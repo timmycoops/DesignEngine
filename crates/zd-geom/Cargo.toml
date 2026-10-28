@@ -1,0 +1,12 @@
+[package]
+name = "zd-geom"
+description = "Geometry for the Zovlyn Pit Design Engine: grid triangulation, seam solids, booleans, ray casting"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+zd-core.workspace = true
+manifold-csg.workspace = true
+parry3d-f64.workspace = true

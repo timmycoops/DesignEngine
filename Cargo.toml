@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/zd-core",
+    "crates/zd-geom",
+    "crates/zd-io",
+    "bench",
+    "app/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[workspace.dependencies]
+zd-core = { path = "crates/zd-core" }
+zd-geom = { path = "crates/zd-geom" }
+zd-io = { path = "crates/zd-io" }
+manifold-csg = "0.4.1"
+parry3d-f64 = "0.31.1"
+
+# Build the C++ Manifold kernel and the BVH code optimised even in dev builds:
+# a debug Manifold makes every test and `tauri dev` session crawl.
+[profile.dev.package.manifold-csg-sys]
+opt-level = 3
+
+[profile.dev.package.manifold-csg]
+opt-level = 3
+
+[profile.dev.package.parry3d-f64]
+opt-level = 3

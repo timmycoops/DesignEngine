@@ -1,0 +1,74 @@
+:root {
+  --bg: #161e29;
+  --hud-bg: rgba(14, 20, 28, 0.78);
+  --hud-text: #e6e9ee;
+  --hud-muted: #9aa5b1;
+  --accent: #c9a227;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--hud-text);
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.viewport {
+  position: absolute;
+  inset: 0;
+}
+
+.viewport canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.hud {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  max-width: min(560px, calc(100vw - 48px));
+  background: var(--hud-bg);
+  border-radius: 6px;
+  pointer-events: auto;
+}
+
+.hud-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.hud button {
+  padding: 5px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--hud-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.hud button:hover {
+  background: rgba(201, 162, 39, 0.15);
+}
+
+.fps {
+  font-variant-numeric: tabular-nums;
+}
+
+.status {
+  color: var(--hud-muted);
+  white-space: pre-wrap;
+  font-variant-numeric: tabular-nums;
+}

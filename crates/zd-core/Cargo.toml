@@ -1,0 +1,9 @@
+[package]
+name = "zd-core"
+description = "Object types for the Zovlyn Pit Design Engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
