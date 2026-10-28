@@ -1,0 +1,25 @@
+# Rust
+/target/
+**/target/
+
+# Node / app
+node_modules/
+app/dist/
+app/src-tauri/target/
+.pnpm-store/
+
+# Editors and OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
+
+# Client data: keep real pit data out of git unless cleared for it
+testdata/golden/*
+!testdata/golden/README.md
+
+# Local project files and outputs
+*.zdproj/
+bench/out/
