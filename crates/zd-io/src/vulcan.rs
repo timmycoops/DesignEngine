@@ -1,9 +1,9 @@
 //! Vulcan grid files, `<proj><seam>.<variable>g` (e.g. `pitupper.srg` roof, `.sfg` floor, `.rag` raw
 //! ash), in the plain binary layout or the compressed one (`vulZ`).
 //!
-//! There is no public specification. The layouts below were worked out from sample files and checked
-//! (decision 0006); they stay marked unverified until a grid matches an independent export node for
-//! node. The plain layout is big-endian throughout:
+//! There is no public specification. The layouts below were worked out from sample files (decision
+//! 0006). A plain grid read this way matches Vulcan's own text export of it at every node; a compressed
+//! grid unpacks to the plain layout. The plain layout is big-endian throughout:
 //!
 //! | Bytes   | Content                                                             |
 //! |---------|---------------------------------------------------------------------|

@@ -1,7 +1,7 @@
 # 0006 — Reading Vulcan grids
 
-Date: 2026-10-28 · Status: accepted; the format reading stays **unverified** until checked against an
-independent export (below)
+Date: 2026-10-28 · Status: accepted; the plain layout **verified** node for node against Vulcan's own
+export on 2026-10-29 (below)
 
 ## Decision
 
@@ -71,6 +71,11 @@ Unpacking takes about 4 ms for a 2 MB grid.
 
 ## Evidence so far
 
+- **Node for node against Vulcan** (2026-10-29). A floor grid that Vulcan wrote in the plain layout
+  (501 × 321 nodes at 10 m, every node live) and Vulcan's own CSV export of it agree at all 160,821
+  nodes: same origin, same cell size, every value equal to the last bit of single precision. This is the
+  independent check decision 0004 asked for before a binary reader is used. A compressed grid unpacks to
+  the plain layout, so its parsing rests on this check and its unpacking on the evidence above.
 - **Orientation.** Read with row 0 as the south edge, the sample topography grid matches a topography
   DXF of the same area at a median of 2 m; read the other way, 74 m.
 - **Consistency.** Two grids written separately from one model run (thickness and structural
@@ -82,8 +87,10 @@ Unpacking takes about 4 ms for a 2 MB grid.
 
 ## Still open
 
-- **Node-for-node check** against an export of the same grids from Deswik or Vulcan (XYZ or ESRI
-  ASCII). Tim is exporting a seam next. The opt-in tests take `ZD_VULCAN_GRIDS`, `ZD_VULCAN_PREFIX` and
-  `ZD_VULCAN_SEAM`: `cargo test --release -p zd-io --test vulcan_golden -- --ignored --nocapture`.
+- **Nulls and compressed files against an export.** The grid checked was plain and had no null nodes.
+  Exports of a grid with nulls and of a compressed grid would close both. Set `ZD_VULCAN_EXPORT` (the
+  text export) and `ZD_VULCAN_EXPORT_GRID` (the grid file) and run
+  `cargo test --release -p zd-io --test vulcan_golden grid_matches_vulcan_export_node_for_node -- --ignored --nocapture`.
+  The other opt-in tests take `ZD_VULCAN_GRIDS`, `ZD_VULCAN_PREFIX` and `ZD_VULCAN_SEAM`.
 - **Variable codes.** Many quality codes (e.g. `s1`–`s8`, `t1`–`t8`, which look like washability yields and
   ash by density) need the project's code key before the seam model names them.
