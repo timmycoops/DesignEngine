@@ -4696,6 +4696,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "webview2-com",
  "windows-core",
+ "zd-commands",
  "zd-core",
  "zd-geom",
  "zd-io",

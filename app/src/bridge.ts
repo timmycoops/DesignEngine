@@ -198,12 +198,89 @@ export interface StagedMesh {
   timings: Record<string, number>;
 }
 
-export const openSurface = (path: string) => invoke<StagedMesh>('open_surface', { path });
+/** Encodes a drawn object's geometry for fetching. */
+export const stageObject = (id: string) => invoke<StagedMesh>('stage_object', { id });
 
 export const prepareSynthetic = (cells: number, kind: 'triangulation' | 'grid') =>
   invoke<StagedMesh>('prepare_synthetic', { cells, kind });
 
-export const clearSurfaces = () => invoke<void>('clear_surfaces');
+// The project, as the engine session holds it (app/src-tauri/src/commands.rs).
+
+export interface Layer {
+  id: string;
+  name: string;
+  colour: [number, number, number];
+  visible: boolean;
+}
+
+export type ObjectKind = 'string' | 'surface' | 'solid' | 'grid';
+
+export interface ObjectSummary {
+  id: string;
+  revision: number;
+  name: string;
+  layer: string;
+  kind: ObjectKind;
+  attributes: Record<string, boolean | number | string>;
+  /** Drawn as a surface: surfaces, solids and elevation grids. */
+  drawn: boolean;
+  /** Changes only when the geometry does. */
+  geometry_key: string;
+  bounds_local: [Vec3, Vec3] | null;
+  /** String vertices, offset from the scene origin. */
+  vertices_local: Vec3[] | null;
+  closed: boolean | null;
+}
+
+export interface ProjectSummary {
+  path: string | null;
+  can_undo: boolean;
+  can_redo: boolean;
+  origin: Vec3 | null;
+  layers: Layer[];
+  objects: ObjectSummary[];
+}
+
+export interface RunRecord {
+  run: string;
+  command: string;
+  params: unknown;
+  inputs: { id: string; revision: number }[];
+  outputs: { id: string; revision: number; change: 'created' | 'revised' | 'deleted'; name: string }[];
+  layers_created: string[];
+  started_unix_ms: number;
+  duration_ms: number;
+  messages: string[];
+  status: 'ok' | { failed: string };
+}
+
+export interface RunReply {
+  record: RunRecord;
+  summary: ProjectSummary;
+}
+
+export interface SaveReply {
+  path: string;
+  object_files_written: number;
+  object_files_reused: number;
+  files_deleted: number;
+  bytes_written: number;
+  ms: number;
+}
+
+export const projectSummary = () => invoke<ProjectSummary>('project_summary');
+
+/** Runs an engine command by name; rejects with the error text if the command fails. */
+export const runCommand = (name: string, params: Record<string, unknown>) => invoke<RunReply>('run_command', { name, params });
+
+export const undo = () => invoke<ProjectSummary>('undo');
+export const redo = () => invoke<ProjectSummary>('redo');
+export const newProject = () => invoke<ProjectSummary>('new_project');
+export const openProject = (path: string) => invoke<ProjectSummary>('open_project', { path });
+/** Saves to `path`, or to the folder last opened or saved. */
+export const saveProject = (path?: string) => invoke<SaveReply>('save_project', { path: path ?? null });
+export const setLayerVisible = (layer: string, visible: boolean) =>
+  invoke<ProjectSummary>('set_layer_visible', { layer, visible });
 
 export interface SnapIndex {
   ms: number;
@@ -214,9 +291,11 @@ export interface SnapIndex {
 export const buildSnapIndex = () => invoke<SnapIndex>('build_snap_index');
 
 export interface SnapHit {
+  /** Offset from the scene origin, for drawing. */
   local: Vec3;
+  /** Mine grid coordinates, for commands. */
   world: Vec3;
-  surface: number;
+  object: string;
 }
 
 export const snapRay = (origin: Vec3, direction: Vec3) => invoke<SnapHit | null>('snap_ray', { origin, direction });

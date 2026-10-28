@@ -12,8 +12,16 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(state::AppState::default())
         .invoke_handler(tauri::generate_handler![
-            commands::open_surface,
-            commands::clear_surfaces,
+            commands::project_summary,
+            commands::run_command,
+            commands::undo,
+            commands::redo,
+            commands::new_project,
+            commands::open_project,
+            commands::save_project,
+            commands::set_layer_visible,
+            commands::run_log,
+            commands::stage_object,
             commands::prepare_synthetic,
             commands::fetch_mesh_shared,
             commands::fetch_mesh_ipc,

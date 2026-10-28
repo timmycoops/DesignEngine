@@ -9,9 +9,14 @@ use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcom
 
 /// `grid.import_vulcan_seam`: every grid of one seam from a folder of Vulcan grids
 /// (`<prefix><seam>.<variable>g`), each as a grid object named "<SEAM> <variable>" (e.g. "UPPER sr")
-/// with its seam, variable, header text and file name as attributes. Roof and floor must read;
-/// grids that cannot be read (compressed ones, for now) are skipped and listed.
+/// with its seam, variable, header text and file name as attributes, and a `role`: `elevation` for
+/// roof, floor and topography (RLs, drawn as surfaces) or `property` for everything else
+/// (thicknesses, qualities). Roof and floor must read; grids that cannot be read (compressed ones,
+/// for now) are skipped and listed.
 pub struct ImportVulcanSeam;
+
+/// Vulcan model variables that hold elevations rather than thicknesses or qualities.
+const ELEVATION_VARIABLES: [&str; 3] = ["sr", "sf", "tp"];
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -62,6 +67,8 @@ impl Command for ImportVulcanSeam {
             let mut attributes = Attributes::new();
             attributes.insert("seam".into(), AttrValue::Text(code.clone()));
             attributes.insert("variable".into(), AttrValue::Text(variable.clone()));
+            let role = if ELEVATION_VARIABLES.contains(&variable.as_str()) { "elevation" } else { "property" };
+            attributes.insert("role".into(), AttrValue::Text(role.into()));
             attributes.insert("vulcan_header".into(), AttrValue::Text(vulcan.description));
             attributes.insert("source".into(), AttrValue::Text(format!("{}{}.{variable}g", p.prefix, p.seam).to_ascii_lowercase()));
             outcome.changes.push(Change::Create {

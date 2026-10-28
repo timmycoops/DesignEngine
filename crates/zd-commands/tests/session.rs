@@ -287,6 +287,9 @@ fn a_vulcan_seam_imports_as_grids_and_survives_a_save() {
 
     let roof_object = s.project().objects().find(|o| o.name == "UPPER sr").unwrap().clone();
     assert_eq!(roof_object.attributes["variable"], zd_core::AttrValue::Text("sr".into()));
+    assert_eq!(roof_object.attributes["role"], zd_core::AttrValue::Text("elevation".into()));
+    let ash = s.project().objects().find(|o| o.name == "UPPER ra").unwrap();
+    assert_eq!(ash.attributes["role"], zd_core::AttrValue::Text("property".into()), "qualities are not elevations");
     match &roof_object.body {
         Body::Grid(g) => assert_eq!((g.z_at(0, 0), g.z_at(3, 2), g.origin), (-120.0, -109.0, [500_025.0, 7_000_625.0])),
         other => panic!("expected a grid, found {:?}", other.kind()),

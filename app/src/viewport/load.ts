@@ -16,17 +16,17 @@ export interface LoadTimings {
 export async function loadStaged(
   viewport: Viewport,
   staged: StagedMesh,
-  transport?: Transport,
+  options: { transport?: Transport; colour?: number } = {},
 ): Promise<{ group: THREE.Group; timings: LoadTimings }> {
   const start = performance.now();
-  const fetched = await fetchMesh(staged.handle, transport);
+  const fetched = await fetchMesh(staged.handle, options.transport);
   const received = performance.now();
   const decoded = decodeMesh(fetched.buffer);
   // Grid tiles are rebuilt into fresh arrays, so a grid's shared buffer can go straight away;
   // triangulation chunks view the buffer until the surface is removed.
   const grid = decoded.header.kind === 'grid';
   if (grid) fetched.release();
-  const group = viewport.addMesh(decoded, grid ? undefined : fetched.release);
+  const group = viewport.addMesh(decoded, grid ? undefined : fetched.release, options.colour);
   const decodedAt = performance.now();
   const frame = await viewport.nextFrame();
   return {
@@ -39,4 +39,9 @@ export async function loadStaged(
       to_gpu_done_ms: frame.gpuDone - start,
     },
   };
+}
+
+/** A layer's `[r, g, b]` as a three.js colour number. */
+export function colourOf(rgb: [number, number, number]): number {
+  return (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
 }

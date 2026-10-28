@@ -118,8 +118,7 @@ export class Viewport {
    * normal attribute three shades flat from screen-space derivatives. `release` runs when the
    * surface is removed (frees a shared buffer the chunks still view).
    */
-  addMesh(decoded: DecodedMesh, release?: () => void): THREE.Group {
-    const colour = SURFACE_COLOURS[this.surfaces.length % SURFACE_COLOURS.length];
+  addMesh(decoded: DecodedMesh, release?: () => void, colour = SURFACE_COLOURS[this.surfaces.length % SURFACE_COLOURS.length]): THREE.Group {
     const material = new THREE.MeshStandardMaterial({
       color: colour,
       roughness: 0.92,
