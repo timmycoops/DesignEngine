@@ -9,7 +9,8 @@ Seam models come from Vulcan grids (decision 5 of the Phase 1 plan). Files are n
 `<proj><seam>.<variable>g`: `.srg` roof, `.sfg` floor, `.tkg` thickness, and quality codes such as `.rag`
 raw ash, `.rdg` relative density, `.rvg` volatile matter and `.tsg` total sulphur. `zd-io` reads the
 plain binary layout directly (`read_vulcan_grid`, `read_vulcan_seam`), and the
-`grid.import_vulcan_seam` command brings a seam's grids into a project.
+`grid.import_vulcan_seam` command brings a seam's grids into a project. The compressed layout
+(`vulZ`) reads too (below, added 2026-10-29).
 
 There is no public specification. The layout was worked out from a client's folder of about 3,000
 grids (client data: kept local, never committed, and not quoted here). Big-endian:
@@ -31,6 +32,43 @@ The reader refuses anything that does not check out: a node count that disagrees
 extents that disagree with the cell size, a truncated file, or non-zero bytes after the last node.
 Null nodes, nodes with leftover values and unknown flags are counted in a log, never dropped silently.
 
+### Compressed layout (`vulZ`)
+
+Some grids are stored compressed: about 5 % of the first folder and a fifth of a second client's folder,
+where they included roof and floor grids. A compressed file holds the plain layout's bytes, cut into
+fixed-size blocks, each compressed with LZF (the public liblzf format). Little-endian:
+
+| Bytes | Content |
+|---|---|
+| 0..8 | magic `ea fb a7 8a` then `vulZ` |
+| 8..12 | i32, 2 in every sample |
+| 12..16 | i32 index depth: levels of index pages, the root included (4 in every sample) |
+| 16..20 | i32, 1 in every sample |
+| 20..24 | i32 block size, in plain bytes (25,600 in one folder, 40,960 in the other) |
+| 24..28 | i32 offset of the root index page (60 in every sample) |
+| 32..40 | u64 size of the plain layout |
+
+An index page is 2,048 bytes: 256 u64 file offsets, zero for unused. Each level's entries point to the
+pages of the next level down, and the deepest level's entries point to the blocks in order. A block is a
+u32 compressed length, a u32 slot length (the space reserved for it), then the LZF stream. The last
+block may unpack past the end of the grid; those bytes are zero. The decoder is written in-house (LZF is
+about 40 lines), so there is no new dependency.
+
+The reader refuses a compressed file whose header does not fit the file, whose index lists too few
+blocks, whose blocks run past the end of the file or fail to unpack, or whose last block holds data past
+the stated size. A grid read from it reports how many blocks were unpacked.
+
+**Evidence.** All 182 compressed grids in the two folders unpack to exactly the stated size and parse as
+the plain layout, on the same lattice as their plain neighbours. In the second folder, eight seams have a
+compressed roof, floor or thickness. In each, roof minus floor equals the thickness grid exactly (to the
+last bit of single precision) at all 266,031 nodes, including one seam where the floor is plain. In the
+first folder, a compressed thickness equals a compressed `tk` (written separately, from roof minus floor)
+at every node in each seam checked. The plain roof and floor there were rewritten two months after the
+thickness (the header text carries the dates). Roof minus floor still equals the compressed thickness
+exactly at 99 % or more of nodes in three seams. Six others differ more, as expected where the roof and
+floor were remodelled. A wrong decoder could not match exactly at hundreds of thousands of nodes.
+Unpacking takes about 4 ms for a 2 MB grid.
+
 ## Evidence so far
 
 - **Orientation.** Read with row 0 as the south edge, the sample topography grid matches a topography
@@ -47,8 +85,5 @@ Null nodes, nodes with leftover values and unknown flags are counted in a log, n
 - **Node-for-node check** against an export of the same grids from Deswik or Vulcan (XYZ or ESRI
   ASCII). Tim is exporting a seam next. The opt-in tests take `ZD_VULCAN_GRIDS`, `ZD_VULCAN_PREFIX` and
   `ZD_VULCAN_SEAM`: `cargo test --release -p zd-io --test vulcan_golden -- --ignored --nocapture`.
-- **The compressed layout (`vulZ`, about 5 % of the sample)** is not read. Its header is
-  little-endian, records the uncompressed size and chains 2 KB blocks, and it is not zlib. Those grids
-  are skipped and listed; export them instead.
 - **Variable codes.** Many quality codes (e.g. `s1`–`s8`, `t1`–`t8`, which look like washability yields and
   ash by density) need the project's code key before the seam model names them.

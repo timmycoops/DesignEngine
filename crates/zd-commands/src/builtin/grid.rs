@@ -11,8 +11,8 @@ use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcom
 /// (`<prefix><seam>.<variable>g`), each as a grid object named "<SEAM> <variable>" (e.g. "UPPER sr")
 /// with its seam, variable, header text and file name as attributes, and a `role`: `elevation` for
 /// roof, floor and topography (RLs, drawn as surfaces) or `property` for everything else
-/// (thicknesses, qualities). Roof and floor must read; grids that cannot be read (compressed ones,
-/// for now) are skipped and listed.
+/// (thicknesses, qualities). Plain and compressed (`vulZ`) files both read. Roof and floor must read;
+/// other grids that cannot be read are skipped and listed.
 pub struct ImportVulcanSeam;
 
 /// Vulcan model variables that hold elevations rather than thicknesses or qualities.
@@ -62,6 +62,9 @@ impl Command for ImportVulcanSeam {
                     "; null nodes holding old values {}, unknown flags {}, non-finite values {}",
                     log.stale_nulls, log.odd_flags, log.non_finite
                 );
+            }
+            if log.compressed_blocks > 0 {
+                line += &format!("; unpacked from the compressed layout ({} blocks)", log.compressed_blocks);
             }
             outcome = outcome.message(line);
             let mut attributes = Attributes::new();
