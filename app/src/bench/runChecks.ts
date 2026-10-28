@@ -7,14 +7,15 @@ import {
   buildSnapIndex,
   defaultTransport,
   exitApp,
-  openSurface,
   prepareSynthetic,
+  runCommand,
   snapRay,
+  stageObject,
   type Transport,
   writeResults,
 } from '../bridge';
 import { loadStaged } from '../viewport/load';
-import type { PolylineTool } from '../viewport/PolylineTool';
+import { PolylineTool } from '../viewport/PolylineTool';
 import type { Viewport } from '../viewport/Viewport';
 
 interface FrameSummary {
@@ -29,12 +30,8 @@ interface FrameSummary {
 
 const WARM_UP_FRAMES = 30;
 
-export async function runChecks(
-  viewport: Viewport,
-  tool: PolylineTool,
-  config: BenchConfig,
-  log: (line: string) => void,
-): Promise<void> {
+export async function runChecks(viewport: Viewport, config: BenchConfig, log: (line: string) => void): Promise<void> {
+  const tool = new PolylineTool(viewport);
   const canvas = viewport.renderer.domElement;
   const results: Record<string, unknown> = {
     generated: new Date().toISOString(),
@@ -65,8 +62,10 @@ async function loadSurfaces(viewport: Viewport, paths: string[], log: (line: str
   const loads = [];
   for (const path of paths) {
     log(`loading ${path}`);
+    // The same path as the app: an engine import command, then the geometry fetched to draw.
     const start = performance.now();
-    const staged = await openSurface(path);
+    const reply = await runCommand('surface.import', { path, layer: 'bench' });
+    const staged = await stageObject(reply.record.outputs[0].id);
     const opened = performance.now();
     const { timings } = await loadStaged(viewport, staged);
     loads.push({
@@ -74,11 +73,12 @@ async function loadSurfaces(viewport: Viewport, paths: string[], log: (line: str
       kind: staged.kind,
       triangles: staged.triangles,
       bytes: staged.bytes,
-      rust_ms: staged.timings,
-      open_ms: opened - start,
+      import_ms: reply.record.duration_ms,
+      encode_ms: staged.timings.encode,
+      import_and_encode_ms: opened - start,
       ...timings,
       total_to_frame_submitted_ms: opened - start + timings.to_frame_submitted_ms,
-      import_log: staged.log,
+      import_log: reply.record.messages,
     });
   }
   return loads;
@@ -151,7 +151,7 @@ async function checkTransfer(viewport: Viewport, cellSizes: number[], log: (line
           `check 3: ${staged.triangles.toLocaleString()} triangles as ${kind}, ` +
             `${(staged.bytes / 1e6).toFixed(0)} MB via ${transport}`,
         );
-        const { group, timings } = await loadStaged(viewport, staged, transport);
+        const { group, timings } = await loadStaged(viewport, staged, { transport });
         rows.push({ cells, kind, triangles: staged.triangles, bytes: staged.bytes, encode_ms: staged.timings.encode, ...timings });
         viewport.removeMesh(group);
         await viewport.nextFrame();
