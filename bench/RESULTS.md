@@ -15,7 +15,7 @@ Branch `phase0/stress-test`, run 2026-10-28. Targets are from
 | 1 · Viewport | Smooth orbit and zoom, ~60 fps, at tens of millions of triangles | **60 fps at 24.3 M unique triangles** (p99 frame 17.3 ms; no frame over 33 ms in one run, two up to 50 ms in a repeat). Tiled copies: 50 fps at 48.5 M, 36 fps at 72.8 M, 23 fps at 121 M | **PASS** up to ~25 M on this entry-level GPU; ≥ 50 fps to ~50 M |
 | 2 · Booleans | Watertight output; seconds, not minutes, per cut | Every part watertight; below + above = input to ≤ 1e-12. 0.24 s (0.2 M tris), 0.74 s (0.9 M), 2.4 s (3.5 M), 9.4 s (14 M) | **PASS** |
 | 3 · Transfer | Multi-million-triangle mesh Rust → viewport well under 1 s, binary | Request → frame submitted over a WebView2 shared buffer: **0.06 s at 2 M, 0.09 s at 8 M, 0.20 s at 18 M** for a general triangulation; 0.015, 0.035 and 0.065 s for grid surfaces | **PASS** (first run: 0.23, 0.88 and 2.2 s over IPC) |
-| 4 · Editing | Vertex drag with surface snapping feels instant | Snap round trip **1.2 ms** p50 (8.2 ms worst) against 24.3 M triangles; every update is in the next frame submitted (worst 21.5 ms) | **PASS** as measured; the feel still needs a hands-on check |
+| 4 · Editing | Vertex drag with surface snapping feels instant | Snap round trip **1.2 ms** p50 (8.2 ms worst) against 24.3 M triangles; every update is in the next frame submitted (worst 21.5 ms) | **PASS**; feel confirmed hands-on ("snappy") |
 
 **Gate: not yet passed, only because the data was synthetic.** All four checks pass here. The first
 run left Check 3 partial; that was fixed in the transfer layer alone, as 0001 anticipates ("a failure
@@ -90,7 +90,8 @@ display's ceiling.
   proves the rule matches, and the viewport checks the triangle count on every load. Elevations
   are within half a step: ≤ 0.3 mm for the topography (34 m range) and ≤ 3.1 mm for the roof
   and floor, which fall about 407 m across the 10 km pit. This is display only; snapping and
-  every engine calculation use the f64 surfaces.
+  every engine calculation use the f64 surfaces. Hands-on check: no cracks visible along the tile
+  seams when zoomed in.
 
 They travel through a **WebView2 shared buffer**: Rust copies the bytes once into shared memory, and
 the page gets an `ArrayBuffer` over the same memory. Raw bytes over Tauri IPC remain the fallback.
@@ -191,8 +192,8 @@ with only the 272 k-triangle design surface drawn, to separate render cost from 
   timing, not render cost, and it has not recurred.
 - BVH build for snapping: **2.4 s** for the four surfaces in parallel (24.3 M triangles), run in the
   background after loading. The first serial build took 7.1 s.
-- "Feels instant" is a human judgement. Open a surface, click to place vertices, and drag one
-  (Esc clears) to confirm.
+- Hands-on check (Tim, 2026-10-28, synthetic topo, roof and floor loaded): placing and dragging
+  vertices "all feels snappy".
 
 ## Follow-ups
 
