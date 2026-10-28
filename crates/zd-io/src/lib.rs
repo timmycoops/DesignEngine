@@ -1,17 +1,20 @@
 //! Import and export for the Zovlyn Pit Design Engine.
 //!
-//! Phase 0 reads triangulations from DXF `3DFACE` entities and regular grids from XYZ/CSV text.
-//! Coordinates stay f64 from file to engine. Every clean-up done on the way in (welding,
+//! Reads triangulations from DXF `3DFACE` entities and regular grids from XYZ/CSV text, and saves
+//! and opens projects as `<name>.zdproj/` folders of Parquet files. Coordinates stay f64 from file
+//! to engine. Every clean-up done on the way in (welding,
 //! dropped faces, nulls) is counted in the import log; nothing is fixed silently.
 
 mod dxf;
 mod error;
+mod store;
 mod xyz;
 
 use std::path::Path;
 
 pub use dxf::{DxfImport, DxfLog, parse_dxf_3dfaces, read_dxf_3dfaces, write_dxf_3dfaces};
 pub use error::IoError;
+pub use store::{Opened, ProjectStore, SaveReport, StoreError};
 pub use xyz::{GridImport, XyzLog, XyzOptions, parse_xyz_grid, read_xyz_grid, write_xyz_grid};
 
 /// What a surface file turned out to hold.

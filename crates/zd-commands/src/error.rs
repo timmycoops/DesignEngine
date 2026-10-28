@@ -16,6 +16,8 @@ pub enum CommandError {
     Io(String),
     /// The project refused the changes (stale input, duplicate layer, ...).
     Project(ProjectError),
+    /// Saving or opening the project folder failed.
+    Store(String),
 }
 
 impl fmt::Display for CommandError {
@@ -36,6 +38,7 @@ impl fmt::Display for CommandError {
             CommandError::Geometry(message) => write!(f, "geometry: {message}"),
             CommandError::Io(message) => write!(f, "{message}"),
             CommandError::Project(e) => write!(f, "{e}"),
+            CommandError::Store(message) => write!(f, "project store: {message}"),
         }
     }
 }

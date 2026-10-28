@@ -1,6 +1,6 @@
 [package]
 name = "zd-io"
-description = "Import and export for the Zovlyn Pit Design Engine: DXF 3DFACE, XYZ/CSV grids"
+description = "Import and export for the Zovlyn Pit Design Engine: DXF 3DFACE, XYZ/CSV grids, the Parquet project store"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,3 +8,11 @@ publish.workspace = true
 
 [dependencies]
 zd-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+parquet.workspace = true
+arrow-array.workspace = true
+arrow-schema.workspace = true
+
+[dev-dependencies]
+zd-geom.workspace = true
