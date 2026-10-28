@@ -3,7 +3,7 @@ use crate::mesh::{cross, norm, sub};
 
 /// Computed validity flags (Seequent Evo vocabulary). Nothing reaches Manifold or a volume
 /// report without them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct MeshValidity {
     /// No boundary: every edge has at least two faces.
     pub closed: bool,

@@ -282,6 +282,65 @@ export const saveProject = (path?: string) => invoke<SaveReply>('save_project', 
 export const setLayerVisible = (layer: string, visible: boolean) =>
   invoke<ProjectSummary>('set_layer_visible', { layer, visible });
 
+/** The session's run log, oldest first: every run (failed ones too), undo, redo, save and open. */
+export type LogEntry =
+  | ({ event: 'run' } & RunRecord)
+  | { event: 'undo' | 'redo'; run: string; at_unix_ms: number }
+  | { event: 'saved' | 'opened'; path: string; at_unix_ms: number };
+
+export const runLog = () => invoke<LogEntry[]>('run_log');
+
+/** Validity flags in Seequent Evo vocabulary, with the counts behind them. */
+export interface MeshValidity {
+  closed: boolean;
+  manifold: boolean;
+  consistent_winding: boolean;
+  non_degenerate: boolean;
+  /** Not computed yet. */
+  non_self_intersecting: boolean | null;
+  boundary_edges: number;
+  non_manifold_edges: number;
+  inconsistent_edges: number;
+  degenerate_triangles: number;
+}
+
+export type Measures =
+  | { kind: 'string'; points: Vec3[]; closed: boolean; length: number; plan_length: number; plan_area: number | null }
+  | { kind: 'surface'; vertices: number; triangles: number; area: number; validity: MeshValidity }
+  | { kind: 'solid'; vertices: number; triangles: number; area: number; volume: number; validity: MeshValidity }
+  | {
+      kind: 'grid';
+      origin: [number, number];
+      cell_size: [number, number];
+      cols: number;
+      rows: number;
+      nulls: number;
+      z_range: [number, number] | null;
+    };
+
+/** One revision of an object and the run that wrote it. */
+export interface RevisionSummary {
+  revision: number;
+  run: string;
+  /** Null when the run is not in this session's log. */
+  command: string | null;
+  at_unix_ms: number | null;
+}
+
+/** The current revision of one object, in world coordinates. */
+export interface ObjectDetails {
+  id: string;
+  name: string;
+  layer: string;
+  attributes: Record<string, boolean | number | string>;
+  bounds: [Vec3, Vec3] | null;
+  /** Oldest first; the last entry is the current revision. */
+  history: RevisionSummary[];
+  measures: Measures;
+}
+
+export const objectDetails = (id: string) => invoke<ObjectDetails>('object_details', { id });
+
 export interface SnapIndex {
   ms: number;
   surfaces: number;

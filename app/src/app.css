@@ -1,213 +1,124 @@
-:root {
-  --bg: #161e29;
-  --panel-bg: rgba(14, 20, 28, 0.86);
-  --text: #e6e9ee;
-  --muted: #9aa5b1;
-  --accent: #c9a227;
-  --error: #ff8a7a;
-  --border: rgba(255, 255, 255, 0.08);
-  font-family: 'Segoe UI', system-ui, sans-serif;
-  font-size: 13px;
-  color: var(--text);
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "dockview-react/dist/styles/dockview.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --font-heading: var(--font-sans);
+    --font-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --color-selection: var(--selection);
+    --color-ok: var(--ok);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-html,
-body,
-#root {
-  margin: 0;
-  height: 100%;
-  overflow: hidden;
-  background: var(--bg);
+/* Dark only: panels sit beside a dark viewport. Slate greys, with the gold accent for what is
+   active or selected (the viewport draws the selected string in the same gold). */
+.dark {
+    --background: oklch(0.2 0.015 250);
+    --foreground: oklch(0.93 0.005 250);
+    --card: oklch(0.23 0.015 250);
+    --card-foreground: oklch(0.93 0.005 250);
+    --popover: oklch(0.25 0.015 250);
+    --popover-foreground: oklch(0.93 0.005 250);
+    --primary: oklch(0.76 0.14 85);
+    --primary-foreground: oklch(0.2 0.02 85);
+    --secondary: oklch(0.29 0.015 250);
+    --secondary-foreground: oklch(0.93 0.005 250);
+    --muted: oklch(0.27 0.015 250);
+    --muted-foreground: oklch(0.7 0.012 250);
+    --accent: oklch(0.3 0.015 250);
+    --accent-foreground: oklch(0.96 0.005 250);
+    --destructive: oklch(0.7 0.17 25);
+    --border: oklch(1 0 0 / 9%);
+    --input: oklch(1 0 0 / 14%);
+    --ring: oklch(0.76 0.14 85 / 60%);
+    --selection: oklch(0.86 0.16 90 / 16%);
+    --ok: oklch(0.75 0.13 150);
+    --radius: 0.5rem;
 }
 
-.viewport {
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    @apply h-full overflow-hidden;
+  }
+  body {
+    @apply bg-background text-foreground text-[13px] antialiased;
+  }
+  button:not(:disabled), [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* The viewport canvas fills its panel; the host div moves with the panel. */
+.viewport-host {
   position: absolute;
   inset: 0;
 }
 
-.viewport canvas {
+.viewport-host canvas {
   display: block;
   width: 100%;
   height: 100%;
 }
 
-button {
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
+/* dockview in the app's palette. */
+.dockview-theme-dark {
+  --dv-group-view-background-color: var(--background);
+  --dv-tabs-and-actions-container-background-color: oklch(0.17 0.015 250);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--background);
+  --dv-activegroup-hiddenpanel-tab-background-color: oklch(0.17 0.015 250);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--background);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: oklch(0.17 0.015 250);
+  --dv-tab-divider-color: transparent;
+  --dv-activegroup-visiblepanel-tab-color: var(--foreground);
+  --dv-activegroup-hiddenpanel-tab-color: var(--muted-foreground);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--muted-foreground);
+  --dv-inactivegroup-hiddenpanel-tab-color: oklch(0.55 0.012 250);
+  --dv-separator-border: var(--border);
+  --dv-paneview-header-border-color: var(--border);
+  --dv-active-sash-color: var(--primary);
+  --dv-drag-over-background-color: oklch(0.76 0.14 85 / 18%);
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-tabs-and-actions-container-height: 30px;
+  font-family: var(--font-sans);
 }
 
-button:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-button.on {
-  border-color: var(--accent);
-  background: rgba(201, 162, 39, 0.18);
-}
-
-button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.toolbar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: var(--panel-bg);
-  border-bottom: 1px solid var(--border);
-}
-
-.toolbar .title {
-  font-weight: 600;
-  margin-right: 8px;
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.toolbar .sep {
-  width: 1px;
-  align-self: stretch;
-  margin: 0 4px;
-  background: var(--border);
-}
-
-.toolbar .fps {
-  margin-left: auto;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.side {
-  position: absolute;
-  top: 44px;
-  left: 10px;
-  bottom: 70px;
-  width: 260px;
-  overflow-y: auto;
-  padding: 8px 10px;
-  background: var(--panel-bg);
-  border-radius: 6px;
-}
-
-.side h3 {
-  margin: 6px 0 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.new-layer {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-  color: var(--muted);
-}
-
-.new-layer input {
-  flex: 1;
-  min-width: 0;
-  padding: 2px 6px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text);
-  font: inherit;
-}
-
-.layer {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 0;
-  cursor: pointer;
-}
-
-.layer.active .name {
-  color: var(--accent);
-}
-
-.layer .swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-}
-
-.layer .count {
-  margin-left: auto;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.objects {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.objects li {
-  padding: 2px 4px;
-  border-radius: 3px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: default;
-}
-
-.objects li.selected {
-  background: rgba(255, 210, 63, 0.16);
-}
-
-.objects .kind {
-  display: inline-block;
-  width: 50px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.properties {
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border);
-  color: var(--muted);
-}
-
-.properties h3 {
-  color: var(--text);
-  text-transform: none;
-  font-size: 13px;
-}
-
-.status {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: 10px;
-  max-height: 56px;
-  overflow-y: auto;
-  padding: 6px 10px;
-  background: var(--panel-bg);
-  border-radius: 6px;
-  color: var(--muted);
-  white-space: pre-wrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.status.error {
-  color: var(--error);
+/* The active panel's tab carries the accent. */
+.dockview-theme-dark .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab {
+  box-shadow: inset 0 2px 0 var(--primary);
 }
