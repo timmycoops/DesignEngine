@@ -22,6 +22,10 @@ zd-io = { path = "crates/zd-io" }
 zd-commands = { path = "crates/zd-commands" }
 manifold-csg = "0.4.1"
 serde = { version = "1", features = ["derive"] }
+# The locked Parquet/Arrow layer for the project store; only the Arrow bridge and Snappy codec.
+parquet = { version = "60", default-features = false, features = ["arrow", "snap"] }
+arrow-array = "60"
+arrow-schema = "60"
 # float_roundtrip: run logs must give back the exact f64 coordinates they were given.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 parry3d-f64 = "0.31.1"

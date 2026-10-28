@@ -76,6 +76,8 @@ pub enum ProjectError {
     KindChanged(ObjectId),
     /// One run may change each object only once.
     ChangedTwice(ObjectId),
+    /// A saved project lists the same object or layer twice, or an object on a missing layer.
+    Corrupt(String),
 }
 
 impl fmt::Display for ProjectError {
@@ -90,6 +92,7 @@ impl fmt::Display for ProjectError {
             ProjectError::EmptyName => write!(f, "names cannot be empty"),
             ProjectError::KindChanged(id) => write!(f, "a revision cannot change the kind of object {id}"),
             ProjectError::ChangedTwice(id) => write!(f, "object {id} is changed twice in one run"),
+            ProjectError::Corrupt(message) => write!(f, "saved project is inconsistent: {message}"),
         }
     }
 }
@@ -127,6 +130,31 @@ pub struct Project {
 impl Project {
     pub fn new() -> Self {
         Project::default()
+    }
+
+    /// A project rebuilt from saved layers and objects (each at its saved revision, in listing
+    /// order). The undo history starts empty: it does not survive closing a project.
+    pub fn from_saved(layers: Vec<Layer>, objects: Vec<Object>) -> Result<Project, ProjectError> {
+        let mut project = Project::default();
+        for layer in layers {
+            non_empty(&layer.name)?;
+            if project.layers.iter().any(|l| l.id == layer.id || l.name == layer.name) {
+                return Err(ProjectError::Corrupt(format!("layer '{}' listed twice", layer.name)));
+            }
+            project.layers.push(layer);
+        }
+        for object in objects {
+            non_empty(&object.name)?;
+            if project.layer(object.layer).is_none() {
+                return Err(ProjectError::Corrupt(format!("object '{}' is on a missing layer", object.name)));
+            }
+            if object.revision == 0 || project.histories.contains_key(&object.id) {
+                return Err(ProjectError::Corrupt(format!("object {} listed twice or at revision 0", object.id)));
+            }
+            project.order.push(object.id);
+            project.histories.insert(object.id, vec![Entry { revision: object.revision, object: Some(Arc::new(object)) }]);
+        }
+        Ok(project)
     }
 
     pub fn layers(&self) -> &[Layer] {

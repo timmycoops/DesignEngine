@@ -217,6 +217,32 @@ fn surface_import_triangulates_a_grid_and_logs_the_read() {
 }
 
 #[test]
+fn save_and_open_carry_the_project_and_its_run_log() {
+    let dir = std::env::temp_dir().join(format!("zd-commands-save-{}-{}", std::process::id(), zd_core::RunId::new()));
+    let path = dir.join("pit.zdproj");
+    let mut s = Session::with_builtins();
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "design", "points": [[E, N, 1.25], [E + 9.5, N, 2.5]] })).unwrap())[0];
+    let solid = created(&s.run("solid.from_mesh", box_mesh("seam A", [E, N, 100.0], [E + 10.0, N + 10.0, 110.0])).unwrap())[0];
+    let surface = created(&s.run("surface.from_mesh", plane(104.0)).unwrap())[0];
+    s.run("solid.cut_by_surface", json!({ "solid": solid, "surface": surface, "layer": "cuts" })).unwrap();
+    let first = s.save(&path).unwrap();
+    assert_eq!(first.object_files_written, 8, "solid, surface and two cut parts: vertices + triangles each");
+
+    let mut t = Session::open(&path).unwrap();
+    let ids = |s: &Session| s.project().objects().map(|o| (o.id, o.revision, o.name.clone())).collect::<Vec<_>>();
+    assert_eq!(ids(&t), ids(&s));
+    assert_eq!(&t.log()[..s.log().len()], s.log(), "run log carries on, including the save");
+    assert!(matches!(t.log().last(), Some(LogEntry::Opened { .. })));
+    assert!(!t.project().can_undo());
+
+    t.run("string.move_vertex", json!({ "string": toe, "index": 1, "to": [E + 10.0, N + 1.0, 2.75] })).unwrap();
+    let second = t.save(&path).unwrap();
+    assert_eq!((second.object_files_written, second.object_files_reused), (0, 8), "only the string changed");
+    assert_eq!(vertices(&Session::open(&path).unwrap(), toe)[1], [E + 10.0, N + 1.0, 2.75]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn an_open_mesh_is_refused_as_a_solid() {
     let mut s = Session::with_builtins();
     let mut open = box_mesh("leaky", [0.0; 3], [1.0; 3]);

@@ -39,6 +39,11 @@ impl Surface {
         &self.mesh
     }
 
+    /// The shared mesh: revisions that keep the geometry share this.
+    pub fn mesh_arc(&self) -> &Arc<TriMesh> {
+        &self.mesh
+    }
+
     pub fn validity(&self) -> MeshValidity {
         self.validity
     }
@@ -59,6 +64,11 @@ impl Solid {
     }
 
     pub fn mesh(&self) -> &TriMesh {
+        &self.mesh
+    }
+
+    /// The shared mesh: revisions that keep the geometry share this.
+    pub fn mesh_arc(&self) -> &Arc<TriMesh> {
         &self.mesh
     }
 
