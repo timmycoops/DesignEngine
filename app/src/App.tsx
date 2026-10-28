@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { confirm, open, save } from '@tauri-apps/plugin-dialog';
+import type { DockviewApi } from 'dockview-react';
+import { FileInput, FilePlus, FolderOpen, Layers3, MousePointer2, PanelsTopLeft, PenLine, Redo2, Save, SaveAll, Undo2 } from 'lucide-react';
+import { cn } from 'cn';
 import {
   benchConfig,
   buildSnapIndex,
+  type LogEntry,
   newProject,
   openProject,
   type ProjectSummary,
@@ -10,15 +14,28 @@ import {
   redo,
   type RunRecord,
   runCommand,
+  runLog,
   saveProject,
   setLayerVisible,
   snapRay,
   undo,
 } from './bridge';
 import { runChecks } from './bench/runChecks';
+import { Button } from './design-system/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './design-system/ui/dropdown-menu';
+import { Separator } from './design-system/ui/separator';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './design-system/ui/tooltip';
 import { SceneSync } from './viewport/sceneSync';
 import { type Mode, StringLayer } from './viewport/strings';
 import { type FrameStats, Viewport } from './viewport/Viewport';
+import { type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
+import { PANELS, resetLayout, showPanel, Workspace } from './workspace/Workspace';
 
 interface Status {
   text: string;
@@ -29,9 +46,9 @@ interface Status {
 function describe(record: RunRecord): string {
   const outputs = record.outputs.map((o) => `${o.name} (${o.change})`);
   const head = `${record.command}: ${outputs.slice(0, 4).join(', ') || 'done'}${outputs.length > 4 ? ` and ${outputs.length - 4} more` : ''} in ${record.duration_ms.toFixed(0)} ms`;
-  const messages = record.messages.slice(0, 3);
-  const more = record.messages.length > 3 ? [`(${record.messages.length - 3} more messages in the run log)`] : [];
-  return [head, ...messages, ...more].join('\n');
+  const messages = record.messages.slice(0, 2);
+  const more = record.messages.length > 2 ? [`(${record.messages.length - 2} more messages in the run log)`] : [];
+  return [head, ...messages, ...more].join(' · ');
 }
 
 /** Splits a file path into its folder and name, for either separator. */
@@ -40,23 +57,42 @@ function splitPath(path: string): [string, string] {
   return [path.slice(0, cut), path.slice(cut + 1)];
 }
 
+function ToolButton({ tip, active, children, ...props }: { tip: string; active?: boolean; children: ReactNode } & ComponentProps<typeof Button>) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="ghost" size="sm" className={cn(active && 'bg-selection text-primary')} {...props}>
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{tip}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export default function App() {
-  const hostRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<Viewport | null>(null);
   const syncRef = useRef<SceneSync | null>(null);
   const stringsRef = useRef<StringLayer | null>(null);
   const layerRef = useRef('design');
+  const dockRef = useRef<DockviewApi | null>(null);
+  const [viewportHost] = useState(() => Object.assign(document.createElement('div'), { className: 'viewport-host' }));
+  const [hostMounted, setHostMounted] = useState(false);
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
+  const [log, setLog] = useState<LogEntry[]>([]);
   const [stats, setStats] = useState<FrameStats | null>(null);
   const [backend, setBackend] = useState('starting…');
   const [status, setStatus] = useState<Status>({ text: 'Open a project or import a surface to start.' });
   const [mode, setModeState] = useState<Mode>('select');
   const [activeLayer, setActiveLayerState] = useState('design');
   const [selected, setSelected] = useState<string | null>(null);
+  const summaryRef = useRef(summary);
+  summaryRef.current = summary;
 
-  /** Shows a new project summary: side panel, strings, and any surfaces whose geometry changed. */
+  /** Shows a new project summary: panels, strings, and any surfaces whose geometry changed. */
   const show = useCallback((next: ProjectSummary) => {
     setSummary(next);
+    void runLog().then(setLog);
     stringsRef.current?.sync(next);
     const sync = syncRef.current;
     const viewport = viewportRef.current;
@@ -78,17 +114,23 @@ export default function App() {
         return true;
       } catch (e) {
         setStatus({ text: String(e), error: true });
+        // A failed run is in the log too.
+        void runLog().then(setLog);
         return false;
       }
     },
     [show],
   );
 
+  const viewportMounted = useCallback(() => setHostMounted(true), []);
+
+  // The viewport is made once its canvas host is in the page (the viewport panel mounts it).
   useEffect(() => {
+    if (!hostMounted) return;
     let viewport: Viewport | null = null;
     let detach = () => {};
     let cancelled = false;
-    void Viewport.create(hostRef.current!).then(async (created) => {
+    void Viewport.create(viewportHost).then(async (created) => {
       if (cancelled) return created.dispose();
       viewport = created;
       viewportRef.current = created;
@@ -110,14 +152,20 @@ export default function App() {
       detach = strings.attach();
       show(await projectSummary());
       const config = await benchConfig();
-      if (config) await runChecks(created, config, (text) => setStatus({ text }));
+      if (config) {
+        // Phase 0 timings were taken with the viewport filling the window.
+        dockRef.current?.getPanel('viewport')?.api.maximize();
+        await created.nextFrame();
+        await created.nextFrame();
+        await runChecks(created, config, (text) => setStatus({ text }));
+      }
     });
     return () => {
       cancelled = true;
       detach();
       viewport?.dispose();
     };
-  }, [run, show]);
+  }, [hostMounted, viewportHost, run, show]);
 
   const attempt = useCallback(async (work: () => Promise<void>) => {
     try {
@@ -125,6 +173,19 @@ export default function App() {
     } catch (e) {
       setStatus({ text: String(e), error: true });
     }
+  }, []);
+
+  const select = useCallback((id: string | null) => {
+    const strings = stringsRef.current;
+    const isString = summaryRef.current?.objects.some((o) => o.id === id && o.kind === 'string');
+    // The string layer reports its own selection (null for anything that isn't a string).
+    strings?.select(isString ? id : null);
+    if (!isString) setSelected(id);
+  }, []);
+
+  const setActiveLayer = useCallback((name: string) => {
+    layerRef.current = name.trim() || 'design';
+    setActiveLayerState(name);
   }, []);
 
   const onUndo = () => attempt(async () => show(await undo()));
@@ -150,6 +211,7 @@ export default function App() {
       const path = await open({ directory: true, title: 'Open project (a .zdproj folder)' });
       if (!path) return;
       setStatus({ text: `Opening ${path}…` });
+      select(null);
       show(await openProject(path));
       setStatus({ text: `Opened ${path}` });
     });
@@ -157,6 +219,7 @@ export default function App() {
   const onNew = () =>
     attempt(async () => {
       if (!(await confirm('Start a new project? Anything unsaved in this one is lost.', { title: 'New project', kind: 'warning' }))) return;
+      select(null);
       show(await newProject());
       setStatus({ text: 'New project' });
     });
@@ -184,12 +247,12 @@ export default function App() {
   const setMode = (next: Mode) => {
     stringsRef.current?.setMode(next);
     setModeState(next);
-    setStatus({ text: next === 'draw' ? 'Draw: click on a surface to add vertices; Enter or double-click finishes' : 'Select: click a string, drag its handles; Alt+click inserts, Delete removes a vertex' });
-  };
-
-  const setActiveLayer = (name: string) => {
-    layerRef.current = name;
-    setActiveLayerState(name);
+    setStatus({
+      text:
+        next === 'draw'
+          ? 'Draw: click on a surface to add vertices; Enter or double-click finishes, Backspace removes the last, Esc abandons'
+          : 'Select: click a string, drag its handles; Alt+click inserts a vertex, Delete removes the one under the cursor',
+    });
   };
 
   // Shortcuts: undo, redo, save.
@@ -212,82 +275,93 @@ export default function App() {
     return () => window.removeEventListener('keydown', key);
   });
 
-  const selectedObject = summary?.objects.find((o) => o.id === selected);
+  const setVisible = useCallback(
+    (layer: string, visible: boolean) => void attempt(async () => show(await setLayerVisible(layer, visible))),
+    [attempt, show],
+  );
+
+  const workspace = useMemo<WorkspaceState>(
+    () => ({ summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setLayerVisible: setVisible, run }),
+    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, run],
+  );
+
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';
 
   return (
-    <>
-      <div ref={hostRef} className="viewport" />
-      <header className="toolbar">
-        <span className="title">{projectName}</span>
-        <button onClick={onNew}>New</button>
-        <button onClick={onOpen}>Open…</button>
-        <button onClick={() => onSave(false)}>Save</button>
-        <button onClick={() => onSave(true)}>Save as…</button>
-        <span className="sep" />
-        <button onClick={onImportSurface}>Import surface…</button>
-        <button onClick={onImportVulcan}>Import Vulcan seam…</button>
-        <span className="sep" />
-        <button className={mode === 'select' ? 'on' : ''} onClick={() => setMode('select')}>
-          Select
-        </button>
-        <button className={mode === 'draw' ? 'on' : ''} onClick={() => setMode('draw')}>
-          Draw string
-        </button>
-        <span className="sep" />
-        <button disabled={!summary?.can_undo} onClick={onUndo} title="Ctrl+Z">
-          Undo
-        </button>
-        <button disabled={!summary?.can_redo} onClick={onRedo} title="Ctrl+Y">
-          Redo
-        </button>
-        <span className="fps" title={backend}>
-          {stats ? `${stats.fps.toFixed(0)} fps · ${stats.triangles.toLocaleString()} triangles` : '–'}
-        </span>
-      </header>
-
-      <aside className="side">
-        <h3>Layers</h3>
-        <div className="new-layer">
-          New strings on
-          <input value={activeLayer} onChange={(e) => setActiveLayer(e.target.value || 'design')} />
-        </div>
-        {summary?.layers.map((layer) => (
-          <label key={layer.id} className={`layer ${layer.name === activeLayer ? 'active' : ''}`}>
-            <input type="checkbox" checked={layer.visible} onChange={(e) => void attempt(async () => show(await setLayerVisible(layer.id, e.target.checked)))} />
-            <span className="swatch" style={{ background: `rgb(${layer.colour.join(',')})` }} />
-            <span className="name" onDoubleClick={() => setActiveLayer(layer.name)} title="Double-click to draw new strings on this layer">
-              {layer.name}
-            </span>
-            <span className="count">{summary.objects.filter((o) => o.layer === layer.id).length}</span>
-          </label>
-        ))}
-        <h3>Objects</h3>
-        <ul className="objects">
-          {summary?.objects.map((o) => (
-            <li
-              key={o.id}
-              className={o.id === selected ? 'selected' : ''}
-              onClick={() => o.kind === 'string' && stringsRef.current?.select(o.id)}
-              title={`${o.kind}, revision ${o.revision}${o.drawn || o.kind === 'string' ? '' : ' (not drawn: a property grid)'}`}
-            >
-              <span className={`kind ${o.kind}`}>{o.kind}</span>
-              {o.name}
-            </li>
-          ))}
-        </ul>
-        {selectedObject && (
-          <div className="properties">
-            <h3>{selectedObject.name}</h3>
-            <div>
-              {selectedObject.vertices_local?.length} vertices{selectedObject.closed ? ', closed' : ''} · revision {selectedObject.revision}
-            </div>
-            <div>layer {summary?.layers.find((l) => l.id === selectedObject.layer)?.name}</div>
+    <TooltipProvider delayDuration={400}>
+      <div className="flex h-full flex-col">
+        <header className="flex shrink-0 items-center gap-0.5 border-b bg-card px-2 py-1">
+          <span className="mr-2 max-w-56 truncate text-sm font-semibold" title={summary?.path ?? undefined}>
+            {projectName}
+          </span>
+          <ToolButton tip="New project" onClick={onNew}>
+            <FilePlus />
+          </ToolButton>
+          <ToolButton tip="Open a .zdproj project" onClick={onOpen}>
+            <FolderOpen />
+          </ToolButton>
+          <ToolButton tip="Save (Ctrl+S)" onClick={() => onSave(false)}>
+            <Save />
+          </ToolButton>
+          <ToolButton tip="Save as…" onClick={() => onSave(true)}>
+            <SaveAll />
+          </ToolButton>
+          <Separator orientation="vertical" className="mx-1 h-5" />
+          <ToolButton tip="Import surfaces (DXF, XYZ, CSV grids)" onClick={onImportSurface}>
+            <FileInput /> Surface
+          </ToolButton>
+          <ToolButton tip="Import a seam's Vulcan grids: pick its roof or floor grid" onClick={onImportVulcan}>
+            <Layers3 /> Vulcan seam
+          </ToolButton>
+          <Separator orientation="vertical" className="mx-1 h-5" />
+          <ToolButton tip="Select and edit strings" active={mode === 'select'} onClick={() => setMode('select')}>
+            <MousePointer2 /> Select
+          </ToolButton>
+          <ToolButton tip="Digitise a string on the surfaces" active={mode === 'draw'} onClick={() => setMode('draw')}>
+            <PenLine /> Draw string
+          </ToolButton>
+          <Separator orientation="vertical" className="mx-1 h-5" />
+          <ToolButton tip="Undo (Ctrl+Z)" disabled={!summary?.can_undo} onClick={onUndo}>
+            <Undo2 />
+          </ToolButton>
+          <ToolButton tip="Redo (Ctrl+Y)" disabled={!summary?.can_redo} onClick={onRedo}>
+            <Redo2 />
+          </ToolButton>
+          <div className="ml-auto">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm">
+                  <PanelsTopLeft /> Panels
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {PANELS.map((p) => (
+                  <DropdownMenuItem key={p.id} onSelect={() => dockRef.current && showPanel(dockRef.current, p.id)}>
+                    {p.title}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => dockRef.current && resetLayout(dockRef.current)}>Reset layout</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-        )}
-      </aside>
+        </header>
 
-      <footer className={`status ${status.error ? 'error' : ''}`}>{status.text}</footer>
-    </>
+        <main className="min-h-0 flex-1">
+          <WorkspaceContext.Provider value={workspace}>
+            <Workspace onReady={(api) => (dockRef.current = api)} />
+          </WorkspaceContext.Provider>
+        </main>
+
+        <footer className="flex shrink-0 items-center gap-3 border-t bg-card px-3 py-1 text-xs">
+          <span className={cn('min-w-0 flex-1 truncate', status.error ? 'text-destructive' : 'text-muted-foreground')} title={status.text}>
+            {status.text}
+          </span>
+          <span className="shrink-0 text-muted-foreground tabular-nums" title={backend}>
+            {stats ? `${stats.fps.toFixed(0)} fps · ${stats.triangles.toLocaleString()} triangles` : '–'}
+          </span>
+        </footer>
+      </div>
+    </TooltipProvider>
   );
 }

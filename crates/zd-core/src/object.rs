@@ -22,6 +22,42 @@ pub struct Polyline {
     pub closed: bool,
 }
 
+impl Polyline {
+    /// The segments in order, including the closing segment of a closed string.
+    fn segments(&self) -> impl Iterator<Item = ([f64; 3], [f64; 3])> + '_ {
+        let n = self.vertices.len();
+        let count = if self.closed && n > 2 { n } else { n.saturating_sub(1) };
+        (0..count).map(move |i| (self.vertices[i], self.vertices[(i + 1) % n]))
+    }
+
+    /// Length along the string in 3D (slope length).
+    pub fn length(&self) -> f64 {
+        self.segments()
+            .map(|(a, b)| ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2) + (b[2] - a[2]).powi(2)).sqrt())
+            .sum()
+    }
+
+    /// Length in plan, ignoring elevation.
+    pub fn plan_length(&self) -> f64 {
+        self.segments().map(|(a, b)| (b[0] - a[0]).hypot(b[1] - a[1])).sum()
+    }
+
+    /// Plan area enclosed by a closed string (shoelace), positive whatever the direction;
+    /// `None` for an open string or fewer than three vertices. Coordinates are taken about
+    /// the first vertex so mine grid eastings and northings keep their precision.
+    pub fn plan_area(&self) -> Option<f64> {
+        if !self.closed || self.vertices.len() < 3 {
+            return None;
+        }
+        let o = self.vertices[0];
+        let twice: f64 = self
+            .segments()
+            .map(|(a, b)| (a[0] - o[0]) * (b[1] - o[1]) - (b[0] - o[0]) * (a[1] - o[1]))
+            .sum();
+        Some(twice.abs() / 2.0)
+    }
+}
+
 /// A triangulated surface with its validity flags, computed once when it is made.
 #[derive(Debug, Clone)]
 pub struct Surface {
@@ -147,4 +183,41 @@ pub struct Layer {
 pub struct ObjectRef {
     pub id: ObjectId,
     pub revision: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const E: f64 = 500_000.0;
+    const N: f64 = 7_000_000.0;
+
+    /// A 100 m square in plan at mine grid coordinates, with its east side 30 m lower.
+    fn square(closed: bool) -> Polyline {
+        let vertices = vec![[E, N, 100.0], [E + 100.0, N, 70.0], [E + 100.0, N + 100.0, 70.0], [E, N + 100.0, 100.0]];
+        Polyline { vertices, closed }
+    }
+
+    #[test]
+    fn closed_square_lengths_and_area() {
+        let s = square(true);
+        // Plan: four 100 m sides. Slope: two sides drop 30 m over 100 m, so each is sqrt(100² + 30²).
+        assert!((s.plan_length() - 400.0).abs() < 1e-9);
+        assert!((s.length() - (200.0 + 2.0 * 10_900f64.sqrt())).abs() < 1e-9);
+        // Exact to 1e-6 m² at MGA coordinates; reversing the direction gives the same area.
+        assert!((s.plan_area().unwrap() - 10_000.0).abs() < 1e-6);
+        let mut reversed = s.clone();
+        reversed.vertices.reverse();
+        assert!((reversed.plan_area().unwrap() - 10_000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn open_string_has_no_closing_segment_or_area() {
+        let s = square(false);
+        assert!((s.plan_length() - 300.0).abs() < 1e-9);
+        assert_eq!(s.plan_area(), None);
+        let point = Polyline { vertices: vec![[E, N, 0.0]], closed: true };
+        assert_eq!(point.length(), 0.0);
+        assert_eq!(point.plan_area(), None);
+    }
 }

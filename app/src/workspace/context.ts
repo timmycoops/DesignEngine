@@ -1,0 +1,28 @@
+import { createContext, useContext } from 'react';
+import type { LogEntry, ProjectSummary } from '@/bridge';
+
+/** What every panel reads, and the actions they share. App owns the state. */
+export interface Workspace {
+  summary: ProjectSummary | null;
+  log: LogEntry[];
+  /** The selected object (any kind); strings are also highlighted in the viewport. */
+  selected: string | null;
+  /** The layer new strings are drawn on; created by the first string drawn on it. */
+  activeLayer: string;
+  /** Holds the viewport canvas. The viewport panel mounts it, so the canvas outlives panel moves. */
+  viewportHost: HTMLDivElement;
+  viewportMounted: () => void;
+  select: (id: string | null) => void;
+  setActiveLayer: (name: string) => void;
+  setLayerVisible: (layer: string, visible: boolean) => void;
+  /** Runs an engine command; reports the outcome on the status line. False if it failed. */
+  run: (name: string, params: Record<string, unknown>) => Promise<boolean>;
+}
+
+export const WorkspaceContext = createContext<Workspace | null>(null);
+
+export function useWorkspace(): Workspace {
+  const workspace = useContext(WorkspaceContext);
+  if (!workspace) throw new Error('useWorkspace outside the workspace');
+  return workspace;
+}

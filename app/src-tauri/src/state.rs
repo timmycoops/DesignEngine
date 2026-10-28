@@ -87,11 +87,7 @@ pub fn bounds(object: &Object) -> Option<zd_core::Aabb> {
             if !is_drawn_surface(object) {
                 return None;
             }
-            let live = g.z.iter().copied().filter(|z| !z.is_nan());
-            let (lo, hi) = live.fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), z| (a.min(z), b.max(z)));
-            if !lo.is_finite() {
-                return None;
-            }
+            let [lo, hi] = g.z_range()?;
             let far = g.node_xy(g.cols - 1, g.rows - 1);
             Some(zd_core::Aabb { min: [g.origin[0], g.origin[1], lo], max: [far[0], far[1], hi] })
         }

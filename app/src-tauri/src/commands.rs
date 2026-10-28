@@ -3,6 +3,7 @@
 //! each change, and fetches geometry as binary render buffers (WebGPU shared buffer or raw IPC
 //! bytes), never as JSON.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -12,7 +13,7 @@ use serde_json::Value;
 use tauri::ipc::Response;
 use tauri::{AppHandle, State, Webview};
 use zd_commands::{LogEntry, RunRecord, Session};
-use zd_core::{Attributes, Body, Layer, LayerId, ObjectId, ObjectKind, TriMesh};
+use zd_core::{Attributes, Body, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, TriMesh};
 use zd_geom::{SurfaceRayCaster, triangulate_grid};
 
 use crate::render::{encode_grid, encode_triangulation};
@@ -90,6 +91,115 @@ fn summary(app: &mut AppInner) -> ProjectSummary {
 #[tauri::command]
 pub fn project_summary(state: State<'_, AppState>) -> ProjectSummary {
     summary(&mut state.app.lock().unwrap())
+}
+
+/// One revision of an object and the run that wrote it.
+#[derive(Serialize)]
+pub struct RevisionSummary {
+    revision: u32,
+    run: RunId,
+    /// `None` when the run is not in this session's log (a project saved before run logs).
+    command: Option<String>,
+    at_unix_ms: Option<u64>,
+}
+
+/// What the properties panel shows for one object, in world coordinates.
+#[derive(Serialize)]
+pub struct ObjectDetails {
+    id: ObjectId,
+    name: String,
+    layer: String,
+    attributes: Attributes,
+    bounds: Option<[[f64; 3]; 2]>,
+    /// Oldest first; the last entry is the current revision.
+    history: Vec<RevisionSummary>,
+    measures: Measures,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Measures {
+    String { points: Vec<[f64; 3]>, closed: bool, length: f64, plan_length: f64, plan_area: Option<f64> },
+    Surface { vertices: usize, triangles: usize, area: f64, validity: MeshValidity },
+    Solid { vertices: usize, triangles: usize, area: f64, volume: f64, validity: MeshValidity },
+    Grid { origin: [f64; 2], cell_size: [f64; 2], cols: usize, rows: usize, nulls: usize, z_range: Option<[f64; 2]> },
+}
+
+fn measure(body: &Body) -> Measures {
+    match body {
+        Body::String(line) => Measures::String {
+            points: line.vertices.clone(),
+            closed: line.closed,
+            length: line.length(),
+            plan_length: line.plan_length(),
+            plan_area: line.plan_area(),
+        },
+        Body::Surface(s) => Measures::Surface {
+            vertices: s.mesh().vertices.len(),
+            triangles: s.mesh().triangle_count(),
+            area: s.mesh().area(),
+            validity: s.validity(),
+        },
+        Body::Solid(s) => Measures::Solid {
+            vertices: s.mesh().vertices.len(),
+            triangles: s.mesh().triangle_count(),
+            area: s.mesh().area(),
+            volume: s.volume(),
+            validity: s.validity(),
+        },
+        Body::Grid(g) => Measures::Grid {
+            origin: g.origin,
+            cell_size: g.cell_size,
+            cols: g.cols,
+            rows: g.rows,
+            nulls: g.null_count(),
+            z_range: g.z_range(),
+        },
+    }
+}
+
+/// Details of the current revision of `id`; areas and ranges are computed off the main thread
+/// because surfaces can run to millions of triangles.
+#[tauri::command]
+pub async fn object_details(id: ObjectId, state: State<'_, AppState>) -> Result<ObjectDetails, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let object = project.object(id).ok_or("no such object")?.clone();
+        let layer = project.layer(object.layer).map(|l| l.name.clone()).unwrap_or_default();
+        let runs: HashMap<RunId, (&str, u64)> = app
+            .session
+            .log()
+            .iter()
+            .filter_map(|entry| match entry {
+                LogEntry::Run(r) => Some((r.run, (r.command.as_str(), r.started_unix_ms))),
+                _ => None,
+            })
+            .collect();
+        let history = (1..=object.revision)
+            .filter_map(|r| project.revision(id, r))
+            .map(|rev| {
+                let run = runs.get(&rev.provenance);
+                RevisionSummary {
+                    revision: rev.revision,
+                    run: rev.provenance,
+                    command: run.map(|(c, _)| c.to_string()),
+                    at_unix_ms: run.map(|&(_, t)| t),
+                }
+            })
+            .collect();
+        Ok(ObjectDetails {
+            id,
+            name: object.name.clone(),
+            layer,
+            attributes: object.attributes.clone(),
+            bounds: bounds(&object).map(|b| [b.min, b.max]),
+            history,
+            measures: measure(&object.body),
+        })
+    })
+    .await?
 }
 
 #[derive(Serialize)]

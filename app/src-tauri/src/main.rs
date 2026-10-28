@@ -13,6 +13,7 @@ fn main() {
         .manage(state::AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::project_summary,
+            commands::object_details,
             commands::run_command,
             commands::undo,
             commands::redo,

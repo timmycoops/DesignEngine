@@ -65,6 +65,14 @@ impl Grid {
     pub fn null_count(&self) -> usize {
         self.z.iter().filter(|z| z.is_nan()).count()
     }
+
+    /// Lowest and highest live node value; `None` when every node is null.
+    pub fn z_range(&self) -> Option<[f64; 2]> {
+        self.z.iter().filter(|z| !z.is_nan()).fold(None, |range, &z| match range {
+            None => Some([z, z]),
+            Some([lo, hi]) => Some([lo.min(z), hi.max(z)]),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -79,5 +87,14 @@ mod tests {
         assert_eq!(g.index(2, 1), 5);
         assert!(g.same_lattice(&g.null_like()));
         assert_eq!(g.null_like().null_count(), 6);
+    }
+
+    #[test]
+    fn z_range_skips_nulls() {
+        let mut g = Grid::from_fn([0.0, 0.0], [1.0, 1.0], 3, 2, |x, y| 100.0 + x - 2.0 * y);
+        g.z[0] = f64::NAN;
+        // Live nodes: 101, 102 (row 0) and 98, 99, 100 (row 1); node (0, 0) = 100 is null.
+        assert_eq!(g.z_range(), Some([98.0, 102.0]));
+        assert_eq!(g.null_like().z_range(), None);
     }
 }
