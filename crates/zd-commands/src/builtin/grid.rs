@@ -52,8 +52,7 @@ impl Command for ImportVulcanSeam {
     fn run(&self, _inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let seam = read_vulcan_seam(Path::new(&p.dir), &p.prefix, &p.seam).map_err(|e| CommandError::Io(e.to_string()))?;
         let code = seam.seam.to_ascii_uppercase();
-        let mut outcome = Outcome::default()
-            .message("Vulcan grid layout is unverified until a grid matches an independent export node for node (decision 0006)");
+        let mut outcome = Outcome::default();
         for (variable, vulcan) in seam.grids {
             let log = &vulcan.log;
             let mut line = format!("{variable}: {} of {} nodes live", log.live, log.nodes);

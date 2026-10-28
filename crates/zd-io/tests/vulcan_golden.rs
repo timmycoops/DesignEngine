@@ -5,12 +5,14 @@
 //! - `ZD_VULCAN_GRIDS`: the folder of grids
 //! - `ZD_VULCAN_PREFIX`: the project prefix on the file names (not needed by the last test)
 //! - `ZD_VULCAN_SEAM`: a seam with `sr`, `sf`, `tk` and `st` grids from one model (for the first test)
+//! - `ZD_VULCAN_EXPORT` and `ZD_VULCAN_EXPORT_GRID`: a grid exported from Vulcan as XYZ or CSV text, and
+//!   the grid file it came from (for the node-for-node test; nothing else needed)
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use zd_io::{VulcanGrid, read_vulcan_grid, read_vulcan_seam, vulcan_grid_name};
+use zd_io::{VulcanGrid, XyzOptions, read_vulcan_grid, read_vulcan_seam, read_xyz_grid, vulcan_grid_name};
 
 fn env(name: &str) -> Option<String> {
     let value = std::env::var(name).ok();
@@ -23,6 +25,53 @@ fn env(name: &str) -> Option<String> {
 /// Live values of a grid's nodes.
 fn live(z: &[f64]) -> impl Iterator<Item = f64> + '_ {
     z.iter().copied().filter(|v| !v.is_nan())
+}
+
+/// The independent check of the format: Vulcan's own text export of a grid must match what we read
+/// from the binary file at every node, value for value (the export writes single-precision values in
+/// full, so equality is exact), with nulls in the same places.
+#[test]
+#[ignore]
+fn grid_matches_vulcan_export_node_for_node() {
+    let (Some(export), Some(file)) = (env("ZD_VULCAN_EXPORT"), env("ZD_VULCAN_EXPORT_GRID")) else { return };
+    let exported = read_xyz_grid(&PathBuf::from(export), &XyzOptions::default()).unwrap();
+    let read = read_vulcan_grid(&PathBuf::from(file)).unwrap();
+    let (e, g) = (&exported.grid, &read.grid);
+    println!(
+        "export: {} x {} nodes from ({}, {}) at {} m, {} points; binary: {} x {} from ({}, {}), {} blocks unpacked",
+        e.cols, e.rows, e.origin[0], e.origin[1], e.cell_size[0], exported.log.points_read, g.cols, g.rows, g.origin[0], g.origin[1], read.log.compressed_blocks
+    );
+    assert_eq!(e.cell_size, g.cell_size, "cell size");
+
+    // The export may cover only part of the lattice (it skips null rows and columns at the edges).
+    let offset = |a: f64, b: f64, cell: f64| {
+        let steps = (a - b) / cell;
+        assert_eq!(steps, steps.round(), "export nodes sit on the binary grid's lattice");
+        steps as usize
+    };
+    let (dc, dr) = (offset(e.origin[0], g.origin[0], g.cell_size[0]), offset(e.origin[1], g.origin[1], g.cell_size[1]));
+    assert!(dc + e.cols <= g.cols && dr + e.rows <= g.rows, "export inside the binary grid");
+    let (mut equal, mut differ, mut only_export, mut only_binary, mut worst) = (0, 0, 0, 0, 0.0f64);
+    for row in 0..g.rows {
+        for col in 0..g.cols {
+            let inside = col >= dc && col < dc + e.cols && row >= dr && row < dr + e.rows;
+            let x = if inside { e.z_at(col - dc, row - dr) } else { f64::NAN };
+            let b = g.z_at(col, row);
+            match (x.is_nan(), b.is_nan()) {
+                (true, true) => {}
+                (false, true) => only_export += 1,
+                (true, false) => only_binary += 1,
+                (false, false) if x == b => equal += 1,
+                (false, false) => {
+                    differ += 1;
+                    worst = worst.max((x - b).abs());
+                }
+            }
+        }
+    }
+    println!("equal {equal}, different {differ} (worst {worst}), live only in export {only_export}, live only in binary {only_binary}");
+    assert_eq!((differ, only_export, only_binary), (0, 0, 0));
+    assert!(equal > 0);
 }
 
 #[test]
