@@ -4,6 +4,7 @@ members = [
     "crates/zd-core",
     "crates/zd-geom",
     "crates/zd-io",
+    "crates/zd-commands",
     "bench",
     "app/src-tauri",
 ]
@@ -18,7 +19,11 @@ publish = false
 zd-core = { path = "crates/zd-core" }
 zd-geom = { path = "crates/zd-geom" }
 zd-io = { path = "crates/zd-io" }
+zd-commands = { path = "crates/zd-commands" }
 manifold-csg = "0.4.1"
+serde = { version = "1", features = ["derive"] }
+# float_roundtrip: run logs must give back the exact f64 coordinates they were given.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 parry3d-f64 = "0.31.1"
 
 # Build the C++ Manifold kernel and the BVH code optimised even in dev builds:

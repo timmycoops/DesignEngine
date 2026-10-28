@@ -1,15 +1,21 @@
 //! Object types for the Zovlyn Pit Design Engine.
 //!
-//! Phase 0 holds only what the stress test needs: a triangulated mesh, a regular grid, and the
-//! explicit validity flags every mesh carries. Ids, layers and provenance arrive with the command
-//! layer in Phase 1.
+//! Geometry (triangulated meshes, grids, explicit validity flags), the object model around it
+//! (ids, layers, objects and their revisions), and the project that holds every revision with an
+//! undo history. Commands live in `zd-commands`.
 
 mod bounds;
 mod grid;
+mod id;
 mod mesh;
+mod object;
+mod project;
 mod validity;
 
 pub use bounds::Aabb;
 pub use grid::Grid;
+pub use id::{LayerId, ObjectId, RunId};
 pub use mesh::TriMesh;
+pub use object::{AttrValue, Attributes, Body, Layer, Object, ObjectKind, ObjectRef, Polyline, Solid, Surface};
+pub use project::{Applied, AppliedChange, Change, ChangeKind, Project, ProjectError};
 pub use validity::{MeshValidity, is_zero_area};

@@ -4468,8 +4468,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "zd-commands"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "zd-core",
+ "zd-geom",
+ "zd-io",
+]
+
+[[package]]
 name = "zd-core"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "zd-geom"
