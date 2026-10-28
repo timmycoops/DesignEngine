@@ -3,14 +3,14 @@
 //! `cargo test --release -p zd-io --test vulcan_golden -- --ignored --nocapture`:
 //!
 //! - `ZD_VULCAN_GRIDS`: the folder of grids
-//! - `ZD_VULCAN_PREFIX`: the project prefix on the file names
+//! - `ZD_VULCAN_PREFIX`: the project prefix on the file names (not needed by the last test)
 //! - `ZD_VULCAN_SEAM`: a seam with `sr`, `sf`, `tk` and `st` grids from one model (for the first test)
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use zd_io::{read_vulcan_seam, vulcan_grid_name};
+use zd_io::{VulcanGrid, read_vulcan_grid, read_vulcan_seam, vulcan_grid_name};
 
 fn env(name: &str) -> Option<String> {
     let value = std::env::var(name).ok();
@@ -88,4 +88,52 @@ fn every_seam_with_roof_and_floor_reads() {
         start.elapsed().as_secs_f64()
     );
     assert!(!seams.is_empty());
+}
+
+/// Every grid file in the folder reads, compressed or plain. Where a seam's roof, floor and structural
+/// thickness (`st`) include a compressed grid, prints how far roof minus floor is from the thickness:
+/// grids written from one model run agree exactly, which a wrong decoder could not manage.
+#[test]
+#[ignore]
+fn every_grid_reads_including_compressed() {
+    let Some(dir) = env("ZD_VULCAN_GRIDS") else { return };
+    // Grids are a few MB each and a folder can hold thousands, so the first pass keeps only file names.
+    let mut by_stem: BTreeMap<String, BTreeMap<String, (PathBuf, bool)>> = BTreeMap::new();
+    let (mut plain, mut compressed, mut compressed_ms, mut failed) = (0, 0, 0.0, Vec::new());
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        let Some((stem, variable)) = path.file_name().and_then(|n| vulcan_grid_name(&n.to_string_lossy())) else { continue };
+        let start = Instant::now();
+        match read_vulcan_grid(&path) {
+            Ok(grid) => {
+                let is_compressed = grid.log.compressed_blocks > 0;
+                if is_compressed {
+                    compressed += 1;
+                    compressed_ms += start.elapsed().as_secs_f64() * 1e3;
+                } else {
+                    plain += 1;
+                }
+                by_stem.entry(stem).or_default().insert(variable, (path, is_compressed));
+            }
+            Err(e) => failed.push(e.to_string()),
+        }
+    }
+    println!("{plain} plain and {compressed} compressed grids read; compressed ones took {:.1} ms each", compressed_ms / f64::from(compressed.max(1)));
+    for (stem, files) in &by_stem {
+        let (Some(roof), Some(floor), Some(st)) = (files.get("sr"), files.get("sf"), files.get("st")) else { continue };
+        if ![roof, floor, st].iter().any(|(_, c)| *c) {
+            continue;
+        }
+        let read = |(path, _): &(PathBuf, bool)| -> VulcanGrid { read_vulcan_grid(path).unwrap() };
+        let (roof, floor, st) = (read(roof), read(floor), read(st));
+        let gaps: Vec<f64> = (0..roof.grid.z.len())
+            .map(|i| (roof.grid.z[i] - floor.grid.z[i] - st.grid.z[i]).abs())
+            .filter(|gap| !gap.is_nan())
+            .collect();
+        let exact = gaps.iter().filter(|&&gap| gap == 0.0).count();
+        let worst = gaps.iter().copied().fold(0.0, f64::max);
+        let which: Vec<&str> = ["sr", "sf", "st"].into_iter().filter(|v| files[*v].1).collect();
+        println!("{stem}: sr - sf = st exactly at {exact} of {} live nodes, worst {worst:.3} m (compressed: {})", gaps.len(), which.join(" "));
+    }
+    assert!(failed.is_empty(), "{} grids failed to read: {failed:#?}", failed.len());
 }
