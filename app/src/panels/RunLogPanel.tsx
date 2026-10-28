@@ -83,6 +83,7 @@ function RunDetails({ record }: { record: RunRecord }) {
         Run {record.run} · {record.command} · {fmt(record.duration_ms, 1)} ms
         {record.layers_created.length > 0 && ` · new layers: ${record.layers_created.join(', ')}`}
       </div>
+      {record.status !== 'ok' && <p className="break-words whitespace-pre-wrap text-destructive">{record.status.failed}</p>}
       {record.outputs.length > 0 && (
         <div className="flex flex-wrap gap-x-3">
           {record.outputs.map((o) =>
