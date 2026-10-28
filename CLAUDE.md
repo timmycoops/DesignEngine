@@ -26,7 +26,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 | Viewport | three.js with `WebGPURenderer` (auto WebGL2 fallback) |
 | Interface | React + TypeScript, shadcn/ui, Tailwind, dockview, TanStack Table |
 | Data at rest | Parquet/Arrow using the OMF2 mesh layout (vertices `x, y, z` f64; triangles `a, b, c` u32, counter-clockwise about an outward normal); DXF/CSV/OMF only for exchange. Evaluate the `omf` Rust crate before writing our own |
-| Python | PyO3 bindings in `crates/zd-py` from Phase 1 (reconciliation and test scripts run from Python) |
+| Python | PyO3 bindings in `crates/zd-py` from Phase 1, built with maturin (reconciliation and test scripts run from Python) |
 | Package manager (JS) | pnpm |
 
 ## Engine rules (non-negotiable)
@@ -70,7 +70,9 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 - `Ramp`: centreline or start point, direction, start and end bench, width, grade (%, ratio or degrees,
   measured on the inside edge by default), inside and outside taper, entry type, flat or graded switchbacks
   with radius. It reports the bench where the grade can't be met instead of drifting.
-- Every object has a stable id, a name, a layer, and provenance (the command run that made it).
+- Every object has a stable id (128-bit, generated in-house), a name, a layer, and provenance (the command
+  run that made it). Edits write a new revision of the same object; earlier revisions stay for undo
+  (see `docs/decisions/0004-phase1-foundations.md`). A project is a `<name>.zdproj/` folder of Parquet files.
 
 ## Scope limits for v1
 
