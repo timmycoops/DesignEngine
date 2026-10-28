@@ -29,38 +29,50 @@ pub const GRID_NULL: u16 = u16::MAX;
 
 pub fn encode_triangulation(mesh: &TriMesh, origin: [f64; 3], header: Value) -> Vec<u8> {
     let start = Instant::now();
-    let chunks = chunk_triangles(mesh, MAX_CHUNK_VERTICES, TARGET_CHUNK_TRIANGLES);
-    let local = |v: [f64; 3]| [v[0] - origin[0], v[1] - origin[1], v[2] - origin[2]];
+    let threads = worker_threads();
+    let chunks = chunk_triangles_on(mesh, MAX_CHUNK_VERTICES, TARGET_CHUNK_TRIANGLES, threads);
 
     let vertex_total: usize = chunks.iter().map(|c| c.vertices.len()).sum();
     let index_total: usize = chunks.iter().map(|c| c.indices.len()).sum();
-    let mut out = Vec::with_capacity(vertex_total * 12 + index_total * 2 + 4 + 160 * chunks.len());
-    let mut meta = Vec::with_capacity(chunks.len());
-    let (mut vertex_start, mut index_start) = (0, 0);
+    // One zeroed allocation with room for the header, so appending it never reallocates.
+    let data_len = vertex_total * 12 + index_total * 2;
+    let mut out = vec![0u8; data_len + 4096 + 320 * chunks.len()];
+    out.truncate(data_len);
+
+    // Each chunk owns a disjoint slice of the position bytes and of the index bytes, so threads
+    // can fill them without coordination.
+    let (mut positions, mut indices) = out.split_at_mut(vertex_total * 12);
+    let mut jobs = Vec::with_capacity(chunks.len());
     for chunk in &chunks {
-        let points: Vec<[f64; 3]> = chunk.vertices.iter().map(|&v| local(mesh.vertices[v as usize])).collect();
-        for p in &points {
-            for c in p {
-                out.extend_from_slice(&(*c as f32).to_le_bytes());
-            }
+        let (p, rest) = positions.split_at_mut(chunk.vertices.len() * 12);
+        let (i, rest_i) = indices.split_at_mut(chunk.indices.len() * 2);
+        positions = rest;
+        indices = rest_i;
+        jobs.push(WriteJob { chunk, positions: p, indices: i, bounds: None });
+    }
+    let per_thread = jobs.len().div_ceil(threads).max(1);
+    std::thread::scope(|scope| {
+        for group in jobs.chunks_mut(per_thread) {
+            scope.spawn(move || group.iter_mut().for_each(|job| job.write(mesh, origin)));
         }
-        let bounds = Aabb::from_points(&points).expect("chunks are never empty");
+    });
+
+    let mut meta = Vec::with_capacity(jobs.len());
+    let (mut vertex_start, mut index_start) = (0, 0);
+    for job in &jobs {
+        let bounds = job.bounds.expect("chunks are never empty");
         meta.push(json!({
             "vertex_start": vertex_start,
-            "vertex_count": chunk.vertices.len(),
+            "vertex_count": job.chunk.vertices.len(),
             "index_start": index_start,
-            "index_count": chunk.indices.len(),
+            "index_count": job.chunk.indices.len(),
             "min": bounds.min,
             "max": bounds.max,
         }));
-        vertex_start += chunk.vertices.len();
-        index_start += chunk.indices.len();
+        vertex_start += job.chunk.vertices.len();
+        index_start += job.chunk.indices.len();
     }
-    for chunk in &chunks {
-        for i in &chunk.indices {
-            out.extend_from_slice(&i.to_le_bytes());
-        }
-    }
+    drop(jobs);
     pad_to_4(&mut out);
 
     let mut header = header;
@@ -144,38 +156,80 @@ pub fn encode_grid(grid: &Grid, origin: [f64; 3], header: Value) -> Vec<u8> {
 }
 
 /// A chunk of a triangulation: global vertex ids and `u16` indices into them.
+#[derive(Debug, Default, PartialEq)]
 pub struct Chunk {
     pub vertices: Vec<u32>,
     pub indices: Vec<u16>,
 }
 
+/// One chunk's share of the output buffer, filled on a worker thread.
+struct WriteJob<'a> {
+    chunk: &'a Chunk,
+    positions: &'a mut [u8],
+    indices: &'a mut [u8],
+    bounds: Option<Aabb>,
+}
+
+impl WriteJob<'_> {
+    fn write(&mut self, mesh: &TriMesh, origin: [f64; 3]) {
+        let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        let (positions, _) = self.positions.as_chunks_mut::<12>();
+        for (&v, out) in self.chunk.vertices.iter().zip(positions) {
+            let p = mesh.vertices[v as usize];
+            for (axis, bytes) in out.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                let c = p[axis] - origin[axis];
+                lo[axis] = lo[axis].min(c);
+                hi[axis] = hi[axis].max(c);
+                *bytes = (c as f32).to_le_bytes();
+            }
+        }
+        let (indices, _) = self.indices.as_chunks_mut::<2>();
+        for (&i, out) in self.chunk.indices.iter().zip(indices) {
+            *out = i.to_le_bytes();
+        }
+        self.bounds = (!self.chunk.vertices.is_empty()).then_some(Aabb { min: lo, max: hi });
+    }
+}
+
+/// Threads for encoding: all available cores.
+fn worker_threads() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
 /// Splits a triangulation into chunks of at most `max_vertices` vertices. Triangles are binned in
 /// plan by centroid (about `target_triangles` per bin) so each chunk covers a compact area; a bin
 /// that needs more vertices than allowed is split into several chunks. Every triangle lands in
-/// exactly one chunk; vertices on chunk seams are repeated.
+/// exactly one chunk; vertices on chunk seams are repeated. Uses every core; the result does not
+/// depend on the thread count.
+#[cfg(test)]
 pub fn chunk_triangles(mesh: &TriMesh, max_vertices: usize, target_triangles: usize) -> Vec<Chunk> {
-    let Some(bounds) = mesh.bounds() else { return Vec::new() };
-    let [w, h, _] = bounds.size();
-    let bins_wanted = mesh.triangles.len().div_ceil(target_triangles).max(1) as f64;
-    let aspect = if h > 0.0 { (w / h).max(1e-6) } else { 1.0 };
-    let nx = (bins_wanted * aspect).sqrt().ceil().max(1.0) as usize;
-    let ny = (bins_wanted / nx as f64).ceil().max(1.0) as usize;
-    let bin_of = |&[a, b, c]: &[u32; 3]| {
-        let centroid = |axis: usize| {
-            (mesh.vertices[a as usize][axis] + mesh.vertices[b as usize][axis] + mesh.vertices[c as usize][axis]) / 3.0
-        };
-        let fx = if w > 0.0 { (centroid(0) - bounds.min[0]) / w } else { 0.0 };
-        let fy = if h > 0.0 { (centroid(1) - bounds.min[1]) / h } else { 0.0 };
-        let ix = ((fx * nx as f64) as usize).min(nx - 1);
-        let iy = ((fy * ny as f64) as usize).min(ny - 1);
-        iy * nx + ix
-    };
+    chunk_triangles_on(mesh, max_vertices, target_triangles, worker_threads())
+}
 
-    // Counting sort of triangle ids by bin.
-    let bins: Vec<usize> = mesh.triangles.iter().map(bin_of).collect();
-    let mut starts = vec![0usize; nx * ny + 1];
+fn chunk_triangles_on(mesh: &TriMesh, max_vertices: usize, target_triangles: usize, threads: usize) -> Vec<Chunk> {
+    assert!(max_vertices <= MAX_CHUNK_VERTICES, "chunk indices are u16");
+    let Some(layout) = BinLayout::new(mesh, target_triangles) else { return Vec::new() };
+    let threads = threads.max(1);
+
+    // Bin of every triangle, in parallel over contiguous ranges.
+    let mut bins = vec![0u32; mesh.triangles.len()];
+    let per_thread = mesh.triangles.len().div_ceil(threads).max(1);
+    std::thread::scope(|scope| {
+        for (tris, out) in mesh.triangles.chunks(per_thread).zip(bins.chunks_mut(per_thread)) {
+            let layout = &layout;
+            scope.spawn(move || {
+                for (tri, bin) in tris.iter().zip(out) {
+                    *bin = layout.bin_of(mesh, tri);
+                }
+            });
+        }
+    });
+
+    // Counting sort of triangle ids by bin (one linear pass; cheap next to the chunking).
+    let bin_count = layout.count();
+    let mut starts = vec![0usize; bin_count + 1];
     for &b in &bins {
-        starts[b + 1] += 1;
+        starts[b as usize + 1] += 1;
     }
     for i in 1..starts.len() {
         starts[i] += starts[i - 1];
@@ -183,39 +237,154 @@ pub fn chunk_triangles(mesh: &TriMesh, max_vertices: usize, target_triangles: us
     let mut cursor = starts.clone();
     let mut order = vec![0u32; mesh.triangles.len()];
     for (t, &b) in bins.iter().enumerate() {
-        order[cursor[b]] = t as u32;
-        cursor[b] += 1;
+        order[cursor[b as usize]] = t as u32;
+        cursor[b as usize] += 1;
     }
 
-    // `stamp[v]` is the chunk that last took vertex v, `local[v]` its index there.
-    let mut stamp = vec![usize::MAX; mesh.vertices.len()];
-    let mut local = vec![0u16; mesh.vertices.len()];
-    let mut chunks = Vec::new();
-    let mut current = Chunk { vertices: Vec::new(), indices: Vec::new() };
-    for bin in 0..nx * ny {
-        for &t in &order[starts[bin]..starts[bin + 1]] {
-            let tri = mesh.triangles[t as usize];
-            let id = chunks.len();
-            let new_vertices = tri.iter().filter(|&&v| stamp[v as usize] != id).count();
-            if current.vertices.len() + new_vertices > max_vertices {
-                chunks.push(std::mem::replace(&mut current, Chunk { vertices: Vec::new(), indices: Vec::new() }));
-            }
-            let id = chunks.len();
-            for v in tri {
-                let v = v as usize;
-                if stamp[v] != id {
-                    stamp[v] = id;
-                    local[v] = current.vertices.len() as u16;
-                    current.vertices.push(v as u32);
-                }
-                current.indices.push(local[v]);
+    // Workers take bins from a shared counter; results go back in bin order, so the output is the
+    // same whatever the thread count.
+    let next_bin = std::sync::atomic::AtomicUsize::new(0);
+    let mut per_bin: Vec<Vec<Chunk>> = (0..bin_count).map(|_| Vec::new()).collect();
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads.min(bin_count))
+            .map(|_| {
+                let (order, starts, next_bin) = (&order, &starts, &next_bin);
+                scope.spawn(move || {
+                    let mut local = LocalIndex::new();
+                    let mut done = Vec::new();
+                    loop {
+                        let bin = next_bin.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if bin >= bin_count {
+                            return done;
+                        }
+                        let tris = &order[starts[bin]..starts[bin + 1]];
+                        done.push((bin, chunk_bin(mesh, tris, max_vertices, &mut local)));
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            for (bin, chunks) in worker.join().expect("chunking thread") {
+                per_bin[bin] = chunks;
             }
         }
-        if !current.vertices.is_empty() {
-            chunks.push(std::mem::replace(&mut current, Chunk { vertices: Vec::new(), indices: Vec::new() }));
+    });
+    per_bin.into_iter().flatten().collect()
+}
+
+/// Plan bins over a mesh's bounding box, about `target_triangles` per bin, shaped to its aspect.
+struct BinLayout {
+    min: [f64; 2],
+    size: [f64; 2],
+    nx: usize,
+    ny: usize,
+}
+
+impl BinLayout {
+    fn new(mesh: &TriMesh, target_triangles: usize) -> Option<Self> {
+        let bounds = mesh.bounds()?;
+        let [w, h, _] = bounds.size();
+        let bins_wanted = mesh.triangles.len().div_ceil(target_triangles).max(1) as f64;
+        let aspect = if h > 0.0 { (w / h).max(1e-6) } else { 1.0 };
+        let nx = (bins_wanted * aspect).sqrt().ceil().max(1.0) as usize;
+        let ny = (bins_wanted / nx as f64).ceil().max(1.0) as usize;
+        Some(BinLayout { min: [bounds.min[0], bounds.min[1]], size: [w, h], nx, ny })
+    }
+
+    fn count(&self) -> usize {
+        self.nx * self.ny
+    }
+
+    fn bin_of(&self, mesh: &TriMesh, &[a, b, c]: &[u32; 3]) -> u32 {
+        let centroid = |axis: usize| {
+            (mesh.vertices[a as usize][axis] + mesh.vertices[b as usize][axis] + mesh.vertices[c as usize][axis]) / 3.0
+        };
+        let cell = |axis: usize, n: usize| {
+            let f = if self.size[axis] > 0.0 { (centroid(axis) - self.min[axis]) / self.size[axis] } else { 0.0 };
+            ((f * n as f64) as usize).min(n - 1)
+        };
+        (cell(1, self.ny) * self.nx + cell(0, self.nx)) as u32
+    }
+}
+
+/// Chunks for one bin's triangles, in order, starting a new chunk whenever the next triangle would
+/// take the current one past `max_vertices`.
+fn chunk_bin(mesh: &TriMesh, tris: &[u32], max_vertices: usize, local: &mut LocalIndex) -> Vec<Chunk> {
+    let mut chunks = Vec::new();
+    let mut current = Chunk::default();
+    local.clear();
+    for &t in tris {
+        let tri = mesh.triangles[t as usize];
+        let new_vertices = tri.iter().filter(|&&v| local.get(v).is_none()).count();
+        if current.vertices.len() + new_vertices > max_vertices {
+            chunks.push(std::mem::take(&mut current));
+            local.clear();
+        }
+        for v in tri {
+            let i = match local.get(v) {
+                Some(i) => i,
+                None => {
+                    let i = current.vertices.len() as u16;
+                    local.insert(v, i);
+                    current.vertices.push(v);
+                    i
+                }
+            };
+            current.indices.push(i);
         }
     }
+    if !current.vertices.is_empty() {
+        chunks.push(current);
+    }
     chunks
+}
+
+/// Global vertex id → index in the chunk being built: open addressing over 2^17 slots, never more
+/// than half full because a chunk holds at most 65,535 vertices. Clearing touches only used slots.
+struct LocalIndex {
+    keys: Vec<u32>,
+    values: Vec<u16>,
+    used: Vec<usize>,
+}
+
+impl LocalIndex {
+    const BITS: u32 = 17;
+    const EMPTY: u32 = u32::MAX;
+
+    fn new() -> Self {
+        let slots = 1 << Self::BITS;
+        LocalIndex { keys: vec![Self::EMPTY; slots], values: vec![0; slots], used: Vec::with_capacity(MAX_CHUNK_VERTICES) }
+    }
+
+    fn slot(&self, key: u32) -> usize {
+        let mask = (1 << Self::BITS) - 1;
+        let mut s = (key.wrapping_mul(0x9E37_79B1) >> (32 - Self::BITS)) as usize;
+        while self.keys[s] != Self::EMPTY && self.keys[s] != key {
+            s = (s + 1) & mask;
+        }
+        s
+    }
+
+    fn get(&self, key: u32) -> Option<u16> {
+        let s = self.slot(key);
+        (self.keys[s] == key).then(|| self.values[s])
+    }
+
+    fn insert(&mut self, key: u32, value: u16) {
+        let s = self.slot(key);
+        if self.keys[s] == Self::EMPTY {
+            self.used.push(s);
+        }
+        self.keys[s] = key;
+        self.values[s] = value;
+    }
+
+    fn clear(&mut self) {
+        for &s in &self.used {
+            self.keys[s] = Self::EMPTY;
+        }
+        self.used.clear();
+    }
 }
 
 /// Triangles `triangulate_grid` makes in the cells of one tile: two per cell with four live
@@ -306,6 +475,56 @@ mod tests {
         seen.sort();
         expected.sort();
         assert_eq!(seen, expected, "same triangles, same winding, each exactly once");
+    }
+
+    #[test]
+    fn chunking_is_the_same_on_one_thread_and_many() {
+        let mesh = triangulate_grid(&sample_grid(300, 260));
+        // Small limits: many bins, some split, so thread scheduling has room to differ.
+        let one = chunk_triangles_on(&mesh, 2000, 5000, 1);
+        let many = chunk_triangles_on(&mesh, 2000, 5000, 16);
+        assert!(one.len() > 20);
+        assert_eq!(one, many);
+    }
+
+    #[test]
+    fn encoded_buffer_is_the_same_on_one_thread_and_many() {
+        // The write phase splits the output by chunk; check it against a serial reference.
+        let mesh = triangulate_grid(&sample_grid(400, 300));
+        let parallel = encode_triangulation(&mesh, ORIGIN, json!({}));
+        let chunks = chunk_triangles_on(&mesh, MAX_CHUNK_VERTICES, TARGET_CHUNK_TRIANGLES, 1);
+        let mut serial = Vec::new();
+        for c in &chunks {
+            for &v in &c.vertices {
+                for (c, o) in mesh.vertices[v as usize].iter().zip(ORIGIN) {
+                    serial.extend_from_slice(&((c - o) as f32).to_le_bytes());
+                }
+            }
+        }
+        for c in &chunks {
+            for i in &c.indices {
+                serial.extend_from_slice(&i.to_le_bytes());
+            }
+        }
+        assert_eq!(&parallel[..serial.len()], &serial[..]);
+    }
+
+    /// Encode timings for the synthetic topography as a triangulation. Opt-in:
+    /// `cargo test --release -p zd-app -- --ignored --nocapture encode_timing`
+    #[test]
+    #[ignore]
+    fn encode_timing() {
+        for cells in [1000, 2000, 3000] {
+            let mesh = triangulate_grid(&crate::synthetic::synthetic_topography(cells));
+            let mut best = f64::INFINITY;
+            for _ in 0..3 {
+                let start = Instant::now();
+                let buf = encode_triangulation(&mesh, ORIGIN, json!({ "timings": {} }));
+                best = best.min(start.elapsed().as_secs_f64() * 1e3);
+                std::hint::black_box(buf);
+            }
+            println!("encode_triangulation {:>10} triangles: best of 3 {best:.0} ms", mesh.triangle_count());
+        }
     }
 
     #[test]

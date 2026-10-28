@@ -12,7 +12,7 @@ Branch `phase0/stress-test`, run 2026-10-28. Targets are from
 
 | Check | Target (0001-stack) | Result | Verdict |
 |---|---|---|---|
-| 1 · Viewport | Smooth orbit and zoom, ~60 fps, at tens of millions of triangles | **60 fps at 24.3 M unique triangles** (p99 frame 17.3 ms, no frame over 33 ms). Tiled copies: 50 fps at 48.5 M, 36 fps at 72.8 M, 23 fps at 121 M | **PASS** up to ~25 M on this entry-level GPU; ≥ 50 fps to ~50 M |
+| 1 · Viewport | Smooth orbit and zoom, ~60 fps, at tens of millions of triangles | **60 fps at 24.3 M unique triangles** (p99 frame 17.3 ms; no frame over 33 ms in one run, two up to 50 ms in a repeat). Tiled copies: 50 fps at 48.5 M, 36 fps at 72.8 M, 23 fps at 121 M | **PASS** up to ~25 M on this entry-level GPU; ≥ 50 fps to ~50 M |
 | 2 · Booleans | Watertight output; seconds, not minutes, per cut | Every part watertight; below + above = input to ≤ 1e-12. 0.24 s (0.2 M tris), 0.74 s (0.9 M), 2.4 s (3.5 M), 9.4 s (14 M) | **PASS** |
 | 3 · Transfer | Multi-million-triangle mesh Rust → viewport well under 1 s, binary | Request → frame submitted over a WebView2 shared buffer: **0.06 s at 2 M, 0.09 s at 8 M, 0.20 s at 18 M** for a general triangulation; 0.015, 0.035 and 0.065 s for grid surfaces | **PASS** (first run: 0.23, 0.88 and 2.2 s over IPC) |
 | 4 · Editing | Vertex drag with surface snapping feels instant | Snap round trip **1.2 ms** p50 (8.2 ms worst) against 24.3 M triangles; every update is in the next frame submitted (worst 21.5 ms) | **PASS** as measured; the feel still needs a hands-on check |
@@ -122,7 +122,9 @@ test vertex and raster throughput, not GPU memory.
 | 5 x tiled | 121,361,610 | 184 | 23.1 | 42.2 ms | 50.0 ms | 50.9 ms | 51.0 ms | 184 | 20.6 |
 
 Frame pacing stays even at every size (p99 within 21 % of p50), so the scene degrades smoothly
-rather than stuttering. The v2 buffers sped up the larger scenes by 10 to 12 %: half the vertex
+rather than stuttering. A repeat run (after the encode change, with no rendering change) gave 59.6,
+51.2, 36.5 and 23.6 fps. Its real-size orbit had two frames over 33 ms (worst 50 ms) in 476, with
+p99 still 17.4 ms, so occasional hitches do happen at real size. The v2 buffers sped up the larger scenes by 10 to 12 %: half the vertex
 data, u16 indices, and per-chunk frustum culling. The trade is flat shading, which shows each
 triangle's facet. That's honest for a TIN, but smooth shading for grids can come back later
 (normals from the lattice, computed in the vertex shader). More headroom if needed: drop MSAA, or
@@ -154,10 +156,20 @@ The first run (f32 positions + f32 normals + u32 indices over IPC) took 0.23 s, 
 - The shared buffer moves 2.5 GB/s, including the copy into shared memory, against IPC's flat
   ~210 MB/s. The 18 M-triangle triangulation still lands in 0.2 s, so even the worst case is
   well under 1 s.
-- Not in these times: encoding in Rust, which happens before the request (in the real app,
-  at load). It takes 6, 26 and 57 ms for grids, but 63, 248 and 558 ms for triangulations, where chunking
-  is single-threaded. Spreading the chunks across threads is the obvious next step if real TIN loads
-  feel slow.
+- Not in these times: encoding in Rust, which happens before the request (in the real app, at
+  load). Grids take 6, 26 and 57 ms. Triangulation encoding now runs on every core: binning,
+  chunking (workers take plan bins from a shared counter) and byte writing. A test proves the
+  output is identical on 1 thread and on 16.
+
+  | Triangulation encode | 2 M | 8 M | 18 M |
+  |---|---:|---:|---:|
+  | Serial, best of 3 (`encode_timing` test) | 53 ms | 208 ms | 464 ms |
+  | Parallel, best of 3 (`encode_timing` test) | 21 ms | 63 ms | 115 ms |
+  | In the app, single cold run: serial → parallel | 63 → 41 ms | 248 → 120 ms | 558 → 227 ms |
+
+  At 18 M the rest is the serial counting sort (34 ms) and memory-bound chunking (42 ms over about
+  180 bins). Run the timing test with
+  `cargo test --release -p zd-app -- --ignored --nocapture encode_timing`.
 
 ## Check 4: editing (polyline drag with snapping)
 
@@ -187,8 +199,8 @@ with only the 272 k-triangle design surface drawn, to separate render cost from 
 1. **Re-run on real data.** Put a pit in `testdata/golden/<pit>/` (topo, `<seam>_roof`,
    `<seam>_floor`, optional `design`). Check 2 picks it up automatically. For the app, run
    `zd-app.exe --bench --surfaces <topo>,<roof>,<floor>,<design>`.
-2. **Triangulation encode time.** Chunking a TIN for the viewport is single-threaded: 0.25 s at 8 M
-   and 0.56 s at 18 M triangles. Splitting the plan bins across threads would cut it several times.
+2. ~~Triangulation encode time~~: done, now multithreaded (115 ms at 18 M, best of 3; was 464 ms).
+   A parallel counting sort would save about 25 ms more, if it ever matters.
 3. **Smooth shading for grids**, if flat shading looks too faceted in use: rebuild normals from the
    lattice in the vertex shader. That costs no transfer bytes.
 4. **Check 2 at the top size.** Manifold's mesh intake (4.5 s of 9.4 s at 14 M triangles) dominates.
