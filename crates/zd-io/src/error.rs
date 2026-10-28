@@ -5,6 +5,8 @@ pub enum IoError {
     Io(std::io::Error),
     /// The file is readable but its content is wrong; `line` is 1-based.
     Format { line: usize, message: String },
+    /// A binary file whose layout does not check out.
+    Binary(String),
     Unsupported(String),
 }
 
@@ -13,6 +15,7 @@ impl fmt::Display for IoError {
         match self {
             IoError::Io(e) => write!(f, "{e}"),
             IoError::Format { line, message } => write!(f, "line {line}: {message}"),
+            IoError::Binary(message) => write!(f, "{message}"),
             IoError::Unsupported(message) => write!(f, "unsupported: {message}"),
         }
     }

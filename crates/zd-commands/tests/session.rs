@@ -50,6 +50,7 @@ fn registry_lists_every_builtin_with_a_spec() {
     assert_eq!(
         names,
         [
+            "grid.import_vulcan_seam",
             "layer.create",
             "object.delete",
             "object.rename",
@@ -64,7 +65,7 @@ fn registry_lists_every_builtin_with_a_spec() {
         ]
     );
     let specs = serde_json::to_value(session.registry().specs()).unwrap();
-    assert_eq!(specs[3]["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
+    assert_eq!(specs[4]["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
 }
 
 #[test]
@@ -239,6 +240,65 @@ fn save_and_open_carry_the_project_and_its_run_log() {
     let second = t.save(&path).unwrap();
     assert_eq!((second.object_files_written, second.object_files_reused), (0, 8), "only the string changed");
     assert_eq!(vertices(&Session::open(&path).unwrap(), toe)[1], [E + 10.0, N + 1.0, 2.75]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A small grid in Vulcan's plain layout (big-endian; nodes from the south-west, x fastest).
+fn vulcan_grid(values: &[Option<f32>], cols: usize, rows: usize) -> Vec<u8> {
+    let mut out = b"SYNTHETIC TEST GRID             ".to_vec();
+    let x1 = 500_025.0 + (cols - 1) as f64 * 25.0;
+    let y1 = 7_000_625.0 + (rows - 1) as f64 * 25.0;
+    for v in [500_025.0f64, x1, 7_000_625.0, y1] {
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    for v in [(cols * rows) as i32, 0] {
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    out.extend_from_slice(&25.0f32.to_be_bytes());
+    out.extend_from_slice(&25.0f32.to_be_bytes());
+    out.extend_from_slice(&(cols as i32).to_be_bytes());
+    out.extend_from_slice(&(rows as i32).to_be_bytes());
+    for v in values {
+        out.extend_from_slice(&v.unwrap_or(0.0).to_be_bytes());
+        out.extend_from_slice(&i32::from(v.is_some()).to_be_bytes());
+    }
+    out
+}
+
+#[test]
+fn a_vulcan_seam_imports_as_grids_and_survives_a_save() {
+    let dir = std::env::temp_dir().join(format!("zd-commands-vulcan-{}-{}", std::process::id(), zd_core::RunId::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let roof: Vec<Option<f32>> = (0..12).map(|i| Some(-120.0 + i as f32)).collect();
+    let floor: Vec<Option<f32>> = roof.iter().map(|v| v.map(|z| z - 1.5)).collect();
+    let mut ash: Vec<Option<f32>> = vec![Some(30.5); 12];
+    ash[7] = None;
+    std::fs::write(dir.join("pitupper.srg"), vulcan_grid(&roof, 4, 3)).unwrap();
+    std::fs::write(dir.join("pitupper.sfg"), vulcan_grid(&floor, 4, 3)).unwrap();
+    std::fs::write(dir.join("pitupper.rag"), vulcan_grid(&ash, 4, 3)).unwrap();
+
+    let mut s = Session::with_builtins();
+    let record = s
+        .run("grid.import_vulcan_seam", json!({ "dir": dir.to_string_lossy(), "prefix": "pit", "seam": "upper", "layer": "geology" }))
+        .unwrap();
+    let names: Vec<String> = created(&record).iter().map(|&id| s.project().object(id).unwrap().name.clone()).collect();
+    assert_eq!(names, ["UPPER ra", "UPPER sf", "UPPER sr"]);
+    assert!(record.messages.iter().any(|m| m == "ra: 11 of 12 nodes live"), "{:?}", record.messages);
+
+    let roof_object = s.project().objects().find(|o| o.name == "UPPER sr").unwrap().clone();
+    assert_eq!(roof_object.attributes["variable"], zd_core::AttrValue::Text("sr".into()));
+    match &roof_object.body {
+        Body::Grid(g) => assert_eq!((g.z_at(0, 0), g.z_at(3, 2), g.origin), (-120.0, -109.0, [500_025.0, 7_000_625.0])),
+        other => panic!("expected a grid, found {:?}", other.kind()),
+    }
+
+    let path = dir.join("pit.zdproj");
+    s.save(&path).unwrap();
+    let reopened = Session::open(&path).unwrap();
+    match &reopened.project().objects().find(|o| o.name == "UPPER ra").unwrap().body {
+        Body::Grid(g) => assert!(g.z[7].is_nan() && g.z[0] == 30.5, "null and value survive the store"),
+        _ => unreachable!(),
+    }
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

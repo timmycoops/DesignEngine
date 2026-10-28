@@ -1,12 +1,14 @@
 //! The engine's own commands. Phase 1 starts with enough to prove the command layer end to end;
 //! the full string set lands with workstream 6.
 
+mod grid;
 mod layer;
 mod object;
 mod solid;
 mod string;
 mod surface;
 
+pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
 pub use layer::{CreateLayer, CreateLayerParams};
 pub use object::{DeleteObject, ObjectParams, RenameObject, RenameParams};
 pub use solid::{CutBySurface, CutBySurfaceParams, SolidFromMesh};
@@ -30,6 +32,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(SurfaceFromMesh);
     registry.register(SolidFromMesh);
     registry.register(CutBySurface);
+    registry.register(ImportVulcanSeam);
 }
 
 fn finite(point: &[f64; 3]) -> Result<(), CommandError> {
