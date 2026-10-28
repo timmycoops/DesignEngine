@@ -6,9 +6,23 @@ on:
   pull_request:
 
 jobs:
+  # Decides which jobs have anything to build yet. The Rust workspace and the app
+  # are created in Phase 0, so until then those jobs are skipped instead of failing.
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.files.outputs.rust }}
+      app: ${{ steps.files.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: files
+        run: |
+          if [ -f Cargo.toml ]; then echo "rust=true" >> "$GITHUB_OUTPUT"; else echo "rust=false" >> "$GITHUB_OUTPUT"; fi
+          if [ -f app/package.json ]; then echo "app=true" >> "$GITHUB_OUTPUT"; else echo "app=false" >> "$GITHUB_OUTPUT"; fi
+
   engine:
-    # Runs once the Rust workspace exists (Phase 0 creates it).
-    if: ${{ hashFiles('Cargo.toml') != '' }}
+    needs: detect
+    if: needs.detect.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -17,6 +31,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Install CMake (Linux)
         if: runner.os == 'Linux'
@@ -27,8 +43,8 @@ jobs:
         run: cargo clippy --workspace --exclude zd-app --exclude bench -- -D warnings
 
   app:
-    # Runs once the Tauri app exists.
-    if: ${{ hashFiles('app/package.json') != '' }}
+    needs: detect
+    if: needs.detect.outputs.app == 'true'
     runs-on: windows-latest
     defaults:
       run:
@@ -36,6 +52,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
