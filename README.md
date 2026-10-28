@@ -5,7 +5,13 @@ and reserves — built with a Rust engine and a Tauri + React + three.js interfa
 
 ## Getting started (Windows)
 
-1. Run the prerequisite check from PowerShell in the repo root:
+1. Install the toolchain from an **Administrator** PowerShell in the repo root (skips anything already installed):
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\install-prereqs.ps1
+   ```
+
+   Then open a new PowerShell, run `gh auth login` once, and run the prerequisite check:
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File scripts\check-prereqs.ps1
