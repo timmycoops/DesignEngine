@@ -1,0 +1,468 @@
+//! The project: every revision of every object, the layers, and the history of applied runs.
+//!
+//! Revisions are shared and never change. An edit adds the next revision of the same object and a
+//! delete adds a tombstone, so undo steps back exactly and redo steps forward again without
+//! re-running any command (decision 0004).
+
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
+use crate::{Attributes, Body, Layer, LayerId, Object, ObjectId, RunId};
+
+/// One change a command asks for. A run's changes apply together or not at all.
+#[derive(Debug, Clone)]
+pub enum Change {
+    /// A new object on the named layer; the layer is created if it does not exist.
+    Create { name: String, layer: String, attributes: Attributes, body: Body },
+    /// The next revision of an object. Fields left `None` carry over. `base` is the revision the
+    /// command read, so a change worked out from a stale revision is refused.
+    Revise {
+        id: ObjectId,
+        base: u32,
+        name: Option<String>,
+        layer: Option<String>,
+        attributes: Option<Attributes>,
+        body: Option<Body>,
+    },
+    /// Deletes an object by adding a tombstone revision; undo brings it back.
+    Delete { id: ObjectId, base: u32 },
+    /// A new layer. Creating a layer that already exists is an error.
+    CreateLayer { name: String, colour: Option<[u8; 3]> },
+}
+
+impl Change {
+    /// The next revision of `object` with a new body.
+    pub fn revise_body(object: &Object, body: Body) -> Change {
+        Change::Revise { id: object.id, base: object.revision, name: None, layer: None, attributes: None, body: Some(body) }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeKind {
+    Created,
+    Revised,
+    Deleted,
+}
+
+/// One revision a run added.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppliedChange {
+    pub id: ObjectId,
+    pub revision: u32,
+    pub change: ChangeKind,
+    pub name: String,
+}
+
+/// What applying a run's changes did.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Applied {
+    pub changes: Vec<AppliedChange>,
+    pub layers_created: Vec<Layer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectError {
+    MissingObject(ObjectId),
+    Deleted(ObjectId),
+    /// The command read revision `base`, but the object has moved on to `current`.
+    Stale { id: ObjectId, base: u32, current: u32 },
+    DuplicateLayer(String),
+    EmptyName,
+    /// A revision may not turn a string into a surface, or the like.
+    KindChanged(ObjectId),
+    /// One run may change each object only once.
+    ChangedTwice(ObjectId),
+}
+
+impl fmt::Display for ProjectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProjectError::MissingObject(id) => write!(f, "no object {id}"),
+            ProjectError::Deleted(id) => write!(f, "object {id} has been deleted"),
+            ProjectError::Stale { id, base, current } => {
+                write!(f, "object {id} is at revision {current}, but the command read revision {base}")
+            }
+            ProjectError::DuplicateLayer(name) => write!(f, "layer '{name}' already exists"),
+            ProjectError::EmptyName => write!(f, "names cannot be empty"),
+            ProjectError::KindChanged(id) => write!(f, "a revision cannot change the kind of object {id}"),
+            ProjectError::ChangedTwice(id) => write!(f, "object {id} is changed twice in one run"),
+        }
+    }
+}
+
+impl std::error::Error for ProjectError {}
+
+/// One step of an object's history: a revision, or a tombstone where it was deleted.
+#[derive(Debug, Clone)]
+struct Entry {
+    revision: u32,
+    object: Option<Arc<Object>>,
+}
+
+/// Everything one run added, kept so undo can take it off and redo can put it back.
+#[derive(Debug, Clone)]
+struct Transaction {
+    run: RunId,
+    layers: Vec<Layer>,
+    entries: Vec<(ObjectId, Entry)>,
+}
+
+const LAYER_COLOURS: [[u8; 3]; 6] =
+    [[168, 145, 107], [91, 107, 125], [140, 154, 166], [201, 162, 39], [111, 143, 95], [176, 96, 80]];
+
+#[derive(Debug, Default)]
+pub struct Project {
+    layers: Vec<Layer>,
+    histories: HashMap<ObjectId, Vec<Entry>>,
+    /// Object ids in creation order, for listing.
+    order: Vec<ObjectId>,
+    done: Vec<Transaction>,
+    undone: Vec<Transaction>,
+}
+
+impl Project {
+    pub fn new() -> Self {
+        Project::default()
+    }
+
+    pub fn layers(&self) -> &[Layer] {
+        &self.layers
+    }
+
+    pub fn layer(&self, id: LayerId) -> Option<&Layer> {
+        self.layers.iter().find(|l| l.id == id)
+    }
+
+    pub fn layer_named(&self, name: &str) -> Option<&Layer> {
+        self.layers.iter().find(|l| l.name == name)
+    }
+
+    /// Display state only: not a change, not undone.
+    pub fn set_layer_visible(&mut self, id: LayerId, visible: bool) -> bool {
+        match self.layers.iter_mut().find(|l| l.id == id) {
+            Some(layer) => {
+                layer.visible = visible;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The current revision of a live object.
+    pub fn object(&self, id: ObjectId) -> Option<&Arc<Object>> {
+        self.histories.get(&id)?.last()?.object.as_ref()
+    }
+
+    /// Any revision still in the history.
+    pub fn revision(&self, id: ObjectId, revision: u32) -> Option<&Arc<Object>> {
+        self.histories.get(&id)?.iter().find(|e| e.revision == revision)?.object.as_ref()
+    }
+
+    /// Live objects at their current revision, in creation order.
+    pub fn objects(&self) -> impl Iterator<Item = &Arc<Object>> {
+        self.order.iter().filter_map(|&id| self.object(id))
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.done.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.undone.is_empty()
+    }
+
+    /// Applies one run's changes together, or none of them if any is refused. A new run clears
+    /// the redo stack.
+    pub fn apply(&mut self, run: RunId, changes: Vec<Change>) -> Result<Applied, ProjectError> {
+        let mut staged = Staged { project: self, run, layers: Vec::new(), entries: Vec::new(), touched: HashSet::new(), applied: Applied::default() };
+        for change in changes {
+            staged.stage(change)?;
+        }
+        let Staged { layers, entries, mut applied, .. } = staged;
+        applied.layers_created = layers.clone();
+        let transaction = Transaction { run, layers, entries };
+        self.push(&transaction);
+        self.done.push(transaction);
+        self.undone.clear();
+        Ok(applied)
+    }
+
+    /// Takes the last run off; returns its id.
+    pub fn undo(&mut self) -> Option<RunId> {
+        let transaction = self.done.pop()?;
+        for (id, entry) in transaction.entries.iter().rev() {
+            let history = self.histories.get_mut(id).expect("undone object has a history");
+            let popped = history.pop().expect("undone revision is in the history");
+            debug_assert_eq!(popped.revision, entry.revision);
+            if history.is_empty() {
+                self.histories.remove(id);
+                self.order.retain(|o| o != id);
+            }
+        }
+        let added: HashSet<LayerId> = transaction.layers.iter().map(|l| l.id).collect();
+        self.layers.retain(|l| !added.contains(&l.id));
+        let run = transaction.run;
+        self.undone.push(transaction);
+        Some(run)
+    }
+
+    /// Puts the last undone run back; returns its id.
+    pub fn redo(&mut self) -> Option<RunId> {
+        let transaction = self.undone.pop()?;
+        self.push(&transaction);
+        let run = transaction.run;
+        self.done.push(transaction);
+        Some(run)
+    }
+
+    fn push(&mut self, transaction: &Transaction) {
+        self.layers.extend(transaction.layers.iter().cloned());
+        for (id, entry) in &transaction.entries {
+            let history = self.histories.entry(*id).or_default();
+            if history.is_empty() {
+                self.order.push(*id);
+            }
+            history.push(entry.clone());
+        }
+    }
+
+    fn current(&self, id: ObjectId) -> Result<(u32, &Arc<Object>), ProjectError> {
+        let last = self.histories.get(&id).and_then(|h| h.last()).ok_or(ProjectError::MissingObject(id))?;
+        let object = last.object.as_ref().ok_or(ProjectError::Deleted(id))?;
+        Ok((last.revision, object))
+    }
+}
+
+/// A run's changes checked against the project before anything is applied.
+struct Staged<'a> {
+    project: &'a Project,
+    run: RunId,
+    layers: Vec<Layer>,
+    entries: Vec<(ObjectId, Entry)>,
+    touched: HashSet<ObjectId>,
+    applied: Applied,
+}
+
+impl Staged<'_> {
+    fn stage(&mut self, change: Change) -> Result<(), ProjectError> {
+        match change {
+            Change::CreateLayer { name, colour } => {
+                if self.layer_id(&name).is_some() {
+                    return Err(ProjectError::DuplicateLayer(name));
+                }
+                self.add_layer(name, colour)?;
+            }
+            Change::Create { name, layer, attributes, body } => {
+                non_empty(&name)?;
+                let layer = self.layer_or_create(layer)?;
+                let id = ObjectId::new();
+                self.touched.insert(id);
+                let object = Object { id, revision: 1, name: name.clone(), layer, provenance: self.run, attributes, body };
+                self.entries.push((id, Entry { revision: 1, object: Some(Arc::new(object)) }));
+                self.applied.changes.push(AppliedChange { id, revision: 1, change: ChangeKind::Created, name });
+            }
+            Change::Revise { id, base, name, layer, attributes, body } => {
+                let old = self.base(id, base)?;
+                if body.as_ref().is_some_and(|b| b.kind() != old.kind()) {
+                    return Err(ProjectError::KindChanged(id));
+                }
+                let name = name.unwrap_or_else(|| old.name.clone());
+                non_empty(&name)?;
+                let layer = match layer {
+                    Some(layer) => self.layer_or_create(layer)?,
+                    None => old.layer,
+                };
+                let object = Object {
+                    id,
+                    revision: base + 1,
+                    name: name.clone(),
+                    layer,
+                    provenance: self.run,
+                    attributes: attributes.unwrap_or_else(|| old.attributes.clone()),
+                    body: body.unwrap_or_else(|| old.body.clone()),
+                };
+                self.entries.push((id, Entry { revision: base + 1, object: Some(Arc::new(object)) }));
+                self.applied.changes.push(AppliedChange { id, revision: base + 1, change: ChangeKind::Revised, name });
+            }
+            Change::Delete { id, base } => {
+                let name = self.base(id, base)?.name.clone();
+                self.entries.push((id, Entry { revision: base + 1, object: None }));
+                self.applied.changes.push(AppliedChange { id, revision: base + 1, change: ChangeKind::Deleted, name });
+            }
+        }
+        Ok(())
+    }
+
+    /// The object at revision `base`, checking it is still current and untouched by this run.
+    fn base(&mut self, id: ObjectId, base: u32) -> Result<Arc<Object>, ProjectError> {
+        if !self.touched.insert(id) {
+            return Err(ProjectError::ChangedTwice(id));
+        }
+        let (current, object) = self.project.current(id)?;
+        if current != base {
+            return Err(ProjectError::Stale { id, base, current });
+        }
+        Ok(object.clone())
+    }
+
+    fn layer_id(&self, name: &str) -> Option<LayerId> {
+        self.project.layer_named(name).or_else(|| self.layers.iter().find(|l| l.name == name)).map(|l| l.id)
+    }
+
+    fn layer_or_create(&mut self, name: String) -> Result<LayerId, ProjectError> {
+        match self.layer_id(&name) {
+            Some(id) => Ok(id),
+            None => self.add_layer(name, None),
+        }
+    }
+
+    fn add_layer(&mut self, name: String, colour: Option<[u8; 3]>) -> Result<LayerId, ProjectError> {
+        non_empty(&name)?;
+        let n = self.project.layers.len() + self.layers.len();
+        let layer = Layer { id: LayerId::new(), name, colour: colour.unwrap_or(LAYER_COLOURS[n % LAYER_COLOURS.len()]), visible: true };
+        let id = layer.id;
+        self.layers.push(layer);
+        Ok(id)
+    }
+}
+
+fn non_empty(name: &str) -> Result<(), ProjectError> {
+    if name.trim().is_empty() { Err(ProjectError::EmptyName) } else { Ok(()) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Polyline;
+
+    fn line(points: &[[f64; 3]]) -> Body {
+        Body::String(Polyline { vertices: points.to_vec(), closed: false })
+    }
+
+    fn create(name: &str, layer: &str, body: Body) -> Change {
+        Change::Create { name: name.into(), layer: layer.into(), attributes: Attributes::new(), body }
+    }
+
+    fn vertices(o: &Object) -> Vec<[f64; 3]> {
+        match &o.body {
+            Body::String(p) => p.vertices.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn create_revise_delete_then_undo_and_redo() {
+        let mut p = Project::new();
+        let a = p.apply(RunId::new(), vec![create("toe", "design", line(&[[0.0; 3], [1.0, 0.0, 0.0]]))]).unwrap();
+        let id = a.changes[0].id;
+        assert_eq!(a.layers_created.len(), 1, "layer 'design' made on demand");
+        let v1 = p.object(id).unwrap().clone();
+
+        let moved = line(&[[0.0; 3], [2.0, 0.0, 0.0]]);
+        p.apply(RunId::new(), vec![Change::revise_body(&v1, moved)]).unwrap();
+        assert_eq!(p.object(id).unwrap().revision, 2);
+        assert_eq!(vertices(&v1), vec![[0.0; 3], [1.0, 0.0, 0.0]], "revision 1 is untouched");
+        assert!(Arc::ptr_eq(p.revision(id, 1).unwrap(), &v1));
+
+        p.apply(RunId::new(), vec![Change::Delete { id, base: 2 }]).unwrap();
+        assert!(p.object(id).is_none());
+        assert_eq!(p.objects().count(), 0);
+
+        p.undo();
+        assert_eq!(p.object(id).unwrap().revision, 2, "delete undone");
+        p.undo();
+        assert_eq!(p.object(id).unwrap().revision, 1, "edit undone");
+        p.undo();
+        assert!(p.object(id).is_none() && p.layers().is_empty(), "creation and its layer undone");
+        assert!(!p.can_undo());
+
+        p.redo();
+        p.redo();
+        assert_eq!(vertices(p.object(id).unwrap()), vec![[0.0; 3], [2.0, 0.0, 0.0]]);
+        assert_eq!(p.layers().len(), 1);
+    }
+
+    #[test]
+    fn a_refused_run_changes_nothing() {
+        let mut p = Project::new();
+        let a = p.apply(RunId::new(), vec![create("toe", "design", line(&[[0.0; 3], [1.0, 0.0, 0.0]]))]).unwrap();
+        let id = a.changes[0].id;
+        // Second change is stale (base 7): the first must not land either, nor its new layer.
+        let err = p
+            .apply(
+                RunId::new(),
+                vec![create("crest", "other", line(&[[0.0; 3], [0.0, 1.0, 0.0]])), Change::Delete { id, base: 7 }],
+            )
+            .unwrap_err();
+        assert_eq!(err, ProjectError::Stale { id, base: 7, current: 1 });
+        assert_eq!(p.objects().count(), 1);
+        assert_eq!(p.layers().len(), 1);
+        assert!(p.apply(RunId::new(), vec![Change::Delete { id, base: 1 }, Change::Delete { id, base: 1 }]).is_err());
+        assert!(p.object(id).is_some(), "changed-twice run refused whole");
+        let solid_body = Body::Grid(Arc::new(crate::Grid::from_fn([0.0, 0.0], [1.0, 1.0], 2, 2, |_, _| 0.0)));
+        assert_eq!(
+            p.apply(RunId::new(), vec![Change::revise_body(p.object(id).unwrap(), solid_body)]).unwrap_err(),
+            ProjectError::KindChanged(id)
+        );
+        assert_eq!(p.apply(RunId::new(), vec![Change::CreateLayer { name: "design".into(), colour: None }]).unwrap_err(), ProjectError::DuplicateLayer("design".into()));
+    }
+
+    /// Live objects as (id, revision, name, vertices), in creation order.
+    fn snapshot(p: &Project) -> Vec<(ObjectId, u32, String, Vec<[f64; 3]>)> {
+        p.objects().map(|o| (o.id, o.revision, o.name.clone(), vertices(o))).collect()
+    }
+
+    #[test]
+    fn undo_and_redo_retrace_one_hundred_random_runs_exactly() {
+        let mut p = Project::new();
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let mut snapshots = vec![snapshot(&p)];
+        for step in 0..100 {
+            let live: Vec<Arc<Object>> = p.objects().cloned().collect();
+            let change = match (live.is_empty(), next(3)) {
+                (true, _) | (_, 0) => create(&format!("s{step}"), &format!("L{}", next(3)), line(&[[step as f64, 0.0, 0.0], [0.0, step as f64, 0.0]])),
+                (_, 1) => {
+                    let o = &live[next(live.len())];
+                    let mut v = vertices(o);
+                    v.push([next(100) as f64, next(100) as f64, 1.5]);
+                    Change::revise_body(o, line(&v))
+                }
+                _ => {
+                    let o = &live[next(live.len())];
+                    Change::Delete { id: o.id, base: o.revision }
+                }
+            };
+            p.apply(RunId::new(), vec![change]).unwrap();
+            snapshots.push(snapshot(&p));
+        }
+        for expected in snapshots.iter().rev().skip(1) {
+            p.undo().unwrap();
+            assert_eq!(&snapshot(&p), expected);
+        }
+        assert!(p.undo().is_none() && p.layers().is_empty());
+        for expected in snapshots.iter().skip(1) {
+            p.redo().unwrap();
+            assert_eq!(&snapshot(&p), expected);
+        }
+    }
+
+    #[test]
+    fn a_new_run_clears_redo() {
+        let mut p = Project::new();
+        p.apply(RunId::new(), vec![create("a", "L", line(&[[0.0; 3], [1.0; 3]]))]).unwrap();
+        p.undo();
+        assert!(p.can_redo());
+        p.apply(RunId::new(), vec![create("b", "L", line(&[[0.0; 3], [1.0; 3]]))]).unwrap();
+        assert!(!p.can_redo());
+    }
+}
