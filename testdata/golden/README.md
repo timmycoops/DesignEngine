@@ -8,6 +8,8 @@ testdata/golden/<pit-name>/
   <seam>_roof.dxf          seam roof surfaces
   <seam>_floor.dxf         seam floor surfaces
   bow.dxf                  base of weathering (optional)
+  design.dxf               a design surface (e.g. pit shell) to cut seam solids with (optional;
+                           Phase 0 Check 2 falls back to bow, then topo)
   toe.dxf                  a highwall toe string
   deswik_volumes.csv       reference volumes/tonnes by block and seam from Deswik
   NOTES.md                 units, coordinate system, densities, anything unusual
