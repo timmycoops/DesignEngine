@@ -12,13 +12,15 @@ Branch `phase0/stress-test`, run 2026-10-28. Targets are from
 
 | Check | Target (0001-stack) | Result | Verdict |
 |---|---|---|---|
-| 1 · Viewport | Smooth orbit and zoom, ~60 fps, at tens of millions of triangles | **60 fps at 24.3 M unique triangles** (p99 frame 17.3 ms, no frame over 33 ms). Tiled copies: 45 fps at 48.5 M, 32 fps at 72.8 M, 21 fps at 121 M | **PASS** up to ~25 M on this entry-level GPU |
+| 1 · Viewport | Smooth orbit and zoom, ~60 fps, at tens of millions of triangles | **60 fps at 24.3 M unique triangles** (p99 frame 17.3 ms, no frame over 33 ms). Tiled copies: 50 fps at 48.5 M, 36 fps at 72.8 M, 23 fps at 121 M | **PASS** up to ~25 M on this entry-level GPU; ≥ 50 fps to ~50 M |
 | 2 · Booleans | Watertight output; seconds, not minutes, per cut | Every part watertight; below + above = input to ≤ 1e-12. 0.24 s (0.2 M tris), 0.74 s (0.9 M), 2.4 s (3.5 M), 9.4 s (14 M) | **PASS** |
-| 3 · Transfer | Multi-million-triangle mesh Rust → viewport well under 1 s, binary | Request to first frame: **0.23 s at 2 M**, 0.88 s at 8 M, 2.2 s at 18 M. The bridge moves a flat ~210 MB/s | **PARTIAL**: pass at 2 M, marginal at 8 M, fail at 18 M |
-| 4 · Editing | Vertex drag with surface snapping feels instant | Snap round trip **1.5 ms** p50 (2.4 ms max) against 24.3 M triangles; each update is in the very next frame (16.6 ms p50 at 60 Hz) | **PASS** as measured; the feel still needs a hands-on check |
+| 3 · Transfer | Multi-million-triangle mesh Rust → viewport well under 1 s, binary | Request → frame submitted over a WebView2 shared buffer: **0.06 s at 2 M, 0.09 s at 8 M, 0.20 s at 18 M** for a general triangulation; 0.015, 0.035 and 0.065 s for grid surfaces | **PASS** (first run: 0.23, 0.88 and 2.2 s over IPC) |
+| 4 · Editing | Vertex drag with surface snapping feels instant | Snap round trip **1.2 ms** p50 (8.2 ms worst) against 24.3 M triangles; every update is in the next frame submitted (worst 21.5 ms) | **PASS** as measured; the feel still needs a hands-on check |
 
-**Gate: not yet passed.** The data was synthetic. Check 3 needs work at the transfer layer, as
-0001 anticipates: "a failure points to one layer to fix". See [Follow-ups](#follow-ups).
+**Gate: not yet passed, only because the data was synthetic.** All four checks pass here. The first
+run left Check 3 partial; that was fixed in the transfer layer alone, as 0001 anticipates ("a failure
+points to one layer to fix"). See [Check 3](#check-3-binary-transfer-rust--viewport) and
+[Follow-ups](#follow-ups).
 
 ## Machine
 
@@ -30,7 +32,7 @@ Branch `phase0/stress-test`, run 2026-10-28. Targets are from
 | Display | 3840 x 2160 at 60 Hz, 150 % scaling |
 | OS | Windows 11 Pro, build 26300 |
 | WebView2 | 155.0.4283.62 (Chromium 155) |
-| Toolchain | Rust 1.99.1 (MSVC), Node 22.22, pnpm 12.15, three.js 0.186.1, Tauri 2.12.5, Manifold 3.5 via manifold-csg 0.4.1, parry3d-f64 0.31.1 |
+| Toolchain | Rust 1.99.1 (MSVC), Node 22.22, pnpm 12.15, three.js 0.186.1, Tauri 2.12.5, Manifold 3.5 via manifold-csg 0.4.1, parry3d-f64 0.31.1, webview2-com 0.39.1 |
 | Builds | Release (`cargo bench`, `pnpm tauri build --no-bundle`) |
 
 ## Data
@@ -74,19 +76,36 @@ under 10 s.
 
 `zd-app.exe --bench` (release build) runs Checks 1, 3 and 4 unattended in the real Tauri window and
 writes `bench/out/app-results.json`. Renderer: three.js `WebGPURenderer` on the **WebGPU** backend
-(no WebGL2 fallback was needed), 4x MSAA, reversed-Z depth, canvas 2400 x 1500 (1600 x 1000 window
-at 150 %). Frame times are `requestAnimationFrame` intervals, so 60 fps is the display's ceiling.
+(no WebGL2 fallback was needed), 4x MSAA, reversed-Z depth, flat shading, canvas 2400 x 1500
+(1600 x 1000 window at 150 %). Frame times are `requestAnimationFrame` intervals, so 60 fps is the
+display's ceiling.
 
-Loading the four files through the app (open → Rust reads and triangulates → binary buffer → first frame):
+**Render buffers (v2).** Meshes cross the bridge in one of two compact layouts (details in
+[0003](../docs/decisions/0003-phase0-choices.md)):
 
-| File | Triangles | Rust read | Triangulate | Encode | Total to first frame |
-|---|---:|---:|---:|---:|---:|
-| topo.xyz | 8,000,000 | 402 ms | 39 ms | 121 ms | 1.62 s |
-| roof.xyz | 8,000,000 | 406 ms | 42 ms | 118 ms | 1.50 s |
-| floor.xyz | 8,000,000 | 404 ms | 41 ms | 120 ms | 1.49 s |
-| design.dxf | 272,322 | 196 ms | — | 4 ms | 0.25 s |
+- *General triangulation:* chunks of at most 65,535 vertices with f32 positions and u16 indices,
+  and no normals (the viewport shades flat). About 12 bytes per triangle, down from 24.
+- *Grid surface:* elevations only, as u16 steps over the surface's z range, about 1 byte per
+  triangle. The viewport rebuilds the lattice and the triangles by the engine's rule; a Rust test
+  proves the rule matches, and the viewport checks the triangle count on every load. Elevations
+  are within half a step: ≤ 0.3 mm for the topography (34 m range) and ≤ 3.1 mm for the roof
+  and floor, which fall about 407 m across the 10 km pit. This is display only; snapping and
+  every engine calculation use the f64 surfaces.
 
-About 0.9 s of each 8 M-triangle load is the bridge (see Check 3), not the engine.
+They travel through a **WebView2 shared buffer**: Rust copies the bytes once into shared memory, and
+the page gets an `ArrayBuffer` over the same memory. Raw bytes over Tauri IPC remain the fallback.
+
+Loading the four files through the Open path (Rust reads, triangulates for snapping and encodes;
+the page fetches, decodes and draws):
+
+| File | Layout | Triangles | Buffer | Rust read | Triangulate | Encode | Fetch (shared) | Decode | **Total to first frame** | First run |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| topo.xyz | grid | 8,000,000 | 8.1 MB | 398 ms | 40 ms | 28 ms | 6 ms | 31 ms | **0.53 s** | 1.62 s |
+| roof.xyz | grid | 8,000,000 | 8.1 MB | 413 ms | 43 ms | 27 ms | 5 ms | 25 ms | **0.52 s** | 1.50 s |
+| floor.xyz | grid | 8,000,000 | 8.1 MB | 406 ms | 44 ms | 27 ms | 5 ms | 23 ms | **0.52 s** | 1.49 s |
+| design.dxf | triangulation | 272,322 | 3.3 MB | 207 ms | — | 8 ms | 3 ms | 0 ms | **0.23 s** | 0.25 s |
+
+Reading the 135 MB text file is now three-quarters of a load.
 
 ## Check 1: viewport
 
@@ -95,33 +114,50 @@ the real scene (three 8 M surfaces plus the design, all unique geometry). Later 
 beside it until the scene passes 25, 50 and 100 M triangles. Copies share GPU buffers, so they
 test vertex and raster throughput, not GPU memory.
 
-| Scene | Triangles | Frames | Mean fps | p50 frame | p95 | p99 | Worst | Frames > 33 ms |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Real size (unique) | 24,272,322 | 479 | **60.0** | 16.7 ms | 17.1 ms | 17.3 ms | 17.4 ms | 0 |
-| 2 x tiled | 48,544,644 | 362 | 45.5 | 22.0 ms | 24.4 ms | 25.4 ms | 25.8 ms | 0 |
-| 3 x tiled | 72,816,966 | 255 | 32.0 | 30.9 ms | 34.7 ms | 35.7 ms | 36.4 ms | 57 |
-| 5 x tiled | 121,361,610 | 164 | 20.6 | 47.9 ms | 54.5 ms | 56.9 ms | 58.2 ms | 164 |
+| Scene | Triangles | Frames | Mean fps | p50 frame | p95 | p99 | Worst | Frames > 33 ms | First run (fps) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Real size (unique) | 24,272,322 | 479 | **60.0** | 16.7 ms | 17.1 ms | 17.3 ms | 17.5 ms | 0 | 60.0 |
+| 2 x tiled | 48,544,644 | 400 | 50.2 | 20.1 ms | 22.1 ms | 22.8 ms | 25.7 ms | 0 | 45.5 |
+| 3 x tiled | 72,816,966 | 285 | 35.8 | 27.7 ms | 32.6 ms | 33.3 ms | 33.5 ms | 2 | 32.0 |
+| 5 x tiled | 121,361,610 | 184 | 23.1 | 42.2 ms | 50.0 ms | 50.9 ms | 51.0 ms | 184 | 20.6 |
 
-Frame pacing stays even at every size (p99 within 20 % of p50), so the scene degrades
-smoothly rather than stuttering. An earlier run of the same build showed one 121 ms hitch at 48 M;
-this run had none. Headroom on this GPU, if needed: drop MSAA, level of detail for distant tiles,
-or frustum culling by tile (each surface is one draw call today).
+Frame pacing stays even at every size (p99 within 21 % of p50), so the scene degrades smoothly
+rather than stuttering. The v2 buffers sped up the larger scenes by 10 to 12 %: half the vertex
+data, u16 indices, and per-chunk frustum culling. The trade is flat shading, which shows each
+triangle's facet. That's honest for a TIN, but smooth shading for grids can come back later
+(normals from the lattice, computed in the vertex shader). More headroom if needed: drop MSAA, or
+level of detail for distant tiles.
 
 ## Check 3: binary transfer, Rust → viewport
 
-A synthetic topography is generated and encoded in Rust first (not timed), then fetched as one
-`tauri::ipc::Response` (raw bytes; f32 positions, f32 normals, u32 indices), viewed as typed
-arrays without copying, and drawn.
+A synthetic topography is generated and encoded in Rust first (not timed). It is then handed to
+the page and drawn. Each size is sent as a general triangulation and as grid elevations, over a
+WebView2 shared buffer and over IPC.
 
-| Triangles | Buffer | Bridge (invoke) | Decode + geometry | GPU upload + submit | **Request → frame submitted** | Request → GPU done |
-|---:|---:|---:|---:|---:|---:|---:|
-| 2,000,000 | 48 MB | 228 ms | 0.2 ms | 6 ms | **0.23 s** | 0.29 s |
-| 8,000,000 | 192 MB | 871 ms | 0.1 ms | 13 ms | **0.88 s** | 0.94 s |
-| 18,000,000 | 432 MB | 2,078 ms | 0.2 ms | 157 ms | **2.23 s** | 2.45 s |
+| Triangles | Layout | Buffer | Transport | Fetch | Decode + geometry | **Request → frame submitted** | Request → GPU done |
+|---:|---|---:|---|---:|---:|---:|---:|
+| 2,000,000 | triangulation | 24 MB | shared | 10 ms | 0 ms | **64 ms** | 186 ms |
+| 2,000,000 | triangulation | 24 MB | IPC | 119 ms | 0 ms | 124 ms | 170 ms |
+| 2,000,000 | grid | 2.0 MB | shared | 2 ms | 10 ms | **15 ms** | 62 ms |
+| 2,000,000 | grid | 2.0 MB | IPC | 13 ms | 7 ms | 31 ms | 78 ms |
+| 8,000,000 | triangulation | 97 MB | shared | 37 ms | 0 ms | **93 ms** | 149 ms |
+| 8,000,000 | triangulation | 97 MB | IPC | 445 ms | 3 ms | 459 ms | 488 ms |
+| 8,000,000 | grid | 8.1 MB | shared | 5 ms | 22 ms | **35 ms** | 60 ms |
+| 8,000,000 | grid | 8.1 MB | IPC | 42 ms | 18 ms | 67 ms | 93 ms |
+| 18,000,000 | triangulation | 217 MB | shared | 86 ms | 1 ms | **202 ms** | 287 ms |
+| 18,000,000 | triangulation | 217 MB | IPC | 1,068 ms | 1 ms | 1,090 ms | 1,128 ms |
+| 18,000,000 | grid | 18 MB | shared | 9 ms | 44 ms | **65 ms** | 96 ms |
+| 18,000,000 | grid | 18 MB | IPC | 90 ms | 38 ms | 141 ms | 169 ms |
 
-The bridge holds a steady **~210 MB/s** at every size, and it accounts for 93 % or more of the time. WebView2 serves
-Tauri's raw IPC responses through its custom-scheme resource handler, which copies the bytes.
-Decoding is free and the GPU upload is fast. The fix belongs in the transfer layer, not the stack.
+The first run (f32 positions + f32 normals + u32 indices over IPC) took 0.23 s, 0.88 s and 2.23 s.
+
+- The shared buffer moves 2.5 GB/s, including the copy into shared memory, against IPC's flat
+  ~210 MB/s. The 18 M-triangle triangulation still lands in 0.2 s, so even the worst case is
+  well under 1 s.
+- Not in these times: encoding in Rust, which happens before the request (in the real app,
+  at load). It takes 6, 26 and 57 ms for grids, but 63, 248 and 558 ms for triangulations, where chunking
+  is single-threaded. Spreading the chunks across threads is the obvious next step if real TIN loads
+  feel slow.
 
 ## Check 4: editing (polyline drag with snapping)
 
@@ -132,13 +168,15 @@ with only the 272 k-triangle design surface drawn, to separate render cost from 
 
 | Scene drawn | Snap round trip (JS → Rust → JS) | Update → frame submitted | Update → GPU-done callback |
 |---|---|---|---|
-| 24.3 M triangles | p50 **1.5 ms**, p95 1.7, max 2.4 | p50 **16.6 ms**, p95 17.2, max 17.8 | p50 66.7 ms, max 67.9 |
-| 0.27 M triangles | p50 1.5 ms, p95 1.7, max 2.1 | p50 16.6 ms, p95 17.3, max 17.6 | p50 66.7 ms, max 67.9 |
+| 24.3 M triangles | p50 **1.2 ms**, p95 2.3, max 8.2 | p50 4.2 ms, p95 18.6, max **21.5** | p50 16.9 ms, p95 31.3, max 33.8 |
+| 0.27 M triangles | p50 1.1 ms, p95 1.5, max 1.8 | p50 13.3 ms, p95 14.1, max 17.7 | p50 16.7 ms, p95 18.0, max 22.5 |
 
-- 300 of 300 updates hit a surface; no misses.
-- Every update lands in the very next frame: 16.6 ms is the wait for the next 60 Hz vsync.
-- The GPU-done figure is the same 66.7 ms whatever the scene size, so it is the delay in
-  Chromium's `onSubmittedWorkDone` callback, not render cost. It is reported for completeness.
+- 300 of 300 updates hit a surface in both runs; no misses.
+- Every update is drawn in the next frame submitted. The submit figure is just the wait for the next
+  60 Hz frame plus the snap, so its p50 depends on where in the frame the drag loop happens to start.
+- The GPU-done callback came back within one or two frames (16.9 ms p50, 33.8 ms worst). In the
+  first build it read a constant 66.7 ms whatever the scene size. That delay was Chromium's callback
+  timing, not render cost, and it has not recurred.
 - BVH build for snapping: **2.4 s** for the four surfaces in parallel (24.3 M triangles), run in the
   background after loading. The first serial build took 7.1 s.
 - "Feels instant" is a human judgement. Open a surface, click to place vertices, and drag one
@@ -149,14 +187,11 @@ with only the 272 k-triangle design surface drawn, to separate render cost from 
 1. **Re-run on real data.** Put a pit in `testdata/golden/<pit>/` (topo, `<seam>_roof`,
    `<seam>_floor`, optional `design`). Check 2 picks it up automatically. For the app, run
    `zd-app.exe --bench --surfaces <topo>,<roof>,<floor>,<design>`.
-2. **Check 3, transfer layer.** Two independent steps:
-   - Smaller buffers. Drop normals and compute them on the GPU, quantise positions to 16 bits per
-     surface tile, and send grid-derived surfaces without explicit indices. That cuts the bytes
-     about 3 to 4 times.
-   - Zero-copy transport through WebView2 shared buffers (`ICoreWebView2SharedBuffer`), which
-     removes the 210 MB/s bridge. This needs `webview2-com` as a direct dependency. It is already
-     in Tauri's dependency tree, but it would be a new direct dependency outside the locked stack.
-3. **Check 2 at the top size.** Manifold's mesh intake (4.5 s of 9.4 s at 14 M triangles) dominates.
+2. **Triangulation encode time.** Chunking a TIN for the viewport is single-threaded: 0.25 s at 8 M
+   and 0.56 s at 18 M triangles. Splitting the plan bins across threads would cut it several times.
+3. **Smooth shading for grids**, if flat shading looks too faceted in use: rebuild normals from the
+   lattice in the vertex shader. That costs no transfer bytes.
+4. **Check 2 at the top size.** Manifold's mesh intake (4.5 s of 9.4 s at 14 M triangles) dominates.
    Cutting per strip or block keeps real cuts in the 0.2 to 2.4 s range shown.
 
 ## Reproduce

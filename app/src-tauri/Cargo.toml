@@ -17,3 +17,9 @@ serde_json = "1"
 zd-core.workspace = true
 zd-geom.workspace = true
 zd-io.workspace = true
+
+# Zero-copy mesh hand-over through WebView2 shared buffers. Same versions Tauri's wry uses, so the
+# interface types match those `PlatformWebview` hands out; windows-core supplies `Interface::cast`.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"

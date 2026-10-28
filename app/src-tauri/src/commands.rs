@@ -1,5 +1,6 @@
-//! Commands the viewport calls. Meshes go out as binary render buffers (`ipc::Response`), never
-//! JSON; everything else is small JSON.
+//! Commands the viewport calls. Meshes are staged as binary render buffers and fetched either
+//! through a WebView2 shared buffer (zero-copy) or as an `ipc::Response` (raw bytes over the
+//! bridge), never as JSON. Everything else is small JSON.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -7,36 +8,55 @@ use std::time::Instant;
 
 use serde::Serialize;
 use tauri::ipc::Response;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, State, Webview};
 use zd_core::TriMesh;
 use zd_geom::{SurfaceRayCaster, triangulate_grid};
 use zd_io::{SurfaceImport, read_surface};
 
-use crate::render::encode_render_buffer;
+use crate::render::{encode_grid, encode_triangulation};
+use crate::shared::post_shared_buffer;
 use crate::state::{AppState, LoadedSurface};
 use crate::synthetic::synthetic_topography;
 
-/// Reads a DXF or XYZ/CSV surface, keeps it in f64 for snapping, and returns its render buffer.
+#[derive(Serialize)]
+pub struct StagedMesh {
+    /// Pass to `fetch_mesh_shared` or `fetch_mesh_ipc`.
+    handle: u32,
+    name: String,
+    /// `grid` or `triangulation`: which compact layout the buffer uses.
+    kind: &'static str,
+    triangles: usize,
+    bytes: usize,
+    log: String,
+    /// Milliseconds: `read`, `triangulate` and `encode`.
+    timings: serde_json::Value,
+}
+
+/// Reads a DXF or XYZ/CSV surface, keeps it in f64 for snapping, and stages its render buffer.
+/// Grids travel as quantised elevations; triangulations as chunked f32 positions.
 #[tauri::command]
-pub async fn open_surface(path: String, state: State<'_, AppState>) -> Result<Response, String> {
+pub async fn open_surface(path: String, state: State<'_, AppState>) -> Result<StagedMesh, String> {
     let path = PathBuf::from(path);
+    let name = file_name(&path);
     let t = Instant::now();
-    let import = blocking(move || read_surface(&path).map_err(|e| e.to_string()).map(|i| (path, i))).await??;
+    let import = blocking(move || read_surface(&path).map_err(|e| e.to_string())).await??;
     let read_ms = ms(t);
-    let (path, import) = import;
 
     let t = Instant::now();
-    let (mesh, log) = match import {
-        SurfaceImport::Triangulation(dxf) => (dxf.mesh, format!("{:?}", dxf.log)),
+    let (mesh, grid, log) = match import {
+        SurfaceImport::Triangulation(dxf) => (dxf.mesh, None, format!("{:?}", dxf.log)),
         SurfaceImport::Grid(xyz) => {
             let log = format!(
                 "{:?}; grid {} x {} nodes at {} x {} m",
                 xyz.log, xyz.grid.cols, xyz.grid.rows, xyz.grid.cell_size[0], xyz.grid.cell_size[1]
             );
-            (blocking(move || triangulate_grid(&xyz.grid)).await?, log)
+            let grid = xyz.grid;
+            let (mesh, grid) = blocking(move || (triangulate_grid(&grid), grid)).await?;
+            (mesh, Some(grid), log)
         }
     };
     let triangulate_ms = ms(t);
+    let triangles = mesh.triangle_count();
     let mesh = Arc::new(mesh);
 
     let (id, origin) = {
@@ -47,14 +67,26 @@ pub async fn open_surface(path: String, state: State<'_, AppState>) -> Result<Re
         (id, origin)
     };
 
-    let header = serde_json::json!({
-        "id": id,
-        "name": file_name(&path),
-        "log": log,
-        "timings": { "read_ms": read_ms, "triangulate_ms": triangulate_ms },
-    });
-    let buffer = blocking(move || encode_render_buffer(&mesh, origin, header)).await?;
-    Ok(Response::new(buffer))
+    let header = serde_json::json!({ "id": id, "name": name, "timings": {} });
+    let kind = if grid.is_some() { "grid" } else { "triangulation" };
+    let (buffer, encode_ms) = blocking(move || {
+        let t = Instant::now();
+        let buffer = match &grid {
+            Some(grid) => encode_grid(grid, origin, header),
+            None => encode_triangulation(&mesh, origin, header),
+        };
+        (buffer, ms(t))
+    })
+    .await?;
+    Ok(stage(
+        &state,
+        buffer,
+        name,
+        kind,
+        triangles,
+        log,
+        serde_json::json!({ "read": read_ms, "triangulate": triangulate_ms, "encode": encode_ms }),
+    ))
 }
 
 #[tauri::command]
@@ -65,38 +97,47 @@ pub fn clear_surfaces(state: State<'_, AppState>) {
     scene.origin = None;
 }
 
-#[derive(Serialize)]
-pub struct StagedMesh {
-    handle: u32,
-    triangles: usize,
-    bytes: usize,
-    prepare_ms: f64,
-}
-
-/// Generates and encodes a synthetic topography of `cells` x `cells` and holds the buffer, so
-/// the transfer check can time the hand-over alone.
+/// Generates a synthetic topography of `cells` x `cells` and stages it in the `grid` or
+/// `triangulation` layout, so the transfer check can time the hand-over alone.
 #[tauri::command]
-pub async fn prepare_synthetic(cells: usize, state: State<'_, AppState>) -> Result<StagedMesh, String> {
+pub async fn prepare_synthetic(cells: usize, kind: String, state: State<'_, AppState>) -> Result<StagedMesh, String> {
     let origin = state.scene.lock().unwrap().origin.unwrap_or([650_000.0, 7_450_000.0, 200.0]);
-    let t = Instant::now();
-    let (buffer, triangles) = blocking(move || {
-        let mesh = triangulate_grid(&synthetic_topography(cells));
-        let header = serde_json::json!({ "id": 0, "name": format!("synthetic {cells}x{cells}"), "log": "", "timings": {} });
-        (encode_render_buffer(&mesh, origin, header), mesh.triangle_count())
+    let as_grid = match kind.as_str() {
+        "grid" => true,
+        "triangulation" => false,
+        other => return Err(format!("unknown layout '{other}'")),
+    };
+    let name = format!("synthetic {cells}x{cells}");
+    let header = serde_json::json!({ "id": 0, "name": name, "timings": {} });
+    let (buffer, triangles, encode_ms) = blocking(move || {
+        let grid = synthetic_topography(cells);
+        let triangles = 2 * cells * cells;
+        let t = Instant::now();
+        let buffer = if as_grid {
+            encode_grid(&grid, origin, header)
+        } else {
+            encode_triangulation(&triangulate_grid(&grid), origin, header)
+        };
+        (buffer, triangles, ms(t))
     })
     .await?;
-    let prepare_ms = ms(t);
-    let mut scene = state.scene.lock().unwrap();
-    let handle = scene.next_id();
-    let bytes = buffer.len();
-    scene.staged.insert(handle, buffer);
-    Ok(StagedMesh { handle, triangles, bytes, prepare_ms })
+    let kind = if as_grid { "grid" } else { "triangulation" };
+    Ok(stage(&state, buffer, name, kind, triangles, String::new(), serde_json::json!({ "encode": encode_ms })))
 }
 
+/// Hands a staged buffer to the page through a WebView2 shared buffer. The page receives it as a
+/// `sharedbufferreceived` event whose additional data is `{"handle": <handle>}`.
 #[tauri::command]
-pub fn fetch_staged(handle: u32, state: State<'_, AppState>) -> Result<Response, String> {
-    let buffer = state.scene.lock().unwrap().staged.remove(&handle).ok_or("no staged mesh with that handle")?;
-    Ok(Response::new(buffer))
+pub async fn fetch_mesh_shared(handle: u32, webview: Webview, state: State<'_, AppState>) -> Result<(), String> {
+    let buffer = take_staged(&state, handle)?;
+    let data = serde_json::json!({ "handle": handle }).to_string();
+    blocking(move || post_shared_buffer(&webview, buffer, data)).await?
+}
+
+/// Hands a staged buffer to the page as raw bytes over the IPC bridge (the fallback path).
+#[tauri::command]
+pub fn fetch_mesh_ipc(handle: u32, state: State<'_, AppState>) -> Result<Response, String> {
+    Ok(Response::new(take_staged(&state, handle)?))
 }
 
 #[derive(Serialize)]
@@ -221,7 +262,27 @@ pub fn exit_app(app: AppHandle) {
     app.exit(0);
 }
 
-/// Runs CPU-heavy work off the async runtime threads.
+fn stage(
+    state: &State<'_, AppState>,
+    buffer: Vec<u8>,
+    name: String,
+    kind: &'static str,
+    triangles: usize,
+    log: String,
+    timings: serde_json::Value,
+) -> StagedMesh {
+    let mut scene = state.scene.lock().unwrap();
+    let handle = scene.next_id();
+    let bytes = buffer.len();
+    scene.staged.insert(handle, buffer);
+    StagedMesh { handle, name, kind, triangles, bytes, log, timings }
+}
+
+fn take_staged(state: &State<'_, AppState>, handle: u32) -> Result<Vec<u8>, String> {
+    state.scene.lock().unwrap().staged.remove(&handle).ok_or_else(|| "no staged mesh with that handle".into())
+}
+
+/// Runs CPU-heavy or blocking work off the async runtime threads.
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())
 }

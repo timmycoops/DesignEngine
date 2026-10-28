@@ -22,7 +22,8 @@ cd app; pnpm tauri build --no-bundle
 ```
 
 `--bench` loads the surfaces, orbits the scene at its real size and then with copies tiled up
-to 100 million triangles, times binary transfers of 2, 8 and 18 million triangles, and drags a
-polyline vertex through 300 snapped updates. Results go to `bench/out/app-results.json`. Add
+to 100 million triangles, times transfers of 2, 8 and 18 million triangles (as a general
+triangulation and as grid elevations, each over a WebView2 shared buffer and over IPC), and drags
+a polyline vertex through 300 snapped updates. Results go to `bench/out/app-results.json`. Add
 `--surfaces a.dxf,b.xyz` to use real data instead of the synthetic pit. Leave the window in
 front while it runs: a hidden window throttles its frame rate.

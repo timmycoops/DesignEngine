@@ -5,14 +5,15 @@ import * as THREE from 'three/webgpu';
 import {
   type BenchConfig,
   buildSnapIndex,
-  decodeMesh,
+  defaultTransport,
   exitApp,
-  fetchStaged,
   openSurface,
   prepareSynthetic,
   snapRay,
+  type Transport,
   writeResults,
 } from '../bridge';
+import { loadStaged } from '../viewport/load';
 import type { PolylineTool } from '../viewport/PolylineTool';
 import type { Viewport } from '../viewport/Viewport';
 
@@ -41,6 +42,7 @@ export async function runChecks(
     adapter: viewport.adapter,
     canvas: { width: canvas.width, height: canvas.height, device_pixel_ratio: window.devicePixelRatio },
     user_agent: navigator.userAgent,
+    default_transport: defaultTransport,
   };
 
   try {
@@ -64,19 +66,19 @@ async function loadSurfaces(viewport: Viewport, paths: string[], log: (line: str
   for (const path of paths) {
     log(`loading ${path}`);
     const start = performance.now();
-    const decoded = await openSurface(path);
-    const invoked = performance.now();
-    viewport.addMesh(decoded);
-    await viewport.nextFrame();
+    const staged = await openSurface(path);
+    const opened = performance.now();
+    const { timings } = await loadStaged(viewport, staged);
     loads.push({
-      name: decoded.header.name,
-      triangles: decoded.header.triangles,
-      vertices: decoded.header.vertices,
-      bytes: decoded.bytes,
-      rust: decoded.header.timings,
-      invoke_ms: invoked - start,
-      first_frame_ms: performance.now() - start,
-      import_log: decoded.header.log,
+      name: staged.name,
+      kind: staged.kind,
+      triangles: staged.triangles,
+      bytes: staged.bytes,
+      rust_ms: staged.timings,
+      open_ms: opened - start,
+      ...timings,
+      total_to_frame_submitted_ms: opened - start + timings.to_frame_submitted_ms,
+      import_log: staged.log,
     });
   }
   return loads;
@@ -133,30 +135,28 @@ async function orbit(viewport: Viewport, seconds: number): Promise<FrameSummary>
   return summarise(intervals);
 }
 
+/**
+ * Each size in both layouts (general triangulation; grid elevations) over both transports
+ * (WebView2 shared buffer; raw bytes over IPC). The mesh is generated and encoded in Rust
+ * first, so only the hand-over, decode and first frame are timed.
+ */
 async function checkTransfer(viewport: Viewport, cellSizes: number[], log: (line: string) => void) {
+  const transports: Transport[] = defaultTransport === 'shared' ? ['shared', 'ipc'] : ['ipc'];
   const rows = [];
   for (const cells of cellSizes) {
-    const staged = await prepareSynthetic(cells);
-    log(`check 3: transferring ${staged.triangles.toLocaleString()} triangles (${(staged.bytes / 1e6).toFixed(0)} MB)`);
-    const start = performance.now();
-    const buffer = await fetchStaged(staged.handle);
-    const received = performance.now();
-    const mesh = viewport.addMesh(decodeMesh(buffer));
-    const built = performance.now();
-    const frame = await viewport.nextFrame();
-    rows.push({
-      cells,
-      triangles: staged.triangles,
-      bytes: staged.bytes,
-      prepare_ms: staged.prepare_ms,
-      ipc_ms: received - start,
-      decode_and_geometry_ms: built - received,
-      upload_and_submit_ms: frame.submitted - built,
-      request_to_frame_submitted_ms: frame.submitted - start,
-      request_to_gpu_done_ms: frame.gpuDone - start,
-    });
-    viewport.removeMesh(mesh);
-    await viewport.nextFrame();
+    for (const kind of ['triangulation', 'grid'] as const) {
+      for (const transport of transports) {
+        const staged = await prepareSynthetic(cells, kind);
+        log(
+          `check 3: ${staged.triangles.toLocaleString()} triangles as ${kind}, ` +
+            `${(staged.bytes / 1e6).toFixed(0)} MB via ${transport}`,
+        );
+        const { group, timings } = await loadStaged(viewport, staged, transport);
+        rows.push({ cells, kind, triangles: staged.triangles, bytes: staged.bytes, encode_ms: staged.timings.encode, ...timings });
+        viewport.removeMesh(group);
+        await viewport.nextFrame();
+      }
+    }
   }
   return rows;
 }

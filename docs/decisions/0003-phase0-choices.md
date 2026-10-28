@@ -25,8 +25,23 @@ Date: 2026-10-28 · Status: accepted (inside the locked stack)
   thinner than a minimum left out, diagonal corner-pinch cells removed so the solid stays manifold,
   vertical walls on the footprint boundary. Every exclusion is logged. Pinch-outs lose the wedge
   inside the last cell; Phase 1 replaces this with proper horizon stacking.
-- **Render buffer:** positions, normals and indices first (4-byte aligned from offset 0), JSON
-  header and its `u32` length last, so the encoder can time itself without copying. Positions are
-  f32 offsets from a scene origin set by the first surface loaded (engine rule 2).
+- **Render buffers (v2, after the first Check 3 run):** arrays first (4-byte aligned from offset 0),
+  JSON header and its `u32` length last, so the encoder can time itself without copying. There are
+  no normals: three shades flat from screen-space derivatives when a geometry has none. Two layouts:
+  - *Triangulation:* spatially compact chunks of at most 65,535 vertices (plan bins of about 100 k
+    triangles) with `u16` indices and f32 positions offset from the scene origin (engine rule 2).
+    About 12 bytes per triangle, down from 24.
+  - *Grid:* only elevations, as `u16` steps of (surface z range / 65,534), in 255 x 255-node tiles.
+    One step for the whole surface means tiles quantise their shared edges identically, so no
+    cracks. The viewport rebuilds x and y from the lattice and the triangles by the same rule as
+    `triangulate_grid` (a Rust test proves the rule matches; the viewport checks the triangle count
+    on every decode). About 1 byte per triangle. The worst-case elevation error is half a step:
+    0.8 mm on a 100 m range, 3.1 mm on a 400 m one. That's display only; the engine keeps f64.
+  - Index buffers are marked `normalized` so three's WebGPU backend uploads them as native
+    `uint16` instead of widening them to `u32`.
+- **Transport: WebView2 shared buffers** (`ICoreWebView2SharedBuffer`, via `webview2-com` 0.39
+  and `windows-core` 0.62, the versions Tauri's wry already uses). Rust copies the buffer once
+  into shared memory and posts it; the page gets an `ArrayBuffer` over the same memory. Raw bytes
+  over Tauri IPC (`ipc::Response`, ~210 MB/s on WebView2) remain the fallback.
 - **Rust minimum 1.90** for the workspace: Tauri 2.12 needs it, and Cargo's MSRV-aware resolver
   otherwise holds Tauri at 2.11 while pnpm installs the 2.12 JS packages.

@@ -3,6 +3,7 @@
 
 mod commands;
 mod render;
+mod shared;
 mod state;
 mod synthetic;
 
@@ -14,7 +15,8 @@ fn main() {
             commands::open_surface,
             commands::clear_surfaces,
             commands::prepare_synthetic,
-            commands::fetch_staged,
+            commands::fetch_mesh_shared,
+            commands::fetch_mesh_ipc,
             commands::build_snap_index,
             commands::snap_ray,
             commands::bench_config,

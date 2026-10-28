@@ -42,8 +42,8 @@ export class Viewport {
   readonly beforeRender = new Set<(now: number) => void>();
   onStats?: (stats: FrameStats) => void;
 
-  private surfaces: THREE.Mesh[] = [];
-  private copies: THREE.Mesh[] = [];
+  private surfaces: THREE.Group[] = [];
+  private copies: THREE.Object3D[] = [];
   private frameWaiters: Array<(timing: FrameTiming) => void> = [];
   private statFrames = 0;
   private statStart = performance.now();
@@ -113,33 +113,59 @@ export class Viewport {
     return this.surfaces.reduce((sum, m) => sum + (m.userData.triangles as number), 0);
   }
 
-  addMesh(decoded: DecodedMesh): THREE.Mesh {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(decoded.positions, 3));
-    geometry.setAttribute('normal', new THREE.BufferAttribute(decoded.normals, 3));
-    geometry.setIndex(new THREE.BufferAttribute(decoded.indices, 1));
-    const bounds = decoded.header.bounds_local;
-    if (bounds) {
-      // Bounds come from the shell, so three never walks millions of positions to find them.
-      geometry.boundingBox = new THREE.Box3(new THREE.Vector3(...bounds.min), new THREE.Vector3(...bounds.max));
-      geometry.boundingSphere = geometry.boundingBox.getBoundingSphere(new THREE.Sphere());
-    }
+  /**
+   * Adds a surface as one mesh per chunk, all sharing one material. Normals are left out: with no
+   * normal attribute three shades flat from screen-space derivatives. `release` runs when the
+   * surface is removed (frees a shared buffer the chunks still view).
+   */
+  addMesh(decoded: DecodedMesh, release?: () => void): THREE.Group {
     const colour = SURFACE_COLOURS[this.surfaces.length % SURFACE_COLOURS.length];
-    const material = new THREE.MeshStandardMaterial({ color: colour, roughness: 0.92, metalness: 0, side: THREE.DoubleSide });
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.name = decoded.header.name;
-    mesh.userData.triangles = decoded.header.triangles;
-    this.surfaces.push(mesh);
-    this.content.add(mesh);
-    return mesh;
+    const material = new THREE.MeshStandardMaterial({
+      color: colour,
+      roughness: 0.92,
+      metalness: 0,
+      side: THREE.DoubleSide,
+      flatShading: true,
+    });
+    const group = new THREE.Group();
+    group.name = decoded.header.name;
+    group.userData.triangles = decoded.header.triangles;
+    group.userData.release = release;
+    // Grid tiles of one size share an index array; share the attribute so it uploads once.
+    const indexAttributes = new Map<Uint16Array, THREE.BufferAttribute>();
+    for (const chunk of decoded.chunks) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(chunk.positions, 3));
+      let index = indexAttributes.get(chunk.indices);
+      if (!index) {
+        index = new THREE.BufferAttribute(chunk.indices, 1);
+        // Without this, three's WebGPU backend widens u16 indices to u32 on upload.
+        index.normalized = true;
+        indexAttributes.set(chunk.indices, index);
+      }
+      geometry.setIndex(index);
+      // Bounds come from the shell, so three never walks the positions to find them.
+      geometry.boundingBox = new THREE.Box3(new THREE.Vector3(...chunk.min), new THREE.Vector3(...chunk.max));
+      geometry.boundingSphere = geometry.boundingBox.getBoundingSphere(new THREE.Sphere());
+      group.add(new THREE.Mesh(geometry, material));
+    }
+    this.surfaces.push(group);
+    this.content.add(group);
+    return group;
   }
 
-  removeMesh(mesh: THREE.Mesh): void {
+  removeMesh(group: THREE.Group): void {
     this.setCopies(1);
-    this.surfaces = this.surfaces.filter((m) => m !== mesh);
-    this.content.remove(mesh);
-    mesh.geometry.dispose();
-    (mesh.material as THREE.Material).dispose();
+    this.surfaces = this.surfaces.filter((s) => s !== group);
+    this.content.remove(group);
+    let material: THREE.Material | undefined;
+    for (const child of group.children) {
+      const mesh = child as THREE.Mesh;
+      mesh.geometry.dispose();
+      material = mesh.material as THREE.Material;
+    }
+    material?.dispose();
+    (group.userData.release as (() => void) | undefined)?.();
   }
 
   /** Tiles `n - 1` copies of the loaded surfaces beside them, sharing GPU buffers. Returns the scene's triangle count. */
@@ -154,7 +180,9 @@ export class Viewport {
       for (let k = 1; k < n; k++) {
         const offset = new THREE.Vector3((k % columns) * size.x * 1.05, Math.floor(k / columns) * size.y * 1.05, 0);
         for (const s of this.surfaces) {
-          const copy = new THREE.Mesh(s.geometry, s.material);
+          // Cloned chunk meshes share the original geometry and material.
+          const copy = new THREE.Group();
+          for (const child of s.children) copy.add((child as THREE.Mesh).clone());
           copy.position.copy(offset);
           copy.userData.triangles = s.userData.triangles;
           this.copies.push(copy);

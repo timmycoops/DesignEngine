@@ -3,6 +3,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { benchConfig, buildSnapIndex, openSurface } from './bridge';
 import { runChecks } from './bench/runChecks';
 import { attachPolylineEditing } from './viewport/editing';
+import { loadStaged } from './viewport/load';
 import { PolylineTool } from './viewport/PolylineTool';
 import { type FrameStats, Viewport } from './viewport/Viewport';
 
@@ -47,16 +48,16 @@ export default function App() {
       setStatus(`loading ${path}…`);
       const start = performance.now();
       try {
-        const mesh = await openSurface(path);
-        viewport.addMesh(mesh);
+        const staged = await openSurface(path);
+        const { timings } = await loadStaged(viewport, staged);
         viewport.fitView();
-        await viewport.nextFrame();
-        const t = mesh.header.timings;
+        const t = staged.timings;
         setStatus(
-          `${mesh.header.name}: ${mesh.header.triangles.toLocaleString()} triangles, ` +
+          `${staged.name}: ${staged.triangles.toLocaleString()} triangles, ` +
             `${(performance.now() - start).toFixed(0)} ms to first frame ` +
-            `(read ${t.read_ms.toFixed(0)}, triangulate ${t.triangulate_ms.toFixed(0)}, encode ${t.encode_ms.toFixed(0)} ms)\n` +
-            mesh.header.log,
+            `(read ${t.read.toFixed(0)}, triangulate ${t.triangulate.toFixed(0)}, encode ${t.encode.toFixed(0)}, ` +
+            `${(staged.bytes / 1e6).toFixed(1)} MB ${staged.kind} via ${timings.transport} ${timings.fetch_ms.toFixed(0)} ms)\n` +
+            staged.log,
         );
       } catch (e) {
         setStatus(`could not open ${path}: ${String(e)}`);
