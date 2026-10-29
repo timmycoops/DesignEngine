@@ -49,10 +49,15 @@ s.save(r"D:\Projects\pit.zdproj")
 Building it, into a project virtual environment:
 
 ```powershell
-py -m venv .venv; .venv\Scripts\activate; python -m pip install "maturin>=1.9.4,<2"
-maturin develop --release -m crates/zd-py/Cargo.toml
-python crates/zd-py/tests/test_session.py
+py -3.13 -m venv .venv
+.venv\Scripts\python -m pip install "maturin>=1.9.4,<2"
+$env:VIRTUAL_ENV = "$PWD\.venv"; .venv\Scripts\maturin develop --release -m crates/zd-py/Cargo.toml
+.venv\Scripts\python crates/zd-py/tests/test_session.py
 ```
+
+The venv's programs are called by path rather than activating it, because PowerShell refuses to
+run the activation script under its default execution policy. Scripts and notebooks then use
+`.venv\Scripts\python`.
 
 ## Evidence
 
