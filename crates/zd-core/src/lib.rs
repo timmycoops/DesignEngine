@@ -20,4 +20,4 @@ pub use mesh::TriMesh;
 pub use object::{AttrValue, Attributes, Body, Layer, Object, ObjectKind, ObjectRef, Polyline, Solid, Surface};
 pub use project::{Applied, AppliedChange, Change, ChangeKind, Project, ProjectError};
 pub use seam::{Fingerprint, GridLink, Horizon, IssueKind, Lattice, SeamModel, StackIssue};
-pub use validity::{MeshValidity, is_zero_area};
+pub use validity::{CrossingCheck, Crossings, MeshValidity, is_zero_area};

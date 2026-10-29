@@ -13,7 +13,7 @@ pub struct MeshValidity {
     pub consistent_winding: bool,
     /// No triangle repeats a vertex or has zero area.
     pub non_degenerate: bool,
-    /// Not computed in Phase 0: it needs a triangle-triangle intersection pass.
+    /// Set by a crossing check ([`Crossings`]); `None` until one has run.
     pub non_self_intersecting: Option<bool>,
     pub boundary_edges: usize,
     pub non_manifold_edges: usize,
@@ -65,6 +65,37 @@ impl MeshValidity {
     /// Closed, manifold and consistently wound: safe to hand to Manifold and to report a volume.
     pub fn is_watertight(&self) -> bool {
         self.closed && self.manifold && self.consistent_winding
+    }
+}
+
+/// How a mesh's crossings were established.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "by", rename_all = "snake_case")]
+pub enum CrossingCheck {
+    /// A search for triangles crossing by more than `tolerance` (m).
+    Search { tolerance: f64 },
+    /// A grid's triangulation, which cannot cross itself: one elevation per node on a regular
+    /// plan lattice.
+    Lattice,
+}
+
+/// The result of a crossing check (decision 0010): pairs of triangles whose insides pass through
+/// each other or fold back onto each other. Crossings are found and never fixed.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Crossings {
+    pub check: CrossingCheck,
+    pub pairs: usize,
+    /// A point where each of the first pairs cross, up to [`Crossings::SITES`].
+    pub at: Vec<[f64; 3]>,
+}
+
+impl Crossings {
+    /// Most crossing sites kept.
+    pub const SITES: usize = 100;
+
+    /// A grid's triangulation: no crossings, by construction.
+    pub fn lattice() -> Self {
+        Crossings { check: CrossingCheck::Lattice, pairs: 0, at: Vec::new() }
     }
 }
 

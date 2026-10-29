@@ -38,7 +38,7 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use serde::{Deserialize, Serialize};
 use zd_core::{
-    Attributes, Body, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, ProjectError, RunId, SeamModel, Solid,
+    Attributes, Body, Crossings, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, ProjectError, RunId, SeamModel, Solid,
     Surface, TriMesh,
 };
 
@@ -122,8 +122,18 @@ struct StoredObject {
 enum StoredBody {
     /// `vertices` rows of the strings file carry this object's index.
     String { closed: bool, vertices: usize },
-    Surface { vertices: String, triangles: String },
-    Solid { vertices: String, triangles: String },
+    Surface {
+        vertices: String,
+        triangles: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        crossings: Option<Crossings>,
+    },
+    Solid {
+        vertices: String,
+        triangles: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        crossings: Option<Crossings>,
+    },
     Grid { origin: [f64; 2], cell_size: [f64; 2], cols: usize, rows: usize, z: String },
     SeamModel { model: SeamModel },
 }
@@ -205,15 +215,21 @@ impl ProjectStore {
                     }
                     Body::String(Polyline { vertices: rows, closed })
                 }
-                StoredBody::Surface { vertices, triangles } => {
-                    let surface = Surface::new(read_mesh(&dir, &vertices, &triangles)?);
+                StoredBody::Surface { vertices, triangles, crossings } => {
+                    let mut surface = Surface::new(read_mesh(&dir, &vertices, &triangles)?);
+                    if let Some(crossings) = crossings {
+                        surface = surface.with_crossings(crossings);
+                    }
                     store.remember_mesh(surface.mesh_arc(), vertices, triangles);
                     Body::Surface(surface)
                 }
-                StoredBody::Solid { vertices, triangles } => {
-                    let solid = Solid::new(read_mesh(&dir, &vertices, &triangles)?).map_err(|_| {
+                StoredBody::Solid { vertices, triangles, crossings } => {
+                    let mut solid = Solid::new(read_mesh(&dir, &vertices, &triangles)?).map_err(|_| {
                         StoreError::Format(format!("solid '{}' is not watertight in {vertices}", stored.name))
                     })?;
+                    if let Some(crossings) = crossings {
+                        solid = solid.with_crossings(crossings);
+                    }
                     store.remember_mesh(solid.mesh_arc(), vertices, triangles);
                     Body::Solid(solid)
                 }
@@ -267,11 +283,11 @@ impl ProjectStore {
                 }
                 Body::Surface(surface) => {
                     let (vertices, triangles) = self.mesh_files(object, surface.mesh_arc(), &mut written, &mut report)?;
-                    StoredBody::Surface { vertices, triangles }
+                    StoredBody::Surface { vertices, triangles, crossings: surface.crossings().cloned() }
                 }
                 Body::Solid(solid) => {
                     let (vertices, triangles) = self.mesh_files(object, solid.mesh_arc(), &mut written, &mut report)?;
-                    StoredBody::Solid { vertices, triangles }
+                    StoredBody::Solid { vertices, triangles, crossings: solid.crossings().cloned() }
                 }
                 Body::Grid(grid) => {
                     let z = self.grid_file(object, grid, &mut written, &mut report)?;

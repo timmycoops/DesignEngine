@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Check, Minus, Trash2, X } from 'lucide-react';
-import { type MeshValidity, type ObjectDetails, objectDetails, type SeamModel, type StackIssue, type Vec3 } from '@/bridge';
+import { type Crossings, type MeshValidity, type ObjectDetails, objectDetails, type SeamModel, type StackIssue, type Vec3 } from '@/bridge';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
 import { Badge } from '@/design-system/ui/badge';
 import { Button } from '@/design-system/ui/button';
@@ -39,15 +39,47 @@ function Flag({ label, value, detail }: { label: string; value: boolean | null; 
   );
 }
 
-function Validity({ v }: { v: MeshValidity }) {
+/** What the crossing check says, in a line. */
+function crossingText(c: Crossings | null): string {
+  if (!c) return 'Not checked: made before crossing checks, or by a cut (a cut checks its inputs itself)';
+  if (c.check.by === 'lattice') return "A grid's triangulation cannot cross itself";
+  const tolerance = `${fmt(c.check.tolerance * 1000, 1)} mm`;
+  return c.pairs === 0 ? `No crossings by more than ${tolerance}` : `${fmt(c.pairs)} pairs of triangles cross by more than ${tolerance}`;
+}
+
+function Validity({ v, crossings }: { v: MeshValidity; crossings: Crossings | null }) {
   return (
     <div className="flex flex-wrap gap-1 px-3 pt-1">
       <Flag label="Closed" value={v.closed} detail={`${fmt(v.boundary_edges)} boundary edges`} />
       <Flag label="Manifold" value={v.manifold} detail={`${fmt(v.non_manifold_edges)} non-manifold edges`} />
       <Flag label="Consistent winding" value={v.consistent_winding} detail={`${fmt(v.inconsistent_edges)} inconsistently wound edges`} />
       <Flag label="Non-degenerate" value={v.non_degenerate} detail={`${fmt(v.degenerate_triangles)} degenerate triangles`} />
-      <Flag label="Non-self-intersecting" value={v.non_self_intersecting} detail="Not computed yet" />
+      <Flag label="Non-self-intersecting" value={v.non_self_intersecting} detail={crossingText(crossings)} />
     </div>
+  );
+}
+
+/** Where a mesh crosses itself, marked in the viewport while it is selected; click one to fly there. */
+function CrossingSites({ crossings }: { crossings: Crossings }) {
+  const { markCrossings, flyTo } = useWorkspace();
+  useEffect(() => {
+    markCrossings(crossings.at);
+    return () => markCrossings([]);
+  }, [crossings, markCrossings]);
+  return (
+    <Section title="Crossings">
+      <p className="px-3 pb-1 text-xs text-destructive">
+        {crossingText(crossings)}. Cuts refuse this mesh until it is fixed at source.
+        {crossings.pairs > crossings.at.length && ` The first ${fmt(crossings.at.length)} are listed.`}
+      </p>
+      <ul className="px-3 text-xs tabular-nums">
+        {crossings.at.map((p, n) => (
+          <li key={n} className="cursor-pointer rounded px-1 hover:bg-selection" title="Show in the viewport" onClick={() => flyTo(p)}>
+            {fmt(p[0], 2)} E {fmt(p[1], 2)} N RL {fmt(p[2], 2)}
+          </li>
+        ))}
+      </ul>
+    </Section>
   );
 }
 
@@ -364,7 +396,8 @@ function Measurements({ d }: { d: ObjectDetails }) {
           <Field label="Vertices">{fmt(m.vertices)}</Field>
           <Field label="Area">{fmt(m.area, 1)} m²</Field>
           {m.kind === 'solid' && <Field label="Volume">{fmt(m.volume, 1)} m³</Field>}
-          <Validity v={m.validity} />
+          <Validity v={m.validity} crossings={m.crossings} />
+          {m.crossings && m.crossings.pairs > 0 && <CrossingSites crossings={m.crossings} />}
         </Section>
       );
     case 'grid': {
