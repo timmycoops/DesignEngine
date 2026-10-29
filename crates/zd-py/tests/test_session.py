@@ -57,6 +57,7 @@ def the_gate_open_list_run_read(tmp, original):
     block = s.object(s.objects(kind="solid")[0]["id"])
     assert abs(block["volume"] - 1000.0) < 1e-6, block["volume"]
     assert block["validity"]["closed"] and block["crossings"]["pairs"] == 0
+    assert block["bounds"] == [[E, N, 30.0], [E + 10.0, N + 20.0, 35.0]], block["bounds"]
     mesh = s.mesh(block["id"])
     assert len(mesh["vertices"]) == 8 and len(mesh["triangles"]) == 12
 

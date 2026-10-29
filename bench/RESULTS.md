@@ -6,7 +6,63 @@ Branch `phase0/stress-test`, run 2026-10-28. Targets are from
 > **Data caveat.** `testdata/golden/` held no pit data for this run, so every check below used the
 > **synthetic pit** (see [Data](#data)). The Phase 0 gate is "all four checks pass on real data",
 > so the gate stays open until the same runs are repeated on a real pit. The harness picks real
-> data up automatically (see [README.md](README.md)).
+> data up automatically (see [README.md](README.md)). Real-data runs began on 2026-10-29: see
+> [Real data](#real-data-golden-pit-2026-10-29).
+
+## Real data (golden pit, 2026-10-29)
+
+A client's open-cut coal pit in Queensland, described by a local `pit.json` (see
+[testdata/golden/README.md](../testdata/golden/README.md)); the data stays local and is not named
+here. Same machine as below; release builds.
+
+| Item | Size |
+|---|---|
+| Topography | Vulcan triangulation, 1.64 M vertices, 3.28 M triangles (stored facing down; turned up by the repair step) |
+| Large surface | Vulcan triangulation, 9.25 M vertices, 18.5 M triangles (holds 11 crossing pairs) |
+| Seams for Check 2 | three parent seams' roof and floor Vulcan grids, 266,031 nodes each at 5 m |
+| Seam model | 15 horizons from the site's stack definition (decision 0007) |
+| Solids | 42,223 relimiting solids (coal and waste, by strip, block, seam and bench) as `.00t` |
+
+### Phase 0 Check 2 on real seams: PASS
+
+Each seam solid (4.2 M triangles) cut by the topography (3.3 M triangles), `cargo bench -p bench
+--bench check2_booleans`:
+
+| Seam | Solid tris | Cut total | Below + above tris | Watertight | Conservation error | Column vs mesh |
+|---|---:|---:|---:|---|---:|---:|
+| A | 4,248,240 | 4.9 s | 6.0 M | yes | 5.2e-13 | 4.6e-6 m³ |
+| B | 4,247,080 | 4.1 s | 4.6 M | yes | 2.6e-13 | 1.5e-6 m³ |
+| C | 4,229,036 | 4.7 s | 5.5 M | yes | 3.9e-14 | 8.9e-7 m³ |
+
+The grids reach past the topography's extent; the uncovered coal reports as above, as the check
+notes.
+
+### Phase 0 Checks 1, 3 and 4 on real data
+
+Pending: `.\bench\golden_app_bench.ps1 testdata\golden\<pit>\pit.json` loads the topography, the
+large surface and the seams' grids (about 25 M real triangles) in the app.
+
+### Phase 1 gate on real data
+
+`bench/phase1_gate.py`, through `zd` (decision 0012):
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Import topography, seam grids and a toe string; every repair logged | topography in 1.1 s (read, repair 0.5 s, crossing search 0.3 s) and 27 seam grids in 55 ms; **toe string pending** (to be exported from Deswik) |
+| 2 | Toe on the topography: insert, move, delete, grade, offset | pass by command (drape added 1,760 edge crossings; edits 0.17 s); digitising in plan view is by hand |
+| 3 | Undo and redo back to empty | pass: 11 runs undone and redone, same 30 objects and revisions |
+| 4 | Save, close, reopen bit for bit | pass: 81 MB saved in 0.66 s, opened in 0.54 s, every coordinate the same |
+| 5 | DXF export read back | pass bit for bit; Deswik's read confirmed by hand |
+| 6 | Seam model from the real grids | pass: 15 horizons, 3 issues flagged, none blocking, 61 ms |
+| 7 | Python: open, list, run, read the log | pass (the script itself) |
+
+### Solids at scale
+
+All 42,223 relimiting solids through `solid.import`: **41,585 imported** (98.5 %) at 3.8 ms each
+once unpacked (2.7 minutes), 955 of them with touching pieces taken apart, 204 M m³ in all. **638
+refused**, each with where: 327 cross themselves, 298 have open edges together with edges of three
+or more faces, 13 have open edges only. These are defects in the source solids; a close-and-repair
+command is next.
 
 ## Summary
 

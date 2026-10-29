@@ -76,7 +76,8 @@ fn a_closed_vulcan_triangulation_imports_as_a_solid() {
     write(&dir.join("open.00t"), &open);
     let error = s.run("solid.import", json!({ "path": dir.join("open.00t").to_string_lossy(), "layer": "coal" })).unwrap_err();
     assert!(error.to_string().starts_with("'open' is not a closed solid after repair: 4 boundary"), "{error}");
-    assert!(error.to_string().contains("so if it is a surface, import it with surface.import"), "{error}");
+    assert!(error.to_string().contains("the first open edge is at 650010.000 7450005.000 RL 250.000"), "{error}");
+    assert!(error.to_string().contains("if it is a surface, import it with surface.import, and if it is a solid, it has gaps to fix at source"), "{error}");
 
     // Two blocks run into each other: closed, but crossing.
     let (a, b) = (block([E, N, 250.0], [10.0, 10.0, 10.0]), block([E + 5.0, N + 5.0, 255.0], [10.0, 10.0, 10.0]));

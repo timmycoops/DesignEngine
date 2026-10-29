@@ -80,13 +80,14 @@ impl PySession {
 
     /// One object with its measurements: a string's points, lengths and area; a surface's counts,
     /// area, validity flags and crossing check; a solid's too, with its volume; a grid's lattice; a
-    /// seam model's horizons and issues.
+    /// seam model's horizons and issues. `bounds` is the lowest and highest corner of its geometry.
     fn object(&self, py: Python<'_>, id: &str) -> PyResult<Py<PyAny>> {
         let project = self.inner.project();
         let object = project.object(object_id(id)?).ok_or_else(|| PyValueError::new_err(format!("no live object {id}")))?;
         let mut value = summary(project, object);
         if let (Value::Object(fields), Value::Object(measured)) = (&mut value, measures(&object.body)) {
             fields.extend(measured);
+            fields.insert("bounds".into(), json!(bounds(&object.body)));
         }
         to_py(py, &value)
     }
@@ -193,6 +194,27 @@ fn summary(project: &Project, object: &Object) -> Value {
         "revision": object.revision,
         "attributes": object.attributes,
     })
+}
+
+/// The lowest and highest corner of the object's geometry, or None (a seam model, or no geometry).
+fn bounds(body: &Body) -> Option<[[f64; 3]; 2]> {
+    let corners = |points: &[[f64; 3]]| {
+        points.iter().fold(None, |acc: Option<[[f64; 3]; 2]>, p| match acc {
+            None => Some([*p, *p]),
+            Some([lo, hi]) => Some([[0, 1, 2].map(|i| lo[i].min(p[i])), [0, 1, 2].map(|i| hi[i].max(p[i]))]),
+        })
+    };
+    match body {
+        Body::String(line) => corners(&line.vertices),
+        Body::Surface(s) => s.mesh().bounds().map(|b| [b.min, b.max]),
+        Body::Solid(s) => s.mesh().bounds().map(|b| [b.min, b.max]),
+        Body::Grid(g) => {
+            let [lo, hi] = g.z_range()?;
+            let far = [g.origin[0] + (g.cols - 1) as f64 * g.cell_size[0], g.origin[1] + (g.rows - 1) as f64 * g.cell_size[1]];
+            Some([[g.origin[0], g.origin[1], lo], [far[0], far[1], hi]])
+        }
+        Body::SeamModel(_) => None,
+    }
 }
 
 /// The measurements Properties shows in the app.

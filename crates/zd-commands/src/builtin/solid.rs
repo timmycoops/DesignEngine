@@ -100,7 +100,9 @@ impl Command for ImportSolid {
                 let line = describe_dxf_faces(&dxf);
                 (dxf.mesh, line)
             }
-            SurfaceImport::Grid(_) => return Err(CommandError::Invalid(format!("{} is a grid: import it as a surface", p.path))),
+            SurfaceImport::Grid(_) | SurfaceImport::VulcanGrid(_) => {
+                return Err(CommandError::Invalid(format!("{} is a grid: import it as a surface", p.path)));
+            }
         };
         let name = p.name.clone().unwrap_or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "solid".into()));
         let (mesh, mut messages, crossings) = repaired(&read, read_log, &p.path, p.weld_tolerance)?;
@@ -112,7 +114,13 @@ impl Command for ImportSolid {
             let (apart, separation) = separate_touching_edges(&mesh);
             let pieces = if validity.boundary_edges == 0 && separation.edges > 0 { split_patches(&apart) } else { Vec::new() };
             if pieces.is_empty() || !pieces.iter().all(|piece| piece.validity().is_watertight()) {
-                let hint = if validity.boundary_edges > 0 { "; it has open edges, so if it is a surface, import it with surface.import" } else { "" };
+                let hint = match first_open_edge(&mesh) {
+                    Some(at) => format!(
+                        "; the first open edge is at {}: if it is a surface, import it with surface.import, and if it is a solid, it has gaps to fix at source",
+                        site(&at)
+                    ),
+                    None => String::new(),
+                };
                 return Err(CommandError::Invalid(format!(
                     "'{name}' is not a closed solid after repair: {} boundary, {} non-manifold and {} inconsistently wound edges{hint} ({})",
                     validity.boundary_edges,
@@ -148,6 +156,21 @@ impl Command for ImportSolid {
         };
         Ok(outcome.message(volume))
     }
+}
+
+/// The middle of the first edge only one triangle has, in triangle order.
+fn first_open_edge(mesh: &TriMesh) -> Option<[f64; 3]> {
+    let mut faces: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
+    for t in &mesh.triangles {
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            *faces.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    mesh.triangles.iter().flat_map(|t| (0..3).map(move |k| (t[k], t[(k + 1) % 3]))).find(|&(a, b)| faces[&(a.min(b), a.max(b))] == 1).map(|(a, b)| {
+        let (p, q) = (mesh.vertices[a as usize], mesh.vertices[b as usize]);
+        [0, 1, 2].map(|i| 0.5 * (p[i] + q[i]))
+    })
 }
 
 /// Refuses a mesh that crosses itself: crossings are fixed at source, never here.

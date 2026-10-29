@@ -35,11 +35,14 @@ pub use xyz::{GridImport, XyzLog, XyzOptions, parse_xyz_grid, read_xyz_grid, wri
 pub enum SurfaceImport {
     Triangulation(DxfDrawing),
     Vulcan(VulcanTriangulation),
+    /// A Vulcan elevation grid (roof, floor or topography).
+    VulcanGrid(VulcanGrid),
     Grid(GridImport),
 }
 
 /// Reads a surface by file extension: `.dxf` as the triangulation of its 3DFACEs and polyface
-/// meshes; `.00t` as a Vulcan triangulation; `.xyz`, `.csv`, `.txt` and `.asc` as a regular grid.
+/// meshes; `.00t` as a Vulcan triangulation; `.srg`, `.sfg` and `.tpg` as a Vulcan elevation grid (roof,
+/// floor, topography); `.xyz`, `.csv`, `.txt` and `.asc` as a regular grid.
 pub fn read_surface(path: &Path) -> Result<SurfaceImport, IoError> {
     let ext = path
         .extension()
@@ -49,6 +52,7 @@ pub fn read_surface(path: &Path) -> Result<SurfaceImport, IoError> {
     match ext.as_str() {
         "dxf" => Ok(SurfaceImport::Triangulation(read_dxf(path)?)),
         "00t" => Ok(SurfaceImport::Vulcan(read_vulcan_triangulation(path)?)),
+        "srg" | "sfg" | "tpg" => Ok(SurfaceImport::VulcanGrid(read_vulcan_grid(path)?)),
         "xyz" | "csv" | "txt" | "asc" => Ok(SurfaceImport::Grid(read_xyz_grid(path, &XyzOptions::default())?)),
         _ => Err(IoError::Unsupported(format!("no surface reader for '.{ext}' files"))),
     }

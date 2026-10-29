@@ -258,5 +258,12 @@ s
     let refused = s.run("export.dxf", json!({ "objects": [toe, grids[0]], "path": dir.join("g.dxf").to_string_lossy() })).unwrap_err();
     assert_eq!(refused.to_string(), "grids and seam models are not exported to DXF: U sf");
     assert!(!dir.join("g.dxf").exists());
+
+    // A Vulcan elevation grid also imports as a surface: two triangles per cell, uncrossable.
+    let record = s.run("surface.import", json!({ "path": dir.join("pitu.srg").to_string_lossy(), "layer": "roofs" })).unwrap();
+    assert_eq!(record.messages[0], "Vulcan grid 2 x 2 nodes at 10 x 10 m: 4 live, 0 null");
+    let Body::Surface(roof) = &s.project().object(created(&record)[0]).unwrap().body else { panic!("not a surface") };
+    assert_eq!((roof.mesh().triangle_count(), roof.validity().non_self_intersecting), (2, Some(true)));
+    assert!(s.run("solid.import", json!({ "path": dir.join("pitu.srg").to_string_lossy(), "layer": "x" })).unwrap_err().to_string().contains("is a grid"));
     std::fs::remove_dir_all(&dir).unwrap();
 }
