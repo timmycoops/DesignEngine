@@ -37,6 +37,8 @@ pub enum FieldType {
         #[serde(rename = "object_kind")]
         kind: ObjectKind,
     },
+    /// A list of objects by id, of the kinds the command's description names.
+    Objects,
     /// A real number with its unit ("m", "%", "deg").
     Number { unit: &'static str },
     Integer,
