@@ -12,7 +12,14 @@ the way back into Deswik, which is confirmed working (decision 0009).
 - `surface.import` reads `.00t` beside DXF and grids; the mesh passes through the repair step and the
   crossing check (decision 0010).
 - `solid.import` (new) makes a solid from a closed triangulation in a `.00t` or DXF file, through the
-  same step, and refuses one that is not watertight or crosses itself, saying why and where.
+  same step, and refuses one with an open piece or a crossing, saying why and where.
+- Where closed pieces touch along an edge (four faces on it), the edge is taken apart (agreed with
+  Tim, 2026-10-29): the faces round it are sorted by angle and paired across each wedge of solid
+  material, as their outward winding shows, and each end of the edge gets a copy of its vertex for
+  each fan of faces that results. No coordinate moves. Separate pieces then become a solid each
+  (`<name> part 1`, ...); a piece touching itself stays whole, now manifold. Edges whose faces do not
+  pair up (fins) are left as they are and the file is refused. Pieces that do not touch at all stay
+  one solid, as the file has them.
 - In the app, the Surface import takes `.00t`, and a Solids button imports as many files as are
   picked, one run each.
 
@@ -47,10 +54,14 @@ not finite. Non-zero trailing triangle words and the properties block are counte
 - Through the registry: a sheet with every other triangle reversed imports as a surface facing up,
   coordinates exact; a box imports as a solid of 1,000 m³; an open box and two boxes run together are
   refused with the reason.
-- The client's files (opt-in tests, `ZD_VULCAN_TRI_DIR`, `ZD_VULCAN_TRI_TIMING`): 53 of the 55 coal
-  solids import as solids; the other two are each two or three closed pieces meeting along an edge
-  with four faces, refused as non-manifold with the edge's location. The 18.5-million-triangle
-  surface holds 11 crossing pairs, flagged with where the first is.
+- Taking edges apart: a ring of cells with one corner missing (its two neighbours touch along an
+  edge) is taken apart there with two vertex copies and stays one watertight piece of the right
+  volume; two cells meeting along an edge come apart into two; three fins are left alone.
+- The client's files (opt-in tests, `ZD_VULCAN_TRI_DIR`, `ZD_VULCAN_TRI_TIMING`): all 55 coal solids
+  import. 53 are single closed solids; in one of the others two pieces touch along an edge (three
+  solids result, one of 0.1 m³), and in the other the main piece touches itself along an edge beside
+  a separate small piece (two solids). The 18.5-million-triangle surface holds 11 crossing pairs,
+  flagged with where the first is.
 - Still to do: `ZD_VULCAN_TRI` with `ZD_VULCAN_TRI_DXF` compares a file with Deswik's DXF export of it
   vertex for vertex and triangle for triangle, and `ZD_VULCAN_TRI_VOLUME` checks a solid's volume
   against Deswik's to 0.001 m³. This waits on those exports.

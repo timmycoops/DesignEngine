@@ -90,6 +90,37 @@ fn a_closed_vulcan_triangulation_imports_as_a_solid() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[test]
+fn closed_pieces_meeting_along_an_edge_import_as_a_solid_each() {
+    let dir = scratch("pieces");
+    // Two 10 m cubes meeting along one vertical edge, written with their own vertices: the weld
+    // joins the edge's two corners, which leaves it with four faces.
+    let (a, b) = (block([E, N, 250.0], [10.0, 10.0, 10.0]), block([E + 10.0, N + 10.0, 250.0], [10.0, 10.0, 10.0]));
+    let mut pair = a.clone();
+    pair.vertices.extend(&b.vertices);
+    pair.triangles.extend(b.triangles.iter().map(|t| t.map(|i| i + 8)));
+    write(&dir.join("pair.00t"), &pair);
+    let mut s = Session::with_builtins();
+    let record = s.run("solid.import", json!({ "path": dir.join("pair.00t").to_string_lossy(), "layer": "coal" })).unwrap();
+    assert!(
+        record.messages.iter().any(|m| m == "1 edges where closed pieces touch taken apart (2 vertices copied, no coordinate moved): 2 closed pieces, each a solid of its own"),
+        "{:?}",
+        record.messages
+    );
+    assert_eq!(record.messages.last().unwrap(), "volumes: pair part 1 1000.000 m3, pair part 2 1000.000 m3");
+    let names: Vec<String> = created(&record).iter().map(|&id| s.project().object(id).unwrap().name.clone()).collect();
+    assert_eq!(names, ["pair part 1", "pair part 2"]);
+
+    // With one piece open, nothing is made.
+    let mut open = pair.clone();
+    open.triangles.truncate(22);
+    write(&dir.join("half.00t"), &open);
+    let error = s.run("solid.import", json!({ "path": dir.join("half.00t").to_string_lossy(), "layer": "coal" })).unwrap_err();
+    assert!(error.to_string().starts_with("'half' is not a closed solid after repair"), "{error}");
+    assert_eq!(s.project().objects().count(), 2);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Opt-in, against real files kept out of the repository: `ZD_VULCAN_TRI` names a `.00t` and
 /// `ZD_VULCAN_TRI_DXF` the same triangulation exported to DXF by Deswik. Every vertex must match,
 /// and so must the triangles as sets of corner coordinates; for a solid, `ZD_VULCAN_TRI_VOLUME`
@@ -148,8 +179,8 @@ fn timing_a_real_surface_import() {
     }
 }
 
-/// Opt-in: every `.00t` in the folder `ZD_VULCAN_TRI_DIR` through `solid.import`, one line each, and
-/// a count of those refused with why.
+/// Opt-in: every `.00t` in the folder `ZD_VULCAN_TRI_DIR` through `solid.import`, one line each, a
+/// count of those refused with why, and the solids made.
 #[test]
 #[ignore = "needs ZD_VULCAN_TRI_DIR"]
 fn every_solid_in_a_folder() {
@@ -170,5 +201,5 @@ fn every_solid_in_a_folder() {
             }
         }
     }
-    println!("{made} solids made, {refused} refused");
+    println!("{made} files imported, {refused} refused; {} solids in the project", s.project().objects().count());
 }

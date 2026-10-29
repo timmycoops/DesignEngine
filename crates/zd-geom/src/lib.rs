@@ -21,7 +21,7 @@ pub use error::GeomError;
 pub use grid::{SampledGrid, sample_surface_on_grid, triangulate_grid};
 pub use halfspace::{CapMethod, ClosedHalfSpace, Side, close_surface_to_halfspace};
 pub use crossings::find_crossings;
-pub use orient::{OrientLog, SITES, boundary_loops, orient_patches, orient_upward};
+pub use orient::{OrientLog, SITES, Separation, boundary_loops, orient_patches, orient_upward, separate_touching_edges, split_patches};
 pub use repair::{RepairLog, repair_mesh};
 pub use ray::SurfaceRayCaster;
 pub use seam::{SeamLog, SeamSolid, build_seam_solid};
