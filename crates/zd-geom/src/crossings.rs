@@ -61,7 +61,7 @@ fn search(mesh: &TriMesh, tolerance: f64, tile_count: Option<usize>) -> Crossing
                             if j as usize > i
                                 && let Some(at) = crossing(triangles[i], triangles[j as usize], local, tolerance)
                             {
-                                hits.push((j, at));
+                                hits.push((j, at.site()));
                             }
                         }
                         hits.sort_by_key(|h| h.0);
@@ -78,6 +78,60 @@ fn search(mesh: &TriMesh, tolerance: f64, tile_count: Option<usize>) -> Crossing
     let pairs = parts.iter().map(|p| p.0).sum();
     let at = parts.into_iter().flat_map(|p| p.1).take(Crossings::SITES).map(|p| add(p, origin)).collect();
     Crossings { check, pairs, at }
+}
+
+/// How two triangles cross: along a segment (in different planes), or overlapping in one plane or
+/// folded back on one edge, with a point in the overlap.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Crossing {
+    Segment([P; 2]),
+    Overlap(P),
+}
+
+impl Crossing {
+    fn site(&self) -> P {
+        match *self {
+            Crossing::Segment([a, b]) => mid(a, b),
+            Crossing::Overlap(p) => p,
+        }
+    }
+}
+
+/// Every crossing pair in the mesh with how it crosses, in world coordinates, in triangle order. For
+/// the self-union, on one core (solids are small).
+pub(crate) fn crossing_list(mesh: &TriMesh, tolerance: f64) -> Vec<(u32, u32, Crossing)> {
+    let tolerance = tolerance.max(0.0);
+    let Some(bounds) = mesh.bounds() else { return Vec::new() };
+    let origin = bounds.centre().map(f64::round);
+    let local: Vec<P> = mesh.vertices.iter().map(|p| sub(*p, origin)).collect();
+    let boxes: Vec<Aabb> = mesh
+        .triangles
+        .iter()
+        .map(|t| {
+            let [a, b, c] = t.map(|i| local[i as usize]);
+            let lo = [0, 1, 2].map(|k| a[k].min(b[k]).min(c[k]) - tolerance);
+            let hi = [0, 1, 2].map(|k| a[k].max(b[k]).max(c[k]) + tolerance);
+            Aabb::new(Vector::new(lo[0], lo[1], lo[2]), Vector::new(hi[0], hi[1], hi[2]))
+        })
+        .collect();
+    let tiles = Tiles::build(&boxes, 1);
+    let mut found = Vec::new();
+    for (i, query) in boxes.iter().enumerate() {
+        let mut hits: Vec<(u32, Crossing)> = tiles
+            .overlapping(query)
+            .filter(|&j| j as usize > i)
+            .filter_map(|j| crossing(mesh.triangles[i], mesh.triangles[j as usize], &local, tolerance).map(|c| (j, c)))
+            .collect();
+        hits.sort_by_key(|h| h.0);
+        found.extend(hits.into_iter().map(|(j, c)| {
+            let world = match c {
+                Crossing::Segment([a, b]) => Crossing::Segment([add(a, origin), add(b, origin)]),
+                Crossing::Overlap(p) => Crossing::Overlap(add(p, origin)),
+            };
+            (i as u32, j, world)
+        }));
+    }
+    found
 }
 
 /// Meshes smaller than this get one BVH; larger ones one per core.
@@ -146,8 +200,8 @@ fn split(mut part: Vec<(f64, f64, u32)>, count: usize) -> Vec<Vec<(f64, f64, u32
     })
 }
 
-/// Where two triangles cross, if they do: the middle of the piece they share.
-fn crossing(ta: [u32; 3], tb: [u32; 3], v: &[P], tol: f64) -> Option<P> {
+/// How two triangles cross, if they do: the piece they share, or a point where they overlap.
+fn crossing(ta: [u32; 3], tb: [u32; 3], v: &[P], tol: f64) -> Option<Crossing> {
     let shared = ta.iter().filter(|i| tb.contains(i)).count();
     if shared == 3 {
         return None;
@@ -172,10 +226,10 @@ fn crossing(ta: [u32; 3], tb: [u32; 3], v: &[P], tol: f64) -> Option<P> {
         let side = |p: P| dot(na, cross(sub(w, u), sub(p, u))) / norm(sub(w, u));
         let (sa, sb) = (side(a[a3]), side(b[b3]));
         let folded = (sa > tol && sb > tol) || (sa < -tol && sb < -tol);
-        return folded.then(|| mid(centroid(a), centroid(b)));
+        return folded.then(|| Crossing::Overlap(mid(centroid(a), centroid(b))));
     }
     if coplanar {
-        return overlap_in_plane(a, na, b, tol);
+        return overlap_in_plane(a, na, b, tol).map(Crossing::Overlap);
     }
     let straddles = |d: &[f64; 3]| d.iter().any(|x| *x > tol) && d.iter().any(|x| *x < -tol);
     if !straddles(&from_a) || !straddles(&from_b) {
@@ -191,7 +245,7 @@ fn crossing(ta: [u32; 3], tb: [u32; 3], v: &[P], tol: f64) -> Option<P> {
     let ((b_lo, pb_lo), (b_hi, pb_hi)) = span_on_line(b, from_a, line, tol)?;
     let (lo, p_lo) = if a_lo >= b_lo { (a_lo, pa_lo) } else { (b_lo, pb_lo) };
     let (hi, p_hi) = if a_hi <= b_hi { (a_hi, pa_hi) } else { (b_hi, pb_hi) };
-    (hi - lo > tol).then(|| mid(p_lo, p_hi))
+    (hi - lo > tol).then_some(Crossing::Segment([p_lo, p_hi]))
 }
 
 /// The piece of triangle `t` lying in the other triangle's plane (`d`: its corners measured from

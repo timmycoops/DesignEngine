@@ -165,6 +165,26 @@ fn repair_closes_fins_cracks_and_small_holes_and_notes_them_on_the_solid() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[test]
+fn repair_resolves_crossings_into_the_solid_enclosed() {
+    let dir = scratch("union");
+    // Two 10 m cubes overlapping by 5 m on each axis, as one file: 2,000 m³ as read, 1,875 enclosed.
+    let (a, b) = (block([E, N, 250.0], [10.0, 10.0, 10.0]), block([E + 5.0, N + 5.0, 255.0], [10.0, 10.0, 10.0]));
+    let mut both = a.clone();
+    both.vertices.extend(&b.vertices);
+    both.triangles.extend(b.triangles.iter().map(|t| t.map(|i| i + 8)));
+    write(&dir.join("overlap.00t"), &both);
+    let mut s = Session::with_builtins();
+    assert!(s.run("solid.import", json!({ "path": dir.join("overlap.00t").to_string_lossy(), "layer": "coal" })).unwrap_err().to_string().contains("crosses itself"));
+    let record = s.run("solid.import", json!({ "path": dir.join("overlap.00t").to_string_lossy(), "layer": "coal", "repair": true })).unwrap();
+    assert!(record.messages[2].starts_with("closing: ") && record.messages[2].contains("crossings resolved") && record.messages[2].contains("volume 2000.000 m3 as read, 1875.000 m3 enclosed, -125.000 m3)"), "{}", record.messages[2]);
+    assert!(record.messages[3].starts_with("crossings: none"), "{}", record.messages[3]);
+    assert_eq!(record.messages.last().unwrap(), "volume 1875.000 m3");
+    let object = s.project().object(created(&record)[0]).unwrap();
+    assert_eq!(object.attributes["repair_volume_change_m3"], zd_core::AttrValue::Number(-125.0));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Opt-in, against real files kept out of the repository: `ZD_VULCAN_TRI` names a `.00t` and
 /// `ZD_VULCAN_TRI_DXF` the same triangulation exported to DXF by Deswik. Every vertex must match,
 /// and so must the triangles as sets of corner coordinates; for a solid, `ZD_VULCAN_TRI_VOLUME`

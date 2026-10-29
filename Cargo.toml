@@ -30,6 +30,7 @@ arrow-schema = "60"
 # float_roundtrip: run logs must give back the exact f64 coordinates they were given.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 parry3d-f64 = "0.31.1"
+spade = "2.15.1"
 
 # Build the C++ Manifold kernel and the BVH code optimised even in dev builds:
 # a debug Manifold makes every test and `tauri dev` session crawl.
