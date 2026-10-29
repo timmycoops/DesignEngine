@@ -104,8 +104,9 @@ impl Command for ImportSolid {
         let (mesh, messages, crossings) = repaired(&read, read_log, &p.path, p.weld_tolerance)?;
         let validity = mesh.validity();
         if !validity.is_watertight() {
+            let hint = if validity.boundary_edges > 0 { "; it has open edges, so if it is a surface, import it with surface.import" } else { "" };
             return Err(CommandError::Invalid(format!(
-                "'{name}' is not a closed solid after repair: {} boundary, {} non-manifold and {} inconsistently wound edges ({})",
+                "'{name}' is not a closed solid after repair: {} boundary, {} non-manifold and {} inconsistently wound edges{hint} ({})",
                 validity.boundary_edges,
                 validity.non_manifold_edges,
                 validity.inconsistent_edges,
