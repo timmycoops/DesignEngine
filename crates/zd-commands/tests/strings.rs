@@ -130,3 +130,54 @@ fn elevation_reverse_and_close_then_undo_to_empty_and_save() {
     assert_eq!(s.project().objects().count(), 0);
     assert!(s.project().layers().is_empty());
 }
+
+#[test]
+fn split_then_join_gives_back_the_string_and_undo_restores_both() {
+    let mut s = Session::with_builtins();
+    let id = toe(&mut s);
+    let split = s.run("string.split", json!({ "string": id, "at": 1 })).unwrap();
+    assert_eq!(split.messages, ["split at vertex 2: 2 and 2 vertices"]);
+    let second = created(&split)[0];
+    assert_eq!(s.project().object(second).unwrap().name, "toe part 2");
+    assert_eq!(local(&vertices(&s, second)), [[100.0, 0.0, 50.0], [100.0, 100.0, 50.0]]);
+
+    // Joining the part back on shares the meeting vertex, keeps the toe and deletes the part.
+    let joined = s.run("string.join", json!({ "string": id, "other": second })).unwrap();
+    assert_eq!(joined.messages, ["joined 'toe part 2' on: 3 vertices"]);
+    assert_eq!(local(&vertices(&s, id)), [[0.0, 0.0, 50.0], [100.0, 0.0, 50.0], [100.0, 100.0, 50.0]]);
+    assert!(s.project().object(second).is_none());
+    s.undo();
+    assert!(s.project().object(second).is_some() && vertices(&s, id).len() == 2, "undo brings the part back");
+    assert!(s.run("string.join", json!({ "string": id, "other": id })).is_err());
+    assert!(s.run("string.split", json!({ "string": id, "at": 0 })).is_err(), "not at an end");
+}
+
+#[test]
+fn a_gap_is_bridged_and_reported_when_joining() {
+    let mut s = Session::with_builtins();
+    let id = toe(&mut s);
+    let far = [[E + 103.0, N + 104.0, 50.0], [E + 103.0, N + 200.0, 50.0]];
+    let other = created(&s.run("string.create", json!({ "name": "spur", "layer": "design", "points": far })).unwrap())[0];
+    let record = s.run("string.join", json!({ "string": id, "other": other })).unwrap();
+    assert_eq!(record.messages, ["joined 'spur' on, bridging a 5.000 m gap: 5 vertices"]);
+}
+
+#[test]
+fn smoothing_then_filtering_through_the_registry() {
+    let mut s = Session::with_builtins();
+    let id = toe(&mut s);
+    let smoothed = s.run("string.smooth", json!({ "string": id, "spacing": 10.0 })).unwrap();
+    assert_eq!(smoothed.messages, ["smoothed at 10 m: 21 vertices, was 3"]);
+    let pts = vertices(&s, id);
+    assert_eq!((local(&pts)[0], local(&pts)[10], local(&pts)[20]), ([0.0, 0.0, 50.0], [100.0, 0.0, 50.0], [100.0, 100.0, 50.0]));
+    // The curve passes through the corner vertex, so it swings just outside it on both legs.
+    assert!(local(&pts)[..10].iter().any(|p| p[1] < 0.0) && local(&pts)[11..].iter().any(|p| p[0] > 100.0));
+
+    // Filter it back at 20 m: the curve is within 20 m of the chord ends, so few vertices remain.
+    let filtered = s.run("string.filter", json!({ "string": id, "tolerance": 20.0 })).unwrap();
+    assert!(filtered.messages[0].starts_with("filtered at 20 m: "), "{:?}", filtered.messages);
+    assert!(vertices(&s, id).len() < 21);
+    assert!(s.run("string.filter", json!({ "string": id, "tolerance": -1.0 })).is_err());
+    while s.undo().is_some() {}
+    assert_eq!(s.project().objects().count(), 0);
+}

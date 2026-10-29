@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use zd_core::{Attributes, Body, Change, ObjectId, ObjectKind, Polyline};
-use zd_geom::{Corner, OffsetSide, drape_string, grade_string, offset_string, triangulate_grid};
+use zd_geom::{
+    Corner, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, smooth_string, split_string, triangulate_grid,
+};
 
 use super::finite;
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
@@ -519,5 +521,166 @@ impl Command for SetClosed {
         let edited = Polyline { vertices: line.vertices.clone(), closed: p.closed };
         check_line(&edited)?;
         Ok(Outcome::new(vec![Change::revise_body(object, Body::String(edited))]))
+    }
+}
+
+/// `string.split`: an open string split at an inner vertex: it keeps the first part, and the second
+/// (from that vertex on) becomes a new string on the same layer. A closed string opens there instead.
+pub struct SplitString;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SplitStringParams {
+    pub string: ObjectId,
+    pub at: usize,
+}
+
+impl Command for SplitString {
+    type Params = SplitStringParams;
+    const NAME: &'static str = "string.split";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Split a string at a vertex",
+            inputs: vec![string_input()],
+            params: vec![Field::new("at", FieldType::Integer, "The vertex to split at")],
+            outputs: vec![Field::object("second", ObjectKind::String, "The second part (none when a closed string opens)")],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let (object, line) = inputs.string(p.string)?;
+        let (first, second) = split_string(line, p.at).map_err(|e| CommandError::Invalid(e.to_string()))?;
+        let mut changes = vec![Change::revise_body(object, Body::String(first.clone()))];
+        let message = match second {
+            None => format!("opened at vertex {}", p.at + 1),
+            Some(second) => {
+                let message = format!("split at vertex {}: {} and {} vertices", p.at + 1, first.vertices.len(), second.vertices.len());
+                changes.push(Change::Create {
+                    name: format!("{} part 2", object.name),
+                    layer: inputs.layer_name(object),
+                    attributes: object.attributes.clone(),
+                    body: Body::String(second),
+                });
+                message
+            }
+        };
+        Ok(Outcome::new(changes).message(message))
+    }
+}
+
+/// `string.join`: another open string joined onto this one at their nearest ends, in this one's
+/// direction. This string keeps the result and the other is deleted (undo brings it back). Ends
+/// that do not meet are bridged by a segment, and the gap is reported.
+pub struct JoinStrings;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JoinStringsParams {
+    pub string: ObjectId,
+    pub other: ObjectId,
+}
+
+impl Command for JoinStrings {
+    type Params = JoinStringsParams;
+    const NAME: &'static str = "string.join";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Join another string onto this one",
+            inputs: vec![string_input(), Field::object("other", ObjectKind::String, "The string to join on; it is deleted")],
+            params: vec![],
+            outputs: vec![],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        if p.string == p.other {
+            return Err(CommandError::Invalid("a string cannot be joined to itself; close it instead".into()));
+        }
+        let (object, line) = inputs.string(p.string)?;
+        let (other, other_line) = inputs.string(p.other)?;
+        let (joined, gap) = join_strings(line, other_line).map_err(|e| CommandError::Invalid(e.to_string()))?;
+        let message = if gap == 0.0 {
+            format!("joined '{}' on: {} vertices", other.name, joined.vertices.len())
+        } else {
+            format!("joined '{}' on, bridging a {gap:.3} m gap: {} vertices", other.name, joined.vertices.len())
+        };
+        Ok(Outcome::new(vec![Change::revise_body(object, Body::String(joined)), Change::Delete { id: other.id, base: other.revision }]).message(message))
+    }
+}
+
+fn default_spacing() -> f64 {
+    5.0
+}
+
+/// `string.smooth`: a smooth curve through every vertex (centripetal Catmull-Rom), with vertices
+/// added so no step is longer than `spacing` in plan. The original vertices stay where they are. A
+/// new revision of the string.
+pub struct SmoothString;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SmoothStringParams {
+    pub string: ObjectId,
+    #[serde(default = "default_spacing")]
+    pub spacing: f64,
+}
+
+impl Command for SmoothString {
+    type Params = SmoothStringParams;
+    const NAME: &'static str = "string.smooth";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Smooth a string through its vertices",
+            inputs: vec![string_input()],
+            params: vec![Field::new("spacing", FieldType::Number { unit: "m" }, "Longest step along the curve in plan; 5 m by default")],
+            outputs: vec![],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let (object, line) = inputs.string(p.string)?;
+        let smoothed = smooth_string(line, p.spacing).map_err(|e| CommandError::Invalid(e.to_string()))?;
+        let message = format!("smoothed at {} m: {} vertices, was {}", p.spacing, smoothed.vertices.len(), line.vertices.len());
+        Ok(Outcome::new(vec![Change::revise_body(object, Body::String(smoothed))]).message(message))
+    }
+}
+
+/// `string.filter`: vertices within `tolerance` metres (in 3D) of the line through their kept
+/// neighbours removed (Douglas-Peucker); the ends of an open string stay. A new revision.
+pub struct FilterString;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilterStringParams {
+    pub string: ObjectId,
+    pub tolerance: f64,
+}
+
+impl Command for FilterString {
+    type Params = FilterStringParams;
+    const NAME: &'static str = "string.filter";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Remove vertices within a tolerance of the line",
+            inputs: vec![string_input()],
+            params: vec![Field::new("tolerance", FieldType::Number { unit: "m" }, "Largest 3D distance a removed vertex may be from the line")],
+            outputs: vec![],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let (object, line) = inputs.string(p.string)?;
+        let filtered = filter_string(line, p.tolerance).map_err(|e| CommandError::Invalid(e.to_string()))?;
+        let removed = line.vertices.len() - filtered.vertices.len();
+        let message = format!("filtered at {} m: {removed} of {} vertices removed", p.tolerance, line.vertices.len());
+        Ok(Outcome::new(vec![Change::revise_body(object, Body::String(filtered))]).message(message))
     }
 }

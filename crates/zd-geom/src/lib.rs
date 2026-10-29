@@ -22,4 +22,4 @@ pub use orient::{boundary_loops, orient_upward};
 pub use ray::SurfaceRayCaster;
 pub use seam::{SeamLog, SeamSolid, build_seam_solid};
 pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_nodes, suggest_seam_tree};
-pub use string::{Corner, DrapeLog, OffsetSide, drape_string, grade_string, offset_string};
+pub use string::{Corner, DrapeLog, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, smooth_string, split_string};

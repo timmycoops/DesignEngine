@@ -131,6 +131,8 @@ export default function App() {
   }, []);
 
   /** Shows the horizon an issue is on and flies to its worst node. */
+  const typeVertex = useCallback(async (text: string) => (stringsRef.current ? stringsRef.current.addTyped(text) : 'The viewport is not ready'), []);
+
   const focusIssue = useCallback(
     (id: string, horizon: string, issue: number) => {
       const view = seamRef.current;
@@ -204,6 +206,7 @@ export default function App() {
           const ray = created.rayFromNdc(nx, ny);
           return snapRay(ray.origin, ray.direction);
         },
+        snapDown: (x, y) => snapRay([x, y, 1e6], [0, 0, -1]),
         status: (text) => setStatus({ text }),
         layer: () => layerRef.current,
       });
@@ -385,8 +388,10 @@ export default function App() {
       seamView,
       showSeamHorizon,
       focusIssue,
+      drawing: mode === 'draw',
+      typeVertex,
     }),
-    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, run, seamView, showSeamHorizon, focusIssue],
+    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, run, seamView, showSeamHorizon, focusIssue, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';

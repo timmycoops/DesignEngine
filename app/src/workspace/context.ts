@@ -24,6 +24,10 @@ export interface Workspace {
   showSeamHorizon: (id: string, horizon: string) => void;
   /** Shows the horizon an issue is on and flies the view to its worst node. */
   focusIssue: (id: string, horizon: string, issue: number) => void;
+  /** In Draw string mode. */
+  drawing: boolean;
+  /** Adds a typed vertex while drawing (`E N [RL]` or `@distance<bearing [RL|grade%]`); an error to show, or null. */
+  typeVertex: (text: string) => Promise<string | null>;
 }
 
 export const WorkspaceContext = createContext<Workspace | null>(null);

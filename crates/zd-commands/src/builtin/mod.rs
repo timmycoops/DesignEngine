@@ -1,5 +1,5 @@
-//! The engine's own commands. Strings: create, vertex edits, grade, offset, drape, elevation,
-//! reverse and close (workstream 6, slice 1); split, join, smooth and filter come next.
+//! The engine's own commands. Strings (workstream 6): create, vertex edits, grade, offset, drape,
+//! elevation, reverse, close, split, join, smooth and filter.
 
 mod grid;
 mod layer;
@@ -15,9 +15,10 @@ pub use object::{DeleteObject, ObjectParams, RenameObject, RenameParams};
 pub use seam::{BuildSeamModel, BuildSeamModelParams, SuggestSeamDefinition, SuggestSeamDefinitionParams};
 pub use solid::{CutBySurface, CutBySurfaceParams, SolidFromMesh};
 pub use string::{
-    CornerParam, CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, DrapeString, DrapeStringParams, InsertVertex,
-    InsertVertexParams, MoveVertex, MoveVertexParams, OffsetString, OffsetStringParams, ReverseString, SetClosed, SetClosedParams,
-    SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam, StringParams,
+    CornerParam, CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, DrapeString, DrapeStringParams, FilterString,
+    FilterStringParams, InsertVertex, InsertVertexParams, JoinStrings, JoinStringsParams, MoveVertex, MoveVertexParams, OffsetString,
+    OffsetStringParams, ReverseString, SetClosed, SetClosedParams, SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam,
+    SmoothString, SmoothStringParams, SplitString, SplitStringParams, StringParams,
 };
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
 
@@ -37,6 +38,10 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(SetElevation);
     registry.register(ReverseString);
     registry.register(SetClosed);
+    registry.register(SplitString);
+    registry.register(JoinStrings);
+    registry.register(SmoothString);
+    registry.register(FilterString);
     registry.register(ImportSurface);
     registry.register(SurfaceFromMesh);
     registry.register(SolidFromMesh);

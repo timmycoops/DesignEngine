@@ -188,6 +188,202 @@ pub fn offset_string(line: &Polyline, distance: f64, side: OffsetSide, corner: C
     Ok(out)
 }
 
+/// A string split at vertex `at`. An open string splits into two that share that vertex (`at`
+/// must be an inner vertex); a closed string opens there instead, starting and ending on it.
+pub fn split_string(line: &Polyline, at: usize) -> Result<(Polyline, Option<Polyline>), GeomError> {
+    let n = line.vertices.len();
+    if line.closed {
+        if at >= n {
+            return Err(GeomError::InvalidInput(format!("vertex {at} is not in a {n}-vertex string")));
+        }
+        let mut vertices: Vec<[f64; 3]> = line.vertices[at..].iter().chain(&line.vertices[..at]).copied().collect();
+        vertices.push(line.vertices[at]);
+        return Ok((Polyline { vertices, closed: false }, None));
+    }
+    if at == 0 || at + 1 >= n {
+        return Err(GeomError::InvalidInput("an open string splits at an inner vertex, not at an end".into()));
+    }
+    let first = Polyline { vertices: line.vertices[..=at].to_vec(), closed: false };
+    let second = Polyline { vertices: line.vertices[at..].to_vec(), closed: false };
+    Ok((first, Some(second)))
+}
+
+/// Two open strings joined at their nearest ends (in plan), keeping `a`'s direction: `b` is added
+/// after `a`'s end or before its start, reversed if need be. Ends that meet exactly share a vertex;
+/// otherwise a segment bridges the gap, whose 3D length comes back with the joined string.
+pub fn join_strings(a: &Polyline, b: &Polyline) -> Result<(Polyline, f64), GeomError> {
+    if a.closed || b.closed {
+        return Err(GeomError::InvalidInput("only open strings can be joined".into()));
+    }
+    let (Some(&a0), Some(&a1), Some(&b0), Some(&b1)) = (a.vertices.first(), a.vertices.last(), b.vertices.first(), b.vertices.last()) else {
+        return Err(GeomError::InvalidInput("a string to join has no vertices".into()));
+    };
+    let plan = |p: [f64; 3], q: [f64; 3]| (p[0] - q[0]).hypot(p[1] - q[1]);
+    // (a's end used, b's end used): after a's end take b forwards from its start, and so on.
+    let options = [(true, true, plan(a1, b0)), (true, false, plan(a1, b1)), (false, false, plan(a0, b1)), (false, true, plan(a0, b0))];
+    let &(after, from_start, _) = options.iter().min_by(|x, y| x.2.total_cmp(&y.2)).expect("four options");
+    let mut tail: Vec<[f64; 3]> = b.vertices.clone();
+    let mut vertices = a.vertices.clone();
+    let (meet, gap) = if after {
+        if !from_start {
+            tail.reverse();
+        }
+        let gap = distance3(a1, tail[0]);
+        (gap == 0.0, gap)
+    } else {
+        if from_start {
+            tail.reverse();
+        }
+        let gap = distance3(*tail.last().expect("vertices"), a0);
+        (gap == 0.0, gap)
+    };
+    if after {
+        vertices.extend(tail.into_iter().skip(usize::from(meet)));
+    } else {
+        let keep = tail.len() - usize::from(meet);
+        tail.truncate(keep);
+        tail.extend(vertices);
+        vertices = tail;
+    }
+    Ok((Polyline { vertices, closed: false }, gap))
+}
+
+/// A smooth curve through every vertex (a centripetal Catmull-Rom spline, which neither loops nor
+/// cusps), with vertices added so no step is longer than `spacing` in plan. The original vertices
+/// stay exactly where they are; elevations follow the same curve.
+pub fn smooth_string(line: &Polyline, spacing: f64) -> Result<Polyline, GeomError> {
+    if !(spacing.is_finite() && spacing > 0.0) {
+        return Err(GeomError::InvalidInput("the smoothing spacing must be more than zero".into()));
+    }
+    let mut points: Vec<[f64; 3]> = Vec::with_capacity(line.vertices.len());
+    for &v in &line.vertices {
+        if points.last() != Some(&v) {
+            points.push(v);
+        }
+    }
+    if line.closed && points.len() > 1 && points.first() == points.last() {
+        points.pop();
+    }
+    let n = points.len();
+    if n < if line.closed { 3 } else { 2 } {
+        return Err(GeomError::InvalidInput("the string needs at least two distinct vertices (three if closed)".into()));
+    }
+    // Neighbours beyond the ends of an open string are reflections, so the curve leaves each end
+    // heading along its end segment.
+    let at = |i: isize| -> [f64; 3] {
+        if line.closed {
+            points[i.rem_euclid(n as isize) as usize]
+        } else if i < 0 {
+            let (p, q) = (points[0], points[1]);
+            [2.0 * p[0] - q[0], 2.0 * p[1] - q[1], 2.0 * p[2] - q[2]]
+        } else if i as usize >= n {
+            let (p, q) = (points[n - 1], points[n - 2]);
+            [2.0 * p[0] - q[0], 2.0 * p[1] - q[1], 2.0 * p[2] - q[2]]
+        } else {
+            points[i as usize]
+        }
+    };
+    let spans = if line.closed { n } else { n - 1 };
+    let mut vertices = Vec::new();
+    for i in 0..spans {
+        let i = i as isize;
+        let [p0, p1, p2, p3] = [at(i - 1), at(i), at(i + 1), at(i + 2)];
+        let steps = ((p2[0] - p1[0]).hypot(p2[1] - p1[1]) / spacing).ceil().max(1.0) as usize;
+        vertices.push(p1);
+        for k in 1..steps {
+            vertices.push(catmull_rom(p0, p1, p2, p3, k as f64 / steps as f64));
+        }
+    }
+    if !line.closed {
+        vertices.push(points[n - 1]);
+    }
+    Ok(Polyline { vertices, closed: line.closed })
+}
+
+/// The centripetal Catmull-Rom curve between `p1` and `p2` at fraction `u`, by the Barry-Goldman
+/// construction with knots spaced by the square root of each chord length.
+fn catmull_rom(p0: [f64; 3], p1: [f64; 3], p2: [f64; 3], p3: [f64; 3], u: f64) -> [f64; 3] {
+    let knot = |a: [f64; 3], b: [f64; 3]| distance3(a, b).sqrt().max(1e-12);
+    let t0 = 0.0;
+    let t1 = t0 + knot(p0, p1);
+    let t2 = t1 + knot(p1, p2);
+    let t3 = t2 + knot(p2, p3);
+    let t = t1 + u * (t2 - t1);
+    let mix = |a: [f64; 3], b: [f64; 3], ta: f64, tb: f64| -> [f64; 3] {
+        let (wa, wb) = ((tb - t) / (tb - ta), (t - ta) / (tb - ta));
+        [wa * a[0] + wb * b[0], wa * a[1] + wb * b[1], wa * a[2] + wb * b[2]]
+    };
+    let (a1, a2, a3) = (mix(p0, p1, t0, t1), mix(p1, p2, t1, t2), mix(p2, p3, t2, t3));
+    let (b1, b2) = (mix(a1, a2, t0, t2), mix(a2, a3, t1, t3));
+    mix(b1, b2, t1, t2)
+}
+
+/// Vertices that lie within `tolerance` metres (in 3D, so grades keep) of the line through the
+/// vertices kept either side are removed (Douglas-Peucker). The ends of an open string stay; a closed
+/// string keeps its first vertex and the one farthest from it.
+pub fn filter_string(line: &Polyline, tolerance: f64) -> Result<Polyline, GeomError> {
+    if !(tolerance.is_finite() && tolerance >= 0.0) {
+        return Err(GeomError::InvalidInput("the filter tolerance must be zero or more".into()));
+    }
+    let v = &line.vertices;
+    let n = v.len();
+    if n < 3 {
+        return Ok(line.clone());
+    }
+    let mut keep = vec![false; n];
+    if line.closed {
+        let far = (1..n).max_by(|&i, &j| distance3(v[0], v[i]).total_cmp(&distance3(v[0], v[j]))).expect("three or more vertices");
+        keep[0] = true;
+        keep[far] = true;
+        douglas_peucker(v, 0, far, tolerance, &mut keep);
+        // The second half runs from the far vertex back round to the first.
+        let ring: Vec<[f64; 3]> = v[far..].iter().chain(std::iter::once(&v[0])).copied().collect();
+        let mut ring_keep = vec![false; ring.len()];
+        douglas_peucker(&ring, 0, ring.len() - 1, tolerance, &mut ring_keep);
+        for (k, kept) in ring_keep.iter().enumerate().take(ring.len() - 1) {
+            keep[far + k] |= *kept;
+        }
+    } else {
+        keep[0] = true;
+        keep[n - 1] = true;
+        douglas_peucker(v, 0, n - 1, tolerance, &mut keep);
+    }
+    let vertices: Vec<[f64; 3]> = v.iter().zip(&keep).filter(|(_, k)| **k).map(|(p, _)| *p).collect();
+    if line.closed && vertices.len() < 3 {
+        return Ok(line.clone());
+    }
+    Ok(Polyline { vertices, closed: line.closed })
+}
+
+/// Marks the vertex between `first` and `last` farthest from their chord if it is beyond
+/// `tolerance`, and recurses either side of it. Iterative, so long strings cannot overflow the stack.
+fn douglas_peucker(v: &[[f64; 3]], first: usize, last: usize, tolerance: f64, keep: &mut [bool]) {
+    let mut stack = vec![(first, last)];
+    while let Some((a, b)) = stack.pop() {
+        if b <= a + 1 {
+            continue;
+        }
+        let (worst, d) = (a + 1..b).map(|i| (i, distance_to_segment3(v[i], v[a], v[b]))).max_by(|x, y| x.1.total_cmp(&y.1)).expect("inner vertices");
+        if d > tolerance {
+            keep[worst] = true;
+            stack.push((a, worst));
+            stack.push((worst, b));
+        }
+    }
+}
+
+fn distance3(a: [f64; 3], b: [f64; 3]) -> f64 {
+    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+}
+
+fn distance_to_segment3(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> f64 {
+    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let ap = [p[0] - a[0], p[1] - a[1], p[2] - a[2]];
+    let len = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+    let t = if len > 0.0 { ((ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / len).clamp(0.0, 1.0) } else { 0.0 };
+    distance3(p, [a[0] + t * ab[0], a[1] + t * ab[1], a[2] + t * ab[2]])
+}
+
 /// What draping did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DrapeLog {
@@ -576,5 +772,93 @@ mod tests {
         let on_surface: Vec<&[f64; 3]> = dense.vertices.iter().filter(|v| v[0] - E <= 100.0 && v[1] - N <= 100.0).collect();
         assert!(on_surface.iter().all(|v| (v[2] - z(v)).abs() < 1e-9));
         assert!(on_surface.windows(2).all(|w| w[1][0] >= w[0][0]), "in order from the start");
+    }
+
+    #[test]
+    fn an_open_string_splits_into_two_sharing_the_vertex() {
+        let l = line(&[[0.0, 0.0, 1.0], [10.0, 0.0, 2.0], [20.0, 0.0, 3.0], [30.0, 0.0, 4.0]], false);
+        let (first, second) = split_string(&l, 2).unwrap();
+        assert_eq!(first.vertices, l.vertices[..3]);
+        assert_eq!(second.unwrap().vertices, l.vertices[2..]);
+        assert!(split_string(&l, 0).is_err() && split_string(&l, 3).is_err(), "not at an end");
+    }
+
+    #[test]
+    fn a_closed_string_opens_where_it_is_split() {
+        let (open, rest) = split_string(&square(), 2).unwrap();
+        assert!(rest.is_none() && !open.closed);
+        assert_eq!(local(&open), [[100.0, 100.0], [0.0, 100.0], [0.0, 0.0], [100.0, 0.0], [100.0, 100.0]]);
+    }
+
+    #[test]
+    fn strings_join_at_their_nearest_ends_in_the_first_ones_direction() {
+        let a = line(&[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]], false);
+        // b runs back towards a's end: it is reversed and added after it, sharing the meeting vertex.
+        let b = line(&[[30.0, 0.0, 0.0], [20.0, 0.0, 0.0], [10.0, 0.0, 0.0]], false);
+        let (joined, gap) = join_strings(&a, &b).unwrap();
+        assert_eq!(gap, 0.0);
+        assert_eq!(local(&joined), [[0.0, 0.0], [10.0, 0.0], [20.0, 0.0], [30.0, 0.0]]);
+        // c lies 3-4-5 before a's start: added in front, with the gap bridged and reported.
+        let c = line(&[[-20.0, 0.0, 0.0], [-3.0, -4.0, 0.0]], false);
+        let (joined, gap) = join_strings(&a, &c).unwrap();
+        assert_eq!(gap, 5.0);
+        assert_eq!(local(&joined), [[-20.0, 0.0], [-3.0, -4.0], [0.0, 0.0], [10.0, 0.0]]);
+        assert!(join_strings(&a, &square()).is_err(), "closed strings do not join");
+    }
+
+    #[test]
+    fn smoothing_passes_through_every_vertex_and_keeps_straights_straight() {
+        let l = line(&[[0.0, 0.0, 0.0], [100.0, 0.0, 10.0], [200.0, 0.0, 20.0]], false);
+        let s = smooth_string(&l, 10.0).unwrap();
+        assert_eq!(s.vertices.len(), 21, "a vertex every 10 m");
+        assert_eq!((s.vertices[0], s.vertices[10], s.vertices[20]), (l.vertices[0], l.vertices[1], l.vertices[2]));
+        // Collinear in 3D, so the curve stays on the line and keeps its 10 % grade.
+        assert!(s.vertices.iter().all(|v| (v[1] - N).abs() < 1e-6 && (v[2] - 0.1 * (v[0] - E)).abs() < 1e-6));
+        let steps = s.vertices.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).fold(0.0, f64::max);
+        assert!(steps <= 10.0 + 1e-6);
+    }
+
+    #[test]
+    fn a_smoothed_square_rounds_its_corners_and_stays_closed() {
+        let s = smooth_string(&square(), 5.0).unwrap();
+        assert!(s.closed);
+        assert_eq!(s.vertices.len(), 80, "four 100 m sides at 5 m");
+        for corner in &square().vertices {
+            assert!(s.vertices.contains(corner), "keeps {corner:?}");
+        }
+        // Bulges outward between corners, but stays inside the circle through them (pi x 5,000 m2).
+        let circle = std::f64::consts::PI * 5_000.0;
+        assert!(area(&s) > 10_000.0 && area(&s) < circle, "{}", area(&s));
+        let centre = |v: &[f64; 3]| (v[0] - E - 50.0).hypot(v[1] - N - 50.0);
+        assert!(s.vertices.iter().all(|v| centre(v) <= 50.0 * 2f64.sqrt() + 1e-6));
+        assert!(smooth_string(&square(), 0.0).is_err());
+    }
+
+    #[test]
+    fn filtering_drops_vertices_on_the_line_and_keeps_the_grade() {
+        // On a straight grade in 3D, every inner vertex goes.
+        let straight = line(&(0..=10).map(|i| [i as f64 * 10.0, 0.0, i as f64]).collect::<Vec<_>>(), false);
+        let f = filter_string(&straight, 1e-6).unwrap();
+        assert_eq!(f.vertices, [straight.vertices[0], straight.vertices[10]]);
+        // A 1 m zigzag survives a 0.5 m tolerance and goes at 2 m.
+        let zig = line(&(0..=10).map(|i| [i as f64 * 10.0, if i % 2 == 1 { 1.0 } else { 0.0 }, 0.0]).collect::<Vec<_>>(), false);
+        assert_eq!(filter_string(&zig, 0.5).unwrap().vertices.len(), 11);
+        assert_eq!(filter_string(&zig, 2.0).unwrap().vertices.len(), 2);
+        // A step in elevation alone is kept: the filter works in 3D.
+        let step = line(&[[0.0, 0.0, 0.0], [50.0, 0.0, 5.0], [100.0, 0.0, 0.0]], false);
+        assert_eq!(filter_string(&step, 1.0).unwrap().vertices.len(), 3);
+    }
+
+    #[test]
+    fn a_closed_filter_keeps_the_corners() {
+        // The square with a vertex in the middle of each side: the mid vertices go, the corners stay.
+        let mut dense = Vec::new();
+        for w in [[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]].windows(2).chain(std::iter::once(&[[0.0, 100.0], [0.0, 0.0]][..])) {
+            dense.push([w[0][0], w[0][1], 50.0]);
+            dense.push([(w[0][0] + w[1][0]) / 2.0, (w[0][1] + w[1][1]) / 2.0, 50.0]);
+        }
+        let f = filter_string(&line(&dense, true), 1e-6).unwrap();
+        assert!(f.closed);
+        assert_eq!(local(&f), [[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]]);
     }
 }
