@@ -29,10 +29,9 @@ export class IssueMarkers {
   }
 
   private place = (): void => {
-    const eye = this.viewport.camera.position;
     for (let i = 0; i < this.points.length; i++) {
       this.dummy.position.copy(this.points[i]);
-      this.dummy.scale.setScalar(eye.distanceTo(this.points[i]) * 0.009);
+      this.dummy.scale.setScalar(this.viewport.pixelSize(this.points[i]) * 9);
       this.dummy.updateMatrix();
       this.mesh.setMatrixAt(i, this.dummy.matrix);
     }

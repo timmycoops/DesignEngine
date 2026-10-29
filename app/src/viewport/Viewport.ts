@@ -54,14 +54,21 @@ export class Viewport {
   private raycaster = new THREE.Raycaster();
   private resizeObserver: ResizeObserver;
 
+  /** Plan view: looking straight down, north up, no perspective. */
+  readonly orthographic = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100_000);
+  private plan = false;
+  /** The 3D view's direction from its target, kept while in plan view. */
+  private savedDirection = new THREE.Vector3(0.45, -0.75, 0.6).normalize();
+
   private constructor(
     readonly renderer: THREE.WebGPURenderer,
-    readonly camera: THREE.PerspectiveCamera,
+    readonly perspective: THREE.PerspectiveCamera,
     readonly controls: OrbitControls,
     readonly backend: string,
     readonly adapter: string,
     private host: HTMLElement,
   ) {
+    this.orthographic.up.set(0, 1, 0);
     this.scene.background = new THREE.Color(0x161e29);
     this.scene.add(new THREE.HemisphereLight(0xdfe8f2, 0x3a3a30, 1.4));
     const sun = new THREE.DirectionalLight(0xffffff, 1.8);
@@ -101,6 +108,63 @@ export class Viewport {
       ? info.description || [info.vendor, info.architecture, info.device].filter(Boolean).join(' ') || 'unknown'
       : 'no WebGPU adapter';
     return new Viewport(renderer, camera, controls, backend, adapterName, host);
+  }
+
+  /** The camera in use: the 3D one, or the plan one. */
+  get camera(): THREE.PerspectiveCamera | THREE.OrthographicCamera {
+    return this.plan ? this.orthographic : this.perspective;
+  }
+
+  get planView(): boolean {
+    return this.plan;
+  }
+
+  /**
+   * Switches between 3D and plan view over the same spot at about the same scale. Plan view pans
+   * with the left button and zooms; it does not rotate.
+   */
+  setPlanView(on: boolean): void {
+    if (on === this.plan) return;
+    const target = this.controls.target.clone();
+    const tan = Math.tan(THREE.MathUtils.degToRad(this.perspective.fov / 2));
+    if (on) {
+      const offset = this.perspective.position.clone().sub(target);
+      this.savedDirection.copy(offset).normalize();
+      this.setPlanHalfHeight(offset.length() * tan);
+      this.orthographic.zoom = 1;
+      this.placePlanCamera(target);
+      this.controls.object = this.orthographic;
+      this.controls.enableRotate = false;
+      this.controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+    } else {
+      const half = (this.orthographic.top - this.orthographic.bottom) / 2 / this.orthographic.zoom;
+      this.perspective.position.copy(target).addScaledVector(this.savedDirection, half / tan);
+      this.controls.object = this.perspective;
+      this.controls.enableRotate = true;
+      this.controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+    }
+    this.plan = on;
+    this.controls.update();
+  }
+
+  /** World units per screen pixel at `p`: keeps handles and markers one size on screen. */
+  pixelSize(p: THREE.Vector3): number {
+    const h = this.renderer.domElement.clientHeight || 1;
+    if (this.plan) return (this.orthographic.top - this.orthographic.bottom) / this.orthographic.zoom / h;
+    return (this.perspective.position.distanceTo(p) * 2 * Math.tan(THREE.MathUtils.degToRad(this.perspective.fov / 2))) / h;
+  }
+
+  private setPlanHalfHeight(half: number): void {
+    const { clientWidth: w, clientHeight: h } = this.host;
+    const aspect = w > 0 && h > 0 ? w / h : 1;
+    Object.assign(this.orthographic, { left: -half * aspect, right: half * aspect, top: half, bottom: -half });
+    this.orthographic.updateProjectionMatrix();
+  }
+
+  /** The plan camera straight above `target`, high enough to see everything below it. */
+  private placePlanCamera(target: THREE.Vector3): void {
+    this.orthographic.position.set(target.x, target.y, target.z + Math.max(this.sceneRadius * 4, 1000));
+    this.orthographic.lookAt(target);
   }
 
   /** Triangles in the visible surfaces and copies. */
@@ -202,20 +266,32 @@ export class Viewport {
     const box = new THREE.Box3().setFromObject(this.content);
     if (box.isEmpty()) return;
     const centre = box.getCenter(new THREE.Vector3());
-    this.sceneRadius = box.getSize(new THREE.Vector3()).length() / 2;
-    const direction = new THREE.Vector3(0.45, -0.75, 0.6).normalize();
-    this.camera.position.copy(centre).addScaledVector(direction, this.sceneRadius * 1.9);
+    const size = box.getSize(new THREE.Vector3());
+    this.sceneRadius = size.length() / 2;
     this.controls.target.copy(centre);
+    if (this.plan) {
+      const { clientWidth: w, clientHeight: h } = this.host;
+      this.setPlanHalfHeight(Math.max(size.y / 2, size.x / 2 / (w > 0 && h > 0 ? w / h : 1)) * 1.1);
+      this.orthographic.zoom = 1;
+      this.placePlanCamera(centre);
+    } else {
+      const direction = new THREE.Vector3(0.45, -0.75, 0.6).normalize();
+      this.perspective.position.copy(centre).addScaledVector(direction, this.sceneRadius * 1.9);
+    }
     this.controls.update();
   }
 
   /** Moves the view to look at `point` from the current direction, no farther than `distance`. */
   focusOn(point: Vec3, distance = 600): void {
     const target = new THREE.Vector3(...point);
-    const offset = this.camera.position.clone().sub(this.controls.target);
-    offset.setLength(Math.min(offset.length(), distance));
+    const offset = this.perspective.position.clone().sub(this.controls.target);
     this.controls.target.copy(target);
-    this.camera.position.copy(target).add(offset);
+    if (this.plan) {
+      this.placePlanCamera(target);
+    } else {
+      offset.setLength(Math.min(offset.length(), distance));
+      this.perspective.position.copy(target).add(offset);
+    }
     this.controls.update();
   }
 
@@ -281,9 +357,15 @@ export class Viewport {
   /** Near and far planes follow the orbit distance; the reversed depth buffer keeps precision. */
   private updateClipPlanes(): void {
     const distance = this.camera.position.distanceTo(this.controls.target);
-    this.camera.near = Math.max(0.05, distance / 5000);
-    this.camera.far = distance + this.sceneRadius * 6;
-    this.camera.updateProjectionMatrix();
+    if (this.plan) {
+      this.orthographic.near = 0.1;
+      this.orthographic.far = distance + this.sceneRadius * 6;
+      this.orthographic.updateProjectionMatrix();
+      return;
+    }
+    this.perspective.near = Math.max(0.05, distance / 5000);
+    this.perspective.far = distance + this.sceneRadius * 6;
+    this.perspective.updateProjectionMatrix();
   }
 
   private tickStats(now: number): void {
@@ -303,7 +385,8 @@ export class Viewport {
     const { clientWidth: w, clientHeight: h } = this.host;
     if (w === 0 || h === 0) return;
     this.renderer.setSize(w, h);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this.perspective.aspect = w / h;
+    this.perspective.updateProjectionMatrix();
+    this.setPlanHalfHeight((this.orthographic.top - this.orthographic.bottom) / 2);
   }
 }

@@ -56,6 +56,8 @@ interface VertexRow {
   x: number;
   y: number;
   z: number;
+  /** Grade to the next vertex (%), along plan length; null at the end of an open string. */
+  grade: number | null;
 }
 
 const vertexHelper = columnHelper<VertexRow>();
@@ -64,11 +66,151 @@ const vertexColumns = vertexHelper.columns([
   vertexHelper.accessor('x', { header: 'Easting', cell: (c) => <span className="tabular-nums">{coord(c.getValue())}</span> }),
   vertexHelper.accessor('y', { header: 'Northing', cell: (c) => <span className="tabular-nums">{coord(c.getValue())}</span> }),
   vertexHelper.accessor('z', { header: 'RL', cell: (c) => <span className="tabular-nums">{coord(c.getValue())}</span> }),
+  vertexHelper.accessor('grade', {
+    header: 'Grade to next',
+    cell: (c) => {
+      const g = c.getValue();
+      return <span className="text-muted-foreground tabular-nums">{g === null ? '' : `${fmt(g, 2)}%`}</span>;
+    },
+  }),
 ]);
 
-function Vertices({ points }: { points: Vec3[] }) {
-  const rows = useMemo(() => points.map(([x, y, z], i) => ({ index: i + 1, x, y, z })), [points]);
+function Vertices({ points, closed }: { points: Vec3[]; closed: boolean }) {
+  const rows = useMemo(
+    () =>
+      points.map(([x, y, z], i) => {
+        const next = i + 1 < points.length ? points[i + 1] : closed ? points[0] : null;
+        const run = next ? Math.hypot(next[0] - x, next[1] - y) : 0;
+        return { index: i + 1, x, y, z, grade: next && run > 0 ? (100 * (next[2] - z)) / run : null };
+      }),
+    [points, closed],
+  );
   return <DataTable data={rows} columns={vertexColumns} rowId={(r) => String(r.index)} />;
+}
+
+/** One row of the string tools: a label, its inputs, and the button that runs the command. */
+function ToolRow({ label, children, onApply, disabled }: { label: string; children?: ReactNode; onApply: () => void; disabled?: boolean }) {
+  return (
+    <div className="flex items-center gap-1 px-3 py-0.5 text-xs">
+      <span className="w-14 shrink-0 text-muted-foreground">{label}</span>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{children}</div>
+      <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={disabled} onClick={onApply}>
+        Apply
+      </Button>
+    </div>
+  );
+}
+
+function SmallInput({ value, onChange, placeholder, title }: { value: string; onChange: (v: string) => void; placeholder: string; title: string }) {
+  return (
+    <Input
+      className="h-6 w-16 px-1 text-xs tabular-nums"
+      value={value}
+      placeholder={placeholder}
+      title={title}
+      aria-label={title}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
+/** Two-way choice as a pair of small buttons. */
+function Choice<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
+  return (
+    <span className="inline-flex rounded border">
+      {options.map(([v, label]) => (
+        <button key={v} className={`px-1.5 py-0.5 ${v === value ? 'bg-selection text-primary' : 'text-muted-foreground'}`} onClick={() => onChange(v)}>
+          {label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * Commands on the selected string. Vertex numbers are as listed below (from 1). Grade, RL, drape,
+ * reverse and close write a new revision; offset makes a new string. All undo.
+ */
+function StringTools({ id, closed }: { id: string; closed: boolean }) {
+  const { run, summary } = useWorkspace();
+  const [from, setFrom] = useState('1');
+  const [to, setTo] = useState('');
+  const [grade, setGrade] = useState('');
+  const [startRl, setStartRl] = useState('');
+  const [distance, setDistance] = useState('');
+  const [side, setSide] = useState<'left' | 'right'>('right');
+  const [corners, setCorners] = useState<'mitre' | 'round'>('mitre');
+  const [level, setLevel] = useState('');
+  const [surface, setSurface] = useState<string | null>(null);
+  const [crossings, setCrossings] = useState(true);
+
+  const num = (s: string) => (s.trim() === '' ? null : Number(s));
+  const ok = (v: number | null) => v !== null && Number.isFinite(v);
+  const optional = (v: number | null) => v === null || Number.isFinite(v);
+  const surfaces = (summary?.objects ?? []).filter((o) => o.drawn && (o.kind === 'surface' || o.kind === 'grid'));
+  const target = surfaces.find((s) => s.id === surface) ?? surfaces[0];
+
+  const gradeParams = () => {
+    const params: Record<string, unknown> = { string: id, from: Math.round(num(from) ?? 1) - 1, grade: num(grade) };
+    if (num(to) !== null) params.to = Math.round(num(to)!) - 1;
+    if (num(startRl) !== null) params.rl = num(startRl);
+    return params;
+  };
+
+  return (
+    <>
+      <ToolRow label="Grade" disabled={!ok(num(grade)) || !ok(num(from)) || !optional(num(to)) || !optional(num(startRl))} onApply={() => void run('string.set_grade', gradeParams())}>
+        <SmallInput value={grade} onChange={setGrade} placeholder="%" title="Grade in %, positive uphill along the string" />
+        <span className="text-muted-foreground">from</span>
+        <SmallInput value={from} onChange={setFrom} placeholder="#" title="Start vertex" />
+        <span className="text-muted-foreground">to</span>
+        <SmallInput value={to} onChange={setTo} placeholder="end" title="End vertex (the last by default)" />
+        <span className="text-muted-foreground">at RL</span>
+        <SmallInput value={startRl} onChange={setStartRl} placeholder="own" title="RL at the start vertex (its own by default)" />
+      </ToolRow>
+      <ToolRow
+        label="Offset"
+        disabled={!(ok(num(distance)) && num(distance)! > 0)}
+        onApply={() => void run('string.offset', { string: id, distance: num(distance), side, corners })}
+      >
+        <SmallInput value={distance} onChange={setDistance} placeholder="m" title="Horizontal distance (m)" />
+        <Choice value={side} onChange={setSide} options={[['left', 'Left'], ['right', 'Right']]} />
+        <Choice value={corners} onChange={setCorners} options={[['mitre', 'Mitre'], ['round', 'Round']]} />
+      </ToolRow>
+      <ToolRow label="Set RL" disabled={!ok(num(level))} onApply={() => void run('string.set_elevation', { string: id, rl: num(level) })}>
+        <SmallInput value={level} onChange={setLevel} placeholder="RL" title="Every vertex to this RL" />
+      </ToolRow>
+      <ToolRow label="Drape" disabled={!target} onApply={() => target && void run('string.drape', { string: id, surface: target.id, crossings })}>
+        {surfaces.length === 0 ? (
+          <span className="text-muted-foreground">no surface loaded</span>
+        ) : (
+          <select
+            className="h-6 max-w-40 rounded border bg-background px-1 text-xs"
+            value={target?.id}
+            onChange={(e) => setSurface(e.target.value)}
+            aria-label="Surface to drape onto"
+          >
+            {surfaces.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        )}
+        <label className="flex items-center gap-1 text-muted-foreground" title="Add vertices where the string crosses the surface's triangle edges">
+          <input type="checkbox" checked={crossings} onChange={(e) => setCrossings(e.target.checked)} /> follow
+        </label>
+      </ToolRow>
+      <div className="flex gap-1 px-3 py-1">
+        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => void run('string.reverse', { string: id })}>
+          Reverse
+        </Button>
+        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => void run('string.set_closed', { string: id, closed: !closed })}>
+          {closed ? 'Open' : 'Close'}
+        </Button>
+      </div>
+    </>
+  );
 }
 
 interface HorizonRow {
@@ -165,8 +307,11 @@ function Measurements({ d }: { d: ObjectDetails }) {
             <Field label="Length (plan)">{fmt(m.plan_length, 2)} m</Field>
             {m.plan_area !== null && <Field label="Area (plan)">{fmt(m.plan_area, 1)} m²</Field>}
           </Section>
+          <Section title="String tools">
+            <StringTools id={d.id} closed={m.closed} />
+          </Section>
           <Section title="Vertices">
-            <Vertices points={m.points} />
+            <Vertices points={m.points} closed={m.closed} />
           </Section>
         </>
       );
