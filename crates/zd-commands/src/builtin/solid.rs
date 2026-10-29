@@ -2,7 +2,12 @@ use serde::{Deserialize, Serialize};
 use zd_core::{Attributes, Body, Change, CrossingCheck, Crossings, ObjectId, ObjectKind, Solid, TriMesh};
 use zd_geom::cut_solid_by_surface;
 
-use super::surface::{MeshParams, check_crossings, default_tolerance, describe, mesh_params, mm, site};
+use std::path::Path;
+
+use zd_io::{SurfaceImport, read_surface};
+
+use super::exchange::describe_dxf_faces;
+use super::surface::{MeshParams, check_crossings, default_tolerance, describe, describe_vulcan, mesh_params, mm, repaired, site};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
 /// `solid.from_mesh`: a solid from vertices and triangles given inline; refused unless watertight
@@ -39,6 +44,81 @@ impl Command for SolidFromMesh {
         .message(flags)
         .message(checked)
         .message(volume))
+    }
+}
+
+/// `solid.import`: a solid from a closed triangulation in a Vulcan `.00t` or DXF file, through the
+/// repair step and the crossing check (decision 0010). Refused unless the repaired mesh is
+/// watertight and free of crossings; the run record says why.
+pub struct ImportSolid;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportSolidParams {
+    pub path: String,
+    pub layer: String,
+    /// Defaults to the file name without its extension.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Vertices closer than this (m) are welded, and crossings by less than it are not counted.
+    #[serde(default = "default_tolerance")]
+    pub weld_tolerance: f64,
+}
+
+impl Command for ImportSolid {
+    type Params = ImportSolidParams;
+    const NAME: &'static str = "solid.import";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Import a solid from a Vulcan triangulation or DXF",
+            inputs: vec![],
+            params: vec![
+                Field::new("path", FieldType::Path, ".00t or .dxf holding one closed triangulation"),
+                Field::new("layer", FieldType::Layer, "Layer for the solid"),
+                Field::new("name", FieldType::Text, "Optional; the file name by default"),
+                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "Weld vertices closer than this; 1 mm by default"),
+            ],
+            outputs: vec![Field::object("solid", ObjectKind::Solid, "The imported solid")],
+        }
+    }
+
+    fn run(&self, _inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        if !(p.weld_tolerance.is_finite() && p.weld_tolerance >= 0.0) {
+            return Err(CommandError::Invalid(format!("tolerance {} must be zero or more", p.weld_tolerance)));
+        }
+        let path = Path::new(&p.path);
+        let (read, read_log) = match read_surface(path).map_err(|e| CommandError::Io(format!("{}: {e}", p.path)))? {
+            SurfaceImport::Vulcan(vulcan) => {
+                let line = describe_vulcan(&vulcan);
+                (vulcan.mesh, line)
+            }
+            SurfaceImport::Triangulation(dxf) => {
+                let line = describe_dxf_faces(&dxf);
+                (dxf.mesh, line)
+            }
+            SurfaceImport::Grid(_) => return Err(CommandError::Invalid(format!("{} is a grid: import it as a surface", p.path))),
+        };
+        let name = p.name.clone().unwrap_or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "solid".into()));
+        let (mesh, messages, crossings) = repaired(&read, read_log, &p.path, p.weld_tolerance)?;
+        let validity = mesh.validity();
+        if !validity.is_watertight() {
+            return Err(CommandError::Invalid(format!(
+                "'{name}' is not a closed solid after repair: {} boundary, {} non-manifold and {} inconsistently wound edges ({})",
+                validity.boundary_edges,
+                validity.non_manifold_edges,
+                validity.inconsistent_edges,
+                messages[1]
+            )));
+        }
+        refuse_crossings("solid", &name, &crossings)?;
+        let solid = Solid::new(mesh).map_err(CommandError::NotWatertight)?.with_crossings(crossings);
+        let flags = describe(&solid.validity(), solid.mesh());
+        let volume = format!("volume {:.3} m3", solid.volume());
+        let mut outcome = Outcome::new(vec![Change::Create { name, layer: p.layer.clone(), attributes: Attributes::new(), body: Body::Solid(solid) }]);
+        outcome.messages = messages;
+        Ok(outcome.message(flags).message(volume))
     }
 }
 

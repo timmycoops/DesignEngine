@@ -494,7 +494,7 @@ export class StringLayer {
       if (m[3] !== undefined) rl = m[4] === '%' ? last.world[2] + (Number(m[3]) / 100) * distance : Number(m[3]);
     } else {
       const numbers = entry.split(/[\s,]+/).map(Number);
-      if (numbers.length < 2 || numbers.length > 3 || numbers.some((v) => !Number.isFinite(v))) return 'Type E N or E N RL, e.g. 553100 7489100 295';
+      if (numbers.length < 2 || numbers.length > 3 || numbers.some((v) => !Number.isFinite(v))) return 'Type E N or E N RL, e.g. 650100 7450200 95';
       world = [numbers[0], numbers[1], last?.world[2] ?? NaN];
       if (numbers.length === 3) rl = numbers[2];
     }

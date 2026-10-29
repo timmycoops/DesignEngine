@@ -1,8 +1,8 @@
 //! The crossing check (decision 0010): pairs of triangles whose insides pass through each other or
 //! fold back onto each other by more than a tolerance. Crossings are found and listed, never fixed.
 //!
-//! Candidates are the pairs whose boxes, grown by the tolerance, overlap (a BVH query per
-//! triangle, split across cores); each is then tested exactly. Two triangles in different planes
+//! Candidates are the pairs whose boxes, grown by the tolerance, overlap (BVH queries split across
+//! cores, against a BVH per core-sized tile of the mesh); each is then tested exactly. Two triangles in different planes
 //! cross when each has corners more than the tolerance either side of the other's plane and the
 //! pieces of the two on the line where the planes meet overlap by more than the tolerance (the
 //! interval test, which holds when edges meet exactly, as grid-aligned coordinates often do). Two in
@@ -20,6 +20,11 @@ type P = [f64; 3];
 /// Every crossing pair in the mesh, with where the first [`Crossings::SITES`] cross (in triangle
 /// order, so the result is the same on any number of cores).
 pub fn find_crossings(mesh: &TriMesh, tolerance: f64) -> Crossings {
+    search(mesh, tolerance, None)
+}
+
+/// The search, with the number of tiles fixed (for tests) or chosen by the mesh's size.
+fn search(mesh: &TriMesh, tolerance: f64, tile_count: Option<usize>) -> Crossings {
     let tolerance = tolerance.max(0.0);
     let check = CrossingCheck::Search { tolerance };
     let Some(bounds) = mesh.bounds() else {
@@ -38,13 +43,12 @@ pub fn find_crossings(mesh: &TriMesh, tolerance: f64) -> Crossings {
             Aabb::new(Vector::new(lo[0], lo[1], lo[2]), Vector::new(hi[0], hi[1], hi[2]))
         })
         .collect();
-    let bvh = Bvh::from_leaves(BvhBuildStrategy::Binned, &boxes);
-
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, triangles.len().max(1));
+    let tiles = Tiles::build(&boxes, tile_count.unwrap_or(if triangles.len() < SMALL { 1 } else { threads }));
     let chunk = triangles.len().div_ceil(threads);
     // Each core takes a run of triangles in order and keeps its count and its first sites.
     let parts: Vec<(usize, Vec<P>)> = std::thread::scope(|scope| {
-        let (bvh, boxes, local) = (&bvh, &boxes, &local);
+        let (tiles, boxes, local) = (&tiles, &boxes, &local);
         let handles: Vec<_> = (0..threads)
             .map(|k| {
                 scope.spawn(move || {
@@ -53,7 +57,7 @@ pub fn find_crossings(mesh: &TriMesh, tolerance: f64) -> Crossings {
                     let mut hits: Vec<(u32, P)> = Vec::new();
                     for i in k * chunk..((k + 1) * chunk).min(triangles.len()) {
                         hits.clear();
-                        for j in bvh.intersect_aabb(&boxes[i]) {
+                        for j in tiles.overlapping(&boxes[i]) {
                             if j as usize > i
                                 && let Some(at) = crossing(triangles[i], triangles[j as usize], local, tolerance)
                             {
@@ -74,6 +78,72 @@ pub fn find_crossings(mesh: &TriMesh, tolerance: f64) -> Crossings {
     let pairs = parts.iter().map(|p| p.0).sum();
     let at = parts.into_iter().flat_map(|p| p.1).take(Crossings::SITES).map(|p| add(p, origin)).collect();
     Crossings { check, pairs, at }
+}
+
+/// Meshes smaller than this get one BVH; larger ones one per core.
+const SMALL: usize = 100_000;
+
+/// The triangles' boxes cut into tiles by median splits of their centres (along the longer plan
+/// axis each time), with a BVH per tile built on its own core: building one BVH over millions of
+/// boxes is a single core's work, and most of a search's time. A box is checked against every
+/// tile whose bounds it reaches.
+struct Tiles {
+    tiles: Vec<(Aabb, Bvh)>,
+}
+
+impl Tiles {
+    fn build(boxes: &[Aabb], count: usize) -> Tiles {
+        let centres: Vec<(f64, f64, u32)> = boxes.iter().enumerate().map(|(i, b)| (0.5 * (b.mins.x + b.maxs.x), 0.5 * (b.mins.y + b.maxs.y), i as u32)).collect();
+        let parts = split(centres, count.max(1));
+        let tiles = std::thread::scope(|scope| {
+            let handles: Vec<_> = parts
+                .into_iter()
+                .filter(|part| !part.is_empty())
+                .map(|part| {
+                    scope.spawn(move || {
+                        let bvh = Bvh::from_iter(BvhBuildStrategy::Binned, part.iter().map(|&(_, _, i)| (i as usize, boxes[i as usize])));
+                        let bounds = part.iter().map(|&(_, _, i)| boxes[i as usize]).reduce(|a, b| Aabb::new(a.mins.min(b.mins), a.maxs.max(b.maxs)));
+                        (bounds.expect("a tile has boxes"), bvh)
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().expect("a BVH thread panicked")).collect()
+        });
+        Tiles { tiles }
+    }
+
+    /// The boxes overlapping `query`, by index.
+    fn overlapping<'a>(&'a self, query: &'a Aabb) -> impl Iterator<Item = u32> + 'a {
+        let reaches = |b: &Aabb| (0..3).all(|k| b.mins[k] <= query.maxs[k] && query.mins[k] <= b.maxs[k]);
+        self.tiles.iter().filter(move |(bounds, _)| reaches(bounds)).flat_map(move |(_, bvh)| bvh.intersect_aabb(query))
+    }
+}
+
+/// Cuts box centres into `count` parts of near-equal size, halving each part at its median along
+/// its longer axis in plan; the halves are cut on cores of their own.
+fn split(mut part: Vec<(f64, f64, u32)>, count: usize) -> Vec<Vec<(f64, f64, u32)>> {
+    if count <= 1 || part.len() < 2 {
+        return vec![part];
+    }
+    let spread = |f: fn(&(f64, f64, u32)) -> f64| {
+        let (lo, hi) = part.iter().map(f).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)));
+        hi - lo
+    };
+    let along_x = spread(|c| c.0) >= spread(|c| c.1);
+    let left_count = count / 2;
+    let mid = part.len() * left_count / count;
+    if along_x {
+        part.select_nth_unstable_by(mid, |a, b| a.0.total_cmp(&b.0));
+    } else {
+        part.select_nth_unstable_by(mid, |a, b| a.1.total_cmp(&b.1));
+    }
+    let right = part.split_off(mid);
+    std::thread::scope(|scope| {
+        let other = scope.spawn(move || split(right, count - left_count));
+        let mut out = split(part, left_count);
+        out.extend(other.join().expect("a split thread panicked"));
+        out
+    })
 }
 
 /// Where two triangles cross, if they do: the middle of the piece they share.
@@ -317,6 +387,24 @@ mod tests {
         for p in &found.at {
             let (x, z) = (p[0] - E, p[2]);
             assert!((z - (100.0 + x / 20.0)).abs() < 1e-6 && (z - (95.0 + (x - 5.0) / 2.0)).abs() < 1e-6, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn tiles_find_exactly_what_one_bvh_finds() {
+        // 125,000 triangles of rolling grid with a sheet cut through it, searched as one tile and as
+        // many: the same pairs and the same first sites.
+        let grid = triangulate_grid(&Grid::from_fn([E, N], [2.0, 2.0], 251, 251, |x, y| 100.0 + 3.0 * ((x - E) / 40.0).sin() + (y - N) / 100.0));
+        let sheet = triangulate_grid(&Grid::from_fn([E + 1.0, N + 1.0], [25.0, 25.0], 21, 21, |x, _| 96.0 + (x - E) / 50.0));
+        let base = grid.vertices.len() as u32;
+        let mut mesh = grid.clone();
+        mesh.vertices.extend(&sheet.vertices);
+        mesh.triangles.extend(sheet.triangles.iter().map(|t| t.map(|i| i + base)));
+        assert!(mesh.triangle_count() > SMALL);
+        let one = search(&mesh, 0.001, Some(1));
+        assert!(one.pairs > 0);
+        for tiles in [2, 7, 48] {
+            assert_eq!(search(&mesh, 0.001, Some(tiles)), one, "{tiles} tiles");
         }
     }
 

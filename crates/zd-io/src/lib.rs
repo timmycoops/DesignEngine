@@ -1,10 +1,10 @@
 //! Import and export for the Zovlyn Pit Design Engine.
 //!
-//! Reads triangulations and strings from DXF, strings from CSV, regular grids from XYZ/CSV text and
-//! Vulcan grids, and writes DXF R12 and CSV strings. Saves and opens projects as `<name>.zdproj/`
-//! folders of Parquet files. Coordinates stay f64 from file to engine and back out. Every clean-up
-//! or conversion done on the way in (welding, dropped faces, arcs to chords, nulls) is counted in
-//! the import log; nothing is fixed silently.
+//! Reads triangulations and strings from DXF, Vulcan triangulations, strings from CSV, regular grids
+//! from XYZ/CSV text and Vulcan grids, and writes DXF R12 and CSV strings. Saves and opens projects
+//! as `<name>.zdproj/` folders of Parquet files. Coordinates stay f64 from file to engine and back
+//! out. Every clean-up or conversion done on the way in (welding, dropped faces, arcs to chords,
+//! nulls) is counted in the import log; nothing is fixed silently.
 
 mod dxf;
 mod error;
@@ -13,6 +13,7 @@ mod store;
 mod string_csv;
 mod text;
 mod vulcan;
+mod vulcan_tri;
 mod xyz;
 
 use std::path::Path;
@@ -26,17 +27,19 @@ pub use seam::{
 pub use store::{Opened, ProjectStore, SaveReport, StoreError};
 pub use string_csv::{CsvLog, CsvString, CsvStrings, format_csv_strings, parse_csv_strings, read_csv_strings, write_csv_strings};
 pub use vulcan::{VulcanGrid, VulcanLog, VulcanSeam, parse_vulcan_grid, read_vulcan_grid, read_vulcan_seam, vulcan_grid_name};
+pub use vulcan_tri::{VulcanTriLog, VulcanTriangulation, parse_vulcan_triangulation, plain_triangulation_bytes, read_vulcan_triangulation};
 pub use xyz::{GridImport, XyzLog, XyzOptions, parse_xyz_grid, read_xyz_grid, write_xyz_grid};
 
 /// What a surface file turned out to hold.
 #[derive(Debug, Clone)]
 pub enum SurfaceImport {
     Triangulation(DxfDrawing),
+    Vulcan(VulcanTriangulation),
     Grid(GridImport),
 }
 
 /// Reads a surface by file extension: `.dxf` as the triangulation of its 3DFACEs and polyface
-/// meshes; `.xyz`, `.csv`, `.txt` and `.asc` as a regular grid.
+/// meshes; `.00t` as a Vulcan triangulation; `.xyz`, `.csv`, `.txt` and `.asc` as a regular grid.
 pub fn read_surface(path: &Path) -> Result<SurfaceImport, IoError> {
     let ext = path
         .extension()
@@ -45,6 +48,7 @@ pub fn read_surface(path: &Path) -> Result<SurfaceImport, IoError> {
         .unwrap_or_default();
     match ext.as_str() {
         "dxf" => Ok(SurfaceImport::Triangulation(read_dxf(path)?)),
+        "00t" => Ok(SurfaceImport::Vulcan(read_vulcan_triangulation(path)?)),
         "xyz" | "csv" | "txt" | "asc" => Ok(SurfaceImport::Grid(read_xyz_grid(path, &XyzOptions::default())?)),
         _ => Err(IoError::Unsupported(format!("no surface reader for '.{ext}' files"))),
     }

@@ -16,7 +16,7 @@ pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
 pub use layer::{CreateLayer, CreateLayerParams};
 pub use object::{DeleteObject, ObjectParams, RenameObject, RenameParams};
 pub use seam::{BuildSeamModel, BuildSeamModelParams, SuggestSeamDefinition, SuggestSeamDefinitionParams};
-pub use solid::{CutBySurface, CutBySurfaceParams, SolidFromMesh};
+pub use solid::{CutBySurface, CutBySurfaceParams, ImportSolid, ImportSolidParams, SolidFromMesh};
 pub use string::{
     CornerParam, CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, DrapeString, DrapeStringParams, FilterString,
     FilterStringParams, InsertVertex, InsertVertexParams, JoinStrings, JoinStringsParams, MoveVertex, MoveVertexParams, OffsetString,
@@ -49,6 +49,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(ImportSurface);
     registry.register(SurfaceFromMesh);
     registry.register(SolidFromMesh);
+    registry.register(ImportSolid);
     registry.register(CutBySurface);
     registry.register(ImportVulcanSeam);
     registry.register(SuggestSeamDefinition);

@@ -1,0 +1,173 @@
+//! Vulcan triangulations (`.00t`) through the registry (decision 0011): surfaces and solids, each
+//! through the repair step and the crossing check, with opt-in checks against real files and their
+//! Deswik exports.
+
+use std::path::{Path, PathBuf};
+
+use serde_json::json;
+use zd_commands::{RunRecord, Session};
+use zd_core::{Body, ChangeKind, ObjectId, RunId, TriMesh};
+use zd_io::{plain_triangulation_bytes, read_dxf, read_vulcan_triangulation};
+
+const E: f64 = 650_000.0;
+const N: f64 = 7_450_000.0;
+
+fn created(record: &RunRecord) -> Vec<ObjectId> {
+    record.outputs.iter().filter(|o| o.change == ChangeKind::Created).map(|o| o.id).collect()
+}
+
+fn scratch(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("zd-00t-{tag}-{}-{}", std::process::id(), RunId::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn write(path: &Path, mesh: &TriMesh) {
+    std::fs::write(path, plain_triangulation_bytes("Created External", mesh)).unwrap();
+}
+
+/// A box wound outward.
+fn block(min: [f64; 3], size: [f64; 3]) -> TriMesh {
+    let v = (0..8).map(|i| [min[0] + (i & 1) as f64 * size[0], min[1] + (i >> 1 & 1) as f64 * size[1], min[2] + (i >> 2) as f64 * size[2]]).collect();
+    let t = vec![[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+    TriMesh::new(v, t)
+}
+
+#[test]
+fn a_vulcan_surface_imports_through_the_repair_step() {
+    let dir = scratch("surface");
+    // A 3 x 3 node sheet at 10 m, every other triangle wound backwards.
+    let v: Vec<[f64; 3]> = (0..9).map(|i| [E + (i % 3) as f64 * 10.0, N + (i / 3) as f64 * 10.0, 200.0 + (i % 3) as f64]).collect();
+    let mut t = Vec::new();
+    for r in 0..2u32 {
+        for c in 0..2u32 {
+            let a = r * 3 + c;
+            t.push([a, a + 1, a + 4]);
+            t.push([a, a + 3, a + 4]); // clockwise: to be flipped
+        }
+    }
+    write(&dir.join("topo.00t"), &TriMesh::new(v.clone(), t));
+    let mut s = Session::with_builtins();
+    let record = s.run("surface.import", json!({ "path": dir.join("topo.00t").to_string_lossy(), "layer": "topo" })).unwrap();
+    assert_eq!(record.messages[0], "Vulcan triangulation: 9 vertices, 8 triangles");
+    assert!(record.messages[1].contains("4 triangles flipped"), "{}", record.messages[1]);
+    assert!(record.messages[2].starts_with("crossings: none"), "{}", record.messages[2]);
+    let Body::Surface(topo) = &s.project().object(created(&record)[0]).unwrap().body else { panic!("not a surface") };
+    assert_eq!(topo.mesh().vertices, v, "every coordinate exactly as stored");
+    assert!(topo.mesh().triangles.iter().all(|&t| topo.mesh().triangle_cross(t)[2] > 0.0));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_closed_vulcan_triangulation_imports_as_a_solid() {
+    let dir = scratch("solid");
+    write(&dir.join("coal.00t"), &block([E + 0.25, N + 0.75, 250.0], [10.0, 20.0, 5.0]));
+    let mut s = Session::with_builtins();
+    let record = s.run("solid.import", json!({ "path": dir.join("coal.00t").to_string_lossy(), "layer": "coal" })).unwrap();
+    assert_eq!(record.messages.last().unwrap(), "volume 1000.000 m3");
+    let object = s.project().object(created(&record)[0]).unwrap();
+    assert_eq!(object.name, "coal");
+    let Body::Solid(solid) = &object.body else { panic!("not a solid") };
+    assert_eq!(solid.validity().non_self_intersecting, Some(true));
+
+    // Open: one face missing.
+    let mut open = block([E, N, 250.0], [10.0, 10.0, 10.0]);
+    open.triangles.truncate(10);
+    write(&dir.join("open.00t"), &open);
+    let error = s.run("solid.import", json!({ "path": dir.join("open.00t").to_string_lossy(), "layer": "coal" })).unwrap_err();
+    assert!(error.to_string().starts_with("'open' is not a closed solid after repair: 4 boundary"), "{error}");
+
+    // Two blocks run into each other: closed, but crossing.
+    let (a, b) = (block([E, N, 250.0], [10.0, 10.0, 10.0]), block([E + 5.0, N + 5.0, 255.0], [10.0, 10.0, 10.0]));
+    let mut both = a.clone();
+    both.vertices.extend(&b.vertices);
+    both.triangles.extend(b.triangles.iter().map(|t| t.map(|i| i + 8)));
+    write(&dir.join("both.00t"), &both);
+    let error = s.run("solid.import", json!({ "path": dir.join("both.00t").to_string_lossy(), "layer": "coal" })).unwrap_err();
+    assert!(error.to_string().starts_with("the solid 'both' crosses itself"), "{error}");
+    assert!(s.run("solid.import", json!({ "path": dir.join("missing.00t").to_string_lossy(), "layer": "coal" })).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Opt-in, against real files kept out of the repository: `ZD_VULCAN_TRI` names a `.00t` and
+/// `ZD_VULCAN_TRI_DXF` the same triangulation exported to DXF by Deswik. Every vertex must match,
+/// and so must the triangles as sets of corner coordinates; for a solid, `ZD_VULCAN_TRI_VOLUME`
+/// (m³, Deswik's figure) is checked to 0.001 m³.
+#[test]
+#[ignore = "needs ZD_VULCAN_TRI and ZD_VULCAN_TRI_DXF"]
+fn a_real_triangulation_matches_its_deswik_export() {
+    let (Ok(tri), Ok(dxf)) = (std::env::var("ZD_VULCAN_TRI"), std::env::var("ZD_VULCAN_TRI_DXF")) else {
+        panic!("set ZD_VULCAN_TRI and ZD_VULCAN_TRI_DXF");
+    };
+    let ours = read_vulcan_triangulation(Path::new(&tri)).unwrap().mesh;
+    let theirs = read_dxf(Path::new(&dxf)).unwrap().mesh;
+    let key = |p: &[f64; 3]| p.map(|c| c.to_bits());
+    let corners = |m: &TriMesh| {
+        let mut set: Vec<[[u64; 3]; 3]> = m
+            .triangles
+            .iter()
+            .map(|t| {
+                let mut c = t.map(|i| key(&m.vertices[i as usize]));
+                c.sort();
+                c
+            })
+            .collect();
+        set.sort();
+        set
+    };
+    let (mut a, mut b): (Vec<[u64; 3]>, Vec<[u64; 3]>) = (ours.vertices.iter().map(key).collect(), theirs.vertices.iter().map(key).collect());
+    a.sort();
+    a.dedup();
+    b.sort();
+    let largest = ours
+        .vertices
+        .iter()
+        .zip(&theirs.vertices)
+        .map(|(p, q)| (0..3).map(|k| (p[k] - q[k]).abs()).fold(0.0, f64::max))
+        .fold(0.0, f64::max);
+    println!("{} vertices, {} triangles; in file order the largest difference is {largest} m", ours.vertices.len(), ours.triangles.len());
+    assert_eq!(a, b, "the same vertices, bit for bit");
+    assert_eq!(corners(&ours), corners(&theirs), "the same triangles");
+    if let Ok(volume) = std::env::var("ZD_VULCAN_TRI_VOLUME") {
+        let volume: f64 = volume.parse().unwrap();
+        assert!((ours.signed_volume() - volume).abs() < 0.001, "ours {} m3, Deswik {volume} m3", ours.signed_volume());
+    }
+}
+
+/// Opt-in timing on a real surface: `ZD_VULCAN_TRI_TIMING` names a large `.00t`. Run in release.
+#[test]
+#[ignore = "needs ZD_VULCAN_TRI_TIMING; run with --release"]
+fn timing_a_real_surface_import() {
+    let Ok(path) = std::env::var("ZD_VULCAN_TRI_TIMING") else { panic!("set ZD_VULCAN_TRI_TIMING") };
+    let mut s = Session::with_builtins();
+    let record = s.run("surface.import", json!({ "path": path, "layer": "topo" })).unwrap();
+    println!("{:.0} ms in all", record.duration_ms);
+    for line in &record.messages {
+        println!("{line}");
+    }
+}
+
+/// Opt-in: every `.00t` in the folder `ZD_VULCAN_TRI_DIR` through `solid.import`, one line each, and
+/// a count of those refused with why.
+#[test]
+#[ignore = "needs ZD_VULCAN_TRI_DIR"]
+fn every_solid_in_a_folder() {
+    let Ok(dir) = std::env::var("ZD_VULCAN_TRI_DIR") else { panic!("set ZD_VULCAN_TRI_DIR") };
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("00t"))).collect();
+    paths.sort();
+    let mut s = Session::with_builtins();
+    let (mut made, mut refused) = (0, 0);
+    for (k, path) in paths.iter().enumerate() {
+        match s.run("solid.import", json!({ "path": path.to_string_lossy(), "layer": "solids" })) {
+            Ok(record) => {
+                made += 1;
+                println!("{k:>3} ok: {} | {} | {}", record.messages[1], record.messages[2], record.messages.last().unwrap());
+            }
+            Err(e) => {
+                refused += 1;
+                println!("{k:>3} refused: {e}");
+            }
+        }
+    }
+    println!("{made} solids made, {refused} refused");
+}

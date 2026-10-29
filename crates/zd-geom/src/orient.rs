@@ -142,28 +142,18 @@ pub const SITES: usize = 100;
 /// three or more faces stop the fill and are listed; a patch that cannot be wound consistently is
 /// left as read and counted. Nothing is refused, unlike [`orient_upward`].
 pub fn orient_patches(mesh: &TriMesh) -> (TriMesh, OrientLog) {
-    let half_edges = sorted_half_edges(mesh);
     let tri_count = mesh.triangles.len();
     let mut log = OrientLog::default();
-    let mut neighbours = vec![[(NONE, false); 3]; tri_count];
-    let mut on_boundary = vec![false; tri_count];
-    for run in half_edges.chunk_by(|x, y| x.key == y.key) {
-        match run {
-            [h] => on_boundary[h.tri] = true,
-            [p, q] => {
-                let same_direction = p.forward == q.forward;
-                neighbours[p.tri][p.slot] = (q.tri as u32, same_direction);
-                neighbours[q.tri][q.slot] = (p.tri as u32, same_direction);
-            }
-            _ => {
-                log.non_manifold_edges += 1;
-                if log.non_manifold_at.len() < SITES {
-                    let (a, b) = (mesh.vertices[run[0].from as usize], mesh.vertices[run[0].to as usize]);
-                    log.non_manifold_at.push([0, 1, 2].map(|i| 0.5 * (a[i] + b[i])));
-                }
-            }
-        }
-    }
+    let Adjacency { neighbours, on_boundary, non_manifold } = adjacency(mesh);
+    log.non_manifold_edges = non_manifold.len();
+    log.non_manifold_at = non_manifold
+        .iter()
+        .take(SITES)
+        .map(|&(u, v)| {
+            let (a, b) = (mesh.vertices[u as usize], mesh.vertices[v as usize]);
+            [0, 1, 2].map(|i| 0.5 * (a[i] + b[i]))
+        })
+        .collect();
 
     // Volumes and normals about a local origin, so mine grid coordinates keep their precision.
     let origin = mesh.bounds().map_or([0.0; 3], |b| b.centre());
@@ -222,6 +212,92 @@ pub fn orient_patches(mesh: &TriMesh) -> (TriMesh, OrientLog) {
         }
     }
     (oriented, log)
+}
+
+/// Who is across each triangle's edges.
+struct Adjacency {
+    /// Per triangle and edge: the one other triangle on it and whether both run it the same way;
+    /// `NONE` on the boundary and where three or more faces meet.
+    neighbours: Vec<[(u32, bool); 3]>,
+    /// Triangles with an edge no other triangle has.
+    on_boundary: Vec<bool>,
+    /// Edges with three or more faces, once each, in triangle order.
+    non_manifold: Vec<(u32, u32)>,
+}
+
+/// Finds each edge's other faces through a list of the triangles at each vertex (no sort of every
+/// edge), split across cores.
+fn adjacency(mesh: &TriMesh) -> Adjacency {
+    let tris = &mesh.triangles;
+    let mut start = vec![0u32; mesh.vertices.len() + 1];
+    for t in tris {
+        for &v in t {
+            start[v as usize + 1] += 1;
+        }
+    }
+    for i in 0..mesh.vertices.len() {
+        start[i + 1] += start[i];
+    }
+    let mut fill = start.clone();
+    let mut incident = vec![0u32; tris.len() * 3];
+    for (k, t) in tris.iter().enumerate() {
+        for &v in t {
+            incident[fill[v as usize] as usize] = k as u32;
+            fill[v as usize] += 1;
+        }
+    }
+
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, tris.len().max(1));
+    let chunk = tris.len().div_ceil(threads).max(1);
+    let (start, incident) = (&start, &incident);
+    let parts: Vec<Adjacency> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads)
+            .map(|k| {
+                scope.spawn(move || {
+                    let range = (k * chunk).min(tris.len())..((k + 1) * chunk).min(tris.len());
+                    let mut neighbours = vec![[(NONE, false); 3]; range.len()];
+                    let mut boundary = vec![false; range.len()];
+                    let mut non_manifold = Vec::new();
+                    for (local, t) in range.enumerate() {
+                        let t = t as u32;
+                        let tri = tris[t as usize];
+                        for slot in 0..3 {
+                            let (u, v) = (tri[slot], tri[(slot + 1) % 3]);
+                            let (mut others, mut found, mut lowest) = (0, (NONE, false), t);
+                            for &o in &incident[start[u as usize] as usize..start[u as usize + 1] as usize] {
+                                if o == t {
+                                    continue;
+                                }
+                                let other = tris[o as usize];
+                                let Some(at) = other.iter().position(|&x| x == u) else { continue };
+                                let same = other[(at + 1) % 3] == v;
+                                if same || other[(at + 2) % 3] == v {
+                                    others += 1;
+                                    found = (o, same);
+                                    lowest = lowest.min(o);
+                                }
+                            }
+                            match others {
+                                0 => boundary[local] = true,
+                                1 => neighbours[local][slot] = found,
+                                _ if lowest == t => non_manifold.push((u, v)),
+                                _ => {}
+                            }
+                        }
+                    }
+                    Adjacency { neighbours, on_boundary: boundary, non_manifold }
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().expect("an adjacency thread panicked")).collect()
+    });
+    let mut out = Adjacency { neighbours: Vec::with_capacity(tris.len()), on_boundary: Vec::with_capacity(tris.len()), non_manifold: Vec::new() };
+    for part in parts {
+        out.neighbours.extend(part.neighbours);
+        out.on_boundary.extend(part.on_boundary);
+        out.non_manifold.extend(part.non_manifold);
+    }
+    out
 }
 
 fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {

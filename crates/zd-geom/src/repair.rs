@@ -4,6 +4,7 @@
 //! and never fixed.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::time::Instant;
 
 use zd_core::{TriMesh, is_zero_area};
@@ -92,13 +93,53 @@ pub fn repair_mesh(mesh: &TriMesh, tolerance: f64) -> (TriMesh, RepairLog) {
     (oriented, log)
 }
 
+/// A fast hash for keys made from coordinates (multiply and rotate, as FxHash does). The keys never
+/// come from outside, so a keyed hash that resists crafted collisions buys nothing here, and the
+/// standard one is several times slower on millions of vertices.
+#[derive(Default)]
+struct CellHasher(u64);
+
+impl Hasher for CellHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.add(u64::from_le_bytes(word));
+        }
+    }
+
+    fn write_u64(&mut self, x: u64) {
+        self.add(x);
+    }
+
+    fn write_i64(&mut self, x: i64) {
+        self.add(x as u64);
+    }
+
+    fn write_usize(&mut self, x: usize) {
+        self.add(x as u64);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+impl CellHasher {
+    fn add(&mut self, x: u64) {
+        self.0 = (self.0.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+type Fast = BuildHasherDefault<CellHasher>;
+
 /// The kept vertices and, for every input vertex, the kept vertex it became.
 fn weld(points: &[[f64; 3]], tolerance: f64, log: &mut RepairLog) -> (Vec<[f64; 3]>, Vec<u32>) {
     let mut kept: Vec<[f64; 3]> = Vec::with_capacity(points.len());
     let mut map = Vec::with_capacity(points.len());
     if tolerance <= 0.0 {
         // Identical coordinates only (-0.0 and 0.0 alike).
-        let mut exact: HashMap<[u64; 3], u32> = HashMap::with_capacity(points.len());
+        let mut exact: HashMap<[u64; 3], u32, Fast> = HashMap::with_capacity_and_hasher(points.len(), Fast::default());
         for p in points {
             let key = p.map(|v| if v == 0.0 { 0 } else { v.to_bits() });
             let next = kept.len() as u32;
@@ -118,7 +159,7 @@ fn weld(points: &[[f64; 3]], tolerance: f64, log: &mut RepairLog) -> (Vec<[f64; 
     // cells hold every vertex within the tolerance. Each cell keeps its vertices as a linked list.
     let low = points.iter().fold([f64::INFINITY; 3], |m, p| [m[0].min(p[0]), m[1].min(p[1]), m[2].min(p[2])]);
     let width = 2.0 * tolerance;
-    let mut heads: HashMap<[i64; 3], u32> = HashMap::with_capacity(points.len());
+    let mut heads: HashMap<[i64; 3], u32, Fast> = HashMap::with_capacity_and_hasher(points.len(), Fast::default());
     let mut next: Vec<u32> = Vec::with_capacity(points.len());
     let limit = tolerance * tolerance;
     for p in points {
