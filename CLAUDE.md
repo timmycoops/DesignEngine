@@ -143,10 +143,11 @@ cargo test --workspace            # engine tests
 cargo bench -p bench              # Phase 0 timings (once bench exists)
 cd app; pnpm install; pnpm tauri dev
 
-# Python (`import zd`), into a project virtual environment:
-py -m venv .venv; .venv\Scriptsctivate; python -m pip install "maturin>=1.9.4,<2"
-maturin develop --release -m crates/zd-py/Cargo.toml
-python crates/zd-py/tests/test_session.py
+# Python (`import zd`), into a project virtual environment (no activation, which PowerShell blocks by default):
+py -3.13 -m venv .venv
+.venv\Scripts\python -m pip install "maturin>=1.9.4,<2"
+$env:VIRTUAL_ENV = "$PWD\.venv"; .venv\Scripts\maturin develop --release -m crates/zd-py/Cargo.toml
+.venv\Scripts\python crates/zd-py/tests/test_session.py
 ```
 
 ## How to work
