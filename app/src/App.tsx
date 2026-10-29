@@ -319,15 +319,19 @@ export default function App() {
       }
     });
 
-  /** Imports closed triangulations as solids, one run each; a refused file says why in the run log. */
-  const onImportSolids = () =>
+  /**
+   * Imports closed triangulations as solids, one run each; a refused file says why in the run log.
+   * With `repair`, fins come off, cracks are joined and holes up to 10 % of the surface are filled,
+   * each noted on the solid (decision 0013).
+   */
+  const onImportSolids = (repair: boolean) =>
     attempt(async () => {
       const picked = await open({ multiple: true, filters: [{ name: 'Solids', extensions: ['00t', 'dxf'] }] });
       const paths = picked === null ? [] : Array.isArray(picked) ? picked : [picked];
       let made = 0;
       for (const [k, path] of paths.entries()) {
-        setStatus({ text: `Importing solid ${k + 1} of ${paths.length}: ${path}…` });
-        if (await run('solid.import', { path, layer: 'solids' })) made += 1;
+        setStatus({ text: `Importing solid ${k + 1} of ${paths.length}${repair ? ', repairing' : ''}: ${path}…` });
+        if (await run('solid.import', { path, layer: 'solids', repair })) made += 1;
       }
       if (paths.length > 1) {
         const refused = paths.length - made;
@@ -491,9 +495,17 @@ export default function App() {
           <ToolButton tip="Import surfaces (Vulcan .00t, DXF, XYZ or CSV grids)" onClick={onImportSurface}>
             <FileInput /> Surface
           </ToolButton>
-          <ToolButton tip="Import solids: closed triangulations in Vulcan .00t or DXF files; pick as many as you like" onClick={onImportSolids}>
-            <FileInput /> Solids
-          </ToolButton>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" title="Import solids: closed triangulations in Vulcan .00t or DXF files">
+                <FileInput /> Solids
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onSelect={() => onImportSolids(false)}>Import solids…</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onImportSolids(true)}>Import and repair: fins off, cracks joined, holes up to 10 % filled…</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <ToolButton tip="Import strings (DXF polylines and lines, or CSV with x, y and z columns)" onClick={onImportStrings}>
             <FileInput /> Strings
           </ToolButton>

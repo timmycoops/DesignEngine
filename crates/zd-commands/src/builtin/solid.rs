@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
-use zd_core::{Attributes, Body, Change, CrossingCheck, Crossings, ObjectId, ObjectKind, Solid, TriMesh};
-use zd_geom::{cut_solid_by_surface, separate_touching_edges, split_patches};
+use zd_core::{AttrValue, Attributes, Body, Change, CrossingCheck, Crossings, ObjectId, ObjectKind, Solid, TriMesh};
+use zd_geom::{CloseLog, close_solid, cut_solid_by_surface, repair_mesh, separate_touching_edges, split_patches};
 
 use std::path::Path;
 
 use zd_io::{SurfaceImport, read_surface};
 
 use super::exchange::describe_dxf_faces;
-use super::surface::{MeshParams, check_crossings, default_tolerance, describe, describe_vulcan, mesh_params, mm, repaired, site};
+use super::surface::{MeshParams, check_crossings, default_tolerance, describe, describe_repair, describe_vulcan, mesh_params, mm, repaired, site};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
 /// `solid.from_mesh`: a solid from vertices and triangles given inline; refused unless watertight
@@ -50,8 +50,9 @@ impl Command for SolidFromMesh {
 /// `solid.import`: a solid from a closed triangulation in a Vulcan `.00t` or DXF file, through the
 /// repair step and the crossing check (decision 0010). Edges where closed pieces, or two parts of
 /// one, touch are taken apart (vertices copied, no coordinate moved), and separate pieces become one
-/// solid each (`<name> part 1`, ...). Refused if any piece is open or the mesh crosses itself; the
-/// run record says why.
+/// solid each (`<name> part 1`, ...). With `repair`, it first closes the mesh (decision 0013): fins
+/// off, cracks joined, holes filled up to `fill_limit` of the surface, each noted on the solid.
+/// Refused if any piece is open or the mesh crosses itself; the run record says why.
 pub struct ImportSolid;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -65,6 +66,16 @@ pub struct ImportSolidParams {
     /// Vertices closer than this (m) are welded, and crossings by less than it are not counted.
     #[serde(default = "default_tolerance")]
     pub weld_tolerance: f64,
+    /// Close the mesh first: fins off, cracks joined, holes filled (decision 0013). Off by default.
+    #[serde(default)]
+    pub repair: bool,
+    /// With `repair`: the most hole area to fill, as a share of the solid's surface (0.1 = 10 %).
+    #[serde(default = "default_fill_limit")]
+    pub fill_limit: f64,
+}
+
+fn default_fill_limit() -> f64 {
+    0.10
 }
 
 impl Command for ImportSolid {
@@ -81,6 +92,8 @@ impl Command for ImportSolid {
                 Field::new("layer", FieldType::Layer, "Layer for the solid"),
                 Field::new("name", FieldType::Text, "Optional; the file name by default"),
                 Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "Weld vertices closer than this; 1 mm by default"),
+                Field::new("repair", FieldType::Bool, "Close the mesh first: fins off, cracks joined, holes filled; off by default"),
+                Field::new("fill_limit", FieldType::Number { unit: "share" }, "With repair: the most hole area to fill, as a share of the surface; 0.1 by default"),
             ],
             outputs: vec![Field::new("solids", FieldType::Objects, "The imported solid, or one per closed piece")],
         }
@@ -89,6 +102,9 @@ impl Command for ImportSolid {
     fn run(&self, _inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         if !(p.weld_tolerance.is_finite() && p.weld_tolerance >= 0.0) {
             return Err(CommandError::Invalid(format!("tolerance {} must be zero or more", p.weld_tolerance)));
+        }
+        if !(p.fill_limit.is_finite() && (0.0..=1.0).contains(&p.fill_limit)) {
+            return Err(CommandError::Invalid(format!("fill limit {} must be a share between 0 and 1", p.fill_limit)));
         }
         let path = Path::new(&p.path);
         let (read, read_log) = match read_surface(path).map_err(|e| CommandError::Io(format!("{}: {e}", p.path)))? {
@@ -105,7 +121,34 @@ impl Command for ImportSolid {
             }
         };
         let name = p.name.clone().unwrap_or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "solid".into()));
-        let (mesh, mut messages, crossings) = repaired(&read, read_log, &p.path, p.weld_tolerance)?;
+        let mut attributes = Attributes::new();
+        let (mesh, mut messages, crossings) = if p.repair {
+            let (welded, log) = repair_mesh(&read, p.weld_tolerance);
+            let (closed, close) = close_solid(&welded, p.weld_tolerance);
+            let share = if close.surface_area > 0.0 { close.filled_area() / close.surface_area } else { 0.0 };
+            if share > p.fill_limit {
+                let (at, area) = close.filled.iter().copied().fold(([0.0; 3], 0.0), |big, f| if f.1 > big.1 { f } else { big });
+                return Err(CommandError::Invalid(format!(
+                    "'{name}' has holes of {:.1} m² in all, {:.1} % of its surface, over the {:.0} % limit; the largest is {area:.1} m² at {}: fix it at source, or import it with a higher fill_limit",
+                    close.filled_area(),
+                    100.0 * share,
+                    100.0 * p.fill_limit,
+                    site(&at)
+                )));
+            }
+            let (crossings, checked) = check_crossings(&closed, p.weld_tolerance);
+            let summary = describe_close(&close);
+            if close.fin_triangles + close.cracks_joined + close.filled.len() > 0 {
+                attributes.insert("repair".into(), AttrValue::Text(summary.clone()));
+                if !close.filled.is_empty() {
+                    attributes.insert("repair_filled_m2".into(), AttrValue::Number(close.filled_area()));
+                }
+            }
+            let messages = vec![read_log, describe_repair(&log, &closed), format!("closing: {summary}"), checked];
+            (closed, messages, crossings)
+        } else {
+            repaired(&read, read_log, &p.path, p.weld_tolerance)?
+        };
         let validity = mesh.validity();
         // Closed pieces meeting along edges of three or more faces come apart, one solid each.
         let pieces = if validity.is_watertight() {
@@ -146,7 +189,7 @@ impl Command for ImportSolid {
             let part = if named { format!("{name} part {}", k + 1) } else { name.clone() };
             messages.push(describe(&solid.validity(), solid.mesh()));
             volumes.push((part.clone(), solid.volume()));
-            changes.push(Change::Create { name: part, layer: p.layer.clone(), attributes: Attributes::new(), body: Body::Solid(solid) });
+            changes.push(Change::Create { name: part, layer: p.layer.clone(), attributes: attributes.clone(), body: Body::Solid(solid) });
         }
         let mut outcome = Outcome::new(changes);
         outcome.messages = messages;
@@ -156,6 +199,28 @@ impl Command for ImportSolid {
         };
         Ok(outcome.message(volume))
     }
+}
+
+/// What closing did, in one line.
+fn describe_close(close: &CloseLog) -> String {
+    let mut parts = Vec::new();
+    if close.fin_triangles > 0 {
+        parts.push(format!("{} fin triangles taken off", close.fin_triangles));
+    }
+    if close.cracks_joined > 0 {
+        parts.push(format!("{} cracks joined", close.cracks_joined));
+    }
+    if !close.filled.is_empty() {
+        let share = if close.surface_area > 0.0 { 100.0 * close.filled_area() / close.surface_area } else { 0.0 };
+        parts.push(format!("{} holes filled ({:.1} m², {share:.1} % of the surface)", close.filled.len(), close.filled_area()));
+    }
+    if close.triangles_turned > 0 && !close.filled.is_empty() {
+        parts.push(format!("{} triangles turned to face out once closed", close.triangles_turned));
+    }
+    if let Some(first) = close.unfillable.first() {
+        parts.push(format!("{} holes could not be filled (their edge folds over itself), the first at {}", close.unfillable.len(), site(first)));
+    }
+    if parts.is_empty() { "nothing to do".to_string() } else { parts.join("; ") }
 }
 
 /// The middle of the first edge only one triangle has, in triangle order.
