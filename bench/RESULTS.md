@@ -61,8 +61,13 @@ large surface and the seams' grids (about 25 M real triangles) in the app.
 All 42,223 relimiting solids through `solid.import`: **41,585 imported** (98.5 %) at 3.8 ms each
 once unpacked (2.7 minutes), 955 of them with touching pieces taken apart, 204 M m³ in all. **638
 refused**, each with where: 327 cross themselves, 298 have open edges together with edges of three
-or more faces, 13 have open edges only. These are defects in the source solids; a close-and-repair
-command is next.
+or more faces, 13 have open edges only.
+
+With the solid rules for crossings (decision 0014), **41,882 import as read** (99.2 %), 276 of them
+with thin pairs reported (knife edges under 1 mm, which the first check took for folds). With repair
+(decision 0013), 529 of the 638 import; **109 are refused**: 86 with open edges or edges of three or
+more faces, 16 with holes over 10 % of the surface, and 7 that cross themselves (4 of them on a
+surface that is not closed, 2 still crossing after the cut, 1 partly inside out).
 
 ## Summary
 

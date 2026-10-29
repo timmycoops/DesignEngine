@@ -183,6 +183,44 @@ fn a_cut_checks_inputs_that_were_never_checked() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[test]
+fn a_cut_takes_a_thin_solid_and_searches_an_old_check_again() {
+    // A wedge rising from a knife edge to 0.5 mm, saved with a check by the surface rules (as before
+    // decision 0014), which calls its top and bottom a fold. The cut searches it again by the
+    // solid rules, finds it thin and cuts it at RL 0.25 mm: 0.01875 m³ below, 0.00625 m³ above.
+    let dir = scratch("thin");
+    let v = [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 0.0, 0.0005], [0.0, 10.0, 0.0], [10.0, 10.0, 0.0], [10.0, 10.0, 0.0005]];
+    let wedge = TriMesh::new(v.iter().map(|p| [E + p[0], N + p[1], p[2]]).collect(), vec![[0, 3, 1], [1, 3, 4], [0, 2, 3], [2, 5, 3], [1, 4, 5], [1, 5, 2], [0, 1, 2], [3, 5, 4]]);
+    let old_check = zd_geom::find_crossings(&wedge, 0.001);
+    assert!(old_check.pairs > 0);
+    let cover = triangulate_grid(&zd_core::Grid::from_fn([E - 10.0, N - 10.0], [10.0, 10.0], 4, 4, |_, _| 0.00025));
+    let mut project = Project::new();
+    let create = |name: &str, body| Change::Create { name: name.into(), layer: "old".into(), attributes: Attributes::new(), body };
+    project
+        .apply(
+            RunId::new(),
+            vec![create("cover", Body::Surface(Surface::new(cover))), create("wedge", Body::Solid(Solid::new(wedge).unwrap().with_crossings(old_check)))],
+        )
+        .unwrap();
+    let id = |name: &str| project.objects().find(|o| o.name == name).unwrap().id;
+    let (cover, wedge) = (id("cover"), id("wedge"));
+    ProjectStore::create(dir.join("old.zdproj")).unwrap().save(&project, "[]").unwrap();
+
+    let mut s = Session::open(dir.join("old.zdproj")).unwrap();
+    let record = s.run("solid.cut_by_surface", json!({ "solid": wedge, "surface": cover, "layer": "cut" })).unwrap();
+    assert!(record.messages[0].starts_with("solid 'wedge' crossings: none by more than 1 mm; ") && record.messages[0].contains("thin pairs"), "{:?}", record.messages);
+    let volumes: Vec<f64> = created(&record)
+        .into_iter()
+        .map(|id| match &s.project().object(id).unwrap().body {
+            Body::Solid(solid) => solid.volume(),
+            other => panic!("expected a solid, found {:?}", other.kind()),
+        })
+        .collect();
+    assert_eq!(volumes.len(), 2, "{:?}", record.messages);
+    assert!((volumes[0] - 0.01875).abs() < 1e-9 && (volumes[1] - 0.00625).abs() < 1e-9, "{volumes:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// A box wound counter-clockwise about its outward normals.
 fn box_mesh(min: [f64; 3], max: [f64; 3]) -> TriMesh {
     let [x0, y0, z0] = min;

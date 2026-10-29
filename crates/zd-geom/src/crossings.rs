@@ -9,6 +9,11 @@
 //! one plane (within the tolerance) cross when they overlap by more than it, and two on one edge
 //! when they fold back onto each other. Triangles that only touch, at a corner, along an edge or
 //! within the tolerance, do not cross.
+//!
+//! On a closed solid (decision 0014), two faces within the tolerance of one plane that face opposite
+//! ways and lie apart are thin, not crossing: the solid tapers to a knife edge there, or two of its
+//! parts come within a hairline. They are counted apart from crossings. Faces that coincide (within
+//! [`COINCIDENT`]), or overlap facing the same way, still cross.
 
 use parry3d_f64::bounding_volume::Aabb;
 use parry3d_f64::math::Vector;
@@ -17,18 +22,39 @@ use zd_core::{CrossingCheck, Crossings, TriMesh};
 
 type P = [f64; 3];
 
-/// Every crossing pair in the mesh, with where the first [`Crossings::SITES`] cross (in triangle
-/// order, so the result is the same on any number of cores).
+/// Faces and points closer than this (m) coincide: rounding, in mine grid coordinates worked about
+/// a whole-metre origin.
+pub const COINCIDENT: f64 = 1e-9;
+
+/// Which rules a search applies to faces within the tolerance of one plane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Rules {
+    /// They cross where they overlap, whichever way they face.
+    Surface,
+    /// Facing opposite ways and apart, they are thin.
+    Solid,
+}
+
+/// Every crossing pair in the mesh, by the surface rules, with where the first
+/// [`Crossings::SITES`] cross (in triangle order, so the result is the same on any number of cores).
 pub fn find_crossings(mesh: &TriMesh, tolerance: f64) -> Crossings {
-    search(mesh, tolerance, None)
+    search(mesh, tolerance, None, Rules::Surface)
+}
+
+/// Every crossing pair in a closed solid, by the solid rules, with the thin pairs counted apart.
+pub fn find_solid_crossings(mesh: &TriMesh, tolerance: f64) -> Crossings {
+    search(mesh, tolerance, None, Rules::Solid)
 }
 
 /// The search, with the number of tiles fixed (for tests) or chosen by the mesh's size.
-fn search(mesh: &TriMesh, tolerance: f64, tile_count: Option<usize>) -> Crossings {
+fn search(mesh: &TriMesh, tolerance: f64, tile_count: Option<usize>, rules: Rules) -> Crossings {
     let tolerance = tolerance.max(0.0);
-    let check = CrossingCheck::Search { tolerance };
+    let check = match rules {
+        Rules::Surface => CrossingCheck::Search { tolerance },
+        Rules::Solid => CrossingCheck::SolidSearch { tolerance },
+    };
     let Some(bounds) = mesh.bounds() else {
-        return Crossings { check, pairs: 0, at: Vec::new() };
+        return Crossings { check, pairs: 0, at: Vec::new(), thin: 0, thin_at: Vec::new() };
     };
     // Worked about a whole-metre origin so mine grid coordinates keep their precision.
     let origin = bounds.centre().map(f64::round);
@@ -46,60 +72,67 @@ fn search(mesh: &TriMesh, tolerance: f64, tile_count: Option<usize>) -> Crossing
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, triangles.len().max(1));
     let tiles = Tiles::build(&boxes, tile_count.unwrap_or(if triangles.len() < SMALL { 1 } else { threads }));
     let chunk = triangles.len().div_ceil(threads);
-    // Each core takes a run of triangles in order and keeps its count and its first sites.
-    let parts: Vec<(usize, Vec<P>)> = std::thread::scope(|scope| {
+    // Each core takes a run of triangles in order and keeps its counts and first sites, of
+    // crossings and of thin pairs.
+    let parts: Vec<[(usize, Vec<P>); 2]> = std::thread::scope(|scope| {
         let (tiles, boxes, local) = (&tiles, &boxes, &local);
         let handles: Vec<_> = (0..threads)
             .map(|k| {
                 scope.spawn(move || {
-                    let mut count = 0;
-                    let mut sites = Vec::new();
-                    let mut hits: Vec<(u32, P)> = Vec::new();
+                    let mut found: [(usize, Vec<P>); 2] = [(0, Vec::new()), (0, Vec::new())];
+                    let mut hits: Vec<(u32, Crossing)> = Vec::new();
                     for i in k * chunk..((k + 1) * chunk).min(triangles.len()) {
                         hits.clear();
                         for j in tiles.overlapping(&boxes[i]) {
                             if j as usize > i
-                                && let Some(at) = crossing(triangles[i], triangles[j as usize], local, tolerance)
+                                && let Some(at) = crossing(triangles[i], triangles[j as usize], local, tolerance, rules)
                             {
-                                hits.push((j, at.site()));
+                                hits.push((j, at));
                             }
                         }
                         hits.sort_by_key(|h| h.0);
-                        count += hits.len();
-                        sites.extend(hits.iter().take(Crossings::SITES - sites.len().min(Crossings::SITES)).map(|h| h.1));
+                        for (_, at) in &hits {
+                            let (count, sites) = &mut found[usize::from(matches!(at, Crossing::Thin(_)))];
+                            *count += 1;
+                            if sites.len() < Crossings::SITES {
+                                sites.push(at.site());
+                            }
+                        }
                     }
-                    (count, sites)
+                    found
                 })
             })
             .collect();
         handles.into_iter().map(|h| h.join().expect("a crossing search thread panicked")).collect()
     });
 
-    let pairs = parts.iter().map(|p| p.0).sum();
-    let at = parts.into_iter().flat_map(|p| p.1).take(Crossings::SITES).map(|p| add(p, origin)).collect();
-    Crossings { check, pairs, at }
+    let total = |k: usize| parts.iter().map(|p| p[k].0).sum();
+    let sites = |k: usize| parts.iter().flat_map(|p| p[k].1.iter()).take(Crossings::SITES).map(|p| add(*p, origin)).collect();
+    Crossings { check, pairs: total(0), at: sites(0), thin: total(1), thin_at: sites(1) }
 }
 
 /// How two triangles cross: along a segment (in different planes), or overlapping in one plane or
-/// folded back on one edge, with a point in the overlap.
+/// folded back on one edge, with a point in the overlap. By the solid rules, `Thin` is two faces
+/// within the tolerance of one plane, facing opposite ways and apart: not a crossing.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Crossing {
     Segment([P; 2]),
     Overlap(P),
+    Thin(P),
 }
 
 impl Crossing {
     fn site(&self) -> P {
         match *self {
             Crossing::Segment([a, b]) => mid(a, b),
-            Crossing::Overlap(p) => p,
+            Crossing::Overlap(p) | Crossing::Thin(p) => p,
         }
     }
 }
 
-/// Every crossing pair in the mesh with how it crosses, in world coordinates, in triangle order. For
-/// the self-union, on one core (solids are small).
-pub(crate) fn crossing_list(mesh: &TriMesh, tolerance: f64) -> Vec<(u32, u32, Crossing)> {
+/// Every crossing pair in the mesh with how it crosses (thin pairs too, by the solid rules), in world
+/// coordinates, in triangle order. For the self-union, on one core (solids are small).
+pub(crate) fn crossing_list(mesh: &TriMesh, tolerance: f64, rules: Rules) -> Vec<(u32, u32, Crossing)> {
     let tolerance = tolerance.max(0.0);
     let Some(bounds) = mesh.bounds() else { return Vec::new() };
     let origin = bounds.centre().map(f64::round);
@@ -120,13 +153,14 @@ pub(crate) fn crossing_list(mesh: &TriMesh, tolerance: f64) -> Vec<(u32, u32, Cr
         let mut hits: Vec<(u32, Crossing)> = tiles
             .overlapping(query)
             .filter(|&j| j as usize > i)
-            .filter_map(|j| crossing(mesh.triangles[i], mesh.triangles[j as usize], &local, tolerance).map(|c| (j, c)))
+            .filter_map(|j| crossing(mesh.triangles[i], mesh.triangles[j as usize], &local, tolerance, rules).map(|c| (j, c)))
             .collect();
         hits.sort_by_key(|h| h.0);
         found.extend(hits.into_iter().map(|(j, c)| {
             let world = match c {
                 Crossing::Segment([a, b]) => Crossing::Segment([add(a, origin), add(b, origin)]),
                 Crossing::Overlap(p) => Crossing::Overlap(add(p, origin)),
+                Crossing::Thin(p) => Crossing::Thin(add(p, origin)),
             };
             (i as u32, j, world)
         }));
@@ -201,7 +235,7 @@ fn split(mut part: Vec<(f64, f64, u32)>, count: usize) -> Vec<Vec<(f64, f64, u32
 }
 
 /// How two triangles cross, if they do: the piece they share, or a point where they overlap.
-fn crossing(ta: [u32; 3], tb: [u32; 3], v: &[P], tol: f64) -> Option<Crossing> {
+fn crossing(ta: [u32; 3], tb: [u32; 3], v: &[P], tol: f64, rules: Rules) -> Option<Crossing> {
     let shared = ta.iter().filter(|i| tb.contains(i)).count();
     if shared == 3 {
         return None;
@@ -212,6 +246,11 @@ fn crossing(ta: [u32; 3], tb: [u32; 3], v: &[P], tol: f64) -> Option<Crossing> {
     let from_a = b.map(|p| dot(na, sub(p, a[0])));
     let from_b = a.map(|p| dot(nb, sub(p, b[0])));
     let coplanar = from_a.iter().chain(&from_b).all(|d| d.abs() <= tol);
+    // By the solid rules, faces in one plane facing opposite ways are thin unless they coincide.
+    let thin_or = |overlap: P| {
+        let apart = from_a.iter().chain(&from_b).any(|d| d.abs() > COINCIDENT);
+        if rules == Rules::Solid && dot(na, nb) < 0.0 && apart { Crossing::Thin(overlap) } else { Crossing::Overlap(overlap) }
+    };
 
     if shared == 2 {
         // On one edge, two triangles meet only along it unless they fold back onto each other in
@@ -226,10 +265,10 @@ fn crossing(ta: [u32; 3], tb: [u32; 3], v: &[P], tol: f64) -> Option<Crossing> {
         let side = |p: P| dot(na, cross(sub(w, u), sub(p, u))) / norm(sub(w, u));
         let (sa, sb) = (side(a[a3]), side(b[b3]));
         let folded = (sa > tol && sb > tol) || (sa < -tol && sb < -tol);
-        return folded.then(|| Crossing::Overlap(mid(centroid(a), centroid(b))));
+        return folded.then(|| thin_or(mid(centroid(a), centroid(b))));
     }
     if coplanar {
-        return overlap_in_plane(a, na, b, tol).map(Crossing::Overlap);
+        return overlap_in_plane(a, na, b, tol).map(thin_or);
     }
     let straddles = |d: &[f64; 3]| d.iter().any(|x| *x > tol) && d.iter().any(|x| *x < -tol);
     if !straddles(&from_a) || !straddles(&from_b) {
@@ -241,16 +280,19 @@ fn crossing(ta: [u32; 3], tb: [u32; 3], v: &[P], tol: f64) -> Option<Crossing> {
         return None;
     }
     let line = line.map(|x| x / length);
-    let ((a_lo, pa_lo), (a_hi, pa_hi)) = span_on_line(a, from_b, line, tol)?;
-    let ((b_lo, pb_lo), (b_hi, pb_hi)) = span_on_line(b, from_a, line, tol)?;
+    let ((a_lo, pa_lo), (a_hi, pa_hi)) = span_on_line(a, from_b, line)?;
+    let ((b_lo, pb_lo), (b_hi, pb_hi)) = span_on_line(b, from_a, line)?;
     let (lo, p_lo) = if a_lo >= b_lo { (a_lo, pa_lo) } else { (b_lo, pb_lo) };
     let (hi, p_hi) = if a_hi <= b_hi { (a_hi, pa_hi) } else { (b_hi, pb_hi) };
     (hi - lo > tol).then_some(Crossing::Segment([p_lo, p_hi]))
 }
 
 /// The piece of triangle `t` lying in the other triangle's plane (`d`: its corners measured from
-/// that plane), as its two ends measured along `line` with their points.
-fn span_on_line(t: [P; 3], d: [f64; 3], line: P, tol: f64) -> Option<((f64, P), (f64, P))> {
+/// that plane), as its two ends measured along `line` with their points. Found exactly: a corner
+/// counts as in the plane only when it coincides with it. (Taking corners within the tolerance as
+/// in the plane stretched the piece past where the triangles meet, and found crossings between
+/// triangles that only pass within the tolerance of each other; decision 0014.)
+fn span_on_line(t: [P; 3], d: [f64; 3], line: P) -> Option<((f64, P), (f64, P))> {
     let mut ends: Option<((f64, P), (f64, P))> = None;
     let mut take = |p: P| {
         let s = dot(line, p);
@@ -261,10 +303,10 @@ fn span_on_line(t: [P; 3], d: [f64; 3], line: P, tol: f64) -> Option<((f64, P), 
     };
     for k in 0..3 {
         let (i, j) = (k, (k + 1) % 3);
-        if d[i].abs() <= tol {
+        if d[i].abs() <= COINCIDENT {
             take(t[i]);
         }
-        if (d[i] > tol && d[j] < -tol) || (d[i] < -tol && d[j] > tol) {
+        if (d[i] > COINCIDENT && d[j] < -COINCIDENT) || (d[i] < -COINCIDENT && d[j] > COINCIDENT) {
             let s = d[i] / (d[i] - d[j]);
             take([0, 1, 2].map(|c| t[i][c] + s * (t[j][c] - t[i][c])));
         }
@@ -377,6 +419,18 @@ mod tests {
     }
 
     #[test]
+    fn triangles_touching_near_their_corners_do_not_cross() {
+        // Each passes through the other's plane by more than 1 mm, but they only touch, at one point,
+        // where a corner of each comes within 1 mm of the other's plane. Taking those corners as in
+        // the plane stretched the shared piece past 1 mm and called it a crossing.
+        let mesh = TriMesh::new(at(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.003, -0.002, -0.0002], [0.5, 0.5, 0.011], [1.3, -0.3, -0.028]]), vec![[0, 1, 2], [3, 4, 5]]);
+        for tolerance in [0.001, 0.0001, COINCIDENT] {
+            assert_eq!(find_crossings(&mesh, tolerance).pairs, 0, "at {tolerance}");
+        }
+        assert_eq!(find_solid_crossings(&mesh, 0.001).pairs, 0);
+    }
+
+    #[test]
     fn touching_is_not_crossing() {
         // A corner resting on the flat triangle, and a triangle standing on its edge.
         let v = at(&[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [2.0, 2.0, 0.0], [5.0, 2.0, 5.0], [2.0, 5.0, 5.0], [3.0, 0.0, 0.0], [6.0, 0.0, 4.0]]);
@@ -392,6 +446,65 @@ mod tests {
         // Two separate triangles in one plane, overlapping.
         let overlap = TriMesh::new(at(&[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [2.0, 2.0, 0.0], [12.0, 2.0, 0.0], [2.0, 12.0, 0.0]]), vec![[0, 1, 2], [3, 4, 5]]);
         assert_eq!(find_crossings(&overlap, 0.001).pairs, 1);
+    }
+
+    /// A box from `min` to `max`, wound outward.
+    fn cuboid(min: P, max: P) -> TriMesh {
+        let v = (0..8).map(|i| [if i & 1 == 0 { min[0] } else { max[0] }, if i >> 1 & 1 == 0 { min[1] } else { max[1] }, if i >> 2 == 0 { min[2] } else { max[2] }]).collect();
+        TriMesh::new(v, vec![[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]])
+    }
+
+    fn joined(a: &TriMesh, b: &TriMesh) -> TriMesh {
+        let mut m = a.clone();
+        let base = m.vertices.len() as u32;
+        m.vertices.extend(&b.vertices);
+        m.triangles.extend(b.triangles.iter().map(|t| t.map(|i| i + base)));
+        m
+    }
+
+    /// A wedge 10 m long and wide whose top rises from a knife edge at x = 0 to `height` at x = 10.
+    pub(crate) fn knife_edge(height: f64) -> TriMesh {
+        let v = at(&[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 0.0, height], [0.0, 10.0, 0.0], [10.0, 10.0, 0.0], [10.0, 10.0, height]]);
+        TriMesh::new(v, vec![[0, 3, 1], [1, 3, 4], [0, 2, 3], [2, 5, 3], [1, 4, 5], [1, 5, 2], [0, 1, 2], [3, 5, 4]])
+    }
+
+    #[test]
+    fn a_knife_edge_is_a_fold_on_a_surface_and_thin_in_a_solid() {
+        // Its top and bottom meet at the knife edge and stay within 0.5 mm of each other: by the
+        // surface rules they fold back onto each other; in a solid they are thin, not crossing.
+        let wedge = knife_edge(0.0005);
+        assert!(wedge.validity().is_watertight() && (wedge.signed_volume() - 0.025).abs() < 1e-12);
+        let surface = find_crossings(&wedge, 0.001);
+        assert!(surface.pairs > 0 && surface.thin == 0, "{surface:?}");
+        let solid = find_solid_crossings(&wedge, 0.001);
+        assert_eq!(solid.pairs, 0, "{solid:?}");
+        assert_eq!(solid.check, CrossingCheck::SolidSearch { tolerance: 0.001 });
+        assert!(solid.thin > 0 && solid.thin_at.len() == solid.thin);
+        // At 0.1 mm the faces are not within the tolerance of one plane: nothing either way.
+        assert_eq!((find_solid_crossings(&wedge, 0.0001).pairs, find_solid_crossings(&wedge, 0.0001).thin), (0, 0));
+    }
+
+    #[test]
+    fn a_hairline_gap_is_thin_in_a_solid() {
+        // Two cubes 0.5 mm apart: the walls facing each other are within 1 mm of one plane.
+        let gap = joined(&cuboid([E, N, 0.0], [E + 10.0, N + 10.0, 10.0]), &cuboid([E + 10.0005, N + 2.0, 1.0], [E + 20.0, N + 12.0, 11.0]));
+        assert!(find_crossings(&gap, 0.001).pairs > 0);
+        let solid = find_solid_crossings(&gap, 0.001);
+        assert_eq!(solid.pairs, 0, "{solid:?}");
+        assert!(solid.thin > 0);
+    }
+
+    #[test]
+    fn coinciding_faces_and_faces_overlapping_the_same_way_still_cross_in_a_solid() {
+        // A cube sitting offset on another: the faces where they touch coincide, facing opposite ways.
+        let sitting = joined(&cuboid([E, N, 0.0], [E + 10.0, N + 10.0, 10.0]), &cuboid([E + 5.0, N + 3.0, 10.0], [E + 15.0, N + 13.0, 20.0]));
+        let found = find_solid_crossings(&sitting, 0.001);
+        assert!(found.pairs > 0 && found.thin == 0, "{found:?}");
+        // Two cubes overlapping with their tops and bottoms in the same planes, facing the same way.
+        let beside = joined(&cuboid([E, N, 0.0], [E + 10.0, N + 10.0, 10.0]), &cuboid([E + 5.0, N + 5.0, 0.0], [E + 15.0, N + 15.0, 10.0]));
+        assert!(find_solid_crossings(&beside, 0.001).pairs > 0);
+        // And a pass-through is a crossing by either rules.
+        assert_eq!(find_solid_crossings(&pierced(5.0), 0.001).pairs, 1);
     }
 
     #[test]
@@ -455,10 +568,10 @@ mod tests {
         mesh.vertices.extend(&sheet.vertices);
         mesh.triangles.extend(sheet.triangles.iter().map(|t| t.map(|i| i + base)));
         assert!(mesh.triangle_count() > SMALL);
-        let one = search(&mesh, 0.001, Some(1));
+        let one = search(&mesh, 0.001, Some(1), Rules::Surface);
         assert!(one.pairs > 0);
         for tiles in [2, 7, 48] {
-            assert_eq!(search(&mesh, 0.001, Some(tiles)), one, "{tiles} tiles");
+            assert_eq!(search(&mesh, 0.001, Some(tiles), Rules::Surface), one, "{tiles} tiles");
         }
     }
 

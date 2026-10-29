@@ -72,8 +72,12 @@ impl MeshValidity {
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "by", rename_all = "snake_case")]
 pub enum CrossingCheck {
-    /// A search for triangles crossing by more than `tolerance` (m).
+    /// A search for triangles crossing by more than `tolerance` (m), by the surface rules: faces
+    /// within the tolerance of one plane cross where they overlap, whichever way they face.
     Search { tolerance: f64 },
+    /// The same search by the solid rules (decision 0014): faces within the tolerance of one plane,
+    /// facing opposite ways and apart, are thin (a knife edge or a hairline gap), not crossing.
+    SolidSearch { tolerance: f64 },
     /// A grid's triangulation, which cannot cross itself: one elevation per node on a regular
     /// plan lattice.
     Lattice,
@@ -87,6 +91,13 @@ pub struct Crossings {
     pub pairs: usize,
     /// A point where each of the first pairs cross, up to [`Crossings::SITES`].
     pub at: Vec<[f64; 3]>,
+    /// Thin pairs, by the solid rules only: faces within the tolerance of each other, facing
+    /// opposite ways and apart. Reported, never refused.
+    #[serde(default)]
+    pub thin: usize,
+    /// Where the first thin pairs are, up to [`Crossings::SITES`].
+    #[serde(default)]
+    pub thin_at: Vec<[f64; 3]>,
 }
 
 impl Crossings {
@@ -95,7 +106,7 @@ impl Crossings {
 
     /// A grid's triangulation: no crossings, by construction.
     pub fn lattice() -> Self {
-        Crossings { check: CrossingCheck::Lattice, pairs: 0, at: Vec::new() }
+        Crossings { check: CrossingCheck::Lattice, pairs: 0, at: Vec::new(), thin: 0, thin_at: Vec::new() }
     }
 }
 

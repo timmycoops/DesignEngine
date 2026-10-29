@@ -1,6 +1,6 @@
 # 0010 — The import repair step and crossings
 
-Date: 2026-10-29 · Status: accepted (Tim, 2026-10-29)
+Date: 2026-10-29 · Status: accepted (Tim, 2026-10-29); for closed solids, amended by decision 0014 (thin features, 2026-10-30)
 
 ## Decision
 

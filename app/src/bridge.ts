@@ -312,12 +312,19 @@ export interface MeshValidity {
   degenerate_triangles: number;
 }
 
-/** A crossing check: pairs of triangles that pass through or fold back onto each other. */
+/**
+ * A crossing check: pairs of triangles that pass through or fold back onto each other. By the solid
+ * rules (decision 0014), faces within the tolerance facing opposite ways and apart are thin instead.
+ */
 export interface Crossings {
-  check: { by: 'search'; tolerance: number } | { by: 'lattice' };
+  check: { by: 'search' | 'solid_search'; tolerance: number } | { by: 'lattice' };
   pairs: number;
   /** Where the first pairs cross (up to 100), in world coordinates. */
   at: Vec3[];
+  /** Thin pairs (solid rules only): knife edges or hairline gaps, kept as they are. */
+  thin: number;
+  /** Where the first thin pairs are (up to 100). */
+  thin_at: Vec3[];
 }
 
 /** A grid file a seam model reads in place, with its fingerprint from when the model was built. */
