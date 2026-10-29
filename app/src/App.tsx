@@ -335,7 +335,8 @@ export default function App() {
 
   const selectedObject = summary?.objects.find((o) => o.id === selected) ?? null;
   const visibleObjects = (kinds: Set<string>) => {
-    const shown = new Set(summary?.layers.filter((l) => l.visible).map((l) => l.name));
+    // Objects carry their layer's id.
+    const shown = new Set(summary?.layers.filter((l) => l.visible).map((l) => l.id));
     return summary?.objects.filter((o) => kinds.has(o.kind) && shown.has(o.layer)) ?? [];
   };
 

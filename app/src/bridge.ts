@@ -226,6 +226,7 @@ export interface ObjectSummary {
   id: string;
   revision: number;
   name: string;
+  /** The layer's id (see `Layer.id`), not its name. */
   layer: string;
   kind: ObjectKind;
   attributes: Record<string, boolean | number | string>;
