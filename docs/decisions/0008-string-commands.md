@@ -79,7 +79,9 @@ second part of a split is new, and the string joined on is deleted with a tombst
 In the app:
 
 - **Snapping** now offers the crossing of two strings (in plan, with the RL of the first string there)
-  after a vertex and before a segment.
+  after a vertex and before a segment. With nothing under the cursor, a point lands on a level working
+  plane rather than being refused: at the dragged vertex's RL while dragging, the last vertex's while
+  drawing, else the RL at the centre of the view. The status line names the plane and its RL.
 - **Typed vertices** while drawing: `E N [RL]` in mine grid coordinates, or `@distance<bearing` from the
   last vertex (plan distance, grid bearing clockwise from north) with an optional RL or `grade%`.
   Without an RL a typed vertex takes the surface below it, else the last vertex's RL. An empty entry

@@ -7,8 +7,10 @@
 // a vertex on it (`string.insert_vertex`); Delete removes the vertex under the cursor
 // (`string.delete_vertex`). Every edit is a command, so undo covers it.
 //
-// Snapping, in order: a string vertex near the cursor (its exact coordinates), the nearest point
-// on a string segment, then the surface under the cursor.
+// Snapping, in order: a string vertex near the cursor (its exact coordinates), the crossing of two
+// strings, the nearest point on a string segment, the surface under the cursor, and failing all of
+// those a level working plane: at the dragged vertex's RL while dragging, the last vertex's while
+// drawing, else the RL at the centre of the view.
 import * as THREE from 'three/webgpu';
 import type { Layer, ProjectSummary, SnapHit, Vec3 } from '../bridge';
 import { colourOf } from './load';
@@ -226,7 +228,7 @@ export class StringLayer {
 
     if (this.mode === 'draw') {
       const hit = await this.snapAt(e.clientX, e.clientY);
-      if (!hit) return this.actions.status('Nothing to snap to under the cursor');
+      if (!hit) return this.actions.status('No point there: the view looks along the working plane; tilt it down or use plan view');
       this.pending.push(hit);
       this.refreshPreview();
       this.placeHandles();
@@ -397,7 +399,24 @@ export class StringLayer {
       if (hit) return hit;
     }
     const surface = await this.actions.snap(x, y);
-    return surface ? { ...surface, kind: 'surface' } : null;
+    if (surface) return { ...surface, kind: 'surface' };
+    const dragged = skip ? this.shown.get(skip.id)?.points[skip.index] : undefined;
+    const last = this.pending[this.pending.length - 1];
+    const plane = dragged ? dragged.z : last ? last.local[2] : this.viewport.controls.target.z;
+    return this.onPlane(x, y, plane);
+  }
+
+  /** Where the pick ray through the cursor meets the level plane at scene-local height `z`. */
+  private onPlane(x: number, y: number, z: number): SnapHit | null {
+    const ray = this.viewport.rayFromNdc(...this.viewport.clientToNdc(x, y));
+    const [o, d] = [ray.origin, ray.direction];
+    if (Math.abs(d[2]) < 1e-9) return null;
+    const t = (z - o[2]) / d[2];
+    // Behind the eye, or so far off towards the horizon that the point would mean nothing.
+    if (t <= 0 || t > 1e6) return null;
+    const local = new THREE.Vector3(o[0] + t * d[0], o[1] + t * d[1], z);
+    const hit = this.stringHit('', local, 'vertex', '');
+    return { ...hit, kind: 'plane', label: `the working plane at RL ${hit.world[2].toFixed(2)}` };
   }
 
   /** The point on a segment of a string nearest the pick ray through the cursor. */

@@ -428,8 +428,11 @@ export interface SnapHit {
   /** Mine grid coordinates, for commands. */
   world: Vec3;
   object: string;
-  /** What was snapped to: a string's vertex, segment or crossing, or (by default) a surface. */
-  kind?: 'vertex' | 'segment' | 'intersection' | 'surface';
+  /**
+   * What was snapped to: a string's vertex, segment or crossing, a surface (the default), or the level
+   * working plane when nothing is under the cursor.
+   */
+  kind?: 'vertex' | 'segment' | 'intersection' | 'surface' | 'plane';
   /** For the status line, e.g. "vertex 3 of toe". */
   label?: string;
 }
