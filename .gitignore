@@ -24,3 +24,8 @@ testdata/golden/*
 # Local project files and outputs
 *.zdproj/
 bench/out/
+
+# Python
+.venv/
+__pycache__/
+*.pyd
