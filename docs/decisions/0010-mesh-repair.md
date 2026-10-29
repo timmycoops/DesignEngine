@@ -72,4 +72,6 @@ and the interval test is indifferent to it.
   solid saved without checks checks both first.
 
 Timings on a 2,000,000-triangle rolling grid (release build, this machine's 48 threads): repair
-641 ms, crossing search 616 ms, 2,000,000 triangles out.
+239 ms, crossing search 222 ms, 2,000,000 triangles out (641 ms and 616 ms before the speed-ups in
+decision 0011, which change no results). On a real surface of 18.5 million triangles: repair 3.9 s,
+crossing search 2.3 s.

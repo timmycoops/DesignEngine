@@ -78,6 +78,7 @@ fn pit_in(dir: &Path) -> Option<GoldenPit> {
 pub fn load_triangulation(path: &Path) -> Result<TriMesh, String> {
     match read_surface(path).map_err(|e| format!("{}: {e}", path.display()))? {
         SurfaceImport::Triangulation(import) => Ok(import.mesh),
+        SurfaceImport::Vulcan(import) => Ok(import.mesh),
         SurfaceImport::Grid(import) => Ok(triangulate_grid(&import.grid)),
     }
 }

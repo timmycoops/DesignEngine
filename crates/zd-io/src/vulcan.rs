@@ -44,7 +44,7 @@ use zd_core::Grid;
 use crate::IoError;
 
 const HEADER: usize = 88;
-const VULZ: &[u8; 4] = b"vulZ";
+pub(crate) const VULZ: &[u8; 4] = b"vulZ";
 const VULZ_HEADER: usize = 40;
 const VULZ_PAGE_ENTRIES: usize = 256;
 
@@ -87,7 +87,7 @@ pub fn read_vulcan_grid(path: &Path) -> Result<VulcanGrid, IoError> {
 /// Reads either layout.
 pub fn parse_vulcan_grid(bytes: &[u8]) -> Result<VulcanGrid, IoError> {
     if bytes.len() >= 8 && &bytes[4..8] == VULZ {
-        let (plain, blocks) = unpack_vulz(bytes)?;
+        let (plain, blocks) = unpack_vulz(bytes, "grid")?;
         let mut read = parse_plain_grid(&plain)?;
         read.log.compressed_blocks = blocks;
         return Ok(read);
@@ -95,9 +95,10 @@ pub fn parse_vulcan_grid(bytes: &[u8]) -> Result<VulcanGrid, IoError> {
     parse_plain_grid(bytes)
 }
 
-/// Unpacks the compressed layout into the plain one; returns it with the number of blocks.
-fn unpack_vulz(bytes: &[u8]) -> Result<(Vec<u8>, usize), IoError> {
-    let bad = |message: String| IoError::Binary(format!("compressed grid: {message}"));
+/// Unpacks the compressed layout into the plain one; returns it with the number of blocks. `what`
+/// names the file's kind in errors (grid, triangulation).
+pub(crate) fn unpack_vulz(bytes: &[u8], what: &str) -> Result<(Vec<u8>, usize), IoError> {
+    let bad = |message: String| IoError::Binary(format!("compressed {what}: {message}"));
     if bytes.len() < VULZ_HEADER {
         return Err(bad(format!("{} bytes is too short for the header", bytes.len())));
     }

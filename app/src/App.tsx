@@ -311,11 +311,27 @@ export default function App() {
 
   const onImportSurface = () =>
     attempt(async () => {
-      const picked = await open({ multiple: true, filters: [{ name: 'Surfaces', extensions: ['dxf', 'xyz', 'csv', 'txt', 'asc'] }] });
+      const picked = await open({ multiple: true, filters: [{ name: 'Surfaces', extensions: ['00t', 'dxf', 'xyz', 'csv', 'txt', 'asc'] }] });
       const paths = picked === null ? [] : Array.isArray(picked) ? picked : [picked];
       for (const path of paths) {
         setStatus({ text: `Importing ${path}…` });
         await run('surface.import', { path, layer: 'surfaces' });
+      }
+    });
+
+  /** Imports closed triangulations as solids, one run each; a refused file says why in the run log. */
+  const onImportSolids = () =>
+    attempt(async () => {
+      const picked = await open({ multiple: true, filters: [{ name: 'Solids', extensions: ['00t', 'dxf'] }] });
+      const paths = picked === null ? [] : Array.isArray(picked) ? picked : [picked];
+      let made = 0;
+      for (const [k, path] of paths.entries()) {
+        setStatus({ text: `Importing solid ${k + 1} of ${paths.length}: ${path}…` });
+        if (await run('solid.import', { path, layer: 'solids' })) made += 1;
+      }
+      if (paths.length > 1) {
+        const refused = paths.length - made;
+        setStatus({ text: `${made} solids imported${refused ? `; ${refused} refused (the run log says why)` : ''}`, error: refused > 0 });
       }
     });
 
@@ -472,8 +488,11 @@ export default function App() {
             <SaveAll />
           </ToolButton>
           <Separator orientation="vertical" className="mx-1 h-5" />
-          <ToolButton tip="Import surfaces (DXF, XYZ, CSV grids)" onClick={onImportSurface}>
+          <ToolButton tip="Import surfaces (Vulcan .00t, DXF, XYZ or CSV grids)" onClick={onImportSurface}>
             <FileInput /> Surface
+          </ToolButton>
+          <ToolButton tip="Import solids: closed triangulations in Vulcan .00t or DXF files; pick as many as you like" onClick={onImportSolids}>
+            <FileInput /> Solids
           </ToolButton>
           <ToolButton tip="Import strings (DXF polylines and lines, or CSV with x, y and z columns)" onClick={onImportStrings}>
             <FileInput /> Strings

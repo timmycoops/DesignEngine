@@ -4,7 +4,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use zd_core::{Attributes, Body, Change, Crossings, MeshValidity, ObjectKind, Surface, TriMesh};
 use zd_geom::{RepairLog, find_crossings, repair_mesh, triangulate_grid};
-use zd_io::{SurfaceImport, read_surface};
+use zd_io::{SurfaceImport, VulcanTriangulation, read_surface};
 
 use super::exchange::describe_dxf_faces;
 use super::finite;
@@ -23,9 +23,10 @@ fn check_tolerance(tolerance: f64) -> Result<(), CommandError> {
     }
 }
 
-/// `surface.import`: a surface from the 3DFACEs and polyface meshes of a DXF file, or an XYZ/CSV
-/// grid (grids are triangulated, engine rule 6). A DXF mesh passes through the repair step and the
-/// crossing check (decision 0010); a grid needs neither. Every change goes into the run record.
+/// `surface.import`: a surface from the 3DFACEs and polyface meshes of a DXF file, a Vulcan
+/// triangulation (`.00t`), or an XYZ/CSV grid (grids are triangulated, engine rule 6). A DXF or
+/// Vulcan mesh passes through the repair step and the crossing check (decision 0010); a grid needs
+/// neither. Every change goes into the run record.
 pub struct ImportSurface;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,13 +49,13 @@ impl Command for ImportSurface {
     fn spec(&self) -> CommandSpec {
         CommandSpec {
             name: Self::NAME,
-            summary: "Import a surface from DXF or an XYZ/CSV grid",
+            summary: "Import a surface from DXF, a Vulcan triangulation or an XYZ/CSV grid",
             inputs: vec![],
             params: vec![
-                Field::new("path", FieldType::Path, ".dxf, .xyz, .csv, .txt or .asc"),
+                Field::new("path", FieldType::Path, ".dxf, .00t, .xyz, .csv, .txt or .asc"),
                 Field::new("layer", FieldType::Layer, "Layer for the surface"),
                 Field::new("name", FieldType::Text, "Optional; the file name by default"),
-                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "DXF meshes: weld vertices closer than this; 1 mm by default"),
+                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "DXF and Vulcan meshes: weld vertices closer than this; 1 mm by default"),
             ],
             outputs: vec![Field::object("surface", ObjectKind::Surface, "The imported surface")],
         }
@@ -66,13 +67,13 @@ impl Command for ImportSurface {
         let (surface, messages) = match read_surface(path).map_err(|e| CommandError::Io(format!("{}: {e}", p.path)))? {
             SurfaceImport::Triangulation(dxf) => {
                 let read = describe_dxf_faces(&dxf);
-                let (mesh, log) = repair_mesh(&dxf.mesh, p.weld_tolerance);
-                if mesh.triangles.is_empty() {
-                    return Err(CommandError::Invalid(format!("{} holds no triangles ({read})", p.path)));
-                }
-                let repaired = describe_repair(&log, &mesh);
-                let (crossings, checked) = check_crossings(&mesh, p.weld_tolerance);
-                (Surface::new(mesh).with_crossings(crossings), vec![read, repaired, checked])
+                let (mesh, messages, crossings) = repaired(&dxf.mesh, read, &p.path, p.weld_tolerance)?;
+                (Surface::new(mesh).with_crossings(crossings), messages)
+            }
+            SurfaceImport::Vulcan(vulcan) => {
+                let read = describe_vulcan(&vulcan);
+                let (mesh, messages, crossings) = repaired(&vulcan.mesh, read, &p.path, p.weld_tolerance)?;
+                (Surface::new(mesh).with_crossings(crossings), messages)
             }
             SurfaceImport::Grid(xyz) => {
                 let (g, log) = (&xyz.grid, &xyz.log);
@@ -102,6 +103,34 @@ impl Command for ImportSurface {
         outcome.messages = messages;
         Ok(outcome.message(flags))
     }
+}
+
+/// A mesh read from a file, through the repair step and the crossing check: the mesh, the run
+/// record's lines (what the reader did, the repair, the check) and the check's result.
+pub(crate) fn repaired(read: &TriMesh, read_log: String, path: &str, tolerance: f64) -> Result<(TriMesh, Vec<String>, Crossings), CommandError> {
+    let (mesh, log) = repair_mesh(read, tolerance);
+    if mesh.triangles.is_empty() {
+        return Err(CommandError::Invalid(format!("{path} holds no triangles ({read_log})")));
+    }
+    let repair = describe_repair(&log, &mesh);
+    let (crossings, checked) = check_crossings(&mesh, tolerance);
+    Ok((mesh, vec![read_log, repair, checked], crossings))
+}
+
+/// What the Vulcan reader found, in one line.
+pub(crate) fn describe_vulcan(vulcan: &VulcanTriangulation) -> String {
+    let log = &vulcan.log;
+    let mut line = format!("Vulcan triangulation: {} vertices, {} triangles", log.vertices, log.triangles);
+    if log.compressed_blocks > 0 {
+        line += &format!(" (compressed, {} blocks)", log.compressed_blocks);
+    }
+    if log.triangle_extras_set > 0 {
+        line += &format!("; {} triangles carry extra words, ignored", log.triangle_extras_set);
+    }
+    if log.property_bytes > 0 {
+        line += &format!("; {} bytes of display properties not read", log.property_bytes);
+    }
+    line
 }
 
 /// A length in millimetres, to the micrometre.

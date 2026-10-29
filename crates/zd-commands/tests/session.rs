@@ -60,6 +60,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "seam.suggest_definition",
             "solid.cut_by_surface",
             "solid.from_mesh",
+            "solid.import",
             "string.create",
             "string.delete_vertex",
             "string.drape",

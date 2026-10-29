@@ -99,9 +99,12 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 
 ## Exchange formats
 
-- Import first: DXF (3DFACE and polyface), CSV and XYZ grids, Surpac `.str`/`.dtm`, Datamine pt/tr ASCII, OBJ.
+- Import first: Vulcan `.00t` triangulations and grids (the formats sites exchange day to day; see
+  `docs/decisions/0006-vulcan-grids.md` and `0011-vulcan-triangulations.md`), DXF (3DFACE, polyface and
+  strings), CSV strings and XYZ grids; then Surpac `.str`/`.dtm`, Datamine pt/tr ASCII, OBJ.
 - Then: OMF v1 and v2, and an export to Seequent Evo schemas (triangle mesh, design geometry).
-- Defer Vulcan `.00t`. Deswik `.dcf` has no public spec; exchange with Deswik through DXF or OMF.
+- Vulcan formats are read, not written. Deswik `.dcf` has no public spec; exchange with Deswik through DXF
+  (R12, confirmed reading at the same coordinates) or OMF.
 
 ## Reference material
 
