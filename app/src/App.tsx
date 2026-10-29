@@ -36,6 +36,7 @@ import {
   setLayerVisible,
   snapRay,
   undo,
+  type Vec3,
 } from './bridge';
 import { runChecks } from './bench/runChecks';
 import { Button } from './design-system/ui/button';
@@ -119,6 +120,7 @@ export default function App() {
   summaryRef.current = summary;
   const seamRef = useRef<SeamShown | null>(null);
   const markersRef = useRef<IssueMarkers | null>(null);
+  const crossingMarkersRef = useRef<IssueMarkers | null>(null);
   /** An issue to fly to once its horizon has loaded. */
   const pendingFocus = useRef<{ id: string; issue: number } | null>(null);
 
@@ -157,6 +159,14 @@ export default function App() {
     },
     [showSeamHorizon],
   );
+
+  /** World coordinates to the scene's local frame, which the viewport draws in. */
+  const toLocal = useCallback((p: Vec3): Vec3 => {
+    const o = summaryRef.current?.origin ?? [0, 0, 0];
+    return [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
+  }, []);
+  const markCrossings = useCallback((sites: Vec3[]) => crossingMarkersRef.current?.set(sites.map(toLocal)), [toLocal]);
+  const flyTo = useCallback((point: Vec3) => viewportRef.current?.focusOn(toLocal(point)), [toLocal]);
 
   /** Shows a new project summary: panels, strings, and any surfaces whose geometry changed. */
   const show = useCallback((next: ProjectSummary) => {
@@ -206,6 +216,7 @@ export default function App() {
       created.onStats = setStats;
       setBackend(`${created.backend} · ${created.adapter}`);
       markersRef.current = new IssueMarkers(created);
+      crossingMarkersRef.current = new IssueMarkers(created);
       const sync = new SceneSync(created);
       sync.onSeam = onSeam;
       sync.onError = (text) => setStatus({ text, error: true });
@@ -431,10 +442,12 @@ export default function App() {
       seamView,
       showSeamHorizon,
       focusIssue,
+      markCrossings,
+      flyTo,
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, run, seamView, showSeamHorizon, focusIssue, mode, typeVertex],
+    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, run, seamView, showSeamHorizon, focusIssue, markCrossings, flyTo, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';

@@ -117,6 +117,125 @@ pub fn boundary_loops(surface: &TriMesh) -> Result<Vec<Vec<u32>>, GeomError> {
     Ok(loops)
 }
 
+/// What [`orient_patches`] found and changed.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OrientLog {
+    /// Connected patches: triangles joined across edges with exactly two faces.
+    pub patches: usize,
+    /// Patches with no boundary edge, turned to face out rather than up.
+    pub closed_patches: usize,
+    /// Triangles whose winding was reversed.
+    pub triangles_flipped: usize,
+    /// Edges with three or more faces; the fill does not cross them.
+    pub non_manifold_edges: usize,
+    /// The midpoints of the first [`SITES`] non-manifold edges.
+    pub non_manifold_at: Vec<[f64; 3]>,
+    /// Patches that cannot be wound consistently (one-sided), left as read.
+    pub non_orientable_patches: usize,
+}
+
+/// Most sites listed for one kind of problem.
+pub const SITES: usize = 100;
+
+/// Makes winding consistent across each connected patch by flood fill, then turns each patch to
+/// face out if it is closed (positive volume) or up if it is open (area-weighted normal). Edges with
+/// three or more faces stop the fill and are listed; a patch that cannot be wound consistently is
+/// left as read and counted. Nothing is refused, unlike [`orient_upward`].
+pub fn orient_patches(mesh: &TriMesh) -> (TriMesh, OrientLog) {
+    let half_edges = sorted_half_edges(mesh);
+    let tri_count = mesh.triangles.len();
+    let mut log = OrientLog::default();
+    let mut neighbours = vec![[(NONE, false); 3]; tri_count];
+    let mut on_boundary = vec![false; tri_count];
+    for run in half_edges.chunk_by(|x, y| x.key == y.key) {
+        match run {
+            [h] => on_boundary[h.tri] = true,
+            [p, q] => {
+                let same_direction = p.forward == q.forward;
+                neighbours[p.tri][p.slot] = (q.tri as u32, same_direction);
+                neighbours[q.tri][q.slot] = (p.tri as u32, same_direction);
+            }
+            _ => {
+                log.non_manifold_edges += 1;
+                if log.non_manifold_at.len() < SITES {
+                    let (a, b) = (mesh.vertices[run[0].from as usize], mesh.vertices[run[0].to as usize]);
+                    log.non_manifold_at.push([0, 1, 2].map(|i| 0.5 * (a[i] + b[i])));
+                }
+            }
+        }
+    }
+
+    // Volumes and normals about a local origin, so mine grid coordinates keep their precision.
+    let origin = mesh.bounds().map_or([0.0; 3], |b| b.centre());
+    let mut flip: Vec<Option<bool>> = vec![None; tri_count];
+    let mut oriented = mesh.clone();
+    let mut queue = VecDeque::new();
+    for seed in 0..tri_count {
+        if flip[seed].is_some() {
+            continue;
+        }
+        log.patches += 1;
+        let mut patch = vec![seed];
+        let mut consistent = true;
+        flip[seed] = Some(false);
+        queue.push_back(seed);
+        while let Some(t) = queue.pop_front() {
+            let ft = flip[t].unwrap();
+            for &(u, same_direction) in &neighbours[t] {
+                if u == NONE {
+                    continue;
+                }
+                let u = u as usize;
+                // Neighbours must run their shared edge in opposite directions once flipped.
+                let want = ft ^ same_direction;
+                match flip[u] {
+                    None => {
+                        flip[u] = Some(want);
+                        patch.push(u);
+                        queue.push_back(u);
+                    }
+                    Some(have) => consistent &= have == want,
+                }
+            }
+        }
+        if !consistent {
+            log.non_orientable_patches += 1;
+            continue;
+        }
+        let closed = patch.iter().all(|&t| !on_boundary[t]);
+        let measure: f64 = patch
+            .iter()
+            .map(|&t| {
+                let [a, b, c] = mesh.triangles[t].map(|i| sub(mesh.vertices[i as usize], origin));
+                let v = if closed { dot(a, cross(b, c)) } else { cross(sub(b, a), sub(c, a))[2] };
+                if flip[t].unwrap() { -v } else { v }
+            })
+            .sum();
+        log.closed_patches += usize::from(closed);
+        let turn_patch = measure < 0.0;
+        for &t in &patch {
+            if flip[t].unwrap() ^ turn_patch {
+                let [a, b, c] = oriented.triangles[t];
+                oriented.triangles[t] = [a, c, b];
+                log.triangles_flipped += 1;
+            }
+        }
+    }
+    (oriented, log)
+}
+
+fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
 const NONE: u32 = u32::MAX;
 
 struct HalfEdge {

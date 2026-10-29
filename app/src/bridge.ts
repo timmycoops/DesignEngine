@@ -304,12 +304,20 @@ export interface MeshValidity {
   manifold: boolean;
   consistent_winding: boolean;
   non_degenerate: boolean;
-  /** Not computed yet. */
+  /** Null until a crossing check has run. */
   non_self_intersecting: boolean | null;
   boundary_edges: number;
   non_manifold_edges: number;
   inconsistent_edges: number;
   degenerate_triangles: number;
+}
+
+/** A crossing check: pairs of triangles that pass through or fold back onto each other. */
+export interface Crossings {
+  check: { by: 'search'; tolerance: number } | { by: 'lattice' };
+  pairs: number;
+  /** Where the first pairs cross (up to 100), in world coordinates. */
+  at: Vec3[];
 }
 
 /** A grid file a seam model reads in place, with its fingerprint from when the model was built. */
@@ -358,8 +366,8 @@ export interface SeamModel {
 
 export type Measures =
   | { kind: 'string'; points: Vec3[]; closed: boolean; length: number; plan_length: number; plan_area: number | null }
-  | { kind: 'surface'; vertices: number; triangles: number; area: number; validity: MeshValidity }
-  | { kind: 'solid'; vertices: number; triangles: number; area: number; volume: number; validity: MeshValidity }
+  | { kind: 'surface'; vertices: number; triangles: number; area: number; validity: MeshValidity; crossings: Crossings | null }
+  | { kind: 'solid'; vertices: number; triangles: number; area: number; volume: number; validity: MeshValidity; crossings: Crossings | null }
   | {
       kind: 'grid';
       origin: [number, number];

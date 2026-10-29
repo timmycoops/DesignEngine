@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Grid, LayerId, MeshValidity, ObjectId, RunId, SeamModel, TriMesh};
+use crate::{Crossings, Grid, LayerId, MeshValidity, ObjectId, RunId, SeamModel, TriMesh};
 
 /// What kind of thing an object is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,17 +59,31 @@ impl Polyline {
     }
 }
 
-/// A triangulated surface with its validity flags, computed once when it is made.
+/// A triangulated surface with its validity flags, computed once when it is made, and the result
+/// of its crossing check once one has run.
 #[derive(Debug, Clone)]
 pub struct Surface {
     mesh: Arc<TriMesh>,
     validity: MeshValidity,
+    crossings: Option<Arc<Crossings>>,
 }
 
 impl Surface {
     pub fn new(mesh: TriMesh) -> Self {
         let validity = mesh.validity();
-        Surface { mesh: Arc::new(mesh), validity }
+        Surface { mesh: Arc::new(mesh), validity, crossings: None }
+    }
+
+    /// The surface with the result of its crossing check, which sets `NonSelfIntersecting`.
+    pub fn with_crossings(mut self, crossings: Crossings) -> Self {
+        self.validity.non_self_intersecting = Some(crossings.pairs == 0);
+        self.crossings = Some(Arc::new(crossings));
+        self
+    }
+
+    /// The crossing check's result; `None` if none has run.
+    pub fn crossings(&self) -> Option<&Crossings> {
+        self.crossings.as_deref()
     }
 
     pub fn mesh(&self) -> &TriMesh {
@@ -91,13 +105,26 @@ impl Surface {
 pub struct Solid {
     mesh: Arc<TriMesh>,
     validity: MeshValidity,
+    crossings: Option<Arc<Crossings>>,
 }
 
 impl Solid {
     /// The mesh as a solid, or its validity flags if it is not watertight.
     pub fn new(mesh: TriMesh) -> Result<Self, MeshValidity> {
         let validity = mesh.validity();
-        if validity.is_watertight() { Ok(Solid { mesh: Arc::new(mesh), validity }) } else { Err(validity) }
+        if validity.is_watertight() { Ok(Solid { mesh: Arc::new(mesh), validity, crossings: None }) } else { Err(validity) }
+    }
+
+    /// The solid with the result of its crossing check, which sets `NonSelfIntersecting`.
+    pub fn with_crossings(mut self, crossings: Crossings) -> Self {
+        self.validity.non_self_intersecting = Some(crossings.pairs == 0);
+        self.crossings = Some(Arc::new(crossings));
+        self
+    }
+
+    /// The crossing check's result; `None` if none has run.
+    pub fn crossings(&self) -> Option<&Crossings> {
+        self.crossings.as_deref()
     }
 
     pub fn mesh(&self) -> &TriMesh {

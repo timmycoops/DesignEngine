@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
-use zd_core::{Attributes, Body, Change, ObjectId, ObjectKind, Solid};
+use zd_core::{Attributes, Body, Change, CrossingCheck, Crossings, ObjectId, ObjectKind, Solid, TriMesh};
 use zd_geom::cut_solid_by_surface;
 
-use super::surface::{MeshParams, describe, mesh_params};
+use super::surface::{MeshParams, check_crossings, default_tolerance, describe, mesh_params, mm, site};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
-/// `solid.from_mesh`: a solid from vertices and triangles given inline; refused unless watertight.
+/// `solid.from_mesh`: a solid from vertices and triangles given inline; refused unless watertight
+/// and free of crossings (decision 0010).
 pub struct SolidFromMesh;
 
 impl Command for SolidFromMesh {
@@ -24,6 +25,9 @@ impl Command for SolidFromMesh {
 
     fn run(&self, _inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let solid = Solid::new(p.mesh()?).map_err(CommandError::NotWatertight)?;
+        let (crossings, checked) = check_crossings(solid.mesh(), p.tolerance);
+        refuse_crossings("solid", &p.name, &crossings)?;
+        let solid = solid.with_crossings(crossings);
         let flags = describe(&solid.validity(), solid.mesh());
         let volume = format!("volume {:.3} m3", solid.volume());
         Ok(Outcome::new(vec![Change::Create {
@@ -33,12 +37,40 @@ impl Command for SolidFromMesh {
             body: Body::Solid(solid),
         }])
         .message(flags)
+        .message(checked)
         .message(volume))
     }
 }
 
+/// Refuses a mesh that crosses itself: crossings are fixed at source, never here.
+fn refuse_crossings(what: &str, name: &str, crossings: &Crossings) -> Result<(), CommandError> {
+    let (Some(first), CrossingCheck::Search { tolerance }) = (crossings.at.first(), crossings.check) else {
+        return Ok(());
+    };
+    Err(CommandError::Invalid(format!(
+        "the {what} '{name}' crosses itself: {} pairs of triangles by more than {}, the first at {}; fix it at source",
+        crossings.pairs,
+        mm(tolerance),
+        site(first)
+    )))
+}
+
+/// A cut's input: its saved crossing check, or a search now if it has none.
+fn checked_input(what: &str, name: &str, saved: Option<&Crossings>, mesh: &TriMesh, messages: &mut Vec<String>) -> Result<(), CommandError> {
+    let found = match saved {
+        Some(crossings) => crossings.clone(),
+        None => {
+            let (crossings, line) = check_crossings(mesh, default_tolerance());
+            messages.push(format!("{what} '{name}' {line}"));
+            crossings
+        }
+    };
+    refuse_crossings(what, name, &found)
+}
+
 /// `solid.cut_by_surface`: the parts of a solid below and above a design surface, as new solids
-/// (engine rule 5). The input solid is left as it is.
+/// (engine rule 5). The input solid is left as it is. Either input crossing itself is refused, and
+/// one never checked is checked first (decision 0010).
 pub struct CutBySurface;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -83,10 +115,13 @@ impl Command for CutBySurface {
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let (solid_object, solid) = inputs.solid(p.solid)?;
         let (surface_object, surface) = inputs.surface(p.surface)?;
+        let mut checks = Vec::new();
+        checked_input("solid", &solid_object.name, solid.crossings(), solid.mesh(), &mut checks)?;
+        checked_input("surface", &surface_object.name, surface.crossings(), surface.mesh(), &mut checks)?;
         let cut = cut_solid_by_surface(solid.mesh(), surface.mesh()).map_err(|e| CommandError::Geometry(e.to_string()))?;
 
         let t = cut.timings;
-        let mut outcome = Outcome::default()
+        let mut outcome = Outcome { messages: checks, ..Outcome::default() }
             .message(format!(
                 "{} + {} triangles in, {} below + {} above out, {:.0} ms (close {:.0}, to Manifold {:.0}, boolean {:.0}, from Manifold {:.0}); cap {:?}",
                 solid.mesh().triangle_count(),

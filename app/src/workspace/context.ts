@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { LogEntry, ProjectSummary } from '@/bridge';
+import type { LogEntry, ProjectSummary, Vec3 } from '@/bridge';
 import type { SeamShown } from '@/viewport/sceneSync';
 
 /** What every panel reads, and the actions they share. App owns the state. */
@@ -24,6 +24,10 @@ export interface Workspace {
   showSeamHorizon: (id: string, horizon: string) => void;
   /** Shows the horizon an issue is on and flies the view to its worst node. */
   focusIssue: (id: string, horizon: string, issue: number) => void;
+  /** Marks crossing sites (world coordinates) in the viewport, replacing any marked; [] clears them. */
+  markCrossings: (sites: Vec3[]) => void;
+  /** Flies the view to a point in world coordinates. */
+  flyTo: (point: Vec3) => void;
   /** In Draw string mode. */
   drawing: boolean;
   /** Adds a typed vertex while drawing (`E N [RL]` or `@distance<bearing [RL|grade%]`); an error to show, or null. */

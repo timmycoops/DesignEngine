@@ -13,7 +13,7 @@ use serde_json::Value;
 use tauri::ipc::Response;
 use tauri::{AppHandle, State, Webview};
 use zd_commands::{LogEntry, RunRecord, Session};
-use zd_core::{Attributes, Body, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, SeamModel, TriMesh};
+use zd_core::{Attributes, Body, Crossings, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, SeamModel, TriMesh};
 use zd_geom::{StackHorizon, SurfaceRayCaster, stack_issue_nodes, triangulate_grid};
 use zd_io::read_stack_grids;
 
@@ -121,8 +121,9 @@ pub struct ObjectDetails {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Measures {
     String { points: Vec<[f64; 3]>, closed: bool, length: f64, plan_length: f64, plan_area: Option<f64> },
-    Surface { vertices: usize, triangles: usize, area: f64, validity: MeshValidity },
-    Solid { vertices: usize, triangles: usize, area: f64, volume: f64, validity: MeshValidity },
+    /// `crossings`: the crossing check, in world coordinates; `None` if none has run.
+    Surface { vertices: usize, triangles: usize, area: f64, validity: MeshValidity, crossings: Option<Crossings> },
+    Solid { vertices: usize, triangles: usize, area: f64, volume: f64, validity: MeshValidity, crossings: Option<Crossings> },
     Grid { origin: [f64; 2], cell_size: [f64; 2], cols: usize, rows: usize, nulls: usize, z_range: Option<[f64; 2]> },
     SeamModel { model: SeamModel },
 }
@@ -141,6 +142,7 @@ fn measure(body: &Body) -> Measures {
             triangles: s.mesh().triangle_count(),
             area: s.mesh().area(),
             validity: s.validity(),
+            crossings: s.crossings().cloned(),
         },
         Body::Solid(s) => Measures::Solid {
             vertices: s.mesh().vertices.len(),
@@ -148,6 +150,7 @@ fn measure(body: &Body) -> Measures {
             area: s.mesh().area(),
             volume: s.volume(),
             validity: s.validity(),
+            crossings: s.crossings().cloned(),
         },
         Body::Grid(g) => Measures::Grid {
             origin: g.origin,
