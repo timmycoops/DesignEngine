@@ -1,6 +1,6 @@
 [package]
 name = "zd-io"
-description = "Import and export for the Zovlyn Pit Design Engine: DXF 3DFACE, XYZ/CSV grids, the Parquet project store"
+description = "Import and export for the Zovlyn Pit Design Engine: DXF faces and strings, CSV strings, XYZ/CSV and Vulcan grids, the Parquet project store"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

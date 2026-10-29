@@ -5,11 +5,12 @@ use zd_core::{Attributes, Body, Change, MeshValidity, ObjectKind, Surface, TriMe
 use zd_geom::triangulate_grid;
 use zd_io::{SurfaceImport, read_surface};
 
+use super::exchange::describe_dxf_faces;
 use super::finite;
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
-/// `surface.import`: a surface from a DXF 3DFACE file or an XYZ/CSV grid (grids are triangulated,
-/// engine rule 6). The reader's log of what it cleaned up goes into the run record.
+/// `surface.import`: a surface from the 3DFACEs and polyface meshes of a DXF file, or an XYZ/CSV
+/// grid (grids are triangulated, engine rule 6). The reader's log of what it cleaned up goes into the run record.
 pub struct ImportSurface;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -44,11 +45,7 @@ impl Command for ImportSurface {
         let path = Path::new(&p.path);
         let (mesh, read_log) = match read_surface(path).map_err(|e| CommandError::Io(format!("{}: {e}", p.path)))? {
             SurfaceImport::Triangulation(dxf) => {
-                let log = &dxf.log;
-                let message = format!(
-                    "DXF: {} faces read, {} quads split, {} degenerate and {} duplicate faces dropped",
-                    log.faces_read, log.quads_split, log.degenerate_dropped, log.duplicates_dropped
-                );
+                let message = describe_dxf_faces(&dxf);
                 (dxf.mesh, message)
             }
             SurfaceImport::Grid(xyz) => {

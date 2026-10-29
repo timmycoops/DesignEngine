@@ -4,6 +4,7 @@ import type { DockviewApi } from 'dockview-react';
 import {
   Box,
   FileInput,
+  FileOutput,
   FilePlus,
   FolderOpen,
   Layers,
@@ -23,6 +24,7 @@ import {
   buildSnapIndex,
   type LogEntry,
   newProject,
+  type ObjectSummary,
   openProject,
   type ProjectSummary,
   projectSummary,
@@ -66,6 +68,15 @@ function describe(record: RunRecord): string {
   const more = record.messages.length > 2 ? [`(${record.messages.length - 2} more messages in the run log)`] : [];
   return [head, ...messages, ...more].join(' · ');
 }
+
+/** A file name from an object or project name: characters Windows refuses become underscores. */
+function fileName(name: string, extension: string): string {
+  const stem = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim() || 'export';
+  return `${stem}.${extension}`;
+}
+
+/** What goes out to DXF: strings, surfaces and solids. */
+const DXF_KINDS = new Set(['string', 'surface', 'solid']);
 
 /** Splits a file path into its folder and name, for either separator. */
 function splitPath(path: string): [string, string] {
@@ -297,6 +308,38 @@ export default function App() {
       }
     });
 
+  const onImportStrings = () =>
+    attempt(async () => {
+      const picked = await open({ multiple: true, filters: [{ name: 'Strings', extensions: ['dxf', 'csv'] }] });
+      const paths = picked === null ? [] : Array.isArray(picked) ? picked : [picked];
+      for (const path of paths) {
+        setStatus({ text: `Importing strings from ${path}…` });
+        // Each string keeps its DXF or CSV layer.
+        await run('string.import', { path });
+      }
+    });
+
+  /** Writes objects to a file picked in the save dialog, which has already asked before replacing one. */
+  const exportObjects = (objects: ObjectSummary[], format: 'dxf' | 'csv', suggested: string) =>
+    attempt(async () => {
+      if (objects.length === 0) {
+        setStatus({ text: format === 'dxf' ? 'Nothing to export: no strings, surfaces or solids are visible.' : 'Nothing to export: no strings are visible.' });
+        return;
+      }
+      const name = format === 'dxf' ? 'DXF R12' : 'CSV';
+      const path = await save({ title: `Export to ${name}`, defaultPath: fileName(suggested, format), filters: [{ name, extensions: [format] }] });
+      if (!path) return;
+      setStatus({ text: `Writing ${path}…` });
+      await run(`export.${format}`, { objects: objects.map((o) => o.id), path, overwrite: true });
+    });
+
+  const selectedObject = summary?.objects.find((o) => o.id === selected) ?? null;
+  const visibleObjects = (kinds: Set<string>) => {
+    // Objects carry their layer's id.
+    const shown = new Set(summary?.layers.filter((l) => l.visible).map((l) => l.id));
+    return summary?.objects.filter((o) => kinds.has(o.kind) && shown.has(o.layer)) ?? [];
+  };
+
   const onImportVulcan = () =>
     attempt(async () => {
       const picked = await open({ title: "Pick the seam's roof or floor grid", filters: [{ name: 'Vulcan grids', extensions: ['srg', 'sfg'] }] });
@@ -419,6 +462,9 @@ export default function App() {
           <ToolButton tip="Import surfaces (DXF, XYZ, CSV grids)" onClick={onImportSurface}>
             <FileInput /> Surface
           </ToolButton>
+          <ToolButton tip="Import strings (DXF polylines and lines, or CSV with x, y and z columns)" onClick={onImportStrings}>
+            <FileInput /> Strings
+          </ToolButton>
           <ToolButton tip="Import a seam's Vulcan grids: pick its roof or floor grid" onClick={onImportVulcan}>
             <Layers3 /> Vulcan seam
           </ToolButton>
@@ -431,6 +477,33 @@ export default function App() {
             <DropdownMenuContent align="start">
               <DropdownMenuItem onSelect={onSuggestSeamDefinition}>Suggest a stack definition (CSV)…</DropdownMenuItem>
               <DropdownMenuItem onSelect={onBuildSeamModel}>Build and check from a definition…</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm">
+                <FileOutput /> Export
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem
+                disabled={!selectedObject || !DXF_KINDS.has(selectedObject.kind)}
+                onSelect={() => selectedObject && exportObjects([selectedObject], 'dxf', selectedObject.name)}
+              >
+                Selected object to DXF…
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={selectedObject?.kind !== 'string'}
+                onSelect={() => selectedObject && exportObjects([selectedObject], 'csv', selectedObject.name)}
+              >
+                Selected string to CSV…
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => exportObjects(visibleObjects(DXF_KINDS), 'dxf', projectName)}>
+                Everything visible to DXF…
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => exportObjects(visibleObjects(new Set(['string'])), 'csv', projectName)}>
+                Visible strings to CSV…
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           <Separator orientation="vertical" className="mx-1 h-5" />

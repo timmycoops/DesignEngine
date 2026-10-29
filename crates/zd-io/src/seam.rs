@@ -22,6 +22,7 @@ use std::time::UNIX_EPOCH;
 
 use zd_core::{Fingerprint, Grid, GridLink, SeamModel};
 
+use crate::text::{csv_cell, csv_fields, decode_text};
 use crate::{IoError, XyzOptions, parse_vulcan_grid, parse_xyz_grid, vulcan_grid_name};
 
 /// Columns with a fixed meaning; any other column is a grid variable.
@@ -59,16 +60,6 @@ pub fn read_seam_definition(path: &Path) -> Result<SeamDefinition, IoError> {
     let bytes = std::fs::read(path)?;
     let base = path.parent().unwrap_or(Path::new(""));
     parse_seam_definition(&decode_text(&bytes), base)
-}
-
-/// Excel saves CSV as UTF-8 (with a byte-order mark) or in the Windows code page; the latter is
-/// read as Latin-1, which agrees with it for every letter in file names.
-fn decode_text(bytes: &[u8]) -> String {
-    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
-    match std::str::from_utf8(bytes) {
-        Ok(text) => text.to_string(),
-        Err(_) => bytes.iter().map(|&b| char::from(b)).collect(),
-    }
 }
 
 /// Reads a definition, listing every problem found rather than stopping at the first.
@@ -209,41 +200,6 @@ pub fn parse_seam_definition(text: &str, base: &Path) -> Result<SeamDefinition, 
     Ok(SeamDefinition { folder, horizons })
 }
 
-/// Splits one CSV line: commas separate fields, a field may be wrapped in double quotes, and `""`
-/// inside quotes is one quote. Unquoted fields are trimmed.
-fn csv_fields(line: &str) -> Result<Vec<String>, &'static str> {
-    let mut fields = Vec::new();
-    let mut chars = line.chars().peekable();
-    loop {
-        while chars.next_if(|c| *c == ' ' || *c == '\t').is_some() {}
-        let mut field = String::new();
-        if chars.next_if_eq(&'"').is_some() {
-            loop {
-                match chars.next() {
-                    None => return Err("a quoted cell is not closed"),
-                    Some('"') if chars.next_if_eq(&'"').is_some() => field.push('"'),
-                    Some('"') => break,
-                    Some(c) => field.push(c),
-                }
-            }
-            while let Some(c) = chars.next_if(|c| *c != ',') {
-                if !c.is_whitespace() {
-                    return Err("text after the closing quote of a cell");
-                }
-            }
-        } else {
-            while let Some(c) = chars.next_if(|c| *c != ',') {
-                field.push(c);
-            }
-            field.truncate(field.trim_end().len());
-        }
-        fields.push(field);
-        if chars.next().is_none() {
-            return Ok(fields);
-        }
-    }
-}
-
 /// The definition as CSV text, ready for Excel: a byte-order mark so Excel reads it as UTF-8, a
 /// comment saying how to edit it, the folder, the header and one row per horizon.
 pub fn format_seam_definition(definition: &SeamDefinition) -> String {
@@ -270,14 +226,6 @@ pub fn format_seam_definition(definition: &SeamDefinition) -> String {
 
 pub fn write_seam_definition(path: &Path, definition: &SeamDefinition) -> Result<(), IoError> {
     Ok(std::fs::write(path, format_seam_definition(definition))?)
-}
-
-fn csv_cell(text: &str) -> String {
-    if text.contains([',', '"', '\n']) || text.trim() != text {
-        format!("\"{}\"", text.replace('"', "\"\""))
-    } else {
-        text.to_string()
-    }
 }
 
 /// A grid read in place, with the fingerprint of the file it came from.

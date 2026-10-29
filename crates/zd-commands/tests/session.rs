@@ -50,6 +50,8 @@ fn registry_lists_every_builtin_with_a_spec() {
     assert_eq!(
         names,
         [
+            "export.csv",
+            "export.dxf",
             "grid.import_vulcan_seam",
             "layer.create",
             "object.delete",
@@ -62,6 +64,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "string.delete_vertex",
             "string.drape",
             "string.filter",
+            "string.import",
             "string.insert_vertex",
             "string.join",
             "string.move_vertex",
@@ -77,7 +80,8 @@ fn registry_lists_every_builtin_with_a_spec() {
         ]
     );
     let specs = serde_json::to_value(session.registry().specs()).unwrap();
-    assert_eq!(specs[6]["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
+    assert_eq!(specs[8]["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
+    assert_eq!(specs[1]["inputs"][0]["type"], json!({ "kind": "objects" }));
 }
 
 #[test]
