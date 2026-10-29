@@ -122,6 +122,49 @@ fn closed_pieces_meeting_along_an_edge_import_as_a_solid_each() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[test]
+fn repair_closes_fins_cracks_and_small_holes_and_notes_them_on_the_solid() {
+    let dir = scratch("repair");
+    // A 10 m cube with a fin on its bottom front edge, a crack where the front face meets the top
+    // front edge at its midpoint, and one triangle missing from the back face.
+    let mut m = block([E, N, 250.0], [10.0, 10.0, 10.0]);
+    m.vertices.push([E + 5.0, N - 8.0, 245.0]); // 8: the fin's tip
+    m.triangles.push([0, 1, 8]);
+    m.vertices.push([E + 5.0, N, 260.0]); // 9: on edge 4-5
+    let front = m.triangles.iter().position(|t| *t == [0, 5, 4]).unwrap();
+    m.triangles[front] = [0, 5, 9];
+    m.triangles.push([0, 9, 4]);
+    let back = m.triangles.iter().position(|t| *t == [2, 7, 3]).unwrap();
+    m.triangles.remove(back);
+    write(&dir.join("worn.00t"), &m);
+
+    let mut s = Session::with_builtins();
+    let refused = s.run("solid.import", json!({ "path": dir.join("worn.00t").to_string_lossy(), "layer": "coal" })).unwrap_err();
+    assert!(refused.to_string().contains("is not a closed solid"), "without repair it is refused: {refused}");
+    let record = s.run("solid.import", json!({ "path": dir.join("worn.00t").to_string_lossy(), "layer": "coal", "repair": true })).unwrap();
+    assert_eq!(record.messages[2], "closing: 1 fin triangles taken off; 1 cracks joined; 1 holes filled (50.0 m², 8.3 % of the surface)");
+    assert_eq!(record.messages.last().unwrap(), "volume 1000.000 m3");
+    let object = s.project().object(created(&record)[0]).unwrap();
+    assert_eq!(object.attributes["repair"], zd_core::AttrValue::Text("1 fin triangles taken off; 1 cracks joined; 1 holes filled (50.0 m², 8.3 % of the surface)".into()));
+    assert_eq!(object.attributes["repair_filled_m2"], zd_core::AttrValue::Number(50.0));
+
+    // The whole top missing: 100 m² of 600, over the 10 % limit, so refused; at 20 % it is filled.
+    let mut lid = block([E, N, 250.0], [10.0, 10.0, 10.0]);
+    lid.triangles.drain(2..4);
+    write(&dir.join("lidless.00t"), &lid);
+    let error = s.run("solid.import", json!({ "path": dir.join("lidless.00t").to_string_lossy(), "layer": "coal", "repair": true })).unwrap_err();
+    assert!(error.to_string().starts_with("'lidless' has holes of 100.0 m² in all, 16.7 % of its surface, over the 10 % limit; the largest is 100.0 m² at 650005.000 7450005.000 RL 260.000"), "{error}");
+    let record = s.run("solid.import", json!({ "path": dir.join("lidless.00t").to_string_lossy(), "layer": "coal", "repair": true, "fill_limit": 0.2 })).unwrap();
+    assert_eq!(record.messages.last().unwrap(), "volume 1000.000 m3");
+    // A clean solid has nothing to repair and carries no note.
+    write(&dir.join("clean.00t"), &block([E, N, 250.0], [10.0, 10.0, 10.0]));
+    let record = s.run("solid.import", json!({ "path": dir.join("clean.00t").to_string_lossy(), "layer": "coal", "repair": true })).unwrap();
+    assert_eq!(record.messages[2], "closing: nothing to do");
+    assert!(s.project().object(created(&record)[0]).unwrap().attributes.is_empty());
+    assert!(s.run("solid.import", json!({ "path": dir.join("clean.00t").to_string_lossy(), "layer": "coal", "repair": true, "fill_limit": 2.0 })).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Opt-in, against real files kept out of the repository: `ZD_VULCAN_TRI` names a `.00t` and
 /// `ZD_VULCAN_TRI_DXF` the same triangulation exported to DXF by Deswik. Every vertex must match,
 /// and so must the triangles as sets of corner coordinates; for a solid, `ZD_VULCAN_TRI_VOLUME`
