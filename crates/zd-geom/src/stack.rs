@@ -39,6 +39,92 @@ impl Tally {
     }
 }
 
+/// One node where a check fails, on `horizon`; `other` is the horizon above for a crossing and the
+/// parent for a daughter outside it.
+struct Hit {
+    kind: IssueKind,
+    horizon: usize,
+    other: Option<usize>,
+    node: usize,
+    overlap: f64,
+}
+
+/// The order issues are listed in for one horizon.
+fn rank(kind: IssueKind) -> u8 {
+    match kind {
+        IssueKind::FloorAboveRoof => 0,
+        IssueKind::Unpaired => 1,
+        IssueKind::OutsideParent => 2,
+        IssueKind::Crossing => 3,
+        IssueKind::NoDensity => 4,
+    }
+}
+
+/// Refuses a stack the checks cannot read: a negative tolerance, mixed lattices, a parent index out
+/// of range.
+fn validate(horizons: &[StackHorizon<'_>], tolerance: f64) -> Result<(), GeomError> {
+    if tolerance.is_nan() || tolerance < 0.0 {
+        return Err(GeomError::InvalidInput("the stack tolerance must be zero or more".into()));
+    }
+    let Some(first) = horizons.first() else { return Ok(()) };
+    for h in horizons {
+        if !h.roof.same_lattice(first.roof) || !h.floor.same_lattice(first.roof) {
+            return Err(GeomError::InvalidInput(format!("horizon '{}' is on a different lattice from '{}'", h.code, first.code)));
+        }
+        if h.parent.is_some_and(|p| p >= horizons.len()) {
+            return Err(GeomError::InvalidInput(format!("horizon '{}' names a parent outside the stack", h.code)));
+        }
+    }
+    Ok(())
+}
+
+/// Every node where a check fails, node order within each horizon and check.
+fn visit_stack(horizons: &[StackHorizon<'_>], tolerance: f64, mut hit: impl FnMut(Hit)) {
+    let Some(first) = horizons.first() else { return };
+    let nodes = first.roof.z.len();
+    for (index, h) in horizons.iter().enumerate() {
+        let parent = h.parent.map(|p| &horizons[p]);
+        for node in 0..nodes {
+            let (r, f) = (h.roof.z[node], h.floor.z[node]);
+            match (r.is_nan(), f.is_nan()) {
+                (false, false) => {}
+                (true, true) => continue,
+                _ => {
+                    hit(Hit { kind: IssueKind::Unpaired, horizon: index, other: None, node, overlap: 0.0 });
+                    continue;
+                }
+            }
+            if f > r {
+                hit(Hit { kind: IssueKind::FloorAboveRoof, horizon: index, other: None, node, overlap: f - r });
+            }
+            if let Some(p) = parent
+                && r - f > tolerance
+            {
+                let over = (r - p.roof.z[node]).max(p.floor.z[node] - f);
+                if over > 0.0 {
+                    hit(Hit { kind: IssueKind::OutsideParent, horizon: index, other: h.parent, node, overlap: over });
+                }
+            }
+        }
+    }
+    let working: Vec<usize> = (0..horizons.len()).filter(|&h| horizons[h].working).collect();
+    for node in 0..nodes {
+        let mut above: Option<(usize, f64)> = None;
+        for &w in &working {
+            let (r, f) = (horizons[w].roof.z[node], horizons[w].floor.z[node]);
+            if r.is_nan() || f.is_nan() {
+                continue;
+            }
+            if let Some((upper, upper_floor)) = above
+                && r > upper_floor
+            {
+                hit(Hit { kind: IssueKind::Crossing, horizon: w, other: Some(upper), node, overlap: r - upper_floor });
+            }
+            above = Some((w, f));
+        }
+    }
+}
+
 /// Checks a stack, top first, on one lattice:
 ///
 /// - every horizon: the floor above the roof, and roof and floor not live at the same nodes;
@@ -48,92 +134,41 @@ impl Tally {
 ///
 /// Overlaps up to `tolerance` are listed but do not block; unpaired nodes always block.
 pub fn check_seam_stack(horizons: &[StackHorizon<'_>], tolerance: f64) -> Result<Vec<StackIssue>, GeomError> {
-    let Some(first) = horizons.first() else { return Ok(Vec::new()) };
-    if tolerance.is_nan() || tolerance < 0.0 {
-        return Err(GeomError::InvalidInput("the stack tolerance must be zero or more".into()));
-    }
-    let lattice = first.roof;
-    for h in horizons {
-        if !h.roof.same_lattice(lattice) || !h.floor.same_lattice(lattice) {
-            return Err(GeomError::InvalidInput(format!("horizon '{}' is on a different lattice from '{}'", h.code, first.code)));
-        }
-        if h.parent.is_some_and(|p| p >= horizons.len()) {
-            return Err(GeomError::InvalidInput(format!("horizon '{}' names a parent outside the stack", h.code)));
-        }
-    }
-    let nodes = lattice.z.len();
-
-    // Crossings in the working section, by (lower, upper) horizon.
-    let working: Vec<usize> = (0..horizons.len()).filter(|&h| horizons[h].working).collect();
-    let mut crossings: BTreeMap<(usize, usize), Tally> = BTreeMap::new();
-    for i in 0..nodes {
-        let mut above: Option<(usize, f64)> = None;
-        for &w in &working {
-            let (r, f) = (horizons[w].roof.z[i], horizons[w].floor.z[i]);
-            if r.is_nan() || f.is_nan() {
-                continue;
-            }
-            if let Some((upper, upper_floor)) = above
-                && r > upper_floor
-            {
-                crossings.entry((w, upper)).or_default().add(i, r - upper_floor);
-            }
-            above = Some((w, f));
-        }
-    }
-
-    let mut crossings = crossings.into_iter().peekable();
-    let at = |node: Option<usize>| node.map(|i| lattice.node_xy(i % lattice.cols, i / lattice.cols));
-    let mut issues = Vec::new();
-    let mut push = |kind: IssueKind, horizon: usize, other: Option<usize>, tally: Tally, blocking: bool| {
-        if tally.nodes > 0 {
-            issues.push(StackIssue {
-                kind,
-                horizon: horizons[horizon].code.to_string(),
-                other: other.map(|o| horizons[o].code.to_string()),
-                nodes: tally.nodes,
-                worst: tally.worst,
-                at: at(tally.at),
-                blocking,
-            });
-        }
+    validate(horizons, tolerance)?;
+    let mut tallies: BTreeMap<(usize, u8, Option<usize>), (IssueKind, Tally)> = BTreeMap::new();
+    visit_stack(horizons, tolerance, |h| {
+        tallies.entry((h.horizon, rank(h.kind), h.other)).or_insert_with(|| (h.kind, Tally::default())).1.add(h.node, h.overlap);
+    });
+    let at = |node: Option<usize>| {
+        let lattice = horizons[0].roof;
+        node.map(|i| lattice.node_xy(i % lattice.cols, i / lattice.cols))
     };
-    for (index, h) in horizons.iter().enumerate() {
-        let (mut inverted, mut unpaired, mut outside) = (Tally::default(), Tally::default(), Tally::default());
-        let parent = h.parent.map(|p| &horizons[p]);
-        for i in 0..nodes {
-            let (r, f) = (h.roof.z[i], h.floor.z[i]);
-            match (r.is_nan(), f.is_nan()) {
-                (false, false) => {}
-                (true, true) => continue,
-                _ => {
-                    unpaired.add(i, 0.0);
-                    continue;
-                }
-            }
-            if f > r {
-                inverted.add(i, f - r);
-            }
-            if let Some(p) = parent
-                && r - f > tolerance
-            {
-                let over = (r - p.roof.z[i]).max(p.floor.z[i] - f);
-                if over > 0.0 {
-                    outside.add(i, over);
-                }
-            }
+    Ok(tallies
+        .into_iter()
+        .map(|((horizon, _, other), (kind, tally))| StackIssue {
+            kind,
+            horizon: horizons[horizon].code.to_string(),
+            other: other.map(|o| horizons[o].code.to_string()),
+            nodes: tally.nodes,
+            worst: tally.worst,
+            at: at(tally.at),
+            blocking: kind == IssueKind::Unpaired || tally.worst > tolerance,
+        })
+        .collect())
+}
+
+/// For each horizon, the nodes where a check fails beyond `tolerance` (unpaired nodes always): what
+/// the viewport marks. A crossing marks the lower horizon, a daughter outside its parent the daughter.
+pub fn stack_issue_nodes(horizons: &[StackHorizon<'_>], tolerance: f64) -> Result<Vec<Vec<bool>>, GeomError> {
+    validate(horizons, tolerance)?;
+    let nodes = horizons.first().map_or(0, |h| h.roof.z.len());
+    let mut flags = vec![vec![false; nodes]; horizons.len()];
+    visit_stack(horizons, tolerance, |h| {
+        if h.kind == IssueKind::Unpaired || h.overlap > tolerance {
+            flags[h.horizon][h.node] = true;
         }
-        let beyond = |t: &Tally| t.worst > tolerance;
-        let (inverted_blocks, outside_blocks) = (beyond(&inverted), beyond(&outside));
-        push(IssueKind::FloorAboveRoof, index, None, inverted, inverted_blocks);
-        push(IssueKind::Unpaired, index, None, unpaired, true);
-        push(IssueKind::OutsideParent, index, h.parent, outside, outside_blocks);
-        while let Some(((_, upper), tally)) = crossings.next_if(|((lower, _), _)| *lower == index) {
-            let blocks = beyond(&tally);
-            push(IssueKind::Crossing, index, Some(upper), tally, blocks);
-        }
-    }
-    Ok(issues)
+    });
+    Ok(flags)
 }
 
 /// A horizon's place in a suggested stack: its index in the input and its parent's.
@@ -344,6 +379,35 @@ mod tests {
         s.roofs[2].z[0] = 99.0;
         let issues = check_seam_stack(&stack(&s), 0.001).unwrap();
         assert!(issues.iter().all(|i| i.kind != IssueKind::Crossing), "{issues:?}");
+    }
+
+    #[test]
+    fn issue_nodes_mark_where_each_blocking_issue_is() {
+        let mut s = split();
+        // As above: al's roof 1.5 m above au's floor on the west five columns, and au's floor above its
+        // own roof east of x = 50 m.
+        s.roofs[2] = grid(|x, _| if x < 50.0 { 97.5 } else { 94.0 });
+        s.floors[1] = grid(|x, _| 96.0 + 0.08 * x);
+        let horizons = stack(&s);
+        let flags = stack_issue_nodes(&horizons, 0.001).unwrap();
+        let count = |h: usize| flags[h].iter().filter(|&&f| f).count();
+        let issues = check_seam_stack(&horizons, 0.001).unwrap();
+        // a is clean; au carries its own inverted floor; al carries the crossings with au's floor.
+        assert_eq!(count(0), 0);
+        let inverted = issues.iter().find(|i| i.kind == IssueKind::FloorAboveRoof).unwrap();
+        assert_eq!(count(1), inverted.nodes, "every inverted node is beyond the tolerance here");
+        assert!(flags[1][6] && !flags[1][5], "x = 60 m inverted, x = 50 m only touching");
+        let crossings: usize = issues.iter().filter(|i| i.kind == IssueKind::Crossing && i.horizon == "al").map(|i| i.nodes).sum();
+        assert_eq!(count(2), crossings);
+        assert!(count(2) > 0);
+    }
+
+    #[test]
+    fn overlaps_within_the_tolerance_mark_no_nodes() {
+        let mut s = split();
+        s.roofs[2] = grid(|_, _| 96.0005);
+        let flags = stack_issue_nodes(&stack(&s), 0.001).unwrap();
+        assert!(flags.iter().flatten().all(|&f| !f));
     }
 
     #[test]

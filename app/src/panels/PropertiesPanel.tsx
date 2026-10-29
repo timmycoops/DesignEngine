@@ -90,7 +90,10 @@ const horizonColumns = horizonHelper.columns([
   horizonHelper.accessor('grids', { header: 'Other grids', cell: (c) => <span className="text-muted-foreground">{c.getValue()}</span> }),
 ]);
 
-function Horizons({ model }: { model: SeamModel }) {
+/** The model's horizons, top first; click one to show it in the viewport. */
+function Horizons({ id, model }: { id: string; model: SeamModel }) {
+  const { seamView, showSeamHorizon } = useWorkspace();
+  const shown = seamView?.id === id ? seamView.result.horizon : null;
   const rows = useMemo(() => {
     const parents = new Map(model.horizons.map((h) => [h.code, h.parent]));
     const depth = (code: string | null): number => {
@@ -106,7 +109,7 @@ function Horizons({ model }: { model: SeamModel }) {
       grids: Object.keys(h.grids).join(' '),
     }));
   }, [model]);
-  return <DataTable data={rows} columns={horizonColumns} rowId={(r) => r.code} />;
+  return <DataTable data={rows} columns={horizonColumns} rowId={(r) => r.code} selected={shown} onRowClick={(r) => showSeamHorizon(id, r.code)} />;
 }
 
 const issueText: Record<StackIssue['kind'], (i: StackIssue) => string> = {
@@ -117,12 +120,19 @@ const issueText: Record<StackIssue['kind'], (i: StackIssue) => string> = {
   no_density: (i) => `${i.horizon} has no density grid`,
 };
 
-function Issues({ issues }: { issues: StackIssue[] }) {
+/** The model's issues; click a blocking one to show its horizon and fly to its worst node. */
+function Issues({ id, issues }: { id: string; issues: StackIssue[] }) {
+  const { focusIssue } = useWorkspace();
   if (issues.length === 0) return <p className="px-3 py-1 text-xs text-muted-foreground">None: the stack is consistent.</p>;
   return (
     <ul className="space-y-1 px-3 py-1 text-xs">
       {issues.map((i, n) => (
-        <li key={n} className="flex gap-2">
+        <li
+          key={n}
+          className={`flex gap-2 ${i.blocking && i.at ? 'cursor-pointer rounded hover:bg-selection' : ''}`}
+          title={i.blocking && i.at ? 'Show in the viewport' : undefined}
+          onClick={i.blocking && i.at ? () => focusIssue(id, i.horizon, n) : undefined}
+        >
           <Badge variant={i.blocking ? 'destructive' : 'outline'} className="shrink-0 font-normal">
             {i.blocking ? 'Blocking' : 'Warning'}
           </Badge>
@@ -213,10 +223,10 @@ function Measurements({ d }: { d: ObjectDetails }) {
             </Field>
           </Section>
           <Section title="Issues">
-            <Issues issues={model.issues} />
+            <Issues id={d.id} issues={model.issues} />
           </Section>
-          <Section title="Horizons (top first)">
-            <Horizons model={model} />
+          <Section title="Horizons (top first): click to show">
+            <Horizons id={d.id} model={model} />
           </Section>
         </>
       );

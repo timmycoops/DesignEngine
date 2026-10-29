@@ -69,10 +69,19 @@ surface-stacking rules use for the same grids. Building the model from it reads 
 blocking issues, matching an independent check of the same grids. The three seams without a density
 grid are flagged as warnings.
 
+## In the viewport
+
+A seam model shows one horizon at a time: its roof, coloured by thickness on a viridis ramp from 0 m to
+the horizon's thickest coal. Nodes with no coal are grey, and nodes of a blocking issue are red, so the
+whole extent of a problem shows, not just its worst node. A red marker that keeps its size on screen sits
+on the worst node of each blocking issue, and clicking an issue in Properties flies the view there.
+Showing a horizon reads every roof and floor of the model in place (the checks need the horizons around
+it), compares each file with the fingerprint the model recorded, and says so in the legend if any has
+changed. On the 15-seam folder that read takes 10 ms and marking the issue nodes 15 ms. Which horizon is
+shown is display state, not a command.
+
 ## Not yet
 
 - A crop surface (topography or base of weathering), existence polygons and fault-block domains.
-- Showing thickness and issue locations in the viewport (next slice).
-- Checking fingerprints when a project opens, to flag a model whose grids have changed since it was built
-  (`fingerprint_file` is in place for it).
+- Checking fingerprints when a project opens, before a horizon is shown.
 - Grids on more than one lattice; for now they are refused and named.

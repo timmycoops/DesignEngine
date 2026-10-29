@@ -20,4 +20,4 @@ pub use halfspace::{CapMethod, ClosedHalfSpace, Side, close_surface_to_halfspace
 pub use orient::{boundary_loops, orient_upward};
 pub use ray::SurfaceRayCaster;
 pub use seam::{SeamLog, SeamSolid, build_seam_solid};
-pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, suggest_seam_tree};
+pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_nodes, suggest_seam_tree};

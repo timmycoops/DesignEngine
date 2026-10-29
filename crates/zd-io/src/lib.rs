@@ -17,8 +17,8 @@ use std::path::Path;
 pub use dxf::{DxfImport, DxfLog, parse_dxf_3dfaces, read_dxf_3dfaces, write_dxf_3dfaces};
 pub use error::IoError;
 pub use seam::{
-    DefinedHorizon, LinkedGrid, SeamDefinition, fingerprint_file, format_seam_definition, parse_seam_definition, read_linked_grid,
-    read_seam_definition, write_seam_definition,
+    DefinedHorizon, LinkedGrid, SeamDefinition, StackGrids, fingerprint_file, format_seam_definition, parse_seam_definition,
+    read_linked_grid, read_seam_definition, read_stack_grids, write_seam_definition,
 };
 pub use store::{Opened, ProjectStore, SaveReport, StoreError};
 pub use vulcan::{VulcanGrid, VulcanLog, VulcanSeam, parse_vulcan_grid, read_vulcan_grid, read_vulcan_seam, vulcan_grid_name};

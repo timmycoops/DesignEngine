@@ -11,7 +11,10 @@
 //!   z step over the surface's range (65,535 = null), in tiles of 255 x 255 nodes. The viewport
 //!   rebuilds x and y from the lattice and the triangles by the same rule as
 //!   `zd_geom::triangulate_grid`. One step is the whole surface's z range / 65,534, so neighbouring
-//!   tiles quantise shared nodes identically and no cracks open between them.
+//!   tiles quantise shared nodes identically and no cracks open between them. A grid may carry a
+//!   second number per node to colour by (seam thickness): `u16` values in the same tile order,
+//!   straight after the elevations, quantised over `[min, max]` with 65,535 for no value and
+//!   65,534 for a node flagged with an issue.
 
 use std::time::Instant;
 
@@ -26,6 +29,17 @@ const TARGET_CHUNK_TRIANGLES: usize = 100_000;
 pub const GRID_TILE_NODES: usize = 255;
 /// Quantised elevation that marks a null node.
 pub const GRID_NULL: u16 = u16::MAX;
+/// Quantised value that marks a node flagged with an issue.
+pub const VALUE_FLAG: u16 = u16::MAX - 1;
+
+/// A second number per node to colour a grid by. NaN is no value (drawn plain).
+pub struct NodeValues<'a> {
+    pub name: &'static str,
+    pub values: &'a [f64],
+    pub flagged: &'a [bool],
+    /// The value range the colours span.
+    pub range: [f64; 2],
+}
 
 pub fn encode_triangulation(mesh: &TriMesh, origin: [f64; 3], header: Value) -> Vec<u8> {
     let start = Instant::now();
@@ -83,7 +97,25 @@ pub fn encode_triangulation(mesh: &TriMesh, origin: [f64; 3], header: Value) -> 
 }
 
 pub fn encode_grid(grid: &Grid, origin: [f64; 3], header: Value) -> Vec<u8> {
+    encode_grid_with(grid, None, origin, header)
+}
+
+/// A grid with a second number per node (see the module notes).
+pub fn encode_grid_with(grid: &Grid, values: Option<&NodeValues<'_>>, origin: [f64; 3], header: Value) -> Vec<u8> {
     let start = Instant::now();
+    let value_step = values.map(|v| if v.range[1] > v.range[0] { (v.range[1] - v.range[0]) / f64::from(VALUE_FLAG - 1) } else { 1.0 });
+    let value_bytes = |i: usize| -> [u8; 2] {
+        let (Some(v), Some(step)) = (values, value_step) else { return [0; 2] };
+        let q = if v.flagged[i] {
+            VALUE_FLAG
+        } else if v.values[i].is_nan() {
+            GRID_NULL
+        } else {
+            ((v.values[i] - v.range[0]) / step).round().clamp(0.0, f64::from(VALUE_FLAG - 1)) as u16
+        };
+        q.to_le_bytes()
+    };
+    let mut value_out = Vec::with_capacity(if values.is_some() { grid.z.len() * 2 } else { 0 });
     let live = || grid.z.iter().copied().filter(|z| !z.is_nan());
     let z_min = live().fold(f64::INFINITY, f64::min);
     let z_max = live().fold(f64::NEG_INFINITY, f64::max);
@@ -118,6 +150,9 @@ pub fn encode_grid(grid: &Grid, origin: [f64; 3], header: Value) -> Vec<u8> {
                         hi = hi.max(z);
                     }
                     out.extend_from_slice(&quantise(z).to_le_bytes());
+                    if values.is_some() {
+                        value_out.extend_from_slice(&value_bytes(grid.index(col, row)));
+                    }
                 }
             }
             let [x0, y0] = grid.node_xy(col0, row0);
@@ -137,9 +172,13 @@ pub fn encode_grid(grid: &Grid, origin: [f64; 3], header: Value) -> Vec<u8> {
             triangles += tile_triangles;
         }
     }
+    out.extend_from_slice(&value_out);
     pad_to_4(&mut out);
 
     let mut header = header;
+    if let (Some(v), Some(step)) = (values, value_step) {
+        header["value"] = json!({ "name": v.name, "min": v.range[0], "max": v.range[1], "step": step, "null": GRID_NULL, "flag": VALUE_FLAG });
+    }
     header["kind"] = "grid".into();
     header["vertices"] = offset.into();
     header["lattice"] = json!({
@@ -653,5 +692,29 @@ mod tests {
                 assert!((a.1 - b.1).abs() <= 0.5 * z_step + 1e-9, "{} vs {}", a.1, b.1);
             }
         }
+    }
+
+    #[test]
+    fn values_follow_the_elevations_tile_by_tile() {
+        // 3 x 2 nodes, one tile. Thickness 0..4 m over the range [0, 4]; node 4 has no value and node 5
+        // is flagged.
+        let grid = Grid::from_fn([650_000.0, 7_450_000.0], [10.0, 10.0], 3, 2, |x, _| 100.0 + (x - 650_000.0) / 10.0);
+        let values = [0.0, 1.0, 2.0, 4.0, f64::NAN, 3.0];
+        let flagged = [false, false, false, false, false, true];
+        let v = NodeValues { name: "thickness", values: &values, flagged: &flagged, range: [0.0, 4.0] };
+        let buf = encode_grid_with(&grid, Some(&v), ORIGIN, json!({ "timings": {} }));
+        let (header, _) = header_of(&buf);
+        assert_eq!(header["vertices"], 6);
+        let step = header["value"]["step"].as_f64().unwrap();
+        assert_eq!((header["value"]["max"].as_f64(), header["value"]["flag"].as_u64()), (Some(4.0), Some(u64::from(VALUE_FLAG))));
+        let value = |i: usize| u16_at(&buf, 12 + 2 * i);
+        assert_eq!((value(0), value(4), value(5)), (0, GRID_NULL, VALUE_FLAG));
+        for (i, expected) in [(1, 1.0), (2, 2.0), (3, 4.0)] {
+            assert!((f64::from(value(i)) * step - expected).abs() <= 0.5 * step, "node {i}");
+        }
+        // Without values the buffer is what it always was.
+        let plain = encode_grid(&grid, ORIGIN, json!({ "timings": {} }));
+        assert!(header_of(&plain).0.get("value").is_none());
+        assert_eq!(plain[..12], buf[..12], "elevations unchanged");
     }
 }

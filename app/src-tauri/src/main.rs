@@ -23,6 +23,7 @@ fn main() {
             commands::set_layer_visible,
             commands::run_log,
             commands::stage_object,
+            commands::stage_seam_horizon,
             commands::prepare_synthetic,
             commands::fetch_mesh_shared,
             commands::fetch_mesh_ipc,

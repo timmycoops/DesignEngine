@@ -36,6 +36,8 @@ export interface MeshHeader {
   chunks?: ChunkMeta[];
   lattice?: { origin: [number, number]; cell_size: [number, number] };
   z?: { min: number; step: number; null: number };
+  /** A second number per node to colour by (seam thickness); `flag` marks a node with an issue. */
+  value?: { name: string; min: number; max: number; step: number; null: number; flag: number };
   tiles?: TileMeta[];
 }
 
@@ -45,6 +47,8 @@ export interface ChunkGeometry {
   indices: Uint16Array;
   min: Vec3;
   max: Vec3;
+  /** Quantised values per vertex, when the buffer carries them (see `MeshHeader.value`). */
+  values?: Uint16Array;
 }
 
 export interface DecodedMesh {
@@ -86,6 +90,8 @@ function decodeGrid(buffer: ArrayBuffer, header: MeshHeader): ChunkGeometry[] {
   const { lattice, z: zq, tiles = [] } = header;
   if (!lattice || !zq) throw new Error('grid buffer without lattice');
   const z = new Uint16Array(buffer, 0, header.vertices);
+  // Values follow the elevations in the same tile order; copied, because the buffer is released.
+  const values = header.value ? new Uint16Array(buffer, header.vertices * 2, header.vertices) : null;
   const [ox, oy] = lattice.origin;
   const [dx, dy] = lattice.cell_size;
   const fullIndices = new Map<string, Uint16Array>();
@@ -110,7 +116,8 @@ function decodeGrid(buffer: ArrayBuffer, header: MeshHeader): ChunkGeometry[] {
       fullIndices.set(key, indices);
     }
     triangles += indices.length / 3;
-    return { positions, indices, min: t.min, max: t.max };
+    const tileValues = values?.slice(t.offset, t.offset + t.cols * t.rows);
+    return { positions, indices, min: t.min, max: t.max, values: tileValues };
   });
   if (triangles !== header.triangles) {
     throw new Error(`grid decode made ${triangles} triangles but the engine made ${header.triangles}`);
@@ -385,6 +392,27 @@ export interface ObjectDetails {
 }
 
 export const objectDetails = (id: string) => invoke<ObjectDetails>('object_details', { id });
+
+/** One horizon of a seam model, staged as its roof coloured by thickness. */
+export interface StagedHorizon {
+  staged: StagedMesh;
+  horizon: string;
+  /** The thickest coal on the horizon (m): the top of the colour ramp. */
+  thickness_max: number;
+  coal_nodes: number;
+  nodes: number;
+  /** Nodes marked for an issue beyond the model's tolerance. */
+  flagged_nodes: number;
+  /** The worst node of each blocking issue on this horizon, scene-local; `issue` indexes the model's issues. */
+  markers: { issue: number; position: Vec3 }[];
+  /** Grid files changed since the model was built. */
+  changed: string[];
+  /** Every horizon, top first, to choose from. */
+  horizons: { code: string; working: boolean }[];
+}
+
+/** Reads a seam model's grids in place and stages one horizon (the first working one if none is named). */
+export const stageSeamHorizon = (id: string, horizon: string | null) => invoke<StagedHorizon>('stage_seam_horizon', { id, horizon });
 
 export interface SnapIndex {
   ms: number;

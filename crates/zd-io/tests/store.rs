@@ -65,6 +65,7 @@ fn seam_model() -> SeamModel {
         density: "rd".into(),
         tolerance: 0.001,
         lattice: Lattice { origin: [E, N], cell_size: [10.0, 10.0], cols: 501, rows: 321 },
+        z_range: Some([-12.375, 301.5]),
         horizons: vec![horizon("a", None, false), horizon("au", Some("a"), true), horizon("al", Some("a"), true)],
         issues: vec![StackIssue {
             kind: IssueKind::Crossing,

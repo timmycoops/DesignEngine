@@ -106,6 +106,10 @@ pub struct SeamModel {
     /// Overlaps up to this many metres are listed but do not block.
     pub tolerance: f64,
     pub lattice: Lattice,
+    /// Lowest floor and highest roof in the working section when the model was built, so it can be
+    /// framed without reading its grids.
+    #[serde(default)]
+    pub z_range: Option<[f64; 2]>,
     /// Top of the stack first.
     pub horizons: Vec<Horizon>,
     pub issues: Vec<StackIssue>,
@@ -171,6 +175,7 @@ mod tests {
             density: "rd".into(),
             tolerance: 0.001,
             lattice: Lattice { origin: [500_000.0, 7_000_000.0], cell_size: [10.0, 10.0], cols: 3, rows: 2 },
+            z_range: Some([90.0, 100.0]),
             horizons: vec![horizon("a", None, false), horizon("au", Some("a"), true), horizon("al", Some("a"), true)],
             issues: vec![],
         }

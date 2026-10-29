@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { LogEntry, ProjectSummary } from '@/bridge';
+import type { SeamShown } from '@/viewport/sceneSync';
 
 /** What every panel reads, and the actions they share. App owns the state. */
 export interface Workspace {
@@ -17,6 +18,12 @@ export interface Workspace {
   setLayerVisible: (layer: string, visible: boolean) => void;
   /** Runs an engine command; reports the outcome on the status line. False if it failed. */
   run: (name: string, params: Record<string, unknown>) => Promise<boolean>;
+  /** The seam horizon the viewport shows coloured by thickness, if any. */
+  seamView: SeamShown | null;
+  /** Shows another horizon of a seam model. Display only: not a command, not undone. */
+  showSeamHorizon: (id: string, horizon: string) => void;
+  /** Shows the horizon an issue is on and flies the view to its worst node. */
+  focusIssue: (id: string, horizon: string, issue: number) => void;
 }
 
 export const WorkspaceContext = createContext<Workspace | null>(null);

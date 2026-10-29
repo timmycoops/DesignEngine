@@ -3,6 +3,7 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { DecodedMesh, Vec3 } from '../bridge';
+import { valueColours } from './ramp';
 
 interface GpuAdapterLike {
   limits: Record<string, number>;
@@ -119,8 +120,11 @@ export class Viewport {
    * surface is removed (frees a shared buffer the chunks still view).
    */
   addMesh(decoded: DecodedMesh, release?: () => void, colour = SURFACE_COLOURS[this.surfaces.length % SURFACE_COLOURS.length]): THREE.Group {
+    // A grid that carries values (seam thickness) is coloured by them, still shaded by the light.
+    const value = decoded.header.value;
     const material = new THREE.MeshStandardMaterial({
-      color: colour,
+      color: value ? 0xffffff : colour,
+      vertexColors: value !== undefined,
       roughness: 0.92,
       metalness: 0,
       side: THREE.DoubleSide,
@@ -135,6 +139,7 @@ export class Viewport {
     for (const chunk of decoded.chunks) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(chunk.positions, 3));
+      if (value && chunk.values) geometry.setAttribute('color', new THREE.BufferAttribute(valueColours(chunk.values, value), 3, true));
       let index = indexAttributes.get(chunk.indices);
       if (!index) {
         index = new THREE.BufferAttribute(chunk.indices, 1);
@@ -201,6 +206,16 @@ export class Viewport {
     const direction = new THREE.Vector3(0.45, -0.75, 0.6).normalize();
     this.camera.position.copy(centre).addScaledVector(direction, this.sceneRadius * 1.9);
     this.controls.target.copy(centre);
+    this.controls.update();
+  }
+
+  /** Moves the view to look at `point` from the current direction, no farther than `distance`. */
+  focusOn(point: Vec3, distance = 600): void {
+    const target = new THREE.Vector3(...point);
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    offset.setLength(Math.min(offset.length(), distance));
+    this.controls.target.copy(target);
+    this.camera.position.copy(target).add(offset);
     this.controls.update();
   }
 
