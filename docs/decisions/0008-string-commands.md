@@ -64,7 +64,33 @@ the vertex table shows the grade to the next vertex.
 - Through the registry: grade, offset, drape, set elevation, reverse and close; save and reopen bit
   for bit; undo back to the empty project.
 
-## Not yet (slice 2)
+## Slice 2 (2026-10-29)
 
-Split, join, smooth and filter; snapping to intersections; typed coordinates (E N RL) and bearing and
-distance while drawing.
+| Command | What it does |
+|---|---|
+| `string.split` | an open string split at an inner vertex: it keeps the first part, the second becomes a new string on its layer; a closed string opens at that vertex instead |
+| `string.join` | another open string joined on at the nearest ends (in plan), in this string's direction; this string keeps the result and the other is deleted (undo restores it); ends that do not meet are bridged by a segment and the gap is reported |
+| `string.smooth` | a centripetal Catmull-Rom curve through every vertex, which neither loops nor cusps, resampled so no plan step exceeds a spacing (5 m by default); the original vertices stay exactly and elevations follow the curve |
+| `string.filter` | Douglas-Peucker in 3D: vertices within a tolerance of the line through their kept neighbours go, so a filtered grade stays a grade; the ends of an open string stay, a closed string keeps its first vertex and the one farthest from it |
+
+Split and join follow decision 2: they edit strings, so the string acted on gets a new revision; the
+second part of a split is new, and the string joined on is deleted with a tombstone.
+
+In the app:
+
+- **Snapping** now offers the crossing of two strings (in plan, with the RL of the first string there)
+  after a vertex and before a segment. With nothing under the cursor, a point lands on a level working
+  plane rather than being refused: at the dragged vertex's RL while dragging, the last vertex's while
+  drawing, else the RL at the centre of the view. The status line names the plane and its RL.
+- **Typed vertices** while drawing: `E N [RL]` in mine grid coordinates, or `@distance<bearing` from the
+  last vertex (plan distance, grid bearing clockwise from north) with an optional RL or `grade%`.
+  Without an RL a typed vertex takes the surface below it, else the last vertex's RL. An empty entry
+  finishes the string.
+- **Handles** are drawn only where a vertex stands at least 12 px on screen from the last one drawn, plus
+  both ends and the vertex under the cursor, so a densely draped string is no longer buried; every
+  vertex can still be grabbed.
+
+Tests: split and join round trip with undo; a 3-4-5 gap bridged and reported as 5 m; smoothing passes
+through every vertex, keeps a straight 10 % grade straight and stays inside the circle through a
+square's corners; filtering removes collinear vertices in 3D, keeps a 1 m zigzag at 0.5 m and a step in
+elevation alone, and keeps a closed square's corners.

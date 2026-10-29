@@ -143,6 +143,12 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
   const [level, setLevel] = useState('');
   const [surface, setSurface] = useState<string | null>(null);
   const [crossings, setCrossings] = useState(true);
+  const [splitAt, setSplitAt] = useState('');
+  const [joinWith, setJoinWith] = useState<string | null>(null);
+  const [spacing, setSpacing] = useState('5');
+  const [tolerance, setTolerance] = useState('');
+  const others = (summary?.objects ?? []).filter((o) => o.kind === 'string' && o.id !== id && !o.closed);
+  const partner = others.find((o) => o.id === joinWith) ?? others[0];
 
   const num = (s: string) => (s.trim() === '' ? null : Number(s));
   const ok = (v: number | null) => v !== null && Number.isFinite(v);
@@ -200,6 +206,41 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
         <label className="flex items-center gap-1 text-muted-foreground" title="Add vertices where the string crosses the surface's triangle edges">
           <input type="checkbox" checked={crossings} onChange={(e) => setCrossings(e.target.checked)} /> follow
         </label>
+      </ToolRow>
+      <ToolRow label="Split" disabled={!ok(num(splitAt))} onApply={() => void run('string.split', { string: id, at: Math.round(num(splitAt)!) - 1 })}>
+        <span className="text-muted-foreground">at vertex</span>
+        <SmallInput value={splitAt} onChange={setSplitAt} placeholder="#" title="Split here; a closed string opens here" />
+      </ToolRow>
+      <ToolRow label="Join" disabled={closed || !partner} onApply={() => partner && void run('string.join', { string: id, other: partner.id })}>
+        {closed ? (
+          <span className="text-muted-foreground">open the string first</span>
+        ) : others.length === 0 ? (
+          <span className="text-muted-foreground">no other open string</span>
+        ) : (
+          <select
+            className="h-6 max-w-40 rounded border bg-background px-1 text-xs"
+            value={partner?.id}
+            onChange={(e) => setJoinWith(e.target.value)}
+            aria-label="String to join on"
+            title="Joined at the nearest ends; that string is deleted (undo brings it back)"
+          >
+            {others.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name}
+              </option>
+            ))}
+          </select>
+        )}
+      </ToolRow>
+      <ToolRow label="Smooth" disabled={!(ok(num(spacing)) && num(spacing)! > 0)} onApply={() => void run('string.smooth', { string: id, spacing: num(spacing) })}>
+        <span className="text-muted-foreground">every</span>
+        <SmallInput value={spacing} onChange={setSpacing} placeholder="m" title="Longest step along the curve in plan (m)" />
+        <span className="text-muted-foreground">m</span>
+      </ToolRow>
+      <ToolRow label="Filter" disabled={!(ok(num(tolerance)) && num(tolerance)! >= 0)} onApply={() => void run('string.filter', { string: id, tolerance: num(tolerance) })}>
+        <span className="text-muted-foreground">within</span>
+        <SmallInput value={tolerance} onChange={setTolerance} placeholder="m" title="Remove vertices within this 3D distance of the line (m)" />
+        <span className="text-muted-foreground">m</span>
       </ToolRow>
       <div className="flex gap-1 px-3 py-1">
         <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => void run('string.reverse', { string: id })}>

@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { Button } from '@/design-system/ui/button';
+import { Input } from '@/design-system/ui/input';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
 import { css, ISSUE, NO_COAL, rampCss } from '@/viewport/ramp';
 import { useWorkspace } from '@/workspace/context';
@@ -61,6 +62,37 @@ function SeamLegend() {
   );
 }
 
+/** While drawing: type a vertex instead of clicking one. */
+function TypedEntry() {
+  const { drawing, typeVertex } = useWorkspace();
+  const [text, setText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  if (!drawing) return null;
+  const submit = async () => {
+    const problem = await typeVertex(text);
+    setError(problem);
+    if (!problem) setText('');
+  };
+  return (
+    <div className="absolute bottom-3 left-1/2 w-[28rem] max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-md border bg-card/90 p-2 text-xs shadow-md backdrop-blur-sm">
+      <Input
+        className="h-7 font-mono text-xs"
+        value={text}
+        placeholder="E N [RL]   or   @distance<bearing [RL | grade%]"
+        aria-label="Type a vertex"
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void submit();
+          if (e.key === 'Escape') e.currentTarget.blur();
+        }}
+      />
+      <p className={`mt-1 ${error ? 'text-destructive' : 'text-muted-foreground'}`}>
+        {error ?? 'Enter adds the vertex; Enter on an empty entry finishes the string. Bearings are grid, clockwise from north.'}
+      </p>
+    </div>
+  );
+}
+
 /** Mounts the app's single viewport canvas; the Viewport itself lives as long as the app. */
 export function ViewportPanel() {
   const { viewportHost, viewportMounted } = useWorkspace();
@@ -74,6 +106,7 @@ export function ViewportPanel() {
     <div className="relative h-full w-full overflow-hidden bg-[#161e29]">
       <div ref={ref} className="absolute inset-0" />
       <SeamLegend />
+      <TypedEntry />
     </div>
   );
 }

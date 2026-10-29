@@ -7,8 +7,10 @@
 // a vertex on it (`string.insert_vertex`); Delete removes the vertex under the cursor
 // (`string.delete_vertex`). Every edit is a command, so undo covers it.
 //
-// Snapping, in order: a string vertex near the cursor (its exact coordinates), the nearest point
-// on a string segment, then the surface under the cursor.
+// Snapping, in order: a string vertex near the cursor (its exact coordinates), the crossing of two
+// strings, the nearest point on a string segment, the surface under the cursor, and failing all of
+// those a level working plane: at the dragged vertex's RL while dragging, the last vertex's while
+// drawing, else the RL at the centre of the view.
 import * as THREE from 'three/webgpu';
 import type { Layer, ProjectSummary, SnapHit, Vec3 } from '../bridge';
 import { colourOf } from './load';
@@ -20,6 +22,8 @@ export interface StringActions {
   /** Runs an engine command; resolves true if it succeeded. */
   run(name: string, params: Record<string, unknown>): Promise<boolean>;
   snap(clientX: number, clientY: number): Promise<SnapHit | null>;
+  /** The surface straight below a scene-local plan position, if any. */
+  snapDown(x: number, y: number): Promise<SnapHit | null>;
   status(text: string): void;
   /** Layer that new strings go on. */
   layer(): string;
@@ -35,6 +39,10 @@ interface Shown {
 
 const PICK_PX = 8;
 const HANDLE_PX = 10;
+/** Handles closer than this on screen to the last one drawn are skipped (they can still be grabbed). */
+const HANDLE_SPACING_PX = 12;
+/** Segments this close to the cursor are tested for crossings. */
+const CROSSING_REACH_PX = 40;
 const CLICK_SLOP_PX = 4;
 const SELECTED = 0xffd23f;
 const PREVIEW = 0x66d9ff;
@@ -220,7 +228,7 @@ export class StringLayer {
 
     if (this.mode === 'draw') {
       const hit = await this.snapAt(e.clientX, e.clientY);
-      if (!hit) return this.actions.status('Nothing to snap to under the cursor');
+      if (!hit) return this.actions.status('No point there: the view looks along the working plane; tilt it down or use plan view');
       this.pending.push(hit);
       this.refreshPreview();
       this.placeHandles();
@@ -311,12 +319,24 @@ export class StringLayer {
         : this.selected
           ? (this.shown.get(this.selected)?.points ?? [])
           : [];
-    const n = Math.min(points.length, MAX_HANDLES);
-    for (let i = 0; i < n; i++) {
+    // A densely draped string would bury itself in handles: draw one only where it stands clear of
+    // the last one drawn, plus both ends and the one under the cursor.
+    const hovered = this.hovered?.id === this.selected ? this.hovered.index : -1;
+    const camera = this.viewport.camera;
+    const { clientWidth: w, clientHeight: h } = this.viewport.renderer.domElement;
+    const at = new THREE.Vector3();
+    let last: [number, number] | null = null;
+    let n = 0;
+    for (let i = 0; i < points.length && n < MAX_HANDLES; i++) {
+      at.copy(points[i]).project(camera);
+      const s: [number, number] = [((at.x + 1) / 2) * w, ((1 - at.y) / 2) * h];
+      const clear = !last || Math.hypot(s[0] - last[0], s[1] - last[1]) >= HANDLE_SPACING_PX;
+      if (!clear && i !== points.length - 1 && i !== hovered) continue;
+      last = s;
       this.dummy.position.copy(points[i]);
       this.dummy.scale.setScalar(this.viewport.pixelSize(points[i]) * 6);
       this.dummy.updateMatrix();
-      this.handles.setMatrixAt(i, this.dummy.matrix);
+      this.handles.setMatrixAt(n++, this.dummy.matrix);
     }
     this.handles.count = n;
     this.handles.instanceMatrix.needsUpdate = true;
@@ -327,7 +347,7 @@ export class StringLayer {
   }
 
   /** A snap from a string point the viewport already holds (scene-local). */
-  private stringHit(id: string, local: THREE.Vector3, kind: 'vertex' | 'segment', label: string): SnapHit {
+  private stringHit(id: string, local: THREE.Vector3, kind: 'vertex' | 'segment' | 'intersection', label: string): SnapHit {
     const l: Vec3 = [local.x, local.y, local.z];
     const [ox, oy, oz] = this.origin;
     return { local: l, world: [ox + l[0], oy + l[1], oz + l[2]], object: id, kind, label };
@@ -359,7 +379,8 @@ export class StringLayer {
       return v.object === '' ? (this.pending.find((h) => h.local.every((c, k) => c === v.local[k])) ?? v) : v;
     }
 
-    let segment: { id: string; index: number; d: number } | null = null;
+    // Segments near the cursor: the nearest is the segment snap, and pairs of them may cross.
+    const near: { id: string; index: number; d: number; a: THREE.Vector3; b: THREE.Vector3; name: string }[] = [];
     for (const [id, shown] of this.shown) {
       if (!shown.line.visible) continue;
       const n = shown.closed ? shown.points.length : shown.points.length - 1;
@@ -367,15 +388,35 @@ export class StringLayer {
         const j = (i + 1) % shown.points.length;
         if (skip?.id === id && (skip.index === i || skip.index === j)) continue;
         const d = distanceToSegment([x, y], this.screen(shown.points[i]), this.screen(shown.points[j]));
-        if (d <= PICK_PX && (!segment || d < segment.d)) segment = { id, index: i, d };
+        if (d <= CROSSING_REACH_PX) near.push({ id, index: i, d, a: shown.points[i], b: shown.points[j], name: shown.name });
       }
     }
+    const crossing = this.crossingNear(near.slice().sort((p, q) => p.d - q.d).slice(0, 64), x, y);
+    if (crossing) return crossing;
+    const segment = near.reduce<(typeof near)[number] | null>((best, s) => (s.d <= PICK_PX && (!best || s.d < best.d) ? s : best), null);
     if (segment) {
       const hit = this.pointOnSegment(segment.id, segment.index, x, y);
       if (hit) return hit;
     }
     const surface = await this.actions.snap(x, y);
-    return surface ? { ...surface, kind: 'surface' } : null;
+    if (surface) return { ...surface, kind: 'surface' };
+    const dragged = skip ? this.shown.get(skip.id)?.points[skip.index] : undefined;
+    const last = this.pending[this.pending.length - 1];
+    const plane = dragged ? dragged.z : last ? last.local[2] : this.viewport.controls.target.z;
+    return this.onPlane(x, y, plane);
+  }
+
+  /** Where the pick ray through the cursor meets the level plane at scene-local height `z`. */
+  private onPlane(x: number, y: number, z: number): SnapHit | null {
+    const ray = this.viewport.rayFromNdc(...this.viewport.clientToNdc(x, y));
+    const [o, d] = [ray.origin, ray.direction];
+    if (Math.abs(d[2]) < 1e-9) return null;
+    const t = (z - o[2]) / d[2];
+    // Behind the eye, or so far off towards the horizon that the point would mean nothing.
+    if (t <= 0 || t > 1e6) return null;
+    const local = new THREE.Vector3(o[0] + t * d[0], o[1] + t * d[1], z);
+    const hit = this.stringHit('', local, 'vertex', '');
+    return { ...hit, kind: 'plane', label: `the working plane at RL ${hit.world[2].toFixed(2)}` };
   }
 
   /** The point on a segment of a string nearest the pick ray through the cursor. */
@@ -394,6 +435,81 @@ export class StringLayer {
     const denom = uu * dd - ud * ud;
     const t = denom > 1e-12 ? Math.max(0, Math.min(1, (ud * dw - dd * uw) / denom)) : 0;
     return this.stringHit(id, a.clone().addScaledVector(u, t), 'segment', `segment ${index + 1} of ${shown.name}`);
+  }
+
+  /**
+   * Where two of the given segments cross in plan, if that crossing is within the handle distance
+   * of the cursor; the nearest such crossing. Its RL is the first segment's there.
+   */
+  private crossingNear(segments: { id: string; index: number; a: THREE.Vector3; b: THREE.Vector3; name: string }[], x: number, y: number): SnapHit | null {
+    let best: SnapHit | null = null;
+    let bestDist = HANDLE_PX * HANDLE_PX;
+    for (let i = 0; i < segments.length; i++) {
+      for (let j = i + 1; j < segments.length; j++) {
+        const [p, q] = [segments[i], segments[j]];
+        // Neighbouring segments of one string meet at a vertex, which the vertex snap already offers.
+        if (p.id === q.id && Math.abs(p.index - q.index) <= 1) continue;
+        const r = [p.b.x - p.a.x, p.b.y - p.a.y];
+        const s = [q.b.x - q.a.x, q.b.y - q.a.y];
+        const denom = r[0] * s[1] - r[1] * s[0];
+        if (Math.abs(denom) < 1e-12) continue;
+        const w = [q.a.x - p.a.x, q.a.y - p.a.y];
+        const t = (w[0] * s[1] - w[1] * s[0]) / denom;
+        const u = (w[0] * r[1] - w[1] * r[0]) / denom;
+        if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+        const point = p.a.clone().lerp(p.b, t);
+        const [sx, sy] = this.screen(point);
+        const d = (sx - x) ** 2 + (sy - y) ** 2;
+        if (d <= bestDist) {
+          bestDist = d;
+          best = this.stringHit(p.id, point, 'intersection', `the crossing of ${p.name} and ${q.name}`);
+        }
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Adds a typed vertex while drawing: `E N [RL]` in mine grid coordinates, or `@distance<bearing`
+   * from the last vertex (plan distance, grid bearing in degrees clockwise from north) with an
+   * optional RL or `grade%`. Without an RL the vertex takes the surface below it, else the last
+   * vertex's RL. An empty entry finishes the string. Returns an error to show, or null.
+   */
+  async addTyped(text: string): Promise<string | null> {
+    if (this.mode !== 'draw') return 'Switch to Draw string first';
+    const entry = text.trim();
+    if (entry === '') {
+      await this.finishDrawing();
+      return null;
+    }
+    const last = this.pending[this.pending.length - 1];
+    let world: Vec3;
+    let rl: number | null = null;
+    if (entry.startsWith('@')) {
+      const m = /^@\s*([-+]?\d*\.?\d+)\s*<\s*([-+]?\d*\.?\d+)\s*(?:[ ,]\s*([-+]?\d*\.?\d+)\s*(%?))?$/.exec(entry);
+      if (!m) return 'Type @distance<bearing, with an optional RL or grade%, e.g. @50<90 or @50<90 -10%';
+      if (!last) return 'Place a first vertex before typing a bearing and distance';
+      const [distance, bearing] = [Number(m[1]), (Number(m[2]) * Math.PI) / 180];
+      world = [last.world[0] + distance * Math.sin(bearing), last.world[1] + distance * Math.cos(bearing), last.world[2]];
+      if (m[3] !== undefined) rl = m[4] === '%' ? last.world[2] + (Number(m[3]) / 100) * distance : Number(m[3]);
+    } else {
+      const numbers = entry.split(/[\s,]+/).map(Number);
+      if (numbers.length < 2 || numbers.length > 3 || numbers.some((v) => !Number.isFinite(v))) return 'Type E N or E N RL, e.g. 553100 7489100 295';
+      world = [numbers[0], numbers[1], last?.world[2] ?? NaN];
+      if (numbers.length === 3) rl = numbers[2];
+    }
+    const [ox, oy, oz] = this.origin;
+    if (rl === null) {
+      const below = await this.actions.snapDown(world[0] - ox, world[1] - oy);
+      rl = below ? below.world[2] : world[2];
+    }
+    if (!Number.isFinite(rl)) return 'No surface below that point and no vertex to take an RL from: type the RL too';
+    world[2] = rl;
+    this.pending.push({ local: [world[0] - ox, world[1] - oy, world[2] - oz], world, object: '', kind: 'surface', label: 'typed' });
+    this.refreshPreview();
+    this.placeHandles();
+    this.actions.status(`${this.pending.length} vertices; type the next, or Enter on an empty entry to finish`);
+    return null;
   }
 
   private reportSnap(hit: SnapHit): void {
