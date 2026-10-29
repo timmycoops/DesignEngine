@@ -44,7 +44,8 @@ function crossingText(c: Crossings | null): string {
   if (!c) return 'Not checked: made before crossing checks, or by a cut (a cut checks its inputs itself)';
   if (c.check.by === 'lattice') return "A grid's triangulation cannot cross itself";
   const tolerance = `${fmt(c.check.tolerance * 1000, 1)} mm`;
-  return c.pairs === 0 ? `No crossings by more than ${tolerance}` : `${fmt(c.pairs)} pairs of triangles cross by more than ${tolerance}`;
+  const crossing = c.pairs === 0 ? `No crossings by more than ${tolerance}` : `${fmt(c.pairs)} pairs of triangles cross by more than ${tolerance}`;
+  return c.thin > 0 ? `${crossing}; ${fmt(c.thin)} thin pairs (knife edges or hairline gaps), kept` : crossing;
 }
 
 function Validity({ v, crossings }: { v: MeshValidity; crossings: Crossings | null }) {
@@ -74,6 +75,37 @@ function CrossingSites({ crossings }: { crossings: Crossings }) {
       </p>
       <ul className="px-3 text-xs tabular-nums">
         {crossings.at.map((p, n) => (
+          <li key={n} className="cursor-pointer rounded px-1 hover:bg-selection" title="Show in the viewport" onClick={() => flyTo(p)}>
+            {fmt(p[0], 2)} E {fmt(p[1], 2)} N RL {fmt(p[2], 2)}
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
+
+/**
+ * Where a solid comes within the tolerance of itself, facing opposite ways: a knife edge or a
+ * hairline gap, kept as it is. Marked in the viewport while selected, unless there are crossings.
+ */
+function ThinSites({ crossings }: { crossings: Crossings }) {
+  const { markCrossings, flyTo } = useWorkspace();
+  const marked = crossings.pairs === 0;
+  useEffect(() => {
+    if (!marked) return;
+    markCrossings(crossings.thin_at);
+    return () => markCrossings([]);
+  }, [crossings, marked, markCrossings]);
+  const tolerance = crossings.check.by === 'lattice' ? '' : ` ${fmt(crossings.check.tolerance * 1000, 1)} mm`;
+  return (
+    <Section title="Thin">
+      <p className="px-3 pb-1 text-xs text-muted-foreground">
+        {fmt(crossings.thin)} pairs of faces within{tolerance} of each other, facing opposite ways: the solid tapers to a knife edge or
+        comes within a hairline of itself there. Not crossings; kept as they are.
+        {crossings.thin > crossings.thin_at.length && ` The first ${fmt(crossings.thin_at.length)} are listed.`}
+      </p>
+      <ul className="px-3 text-xs tabular-nums">
+        {crossings.thin_at.map((p, n) => (
           <li key={n} className="cursor-pointer rounded px-1 hover:bg-selection" title="Show in the viewport" onClick={() => flyTo(p)}>
             {fmt(p[0], 2)} E {fmt(p[1], 2)} N RL {fmt(p[2], 2)}
           </li>
@@ -398,6 +430,7 @@ function Measurements({ d }: { d: ObjectDetails }) {
           {m.kind === 'solid' && <Field label="Volume">{fmt(m.volume, 1)} m³</Field>}
           <Validity v={m.validity} crossings={m.crossings} />
           {m.crossings && m.crossings.pairs > 0 && <CrossingSites crossings={m.crossings} />}
+          {m.crossings && m.crossings.thin > 0 && <ThinSites crossings={m.crossings} />}
         </Section>
       );
     case 'grid': {

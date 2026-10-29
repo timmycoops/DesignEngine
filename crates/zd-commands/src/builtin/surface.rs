@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{Attributes, Body, Change, Crossings, MeshValidity, ObjectKind, Surface, TriMesh};
-use zd_geom::{RepairLog, find_crossings, repair_mesh, triangulate_grid};
+use zd_geom::{RepairLog, find_crossings, find_solid_crossings, repair_mesh, triangulate_grid};
 use zd_io::{SurfaceImport, VulcanTriangulation, read_surface};
 
 use super::exchange::describe_dxf_faces;
@@ -68,12 +68,12 @@ impl Command for ImportSurface {
         let (surface, messages) = match read_surface(path).map_err(|e| CommandError::Io(format!("{}: {e}", p.path)))? {
             SurfaceImport::Triangulation(dxf) => {
                 let read = describe_dxf_faces(&dxf);
-                let (mesh, messages, crossings) = repaired(&dxf.mesh, read, &p.path, p.weld_tolerance)?;
+                let (mesh, messages, crossings) = repaired(&dxf.mesh, read, &p.path, p.weld_tolerance, check_crossings)?;
                 (Surface::new(mesh).with_crossings(crossings), messages)
             }
             SurfaceImport::Vulcan(vulcan) => {
                 let read = describe_vulcan(&vulcan);
-                let (mesh, messages, crossings) = repaired(&vulcan.mesh, read, &p.path, p.weld_tolerance)?;
+                let (mesh, messages, crossings) = repaired(&vulcan.mesh, read, &p.path, p.weld_tolerance, check_crossings)?;
                 (Surface::new(mesh).with_crossings(crossings), messages)
             }
             SurfaceImport::VulcanGrid(vulcan) => {
@@ -125,15 +125,16 @@ impl Command for ImportSurface {
     }
 }
 
-/// A mesh read from a file, through the repair step and the crossing check: the mesh, the run
-/// record's lines (what the reader did, the repair, the check) and the check's result.
-pub(crate) fn repaired(read: &TriMesh, read_log: String, path: &str, tolerance: f64) -> Result<(TriMesh, Vec<String>, Crossings), CommandError> {
+/// A mesh read from a file, through the repair step and the crossing check (`check`: by the surface
+/// or the solid rules): the mesh, the run record's lines (what the reader did, the repair, the
+/// check) and the check's result.
+pub(crate) fn repaired(read: &TriMesh, read_log: String, path: &str, tolerance: f64, check: CrossingCheckFn) -> Result<(TriMesh, Vec<String>, Crossings), CommandError> {
     let (mesh, log) = repair_mesh(read, tolerance);
     if mesh.triangles.is_empty() {
         return Err(CommandError::Invalid(format!("{path} holds no triangles ({read_log})")));
     }
     let repair = describe_repair(&log, &mesh);
-    let (crossings, checked) = check_crossings(&mesh, tolerance);
+    let (crossings, checked) = check(&mesh, tolerance);
     Ok((mesh, vec![read_log, repair, checked], crossings))
 }
 
@@ -195,15 +196,38 @@ pub(crate) fn describe_repair(log: &RepairLog, mesh: &TriMesh) -> String {
     parts.join("; ")
 }
 
-/// Searches a mesh for crossings, with the result in one line for the run record.
+/// A crossing check with its result in one line for the run record.
+pub(crate) type CrossingCheckFn = fn(&TriMesh, f64) -> (Crossings, String);
+
+/// Searches a mesh for crossings by the surface rules, with the result in one line for the run
+/// record.
 pub(crate) fn check_crossings(mesh: &TriMesh, tolerance: f64) -> (Crossings, String) {
+    timed_check(mesh, tolerance, find_crossings)
+}
+
+/// The same by the solid rules (decision 0014): thin pairs, a knife edge or a hairline gap, are
+/// counted and kept as they are, never refused.
+pub(crate) fn check_solid_crossings(mesh: &TriMesh, tolerance: f64) -> (Crossings, String) {
+    timed_check(mesh, tolerance, find_solid_crossings)
+}
+
+fn timed_check(mesh: &TriMesh, tolerance: f64, search: fn(&TriMesh, f64) -> Crossings) -> (Crossings, String) {
     let start = Instant::now();
-    let crossings = find_crossings(mesh, tolerance);
+    let crossings = search(mesh, tolerance);
     let ms = start.elapsed().as_secs_f64() * 1e3;
-    let line = match crossings.at.first() {
-        None => format!("crossings: none by more than {} ({} triangles, {ms:.0} ms)", mm(tolerance), mesh.triangle_count()),
+    let thin = match crossings.thin_at.first() {
+        None => String::new(),
         Some(first) => format!(
-            "crossings: {} pairs of triangles cross by more than {}, the first at {}; cuts refuse this mesh until it is fixed at source ({ms:.0} ms)",
+            "; {} thin pairs, faces within {} of each other facing opposite ways (knife edges or hairline gaps), the first at {}: kept as they are",
+            crossings.thin,
+            mm(tolerance),
+            site(first)
+        ),
+    };
+    let line = match crossings.at.first() {
+        None => format!("crossings: none by more than {}{thin} ({} triangles, {ms:.0} ms)", mm(tolerance), mesh.triangle_count()),
+        Some(first) => format!(
+            "crossings: {} pairs of triangles cross by more than {}, the first at {}; cuts refuse this mesh until it is fixed at source{thin} ({ms:.0} ms)",
             crossings.pairs,
             mm(tolerance),
             site(first)

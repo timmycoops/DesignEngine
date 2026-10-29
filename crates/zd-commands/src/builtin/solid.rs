@@ -1,17 +1,17 @@
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, CrossingCheck, Crossings, ObjectId, ObjectKind, Solid, TriMesh};
-use zd_geom::{CloseLog, close_solid, cut_solid_by_surface, repair_mesh, self_union, separate_touching_edges, split_patches};
+use zd_geom::{COINCIDENT, CloseLog, Separation, UnionLog, close_solid, cut_solid_by_surface, find_solid_crossings, repair_mesh, self_union, separate_touching_edges, split_patches};
 
 use std::path::Path;
 
 use zd_io::{SurfaceImport, read_surface};
 
 use super::exchange::describe_dxf_faces;
-use super::surface::{MeshParams, check_crossings, default_tolerance, describe, describe_repair, describe_vulcan, mesh_params, mm, repaired, site};
+use super::surface::{MeshParams, check_crossings, check_solid_crossings, default_tolerance, describe, describe_repair, describe_vulcan, mesh_params, mm, repaired, site};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
 /// `solid.from_mesh`: a solid from vertices and triangles given inline; refused unless watertight
-/// and free of crossings (decision 0010).
+/// and free of crossings by the solid rules (decisions 0010, 0014).
 pub struct SolidFromMesh;
 
 impl Command for SolidFromMesh {
@@ -30,7 +30,7 @@ impl Command for SolidFromMesh {
 
     fn run(&self, _inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let solid = Solid::new(p.mesh()?).map_err(CommandError::NotWatertight)?;
-        let (crossings, checked) = check_crossings(solid.mesh(), p.tolerance);
+        let (crossings, checked) = check_solid_crossings(solid.mesh(), p.tolerance);
         refuse_crossings("solid", &p.name, &crossings)?;
         let solid = solid.with_crossings(crossings);
         let flags = describe(&solid.validity(), solid.mesh());
@@ -52,7 +52,8 @@ impl Command for SolidFromMesh {
 /// one, touch are taken apart (vertices copied, no coordinate moved), and separate pieces become one
 /// solid each (`<name> part 1`, ...). With `repair`, it first closes the mesh (decision 0013): fins
 /// off, cracks joined, holes filled up to `fill_limit` of the surface, and a surface that crosses
-/// itself reduced to the solid it encloses, each noted on the solid.
+/// itself reduced to the solid it encloses, each noted on the solid. Crossings are found by the
+/// solid rules (decision 0014): a knife edge or a hairline gap is thin, reported and kept.
 /// Refused if any piece is open or the mesh crosses itself; the run record says why.
 pub struct ImportSolid;
 
@@ -137,23 +138,41 @@ impl Command for ImportSolid {
                     site(&at)
                 )));
             }
-            let (mut crossings, mut checked) = check_crossings(&closed, p.weld_tolerance);
+            let (mut crossings, mut checked) = check_solid_crossings(&closed, p.weld_tolerance);
             let mut summary = describe_close(&close);
             let mut closed = closed;
-            // Crossings: the surface of the solid it encloses (slice B).
-            if crossings.pairs > 0 {
-                let (union, done) = self_union(&closed, p.weld_tolerance).map_err(|why| {
-                    CommandError::Invalid(format!("the solid '{name}' crosses itself ({} pairs of triangles) and the crossings could not be resolved: {why}", crossings.pairs))
-                })?;
-                let change = done.volume_after - done.volume_before;
-                let resolved = format!(
-                    "{} crossings resolved ({} triangles cut, {} of {} regions kept; volume {:.3} m3 as read, {:.3} m3 enclosed, {:+.3} m3)",
-                    done.pairs, done.triangles_cut, done.regions_kept, done.regions, done.volume_before, done.volume_after, change
-                );
-                summary = if summary == "nothing to do" { resolved } else { format!("{summary}; {resolved}") };
-                attributes.insert("repair_volume_change_m3".into(), AttrValue::Number(change));
-                closed = union;
-                (crossings, checked) = check_crossings(&closed, p.weld_tolerance);
+            // Crossings: the surface of the solid it encloses (slice B). So too for a mesh closed but
+            // tangled, with edges of three or more faces that are not closed pieces touching; if the
+            // union cannot rebuild it, it is refused below as not closed.
+            let shape = closed.validity();
+            let tangled = crossings.pairs == 0 && !shape.is_watertight() && shape.boundary_edges == 0 && closed_pieces(&closed).is_none();
+            if crossings.pairs > 0 || tangled {
+                let resolved = match resolve_crossings(&closed, p.weld_tolerance) {
+                    Ok(resolved) => Some(resolved),
+                    Err(_) if tangled => None,
+                    Err(why) => {
+                        return Err(CommandError::Invalid(format!(
+                            "the solid '{name}' crosses itself ({} pairs of triangles) and the crossings could not be resolved: {why}",
+                            crossings.pairs
+                        )));
+                    }
+                };
+                if let Some((union, done, cut)) = resolved {
+                    let change = done.volume_after - done.volume_before;
+                    let what = if tangled {
+                        format!("{} edges of three or more faces rebuilt by the union", shape.non_manifold_edges)
+                    } else {
+                        format!("{} crossings resolved", done.pairs)
+                    };
+                    let resolved = format!(
+                        "{what}, {cut} ({} triangles cut, {} of {} regions kept; volume {:.3} m3 as read, {:.3} m3 enclosed, {:+.3} m3)",
+                        done.triangles_cut, done.regions_kept, done.regions, done.volume_before, done.volume_after, change
+                    );
+                    summary = if summary == "nothing to do" { resolved } else { format!("{summary}; {resolved}") };
+                    attributes.insert("repair_volume_change_m3".into(), AttrValue::Number(change));
+                    closed = union;
+                    (crossings, checked) = check_solid_crossings(&closed, p.weld_tolerance);
+                }
             }
             if close.fin_triangles + close.cracks_joined + close.filled.len() > 0 || attributes.contains_key("repair_volume_change_m3") {
                 attributes.insert("repair".into(), AttrValue::Text(summary.clone()));
@@ -164,16 +183,14 @@ impl Command for ImportSolid {
             let messages = vec![read_log, describe_repair(&log, &closed), format!("closing: {summary}"), checked];
             (closed, messages, crossings)
         } else {
-            repaired(&read, read_log, &p.path, p.weld_tolerance)?
+            repaired(&read, read_log, &p.path, p.weld_tolerance, check_solid_crossings)?
         };
         let validity = mesh.validity();
         // Closed pieces meeting along edges of three or more faces come apart, one solid each.
         let pieces = if validity.is_watertight() {
             vec![mesh]
         } else {
-            let (apart, separation) = separate_touching_edges(&mesh);
-            let pieces = if validity.boundary_edges == 0 && separation.edges > 0 { split_patches(&apart) } else { Vec::new() };
-            if pieces.is_empty() || !pieces.iter().all(|piece| piece.validity().is_watertight()) {
+            let Some((pieces, separation)) = closed_pieces(&mesh) else {
                 let hint = match first_open_edge(&mesh) {
                     Some(at) => format!(
                         "; the first open edge is at {}: if it is a surface, import it with surface.import, and if it is a solid, it has gaps to fix at source",
@@ -188,7 +205,7 @@ impl Command for ImportSolid {
                     validity.inconsistent_edges,
                     messages[1]
                 )));
-            }
+            };
             let outcome = if pieces.len() == 1 { "one piece touching itself, imported whole".to_string() } else { format!("{} closed pieces, each a solid of its own", pieces.len()) };
             messages.push(format!(
                 "{} edges where closed pieces touch taken apart ({} vertices copied, no coordinate moved): {outcome}",
@@ -216,6 +233,21 @@ impl Command for ImportSolid {
         };
         Ok(outcome.message(volume))
     }
+}
+
+/// A mesh made of closed pieces meeting along edges of three or more faces (or one piece touching
+/// itself), taken apart there (vertices copied, no coordinate moved): one mesh per piece, or `None`
+/// if it is not that.
+fn closed_pieces(mesh: &TriMesh) -> Option<(Vec<TriMesh>, Separation)> {
+    if mesh.validity().boundary_edges > 0 {
+        return None;
+    }
+    let (apart, separation) = separate_touching_edges(mesh);
+    if separation.edges == 0 {
+        return None;
+    }
+    let pieces = split_patches(&apart);
+    (!pieces.is_empty() && pieces.iter().all(|piece| piece.validity().is_watertight())).then_some((pieces, separation))
 }
 
 /// What closing did, in one line.
@@ -255,9 +287,28 @@ fn first_open_edge(mesh: &TriMesh) -> Option<[f64; 3]> {
     })
 }
 
+/// The self-union of a closed mesh that crosses itself, cut along every crossing however shallow
+/// (decision 0014); if that fails, cut only where they cross by more than `tolerance`, as slice B
+/// was first built. The result must have no crossing left by the solid rules. Returns how it was
+/// cut, for the run record, or why neither way worked (the first's reason).
+fn resolve_crossings(mesh: &TriMesh, tolerance: f64) -> Result<(TriMesh, UnionLog, String), String> {
+    let mut first_failure = None;
+    for (cut, how) in [(COINCIDENT, "cut along every crossing".to_string()), (tolerance, format!("cut where they cross by more than {}", mm(tolerance)))] {
+        let why = match self_union(mesh, cut) {
+            Ok((union, done)) => match find_solid_crossings(&union, tolerance).pairs {
+                0 => return Ok((union, done, how)),
+                left => format!("it still crosses itself after the cut ({left} pairs)"),
+            },
+            Err(why) => why,
+        };
+        first_failure.get_or_insert(why);
+    }
+    Err(first_failure.unwrap_or_default())
+}
+
 /// Refuses a mesh that crosses itself: crossings are fixed at source, never here.
 fn refuse_crossings(what: &str, name: &str, crossings: &Crossings) -> Result<(), CommandError> {
-    let (Some(first), CrossingCheck::Search { tolerance }) = (crossings.at.first(), crossings.check) else {
+    let (Some(first), CrossingCheck::Search { tolerance } | CrossingCheck::SolidSearch { tolerance }) = (crossings.at.first(), crossings.check) else {
         return Ok(());
     };
     Err(CommandError::Invalid(format!(
@@ -268,12 +319,15 @@ fn refuse_crossings(what: &str, name: &str, crossings: &Crossings) -> Result<(),
     )))
 }
 
-/// A cut's input: its saved crossing check, or a search now if it has none.
-fn checked_input(what: &str, name: &str, saved: Option<&Crossings>, mesh: &TriMesh, messages: &mut Vec<String>) -> Result<(), CommandError> {
-    let found = match saved {
+/// A cut's input: its saved crossing check, or a search now if it has none. A solid's must be by
+/// the solid rules: one saved before decision 0014 is searched again.
+fn checked_input(what: &str, name: &str, saved: Option<&Crossings>, mesh: &TriMesh, solid: bool, messages: &mut Vec<String>) -> Result<(), CommandError> {
+    let current = saved.filter(|c| !solid || matches!(c.check, CrossingCheck::SolidSearch { .. }));
+    let found = match current {
         Some(crossings) => crossings.clone(),
         None => {
-            let (crossings, line) = check_crossings(mesh, default_tolerance());
+            let check = if solid { check_solid_crossings } else { check_crossings };
+            let (crossings, line) = check(mesh, default_tolerance());
             messages.push(format!("{what} '{name}' {line}"));
             crossings
         }
@@ -329,8 +383,8 @@ impl Command for CutBySurface {
         let (solid_object, solid) = inputs.solid(p.solid)?;
         let (surface_object, surface) = inputs.surface(p.surface)?;
         let mut checks = Vec::new();
-        checked_input("solid", &solid_object.name, solid.crossings(), solid.mesh(), &mut checks)?;
-        checked_input("surface", &surface_object.name, surface.crossings(), surface.mesh(), &mut checks)?;
+        checked_input("solid", &solid_object.name, solid.crossings(), solid.mesh(), true, &mut checks)?;
+        checked_input("surface", &surface_object.name, surface.crossings(), surface.mesh(), false, &mut checks)?;
         let cut = cut_solid_by_surface(solid.mesh(), surface.mesh()).map_err(|e| CommandError::Geometry(e.to_string()))?;
 
         let t = cut.timings;

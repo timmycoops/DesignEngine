@@ -2,9 +2,12 @@
 //! where it does and reduced to the surface of the solid it encloses, the faces with solid behind
 //! them and empty space in front.
 //!
-//! 1. Every crossing pair's segment is found by the crossing search's interval test. Two faces that
-//!    overlap in one plane (or fold back flat on an edge) give segments too: each one's edges,
-//!    clipped to the other. Where they face opposite ways, the overlap is a sheet with no thickness,
+//! 1. Every crossing pair's segment is found by the crossing search's interval test, at the cut
+//!    tolerance: at [`COINCIDENT`](crate::COINCIDENT), every crossing however shallow (decision 0014),
+//!    so the lines where the surface passes through itself close into loops and the regions between
+//!    them stay apart. Faces that only come close (a knife edge, a hairline gap) are not crossings
+//!    there and are left as they are. Two faces that overlap in one plane (or fold back flat on an
+//!    edge) give segments too: each one's edges, clipped to the other. Where they face opposite ways, the overlap is a sheet with no thickness,
 //!    and its faces drop out at step 4 (the winding number is the same on both sides of it). Where
 //!    they face the same way, the later triangle's faces inside the earlier one drop out at once, so
 //!    the face is kept once.
@@ -33,7 +36,7 @@ use spade::handles::FixedVertexHandle;
 use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation};
 use zd_core::TriMesh;
 
-use crate::crossings::{Crossing, crossing_list};
+use crate::crossings::{Crossing, Rules, crossing_list};
 use crate::separate_touching_edges;
 
 type P = [f64; 3];
@@ -66,13 +69,27 @@ const CHECK_RAYS: usize = 160;
 const CHECK_SHARE: f64 = 1e-4;
 
 /// The surface of the solid a self-crossing closed mesh encloses, or why it could not be found.
-pub fn self_union(mesh: &TriMesh, tolerance: f64) -> Result<(TriMesh, UnionLog), String> {
+/// Crossings by less than `cut` (m) are not cut: [`COINCIDENT`](crate::COINCIDENT) cuts them all.
+pub fn self_union(mesh: &TriMesh, cut: f64) -> Result<(TriMesh, UnionLog), String> {
     let Some(bounds) = mesh.bounds() else { return Err("the mesh is empty".into()) };
+    // The winding number, and so what the surface encloses, is defined only for a closed surface: an
+    // open sheet's volume as read means nothing, and rays can miss it.
+    let counts = edge_counts(&mesh.triangles);
+    let open = counts.values().filter(|&&n| n == 1).count();
+    if let Some(&(a, b)) = mesh.triangles.iter().flat_map(|t| [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])]).map(|(u, v)| undirected(u, v)).collect::<Vec<_>>().iter().find(|e| counts[e] == 1) {
+        let (p, q) = (mesh.vertices[a as usize], mesh.vertices[b as usize]);
+        return Err(format!(
+            "the surface is not closed ({open} open edges, the first at {:.3} {:.3} RL {:.3}): the union needs a closed surface",
+            0.5 * (p[0] + q[0]),
+            0.5 * (p[1] + q[1]),
+            0.5 * (p[2] + q[2])
+        ));
+    }
     let origin = bounds.centre().map(f64::round);
     let local = TriMesh::new(mesh.vertices.iter().map(|p| sub(*p, origin)).collect(), mesh.triangles.clone());
     let mut log = UnionLog { volume_before: local.signed_volume(), ..UnionLog::default() };
 
-    let crossings = crossing_list(&local, tolerance);
+    let crossings = crossing_list(&local, cut, Rules::Surface);
     log.pairs = crossings.len();
 
     // Shared points: the vertices first, then the segments' ends. Each segment goes to the triangles
@@ -86,6 +103,8 @@ pub fn self_union(mesh: &TriMesh, tolerance: f64) -> Result<(TriMesh, UnionLog),
                 let (a, b) = (points.intern(p), points.intern(q));
                 vec![(i, a, b), (j, a, b)]
             }
+            // The surface rules find no thin pairs.
+            Crossing::Thin(_) => Vec::new(),
             Crossing::Overlap(_) => {
                 let (ti, tj) = (local.triangles[i as usize], local.triangles[j as usize]);
                 let mut placed: Vec<(u32, u32, u32)> = clipped_edges(&mut points, tj, ti).into_iter().map(|(a, b)| (i, a, b)).collect();
@@ -241,9 +260,16 @@ pub fn self_union(mesh: &TriMesh, tolerance: f64) -> Result<(TriMesh, UnionLog),
     }
 
     let local_result = TriMesh::new(result.vertices.iter().map(|p| sub(*p, origin)).collect(), result.triangles.clone());
-    let (disagreement, measured) = ray_check(&local, &local_result);
+    let (disagreement, measured, inside_out) = ray_check(&local, &local_result);
     log.ray_disagreement = disagreement;
     log.ray_volume = measured;
+    // The union keeps where the winding is 1 or more: a part of the surface facing in (winding -1)
+    // would be dropped, not resolved.
+    if inside_out > CHECK_SHARE * measured.max(log.volume_after) {
+        return Err(format!(
+            "parts of the surface face inward ({inside_out:.4} m3 lies inside out along vertical rays, against {measured:.3} m3 inside); the union would drop them: not resolved"
+        ));
+    }
     if disagreement > CHECK_SHARE * measured.max(log.volume_after) {
         return Err(format!(
             "the solid enclosed ({:.3} m3) disagrees with the original surface by {disagreement:.4} m3 along vertical rays ({:.3} m3 measured); not resolved",
@@ -254,11 +280,11 @@ pub fn self_union(mesh: &TriMesh, tolerance: f64) -> Result<(TriMesh, UnionLog),
 }
 
 /// Along vertical rays on a plan grid over the original: the summed difference between the length
-/// where the original's winding number is 1 or more and the length inside `result`, and the volume
-/// the rays measured in the original. Rays sit off the grid's lines by irrational fractions of a
-/// cell, so they do not run along edges.
-fn ray_check(original: &TriMesh, result: &TriMesh) -> (f64, f64) {
-    let Some(bounds) = original.bounds() else { return (0.0, 0.0) };
+/// where the original's winding number is 1 or more and the length inside `result`, the volume the
+/// rays measured in the original, and the volume where its winding is -1 or less (inside out). Rays
+/// sit off the grid's lines by irrational fractions of a cell, so they do not run along edges.
+fn ray_check(original: &TriMesh, result: &TriMesh) -> (f64, f64, f64) {
+    let Some(bounds) = original.bounds() else { return (0.0, 0.0, 0.0) };
     let (lo, hi) = (bounds.min, bounds.max);
     let size = [(hi[0] - lo[0]).max(1e-9), (hi[1] - lo[1]).max(1e-9)];
     let cell = [size[0] / CHECK_RAYS as f64, size[1] / CHECK_RAYS as f64];
@@ -302,27 +328,30 @@ fn ray_check(original: &TriMesh, result: &TriMesh) -> (f64, f64) {
             hits.push((w0 * a[2] + w1 * b[2] + w2 * c[2], if area > 0.0 { -1 } else { 1 }));
         }
         hits.sort_by(|p, q| p.0.total_cmp(&q.0));
-        let (mut count, mut inside, mut last) = (0, 0.0, 0.0);
+        let (mut count, mut inside, mut inverted, mut last) = (0, 0.0, 0.0, 0.0);
         for (z, step) in hits {
             if count >= 1 {
                 inside += z - last;
+            } else if count <= -1 {
+                inverted += z - last;
             }
             count += step;
             last = z;
         }
-        inside
+        (inside, inverted)
     };
-    let (mut disagreement, mut measured) = (0.0, 0.0);
+    let (mut disagreement, mut measured, mut inside_out) = (0.0, 0.0, 0.0);
     for i in 0..CHECK_RAYS {
         for j in 0..CHECK_RAYS {
             let [x, y] = at(i, j);
             let k = i * CHECK_RAYS + j;
-            let (la, lb) = (length(original, &bins_a[k], x, y), length(result, &bins_b[k], x, y));
+            let ((la, inverted), (lb, _)) = (length(original, &bins_a[k], x, y), length(result, &bins_b[k], x, y));
             disagreement += (la - lb).abs() * cell[0] * cell[1];
             measured += la * cell[0] * cell[1];
+            inside_out += inverted * cell[0] * cell[1];
         }
     }
-    (disagreement, measured)
+    (disagreement, measured, inside_out)
 }
 
 /// Points shared across triangles, merged within [`SNAP`].
@@ -750,6 +779,67 @@ mod tests {
         assert!(union.validity().is_watertight(), "{:?}", union.validity());
         let expected = 20.0 * 20.0 * 0.0004 + 1.0 - 1.0 * 1.0 * 0.0004;
         assert!((union.signed_volume() - expected).abs() < 1e-9, "{} against {expected}", union.signed_volume());
+    }
+
+    #[test]
+    fn a_crossing_shallower_than_the_tolerance_in_places_is_cut_all_the_way_round() {
+        // A box whose bottom dips into a cube's top by 0.5 mm along one side and 5 mm along the
+        // other. At 1 mm the shallow side is not a crossing, so the line where the two meet stops
+        // short; cut along every crossing, it closes and the union is exact. The overlap is 5 m by
+        // 6 m at an average 2.75 mm.
+        let cube = box_from(|i| [E + (i & 1) as f64 * 10.0, N + (i >> 1 & 1) as f64 * 10.0, 100.0 + (i >> 2) as f64 * 10.0]);
+        let dip = |y_bit: usize| 0.0005 + 0.0045 * y_bit as f64;
+        let above = box_from(|i| [E + 5.0 + (i & 1) as f64 * 10.0, N + 2.0 + (i >> 1 & 1) as f64 * 6.0, if i >> 2 == 0 { 110.0 - dip(i >> 1 & 1) } else { 120.0 }]);
+        let both = joined(&cube, &above);
+        let expected = 1000.0 + (600.0 + 60.0 * 0.00275) - 30.0 * 0.00275;
+        // Cut at 1 mm, the regions either side of the shallow side run together and the union cannot close.
+        assert!(self_union(&both, 0.001).is_err_and(|why| why.contains("could not be closed")));
+        let (union, _) = self_union(&both, crate::COINCIDENT).unwrap();
+        assert!(union.validity().is_watertight(), "{:?}", union.validity());
+        assert!((union.signed_volume() - expected).abs() < 1e-6, "{} against {expected}", union.signed_volume());
+        assert_eq!(find_crossings(&union, crate::COINCIDENT).pairs, 0);
+    }
+
+    #[test]
+    fn thin_features_are_left_as_they_are() {
+        // Two overlapping cubes and, beside them, a wedge rising from a knife edge to 0.5 mm: the
+        // cubes become their union and the wedge keeps its 0.025 m3.
+        let a = box_from(|i| [E + (i & 1) as f64 * 10.0, N + (i >> 1 & 1) as f64 * 10.0, 100.0 + (i >> 2) as f64 * 10.0]);
+        let b = box_from(|i| [E + 5.0 + (i & 1) as f64 * 10.0, N + 5.0 + (i >> 1 & 1) as f64 * 10.0, 105.0 + (i >> 2) as f64 * 10.0]);
+        let wedge = TriMesh::new(
+            [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 0.0, 0.0005], [0.0, 10.0, 0.0], [10.0, 10.0, 0.0], [10.0, 10.0, 0.0005]].iter().map(|p| [E + 30.0 + p[0], N + p[1], 100.0 + p[2]]).collect(),
+            vec![[0, 3, 1], [1, 3, 4], [0, 2, 3], [2, 5, 3], [1, 4, 5], [1, 5, 2], [0, 1, 2], [3, 5, 4]],
+        );
+        let (union, _) = self_union(&joined(&joined(&a, &b), &wedge), crate::COINCIDENT).unwrap();
+        assert!(union.validity().is_watertight(), "{:?}", union.validity());
+        assert!((union.signed_volume() - 1875.025).abs() < 1e-6, "{}", union.signed_volume());
+        let after = crate::find_solid_crossings(&union, 0.001);
+        assert_eq!(after.pairs, 0);
+        assert!(after.thin > 0);
+    }
+
+    #[test]
+    fn an_open_surface_is_refused() {
+        // Two overlapping cubes with a triangle missing: what they enclose is not defined.
+        let a = box_from(|i| [E + (i & 1) as f64 * 10.0, N + (i >> 1 & 1) as f64 * 10.0, 100.0 + (i >> 2) as f64 * 10.0]);
+        let b = box_from(|i| [E + 5.0 + (i & 1) as f64 * 10.0, N + 5.0 + (i >> 1 & 1) as f64 * 10.0, 105.0 + (i >> 2) as f64 * 10.0]);
+        let mut both = joined(&a, &b);
+        both.triangles.remove(0);
+        let why = self_union(&both, crate::COINCIDENT).unwrap_err();
+        assert!(why.starts_with("the surface is not closed (3 open edges, the first at 650005.000 7450005.000 RL 100.000)"), "{why}");
+    }
+
+    #[test]
+    fn a_part_facing_inward_is_refused_not_dropped() {
+        // A cube, and an overlapping one wound inside out: its winding is -1, so the union would keep
+        // only the first cube's 875 m3 outside it and drop the other's 875 m3. Refused instead.
+        let a = box_from(|i| [E + (i & 1) as f64 * 10.0, N + (i >> 1 & 1) as f64 * 10.0, 100.0 + (i >> 2) as f64 * 10.0]);
+        let mut b = box_from(|i| [E + 5.0 + (i & 1) as f64 * 10.0, N + 5.0 + (i >> 1 & 1) as f64 * 10.0, 105.0 + (i >> 2) as f64 * 10.0]);
+        b.triangles.iter_mut().for_each(|t| t.swap(1, 2));
+        let why = self_union(&joined(&a, &b), crate::COINCIDENT).unwrap_err();
+        // Measured along 160 x 160 rays: within 1 % of the 875 m3.
+        let measured: f64 = why.strip_prefix("parts of the surface face inward (").and_then(|rest| rest.split(' ').next()).and_then(|v| v.parse().ok()).expect(&why);
+        assert!((measured - 875.0).abs() < 8.75, "{why}");
     }
 
     #[test]

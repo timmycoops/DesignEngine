@@ -177,11 +177,44 @@ fn repair_resolves_crossings_into_the_solid_enclosed() {
     let mut s = Session::with_builtins();
     assert!(s.run("solid.import", json!({ "path": dir.join("overlap.00t").to_string_lossy(), "layer": "coal" })).unwrap_err().to_string().contains("crosses itself"));
     let record = s.run("solid.import", json!({ "path": dir.join("overlap.00t").to_string_lossy(), "layer": "coal", "repair": true })).unwrap();
-    assert!(record.messages[2].starts_with("closing: ") && record.messages[2].contains("crossings resolved") && record.messages[2].contains("volume 2000.000 m3 as read, 1875.000 m3 enclosed, -125.000 m3)"), "{}", record.messages[2]);
+    assert!(record.messages[2].starts_with("closing: ") && record.messages[2].contains("crossings resolved, cut along every crossing") && record.messages[2].contains("volume 2000.000 m3 as read, 1875.000 m3 enclosed, -125.000 m3)"), "{}", record.messages[2]);
     assert!(record.messages[3].starts_with("crossings: none"), "{}", record.messages[3]);
     assert_eq!(record.messages.last().unwrap(), "volume 1875.000 m3");
     let object = s.project().object(created(&record)[0]).unwrap();
     assert_eq!(object.attributes["repair_volume_change_m3"], zd_core::AttrValue::Number(-125.0));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A lens 10 m square rising from knife edges on two sides to a ridge 0.5 mm high down the middle:
+/// 0.025 m³. No two vertices lie within the 1 mm weld.
+fn knife_edges() -> TriMesh {
+    let v = [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [5.0, 0.0, 0.0005], [0.0, 10.0, 0.0], [10.0, 10.0, 0.0], [5.0, 10.0, 0.0005]];
+    TriMesh::new(v.iter().map(|p| [E + p[0], N + p[1], 250.0 + p[2]]).collect(), vec![[0, 3, 1], [1, 3, 4], [0, 2, 3], [2, 5, 3], [2, 1, 5], [1, 4, 5], [0, 1, 2], [3, 5, 4]])
+}
+
+#[test]
+fn a_knife_edge_solid_imports_with_its_thin_pairs_reported() {
+    // Its top and bottom stay within 0.5 mm of each other: by the solid rules (decision 0014) they
+    // are thin, not crossing, so the solid imports as read, with or without repair.
+    let dir = scratch("knife");
+    let path = dir.join("sliver.00t");
+    write(&path, &knife_edges());
+    let mut s = Session::with_builtins();
+    for repair in [false, true] {
+        let record = s.run("solid.import", json!({ "path": path.to_string_lossy(), "layer": "coal", "repair": repair })).unwrap();
+        let checked = record.messages.iter().find(|m| m.starts_with("crossings: ")).unwrap();
+        assert!(checked.starts_with("crossings: none by more than 1 mm; ") && checked.contains("thin pairs, faces within 1 mm of each other facing opposite ways (knife edges or hairline gaps), the first at 650"), "{checked}");
+        assert!(checked.contains(": kept as they are (8 triangles"), "{checked}");
+        assert_eq!(record.messages.last().unwrap(), "volume 0.025 m3");
+        let Body::Solid(solid) = &s.project().object(created(&record)[0]).unwrap().body else { panic!("not a solid") };
+        let crossings = solid.crossings().unwrap();
+        assert_eq!((crossings.check, crossings.pairs), (zd_core::CrossingCheck::SolidSearch { tolerance: 0.001 }, 0));
+        assert!(crossings.thin > 0 && crossings.thin_at.len() == crossings.thin);
+        assert_eq!(solid.validity().non_self_intersecting, Some(true));
+    }
+    // As a surface the same faces fold back onto each other: flagged by the surface rules.
+    let record = s.run("surface.import", json!({ "path": path.to_string_lossy(), "layer": "topo" })).unwrap();
+    assert!(record.messages[2].contains("pairs of triangles cross by more than 1 mm"), "{}", record.messages[2]);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
