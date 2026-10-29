@@ -4,7 +4,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use zd_core::{AttrValue, Attributes, Body, Change, Grid, Object, Polyline, Project, RunId, Solid, Surface, TriMesh};
+use std::collections::BTreeMap;
+
+use zd_core::{
+    AttrValue, Attributes, Body, Change, Fingerprint, Grid, GridLink, Horizon, IssueKind, Lattice, Object, Polyline, Project,
+    RunId, SeamModel, Solid, StackIssue, Surface, TriMesh,
+};
 use zd_geom::triangulate_grid;
 use zd_io::{ProjectStore, StoreError};
 
@@ -40,8 +45,41 @@ fn box_mesh(min: [f64; 3], max: [f64; 3]) -> TriMesh {
     )
 }
 
+/// A seam model linking to grid files, with a non-blocking issue at a mine grid location.
+fn seam_model() -> SeamModel {
+    let link = |file: &str, checksum: u64| GridLink {
+        file: file.into(),
+        fingerprint: Fingerprint { bytes: 2_128_336, modified_unix_ms: 1_700_000_000_123, checksum },
+    };
+    let horizon = |code: &str, parent: Option<&str>, working: bool| Horizon {
+        code: code.into(),
+        parent: parent.map(Into::into),
+        material: "coal".into(),
+        working,
+        roof: link(&format!("pit{code}.srg"), u64::MAX),
+        floor: link(&format!("pit{code}.sfg"), 0x8594_4171_f739_67e8),
+        grids: BTreeMap::from([("rd".to_string(), link(&format!("pit{code}.rdg"), 7))]),
+    };
+    SeamModel {
+        folder: "D:\\models\\pit\\grids".into(),
+        density: "rd".into(),
+        tolerance: 0.001,
+        lattice: Lattice { origin: [E, N], cell_size: [10.0, 10.0], cols: 501, rows: 321 },
+        horizons: vec![horizon("a", None, false), horizon("au", Some("a"), true), horizon("al", Some("a"), true)],
+        issues: vec![StackIssue {
+            kind: IssueKind::Crossing,
+            horizon: "al".into(),
+            other: Some("au".into()),
+            nodes: 4,
+            worst: 0.000_7,
+            at: Some([E + 30.0, N + 1_230.0]),
+            blocking: false,
+        }],
+    }
+}
+
 /// One of everything: strings (one closed, with attributes, at revision 3), a surface, a solid, a
-/// grid with nulls, a deleted object, and a hidden layer with its own colour.
+/// grid with nulls, a seam model, a deleted object, and a hidden layer with its own colour.
 fn sample_project() -> Project {
     let mut p = Project::new();
     p.apply(RunId::new(), vec![Change::CreateLayer { name: "geology".into(), colour: Some([10, 20, 30]) }]).unwrap();
@@ -54,6 +92,7 @@ fn sample_project() -> Project {
         vec![
             create("topography", "geology", Body::Surface(Surface::new(triangulate_grid(&topo)))),
             create("seam A roof", "geology", Body::Grid(Arc::new(roof))),
+            create("seam stack", "geology", Body::SeamModel(Arc::new(seam_model()))),
             create("seam A", "solids", Body::Solid(Solid::new(box_mesh([E, N, 100.25], [E + 10.5, N + 20.75, 110.125])).unwrap())),
             create("toe", "design", Body::String(Polyline { vertices: vec![[E, N, 120.5], [E + 33.3, N + 0.1, 121.7]], closed: false })),
             create("scratch", "design", Body::String(Polyline { vertices: vec![[E, N, 0.0], [E + 1.0, N, 0.0]], closed: false })),
@@ -110,6 +149,7 @@ fn assert_same(a: &Project, b: &Project) {
                 assert_eq!((p.origin, p.cell_size, p.cols, p.rows), (q.origin, q.cell_size, q.cols, q.rows));
                 assert!(p.z.iter().zip(&q.z).all(|(u, v)| u.to_bits() == v.to_bits()), "grid z bit for bit, nulls included");
             }
+            (Body::SeamModel(p), Body::SeamModel(q)) => assert_eq!(p, q),
             _ => panic!("'{}' changed kind", x.name),
         }
     }

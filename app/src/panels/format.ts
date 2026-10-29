@@ -22,4 +22,5 @@ export const kindLabel: Record<ObjectKind, string> = {
   surface: 'Surface',
   solid: 'Solid',
   grid: 'Grid',
+  seam_model: 'Seam model',
 };

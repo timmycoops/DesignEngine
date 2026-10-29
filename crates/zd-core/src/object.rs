@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Grid, LayerId, MeshValidity, ObjectId, RunId, TriMesh};
+use crate::{Grid, LayerId, MeshValidity, ObjectId, RunId, SeamModel, TriMesh};
 
 /// What kind of thing an object is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,6 +13,7 @@ pub enum ObjectKind {
     Surface,
     Solid,
     Grid,
+    SeamModel,
 }
 
 /// A string: ordered f64 vertices, open or closed.
@@ -125,6 +126,8 @@ pub enum Body {
     Surface(Surface),
     Solid(Solid),
     Grid(Arc<Grid>),
+    /// The stack definition and its check results; the grids stay in their files.
+    SeamModel(Arc<SeamModel>),
 }
 
 impl Body {
@@ -134,6 +137,7 @@ impl Body {
             Body::Surface(_) => ObjectKind::Surface,
             Body::Solid(_) => ObjectKind::Solid,
             Body::Grid(_) => ObjectKind::Grid,
+            Body::SeamModel(_) => ObjectKind::SeamModel,
         }
     }
 }

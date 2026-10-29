@@ -12,6 +12,9 @@
 //!   objects/<id>-r<rev>-grid.parquet       z (f64, NaN = null), row-major; lattice in the manifest
 //! ```
 //!
+//! A seam model is written whole into the manifest: it holds its stack definition, the fingerprints
+//! of the grid files it links to and its check results, never the grids themselves.
+//!
 //! Object files are named by the object and the revision that first wrote them. Revisions never
 //! change, so a later save reuses those files and rewrites only what changed: renaming a surface or
 //! moving a string vertex never rewrites a large mesh. A save writes new files first and swaps the
@@ -35,8 +38,8 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use serde::{Deserialize, Serialize};
 use zd_core::{
-    Attributes, Body, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, ProjectError, RunId, Solid, Surface,
-    TriMesh,
+    Attributes, Body, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, ProjectError, RunId, SeamModel, Solid,
+    Surface, TriMesh,
 };
 
 const FORMAT: &str = "zdproj";
@@ -122,6 +125,7 @@ enum StoredBody {
     Surface { vertices: String, triangles: String },
     Solid { vertices: String, triangles: String },
     Grid { origin: [f64; 2], cell_size: [f64; 2], cols: usize, rows: usize, z: String },
+    SeamModel { model: SeamModel },
 }
 
 /// Files already on disk for a shared mesh or grid, so a later save can point at them again.
@@ -222,6 +226,7 @@ impl ProjectStore {
                     store.written.insert(Arc::as_ptr(&grid) as usize, Written::Grid { _grid: grid.clone(), z });
                     Body::Grid(grid)
                 }
+                StoredBody::SeamModel { model } => Body::SeamModel(Arc::new(model)),
             };
             objects.push(Object {
                 id: stored.id,
@@ -272,6 +277,7 @@ impl ProjectStore {
                     let z = self.grid_file(object, grid, &mut written, &mut report)?;
                     StoredBody::Grid { origin: grid.origin, cell_size: grid.cell_size, cols: grid.cols, rows: grid.rows, z }
                 }
+                Body::SeamModel(model) => StoredBody::SeamModel { model: (**model).clone() },
             };
             stored.push(StoredObject {
                 id: object.id,

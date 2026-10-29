@@ -8,6 +8,8 @@ pub enum IoError {
     /// A binary file whose layout does not check out.
     Binary(String),
     Unsupported(String),
+    /// A definition file with problems, every one listed.
+    Definition(Vec<String>),
 }
 
 impl fmt::Display for IoError {
@@ -17,6 +19,7 @@ impl fmt::Display for IoError {
             IoError::Format { line, message } => write!(f, "line {line}: {message}"),
             IoError::Binary(message) => write!(f, "{message}"),
             IoError::Unsupported(message) => write!(f, "unsupported: {message}"),
+            IoError::Definition(problems) => write!(f, "{} problem(s) in the definition:\n{}", problems.len(), problems.join("\n")),
         }
     }
 }

@@ -1,7 +1,20 @@
 import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { confirm, open, save } from '@tauri-apps/plugin-dialog';
 import type { DockviewApi } from 'dockview-react';
-import { FileInput, FilePlus, FolderOpen, Layers3, MousePointer2, PanelsTopLeft, PenLine, Redo2, Save, SaveAll, Undo2 } from 'lucide-react';
+import {
+  FileInput,
+  FilePlus,
+  FolderOpen,
+  Layers,
+  Layers3,
+  MousePointer2,
+  PanelsTopLeft,
+  PenLine,
+  Redo2,
+  Save,
+  SaveAll,
+  Undo2,
+} from 'lucide-react';
 import { cn } from 'cn';
 import {
   benchConfig,
@@ -244,6 +257,36 @@ export default function App() {
       await run('grid.import_vulcan_seam', { dir, prefix: '', seam: stem, layer: stem.toUpperCase() });
     });
 
+  /** Writes a starting stack definition for a folder of Vulcan grids, to check and edit in Excel. */
+  const onSuggestSeamDefinition = () =>
+    attempt(async () => {
+      const picked = await open({ title: 'Pick any roof grid in the folder of seam grids', filters: [{ name: 'Vulcan roof grids', extensions: ['srg'] }] });
+      if (!picked || Array.isArray(picked)) return;
+      const [dir] = splitPath(picked);
+      const path = await save({ title: 'Save the seam stack definition (CSV)', defaultPath: 'seam-stack.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] });
+      if (!path) return;
+      setStatus({ text: `Reading the seam grids in ${dir}…` });
+      // The save dialog has already asked before replacing a file.
+      await run('seam.suggest_definition', { dir, prefix: '', path, overwrite: true });
+    });
+
+  /** Builds and checks a seam model from a stack definition, then selects it to show its issues. */
+  const onBuildSeamModel = () =>
+    attempt(async () => {
+      const picked = await open({ title: 'Pick a seam stack definition (CSV)', filters: [{ name: 'CSV', extensions: ['csv'] }] });
+      if (!picked || Array.isArray(picked)) return;
+      setStatus({ text: `Building the seam model from ${picked}…` });
+      try {
+        const reply = await runCommand('seam.build_model', { definition: picked, layer: 'seam models' });
+        show(reply.summary);
+        setStatus({ text: describe(reply.record) });
+        const made = reply.record.outputs.find((o) => o.change === 'created');
+        if (made) select(made.id);
+      } finally {
+        void runLog().then(setLog);
+      }
+    });
+
   const setMode = (next: Mode) => {
     stringsRef.current?.setMode(next);
     setModeState(next);
@@ -313,6 +356,17 @@ export default function App() {
           <ToolButton tip="Import a seam's Vulcan grids: pick its roof or floor grid" onClick={onImportVulcan}>
             <Layers3 /> Vulcan seam
           </ToolButton>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm">
+                <Layers /> Seam model
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onSelect={onSuggestSeamDefinition}>Suggest a stack definition (CSV)…</DropdownMenuItem>
+              <DropdownMenuItem onSelect={onBuildSeamModel}>Build and check from a definition…</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Separator orientation="vertical" className="mx-1 h-5" />
           <ToolButton tip="Select and edit strings" active={mode === 'select'} onClick={() => setMode('select')}>
             <MousePointer2 /> Select

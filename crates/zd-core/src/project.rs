@@ -204,13 +204,16 @@ impl Project {
     }
 
     /// Applies one run's changes together, or none of them if any is refused. A new run clears
-    /// the redo stack.
+    /// the redo stack; a run that changes nothing (a report, or a file written) adds no undo step.
     pub fn apply(&mut self, run: RunId, changes: Vec<Change>) -> Result<Applied, ProjectError> {
         let mut staged = Staged { project: self, run, layers: Vec::new(), entries: Vec::new(), touched: HashSet::new(), applied: Applied::default() };
         for change in changes {
             staged.stage(change)?;
         }
         let Staged { layers, entries, mut applied, .. } = staged;
+        if layers.is_empty() && entries.is_empty() {
+            return Ok(applied);
+        }
         applied.layers_created = layers.clone();
         let transaction = Transaction { run, layers, entries };
         self.push(&transaction);
@@ -492,5 +495,16 @@ mod tests {
         assert!(p.can_redo());
         p.apply(RunId::new(), vec![create("b", "L", line(&[[0.0; 3], [1.0; 3]]))]).unwrap();
         assert!(!p.can_redo());
+    }
+
+    #[test]
+    fn a_run_that_changes_nothing_adds_no_undo_step() {
+        let mut p = Project::new();
+        p.apply(RunId::new(), vec![create("a", "L", line(&[[0.0; 3], [1.0; 3]]))]).unwrap();
+        p.undo();
+        let applied = p.apply(RunId::new(), Vec::new()).unwrap();
+        assert!(applied.changes.is_empty());
+        assert!(!p.can_undo(), "nothing to undo");
+        assert!(p.can_redo(), "and the redo stack is kept");
     }
 }

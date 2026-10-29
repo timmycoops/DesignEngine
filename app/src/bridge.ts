@@ -213,7 +213,7 @@ export interface Layer {
   visible: boolean;
 }
 
-export type ObjectKind = 'string' | 'surface' | 'solid' | 'grid';
+export type ObjectKind = 'string' | 'surface' | 'solid' | 'grid' | 'seam_model';
 
 export interface ObjectSummary {
   id: string;
@@ -304,6 +304,50 @@ export interface MeshValidity {
   degenerate_triangles: number;
 }
 
+/** A grid file a seam model reads in place, with its fingerprint from when the model was built. */
+export interface GridLink {
+  file: string;
+  fingerprint: { bytes: number; modified_unix_ms: number; checksum: number };
+}
+
+export interface Horizon {
+  code: string;
+  parent: string | null;
+  material: string;
+  /** Stacked, in order, for solids and reserves. */
+  working: boolean;
+  roof: GridLink;
+  floor: GridLink;
+  /** Quality, density and thickness grids by variable code. */
+  grids: Record<string, GridLink>;
+}
+
+export type IssueKind = 'floor_above_roof' | 'crossing' | 'outside_parent' | 'unpaired' | 'no_density';
+
+/** A problem found when the stack was checked; the grids are never changed to hide it. */
+export interface StackIssue {
+  kind: IssueKind;
+  horizon: string;
+  /** The horizon above for a crossing, the parent for outside_parent. */
+  other: string | null;
+  nodes: number;
+  /** Largest overlap in metres; 0 where the issue is not a distance. */
+  worst: number;
+  /** Easting and northing of the worst node. */
+  at: [number, number] | null;
+  blocking: boolean;
+}
+
+export interface SeamModel {
+  folder: string;
+  density: string;
+  tolerance: number;
+  lattice: { origin: [number, number]; cell_size: [number, number]; cols: number; rows: number };
+  /** Top of the stack first. */
+  horizons: Horizon[];
+  issues: StackIssue[];
+}
+
 export type Measures =
   | { kind: 'string'; points: Vec3[]; closed: boolean; length: number; plan_length: number; plan_area: number | null }
   | { kind: 'surface'; vertices: number; triangles: number; area: number; validity: MeshValidity }
@@ -316,7 +360,8 @@ export type Measures =
       rows: number;
       nulls: number;
       z_range: [number, number] | null;
-    };
+    }
+  | { kind: 'seam_model'; model: SeamModel };
 
 /** One revision of an object and the run that wrote it. */
 export interface RevisionSummary {
