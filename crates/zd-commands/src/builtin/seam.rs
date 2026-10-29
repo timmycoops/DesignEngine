@@ -324,7 +324,12 @@ impl Command for BuildSeamModel {
                 grids: links,
             })
             .collect();
-        let model = SeamModel { folder: definition.folder.to_string_lossy().into_owned(), density, tolerance: p.tolerance, lattice, horizons, issues };
+        let z_range = (0..definition.horizons.len())
+            .filter(|&i| definition.horizons[i].working)
+            .flat_map(|i| grids[i]["roof"].z_range().into_iter().chain(grids[i]["floor"].z_range()))
+            .reduce(|[lo, hi], [a, b]| [lo.min(a), hi.max(b)]);
+        let model =
+            SeamModel { folder: definition.folder.to_string_lossy().into_owned(), density, tolerance: p.tolerance, lattice, z_range, horizons, issues };
         let name = p.name.clone().unwrap_or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "seam model".into()));
         let mut done = Outcome::new(vec![Change::Create { name, layer: p.layer.clone(), attributes: Attributes::new(), body: Body::SeamModel(Arc::new(model)) }]);
         done.messages = outcome.messages;

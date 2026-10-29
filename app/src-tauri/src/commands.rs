@@ -14,9 +14,10 @@ use tauri::ipc::Response;
 use tauri::{AppHandle, State, Webview};
 use zd_commands::{LogEntry, RunRecord, Session};
 use zd_core::{Attributes, Body, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, SeamModel, TriMesh};
-use zd_geom::{SurfaceRayCaster, triangulate_grid};
+use zd_geom::{StackHorizon, SurfaceRayCaster, stack_issue_nodes, triangulate_grid};
+use zd_io::read_stack_grids;
 
-use crate::render::{encode_grid, encode_triangulation};
+use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_triangulation};
 use crate::shared::post_shared_buffer;
 use crate::state::{AppInner, AppState, bounds, geometry_key, is_drawn_surface};
 use crate::synthetic::synthetic_topography;
@@ -345,6 +346,103 @@ pub async fn stage_object(id: ObjectId, state: State<'_, AppState>) -> Result<St
     })
     .await?;
     Ok(stage(&state, buffer, name, kind, triangles, String::new(), serde_json::json!({ "encode": encode_ms })))
+}
+
+/// One horizon of a seam model, staged for the viewport: its roof coloured by thickness.
+#[derive(Serialize)]
+pub struct StagedHorizon {
+    staged: StagedMesh,
+    horizon: String,
+    /// The thickest coal on the horizon (m): the top of the colour ramp.
+    thickness_max: f64,
+    coal_nodes: usize,
+    nodes: usize,
+    /// Nodes marked for an issue beyond the model's tolerance.
+    flagged_nodes: usize,
+    /// The worst node of each blocking issue on this horizon, in scene-local coordinates.
+    markers: Vec<IssueMarker>,
+    /// Grid files that have changed since the model was built.
+    changed: Vec<String>,
+    /// Every horizon, top first, to choose from.
+    horizons: Vec<HorizonChoice>,
+}
+
+#[derive(Serialize)]
+pub struct HorizonChoice {
+    code: String,
+    working: bool,
+}
+
+#[derive(Serialize)]
+pub struct IssueMarker {
+    /// Index into the model's issues.
+    issue: usize,
+    position: [f64; 3],
+}
+
+/// Reads a seam model's roofs and floors in place and stages one horizon's roof (the first working
+/// horizon if none is named) with its thickness per node, marking the nodes of blocking issues.
+#[tauri::command]
+pub async fn stage_seam_horizon(id: ObjectId, horizon: Option<String>, state: State<'_, AppState>) -> Result<StagedHorizon, String> {
+    let (model, name, origin) = {
+        let mut app = state.app.lock().unwrap();
+        let origin = app.origin().unwrap_or([0.0; 3]);
+        let object = app.session.project().object(id).ok_or("no such object")?.clone();
+        let Body::SeamModel(model) = &object.body else { return Err(format!("'{}' is not a seam model", object.name)) };
+        (model.clone(), object.name.clone(), origin)
+    };
+    let code = match horizon {
+        Some(code) => code,
+        None => model.working_section().next().or(model.horizons.first()).ok_or("the model has no horizons")?.code.clone(),
+    };
+    let title = name.clone();
+    let horizons = model.horizons.iter().map(|h| HorizonChoice { code: h.code.clone(), working: h.working }).collect();
+    let (buffer, triangles, staged_horizon, encode_ms) = blocking(move || -> Result<_, String> {
+        let t = Instant::now();
+        let index = model.horizons.iter().position(|h| h.code == code).ok_or_else(|| format!("no horizon '{code}' in the model"))?;
+        let grids = read_stack_grids(&model).map_err(|e| e.to_string())?;
+        let parent = |p: &str| model.horizons.iter().position(|h| h.code.eq_ignore_ascii_case(p));
+        let stack: Vec<StackHorizon<'_>> = model
+            .horizons
+            .iter()
+            .enumerate()
+            .map(|(i, h)| StackHorizon {
+                code: &h.code,
+                parent: h.parent.as_deref().and_then(parent),
+                working: h.working,
+                roof: &grids.roofs[i],
+                floor: &grids.floors[i],
+            })
+            .collect();
+        let flags = stack_issue_nodes(&stack, model.tolerance).map_err(|e| e.to_string())?.swap_remove(index);
+        let (roof, floor) = (&grids.roofs[index], &grids.floors[index]);
+        let thickness: Vec<f64> = roof.z.iter().zip(&floor.z).map(|(r, f)| if r - f > model.tolerance { r - f } else { f64::NAN }).collect();
+        let thickness_max = thickness.iter().copied().filter(|t| !t.is_nan()).fold(0.0, f64::max);
+        let markers = model
+            .issues
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.blocking && i.horizon == code)
+            .filter_map(|(issue, i)| {
+                let [x, y] = i.at?;
+                let col = ((x - roof.origin[0]) / roof.cell_size[0]).round() as usize;
+                let row = ((y - roof.origin[1]) / roof.cell_size[1]).round() as usize;
+                let z = roof.z.get(roof.index(col.min(roof.cols - 1), row.min(roof.rows - 1))).copied().filter(|z| !z.is_nan())?;
+                Some(IssueMarker { issue, position: [x - origin[0], y - origin[1], z - origin[2]] })
+            })
+            .collect();
+        let values = NodeValues { name: "thickness", values: &thickness, flagged: &flags, range: [0.0, thickness_max] };
+        let header = serde_json::json!({ "id": 0, "name": format!("{title} {code}"), "timings": {} });
+        let buffer = encode_grid_with(roof, Some(&values), origin, header);
+        let triangles = 2 * (roof.cols - 1) * (roof.rows - 1);
+        let horizon = (code, thickness_max, thickness.iter().filter(|t| !t.is_nan()).count(), roof.z.len(), flags.iter().filter(|&&f| f).count(), markers, grids.changed);
+        Ok((buffer, triangles, horizon, ms(t)))
+    })
+    .await??;
+    let (code, thickness_max, coal_nodes, nodes, flagged_nodes, markers, changed) = staged_horizon;
+    let log = if changed.is_empty() { String::new() } else { format!("{} grid file(s) changed since the model was built", changed.len()) };
+    let staged = stage(&state, buffer, format!("{name} {code}"), "grid", triangles, log, serde_json::json!({ "read_and_encode": encode_ms }));
+    Ok(StagedHorizon { staged, horizon: code, thickness_max, coal_nodes, nodes, flagged_nodes, markers, changed, horizons })
 }
 
 /// Generates a synthetic topography of `cells` x `cells` and stages it in the `grid` or

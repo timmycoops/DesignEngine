@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 use zd_commands::Session;
 use zd_core::{Body, IssueKind, SeamModel};
-use zd_io::read_seam_definition;
+use zd_geom::{StackHorizon, stack_issue_nodes};
+use zd_io::{read_seam_definition, read_stack_grids};
 
 const E: f64 = 500_000.0;
 const N: f64 = 7_000_000.0;
@@ -136,6 +137,7 @@ fn a_consistent_stack_builds_with_no_issues_and_survives_a_save() {
 
     let m = model(&s);
     assert!(m.issues.is_empty() && m.is_usable(), "{:?}", m.issues);
+    assert_eq!(m.z_range, Some([78.0, 120.0]), "l floor to n roof");
     assert_eq!(m.working_section().map(|h| h.code.as_str()).collect::<Vec<_>>(), ["n", "cu", "cl", "l"]);
     let roof = &m.horizon("cu").unwrap().roof;
     assert_eq!(roof.file, "pitcu.srg");
@@ -168,6 +170,41 @@ fn a_crossing_is_flagged_where_it_is_and_blocks_but_nothing_is_changed() {
     assert!(record.messages.contains(&"BLOCKING: cl roof above the floor of cu at 55 nodes, worst 1.500 m at E 500000.0 N 7000000.0".to_string()));
     assert_eq!(m.blocking_issues().count(), 1, "{:?}", m.issues);
     assert_eq!(std::fs::read(t.0.join("pitcl.srg")).unwrap(), bad, "the grid is left as it is");
+}
+
+#[test]
+fn the_viewport_reads_the_stack_in_place_and_sees_a_changed_file() {
+    let t = TempDir::new("stack");
+    write_pit(&t.0);
+    let csv = t.0.join("stack.csv");
+    let mut s = Session::with_builtins();
+    suggest(&mut s, &t.0, &csv);
+    build(&mut s, &csv).unwrap();
+    let m = model(&s);
+    let grids = read_stack_grids(&m).unwrap();
+    assert_eq!((grids.roofs.len(), grids.floors.len()), (5, 5));
+    assert_eq!((grids.roofs[2].z[0], grids.floors[2].z[0]), (100.0, 96.0), "cu, top first");
+    assert!(grids.changed.is_empty());
+
+    // Remodelled after the build: the model is out of date, and says which file.
+    std::fs::write(t.0.join("pitcl.sfg"), flat(89.5)).unwrap();
+    assert_eq!(read_stack_grids(&m).unwrap().changed, ["pitcl.sfg"]);
+    std::fs::write(t.0.join("pitcl.sfg"), flat(90.0)).unwrap();
+
+    // The nodes the viewport marks: cl's roof raised into cu on the west five columns.
+    let parents: Vec<Option<usize>> = m.horizons.iter().map(|h| h.parent.as_ref().map(|p| m.horizons.iter().position(|x| &x.code == p).unwrap())).collect();
+    let bad = vulcan_grid(COLS, |x, _| Some(if x < 45.0 { 97.5 } else { 94.0 }));
+    std::fs::write(t.0.join("pitcl.srg"), &bad).unwrap();
+    let grids = read_stack_grids(&m).unwrap();
+    let stack: Vec<StackHorizon<'_>> = m
+        .horizons
+        .iter()
+        .enumerate()
+        .map(|(i, h)| StackHorizon { code: &h.code, parent: parents[i], working: h.working, roof: &grids.roofs[i], floor: &grids.floors[i] })
+        .collect();
+    let flags = stack_issue_nodes(&stack, m.tolerance).unwrap();
+    assert_eq!(flags[3].iter().filter(|&&f| f).count(), 5 * ROWS, "cl's crossing with cu");
+    assert!(flags.iter().enumerate().all(|(h, f)| h == 3 || f.iter().all(|&x| !x)));
 }
 
 #[test]
@@ -242,4 +279,25 @@ fn a_real_folder_suggests_and_builds() {
     let built = build(&mut s, &csv).unwrap();
     println!("build: {:.0} ms", built.duration_ms);
     built.messages.iter().for_each(|m| println!("  {m}"));
+
+    // What the viewport does to show a horizon: read every roof and floor, mark the issue nodes.
+    let m = model(&s);
+    let start = std::time::Instant::now();
+    let grids = read_stack_grids(&m).unwrap();
+    let read_ms = start.elapsed().as_secs_f64() * 1e3;
+    let index = |p: &str| m.horizons.iter().position(|h| h.code == p);
+    let stack: Vec<StackHorizon<'_>> = m
+        .horizons
+        .iter()
+        .enumerate()
+        .map(|(i, h)| StackHorizon { code: &h.code, parent: h.parent.as_deref().and_then(index), working: h.working, roof: &grids.roofs[i], floor: &grids.floors[i] })
+        .collect();
+    let flags = stack_issue_nodes(&stack, m.tolerance).unwrap();
+    println!(
+        "viewport: {} roofs and floors read in {read_ms:.0} ms, issue nodes marked in {:.0} ms ({} marked, {} files changed)",
+        2 * grids.roofs.len(),
+        start.elapsed().as_secs_f64() * 1e3 - read_ms,
+        flags.iter().flatten().filter(|&&f| f).count(),
+        grids.changed.len()
+    );
 }

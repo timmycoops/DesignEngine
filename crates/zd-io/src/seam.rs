@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use zd_core::{Fingerprint, Grid};
+use zd_core::{Fingerprint, Grid, GridLink, SeamModel};
 
 use crate::{IoError, XyzOptions, parse_vulcan_grid, parse_xyz_grid, vulcan_grid_name};
 
@@ -300,6 +300,40 @@ pub fn read_linked_grid(path: &Path) -> Result<LinkedGrid, IoError> {
         _ => return Err(IoError::Unsupported(format!("no grid reader for '{name}'"))),
     };
     Ok(LinkedGrid { grid, fingerprint })
+}
+
+/// A model's roofs and floors, read in place, top first.
+#[derive(Debug, Clone)]
+pub struct StackGrids {
+    pub roofs: Vec<Grid>,
+    pub floors: Vec<Grid>,
+    /// Files that differ from the fingerprint the model recorded: the model is out of date.
+    pub changed: Vec<String>,
+}
+
+/// Reads every horizon's roof and floor at once, one thread per file, and notes any file that has
+/// changed since the model was built.
+pub fn read_stack_grids(model: &SeamModel) -> Result<StackGrids, IoError> {
+    let links: Vec<&GridLink> = model.horizons.iter().flat_map(|h| [&h.roof, &h.floor]).collect();
+    let read: Vec<Result<LinkedGrid, IoError>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = links.iter().map(|link| scope.spawn(|| read_linked_grid(&model.path(link)))).collect();
+        handles.into_iter().map(|h| h.join().expect("grid reader thread")).collect()
+    });
+    let (mut grids, mut changed) = (Vec::with_capacity(links.len()), Vec::new());
+    for (link, result) in links.iter().zip(read) {
+        let linked = result.map_err(|e| IoError::Unsupported(format!("{}: {e}", link.file)))?;
+        if linked.fingerprint != link.fingerprint {
+            changed.push(link.file.clone());
+        }
+        grids.push(linked.grid);
+    }
+    let mut pairs = grids.into_iter();
+    let (mut roofs, mut floors) = (Vec::new(), Vec::new());
+    while let (Some(roof), Some(floor)) = (pairs.next(), pairs.next()) {
+        roofs.push(roof);
+        floors.push(floor);
+    }
+    Ok(StackGrids { roofs, floors, changed })
 }
 
 /// The fingerprint of a file as it is now, to compare with the one a model recorded.

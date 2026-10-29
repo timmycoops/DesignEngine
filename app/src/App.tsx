@@ -44,7 +44,8 @@ import {
 } from './design-system/ui/dropdown-menu';
 import { Separator } from './design-system/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './design-system/ui/tooltip';
-import { SceneSync } from './viewport/sceneSync';
+import { IssueMarkers } from './viewport/markers';
+import { type SeamShown, SceneSync } from './viewport/sceneSync';
 import { type Mode, StringLayer } from './viewport/strings';
 import { type FrameStats, Viewport } from './viewport/Viewport';
 import { type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
@@ -99,8 +100,47 @@ export default function App() {
   const [mode, setModeState] = useState<Mode>('select');
   const [activeLayer, setActiveLayerState] = useState('design');
   const [selected, setSelected] = useState<string | null>(null);
+  const [seamView, setSeamView] = useState<SeamShown | null>(null);
   const summaryRef = useRef(summary);
   summaryRef.current = summary;
+  const seamRef = useRef<SeamShown | null>(null);
+  const markersRef = useRef<IssueMarkers | null>(null);
+  /** An issue to fly to once its horizon has loaded. */
+  const pendingFocus = useRef<{ id: string; issue: number } | null>(null);
+
+  /** The seam horizon on show changed (or, with null, the model it belonged to went). */
+  const onSeam = useCallback((id: string, shown: SeamShown | null) => {
+    if (!shown && seamRef.current?.id !== id) return;
+    seamRef.current = shown;
+    setSeamView(shown);
+    markersRef.current?.set(shown?.result.markers.map((m) => m.position) ?? []);
+    const pending = pendingFocus.current;
+    if (shown && pending?.id === id) {
+      pendingFocus.current = null;
+      const marker = shown.result.markers.find((m) => m.issue === pending.issue);
+      if (marker) viewportRef.current?.focusOn(marker.position);
+    }
+  }, []);
+
+  const showSeamHorizon = useCallback((id: string, code: string) => {
+    setStatus({ text: `Reading the grids for ${code}…` });
+    void syncRef.current?.showHorizon(id, code).then(() => setStatus({ text: `Showing ${code}, coloured by thickness` }));
+  }, []);
+
+  /** Shows the horizon an issue is on and flies to its worst node. */
+  const focusIssue = useCallback(
+    (id: string, horizon: string, issue: number) => {
+      const view = seamRef.current;
+      if (view?.id === id && view.result.horizon === horizon) {
+        const marker = view.result.markers.find((m) => m.issue === issue);
+        if (marker) viewportRef.current?.focusOn(marker.position);
+        return;
+      }
+      pendingFocus.current = { id, issue };
+      showSeamHorizon(id, horizon);
+    },
+    [showSeamHorizon],
+  );
 
   /** Shows a new project summary: panels, strings, and any surfaces whose geometry changed. */
   const show = useCallback((next: ProjectSummary) => {
@@ -149,7 +189,11 @@ export default function App() {
       viewportRef.current = created;
       created.onStats = setStats;
       setBackend(`${created.backend} · ${created.adapter}`);
-      syncRef.current = new SceneSync(created);
+      markersRef.current = new IssueMarkers(created);
+      const sync = new SceneSync(created);
+      sync.onSeam = onSeam;
+      sync.onError = (text) => setStatus({ text, error: true });
+      syncRef.current = sync;
       const strings = new StringLayer(created, {
         run,
         snap: (x, y) => {
@@ -178,7 +222,7 @@ export default function App() {
       detach();
       viewport?.dispose();
     };
-  }, [hostMounted, viewportHost, run, show]);
+  }, [hostMounted, viewportHost, run, show, onSeam]);
 
   const attempt = useCallback(async (work: () => Promise<void>) => {
     try {
@@ -324,8 +368,22 @@ export default function App() {
   );
 
   const workspace = useMemo<WorkspaceState>(
-    () => ({ summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setLayerVisible: setVisible, run }),
-    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, run],
+    () => ({
+      summary,
+      log,
+      selected,
+      activeLayer,
+      viewportHost,
+      viewportMounted,
+      select,
+      setActiveLayer,
+      setLayerVisible: setVisible,
+      run,
+      seamView,
+      showSeamHorizon,
+      focusIssue,
+    }),
+    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, run, seamView, showSeamHorizon, focusIssue],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';

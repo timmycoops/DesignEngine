@@ -92,7 +92,12 @@ pub fn bounds(object: &Object) -> Option<zd_core::Aabb> {
             let far = g.node_xy(g.cols - 1, g.rows - 1);
             Some(zd_core::Aabb { min: [g.origin[0], g.origin[1], lo], max: [far[0], far[1], hi] })
         }
-        // Its grids stay in their files, so it has no elevations to hand.
-        Body::SeamModel(_) => None,
+        // Its grids stay in their files; the build recorded the working section's elevation range.
+        Body::SeamModel(m) => {
+            let [lo, hi] = m.z_range?;
+            let l = m.lattice;
+            let far = [l.origin[0] + (l.cols - 1) as f64 * l.cell_size[0], l.origin[1] + (l.rows - 1) as f64 * l.cell_size[1]];
+            Some(zd_core::Aabb { min: [l.origin[0], l.origin[1], lo], max: [far[0], far[1], hi] })
+        }
     }
 }
