@@ -4797,6 +4797,7 @@ version = "0.1.0"
 dependencies = [
  "manifold-csg",
  "parry3d-f64",
+ "spade",
  "zd-core",
 ]
 

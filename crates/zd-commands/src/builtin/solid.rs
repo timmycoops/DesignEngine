@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, CrossingCheck, Crossings, ObjectId, ObjectKind, Solid, TriMesh};
-use zd_geom::{CloseLog, close_solid, cut_solid_by_surface, repair_mesh, separate_touching_edges, split_patches};
+use zd_geom::{CloseLog, close_solid, cut_solid_by_surface, repair_mesh, self_union, separate_touching_edges, split_patches};
 
 use std::path::Path;
 
@@ -51,7 +51,8 @@ impl Command for SolidFromMesh {
 /// repair step and the crossing check (decision 0010). Edges where closed pieces, or two parts of
 /// one, touch are taken apart (vertices copied, no coordinate moved), and separate pieces become one
 /// solid each (`<name> part 1`, ...). With `repair`, it first closes the mesh (decision 0013): fins
-/// off, cracks joined, holes filled up to `fill_limit` of the surface, each noted on the solid.
+/// off, cracks joined, holes filled up to `fill_limit` of the surface, and a surface that crosses
+/// itself reduced to the solid it encloses, each noted on the solid.
 /// Refused if any piece is open or the mesh crosses itself; the run record says why.
 pub struct ImportSolid;
 
@@ -136,9 +137,25 @@ impl Command for ImportSolid {
                     site(&at)
                 )));
             }
-            let (crossings, checked) = check_crossings(&closed, p.weld_tolerance);
-            let summary = describe_close(&close);
-            if close.fin_triangles + close.cracks_joined + close.filled.len() > 0 {
+            let (mut crossings, mut checked) = check_crossings(&closed, p.weld_tolerance);
+            let mut summary = describe_close(&close);
+            let mut closed = closed;
+            // Crossings: the surface of the solid it encloses (slice B).
+            if crossings.pairs > 0 {
+                let (union, done) = self_union(&closed, p.weld_tolerance).map_err(|why| {
+                    CommandError::Invalid(format!("the solid '{name}' crosses itself ({} pairs of triangles) and the crossings could not be resolved: {why}", crossings.pairs))
+                })?;
+                let change = done.volume_after - done.volume_before;
+                let resolved = format!(
+                    "{} crossings resolved ({} triangles cut, {} of {} regions kept; volume {:.3} m3 as read, {:.3} m3 enclosed, {:+.3} m3)",
+                    done.pairs, done.triangles_cut, done.regions_kept, done.regions, done.volume_before, done.volume_after, change
+                );
+                summary = if summary == "nothing to do" { resolved } else { format!("{summary}; {resolved}") };
+                attributes.insert("repair_volume_change_m3".into(), AttrValue::Number(change));
+                closed = union;
+                (crossings, checked) = check_crossings(&closed, p.weld_tolerance);
+            }
+            if close.fin_triangles + close.cracks_joined + close.filled.len() > 0 || attributes.contains_key("repair_volume_change_m3") {
                 attributes.insert("repair".into(), AttrValue::Text(summary.clone()));
                 if !close.filled.is_empty() {
                     attributes.insert("repair_filled_m2".into(), AttrValue::Number(close.filled_area()));

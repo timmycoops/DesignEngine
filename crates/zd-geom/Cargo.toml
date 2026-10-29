@@ -10,3 +10,4 @@ publish.workspace = true
 zd-core.workspace = true
 manifold-csg.workspace = true
 parry3d-f64.workspace = true
+spade.workspace = true
