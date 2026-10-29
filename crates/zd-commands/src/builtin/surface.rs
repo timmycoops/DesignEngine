@@ -24,7 +24,8 @@ fn check_tolerance(tolerance: f64) -> Result<(), CommandError> {
 }
 
 /// `surface.import`: a surface from the 3DFACEs and polyface meshes of a DXF file, a Vulcan
-/// triangulation (`.00t`), or an XYZ/CSV grid (grids are triangulated, engine rule 6). A DXF or
+/// triangulation (`.00t`), a Vulcan elevation grid (`.srg`, `.sfg`, `.tpg`) or an XYZ/CSV grid (grids
+/// are triangulated, engine rule 6). A DXF or
 /// Vulcan mesh passes through the repair step and the crossing check (decision 0010); a grid needs
 /// neither. Every change goes into the run record.
 pub struct ImportSurface;
@@ -49,10 +50,10 @@ impl Command for ImportSurface {
     fn spec(&self) -> CommandSpec {
         CommandSpec {
             name: Self::NAME,
-            summary: "Import a surface from DXF, a Vulcan triangulation or an XYZ/CSV grid",
+            summary: "Import a surface from DXF, a Vulcan triangulation or grid, or an XYZ/CSV grid",
             inputs: vec![],
             params: vec![
-                Field::new("path", FieldType::Path, ".dxf, .00t, .xyz, .csv, .txt or .asc"),
+                Field::new("path", FieldType::Path, ".dxf, .00t, .srg, .sfg, .tpg, .xyz, .csv, .txt or .asc"),
                 Field::new("layer", FieldType::Layer, "Layer for the surface"),
                 Field::new("name", FieldType::Text, "Optional; the file name by default"),
                 Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "DXF and Vulcan meshes: weld vertices closer than this; 1 mm by default"),
@@ -74,6 +75,25 @@ impl Command for ImportSurface {
                 let read = describe_vulcan(&vulcan);
                 let (mesh, messages, crossings) = repaired(&vulcan.mesh, read, &p.path, p.weld_tolerance)?;
                 (Surface::new(mesh).with_crossings(crossings), messages)
+            }
+            SurfaceImport::VulcanGrid(vulcan) => {
+                let (g, log) = (&vulcan.grid, &vulcan.log);
+                let read = format!(
+                    "Vulcan grid {} x {} nodes at {} x {} m: {} live, {} null{}",
+                    g.cols,
+                    g.rows,
+                    g.cell_size[0],
+                    g.cell_size[1],
+                    log.live,
+                    log.nulls,
+                    if log.compressed_blocks > 0 { format!(" (compressed, {} blocks)", log.compressed_blocks) } else { String::new() }
+                );
+                let mesh = triangulate_grid(g);
+                if mesh.triangles.is_empty() {
+                    return Err(CommandError::Invalid(format!("{} holds no live cells", p.path)));
+                }
+                let lattice = "a grid has nothing to weld or orient, and cannot cross itself: one elevation per node on a regular plan lattice";
+                (Surface::new(mesh).with_crossings(Crossings::lattice()), vec![read, lattice.to_string()])
             }
             SurfaceImport::Grid(xyz) => {
                 let (g, log) = (&xyz.grid, &xyz.log);
