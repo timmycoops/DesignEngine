@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Check, Minus, Trash2, X } from 'lucide-react';
-import { type MeshValidity, type ObjectDetails, objectDetails, type Vec3 } from '@/bridge';
+import { type MeshValidity, type ObjectDetails, objectDetails, type SeamModel, type StackIssue, type Vec3 } from '@/bridge';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
 import { Badge } from '@/design-system/ui/badge';
 import { Button } from '@/design-system/ui/button';
@@ -71,6 +71,77 @@ function Vertices({ points }: { points: Vec3[] }) {
   return <DataTable data={rows} columns={vertexColumns} rowId={(r) => String(r.index)} />;
 }
 
+interface HorizonRow {
+  code: string;
+  depth: number;
+  parent: string;
+  working: boolean;
+  grids: string;
+}
+
+const horizonHelper = columnHelper<HorizonRow>();
+const horizonColumns = horizonHelper.columns([
+  horizonHelper.accessor('code', {
+    header: 'Horizon',
+    cell: (c) => <span style={{ paddingLeft: `${c.row.original.depth * 0.75}rem` }}>{c.getValue()}</span>,
+  }),
+  horizonHelper.accessor('parent', { header: 'Parent' }),
+  horizonHelper.accessor('working', { header: 'Working', cell: (c) => (c.getValue() ? 'Yes' : '') }),
+  horizonHelper.accessor('grids', { header: 'Other grids', cell: (c) => <span className="text-muted-foreground">{c.getValue()}</span> }),
+]);
+
+function Horizons({ model }: { model: SeamModel }) {
+  const rows = useMemo(() => {
+    const parents = new Map(model.horizons.map((h) => [h.code, h.parent]));
+    const depth = (code: string | null): number => {
+      let d = 0;
+      for (let p = parents.get(code ?? '') ?? null; p !== null && d < model.horizons.length; p = parents.get(p) ?? null) d += 1;
+      return d;
+    };
+    return model.horizons.map((h) => ({
+      code: h.code,
+      depth: depth(h.code),
+      parent: h.parent ?? '',
+      working: h.working,
+      grids: Object.keys(h.grids).join(' '),
+    }));
+  }, [model]);
+  return <DataTable data={rows} columns={horizonColumns} rowId={(r) => r.code} />;
+}
+
+const issueText: Record<StackIssue['kind'], (i: StackIssue) => string> = {
+  floor_above_roof: (i) => `${i.horizon} floor above its roof`,
+  crossing: (i) => `${i.horizon} roof above the floor of ${i.other ?? '?'}`,
+  outside_parent: (i) => `${i.horizon} outside its parent ${i.other ?? '?'}`,
+  unpaired: (i) => `${i.horizon} roof and floor not live at the same nodes`,
+  no_density: (i) => `${i.horizon} has no density grid`,
+};
+
+function Issues({ issues }: { issues: StackIssue[] }) {
+  if (issues.length === 0) return <p className="px-3 py-1 text-xs text-muted-foreground">None: the stack is consistent.</p>;
+  return (
+    <ul className="space-y-1 px-3 py-1 text-xs">
+      {issues.map((i, n) => (
+        <li key={n} className="flex gap-2">
+          <Badge variant={i.blocking ? 'destructive' : 'outline'} className="shrink-0 font-normal">
+            {i.blocking ? 'Blocking' : 'Warning'}
+          </Badge>
+          <span className="min-w-0">
+            {issueText[i.kind](i)}
+            {i.nodes > 0 && (
+              <span className="text-muted-foreground">
+                {' '}
+                · {fmt(i.nodes)} nodes{i.worst > 0 && `, worst ${fmt(i.worst, 3)} m`}
+                {i.at && ` at ${fmt(i.at[0], 1)} E ${fmt(i.at[1], 1)} N`}
+              </span>
+            )}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function Measurements({ d }: { d: ObjectDetails }) {
   const m = d.measures;
   switch (m.kind) {
@@ -118,6 +189,36 @@ function Measurements({ d }: { d: ObjectDetails }) {
           </Field>
           <Field label="Value range">{m.z_range ? `${fmt(m.z_range[0], 3)} to ${fmt(m.z_range[1], 3)}` : 'all null'}</Field>
         </Section>
+      );
+    }
+    case 'seam_model': {
+      const { model } = m;
+      const blocking = model.issues.filter((i) => i.blocking).length;
+      return (
+        <>
+          <Section title="Seam model">
+            <Field label="Horizons">
+              {fmt(model.horizons.length)} ({fmt(model.horizons.filter((h) => h.working).length)} working)
+            </Field>
+            <Field label="Nodes">
+              {fmt(model.lattice.cols)} × {fmt(model.lattice.rows)} at {fmt(model.lattice.cell_size[0], 2)} m
+            </Field>
+            <Field label="Grid folder">
+              <span title={model.folder}>{model.folder}</span>
+            </Field>
+            <Field label="Density grid">{model.density}</Field>
+            <Field label="Tolerance">{fmt(model.tolerance, 3)} m</Field>
+            <Field label="Status">
+              {blocking === 0 ? 'Ready for solids and reserves' : `${blocking} blocking issue${blocking === 1 ? '' : 's'}: fix the grids and rebuild`}
+            </Field>
+          </Section>
+          <Section title="Issues">
+            <Issues issues={model.issues} />
+          </Section>
+          <Section title="Horizons (top first)">
+            <Horizons model={model} />
+          </Section>
+        </>
       );
     }
   }

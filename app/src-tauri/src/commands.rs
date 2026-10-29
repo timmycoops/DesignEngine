@@ -13,7 +13,7 @@ use serde_json::Value;
 use tauri::ipc::Response;
 use tauri::{AppHandle, State, Webview};
 use zd_commands::{LogEntry, RunRecord, Session};
-use zd_core::{Attributes, Body, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, TriMesh};
+use zd_core::{Attributes, Body, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, SeamModel, TriMesh};
 use zd_geom::{SurfaceRayCaster, triangulate_grid};
 
 use crate::render::{encode_grid, encode_triangulation};
@@ -123,6 +123,7 @@ pub enum Measures {
     Surface { vertices: usize, triangles: usize, area: f64, validity: MeshValidity },
     Solid { vertices: usize, triangles: usize, area: f64, volume: f64, validity: MeshValidity },
     Grid { origin: [f64; 2], cell_size: [f64; 2], cols: usize, rows: usize, nulls: usize, z_range: Option<[f64; 2]> },
+    SeamModel { model: SeamModel },
 }
 
 fn measure(body: &Body) -> Measures {
@@ -155,6 +156,7 @@ fn measure(body: &Body) -> Measures {
             nulls: g.null_count(),
             z_range: g.z_range(),
         },
+        Body::SeamModel(m) => Measures::SeamModel { model: (**m).clone() },
     }
 }
 
@@ -337,7 +339,7 @@ pub async fn stage_object(id: ObjectId, state: State<'_, AppState>) -> Result<St
                 let buffer = encode_grid(g, origin, header);
                 (buffer, "grid", 2 * (g.cols - 1) * (g.rows - 1))
             }
-            Body::String(_) => unreachable!("strings are not staged"),
+            Body::String(_) | Body::SeamModel(_) => unreachable!("only drawn surfaces are staged"),
         };
         (buffer, kind, triangles, ms(t))
     })
@@ -416,7 +418,7 @@ pub async fn build_snap_index(state: State<'_, AppState>) -> Result<SnapIndex, S
                     Body::Surface(s) => Source::Mesh(s.mesh_arc().clone()),
                     Body::Solid(s) => Source::Mesh(s.mesh_arc().clone()),
                     Body::Grid(g) => Source::Grid(g.clone()),
-                    Body::String(_) => unreachable!("strings are not drawn surfaces"),
+                    Body::String(_) | Body::SeamModel(_) => unreachable!("only drawn surfaces are snapped to"),
                 };
                 (o.id, geometry_key(&o.body), source)
             })

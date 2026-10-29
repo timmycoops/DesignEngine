@@ -54,6 +54,8 @@ fn registry_lists_every_builtin_with_a_spec() {
             "layer.create",
             "object.delete",
             "object.rename",
+            "seam.build_model",
+            "seam.suggest_definition",
             "solid.cut_by_surface",
             "solid.from_mesh",
             "string.create",
@@ -65,7 +67,7 @@ fn registry_lists_every_builtin_with_a_spec() {
         ]
     );
     let specs = serde_json::to_value(session.registry().specs()).unwrap();
-    assert_eq!(specs[4]["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
+    assert_eq!(specs[6]["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
 }
 
 #[test]

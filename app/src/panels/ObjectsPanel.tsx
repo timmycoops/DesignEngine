@@ -41,7 +41,12 @@ export function ObjectsPanel() {
         name: o.name,
         layer: layers.get(o.layer) ?? '',
         revision: o.revision,
-        note: o.kind === 'grid' && !o.drawn ? 'Property grid: listed, not drawn' : undefined,
+        note:
+          o.kind === 'grid' && !o.drawn
+            ? 'Property grid: listed, not drawn'
+            : o.kind === 'seam_model'
+              ? 'Seam model: its grids stay in their files'
+              : undefined,
       }),
     );
   }, [summary]);

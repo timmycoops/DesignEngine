@@ -57,10 +57,15 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 - `Surface`: triangulated mesh (vertices f64, triangles u32), name, layer.
 - `Solid`: closed manifold mesh; must always be watertight.
 - `Grid`: regular raster (origin, cell size, rows, cols, z values with NaN for nulls).
-- `SeamModel`: an ordered stack of horizons (the Deswik "surface stacking" pattern). Each horizon has a name,
-  material, parent horizon (for splits), roof and floor grids (or a reference surface plus thickness),
-  quality grids, a density field, existence polygons, and a crop surface (topography or base of weathering).
-  Thickness is clamped at zero so horizons never cross. Faulting applies to structure, never to thickness.
+- `SeamModel`: an explicit, ordered stack of horizons (the Deswik "surface stacking" pattern), defined in a CSV
+  the user edits; `seam.suggest_definition` writes a starting one from the grids' geometry, never from names.
+  Each horizon has a code, material, parent horizon (for splits), working flag, roof and floor grids, quality
+  grids and a density grid. The model links to its grid files in place (fingerprinted, never copied into the
+  project); grids used for design are imported as objects. The stack is checked, never fixed: a floor above
+  its roof, a crossing in the working section or a daughter outside its parent is flagged with its location,
+  and blocks solids and reserves until the source grids are corrected. Existence polygons and a crop surface
+  (topography or base of weathering) come later. Faulting applies to structure, never to thickness.
+  See `docs/decisions/0007-seam-model.md`.
 - `Rule`: a function from a string to one value per edge. Types: fixed, fixed list, inside polygon,
   inside solid, segment azimuth, by horizon. Later: block model, geotech solid with transition distance.
   Blending between rules may only widen berms and flatten slopes.

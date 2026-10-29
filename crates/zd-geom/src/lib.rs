@@ -11,6 +11,7 @@ mod halfspace;
 mod orient;
 mod ray;
 mod seam;
+mod stack;
 
 pub use cut::{CutResult, CutTimings, cut_solid_by_surface};
 pub use error::GeomError;
@@ -19,3 +20,4 @@ pub use halfspace::{CapMethod, ClosedHalfSpace, Side, close_surface_to_halfspace
 pub use orient::{boundary_loops, orient_upward};
 pub use ray::SurfaceRayCaster;
 pub use seam::{SeamLog, SeamSolid, build_seam_solid};
+pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, suggest_seam_tree};

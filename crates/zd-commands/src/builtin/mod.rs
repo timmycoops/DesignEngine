@@ -4,6 +4,7 @@
 mod grid;
 mod layer;
 mod object;
+mod seam;
 mod solid;
 mod string;
 mod surface;
@@ -11,6 +12,7 @@ mod surface;
 pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
 pub use layer::{CreateLayer, CreateLayerParams};
 pub use object::{DeleteObject, ObjectParams, RenameObject, RenameParams};
+pub use seam::{BuildSeamModel, BuildSeamModelParams, SuggestSeamDefinition, SuggestSeamDefinitionParams};
 pub use solid::{CutBySurface, CutBySurfaceParams, SolidFromMesh};
 pub use string::{
     CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, InsertVertex, InsertVertexParams, MoveVertex,
@@ -33,6 +35,8 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(SolidFromMesh);
     registry.register(CutBySurface);
     registry.register(ImportVulcanSeam);
+    registry.register(SuggestSeamDefinition);
+    registry.register(BuildSeamModel);
 }
 
 fn finite(point: &[f64; 3]) -> Result<(), CommandError> {
