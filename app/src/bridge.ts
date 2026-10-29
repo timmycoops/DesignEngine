@@ -428,6 +428,10 @@ export interface SnapHit {
   /** Mine grid coordinates, for commands. */
   world: Vec3;
   object: string;
+  /** What was snapped to: a string's vertex or segment, or (by default) a surface. */
+  kind?: 'vertex' | 'segment' | 'surface';
+  /** For the status line, e.g. "vertex 3 of toe". */
+  label?: string;
 }
 
 export const snapRay = (origin: Vec3, direction: Vec3) => invoke<SnapHit | null>('snap_ray', { origin, direction });

@@ -1,11 +1,14 @@
 // Strings in the viewport, and editing them through engine commands.
 //
-// Draw mode: each click adds a vertex snapped to the surface under the cursor; Enter or a
-// double-click finishes the string (`string.create`), Backspace drops the last vertex, Escape
-// abandons it. Select mode: click a string to select it; drag one of its handles to move that
-// vertex (`string.move_vertex`, one command per drag, with a snapped preview while dragging);
-// Alt+click on the selected string inserts a vertex (`string.insert_vertex`); Delete removes the
-// vertex under the cursor (`string.delete_vertex`). Every edit is a command, so undo covers it.
+// Draw mode: each click adds a vertex; Enter or a double-click finishes the string
+// (`string.create`), Backspace drops the last vertex, Escape abandons it. Select mode: click a
+// string to select it; drag one of its handles to move that vertex (`string.move_vertex`, one
+// command per drag, with a snapped preview while dragging); Alt+click on the selected string inserts
+// a vertex on it (`string.insert_vertex`); Delete removes the vertex under the cursor
+// (`string.delete_vertex`). Every edit is a command, so undo covers it.
+//
+// Snapping, in order: a string vertex near the cursor (its exact coordinates), the nearest point
+// on a string segment, then the surface under the cursor.
 import * as THREE from 'three/webgpu';
 import type { Layer, ProjectSummary, SnapHit, Vec3 } from '../bridge';
 import { colourOf } from './load';
@@ -55,6 +58,8 @@ export class StringLayer {
   private inFlight = false;
   private layers = new Map<string, Layer>();
   private names = 0;
+  /** The scene origin: world = origin + local, exactly, for points the shell sent. */
+  private origin: Vec3 = [0, 0, 0];
 
   constructor(
     private viewport: Viewport,
@@ -89,6 +94,7 @@ export class StringLayer {
   /** Brings the drawn strings in line with the project summary. */
   sync(summary: ProjectSummary): void {
     this.layers = new Map(summary.layers.map((l) => [l.id, l]));
+    this.origin = summary.origin ?? [0, 0, 0];
     const strings = summary.objects.filter((o) => o.kind === 'string' && o.vertices_local);
     this.names = Math.max(this.names, strings.length);
     const live = new Set(strings.map((s) => s.id));
@@ -182,8 +188,9 @@ export class StringLayer {
     this.inFlight = true;
     const target = this.latest;
     this.latest = null;
-    const hit = await this.actions.snap(target.x, target.y);
+    const hit = await this.snapAt(target.x, target.y, this.drag);
     if (hit && this.drag) {
+      this.reportSnap(hit);
       this.drag.hit = hit;
       const shown = this.shown.get(this.drag.id);
       if (shown) {
@@ -212,18 +219,19 @@ export class StringLayer {
     if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > CLICK_SLOP_PX) return;
 
     if (this.mode === 'draw') {
-      const hit = await this.actions.snap(e.clientX, e.clientY);
+      const hit = await this.snapAt(e.clientX, e.clientY);
       if (!hit) return this.actions.status('Nothing to snap to under the cursor');
       this.pending.push(hit);
       this.refreshPreview();
       this.placeHandles();
-      this.actions.status(`${this.pending.length} vertices; Enter or double-click to finish, Esc to abandon`);
+      const snapped = hit.kind && hit.kind !== 'surface' ? ` (on ${hit.label})` : '';
+      this.actions.status(`${this.pending.length} vertices${snapped}; Enter or double-click to finish, Esc to abandon`);
       return;
     }
     if (e.altKey && this.selected) {
+      // On the segment itself, so the string keeps its shape.
       const segment = this.segmentAt(this.selected, e.clientX, e.clientY);
-      if (segment < 0) return;
-      const hit = await this.actions.snap(e.clientX, e.clientY);
+      const hit = segment < 0 ? null : this.pointOnSegment(this.selected, segment, e.clientX, e.clientY);
       if (hit) await this.actions.run('string.insert_vertex', { string: this.selected, index: segment + 1, point: hit.world });
       return;
     }
@@ -303,11 +311,10 @@ export class StringLayer {
         : this.selected
           ? (this.shown.get(this.selected)?.points ?? [])
           : [];
-    const eye = this.viewport.camera.position;
     const n = Math.min(points.length, MAX_HANDLES);
     for (let i = 0; i < n; i++) {
       this.dummy.position.copy(points[i]);
-      this.dummy.scale.setScalar(eye.distanceTo(points[i]) * 0.006);
+      this.dummy.scale.setScalar(this.viewport.pixelSize(points[i]) * 6);
       this.dummy.updateMatrix();
       this.handles.setMatrixAt(i, this.dummy.matrix);
     }
@@ -317,6 +324,80 @@ export class StringLayer {
 
   private screen(p: THREE.Vector3): [number, number] {
     return this.viewport.projectToClient(p);
+  }
+
+  /** A snap from a string point the viewport already holds (scene-local). */
+  private stringHit(id: string, local: THREE.Vector3, kind: 'vertex' | 'segment', label: string): SnapHit {
+    const l: Vec3 = [local.x, local.y, local.z];
+    const [ox, oy, oz] = this.origin;
+    return { local: l, world: [ox + l[0], oy + l[1], oz + l[2]], object: id, kind, label };
+  }
+
+  /**
+   * Snaps the cursor: a visible string's vertex (or one being drawn) within the handle distance,
+   * else the nearest point on a visible string's segment within the pick distance, else the
+   * surface under the cursor. `skip` leaves out a vertex being dragged and its two segments.
+   */
+  private async snapAt(x: number, y: number, skip?: { id: string; index: number }): Promise<SnapHit | null> {
+    let vertex: SnapHit | null = null;
+    let best = HANDLE_PX * HANDLE_PX;
+    const consider = (id: string, name: string, points: THREE.Vector3[]) =>
+      points.forEach((p, i) => {
+        if (skip?.id === id && skip.index === i) return;
+        const [sx, sy] = this.screen(p);
+        const d = (sx - x) ** 2 + (sy - y) ** 2;
+        if (d <= best) {
+          best = d;
+          vertex = this.stringHit(id, p, 'vertex', `vertex ${i + 1} of ${name}`);
+        }
+      });
+    for (const [id, shown] of this.shown) if (shown.line.visible) consider(id, shown.name, shown.points);
+    if (this.mode === 'draw') consider('', 'this string', this.pending.map((h) => new THREE.Vector3(...h.local)));
+    if (vertex) {
+      // Drawn vertices keep the exact coordinates they were snapped with.
+      const v: SnapHit = vertex;
+      return v.object === '' ? (this.pending.find((h) => h.local.every((c, k) => c === v.local[k])) ?? v) : v;
+    }
+
+    let segment: { id: string; index: number; d: number } | null = null;
+    for (const [id, shown] of this.shown) {
+      if (!shown.line.visible) continue;
+      const n = shown.closed ? shown.points.length : shown.points.length - 1;
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % shown.points.length;
+        if (skip?.id === id && (skip.index === i || skip.index === j)) continue;
+        const d = distanceToSegment([x, y], this.screen(shown.points[i]), this.screen(shown.points[j]));
+        if (d <= PICK_PX && (!segment || d < segment.d)) segment = { id, index: i, d };
+      }
+    }
+    if (segment) {
+      const hit = this.pointOnSegment(segment.id, segment.index, x, y);
+      if (hit) return hit;
+    }
+    const surface = await this.actions.snap(x, y);
+    return surface ? { ...surface, kind: 'surface' } : null;
+  }
+
+  /** The point on a segment of a string nearest the pick ray through the cursor. */
+  private pointOnSegment(id: string, index: number, x: number, y: number): SnapHit | null {
+    const shown = this.shown.get(id);
+    if (!shown) return null;
+    const a = shown.points[index];
+    const b = shown.points[(index + 1) % shown.points.length];
+    const ray = this.viewport.rayFromNdc(...this.viewport.clientToNdc(x, y));
+    const o = new THREE.Vector3(...ray.origin);
+    const d = new THREE.Vector3(...ray.direction);
+    // Closest approach of the ray o + s d and the segment a + t (b - a), with t kept on the segment.
+    const u = b.clone().sub(a);
+    const w = a.clone().sub(o);
+    const [uu, ud, dd, uw, dw] = [u.dot(u), u.dot(d), d.dot(d), u.dot(w), d.dot(w)];
+    const denom = uu * dd - ud * ud;
+    const t = denom > 1e-12 ? Math.max(0, Math.min(1, (ud * dw - dd * uw) / denom)) : 0;
+    return this.stringHit(id, a.clone().addScaledVector(u, t), 'segment', `segment ${index + 1} of ${shown.name}`);
+  }
+
+  private reportSnap(hit: SnapHit): void {
+    if (hit.kind && hit.kind !== 'surface') this.actions.status(`Snapped to ${hit.label}`);
   }
 
   private handleAt(id: string, x: number, y: number): number {

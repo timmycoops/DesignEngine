@@ -90,6 +90,11 @@ impl<'a> Inputs<'a> {
             other => Err(wrong_kind(id, ObjectKind::Solid, other)),
         }
     }
+
+    /// The name of an object's layer (display state, so reading it is not an input).
+    pub fn layer_name(&self, object: &Object) -> String {
+        self.project.layer(object.layer).map(|l| l.name.clone()).unwrap_or_default()
+    }
 }
 
 fn wrong_kind(id: ObjectId, expected: ObjectKind, found: &Body) -> CommandError {

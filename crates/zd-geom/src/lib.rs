@@ -12,6 +12,7 @@ mod orient;
 mod ray;
 mod seam;
 mod stack;
+mod string;
 
 pub use cut::{CutResult, CutTimings, cut_solid_by_surface};
 pub use error::GeomError;
@@ -21,3 +22,4 @@ pub use orient::{boundary_loops, orient_upward};
 pub use ray::SurfaceRayCaster;
 pub use seam::{SeamLog, SeamSolid, build_seam_solid};
 pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_nodes, suggest_seam_tree};
+pub use string::{Corner, DrapeLog, OffsetSide, drape_string, grade_string, offset_string};

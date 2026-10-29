@@ -1,5 +1,5 @@
-//! The engine's own commands. Phase 1 starts with enough to prove the command layer end to end;
-//! the full string set lands with workstream 6.
+//! The engine's own commands. Strings: create, vertex edits, grade, offset, drape, elevation,
+//! reverse and close (workstream 6, slice 1); split, join, smooth and filter come next.
 
 mod grid;
 mod layer;
@@ -15,8 +15,9 @@ pub use object::{DeleteObject, ObjectParams, RenameObject, RenameParams};
 pub use seam::{BuildSeamModel, BuildSeamModelParams, SuggestSeamDefinition, SuggestSeamDefinitionParams};
 pub use solid::{CutBySurface, CutBySurfaceParams, SolidFromMesh};
 pub use string::{
-    CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, InsertVertex, InsertVertexParams, MoveVertex,
-    MoveVertexParams,
+    CornerParam, CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, DrapeString, DrapeStringParams, InsertVertex,
+    InsertVertexParams, MoveVertex, MoveVertexParams, OffsetString, OffsetStringParams, ReverseString, SetClosed, SetClosedParams,
+    SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam, StringParams,
 };
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
 
@@ -30,6 +31,12 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(InsertVertex);
     registry.register(MoveVertex);
     registry.register(DeleteVertex);
+    registry.register(SetGrade);
+    registry.register(OffsetString);
+    registry.register(DrapeString);
+    registry.register(SetElevation);
+    registry.register(ReverseString);
+    registry.register(SetClosed);
     registry.register(ImportSurface);
     registry.register(SurfaceFromMesh);
     registry.register(SolidFromMesh);

@@ -2,11 +2,13 @@ import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState,
 import { confirm, open, save } from '@tauri-apps/plugin-dialog';
 import type { DockviewApi } from 'dockview-react';
 import {
+  Box,
   FileInput,
   FilePlus,
   FolderOpen,
   Layers,
   Layers3,
+  Map as MapIcon,
   MousePointer2,
   PanelsTopLeft,
   PenLine,
@@ -98,6 +100,7 @@ export default function App() {
   const [backend, setBackend] = useState('starting…');
   const [status, setStatus] = useState<Status>({ text: 'Open a project or import a surface to start.' });
   const [mode, setModeState] = useState<Mode>('select');
+  const [plan, setPlan] = useState(false);
   const [activeLayer, setActiveLayerState] = useState('design');
   const [selected, setSelected] = useState<string | null>(null);
   const [seamView, setSeamView] = useState<SeamShown | null>(null);
@@ -429,8 +432,18 @@ export default function App() {
           <ToolButton tip="Select and edit strings" active={mode === 'select'} onClick={() => setMode('select')}>
             <MousePointer2 /> Select
           </ToolButton>
-          <ToolButton tip="Digitise a string on the surfaces" active={mode === 'draw'} onClick={() => setMode('draw')}>
+          <ToolButton tip="Digitise a string: snaps to string vertices and segments, then surfaces" active={mode === 'draw'} onClick={() => setMode('draw')}>
             <PenLine /> Draw string
+          </ToolButton>
+          <ToolButton
+            tip={plan ? 'Back to the 3D view' : 'Plan view: straight down, north up; left-drag pans'}
+            active={plan}
+            onClick={() => {
+              viewportRef.current?.setPlanView(!plan);
+              setPlan(!plan);
+            }}
+          >
+            {plan ? <MapIcon /> : <Box />} {plan ? 'Plan' : '3D'}
           </ToolButton>
           <Separator orientation="vertical" className="mx-1 h-5" />
           <ToolButton tip="Undo (Ctrl+Z)" disabled={!summary?.can_undo} onClick={onUndo}>
