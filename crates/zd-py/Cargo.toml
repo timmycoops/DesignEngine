@@ -1,0 +1,22 @@
+[package]
+name = "zd-py"
+description = "Python bindings for the Zovlyn Pit Design Engine: open projects, list objects, run commands, read the run log"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+# Imported from Python as `zd`.
+name = "zd"
+crate-type = ["cdylib"]
+# The bindings are tested from Python (tests/test_session.py), where the module is imported.
+test = false
+doctest = false
+
+[dependencies]
+zd-core.workspace = true
+zd-commands.workspace = true
+serde_json.workspace = true
+# One wheel for every CPython from 3.10 on (the stable ABI).
+pyo3 = { version = "0.30.1", features = ["abi3-py310"] }

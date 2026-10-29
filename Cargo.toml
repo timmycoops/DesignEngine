@@ -5,6 +5,7 @@ members = [
     "crates/zd-geom",
     "crates/zd-io",
     "crates/zd-commands",
+    "crates/zd-py",
     "bench",
     "app/src-tauri",
 ]
