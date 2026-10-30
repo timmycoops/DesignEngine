@@ -19,7 +19,7 @@ job. Of the 67,707 such nodes across the 15 seams, 60,205 have their floor under
 1. **The definition names the RL.** A line beside `folder`, in the file the planner owns:
 
    ```text
-   folder,D:\\models\\pit\\grids
+   folder,D:\models\pit\grids
    no_seam,160
    horizon,parent,material,working,roof,floor,rd
    ```
