@@ -41,7 +41,7 @@ function Flag({ label, value, detail }: { label: string; value: boolean | null; 
 
 /** What the crossing check says, in a line. */
 function crossingText(c: Crossings | null): string {
-  if (!c) return 'Not checked: made before crossing checks, or by a cut (a cut checks its inputs itself)';
+  if (!c) return 'Not checked: made before crossing checks';
   if (c.check.by === 'lattice') return "A grid's triangulation cannot cross itself";
   const tolerance = `${fmt(c.check.tolerance * 1000, 1)} mm`;
   const crossing = c.pairs === 0 ? `No crossings by more than ${tolerance}` : `${fmt(c.pairs)} pairs of triangles cross by more than ${tolerance}`;
@@ -152,15 +152,29 @@ function Vertices({ points, closed }: { points: Vec3[]; closed: boolean }) {
   return <DataTable data={rows} columns={vertexColumns} rowId={(r) => String(r.index)} />;
 }
 
-/** One row of the string tools: a label, its inputs, and the button that runs the command. */
-function ToolRow({ label, children, onApply, disabled }: { label: string; children?: ReactNode; onApply: () => void; disabled?: boolean }) {
+/** One row of a tool: a label, its inputs, and the button that runs the command, if it has one. */
+function ToolRow({
+  label,
+  children,
+  onApply,
+  apply = 'Apply',
+  disabled,
+}: {
+  label: string;
+  children?: ReactNode;
+  onApply?: () => void;
+  apply?: string;
+  disabled?: boolean;
+}) {
   return (
     <div className="flex items-center gap-1 px-3 py-0.5 text-xs">
       <span className="w-14 shrink-0 text-muted-foreground">{label}</span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{children}</div>
-      <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={disabled} onClick={onApply}>
-        Apply
-      </Button>
+      {onApply && (
+        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={disabled} onClick={onApply}>
+          {apply}
+        </Button>
+      )}
     </div>
   );
 }
@@ -178,7 +192,7 @@ function SmallInput({ value, onChange, placeholder, title }: { value: string; on
   );
 }
 
-/** Two-way choice as a pair of small buttons. */
+/** A choice as a row of small buttons. */
 function Choice<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
   return (
     <span className="inline-flex rounded border">
@@ -318,6 +332,90 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
   );
 }
 
+/**
+ * Cuts solids by a surface, a grid or a level, keeping the parts below, above or both (decision
+ * 0016). The solids stay as they are and the parts go on a layer of their own; it is one run, so one
+ * undo takes them all off.
+ */
+function CutTools({ id }: { id: string }) {
+  const { run, summary } = useWorkspace();
+  const [scope, setScope] = useState<'one' | 'layer' | 'visible'>('one');
+  const [by, setBy] = useState<'surface' | 'rl'>('surface');
+  const [surface, setSurface] = useState<string | null>(null);
+  const [rl, setRl] = useState('');
+  const [keep, setKeep] = useState<'below' | 'above' | 'both'>('both');
+  const [layer, setLayer] = useState('cut');
+  const [cutting, setCutting] = useState<number | null>(null);
+
+  const objects = summary?.objects ?? [];
+  const solids = objects.filter((o) => o.kind === 'solid');
+  const layerOf = solids.find((o) => o.id === id)?.layer;
+  const onLayer = solids.filter((o) => o.layer === layerOf);
+  const shown = new Set(summary?.layers.filter((l) => l.visible).map((l) => l.id));
+  const visible = solids.filter((o) => shown.has(o.layer));
+  const picked = scope === 'one' ? solids.filter((o) => o.id === id) : scope === 'layer' ? onLayer : visible;
+
+  const cutters = objects.filter((o) => o.drawn && (o.kind === 'surface' || o.kind === 'grid'));
+  const target = cutters.find((s) => s.id === surface) ?? cutters[0];
+  const level = rl.trim() === '' ? null : Number(rl);
+  const ready = picked.length > 0 && layer.trim() !== '' && (by === 'surface' ? !!target : level !== null && Number.isFinite(level)) && cutting === null;
+
+  const cut = async () => {
+    setCutting(picked.length);
+    await run('solid.cut_by_surface', {
+      solids: picked.map((o) => o.id),
+      ...(by === 'surface' ? { surface: target?.id } : { rl: level }),
+      keep,
+      layer: layer.trim(),
+    });
+    setCutting(null);
+  };
+
+  return (
+    <>
+      <ToolRow label="Solids">
+        <Choice
+          value={scope}
+          onChange={setScope}
+          options={[
+            ['one', 'This one'],
+            ['layer', `Its layer (${fmt(onLayer.length)})`],
+            ['visible', `Visible (${fmt(visible.length)})`],
+          ]}
+        />
+      </ToolRow>
+      <ToolRow label="By">
+        <Choice value={by} onChange={setBy} options={[['surface', 'Surface or grid'], ['rl', 'RL']]} />
+        {by === 'rl' ? (
+          <SmallInput value={rl} onChange={setRl} placeholder="RL" title="The level to cut at (m)" />
+        ) : cutters.length === 0 ? (
+          <span className="text-muted-foreground">no surface or grid loaded</span>
+        ) : (
+          <select
+            className="h-6 max-w-40 rounded border bg-background px-1 text-xs"
+            value={target?.id}
+            onChange={(e) => setSurface(e.target.value)}
+            aria-label="Surface or grid to cut by"
+          >
+            {cutters.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        )}
+      </ToolRow>
+      <ToolRow label="Keep">
+        <Choice value={keep} onChange={setKeep} options={[['below', 'Below'], ['above', 'Above'], ['both', 'Both']]} />
+      </ToolRow>
+      <ToolRow label="To layer" apply="Cut" disabled={!ready} onApply={() => void cut()}>
+        <Input className="h-6 w-28 px-1 text-xs" value={layer} title="Layer for the new solids" aria-label="Layer for the new solids" onChange={(e) => setLayer(e.target.value)} />
+      </ToolRow>
+      {cutting !== null && <p className="px-3 py-0.5 text-xs text-muted-foreground">Cutting {fmt(cutting)} solids…</p>}
+    </>
+  );
+}
+
 interface HorizonRow {
   code: string;
   depth: number;
@@ -423,15 +521,22 @@ function Measurements({ d }: { d: ObjectDetails }) {
     case 'surface':
     case 'solid':
       return (
-        <Section title={m.kind === 'solid' ? 'Solid' : 'Surface'}>
-          <Field label="Triangles">{fmt(m.triangles)}</Field>
-          <Field label="Vertices">{fmt(m.vertices)}</Field>
-          <Field label="Area">{fmt(m.area, 1)} m²</Field>
-          {m.kind === 'solid' && <Field label="Volume">{fmt(m.volume, 1)} m³</Field>}
-          <Validity v={m.validity} crossings={m.crossings} />
-          {m.crossings && m.crossings.pairs > 0 && <CrossingSites crossings={m.crossings} />}
-          {m.crossings && m.crossings.thin > 0 && <ThinSites crossings={m.crossings} />}
-        </Section>
+        <>
+          <Section title={m.kind === 'solid' ? 'Solid' : 'Surface'}>
+            <Field label="Triangles">{fmt(m.triangles)}</Field>
+            <Field label="Vertices">{fmt(m.vertices)}</Field>
+            <Field label="Area">{fmt(m.area, 1)} m²</Field>
+            {m.kind === 'solid' && <Field label="Volume">{fmt(m.volume, 1)} m³</Field>}
+            <Validity v={m.validity} crossings={m.crossings} />
+            {m.crossings && m.crossings.pairs > 0 && <CrossingSites crossings={m.crossings} />}
+            {m.crossings && m.crossings.thin > 0 && <ThinSites crossings={m.crossings} />}
+          </Section>
+          {m.kind === 'solid' && (
+            <Section title="Cut">
+              <CutTools id={d.id} />
+            </Section>
+          )}
+        </>
       );
     case 'grid': {
       const nodes = m.cols * m.rows;

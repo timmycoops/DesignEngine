@@ -30,6 +30,9 @@ the seam-model crop is dropped.
    solid and its parts.
 6. As before, inputs are never changed, a surface or solid that crosses itself is refused, and the part
    of a solid the surface does not cover in plan is counted as above, with a warning.
+7. **In the app** the cut sits in Properties, under a selected solid: this solid, every solid on its
+   layer, or every visible solid; by any drawn surface or grid, or an RL; keep below, above or both; to
+   a layer of its own ("cut" by default). One cut is one run, so one undo takes off all its parts.
 
 Stacking a solid by the seam model and blocking (Phase 4) build on this cut.
 

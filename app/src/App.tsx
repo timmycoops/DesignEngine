@@ -321,8 +321,8 @@ export default function App() {
 
   /**
    * Imports closed triangulations as solids, one run each; a refused file says why in the run log.
-   * With `repair`, fins come off, cracks are joined and holes up to 10 % of the surface are filled,
-   * each noted on the solid (decision 0013).
+   * With `repair`, hanging sheets and fins come off, cracks are joined and holes up to 10 % of the
+   * surface are filled, each noted on the solid (decisions 0013, 0015).
    */
   const onImportSolids = (repair: boolean) =>
     attempt(async () => {
@@ -503,7 +503,7 @@ export default function App() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
               <DropdownMenuItem onSelect={() => onImportSolids(false)}>Import solids…</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onImportSolids(true)}>Import and repair: fins off, cracks joined, holes up to 10 % filled…</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onImportSolids(true)}>Import and repair: sheets and fins off, cracks joined, holes up to 10 % filled…</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           <ToolButton tip="Import strings (DXF polylines and lines, or CSV with x, y and z columns)" onClick={onImportStrings}>
