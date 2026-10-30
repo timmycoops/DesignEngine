@@ -66,4 +66,16 @@ like these.
     midpoint, one piece, 22,000 m³, no vertex moved;
   - two overlapping cubes made as one solid are refused before saving; a cut's parts are saved with
     their check.
-- The golden pit: see below.
+- The golden pit's 42,223 relimiting solids, against the build before this decision, file by file:
+  - **41,891 import as read** (was 41,882: the 9 closed solids touching themselves need no repair now)
+    and 326 with repair; **6 are refused** (was 109): the 332,000 m³ waste solid, the three with
+    interior walls and the two sheets. The pass takes 168 s.
+  - Of the 109 refused before, 103 import, 121,535 m³, each with no volume change: 48 with sheets
+    taken off, 39 with sheets taken off and touching pieces taken apart, 9 split at a midpoint, 7 with
+    a crossing resolved as before.
+  - Nothing that imported before is refused.
+  - **38 of the 232 solids repaired before come out differently**, every one because a sheet is taken
+    off instead of its loose edge being filled as a hole (the fill was under the 10 % limit, so it was
+    allowed and noted). 26 keep their total volume: zero-volume pieces that were a sheet and its fill
+    are gone, or touching pieces are grouped differently. 12 lose 24.3 m³ in all, the largest 9.7 m³
+    of 12.1 m³: the volume the fill enclosed between the sheet and the solid, outside Spry's faces.
