@@ -117,6 +117,9 @@ triangles) into **51,783 parts in 187 s**, 4.2 ms a solid, every part checked by
 solid and its parts agree to 0.15 m³ at most (1.4e-5 of 10,996 m³). One solid is left uncut and named.
 With decision 0017's rules: 44,270 solids into 51,875 parts in 112 s, 2.5 ms a solid, no whole-surface
 retries, two solids left uncut and named, and solids and parts within 0.27 m³ (3.2e-5 of 8,407 m³).
+With one file making one solid (decision 0018): 42,218 solids into 49,764 parts in 107 s, 2.5 ms a solid,
+no whole-surface retries, one solid left uncut and named, and solids and parts within 0.27 m³. Every
+file keeps its volume (to 1e-6 m³) and its result: 41,917 as read, 301 with repair, 5 refused.
 
 ## Summary
 

@@ -45,7 +45,7 @@ Both are solid rules; surfaces keep the surface rules, where a fold is a defect 
     these were false alarms: a real overlap would have lost volume in the union.
   - 26 of the 34 now import as read, untouched. **14 of the 34 come in as several pieces instead of one**:
     108 pieces, the same total volume, because their touching edges are taken apart where the union
-    used to rebuild them. 65 of those pieces are under 0.001 m³.
+    used to rebuild them. 65 of those pieces are under 0.001 m³. (Decision 0018 keeps them as one solid.)
 - The whole-pit cut again, now 44,270 solids, by the mined-out topography: 51,875 parts in 112 s (2.5 ms
   a solid), every part checked. No solid needs the whole-surface retry now (25 did under decision 0016's
   check). Two are left uncut and named (one before; not the same one). Each solid and its parts agree to 0.27 m³ at most (3.2e-5 of 8,407 m³); on the near-zero pieces

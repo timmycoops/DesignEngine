@@ -92,7 +92,7 @@ fn a_closed_vulcan_triangulation_imports_as_a_solid() {
 }
 
 #[test]
-fn closed_pieces_meeting_along_an_edge_import_as_a_solid_each() {
+fn closed_pieces_meeting_along_an_edge_import_as_one_solid() {
     let dir = scratch("pieces");
     // Two 10 m cubes meeting along one vertical edge, written with their own vertices: the weld
     // joins the edge's two corners, which leaves it with four faces.
@@ -104,13 +104,25 @@ fn closed_pieces_meeting_along_an_edge_import_as_a_solid_each() {
     let mut s = Session::with_builtins();
     let record = s.run("solid.import", json!({ "path": dir.join("pair.00t").to_string_lossy(), "layer": "coal" })).unwrap();
     assert!(
-        record.messages.iter().any(|m| m == "1 edges where closed pieces touch taken apart (2 vertices copied, no coordinate moved): 2 closed pieces, each a solid of its own"),
+        record.messages.iter().any(|m| m == "1 edges where closed pieces touch taken apart (2 vertices copied, no coordinate moved): 2 closed pieces, kept as one solid"),
         "{:?}",
         record.messages
     );
-    assert_eq!(record.messages.last().unwrap(), "volumes: pair part 1 1000.000 m3, pair part 2 1000.000 m3");
+    // One file, one solid, under the file's name, with the volume of both.
+    assert_eq!(record.messages.last().unwrap(), "volume 2000.000 m3");
     let names: Vec<String> = created(&record).iter().map(|&id| s.project().object(id).unwrap().name.clone()).collect();
-    assert_eq!(names, ["pair part 1", "pair part 2"]);
+    assert_eq!(names, ["pair"]);
+
+    // It cuts as one: at half height each cube gives 500 m3 to a side (to 1e-6 m3).
+    let solid = created(&record)[0];
+    let cut = s.run("solid.cut_by_surface", json!({ "solid": solid, "rl": 255.0, "layer": "cut" })).unwrap();
+    let parts = created(&cut);
+    assert_eq!(parts.len(), 2);
+    for part in parts {
+        let Some(Body::Solid(solid)) = s.project().object(part).map(|o| &o.body) else { panic!("a part is a solid") };
+        assert!((solid.volume() - 1000.0).abs() < 1e-6, "{}", solid.volume());
+        assert!(solid.validity().is_watertight());
+    }
 
     // With one piece open, nothing is made.
     let mut open = pair.clone();
@@ -118,7 +130,34 @@ fn closed_pieces_meeting_along_an_edge_import_as_a_solid_each() {
     write(&dir.join("half.00t"), &open);
     let error = s.run("solid.import", json!({ "path": dir.join("half.00t").to_string_lossy(), "layer": "coal" })).unwrap_err();
     assert!(error.to_string().starts_with("'half' is not a closed solid after repair"), "{error}");
-    assert_eq!(s.project().objects().count(), 2);
+    assert_eq!(s.project().objects().count(), 3);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn pieces_lying_on_each_other_are_searched_as_one_solid() {
+    let dir = scratch("lying");
+    // Two tetrahedra hinged on one edge, the first above z = 250 and the second below, with a face
+    // each folded flat on the other. Sharing the edge, those faces are thin; taken apart they share
+    // nothing, and are one piece lying on another.
+    let (p, q) = ([E, N, 250.0], [E, N + 10.0, 250.0]);
+    let (r, s_top) = ([E + 10.0, N + 5.0, 250.0], [E, N + 5.0, 260.0]);
+    let (t, u) = ([E + 6.0, N + 5.0, 250.0], [E, N + 5.0, 240.0]);
+    let mesh = TriMesh::new(vec![p, q, r, s_top, t, u], vec![[0, 1, 3], [0, 2, 1], [0, 3, 2], [1, 2, 3], [0, 1, 4], [0, 5, 1], [0, 4, 5], [1, 5, 4]]);
+    write(&dir.join("hinged.00t"), &mesh);
+    let mut s = Session::with_builtins();
+
+    let as_read = s.run("solid.import", json!({ "path": dir.join("hinged.00t").to_string_lossy(), "layer": "coal" })).unwrap_err();
+    assert!(as_read.to_string().starts_with("the solid 'hinged' crosses itself"), "{as_read}");
+
+    // With repair the union makes one solid of them: 500/3 + 100 m3 (to 1e-6 m3), touching only.
+    let record = s.run("solid.import", json!({ "path": dir.join("hinged.00t").to_string_lossy(), "layer": "coal", "repair": true })).unwrap();
+    assert!(record.messages.iter().any(|m| m.contains("crossings between its pieces resolved")), "{:?}", record.messages);
+    let made = created(&record);
+    assert_eq!(made.len(), 1);
+    let Some(Body::Solid(solid)) = s.project().object(made[0]).map(|o| &o.body) else { panic!("a solid") };
+    assert!((solid.volume() - (500.0 / 3.0 + 100.0)).abs() < 1e-6, "{}", solid.volume());
+    assert_eq!(solid.crossings().map(|c| c.pairs), Some(0));
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
