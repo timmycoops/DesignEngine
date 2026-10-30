@@ -20,16 +20,18 @@ grids (client data: kept local, never committed, and not quoted here). Big-endia
 | 0..32 | free text: name and timestamp, or how a derived grid was made (e.g. `…:TK:SR-SF:…`) |
 | 32..64 | f64 x0, x1, y0, y1: extents of the node lattice |
 | 64..68 | i32 node count (cols × rows) |
-| 68..72 | i32, zero in every sample |
+| 68..72 | zero, or (Deswik) the f32 cell size again; not used |
 | 72..80 | f32 dx, dy |
 | 80..88 | i32 cols, rows |
 | 88.. | per node: f32 value, i32 flag (1 = live, else null; null nodes can hold leftover values) |
 
 Nodes run row by row, x fastest, from the south-west corner. Files may end in zero padding. Deswik
-writes the same layout (its files carry `_dw_VulcanGrid` in the header).
+writes the same layout (its files carry `_dw_VulcanGrid` in the header), and may end a file with copies of
+the first node's f64 x and y: two to four in the 31 grids of one client's folder (2026-10-31). They are
+passed over and counted; nothing else is allowed after the last node.
 
 The reader refuses anything that does not check out: a node count that disagrees with cols × rows,
-extents that disagree with the cell size, a truncated file, or non-zero bytes after the last node.
+extents that disagree with the cell size, a truncated file, or anything else after the last node.
 Null nodes, nodes with leftover values and unknown flags are counted in a log, never dropped silently.
 
 ### Compressed layout (`vulZ`)
