@@ -180,6 +180,12 @@ fn a_cut_checks_inputs_that_were_never_checked() {
     assert!(record.messages[1].starts_with("surface 'cover' crossings: none by more than 1 mm (18 triangles"), "{:?}", record.messages);
     // Half the 1,000 mÂ³ box lies below RL 5.
     assert!(record.messages[3].contains("below 500.000 m3"), "{:?}", record.messages);
+    // Both parts are checked by the solid rules before they are saved, and keep the check.
+    assert!(record.messages.iter().any(|m| m.starts_with("2 solids made, checked by the solid rules: none crosses itself")), "{:?}", record.messages);
+    for id in created(&record) {
+        let Body::Solid(part) = &s.project().object(id).unwrap().body else { panic!("a cut makes solids") };
+        assert!(matches!(part.crossings().map(|c| c.check), Some(CrossingCheck::SolidSearch { .. })));
+    }
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

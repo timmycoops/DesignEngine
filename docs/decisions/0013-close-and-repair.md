@@ -1,6 +1,6 @@
 # 0013 — Close and repair solids
 
-Date: 2026-10-29 · Status: accepted (Tim, 2026-10-29); slices A and B built (B below); B's cut and crossing rules revised by decision 0014 (2026-10-30)
+Date: 2026-10-29 · Status: accepted (Tim, 2026-10-29); slices A and B built (B below); B's cut and crossing rules revised by decision 0014 (2026-10-30); hanging sheets before fins, by decision 0015 (2026-10-30)
 
 ## Why
 

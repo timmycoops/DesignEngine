@@ -278,13 +278,20 @@ pub struct Separation {
     pub edges: usize,
     /// Vertices copied so each fan of faces round them has its own.
     pub vertex_copies: usize,
+    /// Edges where one piece touches itself with a single fan round each end, so copies cannot take
+    /// them apart: one side's two faces are split at a vertex added at the edge's midpoint, on the
+    /// edge, so the sides no longer share it.
+    pub edges_split: usize,
 }
 
 /// Takes apart edges with three or more faces where the faces pair up into sheets round solid
 /// material: two closed pieces, or two parts of one, touching along an edge. The faces round such an
 /// edge are sorted by angle and paired across each wedge of material (their outward winding says
 /// which wedges those are); then each vertex whose faces fall into separate fans gets a copy for each
-/// fan. No coordinate moves. An edge whose faces do not pair up is left as it is.
+/// fan. Where one piece touches itself and its faces round both ends of the edge form one fan, the
+/// pairs would still share the edge: each pair after the first has its two faces split at a vertex
+/// added at the edge's midpoint. No coordinate moves. An edge whose faces do not pair up is left as
+/// it is.
 pub fn separate_touching_edges(mesh: &TriMesh) -> (TriMesh, Separation) {
     let tris = &mesh.triangles;
     // Each edge, by its vertices low then high, with the faces on it.
@@ -299,6 +306,8 @@ pub fn separate_touching_edges(mesh: &TriMesh) -> (TriMesh, Separation) {
     let mut across: HashMap<(u32, u32, u32), u32> = HashMap::new();
     let mut separation = Separation::default();
     let mut ends = HashSet::new();
+    // Each edge taken apart, with the faces paired round it.
+    let mut taken_apart: Vec<((u32, u32), Pairs)> = Vec::new();
     for (&(u, v), faces) in &edges {
         let pairs = match faces.len() {
             2 => vec![(faces[0], faces[1])],
@@ -306,6 +315,7 @@ pub fn separate_touching_edges(mesh: &TriMesh) -> (TriMesh, Separation) {
                 Some(pairs) => {
                     separation.edges += 1;
                     ends.extend([u, v]);
+                    taken_apart.push(((u, v), pairs.clone()));
                     pairs
                 }
                 None => continue,
@@ -368,12 +378,52 @@ pub fn separate_touching_edges(mesh: &TriMesh) -> (TriMesh, Separation) {
             triangles[f][k] = copy;
         }
     }
+
+    // Pairs still on the same two vertices (one piece touching itself, one fan at each end): every
+    // pair after the first is split at a vertex of its own at the edge's midpoint. Copies only ever
+    // replace a vertex in place, so each face's corners keep their slots.
+    taken_apart.sort_unstable_by_key(|(edge, _)| *edge);
+    let mut split = HashSet::new();
+    for ((u, v), pairs) in taken_apart {
+        let mut seen = HashSet::new();
+        let mut done = false;
+        for (f, g) in pairs {
+            let ends_of = |face: u32| {
+                let t = tris[face as usize];
+                let (ku, kv) = (t.iter().position(|&x| x == u).unwrap(), t.iter().position(|&x| x == v).unwrap());
+                let (a, b) = (triangles[face as usize][ku], triangles[face as usize][kv]);
+                (a.min(b), a.max(b))
+            };
+            if seen.insert(ends_of(f)) || split.contains(&f) || split.contains(&g) {
+                continue;
+            }
+            let [pu, pv] = [u, v].map(|i| mesh.vertices[i as usize]);
+            vertices.push([0, 1, 2].map(|k| 0.5 * (pu[k] + pv[k])));
+            let m = vertices.len() as u32 - 1;
+            for face in [f, g] {
+                let t = tris[face as usize];
+                let (ku, kv) = (t.iter().position(|&x| x == u).unwrap(), t.iter().position(|&x| x == v).unwrap());
+                // The slot the edge starts from, in the face's own winding.
+                let s = if (ku + 1) % 3 == kv { ku } else { kv };
+                let now = triangles[face as usize];
+                let [a, b, c] = [now[s], now[(s + 1) % 3], now[(s + 2) % 3]];
+                triangles[face as usize] = [a, m, c];
+                triangles.push([m, b, c]);
+                split.insert(face);
+            }
+            done = true;
+        }
+        separation.edges_split += usize::from(done);
+    }
     (TriMesh::new(vertices, triangles), separation)
 }
 
 /// Pairs the faces round edge `u`-`v` across the wedges of material between them, or `None` if they
 /// do not alternate between material and empty space as consistently wound sheets do.
-fn pair_round_edge(mesh: &TriMesh, u: u32, v: u32, faces: &[u32]) -> Option<Vec<(u32, u32)>> {
+/// Faces paired across the wedges of material round an edge.
+type Pairs = Vec<(u32, u32)>;
+
+fn pair_round_edge(mesh: &TriMesh, u: u32, v: u32, faces: &[u32]) -> Option<Pairs> {
     let pu = mesh.vertices[u as usize];
     let along = sub(mesh.vertices[v as usize], pu);
     let length = dot(along, along).sqrt();
@@ -648,7 +698,7 @@ mod tests {
         let before = ring.validity();
         assert!(before.closed && before.consistent_winding && before.non_manifold_edges == 1);
         let (apart, separation) = separate_touching_edges(&ring);
-        assert_eq!(separation, Separation { edges: 1, vertex_copies: 2 });
+        assert_eq!(separation, Separation { edges: 1, vertex_copies: 2, edges_split: 0 });
         assert!(apart.validity().is_watertight(), "{:?}", apart.validity());
         assert_eq!(split_patches(&apart).len(), 1, "one piece");
         assert!((apart.signed_volume() - 7000.0).abs() < 1e-9);
@@ -668,6 +718,30 @@ mod tests {
             vec![[0, 1, 2], [0, 1, 3], [1, 0, 4]],
         );
         assert_eq!(separate_touching_edges(&fins).1, Separation::default());
+    }
+
+    #[test]
+    fn a_slot_pinched_to_an_edge_is_split_at_the_midpoint_and_keeps_its_volume() {
+        // A slab of 10 m cells, 4 x 3 x 2, with one cell out of the top layer and one out of the
+        // bottom layer, diagonal to each other: the two pockets meet along one edge, where the solid
+        // touches itself. The slab is one patch, and round each end of the edge the pockets' end
+        // walls join the faces into one fan, so copying the ends cannot take the edge apart.
+        let cells: Vec<[i32; 3]> = (0..4)
+            .flat_map(|x| (0..3).flat_map(move |y| (0..2).map(move |z| [x, y, z])))
+            .filter(|c| *c != [1, 1, 1] && *c != [2, 1, 0])
+            .collect();
+        let slab = cells_surface(&cells, 10.0);
+        let before = slab.validity();
+        assert!(before.closed && before.consistent_winding && before.non_manifold_edges == 1, "{before:?}");
+        assert_eq!(split_patches(&slab).len(), 1);
+        let (apart, separation) = separate_touching_edges(&slab);
+        assert_eq!(separation, Separation { edges: 1, vertex_copies: 0, edges_split: 1 });
+        assert!(apart.validity().is_watertight(), "{:?}", apart.validity());
+        assert_eq!(split_patches(&apart).len(), 1, "still one piece");
+        assert!((apart.signed_volume() - 22_000.0).abs() < 1e-9, "{}", apart.signed_volume());
+        assert_eq!(apart.vertices.len(), slab.vertices.len() + 1);
+        assert_eq!(apart.vertices.last(), Some(&[20.0, 15.0, 10.0]), "the added vertex is the edge's midpoint");
+        assert!(slab.vertices.iter().zip(&apart.vertices).all(|(p, q)| p == q), "no vertex moves");
     }
 
     #[test]

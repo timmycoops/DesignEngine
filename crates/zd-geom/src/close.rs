@@ -1,7 +1,16 @@
-//! Closing a nearly closed triangulation into a solid (decision 0013): fins taken off, cracks
-//! joined, holes filled. It runs only when asked for, and every change is counted; how much filling
-//! is acceptable is the caller's call (`solid.import` refuses fills over a share of the surface).
+//! Closing a nearly closed triangulation into a solid (decisions 0013 and 0015): hanging sheets and
+//! fins taken off, cracks joined, holes filled. It runs only when asked for, and every change is
+//! counted; how much filling is acceptable is the caller's call (`solid.import` refuses fills over a
+//! share of the surface).
 //!
+//! - A **hanging sheet** is a patch (triangles joined across edges of two faces) with open edges that
+//!   the rest does not need: every edge it shares with the rest keeps two or more faces without it.
+//!   Typically a scrap of the cutting surface left on a relimited solid, attached along an edge. It
+//!   encloses nothing, so taking it off changes no volume. A patch the rest needs (one with a hole
+//!   in it, holding the solid's other faces together) stays, and its hole is filled below. A
+//!   **loose sheet**, attached to nothing, comes off too when it is a sheet rather than a shell with
+//!   a hole: its area vector (the sum of its triangles' areas times their normals, zero for a closed
+//!   shell) is at least half its area. A box missing a face scores 0.2; a scrap of topography about 1.
 //! - A **fin** is a triangle with an open edge that also sits on an edge of three or more faces: a
 //!   flap with no volume, left hanging off the solid. Fins come off until none is left.
 //! - A **crack** is a vertex lying on an open edge, within the tolerance, without being joined to it
@@ -24,6 +33,8 @@ use crate::orient_patches;
 /// What [`close_solid`] changed.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CloseLog {
+    /// Each hanging sheet taken off: a point in its middle and its area (m²).
+    pub sheets: Vec<([f64; 3], f64)>,
     /// Triangles taken off as fins.
     pub fin_triangles: usize,
     /// Vertices joined into open edges they lay on, each splitting one triangle in two.
@@ -42,16 +53,23 @@ impl CloseLog {
     pub fn filled_area(&self) -> f64 {
         self.filled.iter().map(|f| f.1).sum()
     }
+
+    pub fn sheet_area(&self) -> f64 {
+        self.sheets.iter().map(|s| s.1).sum()
+    }
 }
 
 /// The most cracks joined in one mesh, a guard against a mesh that keeps producing them.
 const MAX_CRACKS: usize = 100_000;
 
-/// Fins off, cracks joined, holes filled, in that order (see the module notes).
+/// Hanging sheets and fins off, cracks joined, holes filled, in that order (see the module notes).
 pub fn close_solid(mesh: &TriMesh, tolerance: f64) -> (TriMesh, CloseLog) {
     let mut log = CloseLog::default();
-    let mut triangles = mesh.triangles.clone();
     let mut vertices = mesh.vertices.clone();
+    // Sheets come off before fins: peeling a sheet's edge as fins would leave the rest of it loose,
+    // and its loop would then be filled as a hole.
+    let (mut triangles, sheets) = without_hanging_sheets(mesh);
+    log.sheets = sheets;
 
     // Fins.
     loop {
@@ -123,6 +141,108 @@ pub fn close_solid(mesh: &TriMesh, tolerance: f64) -> (TriMesh, CloseLog) {
     log.triangles_turned = orient.triangles_flipped;
     log.surface_area = closed.area();
     (closed, log)
+}
+
+/// A patch whose area vector is at least this share of its area is a sheet, not a shell with a hole.
+const SHEET_SHARE: f64 = 0.5;
+
+/// A point in the middle of something and its area (m²).
+type Placed = ([f64; 3], f64);
+
+/// The triangles left once hanging and loose sheets are off, and each sheet taken off (its middle
+/// and area). A hanging sheet has an open edge and hangs off the rest along edges of three or more
+/// faces, one face of its own on each; the rest keeps two or more faces on each of those edges, so
+/// no edge is left open. A loose sheet has open edges, touches nothing, and is a sheet by its area
+/// vector. Something must be left. Repeated until none is left, for a sheet hanging off another.
+fn without_hanging_sheets(mesh: &TriMesh) -> (Vec<[u32; 3]>, Vec<Placed>) {
+    let mut triangles = mesh.triangles.clone();
+    let mut sheets = Vec::new();
+    loop {
+        let mut faces_on: HashMap<(u32, u32), Vec<usize>> = HashMap::with_capacity(triangles.len() * 3 / 2);
+        for (f, t) in triangles.iter().enumerate() {
+            for e in edges(t) {
+                faces_on.entry(e).or_default().push(f);
+            }
+        }
+        // Patches: triangles joined across edges of two faces.
+        let mut root: Vec<usize> = (0..triangles.len()).collect();
+        fn find(root: &mut [usize], mut i: usize) -> usize {
+            while root[i] != i {
+                root[i] = root[root[i]];
+                i = root[i];
+            }
+            i
+        }
+        for faces in faces_on.values().filter(|faces| faces.len() == 2) {
+            let (a, b) = (find(&mut root, faces[0]), find(&mut root, faces[1]));
+            root[a] = b;
+        }
+        let patch: Vec<usize> = (0..triangles.len()).map(|f| find(&mut root, f)).collect();
+        // Per patch: has an open edge, hangs off the rest by one face on some edge, has two or more
+        // faces on an edge of three or more (part of the solid there, not a sheet).
+        let mut open = vec![false; triangles.len()];
+        let mut hangs = vec![false; triangles.len()];
+        let mut held = vec![false; triangles.len()];
+        for faces in faces_on.values() {
+            match faces.len() {
+                1 => open[patch[faces[0]]] = true,
+                2 => {}
+                _ => {
+                    for &f in faces {
+                        let own = faces.iter().filter(|&&g| patch[g] == patch[f]).count();
+                        if own == 1 { hangs[patch[f]] = true } else { held[patch[f]] = true }
+                    }
+                }
+            }
+        }
+        // Each patch's area vector and area, for the loose ones.
+        let mut vector = vec![[0.0; 3]; triangles.len()];
+        let mut area = vec![0.0; triangles.len()];
+        for (f, t) in triangles.iter().enumerate().filter(|(f, _)| open[patch[*f]] && !hangs[patch[*f]] && !held[patch[*f]]) {
+            let [a, b, c] = t.map(|i| mesh.vertices[i as usize]);
+            let n = cross([b[0] - a[0], b[1] - a[1], b[2] - a[2]], [c[0] - a[0], c[1] - a[1], c[2] - a[2]]);
+            let p = patch[f];
+            for k in 0..3 {
+                vector[p][k] += 0.5 * n[k];
+            }
+            area[p] += 0.5 * dot(n, n).sqrt();
+        }
+        let loose = |p: usize| open[p] && !hangs[p] && !held[p] && area[p] > 0.0 && dot(vector[p], vector[p]).sqrt() >= SHEET_SHARE * area[p];
+        let mut sheet: Vec<bool> = (0..triangles.len()).map(|p| (open[p] && hangs[p] && !held[p]) || loose(p)).collect();
+        // Sheets hanging on the same edge must not leave it with one face: keep them all there.
+        loop {
+            let mut kept_any = false;
+            for faces in faces_on.values().filter(|faces| faces.len() > 2) {
+                let rest = faces.iter().filter(|&&f| !sheet[patch[f]]).count();
+                if rest == 1 {
+                    for &f in faces {
+                        kept_any |= std::mem::replace(&mut sheet[patch[f]], false);
+                    }
+                }
+            }
+            if !kept_any {
+                break;
+            }
+        }
+        let off: Vec<bool> = patch.iter().map(|&p| sheet[p]).collect();
+        if !off.contains(&true) || !off.contains(&false) {
+            return (triangles, sheets);
+        }
+        let mut each: HashMap<usize, ([f64; 3], f64)> = HashMap::new();
+        for (f, t) in triangles.iter().enumerate().filter(|(f, _)| off[*f]) {
+            let corners = t.map(|i| mesh.vertices[i as usize]);
+            let area = triangle_area(corners);
+            let entry = each.entry(patch[f]).or_insert(([0.0; 3], 0.0));
+            for (k, sum) in entry.0.iter_mut().enumerate() {
+                *sum += area * (corners[0][k] + corners[1][k] + corners[2][k]) / 3.0;
+            }
+            entry.1 += area;
+        }
+        let mut found: Vec<(usize, ([f64; 3], f64))> = each.into_iter().collect();
+        found.sort_by_key(|(p, _)| *p);
+        sheets.extend(found.into_iter().map(|(_, (sum, area))| (if area > 0.0 { sum.map(|c| c / area) } else { sum }, area)));
+        triangles = triangles.into_iter().zip(off).filter(|(_, off)| !off).map(|(t, _)| t).collect();
+    }
 }
 
 fn undirected(a: u32, b: u32) -> (u32, u32) {
@@ -279,15 +399,115 @@ mod tests {
     #[test]
     fn a_fin_comes_off_and_the_cube_is_whole() {
         let mut m = cube();
-        // A flap on the top front edge (4-5), reaching out to a point of its own.
+        // A flap on the top front edge (4-5), reaching out to a point of its own: a sheet of one
+        // triangle.
         m.vertices.push([E + 5.0, N - 8.0, 115.0]);
         m.triangles.push([4, 5, 8]);
         assert!(!m.validity().is_watertight());
         let (closed, log) = close_solid(&m, 0.001);
-        assert_eq!((log.fin_triangles, log.cracks_joined, log.filled.len()), (1, 0, 0));
+        assert_eq!((log.sheets.len(), log.fin_triangles, log.cracks_joined, log.filled.len()), (1, 0, 0, 0));
+        assert!((log.sheet_area() - 0.5 * 10.0 * (8.0f64.powi(2) + 5.0f64.powi(2)).sqrt()).abs() < 1e-9);
         assert!(closed.validity().is_watertight());
         assert_eq!(closed.vertices.len(), 8, "the fin's tip goes with it");
         assert!((closed.signed_volume() - 1000.0).abs() < 1e-9);
+
+        // A flap of two triangles round the top front corner, hanging off edges 4-5 and 5-7: one sheet.
+        let mut m = cube();
+        m.vertices.push([E + 10.0, N - 6.0, 116.0]);
+        m.triangles.extend([[4, 5, 8], [5, 7, 8]]);
+        let (closed, log) = close_solid(&m, 0.001);
+        assert_eq!((log.sheets.len(), log.fin_triangles), (1, 0), "a flap round a corner is one sheet");
+        assert!(closed.validity().is_watertight() && (closed.signed_volume() - 1000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_hanging_sheet_comes_off_whole_and_no_volume_changes() {
+        // A scrap of surface hanging off the cube's top front edge (4-5), sloping down and away from
+        // it like a piece of topography left on a relimited solid: four triangles, one patch, with
+        // open edges all round except where it hangs. Peeling it a fin at a time would leave its
+        // outer triangles loose, and their loop would then be filled as a hole.
+        let mut m = cube();
+        let first = m.vertices.len() as u32;
+        m.vertices.extend([[E, N - 10.0, 108.0], [E + 5.0, N - 10.0, 108.0], [E + 10.0, N - 10.0, 108.0]]);
+        let [a, b, c] = [first, first + 1, first + 2];
+        m.triangles.extend([[4, a, b], [4, b, 5], [5, b, c]]);
+        let before = m.validity();
+        assert!(before.boundary_edges > 0 && before.non_manifold_edges == 1);
+        let (closed, log) = close_solid(&m, 0.001);
+        assert_eq!(log.sheets.len(), 1);
+        assert_eq!((log.fin_triangles, log.cracks_joined, log.filled.len()), (0, 0, 0), "nothing filled: {log:?}");
+        assert!(closed.validity().is_watertight());
+        assert!((closed.signed_volume() - 1000.0).abs() < 1e-9);
+        assert_eq!(closed.vertices.len(), 8);
+        let middle = log.sheets[0].0;
+        assert!(middle[1] < N && middle[2] > 108.0 && middle[2] < 110.0, "the sheet's middle is off the front: {middle:?}");
+
+        // A loose sheet beside the cube, touching nothing: off too.
+        let mut m = cube();
+        let first = m.vertices.len() as u32;
+        m.vertices.extend([[E, N - 30.0, 100.0], [E + 20.0, N - 30.0, 101.0], [E + 20.0, N - 12.0, 102.0], [E, N - 12.0, 101.0]]);
+        m.triangles.extend([[first, first + 1, first + 2], [first, first + 2, first + 3]]);
+        let (closed, log) = close_solid(&m, 0.001);
+        assert_eq!((log.sheets.len(), log.filled.len()), (1, 0));
+        assert!(closed.validity().is_watertight() && (closed.signed_volume() - 1000.0).abs() < 1e-9);
+        // Alone, it is all there is: left for the caller to refuse.
+        let alone = TriMesh::new(m.vertices[8..].to_vec(), vec![[0, 1, 2], [0, 2, 3]]);
+        assert!(close_solid(&alone, 0.001).1.sheets.is_empty());
+
+        // Two sheets on the same edge: the edge keeps the cube's two faces, so both come off.
+        let mut m = cube();
+        m.vertices.extend([[E + 5.0, N - 8.0, 115.0], [E + 5.0, N - 8.0, 105.0]]);
+        m.triangles.extend([[4, 5, 8], [5, 4, 9]]);
+        let (closed, log) = close_solid(&m, 0.001);
+        assert_eq!(log.sheets.len(), 2);
+        assert!(closed.validity().is_watertight() && (closed.signed_volume() - 1000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_patch_the_solid_needs_is_not_a_sheet() {
+        // A cube with a triangle missing: the patch round the hole hangs off nothing (it has no edge of
+        // three or more faces), so it is filled, not taken off.
+        let mut m = cube();
+        m.triangles.remove(3);
+        let (closed, log) = close_solid(&m, 0.001);
+        assert!(log.sheets.is_empty());
+        assert_eq!(log.filled.len(), 1);
+        assert!(closed.validity().is_watertight() && (closed.signed_volume() - 1000.0).abs() < 1e-9);
+
+        // A box missing its top beside a closed cube: a shell with a hole (area vector 100 m² against
+        // 500 m² of faces), not a sheet, so it stays and is filled.
+        let mut m = cube();
+        let shift = m.vertices.len() as u32;
+        m.vertices.extend(cube().vertices.iter().map(|p| [p[0] + 30.0, p[1], p[2]]));
+        m.triangles.extend(cube().triangles[4..].iter().chain(&cube().triangles[..2]).map(|t| t.map(|i| i + shift)));
+        let (closed, log) = close_solid(&m, 0.001);
+        assert!(log.sheets.is_empty(), "{log:?}");
+        assert_eq!(log.filled.len(), 1);
+        assert!((closed.signed_volume() - 2000.0).abs() < 1e-9, "{}", closed.signed_volume());
+
+        // Two cubes touching along an edge, one with a triangle missing (away from that edge): the open
+        // one has two faces of its own on the shared edge, so it is held there, not hanging, and is
+        // filled, not taken off.
+        let mut m = cube();
+        let second: Vec<[f64; 3]> = cube().vertices.iter().map(|p| [p[0] + 10.0, p[1] + 10.0, p[2]]).collect();
+        // The second cube's corners 0 and 4 are the first's 3 and 7.
+        let index: Vec<u32> = (0..8u32)
+            .map(|i| match i {
+                0 => 3,
+                4 => 7,
+                _ => {
+                    m.vertices.push(second[i as usize]);
+                    m.vertices.len() as u32 - 1
+                }
+            })
+            .collect();
+        let mut faces = cube().triangles;
+        faces.remove(10);
+        m.triangles.extend(faces.iter().map(|f| f.map(|i| index[i as usize])));
+        let (closed, log) = close_solid(&m, 0.001);
+        assert!(log.sheets.is_empty(), "{log:?}");
+        assert_eq!(log.filled.len(), 1);
+        assert!((closed.signed_volume() - 2000.0).abs() < 1e-9);
     }
 
     #[test]

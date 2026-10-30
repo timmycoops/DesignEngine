@@ -17,7 +17,8 @@ Date: 2026-10-28 · Status: locked (agreed by Tim). Full plan: the "Phase 1 plan
 
 ## Still open
 
-- Import formats beyond DXF, CSV and XYZ. Each one is added only when the golden pit needs it.
+- ~~Import formats beyond DXF, CSV and XYZ~~: agreed 2026-10-30. No new format until a real job needs
+  one; Vulcan `.00t` came forward that way (decision 0011).
 - ~~The seam grid source~~: answered 2026-10-28. Vulcan seam grids named `<proj><seam>.<mv>g`
   (`.srg` roof, `.sfg` floor, quality code as `<mv>`). Read through Vulcan's ESRI ASCII export first;
   a direct binary reader only once it matches those exports node for node on sample files.
