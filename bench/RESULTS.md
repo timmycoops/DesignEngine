@@ -3,11 +3,10 @@
 Branch `phase0/stress-test`, run 2026-10-28. Targets are from
 [docs/decisions/0001-stack.md](../docs/decisions/0001-stack.md).
 
-> **Data caveat.** `testdata/golden/` held no pit data for this run, so every check below used the
-> **synthetic pit** (see [Data](#data)). The Phase 0 gate is "all four checks pass on real data",
-> so the gate stays open until the same runs are repeated on a real pit. The harness picks real
-> data up automatically (see [README.md](README.md)). Real-data runs began on 2026-10-29: see
-> [Real data](#real-data-golden-pit-2026-10-29).
+> **The gate passed on real data on 2026-10-30:** see
+> [Real data](#real-data-golden-pit-2026-10-29). `testdata/golden/` held no pit data for the first
+> run, so the [Summary](#summary) and everything after it used the **synthetic pit** (see
+> [Data](#data)). The harness picks real data up automatically (see [README.md](README.md)).
 
 ## Real data (golden pit, 2026-10-29)
 
@@ -19,7 +18,7 @@ here. Same machine as below; release builds.
 |---|---|
 | Topography | Vulcan triangulation, 1.64 M vertices, 3.28 M triangles (stored facing down; turned up by the repair step) |
 | Large surface | Vulcan triangulation, 9.25 M vertices, 18.5 M triangles (holds 11 crossing pairs) |
-| Seams for Check 2 | three parent seams' roof and floor Vulcan grids, 266,031 nodes each at 5 m |
+| Seams for Check 2 | three parent seams' roof and floor Vulcan grids, 266,031 nodes each at 10 m |
 | Seam model | 15 horizons from the site's stack definition (decision 0007) |
 | Solids | 42,223 relimiting solids (coal and waste, by strip, block, seam and bench) as `.00t` |
 
@@ -37,10 +36,40 @@ Each seam solid (4.2 M triangles) cut by the topography (3.3 M triangles), `carg
 The grids reach past the topography's extent; the uncovered coal reports as above, as the check
 notes.
 
-### Phase 0 Checks 1, 3 and 4 on real data
+### Phase 0 Checks 1, 3 and 4 on real data: PASS
 
-Pending: `.\bench\golden_app_bench.ps1 testdata\golden\<pit>\pit.json` loads the topography, the
-large surface and the seams' grids (about 25 M real triangles) in the app.
+`.\bench\golden_app_bench.ps1 testdata\golden\<pit>\pit.json`, 2026-10-30: the release app on WebGPU
+(canvas 2400 x 1363) with the topography, the large surface and six seam grids, **24,958,820 real
+triangles**. The app was built before PRs #24 and #25, which touch neither the viewport, the transfer
+nor the snap.
+
+**Check 1, viewport.** The bar is met at 25 M real triangles. Tiled copies of the real scene:
+
+| Triangles | Mean fps | p50 frame | p99 frame | Worst frame | Frames over 33 ms |
+|---:|---:|---:|---:|---:|---:|
+| **25.0 M** | **59.5** | 16.7 ms | 18.9 ms | 34.1 ms | 1 of 475 |
+| 49.9 M | 43.9 | 22.5 ms | 27.5 ms | 28.3 ms | 0 of 350 |
+| 74.9 M | 34.8 | 29.8 ms | 60.6 ms | 68.9 ms | 38 of 277 |
+| 124.8 M | 22.8 | 44.7 ms | 54.8 ms | 83.5 ms | 163 of 181 |
+
+At 50 M the real scene runs slower than the synthetic pit did (49.5 fps), at a slightly smaller canvas.
+
+**Check 3, transfer.** Real surfaces over the shared buffer, from the request to the frame submitted
+and to the GPU finishing. Reading, repairing and the crossing search, which come first, are shown
+beside them:
+
+| Surface | Triangles | Bytes | To frame submitted | To GPU done | Import and encode |
+|---|---:|---:|---:|---:|---:|
+| Topography | 3.28 M | 39.6 MB | 0.06 s | 0.09 s | 1.1 s |
+| Large surface | 18.5 M | 223.7 MB | **0.24 s** | 0.37 s | 8.3 s |
+| Seam grid | 0.53 M | 6.4 MB | 0.02 s | 0.04 s | 0.06 s |
+
+**Check 4, editing.** Against the full 25.0 M triangles: snap round trip **1.6 ms** p50, 3.3 ms p99,
+3.8 ms worst, with 0 misses in 300 updates; each update in a frame submitted within 19.8 ms. The snap
+index takes 6.1 s to build for this scene (2.4 s on the synthetic pit). This is measured, not felt:
+the synthetic pit's hands-on "snappy" has not been repeated on these surfaces.
+
+**Gate: passed, 2026-10-30.** All four checks pass on real data. Tim closed the gate on these numbers.
 
 ### Phase 1 gate on real data
 
@@ -85,13 +114,13 @@ solid and its parts agree to 0.15 m³ at most (1.4e-5 of 10,996 m³). One solid 
 
 | Check | Target (0001-stack) | Result | Verdict |
 |---|---|---|---|
-| 1 · Viewport | Smooth orbit and zoom, ~60 fps, at tens of millions of triangles | **60 fps at 24.3 M unique triangles** (p99 frame 17.3 ms; no frame over 33 ms in one run, two up to 50 ms in a repeat). Tiled copies: 50 fps at 48.5 M, 36 fps at 72.8 M, 23 fps at 121 M | **PASS** up to ~25 M on this entry-level GPU; ≥ 50 fps to ~50 M |
+| 1 · Viewport | Smooth orbit and zoom, ~60 fps, at tens of millions of triangles | **60 fps at 24.3 M unique triangles** (p99 frame 17.3 ms; no frame over 33 ms in one run, two up to 50 ms in a repeat). Tiled copies: 50 fps at 48.5 M, 36 fps at 72.8 M, 23 fps at 121 M | **PASS** up to ~25 M on this entry-level GPU; ≥ 50 fps to ~50 M here (44 fps on the real pit) |
 | 2 · Booleans | Watertight output; seconds, not minutes, per cut | Every part watertight; below + above = input to ≤ 1e-12. 0.24 s (0.2 M tris), 0.74 s (0.9 M), 2.4 s (3.5 M), 9.4 s (14 M) | **PASS** |
 | 3 · Transfer | Multi-million-triangle mesh Rust → viewport well under 1 s, binary | Request → frame submitted over a WebView2 shared buffer: **0.06 s at 2 M, 0.09 s at 8 M, 0.20 s at 18 M** for a general triangulation; 0.015, 0.035 and 0.065 s for grid surfaces | **PASS** (first run: 0.23, 0.88 and 2.2 s over IPC) |
 | 4 · Editing | Vertex drag with surface snapping feels instant | Snap round trip **1.2 ms** p50 (8.2 ms worst) against 24.3 M triangles; every update is in the next frame submitted (worst 21.5 ms) | **PASS**; feel confirmed hands-on ("snappy") |
 
-**Gate: not yet passed, only because the data was synthetic.** All four checks pass here. The first
-run left Check 3 partial; that was fixed in the transfer layer alone, as 0001 anticipates ("a failure
+All four checks pass here, on synthetic data; the gate itself
+[passed on the real pit](#phase-0-checks-1-3-and-4-on-real-data-pass). The first run left Check 3 partial; that was fixed in the transfer layer alone, as 0001 anticipates ("a failure
 points to one layer to fix"). See [Check 3](#check-3-binary-transfer-rust--viewport) and
 [Follow-ups](#follow-ups).
 
