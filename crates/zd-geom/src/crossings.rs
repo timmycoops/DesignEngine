@@ -14,6 +14,11 @@
 //! ways and lie apart are thin, not crossing: the solid tapers to a knife edge there, or two of its
 //! parts come within a hairline. They are counted apart from crossings. Faces that coincide (within
 //! [`COINCIDENT`]), or overlap facing the same way, still cross.
+//!
+//! Two exceptions (decision 0017). Two faces folded flat on a shared edge are thin even when they
+//! coincide: a knife edge of no thickness, enclosing nothing. Two faces overlapping the same way are
+//! thin when a face between them points the other way: going through all three runs solid, gap,
+//! solid, gap, a lip over a gap. With nothing between them the solid would be there twice.
 
 use parry3d_f64::bounding_volume::Aabb;
 use parry3d_f64::math::Vector;
@@ -87,7 +92,13 @@ fn search(mesh: &TriMesh, tolerance: f64, tile_count: Option<usize>, rules: Rule
                             if j as usize > i
                                 && let Some(at) = crossing(triangles[i], triangles[j as usize], local, tolerance, rules)
                             {
-                                hits.push((j, at));
+                                hits.push((
+                                    j,
+                                    match at {
+                                        Crossing::Overlap(p) if rules == Rules::Solid && lip_between(i, j as usize, p, triangles, local, tiles) => Crossing::Thin(p),
+                                        other => other,
+                                    },
+                                ));
                             }
                         }
                         hits.sort_by_key(|h| h.0);
@@ -113,7 +124,8 @@ fn search(mesh: &TriMesh, tolerance: f64, tile_count: Option<usize>, rules: Rule
 
 /// How two triangles cross: along a segment (in different planes), or overlapping in one plane or
 /// folded back on one edge, with a point in the overlap. By the solid rules, `Thin` is two faces
-/// within the tolerance of one plane, facing opposite ways and apart: not a crossing.
+/// within the tolerance of one plane that are not a crossing: facing opposite ways and apart or
+/// folded on an edge, or facing the same way with a lip between them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Crossing {
     Segment([P; 2]),
@@ -246,11 +258,9 @@ fn crossing(ta: [u32; 3], tb: [u32; 3], v: &[P], tol: f64, rules: Rules) -> Opti
     let from_a = b.map(|p| dot(na, sub(p, a[0])));
     let from_b = a.map(|p| dot(nb, sub(p, b[0])));
     let coplanar = from_a.iter().chain(&from_b).all(|d| d.abs() <= tol);
-    // By the solid rules, faces in one plane facing opposite ways are thin unless they coincide.
-    let thin_or = |overlap: P| {
-        let apart = from_a.iter().chain(&from_b).any(|d| d.abs() > COINCIDENT);
-        if rules == Rules::Solid && dot(na, nb) < 0.0 && apart { Crossing::Thin(overlap) } else { Crossing::Overlap(overlap) }
-    };
+    // By the solid rules, faces in one plane facing opposite ways are thin.
+    let opposite = rules == Rules::Solid && dot(na, nb) < 0.0;
+    let thin_if = |thin: bool, overlap: P| if thin { Crossing::Thin(overlap) } else { Crossing::Overlap(overlap) };
 
     if shared == 2 {
         // On one edge, two triangles meet only along it unless they fold back onto each other in
@@ -265,10 +275,13 @@ fn crossing(ta: [u32; 3], tb: [u32; 3], v: &[P], tol: f64, rules: Rules) -> Opti
         let side = |p: P| dot(na, cross(sub(w, u), sub(p, u))) / norm(sub(w, u));
         let (sa, sb) = (side(a[a3]), side(b[b3]));
         let folded = (sa > tol && sb > tol) || (sa < -tol && sb < -tol);
-        return folded.then(|| thin_or(mid(centroid(a), centroid(b))));
+        // Folded on an edge they enclose nothing, even coinciding.
+        return folded.then(|| thin_if(opposite, mid(centroid(a), centroid(b))));
     }
     if coplanar {
-        return overlap_in_plane(a, na, b, tol).map(thin_or);
+        // Apart, or they would be two parts of the solid lying exactly on each other.
+        let apart = from_a.iter().chain(&from_b).any(|d| d.abs() > COINCIDENT);
+        return overlap_in_plane(a, na, b, tol).map(|p| thin_if(opposite && apart, p));
     }
     let straddles = |d: &[f64; 3]| d.iter().any(|x| *x > tol) && d.iter().any(|x| *x < -tol);
     if !straddles(&from_a) || !straddles(&from_b) {
@@ -285,6 +298,53 @@ fn crossing(ta: [u32; 3], tb: [u32; 3], v: &[P], tol: f64, rules: Rules) -> Opti
     let (lo, p_lo) = if a_lo >= b_lo { (a_lo, pa_lo) } else { (b_lo, pb_lo) };
     let (hi, p_hi) = if a_hi <= b_hi { (a_hi, pa_hi) } else { (b_hi, pb_hi) };
     (hi - lo > tol).then_some(Crossing::Segment([p_lo, p_hi]))
+}
+
+/// True when triangles `i` and `j`, overlapping the same way at `p`, have a face between them there
+/// that points the other way: the line through `p` along their normal, from one to the other,
+/// crosses more faces pointing against it than with it. Going through all three then runs solid,
+/// gap, solid, gap: a lip over a gap. Without one, the solid under both is there twice.
+fn lip_between(i: usize, j: usize, p: P, triangles: &[[u32; 3]], v: &[P], tiles: &Tiles) -> bool {
+    let corners = |k: usize| triangles[k].map(|c| v[c as usize]);
+    let (a, b) = (corners(i), corners(j));
+    let (Some(na), Some(nb)) = (unit_normal(a), unit_normal(b)) else { return false };
+    if dot(na, nb) <= 0.0 {
+        return false;
+    }
+    // Where the line through `p` along `na` meets each face's plane, measured from `p`.
+    let meets = |t: [P; 3], n: P, along: f64| dot(sub(t[0], p), n) / along;
+    let (sa, sb) = (meets(a, na, 1.0), meets(b, nb, dot(na, nb)));
+    let (lo, hi) = (sa.min(sb), sa.max(sb));
+    if hi - lo <= COINCIDENT {
+        return false;
+    }
+    let point = |s: f64| [0, 1, 2].map(|k| p[k] + s * na[k]);
+    let (from, to) = (point(lo), point(hi));
+    let query = Aabb::new(Vector::new(from[0].min(to[0]), from[1].min(to[1]), from[2].min(to[2])), Vector::new(from[0].max(to[0]), from[1].max(to[1]), from[2].max(to[2])));
+    let mut against = 0;
+    for k in tiles.overlapping(&query).map(|k| k as usize).filter(|&k| k != i && k != j) {
+        let c = corners(k);
+        let Some(nc) = unit_normal(c) else { continue };
+        let along = dot(nc, na);
+        if along.abs() < 1e-9 {
+            continue;
+        }
+        let s = meets(c, nc, along);
+        if s > lo + COINCIDENT && s < hi - COINCIDENT && holds(c, nc, point(s)) {
+            against += if along < 0.0 { 1 } else { -1 };
+        }
+    }
+    against > 0
+}
+
+/// Whether point `q`, in the plane of triangle `t` with unit normal `n`, lies in the triangle or
+/// within [`COINCIDENT`] of it.
+fn holds(t: [P; 3], n: P, q: P) -> bool {
+    (0..3).all(|k| {
+        let (u, w) = (t[k], t[(k + 1) % 3]);
+        let edge = sub(w, u);
+        dot(cross(edge, sub(q, u)), n) >= -COINCIDENT * norm(edge)
+    })
 }
 
 /// The piece of triangle `t` lying in the other triangle's plane (`d`: its corners measured from
@@ -505,6 +565,55 @@ mod tests {
         assert!(find_solid_crossings(&beside, 0.001).pairs > 0);
         // And a pass-through is a crossing by either rules.
         assert_eq!(find_solid_crossings(&pierced(5.0), 0.001).pairs, 1);
+    }
+
+    /// A 10 m long prism whose profile (x, z) is a block with a step in its top: the top at 10.0008
+    /// reaches over the top at 10 from x = 9 to 11, its underside falling back to x = 9, so at x = 10
+    /// the line up runs top at 10, underside at 10.0004, top at 10.0008.
+    fn lip() -> TriMesh {
+        let profile = [[0.0, 0.0], [20.0, 0.0], [20.0, 10.0], [9.0, 10.0], [11.0, 10.0008], [0.0, 10.0008]];
+        let n = profile.len() as u32;
+        let mut points = Vec::new();
+        for y in [0.0, 10.0] {
+            points.extend(profile.iter().map(|[x, z]| [*x, y, *z]));
+        }
+        let mut t = Vec::new();
+        for i in 0..n {
+            let j = (i + 1) % n;
+            t.extend([[i, j + n, j], [i, i + n, j + n]]);
+        }
+        // Each end, fanned about the step's foot (corner 3).
+        for k in [4, 5, 0, 1] {
+            let next = (k + 1) % n;
+            t.extend([[3, k, next], [3 + n, next + n, k + n]]);
+        }
+        TriMesh::new(at(&points), t)
+    }
+
+    #[test]
+    fn a_lip_over_a_gap_is_thin_in_a_solid() {
+        let lip = lip();
+        let shape = lip.validity();
+        assert!(shape.is_watertight(), "{shape:?}");
+        // The two tops overlap the same way within 1 mm, with the lip's underside between them.
+        assert!(find_crossings(&lip, 0.001).pairs > 0);
+        let found = find_solid_crossings(&lip, 0.001);
+        assert_eq!(found.pairs, 0, "{found:?}");
+        assert!(found.thin > 0);
+
+        // Two blocks overlapping with their tops 0.5 mm apart, facing the same way, and nothing
+        // between them: the solid is there twice, and that still crosses.
+        let stacked = joined(&cuboid([E, N, 0.0], [E + 10.0, N + 10.0, 10.0]), &cuboid([E + 5.0, N + 5.0, 0.0], [E + 15.0, N + 15.0, 10.0005]));
+        assert!(find_solid_crossings(&stacked, 0.001).pairs > 0);
+    }
+
+    #[test]
+    fn a_flat_fold_on_an_edge_is_thin_in_a_solid_and_crosses_on_a_surface() {
+        // Two faces on one edge, folded exactly flat, facing opposite ways: a knife edge of no thickness.
+        let fold = TriMesh::new(at(&[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [2.0, 3.0, 0.0]]), vec![[0, 1, 2], [1, 0, 3]]);
+        assert_eq!(find_crossings(&fold, 0.001).pairs, 1);
+        let found = find_solid_crossings(&fold, 0.001);
+        assert_eq!((found.pairs, found.thin), (0, 1), "{found:?}");
     }
 
     #[test]

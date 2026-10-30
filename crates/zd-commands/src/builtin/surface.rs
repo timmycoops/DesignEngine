@@ -218,7 +218,7 @@ fn timed_check(mesh: &TriMesh, tolerance: f64, search: fn(&TriMesh, f64) -> Cros
     let thin = match crossings.thin_at.first() {
         None => String::new(),
         Some(first) => format!(
-            "; {} thin pairs, faces within {} of each other facing opposite ways (knife edges or hairline gaps), the first at {}: kept as they are",
+            "; {} thin pairs, faces within {} of each other that do not cross (knife edges, hairline gaps or thin lips), the first at {}: kept as they are",
             crossings.thin,
             mm(tolerance),
             site(first)

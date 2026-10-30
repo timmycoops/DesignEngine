@@ -1,6 +1,6 @@
 # 0014 — Thin features in solids
 
-Date: 2026-10-30 · Status: accepted (Tim, 2026-10-30)
+Date: 2026-10-30 · Status: accepted (Tim, 2026-10-30); lips and flat folds are thin too, by decision 0017 (2026-10-30)
 
 ## Why
 

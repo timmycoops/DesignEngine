@@ -204,7 +204,7 @@ fn a_knife_edge_solid_imports_with_its_thin_pairs_reported() {
     for repair in [false, true] {
         let record = s.run("solid.import", json!({ "path": path.to_string_lossy(), "layer": "coal", "repair": repair })).unwrap();
         let checked = record.messages.iter().find(|m| m.starts_with("crossings: ")).unwrap();
-        assert!(checked.starts_with("crossings: none by more than 1 mm; ") && checked.contains("thin pairs, faces within 1 mm of each other facing opposite ways (knife edges or hairline gaps), the first at 650"), "{checked}");
+        assert!(checked.starts_with("crossings: none by more than 1 mm; ") && checked.contains("thin pairs, faces within 1 mm of each other that do not cross (knife edges, hairline gaps or thin lips), the first at 650"), "{checked}");
         assert!(checked.contains(": kept as they are (8 triangles"), "{checked}");
         assert_eq!(record.messages.last().unwrap(), "volume 0.025 m3");
         let Body::Solid(solid) = &s.project().object(created(&record)[0]).unwrap().body else { panic!("not a solid") };

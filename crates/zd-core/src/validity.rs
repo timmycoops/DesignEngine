@@ -76,7 +76,8 @@ pub enum CrossingCheck {
     /// within the tolerance of one plane cross where they overlap, whichever way they face.
     Search { tolerance: f64 },
     /// The same search by the solid rules (decision 0014): faces within the tolerance of one plane,
-    /// facing opposite ways and apart, are thin (a knife edge or a hairline gap), not crossing.
+    /// facing opposite ways and apart, are thin (a knife edge or a hairline gap), not crossing; so are
+    /// faces folded flat on an edge, and faces facing the same way with a lip between them (0017).
     SolidSearch { tolerance: f64 },
     /// A grid's triangulation, which cannot cross itself: one elevation per node on a regular
     /// plan lattice.
