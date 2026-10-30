@@ -375,6 +375,8 @@ export interface SeamModel {
   density: string;
   tolerance: number;
   lattice: { origin: [number, number]; cell_size: [number, number]; cols: number; rows: number };
+  /** An RL that means the seam is absent. */
+  no_seam: number | null;
   /** Top of the stack first. */
   horizons: Horizon[];
   issues: StackIssue[];

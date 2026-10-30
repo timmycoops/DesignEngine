@@ -106,6 +106,9 @@ pub struct SeamModel {
     /// Overlaps up to this many metres are listed but do not block.
     pub tolerance: f64,
     pub lattice: Lattice,
+    /// An RL that means the seam is absent, from the definition (decision 0020): see [`blank_no_seam`].
+    #[serde(default)]
+    pub no_seam: Option<f64>,
     /// Lowest floor and highest roof in the working section when the model was built, so it can be
     /// framed without reading its grids.
     #[serde(default)]
@@ -113,6 +116,22 @@ pub struct SeamModel {
     /// Top of the stack first.
     pub horizons: Vec<Horizon>,
     pub issues: Vec<StackIssue>,
+}
+
+/// Blanks a horizon where its model marks it absent: a node with its roof or floor at `rl` holds no
+/// seam, so both go null. RLs are compared in single precision, as the grids store them. Returns
+/// the nodes blanked.
+pub fn blank_no_seam(roof: &mut Grid, floor: &mut Grid, rl: f64) -> usize {
+    let marked = |z: f64| z as f32 == rl as f32;
+    let mut blanked = 0;
+    for (r, f) in roof.z.iter_mut().zip(&mut floor.z) {
+        if marked(*r) || marked(*f) {
+            blanked += 1;
+            *r = f64::NAN;
+            *f = f64::NAN;
+        }
+    }
+    blanked
 }
 
 impl SeamModel {
@@ -152,6 +171,17 @@ impl SeamModel {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_node_at_the_no_seam_rl_goes_null_in_roof_and_floor_alike() {
+        let lattice = |z: Vec<f64>| Grid::new([650_000.0, 7_450_000.0], [25.0, 25.0], 2, 2, z);
+        // Coal at the first node, the roof marked at the second, both at the third, already null at the last.
+        let mut roof = lattice(vec![100.0, 160.0, 160.0, f64::NAN]);
+        let mut floor = lattice(vec![97.5, 90.0, 160.0, f64::NAN]);
+        assert_eq!(blank_no_seam(&mut roof, &mut floor, 160.0), 2);
+        assert_eq!((roof.z[0], floor.z[0]), (100.0, 97.5), "a real node is left exactly as it was");
+        assert!(roof.z[1..].iter().chain(&floor.z[1..]).all(|z| z.is_nan()));
+    }
+
     fn link(file: &str) -> GridLink {
         GridLink { file: file.into(), fingerprint: Fingerprint { bytes: 1, modified_unix_ms: 2, checksum: 3 } }
     }
@@ -175,6 +205,7 @@ mod tests {
             density: "rd".into(),
             tolerance: 0.001,
             lattice: Lattice { origin: [500_000.0, 7_000_000.0], cell_size: [10.0, 10.0], cols: 3, rows: 2 },
+            no_seam: None,
             z_range: Some([90.0, 100.0]),
             horizons: vec![horizon("a", None, false), horizon("au", Some("a"), true), horizon("al", Some("a"), true)],
             issues: vec![],

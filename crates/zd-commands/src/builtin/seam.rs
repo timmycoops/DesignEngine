@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{Attributes, Body, Change, Grid, GridLink, Horizon, IssueKind, Lattice, ObjectKind, SeamModel, StackIssue};
-use zd_geom::{StackHorizon, check_seam_stack, suggest_seam_tree};
+use zd_core::{Attributes, Body, Change, Grid, GridLink, Horizon, IssueKind, Lattice, ObjectKind, SeamModel, StackIssue, blank_no_seam};
+use zd_geom::{StackHorizon, check_seam_stack, suggest_no_seam_rl, suggest_seam_tree};
 use zd_io::{DefinedHorizon, SeamDefinition, read_linked_grid, read_seam_definition, read_vulcan_grid, vulcan_grid_name, write_seam_definition};
 
 use super::in_parallel;
@@ -130,6 +130,19 @@ impl Command for SuggestSeamDefinition {
             same
         });
 
+        // A roof RL the grids all share marks where seams are absent, and the tree must not read it as coal.
+        let roofs: Vec<&Grid> = usable.iter().map(|(_, r, _)| r).collect();
+        let no_seam = suggest_no_seam_rl(&roofs);
+        if let Some((rl, least, most)) = no_seam {
+            messages.push(format!(
+                "every roof tops out at RL {rl}, flat at {:.0} to {:.0} % of its nodes: written as no_seam, so those nodes read as no seam; delete the line if that RL is real",
+                100.0 * least,
+                100.0 * most
+            ));
+            for (_, roof, floor) in &mut usable {
+                blank_no_seam(roof, floor, rl);
+            }
+        }
         let grids: Vec<(&Grid, &Grid)> = usable.iter().map(|(_, r, f)| (r, f)).collect();
         let tree = suggest_seam_tree(&grids, p.tolerance).map_err(|e| CommandError::Invalid(e.to_string()))?;
         let has_daughters = |i: usize| tree.iter().any(|s| s.parent == Some(i));
@@ -149,7 +162,7 @@ impl Command for SuggestSeamDefinition {
                 }
             })
             .collect();
-        let definition = SeamDefinition { folder: PathBuf::from(&p.dir), horizons };
+        let definition = SeamDefinition { folder: PathBuf::from(&p.dir), no_seam: no_seam.map(|(rl, ..)| rl), horizons };
         write_seam_definition(out, &definition).map_err(|e| CommandError::Io(format!("{}: {e}", p.path)))?;
 
         let mut outcome = Outcome::default().message(format!(
@@ -269,6 +282,17 @@ impl Command for BuildSeamModel {
         }
         let lattice = lattice.expect("a definition has at least one horizon, and every grid read");
 
+        // The definition's own rule, counted on each horizon so the record shows what it took out.
+        let mut blanked = vec![0; definition.horizons.len()];
+        if let Some(rl) = definition.no_seam {
+            for (grids, blanked) in grids.iter_mut().zip(&mut blanked) {
+                let (mut roof, mut floor) = (grids.remove("roof").expect("roof read"), grids.remove("floor").expect("floor read"));
+                *blanked = blank_no_seam(&mut roof, &mut floor, rl);
+                grids.insert("roof".into(), roof);
+                grids.insert("floor".into(), floor);
+            }
+        }
+
         let index: HashMap<String, usize> = definition.horizons.iter().enumerate().map(|(i, h)| (h.code.to_ascii_lowercase(), i)).collect();
         let stack: Vec<StackHorizon<'_>> = definition
             .horizons
@@ -299,7 +323,11 @@ impl Command for BuildSeamModel {
             jobs.len()
         ));
         for (i, h) in definition.horizons.iter().enumerate() {
-            outcome = outcome.message(describe_horizon(h, &grids[i]["roof"], &grids[i]["floor"], p.tolerance));
+            let line = describe_horizon(h, &grids[i]["roof"], &grids[i]["floor"], p.tolerance);
+            outcome = outcome.message(match (blanked[i], definition.no_seam) {
+                (0, _) | (_, None) => line,
+                (n, Some(rl)) => format!("{line}; {n} nodes at RL {rl} read as no seam"),
+            });
         }
         for issue in &issues {
             outcome = outcome.message(describe_issue(issue));
@@ -330,7 +358,7 @@ impl Command for BuildSeamModel {
             .flat_map(|i| grids[i]["roof"].z_range().into_iter().chain(grids[i]["floor"].z_range()))
             .reduce(|[lo, hi], [a, b]| [lo.min(a), hi.max(b)]);
         let model =
-            SeamModel { folder: definition.folder.to_string_lossy().into_owned(), density, tolerance: p.tolerance, lattice, z_range, horizons, issues };
+            SeamModel { folder: definition.folder.to_string_lossy().into_owned(), density, tolerance: p.tolerance, lattice, no_seam: definition.no_seam, z_range, horizons, issues };
         let name = p.name.clone().unwrap_or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "seam model".into()));
         let mut done = Outcome::new(vec![Change::Create { name, layer: p.layer.clone(), attributes: Attributes::new(), body: Body::SeamModel(Arc::new(model)) }]);
         done.messages = outcome.messages;

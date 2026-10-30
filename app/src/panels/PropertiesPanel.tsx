@@ -575,6 +575,7 @@ function Measurements({ d }: { d: ObjectDetails }) {
             </Field>
             <Field label="Density grid">{model.density}</Field>
             <Field label="Tolerance">{fmt(model.tolerance, 3)} m</Field>
+            {model.no_seam !== null && <Field label="No seam at">RL {fmt(model.no_seam, 2)}</Field>}
             <Field label="Status">
               {blocking === 0 ? 'Ready for solids and reserves' : `${blocking} blocking issue${blocking === 1 ? '' : 's'}: fix the grids and rebuild`}
             </Field>
