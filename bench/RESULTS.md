@@ -121,6 +121,10 @@ With one file making one solid (decision 0018): 42,218 solids into 49,764 parts 
 no whole-surface retries, one solid left uncut and named, and solids and parts within 0.27 m³. Every
 file keeps its volume (to 1e-6 m³) and its result: 41,917 as read, 301 with repair, 5 refused.
 
+One run for them all (decision 0019): **42,218 solids from a 72 MB zip in 10.6 s** with repair on, 7.7 s
+with it off, on 48 threads. In the release app, 4.9 M triangles from the zip to drawn with the snap index
+built in **12.6 s**, then orbiting at 60 fps with no frame over 33 ms, snapping at 0.9 ms p50, undo 24 ms.
+
 ## Summary
 
 | Check | Target (0001-stack) | Result | Verdict |

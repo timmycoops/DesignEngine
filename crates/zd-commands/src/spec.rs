@@ -52,4 +52,6 @@ pub enum FieldType {
     Layer,
     /// A file path.
     Path,
+    /// A list of file, folder or zip paths.
+    Paths,
 }

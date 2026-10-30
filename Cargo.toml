@@ -27,6 +27,8 @@ serde = { version = "1", features = ["derive"] }
 parquet = { version = "60", default-features = false, features = ["arrow", "snap"] }
 arrow-array = "60"
 arrow-schema = "60"
+# Solids come as zips of thousands of files (Spry exports them so); deflate is all they use.
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # float_roundtrip: run logs must give back the exact f64 coordinates they were given.
 serde_json = { version = "1", features = ["float_roundtrip"] }
 parry3d-f64 = "0.31.1"

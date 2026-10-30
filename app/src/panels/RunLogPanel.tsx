@@ -37,8 +37,9 @@ function toRows(log: LogEntry[]): LogRow[] {
       case 'run': {
         commandOf.set(e.run, e.command);
         const failed = e.status !== 'ok';
-        const outputs = e.outputs.map((o) => `${o.name} (${o.change})`);
-        const result = failed ? (e.status as { failed: string }).failed : outputs.join(', ') || 'no change';
+        const outputs = e.outputs.slice(0, OUTPUTS_IN_A_ROW).map((o) => `${o.name} (${o.change})`);
+        const more = e.outputs.length > OUTPUTS_IN_A_ROW ? ` and ${e.outputs.length - OUTPUTS_IN_A_ROW} more` : '';
+        const result = failed ? (e.status as { failed: string }).failed : outputs.join(', ') + more || 'no change';
         return { index, at: e.started_unix_ms, what: e.command, result, ms: e.duration_ms, outcome: failed ? 'failed' : undone.has(e.run) ? 'undone' : 'ok', record: e };
       }
       case 'undo':
@@ -51,6 +52,10 @@ function toRows(log: LogEntry[]): LogRow[] {
   });
   return rows.reverse();
 }
+
+/** A run's outputs named in its row, and in its details: a run can make tens of thousands. */
+const OUTPUTS_IN_A_ROW = 4;
+const OUTPUTS_IN_DETAILS = 200;
 
 const helper = columnHelper<LogRow>();
 const columns = helper.columns([
@@ -86,7 +91,7 @@ function RunDetails({ record }: { record: RunRecord }) {
       {record.status !== 'ok' && <p className="break-words whitespace-pre-wrap text-destructive">{record.status.failed}</p>}
       {record.outputs.length > 0 && (
         <div className="flex flex-wrap gap-x-3">
-          {record.outputs.map((o) =>
+          {record.outputs.slice(0, OUTPUTS_IN_DETAILS).map((o) =>
             live.has(o.id) ? (
               <button key={`${o.id}-${o.revision}`} className="text-primary hover:underline" onClick={() => select(o.id)}>
                 {o.name} r{o.revision} ({o.change})
@@ -97,6 +102,7 @@ function RunDetails({ record }: { record: RunRecord }) {
               </span>
             ),
           )}
+          {record.outputs.length > OUTPUTS_IN_DETAILS && <span className="text-muted-foreground">and {record.outputs.length - OUTPUTS_IN_DETAILS} more</span>}
         </div>
       )}
       <pre className="max-h-40 overflow-auto rounded bg-muted px-2 py-1 font-mono text-[11px]">{JSON.stringify(record.params, null, 2)}</pre>

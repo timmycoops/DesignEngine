@@ -177,10 +177,10 @@ export default function App() {
     const viewport = viewportRef.current;
     if (!sync || !viewport) return;
     const first = sync.count === 0;
-    void sync.apply(next).then((loaded) => {
+    return sync.apply(next).then(async (loaded) => {
       if (loaded === 0) return;
       if (first) viewport.fitView();
-      void buildSnapIndex();
+      await buildSnapIndex();
     });
   }, []);
 
@@ -238,11 +238,11 @@ export default function App() {
       show(await projectSummary());
       const config = await benchConfig();
       if (config) {
-        // Phase 0 timings were taken with the viewport filling the window.
-        dockRef.current?.getPanel('viewport')?.api.maximize();
+        // Phase 0 timings were taken with the viewport filling the window; solids go through the panels.
+        if (!config.solids) dockRef.current?.getPanel('viewport')?.api.maximize();
         await created.nextFrame();
         await created.nextFrame();
-        await runChecks(created, config, (text) => setStatus({ text }));
+        await runChecks(created, config, (text) => setStatus({ text }), show);
       }
     });
     return () => {
@@ -320,23 +320,19 @@ export default function App() {
     });
 
   /**
-   * Imports closed triangulations as solids, one run each; a refused file says why in the run log.
-   * With `repair`, hanging sheets and fins come off, cracks are joined and holes up to 10 % of the
-   * surface are filled, each noted on the solid (decisions 0013, 0015).
+   * Imports solids from files and zips, or from folders, all in one run (decision 0019); a refused
+   * file says why in the run log. With `repair`, hanging sheets and fins come off, cracks are joined
+   * and holes up to 10 % of the surface are filled, each noted on the solid (decisions 0013, 0015).
    */
-  const onImportSolids = (repair: boolean) =>
+  const onImportSolids = (from: 'files' | 'folder', repair: boolean) =>
     attempt(async () => {
-      const picked = await open({ multiple: true, filters: [{ name: 'Solids', extensions: ['00t', 'dxf'] }] });
+      const picked = await open(
+        from === 'folder' ? { directory: true, multiple: true } : { multiple: true, filters: [{ name: 'Solids', extensions: ['zip', '00t', 'dxf'] }] },
+      );
       const paths = picked === null ? [] : Array.isArray(picked) ? picked : [picked];
-      let made = 0;
-      for (const [k, path] of paths.entries()) {
-        setStatus({ text: `Importing solid ${k + 1} of ${paths.length}${repair ? ', repairing' : ''}: ${path}…` });
-        if (await run('solid.import', { path, layer: 'solids', repair })) made += 1;
-      }
-      if (paths.length > 1) {
-        const refused = paths.length - made;
-        setStatus({ text: `${made} solids imported${refused ? `; ${refused} refused (the run log says why)` : ''}`, error: refused > 0 });
-      }
+      if (paths.length === 0) return;
+      setStatus({ text: `Importing solids${repair ? ', repairing' : ''} from ${paths.length === 1 ? paths[0] : `${paths.length} places`}…` });
+      await run('solid.import_many', { paths, layer: 'solids', repair });
     });
 
   const onImportStrings = () =>
@@ -497,13 +493,19 @@ export default function App() {
           </ToolButton>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" title="Import solids: closed triangulations in Vulcan .00t or DXF files">
+              <Button variant="ghost" size="sm" title="Import solids: closed triangulations in Vulcan .00t or DXF files, or a zip or folder of them">
                 <FileInput /> Solids
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              <DropdownMenuItem onSelect={() => onImportSolids(false)}>Import solids…</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onImportSolids(true)}>Import and repair: sheets and fins off, cracks joined, holes up to 10 % filled…</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onImportSolids('files', false)}>Import a zip or files…</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onImportSolids('folder', false)}>Import a folder…</DropdownMenuItem>
+              <DropdownMenuItem title="Sheets and fins off, cracks joined, holes up to 10 % filled" onSelect={() => onImportSolids('files', true)}>
+                Import and repair a zip or files…
+              </DropdownMenuItem>
+              <DropdownMenuItem title="Sheets and fins off, cracks joined, holes up to 10 % filled" onSelect={() => onImportSolids('folder', true)}>
+                Import and repair a folder…
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           <ToolButton tip="Import strings (DXF polylines and lines, or CSV with x, y and z columns)" onClick={onImportStrings}>

@@ -1,9 +1,10 @@
 // Keeps the drawn surfaces (surfaces, solids, elevation grids, seam horizons) in line with the
 // project summary. Geometry is fetched only when an object's geometry key changes, so a rename or a
 // layer toggle never refetches a large mesh. A seam model shows one horizon at a time, its roof
-// coloured by thickness; choosing another horizon reloads that model alone.
+// coloured by thickness; choosing another horizon reloads that model alone. A layer's solids draw as
+// one mesh, so a pit's tens of thousands of them are a few chunks; any change to one reloads the layer.
 import * as THREE from 'three/webgpu';
-import { type ProjectSummary, type StagedHorizon, stageObject, stageSeamHorizon } from '../bridge';
+import { type ProjectSummary, type StagedHorizon, stageLayerSolids, stageObject, stageSeamHorizon } from '../bridge';
 import { colourOf, loadStaged } from './load';
 import type { Viewport } from './Viewport';
 
@@ -11,6 +12,9 @@ interface Shown {
   key: string;
   group: THREE.Group;
 }
+
+/** The `shown` key of a layer's solids. */
+const solidsOf = (layer: string) => `solids:${layer}`;
 
 /** A seam model's horizon as the viewport shows it. */
 export interface SeamShown {
@@ -54,8 +58,10 @@ export class SceneSync {
     this.last = summary;
     const layers = new Map(summary.layers.map((l) => [l.id, l]));
     const seam = (kind: string) => kind === 'seam_model';
-    const wanted = new Map(summary.objects.filter((o) => o.drawn || seam(o.kind)).map((o) => [o.id, o]));
+    const wanted = new Map(summary.objects.filter((o) => (o.drawn && o.kind !== 'solid') || seam(o.kind)).map((o) => [o.id, o]));
+    const solids = new Map(summary.solid_layers.map((s) => [solidsOf(s.layer), s.key]));
     const keyOf = (id: string) => {
+      if (solids.has(id)) return solids.get(id);
       const o = wanted.get(id);
       if (!o) return undefined;
       return seam(o.kind) ? `${o.geometry_key}#${this.horizons.get(id) ?? ''}` : o.geometry_key;
@@ -96,6 +102,19 @@ export class SceneSync {
       }
       group.visible = layer?.visible ?? true;
       this.shown.set(object.id, { key: keyOf(object.id)!, group });
+      loaded++;
+    }
+    for (const { layer: id, key } of summary.solid_layers) {
+      const layer = layers.get(id);
+      const shown = this.shown.get(solidsOf(id));
+      if (shown) {
+        shown.group.visible = layer?.visible ?? true;
+        continue;
+      }
+      const staged = await stageLayerSolids(id);
+      const { group } = await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined });
+      group.visible = layer?.visible ?? true;
+      this.shown.set(solidsOf(id), { key, group });
       loaded++;
     }
     return loaded;

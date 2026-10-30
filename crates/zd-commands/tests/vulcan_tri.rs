@@ -2,6 +2,7 @@
 //! through the repair step and the crossing check, with opt-in checks against real files and their
 //! Deswik exports.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
@@ -131,6 +132,65 @@ fn closed_pieces_meeting_along_an_edge_import_as_one_solid() {
     let error = s.run("solid.import", json!({ "path": dir.join("half.00t").to_string_lossy(), "layer": "coal" })).unwrap_err();
     assert!(error.to_string().starts_with("'half' is not a closed solid after repair"), "{error}");
     assert_eq!(s.project().objects().count(), 3);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_zip_and_a_folder_import_in_one_run_and_a_refused_file_is_named() {
+    let dir = scratch("many");
+    let cube = |k: f64| plain_triangulation_bytes("Created External", &block([E + 20.0 * k, N, 250.0], [10.0, 10.0, 10.0]));
+    let mut open = block([E, N + 50.0, 250.0], [10.0, 10.0, 10.0]);
+    open.triangles.truncate(10);
+
+    // Three cubes in a zip, one in a subfolder of it, with an open mesh and a file to leave out.
+    let zipped = dir.join("relimits.zip");
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&zipped).unwrap());
+    let entries: [(&str, Vec<u8>); 5] = [
+        ("a.00t", cube(0.0)),
+        ("b.00t", cube(1.0)),
+        ("strip 4/c.00t", cube(2.0)),
+        ("gap.00t", plain_triangulation_bytes("Created External", &open)),
+        ("readme.txt", b"not a mesh".to_vec()),
+    ];
+    for (name, bytes) in &entries {
+        zip.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+        zip.write_all(bytes).unwrap();
+    }
+    zip.finish().unwrap();
+    // And one more in a folder beside it.
+    let folder = dir.join("loose");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("d.00t"), cube(3.0)).unwrap();
+
+    let mut s = Session::with_builtins();
+    let record = s.run("solid.import_many", json!({ "paths": [zipped.to_string_lossy(), folder.to_string_lossy()], "layer": "coal" })).unwrap();
+    let made = created(&record);
+    let mut names: Vec<String> = made.iter().map(|&id| s.project().object(id).unwrap().name.clone()).collect();
+    names.sort();
+    assert_eq!(names, ["a", "b", "c", "d"]);
+    // Four 10 m cubes: 4,000 m3 (to 1e-6 m3), each closed.
+    let mut volume = 0.0;
+    for &id in &made {
+        let Some(Body::Solid(solid)) = s.project().object(id).map(|o| &o.body) else { panic!("a solid") };
+        assert!(solid.validity().is_watertight());
+        volume += solid.volume();
+    }
+    assert!((volume - 4000.0).abs() < 1e-6, "{volume}");
+    assert!(record.messages[0].starts_with("5 .00t and DXF files from 1 zip and 1 folder; 1 other files left out"), "{:?}", record.messages);
+    let refused = record.messages.iter().position(|m| m == "1 files refused, nothing saved for them:").expect("the refusal is reported");
+    assert!(record.messages[refused + 1].contains("relimits.zip!gap.00t"), "{:?}", record.messages);
+
+    // One run, so one undo takes them all off.
+    assert!(s.undo().is_some());
+    assert_eq!(s.project().objects().count(), 0);
+
+    // Nothing to import is refused, and says where it looked.
+    let empty = dir.join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let error = s.run("solid.import_many", json!({ "paths": [empty.to_string_lossy()], "layer": "coal" })).unwrap_err();
+    assert!(error.to_string().contains("no .00t or .dxf files in"), "{error}");
+    let none = s.run("solid.import_many", json!({ "paths": [], "layer": "coal" })).unwrap_err();
+    assert!(none.to_string().contains("no files, folders or zips given"), "{none}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
