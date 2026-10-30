@@ -1,6 +1,7 @@
 // Unattended Phase 0 run (app started with --bench): loads the surfaces, then times
 // Check 1 (orbit at increasing scene sizes), Check 3 (binary transfer) and Check 4 (drag with
-// snapping), writes bench/out/app-results.json and exits.
+// snapping), writes bench/out/app-results.json and exits. With --solids <zip or folder> it times that
+// import through the app instead, panels showing, and writes bench/out/app-solids-results.json.
 import * as THREE from 'three/webgpu';
 import {
   type BenchConfig,
@@ -8,10 +9,12 @@ import {
   defaultTransport,
   exitApp,
   prepareSynthetic,
+  type ProjectSummary,
   runCommand,
   snapRay,
   stageObject,
   type Transport,
+  undo,
   writeResults,
 } from '../bridge';
 import { loadStaged } from '../viewport/load';
@@ -30,7 +33,10 @@ interface FrameSummary {
 
 const WARM_UP_FRAMES = 30;
 
-export async function runChecks(viewport: Viewport, config: BenchConfig, log: (line: string) => void): Promise<void> {
+/** Shows a summary as the app does: panels, strings, geometry and the snap index. */
+type Show = (summary: ProjectSummary) => Promise<void> | undefined;
+
+export async function runChecks(viewport: Viewport, config: BenchConfig, log: (line: string) => void, show: Show): Promise<void> {
   const tool = new PolylineTool(viewport);
   const canvas = viewport.renderer.domElement;
   const results: Record<string, unknown> = {
@@ -43,11 +49,15 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
   };
 
   try {
-    results.load = await loadSurfaces(viewport, config.surfaces, log);
-    viewport.fitView();
-    results.check1 = await checkViewport(viewport, config, log);
-    results.check3 = await checkTransfer(viewport, config.transfer_cells, log);
-    results.check4 = await checkDrag(viewport, tool, config.drag_updates, log);
+    if (config.solids) {
+      results.solids = await checkSolids(viewport, config.solids, config.orbit_seconds, log, show);
+    } else {
+      results.load = await loadSurfaces(viewport, config.surfaces, log);
+      viewport.fitView();
+      results.check1 = await checkViewport(viewport, config, log);
+      results.check3 = await checkTransfer(viewport, config.transfer_cells, log);
+      results.check4 = await checkDrag(viewport, tool, config.drag_updates, log);
+    }
   } catch (e) {
     results.error = String(e);
     log(`error: ${String(e)}`);
@@ -56,6 +66,57 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
   const path = await writeResults(JSON.stringify(results, null, 2));
   log(`results written to ${path}`);
   await exitApp();
+}
+
+/** A zip or folder of solids by the app's own path: import, draw, snap index, orbit, snap, undo. */
+async function checkSolids(viewport: Viewport, path: string, orbitSeconds: number, log: (line: string) => void, show: Show) {
+  log(`solids: importing ${path}`);
+  const start = performance.now();
+  const reply = await runCommand('solid.import_many', { paths: [path], layer: 'solids', repair: true });
+  const imported = performance.now();
+  await show(reply.summary);
+  const ready = performance.now();
+  await viewport.nextFrame();
+  const painted = performance.now();
+  // Only the rows on screen are in the page, and the far end of the list is a scroll away.
+  const rowsInPage = document.querySelectorAll('[data-slot="table-row"]').length;
+  const list = document.querySelector('table.table-fixed')?.parentElement;
+  list?.scrollTo(0, list.scrollHeight);
+  await viewport.nextFrame();
+  await viewport.nextFrame();
+  const lastRows = list?.querySelectorAll('[data-slot="table-row"]');
+  const scrolledTo = lastRows?.[lastRows.length - 1]?.textContent;
+  const triangles = viewport.triangleCount;
+  for (let i = 0; i < WARM_UP_FRAMES; i++) await viewport.nextFrame();
+  log(`solids: orbiting ${triangles.toLocaleString()} triangles`);
+  const orbited = await orbit(viewport, orbitSeconds);
+  viewport.fitView();
+  const snaps: number[] = [];
+  for (let i = 0; i < 200; i++) {
+    const ray = viewport.rayFromNdc(-0.6 + (i % 20) * 0.06, -0.3 + Math.floor(i / 20) * 0.06);
+    const t = performance.now();
+    await snapRay(ray.origin, ray.direction);
+    snaps.push(performance.now() - t);
+  }
+  snaps.sort((a, b) => a - b);
+  const undoStart = performance.now();
+  await show(await undo());
+  return {
+    solids: reply.summary.objects.length,
+    triangles,
+    engine_ms: reply.record.duration_ms,
+    import_to_summary_ms: imported - start,
+    draw_and_snap_index_ms: ready - imported,
+    total_to_ready_ms: ready - start,
+    total_to_painted_ms: painted - start,
+    table_rows_in_page: rowsInPage,
+    last_solid_in_last_row: scrolledTo?.includes(reply.summary.objects[reply.summary.objects.length - 1].name) ?? false,
+    orbit: orbited,
+    snap_p50_ms: snaps[100],
+    snap_p95_ms: snaps[190],
+    undo_ms: performance.now() - undoStart,
+    messages: reply.record.messages.slice(0, 2),
+  };
 }
 
 async function loadSurfaces(viewport: Viewport, paths: string[], log: (line: string) => void) {

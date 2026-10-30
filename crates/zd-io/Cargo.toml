@@ -13,6 +13,7 @@ serde_json.workspace = true
 parquet.workspace = true
 arrow-array.workspace = true
 arrow-schema.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 zd-geom.workspace = true

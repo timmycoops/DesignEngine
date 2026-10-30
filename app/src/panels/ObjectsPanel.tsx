@@ -51,15 +51,14 @@ export function ObjectsPanel() {
     );
   }, [summary]);
   return (
-    <div className="h-full overflow-auto">
-      <DataTable
-        data={rows}
-        columns={columns}
-        rowId={(r) => r.id}
-        selected={selected}
-        onRowClick={(r) => select(r.id)}
-        empty="Nothing here yet: import a surface or draw a string."
-      />
-    </div>
+    <DataTable
+      data={rows}
+      columns={columns}
+      rowId={(r) => r.id}
+      selected={selected}
+      onRowClick={(r) => select(r.id)}
+      empty="Nothing here yet: import a surface or draw a string."
+      windowed={['4.5rem', undefined, '6rem', '2.5rem']}
+    />
   );
 }

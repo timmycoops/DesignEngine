@@ -202,6 +202,7 @@ impl ProjectStore {
         };
         let mut store = ProjectStore { dir: dir.clone(), written: HashMap::new() };
         let mut objects = Vec::with_capacity(manifest.objects.len());
+        let mut meshes = read_meshes(&dir, &manifest.objects)?;
         for (index, stored) in manifest.objects.into_iter().enumerate() {
             let body = match stored.body {
                 StoredBody::String { closed, vertices } => {
@@ -216,7 +217,7 @@ impl ProjectStore {
                     Body::String(Polyline { vertices: rows, closed })
                 }
                 StoredBody::Surface { vertices, triangles, crossings } => {
-                    let mut surface = Surface::new(read_mesh(&dir, &vertices, &triangles)?);
+                    let mut surface = Surface::new(meshes[index].take().expect("a surface's mesh was read"));
                     if let Some(crossings) = crossings {
                         surface = surface.with_crossings(crossings);
                     }
@@ -224,7 +225,7 @@ impl ProjectStore {
                     Body::Surface(surface)
                 }
                 StoredBody::Solid { vertices, triangles, crossings } => {
-                    let mut solid = Solid::new(read_mesh(&dir, &vertices, &triangles)?).map_err(|_| {
+                    let mut solid = Solid::new(meshes[index].take().expect("a solid's mesh was read")).map_err(|_| {
                         StoreError::Format(format!("solid '{}' is not watertight in {vertices}", stored.name))
                     })?;
                     if let Some(crossings) = crossings {
@@ -439,6 +440,26 @@ impl ProjectStore {
         }
         Ok(deleted)
     }
+}
+
+/// Every surface's and solid's mesh, in object order, read across the machine's cores: a pit is
+/// tens of thousands of solids, two files each.
+fn read_meshes(dir: &Path, objects: &[StoredObject]) -> Result<Vec<Option<TriMesh>>, StoreError> {
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let chunk = objects.len().div_ceil(threads).max(1);
+    let read = |stored: &StoredObject| match &stored.body {
+        StoredBody::Surface { vertices, triangles, .. } | StoredBody::Solid { vertices, triangles, .. } => read_mesh(dir, vertices, triangles).map(Some),
+        _ => Ok(None),
+    };
+    std::thread::scope(|scope| {
+        let read = &read;
+        let handles: Vec<_> = objects.chunks(chunk).map(|part| scope.spawn(move || part.iter().map(read).collect::<Result<Vec<_>, StoreError>>())).collect();
+        let mut meshes = Vec::with_capacity(objects.len());
+        for handle in handles {
+            meshes.extend(handle.join().expect("a mesh reading thread panicked")?);
+        }
+        Ok(meshes)
+    })
 }
 
 fn read_mesh(dir: &Path, vertices: &str, triangles: &str) -> Result<TriMesh, StoreError> {

@@ -31,3 +31,12 @@ pub use ray::SurfaceRayCaster;
 pub use seam::{SeamLog, SeamSolid, build_seam_solid};
 pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_nodes, suggest_seam_tree};
 pub use string::{Corner, DrapeLog, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, smooth_string, split_string};
+
+/// Below this many triangles a search stays on one thread.
+const ONE_THREAD_BELOW: usize = 2_000;
+
+/// Threads for a search over `triangles`. A small mesh stays on one: starting threads costs more
+/// than it saves, and a run of thousands of solids is already spread across the cores.
+pub(crate) fn worker_threads(triangles: usize) -> usize {
+    if triangles < ONE_THREAD_BELOW { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()) }
+}

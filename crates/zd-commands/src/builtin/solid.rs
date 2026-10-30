@@ -1,18 +1,20 @@
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, CrossingCheck, Crossings, ObjectId, ObjectKind, Solid, TriMesh};
 use zd_geom::{
-    COINCIDENT, CloseLog, CutResult, Separation, UnionLog, close_solid, cut_solid_by_surface, cut_solid_by_whole_surface, find_solid_crossings, repair_mesh, self_union,
+    COINCIDENT, CloseLog, CutResult, RepairLog, Separation, UnionLog, close_solid, cut_solid_by_surface, cut_solid_by_whole_surface, find_solid_crossings, repair_mesh, self_union,
     separate_touching_edges, split_patches, triangulate_grid,
 };
 
 use std::borrow::Cow;
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 
-use zd_io::{SurfaceImport, read_surface};
+use zd_io::{MeshFile, MeshSelection, SurfaceImport, find_mesh_files, read_surface};
 
 use super::exchange::describe_dxf_faces;
 use super::in_parallel;
-use super::surface::{MeshParams, check_crossings, check_solid_crossings, default_tolerance, describe, describe_repair, describe_vulcan, mesh_params, mm, repaired, site};
+use super::surface::{MeshParams, check_crossings, check_solid_crossings, default_tolerance, describe, describe_repair, describe_vulcan, mesh_params, mm, site};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
 /// `solid.from_mesh`: a solid from vertices and triangles given inline; refused unless watertight
@@ -108,149 +110,357 @@ impl Command for ImportSolid {
     }
 
     fn run(&self, _inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        if !(p.weld_tolerance.is_finite() && p.weld_tolerance >= 0.0) {
-            return Err(CommandError::Invalid(format!("tolerance {} must be zero or more", p.weld_tolerance)));
-        }
-        if !(p.fill_limit.is_finite() && (0.0..=1.0).contains(&p.fill_limit)) {
-            return Err(CommandError::Invalid(format!("fill limit {} must be a share between 0 and 1", p.fill_limit)));
-        }
+        let cleaning = Cleaning { weld_tolerance: p.weld_tolerance, repair: p.repair, fill_limit: p.fill_limit }.checked()?;
         let path = Path::new(&p.path);
-        let (read, read_log) = match read_surface(path).map_err(|e| CommandError::Io(format!("{}: {e}", p.path)))? {
-            SurfaceImport::Vulcan(vulcan) => {
-                let line = describe_vulcan(&vulcan);
-                (vulcan.mesh, line)
-            }
-            SurfaceImport::Triangulation(dxf) => {
-                let line = describe_dxf_faces(&dxf);
-                (dxf.mesh, line)
-            }
-            SurfaceImport::Grid(_) | SurfaceImport::VulcanGrid(_) => {
-                return Err(CommandError::Invalid(format!("{} is a grid: import it as a surface", p.path)));
-            }
-        };
+        let read = read_surface(path).map_err(|e| CommandError::Io(format!("{}: {e}", p.path)))?;
         let name = p.name.clone().unwrap_or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "solid".into()));
-        let mut attributes = Attributes::new();
-        let (mesh, mut messages, mut crossings) = if p.repair {
-            let (welded, log) = repair_mesh(&read, p.weld_tolerance);
-            let (closed, close) = close_solid(&welded, p.weld_tolerance);
-            let share = if close.surface_area > 0.0 { close.filled_area() / close.surface_area } else { 0.0 };
-            if share > p.fill_limit {
-                let (at, area) = close.filled.iter().copied().fold(([0.0; 3], 0.0), |big, f| if f.1 > big.1 { f } else { big });
-                return Err(CommandError::Invalid(format!(
-                    "'{name}' has holes of {:.1} m² in all, {:.1} % of its surface, over the {:.0} % limit; the largest is {area:.1} m² at {}: fix it at source, or import it with a higher fill_limit",
-                    close.filled_area(),
-                    100.0 * share,
-                    100.0 * p.fill_limit,
-                    site(&at)
-                )));
-            }
-            let (mut crossings, mut checked) = check_solid_crossings(&closed, p.weld_tolerance);
-            let mut summary = describe_close(&close);
-            let mut closed = closed;
-            // Crossings: the surface of the solid it encloses (slice B). So too for a mesh closed but
-            // tangled, with edges of three or more faces that are not closed pieces touching; if the
-            // union cannot rebuild it, it is refused below as not closed.
-            let shape = closed.validity();
-            let tangled = crossings.pairs == 0 && !shape.is_watertight() && shape.boundary_edges == 0 && closed_pieces(&closed).is_none();
-            if crossings.pairs > 0 || tangled {
-                let resolved = match resolve_crossings(&closed, p.weld_tolerance) {
-                    Ok(resolved) => Some(resolved),
-                    Err(_) if tangled => None,
-                    Err(why) => {
-                        return Err(CommandError::Invalid(format!(
-                            "the solid '{name}' crosses itself ({} pairs of triangles) and the crossings could not be resolved: {why}",
-                            crossings.pairs
-                        )));
-                    }
-                };
-                if let Some((union, done, cut)) = resolved {
-                    let what = if tangled {
-                        format!("{} edges of three or more faces rebuilt by the union", shape.non_manifold_edges)
-                    } else {
-                        format!("{} crossings resolved", done.pairs)
-                    };
-                    let resolved = describe_union(&what, &done, &cut);
-                    summary = if summary == "nothing to do" { resolved } else { format!("{summary}; {resolved}") };
-                    attributes.insert("repair_volume_change_m3".into(), AttrValue::Number(done.volume_after - done.volume_before));
-                    closed = union;
-                    (crossings, checked) = check_solid_crossings(&closed, p.weld_tolerance);
-                }
-            }
-            if close.sheets.len() + close.fin_triangles + close.cracks_joined + close.filled.len() > 0 || attributes.contains_key("repair_volume_change_m3") {
-                attributes.insert("repair".into(), AttrValue::Text(summary.clone()));
-                if !close.filled.is_empty() {
-                    attributes.insert("repair_filled_m2".into(), AttrValue::Number(close.filled_area()));
-                }
-            }
-            let messages = vec![read_log, describe_repair(&log, &closed), format!("closing: {summary}"), checked];
-            (closed, messages, crossings)
-        } else {
-            repaired(&read, read_log, &p.path, p.weld_tolerance, check_solid_crossings)?
-        };
-        let validity = mesh.validity();
-        // Closed pieces meeting along edges of three or more faces come apart, within the one solid.
-        let mesh = if validity.is_watertight() {
-            mesh
-        } else {
-            let Some((pieces, separation)) = closed_pieces(&mesh) else {
-                let hint = match first_open_edge(&mesh) {
-                    Some(at) => format!(
-                        "; the first open edge is at {}: if it is a surface, import it with surface.import, and if it is a solid, it has gaps to fix at source",
-                        site(&at)
-                    ),
-                    None => String::new(),
-                };
-                return Err(CommandError::Invalid(format!(
-                    "'{name}' is not a closed solid after repair: {} boundary, {} non-manifold and {} inconsistently wound edges{hint} ({})",
-                    validity.boundary_edges,
-                    validity.non_manifold_edges,
-                    validity.inconsistent_edges,
-                    messages[1]
-                )));
-            };
-            let outcome = if pieces.len() == 1 { "one piece touching itself, imported whole".to_string() } else { format!("{} closed pieces, kept as one solid", pieces.len()) };
-            let split = match separation.edges_split {
-                0 => String::new(),
-                n => format!(", {n} split on one side at a vertex added at their midpoint"),
-            };
-            messages.push(format!(
-                "{} edges where closed pieces touch taken apart ({} vertices copied{split}, no coordinate moved): {outcome}",
-                separation.edges, separation.vertex_copies
-            ));
-            // Faces that shared an edge no longer do, so the solid is searched as it will be saved.
-            let whole = joined(pieces);
-            let (found, checked) = check_solid_crossings(&whole, p.weld_tolerance);
-            messages.push(format!("kept as one, {checked}"));
-            crossings = found;
-            if crossings.pairs > 0 && p.repair {
-                // From the faces as they met: taken apart, the union cannot see where pieces join.
-                let (union, done, cut) = resolve_crossings(&mesh, p.weld_tolerance).map_err(|why| {
-                    CommandError::Invalid(format!("the pieces of '{name}' cross each other ({} pairs of triangles) and the crossings could not be resolved: {why}", crossings.pairs))
-                })?;
-                let line = describe_union(&format!("{} crossings between its pieces resolved", done.pairs), &done, &cut);
-                let repair = match attributes.get("repair") {
-                    Some(AttrValue::Text(before)) => format!("{before}; {line}"),
-                    _ => line.clone(),
-                };
-                attributes.insert("repair".into(), AttrValue::Text(repair));
-                attributes.insert("repair_volume_change_m3".into(), AttrValue::Number(done.volume_after - done.volume_before));
-                messages.push(format!("closing: {line}"));
-                let (found, checked) = check_solid_crossings(&union, p.weld_tolerance);
-                messages.push(checked);
-                crossings = found;
-                union
-            } else {
-                whole
-            }
-        };
-        refuse_crossings("solid", &name, &crossings)?;
-        let solid = Solid::new(mesh).map_err(CommandError::NotWatertight)?.with_crossings(crossings);
-        messages.push(describe(&solid.validity(), solid.mesh()));
+        let ImportedSolid { solid, attributes, messages, .. } = solid_from_file(read, &p.path, &name, cleaning)?;
         let volume = format!("volume {:.3} m3", solid.volume());
         let mut outcome = Outcome::new(vec![Change::Create { name, layer: p.layer.clone(), attributes, body: Body::Solid(solid) }]);
         outcome.messages = messages;
         Ok(outcome.message(volume))
     }
+}
+
+/// `solid.import_many`: one solid per file from any mix of files, folders and zips, in one run
+/// across the machine's cores, so a pit's tens of thousands of solids are one step to import and
+/// one to undo (decision 0019). Each file goes through the steps of `solid.import`. A refused file
+/// makes no solid and is named with why, so one bad file does not lose the rest.
+pub struct ImportSolids;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportSolidsParams {
+    /// Files, folders (with their subfolders) and zips.
+    pub paths: Vec<String>,
+    pub layer: String,
+    /// Vertices closer than this (m) are welded, and crossings by less than it are not counted.
+    #[serde(default = "default_tolerance")]
+    pub weld_tolerance: f64,
+    /// Close each mesh first: fins off, cracks joined, holes filled (decision 0013). Off by default.
+    #[serde(default)]
+    pub repair: bool,
+    /// With `repair`: the most hole area to fill, as a share of a solid's surface (0.1 = 10 %).
+    #[serde(default = "default_fill_limit")]
+    pub fill_limit: f64,
+}
+
+impl Command for ImportSolids {
+    type Params = ImportSolidsParams;
+    const NAME: &'static str = "solid.import_many";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Import solids from files, folders and zips in one run",
+            inputs: vec![],
+            params: vec![
+                Field::new("paths", FieldType::Paths, "Files, folders and zips holding .00t or .dxf files, one closed triangulation to a file"),
+                Field::new("layer", FieldType::Layer, "Layer for the solids"),
+                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "Weld vertices closer than this; 1 mm by default"),
+                Field::new("repair", FieldType::Bool, "Close each mesh first: fins off, cracks joined, holes filled; off by default"),
+                Field::new("fill_limit", FieldType::Number { unit: "share" }, "With repair: the most hole area to fill, as a share of a solid's surface; 0.1 by default"),
+            ],
+            outputs: vec![Field::new("solids", FieldType::Objects, "One solid per file; a refused file makes none")],
+        }
+    }
+
+    fn run(&self, _inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let cleaning = Cleaning { weld_tolerance: p.weld_tolerance, repair: p.repair, fill_limit: p.fill_limit }.checked()?;
+        if p.paths.is_empty() {
+            return Err(CommandError::Invalid("no files, folders or zips given".into()));
+        }
+        let start = Instant::now();
+        let paths: Vec<PathBuf> = p.paths.iter().map(PathBuf::from).collect();
+        let selection = find_mesh_files(&paths).map_err(|e| CommandError::Io(e.to_string()))?;
+        if selection.files.is_empty() {
+            return Err(CommandError::Invalid(format!("no .00t or .dxf files in {}", p.paths.join(", "))));
+        }
+        let found = describe_selection(&selection);
+        let results = in_parallel(&selection.files, |file| import_mesh_file(file, cleaning));
+
+        let few = selection.files.len() <= LINES_PER_SOLID_UP_TO;
+        let mut tally = ImportTally::default();
+        let (mut changes, mut lines, mut refused) = (Vec::new(), Vec::new(), Vec::new());
+        for (file, result) in selection.files.iter().zip(results) {
+            match result {
+                Ok(imported) => {
+                    tally.add(&imported);
+                    if few {
+                        lines.extend(imported.messages.iter().map(|m| format!("{}: {m}", file.name)));
+                    }
+                    changes.push(Change::Create { name: file.name.clone(), layer: p.layer.clone(), attributes: imported.attributes, body: Body::Solid(imported.solid) });
+                }
+                Err(why) => refused.push(format!("{}: {why}", file.place)),
+            }
+        }
+        let mut names = HashSet::new();
+        let repeated = selection.files.iter().filter(|f| !names.insert(f.name.as_str())).count();
+
+        let mut outcome = Outcome::new(changes).message(found);
+        outcome.messages.extend(lines);
+        outcome = outcome.message(tally.describe(cleaning.weld_tolerance, start.elapsed().as_secs_f64() * 1e3));
+        if repeated > 0 {
+            outcome = outcome.message(format!("{repeated} files share a name with another file: their solids share it too"));
+        }
+        if !refused.is_empty() {
+            outcome = outcome.message(format!("{} files refused, nothing saved for them:", refused.len()));
+            outcome.messages.extend(refused);
+        }
+        Ok(outcome)
+    }
+}
+
+/// How a file's mesh is cleaned on its way to a solid.
+#[derive(Debug, Clone, Copy)]
+struct Cleaning {
+    weld_tolerance: f64,
+    repair: bool,
+    fill_limit: f64,
+}
+
+impl Cleaning {
+    fn checked(self) -> Result<Self, CommandError> {
+        if !(self.weld_tolerance.is_finite() && self.weld_tolerance >= 0.0) {
+            return Err(CommandError::Invalid(format!("tolerance {} must be zero or more", self.weld_tolerance)));
+        }
+        if !(self.fill_limit.is_finite() && (0.0..=1.0).contains(&self.fill_limit)) {
+            return Err(CommandError::Invalid(format!("fill limit {} must be a share between 0 and 1", self.fill_limit)));
+        }
+        Ok(self)
+    }
+}
+
+/// A solid made from one file, with what was done to it on the way.
+struct ImportedSolid {
+    solid: Solid,
+    attributes: Attributes,
+    /// The run record's lines for this file.
+    messages: Vec<String>,
+    log: RepairLog,
+    taken_apart: bool,
+}
+
+/// One file of a selection as a solid. A panic in the geometry is this file's refusal, not the run's.
+fn import_mesh_file(file: &MeshFile, cleaning: Cleaning) -> Result<ImportedSolid, String> {
+    let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let read = file.read().map_err(|e| e.to_string())?;
+        solid_from_file(read, &file.place, &file.name, cleaning).map_err(|e| e.to_string())
+    }));
+    attempt.unwrap_or_else(|_| Err("the import stopped on an error in the geometry".into()))
+}
+
+/// Where a selection's files came from, in one line.
+fn describe_selection(selection: &MeshSelection) -> String {
+    let count = |n: usize, what: &str| match n {
+        0 => None,
+        1 => Some(format!("1 {what}")),
+        n => Some(format!("{n} {what}s")),
+    };
+    let from = [count(selection.zips, "zip"), count(selection.folders, "folder")].into_iter().flatten().collect::<Vec<_>>();
+    let from = if from.is_empty() { "the files picked".to_string() } else { from.join(" and ") };
+    let left = match selection.left_out {
+        0 => String::new(),
+        n => format!("; {n} other files left out"),
+    };
+    format!("{} .00t and DXF files from {from}{left}", selection.files.len())
+}
+
+/// What a run of many imports did, summed.
+#[derive(Default)]
+struct ImportTally {
+    solids: usize,
+    triangles: usize,
+    volume: f64,
+    thin: usize,
+    repaired: usize,
+    taken_apart: usize,
+    vertices_welded: usize,
+    largest_move: f64,
+    triangles_dropped: usize,
+    vertices_dropped: usize,
+    triangles_flipped: usize,
+}
+
+impl ImportTally {
+    fn add(&mut self, imported: &ImportedSolid) {
+        let log = &imported.log;
+        self.solids += 1;
+        self.triangles += imported.solid.mesh().triangle_count();
+        self.volume += imported.solid.volume();
+        self.thin += imported.solid.crossings().map_or(0, |c| c.thin);
+        self.repaired += usize::from(imported.attributes.contains_key("repair"));
+        self.taken_apart += usize::from(imported.taken_apart);
+        self.vertices_welded += log.vertices_welded;
+        self.largest_move = self.largest_move.max(log.largest_move);
+        self.triangles_dropped += log.collapsed_dropped + log.degenerate_dropped + log.duplicates_dropped;
+        self.vertices_dropped += log.unused_dropped;
+        self.triangles_flipped += log.orient.triangles_flipped;
+    }
+
+    fn describe(&self, tolerance: f64, ms: f64) -> String {
+        let mut parts = vec![format!("{} solids imported, {} triangles, {:.3} m3 in all, {ms:.0} ms", self.solids, self.triangles, self.volume)];
+        parts.push(format!(
+            "repair at {}: {} vertices welded (largest move {}), {} triangles and {} unused vertices dropped, {} triangles flipped",
+            mm(tolerance),
+            self.vertices_welded,
+            mm(self.largest_move),
+            self.triangles_dropped,
+            self.vertices_dropped,
+            self.triangles_flipped
+        ));
+        if self.repaired > 0 {
+            parts.push(format!("{} closed by repair, each noted on the solid", self.repaired));
+        }
+        if self.taken_apart > 0 {
+            parts.push(format!("{} with touching pieces taken apart, no coordinate moved", self.taken_apart));
+        }
+        parts.push(format!("none crosses itself ({} thin pairs, kept)", self.thin));
+        parts.join("; ")
+    }
+}
+
+/// A file's mesh as a solid: repaired, closed if asked, checked by the solid rules. `place` says
+/// where the file is, `name` what to call the solid.
+fn solid_from_file(read: SurfaceImport, place: &str, name: &str, cleaning: Cleaning) -> Result<ImportedSolid, CommandError> {
+    let Cleaning { weld_tolerance, repair, fill_limit } = cleaning;
+    let (read, read_log) = match read {
+        SurfaceImport::Vulcan(vulcan) => {
+            let line = describe_vulcan(&vulcan);
+            (vulcan.mesh, line)
+        }
+        SurfaceImport::Triangulation(dxf) => {
+            let line = describe_dxf_faces(&dxf);
+            (dxf.mesh, line)
+        }
+        SurfaceImport::Grid(_) | SurfaceImport::VulcanGrid(_) => {
+            return Err(CommandError::Invalid(format!("{place} is a grid: import it as a surface")));
+        }
+    };
+    let mut attributes = Attributes::new();
+    let (welded, log) = repair_mesh(&read, weld_tolerance);
+    if welded.triangles.is_empty() {
+        return Err(CommandError::Invalid(format!("{place} holds no triangles ({read_log})")));
+    }
+    let (mesh, mut messages, mut crossings) = if repair {
+        let (closed, close) = close_solid(&welded, weld_tolerance);
+        let share = if close.surface_area > 0.0 { close.filled_area() / close.surface_area } else { 0.0 };
+        if share > fill_limit {
+            let (at, area) = close.filled.iter().copied().fold(([0.0; 3], 0.0), |big, f| if f.1 > big.1 { f } else { big });
+            return Err(CommandError::Invalid(format!(
+                "'{name}' has holes of {:.1} m² in all, {:.1} % of its surface, over the {:.0} % limit; the largest is {area:.1} m² at {}: fix it at source, or import it with a higher fill_limit",
+                close.filled_area(),
+                100.0 * share,
+                100.0 * fill_limit,
+                site(&at)
+            )));
+        }
+        let (mut crossings, mut checked) = check_solid_crossings(&closed, weld_tolerance);
+        let mut summary = describe_close(&close);
+        let mut closed = closed;
+        // Crossings: the surface of the solid it encloses (slice B). So too for a mesh closed but
+        // tangled, with edges of three or more faces that are not closed pieces touching; if the
+        // union cannot rebuild it, it is refused below as not closed.
+        let shape = closed.validity();
+        let tangled = crossings.pairs == 0 && !shape.is_watertight() && shape.boundary_edges == 0 && closed_pieces(&closed).is_none();
+        if crossings.pairs > 0 || tangled {
+            let resolved = match resolve_crossings(&closed, weld_tolerance) {
+                Ok(resolved) => Some(resolved),
+                Err(_) if tangled => None,
+                Err(why) => {
+                    return Err(CommandError::Invalid(format!(
+                        "the solid '{name}' crosses itself ({} pairs of triangles) and the crossings could not be resolved: {why}",
+                        crossings.pairs
+                    )));
+                }
+            };
+            if let Some((union, done, cut)) = resolved {
+                let what = if tangled {
+                    format!("{} edges of three or more faces rebuilt by the union", shape.non_manifold_edges)
+                } else {
+                    format!("{} crossings resolved", done.pairs)
+                };
+                let resolved = describe_union(&what, &done, &cut);
+                summary = if summary == "nothing to do" { resolved } else { format!("{summary}; {resolved}") };
+                attributes.insert("repair_volume_change_m3".into(), AttrValue::Number(done.volume_after - done.volume_before));
+                closed = union;
+                (crossings, checked) = check_solid_crossings(&closed, weld_tolerance);
+            }
+        }
+        if close.sheets.len() + close.fin_triangles + close.cracks_joined + close.filled.len() > 0 || attributes.contains_key("repair_volume_change_m3") {
+            attributes.insert("repair".into(), AttrValue::Text(summary.clone()));
+            if !close.filled.is_empty() {
+                attributes.insert("repair_filled_m2".into(), AttrValue::Number(close.filled_area()));
+            }
+        }
+        let messages = vec![read_log, describe_repair(&log, &closed), format!("closing: {summary}"), checked];
+        (closed, messages, crossings)
+    } else {
+        let repair = describe_repair(&log, &welded);
+        let (crossings, checked) = check_solid_crossings(&welded, weld_tolerance);
+        (welded, vec![read_log, repair, checked], crossings)
+    };
+    let validity = mesh.validity();
+    let taken_apart = !validity.is_watertight();
+    // Closed pieces meeting along edges of three or more faces come apart, within the one solid.
+    let mesh = if validity.is_watertight() {
+        mesh
+    } else {
+        let Some((pieces, separation)) = closed_pieces(&mesh) else {
+            let hint = match first_open_edge(&mesh) {
+                Some(at) => format!(
+                    "; the first open edge is at {}: if it is a surface, import it with surface.import, and if it is a solid, it has gaps to fix at source",
+                    site(&at)
+                ),
+                None => String::new(),
+            };
+            return Err(CommandError::Invalid(format!(
+                "'{name}' is not a closed solid after repair: {} boundary, {} non-manifold and {} inconsistently wound edges{hint} ({})",
+                validity.boundary_edges,
+                validity.non_manifold_edges,
+                validity.inconsistent_edges,
+                messages[1]
+            )));
+        };
+        let outcome = if pieces.len() == 1 { "one piece touching itself, imported whole".to_string() } else { format!("{} closed pieces, kept as one solid", pieces.len()) };
+        let split = match separation.edges_split {
+            0 => String::new(),
+            n => format!(", {n} split on one side at a vertex added at their midpoint"),
+        };
+        messages.push(format!(
+            "{} edges where closed pieces touch taken apart ({} vertices copied{split}, no coordinate moved): {outcome}",
+            separation.edges, separation.vertex_copies
+        ));
+        // Faces that shared an edge no longer do, so the solid is searched as it will be saved.
+        let whole = joined(pieces);
+        let (found, checked) = check_solid_crossings(&whole, weld_tolerance);
+        messages.push(format!("kept as one, {checked}"));
+        crossings = found;
+        if crossings.pairs > 0 && repair {
+            // From the faces as they met: taken apart, the union cannot see where pieces join.
+            let (union, done, cut) = resolve_crossings(&mesh, weld_tolerance).map_err(|why| {
+                CommandError::Invalid(format!("the pieces of '{name}' cross each other ({} pairs of triangles) and the crossings could not be resolved: {why}", crossings.pairs))
+            })?;
+            let line = describe_union(&format!("{} crossings between its pieces resolved", done.pairs), &done, &cut);
+            let repair = match attributes.get("repair") {
+                Some(AttrValue::Text(before)) => format!("{before}; {line}"),
+                _ => line.clone(),
+            };
+            attributes.insert("repair".into(), AttrValue::Text(repair));
+            attributes.insert("repair_volume_change_m3".into(), AttrValue::Number(done.volume_after - done.volume_before));
+            messages.push(format!("closing: {line}"));
+            let (found, checked) = check_solid_crossings(&union, weld_tolerance);
+            messages.push(checked);
+            crossings = found;
+            union
+        } else {
+            whole
+        }
+    };
+    refuse_crossings("solid", name, &crossings)?;
+    let solid = Solid::new(mesh).map_err(CommandError::NotWatertight)?.with_crossings(crossings);
+    messages.push(describe(&solid.validity(), solid.mesh()));
+    Ok(ImportedSolid { solid, attributes, messages, log, taken_apart })
 }
 
 /// What the union did, in one line.

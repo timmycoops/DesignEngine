@@ -225,15 +225,17 @@ impl Project {
     /// Takes the last run off; returns its id.
     pub fn undo(&mut self) -> Option<RunId> {
         let transaction = self.done.pop()?;
+        let mut gone = HashSet::new();
         for (id, entry) in transaction.entries.iter().rev() {
             let history = self.histories.get_mut(id).expect("undone object has a history");
             let popped = history.pop().expect("undone revision is in the history");
             debug_assert_eq!(popped.revision, entry.revision);
             if history.is_empty() {
                 self.histories.remove(id);
-                self.order.retain(|o| o != id);
+                gone.insert(*id);
             }
         }
+        self.order.retain(|o| !gone.contains(o));
         let added: HashSet<LayerId> = transaction.layers.iter().map(|l| l.id).collect();
         self.layers.retain(|l| !added.contains(&l.id));
         let run = transaction.run;

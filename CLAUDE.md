@@ -28,6 +28,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 | Data at rest | Parquet/Arrow using the OMF2 mesh layout (vertices `x, y, z` f64; triangles `a, b, c` u32, counter-clockwise about an outward normal); DXF/CSV/OMF only for exchange. Evaluate the `omf` Rust crate before writing our own |
 | Python | PyO3 bindings in `crates/zd-py` from Phase 1, built with maturin (reconciliation and test scripts run from Python) |
 | Package manager (JS) | pnpm |
+| Zips | `zip` crate, deflate only (`docs/decisions/0019-solids-by-the-thousand.md`) |
 
 ## Engine rules (non-negotiable)
 
@@ -102,6 +103,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 - Import first: Vulcan `.00t` triangulations and grids (the formats sites exchange day to day; see
   `docs/decisions/0006-vulcan-grids.md` and `0011-vulcan-triangulations.md`), DXF (3DFACE, polyface and
   strings), CSV strings and XYZ grids; then Surpac `.str`/`.dtm`, Datamine pt/tr ASCII, OBJ.
+- Solids come by the thousand as a zip or a folder (Spry exports a zip; Deswik imports one): `solid.import_many`
+  takes either in one run. See `docs/decisions/0019-solids-by-the-thousand.md`.
 - Then: OMF v1 and v2, and an export to Seequent Evo schemas (triangle mesh, design geometry).
 - Vulcan formats are read, not written. Deswik `.dcf` has no public spec; exchange with Deswik through DXF
   (R12, confirmed reading at the same coordinates) or OMF.
@@ -122,7 +125,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 crates/zd-core       object types, ids, layers
 crates/zd-geom       projection, offsets, triangulation, booleans
 crates/zd-commands   typed commands, registry, run log
-crates/zd-io         DXF/CSV/OMF import-export, Parquet project store
+crates/zd-io         DXF/CSV/OMF import-export, zips and folders of solids, Parquet project store
 crates/zd-py         PyO3 bindings (Phase 1)
 app/src-tauri        Tauri shell, command bridge, binary transfer
 app/src              React: viewport/, panels/, forms/, design-system/

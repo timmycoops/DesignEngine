@@ -207,6 +207,7 @@ export interface StagedMesh {
 
 /** Encodes a drawn object's geometry for fetching. */
 export const stageObject = (id: string) => invoke<StagedMesh>('stage_object', { id });
+export const stageLayerSolids = (layer: string) => invoke<StagedMesh>('stage_layer_solids', { layer });
 
 export const prepareSynthetic = (cells: number, kind: 'triangulation' | 'grid') =>
   invoke<StagedMesh>('prepare_synthetic', { cells, kind });
@@ -234,7 +235,6 @@ export interface ObjectSummary {
   drawn: boolean;
   /** Changes only when the geometry does. */
   geometry_key: string;
-  bounds_local: [Vec3, Vec3] | null;
   /** String vertices, offset from the scene origin. */
   vertices_local: Vec3[] | null;
   closed: boolean | null;
@@ -247,6 +247,15 @@ export interface ProjectSummary {
   origin: Vec3 | null;
   layers: Layer[];
   objects: ObjectSummary[];
+  /** The layers holding solids, each drawn as one mesh. */
+  solid_layers: SolidLayer[];
+}
+
+/** A layer's solids as the viewport draws them. */
+export interface SolidLayer {
+  layer: string;
+  /** Changes only when the geometry of a solid on the layer does. */
+  key: string;
 }
 
 export interface RunRecord {
@@ -443,7 +452,8 @@ export interface SnapHit {
   local: Vec3;
   /** Mine grid coordinates, for commands. */
   world: Vec3;
-  object: string;
+  /** The surface or grid hit; null for a solid, which is searched with the rest of its layer. */
+  object: string | null;
   /**
    * What was snapped to: a string's vertex, segment or crossing, a surface (the default), or the level
    * working plane when nothing is under the cursor.
@@ -457,6 +467,8 @@ export const snapRay = (origin: Vec3, direction: Vec3) => invoke<SnapHit | null>
 
 export interface BenchConfig {
   surfaces: string[];
+  /** A zip or folder of solids: time this import and nothing else. */
+  solids: string | null;
   results_path: string;
   scale_targets: number[];
   transfer_cells: number[];

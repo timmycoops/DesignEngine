@@ -1,13 +1,15 @@
 //! Import and export for the Zovlyn Pit Design Engine.
 //!
-//! Reads triangulations and strings from DXF, Vulcan triangulations, strings from CSV, regular grids
-//! from XYZ/CSV text and Vulcan grids, and writes DXF R12 and CSV strings. Saves and opens projects
+//! Reads triangulations and strings from DXF, Vulcan triangulations (one by one, or by the thousand
+//! from folders and zips), strings from CSV, regular grids from XYZ/CSV text and Vulcan grids, and
+//! writes DXF R12 and CSV strings. Saves and opens projects
 //! as `<name>.zdproj/` folders of Parquet files. Coordinates stay f64 from file to engine and back
 //! out. Every clean-up or conversion done on the way in (welding, dropped faces, arcs to chords,
 //! nulls) is counted in the import log; nothing is fixed silently.
 
 mod dxf;
 mod error;
+mod mesh_files;
 mod seam;
 mod store;
 mod string_csv;
@@ -20,6 +22,7 @@ use std::path::Path;
 
 pub use dxf::{ARC_SAGITTA, DxfDrawing, DxfEntity, DxfLog, DxfString, format_dxf, parse_dxf, read_dxf, write_dxf, write_dxf_3dfaces};
 pub use error::IoError;
+pub use mesh_files::{MeshFile, MeshSelection, find_mesh_files};
 pub use seam::{
     DefinedHorizon, LinkedGrid, SeamDefinition, StackGrids, fingerprint_file, format_seam_definition, parse_seam_definition,
     read_linked_grid, read_seam_definition, read_stack_grids, write_seam_definition,

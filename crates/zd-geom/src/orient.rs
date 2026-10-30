@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use zd_core::TriMesh;
 
-use crate::GeomError;
+use crate::{GeomError, worker_threads};
 
 /// Makes winding consistent across each connected patch by flood fill, then turns each patch so
 /// its area-weighted normal points up. Returns the oriented surface and the number of triangles
@@ -513,7 +513,7 @@ fn adjacency(mesh: &TriMesh) -> Adjacency {
         }
     }
 
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, tris.len().max(1));
+    let threads = worker_threads(tris.len());
     let chunk = tris.len().div_ceil(threads).max(1);
     let (start, incident) = (&start, &incident);
     let parts: Vec<Adjacency> = std::thread::scope(|scope| {

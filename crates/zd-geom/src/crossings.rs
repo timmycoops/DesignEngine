@@ -25,6 +25,8 @@ use parry3d_f64::math::Vector;
 use parry3d_f64::partitioning::{Bvh, BvhBuildStrategy};
 use zd_core::{CrossingCheck, Crossings, TriMesh};
 
+use crate::worker_threads;
+
 type P = [f64; 3];
 
 /// Faces and points closer than this (m) coincide: rounding, in mine grid coordinates worked about
@@ -74,7 +76,7 @@ fn search(mesh: &TriMesh, tolerance: f64, tile_count: Option<usize>, rules: Rule
             Aabb::new(Vector::new(lo[0], lo[1], lo[2]), Vector::new(hi[0], hi[1], hi[2]))
         })
         .collect();
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, triangles.len().max(1));
+    let threads = worker_threads(triangles.len());
     let tiles = Tiles::build(&boxes, tile_count.unwrap_or(if triangles.len() < SMALL { 1 } else { threads }));
     let chunk = triangles.len().div_ceil(threads);
     // Each core takes a run of triangles in order and keeps its counts and first sites, of
