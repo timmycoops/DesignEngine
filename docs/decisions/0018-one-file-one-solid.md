@@ -20,8 +20,9 @@ a detail of the geometry nobody sees.
    pieces lying on each other show only then. As read, such a file is refused. With repair, the union
    works from the faces as they met, before they were taken apart, and the change in volume is recorded;
    if it cannot resolve them, the file is refused and says why.
-4. **Nothing comes off by size here.** Import stays exact, so it compares. A small-piece limit is a
-   separate decision; the figures for one are below.
+4. **Nothing comes off by size.** Import stays exact, so it compares. Tim's way with small solids is by
+   hand: filter on volume after an import or a cut, and delete what is too small (2026-10-31). No limit
+   runs on its own, at import or at a cut.
 
 A cut already keeps one part to a side, whatever pieces it holds, so import and cut now follow one rule.
 
@@ -41,7 +42,7 @@ A cut already keeps one part to a side, whatever pieces it holds, so import and 
   solid), every part checked, no whole-surface retries. **One solid is left uncut and named** (two
   before); the 0.695 m³ solid now cuts. Each solid and its parts agree to 0.27 m³ at most (3.2e-5 of
   8,407 m³).
-- For a small-piece limit, taking off every piece under the limit but the largest in each solid:
+- What an automatic limit would have done, taking off every piece under it but the largest in each solid:
 
   | Limit | Pieces off | Solids changed | Volume off | Most off one solid |
   |---|---|---|---|---|
@@ -51,4 +52,5 @@ A cut already keeps one part to a side, whatever pieces it holds, so import and 
   | 10 m³ | 5,911 | 3,616 | 5,432 m³ | 29.3 m³ |
 
   The pit is 206 M m³, so 5 m³ takes off 1.5e-5 of it. It would not make the pieces go away: 961 solids
-  hold two or more pieces of 5 m³ or more, 11 at most. 1,933 solids are under 5 m³ in all (3,964 m³).
+  hold two or more pieces of 5 m³ or more, 11 at most. A filter by hand sees whole solids: 1,933 are under
+  5 m³ in all (3,964 m³). Small pieces inside a larger solid stay in it, so it still matches its file.
