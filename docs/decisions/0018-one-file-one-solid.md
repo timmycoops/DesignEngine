@@ -1,6 +1,6 @@
 # 0018 — One file, one solid
 
-Date: 2026-10-31 · Status: proposed (raised by Tim, 2026-10-31)
+Date: 2026-10-31 · Status: accepted (Tim, 2026-10-31)
 
 ## Why
 
