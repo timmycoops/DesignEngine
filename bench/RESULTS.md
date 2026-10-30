@@ -77,6 +77,10 @@ Nothing that imported before is refused; 38 solids repaired before come out diff
 sheet is now taken off rather than its loose edge filled as a hole: 26 keep their volume, and 12 lose
 24.3 m³ in all (the largest 9.7 m³ of 12.1), the volume that fill enclosed outside the solid.
 
+The general cut (decision 0016) on the same solids: all 44,175 cut by the mined-out topography (3.28 M
+triangles) into **51,783 parts in 187 s**, 4.2 ms a solid, every part checked by the solid rules. Each
+solid and its parts agree to 0.15 m³ at most (1.4e-5 of 10,996 m³). One solid is left uncut and named.
+
 ## Summary
 
 | Check | Target (0001-stack) | Result | Verdict |

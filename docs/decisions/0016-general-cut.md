@@ -42,4 +42,11 @@ Stacking a solid by the seam model and blocking (Phase 4) build on this cut.
   every part checked, the inputs unchanged.
 - Refused: no solid; no cutter, or both a surface and a level; a solid given twice; part names with
   several solids; an unknown `keep`.
-- The golden pit: see below.
+- The golden pit: all 44,175 relimiting solids (the 42,223 files, imported with repair) cut by the
+  mined-out topography (3.28 M triangles), keeping both sides, in nine runs of up to 5,000 solids:
+  **51,783 parts in 187 s** (4.2 ms a solid, the booleans about 23 s of it), every part checked by
+  the solid rules and none crossing itself. Each solid and its parts agree to 0.15 m³ at most (1.4e-5
+  of that solid's 10,996 m³; most to 1e-12). 25 solids were cut again with the whole topography after
+  a part of the cropped cut failed its check; one was left uncut, its part above crossing itself either
+  way, and named. Using the whole topography for every cut took 343 ms a solid, about four hours for
+  the pit.

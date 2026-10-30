@@ -515,7 +515,9 @@ impl Command for CutBySurface {
 
         let few = solids.len() <= LINES_PER_SOLID_UP_TO;
         let mut outcome = Outcome { messages: checks, ..Outcome::default() };
-        let (mut kept, mut volume_kept, mut wholly, mut worst, mut thin) = ([0usize; 2], [0.0f64; 2], [0usize; 2], 0.0f64, 0usize);
+        let (mut kept, mut volume_kept, mut wholly, mut thin) = ([0usize; 2], [0.0f64; 2], [0usize; 2], 0usize);
+        // The largest difference between a solid and its parts, with the solid and its volume.
+        let mut worst: (f64, &str, f64) = (0.0, "", 0.0);
         let (mut uncovered, mut uncut, mut recut) = (Vec::new(), Vec::new(), 0usize);
         for ((object, solid), cut) in solids.iter().zip(cuts) {
             let mut cut = cut.map_err(|e| CommandError::Geometry(format!("'{}': {e}", object.name)))?;
@@ -549,7 +551,10 @@ impl Command for CutBySurface {
                     ))
                     .message(format!("{whose}volumes: input {:.3} m3, below {:.3} m3, above {:.3} m3", cut.input_volume, cut.below_volume, cut.above_volume));
             }
-            worst = worst.max((cut.below_volume + cut.above_volume - cut.input_volume).abs());
+            let difference = (cut.below_volume + cut.above_volume - cut.input_volume).abs();
+            if difference > worst.0 {
+                worst = (difference, object.name.as_str(), cut.input_volume);
+            }
             if !cut.design_covers_solid {
                 uncovered.push(object.name.clone());
             }
@@ -601,7 +606,13 @@ impl Command for CutBySurface {
                 wholly[1]
             ));
         }
-        outcome = outcome.message(format!("volume kept by every cut: below + above within {worst:.6} m3 of the solid"));
+        outcome = outcome.message(match worst {
+            (0.0, _, _) => "volume kept by every cut: below + above equal to the solid".to_string(),
+            (difference, name, volume) => format!(
+                "volume kept by every cut: below + above within {difference:.6} m3 of the solid, the most for '{name}' ({:.1e} of its {volume:.3} m3)",
+                difference / volume.abs().max(f64::MIN_POSITIVE)
+            ),
+        });
         if kept[0] + kept[1] > 0 {
             let thin = if thin > 0 { format!(" ({thin} thin pairs, kept)") } else { String::new() };
             outcome = outcome.message(format!("{} parts checked by the solid rules before saving: none crosses itself{thin}", kept[0] + kept[1]));
