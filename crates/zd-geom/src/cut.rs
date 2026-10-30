@@ -1,7 +1,8 @@
+use std::collections::HashMap;
 use std::time::Instant;
 
 use manifold_csg::Manifold;
-use zd_core::{MeshValidity, TriMesh};
+use zd_core::{Aabb, MeshValidity, TriMesh};
 
 use crate::{CapMethod, GeomError, Side, close_surface_to_halfspace};
 
@@ -44,8 +45,21 @@ impl CutTimings {
 /// the parts inside (below) and outside (above) that half-space.
 ///
 /// Both meshes are moved to a local origin near the solid for the boolean and moved back after,
-/// so Manifold's tolerances are not spent on mine-grid offsets.
+/// so Manifold's tolerances are not spent on mine-grid offsets. Only the design near the solid is
+/// used; [`cut_solid_by_whole_surface`] uses all of it.
 pub fn cut_solid_by_surface(solid: &TriMesh, design: &TriMesh) -> Result<CutResult, GeomError> {
+    cut(solid, design, true)
+}
+
+/// As [`cut_solid_by_surface`], with the whole design in the half-space. Manifold's tolerance
+/// scales with the size of what it is given, so the two can differ below a millimetre where the
+/// solid's faces lie on the design (a relimited solid cut by its own topography); a caller can try
+/// this one when a part of the other fails its check.
+pub fn cut_solid_by_whole_surface(solid: &TriMesh, design: &TriMesh) -> Result<CutResult, GeomError> {
+    cut(solid, design, false)
+}
+
+fn cut(solid: &TriMesh, design: &TriMesh, crop: bool) -> Result<CutResult, GeomError> {
     let validity = solid.validity();
     if !validity.is_watertight() {
         return Err(GeomError::NotWatertight { what: "solid", validity });
@@ -59,6 +73,14 @@ pub fn cut_solid_by_surface(solid: &TriMesh, design: &TriMesh) -> Result<CutResu
     let height = solid_bounds.size()[2].max(design_bounds.size()[2]);
     let margin = 1.0 + 0.01 * height;
     let cap_z = solid_bounds.min[2].min(design_bounds.min[2]) - margin;
+
+    // Only the design over the solid matters: the triangles whose plan extent comes within `reach`
+    // of the solid's. The cropped design's edge lies beyond that reach, so the closed half-space is
+    // the same over the solid, and a topography of millions of triangles costs what its few hundred
+    // over the solid cost. A design with nothing near the solid is used whole (all of it is above).
+    let reach = margin + 0.01 * solid_bounds.size()[0].hypot(solid_bounds.size()[1]);
+    let near = if crop { design_near(design, &solid_bounds, reach) } else { TriMesh::default() };
+    let design = if near.triangles.is_empty() { design } else { &near };
 
     let mut timings = CutTimings::default();
     let t = Instant::now();
@@ -118,6 +140,28 @@ fn from_manifold(m: &Manifold, offset: [f64; 3]) -> TriMesh {
     TriMesh::new(vertices, triangles)
 }
 
+/// The design's triangles that reach within `reach` of the solid's plan extent, with their vertices.
+fn design_near(design: &TriMesh, solid: &Aabb, reach: f64) -> TriMesh {
+    let lo = [solid.min[0] - reach, solid.min[1] - reach];
+    let hi = [solid.max[0] + reach, solid.max[1] + reach];
+    let mut renumber: HashMap<u32, u32> = HashMap::new();
+    let mut vertices = Vec::new();
+    let mut triangles = Vec::new();
+    for t in &design.triangles {
+        let corners = t.map(|i| design.vertices[i as usize]);
+        if (0..2).any(|k| corners.iter().all(|p| p[k] < lo[k]) || corners.iter().all(|p| p[k] > hi[k])) {
+            continue;
+        }
+        triangles.push(t.map(|i| {
+            *renumber.entry(i).or_insert_with(|| {
+                vertices.push(design.vertices[i as usize]);
+                vertices.len() as u32 - 1
+            })
+        }));
+    }
+    TriMesh::new(vertices, triangles)
+}
+
 fn ms(start: Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1e3
 }
@@ -174,6 +218,25 @@ mod tests {
         let cut = cut_solid_by_surface(&box_seam(), &design(|_, _| 150.0)).unwrap();
         assert_close(cut.below_volume, 1000.0, "below");
         assert!(cut.above.triangles.is_empty());
+    }
+
+    #[test]
+    fn a_large_design_is_cropped_to_the_solid_and_cuts_the_same() {
+        // A 400 m square design at 1 m spacing (320,000 triangles) round the 10 m box: only the
+        // triangles near the box go into the half-space, and the volumes are those of a design
+        // covering the box alone.
+        let large = triangulate_grid(&Grid::from_fn([E - 195.0, N - 195.0], [1.0, 1.0], 401, 401, |x, _| 102.0 + 0.6 * (x - E)));
+        let cut = cut_solid_by_surface(&box_seam(), &large).unwrap();
+        assert!(cut.design_covers_solid);
+        assert!(cut.halfspace_triangles < 2_000, "{} triangles in the half-space", cut.halfspace_triangles);
+        assert_close(cut.below_volume, 500.0, "below");
+        assert_close(cut.above_volume, 500.0, "above");
+
+        // A design wholly off to one side is used whole: nothing near the box, all of it above.
+        let aside = triangulate_grid(&Grid::from_fn([E + 100.0, N], [1.0, 1.0], 11, 11, |_, _| 104.0));
+        let cut = cut_solid_by_surface(&box_seam(), &aside).unwrap();
+        assert!(!cut.design_covers_solid && cut.below.triangles.is_empty());
+        assert_close(cut.above_volume, 1000.0, "above");
     }
 
     #[test]

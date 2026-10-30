@@ -1,12 +1,17 @@
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, CrossingCheck, Crossings, ObjectId, ObjectKind, Solid, TriMesh};
-use zd_geom::{COINCIDENT, CloseLog, Separation, UnionLog, close_solid, cut_solid_by_surface, find_solid_crossings, repair_mesh, self_union, separate_touching_edges, split_patches};
+use zd_geom::{
+    COINCIDENT, CloseLog, CutResult, Separation, UnionLog, close_solid, cut_solid_by_surface, cut_solid_by_whole_surface, find_solid_crossings, repair_mesh, self_union,
+    separate_touching_edges, split_patches, triangulate_grid,
+};
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use zd_io::{SurfaceImport, read_surface};
 
 use super::exchange::describe_dxf_faces;
+use super::in_parallel;
 use super::surface::{MeshParams, check_crossings, check_solid_crossings, default_tolerance, describe, describe_repair, describe_vulcan, mesh_params, mm, repaired, site};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
@@ -388,25 +393,58 @@ fn checked_input(what: &str, name: &str, saved: Option<&Crossings>, mesh: &TriMe
     refuse_crossings(what, name, &found)
 }
 
-/// `solid.cut_by_surface`: the parts of a solid below and above a design surface, as new solids
-/// (engine rule 5). The input solid is left as it is. Either input crossing itself is refused, and
-/// one never checked is checked first (decision 0010).
+/// `solid.cut_by_surface`: cuts one solid or many by a surface, a grid or a level, keeping the parts
+/// below, above or both as new solids (engine rule 5; decision 0016). The inputs are left as they
+/// are. Each part keeps its solid's attributes, with the side it lies on and what cut it. A surface
+/// or solid crossing itself is refused, and one never checked is checked first (decision 0010); a
+/// part that would cross itself leaves its solid uncut, said so, so a batch is not lost to one solid.
 pub struct CutBySurface;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CutBySurfaceParams {
-    pub solid: ObjectId,
-    pub surface: ObjectId,
-    /// Layer for both new solids.
+    /// One solid to cut, or give `solids`.
+    #[serde(default)]
+    pub solid: Option<ObjectId>,
+    /// Solids to cut, each on its own.
+    #[serde(default)]
+    pub solids: Vec<ObjectId>,
+    /// The cutting surface or grid; or give `rl`.
+    #[serde(default)]
+    pub surface: Option<ObjectId>,
+    /// A level to cut at (m); or give `surface`.
+    #[serde(default)]
+    pub rl: Option<f64>,
+    #[serde(default)]
+    pub keep: KeepParam,
+    /// Layer for the new solids.
     pub layer: String,
-    /// Default: "<solid> below <surface>".
+    /// For one solid: default "<solid> below <surface>".
     #[serde(default)]
     pub below_name: Option<String>,
-    /// Default: "<solid> above <surface>".
+    /// For one solid: default "<solid> above <surface>".
     #[serde(default)]
     pub above_name: Option<String>,
 }
+
+/// Which parts a cut keeps.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeepParam {
+    Below,
+    Above,
+    #[default]
+    Both,
+}
+
+impl KeepParam {
+    fn keeps(self, side: &str) -> bool {
+        matches!((self, side), (KeepParam::Both, _) | (KeepParam::Below, "below") | (KeepParam::Above, "above"))
+    }
+}
+
+/// More solids than this and the run record sums the cut up instead of a line per solid.
+const LINES_PER_SOLID_UP_TO: usize = 10;
 
 impl Command for CutBySurface {
     type Params = CutBySurfaceParams;
@@ -415,69 +453,205 @@ impl Command for CutBySurface {
     fn spec(&self) -> CommandSpec {
         CommandSpec {
             name: Self::NAME,
-            summary: "Cut a solid by a surface into the parts below and above it",
+            summary: "Cut solids by a surface, a grid or a level, keeping the parts below, above or both",
             inputs: vec![
-                Field::object("solid", ObjectKind::Solid, "The solid to cut"),
-                Field::object("surface", ObjectKind::Surface, "The cutting surface"),
+                Field::object("solid", ObjectKind::Solid, "The solid to cut (or give solids)"),
+                Field::new("solids", FieldType::Objects, "Solids to cut, each on its own"),
+                Field::new("surface", FieldType::Objects, "The cutting surface or grid (or give rl)"),
             ],
             params: vec![
+                Field::new("rl", FieldType::Number { unit: "m" }, "A level to cut at, instead of a surface"),
+                Field::new("keep", FieldType::Text, "below, above or both (the default)"),
                 Field::new("layer", FieldType::Layer, "Layer for the new solids"),
-                Field::new("below_name", FieldType::Text, "Optional name for the part below"),
-                Field::new("above_name", FieldType::Text, "Optional name for the part above"),
+                Field::new("below_name", FieldType::Text, "For one solid: optional name for the part below"),
+                Field::new("above_name", FieldType::Text, "For one solid: optional name for the part above"),
             ],
-            outputs: vec![
-                Field::object("below", ObjectKind::Solid, "The part below the surface (left out if empty)"),
-                Field::object("above", ObjectKind::Solid, "The part above the surface (left out if empty)"),
-            ],
+            outputs: vec![Field::new("parts", FieldType::Objects, "The parts kept, below then above for each solid; a side with nothing on it is left out")],
         }
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let (solid_object, solid) = inputs.solid(p.solid)?;
-        let (surface_object, surface) = inputs.surface(p.surface)?;
-        let mut checks = Vec::new();
-        checked_input("solid", &solid_object.name, solid.crossings(), solid.mesh(), true, &mut checks)?;
-        checked_input("surface", &surface_object.name, surface.crossings(), surface.mesh(), false, &mut checks)?;
-        let cut = cut_solid_by_surface(solid.mesh(), surface.mesh()).map_err(|e| CommandError::Geometry(e.to_string()))?;
-
-        let t = cut.timings;
-        let mut outcome = Outcome { messages: checks, ..Outcome::default() }
-            .message(format!(
-                "{} + {} triangles in, {} below + {} above out, {:.0} ms (close {:.0}, to Manifold {:.0}, boolean {:.0}, from Manifold {:.0}); cap {:?}",
-                solid.mesh().triangle_count(),
-                surface.mesh().triangle_count(),
-                cut.below.triangle_count(),
-                cut.above.triangle_count(),
-                t.total_ms(),
-                t.close_ms,
-                t.to_manifold_ms,
-                t.boolean_ms,
-                t.from_manifold_ms,
-                cut.cap_method
-            ))
-            .message(format!(
-                "volumes: input {:.3} m3, below {:.3} m3, above {:.3} m3",
-                cut.input_volume, cut.below_volume, cut.above_volume
-            ));
-        if !cut.design_covers_solid {
-            outcome = outcome.message("warning: the surface does not cover the solid in plan; the uncovered part is counted as above");
+        let ids: Vec<ObjectId> = p.solid.into_iter().chain(p.solids.iter().copied()).collect();
+        if ids.is_empty() {
+            return Err(CommandError::Invalid("give the solid (or solids) to cut".into()));
         }
-
-        let parts = [
-            (cut.below, p.below_name.clone(), "below"),
-            (cut.above, p.above_name.clone(), "above"),
-        ];
-        for (mesh, name, side) in parts {
-            if mesh.triangles.is_empty() {
-                outcome = outcome.message(format!("nothing of the solid lies {side} the surface"));
-                continue;
+        if let Some(twice) = ids.iter().enumerate().find_map(|(i, id)| ids[..i].contains(id).then_some(id)) {
+            return Err(CommandError::Invalid(format!("solid {twice} is given twice")));
+        }
+        if ids.len() > 1 && (p.below_name.is_some() || p.above_name.is_some()) {
+            return Err(CommandError::Invalid("below_name and above_name name one solid's parts; with several, each part is named after its solid".into()));
+        }
+        let solids = ids.iter().map(|&id| inputs.solid(id)).collect::<Result<Vec<_>, _>>()?;
+        let mut checks = Vec::new();
+        for (object, solid) in &solids {
+            checked_input("solid", &object.name, solid.crossings(), solid.mesh(), true, &mut checks)?;
+        }
+        // The cutter: a surface or a grid's triangulation (engine rule 6), the same for every solid,
+        // or a level, made as a flat surface over each solid.
+        let (by, design): (String, Option<Cow<'_, TriMesh>>) = match (p.surface, p.rl) {
+            (Some(id), None) => {
+                let object = inputs.object(id)?;
+                match &object.body {
+                    Body::Surface(surface) => {
+                        checked_input("surface", &object.name, surface.crossings(), surface.mesh(), false, &mut checks)?;
+                        (object.name.clone(), Some(Cow::Borrowed(surface.mesh())))
+                    }
+                    Body::Grid(grid) => (object.name.clone(), Some(Cow::Owned(triangulate_grid(grid)))),
+                    other => return Err(CommandError::WrongKind { id, expected: ObjectKind::Surface, found: other.kind() }),
+                }
             }
-            let part = Solid::new(mesh).map_err(CommandError::NotWatertight)?;
-            let name = name.unwrap_or_else(|| format!("{} {side} {}", solid_object.name, surface_object.name));
-            outcome.changes.push(Change::Create { name, layer: p.layer.clone(), attributes: Attributes::new(), body: Body::Solid(part) });
+            (None, Some(rl)) if rl.is_finite() => (format!("RL {rl:.3}"), None),
+            (None, Some(rl)) => return Err(CommandError::Invalid(format!("RL {rl} is not a number"))),
+            _ => return Err(CommandError::Invalid("give a surface (or grid) to cut by, or an rl, not both".into())),
+        };
+
+        let start = std::time::Instant::now();
+        let cuts = in_parallel(&solids, |(_, solid)| match (&design, p.rl) {
+            (Some(design), _) => cut_solid_by_surface(solid.mesh(), design),
+            (None, Some(rl)) => cut_solid_by_surface(solid.mesh(), &level_over(solid.mesh(), rl)),
+            (None, None) => unreachable!("a cut has a surface or a level"),
+        });
+        let cut_ms = start.elapsed().as_secs_f64() * 1e3;
+
+        let few = solids.len() <= LINES_PER_SOLID_UP_TO;
+        let mut outcome = Outcome { messages: checks, ..Outcome::default() };
+        let (mut kept, mut volume_kept, mut wholly, mut worst, mut thin) = ([0usize; 2], [0.0f64; 2], [0usize; 2], 0.0f64, 0usize);
+        let (mut uncovered, mut uncut, mut recut) = (Vec::new(), Vec::new(), 0usize);
+        for ((object, solid), cut) in solids.iter().zip(cuts) {
+            let mut cut = cut.map_err(|e| CommandError::Geometry(format!("'{}': {e}", object.name)))?;
+            let mut checked = checked_parts(&cut, p.keep);
+            // Manifold's tolerance scales with what it is given: where a part of the cut made with
+            // the surface near the solid fails its check, the cut is made again with all of it.
+            if let (Err(_), Some(design)) = (&checked, &design) {
+                let whole = cut_solid_by_whole_surface(solid.mesh(), design).map_err(|e| CommandError::Geometry(format!("'{}': {e}", object.name)))?;
+                let again = checked_parts(&whole, p.keep);
+                if again.is_ok() {
+                    recut += 1;
+                    (cut, checked) = (whole, again);
+                }
+            }
+            let whose = if solids.len() > 1 { format!("'{}': ", object.name) } else { String::new() };
+            if few {
+                let t = cut.timings;
+                outcome = outcome
+                    .message(format!(
+                        "{whose}{} + {} triangles in, {} below + {} above out, {:.0} ms (close {:.0}, to Manifold {:.0}, boolean {:.0}, from Manifold {:.0}); cap {:?}",
+                        solid.mesh().triangle_count(),
+                        design.as_ref().map_or(2, |d| d.triangle_count()),
+                        cut.below.triangle_count(),
+                        cut.above.triangle_count(),
+                        t.total_ms(),
+                        t.close_ms,
+                        t.to_manifold_ms,
+                        t.boolean_ms,
+                        t.from_manifold_ms,
+                        cut.cap_method
+                    ))
+                    .message(format!("{whose}volumes: input {:.3} m3, below {:.3} m3, above {:.3} m3", cut.input_volume, cut.below_volume, cut.above_volume));
+            }
+            worst = worst.max((cut.below_volume + cut.above_volume - cut.input_volume).abs());
+            if !cut.design_covers_solid {
+                uncovered.push(object.name.clone());
+            }
+            for (k, side) in [(0, "below"), (1, "above")] {
+                if [&cut.below, &cut.above][k].triangles.is_empty() {
+                    wholly[1 - k] += 1;
+                    if few && p.keep.keeps(side) {
+                        outcome = outcome.message(format!("{whose}nothing of the solid lies {side} {by}"));
+                    }
+                }
+            }
+            // Parts kept, each checked by the solid rules; one that would cross itself leaves the
+            // solid uncut.
+            let found = match checked {
+                Ok(found) => found,
+                Err(why) => {
+                    uncut.push(format!("'{}' ({why})", object.name));
+                    continue;
+                }
+            };
+            for (k, ((mesh, side), crossings)) in [(cut.below, "below"), (cut.above, "above")].into_iter().zip(found).enumerate() {
+                let Some(crossings) = crossings else { continue };
+                thin += crossings.thin;
+                let part = Solid::new(mesh).map_err(CommandError::NotWatertight)?.with_crossings(crossings);
+                let given = if side == "below" { &p.below_name } else { &p.above_name };
+                let name = given.clone().unwrap_or_else(|| format!("{} {side} {by}", object.name));
+                let mut attributes = object.attributes.clone();
+                attributes.insert("cut_side".into(), AttrValue::Text(side.into()));
+                attributes.insert("cut_by".into(), AttrValue::Text(by.clone()));
+                kept[k] += 1;
+                volume_kept[k] += part.volume();
+                outcome.changes.push(Change::Create { name, layer: p.layer.clone(), attributes, body: Body::Solid(part) });
+            }
+        }
+        if !few {
+            let keep = match p.keep {
+                KeepParam::Both => "both sides",
+                KeepParam::Below => "below",
+                KeepParam::Above => "above",
+            };
+            outcome = outcome.message(format!(
+                "{} solids cut by {by} in {cut_ms:.0} ms, keeping {keep}: {} parts below ({:.3} m3) and {} above ({:.3} m3) kept; {} solids wholly below and {} wholly above",
+                solids.len(),
+                kept[0],
+                volume_kept[0],
+                kept[1],
+                volume_kept[1],
+                wholly[0],
+                wholly[1]
+            ));
+        }
+        outcome = outcome.message(format!("volume kept by every cut: below + above within {worst:.6} m3 of the solid"));
+        if kept[0] + kept[1] > 0 {
+            let thin = if thin > 0 { format!(" ({thin} thin pairs, kept)") } else { String::new() };
+            outcome = outcome.message(format!("{} parts checked by the solid rules before saving: none crosses itself{thin}", kept[0] + kept[1]));
+        }
+        if !uncovered.is_empty() {
+            outcome = outcome.message(format!(
+                "warning: {by} does not cover {} solids in plan, the first '{}'; the uncovered part is counted as above",
+                uncovered.len(),
+                uncovered[0]
+            ));
+        }
+        if recut > 0 {
+            outcome = outcome.message(format!("{recut} solids cut again with the whole of {by}: a part of the cut made with the surface near them failed its check"));
+        }
+        if !uncut.is_empty() {
+            outcome = outcome.message(format!("{} solids left uncut, nothing saved for them: {}", uncut.len(), uncut.iter().take(5).cloned().collect::<Vec<_>>().join("; ")));
         }
         Ok(outcome)
     }
+}
+
+/// The crossing check of each part a cut keeps (`None` for a side not kept or empty), or why a part
+/// cannot be saved.
+fn checked_parts(cut: &CutResult, keep: KeepParam) -> Result<[Option<Crossings>; 2], String> {
+    let mut found = [None, None];
+    for (k, (mesh, side)) in [(&cut.below, "below"), (&cut.above, "above")].into_iter().enumerate() {
+        if mesh.triangles.is_empty() || !keep.keeps(side) {
+            continue;
+        }
+        let crossings = find_solid_crossings(mesh, default_tolerance());
+        if let Some(first) = crossings.at.first() {
+            return Err(format!("its part {side} would cross itself, {} pairs, the first at {}", crossings.pairs, site(first)));
+        }
+        found[k] = Some(crossings);
+    }
+    Ok(found)
+}
+
+/// A flat surface at `rl` over the solid's plan extent and a margin, wound to face up.
+fn level_over(solid: &TriMesh, rl: f64) -> TriMesh {
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for p in &solid.vertices {
+        for k in 0..2 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    let margin = 1.0f64.max(0.01 * (hi[0] - lo[0]).hypot(hi[1] - lo[1]));
+    let (x0, y0, x1, y1) = (lo[0] - margin, lo[1] - margin, hi[0] + margin, hi[1] + margin);
+    TriMesh::new(vec![[x0, y0, rl], [x1, y0, rl], [x1, y1, rl], [x0, y1, rl]], vec![[0, 1, 2], [0, 2, 3]])
 }
 
 #[cfg(test)]
