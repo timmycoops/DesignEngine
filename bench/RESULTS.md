@@ -69,6 +69,14 @@ with thin pairs reported (knife edges under 1 mm, which the first check took for
 more faces, 16 with holes over 10 % of the surface, and 7 that cross themselves (4 of them on a
 surface that is not closed, 2 still crossing after the cut, 1 partly inside out).
 
+With hanging and loose sheets taken off and one piece touching itself split on one side (decision
+0015), **41,891 import as read** and 326 with repair; **6 are refused** (the 332,000 m³ waste solid
+over a sub-millimetre fold, three small coal solids with interior walls, two files that are only a
+sheet). Of the 109, 103 import (121,535 m³), every one with no volume change. The pass takes 168 s.
+Nothing that imported before is refused; 38 solids repaired before come out differently, because a
+sheet is now taken off rather than its loose edge filled as a hole: 26 keep their volume, and 12 lose
+24.3 m³ in all (the largest 9.7 m³ of 12.1), the volume that fill enclosed outside the solid.
+
 ## Summary
 
 | Check | Target (0001-stack) | Result | Verdict |

@@ -174,7 +174,7 @@ impl Command for ImportSolid {
                     (crossings, checked) = check_solid_crossings(&closed, p.weld_tolerance);
                 }
             }
-            if close.fin_triangles + close.cracks_joined + close.filled.len() > 0 || attributes.contains_key("repair_volume_change_m3") {
+            if close.sheets.len() + close.fin_triangles + close.cracks_joined + close.filled.len() > 0 || attributes.contains_key("repair_volume_change_m3") {
                 attributes.insert("repair".into(), AttrValue::Text(summary.clone()));
                 if !close.filled.is_empty() {
                     attributes.insert("repair_filled_m2".into(), AttrValue::Number(close.filled_area()));
@@ -207,8 +207,12 @@ impl Command for ImportSolid {
                 )));
             };
             let outcome = if pieces.len() == 1 { "one piece touching itself, imported whole".to_string() } else { format!("{} closed pieces, each a solid of its own", pieces.len()) };
+            let split = match separation.edges_split {
+                0 => String::new(),
+                n => format!(", {n} split on one side at a vertex added at their midpoint"),
+            };
             messages.push(format!(
-                "{} edges where closed pieces touch taken apart ({} vertices copied, no coordinate moved): {outcome}",
+                "{} edges where closed pieces touch taken apart ({} vertices copied{split}, no coordinate moved): {outcome}",
                 separation.edges, separation.vertex_copies
             ));
             pieces
@@ -253,6 +257,14 @@ fn closed_pieces(mesh: &TriMesh) -> Option<(Vec<TriMesh>, Separation)> {
 /// What closing did, in one line.
 fn describe_close(close: &CloseLog) -> String {
     let mut parts = Vec::new();
+    if let Some(&(at, area)) = close.sheets.iter().max_by(|a, b| a.1.total_cmp(&b.1)) {
+        parts.push(format!(
+            "{} hanging sheets taken off ({:.1} m², no volume; the largest {area:.1} m² at {})",
+            close.sheets.len(),
+            close.sheet_area(),
+            site(&at)
+        ));
+    }
     if close.fin_triangles > 0 {
         parts.push(format!("{} fin triangles taken off", close.fin_triangles));
     }
@@ -285,6 +297,47 @@ fn first_open_edge(mesh: &TriMesh) -> Option<[f64; 3]> {
         let (p, q) = (mesh.vertices[a as usize], mesh.vertices[b as usize]);
         [0, 1, 2].map(|i| 0.5 * (p[i] + q[i]))
     })
+}
+
+/// Every solid a run makes, checked by the solid rules before anything is saved (decision 0015).
+/// One already searched by them (an import, a mesh given inline) is taken as it is; any other (a
+/// cut's parts) is searched now and keeps the result. A solid that would cross itself stops the run,
+/// so none is ever saved. Watertightness needs no check here: a `Solid` cannot be made otherwise.
+pub(crate) fn check_solids_made(changes: &mut [Change], messages: &mut Vec<String>) -> Result<(), CommandError> {
+    let start = std::time::Instant::now();
+    let (mut searched, mut thin, mut triangles) = (0, 0, 0);
+    for change in changes.iter_mut() {
+        let (name, body) = match change {
+            Change::Create { name, body, .. } => (Some(name.as_str()), Some(body)),
+            Change::Revise { name, body, .. } => (name.as_deref(), body.as_mut()),
+            _ => continue,
+        };
+        let Some(Body::Solid(solid)) = body else { continue };
+        if solid.crossings().is_some_and(|c| matches!(c.check, CrossingCheck::SolidSearch { .. })) {
+            continue;
+        }
+        let crossings = find_solid_crossings(solid.mesh(), default_tolerance());
+        if let Some(first) = crossings.at.first() {
+            return Err(CommandError::Geometry(format!(
+                "{} would cross itself ({} pairs of triangles, the first at {}): no solid that crosses itself is saved",
+                name.map_or("a revised solid".to_string(), |n| format!("'{n}'")),
+                crossings.pairs,
+                site(first)
+            )));
+        }
+        searched += 1;
+        thin += crossings.thin;
+        triangles += solid.mesh().triangle_count();
+        *solid = solid.clone().with_crossings(crossings);
+    }
+    if searched > 0 {
+        let thin = if thin > 0 { format!(" ({thin} thin pairs, kept)") } else { String::new() };
+        messages.push(format!(
+            "{searched} solids made, checked by the solid rules: none crosses itself{thin} ({triangles} triangles, {:.0} ms)",
+            start.elapsed().as_secs_f64() * 1e3
+        ));
+    }
+    Ok(())
 }
 
 /// The self-union of a closed mesh that crosses itself, cut along every crossing however shallow
@@ -424,5 +477,54 @@ impl Command for CutBySurface {
             outcome.changes.push(Change::Create { name, layer: p.layer.clone(), attributes: Attributes::new(), body: Body::Solid(part) });
         }
         Ok(outcome)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const E: f64 = 650_000.0;
+    const N: f64 = 7_450_000.0;
+
+    /// A 10 m cube from `x` east of the origin, wound outward.
+    fn cube(x: f64) -> TriMesh {
+        let v = (0..8).map(|i| [E + x + (i & 1) as f64 * 10.0, N + (i >> 1 & 1) as f64 * 10.0, 100.0 + (i >> 2) as f64 * 10.0]).collect();
+        let t = vec![[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+        TriMesh::new(v, t)
+    }
+
+    fn made(name: &str, mesh: TriMesh) -> Change {
+        Change::Create { name: name.into(), layer: "made".into(), attributes: Attributes::new(), body: Body::Solid(Solid::new(mesh).unwrap()) }
+    }
+
+    #[test]
+    fn a_solid_that_would_cross_itself_is_never_saved() {
+        // Two cubes overlapping by half: closed and manifold as a mesh, so a Solid holds it, but each
+        // passes through the other.
+        let (a, b) = (cube(0.0), cube(5.0));
+        let mut vertices = a.vertices.clone();
+        vertices.extend(&b.vertices);
+        let triangles = a.triangles.iter().copied().chain(b.triangles.iter().map(|t| t.map(|i| i + 8))).collect();
+        let mut changes = vec![made("clean", cube(30.0)), made("overlap", TriMesh::new(vertices, triangles))];
+        let mut messages = Vec::new();
+        let refused = check_solids_made(&mut changes, &mut messages).unwrap_err().to_string();
+        assert!(refused.contains("'overlap' would cross itself") && refused.contains("no solid that crosses itself is saved"), "{refused}");
+
+        // A clean solid is searched and keeps the check; one searched by the solid rules already is
+        // taken as it is, and anything else is left alone.
+        let searched = Solid::new(cube(60.0)).unwrap().with_crossings(find_solid_crossings(&cube(60.0), 0.001));
+        let mut changes = vec![
+            made("clean", cube(30.0)),
+            Change::Create { name: "imported".into(), layer: "made".into(), attributes: Attributes::new(), body: Body::Solid(searched) },
+            Change::CreateLayer { name: "other".into(), colour: None },
+        ];
+        let mut messages = Vec::new();
+        check_solids_made(&mut changes, &mut messages).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].starts_with("1 solids made, checked by the solid rules: none crosses itself (12 triangles"), "{messages:?}");
+        let Change::Create { body: Body::Solid(clean), .. } = &changes[0] else { panic!() };
+        assert!(matches!(clean.crossings().map(|c| c.check), Some(CrossingCheck::SolidSearch { .. })));
+        assert_eq!(clean.validity().non_self_intersecting, Some(true));
     }
 }

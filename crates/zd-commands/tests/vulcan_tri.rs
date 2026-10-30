@@ -125,8 +125,9 @@ fn closed_pieces_meeting_along_an_edge_import_as_a_solid_each() {
 #[test]
 fn repair_closes_fins_cracks_and_small_holes_and_notes_them_on_the_solid() {
     let dir = scratch("repair");
-    // A 10 m cube with a fin on its bottom front edge, a crack where the front face meets the top
-    // front edge at its midpoint, and one triangle missing from the back face.
+    // A 10 m cube with a fin on its bottom front edge (a hanging sheet of one triangle), a crack
+    // where the front face meets the top front edge at its midpoint, and one triangle missing from
+    // the back face.
     let mut m = block([E, N, 250.0], [10.0, 10.0, 10.0]);
     m.vertices.push([E + 5.0, N - 8.0, 245.0]); // 8: the fin's tip
     m.triangles.push([0, 1, 8]);
@@ -142,10 +143,10 @@ fn repair_closes_fins_cracks_and_small_holes_and_notes_them_on_the_solid() {
     let refused = s.run("solid.import", json!({ "path": dir.join("worn.00t").to_string_lossy(), "layer": "coal" })).unwrap_err();
     assert!(refused.to_string().contains("is not a closed solid"), "without repair it is refused: {refused}");
     let record = s.run("solid.import", json!({ "path": dir.join("worn.00t").to_string_lossy(), "layer": "coal", "repair": true })).unwrap();
-    assert_eq!(record.messages[2], "closing: 1 fin triangles taken off; 1 cracks joined; 1 holes filled (50.0 m², 8.3 % of the surface)");
+    assert_eq!(record.messages[2], "closing: 1 hanging sheets taken off (47.2 m², no volume; the largest 47.2 m² at 650005.000 7449997.333 RL 248.333); 1 cracks joined; 1 holes filled (50.0 m², 8.3 % of the surface)");
     assert_eq!(record.messages.last().unwrap(), "volume 1000.000 m3");
     let object = s.project().object(created(&record)[0]).unwrap();
-    assert_eq!(object.attributes["repair"], zd_core::AttrValue::Text("1 fin triangles taken off; 1 cracks joined; 1 holes filled (50.0 m², 8.3 % of the surface)".into()));
+    assert_eq!(object.attributes["repair"], zd_core::AttrValue::Text("1 hanging sheets taken off (47.2 m², no volume; the largest 47.2 m² at 650005.000 7449997.333 RL 248.333); 1 cracks joined; 1 holes filled (50.0 m², 8.3 % of the surface)".into()));
     assert_eq!(object.attributes["repair_filled_m2"], zd_core::AttrValue::Number(50.0));
 
     // The whole top missing: 100 m² of 600, over the 10 % limit, so refused; at 20 % it is filled.

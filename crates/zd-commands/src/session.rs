@@ -6,6 +6,7 @@ use serde_json::Value;
 use zd_core::{AppliedChange, LayerId, ObjectRef, Project, RunId};
 use zd_io::{ProjectStore, SaveReport};
 
+use crate::builtin::check_solids_made;
 use crate::command::Inputs;
 use crate::{CommandError, Registry};
 
@@ -147,9 +148,11 @@ impl Session {
         let inputs = Inputs::new(&self.project);
         let outcome = command.run_json(&inputs, params);
         record.inputs = inputs.into_read();
-        let (outcome, canonical) = outcome?;
+        let (mut outcome, canonical) = outcome?;
         record.params = canonical;
+        let checked = check_solids_made(&mut outcome.changes, &mut outcome.messages);
         record.messages = outcome.messages;
+        checked?;
         let applied = self.project.apply(run, outcome.changes)?;
         record.outputs = applied.changes;
         record.layers_created = applied.layers_created.into_iter().map(|l| l.name).collect();
