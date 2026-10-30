@@ -6,6 +6,7 @@
 //! ```text
 //! # comment lines start with #
 //! folder,D:\models\pit\grids
+//! no_seam,160
 //! horizon,parent,material,working,roof,floor,as,rd,ts
 //! upper,,coal,yes,pitupper.srg,pitupper.sfg,pitupper.asg,pitupper.rdg,pitupper.tsg
 //! ```
@@ -14,13 +15,14 @@
 //! `material` defaults to coal; `working` says whether the horizon is stacked for solids and reserves
 //! (blank: yes for a horizon with no daughters, no for a parent). Every other column is a grid
 //! variable, and each cell names that horizon's file, or is blank. Files are relative to `folder`;
-//! a relative folder, or none, is relative to the definition's own folder.
+//! a relative folder, or none, is relative to the definition's own folder. `no_seam`, if given, is an
+//! RL that means the seam is absent: a node with its roof or floor there holds no seam (decision 0020).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use zd_core::{Fingerprint, Grid, GridLink, SeamModel};
+use zd_core::{Fingerprint, Grid, GridLink, SeamModel, blank_no_seam};
 
 use crate::text::{csv_cell, csv_fields, decode_text};
 use crate::{IoError, XyzOptions, parse_vulcan_grid, parse_xyz_grid, vulcan_grid_name};
@@ -32,6 +34,8 @@ const FIXED: [&str; 6] = ["horizon", "parent", "material", "working", "roof", "f
 pub struct SeamDefinition {
     /// The folder grid files are relative to.
     pub folder: PathBuf,
+    /// An RL that means the seam is absent.
+    pub no_seam: Option<f64>,
     /// Top of the stack first.
     pub horizons: Vec<DefinedHorizon>,
 }
@@ -66,6 +70,7 @@ pub fn read_seam_definition(path: &Path) -> Result<SeamDefinition, IoError> {
 pub fn parse_seam_definition(text: &str, base: &Path) -> Result<SeamDefinition, IoError> {
     let mut problems = Vec::new();
     let mut folder: Option<String> = None;
+    let mut no_seam: Option<f64> = None;
     let mut header: Option<Vec<String>> = None;
     let mut rows: Vec<(usize, Vec<String>)> = Vec::new();
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -88,6 +93,12 @@ pub fn parse_seam_definition(text: &str, base: &Path) -> Result<SeamDefinition, 
             rows.push((line, fields));
         } else if fields[0].eq_ignore_ascii_case("folder") {
             folder = fields.get(1).cloned();
+        } else if fields[0].eq_ignore_ascii_case("no_seam") {
+            let value = fields.get(1).map_or("", String::as_str);
+            match value.parse::<f64>() {
+                Ok(rl) if rl.is_finite() => no_seam = Some(rl),
+                _ => problems.push(format!("line {line}: no_seam must be an RL, not '{value}'")),
+            }
         } else {
             header = Some(fields.iter().map(|f| f.to_ascii_lowercase()).collect());
         }
@@ -197,7 +208,7 @@ pub fn parse_seam_definition(text: &str, base: &Path) -> Result<SeamDefinition, 
         Some(f) => base.join(f),
         None => base.to_path_buf(),
     };
-    Ok(SeamDefinition { folder, horizons })
+    Ok(SeamDefinition { folder, no_seam, horizons })
 }
 
 /// The definition as CSV text, ready for Excel: a byte-order mark so Excel reads it as UTF-8, a
@@ -215,6 +226,10 @@ pub fn format_seam_definition(definition: &SeamDefinition) -> String {
     }
     let row = |cells: Vec<&str>| cells.into_iter().map(csv_cell).collect::<Vec<_>>().join(",") + "\r\n";
     out.push_str(&row(vec!["folder", &definition.folder.to_string_lossy()]));
+    if let Some(rl) = definition.no_seam {
+        out.push_str("# no_seam = an RL that means the seam is absent: a node with its roof or floor there holds no seam. Delete the line if it is real.\r\n");
+        out.push_str(&row(vec!["no_seam", &rl.to_string()]));
+    }
     out.push_str(&row(FIXED.into_iter().chain(variables.iter().copied()).collect()));
     for h in &definition.horizons {
         let mut cells = vec![h.code.as_str(), h.parent.as_deref().unwrap_or(""), &h.material, if h.working { "yes" } else { "no" }, &h.roof, &h.floor];
@@ -250,7 +265,7 @@ pub fn read_linked_grid(path: &Path) -> Result<LinkedGrid, IoError> {
     Ok(LinkedGrid { grid, fingerprint })
 }
 
-/// A model's roofs and floors, read in place, top first.
+/// A model's roofs and floors, read in place, top first, with any node its `no_seam` marks blanked.
 #[derive(Debug, Clone)]
 pub struct StackGrids {
     pub roofs: Vec<Grid>,
@@ -280,6 +295,11 @@ pub fn read_stack_grids(model: &SeamModel) -> Result<StackGrids, IoError> {
     while let (Some(roof), Some(floor)) = (pairs.next(), pairs.next()) {
         roofs.push(roof);
         floors.push(floor);
+    }
+    if let Some(rl) = model.no_seam {
+        for (roof, floor) in roofs.iter_mut().zip(&mut floors) {
+            blank_no_seam(roof, floor, rl);
+        }
     }
     Ok(StackGrids { roofs, floors, changed })
 }
@@ -335,6 +355,16 @@ mod tests {
         assert_eq!(d.horizons[1].grids.keys().collect::<Vec<_>>(), ["rd", "ts"], "variable names lower-cased");
         assert!(d.horizons[2].grids.is_empty());
         assert_eq!(d.path("pita.srg"), Path::new("defs").join("grids").join("pita.srg"));
+    }
+
+    #[test]
+    fn a_no_seam_rl_reads_writes_and_is_refused_if_it_is_not_one() {
+        let text = "no_seam,160.5\nhorizon,roof,floor\na,a.srg,a.sfg\n";
+        let d = parse(text).unwrap();
+        assert_eq!(d.no_seam, Some(160.5));
+        assert_eq!(parse(&format_seam_definition(&d)).unwrap().no_seam, Some(160.5));
+        assert_eq!(parse("horizon,roof,floor\na,a.srg,a.sfg\n").unwrap().no_seam, None);
+        assert_eq!(problems("no_seam,high\nhorizon,roof,floor\na,a.srg,a.sfg\n"), ["line 1: no_seam must be an RL, not 'high'"]);
     }
 
     #[test]

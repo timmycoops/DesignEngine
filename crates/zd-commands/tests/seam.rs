@@ -208,6 +208,48 @@ fn the_viewport_reads_the_stack_in_place_and_sees_a_changed_file() {
 }
 
 #[test]
+fn a_no_seam_rl_takes_the_false_coal_out_of_the_model() {
+    let t = TempDir::new("no-seam");
+    // Two seams, 3 m and 4 m, in the east of the pit. West of x = 100 m both roofs sit at the mark,
+    // RL 160, over floors that carry on as real elevations.
+    let roof = |z: f32| vulcan_grid(COLS, move |x, _| Some(if x < 100.0 { 160.0 } else { z }));
+    let files: [(&str, Vec<u8>); 4] = [("pitu.srg", roof(120.0)), ("pitu.sfg", flat(117.0)), ("pitl.srg", roof(100.0)), ("pitl.sfg", flat(96.0))];
+    for (name, bytes) in &files {
+        std::fs::write(t.0.join(name), bytes).unwrap();
+    }
+    let csv = t.0.join("stack.csv");
+    let mut s = Session::with_builtins();
+    let record = suggest(&mut s, &t.0, &csv);
+    assert!(record.messages.iter().any(|m| m.starts_with("every roof tops out at RL 160, flat at 48 to 48 % of its nodes")), "{:?}", record.messages);
+    assert_eq!(read_seam_definition(&csv).unwrap().no_seam, Some(160.0));
+
+    let built = build(&mut s, &csv).unwrap();
+    let m = model(&s);
+    assert_eq!(m.no_seam, Some(160.0));
+    assert!(m.is_usable(), "{:?}", m.issues);
+    // 11 columns of 11 rows hold coal; the other 10 columns of 11 rows are no seam.
+    let line = "u: working; coal at 121 of 231 nodes, up to 3.00 m thick (mean 3.00 m); 110 nodes at RL 160 read as no seam";
+    assert!(built.messages.iter().any(|l| l == line), "{:?}", built.messages);
+    assert_eq!(m.z_range, Some([96.0, 120.0]), "the mark is not part of the working section");
+
+    // The viewport reads the same thing, and the file is left as it was.
+    let grids = read_stack_grids(&m).unwrap();
+    assert!(grids.roofs[0].z[0].is_nan() && grids.floors[0].z[0].is_nan(), "west: no seam");
+    assert_eq!((grids.roofs[0].z[20], grids.floors[0].z[20]), (120.0, 117.0), "east: the grids' own values");
+    assert_eq!(std::fs::read(t.0.join("pitu.srg")).unwrap(), roof(120.0));
+
+    // Delete the line and the mark is read as coal, 43 m of it, crossing the seam above.
+    let text = std::fs::read_to_string(&csv).unwrap();
+    let kept: Vec<&str> = text.lines().filter(|l| !l.starts_with("no_seam")).collect();
+    std::fs::write(&csv, kept.join("
+")).unwrap();
+    let mut s = Session::with_builtins();
+    let built = build(&mut s, &csv).unwrap();
+    assert!(built.messages.iter().any(|l| l.starts_with("u: working; coal at 231 of 231 nodes, up to 43.00 m thick")), "{:?}", built.messages);
+    assert!(!model(&s).is_usable(), "{:?}", model(&s).issues);
+}
+
+#[test]
 fn a_missing_density_grid_is_a_warning() {
     let t = TempDir::new("density");
     write_pit(&t.0);

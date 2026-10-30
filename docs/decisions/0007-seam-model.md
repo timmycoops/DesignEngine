@@ -1,6 +1,6 @@
 # 0007 — The seam model
 
-Date: 2026-10-29 · Status: accepted (Tim, 2026-10-29)
+Date: 2026-10-29 · Status: accepted (Tim, 2026-10-29); an RL can mean no seam by decision 0020 (2026-10-31)
 
 ## Decision
 

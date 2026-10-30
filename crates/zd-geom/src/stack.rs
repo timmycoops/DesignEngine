@@ -178,6 +178,34 @@ pub struct SuggestedHorizon {
     pub parent: Option<usize>,
 }
 
+/// Share of a roof's nodes that must sit at its highest RL for that to look like a mark, not a peak.
+const FLAT_SHARE: f64 = 0.01;
+
+/// The RL that marks a seam absent, if the grids show one: every roof tops out at exactly one RL,
+/// held flat over part of its nodes. A real roof peaks at a few nodes and no two seams peak alike.
+/// Needs two roofs or more, as one has nothing to agree with. Returns the RL and the smallest and
+/// largest share of nodes at it.
+pub fn suggest_no_seam_rl(roofs: &[&Grid]) -> Option<(f64, f64, f64)> {
+    let [first, others @ ..] = roofs else { return None };
+    if others.is_empty() {
+        return None;
+    }
+    let rl = first.z_range()?[1];
+    let mut shares = (f64::INFINITY, 0.0f64);
+    for roof in roofs {
+        let live = roof.z.iter().filter(|z| !z.is_nan()).count();
+        if roof.z_range()?[1] as f32 != rl as f32 {
+            return None;
+        }
+        let share = roof.z.iter().filter(|&&z| z as f32 == rl as f32).count() as f64 / live.max(1) as f64;
+        if share < FLAT_SHARE {
+            return None;
+        }
+        shares = (shares.0.min(share), shares.1.max(share));
+    }
+    Some((rl, shares.0, shares.1))
+}
+
 /// Share of a daughter's coal nodes that must sit inside a horizon for it to be suggested as the
 /// parent. Lenient on purpose: the suggestion is a starting point, and the check lists every node
 /// outside the parent.
@@ -417,6 +445,24 @@ mod tests {
         let mut horizons = stack(&s);
         horizons[2].floor = &other;
         assert!(check_seam_stack(&horizons, 0.001).is_err());
+    }
+
+    #[test]
+    fn a_flat_top_shared_by_every_roof_is_suggested_as_no_seam() {
+        // Two dipping roofs, each cut off flat at RL 160 up-dip.
+        let capped = |offset: f64| grid(move |x, _| (120.0 + offset + x).min(160.0));
+        let (a, b) = (capped(0.0), capped(10.0));
+        let (rl, least, most) = suggest_no_seam_rl(&[&a, &b]).expect("both top out flat at 160");
+        assert_eq!(rl, 160.0);
+        assert!(least > 0.01 && least <= most && most < 1.0, "{least} {most}");
+
+        // A roof that peaks somewhere else, or only one roof, shows nothing.
+        let peak = grid(|x, _| 100.0 + x);
+        assert_eq!(suggest_no_seam_rl(&[&a, &peak]), None);
+        assert_eq!(suggest_no_seam_rl(&[&a]), None);
+        // Two roofs topping out at one RL at a single node each are peaks, not a mark.
+        let lone = |o: f64| grid(move |x, y| if x == 200.0 && y == 100.0 { 160.0 } else { 100.0 + o });
+        assert_eq!(suggest_no_seam_rl(&[&lone(0.0), &lone(1.0)]), None);
     }
 
     #[test]

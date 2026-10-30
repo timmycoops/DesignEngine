@@ -64,7 +64,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   grids and a density grid. The model links to its grid files in place (fingerprinted, never copied into the
   project); grids used for design are imported as objects. The stack is checked, never fixed: a floor above
   its roof, a crossing in the working section or a daughter outside its parent is flagged with its location,
-  and blocks solids and reserves until the source grids are corrected. Existence polygons and a crop surface
+  and blocks solids and reserves until the source grids are corrected. A definition may name an RL that means no
+  seam, for models that mark absence that way (`docs/decisions/0020-no-seam-rl.md`). Existence polygons and a crop surface
   (topography or base of weathering) come later. Faulting applies to structure, never to thickness.
   See `docs/decisions/0007-seam-model.md`.
 - `Rule`: a function from a string to one value per edge. Types: fixed, fixed list, inside polygon,
