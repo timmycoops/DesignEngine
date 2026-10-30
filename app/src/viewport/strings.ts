@@ -10,7 +10,8 @@
 // Snapping, in order: a string vertex near the cursor (its exact coordinates), the crossing of two
 // strings, the nearest point on a string segment, the surface under the cursor, and failing all of
 // those a level working plane: at the dragged vertex's RL while dragging, the last vertex's while
-// drawing, else the RL at the centre of the view.
+// drawing, else the RL at the centre of the view. With snapping off (S, or the toolbar), every point
+// goes straight on that plane.
 import * as THREE from 'three/webgpu';
 import type { Layer, ProjectSummary, SnapHit, Vec3 } from '../bridge';
 import { colourOf } from './load';
@@ -66,6 +67,9 @@ export class StringLayer {
   private inFlight = false;
   private layers = new Map<string, Layer>();
   private names = 0;
+  private snapping = true;
+  /** Snapping was switched on or off. */
+  onSnapping?: (on: boolean) => void;
   /** The scene origin: world = origin + local, exactly, for points the shell sent. */
   private origin: Vec3 = [0, 0, 0];
 
@@ -90,6 +94,13 @@ export class StringLayer {
     this.pending = [];
     this.refreshPreview();
     this.placeHandles();
+  }
+
+  /** Works mid-string or mid-drag too: the next point takes the new setting. */
+  toggleSnapping(): void {
+    this.snapping = !this.snapping;
+    this.onSnapping?.(this.snapping);
+    this.actions.status(this.snapping ? 'Snap on: strings, then surfaces, then the working plane' : 'Snap off: points go on the working plane');
   }
 
   select(id: string | null): void {
@@ -248,6 +259,7 @@ export class StringLayer {
 
   private keyDown(e: KeyboardEvent): void {
     if (e.target instanceof HTMLInputElement) return;
+    if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey && !e.altKey) return this.toggleSnapping();
     if (this.mode === 'draw') {
       if (e.key === 'Enter') void this.finishDrawing();
       if (e.key === 'Escape') {
@@ -359,6 +371,13 @@ export class StringLayer {
    * surface under the cursor. `skip` leaves out a vertex being dragged and its two segments.
    */
   private async snapAt(x: number, y: number, skip?: { id: string; index: number }): Promise<SnapHit | null> {
+    const workingPlane = () => {
+      const dragged = skip ? this.shown.get(skip.id)?.points[skip.index] : undefined;
+      const last = this.pending[this.pending.length - 1];
+      return this.onPlane(x, y, dragged ? dragged.z : last ? last.local[2] : this.viewport.controls.target.z);
+    };
+    if (!this.snapping) return workingPlane();
+
     let vertex: SnapHit | null = null;
     let best = HANDLE_PX * HANDLE_PX;
     const consider = (id: string, name: string, points: THREE.Vector3[]) =>
@@ -400,10 +419,7 @@ export class StringLayer {
     }
     const surface = await this.actions.snap(x, y);
     if (surface) return { ...surface, kind: 'surface' };
-    const dragged = skip ? this.shown.get(skip.id)?.points[skip.index] : undefined;
-    const last = this.pending[this.pending.length - 1];
-    const plane = dragged ? dragged.z : last ? last.local[2] : this.viewport.controls.target.z;
-    return this.onPlane(x, y, plane);
+    return workingPlane();
   }
 
   /** Where the pick ray through the cursor meets the level plane at scene-local height `z`. */

@@ -99,6 +99,8 @@ async function checkSolids(viewport: Viewport, path: string, orbitSeconds: numbe
     snaps.push(performance.now() - t);
   }
   snaps.sort((a, b) => a - b);
+  const camera = await checkCamera(viewport);
+  const snapSwitch = await checkSnapSwitch(viewport);
   const undoStart = performance.now();
   await show(await undo());
   return {
@@ -112,11 +114,96 @@ async function checkSolids(viewport: Viewport, path: string, orbitSeconds: numbe
     table_rows_in_page: rowsInPage,
     last_solid_in_last_row: scrolledTo?.includes(reply.summary.objects[reply.summary.objects.length - 1].name) ?? false,
     orbit: orbited,
+    camera,
+    snap_switch: snapSwitch,
     snap_p50_ms: snaps[100],
     snap_p95_ms: snaps[190],
     undo_ms: performance.now() - undoStart,
     messages: reply.record.messages.slice(0, 2),
   };
+}
+
+/**
+ * Drags and wheels the real canvas with a point of the scene under the cursor: that point must stay
+ * under the cursor (px), while the view turns and closes in on it (m).
+ */
+async function checkCamera(viewport: Viewport) {
+  const canvas = viewport.renderer.domElement;
+  const box = canvas.getBoundingClientRect();
+  const settle = async () => {
+    for (let i = 0; i < 4; i++) await viewport.nextFrame();
+  };
+  let found: { x: number; y: number; point: THREE.Vector3 } | null = null;
+  for (let k = 0; k < 40 && !found; k++) {
+    const [x, y] = [box.left + box.width * (0.25 + (k % 8) * 0.07), box.top + box.height * (0.3 + Math.floor(k / 8) * 0.1)];
+    const hit = await viewport.pickPoint?.(x, y);
+    if (hit) found = { x, y, point: new THREE.Vector3(...hit) };
+  }
+  if (!found) return { error: 'nothing under the cursor' };
+  const { x, y, point } = found;
+  const drift = () => {
+    const [sx, sy] = viewport.projectToClient(point);
+    return Math.hypot(sx - x, sy - y);
+  };
+  const send = (type: string, dx: number, dy: number) =>
+    canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons: 1, clientX: x + dx, clientY: y + dy, pointerId: 1, pointerType: 'mouse' }));
+
+  const startDistance = viewport.camera.position.distanceTo(point);
+  const startPosition = viewport.camera.position.clone();
+  send('pointerdown', 0, 0);
+  await settle();
+  for (let k = 1; k <= 12; k++) {
+    send('pointermove', 10 * k, 5 * k);
+    await viewport.nextFrame();
+  }
+  send('pointerup', 120, 60);
+  await settle();
+  const turned = { drift_px: drift(), camera_moved_m: viewport.camera.position.distanceTo(startPosition) };
+
+  const turnedDistance = viewport.camera.position.distanceTo(point);
+  for (let k = 0; k < 12; k++) {
+    canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: x, clientY: y, deltaY: -120 }));
+    await viewport.nextFrame();
+  }
+  await settle();
+  return { start_distance_m: startDistance, turned, zoom: { drift_px: drift(), from_m: turnedDistance, to_m: viewport.camera.position.distanceTo(point) } };
+}
+
+/** Draws through the real toolbar, canvas and key: a click snaps, S, then a click lands on the plane. */
+async function checkSnapSwitch(viewport: Viewport) {
+  const canvas = viewport.renderer.domElement;
+  const box = canvas.getBoundingClientRect();
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await viewport.nextFrame();
+  };
+  const button = (label: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.includes(label));
+  const screen = () => document.body.innerText;
+  const key = (name: string) => window.dispatchEvent(new KeyboardEvent('keydown', { key: name }));
+  const click = async (x: number, y: number) => {
+    for (const type of ['pointerdown', 'pointerup']) {
+      canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons: 1, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+    }
+    await settle();
+  };
+  const [x, y] = [box.left + box.width * 0.5, box.top + box.height * 0.5];
+  viewport.fitView();
+  await settle();
+  button('Draw string')?.click();
+  await settle();
+  await click(x, y);
+  const first = screen().includes('1 vertices') && !screen().includes('1 vertices (on the working plane');
+  key('s');
+  await settle();
+  const switchedOff = screen().includes('Snap off');
+  await click(x + 60, y + 30);
+  const second = screen().includes('2 vertices (on the working plane at RL');
+  key('Escape');
+  key('s');
+  await settle();
+  const switchedOn = screen().includes('Snap on');
+  button('Select')?.click();
+  await settle();
+  return { first_click_snapped: first, s_turned_it_off: switchedOff, second_click_on_the_plane: second, s_turned_it_on: switchedOn };
 }
 
 async function loadSurfaces(viewport: Viewport, paths: string[], log: (line: string) => void) {
