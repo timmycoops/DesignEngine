@@ -85,6 +85,16 @@ the synthetic pit's hands-on "snappy" has not been repeated on these surfaces.
 | 6 | Seam model from the real grids | pass: 15 horizons, 3 issues flagged, none blocking, 61 ms |
 | 7 | Python: open, list, run, read the log | pass (the script itself) |
 
+The toe string came on a second pit, with its own topography (8.06 M triangles, in 3.0 s), 30 grids of 15
+seams and 3 closed strings exported from Deswik, so items 1 to 7 ran together on one pit. All pass: 23
+runs undone to empty and redone, 88 MB saved in 0.8 s and opened in 0.9 s with every coordinate the same,
+and a seam model of 15 horizons with 7 blocking crossings flagged at 36 nodes (decision 0020). Tim then
+ran item 2 by hand in plan view: drawing with snapping, inserting, moving and deleting vertices, setting
+a grade and offsetting.
+
+**Gate: passed, 2026-10-31.** Tim's notes for later: zooming and rotating about a fixed centre feels
+wrong when zoomed in on an object, and snapping has no off switch.
+
 ### Solids at scale
 
 All 42,223 relimiting solids through `solid.import`: **41,585 imported** (98.5 %) at 3.8 ms each

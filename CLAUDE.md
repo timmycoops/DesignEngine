@@ -169,9 +169,10 @@ $env:VIRTUAL_ENV = "$PWD\.venv"; .venv\Scripts\maturin develop --release -m crat
 
 ## Current phase
 
-**Phase 1 — foundation.** Gate: digitise and edit a toe string on real surfaces; the checklist and
-workstreams are on the "Phase 1 plan" tab of the Build Plan doc.
+**Phase 2 — sections.** A live section view with clipping planes, with strings and surfaces editable in
+section. Gate: a section through the pit reads as clearly as in Deswik. The plan is still to be written.
 
-The Phase 0 gate passed on real data on 2026-10-30 (`bench/RESULTS.md`): all four checks, with 59.5 fps
-at 25 M real triangles. The viewport bar is tens of millions of triangles: the best incumbent claim
+The Phase 1 gate passed on 2026-10-31: a toe string digitised and edited on real surfaces, with every
+check on the "Phase 1 plan" tab of the Build Plan doc ticked. The Phase 0 gate passed on real data on
+2026-10-30 (`bench/RESULTS.md`): all four checks, with 59.5 fps at 25 M real triangles. The viewport bar is tens of millions of triangles: the best incumbent claim
 (Datamine MineScape on HOOPS) is at that level, and every incumbent runs OpenGL 3.3–4.6.
