@@ -106,9 +106,17 @@ Nothing that imported before is refused; 38 solids repaired before come out diff
 sheet is now taken off rather than its loose edge filled as a hole: 26 keep their volume, and 12 lose
 24.3 m³ in all (the largest 9.7 m³ of 12.1), the volume that fill enclosed outside the solid.
 
+With lips and flat folds counted as thin (decision 0017), **41,917 import as read** and 301 with repair;
+**5 are refused**: three small coal solids with interior walls and two files that are only a sheet.
+The 332,000 m³ waste solid imports. The pass takes 143 s. 34 solids no longer go through the union,
+each keeping the volume the union gave it; 14 of them come in as several pieces rather than one (108
+pieces, 65 of them under 0.001 m³, the same total volume).
+
 The general cut (decision 0016) on the same solids: all 44,175 cut by the mined-out topography (3.28 M
 triangles) into **51,783 parts in 187 s**, 4.2 ms a solid, every part checked by the solid rules. Each
 solid and its parts agree to 0.15 m³ at most (1.4e-5 of 10,996 m³). One solid is left uncut and named.
+With decision 0017's rules: 44,270 solids into 51,875 parts in 112 s, 2.5 ms a solid, no whole-surface
+retries, two solids left uncut and named, and solids and parts within 0.27 m³ (3.2e-5 of 8,407 m³).
 
 ## Summary
 
