@@ -66,3 +66,14 @@ fn finite(point: &[f64; 3]) -> Result<(), CommandError> {
         Err(CommandError::Invalid(format!("point {point:?} is not finite")))
     }
 }
+
+/// Runs `work` on every item across the machine's cores; results come back in item order.
+pub(crate) fn in_parallel<I: Sync, T: Send>(items: &[I], work: impl Fn(&I) -> T + Sync) -> Vec<T> {
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, items.len().max(1));
+    let chunk = items.len().div_ceil(threads).max(1);
+    std::thread::scope(|scope| {
+        let work = &work;
+        let handles: Vec<_> = items.chunks(chunk).map(|part| scope.spawn(move || part.iter().map(work).collect::<Vec<T>>())).collect();
+        handles.into_iter().flat_map(|h| h.join().expect("worker thread")).collect()
+    })
+}

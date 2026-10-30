@@ -8,6 +8,7 @@ use zd_core::{Attributes, Body, Change, Grid, GridLink, Horizon, IssueKind, Latt
 use zd_geom::{StackHorizon, check_seam_stack, suggest_seam_tree};
 use zd_io::{DefinedHorizon, SeamDefinition, read_linked_grid, read_seam_definition, read_vulcan_grid, vulcan_grid_name, write_seam_definition};
 
+use super::in_parallel;
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
 fn default_tolerance() -> f64 {
@@ -390,17 +391,6 @@ fn shared_prefix<'a>(mut names: impl Iterator<Item = &'a str>) -> String {
         return String::new();
     }
     prefix.chars().take(shortest.saturating_sub(1)).collect()
-}
-
-/// Runs `work` on every item across the machine's cores; results come back in item order.
-fn in_parallel<I: Sync, T: Send>(items: &[I], work: impl Fn(&I) -> T + Sync) -> Vec<T> {
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, items.len().max(1));
-    let chunk = items.len().div_ceil(threads).max(1);
-    std::thread::scope(|scope| {
-        let work = &work;
-        let handles: Vec<_> = items.chunks(chunk).map(|part| scope.spawn(move || part.iter().map(work).collect::<Vec<T>>())).collect();
-        handles.into_iter().flat_map(|h| h.join().expect("grid reader thread")).collect()
-    })
 }
 
 #[cfg(test)]

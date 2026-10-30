@@ -18,7 +18,7 @@ mod seam;
 mod stack;
 mod string;
 
-pub use cut::{CutResult, CutTimings, cut_solid_by_surface};
+pub use cut::{CutResult, CutTimings, cut_solid_by_surface, cut_solid_by_whole_surface};
 pub use error::GeomError;
 pub use grid::{SampledGrid, sample_surface_on_grid, triangulate_grid};
 pub use halfspace::{CapMethod, ClosedHalfSpace, Side, close_surface_to_halfspace};
