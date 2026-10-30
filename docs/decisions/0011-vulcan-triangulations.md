@@ -1,7 +1,8 @@
 # 0011 — Reading Vulcan triangulations (`.00t`)
 
 Date: 2026-10-29 · Status: accepted (Tim, 2026-10-29); the layout is checked against every local
-sample, and awaits a vertex-for-vertex check against Deswik's export of the same files
+sample, and awaits a vertex-for-vertex check against Deswik's export of the same files. Touching pieces
+stay one solid by decision 0018 (2026-10-31)
 
 ## Decision
 
