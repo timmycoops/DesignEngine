@@ -86,7 +86,11 @@ impl Command for ImportSurface {
                     g.cell_size[1],
                     log.live,
                     log.nulls,
-                    if log.compressed_blocks > 0 { format!(" (compressed, {} blocks)", log.compressed_blocks) } else { String::new() }
+                    match (log.compressed_blocks, log.origin_copies) {
+                        (0, 0) => String::new(),
+                        (0, n) => format!("; {n} copies of the first node's position after the last node, passed over"),
+                        (blocks, _) => format!(" (compressed, {blocks} blocks)"),
+                    }
                 );
                 let mesh = triangulate_grid(g);
                 if mesh.triangles.is_empty() {

@@ -65,6 +65,9 @@ impl Command for ImportVulcanSeam {
             if log.compressed_blocks > 0 {
                 line += &format!("; unpacked from the compressed layout ({} blocks)", log.compressed_blocks);
             }
+            if log.origin_copies > 0 {
+                line += &format!("; {} copies of the first node's position after the last node, passed over", log.origin_copies);
+            }
             outcome = outcome.message(line);
             let mut attributes = Attributes::new();
             attributes.insert("seam".into(), AttrValue::Text(code.clone()));

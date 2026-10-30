@@ -10,12 +10,13 @@
 //! | 0..32   | free text: name and timestamp, or how a derived grid was made       |
 //! | 32..64  | f64 x0, x1, y0, y1: extents of the node lattice                     |
 //! | 64..68  | i32 node count (cols × rows)                                        |
-//! | 68..72  | i32, zero in every sample                                           |
+//! | 68..72  | zero, or (Deswik) the f32 cell size again; not used                 |
 //! | 72..80  | f32 dx, dy                                                          |
 //! | 80..88  | i32 cols, rows                                                      |
 //! | 88..    | per node: f32 value, i32 flag (1 = live; anything else is null)     |
 //!
-//! Nodes run row by row, x fastest, from the south-west corner. Files may end in zero padding.
+//! Nodes run row by row, x fastest, from the south-west corner. Files may end in zero padding, or
+//! in copies of the first node's f64 x and y, which Deswik writes (two to four in samples).
 //! Values are single precision and widen to f64 exactly.
 //!
 //! The compressed layout holds the plain layout's bytes cut into fixed-size blocks, each compressed
@@ -71,6 +72,8 @@ pub struct VulcanLog {
     pub non_finite: usize,
     /// Zero bytes after the last node.
     pub padding_bytes: usize,
+    /// Copies of the first node's position after the last node, passed over.
+    pub origin_copies: usize,
     /// Blocks unpacked from the compressed layout; zero for a plain file.
     pub compressed_blocks: usize,
 }
@@ -229,11 +232,15 @@ fn parse_plain_grid(bytes: &[u8]) -> Result<VulcanGrid, IoError> {
     if bytes.len() < end {
         return Err(bad(format!("truncated: {nodes} nodes need {end} bytes, the file has {}", bytes.len())));
     }
-    if bytes[end..].iter().any(|&b| b != 0) {
-        return Err(bad(format!("{} bytes after the last node are not zero padding", bytes.len() - end)));
+    let tail = &bytes[end..];
+    let origin = [x0.to_be_bytes(), y0.to_be_bytes()].concat();
+    let copies = !tail.is_empty() && tail.len().is_multiple_of(origin.len()) && tail.chunks(origin.len()).all(|pair| pair == origin);
+    if !copies && tail.iter().any(|&b| b != 0) {
+        return Err(bad(format!("{} bytes after the last node are neither zero padding nor copies of the first node's position", tail.len())));
     }
+    let (padding_bytes, origin_copies) = if copies { (0, tail.len() / origin.len()) } else { (tail.len(), 0) };
 
-    let mut log = VulcanLog { nodes, padding_bytes: bytes.len() - end, ..VulcanLog::default() };
+    let mut log = VulcanLog { nodes, padding_bytes, origin_copies, ..VulcanLog::default() };
     let mut z = Vec::with_capacity(nodes);
     for i in 0..nodes {
         let value = f32_at(HEADER + 8 * i);
@@ -455,7 +462,7 @@ pub(crate) mod tests {
         assert!(g.z_at(1, 1).is_nan());
         assert_eq!(
             read.log,
-            VulcanLog { nodes: 12, live: 11, nulls: 1, stale_nulls: 1, odd_flags: 0, non_finite: 0, padding_bytes: 640, compressed_blocks: 0 }
+            VulcanLog { nodes: 12, live: 11, nulls: 1, stale_nulls: 1, odd_flags: 0, non_finite: 0, padding_bytes: 640, origin_copies: 0, compressed_blocks: 0 }
         );
     }
 
@@ -558,7 +565,32 @@ pub(crate) mod tests {
         assert!(matches!(parse_vulcan_grid(&good[..good.len() - 1]), Err(IoError::Binary(m)) if m.contains("truncated")));
         let mut trailing = good.clone();
         trailing.extend_from_slice(&[0, 0, 7]);
-        assert!(matches!(parse_vulcan_grid(&trailing), Err(IoError::Binary(m)) if m.contains("not zero padding")));
+        assert!(matches!(parse_vulcan_grid(&trailing), Err(IoError::Binary(m)) if m.contains("neither zero padding")));
+    }
+
+    #[test]
+    fn deswiks_copies_of_the_first_node_after_the_last_are_passed_over() {
+        let values: Vec<Option<f32>> = (0..6).map(|k| Some(100.5 + k as f32)).collect();
+        let good = plain_grid("_dw_VulcanGrid", [E, N], 25.0, 3, 2, &values, 0);
+        let first: Vec<u8> = [E.to_be_bytes(), N.to_be_bytes()].concat();
+        let mut with_copies = good.clone();
+        for _ in 0..4 {
+            with_copies.extend_from_slice(&first);
+        }
+        let read = parse_vulcan_grid(&with_copies).unwrap();
+        assert_eq!(read.log.origin_copies, 4);
+        assert_eq!(read.log.padding_bytes, 0);
+        assert_eq!(read.grid.z, parse_vulcan_grid(&good).unwrap().grid.z, "the nodes read the same with or without them");
+
+        // Half a copy, or a position that is not the first node's, is not this.
+        let refused = |bytes: &[u8]| matches!(parse_vulcan_grid(bytes), Err(IoError::Binary(m)) if m.contains("neither zero padding"));
+        let mut half = good.clone();
+        half.extend_from_slice(&first[..8]);
+        assert!(refused(&half));
+        let mut elsewhere = good.clone();
+        elsewhere.extend_from_slice(&first);
+        elsewhere.extend_from_slice(&[(E + 25.0).to_be_bytes(), N.to_be_bytes()].concat());
+        assert!(refused(&elsewhere));
     }
 
     #[test]
