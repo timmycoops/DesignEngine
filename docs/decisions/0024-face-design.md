@@ -72,5 +72,5 @@ from their outline, the same faces had 7 to 11 crossing pairs.
 
 Known answers hold to 1 mm: every crest and berm of the sequence on level surfaces, up and down, and the faces' areas.
 The slit test fails with 3 boundary loops with item 17 switched off. The table was driven in a browser against a
-stand-in engine and what it saved is pinned as a test against the Rust types. The table hasn't been run in the real
-app, and the bench hasn't been run on this layout.
+stand-in engine and what it saved is pinned as a test against the Rust types. The bench runs the same two-way design
+through the real app and its bridge (decision 0025), but not the table's own controls.

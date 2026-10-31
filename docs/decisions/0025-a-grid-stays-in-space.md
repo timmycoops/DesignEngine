@@ -61,7 +61,9 @@ Tim's 620 m string on PIT B, up and down, on five seam grids of 530,000 triangle
 | Triangles out, up | 5,199 to 5,312 | 5,840 to 5,914 |
 | Triangles out, down | 417 to 441 | 449 to 473 |
 
-Every face has one boundary loop, no crossing triangles and consistent winding, either way.
+Every face has one boundary loop, no crossing triangles and consistent winding, either way. Through the real app with
+41,917 solids, the topography and the seam model loaded, a design going both ways saves and runs in 386 ms including
+the screen update, a re-run replaces 14 objects for 14, and section steps are 46 ms.
 
 All 41,917 PIT B solids, 205.0 M m³, cut by a grid:
 
