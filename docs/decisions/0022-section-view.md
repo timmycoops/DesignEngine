@@ -22,9 +22,11 @@ in mine grid coordinates, and can be snapped to and exported.
    button picks two points, and the section takes over from the view it was picked in. Plan view, 3D and
    the snap, draw and select tools come back when it closes. Strings cannot be edited in section yet.
 5. **What is cut:** every visible layer. Solids cut as one mesh per layer, as they draw, and seam models as
-   their working horizons' roofs and floors. What takes work to make is kept until its geometry changes, so
+   each working horizon's roof and floor. What takes work to make is kept until its geometry changes, so
    a step costs only the cut. Each mesh kept carries an index, groups of 2,000 triangles with a bounding
-   circle each, so a cut looks only at the groups the plane can touch.
+   circle each, so a cut looks only at the groups the plane can touch. The list of what to cut is kept against
+   `Project::generation`, which moves with every run, undo, redo and layer shown or hidden, because finding
+   tens of thousands of solids again at every step took twice as long as cutting them.
 6. **Lines have real weights,** drawn with three.js's Line2 on the WebGPU renderer: 2.5 px for surfaces,
    1.5 px for solids and seams, 2 px for strings, and a layer can set its own in the Layers panel while a
    section is open. Weights are display state and are not saved. Keeping them on the layer is a stopgap:
@@ -49,8 +51,13 @@ in mine grid coordinates, and can be snapped to and exported.
     button to go back to lines only. A hole goes with the smallest outer edge round it and each outer edge
     fills on its own, so solids that touch or overlap on a layer each fill as themselves. The area filled must
     match the area the loops enclose to one part in a million. A loop that fails, such as one that crosses
-    itself, stays unfilled and the status line counts it, so nothing is coloured in that isn't there. Seams
-    are a roof and a floor, open lines that need pairing, and follow separately.
+    itself, stays unfilled and the status line counts it, so nothing is coloured in that isn't there.
+11. **Seams fill between each working horizon's own roof and floor.** Those are surfaces, so they cut into open
+    lines, not loops: the fill walks both along the section from breakpoint to breakpoint and takes in what
+    lies between them wherever both exist and the roof is above the floor, stopping exactly where one passes
+    through the other. A parent does not fill, as its daughters do. Seam lines and fills take a default colour
+    by the horizon's material, amber for coal and grey for waste, whatever the case it is typed in; any other
+    material keeps its layer colour. Setting colours comes with colouring, filtering and attributes.
 
 ## Evidence
 
@@ -88,6 +95,19 @@ in mine grid coordinates, and can be snapped to and exported.
   ticks and a pan, every line sits within 4e-6 px of where the camera draws that RL and distance, the spacing
   runs from 0.05 m to 2 km with lines 64 to 158 px apart, and a drawing takes at most 1.4 ms.
 
+- Seam fills, to 1e-7 m2: a flat seam fills 1,000 m2, a roof dipping through its floor stops at the crossing
+  at 250 m2, and a gap in the roof leaves 800 m2. Breakpoints that don't match, and lines running either way,
+  match the trapezium rule. A floor above its roof fills nothing. Cut from two sloping grids, a seam fills its
+  exact 1,200 m2, and a model of a parent and two daughters fills 3,000 m2, with none of the parent's.
+- With seam models loaded, in the release app:
+
+  | Pit | Scene | First section | Step p50 | Step worst | Engine p50 |
+  |---|---|---|---|---|---|
+  | PIT A | 11.7 M triangles, 21,469 solids, 5,724 strings, 15 horizons | 245 ms | 28 ms | 30 ms | 7.8 ms |
+  | PIT B | 8.4 M triangles, about 42,000 solids, 10 horizons | 316 ms | 46 ms | 47 ms | 12.5 ms |
+
+  Before the list of what to cut was kept, PIT B stepped in 62 ms at p50 and 78 ms at worst, with 23 ms of its
+  35 ms in the engine going on walking the objects. One loop in PIT B's section stays unfilled and is counted.
 - Fills, to 1e-7 m2: a 10 m cube fills 100 m2, a hollow 64 m2, an L 75 m2 with nothing in its notch, and an
   island in a hole 68 m2. Touching and overlapping solids each fill whole, a hole goes with the smallest edge
   round it, and a 4,000-point loop matches its area. A bow tie and a hole with no edge round it are counted,

@@ -7,16 +7,23 @@
 //! tells what is inside them. The area filled has to match the area the loops enclose: a loop that
 //! fails that, such as one that crosses itself, stays unfilled and is counted, so its lines show as
 //! they were cut and nothing is coloured in that isn't there.
+//!
+//! A seam has no loops: its roof and floor are surfaces, and they cut into open lines. Each line is a
+//! height along the section, so the fill walks both together, from breakpoint to breakpoint, and
+//! takes in what lies between them wherever both exist and the roof is above the floor.
 
 use spade::handles::{FixedFaceHandle, InnerTag};
 use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation};
 
 use crate::slice::{SectionPlane, SliceLine};
+use crate::worker_threads;
 
 type Cdt = ConstrainedDelaunayTriangulation<Point2<f64>>;
 
 /// How far the area filled may stray from the area enclosed, as a share of it.
 const AREA_TOLERANCE: f64 = 1e-6;
+/// How far a surface's line may run backwards along the section (m): rounding, not a real fold.
+const ALONG_TOLERANCE: f64 = 1e-6;
 
 /// What a section's closed loops fill.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -74,8 +81,15 @@ pub fn fill_section_loops(lines: &[SliceLine], plane: &SectionPlane) -> SectionF
         }
     }
     let on_plane = |[along, rl]: [f64; 2]| [plane.origin[0] + along * plane.direction[0], plane.origin[1] + along * plane.direction[1], rl];
-    for (outer, holes) in outers.iter().zip(&held) {
-        match fill_outline(outer, holes) {
+    let jobs: Vec<(&Outline, &Vec<&Outline>)> = outers.iter().zip(&held).collect();
+    let threads = worker_threads(outers.iter().map(|o| o.points.len()).sum());
+    let filled: Vec<Vec<FlatFill>> = std::thread::scope(|scope| {
+        let chunks = jobs.chunks(jobs.len().div_ceil(threads).max(1));
+        let workers: Vec<_> = chunks.map(|chunk| scope.spawn(move || chunk.iter().map(|(outer, holes)| fill_outline(outer, holes)).collect())).collect();
+        workers.into_iter().map(|worker| worker.join().expect("fill worker")).collect()
+    });
+    for (result, (_, holes)) in filled.into_iter().flatten().zip(&jobs) {
+        match result {
             Some(triangles) => fill.triangles.extend(triangles.into_iter().map(|t| t.map(on_plane))),
             None => fill.unfilled += 1 + holes.len(),
         }
@@ -83,17 +97,93 @@ pub fn fill_section_loops(lines: &[SliceLine], plane: &SectionPlane) -> SectionF
     fill
 }
 
+/// One outer edge's triangles flat on the section, if it filled.
+type FlatFill = Option<Vec<[[f64; 2]; 3]>>;
+
+/// What lies between a seam's roof and floor on a section: wherever both exist and the roof is above
+/// the floor. Where one passes through the other the fill stops at the crossing.
+pub fn fill_between_lines(roof: &[SliceLine], floor: &[SliceLine], plane: &SectionPlane) -> SectionFill {
+    let mut fill = SectionFill::default();
+    let mut profiles_of = |lines: &[SliceLine]| {
+        let profiles: Vec<Option<Vec<[f64; 2]>>> = lines.iter().filter(|l| !l.closed).map(|l| profile(l, plane)).collect();
+        fill.unfilled += profiles.iter().filter(|p| p.is_none()).count();
+        profiles.into_iter().flatten().collect::<Vec<_>>()
+    };
+    let (roofs, floors) = (profiles_of(roof), profiles_of(floor));
+    let mut flat = Vec::new();
+    for top in &roofs {
+        for base in &floors {
+            bands_between(top, base, &mut flat);
+        }
+    }
+    let on_plane = |[along, rl]: [f64; 2]| [plane.origin[0] + along * plane.direction[0], plane.origin[1] + along * plane.direction[1], rl];
+    fill.triangles.extend(flat.into_iter().map(|t: [[f64; 2]; 3]| t.map(on_plane)));
+    fill
+}
+
+/// A surface's line as RL by distance along the section, running forward. A line that truly runs
+/// back on itself is not a height along the section, and has no profile.
+fn profile(line: &SliceLine, plane: &SectionPlane) -> Option<Vec<[f64; 2]>> {
+    let mut points: Vec<[f64; 2]> = line.points.iter().map(|&p| [plane.along(p), p[2]]).collect();
+    if points.first()?[0] > points.last()?[0] {
+        points.reverse();
+    }
+    if points.windows(2).any(|w| w[1][0] < w[0][0] - ALONG_TOLERANCE) {
+        return None;
+    }
+    points.sort_by(|p, q| p[0].total_cmp(&q[0]));
+    Some(points)
+}
+
+/// Walks a roof and floor together over the stretch they share, band by band.
+fn bands_between(roof: &[[f64; 2]], floor: &[[f64; 2]], out: &mut Vec<[[f64; 2]; 3]>) {
+    let to = roof[roof.len() - 1][0].min(floor[floor.len() - 1][0]);
+    let mut along = roof[0][0].max(floor[0][0]);
+    let (mut r, mut f) = (0, 0);
+    while along < to {
+        while r + 2 < roof.len() && roof[r + 1][0] <= along {
+            r += 1;
+        }
+        while f + 2 < floor.len() && floor[f + 1][0] <= along {
+            f += 1;
+        }
+        let next = roof[r + 1][0].min(floor[f + 1][0]).min(to);
+        band([along, next], [height(roof, r, along), height(roof, r, next)], [height(floor, f, along), height(floor, f, next)], out);
+        along = next;
+    }
+}
+
+/// The RL at `along` on the segment of `line` from point `k`.
+fn height(line: &[[f64; 2]], k: usize, along: f64) -> f64 {
+    let (p, q) = (line[k], line[k + 1]);
+    if q[0] == p[0] { p[1] } else { p[1] + (q[1] - p[1]) * (along - p[0]) / (q[0] - p[0]) }
+}
+
+/// The part of one band, straight at both edges, where the roof is above the floor.
+fn band([s0, s1]: [f64; 2], [r0, r1]: [f64; 2], [f0, f1]: [f64; 2], out: &mut Vec<[[f64; 2]; 3]>) {
+    let (t0, t1) = (r0 - f0, r1 - f1);
+    // Where the roof meets the floor, as a share of the way across the band.
+    let at = t0 / (t0 - t1);
+    let crossing = [s0 + (s1 - s0) * at, f0 + (f1 - f0) * at];
+    match (t0 > 0.0, t1 > 0.0) {
+        (true, true) => out.extend([[[s0, r0], [s0, f0], [s1, f1]], [[s0, r0], [s1, f1], [s1, r1]]]),
+        (true, false) => out.push([[s0, r0], [s0, f0], crossing]),
+        (false, true) => out.push([crossing, [s1, f1], [s1, r1]]),
+        (false, false) => {}
+    }
+}
+
 /// The triangles inside one outer edge and its holes, if they add up to the area enclosed. spade
 /// asserts on some near-degenerate constraints; a panic there leaves this loop unfilled, not the
 /// section gone.
-fn fill_outline(outer: &Outline, holes: &[&Outline]) -> Option<Vec<[[f64; 2]; 3]>> {
+fn fill_outline(outer: &Outline, holes: &[&Outline]) -> FlatFill {
     let triangles = std::panic::catch_unwind(|| triangles_inside(outer, holes)).ok()??;
     let filled: f64 = triangles.iter().map(|&[a, b, c]| ((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])).abs() / 2.0).sum();
     let enclosed = outer.area + holes.iter().map(|h| h.area).sum::<f64>();
     ((filled - enclosed).abs() <= AREA_TOLERANCE * enclosed).then_some(triangles)
 }
 
-fn triangles_inside(outer: &Outline, holes: &[&Outline]) -> Option<Vec<[[f64; 2]; 3]>> {
+fn triangles_inside(outer: &Outline, holes: &[&Outline]) -> FlatFill {
     let mut cdt = Cdt::new();
     for ring in std::iter::once(outer).chain(holes.iter().copied()) {
         let mut handles = Vec::with_capacity(ring.points.len());
@@ -164,12 +254,18 @@ fn faces_inside(cdt: &Cdt) -> Vec<bool> {
 mod tests {
     use super::*;
     use crate::slice::slice_mesh;
-    use zd_core::TriMesh;
+    use crate::triangulate_grid;
+    use zd_core::{Grid, TriMesh};
 
     const E: f64 = 650_000.0;
     const N: f64 = 7_450_000.0;
     /// To 1e-7 m2: a coordinate this size holds to about 1e-9 m, over sides of 10 to 20 m.
     const AREA_NEAR: f64 = 1e-7;
+
+    /// An open line on the plane, given as distance along it and RL.
+    fn line(plane: &SectionPlane, points: &[[f64; 2]]) -> SliceLine {
+        SliceLine { closed: false, ..ring(plane, points) }
+    }
 
     fn plane() -> SectionPlane {
         SectionPlane::through([E, N], [E + 300.0, N + 400.0]).unwrap()
@@ -292,6 +388,84 @@ mod tests {
         let fill = fill_section_loops(&[rectangle(&plane, [0.0, 0.0], [10.0, 10.0], false)], &plane);
         assert!(fill.triangles.is_empty());
         assert_eq!(fill.unfilled, 1);
+    }
+
+    #[test]
+    fn a_flat_seam_fills_its_thickness_by_its_length() {
+        let plane = plane();
+        let (roof, floor) = (line(&plane, &[[0.0, 110.0], [100.0, 110.0]]), line(&plane, &[[0.0, 100.0], [100.0, 100.0]]));
+        let fill = fill_between_lines(&[roof], &[floor], &plane);
+        assert!((area(&fill) - 1_000.0).abs() < AREA_NEAR, "{}", area(&fill));
+        assert_eq!(fill.unfilled, 0);
+        assert!(fill.triangles.iter().flatten().all(|&p| plane.offset(p).abs() < 1e-9 && (100.0..=110.0).contains(&p[2])), "on the plane, between the two");
+    }
+
+    #[test]
+    fn a_roof_that_dips_through_its_floor_stops_at_the_crossing() {
+        // 20 m of roof fall over 100 m through a flat floor at the halfway mark: a 50 m by 10 m triangle.
+        let plane = plane();
+        let (roof, floor) = (line(&plane, &[[0.0, 110.0], [100.0, 90.0]]), line(&plane, &[[0.0, 100.0], [100.0, 100.0]]));
+        let fill = fill_between_lines(&[roof.clone()], &[floor.clone()], &plane);
+        assert!((area(&fill) - 250.0).abs() < AREA_NEAR, "{}", area(&fill));
+        let furthest = fill.triangles.iter().flatten().map(|&p| plane.along(p)).fold(0.0, f64::max);
+        assert!((furthest - 50.0).abs() < 1e-6, "{furthest}");
+        // And coming up through it the other way.
+        let rising = line(&plane, &[[0.0, 90.0], [100.0, 110.0]]);
+        assert!((area(&fill_between_lines(&[rising], &[floor], &plane)) - 250.0).abs() < AREA_NEAR);
+    }
+
+    #[test]
+    fn breakpoints_need_not_match_and_lines_can_run_either_way() {
+        let plane = plane();
+        let roof = line(&plane, &[[0.0, 112.0], [40.0, 108.0], [100.0, 114.0]]);
+        // Against the roof's direction, as a surface's winding can make it.
+        let floor = line(&plane, &[[100.0, 100.0], [75.0, 102.0], [50.0, 98.0], [25.0, 100.0], [0.0, 100.0]]);
+        // By the trapezium rule over every breakpoint of either.
+        let heights = [(0.0, 112.0, 100.0), (25.0, 109.5, 100.0), (40.0, 108.0, 98.8), (50.0, 109.0, 98.0), (75.0, 111.5, 102.0), (100.0, 114.0, 100.0)];
+        let expected: f64 = heights.windows(2).map(|w| (w[1].0 - w[0].0) * ((w[0].1 - w[0].2) + (w[1].1 - w[1].2)) / 2.0).sum();
+        let fill = fill_between_lines(&[roof], &[floor], &plane);
+        assert!((area(&fill) - expected).abs() < AREA_NEAR, "{} against {expected}", area(&fill));
+    }
+
+    #[test]
+    fn a_seam_fills_only_where_both_exist() {
+        // The roof has a gap, as a grid with nulls does: 20 m of 100 m is not seam.
+        let plane = plane();
+        let roof = [line(&plane, &[[0.0, 110.0], [40.0, 110.0]]), line(&plane, &[[60.0, 110.0], [100.0, 110.0]])];
+        let floor = line(&plane, &[[-50.0, 100.0], [150.0, 100.0]]);
+        assert!((area(&fill_between_lines(&roof, &[floor], &plane)) - 800.0).abs() < AREA_NEAR);
+    }
+
+    #[test]
+    fn a_floor_above_its_roof_fills_nothing() {
+        let plane = plane();
+        let (roof, floor) = (line(&plane, &[[0.0, 100.0], [100.0, 100.0]]), line(&plane, &[[0.0, 110.0], [100.0, 110.0]]));
+        assert_eq!(fill_between_lines(&[roof.clone()], &[floor], &plane), SectionFill::default());
+        assert_eq!(fill_between_lines(&[roof.clone()], &[], &plane), SectionFill::default());
+        // Touching along its length is no seam either.
+        assert_eq!(fill_between_lines(&[roof.clone()], &[roof], &plane), SectionFill::default());
+    }
+
+    #[test]
+    fn a_line_that_runs_back_on_itself_is_counted_and_left_out() {
+        let plane = plane();
+        let fold = line(&plane, &[[0.0, 110.0], [60.0, 110.0], [40.0, 111.0], [100.0, 110.0]]);
+        let fill = fill_between_lines(&[fold], &[line(&plane, &[[0.0, 100.0], [100.0, 100.0]])], &plane);
+        assert!(fill.triangles.is_empty());
+        assert_eq!(fill.unfilled, 1);
+    }
+
+    #[test]
+    fn a_seam_cut_from_grids_fills_its_exact_thickness() {
+        // Thickness 5 m at the west edge, growing 1 cm a metre east, along a section due east for 200 m:
+        // 200 by 5, plus half of 200 by 2. Both surfaces slope, so only the thickness is simple.
+        let tilt = |x: f64, y: f64| 100.0 + 0.03 * (x - E) - 0.02 * (y - N);
+        let thickness = |x: f64| 5.0 + 0.01 * (x - E);
+        let roof = triangulate_grid(&Grid::from_fn([E, N], [10.0, 10.0], 21, 11, |x, y| tilt(x, y) + thickness(x)));
+        let floor = triangulate_grid(&Grid::from_fn([E, N], [10.0, 10.0], 21, 11, tilt));
+        let plane = SectionPlane::through([E - 30.0, N + 33.0], [E + 300.0, N + 33.0]).unwrap();
+        let fill = fill_between_lines(&slice_mesh(&roof, &plane), &slice_mesh(&floor, &plane), &plane);
+        assert!((area(&fill) - 1_200.0).abs() < 1e-6, "{}", area(&fill));
     }
 
     #[test]

@@ -215,6 +215,8 @@ export type SectionKind = 'surface' | 'solid' | 'seam' | 'string';
 export interface SectionGroup {
   layer: string;
   kind: SectionKind;
+  /** A seam horizon's material in lower case; empty for anything else. */
+  material: string;
   segments: number;
   /** What its closed loops fill, and the loops that could not be filled. */
   triangles: number;
@@ -469,7 +471,7 @@ export interface StagedHorizon {
   /** Grid files changed since the model was built. */
   changed: string[];
   /** Every horizon, top first, to choose from. */
-  horizons: { code: string; working: boolean }[];
+  horizons: { code: string; material: string; working: boolean }[];
 }
 
 /** Reads a seam model's grids in place and stages one horizon (the first working one if none is named). */
@@ -507,6 +509,7 @@ export interface BenchConfig {
   solids: string | null;
   /** Strings to load into the same scene first. */
   strings: string[];
+  seam: string | null;
   results_path: string;
   scale_targets: number[];
   transfer_cells: number[];

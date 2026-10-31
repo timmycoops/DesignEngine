@@ -75,6 +75,7 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
   const orbitSeconds = config.orbit_seconds;
   for (const surface of config.surfaces) await show((await runCommand('surface.import', { path: surface, layer: 'surfaces' })).summary);
   for (const strings of config.strings) await show((await runCommand('string.import', { path: strings })).summary);
+  if (config.seam) await show((await runCommand('seam.build_model', { definition: config.seam, layer: 'seam models' })).summary);
   log(`solids: importing ${path}`);
   const start = performance.now();
   const reply = await runCommand('solid.import_many', { paths: [path], layer: 'solids', repair: true });
@@ -347,7 +348,11 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   button('Section')?.click();
   await settle();
   await click(box.left + box.width * 0.3, box.top + box.height * 0.5);
+  const picked = performance.now();
   await click(box.left + box.width * 0.7, box.top + box.height * 0.5);
+  // The first section makes what the steps after it reuse.
+  while (!viewport.sectionView && performance.now() - picked < 60_000) await viewport.nextFrame();
+  const openMs = performance.now() - picked;
   await settle();
   await settle();
   const opened = section.open && viewport.sectionView;
@@ -428,23 +433,24 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   await settle();
   const hiddenAfter = getComputedStyle(map).display === 'none';
   const gridHiddenAfter = getComputedStyle(section.gridCanvas).display === 'none';
-  return { opened, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_pictures_ms: pictures, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, overview_carried_m: carried, overview_carried_on_map: carriedOnMap, overview_stays_on_map: staysOnMap, grid_hidden_before: gridHiddenBefore, grid_hidden_after: gridHiddenAfter, grid, fill, wide, close, overview, walked };
+  return { opened, open_ms: openMs, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_pictures_ms: pictures, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, overview_carried_m: carried, overview_carried_on_map: carriedOnMap, overview_stays_on_map: staysOnMap, grid_hidden_before: gridHiddenBefore, grid_hidden_after: gridHiddenAfter, grid, fill, wide, close, overview, walked };
 }
 
 /** The fills on, as they first show, then off and on again by the toolbar's Fill button. */
 async function checkFill(viewport: Viewport, section: SectionView, button: (name: string) => HTMLButtonElement | undefined, settle: () => Promise<void>) {
-  const triangles = () => (section.lastCut?.groups ?? []).reduce((sum, group) => sum + group.triangles, 0);
+  const triangles = (kind?: string) => (section.lastCut?.groups ?? []).filter((group) => !kind || group.kind === kind).reduce((sum, group) => sum + group.triangles, 0);
   const over = [section.gridCanvas, section.overviewCanvas];
   const toggle = async () => {
     button('Fill')?.click();
     await settle();
     await settle();
   };
-  const [on, unfilled, filled] = [triangles(), section.unfilled, screen(viewport, over)];
+  const [on, solids, seams, unfilled, filled] = [triangles(), triangles('solid'), triangles('seam'), section.unfilled, screen(viewport, over)];
   await toggle();
   const [off, lines] = [triangles(), screen(viewport, over)];
   await toggle();
-  return { triangles: on, unfilled, off_triangles: off, back_triangles: triangles(), filled, lines };
+  const materials = [...new Set((section.lastCut?.groups ?? []).map((group) => group.material).filter(Boolean))];
+  return { triangles: on, solid_triangles: solids, seam_triangles: seams, materials, unfilled, off_triangles: off, back_triangles: triangles(), filled, lines };
 }
 
 /**

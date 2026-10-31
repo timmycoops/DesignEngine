@@ -66,7 +66,7 @@ pub fn encode_section(groups: &[SectionGroup], origin: [f64; 3], plane: &Section
     }
     let described: Vec<Value> = groups
         .iter()
-        .map(|g| json!({ "layer": g.layer, "kind": g.kind, "segments": g.segments.len(), "triangles": g.fill.triangles.len(), "unfilled": g.fill.unfilled }))
+        .map(|g| json!({ "layer": g.layer, "kind": g.kind, "material": g.material, "segments": g.segments.len(), "triangles": g.fill.triangles.len(), "unfilled": g.fill.unfilled }))
         .collect();
     let bounds = (total > 0).then(|| json!({ "along": along, "rl": rl }));
     let header = json!({ "groups": described, "bounds": bounds, "ms": ms }).to_string();

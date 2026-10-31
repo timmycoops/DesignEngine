@@ -18,11 +18,12 @@ function Swatch({ colour, label }: { colour: string; label: string }) {
 
 /** The seam horizon on show: which one (and a picker for the others), the thickness ramp, and its issues. */
 function SeamLegend() {
-  const { seamView, showSeamHorizon, select } = useWorkspace();
+  const { seamView, showSeamHorizon, select, sectionOpen } = useWorkspace();
   if (!seamView) return null;
   const r = seamView.result;
+  const material = (r.horizons.find((h) => h.code === r.horizon)?.material ?? 'coal').toLowerCase();
   return (
-    <div className="absolute bottom-3 left-3 w-64 rounded-md border bg-card/90 p-2 text-xs shadow-md backdrop-blur-sm">
+    <div className={`absolute left-3 z-10 w-64 rounded-md border bg-card/90 p-2 text-xs shadow-md backdrop-blur-sm ${sectionOpen ? 'bottom-[264px]' : 'bottom-3'}`}>
       <div className="flex items-center gap-1">
         <button className="min-w-0 truncate font-medium hover:underline" title="Show the model's horizons and issues" onClick={() => select(seamView.id)}>
           {seamView.name}
@@ -43,14 +44,14 @@ function SeamLegend() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <p className="mt-1 text-muted-foreground">Roof coloured by seam thickness</p>
+      <p className="mt-1 text-muted-foreground">Roof coloured by {material === 'coal' ? 'seam' : material} thickness</p>
       <div className="mt-1 h-2.5 rounded-sm" style={{ background: rampCss() }} />
       <div className="flex justify-between text-muted-foreground tabular-nums">
         <span>0 m</span>
         <span>{fmt(r.thickness_max, 2)} m</span>
       </div>
       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-        <Swatch colour={css(NO_COAL)} label={`No coal · ${fmt((100 * (r.nodes - r.coal_nodes)) / Math.max(r.nodes, 1), 1)}%`} />
+        <Swatch colour={css(NO_COAL)} label={`No ${material} · ${fmt((100 * (r.nodes - r.coal_nodes)) / Math.max(r.nodes, 1), 1)}%`} />
         <Swatch colour={css(ISSUE)} label={`Issue · ${fmt(r.flagged_nodes)} nodes`} />
       </div>
       {r.changed.length > 0 && (

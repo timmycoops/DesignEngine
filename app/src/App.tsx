@@ -269,7 +269,7 @@ export default function App() {
       strings.onSelect = setSelected;
       strings.onSnapping = setSnapping;
       section.mapShows = [strings.lines];
-      section.onUnfilled = (count) => setStatus({ text: `${count} closed loops in this section could not be filled: their lines show as cut` });
+      section.onUnfilled = (count) => setStatus({ text: `${count === 1 ? 'A closed loop' : `${count} closed loops`} in this section could not be filled: the lines show as cut` });
       created.pickPoint = (x, y) => strings.pick(x, y);
       stringsRef.current = strings;
       detach = strings.attach();
@@ -418,7 +418,7 @@ export default function App() {
   /** Writes a starting stack definition for a folder of Vulcan grids, to check and edit in Excel. */
   const onSuggestSeamDefinition = () =>
     attempt(async () => {
-      const picked = await open({ title: 'Pick any roof grid in the folder of seam grids', filters: [{ name: 'Vulcan roof grids', extensions: ['srg'] }] });
+      const picked = await open({ title: 'Pick any grid in the folder of seam grids: roofs and floors are found from there', filters: [{ name: 'Vulcan roof and floor grids', extensions: ['srg', 'sfg'] }] });
       if (!picked || Array.isArray(picked)) return;
       const [dir] = splitPath(picked);
       const path = await save({ title: 'Save the seam stack definition (CSV)', defaultPath: 'seam-stack.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] });

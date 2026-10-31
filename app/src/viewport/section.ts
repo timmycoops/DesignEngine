@@ -24,6 +24,9 @@ const FILL_OPACITY = 0.3;
 /** Fills draw behind every line. */
 const FILL_ORDER = 5;
 
+/** Seam horizons by material, until colours can be set: coal stands out and waste sits back as context. */
+const MATERIAL_COLOURS: Record<string, number> = { coal: 0xf2b134, waste: 0x8d8579 };
+
 export type PlanPoint = [number, number];
 
 export class SectionView {
@@ -258,8 +261,8 @@ export class SectionView {
     const layers = new Map(this.summary?.layers.map((l) => [l.id, l]));
     const seen = new Set<string>();
     let [from, fillFrom, unfilled] = [0, 0, 0];
-    for (const { layer, kind, segments, triangles, unfilled: left } of groups) {
-      const key = `${layer} ${kind}`;
+    for (const { layer, kind, material, segments, triangles, unfilled: left } of groups) {
+      const key = `${layer} ${kind} ${material}`;
       seen.add(key);
       const geometry = new LineSegmentsGeometry();
       geometry.setPositions(positions.slice(from, from + segments * 6));
@@ -277,7 +280,7 @@ export class SectionView {
         this.lines.set(key, line);
       }
       const layerColour = layers.get(layer)?.colour;
-      const colour = layerColour ? colourOf(layerColour) : 0xffffff;
+      const colour = MATERIAL_COLOURS[material] ?? (layerColour ? colourOf(layerColour) : 0xffffff);
       (line.material as THREE.Line2NodeMaterial).color.setHex(colour);
       line.visible = true;
       if (triangles > 0) this.drawFill(key, fills.slice(fillFrom, fillFrom + triangles * 9), colour);

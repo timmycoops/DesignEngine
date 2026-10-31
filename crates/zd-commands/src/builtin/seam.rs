@@ -309,7 +309,9 @@ impl Command for BuildSeamModel {
         let check = Instant::now();
         let mut issues = check_seam_stack(&stack, p.tolerance).map_err(|e| CommandError::Invalid(e.to_string()))?;
         let check_ms = check.elapsed().as_secs_f64() * 1e3;
-        for h in definition.horizons.iter().filter(|h| h.working && !h.grids.contains_key(&density)) {
+        // Waste reports in BCM, so it needs no density; anything else may report in tonnes.
+        let wants_density = |h: &&DefinedHorizon| h.working && !h.material.eq_ignore_ascii_case("waste");
+        for h in definition.horizons.iter().filter(wants_density).filter(|h| !h.grids.contains_key(&density)) {
             issues.push(StackIssue { kind: IssueKind::NoDensity, horizon: h.code.clone(), other: None, nodes: 0, worst: 0.0, at: None, blocking: false });
         }
 

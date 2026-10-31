@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -125,17 +126,31 @@ pub struct Project {
     order: Vec<ObjectId>,
     done: Vec<Transaction>,
     undone: Vec<Transaction>,
+    /// See [`Project::generation`]. Not saved.
+    generation: u64,
+}
+
+/// A number no project has held before.
+fn next_generation() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Project {
     pub fn new() -> Self {
-        Project::default()
+        Project { generation: next_generation(), ..Project::default() }
+    }
+
+    /// A number that changes with every change to the project, a layer shown or hidden included,
+    /// and that no other project has held: what is worked out from a project can be kept against it.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// A project rebuilt from saved layers and objects (each at its saved revision, in listing
     /// order). The undo history starts empty: it does not survive closing a project.
     pub fn from_saved(layers: Vec<Layer>, objects: Vec<Object>) -> Result<Project, ProjectError> {
-        let mut project = Project::default();
+        let mut project = Project::new();
         for layer in layers {
             non_empty(&layer.name)?;
             if project.layers.iter().any(|l| l.id == layer.id || l.name == layer.name) {
@@ -174,6 +189,7 @@ impl Project {
         match self.layers.iter_mut().find(|l| l.id == id) {
             Some(layer) => {
                 layer.visible = visible;
+                self.generation = next_generation();
                 true
             }
             None => false,
@@ -219,6 +235,7 @@ impl Project {
         self.push(&transaction);
         self.done.push(transaction);
         self.undone.clear();
+        self.generation = next_generation();
         Ok(applied)
     }
 
@@ -240,6 +257,7 @@ impl Project {
         self.layers.retain(|l| !added.contains(&l.id));
         let run = transaction.run;
         self.undone.push(transaction);
+        self.generation = next_generation();
         Some(run)
     }
 
@@ -249,6 +267,7 @@ impl Project {
         self.push(&transaction);
         let run = transaction.run;
         self.done.push(transaction);
+        self.generation = next_generation();
         Some(run)
     }
 
@@ -508,5 +527,31 @@ mod tests {
         assert!(applied.changes.is_empty());
         assert!(!p.can_undo(), "nothing to undo");
         assert!(p.can_redo(), "and the redo stack is kept");
+    }
+
+    #[test]
+    fn the_generation_moves_with_every_change_and_with_nothing_else() {
+        let mut p = Project::new();
+        assert_ne!(p.generation(), Project::new().generation(), "no two projects share one");
+        let mut seen = vec![p.generation()];
+        let mut moved = |p: &Project, why: &str| {
+            assert!(!seen.contains(&p.generation()), "{why}");
+            seen.push(p.generation());
+        };
+        let a = p.apply(RunId::new(), vec![create("a", "L", line(&[[0.0; 3], [1.0; 3]]))]).unwrap();
+        moved(&p, "a run");
+        let layer = p.object(a.changes[0].id).unwrap().layer;
+        p.set_layer_visible(layer, false);
+        moved(&p, "a layer hidden");
+        p.undo();
+        moved(&p, "an undo");
+        p.redo();
+        moved(&p, "a redo");
+
+        let before = p.generation();
+        p.apply(RunId::new(), Vec::new()).unwrap();
+        assert_eq!(p.generation(), before, "a run that changes nothing");
+        p.objects().count();
+        assert_eq!(p.generation(), before, "reading");
     }
 }
