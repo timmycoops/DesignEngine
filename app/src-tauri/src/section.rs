@@ -10,13 +10,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use zd_core::{Body, LayerId, Object, ObjectKind, TriMesh};
-use zd_geom::{SectionFill, SectionPlane, SliceIndex, SliceLine, fill_between_lines, fill_section_loops, slice_indexed, string_near_plane, triangulate_grid};
+use zd_geom::{
+    CutSegment, SectionFill, SectionPlane, SectionSnapKind, SliceIndex, SliceLine, fill_between_lines, fill_section_loops, slice_indexed, snap_to_section, string_near_plane, triangulate_grid,
+};
 use zd_io::{StackGrids, read_stack_grids};
 
 use crate::state::{AppInner, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_layer_keys};
 
 /// Two ends of a segment, in mine grid coordinates.
-pub type Segment = [[f64; 3]; 2];
+pub type Segment = CutSegment;
 
 /// One layer's lines of one kind.
 pub struct SectionGroup {
@@ -37,6 +39,38 @@ pub struct SectionMesh {
 
 /// Meshes made for sections, each with a stamp of what it was made from.
 pub type SectionMeshes = HashMap<String, (String, Arc<SectionMesh>)>;
+
+/// The last section cut, kept so the cursor can snap to it.
+pub struct SectionCut {
+    pub plane: SectionPlane,
+    pub groups: Vec<SectionGroup>,
+}
+
+/// A point on the cut lines, in mine grid coordinates, with what to call it.
+pub struct SectionPoint {
+    pub point: [f64; 3],
+    pub kind: &'static str,
+    pub label: String,
+}
+
+/// Where a cursor at `at` (distance along the section, RL) snaps on the last section cut. See
+/// [`snap_to_section`].
+pub fn snap_on_section(app: &AppInner, at: [f64; 2], vertex_reach: f64, segment_reach: f64, ignoring: Option<[f64; 2]>) -> Option<SectionPoint> {
+    let cut = app.section_cut.as_ref()?;
+    let groups: Vec<&[Segment]> = cut.groups.iter().map(|g| g.segments.as_slice()).collect();
+    let snap = snap_to_section(&groups, &cut.plane, at, vertex_reach, segment_reach, ignoring)?;
+    let name = |group: usize| {
+        let group = &cut.groups[group];
+        let layer = app.session.project().layer(group.layer).map_or("a layer", |l| l.name.as_str());
+        if group.material.is_empty() { layer.to_string() } else { format!("{layer} ({})", group.material) }
+    };
+    let (kind, label) = match snap.kind {
+        SectionSnapKind::Crossing => ("intersection", format!("the crossing of {} and {}", name(snap.group), name(snap.other.unwrap_or(snap.group)))),
+        SectionSnapKind::Vertex => ("vertex", format!("a vertex on {}", name(snap.group))),
+        SectionSnapKind::Segment => ("segment", format!("the line of {}", name(snap.group))),
+    };
+    Some(SectionPoint { point: snap.point, kind, label })
+}
 
 /// Everything a section cuts, as the project stood at `generation`.
 pub struct SectionInputs {
@@ -321,6 +355,27 @@ mod tests {
         assert!((cut(&mut app) - 80.0).abs() < 1e-9, "a solid added");
         app.session.undo().unwrap();
         assert!((cut(&mut app) - 40.0).abs() < 1e-9, "and undone");
+    }
+
+    #[test]
+    fn a_cursor_snaps_to_the_last_cut_in_mine_grid_coordinates() {
+        let mut s = Session::with_builtins();
+        s.run("solid.from_mesh", cube("a", "coal", 0.0)).unwrap();
+        let mut app = AppInner::new(s, None);
+        let plane = SectionPlane::through([E - 10.0, N + 5.0], [E + 60.0, N + 5.0]).unwrap();
+        assert!(snap_on_section(&app, [15.0, 110.0], 1.0, 1.0, None).is_none(), "nothing cut yet");
+        let groups = section_groups(&mut app, &plane, 1.0, true).unwrap();
+        app.section_cut = Some(SectionCut { plane, groups });
+
+        // The cube's top corner: 10 m along from a start 10 m west of it, at RL 110.
+        let corner = snap_on_section(&app, [10.3, 109.8], 1.0, 0.5, None).unwrap();
+        assert_eq!((corner.kind, corner.label.as_str()), ("vertex", "a vertex on coal"));
+        assert_eq!(corner.point, [E, N + 5.0, 110.0], "exact");
+        // Clear of the cube's corner, and of the vertex where the top face's diagonal crosses the plane.
+        let line = snap_on_section(&app, [12.5, 109.8], 1.0, 0.5, None).unwrap();
+        assert_eq!((line.kind, line.label.as_str()), ("segment", "the line of coal"));
+        assert!((line.point[0] - (E + 2.5)).abs() < 1e-9 && line.point[1] == N + 5.0 && line.point[2] == 110.0, "{:?}", line.point);
+        assert!(snap_on_section(&app, [12.5, 130.0], 1.0, 0.5, None).is_none(), "nothing there");
     }
 
     #[test]

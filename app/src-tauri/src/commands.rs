@@ -18,7 +18,7 @@ use zd_geom::{SectionPlane, StackHorizon, SurfaceRayCaster, stack_issue_nodes, t
 use zd_io::read_stack_grids;
 
 use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_section, encode_triangulation};
-use crate::section::section_groups;
+use crate::section::{SectionCut, section_groups, snap_on_section};
 use crate::shared::post_shared_buffer;
 use crate::state::{AppInner, AppState, bounds, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_layer_keys};
 use crate::synthetic::synthetic_topography;
@@ -398,7 +398,9 @@ pub async fn section_lines(a: [f64; 2], b: [f64; 2], width: f64, fill: bool, sta
         let mut app = app.lock().unwrap();
         let groups = section_groups(&mut app, &plane, width, fill)?;
         let origin = app.origin().unwrap_or([0.0; 3]);
-        Ok(Response::new(encode_section(&groups, origin, &plane, ms(start))))
+        let encoded = encode_section(&groups, origin, &plane, ms(start));
+        app.section_cut = Some(SectionCut { plane, groups });
+        Ok(Response::new(encoded))
     })
     .await?
 }
@@ -641,6 +643,11 @@ pub struct SnapHit {
     world: [f64; 3],
     /// The surface or grid hit; none for a solid, which is searched with the rest of its layer.
     object: Option<ObjectId>,
+    /// What a section's cut lines gave: a vertex, segment or intersection, and what to call it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
 }
 
 /// Nearest hit on a drawn surface of a visible layer, along a ray in scene-local coordinates.
@@ -668,7 +675,19 @@ pub fn snap_ray(origin: [f64; 3], direction: [f64; 3], state: State<'_, AppState
             local: [world[0] - scene_origin[0], world[1] - scene_origin[1], world[2] - scene_origin[2]],
             world,
             object,
+            kind: None,
+            label: None,
         })
+}
+
+/// Where a cursor at distance `along` and `rl` on the section snaps to the last cut, if anywhere near.
+#[tauri::command]
+pub fn section_snap(along: f64, rl: f64, vertex_reach: f64, segment_reach: f64, ignoring: Option<[f64; 2]>, state: State<'_, AppState>) -> Option<SnapHit> {
+    let mut app = state.app.lock().unwrap();
+    let origin = app.origin()?;
+    let hit = snap_on_section(&app, [along, rl], vertex_reach, segment_reach, ignoring)?;
+    let world = hit.point;
+    Some(SnapHit { local: [world[0] - origin[0], world[1] - origin[1], world[2] - origin[2]], world, object: None, kind: Some(hit.kind), label: Some(hit.label) })
 }
 
 #[derive(Serialize)]

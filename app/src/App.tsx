@@ -202,16 +202,16 @@ export default function App() {
     const [section, strings, project] = [sectionRef.current, stringsRef.current, summaryRef.current];
     if (!section || !project) return;
     strings?.setMode('select');
-    strings?.setFrozen(true);
+    strings?.setSection(section.tools);
     setModeState('select');
     setSectionOpen(true);
-    setStatus({ text: 'Section: [ and ] step along it, or drag on the plan map; the wheel zooms where the cursor is, left drag pans' });
+    setStatus({ text: 'Section: [ and ] step along it, or drag on the plan map; Draw string works on the plane; the wheel zooms where the cursor is, left drag pans' });
     void section.show(planPoint(a), planPoint(b), project).catch((e) => setStatus({ text: String(e), error: true }));
   }, []);
 
   const closeSection = useCallback(() => {
     sectionRef.current?.close();
-    stringsRef.current?.setFrozen(false);
+    stringsRef.current?.setSection(null);
     setSectionOpen(false);
   }, []);
 
@@ -606,11 +606,11 @@ export default function App() {
           <ToolButton tip="Select and edit strings" active={mode === 'select'} onClick={() => setMode('select')}>
             <MousePointer2 /> Select
           </ToolButton>
-          <ToolButton tip="Digitise a string: snaps to string vertices and segments, then surfaces" active={mode === 'draw'} onClick={() => setMode('draw')}>
+          <ToolButton tip={sectionOpen ? 'Digitise a string on the section: snaps to crossings, vertices and lines of the cut' : 'Digitise a string: snaps to string vertices and segments, then surfaces'} active={mode === 'draw'} onClick={() => setMode('draw')}>
             <PenLine /> Draw string
           </ToolButton>
           <ToolButton
-            tip={snapping ? 'Snap is on: to strings, then surfaces (S turns it off)' : 'Snap is off: points go on the working plane (S turns it on)'}
+            tip={snapping ? `Snap is on: to ${sectionOpen ? 'the cut lines' : 'strings, then surfaces'} (S turns it off)` : 'Snap is off: points go on the working plane (S turns it on)'}
             active={snapping}
             onClick={() => stringsRef.current?.toggleSnapping()}
           >

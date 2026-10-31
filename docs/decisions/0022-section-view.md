@@ -19,8 +19,8 @@ in mine grid coordinates, and can be snapped to and exported.
 3. **Surfaces, solids and grids are cut with no width.** Strings cross a thin slice rather than lie in it, so
    those within 1 m either side are drawn flat onto it (`string_near_plane`).
 4. **A section is view state, like the seam horizon on show:** no command, nothing to undo. The Section
-   button picks two points, and the section takes over from the view it was picked in. Plan view, 3D and
-   the snap, draw and select tools come back when it closes. Strings cannot be edited in section yet.
+   button picks two points, and the section takes over from the view it was picked in. Plan view and 3D come
+   back when it closes.
 5. **What is cut:** every visible layer. Solids cut as one mesh per layer, as they draw, and seam models as
    each working horizon's roof and floor. What takes work to make is kept until its geometry changes, so
    a step costs only the cut. Each mesh kept carries an index, groups of 2,000 triangles with a bounding
@@ -58,6 +58,12 @@ in mine grid coordinates, and can be snapped to and exported.
     through the other. A parent does not fill, as its daughters do. Seam lines and fills take a default colour
     by the horizon's material, amber for coal and grey for waste, whatever the case it is typed in; any other
     material keeps its layer colour. Setting colours comes with colouring, filtering and attributes.
+12. **Strings are drawn and edited on the section as anywhere else.** The section plane is the working plane.
+    Points snap to the cut lines: a crossing first, because that is what a planner is after, then a vertex,
+    then the nearest point on a line, and failing those the plane itself. The engine snaps, because it holds the
+    cut lines exactly and the viewport holds them only as far as `f32` goes. Only what lies within the
+    section's 1 m width can be picked or shows a handle, and a dragged vertex lands on the plane. What comes
+    out is an ordinary 3D string: stepping between clicks draws one across several sections.
 
 ## Evidence
 
@@ -95,6 +101,12 @@ in mine grid coordinates, and can be snapped to and exported.
   ticks and a pan, every line sits within 4e-6 px of where the camera draws that RL and distance, the spacing
   runs from 0.05 m to 2 km with lines 64 to 158 px apart, and a drawing takes at most 1.4 ms.
 
+- Editing, on PIT B through the real toolbar, canvas and keys: a string of four vertices, three snapped and one
+  on the plane, holds what the engine snapped to bit for bit and lies within 6e-10 m of the plane. It shows
+  among the cut lines, drags to where the cursor went to 1e-6 m, and both steps undo. A snap costs 1.3 ms at
+  p50 and 3.8 ms at worst. To the bit in tests too: a vertex comes back exact, a line's nearest point is right
+  to 1e-9 m, two groups cross where they should, a line doesn't cross itself or one laid along it, and a
+  dragged vertex skips its own segments.
 - Seam fills, to 1e-7 m2: a flat seam fills 1,000 m2, a roof dipping through its floor stops at the crossing
   at 250 m2, and a gap in the roof leaves 800 m2. Breakpoints that don't match, and lines running either way,
   match the trapezium rule. A floor above its roof fills nothing. Cut from two sloping grids, a seam fills its

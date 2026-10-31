@@ -6,7 +6,7 @@ use zd_commands::Session;
 use zd_core::{AttrValue, Body, LayerId, Object, ObjectId, Project, TriMesh};
 use zd_geom::SurfaceRayCaster;
 
-use crate::section::{SectionInputs, SectionMeshes};
+use crate::section::{SectionCut, SectionInputs, SectionMeshes};
 
 /// The shell's state: one engine session, plus what the viewport needs around it. Shared with
 /// worker threads, hence the `Arc`.
@@ -41,11 +41,13 @@ pub struct AppInner {
     pub section_meshes: SectionMeshes,
     /// What the section view cuts, kept until the project changes.
     pub section_inputs: Option<Arc<SectionInputs>>,
+    /// The last section cut, for snapping to.
+    pub section_cut: Option<SectionCut>,
 }
 
 impl AppInner {
     pub fn new(session: Session, path: Option<PathBuf>) -> Self {
-        AppInner { session, path, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), section_meshes: SectionMeshes::new(), section_inputs: None }
+        AppInner { session, path, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), section_meshes: SectionMeshes::new(), section_inputs: None, section_cut: None }
     }
 
     pub fn handle(&mut self) -> u32 {
