@@ -38,7 +38,7 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use serde::{Deserialize, Serialize};
 use zd_core::{
-    Attributes, Body, Crossings, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, ProjectError, RunId, SeamModel, Solid,
+    Attributes, Body, Crossings, FaceDesign, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, ProjectError, RunId, SeamModel, Solid,
     Surface, TriMesh,
 };
 
@@ -136,6 +136,7 @@ enum StoredBody {
     },
     Grid { origin: [f64; 2], cell_size: [f64; 2], cols: usize, rows: usize, z: String },
     SeamModel { model: SeamModel },
+    FaceDesign { design: FaceDesign },
 }
 
 /// Files already on disk for a shared mesh or grid, so a later save can point at them again.
@@ -244,6 +245,7 @@ impl ProjectStore {
                     Body::Grid(grid)
                 }
                 StoredBody::SeamModel { model } => Body::SeamModel(Arc::new(model)),
+                StoredBody::FaceDesign { design } => Body::FaceDesign(Arc::new(design)),
             };
             objects.push(Object {
                 id: stored.id,
@@ -295,6 +297,7 @@ impl ProjectStore {
                     StoredBody::Grid { origin: grid.origin, cell_size: grid.cell_size, cols: grid.cols, rows: grid.rows, z }
                 }
                 Body::SeamModel(model) => StoredBody::SeamModel { model: (**model).clone() },
+                Body::FaceDesign(design) => StoredBody::FaceDesign { design: (**design).clone() },
             };
             stored.push(StoredObject {
                 id: object.id,

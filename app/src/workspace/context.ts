@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { LogEntry, ProjectSummary, Vec3 } from '@/bridge';
+import type { LogEntry, ProjectSummary, RunRecord, Vec3 } from '@/bridge';
 import type { SeamShown } from '@/viewport/sceneSync';
 
 /** What every panel reads, and the actions they share. App owns the state. */
@@ -18,6 +18,8 @@ export interface Workspace {
   setLayerVisible: (layer: string, visible: boolean) => void;
   /** Runs an engine command; reports the outcome on the status line. False if it failed. */
   run: (name: string, params: Record<string, unknown>) => Promise<boolean>;
+  /** The same, handing back the run's record, or why it failed, for a panel to show. */
+  runRecord: (name: string, params: Record<string, unknown>) => Promise<{ record?: RunRecord; error?: string }>;
   /** The seam horizon the viewport shows coloured by thickness, if any. */
   seamView: SeamShown | null;
   /** A section is showing in place of the plan view. */

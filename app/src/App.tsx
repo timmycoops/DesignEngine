@@ -13,6 +13,7 @@ import {
   Map as MapIcon,
   MousePointer2,
   PaintBucket,
+  MountainSnow,
   PanelsTopLeft,
   PenLine,
   Redo2,
@@ -215,22 +216,24 @@ export default function App() {
     setSectionOpen(false);
   }, []);
 
-  const run = useCallback(
+  const runRecord = useCallback(
     async (name: string, params: Record<string, unknown>) => {
       try {
         const reply = await runCommand(name, params);
         show(reply.summary);
         setStatus({ text: describe(reply.record) });
-        return true;
+        return { record: reply.record };
       } catch (e) {
         setStatus({ text: String(e), error: true });
         // A failed run is in the log too.
         void runLog().then(setLog);
-        return false;
+        return { error: String(e) };
       }
     },
     [show],
   );
+
+  const run = useCallback(async (name: string, params: Record<string, unknown>) => !!(await runRecord(name, params)).record, [runRecord]);
 
   const viewportMounted = useCallback(() => setHostMounted(true), []);
 
@@ -502,6 +505,7 @@ export default function App() {
       setActiveLayer,
       setLayerVisible: setVisible,
       run,
+      runRecord,
       seamView,
       sectionOpen,
       lineWeight: (layer) => sectionRef.current?.weightOf(layer) ?? null,
@@ -513,7 +517,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, run, seamView, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, mode, typeVertex],
+    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, run, runRecord, seamView, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';
@@ -636,6 +640,9 @@ export default function App() {
             }}
           >
             <Scissors /> Section
+          </ToolButton>
+          <ToolButton tip="Face design: lines, profiles and rules, run as one" onClick={() => dockRef.current && showPanel(dockRef.current, 'face')}>
+            <MountainSnow /> Face
           </ToolButton>
           {sectionOpen && (
             <>

@@ -564,6 +564,24 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
     from = next.id;
   }
   const ms = performance.now() - started;
+  // The same grids as a whole design, as the Face design panel runs it: a line each side of the section.
+  const rule = (name: string) => [name, { type: 'fixed', value: name === 'Berm' ? 10 : 70 }];
+  const up = targets.slice(1).flatMap((id) => [
+    { step: 'project', to: { kind: 'surface', id }, rule: 'Batter' },
+    { step: 'berm', rule: 'Berm' },
+  ]);
+  const content = {
+    layer: 'bench faces',
+    tolerance: 0.1,
+    lines: [{ string: toe.id, profile: 'Highwall', side: 'left', run_on: [100, 100] }],
+    profiles: [{ name: 'Highwall', register: targets[0], up: [...up, { step: 'project', to: { kind: 'rl', rl: 500 }, rule: 'Batter' }], down: [{ step: 'project', to: { kind: 'rl', rl: -500 }, rule: 'Batter' }] }],
+    rules: ['Batter', 'Berm'].map((name) => ({ name, value: rule(name)[1] })),
+  };
+  const design = (await run('face.save_design', { name: 'Bench design', content })).fresh[0];
+  const designed = performance.now();
+  const whole = await run('face.project', { design: design.id });
+  const designMs = performance.now() - designed;
+  const again = await run('face.project', { design: design.id });
   const close = async (half: number) => {
     await section.show([at[0] - half * ux, at[1] - half * uy], [at[0] + half * ux, at[1] + half * uy], summary);
     await settle();
@@ -573,7 +591,7 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
   const wide = await close(400);
   const tight = await close(120);
   const surfaces = (section.lastCut?.groups ?? []).filter((g) => g.kind === 'surface').reduce((sum, g) => sum + g.segments, 0);
-  return { steps, ms, surface_segments_in_cut: surfaces, wide, tight };
+  return { steps, ms, surface_segments_in_cut: surfaces, design_ms: designMs, design_messages: whole.messages, design_made: whole.fresh.length, design_rerun_made: again.fresh.length, wide, tight };
 }
 
 /** The fills on, as they first show, then off and on again by the toolbar's Fill button. */

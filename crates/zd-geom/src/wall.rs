@@ -15,11 +15,14 @@
 //! a section, so neighbouring triangles agree on the crest to the bit, and a target vertex on a wall
 //! counts as above it, so a crest never runs through a corner.
 //!
-//! The target is a surface single-valued in plan. Two cases are refused for now, each with its place:
-//! a wall that runs off the target, and a wall that closes against a far wall (a split in skeleton
-//! terms), which would make the crest cross itself.
+//! The target is a surface single-valued in plan, wound either way. Where it has no data under a wall,
+//! in a no-seam hole or past its edge, it's bridged and the stretch is reported: straight across a hole
+//! between its edges, and level with the nearest edge past the outside, so the crest stays whole and a
+//! face stays one sheet. A wall that closes against a far wall (a split in skeleton terms) is refused,
+//! as it would make the crest cross itself.
 
 use std::cmp::Ordering;
+use std::collections::hash_map::Entry;
 use std::collections::{BinaryHeap, HashMap};
 
 use spade::{Point2, Triangulation};
@@ -52,8 +55,6 @@ const FOOT: usize = usize::MAX;
 const TOP: usize = usize::MAX - 1;
 const NONE: usize = usize::MAX - 2;
 
-const NO_WALL: &str = "the string is on or above the target all the way along, so there's no wall to make: pick a surface above it";
-
 /// What a wall step did.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WallLog {
@@ -64,12 +65,14 @@ pub struct WallLog {
     /// String vertices dropped for sitting on the one before in plan.
     pub vertices_dropped: usize,
     /// Stretches where the target is below the string, so the step has no height.
-    pub no_height: Vec<NoHeight>,
+    pub no_height: Vec<Stretch>,
+    /// Stretches of crest where the target has no data and was bridged.
+    pub no_target: Vec<Stretch>,
 }
 
-/// A stretch of string above the target.
+/// A stretch along a string or crest.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NoHeight {
+pub struct Stretch {
     pub from: [f64; 3],
     pub to: [f64; 3],
 }
@@ -100,8 +103,18 @@ pub fn project_wall(toe: &Polyline, side: OffsetSide, batter_degrees: f64, targe
     sweep.run(highest + 1.0, (highest + 1.0 - lowest) / slope, &mut log);
     let edges: Vec<Vec<Edge>> = sweep.walls.iter().take(sweep.segments).map(edges_round).collect();
     let near = target_near(target, origin, &edges)?;
-    let walk = Walk::new(&near, &sweep, &edges, origin);
-    let walked = walk.run(&mut log)?;
+    let mut attempt = log.clone();
+    let walked = match Walk::new(&near, near.triangles.len(), &sweep, &edges, origin).run(&mut attempt) {
+        Ok(walked) => {
+            log = attempt;
+            walked
+        }
+        Err(GeomError::OffTarget { .. }) => {
+            let bridged = bridged_target(&near, &edges);
+            Walk::new(&bridged, near.triangles.len(), &sweep, &edges, origin).run(&mut log)?
+        }
+        Err(e) => return Err(e),
+    };
     if let Some(p) = crossing_of(&walked.crest, toe.closed) {
         return Err(GeomError::InvalidInput(format!(
             "the crest crosses itself near {:.3}, {:.3}: a wall has closed against a far wall",
@@ -111,14 +124,16 @@ pub fn project_wall(toe: &Polyline, side: OffsetSide, batter_degrees: f64, targe
     }
     let wall = wall_mesh(&sweep, &edges, &walked, origin)?;
     if wall.triangles.is_empty() {
-        return Err(GeomError::InvalidInput(NO_WALL.into()));
+        return Err(GeomError::NoHeight);
     }
     let mut vertices: Vec<[f64; 3]> = walked.crest.iter().map(|p| world(*p, origin)).collect();
     if side == OffsetSide::Right {
         vertices.reverse();
-        log.no_height.reverse();
-        for stretch in &mut log.no_height {
-            std::mem::swap(&mut stretch.from, &mut stretch.to);
+        for stretches in [&mut log.no_height, &mut log.no_target] {
+            stretches.reverse();
+            for stretch in stretches {
+                std::mem::swap(&mut stretch.from, &mut stretch.to);
+            }
         }
     }
     Ok(WallStep { crest: Polyline { vertices, closed: toe.closed }, wall, log })
@@ -521,6 +536,13 @@ fn target_near(target: &TriMesh, origin: P3, edges: &[Vec<Edge>]) -> Result<TriM
         if low[0] > hi[0] || high[0] < lo[0] || low[1] > hi[1] || high[1] < lo[1] {
             continue;
         }
+        // The walk goes by which way round a triangle runs in plan. A triangle on edge in plan has no
+        // way round, and no height the walk could use.
+        let plan = area2([a[0], a[1]], [b[0], b[1]], [c[0], c[1]]);
+        if plan == 0.0 {
+            continue;
+        }
+        let triangle = if plan > 0.0 { *triangle } else { [triangle[0], triangle[2], triangle[1]] };
         near.triangles.push(triangle.map(|v| {
             if renumbered[v as usize] == u32::MAX {
                 renumbered[v as usize] = near.vertices.len() as u32;
@@ -534,6 +556,74 @@ fn target_near(target: &TriMesh, origin: P3, edges: &[Vec<Edge>]) -> Result<TriM
         return Err(GeomError::InvalidInput("the target doesn't reach the string".into()));
     }
     Ok(near)
+}
+
+/// The target with its gaps filled over everything the walls reach: a triangulation in plan of its
+/// open edges, keeping only the triangles where it has no data. New corners take the elevation of the
+/// nearest open edge. Its own triangles stay first.
+fn bridged_target(near: &TriMesh, edges: &[Vec<Edge>]) -> TriMesh {
+    let mut uses: HashMap<(u32, u32), u32> = HashMap::with_capacity(near.triangles.len() * 2);
+    for t in &near.triangles {
+        for k in 0..3 {
+            let (u, v) = (t[k], t[(k + 1) % 3]);
+            *uses.entry((u.min(v), u.max(v))).or_insert(0) += 1;
+        }
+    }
+    let mut open: Vec<(u32, u32)> = uses.into_iter().filter(|(_, count)| *count == 1).map(|(edge, _)| edge).collect();
+    open.sort_unstable();
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for p in near.vertices.iter().copied().chain(edges.iter().flatten().flat_map(|e| [e.from, e.to])) {
+        lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+        hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+    }
+    let mut out = near.clone();
+    let mut cdt = Cdt::new();
+    let mut numbers: Vec<u32> = Vec::new();
+    let mut handles: HashMap<u32, _> = HashMap::new();
+    let insert = |cdt: &mut Cdt, number: u32, p: P3, numbers: &mut Vec<u32>| {
+        let handle = cdt.insert(Point2::new(p[0], p[1])).ok()?;
+        if handle.index() >= numbers.len() {
+            numbers.resize(handle.index() + 1, number);
+        }
+        Some(handle)
+    };
+    for &(u, v) in &open {
+        for w in [u, v] {
+            if let Entry::Vacant(slot) = handles.entry(w)
+                && let Some(handle) = insert(&mut cdt, w, near.vertices[w as usize], &mut numbers)
+            {
+                slot.insert(handle);
+            }
+        }
+    }
+    let margin = 1.0;
+    for corner in [[lo[0] - margin, lo[1] - margin], [hi[0] + margin, lo[1] - margin], [hi[0] + margin, hi[1] + margin], [lo[0] - margin, hi[1] + margin]] {
+        let nearest = handles.keys().copied().min_by(|&a, &b| {
+            let gap = |v: u32| (near.vertices[v as usize][0] - corner[0]).hypot(near.vertices[v as usize][1] - corner[1]);
+            gap(a).total_cmp(&gap(b)).then(a.cmp(&b))
+        });
+        let z = nearest.map_or(0.0, |v| near.vertices[v as usize][2]);
+        out.vertices.push([corner[0], corner[1], z]);
+        let number = out.vertices.len() as u32 - 1;
+        insert(&mut cdt, number, [corner[0], corner[1], z], &mut numbers);
+    }
+    for (u, v) in open {
+        if let (Some(&from), Some(&to)) = (handles.get(&u), handles.get(&v))
+            && from != to
+            && cdt.can_add_constraint(from, to)
+        {
+            cdt.add_constraint(from, to);
+        }
+    }
+    let bins = TriangleBins::new(near, lo, hi);
+    for face in cdt.inner_faces() {
+        let corners = face.vertices().map(|v| v.position());
+        let middle = [(corners[0].x + corners[1].x + corners[2].x) / 3.0, (corners[0].y + corners[1].y + corners[2].y) / 3.0];
+        if bins.height(near, middle).is_none() {
+            out.triangles.push(face.vertices().map(|v| numbers[v.fix().index()]));
+        }
+    }
+    out
 }
 
 /// Where a crest stops on a wall's boundary.
@@ -562,6 +652,8 @@ struct Walked {
 /// Round the crest, one triangle and one wall at a time.
 struct Walk<'a> {
     near: &'a TriMesh,
+    /// Triangles from this one on bridge a gap in the target.
+    real: usize,
     bins: TriangleBins,
     /// Triangles round each vertex.
     fan_starts: Vec<u32>,
@@ -581,7 +673,7 @@ struct Position {
 }
 
 impl<'a> Walk<'a> {
-    fn new(near: &'a TriMesh, sweep: &'a Sweep, edges: &'a [Vec<Edge>], origin: P3) -> Self {
+    fn new(near: &'a TriMesh, real: usize, sweep: &'a Sweep, edges: &'a [Vec<Edge>], origin: P3) -> Self {
         let mut fan_starts = vec![0u32; near.vertices.len() + 1];
         for v in near.triangles.iter().flatten() {
             fan_starts[*v as usize + 1] += 1;
@@ -602,7 +694,7 @@ impl<'a> Walk<'a> {
             lo = [lo[0].min(p[0]), lo[1].min(p[1])];
             hi = [hi[0].max(p[0]), hi[1].max(p[1])];
         }
-        Walk { near, bins: TriangleBins::new(near, lo, hi), fan_starts, fans, sweep, edges, origin }
+        Walk { near, real, bins: TriangleBins::new(near, lo, hi), fan_starts, fans, sweep, edges, origin }
     }
 
     fn fan(&self, v: u32) -> &[u32] {
@@ -614,7 +706,7 @@ impl<'a> Walk<'a> {
     }
 
     fn off_target(&self, p: P3) -> GeomError {
-        GeomError::InvalidInput(format!("the wall runs off the target at {:.3}, {:.3}", p[0] + self.origin[0], p[1] + self.origin[1]))
+        GeomError::OffTarget { at: [p[0] + self.origin[0], p[1] + self.origin[1]] }
     }
 
     /// The triangle holding `p` that the wall's plane cuts.
@@ -689,7 +781,21 @@ impl<'a> Walk<'a> {
         keep(&mut walked.crest, position.at);
         let mut piece = Piece { entry: stop_on(&self.edges[position.wall], position.entered, position.at), exit: Stop { edge: 0, along: 0.0 }, points: vec![position.at] };
         let limit = 8 * (self.near.triangles.len() + self.sweep.walls.len()) + 1_000;
+        // Where the crest went over a gap in the target.
+        let mut gap_from: Option<P3> = None;
+        let mut note_gap = |at: P3, triangle: u32, log: &mut WallLog| {
+            let over = triangle as usize >= self.real;
+            match gap_from {
+                None if over => gap_from = Some(at),
+                Some(from) if !over => {
+                    log.no_target.push(Stretch { from: world(from, self.origin), to: world(at, self.origin) });
+                    gap_from = None;
+                }
+                _ => {}
+            }
+        };
         for _ in 0..limit {
+            note_gap(position.at, position.triangle, log);
             let plane = self.sweep.walls[position.wall].plane;
             let corners = self.near.triangles[position.triangle as usize];
             let sides = corners.map(|v| plane.above(self.near.vertices[v as usize]));
@@ -708,6 +814,7 @@ impl<'a> Walk<'a> {
                 if let Some((_, finish)) = self.sweep.ends()
                     && across == finish
                 {
+                    note_gap(point, 0, log);
                     return Ok(walked);
                 }
                 if across == FOOT {
@@ -722,10 +829,15 @@ impl<'a> Walk<'a> {
                     }
                 }
                 if across == TOP || self.sweep.is_end(across) {
-                    return Err(self.off_target(point));
+                    return Err(GeomError::InvalidInput(format!(
+                        "the crest ran out of the walls at {:.3}, {:.3}: the string climbs too steeply for this batter there",
+                        point[0] + self.origin[0],
+                        point[1] + self.origin[1]
+                    )));
                 }
                 let entered = self.edges[across].iter().position(|e| e.across == position.wall).ok_or_else(|| self.off_target(point))?;
                 if self.sweep.closed && across == first.wall && entered == first.entered && norm(sub(point, first.at)) < SAME_POINT {
+                    note_gap(point, 0, log);
                     walked.crest.pop();
                     return Ok(walked);
                 }
@@ -764,7 +876,7 @@ impl<'a> Walk<'a> {
             covered |= self.target_at(p).ok_or_else(|| self.off_target(p))? > p[2] + ON_TARGET;
         }
         if !covered {
-            return Err(GeomError::InvalidInput(NO_WALL.into()));
+            return Err(GeomError::NoHeight);
         }
         self.start_up(|across| across < self.sweep.segments).map(Some)
     }
@@ -795,7 +907,7 @@ impl<'a> Walk<'a> {
             let foot = self.sweep.walls[wall].foot;
             if let Some(point) = self.target_rises_over(at, foot[1])? {
                 keep(&mut walked.crest, point);
-                log.no_height.push(NoHeight { from: world(from, self.origin), to: world(point, self.origin) });
+                log.no_height.push(Stretch { from: world(from, self.origin), to: world(point, self.origin) });
                 let plane = self.sweep.walls[wall].plane;
                 let triangle = self.triangle_on(&plane, point).ok_or_else(|| self.off_target(point))?;
                 return Ok(Some(Position { wall, triangle, at: point, entered: 0 }));
@@ -809,7 +921,7 @@ impl<'a> Walk<'a> {
                 if self.sweep.closed {
                     wall = 0;
                 } else {
-                    log.no_height.push(NoHeight { from: world(from, self.origin), to: world(foot[1], self.origin) });
+                    log.no_height.push(Stretch { from: world(from, self.origin), to: world(foot[1], self.origin) });
                     return Ok(None);
                 }
             }
@@ -1024,7 +1136,7 @@ impl MeshBuilder {
 }
 
 /// The triangles of a polygon, as places in `outline`, if they add up to its area.
-fn triangles_of(outline: &[P3]) -> Option<Vec<[usize; 3]>> {
+pub(crate) fn triangles_of(outline: &[P3]) -> Option<Vec<[usize; 3]>> {
     let mut cdt = Cdt::new();
     let mut handles = Vec::with_capacity(outline.len());
     for p in outline {
