@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use zd_core::{Body, LayerId, ObjectKind, TriMesh};
-use zd_geom::{SectionPlane, SliceIndex, slice_indexed, string_near_plane, triangulate_grid};
+use zd_geom::{SectionFill, SectionPlane, SliceIndex, fill_section_loops, slice_indexed, string_near_plane, triangulate_grid};
 use zd_io::read_stack_grids;
 
 use crate::state::{AppInner, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_layer_keys};
@@ -21,6 +21,8 @@ pub struct SectionGroup {
     pub layer: LayerId,
     pub kind: &'static str,
     pub segments: Vec<Segment>,
+    /// What the solids' closed loops fill.
+    pub fill: SectionFill,
 }
 
 /// A mesh ready to cut.
@@ -32,8 +34,9 @@ pub struct SectionMesh {
 /// Meshes made for sections, each with a stamp of what it was made from.
 pub type SectionMeshes = HashMap<String, (String, Arc<SectionMesh>)>;
 
-/// The lines where `plane` cuts every visible layer. Strings within `width` of the plane draw flat on it.
-pub fn section_groups(app: &mut AppInner, plane: &SectionPlane, width: f64) -> Result<Vec<SectionGroup>, String> {
+/// The lines where `plane` cuts every visible layer, and with `fill` what solids fill. Strings within
+/// `width` of the plane draw flat on it.
+pub fn section_groups(app: &mut AppInner, plane: &SectionPlane, width: f64, fill: bool) -> Result<Vec<SectionGroup>, String> {
     let mut groups: Vec<SectionGroup> = Vec::new();
     let project = app.session.project();
     let visible = |layer: LayerId| project.layer(layer).is_some_and(|l| l.visible);
@@ -84,16 +87,18 @@ pub fn section_groups(app: &mut AppInner, plane: &SectionPlane, width: f64) -> R
         }
     }
     for (layer, kind, section) in meshes {
+        let lines = slice_indexed(&section.mesh, &section.index, plane);
+        let filled = if fill && kind == "solid" { fill_section_loops(&lines, plane) } else { SectionFill::default() };
         let mut segments = Vec::new();
-        for line in slice_indexed(&section.mesh, &section.index, plane) {
+        for line in lines {
             let closing = line.closed.then(|| [line.points[line.points.len() - 1], line.points[0]]);
             segments.extend(line.points.windows(2).map(|w| [w[0], w[1]]).chain(closing));
         }
-        add(&mut groups, layer, kind, segments);
+        add(&mut groups, layer, kind, segments, filled);
     }
     for object in project.objects().filter(|o| o.kind() == ObjectKind::String && visible(o.layer)) {
         if let Body::String(line) = &object.body {
-            add(&mut groups, object.layer, "string", string_near_plane(&line.vertices, line.closed, plane, width));
+            add(&mut groups, object.layer, "string", string_near_plane(&line.vertices, line.closed, plane, width), SectionFill::default());
         }
     }
     app.section_meshes = kept;
@@ -101,13 +106,17 @@ pub fn section_groups(app: &mut AppInner, plane: &SectionPlane, width: f64) -> R
 }
 
 /// Adds segments to the layer's group of that kind.
-fn add(groups: &mut Vec<SectionGroup>, layer: LayerId, kind: &'static str, segments: Vec<Segment>) {
+fn add(groups: &mut Vec<SectionGroup>, layer: LayerId, kind: &'static str, segments: Vec<Segment>, fill: SectionFill) {
     if segments.is_empty() {
         return;
     }
     match groups.iter_mut().find(|g| g.layer == layer && g.kind == kind) {
-        Some(group) => group.segments.extend(segments),
-        None => groups.push(SectionGroup { layer, kind, segments }),
+        Some(group) => {
+            group.segments.extend(segments);
+            group.fill.triangles.extend(fill.triangles);
+            group.fill.unfilled += fill.unfilled;
+        }
+        None => groups.push(SectionGroup { layer, kind, segments, fill }),
     }
 }
 
@@ -133,6 +142,15 @@ mod tests {
         segments.iter().map(|[p, q]| ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2) + (q[2] - p[2]).powi(2)).sqrt()).sum()
     }
 
+    fn area(fill: &SectionFill) -> f64 {
+        // Plan length along the section, by RL: a vertical plane, so this is the true area.
+        let flat = |t: &[[f64; 3]; 3]| {
+            let (u, v) = ((t[1][0] - t[0][0]).hypot(t[1][1] - t[0][1]) * (t[1][0] - t[0][0]).signum(), (t[2][0] - t[0][0]).hypot(t[2][1] - t[0][1]) * (t[2][0] - t[0][0]).signum());
+            (u * (t[2][2] - t[0][2]) - v * (t[1][2] - t[0][2])).abs() / 2.0
+        };
+        fill.triangles.iter().map(flat).sum()
+    }
+
     fn group<'a>(groups: &'a [SectionGroup], project: &Project, layer: &str, kind: &str) -> Option<&'a SectionGroup> {
         let id = project.layers().iter().find(|l| l.name == layer)?.id;
         groups.iter().find(|g| g.layer == id && g.kind == kind)
@@ -153,14 +171,27 @@ mod tests {
 
         // A plane along y = N + 5, west to east, through both cubes on "coal" and the hidden one.
         let plane = SectionPlane::through([E - 10.0, N + 5.0], [E + 60.0, N + 5.0]).unwrap();
-        let groups = section_groups(&mut app, &plane, 1.0).unwrap();
+        let groups = section_groups(&mut app, &plane, 1.0, true).unwrap();
         let project = app.session.project();
         let coal = group(&groups, project, "coal", "solid").expect("the coal layer's cut");
         assert!((length(&coal.segments) - 80.0).abs() < 1e-9, "two 10 m squares: {}", length(&coal.segments));
+        assert!((area(&coal.fill) - 200.0).abs() < 1e-6, "and they fill: {}", area(&coal.fill));
         assert!(group(&groups, project, "waste", "solid").is_none(), "a hidden layer is not cut");
         let strings = group(&groups, project, "design", "string").expect("the near string");
         assert!((length(&strings.segments) - 30.0).abs() < 1e-9, "only the near string: {}", length(&strings.segments));
         assert!(strings.segments.iter().flatten().all(|&p| plane.offset(p).abs() < 1e-9), "drawn flat on the plane");
+        assert!(strings.fill.triangles.is_empty(), "strings fill nothing");
+    }
+
+    #[test]
+    fn fills_are_asked_for() {
+        let mut s = Session::with_builtins();
+        s.run("solid.from_mesh", cube("a", "coal", 0.0)).unwrap();
+        let mut app = AppInner::new(s, None);
+        let plane = SectionPlane::through([E - 10.0, N + 5.0], [E + 60.0, N + 5.0]).unwrap();
+        let groups = section_groups(&mut app, &plane, 1.0, false).unwrap();
+        assert!(groups[0].fill.triangles.is_empty());
+        assert!(!groups[0].segments.is_empty(), "the lines still cut");
     }
 
     #[test]
@@ -169,13 +200,13 @@ mod tests {
         s.run("solid.from_mesh", cube("a", "coal", 0.0)).unwrap();
         let mut app = AppInner::new(s, None);
         let plane = SectionPlane::through([E - 10.0, N + 5.0], [E + 60.0, N + 5.0]).unwrap();
-        section_groups(&mut app, &plane, 1.0).unwrap();
+        section_groups(&mut app, &plane, 1.0, true).unwrap();
         let first = app.section_meshes.values().next().unwrap().1.clone();
-        section_groups(&mut app, &plane.stepped(1.0), 1.0).unwrap();
+        section_groups(&mut app, &plane.stepped(1.0), 1.0, true).unwrap();
         assert!(Arc::ptr_eq(&first, &app.section_meshes.values().next().unwrap().1), "kept between steps");
 
         app.session.run("solid.from_mesh", cube("b", "coal", 20.0)).unwrap();
-        let groups = section_groups(&mut app, &plane, 1.0).unwrap();
+        let groups = section_groups(&mut app, &plane, 1.0, true).unwrap();
         assert!(!Arc::ptr_eq(&first, &app.section_meshes.values().next().unwrap().1), "made again when a solid is added");
         assert!((length(&groups[0].segments) - 80.0).abs() < 1e-9);
     }

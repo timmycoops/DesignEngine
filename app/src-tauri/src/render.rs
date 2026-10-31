@@ -44,11 +44,12 @@ pub struct NodeValues<'a> {
     pub range: [f64; 2],
 }
 
-/// A section's lines for the viewport: `f32` segment ends offset from the scene origin, group after
+/// A section for the viewport: `f32` segment ends offset from the scene origin, group after
 /// group, then the JSON header and its length, as the other layouts end.
 pub fn encode_section(groups: &[SectionGroup], origin: [f64; 3], plane: &SectionPlane, ms: f64) -> Vec<u8> {
     let total: usize = groups.iter().map(|g| g.segments.len()).sum();
-    let mut out = Vec::with_capacity(total * 24 + 256 + groups.len() * 96);
+    let filled: usize = groups.iter().map(|g| g.fill.triangles.len()).sum();
+    let mut out = Vec::with_capacity(total * 24 + filled * 36 + 256 + groups.len() * 96);
     let (mut along, mut rl) = ([f64::INFINITY, f64::NEG_INFINITY], [f64::INFINITY, f64::NEG_INFINITY]);
     for p in groups.iter().flat_map(|g| g.segments.iter()).flatten() {
         let a = plane.along(*p);
@@ -58,7 +59,15 @@ pub fn encode_section(groups: &[SectionGroup], origin: [f64; 3], plane: &Section
             out.extend_from_slice(&((p[k] - origin[k]) as f32).to_le_bytes());
         }
     }
-    let described: Vec<Value> = groups.iter().map(|g| json!({ "layer": g.layer, "kind": g.kind, "segments": g.segments.len() })).collect();
+    for p in groups.iter().flat_map(|g| g.fill.triangles.iter()).flatten() {
+        for k in 0..3 {
+            out.extend_from_slice(&((p[k] - origin[k]) as f32).to_le_bytes());
+        }
+    }
+    let described: Vec<Value> = groups
+        .iter()
+        .map(|g| json!({ "layer": g.layer, "kind": g.kind, "segments": g.segments.len(), "triangles": g.fill.triangles.len(), "unfilled": g.fill.unfilled }))
+        .collect();
     let bounds = (total > 0).then(|| json!({ "along": along, "rl": rl }));
     let header = json!({ "groups": described, "bounds": bounds, "ms": ms }).to_string();
     out.extend_from_slice(header.as_bytes());

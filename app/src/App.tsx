@@ -12,6 +12,7 @@ import {
   Magnet,
   Map as MapIcon,
   MousePointer2,
+  PaintBucket,
   PanelsTopLeft,
   PenLine,
   Redo2,
@@ -122,6 +123,7 @@ export default function App() {
   const [snapping, setSnapping] = useState(true);
   const [sectionOpen, setSectionOpen] = useState(false);
   const [sectionStep, setSectionStep] = useState('25');
+  const [sectionFill, setSectionFill] = useState(true);
   const sectionRef = useRef<SectionView | null>(null);
   const [activeLayer, setActiveLayerState] = useState('design');
   const [selected, setSelected] = useState<string | null>(null);
@@ -267,6 +269,7 @@ export default function App() {
       strings.onSelect = setSelected;
       strings.onSnapping = setSnapping;
       section.mapShows = [strings.lines];
+      section.onUnfilled = (count) => setStatus({ text: `${count} closed loops in this section could not be filled: their lines show as cut` });
       created.pickPoint = (x, y) => strings.pick(x, y);
       stringsRef.current = strings;
       detach = strings.attach();
@@ -652,6 +655,16 @@ export default function App() {
               />
               <ToolButton tip="Step on (])" onClick={() => stepSection(1)}>
                 <StepForward />
+              </ToolButton>
+              <ToolButton
+                tip="Fill solids between their cut lines"
+                active={sectionFill}
+                onClick={() => {
+                  setSectionFill(!sectionFill);
+                  if (sectionRef.current) sectionRef.current.filled = !sectionFill;
+                }}
+              >
+                <PaintBucket /> Fill
               </ToolButton>
             </>
           )}

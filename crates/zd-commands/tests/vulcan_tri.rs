@@ -431,6 +431,7 @@ fn a_real_pit_slices_exactly_and_fast() {
         let index = zd_geom::SliceIndex::new(mesh);
         println!("{name}: index built in {:.0} ms", built.elapsed().as_secs_f64() * 1e3);
         let mut totals = (0, 0, 0);
+        let (mut fill_times, mut triangles, mut unfilled) = (Vec::new(), 0, 0);
         for k in 0..41 {
             let east = centre[0] + (k as f64 - 20.0) * 25.0;
             let plane = zd_geom::SectionPlane::through([east, centre[1] - span], [east + 30.0, centre[1] + span]).unwrap();
@@ -441,8 +442,13 @@ fn a_real_pit_slices_exactly_and_fast() {
             totals.1 += lines.iter().filter(|l| l.closed).count();
             totals.2 += lines.iter().map(|l| l.points.len()).sum::<usize>();
             worst = lines.iter().flat_map(|l| &l.points).fold(worst, |w, &p| w.max(plane.offset(p).abs()));
+            let start = std::time::Instant::now();
+            let fill = zd_geom::fill_section_loops(&lines, &plane);
+            fill_times.push(start.elapsed().as_secs_f64() * 1e3);
+            (triangles, unfilled) = (triangles + fill.triangles.len(), unfilled + fill.unfilled);
         }
         times.sort_by(f64::total_cmp);
+        fill_times.sort_by(f64::total_cmp);
         println!(
             "{name}: {} triangles; 41 sections: {:.1} ms p50, {:.1} ms worst; {} lines per section ({} closed), {} points; furthest point off the plane {worst:.2e} m",
             mesh.triangle_count(),
@@ -452,6 +458,7 @@ fn a_real_pit_slices_exactly_and_fast() {
             totals.1 / 41,
             totals.2 / 41
         );
+        println!("{name}: fills {:.1} ms p50, {:.1} ms worst; {} triangles and {} loops left unfilled per section", fill_times[20], fill_times[40], triangles / 41, unfilled / 41);
         assert!(worst < 1e-6, "{worst}");
     }
 }
