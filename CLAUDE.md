@@ -21,7 +21,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 | Solid booleans | Manifold via `manifold-csg` / `manifold3d` crate (64-bit MeshGL64) |
 | Spatial queries | `parry3d` (BVH ray casting) |
 | Triangulation | `spade` or Manifold's constrained Delaunay |
-| Wall offsets | Weighted straight skeleton in `zd-geom` (edge speed from batter, berms as delayed starts); no offset-then-repair |
+| Wall offsets | Straight skeleton on wall planes in `zd-geom` (each segment's plane set by its batter, hips where planes meet); a berm is the conditioned crest moved out and registered back on the grid; no offset-then-repair (`docs/decisions/0023-wall-step.md`) |
 | Planar offsets | Clipper2 or Manifold `CrossSection` for plain 2D offsets |
 | Viewport | three.js with `WebGPURenderer` (auto WebGL2 fallback) |
 | Interface | React + TypeScript, shadcn/ui, Tailwind, dockview, TanStack Table |

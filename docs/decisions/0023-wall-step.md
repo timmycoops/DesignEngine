@@ -1,6 +1,6 @@
 # 0023 — A wall step from grid to grid
 
-Date: 2026-10-31 · Status: accepted (Tim, 2026-10-31), with item 5 for Tim to confirm
+Date: 2026-10-31 · Status: accepted (Tim, 2026-10-31)
 
 ## Why
 
