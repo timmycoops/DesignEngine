@@ -329,6 +329,7 @@ async function checkStringPick(viewport: Viewport, show: Show) {
 async function checkSection(viewport: Viewport, section: SectionView | null, summary: ProjectSummary) {
   if (!section) return { error: 'no section view' };
   const hiddenBefore = getComputedStyle(section.overviewCanvas).display === 'none';
+  const gridHiddenBefore = getComputedStyle(section.gridCanvas).display === 'none';
   const canvas = viewport.renderer.domElement;
   const box = canvas.getBoundingClientRect();
   const settle = async () => {
@@ -394,11 +395,13 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   // A section as a planner would pick one: 1.5 km across the first solid cut, not the whole view.
   const o = summary.origin ?? [0, 0, 0];
   let close = '';
+  let grid = {};
   if (across) {
     const [x, y] = [across.x + o[0], across.y + o[1]];
     await section.show([x - 750, y - 200], [x + 750, y + 200], summary);
     await settle();
     close = picture(viewport);
+    grid = await checkGrid(viewport, section, box, settle);
     await section.step(125);
     await settle();
   }
@@ -422,7 +425,123 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   button('Section')?.click();
   await settle();
   const hiddenAfter = getComputedStyle(map).display === 'none';
-  return { opened, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_pictures_ms: pictures, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, overview_carried_m: carried, overview_carried_on_map: carriedOnMap, overview_stays_on_map: staysOnMap, wide, close, overview, walked };
+  const gridHiddenAfter = getComputedStyle(section.gridCanvas).display === 'none';
+  return { opened, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_pictures_ms: pictures, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, overview_carried_m: carried, overview_carried_on_map: carriedOnMap, overview_stays_on_map: staysOnMap, grid_hidden_before: gridHiddenBefore, grid_hidden_after: gridHiddenAfter, grid, wide, close, overview, walked };
+}
+
+/**
+ * The RL grid against what is drawn: every line must sit where the camera puts that RL and distance,
+ * through a zoom in and out and a pan by the real controls, with the labels staying apart.
+ */
+async function checkGrid(viewport: Viewport, section: SectionView, box: DOMRect, settle: () => Promise<void>) {
+  const canvas = viewport.renderer.domElement;
+  const gridBox = section.gridCanvas.getBoundingClientRect();
+  const covers = [gridBox.left - box.left, gridBox.top - box.top, gridBox.width - box.width, gridBox.height - box.height].every((d) => Math.abs(d) < 1);
+  const clear = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2) === canvas;
+  const [middleX, middleY] = [box.left + box.width / 2, box.top + box.height / 2];
+  const readings = { worst_px: 0, least_gap_px: Infinity, most_gap_px: 0, spacings: new Set<number>(), most_labels: 0, worst_draw_ms: 0 };
+  const read = () => {
+    const { spacing, along, rl } = section.gridLines;
+    const midAlong = along[Math.floor(along.length / 2)]?.value ?? 0;
+    const midRl = rl[Math.floor(rl.length / 2)]?.value ?? 0;
+    for (const { value, x } of along) readings.worst_px = Math.max(readings.worst_px, Math.abs(viewport.projectToClient(section.pointOn(value, midRl))[0] - box.left - x));
+    for (const { value, y } of rl) readings.worst_px = Math.max(readings.worst_px, Math.abs(viewport.projectToClient(section.pointOn(midAlong, value))[1] - box.top - y));
+    if (along.length > 1) {
+      const gap = along[1].x - along[0].x;
+      readings.least_gap_px = Math.min(readings.least_gap_px, gap);
+      readings.most_gap_px = Math.max(readings.most_gap_px, gap);
+    }
+    readings.spacings.add(spacing);
+    readings.most_labels = Math.max(readings.most_labels, along.length + rl.length);
+    readings.worst_draw_ms = Math.max(readings.worst_draw_ms, section.gridDrawMs);
+  };
+  const frames = async () => {
+    await viewport.nextFrame();
+    await viewport.nextFrame();
+  };
+  const wheel = async (deltaY: number, times: number) => {
+    for (let k = 0; k < times; k++) {
+      canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY, clientX: middleX, clientY: middleY }));
+      await frames();
+      read();
+    }
+  };
+  const pointer = (type: string, x: number, y: number) =>
+    canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons: 1, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+  read();
+  const engine = readOffLabels(viewport, section, box);
+  const framed = section.gridLines.spacing;
+  await wheel(-120, 130);
+  await settle();
+  const closest = section.gridLines.spacing;
+  const deep = screen(viewport, [section.gridCanvas, section.overviewCanvas]);
+  await wheel(120, 175);
+  const widest = section.gridLines.spacing;
+  await wheel(-120, 45);
+  // A pan by the real controls, left drag.
+  pointer('pointerdown', middleX, middleY);
+  await frames();
+  pointer('pointermove', middleX + 137, middleY - 83);
+  await frames();
+  pointer('pointerup', middleX + 137, middleY - 83);
+  await settle();
+  read();
+  const picture = screen(viewport, [section.gridCanvas, section.overviewCanvas]);
+  // A step moves the plane, not the distances or RLs.
+  const places = () => [...section.gridLines.along.map((l) => l.x), ...section.gridLines.rl.map((l) => l.y)];
+  const before = places();
+  await section.step(25);
+  await settle();
+  const after = places();
+  const stepKeeps = before.length === after.length && before.every((at, k) => Math.abs(at - after[k]) < 1e-6);
+  await section.step(-25);
+  await settle();
+  return { covers, clear, framed_spacing: framed, closest_spacing: closest, widest_spacing: widest, step_keeps: stepKeeps, engine, ...readings, spacings: [...readings.spacings].sort((a, b) => a - b), picture, deep };
+}
+
+/**
+ * Reads the ends of what is cut off the grid's labels, as a planner would, and sets them against the
+ * engine's own figures in mine grid: the only check here that does not lean on the local origin.
+ */
+function readOffLabels(viewport: Viewport, section: SectionView, box: DOMRect) {
+  const cut = section.lastCut;
+  const { along, rl } = section.gridLines;
+  if (!cut?.bounds || along.length < 2 || rl.length < 2) return { error: 'nothing to read' };
+  const [left, right] = [along[0], along[along.length - 1]];
+  const [high, low] = [rl[rl.length - 1], rl[0]];
+  const [alongRange, rlRange]: [number, number][] = [
+    [Infinity, -Infinity],
+    [Infinity, -Infinity],
+  ];
+  const widen = (range: [number, number], value: number) => {
+    range[0] = Math.min(range[0], value);
+    range[1] = Math.max(range[1], value);
+  };
+  const { positions } = cut;
+  for (let k = 0; k + 2 < positions.length; k += 3) {
+    const [x, y] = viewport.projectToClient(new THREE.Vector3(positions[k], positions[k + 1], positions[k + 2]));
+    widen(alongRange, left.value + ((x - box.left - left.x) / (right.x - left.x)) * (right.value - left.value));
+    widen(rlRange, low.value + ((y - box.top - low.y) / (high.y - low.y)) * (high.value - low.value));
+  }
+  const { along: engineAlong, rl: engineRl } = cut.bounds;
+  const worst = Math.max(...[0, 1].flatMap((i) => [Math.abs(alongRange[i] - engineAlong[i]), Math.abs(rlRange[i] - engineRl[i])]));
+  return { points: positions.length / 3, read_along: alongRange, engine_along: engineAlong, read_rl: rlRange, engine_rl: engineRl, worst_m: worst };
+}
+
+/** The viewport as it stands on screen: the 3D canvas, then what sits over it, each where it lands. */
+function screen(viewport: Viewport, over: HTMLCanvasElement[]): string {
+  const source = viewport.renderer.domElement;
+  const box = source.getBoundingClientRect();
+  const scale = source.width / box.width;
+  const copy = Object.assign(document.createElement('canvas'), { width: source.width, height: source.height });
+  const context = copy.getContext('2d');
+  viewport.renderer.render(viewport.scene, viewport.camera);
+  context?.drawImage(source, 0, 0);
+  for (const canvas of over) {
+    const at = canvas.getBoundingClientRect();
+    if (at.width > 0) context?.drawImage(canvas, (at.left - box.left) * scale, (at.top - box.top) * scale, at.width * scale, at.height * scale);
+  }
+  return copy.toDataURL('image/png');
 }
 
 /** What the viewport shows now, as a PNG data URL: drawn again and copied before the frame is gone. */

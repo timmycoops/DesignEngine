@@ -7,6 +7,7 @@ import * as THREE from 'three/webgpu';
 import { type ProjectSummary, type SectionLines, sectionLines, type SectionKind, type Vec3 } from '../bridge';
 import { colourOf } from './load';
 import { SectionOverview } from './overview';
+import { type GridLines, SectionGrid } from './sectionGrid';
 import type { Viewport } from './Viewport';
 
 /** Strings this close to the plane (m) draw flat on it: a string crosses a thin slice, not lies in it. */
@@ -30,6 +31,7 @@ export class SectionView {
   private fetching: Promise<void> | null = null;
   private fetchAgain = false;
   private overview: SectionOverview;
+  private grid: SectionGrid;
   /** Metres moved square to the section since it opened. */
   private moved = 0;
   /** What the plan map shows beyond the surfaces. */
@@ -50,6 +52,34 @@ export class SectionView {
       const steps = Math.round(offset / this.stepSize);
       if (steps !== 0) void this.step(steps * this.stepSize);
     };
+    this.grid = new SectionGrid(host);
+    viewport.cameraMoved.add(() => this.drawGrid());
+  }
+
+  /** The RL grid's canvas, for checks. */
+  get gridCanvas(): HTMLCanvasElement {
+    return this.grid.canvasElement;
+  }
+
+  /** The grid lines drawn, for checks. */
+  get gridLines(): GridLines {
+    return this.grid.lines;
+  }
+
+  /** How long the grid's last drawing took (ms). */
+  get gridDrawMs(): number {
+    return this.grid.lastDrawMs;
+  }
+
+  /** The last cut as the engine sent it, for checks. */
+  lastCut: SectionLines | null = null;
+
+  /** The scene-local point at a distance along the section from A and an RL. */
+  pointOn(along: number, rl: number): THREE.Vector3 {
+    const { a, b } = this.ends ?? { a: [0, 0], b: [1, 0] };
+    const o = this.summary?.origin ?? [0, 0, 0];
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    return new THREE.Vector3(a[0] + ((b[0] - a[0]) / length) * along - o[0], a[1] + ((b[1] - a[1]) / length) * along - o[1], rl - o[2]);
   }
 
   /** Whether both ends of the section are on the overview map. */
@@ -100,6 +130,7 @@ export class SectionView {
 
   /** Opens the section through two plan points (mine grid), framing the stretch between them. */
   async show(a: PlanPoint, b: PlanPoint, summary: ProjectSummary): Promise<void> {
+    this.grid.hide();
     this.ends = { a, b };
     this.summary = summary;
     const lines = await sectionLines(a, b, STRING_WIDTH);
@@ -117,6 +148,24 @@ export class SectionView {
     this.group.visible = true;
     this.overview.show();
     this.drawOverview();
+    this.grid.show();
+  }
+
+  /** The grid for where the camera is now: distances from A, RLs in mine grid. */
+  private drawGrid(): void {
+    if (!this.ends || !this.grid.shown) return;
+    const { a, b } = this.ends;
+    const o = this.summary?.origin ?? [0, 0, 0];
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const camera = this.viewport.sectionCamera;
+    const { x, y, z } = camera.position;
+    this.grid.draw({
+      along: ((x + o[0] - a[0]) * (b[0] - a[0]) + (y + o[1] - a[1]) * (b[1] - a[1])) / length,
+      rl: z + o[2],
+      length,
+      across: (camera.right - camera.left) / camera.zoom,
+      up: (camera.top - camera.bottom) / camera.zoom,
+    });
   }
 
   private drawOverview(): void {
@@ -178,10 +227,13 @@ export class SectionView {
     this.ends = null;
     this.group.visible = false;
     this.overview.hide();
+    this.grid.hide();
     this.viewport.closeSection();
   }
 
-  private draw({ groups, positions }: SectionLines): void {
+  private draw(lines: SectionLines): void {
+    this.lastCut = lines;
+    const { groups, positions } = lines;
     const layers = new Map(this.summary?.layers.map((l) => [l.id, l]));
     const seen = new Set<string>();
     let from = 0;

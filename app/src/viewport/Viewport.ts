@@ -45,6 +45,8 @@ export class Viewport {
   readonly overlay = new THREE.Group();
   /** Hooks run at the start of every frame with `performance.now()`. */
   readonly beforeRender = new Set<(now: number) => void>();
+  /** Runs each frame once the camera has moved, so what follows it is not a frame behind. */
+  readonly cameraMoved = new Set<() => void>();
   onStats?: (stats: FrameStats) => void;
   /** What is drawn under a screen point, scene-local: what the view turns on and zooms to. */
   pickPoint?: (clientX: number, clientY: number) => Promise<Vec3 | null>;
@@ -515,6 +517,7 @@ export class Viewport {
     const now = performance.now();
     for (const hook of this.beforeRender) hook(now);
     this.controls.update();
+    for (const hook of this.cameraMoved) hook();
     this.updateClipPlanes();
     this.renderer.render(this.scene, this.camera);
     const submitted = performance.now();
