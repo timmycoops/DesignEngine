@@ -427,12 +427,15 @@ fn a_real_pit_slices_exactly_and_fast() {
     for (name, mesh) in [("topography", topo.mesh()), ("solids", &joined)] {
         let mut worst = 0.0f64;
         let mut times = Vec::new();
+        let built = std::time::Instant::now();
+        let index = zd_geom::SliceIndex::new(mesh);
+        println!("{name}: index built in {:.0} ms", built.elapsed().as_secs_f64() * 1e3);
         let mut totals = (0, 0, 0);
         for k in 0..41 {
             let east = centre[0] + (k as f64 - 20.0) * 25.0;
             let plane = zd_geom::SectionPlane::through([east, centre[1] - span], [east + 30.0, centre[1] + span]).unwrap();
             let start = std::time::Instant::now();
-            let lines = zd_geom::slice_mesh(mesh, &plane);
+            let lines = zd_geom::slice_indexed(mesh, &index, &plane);
             times.push(start.elapsed().as_secs_f64() * 1e3);
             totals.0 += lines.len();
             totals.1 += lines.iter().filter(|l| l.closed).count();

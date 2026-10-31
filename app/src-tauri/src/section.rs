@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use zd_core::{Body, LayerId, ObjectKind, TriMesh};
-use zd_geom::{SectionPlane, slice_mesh, string_near_plane, triangulate_grid};
+use zd_geom::{SectionPlane, SliceIndex, slice_indexed, string_near_plane, triangulate_grid};
 use zd_io::read_stack_grids;
 
 use crate::state::{AppInner, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_layer_keys};
@@ -23,21 +23,31 @@ pub struct SectionGroup {
     pub segments: Vec<Segment>,
 }
 
-/// A mesh made for sections, with what it was made from.
-pub type SectionMeshes = HashMap<String, (String, Arc<TriMesh>)>;
+/// A mesh ready to cut.
+pub struct SectionMesh {
+    mesh: Arc<TriMesh>,
+    index: SliceIndex,
+}
+
+/// Meshes made for sections, each with a stamp of what it was made from.
+pub type SectionMeshes = HashMap<String, (String, Arc<SectionMesh>)>;
 
 /// The lines where `plane` cuts every visible layer. Strings within `width` of the plane draw flat on it.
 pub fn section_groups(app: &mut AppInner, plane: &SectionPlane, width: f64) -> Result<Vec<SectionGroup>, String> {
     let mut groups: Vec<SectionGroup> = Vec::new();
     let project = app.session.project();
     let visible = |layer: LayerId| project.layer(layer).is_some_and(|l| l.visible);
-    let mut meshes: Vec<(LayerId, &'static str, Arc<TriMesh>)> = Vec::new();
+    let mut meshes: Vec<(LayerId, &'static str, Arc<SectionMesh>)> = Vec::new();
     let mut made = std::mem::take(&mut app.section_meshes);
     let mut kept = SectionMeshes::new();
-    let mut keep = |key: String, stamp: String, make: &mut dyn FnMut() -> Result<TriMesh, String>| -> Result<Arc<TriMesh>, String> {
+    let mut keep = |key: String, stamp: String, make: &mut dyn FnMut() -> Result<Arc<TriMesh>, String>| -> Result<Arc<SectionMesh>, String> {
         let entry = match made.remove(&key) {
             Some(entry) if entry.0 == stamp => entry,
-            _ => (stamp, Arc::new(make()?)),
+            _ => {
+                let mesh = make()?;
+                let index = SliceIndex::new(&mesh);
+                (stamp, Arc::new(SectionMesh { mesh, index }))
+            }
         };
         let mesh = entry.1.clone();
         kept.insert(key, entry);
@@ -46,16 +56,19 @@ pub fn section_groups(app: &mut AppInner, plane: &SectionPlane, width: f64) -> R
 
     for (layer, key) in solid_layer_keys(project) {
         if visible(layer) {
-            let mesh = keep(format!("solids {layer}"), key, &mut || Ok(joined_meshes(&layer_solids(project, layer))))?;
+            let mesh = keep(format!("solids {layer}"), key, &mut || Ok(Arc::new(joined_meshes(&layer_solids(project, layer)))))?;
             meshes.push((layer, "solid", mesh));
         }
     }
     for object in project.objects().filter(|o| visible(o.layer)) {
         let stamp = geometry_key(&object.body).to_string();
         match &object.body {
-            Body::Surface(s) => meshes.push((object.layer, "surface", s.mesh_arc().clone())),
+            Body::Surface(s) => {
+                let mesh = keep(object.id.to_string(), stamp, &mut || Ok(s.mesh_arc().clone()))?;
+                meshes.push((object.layer, "surface", mesh));
+            }
             Body::Grid(g) if is_drawn_surface(object) => {
-                let mesh = keep(object.id.to_string(), stamp, &mut || Ok(triangulate_grid(g)))?;
+                let mesh = keep(object.id.to_string(), stamp, &mut || Ok(Arc::new(triangulate_grid(g))))?;
                 meshes.push((object.layer, "surface", mesh));
             }
             Body::SeamModel(model) => {
@@ -63,16 +76,16 @@ pub fn section_groups(app: &mut AppInner, plane: &SectionPlane, width: f64) -> R
                     let grids = read_stack_grids(model).map_err(|e| e.to_string())?;
                     let working = model.horizons.iter().enumerate().filter(|(_, h)| h.working).map(|(i, _)| i);
                     let parts: Vec<Arc<TriMesh>> = working.flat_map(|i| [&grids.roofs[i], &grids.floors[i]]).map(|g| Arc::new(triangulate_grid(g))).collect();
-                    Ok(joined_meshes(&parts))
+                    Ok(Arc::new(joined_meshes(&parts)))
                 })?;
                 meshes.push((object.layer, "seam", mesh));
             }
             _ => {}
         }
     }
-    for (layer, kind, mesh) in meshes {
+    for (layer, kind, section) in meshes {
         let mut segments = Vec::new();
-        for line in slice_mesh(&mesh, plane) {
+        for line in slice_indexed(&section.mesh, &section.index, plane) {
             let closing = line.closed.then(|| [line.points[line.points.len() - 1], line.points[0]]);
             segments.extend(line.points.windows(2).map(|w| [w[0], w[1]]).chain(closing));
         }

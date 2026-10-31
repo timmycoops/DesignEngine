@@ -162,6 +162,11 @@ export class StringLayer {
     this.placeHandles();
   }
 
+  /** The strings as drawn, for the section's plan map. */
+  get lines(): THREE.Object3D {
+    return this.group;
+  }
+
   /** Takes the strings off the view while a section is showing, and puts them back. */
   setFrozen(frozen: boolean): void {
     this.frozen = frozen;

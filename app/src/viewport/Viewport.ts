@@ -123,6 +123,7 @@ export class Viewport {
     const renderer = new THREE.WebGPURenderer(options as ConstructorParameters<typeof THREE.WebGPURenderer>[0]);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(host.clientWidth, host.clientHeight);
+    renderer.domElement.classList.add('viewport-canvas');
     host.appendChild(renderer.domElement);
     await renderer.init();
 
@@ -184,6 +185,32 @@ export class Viewport {
     this.controls.enableRotate = false;
     this.controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
     this.controls.update();
+  }
+
+  /**
+   * Draws the plan around scene-local (`x`, `y`), `half` metres each way, onto a 2D canvas, whatever
+   * view is showing: the scene is rendered once from above and copied before the frame is shown, with
+   * `parts.show` drawn and `parts.hide` left out. The surfaces show even under a section.
+   */
+  planPicture(target: CanvasRenderingContext2D, x: number, y: number, half: number, parts: { show: THREE.Object3D[]; hide: THREE.Object3D[] }): void {
+    const source = this.renderer.domElement;
+    const aspect = source.width / source.height;
+    const camera = new THREE.OrthographicCamera(-half * aspect, half * aspect, half, -half, 0.1, 1_000_000);
+    camera.up.set(0, 1, 0);
+    camera.position.set(x, y, 200_000);
+    camera.lookAt(x, y, 0);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    const changed = [...parts.show.map((o) => [o, o.visible] as const), ...parts.hide.map((o) => [o, o.visible] as const), [this.content, this.content.visible] as const];
+    for (const o of parts.show) o.visible = true;
+    for (const o of parts.hide) o.visible = false;
+    this.content.visible = true;
+    this.renderer.render(this.scene, camera);
+    const side = Math.min(source.width, source.height);
+    target.drawImage(source, (source.width - side) / 2, (source.height - side) / 2, side, side, 0, 0, target.canvas.width, target.canvas.height);
+    for (const [o, visible] of changed) o.visible = visible;
+    // What the canvas shows at the end of this task is the frame, not the picture.
+    this.renderer.render(this.scene, this.camera);
   }
 
   /** Slides the section's camera with its plane, so a step keeps the same view of the section. */

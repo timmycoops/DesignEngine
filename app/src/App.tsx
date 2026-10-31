@@ -203,7 +203,7 @@ export default function App() {
     strings?.setFrozen(true);
     setModeState('select');
     setSectionOpen(true);
-    setStatus({ text: 'Section: [ and ] step along it; the wheel zooms where the cursor is, left drag pans' });
+    setStatus({ text: 'Section: [ and ] step along it, or drag on the plan map; the wheel zooms where the cursor is, left drag pans' });
     void section.show(planPoint(a), planPoint(b), project).catch((e) => setStatus({ text: String(e), error: true }));
   }, []);
 
@@ -250,7 +250,8 @@ export default function App() {
       sync.onSeam = onSeam;
       sync.onError = (text) => setStatus({ text, error: true });
       syncRef.current = sync;
-      sectionRef.current = new SectionView(created);
+      const section = new SectionView(created);
+      sectionRef.current = section;
       const strings = new StringLayer(created, {
         run,
         section: (a, b) => void openSection(a, b),
@@ -265,6 +266,7 @@ export default function App() {
       });
       strings.onSelect = setSelected;
       strings.onSnapping = setSnapping;
+      section.mapShows = [strings.lines];
       created.pickPoint = (x, y) => strings.pick(x, y);
       stringsRef.current = strings;
       detach = strings.attach();
@@ -640,7 +642,11 @@ export default function App() {
               <Input
                 className="h-7 w-14 px-1.5 text-xs tabular-nums"
                 value={sectionStep}
-                onChange={(e) => setSectionStep(e.target.value)}
+                onChange={(e) => {
+                  setSectionStep(e.target.value);
+                  const distance = Number(e.target.value);
+                  if (sectionRef.current && Number.isFinite(distance) && distance > 0) sectionRef.current.stepSize = distance;
+                }}
                 title="Metres to step, square to the section"
                 aria-label="Section step in metres"
               />
