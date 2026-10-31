@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use zd_core::TriMesh;
 
-use crate::{GeomError, worker_threads};
+use crate::GeomError;
 
 /// A vertical plane through two plan points, in mine grid coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -57,32 +57,110 @@ pub struct SliceLine {
     pub closed: bool,
 }
 
+/// A mesh's triangles binned in plan, so a section looks only at those near its plane: a pit's
+/// topography is millions of triangles, and one section crosses a few thousand of them.
+#[derive(Debug, Clone)]
+pub struct SliceIndex {
+    /// Triangle numbers, cell after cell.
+    triangles: Vec<u32>,
+    cells: Vec<SliceCell>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SliceCell {
+    /// Where the cell's triangles are in `triangles`.
+    start: u32,
+    end: u32,
+    /// A circle in plan round every triangle in the cell.
+    centre: [f64; 2],
+    radius: f64,
+}
+
+/// About this many triangles to a cell.
+const TRIANGLES_PER_CELL: usize = 2_000;
+
+impl SliceIndex {
+    pub fn new(mesh: &TriMesh) -> Self {
+        let Some(bounds) = mesh.bounds() else { return SliceIndex { triangles: Vec::new(), cells: Vec::new() } };
+        let side = (mesh.triangles.len() as f64 / TRIANGLES_PER_CELL as f64).sqrt().ceil().max(1.0) as usize;
+        let (lo, span) = (bounds.min, [(bounds.max[0] - bounds.min[0]).max(1e-9), (bounds.max[1] - bounds.min[1]).max(1e-9)]);
+        let cell_of = |t: &[u32; 3]| {
+            let [a, b, c] = t.map(|v| mesh.vertices[v as usize]);
+            let at = |axis: usize| {
+                let centroid = (a[axis] + b[axis] + c[axis]) / 3.0;
+                (((centroid - lo[axis]) / span[axis] * side as f64) as usize).min(side - 1)
+            };
+            at(1) * side + at(0)
+        };
+        let of: Vec<u32> = mesh.triangles.iter().map(|t| cell_of(t) as u32).collect();
+        let mut ends = vec![0u32; side * side + 1];
+        for &cell in &of {
+            ends[cell as usize + 1] += 1;
+        }
+        for k in 0..side * side {
+            ends[k + 1] += ends[k];
+        }
+        let mut next = ends.clone();
+        let mut triangles = vec![0u32; mesh.triangles.len()];
+        for (t, &cell) in of.iter().enumerate() {
+            triangles[next[cell as usize] as usize] = t as u32;
+            next[cell as usize] += 1;
+        }
+        let cells = ends
+            .windows(2)
+            .filter(|w| w[0] < w[1])
+            .map(|w| {
+                let (mut low, mut high) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+                for &t in &triangles[w[0] as usize..w[1] as usize] {
+                    for v in mesh.triangles[t as usize] {
+                        let p = mesh.vertices[v as usize];
+                        low = [low[0].min(p[0]), low[1].min(p[1])];
+                        high = [high[0].max(p[0]), high[1].max(p[1])];
+                    }
+                }
+                let centre = [(low[0] + high[0]) / 2.0, (low[1] + high[1]) / 2.0];
+                SliceCell { start: w[0], end: w[1], centre, radius: (high[0] - low[0]).hypot(high[1] - low[1]) / 2.0 }
+            })
+            .collect();
+        SliceIndex { triangles, cells }
+    }
+}
+
 /// The lines where `plane` cuts `mesh`.
 pub fn slice_mesh(mesh: &TriMesh, plane: &SectionPlane) -> Vec<SliceLine> {
-    let offsets = offsets_from(mesh, plane);
-    let crossing = crossing_triangles(mesh, &offsets);
-    let mut nodes: HashMap<(u32, u32), u32> = HashMap::with_capacity(crossing.len() * 2);
-    let mut points: Vec<[f64; 3]> = Vec::with_capacity(crossing.len() * 2);
-    let mut links: Vec<(u32, u32)> = Vec::with_capacity(crossing.len());
-    let mut node_on = |u: u32, v: u32| {
-        // The same way round from either triangle, so an edge gives one point, to the bit.
-        let key = (u.min(v), u.max(v));
-        *nodes.entry(key).or_insert_with(|| {
-            let (a, b) = (key.0 as usize, key.1 as usize);
-            let t = offsets[a] / (offsets[a] - offsets[b]);
-            let (p, q) = (mesh.vertices[a], mesh.vertices[b]);
-            points.push([p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1]), p[2] + t * (q[2] - p[2])]);
-            points.len() as u32 - 1
-        })
-    };
-    for &triangle in &crossing {
+    slice_indexed(mesh, &SliceIndex::new(mesh), plane)
+}
+
+/// The lines where `plane` cuts `mesh`, through an index made from that mesh.
+pub fn slice_indexed(mesh: &TriMesh, index: &SliceIndex, plane: &SectionPlane) -> Vec<SliceLine> {
+    let offset = |v: u32| plane.offset(mesh.vertices[v as usize]);
+    let mut nodes: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut points: Vec<[f64; 3]> = Vec::new();
+    let mut links: Vec<(u32, u32)> = Vec::new();
+    let near = index.cells.iter().filter(|c| plane.offset([c.centre[0], c.centre[1], 0.0]).abs() <= c.radius);
+    for &triangle in near.flat_map(|c| &index.triangles[c.start as usize..c.end as usize]) {
         let corners = mesh.triangles[triangle as usize];
+        let sides = corners.map(|v| offset(v) >= 0.0);
+        if sides[0] == sides[1] && sides[0] == sides[2] {
+            continue;
+        }
+        let mut node_on = |u: u32, v: u32| {
+            // The same way round from either triangle, so an edge gives one point, to the bit.
+            let key = (u.min(v), u.max(v));
+            *nodes.entry(key).or_insert_with(|| {
+                let (du, dv) = (offset(key.0), offset(key.1));
+                let t = du / (du - dv);
+                let (p, q) = (mesh.vertices[key.0 as usize], mesh.vertices[key.1 as usize]);
+                points.push([p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1]), p[2] + t * (q[2] - p[2])]);
+                points.len() as u32 - 1
+            })
+        };
         // Round the triangle's winding, its edges cross one each way. Neighbours wind a shared edge
         // opposite ways, so the end of one segment is the start of the next.
         let (mut entering, mut leaving) = (0, 0);
         for k in 0..3 {
             let (u, v) = (corners[k], corners[(k + 1) % 3]);
-            match (offsets[u as usize] >= 0.0, offsets[v as usize] >= 0.0) {
+            match (sides[k], sides[(k + 1) % 3]) {
                 (true, false) => leaving = node_on(u, v),
                 (false, true) => entering = node_on(u, v),
                 _ => {}
@@ -120,42 +198,6 @@ pub fn string_near_plane(points: &[[f64; 3]], closed: bool, plane: &SectionPlane
         }
     }
     out
-}
-
-/// Every vertex's offset from the plane, across the cores for a large mesh.
-fn offsets_from(mesh: &TriMesh, plane: &SectionPlane) -> Vec<f64> {
-    let chunk = mesh.vertices.len().div_ceil(worker_threads(mesh.vertices.len())).max(1);
-    let mut offsets = vec![0.0; mesh.vertices.len()];
-    std::thread::scope(|scope| {
-        for (part, vertices) in offsets.chunks_mut(chunk).zip(mesh.vertices.chunks(chunk)) {
-            scope.spawn(move || {
-                for (offset, &p) in part.iter_mut().zip(vertices) {
-                    *offset = plane.offset(p);
-                }
-            });
-        }
-    });
-    offsets
-}
-
-/// The triangles with corners on both sides of the plane, in order.
-fn crossing_triangles(mesh: &TriMesh, offsets: &[f64]) -> Vec<u32> {
-    let chunk = mesh.triangles.len().div_ceil(worker_threads(mesh.triangles.len())).max(1);
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = mesh
-            .triangles
-            .chunks(chunk)
-            .enumerate()
-            .map(|(part, triangles)| {
-                scope.spawn(move || {
-                    let side = |v: u32| offsets[v as usize] >= 0.0;
-                    let crosses = |t: &[u32; 3]| side(t[0]) != side(t[1]) || side(t[0]) != side(t[2]);
-                    triangles.iter().enumerate().filter(|(_, t)| crosses(t)).map(|(k, _)| (part * chunk + k) as u32).collect::<Vec<u32>>()
-                })
-            })
-            .collect();
-        handles.into_iter().flat_map(|h| h.join().expect("a section thread panicked")).collect()
-    })
 }
 
 /// Chains directed links between points into lines: open lines from the points they start at, then
@@ -306,6 +348,41 @@ mod tests {
         for &p in &lines[0].points {
             assert!(plane.offset(p).abs() < 1e-9);
             assert!((p[2] - height(p[0], p[1])).abs() < 1e-9, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn the_index_finds_every_crossing_a_full_scan_finds() {
+        // A rolling grid of 40,000 triangles, so the index has many cells, cut every way.
+        let height = |x: f64, y: f64| 100.0 + 8.0 * (x / 40.0).sin() + 5.0 * (y / 25.0).cos();
+        let surface = triangulate_grid(&Grid::from_fn([E, N], [5.0, 5.0], 142, 142, |x, y| height(x - E, y - N)));
+        let index = SliceIndex::new(&surface);
+        assert!(index.cells.len() > 16, "{}", index.cells.len());
+        for turn in 0..24 {
+            let angle = turn as f64 * 0.27;
+            let middle = [E + 300.0 + 20.0 * turn as f64, N + 400.0 - 15.0 * turn as f64];
+            let plane = SectionPlane::through(middle, [middle[0] + 100.0 * angle.cos(), middle[1] + 100.0 * angle.sin()]).unwrap();
+            let by_index: f64 = slice_indexed(&surface, &index, &plane).iter().map(length).sum();
+            // Every triangle, on its own: the length of its piece of the plane.
+            let by_scan: f64 = surface
+                .triangles
+                .iter()
+                .map(|t| {
+                    let c = t.map(|v| surface.vertices[v as usize]);
+                    let ends: Vec<[f64; 3]> = (0..3)
+                        .filter_map(|k| {
+                            let (p, q) = (c[k], c[(k + 1) % 3]);
+                            let (dp, dq) = (plane.offset(p), plane.offset(q));
+                            ((dp >= 0.0) != (dq >= 0.0)).then(|| {
+                                let s = dp / (dp - dq);
+                                [p[0] + s * (q[0] - p[0]), p[1] + s * (q[1] - p[1]), p[2] + s * (q[2] - p[2])]
+                            })
+                        })
+                        .collect();
+                    if ends.len() == 2 { ((ends[1][0] - ends[0][0]).powi(2) + (ends[1][1] - ends[0][1]).powi(2) + (ends[1][2] - ends[0][2]).powi(2)).sqrt() } else { 0.0 }
+                })
+                .sum();
+            assert!(by_scan > 100.0 && (by_index - by_scan).abs() < 1e-6, "turn {turn}: {by_index} against {by_scan}");
         }
     }
 
