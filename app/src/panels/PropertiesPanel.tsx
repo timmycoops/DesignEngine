@@ -314,9 +314,12 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
           </select>
         )}
         <SmallInput value={batter} onChange={setBatter} placeholder="deg" title="Batter in degrees from horizontal, square to the string" />
+        <span className="text-muted-foreground">deg</span>
         <Choice value={side} onChange={setSide} options={[['left', 'Left'], ['right', 'Right']]} />
-        <SmallInput value={berm} onChange={setBerm} placeholder="berm" title="Width of the berm at the crest, for the next toe (m)" />
-        <SmallInput value={conditioning} onChange={setConditioning} placeholder="tol" title="How far the next toe's plan shape may leave the crest (m)" />
+        <span className="text-muted-foreground">berm</span>
+        <SmallInput value={berm} onChange={setBerm} placeholder="m" title="Width of the berm at the crest, for the next toe (m)" />
+        <span className="text-muted-foreground">tolerance</span>
+        <SmallInput value={conditioning} onChange={setConditioning} placeholder="m" title="How far the next toe may leave the crest (m): 0.1 is usual, 2 at most. This isn't the berm." />
       </ToolRow>
       <ToolRow label="Split" disabled={!ok(num(splitAt))} onApply={() => void run('string.split', { string: id, at: Math.round(num(splitAt)!) - 1 })}>
         <span className="text-muted-foreground">at vertex</span>

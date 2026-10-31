@@ -83,10 +83,14 @@ fn a_bad_step_is_refused_with_its_reason() {
     let target = level_surface(&mut s, "roof", 120.0);
     let points = [[E + 50.0, N + 50.0, 100.0], [E + 250.0, N + 50.0, 100.0]];
     let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "design", "points": points })).unwrap())[0];
-    for (batter, berm, reason) in [(0.0, 0.0, "the batter"), (95.0, 0.0, "the batter"), (45.0, -1.0, "the berm")] {
-        let error = s.run("face.project_step", json!({ "string": toe, "target": target, "batter": batter, "side": "left", "berm": berm })).unwrap_err();
+    for (batter, berm, tolerance, reason) in [(0.0, 0.0, 0.1, "the batter"), (95.0, 0.0, 0.1, "the batter"), (45.0, -1.0, 0.1, "the berm"), (45.0, 0.0, 30.0, "cut corners")] {
+        let error = s.run("face.project_step", json!({ "string": toe, "target": target, "batter": batter, "side": "left", "berm": berm, "tolerance": tolerance })).unwrap_err();
         assert!(error.to_string().contains(reason), "{error}");
     }
+    // Stepping again to the grid the next toe already lies on.
+    let made = created(&s.run("face.project_step", json!({ "string": toe, "target": target, "batter": 45.0, "side": "left", "berm": 10.0 })).unwrap());
+    let error = s.run("face.project_step", json!({ "string": made[2], "target": target, "batter": 45.0, "side": "left" })).unwrap_err();
+    assert!(error.to_string().contains("no wall to make"), "{error}");
 }
 
 /// The node nearest the middle of the live grid, and the way the grid dips there.
@@ -197,6 +201,100 @@ fn read_in_section(plan: &Polyline, step: &WallStep, from: &TriMesh, to: &TriMes
         (count, low, high, off) = (count + 1, low.min(batter), high.max(batter), off.max((floor - toe[2]).abs()).max((roof - crest[2]).abs()));
     }
     (count, low, high, off)
+}
+
+/// One string on one grid, to look into a run from the app. `ZD_WALL_STRING` is `x,y,z;x,y,z`,
+/// `ZD_WALL_TARGET` a Vulcan grid file and `ZD_WALL_RUNS` is `side,batter,berm,tolerance;...`. Writes each
+/// run's lines to `ZD_WALL_OUT` as CSV, which stays local with the data.
+#[test]
+#[ignore = "needs ZD_WALL_STRING, ZD_WALL_TARGET and ZD_WALL_RUNS"]
+fn one_string_on_one_real_grid() {
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is needed"));
+    let numbers = |s: &str| s.split(',').map(|n| n.trim().parse::<f64>().unwrap()).collect::<Vec<_>>();
+    let vertices = var("ZD_WALL_STRING").split(';').map(|p| <[f64; 3]>::try_from(numbers(p)).unwrap()).collect();
+    let toe = Polyline { vertices, closed: false };
+    let grid = zd_io::read_vulcan_grid(Path::new(&var("ZD_WALL_TARGET"))).unwrap().grid;
+    let target = triangulate_grid(&grid);
+    let out = var("ZD_WALL_OUT");
+    let write = |name: String, line: &Polyline| {
+        let rows: String = line.vertices.iter().map(|p| format!("{},{},{}\n", p[0], p[1], p[2])).collect();
+        std::fs::write(Path::new(&out).join(name), rows).unwrap();
+    };
+    write("string.csv".into(), &toe);
+    for (k, run) in var("ZD_WALL_RUNS").split(';').enumerate() {
+        let (word, rest) = run.split_once(',').unwrap();
+        let side = if word == "left" { OffsetSide::Left } else { OffsetSide::Right };
+        let [batter, berm, tolerance] = <[f64; 3]>::try_from(numbers(rest)).unwrap();
+        println!("--- run {k}: {side:?}, batter {batter}, berm {berm}, tolerance {tolerance}");
+        let start = Instant::now();
+        let step = match project_wall(&toe, side, batter, &target) {
+            Ok(step) => step,
+            Err(e) => {
+                println!("refused after {:.1} ms: {e}", start.elapsed().as_secs_f64() * 1e3);
+                continue;
+            }
+        };
+        println!("{:.1} ms, {:?}", start.elapsed().as_secs_f64() * 1e3, step.log);
+        let (toes, log) = next_toe(&step.crest, berm, side, tolerance, &target).unwrap();
+        println!("crest {} vertices, length {:.1} m in plan; next toe {log:?}, {} piece(s), {:.1} m in plan", step.crest.vertices.len(), step.crest.plan_length(), toes.len(), toes.iter().map(Polyline::plan_length).sum::<f64>());
+        write(format!("run{k}-crest.csv"), &step.crest);
+        for (p, piece) in toes.iter().enumerate() {
+            write(format!("run{k}-next{p}.csv"), piece);
+        }
+    }
+}
+
+/// Every mix of side, batter, berm and tolerance on one string, through a second step to
+/// `ZD_WALL_SECOND`, printing only what fails. The string and target are as in the test above.
+#[test]
+#[ignore = "needs ZD_WALL_STRING, ZD_WALL_TARGET and ZD_WALL_SECOND"]
+fn sweep_one_string_on_real_grids() {
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is needed"));
+    let numbers = |s: &str| s.split(',').map(|n| n.trim().parse::<f64>().unwrap()).collect::<Vec<_>>();
+    let vertices = var("ZD_WALL_STRING").split(';').map(|p| <[f64; 3]>::try_from(numbers(p)).unwrap()).collect();
+    let toe = Polyline { vertices, closed: false };
+    let mesh = |name: &str| triangulate_grid(&zd_io::read_vulcan_grid(Path::new(&var(name))).unwrap().grid);
+    let (first, second) = (mesh("ZD_WALL_TARGET"), mesh("ZD_WALL_SECOND"));
+    let (mut steps, mut refused) = (0, std::collections::BTreeMap::<String, (usize, String)>::new());
+    let mut note = |reason: String, case: String| {
+        // The place in a message varies, so messages count by their words.
+        let key: String = reason.split(" at ").next().unwrap().split(" near ").next().unwrap().to_string();
+        let entry = refused.entry(key).or_insert((0, format!("{case}: {reason}")));
+        entry.0 += 1;
+    };
+    for side in [OffsetSide::Left, OffsetSide::Right] {
+        for batter in (60..=176).map(|k| f64::from(k) * 0.5) {
+            let case = format!("{side:?} {batter}");
+            steps += 1;
+            let step = match project_wall(&toe, side, batter, &first) {
+                Ok(step) => step,
+                Err(e) => {
+                    note(e.to_string(), case);
+                    continue;
+                }
+            };
+            for tolerance in [0.05, 0.1, 0.25, 0.5, 1.0, 5.0, 30.0] {
+                for berm in [0.0, 3.0, 5.0, 10.0, 20.0, 30.0, 50.0] {
+                    let case = format!("{case}, tolerance {tolerance}, berm {berm}");
+                    match next_toe(&step.crest, berm, side, tolerance, &first) {
+                        Err(e) => note(e.to_string(), case),
+                        Ok((toes, _)) => {
+                            for piece in &toes {
+                                steps += 1;
+                                if let Err(e) = project_wall(piece, side, batter, &second) {
+                                    note(e.to_string(), case.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    println!("{steps} steps");
+    for (key, (count, first)) in &refused {
+        println!("{count} x {key}\n    first: {first}");
+    }
 }
 
 #[test]

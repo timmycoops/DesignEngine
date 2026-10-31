@@ -14,6 +14,9 @@ fn default_tolerance() -> f64 {
     0.1
 }
 
+/// Past this a conditioning tolerance stops tidying the crest and starts cutting its corners off.
+const MOST_TOLERANCE: f64 = 2.0;
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectStepParams {
@@ -52,7 +55,7 @@ impl Command for ProjectStep {
                 Field::new("batter", FieldType::Number { unit: "deg" }, "From horizontal, square to the string in plan"),
                 Field::new("side", FieldType::Text, "left or right, looking along the string"),
                 Field::new("berm", FieldType::Number { unit: "m" }, "Width of the berm at the crest; none by default"),
-                Field::new("tolerance", FieldType::Number { unit: "m" }, "How far the next toe's plan shape may leave the crest; 0.1 by default"),
+                Field::new("tolerance", FieldType::Number { unit: "m" }, "How far the next toe's plan shape may leave the crest; 0.1 by default, 2 at most"),
                 Field::new("layer", FieldType::Layer, "Layer for what's made; the string's by default"),
                 Field::new("name", FieldType::Text, "Start of the new names; the string's by default"),
             ],
@@ -67,6 +70,12 @@ impl Command for ProjectStep {
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let (object, line) = inputs.string(p.string)?;
         let target = inputs.object(p.target)?;
+        if p.tolerance > MOST_TOLERANCE {
+            return Err(CommandError::Invalid(format!(
+                "a tolerance of {} m would cut corners off the crest: it's how far the next toe may leave the crest, at most {MOST_TOLERANCE} m. The berm width has its own box",
+                p.tolerance
+            )));
+        }
         let triangulated;
         let mesh = match &target.body {
             Body::Surface(s) => s.mesh(),

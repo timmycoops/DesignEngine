@@ -35,6 +35,9 @@ type P3 = [f64; 3];
 const SAME_POINT: f64 = 1e-6;
 /// Room for rounding on a position (m).
 const NEAR: f64 = 1e-9;
+/// A gap up to the target this small is rounding, not height: the string is on the target there. A
+/// string registered on a grid and stepped to that same grid is only ever this far off it.
+const ON_TARGET: f64 = 1e-7;
 /// Hips this close to parallel never meet: 1e-10 rad squared.
 const PARALLEL: f64 = 1e-20;
 /// How much of a wall polygon the triangles may miss.
@@ -48,6 +51,8 @@ const FOOT: usize = usize::MAX;
 /// The level edge left at the top of the sweep.
 const TOP: usize = usize::MAX - 1;
 const NONE: usize = usize::MAX - 2;
+
+const NO_WALL: &str = "the string is on or above the target all the way along, so there's no wall to make: pick a surface above it";
 
 /// What a wall step did.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -105,6 +110,9 @@ pub fn project_wall(toe: &Polyline, side: OffsetSide, batter_degrees: f64, targe
         )));
     }
     let wall = wall_mesh(&sweep, &edges, &walked, origin)?;
+    if wall.triangles.is_empty() {
+        return Err(GeomError::InvalidInput(NO_WALL.into()));
+    }
     let mut vertices: Vec<[f64; 3]> = walked.crest.iter().map(|p| world(*p, origin)).collect();
     if side == OffsetSide::Right {
         vertices.reverse();
@@ -623,8 +631,11 @@ impl<'a> Walk<'a> {
         self.triangle_at(plane, p, std::iter::once(triangle).chain(corners.iter().flat_map(|&v| self.fan(v).iter().copied())))
     }
 
+    /// The same from scratch. A point on a triangle's edge can lie in a bin the triangle the wall cuts
+    /// isn't in, so the search goes out round whichever triangles hold it.
     fn triangle_on(&self, plane: &Plane, p: P3) -> Option<u32> {
-        self.triangle_at(plane, p, self.bins.at(p[0], p[1]).iter().copied())
+        let holding = self.bins.at(p[0], p[1]).iter().copied().filter(|&t| holds(self.near.triangles[t as usize].map(|v| self.near.vertices[v as usize]), p));
+        holding.into_iter().find_map(|t| self.triangle_around(plane, p, t))
     }
 
     /// The triangle across the edge from `u` to `v`.
@@ -634,12 +645,12 @@ impl<'a> Walk<'a> {
 
     /// The first place up the stretch `p`-`q` where the target stops being above it.
     fn target_met(&self, p: P3, q: P3) -> Result<Option<P3>, GeomError> {
-        self.crossing_on(p, q, |gap| gap > 0.0)
+        self.crossing_on(p, q, |gap| gap > ON_TARGET)
     }
 
     /// The first place along the stretch `p`-`q` where the target goes back above it.
     fn target_rises_over(&self, p: P3, q: P3) -> Result<Option<P3>, GeomError> {
-        self.crossing_on(p, q, |gap| gap <= 0.0)
+        self.crossing_on(p, q, |gap| gap <= ON_TARGET)
     }
 
     /// The first place along `p`-`q` where the gap up to the target leaves the state `before` holds.
@@ -657,7 +668,7 @@ impl<'a> Walk<'a> {
             let t = along(s);
             let gap = s[2] - at(t)[2];
             if before(last.1) && !before(gap) {
-                let share = last.1 / (last.1 - gap);
+                let share = (last.1 / (last.1 - gap)).clamp(0.0, 1.0);
                 return Ok(Some(at(last.0 + share * (t - last.0))));
             }
             last = (t, gap);
@@ -737,7 +748,7 @@ impl<'a> Walk<'a> {
     fn start_on_open_string(&self, walked: &mut Walked, log: &mut WallLog) -> Result<Option<Position>, GeomError> {
         let foot = self.sweep.walls[0].foot;
         let height = self.target_at(foot[0]).ok_or_else(|| self.off_target(foot[0]))?;
-        if height <= foot[0][2] {
+        if height <= foot[0][2] + ON_TARGET {
             walked.crest.push(foot[0]);
             return self.resume_along(0, foot[0], walked, log);
         }
@@ -750,10 +761,10 @@ impl<'a> Walk<'a> {
         let mut covered = false;
         for wall in 0..self.sweep.segments {
             let p = self.sweep.walls[wall].foot[0];
-            covered |= self.target_at(p).ok_or_else(|| self.off_target(p))? > p[2];
+            covered |= self.target_at(p).ok_or_else(|| self.off_target(p))? > p[2] + ON_TARGET;
         }
         if !covered {
-            return Err(GeomError::InvalidInput("the target is below the whole of the closed string".into()));
+            return Err(GeomError::InvalidInput(NO_WALL.into()));
         }
         self.start_up(|across| across < self.sweep.segments).map(Some)
     }
@@ -1255,6 +1266,43 @@ mod tests {
         for &t in &step.wall.triangles {
             assert!(step.wall.triangle_cross(t)[2] > 0.0, "a wall is wound downward");
         }
+    }
+
+    #[test]
+    fn a_string_on_its_target_makes_no_wall_and_says_so() {
+        let surface = target(|x, y| 130.0 + 6.0 * (x / 31.0).cos() + 4.0 * (y / 19.0).sin());
+        let flat = Polyline { vertices: vec![[E + 20.0, N + 60.0, 0.0], [E + 200.0, N + 75.0, 0.0], [E + 380.0, N + 80.0, 0.0]], closed: false };
+        let (toe, _) = drape_string(&flat, &surface, true).unwrap();
+        for side in [OffsetSide::Left, OffsetSide::Right] {
+            let refused = project_wall(&toe, side, 70.0, &surface).unwrap_err();
+            assert!(refused.to_string().contains("no wall to make"), "{refused}");
+        }
+        // The same again for the line a step hands on, which is what's on the grid after a step.
+        let lower = target(|_, _| 100.0);
+        let flat_toe = string(&[[20.0, 60.0, 100.0], [380.0, 80.0, 100.0]], false);
+        let step = project_wall(&flat_toe, OffsetSide::Left, 70.0, &surface).unwrap();
+        let (toes, _) = next_toe(&step.crest, 10.0, OffsetSide::Left, 0.1, &surface).unwrap();
+        assert!(project_wall(&toes[0], OffsetSide::Left, 70.0, &surface).unwrap_err().to_string().contains("no wall to make"));
+        assert!(project_wall(&toes[0], OffsetSide::Left, 70.0, &lower).unwrap_err().to_string().contains("no wall to make"));
+    }
+
+    #[test]
+    fn a_target_that_lifts_off_the_string_starts_its_wall_there() {
+        // The string lies on the target to x = 200, and the target rises away from it after that.
+        let base = |x: f64, y: f64| 100.0 + 3.0 * (y / 29.0).cos() + 0.02 * x;
+        let surface = target(|x, y| base(x, y) + 0.3 * (x - 200.0).max(0.0));
+        let flat = Polyline { vertices: vec![[E + 20.0, N + 60.0, 0.0], [E + 380.0, N + 60.0, 0.0]], closed: false };
+        let lying = target(base);
+        let (toe, _) = drape_string(&flat, &lying, true).unwrap();
+        let step = project_wall(&toe, OffsetSide::Left, 70.0, &surface).unwrap();
+        assert_eq!(step.log.no_height.len(), 1, "{:?}", step.log.no_height);
+        close(step.log.no_height[0].from[0] - E, 20.0, 1e-6);
+        close(step.log.no_height[0].to[0] - E, 200.0, 1e-6);
+        let bins = TriangleBins::new(&surface, [E, N], [E + 400.0, N + 400.0]);
+        for p in step.crest.vertices.iter().filter(|p| p[0] > E + 200.0) {
+            close(bins.height(&surface, [p[0], p[1]]).unwrap(), p[2], 1e-6);
+        }
+        assert!(step.wall.triangles.iter().all(|&t| step.wall.triangle_cross(t)[2] > 0.0));
     }
 
     #[test]
