@@ -91,6 +91,11 @@ impl<'a> Inputs<'a> {
         }
     }
 
+    /// Every live object, to find what an earlier run made. Listing them is not reading them as inputs.
+    pub fn objects(&self) -> impl Iterator<Item = &'a Arc<Object>> {
+        self.project.objects()
+    }
+
     /// The name of an object's layer (display state, so reading it is not an input).
     pub fn layer_name(&self, object: &Object) -> String {
         self.project.layer(object.layer).map(|l| l.name.clone()).unwrap_or_default()

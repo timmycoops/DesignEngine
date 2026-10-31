@@ -564,6 +564,23 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
     from = next.id;
   }
   const ms = performance.now() - started;
+  // The same grids as a whole design, as the Face design panel runs it: the toe going up and going down.
+  const wall = (to: unknown) => ({ step: 'project', to, batter: 'Batter', condition: 0.1 });
+  const up = targets.slice(1).flatMap((id) => [wall({ kind: 'surface', id }), { step: 'berm', on: null, width: 10, register: true, condition: 0.1 }]);
+  const content = {
+    layer: 'bench faces',
+    lines: ['Highwall', 'Highwall down'].map((profile) => ({ string: toe.id, profile, side: 'left', run_on: [100, 100] })),
+    profiles: [
+      { name: 'Highwall', direction: 'up', register: targets[0], condition: null, steps: [...up, wall({ kind: 'rl', rl: 500 })] },
+      { name: 'Highwall down', direction: 'down', register: targets[0], condition: null, steps: [wall({ kind: 'rl', rl: -500 })] },
+    ],
+    rules: [{ name: 'Batter', value: { type: 'fixed', value: 70 } }],
+  };
+  const design = (await run('face.save_design', { name: 'Bench design', content })).fresh[0];
+  const designed = performance.now();
+  const whole = await run('face.project', { design: design.id });
+  const designMs = performance.now() - designed;
+  const again = await run('face.project', { design: design.id });
   const close = async (half: number) => {
     await section.show([at[0] - half * ux, at[1] - half * uy], [at[0] + half * ux, at[1] + half * uy], summary);
     await settle();
@@ -573,7 +590,7 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
   const wide = await close(400);
   const tight = await close(120);
   const surfaces = (section.lastCut?.groups ?? []).filter((g) => g.kind === 'surface').reduce((sum, g) => sum + g.segments, 0);
-  return { steps, ms, surface_segments_in_cut: surfaces, wide, tight };
+  return { steps, ms, surface_segments_in_cut: surfaces, design_ms: designMs, design_messages: whole.messages, design_made: whole.fresh.length, design_rerun_made: again.fresh.length, wide, tight };
 }
 
 /** The fills on, as they first show, then off and on again by the toolbar's Fill button. */

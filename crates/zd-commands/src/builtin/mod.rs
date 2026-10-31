@@ -13,7 +13,7 @@ mod string;
 mod surface;
 
 pub use exchange::{ExportCsv, ExportDxf, ExportParams, ImportStrings, ImportStringsParams};
-pub use face::{ProjectStep, ProjectStepParams};
+pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParams, SaveDesign, SaveDesignParams};
 pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
 pub use layer::{CreateLayer, CreateLayerParams};
 pub use object::{DeleteObject, ObjectParams, RenameObject, RenameParams};
@@ -56,6 +56,8 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(ImportSolids);
     registry.register(CutBySurface);
     registry.register(ProjectStep);
+    registry.register(SaveDesign);
+    registry.register(ProjectDesign);
     registry.register(ImportVulcanSeam);
     registry.register(SuggestSeamDefinition);
     registry.register(BuildSeamModel);

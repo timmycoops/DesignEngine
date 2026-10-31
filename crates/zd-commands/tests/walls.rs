@@ -116,6 +116,158 @@ fn middle_and_strike(grid: &Grid) -> ([f64; 2], [f64; 2]) {
     ([mx, my], [-gy / length, gx / length])
 }
 
+/// A design that takes each string both ways with a profile for each: up to `to` at 45 degrees, a 5 m
+/// berm and on to RL 160, and down to RL 50 at a batter typed on the row.
+fn level_design(strings: &[ObjectId], from: ObjectId, to: ObjectId) -> serde_json::Value {
+    let lines: Vec<_> = strings.iter().flat_map(|s| ["Highwall", "Highwall down"].map(|profile| json!({ "string": s, "profile": profile, "side": "left", "run_on": [10.0, 10.0] }))).collect();
+    json!({
+        "layer": "faces",
+        "lines": lines,
+        "profiles": [{
+            "name": "Highwall",
+            "direction": "up",
+            "register": from,
+            "steps": [
+                { "step": "project", "to": { "kind": "surface", "id": to }, "batter": "HW batter", "condition": 0.1 },
+                { "step": "berm", "width": "HW berm", "condition": 0.1 },
+                { "step": "project", "to": { "kind": "rl", "rl": 160.0 }, "batter": "HW batter", "condition": 0.1 },
+            ],
+        }, {
+            "name": "Highwall down",
+            "direction": "down",
+            "register": from,
+            "steps": [{ "step": "project", "to": { "kind": "rl", "rl": 50.0 }, "batter": 45.0, "condition": 0.1 }],
+        }],
+        "rules": [
+            { "name": "HW batter", "value": { "type": "fixed", "value": 45.0 } },
+            { "name": "HW berm", "value": { "type": "fixed", "value": 5.0 } },
+        ],
+    })
+}
+
+/// Live objects on a layer, by kind: strings and surfaces.
+fn on_layer(s: &Session, layer: &str) -> (usize, usize) {
+    let Some(layer) = s.project().layer_named(layer).map(|l| l.id) else { return (0, 0) };
+    let here: Vec<_> = s.project().objects().filter(|o| o.layer == layer).collect();
+    (here.iter().filter(|o| matches!(o.body, Body::String(_))).count(), here.iter().filter(|o| matches!(o.body, Body::Surface(_))).count())
+}
+
+#[test]
+fn a_design_runs_every_line_in_one_run_and_runs_again_over_itself() {
+    let mut s = Session::with_builtins();
+    let (floor, roof) = (level_surface(&mut s, "floor", 100.0), level_surface(&mut s, "roof", 120.0));
+    let string = |s: &mut Session, name: &str, y: f64| {
+        let points = [[E + 50.0, N + y, 0.0], [E + 250.0, N + y, 0.0]];
+        created(&s.run("string.create", json!({ "name": name, "layer": "design", "points": points })).unwrap())[0]
+    };
+    let (one, two) = (string(&mut s, "strip 1", 60.0), string(&mut s, "strip 2", 200.0));
+    let saved = s.run("face.save_design", json!({ "name": "Pit design", "content": level_design(&[one, two], floor, roof) })).unwrap();
+    let design = created(&saved)[0];
+
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    // Each string goes up in two walls and down in one, each with a toe and a crest, and one face each way.
+    assert_eq!(on_layer(&s, "faces"), (12, 4), "{:?}", record.messages);
+    assert_eq!(record.messages.len(), 4, "{:?}", record.messages);
+    assert!(record.messages[0].starts_with("strip 1 Highwall: 2 walls"), "{:?}", record.messages);
+    assert_eq!(s.project().object(one).unwrap().revision, 1, "a line's string stays as it was");
+    let face = s.project().objects().find(|o| o.name == "strip 1 Highwall face").unwrap().clone();
+    let Body::Surface(sheet) = &face.body else { panic!("a face is a surface") };
+    // 220 m of toe with the run-on: walls 20 and 40 m high at 45 degrees, and the berm.
+    let want = 220.0 * ((20.0 + 40.0) * 2f64.sqrt() + 5.0);
+    assert!((sheet.mesh().area() - want).abs() < 1e-3, "{} against {want}", sheet.mesh().area());
+    assert_eq!(sheet.validity().non_self_intersecting, Some(true));
+    // Down is 50 m at 45 degrees, from the same toe as up.
+    let below = s.project().objects().find(|o| o.name == "strip 1 Highwall down face").unwrap();
+    let Body::Surface(sheet) = &below.body else { panic!("a face is a surface") };
+    assert!((sheet.mesh().area() - 220.0 * 50.0 * 2f64.sqrt()).abs() < 1e-3, "{}", sheet.mesh().area());
+    let toe_of = |name: &str| match &s.project().objects().find(|o| o.name == name).unwrap().body {
+        Body::String(line) => line.vertices.clone(),
+        _ => panic!("a toe is a string"),
+    };
+    assert_eq!(toe_of("strip 1 Highwall toe 1"), toe_of("strip 1 Highwall down toe 1"));
+
+    // Change a rule and run again: it replaces the last run, and one undo brings that back.
+    let mut content = level_design(&[one, two], floor, roof);
+    content["rules"][1]["value"]["value"] = json!(20.0);
+    s.run("face.save_design", json!({ "design": design, "name": "Pit design", "content": content })).unwrap();
+    s.run("face.project", json!({ "design": design })).unwrap();
+    assert_eq!(on_layer(&s, "faces"), (12, 4));
+    let wider = s.project().objects().find(|o| o.name == "strip 1 Highwall face").unwrap();
+    let Body::Surface(sheet) = &wider.body else { panic!("a face is a surface") };
+    assert!((sheet.mesh().area() - 220.0 * ((20.0 + 40.0) * 2f64.sqrt() + 20.0)).abs() < 1e-3, "{}", sheet.mesh().area());
+    s.undo().unwrap();
+    assert_eq!(on_layer(&s, "faces"), (12, 4), "undo brings the first run back");
+    assert_eq!(s.project().objects().find(|o| o.name == "strip 1 Highwall face").unwrap().id, face.id);
+}
+
+/// A rough toe, cleaned on its Register row, and a berm that names the surface it registers on.
+#[test]
+fn a_row_can_condition_the_toe_and_name_a_berms_surface() {
+    let mut s = Session::with_builtins();
+    let (floor, roof, shelf) = (level_surface(&mut s, "floor", 100.0), level_surface(&mut s, "roof", 120.0), level_surface(&mut s, "shelf", 123.0));
+    let points = [[E + 50.0, N + 60.0, 0.0], [E + 100.0, N + 60.04, 0.0], [E + 150.0, N + 59.97, 0.0], [E + 250.0, N + 60.0, 0.0]];
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "design", "points": points })).unwrap())[0];
+    let content = json!({
+        "layer": "faces",
+        "lines": [{ "string": toe, "profile": "Highwall", "side": "left" }],
+        "profiles": [{
+            "name": "Highwall",
+            "direction": "up",
+            "register": floor,
+            "condition": 0.1,
+            "steps": [
+                { "step": "project", "to": { "kind": "surface", "id": roof }, "batter": 45.0, "condition": 0.1 },
+                { "step": "berm", "on": { "kind": "surface", "id": shelf }, "width": 5.0, "condition": 0.1 },
+                { "step": "project", "to": { "kind": "rl", "rl": 160.0 }, "batter": 45.0 },
+            ],
+        }],
+    });
+    let design = created(&s.run("face.save_design", json!({ "name": "Pit design", "content": content })).unwrap())[0];
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    assert!(record.messages[0].contains("toe conditioned from 4 to 2 vertices"), "{:?}", record.messages);
+    let string = |name: &str| match &s.project().objects().find(|o| o.name == name).unwrap().body {
+        Body::String(line) => line.vertices.clone(),
+        _ => panic!("a toe is a string"),
+    };
+    assert!(string("toe Highwall toe 1").iter().all(|p| (p[1] - N - 60.0).abs() < 1e-9), "cleaned to one straight line");
+    assert!(string("toe Highwall toe 2").iter().all(|p| (p[2] - 123.0).abs() < 1e-6));
+    assert_eq!(s.project().object(toe).unwrap().revision, 1, "the string stays as it was drawn");
+}
+
+#[test]
+fn a_design_that_cant_run_says_why_and_changes_nothing() {
+    let mut s = Session::with_builtins();
+    let (floor, roof) = (level_surface(&mut s, "floor", 100.0), level_surface(&mut s, "roof", 120.0));
+    let points = [[E + 50.0, N + 60.0, 0.0], [E + 250.0, N + 60.0, 0.0]];
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "design", "points": points })).unwrap())[0];
+    let mut content = level_design(&[toe], floor, roof);
+    content["lines"][0]["profile"] = json!("Endwall");
+    let design = created(&s.run("face.save_design", json!({ "name": "Pit design", "content": content })).unwrap())[0];
+    let error = s.run("face.project", json!({ "design": design })).unwrap_err();
+    assert!(error.to_string().contains("profile that isn't there: Endwall"), "{error}");
+    assert_eq!(on_layer(&s, "faces"), (0, 0));
+}
+
+#[test]
+fn a_design_saves_and_opens_with_the_project() {
+    let mut s = Session::with_builtins();
+    let (floor, roof) = (level_surface(&mut s, "floor", 100.0), level_surface(&mut s, "roof", 120.0));
+    let points = [[E + 50.0, N + 60.0, 0.0], [E + 250.0, N + 60.0, 0.0]];
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "design", "points": points })).unwrap())[0];
+    let design = created(&s.run("face.save_design", json!({ "name": "Pit design", "content": level_design(&[toe], floor, roof) })).unwrap())[0];
+    let dir = std::env::temp_dir().join(format!("zd-face-{}-{}.zdproj", std::process::id(), zd_core::RunId::new()));
+    s.save(&dir).unwrap();
+    let mut opened = Session::open(&dir).unwrap();
+    let body = |s: &Session| match &s.project().object(design).unwrap().body {
+        Body::FaceDesign(d) => (**d).clone(),
+        _ => panic!("a design comes back a design"),
+    };
+    assert_eq!(body(&opened), body(&s));
+    opened.run("face.project", json!({ "design": design })).unwrap();
+    assert_eq!(on_layer(&opened, "faces").1, 2);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// A string running along strike through the middle, bending gently in plan.
 fn along_strike(middle: [f64; 2], strike: [f64; 2], half_length: f64) -> Polyline {
     let across = [-strike[1], strike[0]];
@@ -294,6 +446,65 @@ fn sweep_one_string_on_real_grids() {
     println!("{steps} steps");
     for (key, (count, first)) in &refused {
         println!("{count} x {key}\n    first: {first}");
+    }
+}
+
+/// The whole face on real data through the commands, as the panel runs it. `ZD_WALL_STRING` is
+/// `x,y,z;x,y,z`, `ZD_FACE_GRIDS` lists grids bottom first with `;`, and `ZD_FACE_TOPO` is a topography.
+#[test]
+#[ignore = "needs ZD_WALL_STRING, ZD_FACE_GRIDS and ZD_FACE_TOPO"]
+fn a_whole_face_on_real_grids() {
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is needed"));
+    let mut s = Session::with_builtins();
+    let mut import = |path: &str| created(&s.run("surface.import", json!({ "path": path, "layer": "surfaces" })).unwrap())[0];
+    let grids: Vec<ObjectId> = var("ZD_FACE_GRIDS").split(';').map(&mut import).collect();
+    let topo = import(&var("ZD_FACE_TOPO"));
+    let numbers = |p: &str| p.split(',').map(|n| n.trim().parse::<f64>().unwrap()).collect::<Vec<_>>();
+    let points: Vec<Vec<f64>> = var("ZD_WALL_STRING").split(';').map(numbers).collect();
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "design", "points": points })).unwrap())[0];
+    for side in ["right", "left"] {
+        let mut up = Vec::new();
+        for grid in &grids[1..] {
+            up.push(json!({ "step": "project", "to": { "kind": "surface", "id": grid }, "batter": "HW batter", "condition": 0.1 }));
+            up.push(json!({ "step": "berm", "width": "HW berm", "condition": 0.1 }));
+        }
+        up.push(json!({ "step": "project", "to": { "kind": "surface", "id": topo }, "batter": "Upper batter", "condition": 0.1 }));
+        up.push(json!({ "step": "project", "to": { "kind": "rl", "rl": 500.0 }, "batter": "Upper batter", "condition": 0.1 }));
+        let content = json!({
+            "layer": format!("faces {side}"),
+            "lines": [
+                { "string": toe, "profile": "Up", "side": side, "run_on": [100.0, 100.0] },
+                { "string": toe, "profile": "Down", "side": side, "run_on": [100.0, 100.0] },
+            ],
+            "profiles": [
+                { "name": "Up", "direction": "up", "register": grids[0], "steps": up },
+                { "name": "Down", "direction": "down", "register": grids[0], "steps": [{ "step": "project", "to": { "kind": "rl", "rl": -500.0 }, "batter": "HW batter", "condition": 0.1 }] },
+            ],
+            "rules": [
+                { "name": "HW batter", "value": { "type": "fixed", "value": 70.0 } },
+                { "name": "HW berm", "value": { "type": "fixed", "value": 10.0 } },
+                { "name": "Upper batter", "value": { "type": "fixed", "value": 45.0 } },
+            ],
+        });
+        let design = created(&s.run("face.save_design", json!({ "name": format!("design {side}"), "content": content })).unwrap())[0];
+        let start = Instant::now();
+        match s.run("face.project", json!({ "design": design })) {
+            Ok(record) => {
+                println!("{side}: {:.1} ms", start.elapsed().as_secs_f64() * 1e3);
+                record.messages.iter().for_each(|m| println!("  {m}"));
+                let (strings, faces) = on_layer(&s, &format!("faces {side}"));
+                println!("  {strings} strings, {faces} faces");
+                for name in ["toe Up face", "toe Down face"] {
+                    let face = s.project().objects().find(|o| o.name == name && s.project().layer(o.layer).is_some_and(|l| l.name == format!("faces {side}"))).unwrap();
+                    let Body::Surface(sheet) = &face.body else { panic!("a face is a surface") };
+                    let v = sheet.validity();
+                    let b = sheet.mesh().bounds().unwrap();
+                    println!("  {name}: RL {:.3} to {:.3}, {} triangles, {} boundary loop(s), {v:?}", b.min[2], b.max[2], sheet.mesh().triangles.len(), zd_geom::boundary_loops(sheet.mesh()).unwrap().len());
+                    assert!(v.non_self_intersecting == Some(true) && v.consistent_winding);
+                }
+            }
+            Err(e) => println!("{side}: refused after {:.1} ms: {e}", start.elapsed().as_secs_f64() * 1e3),
+        }
     }
 }
 

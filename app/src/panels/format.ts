@@ -23,4 +23,5 @@ export const kindLabel: Record<ObjectKind, string> = {
   solid: 'Solid',
   grid: 'Grid',
   seam_model: 'Seam model',
+  face_design: 'Face design',
 };

@@ -230,7 +230,7 @@ impl Command for ExportDxf {
                     triangles += solid.mesh().triangle_count();
                     entities.push(DxfEntity::Mesh(solid.mesh()));
                 }
-                Body::Grid(_) | Body::SeamModel(_) => {
+                Body::Grid(_) | Body::SeamModel(_) | Body::FaceDesign(_) => {
                     refused.push(object.name.as_str());
                     continue;
                 }
