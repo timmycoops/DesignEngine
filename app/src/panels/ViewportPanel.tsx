@@ -18,11 +18,11 @@ function Swatch({ colour, label }: { colour: string; label: string }) {
 
 /** The seam horizon on show: which one (and a picker for the others), the thickness ramp, and its issues. */
 function SeamLegend() {
-  const { seamView, showSeamHorizon, select } = useWorkspace();
+  const { seamView, showSeamHorizon, select, sectionOpen } = useWorkspace();
   if (!seamView) return null;
   const r = seamView.result;
   return (
-    <div className="absolute bottom-3 left-3 w-64 rounded-md border bg-card/90 p-2 text-xs shadow-md backdrop-blur-sm">
+    <div className={`absolute left-3 z-10 w-64 rounded-md border bg-card/90 p-2 text-xs shadow-md backdrop-blur-sm ${sectionOpen ? 'bottom-[264px]' : 'bottom-3'}`}>
       <div className="flex items-center gap-1">
         <button className="min-w-0 truncate font-medium hover:underline" title="Show the model's horizons and issues" onClick={() => select(seamView.id)}>
           {seamView.name}

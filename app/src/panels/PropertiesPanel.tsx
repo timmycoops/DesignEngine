@@ -432,7 +432,7 @@ const horizonColumns = horizonHelper.columns([
   }),
   horizonHelper.accessor('parent', { header: 'Parent' }),
   horizonHelper.accessor('working', { header: 'Working', cell: (c) => (c.getValue() ? 'Yes' : '') }),
-  horizonHelper.accessor('grids', { header: 'Other grids', cell: (c) => <span className="text-muted-foreground">{c.getValue()}</span> }),
+  horizonHelper.accessor('grids', { header: 'Grids', cell: (c) => <span className="text-muted-foreground">{c.getValue()}</span> }),
 ]);
 
 /** The model's horizons, top first; click one to show it in the viewport. */
@@ -451,7 +451,7 @@ function Horizons({ id, model }: { id: string; model: SeamModel }) {
       depth: depth(h.code),
       parent: h.parent ?? '',
       working: h.working,
-      grids: Object.keys(h.grids).join(' '),
+      grids: ['srg', 'sfg', ...Object.keys(h.grids)].join(' '),
     }));
   }, [model]);
   return <DataTable data={rows} columns={horizonColumns} rowId={(r) => r.code} selected={shown} onRowClick={(r) => showSeamHorizon(id, r.code)} />;

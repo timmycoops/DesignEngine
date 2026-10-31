@@ -507,6 +507,7 @@ export interface BenchConfig {
   solids: string | null;
   /** Strings to load into the same scene first. */
   strings: string[];
+  seam: string | null;
   results_path: string;
   scale_targets: number[];
   transfer_cells: number[];
