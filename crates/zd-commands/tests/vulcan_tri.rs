@@ -432,6 +432,15 @@ fn a_real_pit_slices_exactly_and_fast() {
         println!("{name}: index built in {:.0} ms", built.elapsed().as_secs_f64() * 1e3);
         let mut totals = (0, 0, 0);
         let (mut fill_times, mut triangles, mut unfilled) = (Vec::new(), 0, 0);
+        // A ray through the middle of a cut segment, from 0.5 mm short of it, has to meet the mesh within
+        // that 0.5 mm. A segment crosses one triangle, so its middle is inside that triangle; its ends
+        // lie on edges, where a ray can slip between two triangles and find the ground beyond.
+        let caster = zd_geom::SurfaceRayCaster::new(mesh).unwrap();
+        let (mut measured, mut missed, mut furthest) = (0usize, 0usize, 0.0f64);
+        let through = |p: [f64; 3], d: [f64; 3]| {
+            let from = [p[0] - d[0] * 5e-4, p[1] - d[1] * 5e-4, p[2] - d[2] * 5e-4];
+            caster.cast(from, d).map(|hit| ((hit[0] - from[0]).powi(2) + (hit[1] - from[1]).powi(2) + (hit[2] - from[2]).powi(2)).sqrt())
+        };
         for k in 0..41 {
             let east = centre[0] + (k as f64 - 20.0) * 25.0;
             let plane = zd_geom::SectionPlane::through([east, centre[1] - span], [east + 30.0, centre[1] + span]).unwrap();
@@ -442,6 +451,13 @@ fn a_real_pit_slices_exactly_and_fast() {
             totals.1 += lines.iter().filter(|l| l.closed).count();
             totals.2 += lines.iter().map(|l| l.points.len()).sum::<usize>();
             worst = lines.iter().flat_map(|l| &l.points).fold(worst, |w, &p| w.max(plane.offset(p).abs()));
+            for w in lines.iter().flat_map(|l| l.points.windows(2)) {
+                let middle = [(w[0][0] + w[1][0]) / 2.0, (w[0][1] + w[1][1]) / 2.0, (w[0][2] + w[1][2]) / 2.0];
+                match through(middle, [0.36, 0.48, 0.8]) {
+                    Some(gap) => (measured, furthest) = (measured + 1, furthest.max(gap)),
+                    None => missed += 1,
+                }
+            }
             let start = std::time::Instant::now();
             let fill = zd_geom::fill_section_loops(&lines, &plane);
             fill_times.push(start.elapsed().as_secs_f64() * 1e3);
@@ -458,6 +474,8 @@ fn a_real_pit_slices_exactly_and_fast() {
             totals.1 / 41,
             totals.2 / 41
         );
+        println!("{name}: {measured} cut segments met the mesh within {:.3} mm, {missed} rays missed", furthest * 1e3);
+        assert!(furthest < 1e-3, "{furthest}");
         println!("{name}: fills {:.1} ms p50, {:.1} ms worst; {} triangles and {} loops left unfilled per section", fill_times[20], fill_times[40], triangles / 41, unfilled / 41);
         assert!(worst < 1e-6, "{worst}");
     }

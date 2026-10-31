@@ -95,6 +95,27 @@ a grade and offsetting.
 **Gate: passed, 2026-10-31.** Tim's notes for later: zooming and rotating about a fixed centre feels
 wrong when zoomed in on an object, and snapping has no off switch.
 
+### Phase 2 gate on real data
+
+The release app through its real toolbar, canvas and keys (`zd-app.exe --bench --solids <zip> --surfaces <topo>
+--strings <dxf> --seam <csv>`), and `a_real_pit_slices_exactly_and_fast` in `zd-commands` on both pits. PIT A is
+11.7 M triangles, 21,469 solids and 5,724 strings. PIT B is 8.4 M triangles, about 42,000 solids and the only real
+coal seam models, so seams are judged on it. Details are in decision 0022.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Pick two points: the view becomes the slice, one click goes back | pass, by hand |
+| 2 | Every cut line on the plane and on what it came from, to 1 mm | pass: 41 sections on each pit, 1,183,889 cut segments all met their mesh within the 0.5 mm the test allows, and no point lies more than 6e-11 m off the plane |
+| 3 | Each step under 50 ms on the full scene | pass: 28 ms p50 and 30 ms worst on PIT A, 46 ms and 47 ms on PIT B with its seam model |
+| 4 | The overview shows where the section is, and moving it there moves the section | pass, by hand |
+| 5 | Line weights, an RL grid, distance along the section, solids and seams filled | pass: labels read against the engine to 0.12 mm over 9,708 points, and all 485 solid loops a section on PIT A fill |
+| 6 | Digitise and edit a string in section, snapped to the cut lines | pass on PIT B: vertices exact to the bit, 6e-10 m off the plane, snap 1.3 ms p50, drag and undo through the real tools |
+| 7 | A section beside the same section in Deswik reads as clearly | passed by Tim on look and feel, without a side-by-side |
+
+**Gate: passed, 2026-10-31.** Tim: "the look and feel is very good for the section so I'm happy with that". Left
+for later: lightening the RL labels on a smaller viewport, the plan map's size, setting colours, where line weight
+lives, and the odd solid loop on PIT B that stays unfilled, about one a section and counted on the status line.
+
 ### Solids at scale
 
 All 42,223 relimiting solids through `solid.import`: **41,585 imported** (98.5 %) at 3.8 ms each
