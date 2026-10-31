@@ -20,6 +20,7 @@ import {
 } from '../bridge';
 import { loadStaged } from '../viewport/load';
 import { PolylineTool } from '../viewport/PolylineTool';
+import type { SectionView } from '../viewport/section';
 import type { Viewport } from '../viewport/Viewport';
 
 interface FrameSummary {
@@ -37,7 +38,7 @@ const WARM_UP_FRAMES = 30;
 /** Shows a summary as the app does: panels, strings, geometry and the snap index. */
 type Show = (summary: ProjectSummary) => Promise<void> | undefined;
 
-export async function runChecks(viewport: Viewport, config: BenchConfig, log: (line: string) => void, show: Show): Promise<void> {
+export async function runChecks(viewport: Viewport, config: BenchConfig, log: (line: string) => void, show: Show, section: () => SectionView | null): Promise<void> {
   const tool = new PolylineTool(viewport);
   const canvas = viewport.renderer.domElement;
   const results: Record<string, unknown> = {
@@ -51,7 +52,7 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
 
   try {
     if (config.solids) {
-      results.solids = await checkSolids(viewport, config, config.solids, log, show);
+      results.solids = await checkSolids(viewport, config, config.solids, log, show, section);
     } else {
       results.load = await loadSurfaces(viewport, config.surfaces, log);
       viewport.fitView();
@@ -70,7 +71,7 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
 }
 
 /** A zip or folder of solids by the app's own path: import, draw, snap index, orbit, snap, undo. */
-async function checkSolids(viewport: Viewport, config: BenchConfig, path: string, log: (line: string) => void, show: Show) {
+async function checkSolids(viewport: Viewport, config: BenchConfig, path: string, log: (line: string) => void, show: Show, section: () => SectionView | null) {
   const orbitSeconds = config.orbit_seconds;
   for (const surface of config.surfaces) await show((await runCommand('surface.import', { path: surface, layer: 'surfaces' })).summary);
   for (const strings of config.strings) await show((await runCommand('string.import', { path: strings })).summary);
@@ -107,6 +108,7 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
   const camera = await checkCamera(viewport);
   const snapSwitch = await checkSnapSwitch(viewport);
   const stringPick = await checkStringPick(viewport, show);
+  const sectionCheck = await checkSection(viewport, section(), reply.summary);
   const undoStart = performance.now();
   await show(await undo());
   return {
@@ -124,6 +126,7 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
     camera,
     snap_switch: snapSwitch,
     string_pick: stringPick,
+    section: sectionCheck,
     snap_p50_ms: snaps[100],
     snap_p95_ms: snaps[190],
     undo_ms: performance.now() - undoStart,
@@ -320,6 +323,76 @@ async function checkStringPick(viewport: Viewport, show: Show) {
   await settle();
   await show(await undo());
   return { turn_from_vertex_off_m: fromVertex, turn_from_segment_off_m: fromSegment, label_over_vertex: overVertex, label_over_segment: overSegment };
+}
+
+/** Picks a section through the real toolbar and canvas, then steps it: the gate's 50 ms a step. */
+async function checkSection(viewport: Viewport, section: SectionView | null, summary: ProjectSummary) {
+  if (!section) return { error: 'no section view' };
+  const canvas = viewport.renderer.domElement;
+  const box = canvas.getBoundingClientRect();
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await viewport.nextFrame();
+  };
+  const button = (name: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.includes(name));
+  const click = async (x: number, y: number) => {
+    for (const type of ['pointerdown', 'pointerup']) {
+      canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons: 1, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+    }
+    await settle();
+  };
+  viewport.fitView();
+  await settle();
+  button('Section')?.click();
+  await settle();
+  await click(box.left + box.width * 0.3, box.top + box.height * 0.5);
+  await click(box.left + box.width * 0.7, box.top + box.height * 0.5);
+  await settle();
+  await settle();
+  const opened = section.open && viewport.sectionView;
+  const wide = picture(viewport);
+  const [times, engine]: number[][] = [[], []];
+  for (let k = 0; k < 40; k++) {
+    await section.step(k < 20 ? 25 : -25);
+    times.push(section.lastMs);
+    engine.push(section.lastEngineMs);
+  }
+  times.sort((a, b) => a - b);
+  engine.sort((a, b) => a - b);
+  const frames = await orbitless(viewport);
+
+  // A section as a planner would pick one: 1.5 km across the first solid cut, not the whole view.
+  const o = summary.origin ?? [0, 0, 0];
+  const across = section.firstSolidPoint();
+  let close = '';
+  if (across) {
+    const [x, y] = [across.x + o[0], across.y + o[1]];
+    await section.show([x - 750, y - 200], [x + 750, y + 200], summary);
+    await settle();
+    close = picture(viewport);
+  }
+  button('Section')?.click();
+  await settle();
+  return { opened, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, wide, close };
+}
+
+/** What the viewport shows now, as a PNG data URL: drawn again and copied before the frame is gone. */
+function picture(viewport: Viewport): string {
+  const source = viewport.renderer.domElement;
+  const copy = Object.assign(document.createElement('canvas'), { width: source.width, height: source.height });
+  viewport.renderer.render(viewport.scene, viewport.camera);
+  copy.getContext('2d')?.drawImage(source, 0, 0);
+  return copy.toDataURL('image/png');
+}
+
+/** Frames per second over two seconds, the view left alone. */
+async function orbitless(viewport: Viewport): Promise<number> {
+  const start = performance.now();
+  let frames = 0;
+  while (performance.now() - start < 2000) {
+    await viewport.nextFrame();
+    frames++;
+  }
+  return (frames * 1000) / (performance.now() - start);
 }
 
 async function loadSurfaces(viewport: Viewport, paths: string[], log: (line: string) => void) {

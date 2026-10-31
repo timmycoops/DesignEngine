@@ -2,7 +2,7 @@
 //!
 //! Grid triangulation and resampling, seam solids between roof and floor grids, closing a design
 //! surface into a half-space, the Manifold cut, BVH ray casting for snapping, the seam stack check,
-//! string geometry, and the import repair step with its crossing check.
+//! string geometry, section lines, and the import repair step with its crossing check.
 
 mod close;
 mod crossings;
@@ -15,6 +15,7 @@ mod ray;
 mod repair;
 mod self_union;
 mod seam;
+mod slice;
 mod stack;
 mod string;
 
@@ -29,6 +30,7 @@ pub use repair::{RepairLog, repair_mesh};
 pub use self_union::{UnionLog, self_union};
 pub use ray::SurfaceRayCaster;
 pub use seam::{SeamLog, SeamSolid, build_seam_solid};
+pub use slice::{SectionPlane, SliceLine, slice_mesh, string_near_plane};
 pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_nodes, suggest_no_seam_rl, suggest_seam_tree};
 pub use string::{Corner, DrapeLog, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, smooth_string, split_string};
 

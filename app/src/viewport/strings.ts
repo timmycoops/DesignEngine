@@ -19,7 +19,7 @@ import { colourOf } from './load';
 import { PointMark } from './markers';
 import type { Viewport } from './Viewport';
 
-export type Mode = 'select' | 'draw';
+export type Mode = 'select' | 'draw' | 'section';
 
 export interface StringActions {
   /** Runs an engine command; resolves true if it succeeded. */
@@ -30,6 +30,8 @@ export interface StringActions {
   status(text: string): void;
   /** Layer that new strings go on. */
   layer(): string;
+  /** The second point of a section was picked. */
+  section(a: Vec3, b: Vec3): void;
 }
 
 interface Shown {
@@ -116,6 +118,8 @@ export class StringLayer {
   private layers = new Map<string, Layer>();
   private names = 0;
   private snapping = true;
+  /** A section is showing: strings are not drawn or edited over it. */
+  private frozen = false;
   private snapMark: PointMark;
   private snapLabel: HTMLElement;
   private hovering: { x: number; y: number } | null = null;
@@ -156,6 +160,15 @@ export class StringLayer {
     this.clearSnapMark();
     this.refreshPreview();
     this.placeHandles();
+  }
+
+  /** Takes the strings off the view while a section is showing, and puts them back. */
+  setFrozen(frozen: boolean): void {
+    this.frozen = frozen;
+    this.group.visible = !frozen;
+    this.handles.visible = !frozen;
+    this.clearSnapMark();
+    this.recolour();
   }
 
   /** Works mid-string or mid-drag too: the next point takes the new setting. */
@@ -271,7 +284,7 @@ export class StringLayer {
   }
 
   private pointerDown(e: PointerEvent): void {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || this.frozen) return;
     if (this.mode === 'select' && this.selected) {
       const index = this.handleAt(this.selected, e.clientX, e.clientY);
       if (index >= 0) {
@@ -292,8 +305,8 @@ export class StringLayer {
       return;
     }
     // A held button is the view turning or panning, not a point being placed.
-    if (e.buttons !== 0) return this.clearSnapMark();
-    if (this.mode === 'draw') {
+    if (e.buttons !== 0 || this.frozen) return this.clearSnapMark();
+    if (this.mode !== 'select') {
       this.hovering = { x: e.clientX, y: e.clientY };
       void this.pumpHover();
     }
@@ -311,7 +324,7 @@ export class StringLayer {
     this.hovering = null;
     const hit = await this.snapAt(at.x, at.y);
     this.hoverInFlight = false;
-    if (this.mode === 'draw') this.showSnap(hit, at);
+    if (this.mode !== 'select') this.showSnap(hit, at);
     void this.pumpHover();
   }
 
@@ -375,6 +388,17 @@ export class StringLayer {
     this.down = null;
     if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > CLICK_SLOP_PX) return;
 
+    if (this.mode === 'section') {
+      const hit = await this.snapAt(e.clientX, e.clientY);
+      if (!hit) return this.actions.status('No point there: tilt the view down or use plan view');
+      this.pending.push(hit);
+      this.placeHandles();
+      if (this.pending.length < 2) return this.actions.status('Section: pick the second point');
+      const [a, b] = this.pending;
+      this.pending = [];
+      if (a.world[0] === b.world[0] && a.world[1] === b.world[1]) return this.actions.status('Section: those are the same point in plan; pick the first point again');
+      return this.actions.section(a.world, b.world);
+    }
     if (this.mode === 'draw') {
       const hit = await this.snapAt(e.clientX, e.clientY);
       if (!hit) return this.actions.status('No point there: the view looks along the working plane; tilt it down or use plan view');
@@ -396,9 +420,9 @@ export class StringLayer {
   }
 
   private keyDown(e: KeyboardEvent): void {
-    if (e.target instanceof HTMLInputElement) return;
+    if (e.target instanceof HTMLInputElement || this.frozen) return;
     if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey && !e.altKey) return this.toggleSnapping();
-    if (this.mode === 'draw') {
+    if (this.mode !== 'select') {
       if (e.key === 'Enter') void this.finishDrawing();
       if (e.key === 'Escape') {
         this.pending = [];
@@ -440,7 +464,7 @@ export class StringLayer {
   }
 
   private refreshPreview(): void {
-    if (this.mode === 'draw' && this.pending.length > 0) {
+    if (this.mode !== 'select' && this.pending.length > 0) {
       this.showPreview(this.pending.map((h) => new THREE.Vector3(...h.local)));
     } else {
       this.preview.visible = false;
@@ -455,7 +479,7 @@ export class StringLayer {
 
   private recolour(): void {
     const shown = this.selected ? this.shown.get(this.selected) : undefined;
-    this.highlight.visible = !!shown?.visible;
+    this.highlight.visible = !!shown?.visible && !this.frozen;
     if (!shown) return;
     this.highlight.geometry.dispose();
     this.highlight.geometry = new THREE.BufferGeometry().setFromPoints(shown.closed ? [...shown.points, shown.points[0]] : shown.points);
@@ -464,7 +488,7 @@ export class StringLayer {
   /** Handles for the selected string's vertices, or for the vertices being drawn. */
   private placeHandles(): void {
     const points =
-      this.mode === 'draw'
+      this.mode !== 'select'
         ? this.pending.map((h) => new THREE.Vector3(...h.local))
         : this.selected
           ? (this.shown.get(this.selected)?.points ?? [])
@@ -509,8 +533,8 @@ export class StringLayer {
     const { origin: o, direction: d } = viewport.rayFromNdc(...viewport.clientToNdc(x, y));
     // What a pixel measures: the same everywhere in plan, growing with distance in 3D.
     const eye = viewport.camera.position;
-    const flat = viewport.planView ? viewport.pixelSize(eye) : 0;
-    const perMetre = viewport.planView ? 0 : viewport.pixelSize(new THREE.Vector3(eye.x + d[0], eye.y + d[1], eye.z + d[2]));
+    const flat = viewport.flatView ? viewport.pixelSize(eye) : 0;
+    const perMetre = viewport.flatView ? 0 : viewport.pixelSize(new THREE.Vector3(eye.x + d[0], eye.y + d[1], eye.z + d[2]));
     return this.runs.filter(({ shown, centre, radius }) => {
       if (!shown.visible) return false;
       const [wx, wy, wz] = [centre.x - o[0], centre.y - o[1], centre.z - o[2]];
@@ -570,7 +594,7 @@ export class StringLayer {
     for (const { id, shown, first, count } of runs) {
       for (let i = first; i <= first + count; i++) consider(id, shown.name, shown.points, i % shown.points.length);
     }
-    if (this.mode === 'draw') {
+    if (this.mode !== 'select') {
       const drawn = this.pending.map((h) => new THREE.Vector3(...h.local));
       drawn.forEach((_, i) => consider('', 'this string', drawn, i));
     }

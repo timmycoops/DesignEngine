@@ -3,6 +3,7 @@
 
 mod commands;
 mod render;
+mod section;
 mod shared;
 mod state;
 mod synthetic;
@@ -24,6 +25,7 @@ fn main() {
             commands::run_log,
             commands::stage_object,
             commands::stage_layer_solids,
+            commands::section_lines,
             commands::stage_seam_horizon,
             commands::prepare_synthetic,
             commands::fetch_mesh_shared,

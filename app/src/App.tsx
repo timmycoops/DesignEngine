@@ -17,6 +17,9 @@ import {
   Redo2,
   Save,
   SaveAll,
+  Scissors,
+  StepBack,
+  StepForward,
   Undo2,
 } from 'lucide-react';
 import { cn } from 'cn';
@@ -52,8 +55,10 @@ import { Separator } from './design-system/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './design-system/ui/tooltip';
 import { IssueMarkers } from './viewport/markers';
 import { type SeamShown, SceneSync } from './viewport/sceneSync';
+import { planPoint, SectionView } from './viewport/section';
 import { type Mode, StringLayer } from './viewport/strings';
 import { type FrameStats, Viewport } from './viewport/Viewport';
+import { Input } from '@/design-system/ui/input';
 import { type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
 import { PANELS, resetLayout, showPanel, Workspace } from './workspace/Workspace';
 
@@ -115,6 +120,9 @@ export default function App() {
   const [mode, setModeState] = useState<Mode>('select');
   const [plan, setPlan] = useState(false);
   const [snapping, setSnapping] = useState(true);
+  const [sectionOpen, setSectionOpen] = useState(false);
+  const [sectionStep, setSectionStep] = useState('25');
+  const sectionRef = useRef<SectionView | null>(null);
   const [activeLayer, setActiveLayerState] = useState('design');
   const [selected, setSelected] = useState<string | null>(null);
   const [seamView, setSeamView] = useState<SeamShown | null>(null);
@@ -175,6 +183,7 @@ export default function App() {
     setSummary(next);
     void runLog().then(setLog);
     stringsRef.current?.sync(next);
+    void sectionRef.current?.refresh(next);
     const sync = syncRef.current;
     const viewport = viewportRef.current;
     if (!sync || !viewport) return;
@@ -184,6 +193,24 @@ export default function App() {
       if (first) viewport.fitView();
       await buildSnapIndex();
     });
+  }, []);
+
+  /** Opens the section through two picked points, in place of the view it was picked in. */
+  const openSection = useCallback((a: Vec3, b: Vec3) => {
+    const [section, strings, project] = [sectionRef.current, stringsRef.current, summaryRef.current];
+    if (!section || !project) return;
+    strings?.setMode('select');
+    strings?.setFrozen(true);
+    setModeState('select');
+    setSectionOpen(true);
+    setStatus({ text: 'Section: [ and ] step along it; the wheel zooms where the cursor is, left drag pans' });
+    void section.show(planPoint(a), planPoint(b), project).catch((e) => setStatus({ text: String(e), error: true }));
+  }, []);
+
+  const closeSection = useCallback(() => {
+    sectionRef.current?.close();
+    stringsRef.current?.setFrozen(false);
+    setSectionOpen(false);
   }, []);
 
   const run = useCallback(
@@ -223,8 +250,10 @@ export default function App() {
       sync.onSeam = onSeam;
       sync.onError = (text) => setStatus({ text, error: true });
       syncRef.current = sync;
+      sectionRef.current = new SectionView(created);
       const strings = new StringLayer(created, {
         run,
+        section: (a, b) => void openSection(a, b),
         snap: (x, y) => {
           const [nx, ny] = created.clientToNdc(x, y);
           const ray = created.rayFromNdc(nx, ny);
@@ -246,7 +275,7 @@ export default function App() {
         if (!config.solids) dockRef.current?.getPanel('viewport')?.api.maximize();
         await created.nextFrame();
         await created.nextFrame();
-        await runChecks(created, config, (text) => setStatus({ text }), show);
+        await runChecks(created, config, (text) => setStatus({ text }), show, () => sectionRef.current);
       }
     });
     return () => {
@@ -254,7 +283,7 @@ export default function App() {
       detach();
       viewport?.dispose();
     };
-  }, [hostMounted, viewportHost, run, show, onSeam]);
+  }, [hostMounted, viewportHost, run, show, onSeam, openSection]);
 
   const attempt = useCallback(async (work: () => Promise<void>) => {
     try {
@@ -416,16 +445,25 @@ export default function App() {
     setModeState(next);
     setStatus({
       text:
-        next === 'draw'
-          ? 'Draw: click on a surface to add vertices; Enter or double-click finishes, Backspace removes the last, Esc abandons'
-          : 'Select: click a string, drag its handles; Alt+click inserts a vertex, Delete removes the one under the cursor',
+        next === 'section'
+          ? 'Section: pick the first point'
+          : next === 'draw'
+            ? 'Draw: click on a surface to add vertices; Enter or double-click finishes, Backspace removes the last, Esc abandons'
+            : 'Select: click a string, drag its handles; Alt+click inserts a vertex, Delete removes the one under the cursor',
     });
   };
 
-  // Shortcuts: undo, redo, save.
+  const stepSection = (direction: number) => {
+    const distance = Number(sectionStep);
+    if (Number.isFinite(distance) && distance > 0) void sectionRef.current?.step(direction * distance);
+  };
+
+  // Shortcuts: undo, redo, save, and stepping a section.
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.target instanceof HTMLInputElement) return;
+      if (e.target instanceof HTMLInputElement) return;
+      if (sectionOpen && (e.key === '[' || e.key === ']')) return stepSection(e.key === ']' ? 1 : -1);
+      if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
       if (k === 'z' && !e.shiftKey) {
         e.preventDefault();
@@ -460,6 +498,9 @@ export default function App() {
       setLayerVisible: setVisible,
       run,
       seamView,
+      sectionOpen,
+      lineWeight: (layer) => sectionRef.current?.weightOf(layer) ?? null,
+      setLineWeight: (layer, px) => sectionRef.current?.setWeight(layer, px),
       showSeamHorizon,
       focusIssue,
       markCrossings,
@@ -467,7 +508,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, run, seamView, showSeamHorizon, focusIssue, markCrossings, flyTo, mode, typeVertex],
+    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, run, seamView, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';
@@ -574,12 +615,40 @@ export default function App() {
             tip={plan ? 'Back to the 3D view' : 'Plan view: straight down, north up; left-drag pans; the wheel zooms where the cursor is'}
             active={plan}
             onClick={() => {
+              if (sectionOpen) closeSection();
               viewportRef.current?.setPlanView(!plan);
               setPlan(!plan);
             }}
           >
             {plan ? <MapIcon /> : <Box />} {plan ? 'Plan' : '3D'}
           </ToolButton>
+          <ToolButton
+            tip={sectionOpen ? 'Close the section' : 'Section: pick two points for a true vertical slice'}
+            active={sectionOpen || mode === 'section'}
+            onClick={() => {
+              if (sectionOpen) return closeSection();
+              setMode(mode === 'section' ? 'select' : 'section');
+            }}
+          >
+            <Scissors /> Section
+          </ToolButton>
+          {sectionOpen && (
+            <>
+              <ToolButton tip="Step back ([)" onClick={() => stepSection(-1)}>
+                <StepBack />
+              </ToolButton>
+              <Input
+                className="h-7 w-14 px-1.5 text-xs tabular-nums"
+                value={sectionStep}
+                onChange={(e) => setSectionStep(e.target.value)}
+                title="Metres to step, square to the section"
+                aria-label="Section step in metres"
+              />
+              <ToolButton tip="Step on (])" onClick={() => stepSection(1)}>
+                <StepForward />
+              </ToolButton>
+            </>
+          )}
           <Separator orientation="vertical" className="mx-1 h-5" />
           <ToolButton tip="Undo (Ctrl+Z)" disabled={!summary?.can_undo} onClick={onUndo}>
             <Undo2 />
