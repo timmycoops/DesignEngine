@@ -111,7 +111,7 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
   const camera = await checkCamera(viewport);
   const snapSwitch = await checkSnapSwitch(viewport);
   const stringPick = await checkStringPick(viewport, show);
-  const sectionCheck = await checkSection(viewport, section(), reply.summary, show);
+  const sectionCheck = await checkSection(viewport, section(), reply.summary, show, config.walls);
   const undoStart = performance.now();
   await show(await undo());
   return {
@@ -329,7 +329,7 @@ async function checkStringPick(viewport: Viewport, show: Show) {
 }
 
 /** Picks a section through the real toolbar and canvas, then steps it: the gate's 50 ms a step. */
-async function checkSection(viewport: Viewport, section: SectionView | null, summary: ProjectSummary, show: Show) {
+async function checkSection(viewport: Viewport, section: SectionView | null, summary: ProjectSummary, show: Show, walls: string[]) {
   if (!section) return { error: 'no section view' };
   const hiddenBefore = getComputedStyle(section.overviewCanvas).display === 'none';
   const gridHiddenBefore = getComputedStyle(section.gridCanvas).display === 'none';
@@ -405,6 +405,7 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   let grid = {};
   let fill = {};
   let editing = {};
+  let wall = {};
   if (across) {
     const [x, y] = [across.x + o[0], across.y + o[1]];
     await section.show([x - 750, y - 200], [x + 750, y + 200], summary);
@@ -413,6 +414,7 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
     fill = await checkFill(viewport, section, button, settle);
     grid = await checkGrid(viewport, section, box, settle);
     editing = await checkEditing(viewport, section, box, button, settle, show);
+    if (walls.length > 1) wall = await checkWall(viewport, section, walls, [x, y], settle, show);
     await section.step(125);
     await settle();
   }
@@ -437,7 +439,7 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   await settle();
   const hiddenAfter = getComputedStyle(map).display === 'none';
   const gridHiddenAfter = getComputedStyle(section.gridCanvas).display === 'none';
-  return { opened, open_ms: openMs, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_pictures_ms: pictures, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, overview_carried_m: carried, overview_carried_on_map: carriedOnMap, overview_stays_on_map: staysOnMap, grid_hidden_before: gridHiddenBefore, grid_hidden_after: gridHiddenAfter, grid, fill, editing, wide, close, overview, walked };
+  return { opened, open_ms: openMs, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_pictures_ms: pictures, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, overview_carried_m: carried, overview_carried_on_map: carriedOnMap, overview_stays_on_map: staysOnMap, grid_hidden_before: gridHiddenBefore, grid_hidden_after: gridHiddenAfter, grid, fill, editing, wall, wide, close, overview, walked };
 }
 
 /**
@@ -524,6 +526,54 @@ async function checkEditing(viewport: Viewport, section: SectionView, box: DOMRe
   await settle();
   const gone = !(await projectSummary()).objects.some((o) => o.id === made.id);
   return { targets: expected.map((hit) => hit?.kind), snap_p50_ms: times[100], snap_max_ms: times[199], empty_spot_snapped: !!emptySpot, vertices: points.length, exact, worst_off_plane_m: worstOff, free_point_on_plane: free, string_segments_in_cut: cutSegments, dragged, undone: gone, drawn };
+}
+
+/**
+ * A wall stepped up real grids by the command the string tools run, then read on a section square to
+ * it: a toe across `at` registered on the first grid, a step to each grid after it with a berm.
+ */
+async function checkWall(viewport: Viewport, section: SectionView, grids: string[], at: [number, number], settle: () => Promise<void>, show: Show) {
+  let summary = await projectSummary();
+  const known = new Set(summary.objects.map((o) => o.id));
+  const made = () => {
+    const fresh = summary.objects.filter((o) => !known.has(o.id));
+    fresh.forEach((o) => known.add(o.id));
+    return fresh;
+  };
+  const run = async (name: string, params: Record<string, unknown>) => {
+    const reply = await runCommand(name, params);
+    summary = reply.summary;
+    await show(summary);
+    return { fresh: made(), messages: reply.record.messages };
+  };
+  const targets: string[] = [];
+  for (const path of grids) targets.push((await run('surface.import', { path, layer: 'walls' })).fresh[0].id);
+  // Square to the section's own direction, 300 m each way.
+  const [ux, uy] = [1500 / Math.hypot(1500, 400), 400 / Math.hypot(1500, 400)];
+  const ends = [1, -1].map((k) => [at[0] - k * 300 * uy, at[1] + k * 300 * ux, 0]);
+  const toe = (await run('string.create', { name: 'bench toe', layer: 'walls', points: ends })).fresh[0];
+  await run('string.drape', { string: toe.id, surface: targets[0] });
+  let from = toe.id;
+  const steps: string[] = [];
+  const started = performance.now();
+  for (const target of targets.slice(1)) {
+    const { fresh, messages } = await run('face.project_step', { string: from, target, batter: 70, side: 'left', berm: 10, tolerance: 0.1 });
+    steps.push(...messages);
+    const next = fresh.find((o) => o.name.endsWith('next toe'));
+    if (!next) return { error: 'no next toe was made', steps };
+    from = next.id;
+  }
+  const ms = performance.now() - started;
+  const close = async (half: number) => {
+    await section.show([at[0] - half * ux, at[1] - half * uy], [at[0] + half * ux, at[1] + half * uy], summary);
+    await settle();
+    await settle();
+    return screen(viewport, [section.gridCanvas, section.overviewCanvas]);
+  };
+  const wide = await close(400);
+  const tight = await close(120);
+  const surfaces = (section.lastCut?.groups ?? []).filter((g) => g.kind === 'surface').reduce((sum, g) => sum + g.segments, 0);
+  return { steps, ms, surface_segments_in_cut: surfaces, wide, tight };
 }
 
 /** The fills on, as they first show, then off and on again by the toolbar's Fill button. */

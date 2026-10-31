@@ -699,6 +699,8 @@ pub struct BenchConfig {
     strings: Vec<String>,
     /// With `--solids`, `--seam stack.csv` builds this seam model into the same scene first.
     seam: Option<String>,
+    /// With `--solids`, `--walls a.sfg,b.srg` steps a wall up these grids, bottom first, on the section.
+    walls: Vec<String>,
     results_path: String,
     scale_targets: Vec<u64>,
     transfer_cells: Vec<usize>,
@@ -735,6 +737,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         solids,
         strings: list("--strings").unwrap_or_default(),
         seam: args.iter().position(|a| a == "--seam").and_then(|i| args.get(i + 1)).cloned(),
+        walls: list("--walls").unwrap_or_default(),
         results_path: bench_out.join(results).to_string_lossy().into_owned(),
         scale_targets: vec![10_000_000, 25_000_000, 50_000_000, 100_000_000],
         transfer_cells: vec![1000, 2000, 3000],

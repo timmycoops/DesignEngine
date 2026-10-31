@@ -1,0 +1,1357 @@
+//! One wall step (Phase 3): a string rises at a batter until it meets a target surface.
+//!
+//! Each segment of the string makes a wall plane, through the segment and rising at the batter square
+//! to it in plan. Neighbouring walls meet in a hip, the line their planes share, so a string that rises
+//! and falls gets exact walls and exact mitres. The sweep up the walls is a straight skeleton with
+//! planes in place of plan offsets: where the two hips of a wall close, it is squeezed out and its
+//! neighbours meet in a new hip. A plan offset can't do this: on a string that isn't level, the mitre
+//! between two walls leaves the bisector, and where the string climbs along its length a hip can even
+//! run outward and downhill. So a hip is taken outward in plan, and a closing goes ahead once it's the
+//! first thing to happen along both of its hips.
+//!
+//! The walls are swept past the highest point of the target, and the crest is then walked across it,
+//! triangle by triangle, wherever target and wall cross. Everything above the crest stays out of the
+//! result, so a closing above the target changes nothing. An edge of the target is crossed once, as in
+//! a section, so neighbouring triangles agree on the crest to the bit, and a target vertex on a wall
+//! counts as above it, so a crest never runs through a corner.
+//!
+//! The target is a surface single-valued in plan. Two cases are refused for now, each with its place:
+//! a wall that runs off the target, and a wall that closes against a far wall (a split in skeleton
+//! terms), which would make the crest cross itself.
+
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap};
+
+use spade::{Point2, Triangulation};
+use zd_core::{Polyline, TriMesh};
+
+use crate::section_fill::{Cdt, faces_inside};
+use crate::string::{TriangleBins, cross as cross2, segment_crossing};
+use crate::{Corner, GeomError, OffsetSide, drape_string, filter_string, offset_string};
+
+type P3 = [f64; 3];
+
+/// Plan distance under which two string vertices are one (m).
+const SAME_POINT: f64 = 1e-6;
+/// Room for rounding on a position (m).
+const NEAR: f64 = 1e-9;
+/// Hips this close to parallel never meet: 1e-10 rad squared.
+const PARALLEL: f64 = 1e-20;
+/// How much of a wall polygon the triangles may miss.
+const AREA_TOLERANCE: f64 = 1e-6;
+/// How many times the plan distance a hip that doesn't rise is run out, more than a sharp mitre needs.
+const MITRE_REACH: f64 = 8.0;
+/// Mitres on a berm's inside line reaching farther than this many widths are bevelled.
+const BERM_MITRE_LIMIT: f64 = 4.0;
+/// Neither a wall nor a string end: the edge a wall stands on.
+const FOOT: usize = usize::MAX;
+/// The level edge left at the top of the sweep.
+const TOP: usize = usize::MAX - 1;
+const NONE: usize = usize::MAX - 2;
+
+/// What a wall step did.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WallLog {
+    /// Walls the string made.
+    pub walls: usize,
+    /// Walls squeezed out by their neighbours below the crest.
+    pub squeezed_out: usize,
+    /// String vertices dropped for sitting on the one before in plan.
+    pub vertices_dropped: usize,
+    /// Stretches where the target is below the string, so the step has no height.
+    pub no_height: Vec<NoHeight>,
+}
+
+/// A stretch of string above the target.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NoHeight {
+    pub from: [f64; 3],
+    pub to: [f64; 3],
+}
+
+/// A wall from a string up to a target.
+#[derive(Debug, Clone)]
+pub struct WallStep {
+    /// Where the wall meets the target, the same way along as the string.
+    pub crest: Polyline,
+    /// The wall from the string to the crest, wound upward.
+    pub wall: TriMesh,
+    pub log: WallLog,
+}
+
+/// The wall from `toe` rising on `side` at `batter_degrees` (from horizontal, measured square to the
+/// string in plan) until it meets `target`.
+pub fn project_wall(toe: &Polyline, side: OffsetSide, batter_degrees: f64, target: &TriMesh) -> Result<WallStep, GeomError> {
+    if !(batter_degrees > 0.0 && batter_degrees < 90.0) {
+        return Err(GeomError::InvalidInput("the batter must be between 0 and 90 degrees".into()));
+    }
+    let Some(bounds) = target.bounds() else { return Err(GeomError::InvalidInput("the target has no triangles".into())) };
+    let mut log = WallLog::default();
+    let (string, origin) = local_string(toe, side, &mut log)?;
+    let slope = batter_degrees.to_radians().tan();
+    let highest = string.iter().map(|p| p[2]).fold(bounds.max[2] - origin[2], f64::max);
+    let lowest = string.iter().map(|p| p[2]).fold(bounds.min[2] - origin[2], f64::min);
+    let mut sweep = Sweep::new(&string, toe.closed, slope, origin)?;
+    sweep.run(highest + 1.0, (highest + 1.0 - lowest) / slope, &mut log);
+    let edges: Vec<Vec<Edge>> = sweep.walls.iter().take(sweep.segments).map(edges_round).collect();
+    let near = target_near(target, origin, &edges)?;
+    let walk = Walk::new(&near, &sweep, &edges, origin);
+    let walked = walk.run(&mut log)?;
+    if let Some(p) = crossing_of(&walked.crest, toe.closed) {
+        return Err(GeomError::InvalidInput(format!(
+            "the crest crosses itself near {:.3}, {:.3}: a wall has closed against a far wall",
+            p[0] + origin[0],
+            p[1] + origin[1]
+        )));
+    }
+    let wall = wall_mesh(&sweep, &edges, &walked, origin)?;
+    let mut vertices: Vec<[f64; 3]> = walked.crest.iter().map(|p| world(*p, origin)).collect();
+    if side == OffsetSide::Right {
+        vertices.reverse();
+        log.no_height.reverse();
+        for stretch in &mut log.no_height {
+            std::mem::swap(&mut stretch.from, &mut stretch.to);
+        }
+    }
+    Ok(WallStep { crest: Polyline { vertices, closed: toe.closed }, wall, log })
+}
+
+/// The string about a whole-metre origin, running so the wall rises on its left.
+fn local_string(toe: &Polyline, side: OffsetSide, log: &mut WallLog) -> Result<(Vec<P3>, P3), GeomError> {
+    let Some(&first) = toe.vertices.first() else { return Err(GeomError::InvalidInput("the string has no vertices".into())) };
+    if toe.vertices.iter().flatten().any(|c| !c.is_finite()) {
+        return Err(GeomError::InvalidInput("the string has a vertex that isn't a number".into()));
+    }
+    let origin = [first[0].round(), first[1].round(), first[2].round()];
+    let mut string: Vec<P3> = Vec::with_capacity(toe.vertices.len());
+    for v in &toe.vertices {
+        let p = [v[0] - origin[0], v[1] - origin[1], v[2] - origin[2]];
+        match string.last() {
+            Some(q) if plan_gap(*q, p) < SAME_POINT => log.vertices_dropped += 1,
+            _ => string.push(p),
+        }
+    }
+    if toe.closed && string.len() > 1 && plan_gap(string[0], string[string.len() - 1]) < SAME_POINT {
+        string.pop();
+        log.vertices_dropped += 1;
+    }
+    if string.len() < if toe.closed { 3 } else { 2 } {
+        return Err(GeomError::InvalidInput("the string needs at least two distinct vertices in plan (three if closed)".into()));
+    }
+    if side == OffsetSide::Right {
+        string.reverse();
+    }
+    Ok((string, origin))
+}
+
+/// What getting a line ready for the next step did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConditionLog {
+    pub vertices_in: usize,
+    /// Vertices left in the plan shape.
+    pub plan_vertices: usize,
+    /// Vertices on the line after it's registered back on the surface.
+    pub vertices_out: usize,
+    /// Vertices with no surface under them, which keep their elevations.
+    pub off_surface: usize,
+}
+
+/// The string the next step starts from: `crest` simplified in plan to within `tolerance` metres, moved
+/// out a berm of `berm` metres on `side` if there is one, and registered back on `surface`.
+///
+/// A line cut from a surface has a vertex at every triangle it crosses, and a wall from each of those
+/// short segments would face its own way. Walls follow the plan shape alone: collinear segments in plan
+/// share a wall's azimuth however they rise and fall, and the line still lies exactly on the surface.
+/// An offset can come back in pieces, as `offset_string` says, and each piece is a string to go on with.
+pub fn next_toe(crest: &Polyline, berm: f64, side: OffsetSide, tolerance: f64, surface: &TriMesh) -> Result<(Vec<Polyline>, ConditionLog), GeomError> {
+    if !(berm.is_finite() && berm >= 0.0) {
+        return Err(GeomError::InvalidInput("the berm width must be zero or more".into()));
+    }
+    let flat = Polyline { vertices: crest.vertices.iter().map(|v| [v[0], v[1], 0.0]).collect(), closed: crest.closed };
+    let shape = filter_string(&flat, tolerance)?;
+    let mut log = ConditionLog { vertices_in: crest.vertices.len(), plan_vertices: shape.vertices.len(), ..ConditionLog::default() };
+    let pieces = if berm > 0.0 { offset_string(&shape, berm, side, Corner::Mitre { limit: BERM_MITRE_LIMIT }, None)? } else { vec![shape] };
+    let mut toes = Vec::with_capacity(pieces.len());
+    for piece in &pieces {
+        let (toe, draped) = drape_string(piece, surface, true)?;
+        log.vertices_out += toe.vertices.len();
+        log.off_surface += draped.off_surface;
+        toes.push(toe);
+    }
+    Ok((toes, log))
+}
+
+/// A plane, with `above` positive on the side its normal points to.
+#[derive(Debug, Clone, Copy)]
+struct Plane {
+    normal: P3,
+    through: P3,
+}
+
+impl Plane {
+    fn above(&self, p: P3) -> f64 {
+        dot(self.normal, sub(p, self.through))
+    }
+}
+
+/// One string segment's wall, or a vertical plane closing off an end of an open string.
+#[derive(Debug, Clone)]
+struct Wall {
+    plane: Plane,
+    /// The unit plan direction the wall rises in.
+    out: [f64; 2],
+    foot: [P3; 2],
+    /// The boundary up from `foot[0]` and from `foot[1]`, one hip at a time.
+    start_side: Vec<Rise>,
+    end_side: Vec<Rise>,
+    closed_at: Option<P3>,
+}
+
+/// The end of a stretch of wall boundary, and the wall across it.
+#[derive(Debug, Clone, Copy)]
+struct Rise {
+    to: P3,
+    across: usize,
+}
+
+/// The line two walls share, up from where they first meet.
+#[derive(Debug, Clone, Copy)]
+struct Hip {
+    from: P3,
+    /// Unit, outward from the string in plan.
+    direction: P3,
+    behind: usize,
+    ahead: usize,
+    before: usize,
+    after: usize,
+    live: bool,
+}
+
+/// Two hips meeting, which closes the wall between them.
+#[derive(Debug, Clone, Copy)]
+struct Closing {
+    at: P3,
+    /// How far out from its foot the wall closes: only the order to look at closings in.
+    reach: f64,
+    start: usize,
+    end: usize,
+}
+
+impl PartialEq for Closing {
+    fn eq(&self, other: &Self) -> bool {
+        self.reach == other.reach
+    }
+}
+impl Eq for Closing {}
+impl PartialOrd for Closing {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Closing {
+    /// The nearest first, out of a max-heap.
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.reach.total_cmp(&self.reach)
+    }
+}
+
+/// The walls of a string and the hips between them.
+struct Sweep {
+    walls: Vec<Wall>,
+    hips: Vec<Hip>,
+    /// Real walls, which come first in `walls`.
+    segments: usize,
+    closed: bool,
+    slope: f64,
+}
+
+impl Sweep {
+    fn new(string: &[P3], closed: bool, slope: f64, origin: P3) -> Result<Self, GeomError> {
+        let n = string.len();
+        let segments = if closed { n } else { n - 1 };
+        let mut walls: Vec<Wall> = (0..segments).map(|i| wall_of(string[i], string[(i + 1) % n], slope)).collect();
+        if !closed {
+            walls.push(end_plane(string[0], &walls[0]));
+            walls.push(end_plane(string[n - 1], &walls[segments - 1]));
+        }
+        let (start, finish) = (segments, segments + 1);
+        let mut sweep = Sweep { walls, hips: Vec::with_capacity(2 * n), segments, closed, slope };
+        for (i, &vertex) in string.iter().enumerate() {
+            let behind = if i > 0 {
+                i - 1
+            } else if closed {
+                n - 1
+            } else {
+                start
+            };
+            let ahead = if i < segments { i } else { finish };
+            let Some(direction) = sweep.hip_direction(behind, ahead) else {
+                return Err(GeomError::InvalidInput(format!(
+                    "no wall can rise from the string at {:.3}, {:.3}: it doubles back there",
+                    vertex[0] + origin[0],
+                    vertex[1] + origin[1]
+                )));
+            };
+            let before = if i > 0 {
+                i - 1
+            } else if closed {
+                n - 1
+            } else {
+                NONE
+            };
+            let after = if i + 1 < n {
+                i + 1
+            } else if closed {
+                0
+            } else {
+                NONE
+            };
+            sweep.hips.push(Hip { from: vertex, direction, behind, ahead, before, after, live: true });
+        }
+        Ok(sweep)
+    }
+
+    fn is_end(&self, wall: usize) -> bool {
+        wall >= self.segments
+    }
+
+    /// The line two walls share, outward from the string in plan. Walls in one plane share all of
+    /// it, so the fall line stands in. A string that turns straight back has no outward.
+    fn hip_direction(&self, behind: usize, ahead: usize) -> Option<P3> {
+        let (a, b) = (&self.walls[behind], &self.walls[ahead]);
+        let c = cross(a.plane.normal, b.plane.normal);
+        let length = norm(c);
+        if length < 1e-12 {
+            let real = if self.is_end(behind) { b } else { a };
+            return Some(unit([real.out[0], real.out[1], self.slope]));
+        }
+        let c = scale(c, 1.0 / length);
+        let out = [a.out[0] + b.out[0], a.out[1] + b.out[1]];
+        if out[0] * out[0] + out[1] * out[1] < 1e-12 {
+            return None;
+        }
+        let outward = c[0] * out[0] + c[1] * out[1];
+        // Square to the way out, which only a level ridge can be, a hip rises.
+        let flip = if outward.abs() > 1e-12 { outward < 0.0 } else { c[2] < 0.0 };
+        Some(if flip { scale(c, -1.0) } else { c })
+    }
+
+    /// Closes walls wherever two hips meet below `top`, then runs every hip left out to `top`, or as
+    /// far as a mitre could reach past `furthest` in plan if it never gets there.
+    fn run(&mut self, top: f64, furthest: f64, log: &mut WallLog) {
+        log.walls = self.segments;
+        let mut closings = BinaryHeap::new();
+        for h in 0..self.hips.len() {
+            if self.hips[h].after != NONE {
+                closings.extend(self.closing(h, self.hips[h].after));
+            }
+        }
+        while let Some(event) = closings.pop() {
+            if event.at[2] >= top || !self.hips[event.start].live || !self.hips[event.end].live || !self.is_first_on_its_hips(&event) {
+                continue;
+            }
+            let Some(hip) = self.close_wall(event) else { break };
+            log.squeezed_out += 1;
+            // The closings next along may have been waiting on this one, so they're all looked at again.
+            let (before, after) = (self.hips[hip].before, self.hips[hip].after);
+            for (a, b) in [(self.before(before), before), (before, hip), (hip, after), (after, self.after(after))] {
+                if a != NONE && b != NONE {
+                    closings.extend(self.closing(a, b));
+                }
+            }
+        }
+        for h in 0..self.hips.len() {
+            if self.hips[h].live {
+                let hip = self.hips[h];
+                let rise = if hip.direction[2] > 1e-12 { ((top - hip.from[2]) / hip.direction[2]).max(0.0) } else { f64::INFINITY };
+                let plan = hip.direction[0].hypot(hip.direction[1]);
+                let out = if plan > 1e-12 { MITRE_REACH * furthest / plan } else { f64::INFINITY };
+                self.end_hip(h, add(hip.from, scale(hip.direction, rise.min(out))));
+            }
+        }
+    }
+
+    fn before(&self, hip: usize) -> usize {
+        if hip == NONE { NONE } else { self.hips[hip].before }
+    }
+
+    fn after(&self, hip: usize) -> usize {
+        if hip == NONE { NONE } else { self.hips[hip].after }
+    }
+
+    /// Whether nothing happens sooner along either hip of a closing.
+    fn is_first_on_its_hips(&self, event: &Closing) -> bool {
+        let (a, b) = (&self.hips[event.start], &self.hips[event.end]);
+        let along = |hip: &Hip, p: P3| dot(sub(p, hip.from), hip.direction);
+        let sooner = |hip: &Hip, other: Option<Closing>| other.is_some_and(|c| along(hip, c.at) < along(hip, event.at) - NEAR);
+        let (before, after) = (a.before, b.after);
+        !(before != NONE && sooner(a, self.closing(before, event.start))) && !(after != NONE && sooner(b, self.closing(event.end, after)))
+    }
+
+    /// Where the hips either side of a wall meet, if they do on their way out.
+    fn closing(&self, start: usize, end: usize) -> Option<Closing> {
+        let (a, b) = (&self.hips[start], &self.hips[end]);
+        let gap = sub(b.from, a.from);
+        let n = cross(a.direction, b.direction);
+        let nn = dot(n, n);
+        if nn < PARALLEL {
+            // Head on along one line: two walls meeting in a level ridge.
+            let along = dot(gap, a.direction);
+            let aside = norm(sub(gap, scale(a.direction, along)));
+            return (along > 0.0 && dot(a.direction, b.direction) < 0.0 && aside < NEAR).then(|| self.closing_at(scale(add(a.from, b.from), 0.5), start, end));
+        }
+        let s = dot(cross(gap, b.direction), n) / nn;
+        let t = dot(cross(gap, a.direction), n) / nn;
+        (s >= -NEAR && t >= -NEAR).then(|| self.closing_at(add(a.from, scale(a.direction, s.max(0.0))), start, end))
+    }
+
+    fn closing_at(&self, at: P3, start: usize, end: usize) -> Closing {
+        let wall = &self.walls[self.hips[start].ahead];
+        let from_foot = sub(at, wall.foot[0]);
+        Closing { at, reach: wall.out[0] * from_foot[0] + wall.out[1] * from_foot[1], start, end }
+    }
+
+    /// Takes a wall out: its hips end where they meet, and a new hip joins its neighbours. No hip
+    /// comes back when nothing is left.
+    fn close_wall(&mut self, event: Closing) -> Option<usize> {
+        let Closing { at, start, end, .. } = event;
+        let wall = self.hips[start].ahead;
+        let (behind, ahead) = (self.hips[start].behind, self.hips[end].ahead);
+        let (before, after) = (self.hips[start].before, self.hips[end].after);
+        self.end_hip(start, at);
+        self.end_hip(end, at);
+        self.walls[wall].closed_at = Some(at);
+        if behind == ahead || (self.is_end(behind) && self.is_end(ahead)) {
+            return None;
+        }
+        // Neighbours squeezed together may be back to back. The hip runs on away from the closed wall.
+        let foot = self.walls[wall].foot;
+        let from_foot = sub(at, scale(add(foot[0], foot[1]), 0.5));
+        let mut direction = self.hip_direction(behind, ahead).unwrap_or_else(|| unit([from_foot[0], from_foot[1], 0.0]));
+        if direction[0] * from_foot[0] + direction[1] * from_foot[1] < 0.0 {
+            direction = scale(direction, -1.0);
+        }
+        let hip = self.hips.len();
+        self.hips.push(Hip { from: at, direction, behind, ahead, before, after, live: true });
+        if before != NONE {
+            self.hips[before].after = hip;
+        }
+        if after != NONE {
+            self.hips[after].before = hip;
+        }
+        Some(hip)
+    }
+
+    fn end_hip(&mut self, h: usize, to: P3) {
+        let hip = &mut self.hips[h];
+        hip.live = false;
+        let (behind, ahead) = (hip.behind, hip.ahead);
+        self.walls[behind].end_side.push(Rise { to, across: ahead });
+        self.walls[ahead].start_side.push(Rise { to, across: behind });
+    }
+
+    /// The walls either end of an open string, or none for a closed one.
+    fn ends(&self) -> Option<(usize, usize)> {
+        (!self.closed).then_some((self.segments, self.segments + 1))
+    }
+}
+
+fn wall_of(a: P3, b: P3, slope: f64) -> Wall {
+    let along = sub(b, a);
+    let length = along[0].hypot(along[1]);
+    let out = [-along[1] / length, along[0] / length];
+    let normal = unit(cross(along, [out[0], out[1], slope]));
+    Wall { plane: Plane { normal, through: a }, out, foot: [a, b], start_side: Vec::new(), end_side: Vec::new(), closed_at: None }
+}
+
+/// The vertical plane square to an end wall through the end of the string.
+fn end_plane(end: P3, wall: &Wall) -> Wall {
+    let normal = [wall.out[1], -wall.out[0], 0.0];
+    Wall { plane: Plane { normal, through: end }, out: wall.out, foot: [end, end], start_side: Vec::new(), end_side: Vec::new(), closed_at: None }
+}
+
+/// One stretch of a wall's boundary.
+#[derive(Debug, Clone, Copy)]
+struct Edge {
+    from: P3,
+    to: P3,
+    across: usize,
+}
+
+/// A wall's boundary, anticlockwise in plan: along the foot, up the end side, back along the top if
+/// the wall reached it, and down the start side.
+fn edges_round(wall: &Wall) -> Vec<Edge> {
+    let mut edges = vec![Edge { from: wall.foot[0], to: wall.foot[1], across: FOOT }];
+    let mut at = wall.foot[1];
+    for rise in &wall.end_side {
+        edges.push(Edge { from: at, to: rise.to, across: rise.across });
+        at = rise.to;
+    }
+    let last = wall.start_side.last().map_or(wall.foot[0], |r| r.to);
+    if wall.closed_at.is_none() {
+        edges.push(Edge { from: at, to: last, across: TOP });
+    }
+    for k in (0..wall.start_side.len()).rev() {
+        let to = if k > 0 { wall.start_side[k - 1].to } else { wall.foot[0] };
+        edges.push(Edge { from: wall.start_side[k].to, to, across: wall.start_side[k].across });
+    }
+    edges
+}
+
+/// The target's triangles under the walls, about the string's origin.
+fn target_near(target: &TriMesh, origin: P3, edges: &[Vec<Edge>]) -> Result<TriMesh, GeomError> {
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for p in edges.iter().flatten().flat_map(|e| [e.from, e.to]) {
+        lo = [lo[0].min(p[0] + origin[0]), lo[1].min(p[1] + origin[1])];
+        hi = [hi[0].max(p[0] + origin[0]), hi[1].max(p[1] + origin[1])];
+    }
+    let mut renumbered = vec![u32::MAX; target.vertices.len()];
+    let mut near = TriMesh::default();
+    for triangle in &target.triangles {
+        let [a, b, c] = triangle.map(|v| target.vertices[v as usize]);
+        let (low, high) = ([a[0].min(b[0]).min(c[0]), a[1].min(b[1]).min(c[1])], [a[0].max(b[0]).max(c[0]), a[1].max(b[1]).max(c[1])]);
+        if low[0] > hi[0] || high[0] < lo[0] || low[1] > hi[1] || high[1] < lo[1] {
+            continue;
+        }
+        near.triangles.push(triangle.map(|v| {
+            if renumbered[v as usize] == u32::MAX {
+                renumbered[v as usize] = near.vertices.len() as u32;
+                let p = target.vertices[v as usize];
+                near.vertices.push([p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]]);
+            }
+            renumbered[v as usize]
+        }));
+    }
+    if near.triangles.is_empty() {
+        return Err(GeomError::InvalidInput("the target doesn't reach the string".into()));
+    }
+    Ok(near)
+}
+
+/// Where a crest stops on a wall's boundary.
+#[derive(Debug, Clone, Copy)]
+struct Stop {
+    edge: usize,
+    along: f64,
+}
+
+/// A stretch of crest across one wall.
+#[derive(Debug, Clone)]
+struct Piece {
+    entry: Stop,
+    exit: Stop,
+    points: Vec<P3>,
+}
+
+/// The crest, and what of it lies on each wall.
+struct Walked {
+    crest: Vec<P3>,
+    pieces: Vec<Vec<Piece>>,
+    /// Walls whose whole foot is above the target.
+    footless: Vec<bool>,
+}
+
+/// Round the crest, one triangle and one wall at a time.
+struct Walk<'a> {
+    near: &'a TriMesh,
+    bins: TriangleBins,
+    /// Triangles round each vertex.
+    fan_starts: Vec<u32>,
+    fans: Vec<u32>,
+    sweep: &'a Sweep,
+    edges: &'a [Vec<Edge>],
+    origin: P3,
+}
+
+/// Where the crest is.
+#[derive(Debug, Clone, Copy)]
+struct Position {
+    wall: usize,
+    triangle: u32,
+    at: P3,
+    entered: usize,
+}
+
+impl<'a> Walk<'a> {
+    fn new(near: &'a TriMesh, sweep: &'a Sweep, edges: &'a [Vec<Edge>], origin: P3) -> Self {
+        let mut fan_starts = vec![0u32; near.vertices.len() + 1];
+        for v in near.triangles.iter().flatten() {
+            fan_starts[*v as usize + 1] += 1;
+        }
+        for k in 0..near.vertices.len() {
+            fan_starts[k + 1] += fan_starts[k];
+        }
+        let mut next = fan_starts.clone();
+        let mut fans = vec![0u32; near.triangles.len() * 3];
+        for (t, corners) in near.triangles.iter().enumerate() {
+            for v in corners {
+                fans[next[*v as usize] as usize] = t as u32;
+                next[*v as usize] += 1;
+            }
+        }
+        let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+        for p in &near.vertices {
+            lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+            hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+        }
+        Walk { near, bins: TriangleBins::new(near, lo, hi), fan_starts, fans, sweep, edges, origin }
+    }
+
+    fn fan(&self, v: u32) -> &[u32] {
+        &self.fans[self.fan_starts[v as usize] as usize..self.fan_starts[v as usize + 1] as usize]
+    }
+
+    fn target_at(&self, p: P3) -> Option<f64> {
+        self.bins.height(self.near, [p[0], p[1]])
+    }
+
+    fn off_target(&self, p: P3) -> GeomError {
+        GeomError::InvalidInput(format!("the wall runs off the target at {:.3}, {:.3}", p[0] + self.origin[0], p[1] + self.origin[1]))
+    }
+
+    /// The triangle holding `p` that the wall's plane cuts.
+    fn triangle_at(&self, plane: &Plane, p: P3, candidates: impl Iterator<Item = u32>) -> Option<u32> {
+        candidates.into_iter().find(|&t| {
+            let corners = self.near.triangles[t as usize].map(|v| self.near.vertices[v as usize]);
+            let sides = corners.map(|c| plane.above(c) >= 0.0);
+            sides != [sides[0]; 3] && holds(corners, p)
+        })
+    }
+
+    fn triangle_around(&self, plane: &Plane, p: P3, triangle: u32) -> Option<u32> {
+        let corners = self.near.triangles[triangle as usize];
+        self.triangle_at(plane, p, std::iter::once(triangle).chain(corners.iter().flat_map(|&v| self.fan(v).iter().copied())))
+    }
+
+    fn triangle_on(&self, plane: &Plane, p: P3) -> Option<u32> {
+        self.triangle_at(plane, p, self.bins.at(p[0], p[1]).iter().copied())
+    }
+
+    /// The triangle across the edge from `u` to `v`.
+    fn across(&self, triangle: u32, u: u32, v: u32) -> Option<u32> {
+        self.fan(u).iter().copied().find(|&t| t != triangle && self.near.triangles[t as usize].contains(&v))
+    }
+
+    /// The first place up the stretch `p`-`q` where the target stops being above it.
+    fn target_met(&self, p: P3, q: P3) -> Result<Option<P3>, GeomError> {
+        self.crossing_on(p, q, |gap| gap > 0.0)
+    }
+
+    /// The first place along the stretch `p`-`q` where the target goes back above it.
+    fn target_rises_over(&self, p: P3, q: P3) -> Result<Option<P3>, GeomError> {
+        self.crossing_on(p, q, |gap| gap <= 0.0)
+    }
+
+    /// The first place along `p`-`q` where the gap up to the target leaves the state `before` holds.
+    fn crossing_on(&self, p: P3, q: P3, before: impl Fn(f64) -> bool) -> Result<Option<P3>, GeomError> {
+        let height = |s: P3| self.target_at(s).ok_or_else(|| self.off_target(s));
+        let at = |t: f64| add(p, scale(sub(q, p), t));
+        let mut last = (0.0, height(p)? - p[2]);
+        let end = self.target_at(q);
+        let along = |s: [f64; 3]| {
+            let (d, e) = ([q[0] - p[0], q[1] - p[1]], [s[0] - p[0], s[1] - p[1]]);
+            (d[0] * e[0] + d[1] * e[1]) / (d[0] * d[0] + d[1] * d[1])
+        };
+        let steps = if plan_gap(p, q) > 0.0 { self.bins.crossings(self.near, [p[0], p[1]], [q[0], q[1]]) } else { Vec::new() };
+        for s in steps.iter().copied().chain(end.map(|z| [q[0], q[1], z])) {
+            let t = along(s);
+            let gap = s[2] - at(t)[2];
+            if before(last.1) && !before(gap) {
+                let share = last.1 / (last.1 - gap);
+                return Ok(Some(at(last.0 + share * (t - last.0))));
+            }
+            last = (t, gap);
+        }
+        // The stretch runs off the target before it's crossed.
+        end.map(|_| None).ok_or_else(|| self.off_target(q))
+    }
+
+    fn run(&self, log: &mut WallLog) -> Result<Walked, GeomError> {
+        let segments = self.sweep.segments;
+        let mut walked = Walked { crest: Vec::new(), pieces: vec![Vec::new(); segments], footless: vec![false; segments] };
+        let start = match self.sweep.ends() {
+            Some(_) => self.start_on_open_string(&mut walked, log)?,
+            None => self.start_on_closed_string()?,
+        };
+        let Some(mut position) = start else { return Ok(walked) };
+        let first = position;
+        keep(&mut walked.crest, position.at);
+        let mut piece = Piece { entry: stop_on(&self.edges[position.wall], position.entered, position.at), exit: Stop { edge: 0, along: 0.0 }, points: vec![position.at] };
+        let limit = 8 * (self.near.triangles.len() + self.sweep.walls.len()) + 1_000;
+        for _ in 0..limit {
+            let plane = self.sweep.walls[position.wall].plane;
+            let corners = self.near.triangles[position.triangle as usize];
+            let sides = corners.map(|v| plane.above(self.near.vertices[v as usize]));
+            let Some(k) = (0..3).find(|&k| sides[k] >= 0.0 && sides[(k + 1) % 3] < 0.0) else {
+                position.triangle = self.triangle_around(&plane, position.at, position.triangle).filter(|&t| t != position.triangle).ok_or_else(|| self.off_target(position.at))?;
+                continue;
+            };
+            let (u, v) = (corners[k], corners[(k + 1) % 3]);
+            let next = crossing_of_edge(self.near, &plane, u, v);
+            if let Some((edge, point, along)) = first_exit(&self.edges[position.wall], position.at, next, position.entered) {
+                keep(&mut walked.crest, point);
+                keep(&mut piece.points, point);
+                piece.exit = Stop { edge, along };
+                let across = self.edges[position.wall][edge].across;
+                walked.pieces[position.wall].push(std::mem::replace(&mut piece, Piece { entry: Stop { edge: 0, along: 0.0 }, exit: Stop { edge: 0, along: 0.0 }, points: vec![point] }));
+                if let Some((_, finish)) = self.sweep.ends()
+                    && across == finish
+                {
+                    return Ok(walked);
+                }
+                if across == FOOT {
+                    match self.resume_along(position.wall, point, &mut walked, log)? {
+                        Some(resumed) => {
+                            piece.entry = stop_on(&self.edges[resumed.wall], resumed.entered, resumed.at);
+                            piece.points = vec![resumed.at];
+                            position = resumed;
+                            continue;
+                        }
+                        None => return Ok(walked),
+                    }
+                }
+                if across == TOP || self.sweep.is_end(across) {
+                    return Err(self.off_target(point));
+                }
+                let entered = self.edges[across].iter().position(|e| e.across == position.wall).ok_or_else(|| self.off_target(point))?;
+                if self.sweep.closed && across == first.wall && entered == first.entered && norm(sub(point, first.at)) < SAME_POINT {
+                    walked.crest.pop();
+                    return Ok(walked);
+                }
+                piece.entry = stop_on(&self.edges[across], entered, point);
+                let triangle = self.triangle_around(&self.sweep.walls[across].plane, point, position.triangle).ok_or_else(|| self.off_target(point))?;
+                position = Position { wall: across, triangle, at: point, entered };
+                continue;
+            }
+            keep(&mut walked.crest, next);
+            keep(&mut piece.points, next);
+            position.at = next;
+            position.entered = NONE;
+            position.triangle = self.across(position.triangle, u, v).ok_or_else(|| self.off_target(next))?;
+        }
+        Err(GeomError::InvalidInput("the crest walk didn't finish".into()))
+    }
+
+    /// Where the crest starts on an open string: up the end if the target is above the string there,
+    /// or at the string itself if not.
+    fn start_on_open_string(&self, walked: &mut Walked, log: &mut WallLog) -> Result<Option<Position>, GeomError> {
+        let foot = self.sweep.walls[0].foot;
+        let height = self.target_at(foot[0]).ok_or_else(|| self.off_target(foot[0]))?;
+        if height <= foot[0][2] {
+            walked.crest.push(foot[0]);
+            return self.resume_along(0, foot[0], walked, log);
+        }
+        let (start, _) = self.sweep.ends().expect("an open string");
+        self.start_up(|across| across == start).map(Some)
+    }
+
+    /// Where the crest starts on a closed string: on any hip the target meets.
+    fn start_on_closed_string(&self) -> Result<Option<Position>, GeomError> {
+        let mut covered = false;
+        for wall in 0..self.sweep.segments {
+            let p = self.sweep.walls[wall].foot[0];
+            covered |= self.target_at(p).ok_or_else(|| self.off_target(p))? > p[2];
+        }
+        if !covered {
+            return Err(GeomError::InvalidInput("the target is below the whole of the closed string".into()));
+        }
+        self.start_up(|across| across < self.sweep.segments).map(Some)
+    }
+
+    /// The first place, wall by wall and up each start side, the target meets an edge `wanted` takes.
+    fn start_up(&self, wanted: impl Fn(usize) -> bool) -> Result<Position, GeomError> {
+        for wall in 0..self.sweep.segments {
+            let edges = &self.edges[wall];
+            for e in (edges.len() - self.sweep.walls[wall].start_side.len()..edges.len()).rev() {
+                if !wanted(edges[e].across) {
+                    continue;
+                }
+                if let Some(point) = self.target_met(edges[e].to, edges[e].from)? {
+                    let triangle = self.triangle_on(&self.sweep.walls[wall].plane, point).ok_or_else(|| self.off_target(point))?;
+                    return Ok(Position { wall, triangle, at: point, entered: e });
+                }
+            }
+        }
+        Err(GeomError::InvalidInput("the walls close before they reach the target".into()))
+    }
+
+    /// The crest where it's come down onto the string: on along the string until the target rises
+    /// over it again.
+    fn resume_along(&self, wall: usize, from: P3, walked: &mut Walked, log: &mut WallLog) -> Result<Option<Position>, GeomError> {
+        let mut wall = wall;
+        let mut at = from;
+        loop {
+            let foot = self.sweep.walls[wall].foot;
+            if let Some(point) = self.target_rises_over(at, foot[1])? {
+                keep(&mut walked.crest, point);
+                log.no_height.push(NoHeight { from: world(from, self.origin), to: world(point, self.origin) });
+                let plane = self.sweep.walls[wall].plane;
+                let triangle = self.triangle_on(&plane, point).ok_or_else(|| self.off_target(point))?;
+                return Ok(Some(Position { wall, triangle, at: point, entered: 0 }));
+            }
+            keep(&mut walked.crest, foot[1]);
+            if at == foot[0] {
+                walked.footless[wall] = true;
+            }
+            wall += 1;
+            if wall == self.sweep.segments {
+                if self.sweep.closed {
+                    wall = 0;
+                } else {
+                    log.no_height.push(NoHeight { from: world(from, self.origin), to: world(foot[1], self.origin) });
+                    return Ok(None);
+                }
+            }
+            at = self.sweep.walls[wall].foot[0];
+        }
+    }
+}
+
+fn stop_on(edges: &[Edge], edge: usize, p: P3) -> Stop {
+    let (from, to) = (edges[edge].from, edges[edge].to);
+    let d = sub(to, from);
+    let length = dot(d, d);
+    Stop { edge, along: if length > 0.0 { (dot(sub(p, from), d) / length).clamp(0.0, 1.0) } else { 0.0 } }
+}
+
+/// The first edge the plan line from `a` to `b` leaves the wall by, other than the one it came in by.
+fn first_exit(edges: &[Edge], a: P3, b: P3, entered: usize) -> Option<(usize, P3, f64)> {
+    let d = [b[0] - a[0], b[1] - a[1]];
+    if d[0] * d[0] + d[1] * d[1] < 1e-24 {
+        return None;
+    }
+    let mut best: Option<(usize, f64, f64)> = None;
+    for (i, edge) in edges.iter().enumerate() {
+        if i == entered {
+            continue;
+        }
+        let s = [edge.to[0] - edge.from[0], edge.to[1] - edge.from[1]];
+        let denominator = cross2(d, s);
+        // Inside is left of an edge, so a line leaving crosses it left to right.
+        if denominator <= 0.0 {
+            continue;
+        }
+        let gap = [edge.from[0] - a[0], edge.from[1] - a[1]];
+        let t = cross2(gap, s) / denominator;
+        let along = cross2(gap, d) / denominator;
+        if (-1e-12..=1.0).contains(&t) && (-1e-9..=1.0 + 1e-9).contains(&along) && best.is_none_or(|b| t < b.1) {
+            best = Some((i, t.max(0.0), along.clamp(0.0, 1.0)));
+        }
+    }
+    best.map(|(edge, t, along)| (edge, add(a, scale(sub(b, a), t)), along))
+}
+
+/// Where the wall crosses a target edge: one point for that edge, whichever way round it's reached.
+fn crossing_of_edge(near: &TriMesh, plane: &Plane, u: u32, v: u32) -> P3 {
+    let (low, high) = (u.min(v), u.max(v));
+    let (p, q) = (near.vertices[low as usize], near.vertices[high as usize]);
+    let (dp, dq) = (plane.above(p), plane.above(q));
+    let t = dp / (dp - dq);
+    add(p, scale(sub(q, p), t))
+}
+
+/// Whether a triangle holds `p` in plan.
+fn holds([a, b, c]: [P3; 3], p: P3) -> bool {
+    let side = |u: P3, v: P3| (v[0] - u[0]) * (p[1] - u[1]) - (v[1] - u[1]) * (p[0] - u[0]);
+    let (x, y, z) = (side(a, b), side(b, c), side(c, a));
+    let room = -1e-7;
+    (x >= room && y >= room && z >= room) || (x <= -room && y <= -room && z <= -room)
+}
+
+/// Adds a point unless it's the one already there.
+fn keep(points: &mut Vec<P3>, p: P3) {
+    if points.last().is_none_or(|q| norm(sub(*q, p)) > NEAR) {
+        points.push(p);
+    }
+}
+
+/// Where a line crosses itself in plan, if it does. Neighbouring segments share a vertex and don't count.
+fn crossing_of(points: &[P3], closed: bool) -> Option<P3> {
+    let n = points.len();
+    let segments = if closed { n } else { n.saturating_sub(1) };
+    let extent = |k: usize| (points[k][0].min(points[(k + 1) % n][0]), points[k][0].max(points[(k + 1) % n][0]));
+    let mut order: Vec<usize> = (0..segments).collect();
+    order.sort_by(|&a, &b| extent(a).0.total_cmp(&extent(b).0));
+    for (place, &k) in order.iter().enumerate() {
+        let reach = extent(k).1;
+        for &m in &order[place + 1..] {
+            if extent(m).0 > reach {
+                break;
+            }
+            let apart = k.abs_diff(m);
+            if apart <= 1 || (closed && apart == segments - 1) {
+                continue;
+            }
+            let (a, b) = (points[k], points[(k + 1) % n]);
+            let (p, q) = (points[m], points[(m + 1) % n]);
+            if let Some((t, _)) = segment_crossing([a[0], a[1]], [b[0], b[1]], [p[0], p[1]], [q[0], q[1]]) {
+                return Some(add(a, scale(sub(b, a), t)));
+            }
+        }
+    }
+    None
+}
+
+/// The walls below the crest as one mesh.
+fn wall_mesh(sweep: &Sweep, edges: &[Vec<Edge>], walked: &Walked, origin: P3) -> Result<TriMesh, GeomError> {
+    let mut mesh = MeshBuilder { origin, mesh: TriMesh::default(), numbered: HashMap::new() };
+    for (wall, around) in edges.iter().enumerate() {
+        let pieces = &walked.pieces[wall];
+        if pieces.is_empty() {
+            if walked.footless[wall] {
+                continue;
+            }
+            if sweep.walls[wall].closed_at.is_none() {
+                return Err(GeomError::InvalidInput("a wall reaches past the target with no crest on it".into()));
+            }
+            let outline: Vec<P3> = around.iter().map(|e| e.from).collect();
+            mesh.add_polygon(&outline)?;
+            continue;
+        }
+        for outline in outlines_below(around, pieces)? {
+            mesh.add_polygon(&outline)?;
+        }
+    }
+    Ok(mesh.mesh)
+}
+
+/// The parts of a wall below its crest, each anticlockwise: round the wall from where the crest comes
+/// in to where it next leaves, then back along the crest.
+fn outlines_below(edges: &[Edge], pieces: &[Piece]) -> Result<Vec<Vec<P3>>, GeomError> {
+    let position = |s: Stop| (s.edge, s.along);
+    let mut stops: Vec<(usize, f64, usize, bool)> = Vec::with_capacity(pieces.len() * 2);
+    for (k, piece) in pieces.iter().enumerate() {
+        stops.push((piece.entry.edge, piece.entry.along, k, true));
+        stops.push((piece.exit.edge, piece.exit.along, k, false));
+    }
+    stops.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    let mut used = vec![false; pieces.len()];
+    let mut outlines = Vec::new();
+    for first in 0..pieces.len() {
+        if used[first] {
+            continue;
+        }
+        let mut outline: Vec<P3> = Vec::new();
+        let mut piece = first;
+        loop {
+            // Round the wall from this piece's entry to the next exit.
+            let from = position(pieces[piece].entry);
+            let place = stops.iter().position(|s| s.2 == piece && s.3).expect("every piece has an entry");
+            let next = (1..=stops.len()).map(|k| stops[(place + k) % stops.len()]).find(|s| !s.3).expect("every piece has an exit");
+            walk_edges(edges, from, (next.0, next.1), &mut outline);
+            let exiting = next.2;
+            if used[exiting] {
+                return Err(GeomError::InvalidInput("a crest doesn't close on a wall".into()));
+            }
+            used[exiting] = true;
+            outline.extend(pieces[exiting].points.iter().rev().copied());
+            if exiting == first {
+                break;
+            }
+            piece = exiting;
+        }
+        outline.dedup_by(|a, b| norm(sub(*a, *b)) <= NEAR);
+        if outline.len() > 1 && norm(sub(outline[0], outline[outline.len() - 1])) <= NEAR {
+            outline.pop();
+        }
+        outlines.push(outline);
+    }
+    Ok(outlines)
+}
+
+/// The wall's corners passed going round from one stop to the next.
+fn walk_edges(edges: &[Edge], from: (usize, f64), to: (usize, f64), outline: &mut Vec<P3>) {
+    let n = edges.len();
+    let same_edge_ahead = from.0 == to.0 && from.1 <= to.1;
+    if same_edge_ahead {
+        return;
+    }
+    let mut e = from.0;
+    loop {
+        outline.push(edges[e].to);
+        e = (e + 1) % n;
+        if e == to.0 {
+            break;
+        }
+    }
+}
+
+/// Polygons into one mesh, sharing vertices that are exactly the same point.
+struct MeshBuilder {
+    origin: P3,
+    mesh: TriMesh,
+    numbered: HashMap<[u64; 3], u32>,
+}
+
+impl MeshBuilder {
+    fn number(&mut self, p: P3) -> u32 {
+        let (mesh, origin) = (&mut self.mesh, self.origin);
+        *self.numbered.entry(p.map(f64::to_bits)).or_insert_with(|| {
+            mesh.vertices.push(world(p, origin));
+            mesh.vertices.len() as u32 - 1
+        })
+    }
+
+    /// Adds a polygon lying in a wall plane, by constrained Delaunay in plan.
+    fn add_polygon(&mut self, outline: &[P3]) -> Result<(), GeomError> {
+        if outline.len() < 3 {
+            return Ok(());
+        }
+        if outline.len() == 3 {
+            let triangle = [self.number(outline[0]), self.number(outline[1]), self.number(outline[2])];
+            self.mesh.triangles.push(triangle);
+            return Ok(());
+        }
+        let refused = || GeomError::InvalidInput(format!("a wall near {:.3}, {:.3} won't triangulate", outline[0][0] + self.origin[0], outline[0][1] + self.origin[1]));
+        let triangles = std::panic::catch_unwind(|| triangles_of(outline)).ok().flatten().ok_or_else(refused)?;
+        for [a, b, c] in triangles {
+            let triangle = [self.number(outline[a]), self.number(outline[b]), self.number(outline[c])];
+            self.mesh.triangles.push(triangle);
+        }
+        Ok(())
+    }
+}
+
+/// The triangles of a polygon, as places in `outline`, if they add up to its area.
+fn triangles_of(outline: &[P3]) -> Option<Vec<[usize; 3]>> {
+    let mut cdt = Cdt::new();
+    let mut handles = Vec::with_capacity(outline.len());
+    for p in outline {
+        handles.push(cdt.insert(Point2::new(p[0], p[1])).ok()?);
+    }
+    let mut place = vec![usize::MAX; cdt.num_vertices()];
+    for (k, handle) in handles.iter().enumerate() {
+        place[handle.index()] = k;
+    }
+    for k in 0..handles.len() {
+        let (from, to) = (handles[k], handles[(k + 1) % handles.len()]);
+        if from != to {
+            if !cdt.can_add_constraint(from, to) {
+                return None;
+            }
+            cdt.add_constraint(from, to);
+        }
+    }
+    let inside = faces_inside(&cdt);
+    let triangles: Vec<[usize; 3]> = cdt.inner_faces().filter(|f| inside[f.fix().index()]).map(|f| f.vertices().map(|v| place[v.fix().index()])).collect();
+    let flat = |k: usize| [outline[k][0], outline[k][1]];
+    let filled: f64 = triangles.iter().map(|&[a, b, c]| area2(flat(a), flat(b), flat(c)).abs() / 2.0).sum();
+    let enclosed: f64 = (1..outline.len() - 1).map(|k| area2(flat(0), flat(k), flat(k + 1))).sum::<f64>().abs() / 2.0;
+    ((filled - enclosed).abs() <= AREA_TOLERANCE * enclosed.max(1e-6)).then_some(triangles)
+}
+
+fn area2(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
+    (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])
+}
+
+fn world(p: P3, origin: P3) -> P3 {
+    [p[0] + origin[0], p[1] + origin[1], p[2] + origin[2]]
+}
+
+fn plan_gap(a: P3, b: P3) -> f64 {
+    (b[0] - a[0]).hypot(b[1] - a[1])
+}
+
+fn add(a: P3, b: P3) -> P3 {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+fn sub(a: P3, b: P3) -> P3 {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn scale(a: P3, s: f64) -> P3 {
+    [a[0] * s, a[1] * s, a[2] * s]
+}
+
+fn dot(a: P3, b: P3) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross(a: P3, b: P3) -> P3 {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+fn norm(a: P3) -> f64 {
+    dot(a, a).sqrt()
+}
+
+fn unit(a: P3) -> P3 {
+    scale(a, 1.0 / norm(a))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::triangulate_grid;
+    use zd_core::{Grid, Polyline};
+
+    const E: f64 = 650_000.0;
+    const N: f64 = 7_450_000.0;
+
+    /// A target over 400 m by 400 m of 10 m cells.
+    fn target(height: impl Fn(f64, f64) -> f64) -> TriMesh {
+        triangulate_grid(&Grid::from_fn([E, N], [10.0, 10.0], 41, 41, |x, y| height(x - E, y - N)))
+    }
+
+    fn string(points: &[[f64; 3]], closed: bool) -> Polyline {
+        Polyline { vertices: points.iter().map(|p| [p[0] + E, p[1] + N, p[2]]).collect(), closed }
+    }
+
+    fn close(a: f64, b: f64, tolerance: f64) {
+        assert!((a - b).abs() <= tolerance, "{a} is not {b} to {tolerance}");
+    }
+
+    /// The only open edges are the toe's, the crest's and the two ends.
+    fn watertight_between_walls(step: &WallStep, toe_segments: usize) {
+        let v = step.wall.validity();
+        assert_eq!(v.non_manifold_edges + v.inconsistent_edges + v.degenerate_triangles, 0, "{v:?}");
+        assert_eq!(v.boundary_edges, toe_segments + step.crest.vertices.len() - 1 + 2, "{v:?}");
+    }
+
+    /// Crest vertices about the test origin.
+    fn crest(step: &WallStep) -> Vec<[f64; 3]> {
+        step.crest.vertices.iter().map(|p| [p[0] - E, p[1] - N, p[2]]).collect()
+    }
+
+    #[test]
+    fn a_45_degree_batter_from_a_flat_toe_lands_at_its_height() {
+        let step = project_wall(&string(&[[20.0, 20.0, 100.0], [180.0, 20.0, 100.0]], false), OffsetSide::Left, 45.0, &target(|_, _| 120.0)).unwrap();
+        let line = crest(&step);
+        close(line[0][0], 20.0, 1e-3);
+        close(line[line.len() - 1][0], 180.0, 1e-3);
+        for p in &line {
+            close(p[1], 40.0, 1e-3);
+            close(p[2], 120.0, 1e-3);
+        }
+        close(step.wall.area(), 160.0 * 20.0 * 2f64.sqrt(), 1e-3);
+    }
+
+    #[test]
+    fn the_right_side_goes_the_other_way_and_keeps_the_string_direction() {
+        let step = project_wall(&string(&[[20.0, 200.0, 100.0], [180.0, 200.0, 100.0]], false), OffsetSide::Right, 45.0, &target(|_, _| 120.0)).unwrap();
+        let line = crest(&step);
+        close(line[0][0], 20.0, 1e-3);
+        close(line[0][1], 180.0, 1e-3);
+        close(line[line.len() - 1][0], 180.0, 1e-3);
+        close(step.wall.area(), 160.0 * 20.0 * 2f64.sqrt(), 1e-3);
+    }
+
+    #[test]
+    fn corners_mitre_exactly_on_both_sides() {
+        let toe = string(&[[20.0, 100.0, 100.0], [100.0, 100.0, 100.0], [100.0, 180.0, 100.0]], false);
+        let flat = target(|_, _| 120.0);
+        let has = |step: &WallStep, x: f64, y: f64| assert!(crest(step).iter().any(|p| (p[0] - x).abs() < 1e-3 && (p[1] - y).abs() < 1e-3), "no {x}, {y} in {:?}", crest(step));
+        // The inside of the turn: the walls meet in a hip that closes in.
+        has(&project_wall(&toe, OffsetSide::Left, 45.0, &flat).unwrap(), 80.0, 120.0);
+        // The outside: the mitre reaches out square to both.
+        has(&project_wall(&toe, OffsetSide::Right, 45.0, &flat).unwrap(), 120.0, 80.0);
+    }
+
+    #[test]
+    fn a_closed_toe_rises_to_the_rectangle_outside_it() {
+        let toe = string(&[[100.0, 100.0, 100.0], [300.0, 100.0, 100.0], [300.0, 250.0, 100.0], [100.0, 250.0, 100.0]], true);
+        let step = project_wall(&toe, OffsetSide::Right, 45.0, &target(|_, _| 130.0)).unwrap();
+        assert!(step.crest.closed);
+        close(step.crest.plan_area().unwrap(), 260.0 * 210.0, 1e-3);
+        // Four trapezoids, each 30 root 2 up the slope, growing by 60 m from toe to crest.
+        close(step.wall.area(), (200.0 + 260.0 + 150.0 + 210.0) * 30.0 * 2f64.sqrt(), 1e-3);
+    }
+
+    #[test]
+    fn a_step_between_two_dipping_planes_lands_on_their_line() {
+        let a = |x: f64, y: f64| 100.0 + 0.05 * x + 0.02 * y;
+        let b = |x: f64, y: f64| 160.0 + 0.03 * x - 0.01 * y;
+        let y0 = 60.0;
+        let toe = string(&[[20.0, y0, a(20.0, y0)], [380.0, y0, a(380.0, y0)]], false);
+        let step = project_wall(&toe, OffsetSide::Left, 70.0, &target(b)).unwrap();
+        let k = 70f64.to_radians().tan();
+        for p in crest(&step) {
+            let y = y0 + (b(p[0], y0) - a(p[0], y0)) / (k + 0.01);
+            close(p[1], y, 1e-6);
+            close(p[2], b(p[0], y), 1e-6);
+        }
+    }
+
+    #[test]
+    fn a_mitre_on_a_rising_string_meets_all_three_planes() {
+        let a = |x: f64, y: f64| 100.0 + 0.05 * x + 0.02 * y;
+        let toe = string(&[[40.0, 60.0, a(40.0, 60.0)], [200.0, 60.0, a(200.0, 60.0)], [320.0, 200.0, a(320.0, 200.0)]], false);
+        let rl = 150.0;
+        let step = project_wall(&toe, OffsetSide::Left, 60.0, &target(|_, _| rl)).unwrap();
+        let k = 60f64.to_radians().tan();
+        // Each wall's plane holds every crest vertex that belongs to it, and the corner holds both.
+        let walls = [
+            ([40.0, 60.0, a(40.0, 60.0)], [200.0, 60.0, a(200.0, 60.0)]),
+            ([200.0, 60.0, a(200.0, 60.0)], [320.0, 200.0, a(320.0, 200.0)]),
+        ];
+        let rise = |(p, q): ([f64; 3], [f64; 3]), x: f64, y: f64| {
+            let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
+            let length = dx.hypot(dy);
+            let (along, out) = (((x - p[0]) * dx + (y - p[1]) * dy) / length, (-(x - p[0]) * dy + (y - p[1]) * dx) / length);
+            p[2] + along * (q[2] - p[2]) / length + k * out
+        };
+        let line = crest(&step);
+        let corner = line.iter().find(|p| (rise(walls[0], p[0], p[1]) - rl).abs() < 1e-6 && (rise(walls[1], p[0], p[1]) - rl).abs() < 1e-6);
+        assert!(corner.is_some(), "no vertex on both walls in {line:?}");
+        for p in &line {
+            close(p[2], rl, 1e-6);
+        }
+    }
+
+    #[test]
+    fn a_short_wall_squeezed_out_leaves_its_neighbours_meeting() {
+        // Turning left twice: the middle wall, 7.07 m long, closes 8.54 m out.
+        let toe = string(&[[100.0, 100.0, 100.0], [200.0, 100.0, 100.0], [205.0, 105.0, 100.0], [205.0, 205.0, 100.0]], false);
+        let step = project_wall(&toe, OffsetSide::Left, 45.0, &target(|_, _| 120.0)).unwrap();
+        assert_eq!(step.log.squeezed_out, 1);
+        let line = crest(&step);
+        assert!(line.iter().any(|p| (p[0] - 185.0).abs() < 1e-3 && (p[1] - 120.0).abs() < 1e-3), "{line:?}");
+        // Short of the closing the middle wall still reaches the crest.
+        let low = project_wall(&toe, OffsetSide::Left, 45.0, &target(|_, _| 105.0)).unwrap();
+        assert!(crest(&low).iter().any(|p| (p[0] - 200.0 + 5.0 * (std::f64::consts::FRAC_PI_8).tan()).abs() < 1e-3 && (p[1] - 105.0).abs() < 1e-3), "{:?}", crest(&low));
+    }
+
+    #[test]
+    fn walls_that_close_below_the_target_are_refused() {
+        let toe = string(&[[100.0, 100.0, 100.0], [140.0, 100.0, 100.0], [120.0, 130.0, 100.0]], true);
+        assert!(project_wall(&toe, OffsetSide::Left, 45.0, &target(|_, _| 150.0)).is_err());
+    }
+
+    #[test]
+    fn an_undulating_target_is_met_exactly_along_a_straight_toe() {
+        let t = |x: f64, y: f64| 130.0 + 8.0 * (x / 37.0).sin() + 5.0 * (y / 23.0).cos();
+        let y0 = 100.0;
+        let toe = string(&[[20.0, y0, 100.0], [380.0, y0, 100.0]], false);
+        let surface = target(t);
+        let step = project_wall(&toe, OffsetSide::Left, 70.0, &surface).unwrap();
+        let k = 70f64.to_radians().tan();
+        for p in crest(&step) {
+            close(p[2], 100.0 + k * (p[1] - y0), 1e-6);
+        }
+        let bins = TriangleBins::new(&surface, [E, N], [E + 400.0, N + 400.0]);
+        for p in &step.crest.vertices {
+            close(bins.height(&surface, [p[0], p[1]]).unwrap(), p[2], 1e-6);
+        }
+        assert!(step.crest.vertices.len() > 40, "the crest follows the target's triangles");
+        watertight_between_walls(&step, 1);
+    }
+
+    #[test]
+    fn an_undulating_toe_rises_to_an_undulating_target() {
+        let a = |x: f64, y: f64| 100.0 + 3.0 * (x / 41.0).sin() + 2.0 * (y / 29.0).cos();
+        let t = |x: f64, y: f64| 130.0 + 6.0 * (x / 31.0).cos() + 4.0 * (y / 19.0).sin();
+        let lower = target(a);
+        let upper = target(t);
+        let flat = Polyline { vertices: (0..=36).map(|i| [E + 20.0 + 10.0 * i as f64, N + 100.0 + 0.1 * i as f64, 0.0]).collect(), closed: false };
+        let toe = crate::drape_string(&flat, &lower, true).unwrap().0;
+        let step = project_wall(&toe, OffsetSide::Left, 70.0, &upper).unwrap();
+        let bins = TriangleBins::new(&upper, [E, N], [E + 400.0, N + 400.0]);
+        for p in &step.crest.vertices {
+            close(bins.height(&upper, [p[0], p[1]]).unwrap(), p[2], 1e-6);
+        }
+        watertight_between_walls(&step, toe.vertices.len() - 1);
+        // Every triangle faces up: the wall leans back from the string.
+        for &t in &step.wall.triangles {
+            assert!(step.wall.triangle_cross(t)[2] > 0.0, "a wall is wound downward");
+        }
+    }
+
+    #[test]
+    fn a_string_that_starts_above_the_target_starts_its_crest_on_the_string() {
+        let toe = string(&[[20.0, 100.0, 100.0], [180.0, 100.0, 100.0]], false);
+        // The target comes up through the string's RL at x = 40, and is above it from there on.
+        let step = project_wall(&toe, OffsetSide::Left, 45.0, &target(|x, _| 90.0 + 0.25 * x)).unwrap();
+        let line = crest(&step);
+        close(line[0][0], 20.0, 1e-6);
+        close(line[1][0], 40.0, 1e-6);
+        for p in &line[..2] {
+            close(p[1], 100.0, 1e-6);
+            close(p[2], 100.0, 1e-6);
+        }
+        assert!(line[2][1] > 100.0, "the wall starts where the target rises over the string");
+        assert_eq!(step.log.no_height.len(), 1);
+        assert!(step.crest.vertices.windows(2).all(|w| w[0] != w[1]), "no vertex twice");
+        // A wedge from a point on the string: its foot, its crest and the far end are all that's open.
+        let v = step.wall.validity();
+        assert_eq!(v.non_manifold_edges + v.inconsistent_edges + v.degenerate_triangles, 0, "{v:?}");
+        assert_eq!(v.boundary_edges, 1 + line.len() - 2 + 1, "{v:?}");
+    }
+
+    #[test]
+    fn a_hip_on_a_climbing_string_runs_outward_even_if_downhill() {
+        // Up the line at 40 %, turning left 3 degrees onto a flatter grade: the walls' planes meet in a
+        // line nearly along the string, and only its outward end lies on the wall side.
+        let turn = 3f64.to_radians();
+        let (a, b) = ([100.0, 100.0, 100.0], [200.0, 100.0, 140.0]);
+        let c = [200.0 + 100.0 * turn.cos(), 100.0 + 100.0 * turn.sin(), 140.0 + 100.0 * 0.40 + 100.0 * 0.05];
+        let step = project_wall(&string(&[a, b, c], false), OffsetSide::Left, 70.0, &target(|_, _| 400.0)).unwrap();
+        watertight_between_walls(&step, 2);
+        for p in crest(&step) {
+            close(p[2], 400.0, 1e-6);
+        }
+    }
+
+    #[test]
+    fn the_next_toe_keeps_the_plan_shape_and_lies_on_the_surface() {
+        let t = |x: f64, y: f64| 130.0 + 6.0 * (x / 31.0).cos() + 4.0 * (y / 19.0).sin();
+        let surface = target(t);
+        let toe = string(&[[20.0, 100.0, 100.0], [380.0, 100.0, 100.0]], false);
+        let step = project_wall(&toe, OffsetSide::Left, 70.0, &surface).unwrap();
+        // A tolerance as wide as the crest's swing leaves a straight line in plan.
+        let (toes, log) = next_toe(&step.crest, 0.0, OffsetSide::Left, 100.0, &surface).unwrap();
+        assert_eq!(log.plan_vertices, 2);
+        assert_eq!(log.off_surface, 0);
+        let bins = TriangleBins::new(&surface, [E, N], [E + 400.0, N + 400.0]);
+        for p in &toes[0].vertices {
+            close(bins.height(&surface, [p[0], p[1]]).unwrap(), p[2], 1e-9);
+        }
+        assert!(toes[0].vertices.len() > 40, "the line still follows the surface");
+        // With no tolerance every vertex of the plan shape stays.
+        let (exact, _) = next_toe(&step.crest, 0.0, OffsetSide::Left, 0.0, &surface).unwrap();
+        assert!(exact[0].vertices.len() >= step.crest.vertices.len() - 1);
+    }
+
+    #[test]
+    fn a_berm_moves_the_next_toe_out_on_the_wall_side() {
+        let surface = target(|_, _| 120.0);
+        let toe = string(&[[20.0, 100.0, 100.0], [380.0, 100.0, 100.0]], false);
+        let step = project_wall(&toe, OffsetSide::Left, 45.0, &surface).unwrap();
+        let (toes, _) = next_toe(&step.crest, 10.0, OffsetSide::Left, 0.1, &surface).unwrap();
+        assert_eq!(toes.len(), 1);
+        for p in &toes[0].vertices {
+            close(p[1] - N, 130.0, 1e-6);
+            close(p[2], 120.0, 1e-9);
+        }
+    }
+
+    #[test]
+    fn steps_chain_through_a_berm_from_grid_to_grid() {
+        let lower = target(|x, y| 100.0 + 3.0 * (x / 41.0).sin() + 2.0 * (y / 29.0).cos());
+        let middle = target(|x, y| 125.0 + 4.0 * (x / 31.0).cos() + 3.0 * (y / 19.0).sin());
+        let upper = target(|x, y| 150.0 + 5.0 * (x / 37.0).sin() + 3.0 * (y / 23.0).cos());
+        let flat = Polyline { vertices: vec![[E + 20.0, N + 60.0, 0.0], [E + 380.0, N + 80.0, 0.0]], closed: false };
+        let (toe, _) = drape_string(&flat, &lower, true).unwrap();
+        let first = project_wall(&toe, OffsetSide::Left, 70.0, &middle).unwrap();
+        let (toes, _) = next_toe(&first.crest, 8.0, OffsetSide::Left, 0.1, &middle).unwrap();
+        let second = project_wall(&toes[0], OffsetSide::Left, 70.0, &upper).unwrap();
+        watertight_between_walls(&second, toes[0].vertices.len() - 1);
+        let bins = TriangleBins::new(&upper, [E, N], [E + 400.0, N + 400.0]);
+        for p in &second.crest.vertices {
+            close(bins.height(&upper, [p[0], p[1]]).unwrap(), p[2], 1e-6);
+        }
+    }
+
+    #[test]
+    fn where_the_target_dips_below_the_string_the_step_has_no_height() {
+        let toe = string(&[[20.0, 100.0, 100.0], [180.0, 100.0, 100.0]], false);
+        let surface = target(|x, _| 90.0 + 0.5 * (x - 100.0).abs());
+        let step = project_wall(&toe, OffsetSide::Left, 45.0, &surface).unwrap();
+        assert_eq!(step.log.no_height.len(), 1);
+        assert!(step.crest.vertices.windows(2).all(|w| w[0] != w[1]), "no vertex twice");
+        close(step.log.no_height[0].from[0] - E, 80.0, 1e-6);
+        close(step.log.no_height[0].to[0] - E, 120.0, 1e-6);
+        let line = crest(&step);
+        assert!(line.iter().any(|p| (p[0] - 100.0).abs() > 19.9 && (p[1] - 100.0).abs() < 1e-6));
+    }
+}

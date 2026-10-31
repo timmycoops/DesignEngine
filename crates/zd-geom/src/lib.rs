@@ -20,6 +20,7 @@ mod section_snap;
 mod slice;
 mod stack;
 mod string;
+mod wall;
 
 pub use cut::{CutResult, CutTimings, cut_solid_by_surface, cut_solid_by_whole_surface};
 pub use error::GeomError;
@@ -36,6 +37,7 @@ pub use section_fill::{SectionFill, fill_between_lines, fill_section_loops};
 pub use section_snap::{CutSegment, SectionSnap, SectionSnapKind, snap_to_section};
 pub use slice::{SectionPlane, SliceIndex, SliceLine, slice_indexed, slice_mesh, string_near_plane};
 pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_nodes, suggest_no_seam_rl, suggest_seam_tree};
+pub use wall::{ConditionLog, NoHeight, WallLog, WallStep, next_toe, project_wall};
 pub use string::{Corner, DrapeLog, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, smooth_string, split_string};
 
 /// Below this many triangles a search stays on one thread.

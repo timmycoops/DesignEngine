@@ -429,7 +429,7 @@ pub fn drape_string(line: &Polyline, surface: &TriMesh, add_crossings: bool) -> 
 }
 
 /// Triangles of a surface binned in plan over the area a string covers.
-struct TriangleBins {
+pub(crate) struct TriangleBins {
     lo: [f64; 2],
     cell: [f64; 2],
     dims: [usize; 2],
@@ -437,7 +437,7 @@ struct TriangleBins {
 }
 
 impl TriangleBins {
-    fn new(surface: &TriMesh, lo: [f64; 2], hi: [f64; 2]) -> Self {
+    pub(crate) fn new(surface: &TriMesh, lo: [f64; 2], hi: [f64; 2]) -> Self {
         let plan = |t: &[u32; 3]| t.map(|i| surface.vertices[i as usize]);
         let overlaps = |t: &[[f64; 3]; 3]| {
             t.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min) <= hi[0]
@@ -468,8 +468,14 @@ impl TriangleBins {
         (along(0), along(1))
     }
 
+    /// The triangles that may hold the plan point `x`, `y`.
+    pub(crate) fn at(&self, x: f64, y: f64) -> &[u32] {
+        let (c, r) = self.bin_of([x, y]);
+        &self.bins[r * self.dims[0] + c]
+    }
+
     /// The highest elevation of the surface at `p`, if any triangle covers it.
-    fn height(&self, surface: &TriMesh, p: [f64; 2]) -> Option<f64> {
+    pub(crate) fn height(&self, surface: &TriMesh, p: [f64; 2]) -> Option<f64> {
         let (c, r) = self.bin_of(p);
         self.bins[r * self.dims[0] + c]
             .iter()
@@ -490,7 +496,7 @@ impl TriangleBins {
 
     /// Where the plan segment `a`-`b` crosses triangle edges, strictly between its ends, in order from
     /// `a`, each at the edge's elevation there.
-    fn crossings(&self, surface: &TriMesh, a: [f64; 2], b: [f64; 2]) -> Vec<[f64; 3]> {
+    pub(crate) fn crossings(&self, surface: &TriMesh, a: [f64; 2], b: [f64; 2]) -> Vec<[f64; 3]> {
         let (c0, r0) = self.bin_of([a[0].min(b[0]), a[1].min(b[1])]);
         let (c1, r1) = self.bin_of([a[0].max(b[0]), a[1].max(b[1])]);
         let mut seen = std::collections::HashSet::new();
@@ -518,7 +524,7 @@ impl TriangleBins {
 }
 
 /// Where segment `a`-`b` crosses segment `p`-`q`: the fraction along each, strictly inside `a`-`b`.
-fn segment_crossing(a: [f64; 2], b: [f64; 2], p: [f64; 2], q: [f64; 2]) -> Option<(f64, f64)> {
+pub(crate) fn segment_crossing(a: [f64; 2], b: [f64; 2], p: [f64; 2], q: [f64; 2]) -> Option<(f64, f64)> {
     let (r, s) = (sub(b, a), sub(q, p));
     let denom = cross(r, s);
     if denom.abs() < 1e-12 {
@@ -590,7 +596,7 @@ fn dot(a: [f64; 2], b: [f64; 2]) -> f64 {
     a[0] * b[0] + a[1] * b[1]
 }
 
-fn cross(a: [f64; 2], b: [f64; 2]) -> f64 {
+pub(crate) fn cross(a: [f64; 2], b: [f64; 2]) -> f64 {
     a[0] * b[1] - a[1] * b[0]
 }
 

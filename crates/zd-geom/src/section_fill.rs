@@ -18,7 +18,7 @@ use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation};
 use crate::slice::{SectionPlane, SliceLine};
 use crate::worker_threads;
 
-type Cdt = ConstrainedDelaunayTriangulation<Point2<f64>>;
+pub(crate) type Cdt = ConstrainedDelaunayTriangulation<Point2<f64>>;
 
 /// How far the area filled may stray from the area enclosed, as a share of it.
 const AREA_TOLERANCE: f64 = 1e-6;
@@ -205,7 +205,7 @@ fn triangles_inside(outer: &Outline, holes: &[&Outline]) -> FlatFill {
 /// Which faces lie inside the kept edges, numbered as spade numbers them. The flood takes in all it
 /// can reach before crossing a kept edge, so a kept edge with outside on both sides, a spike doubling
 /// back on itself, changes nothing.
-fn faces_inside(cdt: &Cdt) -> Vec<bool> {
+pub(crate) fn faces_inside(cdt: &Cdt) -> Vec<bool> {
     let mut inside = vec![false; cdt.num_all_faces()];
     let mut seen = vec![false; cdt.num_all_faces()];
     let touching_outside = cdt.directed_edges().filter(|e| e.face().is_outer()).filter_map(|e| e.rev().face().as_inner().map(|f| (f.fix(), e.as_undirected().fix())));
