@@ -19,6 +19,11 @@ const WEIGHTS: Record<SectionKind, number> = { surface: 2.5, seam: 1.5, solid: 1
 /** Each kind's own lines draw over the next: strings, then seams, surfaces and solids. */
 const ORDER: Record<SectionKind, number> = { solid: 10, surface: 11, seam: 12, string: 13 };
 
+/** How much of a fill shows: enough to read the layer, with its cut lines standing out in the same colour. */
+const FILL_OPACITY = 0.3;
+/** Fills draw behind every line. */
+const FILL_ORDER = 5;
+
 export type PlanPoint = [number, number];
 
 export class SectionView {
@@ -27,6 +32,8 @@ export class SectionView {
   private summary: ProjectSummary | null = null;
   private group = new THREE.Group();
   private lines = new Map<string, LineSegments2>();
+  private fills = new Map<string, THREE.Mesh>();
+  private filling = true;
   private weights = new Map<string, number>();
   private fetching: Promise<void> | null = null;
   private fetchAgain = false;
@@ -34,6 +41,10 @@ export class SectionView {
   private grid: SectionGrid;
   /** Metres moved square to the section since it opened. */
   private moved = 0;
+  /** Closed loops the last cut could not fill. */
+  unfilled = 0;
+  /** Tells of closed loops left unfilled, when that count changes. */
+  onUnfilled?: (count: number) => void;
   /** What the plan map shows beyond the surfaces. */
   mapShows: THREE.Object3D[] = [];
   private increment = 25;
@@ -116,6 +127,16 @@ export class SectionView {
     return this.ends !== null;
   }
 
+  /** Whether solids fill between their cut lines. */
+  get filled(): boolean {
+    return this.filling;
+  }
+
+  set filled(on: boolean) {
+    this.filling = on;
+    void this.refresh();
+  }
+
   /** The kinds' weight for a layer: its own, or null while it uses the defaults. */
   weightOf(layer: string): number | null {
     return this.weights.get(layer) ?? null;
@@ -133,7 +154,7 @@ export class SectionView {
     this.grid.hide();
     this.ends = { a, b };
     this.summary = summary;
-    const lines = await sectionLines(a, b, STRING_WIDTH);
+    const lines = await sectionLines(a, b, STRING_WIDTH, this.filling);
     if (!this.ends) return;
     this.draw(lines);
     const o = summary.origin ?? [0, 0, 0];
@@ -208,7 +229,7 @@ export class SectionView {
       const ends = this.ends;
       if (!ends) return;
       const start = performance.now();
-      const lines = await sectionLines(ends.a, ends.b, STRING_WIDTH);
+      const lines = await sectionLines(ends.a, ends.b, STRING_WIDTH, this.filling);
       if (this.ends) this.draw(lines);
       const frame = await this.viewport.nextFrame();
       this.lastMs = frame.submitted - start;
@@ -233,11 +254,11 @@ export class SectionView {
 
   private draw(lines: SectionLines): void {
     this.lastCut = lines;
-    const { groups, positions } = lines;
+    const { groups, positions, fills } = lines;
     const layers = new Map(this.summary?.layers.map((l) => [l.id, l]));
     const seen = new Set<string>();
-    let from = 0;
-    for (const { layer, kind, segments } of groups) {
+    let [from, fillFrom, unfilled] = [0, 0, 0];
+    for (const { layer, kind, segments, triangles, unfilled: left } of groups) {
       const key = `${layer} ${kind}`;
       seen.add(key);
       const geometry = new LineSegmentsGeometry();
@@ -255,12 +276,39 @@ export class SectionView {
         this.group.add(line);
         this.lines.set(key, line);
       }
-      const colour = layers.get(layer)?.colour;
-      (line.material as THREE.Line2NodeMaterial).color.setHex(colour ? colourOf(colour) : 0xffffff);
+      const layerColour = layers.get(layer)?.colour;
+      const colour = layerColour ? colourOf(layerColour) : 0xffffff;
+      (line.material as THREE.Line2NodeMaterial).color.setHex(colour);
       line.visible = true;
+      if (triangles > 0) this.drawFill(key, fills.slice(fillFrom, fillFrom + triangles * 9), colour);
+      else if (this.fills.has(key)) (this.fills.get(key) as THREE.Mesh).visible = false;
+      fillFrom += triangles * 9;
+      unfilled += left;
     }
     for (const [key, line] of this.lines) if (!seen.has(key)) line.visible = false;
+    for (const [key, fill] of this.fills) if (!seen.has(key)) fill.visible = false;
+    if (unfilled !== this.unfilled && unfilled > 0) this.onUnfilled?.(unfilled);
+    this.unfilled = unfilled;
     this.reweigh();
+  }
+
+  private drawFill(key: string, positions: Float32Array, colour: number): void {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    let fill = this.fills.get(key);
+    if (fill) {
+      fill.geometry.dispose();
+      fill.geometry = geometry;
+    } else {
+      const material = new THREE.MeshBasicNodeMaterial({ transparent: true, opacity: FILL_OPACITY, side: THREE.DoubleSide, depthTest: false, depthWrite: false });
+      fill = new THREE.Mesh(geometry, material);
+      fill.renderOrder = FILL_ORDER;
+      fill.frustumCulled = false;
+      this.group.add(fill);
+      this.fills.set(key, fill);
+    }
+    (fill.material as THREE.MeshBasicNodeMaterial).color.setHex(colour);
+    fill.visible = true;
   }
 
   private reweigh(): void {

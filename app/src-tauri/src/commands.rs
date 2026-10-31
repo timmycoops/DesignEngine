@@ -390,13 +390,13 @@ pub async fn stage_layer_solids(layer: LayerId, state: State<'_, AppState>) -> R
 /// The section through two plan points (mine grid) as binary: where the plane cuts every visible
 /// layer, with strings within `width` drawn flat on it. View state, not a command.
 #[tauri::command]
-pub async fn section_lines(a: [f64; 2], b: [f64; 2], width: f64, state: State<'_, AppState>) -> Result<Response, String> {
+pub async fn section_lines(a: [f64; 2], b: [f64; 2], width: f64, fill: bool, state: State<'_, AppState>) -> Result<Response, String> {
     let app = state.app.clone();
     blocking(move || {
         let start = Instant::now();
         let plane = SectionPlane::through(a, b).map_err(|e| e.to_string())?;
         let mut app = app.lock().unwrap();
-        let groups = section_groups(&mut app, &plane, width)?;
+        let groups = section_groups(&mut app, &plane, width, fill)?;
         let origin = app.origin().unwrap_or([0.0; 3]);
         Ok(Response::new(encode_section(&groups, origin, &plane, ms(start))))
     })

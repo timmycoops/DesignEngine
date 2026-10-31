@@ -45,6 +45,12 @@ in mine grid coordinates, and can be snapped to and exported.
    square on a true-scale section, and labels gain decimals as the spacing drops below a metre. RLs read on
    both sides, and distances along the top with A and B marked, because the plan map takes the bottom left
    and A falls under it. A step moves the plane, not the distances or RLs, so it leaves the grid alone.
+10. **Solids fill between their cut lines,** in their layer colour at 30 % so the lines stand out, with a Fill
+    button to go back to lines only. A hole goes with the smallest outer edge round it and each outer edge
+    fills on its own, so solids that touch or overlap on a layer each fill as themselves. The area filled must
+    match the area the loops enclose to one part in a million. A loop that fails, such as one that crosses
+    itself, stays unfilled and the status line counts it, so nothing is coloured in that isn't there. Seams
+    are a roof and a floor, open lines that need pairing, and follow separately.
 
 ## Evidence
 
@@ -81,6 +87,12 @@ in mine grid coordinates, and can be snapped to and exported.
   the ends of 9,708 cut points match the engine's own mine grid RLs and distances to 0.12 mm. Through 350 wheel
   ticks and a pan, every line sits within 4e-6 px of where the camera draws that RL and distance, the spacing
   runs from 0.05 m to 2 km with lines 64 to 158 px apart, and a drawing takes at most 1.4 ms.
+
+- Fills, to 1e-7 m2: a 10 m cube fills 100 m2, a hollow 64 m2, an L 75 m2 with nothing in its notch, and an
+  island in a hole 68 m2. Touching and overlapping solids each fill whole, a hole goes with the smallest edge
+  round it, and a 4,000-point loop matches its area. A bow tie and a hole with no edge round it are counted,
+  not filled. PIT A's solids, 41 sections: all 485 loops a section fill, 6,741 triangles, 2.9 ms at p50 and
+  3.9 ms worst. With fills on in the release app, a step is 30 ms at p50 and 37 ms at worst at 60 fps.
 
 Tim tried the map by hand on PIT A's solids: the drag, the run past the data and the step size.
 

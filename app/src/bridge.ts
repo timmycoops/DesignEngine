@@ -216,24 +216,31 @@ export interface SectionGroup {
   layer: string;
   kind: SectionKind;
   segments: number;
+  /** What its closed loops fill, and the loops that could not be filled. */
+  triangles: number;
+  unfilled: number;
 }
 
 export interface SectionLines {
   groups: SectionGroup[];
   /** Six floats a segment, scene-local, group after group. */
   positions: Float32Array;
+  /** Nine floats a triangle, scene-local, group after group. */
+  fills: Float32Array;
   /** Distance along the section and RLs of everything cut (m). */
   bounds: { along: [number, number]; rl: [number, number] } | null;
   ms: number;
 }
 
-/** The section through two plan points (mine grid): lines as `f32`, then a JSON header and its length. */
-export async function sectionLines(a: [number, number], b: [number, number], width: number): Promise<SectionLines> {
-  const buffer = await invoke<ArrayBuffer>('section_lines', { a, b, width });
+/** The section through two plan points (mine grid): lines and fills as `f32`, then a JSON header and its length. */
+export async function sectionLines(a: [number, number], b: [number, number], width: number, fill: boolean): Promise<SectionLines> {
+  const buffer = await invoke<ArrayBuffer>('section_lines', { a, b, width, fill });
   const length = new DataView(buffer).getUint32(buffer.byteLength - 4, true);
   const start = buffer.byteLength - 4 - length;
   const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, start, length)));
-  return { ...header, positions: new Float32Array(buffer, 0, start / 4) };
+  const floats = new Float32Array(buffer, 0, start / 4);
+  const lineFloats = (header.groups as SectionGroup[]).reduce((sum, group) => sum + group.segments * 6, 0);
+  return { ...header, positions: floats.subarray(0, lineFloats), fills: floats.subarray(lineFloats) };
 }
 
 export const prepareSynthetic = (cells: number, kind: 'triangulation' | 'grid') =>

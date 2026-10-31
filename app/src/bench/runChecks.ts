@@ -396,11 +396,13 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   const o = summary.origin ?? [0, 0, 0];
   let close = '';
   let grid = {};
+  let fill = {};
   if (across) {
     const [x, y] = [across.x + o[0], across.y + o[1]];
     await section.show([x - 750, y - 200], [x + 750, y + 200], summary);
     await settle();
     close = picture(viewport);
+    fill = await checkFill(viewport, section, button, settle);
     grid = await checkGrid(viewport, section, box, settle);
     await section.step(125);
     await settle();
@@ -426,7 +428,23 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   await settle();
   const hiddenAfter = getComputedStyle(map).display === 'none';
   const gridHiddenAfter = getComputedStyle(section.gridCanvas).display === 'none';
-  return { opened, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_pictures_ms: pictures, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, overview_carried_m: carried, overview_carried_on_map: carriedOnMap, overview_stays_on_map: staysOnMap, grid_hidden_before: gridHiddenBefore, grid_hidden_after: gridHiddenAfter, grid, wide, close, overview, walked };
+  return { opened, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_pictures_ms: pictures, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, overview_carried_m: carried, overview_carried_on_map: carriedOnMap, overview_stays_on_map: staysOnMap, grid_hidden_before: gridHiddenBefore, grid_hidden_after: gridHiddenAfter, grid, fill, wide, close, overview, walked };
+}
+
+/** The fills on, as they first show, then off and on again by the toolbar's Fill button. */
+async function checkFill(viewport: Viewport, section: SectionView, button: (name: string) => HTMLButtonElement | undefined, settle: () => Promise<void>) {
+  const triangles = () => (section.lastCut?.groups ?? []).reduce((sum, group) => sum + group.triangles, 0);
+  const over = [section.gridCanvas, section.overviewCanvas];
+  const toggle = async () => {
+    button('Fill')?.click();
+    await settle();
+    await settle();
+  };
+  const [on, unfilled, filled] = [triangles(), section.unfilled, screen(viewport, over)];
+  await toggle();
+  const [off, lines] = [triangles(), screen(viewport, over)];
+  await toggle();
+  return { triangles: on, unfilled, off_triangles: off, back_triangles: triangles(), filled, lines };
 }
 
 /**
