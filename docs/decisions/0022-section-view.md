@@ -81,7 +81,8 @@ in mine grid coordinates, and can be snapped to and exported.
   | Solids | 3.59 M | 59 ms | 5.7 ms p50, 8.4 ms worst | 485 lines, all closed |
 
   Every point lies within 6e-11 m of the plane. Without the index these took 8.6 and 8.2 ms at p50. On a
-  test mesh the index finds every crossing a full scan finds.
+  test mesh the index finds every crossing a full scan finds. Across both pits' 41 sections, a ray through the
+  middle of each of 1,183,889 cut segments met its mesh within the 0.5 mm the test allows, none missing.
 - The release app on the full scene, through the real toolbar and canvas: 11.7 M triangles, 21,469 solids and
   5,724 strings of about a million vertices. A step takes 29 ms at p50 from request to frame submitted, about
   20 ms of that in the engine, and 47 ms at worst across twelve runs, so the gate's 50 ms holds on every step.
