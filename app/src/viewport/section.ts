@@ -52,6 +52,16 @@ export class SectionView {
     };
   }
 
+  /** Whether both ends of the section are on the overview map. */
+  get overviewOnMap(): boolean {
+    return this.overview.sectionOnMap;
+  }
+
+  /** How long the overview map's last picture took (ms). */
+  get overviewPictureMs(): number {
+    return this.overview.lastPictureMs;
+  }
+
   /** The overview map, for checks. */
   get overviewCanvas(): HTMLCanvasElement {
     return this.overview.canvasElement;
@@ -102,7 +112,7 @@ export class SectionView {
     ];
     const length = Math.hypot(to[0] - from[0], to[1] - from[1]);
     this.moved = 0;
-    this.overview.retake(from, to);
+    this.overview.frameOn(from, to);
     this.viewport.showSection(from, to, [0, length], rlBetween(lines.positions, from, to, length));
     this.group.visible = true;
     this.overview.show();

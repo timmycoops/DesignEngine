@@ -35,8 +35,10 @@ in mine grid coordinates, and can be snapped to and exported.
    surfaces and strings from above, the section line with its A and B ends, a tick for the way it looks, the
    step lines either side when they stand far enough apart to read, and how far it has moved from the start.
    A press or drag on the map moves the section to the pointer in whole steps, so it lands on the same
-   sections the keys do. The map is a picture, taken when the section opens and again when the section walks
-   off it, never under a drag, so a step does not draw the scene twice.
+   sections the keys do. A drag held near the map's edge runs on past what is in view, the faster the closer
+   to the edge, and when it ends the map eases back round the section. Stepping keeps the section near the
+   map's centre, with the plan ahead in view. The map slides over a picture of the plan three times its width,
+   so it follows at every step without drawing the scene, and the picture is taken again when it nears its edge.
 
 ## Evidence
 
@@ -57,14 +59,17 @@ in mine grid coordinates, and can be snapped to and exported.
   test mesh the index finds every crossing a full scan finds.
 - The release app on the full scene, through the real toolbar and canvas: 11.7 M triangles, 21,469 solids and
   5,724 strings of about a million vertices. A step takes 29 ms at p50 from request to frame submitted, about
-  20 ms of that in the engine, and 47 ms at worst across eight runs, so the gate's 50 ms holds on every step.
+  20 ms of that in the engine, and 47 ms at worst across twelve runs, so the gate's 50 ms holds on every step.
   Before the index it was 46 ms at p50 and 63 ms at worst. The section holds 60 fps.
 - The plan map in the same run, by pointer events on the canvas: a press moved the section in whole 25 m
   steps, and moving the pointer at the same place left it there, so it goes to the pointer and the map holds
-  still. The saved pictures show the topography, contours and pit outlines under the section, step lines at
-  200 m, and a new picture taken after a 2 km move walked the section off the old one. Its place on screen is
-  checked as well, as those pictures can't show it: 240 px in the corner, the middle of the viewport still the
-  section, and gone before a section opens and after it closes.
+  still. Held at the map's edge for 30 frames it ran on 2.8 km on the solids alone and 6.3 km on the full scene
+  and ended on the map, and both ends of the section stayed on the map through five 2 km steps. The saved
+  pictures show the topography, contours and pit outlines under the section, step lines at 200 m, and the
+  plan moved on after those steps. A new picture costs under 10 ms of script and the next frame follows as
+  usual, so what looked like a slow map was the old map waiting to move. Its place on screen is checked as well, as
+  those pictures can't show it: 240 px in the corner, the middle of the viewport still the section, and gone
+  before a section opens and after it closes.
 
 Not covered: seam models in a section have only been tested through their parts, not on screen, the line
 weight input is untested by the bench, and a drag across the map has not been tried by hand.

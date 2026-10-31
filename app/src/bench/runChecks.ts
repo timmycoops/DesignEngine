@@ -369,6 +369,7 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   const place = [mapBox.left - box.left, box.bottom - mapBox.bottom, mapBox.width, mapBox.height];
   const inCorner = place.every((value, i) => Math.abs(value - [12, 12, 240, 240][i]) < 2);
   const sectionClear = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2) === canvas;
+  const across = section.firstSolidPoint();
   const atStart = section.offset;
   const drag = (type: string, x: number, y: number) =>
     map.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons: 1, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
@@ -381,12 +382,17 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   drag('pointermove', dragX, dragY);
   await settle();
   const stayed = section.offset - atStart === dragged;
-  drag('pointerup', dragX, dragY);
+  // Held at the map's edge, a drag runs on past what is in view.
+  drag('pointermove', dragX, mapBox.top + 1);
+  for (let k = 0; k < 30; k++) await viewport.nextFrame();
+  const carried = section.offset - atStart - dragged;
+  drag('pointerup', dragX, mapBox.top + 1);
   await settle();
+  await settle();
+  const carriedOnMap = section.overviewOnMap;
 
   // A section as a planner would pick one: 1.5 km across the first solid cut, not the whole view.
   const o = summary.origin ?? [0, 0, 0];
-  const across = section.firstSolidPoint();
   let close = '';
   if (across) {
     const [x, y] = [across.x + o[0], across.y + o[1]];
@@ -399,14 +405,24 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   // Step lines stand apart at 200 m on this map, and a long move walks the section off it.
   section.stepSize = 200;
   const overview = map.toDataURL('image/png');
-  await section.step(2_000);
+  const pictures: number[][] = [];
+  let staysOnMap = section.overviewOnMap;
+  for (let k = 0; k < 5; k++) {
+    const started = performance.now();
+    await section.step(2_000);
+    const stepped = performance.now() - started;
+    const picture = section.overviewPictureMs;
+    await viewport.nextFrame();
+    pictures.push([stepped, picture, performance.now() - started]);
+    staysOnMap &&= section.overviewOnMap;
+  }
   await settle();
   const walked = map.toDataURL('image/png');
   section.stepSize = 25;
   button('Section')?.click();
   await settle();
   const hiddenAfter = getComputedStyle(map).display === 'none';
-  return { opened, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, wide, close, overview, walked };
+  return { opened, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_pictures_ms: pictures, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, overview_carried_m: carried, overview_carried_on_map: carriedOnMap, overview_stays_on_map: staysOnMap, wide, close, overview, walked };
 }
 
 /** What the viewport shows now, as a PNG data URL: drawn again and copied before the frame is gone. */
