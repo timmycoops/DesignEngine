@@ -29,11 +29,15 @@ does the fitting.
    crosses. Its plan shape is simplified to a tolerance, moved out a berm, and registered back on the grid.
    Walls take their azimuth from the plan alone, so vertices that are collinear in plan add no corners
    however the line rises and falls, and the line stays exactly on the grid. This runs before a step, not
-   after it, so it isn't offset-then-repair. Deswik has the same stage (`DefaultLineConditioner`).
+   after it, so it isn't offset-then-repair. Deswik has the same stage (`DefaultLineConditioner`). The
+   tolerance is 0.1 m by default and refused past 2 m, where it starts cutting corners off the crest: 30 m
+   left a crest's next toe 11 m out on real data.
 5. **A berm is the conditioned crest moved out in plan and registered on the grid**, not a delayed start. A
    step starts from a string on a grid, so there's no one level for a delay to count from.
-6. **Where a target is below the string, the step has no height there.** The crest runs along the string and
-   the place is reported.
+6. **Where a target is below the string, or the string lies on it, the step has no height there.** The crest
+   runs along the string and the place is reported. A gap up to 1e-7 m counts as on it: that's rounding, and
+   a string registered on a grid is only that far off it. A string with no height anywhere is refused, so
+   stepping a next toe to the grid it already lies on says so.
 7. **Refused for now, each with its place:** a wall that runs off the target, and a wall that closes against
    a far wall (a split in skeleton terms), which would make the crest cross itself. The first needs the
    fall-back of engine rule 6 and comes with face projection. PIT B's grids are about half null, so oversized
@@ -60,6 +64,13 @@ vertices come down to 18 in plan.
 Through the app, with PIT B's 42,000 solids, topography and seam model loaded, four steps up five grids took
 1.1 s including the panels (`--walls` on the bench). They read on the section as walls landing on each seam
 line with a berm along it, and a stretch where two grids cross came back as having no height.
+
+Tim's first run in the app found what the tests above hadn't. An unlabelled tolerance box took a 30 that was
+meant for the berm, and a next toe stepped to the grid it already lay on came apart in rounding. On his string,
+every half degree of batter to each side, with seven tolerances and seven berms, through a second step: about
+15,500 steps, none failing in the crest walk. With the rounding fix switched off, stepping to the same grid
+failed the walk 641 times in about 10,400 steps. A correct 30 m berm sits 29.91 to 30.09 m from its crest at 0.1 m tolerance. One message from his run, "won't
+triangulate", wasn't reproduced with the fix on or off, and its input isn't known.
 
 Known answers hold to 1 mm: a 45° batter from a flat toe, mitres on both sides of a corner, a closed toe's
 rectangle and its wall area, a step between two dipping planes, a mitre on a rising string, and a wall
