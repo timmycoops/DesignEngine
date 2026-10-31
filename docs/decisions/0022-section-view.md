@@ -57,12 +57,14 @@ in mine grid coordinates, and can be snapped to and exported.
   test mesh the index finds every crossing a full scan finds.
 - The release app on the full scene, through the real toolbar and canvas: 11.7 M triangles, 21,469 solids and
   5,724 strings of about a million vertices. A step takes 29 ms at p50 from request to frame submitted, about
-  20 ms of that in the engine, and 47 ms at worst across six runs, so the gate's 50 ms holds on every step.
+  20 ms of that in the engine, and 47 ms at worst across eight runs, so the gate's 50 ms holds on every step.
   Before the index it was 46 ms at p50 and 63 ms at worst. The section holds 60 fps.
 - The plan map in the same run, by pointer events on the canvas: a press moved the section in whole 25 m
   steps, and moving the pointer at the same place left it there, so it goes to the pointer and the map holds
   still. The saved pictures show the topography, contours and pit outlines under the section, step lines at
-  200 m, and a new picture taken after a 2 km move walked the section off the old one.
+  200 m, and a new picture taken after a 2 km move walked the section off the old one. Its place on screen is
+  checked as well, as those pictures can't show it: 240 px in the corner, the middle of the viewport still the
+  section, and gone before a section opens and after it closes.
 
 Not covered: seam models in a section have only been tested through their parts, not on screen, the line
 weight input is untested by the bench, and a drag across the map has not been tried by hand.

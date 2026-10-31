@@ -203,7 +203,7 @@ export default function App() {
     strings?.setFrozen(true);
     setModeState('select');
     setSectionOpen(true);
-    setStatus({ text: 'Section: [ and ] step along it; the wheel zooms where the cursor is, left drag pans' });
+    setStatus({ text: 'Section: [ and ] step along it, or drag on the plan map; the wheel zooms where the cursor is, left drag pans' });
     void section.show(planPoint(a), planPoint(b), project).catch((e) => setStatus({ text: String(e), error: true }));
   }, []);
 

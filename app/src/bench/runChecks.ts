@@ -328,6 +328,7 @@ async function checkStringPick(viewport: Viewport, show: Show) {
 /** Picks a section through the real toolbar and canvas, then steps it: the gate's 50 ms a step. */
 async function checkSection(viewport: Viewport, section: SectionView | null, summary: ProjectSummary) {
   if (!section) return { error: 'no section view' };
+  const hiddenBefore = getComputedStyle(section.overviewCanvas).display === 'none';
   const canvas = viewport.renderer.domElement;
   const box = canvas.getBoundingClientRect();
   const settle = async () => {
@@ -362,9 +363,13 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
 
   // The overview: a drag across it moves the section in whole steps.
   const map = section.overviewCanvas;
-  const shown = !map.hidden;
-  const atStart = section.offset;
+  // Where it lands on screen, which its own pixels can't show: a box in the corner, the section clear of it.
+  const shown = getComputedStyle(map).display !== 'none';
   const mapBox = map.getBoundingClientRect();
+  const place = [mapBox.left - box.left, box.bottom - mapBox.bottom, mapBox.width, mapBox.height];
+  const inCorner = place.every((value, i) => Math.abs(value - [12, 12, 240, 240][i]) < 2);
+  const sectionClear = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2) === canvas;
+  const atStart = section.offset;
   const drag = (type: string, x: number, y: number) =>
     map.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons: 1, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
   const [dragX, dragY] = [mapBox.left + mapBox.width * 0.5, mapBox.top + mapBox.height * 0.2];
@@ -400,7 +405,8 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   section.stepSize = 25;
   button('Section')?.click();
   await settle();
-  return { opened, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, wide, close, overview, walked };
+  const hiddenAfter = getComputedStyle(map).display === 'none';
+  return { opened, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, wide, close, overview, walked };
 }
 
 /** What the viewport shows now, as a PNG data URL: drawn again and copied before the frame is gone. */

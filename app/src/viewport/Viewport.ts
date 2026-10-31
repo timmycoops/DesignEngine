@@ -123,6 +123,7 @@ export class Viewport {
     const renderer = new THREE.WebGPURenderer(options as ConstructorParameters<typeof THREE.WebGPURenderer>[0]);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(host.clientWidth, host.clientHeight);
+    renderer.domElement.classList.add('viewport-canvas');
     host.appendChild(renderer.domElement);
     await renderer.init();
 
