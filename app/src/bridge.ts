@@ -215,6 +215,8 @@ export type SectionKind = 'surface' | 'solid' | 'seam' | 'string';
 export interface SectionGroup {
   layer: string;
   kind: SectionKind;
+  /** A seam horizon's material in lower case; empty for anything else. */
+  material: string;
   segments: number;
   /** What its closed loops fill, and the loops that could not be filled. */
   triangles: number;

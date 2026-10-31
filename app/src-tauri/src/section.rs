@@ -22,6 +22,8 @@ pub type Segment = [[f64; 3]; 2];
 pub struct SectionGroup {
     pub layer: LayerId,
     pub kind: &'static str,
+    /// A seam horizon's material in lower case, which sets its colour; empty for anything else.
+    pub material: String,
     pub segments: Vec<Segment>,
     /// What the solids' closed loops and the seams between roof and floor fill.
     pub fill: SectionFill,
@@ -40,7 +42,7 @@ pub type SectionMeshes = HashMap<String, (String, Arc<SectionMesh>)>;
 pub struct SectionInputs {
     generation: u64,
     meshes: Vec<(LayerId, &'static str, Arc<SectionMesh>)>,
-    seams: Vec<(LayerId, Arc<SectionMesh>, Arc<SectionMesh>)>,
+    seams: Vec<(LayerId, String, Arc<SectionMesh>, Arc<SectionMesh>)>,
     strings: Vec<Arc<Object>>,
 }
 
@@ -52,25 +54,25 @@ pub fn section_groups(app: &mut AppInner, plane: &SectionPlane, width: f64, fill
     for (layer, kind, section) in &inputs.meshes {
         let lines = slice_indexed(&section.mesh, &section.index, plane);
         let filled = if fill && *kind == "solid" { fill_section_loops(&lines, plane) } else { SectionFill::default() };
-        add(&mut groups, *layer, *kind, segments_of(lines), filled);
+        add(&mut groups, *layer, kind, "", segments_of(lines), filled);
     }
     // A model has a roof and floor for every horizon, and each pair stands alone.
-    let cut: Vec<(LayerId, Vec<Segment>, SectionFill)> = std::thread::scope(|scope| {
-        let horizons = inputs.seams.iter().map(|(layer, roof, floor)| {
+    let cut: Vec<(LayerId, &str, Vec<Segment>, SectionFill)> = std::thread::scope(|scope| {
+        let horizons = inputs.seams.iter().map(|(layer, material, roof, floor)| {
             scope.spawn(move || {
                 let (top, base) = (slice_indexed(&roof.mesh, &roof.index, plane), slice_indexed(&floor.mesh, &floor.index, plane));
                 let filled = if fill { fill_between_lines(&top, &base, plane) } else { SectionFill::default() };
-                (*layer, segments_of(top.into_iter().chain(base)), filled)
+                (*layer, material.as_str(), segments_of(top.into_iter().chain(base)), filled)
             })
         });
         horizons.collect::<Vec<_>>().into_iter().map(|horizon| horizon.join().expect("seam worker")).collect()
     });
-    for (layer, segments, filled) in cut {
-        add(&mut groups, layer, "seam", segments, filled);
+    for (layer, material, segments, filled) in cut {
+        add(&mut groups, layer, "seam", material, segments, filled);
     }
     for object in &inputs.strings {
         if let Body::String(line) = &object.body {
-            add(&mut groups, object.layer, "string", string_near_plane(&line.vertices, line.closed, plane, width), SectionFill::default());
+            add(&mut groups, object.layer, "string", "", string_near_plane(&line.vertices, line.closed, plane, width), SectionFill::default());
         }
     }
     Ok(groups)
@@ -85,7 +87,7 @@ fn section_inputs(app: &mut AppInner) -> Result<Arc<SectionInputs>, String> {
     let project = app.session.project();
     let visible = |layer: LayerId| project.layer(layer).is_some_and(|l| l.visible);
     let mut meshes: Vec<(LayerId, &'static str, Arc<SectionMesh>)> = Vec::new();
-    let mut seams: Vec<(LayerId, Arc<SectionMesh>, Arc<SectionMesh>)> = Vec::new();
+    let mut seams: Vec<(LayerId, String, Arc<SectionMesh>, Arc<SectionMesh>)> = Vec::new();
     let mut made = std::mem::take(&mut app.section_meshes);
     let mut kept = SectionMeshes::new();
     let mut keep = |key: String, stamp: String, make: &mut dyn FnMut() -> Result<Arc<TriMesh>, String>| -> Result<Arc<SectionMesh>, String> {
@@ -131,7 +133,7 @@ fn section_inputs(app: &mut AppInner) -> Result<Arc<SectionInputs>, String> {
                     };
                     let roof = keep(format!("{} roof {i}", object.id), stamp.clone(), &mut || surface(|g, i| &g.roofs[i]))?;
                     let floor = keep(format!("{} floor {i}", object.id), stamp.clone(), &mut || surface(|g, i| &g.floors[i]))?;
-                    seams.push((object.layer, roof, floor));
+                    seams.push((object.layer, model.horizons[i].material.to_ascii_lowercase(), roof, floor));
                 }
             }
             _ => {}
@@ -154,18 +156,18 @@ fn segments_of(lines: impl IntoIterator<Item = SliceLine>) -> Vec<Segment> {
     segments
 }
 
-/// Adds segments to the layer's group of that kind.
-fn add(groups: &mut Vec<SectionGroup>, layer: LayerId, kind: &'static str, segments: Vec<Segment>, fill: SectionFill) {
+/// Adds segments to the layer's group of that kind and material.
+fn add(groups: &mut Vec<SectionGroup>, layer: LayerId, kind: &'static str, material: &str, segments: Vec<Segment>, fill: SectionFill) {
     if segments.is_empty() {
         return;
     }
-    match groups.iter_mut().find(|g| g.layer == layer && g.kind == kind) {
+    match groups.iter_mut().find(|g| g.layer == layer && g.kind == kind && g.material == material) {
         Some(group) => {
             group.segments.extend(segments);
             group.fill.triangles.extend(fill.triangles);
             group.fill.unfilled += fill.unfilled;
         }
-        None => groups.push(SectionGroup { layer, kind, segments, fill }),
+        None => groups.push(SectionGroup { layer, kind, material: material.to_string(), segments, fill }),
     }
 }
 
@@ -255,22 +257,39 @@ mod tests {
         out
     }
 
-    #[test]
-    fn a_seam_model_fills_each_working_horizon_between_its_own_roof_and_floor() {
-        // A parent of 20 m over its two daughters, 10 m and 5 m with a parting between. If the parent
-        // filled, or a roof paired with the wrong floor, the area would be wrong.
+    /// A section along 200 m of a seam model built from `rows` over a parent of 20 m and its two
+    /// daughters, 10 m and 5 m with a parting between. Returns the app and the folder to remove.
+    fn seam_section(rows: &str) -> (AppInner, SectionPlane, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("zd-section-{}-{}", std::process::id(), zd_core::RunId::new()));
         std::fs::create_dir_all(&dir).unwrap();
         for (file, rl) in [("p.srg", 120.0), ("p.sfg", 100.0), ("a.srg", 120.0), ("a.sfg", 110.0), ("b.srg", 105.0), ("b.sfg", 100.0)] {
             std::fs::write(dir.join(file), flat_grid(rl)).unwrap();
         }
         let definition = dir.join("stack.csv");
-        let rows = "horizon,parent,material,working,roof,floor\np,,coal,no,p.srg,p.sfg\na,p,coal,yes,a.srg,a.sfg\nb,p,coal,yes,b.srg,b.sfg\n";
         std::fs::write(&definition, rows).unwrap();
         let mut s = Session::with_builtins();
         s.run("seam.build_model", json!({ "definition": definition.to_string_lossy(), "layer": "seams" })).unwrap();
-        let mut app = AppInner::new(s, None);
         let plane = SectionPlane::through([E - 10.0, N + 33.0], [E + 210.0, N + 33.0]).unwrap();
+        (AppInner::new(s, None), plane, dir)
+    }
+
+    #[test]
+    fn a_seam_section_groups_by_material_whatever_its_case() {
+        let rows = "horizon,parent,material,working,roof,floor\na,,Waste,yes,a.srg,a.sfg\nb,,COAL,yes,b.srg,b.sfg\n";
+        let (mut app, plane, dir) = seam_section(rows);
+        let groups = section_groups(&mut app, &plane, 1.0, true).unwrap();
+        let of = |material: &str| groups.iter().find(|g| g.material == material).unwrap_or_else(|| panic!("no {material} group"));
+        assert_eq!(groups.len(), 2);
+        assert!((area(&of("waste").fill) - 2_000.0).abs() < 1e-6, "200 by 10: {}", area(&of("waste").fill));
+        assert!((area(&of("coal").fill) - 1_000.0).abs() < 1e-6, "200 by 5: {}", area(&of("coal").fill));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_seam_model_fills_each_working_horizon_between_its_own_roof_and_floor() {
+        // If the parent filled, or a roof paired with the wrong floor, the area would be wrong.
+        let rows = "horizon,parent,material,working,roof,floor\np,,coal,no,p.srg,p.sfg\na,p,coal,yes,a.srg,a.sfg\nb,p,coal,yes,b.srg,b.sfg\n";
+        let (mut app, plane, dir) = seam_section(rows);
         let groups = section_groups(&mut app, &plane, 1.0, true).unwrap();
         let project = app.session.project();
         let seam = group(&groups, project, "seams", "seam").expect("the model's cut");

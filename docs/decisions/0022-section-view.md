@@ -55,7 +55,9 @@ in mine grid coordinates, and can be snapped to and exported.
 11. **Seams fill between each working horizon's own roof and floor.** Those are surfaces, so they cut into open
     lines, not loops: the fill walks both along the section from breakpoint to breakpoint and takes in what
     lies between them wherever both exist and the roof is above the floor, stopping exactly where one passes
-    through the other. A parent does not fill, as its daughters do.
+    through the other. A parent does not fill, as its daughters do. Seam lines and fills take a default colour
+    by the horizon's material, amber for coal and grey for waste, whatever the case it is typed in; any other
+    material keeps its layer colour. Setting colours comes with colouring, filtering and attributes.
 
 ## Evidence
 

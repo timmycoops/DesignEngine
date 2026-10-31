@@ -449,7 +449,8 @@ async function checkFill(viewport: Viewport, section: SectionView, button: (name
   await toggle();
   const [off, lines] = [triangles(), screen(viewport, over)];
   await toggle();
-  return { triangles: on, solid_triangles: solids, seam_triangles: seams, unfilled, off_triangles: off, back_triangles: triangles(), filled, lines };
+  const materials = [...new Set((section.lastCut?.groups ?? []).map((group) => group.material).filter(Boolean))];
+  return { triangles: on, solid_triangles: solids, seam_triangles: seams, materials, unfilled, off_triangles: off, back_triangles: triangles(), filled, lines };
 }
 
 /**
