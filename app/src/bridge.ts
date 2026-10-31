@@ -410,14 +410,23 @@ export type WallSide = 'left' | 'right';
 
 export type StepTarget = { kind: 'surface'; id: string } | { kind: 'rl'; rl: number };
 
-export type ProfileStep = { step: 'project'; to: StepTarget; rule: string } | { step: 'berm'; rule: string };
+/** A step's batter or width: a number typed on the row, or a rule's name. */
+export type StepValue = number | string;
+
+/** `condition` is how far the line may move in plan when it's cleaned (m); null leaves it as it is. */
+export type ProfileStep =
+  | { step: 'project'; to: StepTarget; batter: StepValue; condition: number | null }
+  | { step: 'berm'; on: StepTarget | null; width: StepValue; register: boolean; condition: number | null };
+
+export type FaceDirection = 'up' | 'down';
 
 export interface FaceProfile {
   name: string;
+  direction: FaceDirection;
   /** The surface or grid a toe registers to. */
   register: string;
-  up: ProfileStep[];
-  down: ProfileStep[];
+  condition: number | null;
+  steps: ProfileStep[];
 }
 
 export interface FaceLine {
@@ -435,7 +444,6 @@ export interface WallRule {
 
 export interface FaceDesign {
   layer: string;
-  tolerance: number;
   lines: FaceLine[];
   profiles: FaceProfile[];
   rules: WallRule[];

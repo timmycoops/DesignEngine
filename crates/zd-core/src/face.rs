@@ -1,13 +1,16 @@
 //! A face design: what the Face design panel edits and `face.project` runs. Which lines, which profile
-//! each one takes, the steps of each profile, and the named rules those steps use. It's one saved object,
-//! so one edit is one revision and undoes in one go. See `docs/decisions/0024-face-design.md`.
+//! each one takes, and the steps of each profile, one table going one way from the toe. It's one saved
+//! object, so one edit is one revision and undoes in one go. See `docs/decisions/0024-face-design.md`.
 
 use serde::{Deserialize, Serialize};
 
 use crate::ObjectId;
 
-fn default_tolerance() -> f64 {
-    0.1
+/// Past this a conditioning tolerance stops tidying a line and starts cutting its corners off (m).
+pub const MOST_TOLERANCE: f64 = 2.0;
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -15,15 +18,13 @@ fn default_tolerance() -> f64 {
 pub struct FaceDesign {
     /// Everything a run makes goes on this layer.
     pub layer: String,
-    /// How far a next toe's plan shape may leave its crest (m).
-    #[serde(default = "default_tolerance")]
-    pub tolerance: f64,
     pub lines: Vec<FaceLine>,
     pub profiles: Vec<FaceProfile>,
+    #[serde(default)]
     pub rules: Vec<WallRule>,
 }
 
-/// One string to run, and how.
+/// One string to run, and how. A string can be in twice with different profiles, to go both ways from it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FaceLine {
@@ -36,7 +37,8 @@ pub struct FaceLine {
     pub run_on: [f64; 2],
 }
 
-/// The side a wall rises on, looking along the string.
+/// The side a wall rises on, looking along the string. It doesn't change with direction: going down from
+/// the same string on the same side carries on the same plane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WallSide {
@@ -44,24 +46,51 @@ pub enum WallSide {
     Right,
 }
 
+/// The way a profile's steps go from the toe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FaceDirection {
+    Up,
+    Down,
+}
+
+/// One table of steps, for one type of string.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FaceProfile {
     pub name: String,
+    pub direction: FaceDirection,
     /// The surface or grid a toe registers to.
     pub register: ObjectId,
-    pub up: Vec<ProfileStep>,
+    /// How far a toe may move in plan when it's conditioned (m); none leaves it as drawn.
     #[serde(default)]
-    pub down: Vec<ProfileStep>,
+    pub condition: Option<f64>,
+    pub steps: Vec<ProfileStep>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "step", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProfileStep {
-    /// A wall to a target at the batter a rule gives (degrees).
-    Project { to: StepTarget, rule: String },
-    /// A berm of the width a rule gives (m).
-    Berm { rule: String },
+    /// A wall to a target at a batter (degrees). `condition` is how far the crest may move in plan when
+    /// it's cleaned for the next step (m); none leaves it as it landed.
+    Project {
+        to: StepTarget,
+        batter: StepValue,
+        #[serde(default)]
+        condition: Option<f64>,
+    },
+    /// A berm of a width (m). Its line registers on `on`, or on what the row above reached if that's left
+    /// out. With `register` off it keeps its crest's heights instead. `condition` is how far the line may
+    /// move in plan when it's cleaned after moving out (m).
+    Berm {
+        #[serde(default)]
+        on: Option<StepTarget>,
+        width: StepValue,
+        #[serde(default = "yes")]
+        register: bool,
+        #[serde(default)]
+        condition: Option<f64>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -69,6 +98,14 @@ pub enum ProfileStep {
 pub enum StepTarget {
     Surface { id: ObjectId },
     Rl { rl: f64 },
+}
+
+/// A step's batter or width: a number typed on the row, or the name of a rule.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum StepValue {
+    Number(f64),
+    Rule(String),
 }
 
 /// A named rule, which any step can use.
@@ -96,15 +133,23 @@ impl FaceDesign {
         self.profiles.iter().find(|p| p.name == name)
     }
 
+    /// The number a step's batter or width comes to.
+    pub fn value_of(&self, given: &StepValue) -> Option<f64> {
+        match given {
+            StepValue::Number(value) => Some(*value),
+            StepValue::Rule(name) => self.rule(name).map(|rule| {
+                let RuleValue::Fixed { value } = rule.value;
+                value
+            }),
+        }
+    }
+
     /// What's wrong with the design, in the words the panel shows. Empty when it can run, as far as can
     /// be told without the strings and surfaces it names.
     pub fn problems(&self) -> Vec<String> {
         let mut problems = Vec::new();
         if self.layer.trim().is_empty() {
             problems.push("Name a layer for what a run makes".to_string());
-        }
-        if !(self.tolerance.is_finite() && self.tolerance >= 0.0) {
-            problems.push("The tolerance must be zero or more".to_string());
         }
         if self.lines.is_empty() {
             problems.push("Add at least one line".to_string());
@@ -120,26 +165,31 @@ impl FaceDesign {
         };
         twice(self.profiles.iter().map(|p| p.name.as_str()).collect(), "profile", &mut problems);
         twice(self.rules.iter().map(|r| r.name.as_str()).collect(), "rule", &mut problems);
-        for line in &self.lines {
+        for (k, line) in self.lines.iter().enumerate() {
             if self.profile(&line.profile).is_none() {
                 problems.push(format!("A line uses a profile that isn't there: {}", line.profile));
             }
             if !line.run_on.iter().all(|d| d.is_finite() && *d >= 0.0) {
                 problems.push("A run-on must be zero or more".to_string());
             }
+            if self.lines[..k].iter().any(|l| l.string == line.string && l.profile == line.profile) {
+                problems.push(format!("A string is in twice with the profile {}", line.profile));
+            }
         }
         for profile in &self.profiles {
-            if profile.up.is_empty() && profile.down.is_empty() {
+            if profile.steps.is_empty() {
                 problems.push(format!("{} has no steps", profile.name));
             }
-            for step in profile.up.iter().chain(&profile.down) {
-                self.check_step(profile, step, &mut problems);
+            check_tolerance(&format!("{}'s toe", profile.name), profile.condition, &mut problems);
+            for (k, step) in profile.steps.iter().enumerate() {
+                self.check_step(&format!("{} step {}", profile.name, k + 1), step, &mut problems);
             }
         }
-        let steps = || self.profiles.iter().flat_map(|p| p.up.iter().chain(&p.down));
+        let steps = || self.profiles.iter().flat_map(|p| &p.steps);
         for rule in &self.rules {
-            let as_batter = steps().any(|s| matches!(s, ProfileStep::Project { rule: r, .. } if *r == rule.name));
-            let as_berm = steps().any(|s| matches!(s, ProfileStep::Berm { rule: r } if *r == rule.name));
+            let named = |value: &StepValue| matches!(value, StepValue::Rule(name) if *name == rule.name);
+            let as_batter = steps().any(|s| matches!(s, ProfileStep::Project { batter, .. } if named(batter)));
+            let as_berm = steps().any(|s| matches!(s, ProfileStep::Berm { width, .. } if named(width)));
             if as_batter && as_berm {
                 problems.push(format!("{} is used as both a batter and a berm: a batter is in degrees and a berm in metres", rule.name));
             }
@@ -148,22 +198,33 @@ impl FaceDesign {
         problems
     }
 
-    fn check_step(&self, profile: &FaceProfile, step: &ProfileStep, problems: &mut Vec<String>) {
-        let (name, batter) = match step {
-            ProfileStep::Project { rule, .. } => (rule, true),
-            ProfileStep::Berm { rule } => (rule, false),
+    fn check_step(&self, row: &str, step: &ProfileStep, problems: &mut Vec<String>) {
+        let (given, condition, is_batter) = match step {
+            ProfileStep::Project { batter, condition, .. } => (batter, condition, true),
+            ProfileStep::Berm { width, condition, .. } => (width, condition, false),
         };
-        let Some(rule) = self.rule(name) else {
-            problems.push(format!("{} uses a rule that isn't there: {name}", profile.name));
+        check_tolerance(row, *condition, problems);
+        let Some(value) = self.value_of(given) else {
+            match given {
+                StepValue::Rule(name) if !name.trim().is_empty() => problems.push(format!("{row} uses a rule that isn't there: {name}")),
+                _ => problems.push(format!("{row} needs {}", if is_batter { "a batter" } else { "a width" })),
+            }
             return;
         };
-        let RuleValue::Fixed { value } = rule.value;
-        if batter && !(value > 0.0 && value < 90.0) {
-            problems.push(format!("{name} is used as a batter, which must be between 0 and 90 degrees"));
+        if is_batter && !(value > 0.0 && value < 90.0) {
+            problems.push(format!("{row}: a batter must be between 0 and 90 degrees"));
         }
-        if !batter && !(value.is_finite() && value >= 0.0) {
-            problems.push(format!("{name} is used as a berm, which must be zero or more"));
+        if !is_batter && !(value.is_finite() && value >= 0.0) {
+            problems.push(format!("{row}: a berm must be zero or more"));
         }
+    }
+}
+
+fn check_tolerance(row: &str, condition: Option<f64>, problems: &mut Vec<String>) {
+    if let Some(tolerance) = condition
+        && !(tolerance.is_finite() && (0.0..=MOST_TOLERANCE).contains(&tolerance))
+    {
+        problems.push(format!("{row}: a conditioning tolerance must be from 0 to {MOST_TOLERANCE} m"));
     }
 }
 
@@ -175,15 +236,19 @@ mod tests {
         let id = ObjectId::new();
         FaceDesign {
             layer: "faces".into(),
-            tolerance: 0.1,
             lines: vec![FaceLine { string: id, profile: "Highwall".into(), side: WallSide::Right, run_on: [100.0, 100.0] }],
             profiles: vec![FaceProfile {
                 name: "Highwall".into(),
+                direction: FaceDirection::Up,
                 register: id,
-                up: vec![ProfileStep::Project { to: StepTarget::Surface { id }, rule: "HW batter".into() }, ProfileStep::Berm { rule: "HW berm".into() }, ProfileStep::Project { to: StepTarget::Rl { rl: 500.0 }, rule: "HW batter".into() }],
-                down: vec![ProfileStep::Project { to: StepTarget::Rl { rl: -500.0 }, rule: "HW batter".into() }],
+                condition: None,
+                steps: vec![
+                    ProfileStep::Project { to: StepTarget::Surface { id }, batter: StepValue::Rule("HW batter".into()), condition: Some(0.1) },
+                    ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: true, condition: Some(0.1) },
+                    ProfileStep::Project { to: StepTarget::Rl { rl: 500.0 }, batter: StepValue::Rule("HW batter".into()), condition: None },
+                ],
             }],
-            rules: vec![WallRule { name: "HW batter".into(), value: RuleValue::Fixed { value: 70.0 } }, WallRule { name: "HW berm".into(), value: RuleValue::Fixed { value: 10.0 } }],
+            rules: vec![WallRule { name: "HW batter".into(), value: RuleValue::Fixed { value: 70.0 } }],
         }
     }
 
@@ -194,6 +259,46 @@ mod tests {
         assert!(d.problems().is_empty());
     }
 
+    /// Exactly what the Face design panel sent, nulls and whole numbers included.
+    #[test]
+    fn a_design_as_the_panel_saves_it_reads() {
+        let saved = r#"{
+            "layer": "faces",
+            "lines": [
+                { "string": "55555555555555555555555555555555", "profile": "Highwall", "side": "right", "run_on": [100, 100] },
+                { "string": "55555555555555555555555555555555", "profile": "Highwall copy", "side": "right", "run_on": [100, 100] }
+            ],
+            "profiles": [{
+                "name": "Highwall", "direction": "up", "register": "11111111111111111111111111111111", "condition": null,
+                "steps": [
+                    { "step": "project", "to": { "kind": "surface", "id": "22222222222222222222222222222222" }, "batter": "Highwall batter", "condition": 0.1 },
+                    { "step": "berm", "on": null, "width": 10, "register": false, "condition": 0.1 },
+                    { "step": "berm", "on": { "kind": "rl", "rl": 300 }, "width": 10, "register": true, "condition": null },
+                    { "step": "project", "to": { "kind": "rl", "rl": 500 }, "batter": 45.5, "condition": 0.1 }
+                ]
+            }, {
+                "name": "Highwall copy", "direction": "down", "register": "11111111111111111111111111111111", "condition": 0.1,
+                "steps": [{ "step": "project", "to": { "kind": "rl", "rl": -500 }, "batter": "Highwall batter", "condition": null }]
+            }],
+            "rules": [{ "name": "Highwall batter", "value": { "type": "fixed", "value": 72 } }]
+        }"#;
+        let design: FaceDesign = serde_json::from_str(saved).unwrap();
+        assert!(design.problems().is_empty(), "{:?}", design.problems());
+        assert_eq!(design.profiles[1].direction, FaceDirection::Down);
+        assert_eq!(design.profiles[0].steps[1], ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: false, condition: Some(0.1) });
+        assert_eq!(design.value_of(&StepValue::Rule("Highwall batter".into())), Some(72.0));
+    }
+
+    #[test]
+    fn a_step_takes_a_number_or_a_rule() {
+        let d = design();
+        assert_eq!(d.value_of(&StepValue::Number(45.0)), Some(45.0));
+        assert_eq!(d.value_of(&StepValue::Rule("HW batter".into())), Some(70.0));
+        assert_eq!(d.value_of(&StepValue::Rule("Endwall batter".into())), None);
+        let row: ProfileStep = serde_json::from_str(r#"{ "step": "berm", "width": 30 }"#).unwrap();
+        assert_eq!(row, ProfileStep::Berm { on: None, width: StepValue::Number(30.0), register: true, condition: None });
+    }
+
     #[test]
     fn what_is_wrong_with_a_design_is_said_in_plain_words() {
         let mut d = design();
@@ -201,15 +306,37 @@ mod tests {
         assert!(d.problems().iter().any(|p| p.contains("profile that isn't there: Endwall")));
         let mut d = design();
         d.rules[0].value = RuleValue::Fixed { value: 95.0 };
-        assert!(d.problems().iter().any(|p| p.contains("HW batter is used as a batter")));
+        assert!(d.problems().iter().any(|p| p.contains("Highwall step 1: a batter must be")));
         let mut d = design();
-        d.rules.remove(1);
-        assert!(d.problems().iter().any(|p| p.contains("rule that isn't there: HW berm")));
+        d.rules.remove(0);
+        assert!(d.problems().iter().any(|p| p.contains("Highwall step 1 uses a rule that isn't there: HW batter")));
         let mut d = design();
-        d.profiles[0].up[1] = ProfileStep::Berm { rule: "HW batter".into() };
+        d.profiles[0].steps[1] = ProfileStep::Berm { on: None, width: StepValue::Rule(String::new()), register: true, condition: None };
+        assert!(d.problems().iter().any(|p| p.contains("Highwall step 2 needs a width")));
+        let mut d = design();
+        d.profiles[0].steps[1] = ProfileStep::Berm { on: None, width: StepValue::Rule("HW batter".into()), register: true, condition: None };
         assert!(d.problems().iter().any(|p| p.contains("HW batter is used as both")));
         let mut d = design();
         d.profiles.push(d.profiles[0].clone());
         assert!(d.problems().iter().any(|p| p.contains("Two profiles are called Highwall")));
+        let mut d = design();
+        d.profiles[0].steps[0] = ProfileStep::Project { to: StepTarget::Rl { rl: 0.0 }, batter: StepValue::Number(70.0), condition: Some(30.0) };
+        assert!(d.problems().iter().any(|p| p.contains("Highwall step 1: a conditioning tolerance must be")));
+        let mut d = design();
+        d.profiles[0].condition = Some(5.0);
+        assert!(d.problems().iter().any(|p| p.contains("Highwall's toe: a conditioning tolerance must be")));
+    }
+
+    #[test]
+    fn a_string_goes_both_ways_with_a_profile_for_each_but_not_twice_with_one() {
+        let mut d = design();
+        let mut down = d.profiles[0].clone();
+        down.name = "Highwall down".into();
+        down.direction = FaceDirection::Down;
+        d.profiles.push(down);
+        d.lines.push(FaceLine { profile: "Highwall down".into(), ..d.lines[0].clone() });
+        assert!(d.problems().is_empty(), "{:?}", d.problems());
+        d.lines.push(d.lines[0].clone());
+        assert!(d.problems().iter().any(|p| p.contains("A string is in twice with the profile Highwall")));
     }
 }

@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceProfile, ObjectId, ObjectKind, ProfileStep, RuleValue, StepTarget, Surface, TriMesh, WallSide};
-use zd_geom::{COINCIDENT, FaceStep, FaceTarget, GeomError, Leg, OffsetSide, find_crossings, next_toe, project_face, project_wall, register_toe, run_on, triangulate_grid};
+use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceProfile, MOST_TOLERANCE, ObjectId, ObjectKind, ProfileStep, StepTarget, StepValue, Surface, TriMesh, WallSide};
+use zd_geom::{COINCIDENT, FaceStep, FaceTarget, GeomError, OffsetSide, conditioned_toe, find_crossings, next_toe, project_face, project_wall, register_toe, run_on, triangulate_grid};
 
 use super::SideParam;
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
@@ -16,9 +16,6 @@ pub struct ProjectStep;
 fn default_tolerance() -> f64 {
     0.1
 }
-
-/// Past this a conditioning tolerance stops tidying the crest and starts cutting its corners off.
-const MOST_TOLERANCE: f64 = 2.0;
 
 fn too_much_tolerance(tolerance: f64) -> String {
     format!("a tolerance of {tolerance} m would cut corners off the crest: it's how far the next toe may leave the crest, at most {MOST_TOLERANCE} m. The berm width has its own box")
@@ -186,9 +183,9 @@ impl Command for SaveDesign {
     }
 }
 
-/// `face.project`: every line of a design through its profile: registered, run on past its ends and
-/// stepped up and down, in one run and one undo. Each line makes one face surface, with its toe and crest
-/// strings. Re-running replaces what the last run of the design made.
+/// `face.project`: every line of a design through its profile: run on past its ends, registered and
+/// stepped the way the profile goes, in one run and one undo. Each line makes one face surface, with its
+/// toe and crest strings. Re-running replaces what the last run of the design made.
 pub struct ProjectDesign;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -222,9 +219,6 @@ impl Command for ProjectDesign {
         if let Some(problem) = design.problems().into_iter().next() {
             return Err(CommandError::Invalid(problem));
         }
-        if design.tolerance > MOST_TOLERANCE {
-            return Err(CommandError::Invalid(too_much_tolerance(design.tolerance)));
-        }
         let mut targets = Targets { inputs, grids: HashMap::new() };
         for id in design.profiles.iter().flat_map(surfaces_of) {
             targets.prepare(id)?;
@@ -234,30 +228,33 @@ impl Command for ProjectDesign {
         for line in &design.lines {
             let (string, path) = inputs.string(line.string)?;
             let profile = design.profile(&line.profile).ok_or_else(|| CommandError::Invalid(format!("no profile called {}", line.profile)))?;
-            let refuse = |e: GeomError| CommandError::Invalid(format!("{}: {e}", string.name));
+            let base = format!("{} {}", string.name, line.profile);
+            let refuse = |e: GeomError| CommandError::Invalid(format!("{base}: {e}"));
             let extended = run_on(path, line.run_on).map_err(refuse)?;
+            let shaped = match profile.condition {
+                Some(tolerance) if tolerance > 0.0 => conditioned_toe(&extended, tolerance).map_err(refuse)?,
+                _ => extended.clone(),
+            };
             let registered = targets.mesh(profile.register)?;
-            let (toe, register) = register_toe(&extended, registered).map_err(refuse)?;
-            let up = steps_of(design, &profile.up, &targets)?;
-            let down = steps_of(design, &profile.down, &targets)?;
+            let (toe, register) = register_toe(&shaped, registered).map_err(refuse)?;
+            let steps = steps_of(design, &profile.steps, &targets)?;
             let side = match line.side {
                 WallSide::Left => OffsetSide::Left,
                 WallSide::Right => OffsetSide::Right,
             };
-            let face = project_face(&toe, registered, side, &up, &down, design.tolerance).map_err(refuse)?;
-            messages.push(line_report(&string.name, &face, register.off_grid));
+            let face = project_face(&toe, registered, side, profile.direction, &steps).map_err(refuse)?;
+            messages.push(line_report(&base, &face, [extended.vertices.len(), shaped.vertices.len()], register.off_grid));
             let attributes = || Attributes::from([(MADE_BY.to_string(), AttrValue::Text(p.design.to_string()))]);
             let create = |name: String, body: Body| Change::Create { name, layer: design.layer.clone(), attributes: attributes(), body };
             for (k, bench) in face.benches.iter().enumerate() {
-                let way = if bench.leg == Leg::Up { "" } else { "down " };
-                changes.push(create(format!("{} {way}toe {}", string.name, k + 1), Body::String(bench.toe.clone())));
-                changes.push(create(format!("{} {way}crest {}", string.name, k + 1), Body::String(bench.crest.clone())));
+                changes.push(create(format!("{base} toe {}", k + 1), Body::String(bench.toe.clone())));
+                changes.push(create(format!("{base} crest {}", k + 1), Body::String(bench.crest.clone())));
             }
             let crossings = find_crossings(&face.surface, COINCIDENT);
             if crossings.pairs > 0 {
-                messages.push(format!("{}: {} pairs of face triangles cross", string.name, crossings.pairs));
+                messages.push(format!("{base}: {} pairs of face triangles cross", crossings.pairs));
             }
-            changes.push(create(format!("{} face", string.name), Body::Surface(Surface::new(face.surface).with_crossings(crossings))));
+            changes.push(create(format!("{base} face"), Body::Surface(Surface::new(face.surface).with_crossings(crossings))));
         }
         let mut outcome = Outcome::new(changes);
         for message in messages {
@@ -270,8 +267,8 @@ impl Command for ProjectDesign {
 /// The surfaces a profile names.
 fn surfaces_of(profile: &FaceProfile) -> Vec<ObjectId> {
     let mut ids = vec![profile.register];
-    for step in profile.up.iter().chain(&profile.down) {
-        if let ProfileStep::Project { to: StepTarget::Surface { id }, .. } = step {
+    for step in &profile.steps {
+        if let ProfileStep::Project { to: StepTarget::Surface { id }, .. } | ProfileStep::Berm { on: Some(StepTarget::Surface { id }), .. } = step {
             ids.push(*id);
         }
     }
@@ -310,46 +307,48 @@ impl Targets<'_, '_> {
 }
 
 fn steps_of<'t>(design: &FaceDesign, steps: &[ProfileStep], targets: &'t Targets<'_, '_>) -> Result<Vec<FaceStep<'t>>, CommandError> {
-    let value = |name: &str| match design.rule(name).map(|r| r.value) {
-        Some(RuleValue::Fixed { value }) => Ok(value),
-        None => Err(CommandError::Invalid(format!("no rule called {name}"))),
+    let value = |given: &StepValue| design.value_of(given).ok_or_else(|| CommandError::Invalid(format!("no rule called {given:?}")));
+    let target = |to: &StepTarget| match to {
+        StepTarget::Surface { id } => targets.mesh(*id).map(FaceTarget::Surface),
+        StepTarget::Rl { rl } => Ok(FaceTarget::Rl(*rl)),
     };
     steps
         .iter()
         .map(|step| {
             Ok(match step {
-                ProfileStep::Project { to: StepTarget::Surface { id }, rule } => FaceStep::Project { to: FaceTarget::Surface(targets.mesh(*id)?), batter: value(rule)? },
-                ProfileStep::Project { to: StepTarget::Rl { rl }, rule } => FaceStep::Project { to: FaceTarget::Rl(*rl), batter: value(rule)? },
-                ProfileStep::Berm { rule } => FaceStep::Berm { width: value(rule)? },
+                ProfileStep::Project { to, batter, condition } => FaceStep::Project { to: target(to)?, batter: value(batter)?, condition: *condition },
+                ProfileStep::Berm { on, width, register, condition } => FaceStep::Berm { on: on.as_ref().map(target).transpose()?, width: value(width)?, register: *register, condition: *condition },
             })
         })
         .collect()
 }
 
 /// One line's result, naming each place the design needs looking at.
-fn line_report(name: &str, face: &zd_geom::Face, off_grid: usize) -> String {
+fn line_report(name: &str, face: &zd_geom::Face, [toe_in, toe_out]: [usize; 2], off_grid: usize) -> String {
     let (walls, triangles) = (face.benches.len(), face.surface.triangles.len());
     let mut report = format!("{name}: {walls} walls, {triangles} triangles");
+    if toe_out != toe_in {
+        report += &format!("; toe conditioned from {toe_in} to {toe_out} vertices");
+    }
     if off_grid > 0 {
         report += &format!("; {off_grid} toe vertices off their grid carried on at their grade");
     }
     for step in &face.steps {
-        let leg = if step.leg == Leg::Up { "up" } else { "down" };
         let number = step.step + 1;
         if step.no_wall {
-            report += &format!("; {leg} step {number} has no height: its target is on or below the string all the way along");
+            report += &format!("; step {number} has no height: its target is on or past the string all the way along");
         }
         if let Some(first) = step.no_height.first() {
-            report += &format!("; {leg} step {number} has no height along {} stretch(es), the first from {:.1}, {:.1}", step.no_height.len(), first.from[0], first.from[1]);
+            report += &format!("; step {number} has no height along {} stretch(es), the first from {:.1}, {:.1}", step.no_height.len(), first.from[0], first.from[1]);
         }
         if let Some(first) = step.no_target.first() {
-            report += &format!("; {leg} step {number} has no target along {} stretch(es), bridged, the first from {:.1}, {:.1}", step.no_target.len(), first.from[0], first.from[1]);
+            report += &format!("; step {number} has no target along {} stretch(es), bridged, the first from {:.1}, {:.1}", step.no_target.len(), first.from[0], first.from[1]);
         }
         if step.off_surface > 0 {
-            report += &format!("; {leg} step {number}: {} berm vertices have no surface under them", step.off_surface);
+            report += &format!("; step {number}: {} berm vertices have no surface under them and hold their crest's height", step.off_surface);
         }
         if step.pieces_dropped > 0 {
-            report += &format!("; {leg} step {number}: a berm pinched into pieces and {} were left out", step.pieces_dropped);
+            report += &format!("; step {number}: a berm pinched into pieces and {} were left out", step.pieces_dropped);
         }
     }
     report

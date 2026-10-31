@@ -1,30 +1,78 @@
 import { ArrowDown, ArrowUp, Play, Plus, Save, Trash2 } from 'lucide-react';
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import { type FaceDesign, type FaceLine, type FaceProfile, objectDetails, type ObjectSummary, type ProfileStep, type StepTarget, type WallRule, type WallSide } from '@/bridge';
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, objectDetails, type ObjectSummary, type ProfileStep, type StepTarget, type StepValue, type WallRule, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
+import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
 import { useWorkspace } from '@/workspace/context';
 
 const selectClass = 'h-7 min-w-0 rounded border bg-background px-1 text-xs';
+const headClass = 'px-1 font-normal';
+const cellClass = 'px-1 py-0.5';
 
-/** A number that can be typed through half-finished values: it only reports what parses. */
-function NumberBox({ value, onChange, title, width = 'w-16' }: { value: number; onChange: (v: number) => void; title: string; width?: string }) {
-  const [text, setText] = useState(String(value));
+/** What a new row starts with. */
+const usualTolerance = 0.1;
+const usualBatter = 70;
+const usualBerm = 10;
+
+/** A number that can be typed through half-finished values: it only reports what parses, and goes back to what's held on leaving it. */
+function NumberBox({ value, onChange, title, width = 'w-16', disabled }: { value: number | null; onChange: (v: number) => void; title: string; width?: string; disabled?: boolean }) {
+  const held = value === null ? '' : String(value);
+  const [text, setText] = useState(held);
   useEffect(() => {
-    setText((t) => (Number(t) === value ? t : String(value)));
-  }, [value]);
+    setText((t) => (t.trim() !== '' && Number(t) === value ? t : held));
+  }, [value, held]);
   return (
     <Input
       className={`h-7 ${width} px-1 text-xs tabular-nums`}
       value={text}
       title={title}
       aria-label={title}
+      disabled={disabled}
+      onBlur={() => setText(held)}
       onChange={(e) => {
         setText(e.target.value);
         const n = Number(e.target.value);
         if (e.target.value.trim() !== '' && Number.isFinite(n)) onChange(n);
       }}
     />
+  );
+}
+
+/** What's typed in a batter or width: a number if it reads as one, otherwise a rule's name. */
+function stepValue(text: string): StepValue {
+  const n = Number(text);
+  return text.trim() !== '' && Number.isFinite(n) ? n : text.trim();
+}
+
+/** A batter or width: a number typed on the row, or a rule picked from the list. */
+function ValueBox({ value, unit, what, rules, onChange }: { value: StepValue; unit: string; what: string; rules: WallRule[]; onChange: (v: StepValue) => void }) {
+  const [text, setText] = useState(String(value));
+  const list = useId();
+  useEffect(() => {
+    setText((t) => (stepValue(t) === value ? t : String(value)));
+  }, [value]);
+  return (
+    <span className="flex items-center gap-1">
+      <Input
+        className="h-7 w-24 px-1 text-xs tabular-nums"
+        list={list}
+        value={text}
+        title={`${what}, or the name of a rule`}
+        aria-label={what}
+        onBlur={() => setText(String(value))}
+        onChange={(e) => {
+          setText(e.target.value);
+          onChange(stepValue(e.target.value));
+        }}
+      />
+      <datalist id={list}>
+        {rules.map((r) => (
+          <option key={r.name} value={r.name} />
+        ))}
+      </datalist>
+      <span className="text-muted-foreground">{unit}</span>
+    </span>
   );
 }
 
@@ -53,27 +101,26 @@ function IconButton({ onClick, title, children, disabled }: { onClick: () => voi
   );
 }
 
-function SideChoice({ value, onChange }: { value: WallSide; onChange: (v: WallSide) => void }) {
+function Choice<T extends string>({ value, options, onChange }: { value: T; options: readonly T[]; onChange: (v: T) => void }) {
   return (
     <span className="inline-flex rounded border">
-      {(['left', 'right'] as const).map((side) => (
-        <button key={side} className={`px-1.5 py-1 capitalize ${side === value ? 'bg-selection text-primary' : 'text-muted-foreground'}`} onClick={() => onChange(side)}>
-          {side}
+      {options.map((option) => (
+        <button key={option} className={`px-1.5 py-1 capitalize ${option === value ? 'bg-selection text-primary' : 'text-muted-foreground'}`} onClick={() => onChange(option)}>
+          {option}
         </button>
       ))}
     </span>
   );
 }
 
+const SIDES: readonly WallSide[] = ['left', 'right'];
+const DIRECTIONS: readonly FaceDirection[] = ['up', 'down'];
+
 const blankDesign = (register: string): FaceDesign => ({
   layer: 'faces',
-  tolerance: 0.1,
   lines: [],
-  profiles: [{ name: 'Highwall', register, up: [], down: [] }],
-  rules: [
-    { name: 'Batter', value: { type: 'fixed', value: 70 } },
-    { name: 'Berm', value: { type: 'fixed', value: 10 } },
-  ],
+  profiles: [{ name: 'Highwall', direction: 'up', register, condition: usualTolerance, steps: [] }],
+  rules: [],
 });
 
 /** A name not already taken, from a starting word. */
@@ -94,68 +141,107 @@ function moved<T>(items: T[], at: number, by: number) {
   return out;
 }
 
-/** The rule a step of this kind should start on, going by the rule's name, so a berm never starts at a batter. */
-function ruleFor(kind: ProfileStep['step'], rules: WallRule[]) {
-  const word = kind === 'berm' ? 'berm' : 'batter';
-  const other = kind === 'berm' ? 'batter' : 'berm';
-  return (rules.find((r) => r.name.toLowerCase().includes(word)) ?? rules.find((r) => !r.name.toLowerCase().includes(other)) ?? rules[0])?.name ?? '';
+/** The number a value comes to, if it comes to one yet. */
+function numberOf(value: StepValue, rules: WallRule[]) {
+  return typeof value === 'number' ? value : rules.find((r) => r.name === value)?.value.value;
 }
 
-/** Where a new step should start: the surface after the last one this list went to, or after the toe's own. */
+function stepValueOf(step: ProfileStep) {
+  return step.step === 'project' ? step.batter : step.width;
+}
+
+function targetOf(step: ProfileStep) {
+  return step.step === 'project' ? step.to : step.on;
+}
+
+/** Where a new step should start: the surface after the last one the table went to, or after the toe's own. */
 function nextTarget(steps: ProfileStep[], surfaces: ObjectSummary[], register: string): StepTarget {
   const last = [...steps].reverse().find((s) => s.step === 'project' && s.to.kind === 'surface');
   const from = last?.step === 'project' && last.to.kind === 'surface' ? last.to.id : register;
-  const next = surfaces[surfaces.findIndex((s) => s.id === from) + 1] ?? surfaces.find((s) => s.id !== register);
+  // Past the last surface a face goes on to an RL.
+  const next = surfaces[surfaces.findIndex((s) => s.id === from) + 1];
   return next ? { kind: 'surface', id: next.id } : { kind: 'rl', rl: 0 };
 }
 
-/** One step of a profile: a wall to a surface or RL, or a berm on whatever the last wall reached. */
-function StepRow({ step, surfaces, rules, startingTarget, onChange, onMove, onRemove }: { step: ProfileStep; surfaces: ObjectSummary[]; rules: WallRule[]; startingTarget: StepTarget; onChange: (s: ProfileStep) => void; onMove: (by: number) => void; onRemove: () => void }) {
-  const ruleName = step.rule;
-  const toValue = step.step === 'project' ? (step.to.kind === 'rl' ? 'rl' : step.to.id) : '';
-  const setTo = (value: string) => {
-    if (step.step !== 'project') return;
-    const to: StepTarget = value === 'rl' ? { kind: 'rl', rl: 0 } : { kind: 'surface', id: value };
-    onChange({ ...step, to });
+/** A new step of a kind, starting from the table's last one of that kind. */
+function blankStep(kind: ProfileStep['step'], steps: ProfileStep[], surfaces: ObjectSummary[], register: string, condition: number | null): ProfileStep {
+  const last = [...steps].reverse().find((s) => s.step === kind);
+  if (kind === 'project') return { step: 'project', to: nextTarget(steps, surfaces, register), batter: last ? stepValueOf(last) : usualBatter, condition };
+  return { step: 'berm', on: null, width: last ? stepValueOf(last) : usualBerm, register: true, condition };
+}
+
+/** Whether a row hands its crest on as one wall with the row below: same batter, no berm between. */
+function carriesOn(steps: ProfileStep[], at: number, rules: WallRule[]) {
+  const [step, next] = [steps[at], steps[at + 1]];
+  if (step.step !== 'project' || next?.step !== 'project') return false;
+  const batter = numberOf(step.batter, rules);
+  return batter !== undefined && batter === numberOf(next.batter, rules);
+}
+
+/** A tick and its tolerance: off leaves the line as it is. */
+function ConditionCell({ value, onChange, carries }: { value: number | null; onChange: (v: number | null) => void; carries?: boolean }) {
+  const on = value !== null && !carries;
+  return (
+    <span className="flex items-center gap-2" title={carries ? 'One wall carries straight on from here, so there is no line to condition' : undefined}>
+      <Checkbox className="after:inset-0" checked={on} disabled={carries} aria-label="Condition this line" onCheckedChange={(ticked) => onChange(ticked === true ? usualTolerance : null)} />
+      <NumberBox width="w-12" value={on ? value : null} disabled={!on} title="How far the line may move in plan (m): 0.1 is usual, 2 at most" onChange={onChange} />
+    </span>
+  );
+}
+
+function RegisterCell({ checked, onChange }: { checked: boolean; onChange?: (v: boolean) => void }) {
+  const locked = !onChange;
+  return <Checkbox className="after:inset-0" checked={checked} disabled={locked} title={locked ? 'A wall always stops on its target, with a vertex at every triangle it crosses' : 'Follow the surface. Unticked, the line keeps the heights of its crest'} aria-label="Register" onCheckedChange={(ticked) => onChange?.(ticked === true)} />;
+}
+
+function SurfaceOptions({ surfaces }: { surfaces: ObjectSummary[] }) {
+  return surfaces.map((s) => (
+    <option key={s.id} value={s.id}>
+      {s.name}
+    </option>
+  ));
+}
+
+/** One step of a profile. A row says where it finishes: a wall's target, or the surface a berm's line registers on. */
+function StepRow({ number, step, surfaces, rules, above, carries, blank, onChange, onMove, onRemove }: { number: number; step: ProfileStep; surfaces: ObjectSummary[]; rules: WallRule[]; above: string; carries: boolean; blank: (kind: ProfileStep['step']) => ProfileStep; onChange: (s: ProfileStep) => void; onMove: (by: number) => void; onRemove: () => void }) {
+  const target = targetOf(step);
+  const surfaceValue = target?.kind === 'surface' ? target.id : target?.kind === 'rl' ? 'rl' : '';
+  const setSurface = (value: string) => {
+    if (step.step === 'project') onChange({ ...step, to: value === 'rl' ? { kind: 'rl', rl: 0 } : { kind: 'surface', id: value } });
+    else onChange({ ...step, on: value === '' ? null : { kind: 'surface', id: value } });
   };
+  const setRl = (rl: number) => onChange(step.step === 'project' ? { ...step, to: { kind: 'rl', rl } } : { ...step, on: { kind: 'rl', rl } });
+  // A berm that keeps its crest's heights doesn't register on anything.
+  const held = step.step === 'berm' && !step.register;
   return (
     <tr className="border-t">
-      <td className="px-1 py-0.5">
-        <select
-          className={selectClass}
-          value={step.step}
-          aria-label="Step"
-          onChange={(e) => onChange(e.target.value === 'berm' ? { step: 'berm', rule: ruleFor('berm', rules) } : { step: 'project', to: startingTarget, rule: ruleFor('project', rules) })}
-        >
+      <td className={`${cellClass} tabular-nums text-muted-foreground`}>{number}</td>
+      <td className={cellClass}>
+        <select className={selectClass} value={step.step} aria-label="Type" onChange={(e) => onChange({ ...blank(e.target.value as ProfileStep['step']), condition: step.condition })}>
           <option value="project">Project</option>
           <option value="berm">Berm</option>
         </select>
       </td>
-      <td className="px-1 py-0.5">
-        {step.step === 'berm' ? (
-          <span className="text-muted-foreground">on the last target</span>
+      <td className={cellClass}>
+        <select className={`${selectClass} w-full max-w-36`} value={surfaceValue} aria-label="Surface" disabled={held} onChange={(e) => setSurface(e.target.value)}>
+          {step.step === 'berm' && <option value="">{above} (as above)</option>}
+          <SurfaceOptions surfaces={surfaces} />
+          {(step.step === 'project' || target?.kind === 'rl') && <option value="rl">–</option>}
+        </select>
+      </td>
+      <td className={cellClass}>
+        <NumberBox width="w-14" value={target?.kind === 'rl' ? target.rl : null} title="RL" disabled={held} onChange={setRl} />
+      </td>
+      <td className={cellClass}>
+        {step.step === 'project' ? (
+          <ValueBox value={step.batter} unit="°" what="Batter in degrees" rules={rules} onChange={(batter) => onChange({ ...step, batter })} />
         ) : (
-          <span className="flex items-center gap-1">
-            <select className={`${selectClass} max-w-36`} value={toValue} aria-label="Project to" onChange={(e) => setTo(e.target.value)}>
-              {surfaces.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-              <option value="rl">An RL</option>
-            </select>
-            {step.to.kind === 'rl' && <NumberBox value={step.to.rl} title="RL" onChange={(rl) => onChange({ ...step, to: { kind: 'rl', rl } })} />}
-          </span>
+          <ValueBox value={step.width} unit="m" what="Width in metres" rules={rules} onChange={(width) => onChange({ ...step, width })} />
         )}
       </td>
-      <td className="px-1 py-0.5">
-        <select className={`${selectClass} max-w-28`} value={ruleName} aria-label="Rule" onChange={(e) => onChange({ ...step, rule: e.target.value })}>
-          {rules.map((r) => (
-            <option key={r.name} value={r.name}>
-              {r.name}
-            </option>
-          ))}
-        </select>
+      <td className={cellClass}>{step.step === 'berm' ? <RegisterCell checked={step.register} onChange={(register) => onChange({ ...step, register })} /> : step.to.kind === 'surface' && <RegisterCell checked />}</td>
+      <td className={cellClass}>
+        <ConditionCell value={step.condition} carries={carries} onChange={(condition) => onChange({ ...step, condition })} />
       </td>
       <td className="whitespace-nowrap py-0.5 text-right">
         <IconButton title="Move up" onClick={() => onMove(-1)}>
@@ -172,51 +258,91 @@ function StepRow({ step, surfaces, rules, startingTarget, onChange, onMove, onRe
   );
 }
 
-/** A profile's steps one way from the toe. */
-function StepTable({ title, steps, surfaces, rules, register, onChange }: { title: string; steps: ProfileStep[]; surfaces: ObjectSummary[]; rules: WallRule[]; register: string; onChange: (s: ProfileStep[]) => void }) {
-  const startingTarget = nextTarget(steps, surfaces, register);
-  const add = () => onChange([...steps, { step: 'project', to: startingTarget, rule: ruleFor('project', rules) }]);
+/** A profile as one table, read top to bottom: the toe's Register row, then each step going one way from it. */
+function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfile; surfaces: ObjectSummary[]; rules: WallRule[]; onChange: (p: Partial<FaceProfile>) => void }) {
+  const { steps, register } = profile;
+  const blank = (kind: ProfileStep['step']) => blankStep(kind, steps, surfaces, register, usualTolerance);
+  const add = (kind: ProfileStep['step']) => onChange({ steps: [...steps, blank(kind)] });
+  const setSteps = (next: ProfileStep[]) => onChange({ steps: next });
+  const nameOf = (target: StepTarget) => (target.kind === 'rl' ? `RL ${target.rl}` : (surfaces.find((s) => s.id === target.id)?.name ?? 'missing'));
+  /** What the rows above a row last reached, which a berm registers on unless it names another. */
+  const reached = (at: number) => {
+    const last = steps.slice(0, at).reverse().map(targetOf).find((t) => t);
+    return nameOf(last ?? { kind: 'surface', id: register });
+  };
   return (
     <div className="px-3 pb-1">
-      <div className="flex items-center gap-2 py-1 text-xs">
-        <span className="font-medium">{title}</span>
-        <SmallButton onClick={add}>
-          <Plus className="size-3" /> Add step
-        </SmallButton>
-      </div>
-      {steps.length > 0 && (
+      <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="text-left text-muted-foreground">
             <tr>
-              <th className="px-1 font-normal">Step</th>
-              <th className="px-1 font-normal">To</th>
-              <th className="px-1 font-normal">Rule</th>
+              <th className={headClass}>Step</th>
+              <th className={headClass}>Type</th>
+              <th className={headClass} title="Where the row finishes: a wall's target, or the surface a berm's line registers on">
+                Surface
+              </th>
+              <th className={headClass}>RL</th>
+              <th className={headClass}>Batter / Width</th>
+              <th className={headClass}>Register</th>
+              <th className={headClass} title="Clean the line before the next step, to within this many metres">
+                Condition, m
+              </th>
               <th />
             </tr>
           </thead>
           <tbody>
+            <tr className="border-t">
+              <td />
+              <td className={`${cellClass} px-2`}>Register</td>
+              <td className={cellClass}>
+                <select className={`${selectClass} w-full max-w-36`} value={register} aria-label="Register toe to" onChange={(e) => onChange({ register: e.target.value })}>
+                  <SurfaceOptions surfaces={surfaces} />
+                </select>
+              </td>
+              <td />
+              <td />
+              <td className={cellClass}>
+                <RegisterCell checked />
+              </td>
+              <td className={cellClass}>
+                <ConditionCell value={profile.condition} onChange={(condition) => onChange({ condition })} />
+              </td>
+              <td />
+            </tr>
             {steps.map((step, k) => (
               <StepRow
                 key={k}
+                number={k + 1}
                 step={step}
                 surfaces={surfaces}
                 rules={rules}
-                startingTarget={startingTarget}
-                onChange={(s) => onChange(replaceAt(steps, k, s))}
-                onMove={(by) => onChange(moved(steps, k, by))}
-                onRemove={() => onChange(steps.filter((_, j) => j !== k))}
+                above={reached(k)}
+                carries={carriesOn(steps, k, rules)}
+                blank={blank}
+                onChange={(s) => setSteps(replaceAt(steps, k, s))}
+                onMove={(by) => setSteps(moved(steps, k, by))}
+                onRemove={() => setSteps(steps.filter((_, j) => j !== k))}
               />
             ))}
           </tbody>
         </table>
-      )}
+      </div>
+      <div className="flex items-center gap-1 pt-1">
+        <SmallButton onClick={() => add('project')}>
+          <Plus className="size-3" /> Project
+        </SmallButton>
+        <SmallButton onClick={() => add('berm')}>
+          <Plus className="size-3" /> Berm
+        </SmallButton>
+      </div>
     </div>
   );
 }
 
 /**
- * A face design: the lines to run, the profile each one takes, and the named rules those profiles use.
- * It stands apart from the selection. Run saves it and steps every line in one run, one undo.
+ * A face design: the lines to run, the profile each one takes, and any rules those profiles share. Each
+ * profile is one table going one way from the toe. A design stands apart from the selection. Run saves it
+ * and steps every line in one run, one undo.
  */
 export function FaceDesignPanel() {
   const { summary, selected, runRecord } = useWorkspace();
@@ -301,7 +427,7 @@ export function FaceDesignPanel() {
   if (!draft) {
     return (
       <div className="flex h-full flex-col gap-2 overflow-auto p-3 text-xs">
-        <p className="text-muted-foreground">A face design holds the lines to run, a profile of steps for each, and the rules those steps use.</p>
+        <p className="text-muted-foreground">A face design holds the lines to run, a table of steps for each, and any rules those steps share.</p>
         <div className="flex items-center gap-2">
           <SmallButton onClick={start}>
             <Plus className="size-3" /> New design
@@ -325,7 +451,7 @@ export function FaceDesignPanel() {
   const profile: FaceProfile | undefined = draft.profiles.find((p) => p.name === profileName) ?? draft.profiles[0];
   const profileNames = draft.profiles.map((p) => p.name);
   const ruleNames = draft.rules.map((r) => r.name);
-  const stepRuleNames = draft.profiles.flatMap((p) => [...p.up, ...p.down].map((s) => s.rule));
+  const stepValues = draft.profiles.flatMap((p) => p.steps.map(stepValueOf));
   const setProfile = (change: Partial<FaceProfile>) => {
     if (!profile) return;
     const at = draft.profiles.indexOf(profile);
@@ -339,7 +465,7 @@ export function FaceDesignPanel() {
   };
   const addProfile = (copy: boolean) => {
     const fresh = freeName(copy && profile ? `${profile.name} copy` : 'Profile', profileNames);
-    const made_: FaceProfile = copy && profile ? { ...profile, name: fresh } : { name: fresh, register: profile?.register ?? surfaces[0]?.id ?? '', up: [], down: [] };
+    const made_: FaceProfile = copy && profile ? { ...profile, name: fresh } : { name: fresh, direction: profile?.direction ?? 'up', register: profile?.register ?? surfaces[0]?.id ?? '', condition: usualTolerance, steps: [] };
     edit((d) => ({ ...d, profiles: [...d.profiles, made_] }));
     setProfileName(fresh);
   };
@@ -349,17 +475,22 @@ export function FaceDesignPanel() {
     setProfileName(null);
   };
   const renameRule = (from: string, to: string) => {
-    const follow = (s: ProfileStep): ProfileStep => (s.rule === from ? { ...s, rule: to } : s);
+    const follow = (s: ProfileStep): ProfileStep => (stepValueOf(s) !== from ? s : s.step === 'project' ? { ...s, batter: to } : { ...s, width: to });
     edit((d) => ({
       ...d,
       rules: d.rules.map((r) => (r.name === from ? { ...r, name: to } : r)),
-      profiles: d.profiles.map((p) => ({ ...p, up: p.up.map(follow), down: p.down.map(follow) })),
+      profiles: d.profiles.map((p) => ({ ...p, steps: p.steps.map(follow) })),
     }));
   };
+  // A string can go in again under another profile, to go both ways from it.
   const addLine = (string: string) => {
-    if (draft.lines.some((l) => l.string === string)) return;
-    const line: FaceLine = { string, profile: profile?.name ?? '', side: 'right', run_on: [100, 100] };
-    edit((d) => ({ ...d, lines: [...d.lines, line] }));
+    edit((d) => {
+      const taken = d.lines.filter((l) => l.string === string).map((l) => l.profile);
+      const free = [profile?.name ?? '', ...d.profiles.map((p) => p.name)].find((p) => p && !taken.includes(p));
+      if (!free) return d;
+      const line: FaceLine = { string, profile: free, side: 'right', run_on: [100, 100] };
+      return { ...d, lines: [...d.lines, line] };
+    });
   };
   const selectedString = strings.find((s) => s.id === selected);
   const layers = (summary?.layers ?? []).filter((l) => strings.some((s) => s.layer === l.id));
@@ -412,19 +543,21 @@ export function FaceDesignPanel() {
               {draft.lines.map((line, k) => {
                 const change = (c: Partial<FaceLine>) => edit((d) => ({ ...d, lines: replaceAt(d.lines, k, { ...line, ...c }) }));
                 return (
-                  <tr key={line.string} className="border-t">
+                  <tr key={k} className="border-t">
                     <td className="max-w-28 truncate px-1 py-0.5" title={nameOf(line.string)}>
                       {nameOf(line.string)}
                     </td>
                     <td className="px-1 py-0.5">
-                      <select className={`${selectClass} max-w-24`} value={line.profile} aria-label="Profile" onChange={(e) => change({ profile: e.target.value })}>
-                        {profileNames.map((p) => (
-                          <option key={p}>{p}</option>
+                      <select className={`${selectClass} max-w-40`} value={line.profile} aria-label="Profile" onChange={(e) => change({ profile: e.target.value })}>
+                        {draft.profiles.map((p) => (
+                          <option key={p.name} value={p.name}>
+                            {p.name} ({p.direction})
+                          </option>
                         ))}
                       </select>
                     </td>
                     <td className="px-1 py-0.5">
-                      <SideChoice value={line.side} onChange={(side) => change({ side })} />
+                      <Choice value={line.side} options={SIDES} onChange={(side) => change({ side })} />
                     </td>
                     <td className="whitespace-nowrap px-1 py-0.5">
                       <NumberBox width="w-12" value={line.run_on[0]} title="Past the start (m)" onChange={(v) => change({ run_on: [v, line.run_on[1]] })} />{' '}
@@ -498,17 +631,10 @@ export function FaceDesignPanel() {
               ))}
             </select>
             <Input className="h-7 w-28 px-1 text-xs" value={profile.name} aria-label="Profile name" onChange={(e) => renameProfile(e.target.value)} />
-            <span className="ml-auto text-muted-foreground">Register toe to</span>
-            <select className={`${selectClass} max-w-32`} value={profile.register} aria-label="Register toe to" onChange={(e) => setProfile({ register: e.target.value })}>
-              {surfaces.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+            <span className="ml-auto text-muted-foreground">Direction</span>
+            <Choice value={profile.direction} options={DIRECTIONS} onChange={(direction) => setProfile({ direction })} />
           </div>
-          <StepTable title="Up from the toe" steps={profile.up} surfaces={surfaces} rules={draft.rules} register={profile.register} onChange={(up) => setProfile({ up })} />
-          <StepTable title="Down from the toe" steps={profile.down} surfaces={surfaces} rules={draft.rules} register={profile.register} onChange={(down) => setProfile({ down })} />
+          <StepTable profile={profile} surfaces={surfaces} rules={draft.rules} onChange={setProfile} />
         </>
       )}
 
@@ -521,6 +647,7 @@ export function FaceDesignPanel() {
       >
         3. Rules
       </Heading>
+      <p className="px-3 pb-1 text-xs text-muted-foreground">Name a value here to share it across steps, then type its name on a row.</p>
       <div className="px-3">
         <table className="w-full text-xs">
           <thead className="text-left text-muted-foreground">
@@ -544,7 +671,7 @@ export function FaceDesignPanel() {
                   <NumberBox value={rule.value.value} title="Degrees for a batter, metres for a berm" onChange={(value) => edit((d) => ({ ...d, rules: replaceAt(d.rules, k, { ...rule, value: { type: 'fixed', value } }) }))} />
                 </td>
                 <td className="py-0.5 text-right">
-                  <IconButton title="Remove this rule" disabled={stepRuleNames.includes(rule.name)} onClick={() => edit((d) => ({ ...d, rules: d.rules.filter((_, j) => j !== k) }))}>
+                  <IconButton title="Remove this rule" disabled={stepValues.includes(rule.name)} onClick={() => edit((d) => ({ ...d, rules: d.rules.filter((_, j) => j !== k) }))}>
                     <Trash2 className="size-3" />
                   </IconButton>
                 </td>
@@ -556,9 +683,7 @@ export function FaceDesignPanel() {
 
       <Heading>4. Run</Heading>
       <div className="flex items-center gap-1 px-3 text-xs">
-        <span className="text-muted-foreground">Tolerance</span>
-        <NumberBox width="w-12" value={draft.tolerance} title="How far a next toe may leave its crest (m): 0.1 is usual, 2 at most" onChange={(tolerance) => edit((d) => ({ ...d, tolerance }))} />
-        <span className="text-muted-foreground">m, on layer</span>
+        <span className="text-muted-foreground">On layer</span>
         <Input className="h-7 min-w-0 flex-1 px-1 text-xs" value={draft.layer} aria-label="Layer for what a run makes" onChange={(e) => edit((d) => ({ ...d, layer: e.target.value }))} />
         <Button size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => void runAll()}>
           <Play className="size-3" /> Run all lines

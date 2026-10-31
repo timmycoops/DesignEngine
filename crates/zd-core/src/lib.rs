@@ -15,7 +15,7 @@ mod seam;
 mod validity;
 
 pub use bounds::Aabb;
-pub use face::{FaceDesign, FaceLine, FaceProfile, ProfileStep, RuleValue, StepTarget, WallRule, WallSide};
+pub use face::{FaceDesign, FaceDirection, FaceLine, FaceProfile, MOST_TOLERANCE, ProfileStep, RuleValue, StepTarget, StepValue, WallRule, WallSide};
 pub use grid::Grid;
 pub use id::{LayerId, ObjectId, RunId};
 pub use mesh::TriMesh;

@@ -36,7 +36,7 @@ export const PANELS: { id: PanelId; title: string; place: AddPanelOptions['posit
   { id: 'objects', title: 'Objects', place: { referencePanel: 'viewport', direction: 'left' }, size: { width: 280 } },
   { id: 'properties', title: 'Properties', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 320 } },
   { id: 'runlog', title: 'Run log', place: { referencePanel: 'viewport', direction: 'below' }, size: { height: 200 } },
-  { id: 'face', title: 'Face design', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 540 } },
+  { id: 'face', title: 'Face design', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 680 } },
 ];
 
 const LAYOUT_KEY = 'zd.workspace.layout.v2';

@@ -564,18 +564,17 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
     from = next.id;
   }
   const ms = performance.now() - started;
-  // The same grids as a whole design, as the Face design panel runs it: a line each side of the section.
-  const rule = (name: string) => [name, { type: 'fixed', value: name === 'Berm' ? 10 : 70 }];
-  const up = targets.slice(1).flatMap((id) => [
-    { step: 'project', to: { kind: 'surface', id }, rule: 'Batter' },
-    { step: 'berm', rule: 'Berm' },
-  ]);
+  // The same grids as a whole design, as the Face design panel runs it: the toe going up and going down.
+  const wall = (to: unknown) => ({ step: 'project', to, batter: 'Batter', condition: 0.1 });
+  const up = targets.slice(1).flatMap((id) => [wall({ kind: 'surface', id }), { step: 'berm', on: null, width: 10, register: true, condition: 0.1 }]);
   const content = {
     layer: 'bench faces',
-    tolerance: 0.1,
-    lines: [{ string: toe.id, profile: 'Highwall', side: 'left', run_on: [100, 100] }],
-    profiles: [{ name: 'Highwall', register: targets[0], up: [...up, { step: 'project', to: { kind: 'rl', rl: 500 }, rule: 'Batter' }], down: [{ step: 'project', to: { kind: 'rl', rl: -500 }, rule: 'Batter' }] }],
-    rules: ['Batter', 'Berm'].map((name) => ({ name, value: rule(name)[1] })),
+    lines: ['Highwall', 'Highwall down'].map((profile) => ({ string: toe.id, profile, side: 'left', run_on: [100, 100] })),
+    profiles: [
+      { name: 'Highwall', direction: 'up', register: targets[0], condition: null, steps: [...up, wall({ kind: 'rl', rl: 500 })] },
+      { name: 'Highwall down', direction: 'down', register: targets[0], condition: null, steps: [wall({ kind: 'rl', rl: -500 })] },
+    ],
+    rules: [{ name: 'Batter', value: { type: 'fixed', value: 70 } }],
   };
   const design = (await run('face.save_design', { name: 'Bench design', content })).fresh[0];
   const designed = performance.now();

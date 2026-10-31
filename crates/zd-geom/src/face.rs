@@ -1,20 +1,21 @@
-//! A whole face (Phase 3): a toe registered on its grid, then a list of steps up from it and a list
-//! down from it, each a wall to a surface or RL or a berm. Built oversized on purpose: it runs from RL
-//! to RL and past the pit, and the cut does the fitting (decision 0023).
+//! A whole face (Phase 3): a toe registered on its grid, then a list of steps going one way from it, each
+//! a wall to a surface or RL or a berm. Built oversized on purpose: it runs on past the pit and the cut
+//! does the fitting (decision 0023).
 //!
-//! Each wall comes from `project_wall`, and the crest goes through `next_toe` before the next one.
-//! Steps at one batter with no berm between them are one wall: a face projected to the topography and
-//! on to an RL is the same plane carrying straight through, not a new wall from a rough line. The leg down is the same thing upside down: the sheet carries on below the toe on the far side, so
-//! heights are mirrored and the side swapped, and a wall that "rises" there is going down. Plan winding
-//! doesn't change, so the whole sheet stays wound upward.
+//! Each wall comes from `project_wall`, and each row says whether its line is conditioned and, for a berm,
+//! registered, before the next one. Steps at one batter with no berm between them are one wall: a face
+//! projected to the topography and on to an RL is the same plane carrying straight through, not a new wall
+//! from a rough line. Going down is the same thing upside down: the sheet carries on below the toe on the
+//! far side, so heights are mirrored and the side swapped, and a wall that "rises" there is going down.
+//! Plan winding doesn't change, so the sheet stays wound upward.
 
 use std::collections::HashMap;
 
-use zd_core::{Polyline, TriMesh};
+use zd_core::{FaceDirection, Polyline, TriMesh};
 
 use crate::string::TriangleBins;
-use crate::wall::{Stretch, triangles_of};
-use crate::{GeomError, OffsetSide, drape_string, next_toe, project_wall};
+use crate::wall::{Stretch, at_crest_heights, next_line, triangles_of, with_crest_vertices};
+use crate::{GeomError, OffsetSide, drape_string, filter_string, next_toe, project_wall};
 
 /// What a wall rises to.
 #[derive(Debug, Clone, Copy)]
@@ -26,24 +27,18 @@ pub enum FaceTarget<'a> {
 /// One step of a face.
 #[derive(Debug, Clone, Copy)]
 pub enum FaceStep<'a> {
-    /// A wall at a batter in degrees.
-    Project { to: FaceTarget<'a>, batter: f64 },
-    /// A berm of a width in metres, on whatever the last wall reached.
-    Berm { width: f64 },
-}
-
-/// Which way from the toe a step goes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Leg {
-    Up,
-    Down,
+    /// A wall at a batter in degrees. With a tolerance, its crest is conditioned for the next step.
+    Project { to: FaceTarget<'a>, batter: f64, condition: Option<f64> },
+    /// A berm of a width in metres. Its line registers on `on`, or on what the last wall reached if that's
+    /// left out. With `register` off it keeps its crest's heights instead. With a tolerance it's
+    /// conditioned after it's moved out.
+    Berm { on: Option<FaceTarget<'a>>, width: f64, register: bool, condition: Option<f64> },
 }
 
 /// One wall of a face.
 #[derive(Debug, Clone)]
 pub struct FaceBench {
-    pub leg: Leg,
-    /// Where it is in its leg's steps, from 0.
+    /// Where it is in the steps, from 0.
     pub step: usize,
     pub toe: Polyline,
     pub crest: Polyline,
@@ -52,7 +47,6 @@ pub struct FaceBench {
 /// What one step did.
 #[derive(Debug, Clone)]
 pub struct StepReport {
-    pub leg: Leg,
     pub step: usize,
     pub walls: usize,
     pub squeezed_out: usize,
@@ -107,6 +101,11 @@ pub fn run_on(line: &Polyline, [start, end]: [f64; 2]) -> Result<Polyline, GeomE
         vertices.extend(past(line.vertices[n - 1], line.vertices[n - 2], end));
     }
     Ok(Polyline { vertices, closed: false })
+}
+
+/// A toe's plan shape simplified to within `tolerance` metres, ready to be registered. Its ends stay.
+pub fn conditioned_toe(line: &Polyline, tolerance: f64) -> Result<Polyline, GeomError> {
+    filter_string(&Polyline { vertices: line.vertices.iter().map(|v| [v[0], v[1], 0.0]).collect(), closed: line.closed }, tolerance)
 }
 
 /// A toe laid on the grid it starts from, following the grid between vertices. Where there's no grid
@@ -170,38 +169,53 @@ fn last_grade(points: &[[f64; 3]], along: &[f64], known: &[usize], at_the_far_en
     if near == far { 0.0 } else { (points[near][2] - points[far][2]) / (along[near] - along[far]) }
 }
 
-/// The whole face from a toe already on its grid. `register` is the surface the toe lies on.
-pub fn project_face(toe: &Polyline, register: &TriMesh, side: OffsetSide, up: &[FaceStep<'_>], down: &[FaceStep<'_>], tolerance: f64) -> Result<Face, GeomError> {
+/// The whole face from a toe already on its grid, going one way. `register` is the surface the toe lies on.
+pub fn project_face(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: FaceDirection, steps: &[FaceStep<'_>]) -> Result<Face, GeomError> {
     let mut face = FaceParts::default();
-    run_leg(toe, register, side, up, tolerance, Leg::Up, &mut face)?;
-    if !down.is_empty() {
-        let (toe, surface) = (mirrored_line(toe), mirrored_mesh(register));
-        let swapped = if side == OffsetSide::Left { OffsetSide::Right } else { OffsetSide::Left };
-        let surfaces: Vec<Option<TriMesh>> = down
-            .iter()
-            .map(|step| match step {
-                FaceStep::Project { to: FaceTarget::Surface(mesh), .. } => Some(mirrored_mesh(mesh)),
-                _ => None,
-            })
-            .collect();
-        let steps: Vec<FaceStep<'_>> = down
-            .iter()
-            .zip(&surfaces)
-            .map(|(step, mirror)| match (step, mirror) {
-                (FaceStep::Project { batter, .. }, Some(mesh)) => FaceStep::Project { to: FaceTarget::Surface(mesh), batter: *batter },
-                (FaceStep::Project { to: FaceTarget::Rl(rl), batter }, _) => FaceStep::Project { to: FaceTarget::Rl(-rl), batter: *batter },
-                (other, _) => *other,
-            })
-            .collect();
-        let mut below = FaceParts::default();
-        run_leg(&toe, &surface, swapped, &steps, tolerance, Leg::Down, &mut below)?;
-        below.mirror();
-        face.absorb(below);
+    match direction {
+        FaceDirection::Up => run_steps(toe, register, side, steps, &mut face)?,
+        FaceDirection::Down => {
+            let (toe, surface) = (mirrored_line(toe), mirrored_mesh(register));
+            let swapped = if side == OffsetSide::Left { OffsetSide::Right } else { OffsetSide::Left };
+            let surfaces: Vec<Option<TriMesh>> = steps
+                .iter()
+                .map(|step| match target_of(step) {
+                    Some(FaceTarget::Surface(mesh)) => Some(mirrored_mesh(mesh)),
+                    _ => None,
+                })
+                .collect();
+            let mirrored: Vec<FaceStep<'_>> = steps
+                .iter()
+                .zip(&surfaces)
+                .map(|(step, mesh)| match *step {
+                    FaceStep::Project { to, batter, condition } => FaceStep::Project { to: mirrored_target(to, mesh.as_ref()), batter, condition },
+                    FaceStep::Berm { on, width, register, condition } => FaceStep::Berm { on: on.map(|on| mirrored_target(on, mesh.as_ref())), width, register, condition },
+                })
+                .collect();
+            run_steps(&toe, &surface, swapped, &mirrored, &mut face)?;
+            face.mirror();
+        }
     }
     Ok(Face { surface: face.joined(), benches: face.benches, steps: face.steps })
 }
 
-/// What a leg has made so far.
+/// What a step goes to, where it names one.
+fn target_of<'a>(step: &FaceStep<'a>) -> Option<FaceTarget<'a>> {
+    match step {
+        FaceStep::Project { to, .. } => Some(*to),
+        FaceStep::Berm { on, .. } => *on,
+    }
+}
+
+fn mirrored_target<'a>(target: FaceTarget<'_>, mesh: Option<&'a TriMesh>) -> FaceTarget<'a> {
+    match (target, mesh) {
+        (FaceTarget::Rl(rl), _) => FaceTarget::Rl(-rl),
+        (FaceTarget::Surface(_), Some(mesh)) => FaceTarget::Surface(mesh),
+        (FaceTarget::Surface(_), None) => unreachable!("every surface is mirrored first"),
+    }
+}
+
+/// What the steps have made so far.
 #[derive(Default)]
 struct FaceParts {
     meshes: Vec<TriMesh>,
@@ -224,13 +238,8 @@ impl FaceParts {
         }
     }
 
-    fn absorb(&mut self, other: FaceParts) {
-        self.meshes.extend(other.meshes);
-        self.benches.extend(other.benches);
-        self.steps.extend(other.steps);
-    }
-
-    /// One mesh, sharing vertices within a micrometre.
+    /// One mesh, sharing vertices within a micrometre. A wall and a berm work out the same point apart, so
+    /// the two can land either side of a rounding step: each point looks in the cells round its own.
     fn joined(&self) -> TriMesh {
         let mut out = TriMesh::default();
         let mut numbered: HashMap<[i64; 3], u32> = HashMap::new();
@@ -239,8 +248,11 @@ impl FaceParts {
                 .vertices
                 .iter()
                 .map(|p| {
-                    *numbered.entry(p.map(|c| (c * 1e6).round() as i64)).or_insert_with(|| {
+                    let cell = p.map(|c| (c / WELD).round() as i64);
+                    let same = |v: &u32| out.vertices[*v as usize].iter().zip(p).all(|(a, b)| (a - b).abs() <= WELD);
+                    cells_round(cell).find_map(|c| numbered.get(&c).filter(|v| same(v)).copied()).unwrap_or_else(|| {
                         out.vertices.push(*p);
+                        numbered.insert(cell, out.vertices.len() as u32 - 1);
                         out.vertices.len() as u32 - 1
                     })
                 })
@@ -262,82 +274,148 @@ fn sheet_reach(line: &Polyline, rl: f64, batter: f64) -> f64 {
     100.0 + 8.0 * (rl - lowest).abs() / batter.to_radians().tan()
 }
 
-/// A level sheet at an RL over a string's plan area, as a target for a wall.
-fn level_sheet(line: &Polyline, rl: f64, batter: f64) -> TriMesh {
+/// A level sheet at an RL over a string's plan area, as a target.
+fn level_sheet(line: &Polyline, rl: f64, reach: f64) -> TriMesh {
     let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
     for p in &line.vertices {
         lo = [lo[0].min(p[0]), lo[1].min(p[1])];
         hi = [hi[0].max(p[0]), hi[1].max(p[1])];
     }
-    let reach = sheet_reach(line, rl, batter);
     let (x0, y0, x1, y1) = (lo[0] - reach, lo[1] - reach, hi[0] + reach, hi[1] + reach);
     TriMesh::new(vec![[x0, y0, rl], [x1, y0, rl], [x1, y1, rl], [x0, y1, rl]], vec![[0, 1, 2], [0, 2, 3]])
 }
 
-fn run_leg<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps: &[FaceStep<'a>], tolerance: f64, leg: Leg, face: &mut FaceParts) -> Result<(), GeomError> {
+/// A crest waiting to become the next toe, and how its row conditions it.
+struct Waiting {
+    crest: Polyline,
+    condition: Option<f64>,
+}
+
+fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps: &[FaceStep<'a>], face: &mut FaceParts) -> Result<(), GeomError> {
     let mut from = toe.clone();
-    // The crest waiting to become the next toe, and what it lies on.
-    let mut pending: Option<Polyline> = None;
+    let mut waiting: Option<Waiting> = None;
+    // The crest a berm starts from. The berm waits for the wall above it, as that wall's crest can come
+    // down onto `from` part way along a segment.
+    let mut berm_from: Option<Polyline> = None;
     let mut on = Resting::Surface(register);
-    let fail = |k: usize, e: GeomError| GeomError::InvalidInput(format!("{} step {}: {e}", if leg == Leg::Up { "up" } else { "down" }, k + 1));
+    let fail = |k: usize, e: GeomError| GeomError::InvalidInput(format!("step {}: {e}", k + 1));
     let mut k = 0;
     while k < steps.len() {
         match steps[k] {
             FaceStep::Project { batter, .. } => {
-                if let Some(crest) = pending.take() {
-                    // A conditioned line weaves either side of its crest, so with no berm here it stands
-                    // clear of it by the tolerance, which can only widen what's there.
-                    let (toes, _) = next_toe(&crest, tolerance, side, tolerance, on.mesh()).map_err(|e| fail(k, e))?;
-                    from = longest(toes);
-                    face.meshes.push(band(&crest, &from).map_err(|e| fail(k, e))?);
+                if let Some(Waiting { crest, condition }) = waiting.take() {
+                    from = match condition.filter(|t| *t > 0.0) {
+                        // A conditioned line weaves either side of its crest, so with no berm here it
+                        // stands clear of it by the tolerance, which can only widen what's there.
+                        Some(tolerance) => {
+                            let (toes, _) = next_toe(&crest, tolerance, side, tolerance, on.mesh()).map_err(|e| fail(k, e))?;
+                            berm_from = Some(crest);
+                            longest(toes)
+                        }
+                        None => crest,
+                    };
                 }
                 // Steps at one batter with no berm between them are one wall carrying straight on: the
                 // targets on the way only mark where its crest lines fall.
-                let last = (k..steps.len()).take_while(|&j| matches!(steps[j], FaceStep::Project { batter: b, .. } if b == batter)).last().unwrap_or(k);
-                for (j, &step) in steps.iter().enumerate().take(last).skip(k) {
-                    let target = Resting::of(step, &from);
+                let wall: Vec<(usize, FaceTarget<'a>, Option<f64>)> = (k..steps.len())
+                    .map_while(|j| match steps[j] {
+                        FaceStep::Project { to, batter: b, condition } if b == batter => Some((j, to, condition)),
+                        _ => None,
+                    })
+                    .collect();
+                let (&(last, to, condition), marks) = wall.split_last().expect("this step at least");
+                for &(j, to, _) in marks {
+                    let target = Resting::of(to, &from, batter);
                     match project_wall(&from, side, batter, target.mesh()) {
                         Ok(wall) => {
-                            face.steps.push(wall_report(leg, j, &wall));
-                            face.benches.push(FaceBench { leg, step: j, toe: from.clone(), crest: wall.crest });
+                            face.steps.push(wall_report(j, &wall));
+                            face.benches.push(FaceBench { step: j, toe: from.clone(), crest: wall.crest });
                         }
                         // The wall carries on through here whatever this target does.
-                        Err(_) => face.steps.push(no_wall_report(leg, j)),
+                        Err(_) => face.steps.push(no_wall_report(j)),
                     }
                 }
-                let target = Resting::of(steps[last], &from);
+                let target = Resting::of(to, &from, batter);
                 match project_wall(&from, side, batter, target.mesh()) {
                     Ok(wall) => {
-                        face.steps.push(wall_report(leg, last, &wall));
-                        face.benches.push(FaceBench { leg, step: last, toe: from.clone(), crest: wall.crest.clone() });
+                        face.steps.push(wall_report(last, &wall));
+                        let toe = if wall.log.no_height.is_empty() { from.clone() } else { with_touches(&from, &wall.crest) };
+                        finish_berm(&mut berm_from, &toe, face).map_err(|e| fail(last, e))?;
+                        face.benches.push(FaceBench { step: last, toe, crest: wall.crest.clone() });
                         face.meshes.push(wall.wall);
-                        pending = Some(wall.crest);
+                        waiting = Some(Waiting { crest: wall.crest, condition });
                         on = target;
                     }
                     Err(GeomError::NoHeight) => {
                         // Nothing to build here: the sheet carries on from the same string.
-                        face.steps.push(no_wall_report(leg, last));
-                        pending = Some(from.clone());
+                        face.steps.push(no_wall_report(last));
+                        finish_berm(&mut berm_from, &from, face).map_err(|e| fail(last, e))?;
+                        waiting = Some(Waiting { crest: from.clone(), condition });
                     }
                     Err(e) => return Err(fail(last, e)),
                 }
                 k = last + 1;
             }
-            FaceStep::Berm { width } => {
-                let crest = pending.take().unwrap_or_else(|| from.clone());
-                let (toes, log) = next_toe(&crest, width, side, tolerance, on.mesh()).map_err(|e| fail(k, e))?;
-                let dropped = toes.len().saturating_sub(1);
-                from = longest(toes);
-                hold_above_the_target(&mut from, &crest, on.mesh());
-                face.meshes.push(band(&crest, &from).map_err(|e| fail(k, e))?);
-                let mut report = no_wall_report(leg, k);
-                (report.no_wall, report.off_surface, report.pieces_dropped) = (false, log.off_surface, dropped);
+            FaceStep::Berm { on: named, width, register, condition } => {
+                let Waiting { crest, condition: before } = waiting.take().unwrap_or_else(|| Waiting { crest: from.clone(), condition: None });
+                finish_berm(&mut berm_from, &from, face).map_err(|e| fail(k, e))?;
+                if let Some(target) = named {
+                    on = Resting::of(target, &crest, BERM_BATTER);
+                }
+                let (lines, _) = next_line(&crest, width, side, before.unwrap_or(0.0), condition.unwrap_or(0.0)).map_err(|e| fail(k, e))?;
+                let dropped = lines.len().saturating_sub(1);
+                let line = longest(lines);
+                let mut report = no_wall_report(k);
+                from = if register {
+                    let (mut toe, draped) = drape_string(&line, on.mesh(), true).map_err(|e| fail(k, e))?;
+                    hold_above_the_target(&mut toe, &crest, on.mesh());
+                    report.off_surface = draped.off_surface;
+                    toe
+                } else {
+                    at_crest_heights(&with_crest_vertices(&line, &crest, |_, on, _| Some(on)), &crest)
+                };
+                berm_from = Some(crest);
+                (report.no_wall, report.pieces_dropped) = (false, dropped);
                 face.steps.push(report);
                 k += 1;
             }
         }
     }
+    finish_berm(&mut berm_from, &from, face).map_err(|e| fail(steps.len().saturating_sub(1), e))?;
+    // The last crest goes nowhere, so conditioning it only cleans the string: the sheet keeps its own edge.
+    if let Some(Waiting { crest, condition: Some(tolerance) }) = waiting
+        && tolerance > 0.0
+        && let Some(bench) = face.benches.last_mut().filter(|b| b.step + 1 == steps.len())
+    {
+        let (lines, _) = next_toe(&crest, 0.0, side, tolerance, on.mesh()).map_err(|e| fail(bench.step, e))?;
+        bench.crest = longest(lines);
+    }
     Ok(())
+}
+
+/// The berm waiting on a crest, now the line it runs out to is known.
+fn finish_berm(berm_from: &mut Option<Polyline>, line: &Polyline, face: &mut FaceParts) -> Result<(), GeomError> {
+    if let Some(crest) = berm_from.take() {
+        face.meshes.push(band(&crest, line)?);
+    }
+    Ok(())
+}
+
+/// A toe with a vertex wherever its crest touches it, so the berm below meets the wall and the crest above
+/// there with no slit between them.
+fn with_touches(toe: &Polyline, crest: &Polyline) -> Polyline {
+    with_crest_vertices(toe, crest, |vertex, on, gap| (gap <= WELD && (vertex[2] - on[2]).abs() <= WELD).then_some(vertex))
+}
+
+/// The batter a level sheet for a berm is sized for, flat enough to reach past any berm.
+const BERM_BATTER: f64 = 5.0;
+
+/// How close two points of a face are to be the same point (m).
+const WELD: f64 = 1e-6;
+
+/// A cell of the weld's lattice and those touching it.
+fn cells_round([x, y, z]: [i64; 3]) -> impl Iterator<Item = [i64; 3]> {
+    (-1..=1).flat_map(move |i| (-1..=1).flat_map(move |j| (-1..=1).map(move |k| [x + i, y + j, z + k])))
 }
 
 /// What a line lies on or a wall rises to.
@@ -347,12 +425,11 @@ enum Resting<'a> {
 }
 
 impl<'a> Resting<'a> {
-    /// The target of a step, for a wall from `from`.
-    fn of(step: FaceStep<'a>, from: &Polyline) -> Self {
-        match step {
-            FaceStep::Project { to: FaceTarget::Surface(mesh), .. } => Resting::Surface(mesh),
-            FaceStep::Project { to: FaceTarget::Rl(rl), batter } => Resting::Level(level_sheet(from, rl, batter)),
-            FaceStep::Berm { .. } => unreachable!("a berm has no target"),
+    /// A target, for a wall from `from` at a batter.
+    fn of(target: FaceTarget<'a>, from: &Polyline, batter: f64) -> Self {
+        match target {
+            FaceTarget::Surface(mesh) => Resting::Surface(mesh),
+            FaceTarget::Rl(rl) => Resting::Level(level_sheet(from, rl, sheet_reach(from, rl, batter))),
         }
     }
 
@@ -364,19 +441,19 @@ impl<'a> Resting<'a> {
     }
 }
 
-fn wall_report(leg: Leg, step: usize, wall: &crate::WallStep) -> StepReport {
+fn wall_report(step: usize, wall: &crate::WallStep) -> StepReport {
     StepReport {
         walls: wall.log.walls,
         squeezed_out: wall.log.squeezed_out,
         no_wall: false,
         no_height: wall.log.no_height.clone(),
         no_target: wall.log.no_target.clone(),
-        ..no_wall_report(leg, step)
+        ..no_wall_report(step)
     }
 }
 
-fn no_wall_report(leg: Leg, step: usize) -> StepReport {
-    StepReport { leg, step, walls: 0, squeezed_out: 0, no_wall: true, no_height: Vec::new(), no_target: Vec::new(), off_surface: 0, pieces_dropped: 0 }
+fn no_wall_report(step: usize) -> StepReport {
+    StepReport { step, walls: 0, squeezed_out: 0, no_wall: true, no_height: Vec::new(), no_target: Vec::new(), off_surface: 0, pieces_dropped: 0 }
 }
 
 fn longest(toes: Vec<Polyline>) -> Polyline {
@@ -464,31 +541,37 @@ mod tests {
         assert!((a - b).abs() <= tolerance, "{a} is not {b} to {tolerance}");
     }
 
+    /// What's left of a line's plan shape simplified to a centimetre.
+    fn plan_corners(line: &Polyline) -> usize {
+        conditioned_toe(line, 0.01).unwrap().vertices.len()
+    }
+
+    /// A wall and a berm as the table starts them, conditioned at 0.1 m.
+    fn wall<'a>(to: FaceTarget<'a>, batter: f64) -> FaceStep<'a> {
+        FaceStep::Project { to, batter, condition: Some(0.1) }
+    }
+
+    fn berm<'a>(width: f64) -> FaceStep<'a> {
+        FaceStep::Berm { on: None, width, register: true, condition: Some(0.1) }
+    }
+
     /// Tim's sequence on level surfaces, where every line has a known place: the toe on Grid A at RL 100,
-    /// to Grid B at 120 and a berm, to Grid C at 140 and a berm, to the topography at 160, on to RL 200,
-    /// and back down from the toe to RL 50.
+    /// to Grid B at 120 and a berm, to Grid C at 140 and a berm, to the topography at 160, on to RL 200.
     #[test]
-    fn a_whole_face_runs_from_rl_to_rl_with_its_berms_where_they_belong() {
+    fn a_whole_face_runs_up_with_its_berms_where_they_belong() {
         let (a, b, c, topo) = (surface(|_, _| 100.0), surface(|_, _| 120.0), surface(|_, _| 140.0), surface(|_, _| 160.0));
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
-        let up = [
-            FaceStep::Project { to: FaceTarget::Surface(&b), batter: 45.0 },
-            FaceStep::Berm { width: 5.0 },
-            FaceStep::Project { to: FaceTarget::Surface(&c), batter: 45.0 },
-            FaceStep::Berm { width: 5.0 },
-            FaceStep::Project { to: FaceTarget::Surface(&topo), batter: 45.0 },
-            FaceStep::Project { to: FaceTarget::Rl(200.0), batter: 45.0 },
-        ];
-        let down = [FaceStep::Project { to: FaceTarget::Rl(50.0), batter: 45.0 }];
-        let face = project_face(&toe, &a, OffsetSide::Left, &up, &down, 0.1).unwrap();
+        let steps = [wall(FaceTarget::Surface(&b), 45.0), berm(5.0), wall(FaceTarget::Surface(&c), 45.0), berm(5.0), wall(FaceTarget::Surface(&topo), 45.0), wall(FaceTarget::Rl(200.0), 45.0)];
+        let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps).unwrap();
 
         let crests: Vec<(f64, f64)> = face.benches.iter().map(|b| (b.crest.vertices[0][1] - N, b.crest.vertices[0][2])).collect();
-        for ((y, z), (want_y, want_z)) in crests.iter().zip([(120.0, 120.0), (145.0, 140.0), (170.0, 160.0), (210.0, 200.0), (50.0, 50.0)]) {
+        assert_eq!(crests.len(), 4);
+        for ((y, z), (want_y, want_z)) in crests.iter().zip([(120.0, 120.0), (145.0, 140.0), (170.0, 160.0), (210.0, 200.0)]) {
             close(*y, want_y, 1e-6);
             close(*z, want_z, 1e-6);
         }
         // The walls' slope lengths and two berms, over the 300 m toe.
-        let walls = (20.0 + 20.0 + 20.0 + 40.0 + 50.0) * 2f64.sqrt();
+        let walls = (20.0 + 20.0 + 20.0 + 40.0) * 2f64.sqrt();
         close(face.surface.area(), 300.0 * (walls + 5.0 + 5.0), 1e-3);
         let v = face.surface.validity();
         assert_eq!(v.non_manifold_edges + v.inconsistent_edges, 0, "{v:?}");
@@ -497,29 +580,41 @@ mod tests {
     }
 
     #[test]
-    fn the_leg_down_carries_on_the_sheet_below_the_toe() {
+    fn going_down_carries_on_the_same_plane_below_the_toe() {
         let a = surface(|x, _| 100.0 + 0.05 * x);
         let toe = register_toe(&line(&[[50.0, 200.0, 0.0], [350.0, 200.0, 0.0]]), &a).unwrap().0;
-        let up = [FaceStep::Project { to: FaceTarget::Rl(180.0), batter: 60.0 }];
-        let down = [FaceStep::Project { to: FaceTarget::Rl(20.0), batter: 60.0 }];
-        let face = project_face(&toe, &a, OffsetSide::Right, &up, &down, 0.1).unwrap();
+        let up = project_face(&toe, &a, OffsetSide::Right, FaceDirection::Up, &[wall(FaceTarget::Rl(180.0), 60.0)]).unwrap();
+        let down = project_face(&toe, &a, OffsetSide::Right, FaceDirection::Down, &[wall(FaceTarget::Rl(20.0), 60.0)]).unwrap();
         // Right of an eastward string is south, so up goes south and down goes north, one plane through the toe.
         let k = 60f64.to_radians().tan();
-        for bench in &face.benches {
-            for p in &bench.crest.vertices {
-                close(p[2], 100.0 + 0.05 * (p[0] - E) + k * (200.0 - (p[1] - N)), 1e-6);
-            }
-        }
-        assert!(face.benches[0].crest.vertices.iter().all(|p| p[1] - N < 200.0));
-        assert!(face.benches[1].crest.vertices.iter().all(|p| p[1] - N > 200.0));
+        let on_the_plane = |p: &[f64; 3]| close(p[2], 100.0 + 0.05 * (p[0] - E) + k * (200.0 - (p[1] - N)), 1e-6);
+        up.benches[0].crest.vertices.iter().for_each(on_the_plane);
+        down.benches[0].crest.vertices.iter().for_each(on_the_plane);
+        assert!(up.benches[0].crest.vertices.iter().all(|p| p[1] - N < 200.0));
+        assert!(down.benches[0].crest.vertices.iter().all(|p| p[1] - N > 200.0));
+        assert!(down.surface.triangles.iter().all(|&t| down.surface.triangle_cross(t)[2] > 0.0), "going down still faces up");
+    }
+
+    /// Down from a level toe through a level grid and a berm on it, to an RL.
+    #[test]
+    fn going_down_steps_through_a_grid_and_a_berm() {
+        let (a, b) = (surface(|_, _| 100.0), surface(|_, _| 80.0));
+        let toe = line(&[[50.0, 200.0, 100.0], [350.0, 200.0, 100.0]]);
+        let steps = [wall(FaceTarget::Surface(&b), 45.0), berm(5.0), wall(FaceTarget::Rl(50.0), 45.0)];
+        // Left of an eastward string is north, so a wall rising left goes down to the south.
+        let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Down, &steps).unwrap();
+        close(face.benches[0].crest.vertices[0][1] - N, 180.0, 1e-6);
+        close(face.benches[0].crest.vertices[0][2], 80.0, 1e-6);
+        close(face.benches[1].crest.vertices[0][1] - N, 145.0, 1e-6);
+        close(face.benches[1].crest.vertices[0][2], 50.0, 1e-6);
+        close(face.surface.area(), 300.0 * ((20.0 + 30.0) * 2f64.sqrt() + 5.0), 1e-3);
     }
 
     #[test]
     fn a_step_with_no_height_passes_to_the_next_one() {
         let (a, lower, top) = (surface(|_, _| 100.0), surface(|_, _| 90.0), surface(|_, _| 130.0));
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
-        let up = [FaceStep::Project { to: FaceTarget::Surface(&lower), batter: 45.0 }, FaceStep::Project { to: FaceTarget::Surface(&top), batter: 45.0 }];
-        let face = project_face(&toe, &a, OffsetSide::Left, &up, &[], 0.1).unwrap();
+        let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &[wall(FaceTarget::Surface(&lower), 45.0), wall(FaceTarget::Surface(&top), 45.0)]).unwrap();
         assert!(face.steps[0].no_wall);
         assert_eq!(face.benches.len(), 1);
         close(face.benches[0].crest.vertices[0][1] - N, 130.0, 1e-6);
@@ -531,11 +626,185 @@ mod tests {
         let a = surface(|_, _| 100.0);
         let dipping = surface(|x, _| 90.0 + 0.5 * (x - 200.0).abs());
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
-        let up = [FaceStep::Project { to: FaceTarget::Surface(&dipping), batter: 45.0 }, FaceStep::Berm { width: 5.0 }];
-        let face = project_face(&toe, &a, OffsetSide::Left, &up, &[], 0.1).unwrap();
+        let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &[wall(FaceTarget::Surface(&dipping), 45.0), berm(5.0)]).unwrap();
         assert_eq!(face.steps[0].no_height.len(), 1);
         let v = face.surface.validity();
         assert_eq!(v.non_manifold_edges + v.inconsistent_edges, 0, "{v:?}");
+    }
+
+    #[test]
+    fn a_berm_over_a_hole_holds_the_height_of_its_crest() {
+        // A kink in the toe puts a vertex of the berm line over the hole.
+        let holed = triangulate_grid(&Grid::from_fn([E, N], [10.0, 10.0], 41, 41, |x, y| {
+            let (x, y) = (x - E, y - N);
+            if (150.0..=250.0).contains(&x) && (60.0..=200.0).contains(&y) { f64::NAN } else { 120.0 }
+        }));
+        let a = surface(|_, _| 100.0);
+        let toe = line(&[[50.0, 100.0, 100.0], [200.0, 80.0, 100.0], [350.0, 100.0, 100.0]]);
+        let steps = [wall(FaceTarget::Surface(&holed), 45.0), berm(5.0), wall(FaceTarget::Rl(140.0), 45.0)];
+        let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps).unwrap();
+        assert!(face.steps.iter().any(|s| s.off_surface > 0), "{:?}", face.steps);
+        for p in &face.benches[1].toe.vertices {
+            close(p[2], 120.0, 1e-6);
+        }
+    }
+
+    /// A berm with Register off keeps its crest's heights: on a target with a cross fall the line stays at
+    /// the crest, and along a rolling target it follows the crest between its own two ends.
+    #[test]
+    fn a_berm_with_register_off_keeps_the_heights_of_its_crest() {
+        let a = surface(|_, _| 100.0);
+        let rolling = surface(|x, y| 120.0 + 0.2 * (y - 120.0) + 4.0 * (x / 41.0).sin());
+        let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
+        let steps = |register| [wall(FaceTarget::Surface(&rolling), 60.0), FaceStep::Berm { on: None, width: 10.0, register, condition: Some(0.1) }, wall(FaceTarget::Rl(160.0), 60.0)];
+        let held = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps(false)).unwrap();
+        let crest = &held.benches[0].crest;
+        let next = &held.benches[1].toe;
+        let height_of = |line: &Polyline, x: f64| {
+            let w = line.vertices.windows(2).find(|w| (w[0][0] - x) * (w[1][0] - x) <= 0.0).unwrap();
+            w[0][2] + (x - w[0][0]) / (w[1][0] - w[0][0]) * (w[1][2] - w[0][2])
+        };
+        let (first, last) = (crest.vertices[0][0].max(next.vertices[0][0]), crest.vertices[crest.vertices.len() - 1][0].min(next.vertices[next.vertices.len() - 1][0]));
+        for x in (0..=100).map(|k| first + (last - first) * f64::from(k) / 100.0) {
+            // The crest runs off straight in plan only by its small swing, so the two read the same to 10 cm.
+            close(height_of(next, x), height_of(crest, x), 0.1);
+        }
+        let registered = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps(true)).unwrap();
+        // Registered, the same line sits 10 m further up the 1 in 5 cross fall, 2 m higher.
+        let middle = E + 200.0;
+        close(height_of(&registered.benches[1].toe, middle) - height_of(next, middle), 2.0, 0.1);
+    }
+
+    #[test]
+    fn a_berm_can_name_the_surface_or_rl_it_registers_on() {
+        let (a, b, c) = (surface(|_, _| 100.0), surface(|_, _| 120.0), surface(|_, _| 125.0));
+        let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
+        for (on, want) in [(FaceTarget::Surface(&c), 125.0), (FaceTarget::Rl(123.0), 123.0)] {
+            let steps = [wall(FaceTarget::Surface(&b), 45.0), FaceStep::Berm { on: Some(on), width: 5.0, register: true, condition: None }, wall(FaceTarget::Rl(160.0), 45.0)];
+            let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps).unwrap();
+            for p in &face.benches[1].toe.vertices {
+                close(p[2], want, 1e-6);
+                close(p[1] - N, 125.0, 1e-6);
+            }
+        }
+    }
+
+    /// A rolling target gives a crest that weaves in plan. Each row's tick decides what happens to it.
+    #[test]
+    fn each_row_says_whether_its_line_is_conditioned() {
+        let a = surface(|_, _| 100.0);
+        let rolling = surface(|x, y| 120.0 + 3.0 * (x / 29.0).sin() + 2.0 * (y / 17.0).cos());
+        let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
+        let corners_of_next_toe = |crest: Option<f64>, after: Option<f64>| {
+            let steps = [FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: 60.0, condition: crest }, FaceStep::Berm { on: None, width: 10.0, register: true, condition: after }, wall(FaceTarget::Rl(170.0), 60.0)];
+            let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps).unwrap();
+            plan_corners(&face.benches[1].toe)
+        };
+        let (raw, cleaned, after_only) = (corners_of_next_toe(None, None), corners_of_next_toe(Some(0.5), None), corners_of_next_toe(None, Some(0.5)));
+        assert!(cleaned * 3 < raw, "{cleaned} against {raw}");
+        assert!(after_only * 3 < raw, "{after_only} against {raw}");
+    }
+
+    #[test]
+    fn a_change_of_batter_with_conditioning_off_starts_on_the_crest() {
+        let (a, b) = (surface(|_, _| 100.0), surface(|_, _| 120.0));
+        let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
+        let steps = |condition| [FaceStep::Project { to: FaceTarget::Surface(&b), batter: 45.0, condition }, wall(FaceTarget::Rl(140.0), 60.0)];
+        let walls = 20.0 * 2f64.sqrt() + 20.0 / 60f64.to_radians().sin();
+        let on_the_crest = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps(None)).unwrap();
+        close(on_the_crest.surface.area(), 300.0 * walls, 1e-3);
+        let clear = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps(Some(0.1))).unwrap();
+        close(clear.surface.area(), 300.0 * (walls + 0.1), 1e-3);
+    }
+
+    #[test]
+    fn conditioning_between_walls_of_one_batter_changes_nothing() {
+        let (a, topo) = (surface(|_, _| 100.0), surface(|x, y| 130.0 + 3.0 * (x / 29.0).sin() + 2.0 * (y / 17.0).cos()));
+        let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
+        let run = |condition| {
+            let steps = [FaceStep::Project { to: FaceTarget::Surface(&topo), batter: 70.0, condition }, wall(FaceTarget::Rl(200.0), 70.0)];
+            project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps).unwrap()
+        };
+        let (on, off) = (run(Some(1.0)), run(None));
+        assert_eq!(on.surface.triangles.len(), off.surface.triangles.len());
+        close(on.surface.area(), off.surface.area(), 1e-9);
+        close(on.surface.area(), 300.0 * 100.0 / 70f64.to_radians().sin(), 1e-3);
+    }
+
+    #[test]
+    fn conditioning_the_last_crest_cleans_the_string_and_leaves_the_sheet_alone() {
+        let (a, rolling) = (surface(|_, _| 100.0), surface(|x, y| 130.0 + 3.0 * (x / 29.0).sin() + 2.0 * (y / 17.0).cos()));
+        let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
+        let run = |condition| project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &[FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: 70.0, condition }]).unwrap();
+        let (raw, clean) = (run(None), run(Some(1.0)));
+        // The cleaned crest is laid back on the target with a vertex at every triangle, so it's its plan
+        // shape that's simpler.
+        let (rough, cleaned) = (plan_corners(&raw.benches[0].crest), plan_corners(&clean.benches[0].crest));
+        assert!(cleaned * 2 < rough, "{cleaned} against {rough}");
+        assert_eq!(raw.surface.triangles.len(), clean.surface.triangles.len());
+        close(raw.surface.area(), clean.surface.area(), 1e-9);
+    }
+
+    #[test]
+    fn a_conditioned_toe_keeps_its_ends_and_stays_within_the_tolerance() {
+        let wavy = line(&[[0.0, 100.0, 9.0], [50.0, 100.05, 9.0], [100.0, 99.95, 9.0], [150.0, 100.2, 9.0], [200.0, 100.0, 9.0]]);
+        let cleaned = conditioned_toe(&wavy, 0.1).unwrap();
+        assert_eq!(cleaned.vertices.len(), 4, "the 5 cm wiggle goes and the larger two stay");
+        assert_eq!((cleaned.vertices[0][0], cleaned.vertices[3][0]), (wavy.vertices[0][0], wavy.vertices[4][0]));
+        assert_eq!(conditioned_toe(&wavy, 0.5).unwrap().vertices.len(), 2);
+    }
+
+    /// A wall up to a target that dips below its toe in the middle, 2 m at `centre`, with a berm either side
+    /// of it, so the sheet carries on over the stretch with no height. The last wall is steeper because a
+    /// target with no cross-fall puts a line moved square off its crest in the plane of the wall below, and
+    /// at that same batter neighbouring walls are one plane, with no hip between them. That's refused.
+    fn over_a_dip(centre: f64) -> Face {
+        let (a, b) = (surface(|_, _| 100.0), surface(|_, _| 120.0));
+        let dipping = surface(|x, _| 118.0 + 0.025 * (x - centre).abs());
+        let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
+        let steps = [wall(FaceTarget::Surface(&b), 45.0), berm(5.0), wall(FaceTarget::Surface(&dipping), 45.0), berm(5.0), wall(FaceTarget::Rl(150.0), 60.0)];
+        project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps).unwrap()
+    }
+
+    fn assert_one_sheet_over_the_dip(face: &Face, centre: f64) {
+        assert_eq!(face.steps[2].no_height.len(), 1, "{:?}", face.steps[2]);
+        let stretch = face.steps[2].no_height[0];
+        close(stretch.from[0].min(stretch.to[0]) - E, centre - 80.0, 1e-6);
+        close(stretch.from[0].max(stretch.to[0]) - E, centre + 80.0, 1e-6);
+        let v = face.surface.validity();
+        assert_eq!(v.non_manifold_edges + v.inconsistent_edges, 0, "{v:?}");
+        assert_eq!(crate::boundary_loops(&face.surface).unwrap().len(), 1, "one sheet, with one edge round it");
+    }
+
+    /// The crest comes down onto its toe between two of the toe's vertices, and rises again further on.
+    #[test]
+    fn a_crest_touching_its_toe_part_way_along_a_segment_leaves_no_slit() {
+        assert_one_sheet_over_the_dip(&over_a_dip(203.7), 203.7);
+    }
+
+    /// The target meets the toe on grid lines, where the toe has its vertices, as grids that pinch together do.
+    #[test]
+    fn a_crest_landing_exactly_on_a_string_vertex_carries_on() {
+        assert_one_sheet_over_the_dip(&over_a_dip(200.0), 200.0);
+    }
+
+    /// Two triangles that share an edge, worked out a whisker apart either side of a rounding step.
+    #[test]
+    fn a_face_welds_across_a_rounding_step() {
+        let step = 2.5e-6;
+        let (below, above) = (step - 1e-12, step + 1e-12);
+        let left = TriMesh::new(vec![[0.0, 0.0, 0.0], [below, 10.0, 0.0], [-5.0, 5.0, 0.0]], vec![[0, 1, 2]]);
+        let right = TriMesh::new(vec![[0.0, 0.0, 0.0], [5.0, 5.0, 0.0], [above, 10.0, 0.0]], vec![[0, 1, 2]]);
+        let joined = FaceParts { meshes: vec![left, right], ..FaceParts::default() }.joined();
+        assert_eq!(joined.vertices.len(), 4);
+        assert_eq!(crate::boundary_loops(&joined).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn points_further_apart_than_the_weld_stay_apart() {
+        let left = TriMesh::new(vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], vec![[0, 1, 2]]);
+        let right = TriMesh::new(vec![[3e-6, 0.0, 0.0], [1.0, 3e-6, 0.0], [1.0, 1.0, 0.0]], vec![[0, 1, 2]]);
+        assert_eq!(FaceParts { meshes: vec![left, right], ..FaceParts::default() }.joined().vertices.len(), 6);
     }
 
     #[test]
@@ -569,7 +838,7 @@ mod tests {
         }));
         let a = surface(|_, _| 100.0);
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
-        let face = project_face(&toe, &a, OffsetSide::Left, &[FaceStep::Project { to: FaceTarget::Surface(&holed), batter: 45.0 }], &[], 0.1).unwrap();
+        let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &[wall(FaceTarget::Surface(&holed), 45.0)]).unwrap();
         assert_eq!(face.steps[0].no_target.len(), 1, "{:?}", face.steps[0]);
         let stretch = face.steps[0].no_target[0];
         assert!(stretch.from[0] - E <= 150.0 + 10.0 && stretch.to[0] - E >= 250.0 - 10.0, "{stretch:?}");
@@ -586,7 +855,7 @@ mod tests {
         let short = triangulate_grid(&Grid::from_fn([E, N], [10.0, 10.0], 41, 41, |x, _| if x - E > 200.0 { f64::NAN } else { 120.0 }));
         let a = surface(|_, _| 100.0);
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
-        let face = project_face(&toe, &a, OffsetSide::Left, &[FaceStep::Project { to: FaceTarget::Surface(&short), batter: 45.0 }], &[], 0.1).unwrap();
+        let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &[wall(FaceTarget::Surface(&short), 45.0)]).unwrap();
         assert_eq!(face.steps[0].no_target.len(), 1);
         for p in &face.benches[0].crest.vertices {
             close(p[2], 120.0, 1e-6);
@@ -598,10 +867,9 @@ mod tests {
         let a = surface(|_, _| 100.0);
         let target = surface(|x, y| 130.0 + 5.0 * (x / 37.0).sin() + 3.0 * (y / 23.0).cos());
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
-        let steps = |mesh| [FaceStep::Project { to: FaceTarget::Surface(mesh), batter: 70.0 }];
         let flipped = target.flipped();
-        let (up, down) = (steps(&target), steps(&flipped));
-        let (normal, reversed) = (project_face(&toe, &a, OffsetSide::Left, &up, &[], 0.1).unwrap(), project_face(&toe, &a, OffsetSide::Left, &down, &[], 0.1).unwrap());
+        let run = |mesh| project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &[wall(FaceTarget::Surface(mesh), 70.0)]).unwrap();
+        let (normal, reversed) = (run(&target), run(&flipped));
         close(normal.benches[0].crest.plan_length(), reversed.benches[0].crest.plan_length(), 1e-6);
     }
 }

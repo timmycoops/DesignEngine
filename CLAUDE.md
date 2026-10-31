@@ -72,12 +72,14 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 - `Rule`: a function from a string to one value per edge. Types: fixed, fixed list, inside polygon,
   inside solid, segment azimuth, by horizon. Later: block model, geotech solid with transition distance.
   Blending between rules may only widen berms and flatten slopes.
-- `FaceProfile`: the grid the toe registers to, then ordered steps up from it and down from it, each "project
-  to surface B or an RL at a batter rule" or "berm of a width rule", with berm on roof and berm on floor per
-  horizon, minimum and maximum bench height, a conditioning tolerance, wall type (face, side, end), and side
-  (left or right for open highwall strings). A face is built oversized, RL to RL and past the pit shell, and
-  the cut does the fitting (`docs/decisions/0023-wall-step.md`). `FaceDesign` is the saved object the Face design
-  panel edits: lines, profiles and named rules together (`docs/decisions/0024-face-design.md`).
+- `FaceProfile`: one table for one type of string, going one way from its toe, up or down: the grid the toe
+  registers to, then ordered steps, each "project to surface B or an RL at a batter" or "berm of a width", with the
+  batter or width a number or a rule, and each row saying how its line registers and conditions. A string going both
+  ways takes a profile for each, and the top or bottom string is made by hand after the run. Still to come: berm on
+  roof and berm on floor per horizon, minimum and maximum bench height, wall type (face, side, end). Side (left or
+  right for open highwall strings) is on the line. A face is built oversized, past the pit shell, and the cut does
+  the fitting (`docs/decisions/0023-wall-step.md`). `FaceDesign` is the saved object the Face design panel edits:
+  lines, profiles and any shared rules together (`docs/decisions/0024-face-design.md`).
 - `Ramp`: centreline or start point, direction, start and end bench, width, grade (%, ratio or degrees,
   measured on the inside edge by default), inside and outside taper, entry type, flat or graded switchbacks
   with radius. It reports the bench where the grade can't be met instead of drifting.

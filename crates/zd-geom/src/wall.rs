@@ -187,13 +187,7 @@ pub struct ConditionLog {
 /// share a wall's azimuth however they rise and fall, and the line still lies exactly on the surface.
 /// An offset can come back in pieces, as `offset_string` says, and each piece is a string to go on with.
 pub fn next_toe(crest: &Polyline, berm: f64, side: OffsetSide, tolerance: f64, surface: &TriMesh) -> Result<(Vec<Polyline>, ConditionLog), GeomError> {
-    if !(berm.is_finite() && berm >= 0.0) {
-        return Err(GeomError::InvalidInput("the berm width must be zero or more".into()));
-    }
-    let flat = Polyline { vertices: crest.vertices.iter().map(|v| [v[0], v[1], 0.0]).collect(), closed: crest.closed };
-    let shape = filter_string(&flat, tolerance)?;
-    let mut log = ConditionLog { vertices_in: crest.vertices.len(), plan_vertices: shape.vertices.len(), ..ConditionLog::default() };
-    let pieces = if berm > 0.0 { offset_string(&shape, berm, side, Corner::Mitre { limit: BERM_MITRE_LIMIT }, None)? } else { vec![shape] };
+    let (pieces, mut log) = next_line(crest, berm, side, tolerance, 0.0)?;
     let mut toes = Vec::with_capacity(pieces.len());
     for piece in &pieces {
         let (toe, draped) = drape_string(piece, surface, true)?;
@@ -202,6 +196,80 @@ pub fn next_toe(crest: &Polyline, berm: f64, side: OffsetSide, tolerance: f64, s
         toes.push(toe);
     }
     Ok((toes, log))
+}
+
+/// The next line before it's registered: `crest` simplified in plan to within `before` metres, moved out
+/// a berm of `berm` metres on `side` if there is one, and simplified to within `after`. Each vertex takes
+/// the height of the nearest point on the crest, which it keeps if there's no surface under it.
+pub(crate) fn next_line(crest: &Polyline, berm: f64, side: OffsetSide, before: f64, after: f64) -> Result<(Vec<Polyline>, ConditionLog), GeomError> {
+    if !(berm.is_finite() && berm >= 0.0) {
+        return Err(GeomError::InvalidInput("the berm width must be zero or more".into()));
+    }
+    let flat = Polyline { vertices: crest.vertices.iter().map(|v| [v[0], v[1], 0.0]).collect(), closed: crest.closed };
+    let shape = filter_string(&flat, before)?;
+    let log = ConditionLog { vertices_in: crest.vertices.len(), plan_vertices: shape.vertices.len(), ..ConditionLog::default() };
+    let pieces = if berm > 0.0 { offset_string(&shape, berm, side, Corner::Mitre { limit: BERM_MITRE_LIMIT }, None)? } else { vec![shape] };
+    let lines = pieces.iter().map(|piece| Ok(at_crest_heights(&filter_string(piece, after)?, crest))).collect::<Result<_, GeomError>>()?;
+    Ok((lines, log))
+}
+
+/// How far along a segment in plan the nearest point to `p` is, from 0 to 1, and how far off it is.
+fn nearest_along(a: [f64; 3], b: [f64; 3], p: [f64; 3]) -> (f64, f64) {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let length = dx * dx + dy * dy;
+    let t = if length > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length).clamp(0.0, 1.0) } else { 0.0 };
+    (t, (a[0] + t * dx - p[0]).hypot(a[1] + t * dy - p[1]))
+}
+
+fn segment_count(line: &Polyline) -> usize {
+    if line.closed { line.vertices.len() } else { line.vertices.len().saturating_sub(1) }
+}
+
+/// A line's vertices at the height of the nearest point on `crest` in plan.
+pub(crate) fn at_crest_heights(line: &Polyline, crest: &Polyline) -> Polyline {
+    let n = crest.vertices.len();
+    let height = |p: [f64; 3]| {
+        let mut nearest = (f64::INFINITY, crest.vertices.first().map_or(p[2], |v| v[2]));
+        for i in 0..segment_count(crest) {
+            let (a, b) = (crest.vertices[i], crest.vertices[(i + 1) % n]);
+            let (t, gap) = nearest_along(a, b, p);
+            if gap < nearest.0 {
+                nearest = (gap, a[2] + t * (b[2] - a[2]));
+            }
+        }
+        nearest.1
+    };
+    Polyline { vertices: line.vertices.iter().map(|p| [p[0], p[1], height(*p)]).collect(), closed: line.closed }
+}
+
+/// A line with a new vertex wherever `place` puts one for a crest vertex. It's given the crest vertex, the
+/// nearest point on the line, and how far apart they are in plan.
+pub(crate) fn with_crest_vertices(line: &Polyline, crest: &Polyline, place: impl Fn([f64; 3], [f64; 3], f64) -> Option<[f64; 3]>) -> Polyline {
+    let (n, segments) = (line.vertices.len(), segment_count(line));
+    let mut falling: Vec<Vec<(f64, [f64; 3])>> = vec![Vec::new(); segments];
+    for &c in &crest.vertices {
+        let nearest = (0..segments).map(|i| (i, nearest_along(line.vertices[i], line.vertices[(i + 1) % n], c))).min_by(|a, b| a.1.1.total_cmp(&b.1.1));
+        let Some((i, (t, gap))) = nearest else { continue };
+        let (a, b) = (line.vertices[i], line.vertices[(i + 1) % n]);
+        if let Some(p) = place(c, [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])], gap) {
+            falling[i].push((t, p));
+        }
+    }
+    let mut vertices: Vec<[f64; 3]> = Vec::with_capacity(n + crest.vertices.len());
+    let apart = |a: [f64; 3], b: [f64; 3]| (a[0] - b[0]).hypot(a[1] - b[1]) > SAME_POINT;
+    for i in 0..n {
+        let a = line.vertices[i];
+        vertices.push(a);
+        let Some(along) = falling.get_mut(i) else { continue };
+        let b = line.vertices[(i + 1) % n];
+        along.sort_by(|x, y| x.0.total_cmp(&y.0));
+        for &(_, p) in along.iter() {
+            if vertices.last().is_some_and(|&last| apart(last, p)) && apart(p, b) {
+                vertices.push(p);
+            }
+        }
+    }
+    Polyline { vertices, closed: line.closed }
 }
 
 /// A plane, with `above` positive on the side its normal points to.
@@ -753,7 +821,9 @@ impl<'a> Walk<'a> {
         let end = self.target_at(q);
         let along = |s: [f64; 3]| {
             let (d, e) = ([q[0] - p[0], q[1] - p[1]], [s[0] - p[0], s[1] - p[1]]);
-            (d[0] * e[0] + d[1] * e[1]) / (d[0] * d[0] + d[1] * d[1])
+            let length = d[0] * d[0] + d[1] * d[1];
+            // A crest that lands exactly on a string vertex starts from the end of its stretch.
+            if length > 0.0 { (d[0] * e[0] + d[1] * e[1]) / length } else { 1.0 }
         };
         let steps = if plan_gap(p, q) > 0.0 { self.bins.crossings(self.near, [p[0], p[1]], [q[0], q[1]]) } else { Vec::new() };
         for s in steps.iter().copied().chain(end.map(|z| [q[0], q[1], z])) {
