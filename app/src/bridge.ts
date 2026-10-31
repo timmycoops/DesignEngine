@@ -471,6 +471,8 @@ export interface BenchConfig {
   surfaces: string[];
   /** A zip or folder of solids: time this import and nothing else. */
   solids: string | null;
+  /** Strings to load into the same scene first. */
+  strings: string[];
   results_path: string;
   scale_targets: number[];
   transfer_cells: number[];

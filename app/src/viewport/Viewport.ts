@@ -69,6 +69,8 @@ export class Viewport {
   private savedDirection = new THREE.Vector3(0.45, -0.75, 0.6).normalize();
   /** A left drag turning the 3D view: the point it turns on, and where the pointer last was. */
   private turning: { pivot: THREE.Vector3; x: number; y: number } | null = null;
+  /** A wheel pick in flight: ticks that arrive meanwhile keep the depth it finds. */
+  private settling = false;
 
   private constructor(
     readonly renderer: THREE.WebGPURenderer,
@@ -404,8 +406,10 @@ export class Viewport {
    * view does not move: zooming then slows as it nears the surface, and stops short of it.
    */
   private settleDepth = (e: WheelEvent): void => {
-    if (this.plan) return;
-    void this.pickPoint?.(e.clientX, e.clientY).then((hit) => {
+    if (this.plan || this.settling || !this.pickPoint) return;
+    this.settling = true;
+    void this.pickPoint(e.clientX, e.clientY).then((hit) => {
+      this.settling = false;
       if (!hit) return;
       const camera = this.perspective;
       const forward = camera.getWorldDirection(new THREE.Vector3());

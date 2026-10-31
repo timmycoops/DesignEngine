@@ -658,6 +658,8 @@ pub struct BenchConfig {
     surfaces: Vec<String>,
     /// With `--solids <zip or folder>`: time this import and nothing else.
     solids: Option<String>,
+    /// With `--solids`, `--strings a.dxf,b.dxf` loads these into the same scene first.
+    strings: Vec<String>,
     results_path: String,
     scale_targets: Vec<u64>,
     transfer_cells: Vec<usize>,
@@ -676,8 +678,11 @@ pub fn bench_config() -> Option<BenchConfig> {
     }
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
     let bench_out = repo.join("bench").join("out");
+    let solids = args.iter().position(|a| a == "--solids").and_then(|i| args.get(i + 1)).cloned();
+    let list = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).map(|s| s.split(',').map(str::to_string).collect::<Vec<_>>());
     let surfaces = match args.iter().position(|a| a == "--surfaces") {
         Some(i) => args.get(i + 1).map(|s| s.split(',').map(str::to_string).collect()).unwrap_or_default(),
+        None if solids.is_some() => Vec::new(),
         None => ["topo.xyz", "roof.xyz", "floor.xyz", "design.dxf"]
             .iter()
             .map(|f| bench_out.join("synthetic").join(f))
@@ -685,11 +690,11 @@ pub fn bench_config() -> Option<BenchConfig> {
             .map(|p| p.to_string_lossy().into_owned())
             .collect(),
     };
-    let solids = args.iter().position(|a| a == "--solids").and_then(|i| args.get(i + 1)).cloned();
     let results = if solids.is_some() { "app-solids-results.json" } else { "app-results.json" };
     Some(BenchConfig {
         surfaces,
         solids,
+        strings: list("--strings").unwrap_or_default(),
         results_path: bench_out.join(results).to_string_lossy().into_owned(),
         scale_targets: vec![10_000_000, 25_000_000, 50_000_000, 100_000_000],
         transfer_cells: vec![1000, 2000, 3000],

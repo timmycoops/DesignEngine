@@ -1,4 +1,5 @@
-// Strings in the viewport, and editing them through engine commands.
+// Strings in the viewport, and editing them through engine commands. A layer's strings draw as one
+// set of lines, so thousands of contours are one draw, and the selected string draws over them.
 //
 // Draw mode: each click adds a vertex; Enter or a double-click finishes the string
 // (`string.create`), Backspace drops the last vertex, Escape abandons it. Select mode: click a
@@ -32,19 +33,51 @@ export interface StringActions {
 }
 
 interface Shown {
-  line: THREE.Line;
+  layer: string;
+  visible: boolean;
   points: THREE.Vector3[];
   closed: boolean;
   revision: number;
   name: string;
 }
 
+/**
+ * A stretch of a string's segments with a sphere round it. A pick tests the spheres against the ray
+ * through the cursor and looks closely only at the runs it meets, so a project of a million vertices
+ * of contours costs a pick a few thousand vertices, not a million.
+ */
+interface Run {
+  id: string;
+  shown: Shown;
+  /** Segment `i` joins vertices `i` and `i + 1`; these are `first` to `first + count - 1`. */
+  first: number;
+  count: number;
+  centre: THREE.Vector3;
+  radius: number;
+}
+
+/** Segments in a run. */
+const RUN_SEGMENTS = 64;
+
+/** A string's segments as runs. */
+function runsOf(id: string, shown: Shown): Run[] {
+  const { points, closed } = shown;
+  const segments = closed ? points.length : points.length - 1;
+  const runs: Run[] = [];
+  for (let first = 0; first < segments; first += RUN_SEGMENTS) {
+    const count = Math.min(RUN_SEGMENTS, segments - first);
+    const box = new THREE.Box3();
+    for (let i = first; i <= first + count; i++) box.expandByPoint(points[i % points.length]);
+    const centre = box.getCenter(new THREE.Vector3());
+    runs.push({ id, shown, first, count, centre, radius: box.getSize(new THREE.Vector3()).length() / 2 });
+  }
+  return runs;
+}
+
 const PICK_PX = 8;
 const HANDLE_PX = 10;
 /** Handles closer than this on screen to the last one drawn are skipped (they can still be grabbed). */
 const HANDLE_SPACING_PX = 12;
-/** Segments this close to the cursor are tested for crossings. */
-const CROSSING_REACH_PX = 40;
 const CLICK_SLOP_PX = 4;
 const SELECTED = 0xffd23f;
 const PREVIEW = 0x66d9ff;
@@ -65,7 +98,12 @@ export class StringLayer {
   onSelect?: (id: string | null) => void;
 
   private shown = new Map<string, Shown>();
+  private runs: Run[] = [];
   private group = new THREE.Group();
+  /** Each layer's strings as one set of lines. */
+  private layerLines = new Map<string, THREE.LineSegments>();
+  /** The selected string, over its layer's lines. */
+  private highlight: THREE.Line;
   private preview: THREE.Line;
   private handles: THREE.InstancedMesh;
   private dummy = new THREE.Object3D();
@@ -97,11 +135,15 @@ export class StringLayer {
     this.preview.renderOrder = 12;
     this.preview.frustumCulled = false;
     this.preview.visible = false;
+    this.highlight = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: SELECTED, depthTest: false }));
+    this.highlight.renderOrder = 11;
+    this.highlight.frustumCulled = false;
+    this.highlight.visible = false;
     this.handles = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false }), MAX_HANDLES);
     this.handles.count = 0;
     this.handles.renderOrder = 13;
     this.handles.frustumCulled = false;
-    viewport.overlay.add(this.group, this.preview, this.handles);
+    viewport.overlay.add(this.group, this.highlight, this.preview, this.handles);
     viewport.beforeRender.add(() => this.placeHandles());
     this.snapMark = new PointMark(viewport, SNAP_MARK_PX);
     this.snapLabel = Object.assign(document.createElement('div'), { className: 'snap-label', hidden: true });
@@ -138,11 +180,12 @@ export class StringLayer {
     this.surfaceNames = new Map(summary.objects.filter((o) => o.drawn && o.kind !== 'solid').map((o) => [o.id, o.name]));
     const strings = summary.objects.filter((o) => o.kind === 'string' && o.vertices_local);
     this.names = Math.max(this.names, strings.length);
+    // Layers whose lines must be made again; an edit on one leaves the contours on another alone.
+    const changed = new Set<string>();
     const live = new Set(strings.map((s) => s.id));
     for (const [id, shown] of this.shown) {
       if (!live.has(id)) {
-        this.group.remove(shown.line);
-        shown.line.geometry.dispose();
+        changed.add(shown.layer);
         this.shown.delete(id);
       }
     }
@@ -150,27 +193,55 @@ export class StringLayer {
       const visible = this.layers.get(s.layer)?.visible ?? true;
       const existing = this.shown.get(s.id);
       if (existing && existing.revision === s.revision) {
-        existing.line.visible = visible;
-        existing.line.userData.layer = s.layer;
+        existing.visible = visible;
         continue;
       }
-      if (existing) {
-        this.group.remove(existing.line);
-        existing.line.geometry.dispose();
-      }
+      if (existing) changed.add(existing.layer);
+      changed.add(s.layer);
       const points = (s.vertices_local ?? []).map((p) => new THREE.Vector3(...p));
-      const ring = s.closed ? [...points, points[0]] : points;
-      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(ring), new THREE.LineBasicMaterial({ depthTest: false }));
-      line.renderOrder = 10;
-      line.frustumCulled = false;
-      line.visible = visible;
-      line.userData.layer = s.layer;
-      this.group.add(line);
-      this.shown.set(s.id, { line, points, closed: !!s.closed, revision: s.revision, name: s.name });
+      this.shown.set(s.id, { layer: s.layer, visible, points, closed: !!s.closed, revision: s.revision, name: s.name });
+    }
+    for (const layer of changed) this.drawLayer(layer);
+    if (changed.size > 0) this.runs = [...this.shown].flatMap(([id, shown]) => runsOf(id, shown));
+    for (const [id, lines] of this.layerLines) {
+      const layer = this.layers.get(id);
+      lines.visible = layer?.visible ?? true;
+      (lines.material as THREE.LineBasicMaterial).color.setHex(layer ? colourOf(layer.colour) : 0xffffff);
     }
     if (this.selected && !this.shown.has(this.selected)) this.select(null);
     this.recolour();
     this.placeHandles();
+  }
+
+  /** Makes a layer's lines again from its strings. */
+  private drawLayer(id: string): void {
+    const old = this.layerLines.get(id);
+    if (old) {
+      this.group.remove(old);
+      old.geometry.dispose();
+      (old.material as THREE.Material).dispose();
+      this.layerLines.delete(id);
+    }
+    const strings = [...this.shown.values()].filter((s) => s.layer === id);
+    const segments = strings.reduce((n, s) => n + (s.closed ? s.points.length : s.points.length - 1), 0);
+    if (segments <= 0) return;
+    const positions = new Float32Array(segments * 6);
+    let at = 0;
+    for (const { points, closed } of strings) {
+      const n = closed ? points.length : points.length - 1;
+      for (let i = 0; i < n; i++) {
+        const [a, b] = [points[i], points[(i + 1) % points.length]];
+        positions.set([a.x, a.y, a.z, b.x, b.y, b.z], at);
+        at += 6;
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const lines = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ depthTest: false }));
+    lines.renderOrder = 10;
+    lines.frustumCulled = false;
+    this.group.add(lines);
+    this.layerLines.set(id, lines);
   }
 
   /** Listens on the canvas; returns a function that stops listening. */
@@ -220,11 +291,11 @@ export class StringLayer {
       void this.pumpDrag();
       return;
     }
+    // A held button is the view turning or panning, not a point being placed.
+    if (e.buttons !== 0) return this.clearSnapMark();
     if (this.mode === 'draw') {
-      // A held button is the view turning or panning, not a point being placed.
-      this.hovering = e.buttons === 0 ? { x: e.clientX, y: e.clientY } : null;
-      if (this.hovering) void this.pumpHover();
-      else this.clearSnapMark();
+      this.hovering = { x: e.clientX, y: e.clientY };
+      void this.pumpHover();
     }
     if (this.mode === 'select' && this.selected) {
       const index = this.handleAt(this.selected, e.clientX, e.clientY);
@@ -383,11 +454,11 @@ export class StringLayer {
   }
 
   private recolour(): void {
-    for (const [id, shown] of this.shown) {
-      const layer = this.layers.get(shown.line.userData.layer as string);
-      const colour = id === this.selected ? SELECTED : layer ? colourOf(layer.colour) : 0xffffff;
-      (shown.line.material as THREE.LineBasicMaterial).color.setHex(colour);
-    }
+    const shown = this.selected ? this.shown.get(this.selected) : undefined;
+    this.highlight.visible = !!shown?.visible;
+    if (!shown) return;
+    this.highlight.geometry.dispose();
+    this.highlight.geometry = new THREE.BufferGeometry().setFromPoints(shown.closed ? [...shown.points, shown.points[0]] : shown.points);
   }
 
   /** Handles for the selected string's vertices, or for the vertices being drawn. */
@@ -421,8 +492,33 @@ export class StringLayer {
     this.handles.instanceMatrix.needsUpdate = true;
   }
 
-  private screen(p: THREE.Vector3): [number, number] {
-    return this.viewport.projectToClient(p);
+  /** Scene-local points to client pixels, for many at a time: one read of the canvas, no allocation. */
+  private screen(): (p: THREE.Vector3) => [number, number] {
+    const box = this.viewport.renderer.domElement.getBoundingClientRect();
+    const camera = this.viewport.camera;
+    const at = new THREE.Vector3();
+    return (p) => {
+      at.copy(p).project(camera);
+      return [box.left + ((at.x + 1) / 2) * box.width, box.top + ((1 - at.y) / 2) * box.height];
+    };
+  }
+
+  /** The visible runs whose spheres come within `reachPx` of the ray through the cursor. */
+  private runsNear(x: number, y: number, reachPx: number): Run[] {
+    const viewport = this.viewport;
+    const { origin: o, direction: d } = viewport.rayFromNdc(...viewport.clientToNdc(x, y));
+    // What a pixel measures: the same everywhere in plan, growing with distance in 3D.
+    const eye = viewport.camera.position;
+    const flat = viewport.planView ? viewport.pixelSize(eye) : 0;
+    const perMetre = viewport.planView ? 0 : viewport.pixelSize(new THREE.Vector3(eye.x + d[0], eye.y + d[1], eye.z + d[2]));
+    return this.runs.filter(({ shown, centre, radius }) => {
+      if (!shown.visible) return false;
+      const [wx, wy, wz] = [centre.x - o[0], centre.y - o[1], centre.z - o[2]];
+      const along = wx * d[0] + wy * d[1] + wz * d[2];
+      const [px, py, pz] = [wx - along * d[0], wy - along * d[1], wz - along * d[2]];
+      const reach = radius + reachPx * (flat + perMetre * (Math.abs(along) + radius));
+      return px * px + py * py + pz * pz <= reach * reach;
+    });
   }
 
   /** A snap from a string point the viewport already holds (scene-local). */
@@ -458,36 +554,41 @@ export class StringLayer {
 
   /** A string's vertex, crossing or segment near the cursor, in that order, or null. */
   private snapToStrings(x: number, y: number, skip?: { id: string; index: number }): SnapHit | null {
+    const screen = this.screen();
+    const runs = this.runsNear(x, y, HANDLE_PX);
     let vertex: SnapHit | null = null;
     let best = HANDLE_PX * HANDLE_PX;
-    const consider = (id: string, name: string, points: THREE.Vector3[]) =>
-      points.forEach((p, i) => {
-        if (skip?.id === id && skip.index === i) return;
-        const [sx, sy] = this.screen(p);
-        const d = (sx - x) ** 2 + (sy - y) ** 2;
-        if (d <= best) {
-          best = d;
-          vertex = this.stringHit(id, p, 'vertex', `vertex ${i + 1} of ${name}`);
-        }
-      });
-    for (const [id, shown] of this.shown) if (shown.line.visible) consider(id, shown.name, shown.points);
-    if (this.mode === 'draw') consider('', 'this string', this.pending.map((h) => new THREE.Vector3(...h.local)));
+    const consider = (id: string, name: string, points: THREE.Vector3[], i: number) => {
+      if (skip?.id === id && skip.index === i) return;
+      const [sx, sy] = screen(points[i]);
+      const d = (sx - x) ** 2 + (sy - y) ** 2;
+      if (d <= best) {
+        best = d;
+        vertex = this.stringHit(id, points[i], 'vertex', `vertex ${i + 1} of ${name}`);
+      }
+    };
+    for (const { id, shown, first, count } of runs) {
+      for (let i = first; i <= first + count; i++) consider(id, shown.name, shown.points, i % shown.points.length);
+    }
+    if (this.mode === 'draw') {
+      const drawn = this.pending.map((h) => new THREE.Vector3(...h.local));
+      drawn.forEach((_, i) => consider('', 'this string', drawn, i));
+    }
     if (vertex) {
       // Drawn vertices keep the exact coordinates they were snapped with.
       const v: SnapHit = vertex;
       return v.object === '' ? (this.pending.find((h) => h.local.every((c, k) => c === v.local[k])) ?? v) : v;
     }
 
-    // Segments near the cursor: the nearest is the segment snap, and pairs of them may cross.
+    // Segments near the cursor: the nearest is the segment snap, and pairs of them may cross. A
+    // crossing within the handle distance has both its segments within that distance too.
     const near: { id: string; index: number; d: number; a: THREE.Vector3; b: THREE.Vector3; name: string }[] = [];
-    for (const [id, shown] of this.shown) {
-      if (!shown.line.visible) continue;
-      const n = shown.closed ? shown.points.length : shown.points.length - 1;
-      for (let i = 0; i < n; i++) {
+    for (const { id, shown, first, count } of runs) {
+      for (let i = first; i < first + count; i++) {
         const j = (i + 1) % shown.points.length;
         if (skip?.id === id && (skip.index === i || skip.index === j)) continue;
-        const d = distanceToSegment([x, y], this.screen(shown.points[i]), this.screen(shown.points[j]));
-        if (d <= CROSSING_REACH_PX) near.push({ id, index: i, d, a: shown.points[i], b: shown.points[j], name: shown.name });
+        const d = distanceToSegment([x, y], screen(shown.points[i]), screen(shown.points[j]));
+        if (d <= HANDLE_PX) near.push({ id, index: i, d, a: shown.points[i], b: shown.points[j], name: shown.name });
       }
     }
     const crossing = this.crossingNear(near.slice().sort((p, q) => p.d - q.d).slice(0, 64), x, y);
@@ -552,7 +653,7 @@ export class StringLayer {
         const u = (w[0] * r[1] - w[1] * r[0]) / denom;
         if (t < 0 || t > 1 || u < 0 || u > 1) continue;
         const point = p.a.clone().lerp(p.b, t);
-        const [sx, sy] = this.screen(point);
+        const [sx, sy] = this.viewport.projectToClient(point);
         const d = (sx - x) ** 2 + (sy - y) ** 2;
         if (d <= bestDist) {
           bestDist = d;
@@ -613,10 +714,11 @@ export class StringLayer {
   private handleAt(id: string, x: number, y: number): number {
     const shown = this.shown.get(id);
     if (!shown) return -1;
+    const screen = this.screen();
     let best = -1;
     let bestDist = HANDLE_PX * HANDLE_PX;
     shown.points.forEach((p, i) => {
-      const [sx, sy] = this.screen(p);
+      const [sx, sy] = screen(p);
       const d = (sx - x) ** 2 + (sy - y) ** 2;
       if (d <= bestDist) {
         best = i;
@@ -631,10 +733,11 @@ export class StringLayer {
     const shown = this.shown.get(id);
     if (!shown) return -1;
     const n = shown.closed ? shown.points.length : shown.points.length - 1;
+    const screen = this.screen();
     let best = -1;
     let bestDist = PICK_PX;
     for (let i = 0; i < n; i++) {
-      const d = distanceToSegment([x, y], this.screen(shown.points[i]), this.screen(shown.points[(i + 1) % shown.points.length]));
+      const d = distanceToSegment([x, y], screen(shown.points[i]), screen(shown.points[(i + 1) % shown.points.length]));
       if (d <= bestDist) {
         best = i;
         bestDist = d;
@@ -644,13 +747,12 @@ export class StringLayer {
   }
 
   private stringAt(x: number, y: number): string | null {
+    const screen = this.screen();
     let best: string | null = null;
     let bestDist = PICK_PX;
-    for (const [id, shown] of this.shown) {
-      if (!shown.line.visible) continue;
-      const n = shown.closed ? shown.points.length : shown.points.length - 1;
-      for (let i = 0; i < n; i++) {
-        const d = distanceToSegment([x, y], this.screen(shown.points[i]), this.screen(shown.points[(i + 1) % shown.points.length]));
+    for (const { id, shown, first, count } of this.runsNear(x, y, PICK_PX)) {
+      for (let i = first; i < first + count; i++) {
+        const d = distanceToSegment([x, y], screen(shown.points[i]), screen(shown.points[(i + 1) % shown.points.length]));
         if (d <= bestDist) {
           best = id;
           bestDist = d;

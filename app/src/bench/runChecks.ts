@@ -51,7 +51,7 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
 
   try {
     if (config.solids) {
-      results.solids = await checkSolids(viewport, config.solids, config.orbit_seconds, log, show);
+      results.solids = await checkSolids(viewport, config, config.solids, log, show);
     } else {
       results.load = await loadSurfaces(viewport, config.surfaces, log);
       viewport.fitView();
@@ -70,7 +70,10 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
 }
 
 /** A zip or folder of solids by the app's own path: import, draw, snap index, orbit, snap, undo. */
-async function checkSolids(viewport: Viewport, path: string, orbitSeconds: number, log: (line: string) => void, show: Show) {
+async function checkSolids(viewport: Viewport, config: BenchConfig, path: string, log: (line: string) => void, show: Show) {
+  const orbitSeconds = config.orbit_seconds;
+  for (const surface of config.surfaces) await show((await runCommand('surface.import', { path: surface, layer: 'surfaces' })).summary);
+  for (const strings of config.strings) await show((await runCommand('string.import', { path: strings })).summary);
   log(`solids: importing ${path}`);
   const start = performance.now();
   const reply = await runCommand('solid.import_many', { paths: [path], layer: 'solids', repair: true });
@@ -100,6 +103,7 @@ async function checkSolids(viewport: Viewport, path: string, orbitSeconds: numbe
     snaps.push(performance.now() - t);
   }
   snaps.sort((a, b) => a - b);
+  const pick = await checkPickTime(viewport);
   const camera = await checkCamera(viewport);
   const snapSwitch = await checkSnapSwitch(viewport);
   const stringPick = await checkStringPick(viewport, show);
@@ -116,6 +120,7 @@ async function checkSolids(viewport: Viewport, path: string, orbitSeconds: numbe
     table_rows_in_page: rowsInPage,
     last_solid_in_last_row: scrolledTo?.includes(reply.summary.objects[reply.summary.objects.length - 1].name) ?? false,
     orbit: orbited,
+    pick,
     camera,
     snap_switch: snapSwitch,
     string_pick: stringPick,
@@ -124,6 +129,20 @@ async function checkSolids(viewport: Viewport, path: string, orbitSeconds: numbe
     undo_ms: performance.now() - undoStart,
     messages: reply.record.messages.slice(0, 2),
   };
+}
+
+/** What a press or a wheel tick costs: the time to pick, across the view, with everything loaded. */
+async function checkPickTime(viewport: Viewport) {
+  const box = viewport.renderer.domElement.getBoundingClientRect();
+  const times: number[] = [];
+  for (let k = 0; k < 200; k++) {
+    const [x, y] = [box.left + box.width * (0.1 + (k % 20) * 0.04), box.top + box.height * (0.1 + Math.floor(k / 20) * 0.08)];
+    const start = performance.now();
+    await viewport.pickPoint?.(x, y);
+    times.push(performance.now() - start);
+  }
+  times.sort((a, b) => a - b);
+  return { p50_ms: times[100], p95_ms: times[190], max_ms: times[199] };
 }
 
 /**
@@ -140,7 +159,12 @@ async function checkCamera(viewport: Viewport) {
   for (let k = 0; k < 40 && !found; k++) {
     const [x, y] = [box.left + box.width * (0.25 + (k % 8) * 0.07), box.top + box.height * (0.3 + Math.floor(k / 8) * 0.1)];
     const hit = await viewport.pickPoint?.(x, y);
-    if (hit) found = { x, y, point: new THREE.Vector3(...hit) };
+    if (hit) {
+      // Start exactly on the point: a pick can land on a string a few pixels from the cursor.
+      const point = new THREE.Vector3(...hit);
+      const [px, py] = viewport.projectToClient(point);
+      found = { x: px, y: py, point };
+    }
   }
   if (!found) return { error: 'nothing under the cursor' };
   const { x, y, point } = found;
@@ -260,8 +284,14 @@ async function checkStringPick(viewport: Viewport, show: Show) {
   const middle = points[0].clone().lerp(points[1], 0.5);
   const send = (type: string, x: number, y: number, buttons: number) =>
     canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+  /** Close in on `p`, so the string stands clear of anything dense behind it. */
+  const closeIn = async (p: THREE.Vector3) => {
+    viewport.focusOn([p.x, p.y, p.z], 300);
+    await settle();
+  };
   /** How far the rotation point lands from `p` when a drag starts on it. */
   const turnFrom = async (p: THREE.Vector3) => {
+    await closeIn(p);
     const [x, y] = viewport.projectToClient(p);
     send('pointerdown', x, y, 1);
     await settle();
@@ -273,6 +303,7 @@ async function checkStringPick(viewport: Viewport, show: Show) {
     return off;
   };
   const label = async (p: THREE.Vector3) => {
+    await closeIn(p);
     const [x, y] = viewport.projectToClient(p);
     send('pointermove', x, y, 0);
     await settle();

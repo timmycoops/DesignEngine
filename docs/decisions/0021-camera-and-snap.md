@@ -27,6 +27,11 @@ Phase 2, because sections mean constant zooming in on one spot.
    is: green a vertex, blue a segment, pink where strings cross, white a surface or solid, amber the
    working plane.
 6. **The rotation point shows.** A gold ring sits on it while a drag turns the view.
+7. **Picks and strings stay fast with a million vertices.** A string is held as runs of 64 segments, each
+   with a sphere round it. A pick tests the spheres against the ray through the cursor and looks closely
+   only at the runs it meets, and reaches only as far as the handle distance. A layer's strings draw as one
+   set of lines, as a layer's solids draw as one mesh (decision 0019), and the selected string draws over
+   them. An edit reloads only its own layer's lines.
 
 These are all in the viewport: no engine change and no new command.
 
@@ -45,5 +50,17 @@ wheel and key events to the canvas:
   its vertex pivoted on it to 0 m, and from its segment to 4e-10 m. Hovering named `vertex 2` and `segment 1`
   of the string, with their RL.
 - Orbiting still holds 60 fps, and snapping takes 0.9 ms at p50.
+
+The first version of string picking looked at every vertex and was far too slow on Tim's project. The scene
+that showed it is now part of the check: a real pit's topography, 21,432 solids and 5,724 strings of about
+a million vertices, 11.7 M triangles in all.
+
+| On that scene | One draw and pick per string | Now |
+|---|---|---|
+| Orbit | 35 fps, p95 35 ms | **60 fps**, p95 17 ms |
+| A pick, at every press and wheel tick | 92 ms at p50 (reaching 40 px) | **1.5 ms** at p50, 6 ms at worst |
+
+The point under the cursor stayed there through a 27.9 km swing to 3e-12 px, and to 1 px through a zoom from
+31.8 km to 15.6 km. Turning from a string's vertex or segment pivoted on it to 8e-10 m at most.
 
 How it feels is checked by hand, not by this. The bench runs in 3D, so zooming in plan view is not covered.
