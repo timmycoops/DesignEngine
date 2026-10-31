@@ -3,6 +3,7 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { DecodedMesh, Vec3 } from '../bridge';
+import { PointMark } from './markers';
 import { valueColours } from './ramp';
 
 interface GpuAdapterLike {
@@ -33,6 +34,9 @@ export interface FrameTiming {
 
 const SURFACE_COLOURS = [0xa8916b, 0x5b6b7d, 0x8c9aa6, 0xc9a227, 0x6f8f5f];
 
+const PIVOT_MARK_PX = 9;
+const PIVOT_MARK_COLOUR = 0xffd23f;
+
 export class Viewport {
   readonly scene = new THREE.Scene();
   /** Loaded surfaces and their scale-test copies. */
@@ -44,6 +48,8 @@ export class Viewport {
   onStats?: (stats: FrameStats) => void;
   /** What is drawn under a screen point, scene-local: what the view turns on and zooms to. */
   pickPoint?: (clientX: number, clientY: number) => Promise<Vec3 | null>;
+  /** The rotation point, shown while a drag turns the view. */
+  readonly pivotMark: PointMark;
 
   private surfaces: THREE.Group[] = [];
   private copies: THREE.Object3D[] = [];
@@ -78,6 +84,7 @@ export class Viewport {
     const sun = new THREE.DirectionalLight(0xffffff, 1.8);
     sun.position.set(0.5, -0.8, 1.0);
     this.scene.add(sun, this.content, this.overlay);
+    this.pivotMark = new PointMark(this, PIVOT_MARK_PX);
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(host);
     // The wheel zooms where the cursor is, and left drag is `turnAbout`, so the view works on what
@@ -363,12 +370,14 @@ export class Viewport {
     if (!turn || !this.controls.enabled) return;
     const fullTurn = (2 * Math.PI) / (this.renderer.domElement.clientHeight || 1);
     this.turnAbout(turn.pivot, -fullTurn * (e.clientX - turn.x), fullTurn * (e.clientY - turn.y));
+    this.pivotMark.show(turn.pivot, PIVOT_MARK_COLOUR);
     turn.x = e.clientX;
     turn.y = e.clientY;
   };
 
   private endTurn = (): void => {
     this.turning = null;
+    this.pivotMark.hide();
   };
 
   /**

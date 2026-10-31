@@ -15,6 +15,7 @@
 import * as THREE from 'three/webgpu';
 import type { Layer, ProjectSummary, SnapHit, Vec3 } from '../bridge';
 import { colourOf } from './load';
+import { PointMark } from './markers';
 import type { Viewport } from './Viewport';
 
 export type Mode = 'select' | 'draw';
@@ -48,6 +49,15 @@ const CLICK_SLOP_PX = 4;
 const SELECTED = 0xffd23f;
 const PREVIEW = 0x66d9ff;
 const MAX_HANDLES = 8192;
+const SNAP_MARK_PX = 7;
+/** A snap marker's colour says what the point will land on. */
+const SNAP_COLOURS: Record<NonNullable<SnapHit['kind']>, number> = {
+  vertex: 0x7dfca0,
+  segment: 0x66d9ff,
+  intersection: 0xff7ad9,
+  surface: 0xffffff,
+  plane: 0xffb347,
+};
 
 export class StringLayer {
   mode: Mode = 'select';
@@ -68,6 +78,12 @@ export class StringLayer {
   private layers = new Map<string, Layer>();
   private names = 0;
   private snapping = true;
+  private snapMark: PointMark;
+  private snapLabel: HTMLElement;
+  private hovering: { x: number; y: number } | null = null;
+  private hoverInFlight = false;
+  /** Surfaces and grids by id, to name what a point snaps to. */
+  private surfaceNames = new Map<string, string>();
   /** Snapping was switched on or off. */
   onSnapping?: (on: boolean) => void;
   /** The scene origin: world = origin + local, exactly, for points the shell sent. */
@@ -87,11 +103,15 @@ export class StringLayer {
     this.handles.frustumCulled = false;
     viewport.overlay.add(this.group, this.preview, this.handles);
     viewport.beforeRender.add(() => this.placeHandles());
+    this.snapMark = new PointMark(viewport, SNAP_MARK_PX);
+    this.snapLabel = Object.assign(document.createElement('div'), { className: 'snap-label', hidden: true });
+    viewport.renderer.domElement.parentElement?.append(this.snapLabel);
   }
 
   setMode(mode: Mode): void {
     this.mode = mode;
     this.pending = [];
+    this.clearSnapMark();
     this.refreshPreview();
     this.placeHandles();
   }
@@ -100,6 +120,7 @@ export class StringLayer {
   toggleSnapping(): void {
     this.snapping = !this.snapping;
     this.onSnapping?.(this.snapping);
+    this.clearSnapMark();
     this.actions.status(this.snapping ? 'Snap on: strings, then surfaces, then the working plane' : 'Snap off: points go on the working plane');
   }
 
@@ -114,6 +135,7 @@ export class StringLayer {
   sync(summary: ProjectSummary): void {
     this.layers = new Map(summary.layers.map((l) => [l.id, l]));
     this.origin = summary.origin ?? [0, 0, 0];
+    this.surfaceNames = new Map(summary.objects.filter((o) => o.drawn && o.kind !== 'solid').map((o) => [o.id, o.name]));
     const strings = summary.objects.filter((o) => o.kind === 'string' && o.vertices_local);
     this.names = Math.max(this.names, strings.length);
     const live = new Set(strings.map((s) => s.id));
@@ -161,14 +183,17 @@ export class StringLayer {
     const key = (e: KeyboardEvent) => this.keyDown(e);
     // Capture phase runs before OrbitControls' own listener on the canvas.
     canvas.addEventListener('pointerdown', down, { capture: true });
+    const left = () => this.clearSnapMark();
     canvas.addEventListener('pointermove', move);
     canvas.addEventListener('pointerup', up);
+    canvas.addEventListener('pointerleave', left);
     canvas.addEventListener('dblclick', dbl);
     window.addEventListener('keydown', key);
     return () => {
       canvas.removeEventListener('pointerdown', down, { capture: true });
       canvas.removeEventListener('pointermove', move);
       canvas.removeEventListener('pointerup', up);
+      canvas.removeEventListener('pointerleave', left);
       canvas.removeEventListener('dblclick', dbl);
       window.removeEventListener('keydown', key);
     };
@@ -195,10 +220,50 @@ export class StringLayer {
       void this.pumpDrag();
       return;
     }
+    if (this.mode === 'draw') {
+      // A held button is the view turning or panning, not a point being placed.
+      this.hovering = e.buttons === 0 ? { x: e.clientX, y: e.clientY } : null;
+      if (this.hovering) void this.pumpHover();
+      else this.clearSnapMark();
+    }
     if (this.mode === 'select' && this.selected) {
       const index = this.handleAt(this.selected, e.clientX, e.clientY);
       this.hovered = index >= 0 ? { id: this.selected, index } : null;
     }
+  }
+
+  /** What the next click would land on, shown as the cursor moves. As in `pumpDrag`, one at a time. */
+  private async pumpHover(): Promise<void> {
+    if (this.hoverInFlight || !this.hovering) return;
+    this.hoverInFlight = true;
+    const at = this.hovering;
+    this.hovering = null;
+    const hit = await this.snapAt(at.x, at.y);
+    this.hoverInFlight = false;
+    if (this.mode === 'draw') this.showSnap(hit, at);
+    void this.pumpHover();
+  }
+
+  private showSnap(hit: SnapHit | null, at: { x: number; y: number }): void {
+    if (!hit?.kind) return this.clearSnapMark();
+    this.snapMark.show(new THREE.Vector3(...hit.local), SNAP_COLOURS[hit.kind]);
+    const box = this.viewport.renderer.domElement.getBoundingClientRect();
+    this.snapLabel.textContent = this.describeSnap(hit);
+    this.snapLabel.style.transform = `translate(${at.x - box.left + 14}px, ${at.y - box.top + 14}px)`;
+    this.snapLabel.hidden = false;
+  }
+
+  private clearSnapMark(): void {
+    this.hovering = null;
+    this.snapMark.hide();
+    this.snapLabel.hidden = true;
+  }
+
+  /** What a point lands on and at what RL, for the label beside the cursor. */
+  private describeSnap(hit: SnapHit): string {
+    if (hit.kind === 'plane') return hit.label ?? 'The working plane';
+    const name = hit.kind === 'surface' ? ((hit.object && this.surfaceNames.get(hit.object)) ?? 'Solid') : hit.label;
+    return `${name} · RL ${hit.world[2].toFixed(2)}`;
   }
 
   /** One snap request in flight; moves that arrive meanwhile collapse to the latest. */
@@ -210,6 +275,7 @@ export class StringLayer {
     const hit = await this.snapAt(target.x, target.y, this.drag);
     if (hit && this.drag) {
       this.reportSnap(hit);
+      this.showSnap(hit, target);
       this.drag.hit = hit;
       const shown = this.shown.get(this.drag.id);
       if (shown) {
@@ -230,6 +296,7 @@ export class StringLayer {
       this.viewport.controls.enabled = true;
       this.viewport.renderer.domElement.releasePointerCapture(e.pointerId);
       this.preview.visible = false;
+      this.clearSnapMark();
       if (hit) await this.actions.run('string.move_vertex', { string: id, index, to: hit.world });
       return;
     }

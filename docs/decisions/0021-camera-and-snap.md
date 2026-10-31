@@ -21,6 +21,11 @@ Phase 2, because sections mean constant zooming in on one spot.
 4. **Snap is a toolbar button and the S key**, on by default, and works mid-string or mid-drag. With it off,
    every point goes on the working plane: at the dragged vertex's RL while dragging, the last vertex's
    while drawing, else the RL at the centre of the view.
+5. **You can see where a point will land before you click.** While drawing, or dragging a vertex, a ring
+   sits on the snap point with a label beside the cursor naming it and its RL. Its colour says what it
+   is: green a vertex, blue a segment, pink where strings cross, white a surface or solid, amber the
+   working plane.
+6. **The rotation point shows.** A gold ring sits on it while a drag turns the view.
 
 These are all in the viewport: no engine change and no new command.
 
@@ -33,6 +38,8 @@ wheel and key events to the canvas:
 - Twelve wheel clicks closed from 5,497 m to 2,696 m, with that point 0.28 px from the cursor.
 - In draw mode, a click snapped; S switched snap off; the next click landed on the working plane; S
   switched it on again.
+- The hover label named what was under the cursor: a solid and its RL with snap on, the working plane and
+  its RL with snap off. The gold ring sat on the point turned about, 0 m off, and cleared on release.
 - Orbiting still holds 60 fps, and snapping takes 0.9 ms at p50.
 
 How it feels is checked by hand, not by this. The bench runs in 3D, so zooming in plan view is not covered.

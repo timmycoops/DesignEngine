@@ -6,6 +6,51 @@ import { ISSUE } from './ramp';
 import type { Viewport } from './Viewport';
 
 const MAX_MARKERS = 256;
+/** A point mark's ring and centre dot, as shares of its radius. */
+const RING_INSIDE = 0.72;
+const DOT = 0.2;
+
+/** A ring with a dot at one point, drawn over everything, facing the camera, one size on screen. */
+export class PointMark {
+  private mark = new THREE.Group();
+  private material = new THREE.MeshBasicMaterial({ depthTest: false, side: THREE.DoubleSide });
+
+  constructor(
+    private viewport: Viewport,
+    private radiusPx: number,
+  ) {
+    for (const geometry of [new THREE.RingGeometry(RING_INSIDE, 1, 40), new THREE.CircleGeometry(DOT, 16)]) {
+      const mesh = new THREE.Mesh(geometry, this.material);
+      mesh.renderOrder = 14;
+      mesh.frustumCulled = false;
+      this.mark.add(mesh);
+    }
+    this.mark.visible = false;
+    viewport.overlay.add(this.mark);
+    viewport.beforeRender.add(this.place);
+  }
+
+  /** Where the mark is (scene-local), or null when it is hidden. */
+  get position(): THREE.Vector3 | null {
+    return this.mark.visible ? this.mark.position : null;
+  }
+
+  show(at: THREE.Vector3, colour: number): void {
+    this.mark.position.copy(at);
+    this.material.color.setHex(colour);
+    this.mark.visible = true;
+  }
+
+  hide(): void {
+    this.mark.visible = false;
+  }
+
+  private place = (): void => {
+    if (!this.mark.visible) return;
+    this.mark.quaternion.copy(this.viewport.camera.quaternion);
+    this.mark.scale.setScalar(this.viewport.pixelSize(this.mark.position) * this.radiusPx);
+  };
+}
 
 export class IssueMarkers {
   private mesh: THREE.InstancedMesh;

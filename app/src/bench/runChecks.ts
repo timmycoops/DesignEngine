@@ -156,9 +156,15 @@ async function checkCamera(viewport: Viewport) {
     send('pointermove', 10 * k, 5 * k);
     await viewport.nextFrame();
   }
+  const pivotMark = viewport.pivotMark.position?.distanceTo(point);
   send('pointerup', 120, 60);
   await settle();
-  const turned = { drift_px: drift(), camera_moved_m: viewport.camera.position.distanceTo(startPosition) };
+  const turned = {
+    drift_px: drift(),
+    camera_moved_m: viewport.camera.position.distanceTo(startPosition),
+    pivot_mark_off_point_m: pivotMark ?? null,
+    pivot_mark_gone_after: viewport.pivotMark.position === null,
+  };
 
   const turnedDistance = viewport.camera.position.distanceTo(point);
   for (let k = 0; k < 12; k++) {
@@ -190,11 +196,18 @@ async function checkSnapSwitch(viewport: Viewport) {
   await settle();
   button('Draw string')?.click();
   await settle();
+  const hover = async (hx: number, hy: number) => {
+    canvas.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, buttons: 0, clientX: hx, clientY: hy, pointerId: 1, pointerType: 'mouse' }));
+    await settle();
+    return document.querySelector<HTMLElement>('.snap-label')?.textContent ?? '';
+  };
+  const overSurface = await hover(x, y);
   await click(x, y);
   const first = screen().includes('1 vertices') && !screen().includes('1 vertices (on the working plane');
   key('s');
   await settle();
   const switchedOff = screen().includes('Snap off');
+  const overPlane = await hover(x + 60, y + 30);
   await click(x + 60, y + 30);
   const second = screen().includes('2 vertices (on the working plane at RL');
   key('Escape');
@@ -203,7 +216,14 @@ async function checkSnapSwitch(viewport: Viewport) {
   const switchedOn = screen().includes('Snap on');
   button('Select')?.click();
   await settle();
-  return { first_click_snapped: first, s_turned_it_off: switchedOff, second_click_on_the_plane: second, s_turned_it_on: switchedOn };
+  return {
+    first_click_snapped: first,
+    s_turned_it_off: switchedOff,
+    second_click_on_the_plane: second,
+    s_turned_it_on: switchedOn,
+    label_over_a_solid: overSurface.replace(/[-\d.]+$/, '<RL>'),
+    label_snap_off: overPlane.replace(/[-\d.]+$/, '<RL>'),
+  };
 }
 
 async function loadSurfaces(viewport: Viewport, paths: string[], log: (line: string) => void) {
