@@ -65,6 +65,11 @@ export class Viewport {
   /** Plan view: looking straight down, north up, no perspective. */
   readonly orthographic = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100_000);
   private plan = false;
+  /** The section view: flat too, square onto a vertical plane with RL up. */
+  readonly sectionCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100_000);
+  private sectioned = false;
+  /** The view's centre before a section, to come back to. */
+  private beforeSection = new THREE.Vector3();
   /** The 3D view's direction from its target, kept while in plan view. */
   private savedDirection = new THREE.Vector3(0.45, -0.75, 0.6).normalize();
   /** A left drag turning the 3D view: the point it turns on, and where the pointer last was. */
@@ -81,6 +86,7 @@ export class Viewport {
     private host: HTMLElement,
   ) {
     this.orthographic.up.set(0, 1, 0);
+    this.sectionCamera.up.set(0, 0, 1);
     this.scene.background = new THREE.Color(0x161e29);
     this.scene.add(new THREE.HemisphereLight(0xdfe8f2, 0x3a3a30, 1.4));
     const sun = new THREE.DirectionalLight(0xffffff, 1.8);
@@ -133,13 +139,70 @@ export class Viewport {
     return new Viewport(renderer, camera, controls, backend, adapterName, host);
   }
 
-  /** The camera in use: the 3D one, or the plan one. */
+  /** The camera in use: the 3D one, the plan one or the section one. */
   get camera(): THREE.PerspectiveCamera | THREE.OrthographicCamera {
-    return this.plan ? this.orthographic : this.perspective;
+    return this.sectioned ? this.sectionCamera : this.plan ? this.orthographic : this.perspective;
   }
 
   get planView(): boolean {
     return this.plan;
+  }
+
+  /** A view with no perspective: plan or section. A pixel measures the same everywhere in it. */
+  get flatView(): boolean {
+    return this.plan || this.sectioned;
+  }
+
+  get sectionView(): boolean {
+    return this.sectioned;
+  }
+
+  /**
+   * Looks square onto the vertical plane through scene-local plan points `a` and `b`, with `a` to the
+   * left, framing the distances along it and the RLs. The solid view is hidden: only what is cut shows.
+   */
+  showSection(a: [number, number], b: [number, number], along: [number, number], rl: [number, number]): void {
+    if (!this.sectioned) this.beforeSection.copy(this.controls.target);
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const [dx, dy] = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+    const middle = (along[0] + along[1]) / 2;
+    const centre = new THREE.Vector3(a[0] + dx * middle, a[1] + dy * middle, (rl[0] + rl[1]) / 2);
+    const { clientWidth: w, clientHeight: h } = this.host;
+    const aspect = w > 0 && h > 0 ? w / h : 1;
+    const half = Math.max((rl[1] - rl[0]) / 2, (along[1] - along[0]) / 2 / aspect, 1) * 1.1;
+    const camera = this.sectionCamera;
+    Object.assign(camera, { left: -half * aspect, right: half * aspect, top: half, bottom: -half, zoom: 1 });
+    camera.updateProjectionMatrix();
+    // Standing to the right of the line from `a` to `b`, so it runs left to right on screen.
+    const stand = Math.max(this.sceneRadius * 4, 1000);
+    camera.position.set(centre.x + dy * stand, centre.y - dx * stand, centre.z);
+    camera.lookAt(centre);
+    this.sectioned = true;
+    this.content.visible = false;
+    this.controls.object = camera;
+    this.controls.target.copy(centre);
+    this.controls.enableRotate = false;
+    this.controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+    this.controls.update();
+  }
+
+  /** Slides the section's camera with its plane, so a step keeps the same view of the section. */
+  moveSection(x: number, y: number): void {
+    this.sectionCamera.position.x += x;
+    this.sectionCamera.position.y += y;
+    this.controls.target.x += x;
+    this.controls.target.y += y;
+  }
+
+  /** Back to the view the section replaced. */
+  closeSection(): void {
+    this.sectioned = false;
+    this.content.visible = true;
+    this.controls.object = this.camera;
+    this.controls.target.copy(this.beforeSection);
+    this.controls.enableRotate = !this.plan;
+    this.controls.mouseButtons.LEFT = this.plan ? THREE.MOUSE.PAN : null;
+    this.controls.update();
   }
 
   /**
@@ -173,7 +236,10 @@ export class Viewport {
   /** World units per screen pixel at `p`: keeps handles and markers one size on screen. */
   pixelSize(p: THREE.Vector3): number {
     const h = this.renderer.domElement.clientHeight || 1;
-    if (this.plan) return (this.orthographic.top - this.orthographic.bottom) / this.orthographic.zoom / h;
+    if (this.flatView) {
+      const flat = this.camera as THREE.OrthographicCamera;
+      return (flat.top - flat.bottom) / flat.zoom / h;
+    }
     return (this.perspective.position.distanceTo(p) * 2 * Math.tan(THREE.MathUtils.degToRad(this.perspective.fov / 2))) / h;
   }
 
@@ -358,7 +424,7 @@ export class Viewport {
   }
 
   private startTurn = (e: PointerEvent): void => {
-    if (e.button !== 0 || this.plan || !this.controls.enabled) return;
+    if (e.button !== 0 || this.flatView || !this.controls.enabled) return;
     const turn = { pivot: this.controls.target.clone(), x: e.clientX, y: e.clientY };
     this.turning = turn;
     // A drag over empty space keeps the view's centre. The answer takes about a millisecond.
@@ -406,7 +472,7 @@ export class Viewport {
    * view does not move: zooming then slows as it nears the surface, and stops short of it.
    */
   private settleDepth = (e: WheelEvent): void => {
-    if (this.plan || this.settling || !this.pickPoint) return;
+    if (this.flatView || this.settling || !this.pickPoint) return;
     this.settling = true;
     void this.pickPoint(e.clientX, e.clientY).then((hit) => {
       this.settling = false;
@@ -441,10 +507,11 @@ export class Viewport {
   /** Near and far planes follow the orbit distance; the reversed depth buffer keeps precision. */
   private updateClipPlanes(): void {
     const distance = this.camera.position.distanceTo(this.controls.target);
-    if (this.plan) {
-      this.orthographic.near = 0.1;
-      this.orthographic.far = distance + this.sceneRadius * 6;
-      this.orthographic.updateProjectionMatrix();
+    if (this.flatView) {
+      const flat = this.camera as THREE.OrthographicCamera;
+      flat.near = 0.1;
+      flat.far = distance + this.sceneRadius * 6;
+      flat.updateProjectionMatrix();
       return;
     }
     this.perspective.near = Math.max(0.05, distance / 5000);
@@ -472,5 +539,9 @@ export class Viewport {
     this.perspective.aspect = w / h;
     this.perspective.updateProjectionMatrix();
     this.setPlanHalfHeight((this.orthographic.top - this.orthographic.bottom) / 2);
+    const section = this.sectionCamera;
+    const half = (section.top - section.bottom) / 2;
+    Object.assign(section, { left: (-half * w) / h, right: (half * w) / h });
+    section.updateProjectionMatrix();
   }
 }

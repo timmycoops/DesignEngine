@@ -20,6 +20,9 @@ use std::time::Instant;
 
 use serde_json::{Value, json};
 use zd_core::{Aabb, Grid, TriMesh};
+use zd_geom::SectionPlane;
+
+use crate::section::SectionGroup;
 
 /// Most vertices a chunk may hold so its indices fit in `u16`.
 pub const MAX_CHUNK_VERTICES: usize = 65_535;
@@ -39,6 +42,28 @@ pub struct NodeValues<'a> {
     pub flagged: &'a [bool],
     /// The value range the colours span.
     pub range: [f64; 2],
+}
+
+/// A section's lines for the viewport: `f32` segment ends offset from the scene origin, group after
+/// group, then the JSON header and its length, as the other layouts end.
+pub fn encode_section(groups: &[SectionGroup], origin: [f64; 3], plane: &SectionPlane, ms: f64) -> Vec<u8> {
+    let total: usize = groups.iter().map(|g| g.segments.len()).sum();
+    let mut out = Vec::with_capacity(total * 24 + 256 + groups.len() * 96);
+    let (mut along, mut rl) = ([f64::INFINITY, f64::NEG_INFINITY], [f64::INFINITY, f64::NEG_INFINITY]);
+    for p in groups.iter().flat_map(|g| g.segments.iter()).flatten() {
+        let a = plane.along(*p);
+        (along[0], along[1]) = (along[0].min(a), along[1].max(a));
+        (rl[0], rl[1]) = (rl[0].min(p[2]), rl[1].max(p[2]));
+        for k in 0..3 {
+            out.extend_from_slice(&((p[k] - origin[k]) as f32).to_le_bytes());
+        }
+    }
+    let described: Vec<Value> = groups.iter().map(|g| json!({ "layer": g.layer, "kind": g.kind, "segments": g.segments.len() })).collect();
+    let bounds = (total > 0).then(|| json!({ "along": along, "rl": rl }));
+    let header = json!({ "groups": described, "bounds": bounds, "ms": ms }).to_string();
+    out.extend_from_slice(header.as_bytes());
+    out.extend_from_slice(&(header.len() as u32).to_le_bytes());
+    out
 }
 
 pub fn encode_triangulation(mesh: &TriMesh, origin: [f64; 3], header: Value) -> Vec<u8> {

@@ -14,10 +14,11 @@ use tauri::ipc::Response;
 use tauri::{AppHandle, State, Webview};
 use zd_commands::{LogEntry, RunRecord, Session};
 use zd_core::{Attributes, Body, Crossings, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, SeamModel, TriMesh};
-use zd_geom::{StackHorizon, SurfaceRayCaster, stack_issue_nodes, triangulate_grid};
+use zd_geom::{SectionPlane, StackHorizon, SurfaceRayCaster, stack_issue_nodes, triangulate_grid};
 use zd_io::read_stack_grids;
 
-use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_triangulation};
+use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_section, encode_triangulation};
+use crate::section::section_groups;
 use crate::shared::post_shared_buffer;
 use crate::state::{AppInner, AppState, bounds, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_layer_keys};
 use crate::synthetic::synthetic_topography;
@@ -384,6 +385,22 @@ pub async fn stage_layer_solids(layer: LayerId, state: State<'_, AppState>) -> R
     })
     .await?;
     Ok(stage(&state, buffer, name, "triangulation", triangles, String::new(), serde_json::json!({ "encode": encode_ms })))
+}
+
+/// The section through two plan points (mine grid) as binary: where the plane cuts every visible
+/// layer, with strings within `width` drawn flat on it. View state, not a command.
+#[tauri::command]
+pub async fn section_lines(a: [f64; 2], b: [f64; 2], width: f64, state: State<'_, AppState>) -> Result<Response, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let start = Instant::now();
+        let plane = SectionPlane::through(a, b).map_err(|e| e.to_string())?;
+        let mut app = app.lock().unwrap();
+        let groups = section_groups(&mut app, &plane, width)?;
+        let origin = app.origin().unwrap_or([0.0; 3]);
+        Ok(Response::new(encode_section(&groups, origin, &plane, ms(start))))
+    })
+    .await?
 }
 
 /// One horizon of a seam model, staged for the viewport: its roof coloured by thickness.

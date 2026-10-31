@@ -124,7 +124,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 
 ```
 crates/zd-core       object types, ids, layers
-crates/zd-geom       projection, offsets, triangulation, booleans
+crates/zd-geom       projection, offsets, triangulation, booleans, section lines
 crates/zd-commands   typed commands, registry, run log
 crates/zd-io         DXF/CSV/OMF import-export, zips and folders of solids, Parquet project store
 crates/zd-py         PyO3 bindings (Phase 1)
@@ -170,7 +170,8 @@ $env:VIRTUAL_ENV = "$PWD\.venv"; .venv\Scripts\maturin develop --release -m crat
 ## Current phase
 
 **Phase 2 — sections.** A live section view with clipping planes, with strings and surfaces editable in
-section. Gate: a section through the pit reads as clearly as in Deswik. The plan is still to be written.
+section. Gate: a section through the pit reads as clearly as in Deswik. The checklist and workstreams are on
+the "Phase 2 plan" tab of the Build Plan doc.
 
 The Phase 1 gate passed on 2026-10-31: a toe string digitised and edited on real surfaces, with every
 check on the "Phase 1 plan" tab of the Build Plan doc ticked. The Phase 0 gate passed on real data on

@@ -1,12 +1,34 @@
+import { useState } from 'react';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
 import { ScrollArea } from '@/design-system/ui/scroll-area';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 
+/** A layer's line weight in the section, in pixels; blank takes the default for what is cut. */
+function LineWeight({ layer }: { layer: string }) {
+  const { lineWeight, setLineWeight } = useWorkspace();
+  const [text, setText] = useState(lineWeight(layer)?.toString() ?? '');
+  return (
+    <Input
+      className="h-5 w-9 px-1 text-xs tabular-nums"
+      value={text}
+      placeholder="px"
+      title="Line weight in the section (px); blank for the default"
+      aria-label="Line weight in the section"
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        setText(e.target.value);
+        const px = Number(e.target.value);
+        setLineWeight(layer, e.target.value.trim() !== '' && Number.isFinite(px) && px > 0 ? px : null);
+      }}
+    />
+  );
+}
+
 /** Layers with visibility, colour and object counts; click a layer to draw new strings on it. */
 export function LayersPanel() {
-  const { summary, activeLayer, setActiveLayer, setLayerVisible } = useWorkspace();
+  const { summary, activeLayer, setActiveLayer, setLayerVisible, sectionOpen } = useWorkspace();
   const counts = new Map<string, number>();
   for (const o of summary?.objects ?? []) counts.set(o.layer, (counts.get(o.layer) ?? 0) + 1);
   return (
@@ -38,6 +60,7 @@ export function LayersPanel() {
             />
             <span className="size-2.5 shrink-0 rounded-sm" style={{ background: `rgb(${layer.colour.join(',')})` }} />
             <span className={cn('min-w-0 flex-1 truncate', layer.name === activeLayer && 'text-primary')}>{layer.name}</span>
+            {sectionOpen && <LineWeight layer={layer.id} />}
             <span className="text-xs text-muted-foreground tabular-nums">{counts.get(layer.id) ?? 0}</span>
           </div>
         ))}

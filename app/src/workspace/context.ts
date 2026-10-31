@@ -20,6 +20,11 @@ export interface Workspace {
   run: (name: string, params: Record<string, unknown>) => Promise<boolean>;
   /** The seam horizon the viewport shows coloured by thickness, if any. */
   seamView: SeamShown | null;
+  /** A section is showing in place of the plan view. */
+  sectionOpen: boolean;
+  /** A layer's own line weight in the section (px), or null for the defaults. Display only. */
+  lineWeight: (layer: string) => number | null;
+  setLineWeight: (layer: string, px: number | null) => void;
   /** Shows another horizon of a seam model. Display only: not a command, not undone. */
   showSeamHorizon: (id: string, horizon: string) => void;
   /** Shows the horizon an issue is on and flies the view to its worst node. */

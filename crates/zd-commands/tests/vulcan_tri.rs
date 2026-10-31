@@ -400,3 +400,55 @@ fn every_solid_in_a_folder() {
     }
     println!("{made} files imported, {refused} refused; {} solids in the project", s.project().objects().count());
 }
+
+/// Opt-in, on real data: sections through a surface and a zip of solids, timed and checked.
+/// `ZD_SLICE_SURFACE=<.00t> ZD_SLICE_SOLIDS=<zip> cargo test --release -p zd-commands --test vulcan_tri -- --ignored --nocapture a_real_pit`
+#[test]
+#[ignore]
+fn a_real_pit_slices_exactly_and_fast() {
+    let (Ok(surface), Ok(solids)) = (std::env::var("ZD_SLICE_SURFACE"), std::env::var("ZD_SLICE_SOLIDS")) else {
+        eprintln!("ZD_SLICE_SURFACE and ZD_SLICE_SOLIDS are not set; skipped");
+        return;
+    };
+    let mut s = Session::with_builtins();
+    let topo = created(&s.run("surface.import", json!({ "path": surface, "layer": "topo" })).unwrap())[0];
+    let Some(Body::Surface(topo)) = s.project().object(topo).map(|o| o.body.clone()) else { panic!("a surface") };
+    let made = created(&s.run("solid.import_many", json!({ "paths": [solids], "layer": "solids", "repair": true })).unwrap());
+    let mut joined = TriMesh::default();
+    for id in made {
+        let Some(Body::Solid(solid)) = s.project().object(id).map(|o| &o.body) else { panic!("a solid") };
+        let offset = joined.vertices.len() as u32;
+        joined.vertices.extend_from_slice(&solid.mesh().vertices);
+        joined.triangles.extend(solid.mesh().triangles.iter().map(|t| t.map(|i| i + offset)));
+    }
+    let bounds = joined.bounds().unwrap();
+    let centre = bounds.centre();
+    let span = bounds.max[1] - bounds.min[1];
+    for (name, mesh) in [("topography", topo.mesh()), ("solids", &joined)] {
+        let mut worst = 0.0f64;
+        let mut times = Vec::new();
+        let mut totals = (0, 0, 0);
+        for k in 0..41 {
+            let east = centre[0] + (k as f64 - 20.0) * 25.0;
+            let plane = zd_geom::SectionPlane::through([east, centre[1] - span], [east + 30.0, centre[1] + span]).unwrap();
+            let start = std::time::Instant::now();
+            let lines = zd_geom::slice_mesh(mesh, &plane);
+            times.push(start.elapsed().as_secs_f64() * 1e3);
+            totals.0 += lines.len();
+            totals.1 += lines.iter().filter(|l| l.closed).count();
+            totals.2 += lines.iter().map(|l| l.points.len()).sum::<usize>();
+            worst = lines.iter().flat_map(|l| &l.points).fold(worst, |w, &p| w.max(plane.offset(p).abs()));
+        }
+        times.sort_by(f64::total_cmp);
+        println!(
+            "{name}: {} triangles; 41 sections: {:.1} ms p50, {:.1} ms worst; {} lines per section ({} closed), {} points; furthest point off the plane {worst:.2e} m",
+            mesh.triangle_count(),
+            times[20],
+            times[40],
+            totals.0 / 41,
+            totals.1 / 41,
+            totals.2 / 41
+        );
+        assert!(worst < 1e-6, "{worst}");
+    }
+}
