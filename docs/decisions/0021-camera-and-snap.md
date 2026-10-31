@@ -11,10 +11,11 @@ Phase 2, because sections mean constant zooming in on one spot.
 
 ## Decision
 
-1. **The wheel zooms where the cursor is**, in 3D and in plan. In 3D it slows as it nears the surface under
+1. **The wheel zooms where the cursor is**, in 3D and in plan. In 3D it slows as it nears what is under
    the cursor, and stops short of it.
-2. **Left drag in 3D turns about the point under the cursor** when the button goes down: the surface or
-   solid there, whichever layer is showing. The camera and its target swing together about that point, so
+2. **Left drag in 3D turns about the point under the cursor** when the button goes down: a visible string
+   near it first, as strings draw on top, else the surface or solid there, whichever layer is showing. The
+   camera and its target swing together about that point, so
    it stays where it is on screen and the view does not jump. Over empty space it turns about the view's
    centre. The turn stops just short of straight up or down.
 3. **Right drag still pans**, and left drag still pans in plan view.
@@ -40,6 +41,9 @@ wheel and key events to the canvas:
   switched it on again.
 - The hover label named what was under the cursor: a solid and its RL with snap on, the working plane and
   its RL with snap off. The gold ring sat on the point turned about, 0 m off, and cleared on release.
+- A string held 50 m above the surface, so a pick that saw only surfaces would land elsewhere: a turn from
+  its vertex pivoted on it to 0 m, and from its segment to 4e-10 m. Hovering named `vertex 2` and `segment 1`
+  of the string, with their RL.
 - Orbiting still holds 60 fps, and snapping takes 0.9 ms at p50.
 
 How it feels is checked by hand, not by this. The bench runs in 3D, so zooming in plan view is not covered.

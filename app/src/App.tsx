@@ -236,10 +236,7 @@ export default function App() {
       });
       strings.onSelect = setSelected;
       strings.onSnapping = setSnapping;
-      created.pickPoint = async (x, y) => {
-        const ray = created.rayFromNdc(...created.clientToNdc(x, y));
-        return (await snapRay(ray.origin, ray.direction))?.local ?? null;
-      };
+      created.pickPoint = (x, y) => strings.pick(x, y);
       stringsRef.current = strings;
       detach = strings.attach();
       show(await projectSummary());

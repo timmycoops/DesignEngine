@@ -444,7 +444,20 @@ export class StringLayer {
       return this.onPlane(x, y, dragged ? dragged.z : last ? last.local[2] : this.viewport.controls.target.z);
     };
     if (!this.snapping) return workingPlane();
+    const onString = this.snapToStrings(x, y, skip);
+    if (onString) return onString;
+    const surface = await this.actions.snap(x, y);
+    if (surface) return { ...surface, kind: 'surface' };
+    return workingPlane();
+  }
 
+  /** What a drag or the wheel works on at a screen point: a string near it, else the surface under it. */
+  async pick(x: number, y: number): Promise<Vec3 | null> {
+    return (this.snapToStrings(x, y) ?? (await this.actions.snap(x, y)))?.local ?? null;
+  }
+
+  /** A string's vertex, crossing or segment near the cursor, in that order, or null. */
+  private snapToStrings(x: number, y: number, skip?: { id: string; index: number }): SnapHit | null {
     let vertex: SnapHit | null = null;
     let best = HANDLE_PX * HANDLE_PX;
     const consider = (id: string, name: string, points: THREE.Vector3[]) =>
@@ -484,9 +497,7 @@ export class StringLayer {
       const hit = this.pointOnSegment(segment.id, segment.index, x, y);
       if (hit) return hit;
     }
-    const surface = await this.actions.snap(x, y);
-    if (surface) return { ...surface, kind: 'surface' };
-    return workingPlane();
+    return null;
   }
 
   /** Where the pick ray through the cursor meets the level plane at scene-local height `z`. */

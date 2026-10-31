@@ -11,6 +11,7 @@ import {
   prepareSynthetic,
   type ProjectSummary,
   runCommand,
+  type SnapHit,
   snapRay,
   stageObject,
   type Transport,
@@ -101,6 +102,7 @@ async function checkSolids(viewport: Viewport, path: string, orbitSeconds: numbe
   snaps.sort((a, b) => a - b);
   const camera = await checkCamera(viewport);
   const snapSwitch = await checkSnapSwitch(viewport);
+  const stringPick = await checkStringPick(viewport, show);
   const undoStart = performance.now();
   await show(await undo());
   return {
@@ -116,6 +118,7 @@ async function checkSolids(viewport: Viewport, path: string, orbitSeconds: numbe
     orbit: orbited,
     camera,
     snap_switch: snapSwitch,
+    string_pick: stringPick,
     snap_p50_ms: snaps[100],
     snap_p95_ms: snaps[190],
     undo_ms: performance.now() - undoStart,
@@ -224,6 +227,68 @@ async function checkSnapSwitch(viewport: Viewport) {
     label_over_a_solid: overSurface.replace(/[-\d.]+$/, '<RL>'),
     label_snap_off: overPlane.replace(/[-\d.]+$/, '<RL>'),
   };
+}
+
+/**
+ * A real string held 50 m above the surface, so a pick that only sees surfaces lands elsewhere:
+ * turning from its vertex or its segment must pivot on the string, and hovering must name it.
+ */
+async function checkStringPick(viewport: Viewport, show: Show) {
+  const canvas = viewport.renderer.domElement;
+  const box = canvas.getBoundingClientRect();
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await viewport.nextFrame();
+  };
+  viewport.fitView();
+  await settle();
+  // The solids have gaps: the first row of the view with three surface points along it.
+  let hits: SnapHit[] = [];
+  for (let down = 0.25; down < 0.8 && hits.length < 3; down += 0.05) {
+    hits = [];
+    for (let across = 0.2; across < 0.85 && hits.length < 3; across += 0.1) {
+      const ray = viewport.rayFromNdc(...viewport.clientToNdc(box.left + box.width * across, box.top + box.height * down));
+      const hit = await snapRay(ray.origin, ray.direction);
+      if (hit) hits.push(hit);
+    }
+  }
+  if (hits.length < 3) return { error: 'the string needs three points on a surface' };
+  const reply = await runCommand('string.create', { name: 'bench string', layer: 'design', points: hits.map((h) => [h.world[0], h.world[1], h.world[2] + 50]) });
+  await show(reply.summary);
+  await settle();
+
+  const points = hits.map((h) => new THREE.Vector3(h.local[0], h.local[1], h.local[2] + 50));
+  const middle = points[0].clone().lerp(points[1], 0.5);
+  const send = (type: string, x: number, y: number, buttons: number) =>
+    canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+  /** How far the rotation point lands from `p` when a drag starts on it. */
+  const turnFrom = async (p: THREE.Vector3) => {
+    const [x, y] = viewport.projectToClient(p);
+    send('pointerdown', x, y, 1);
+    await settle();
+    send('pointermove', x + 12, y + 6, 1);
+    await settle();
+    const off = viewport.pivotMark.position?.distanceTo(p) ?? null;
+    send('pointerup', x + 12, y + 6, 0);
+    await settle();
+    return off;
+  };
+  const label = async (p: THREE.Vector3) => {
+    const [x, y] = viewport.projectToClient(p);
+    send('pointermove', x, y, 0);
+    await settle();
+    return document.querySelector<HTMLElement>('.snap-label')?.textContent?.replace(/[-\d.]+$/, '<RL>') ?? '';
+  };
+  const fromVertex = await turnFrom(points[1]);
+  const fromSegment = await turnFrom(middle);
+  const button = (name: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.includes(name));
+  button('Draw string')?.click();
+  await settle();
+  const overVertex = await label(points[1]);
+  const overSegment = await label(middle);
+  button('Select')?.click();
+  await settle();
+  await show(await undo());
+  return { turn_from_vertex_off_m: fromVertex, turn_from_segment_off_m: fromSegment, label_over_vertex: overVertex, label_over_segment: overSegment };
 }
 
 async function loadSurfaces(viewport: Viewport, paths: string[], log: (line: string) => void) {
