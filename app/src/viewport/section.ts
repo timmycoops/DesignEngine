@@ -6,6 +6,7 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import * as THREE from 'three/webgpu';
 import { type ProjectSummary, type SectionLines, sectionLines, type SectionKind, type Vec3 } from '../bridge';
 import { colourOf } from './load';
+import { SectionOverview } from './overview';
 import type { Viewport } from './Viewport';
 
 /** Strings this close to the plane (m) draw flat on it: a string crosses a thin slice, not lies in it. */
@@ -28,12 +29,47 @@ export class SectionView {
   private weights = new Map<string, number>();
   private fetching: Promise<void> | null = null;
   private fetchAgain = false;
+  private overview: SectionOverview;
+  /** Metres moved square to the section since it opened. */
+  private moved = 0;
+  /** What the plan map shows beyond the surfaces. */
+  mapShows: THREE.Object3D[] = [];
+  private increment = 25;
   /** The last section: request to frame submitted, and the engine's share of that (ms). */
   lastMs = 0;
   lastEngineMs = 0;
 
   constructor(private viewport: Viewport) {
     viewport.overlay.add(this.group);
+    const host = viewport.renderer.domElement.parentElement as HTMLElement;
+    this.overview = new SectionOverview(host, (target, x, y, half) =>
+      viewport.planPicture(target, x, y, half, { show: this.mapShows, hide: [this.group] }),
+    );
+    // In whole steps, so a drag lands on the same sections the keys do.
+    this.overview.onPointAt = (offset) => {
+      const steps = Math.round(offset / this.stepSize);
+      if (steps !== 0) void this.step(steps * this.stepSize);
+    };
+  }
+
+  /** The overview map, for checks. */
+  get overviewCanvas(): HTMLCanvasElement {
+    return this.overview.canvasElement;
+  }
+
+  /** The increment of a step and of a drag on the map (m). */
+  get stepSize(): number {
+    return this.increment;
+  }
+
+  set stepSize(distance: number) {
+    this.increment = distance;
+    this.drawOverview();
+  }
+
+  /** Metres moved square to the section since it opened: positive is away from the viewer. */
+  get offset(): number {
+    return this.moved;
   }
 
   get open(): boolean {
@@ -65,8 +101,19 @@ export class SectionView {
       [b[0] - o[0], b[1] - o[1]],
     ];
     const length = Math.hypot(to[0] - from[0], to[1] - from[1]);
+    this.moved = 0;
+    this.overview.retake(from, to);
     this.viewport.showSection(from, to, [0, length], rlBetween(lines.positions, from, to, length));
     this.group.visible = true;
+    this.overview.show();
+    this.drawOverview();
+  }
+
+  private drawOverview(): void {
+    if (!this.ends || !this.summary) return;
+    const o = this.summary.origin ?? [0, 0, 0];
+    const { a, b } = this.ends;
+    this.overview.draw([a[0] - o[0], a[1] - o[1]], [b[0] - o[0], b[1] - o[1]], this.stepSize, this.moved);
   }
 
   /** Moves the plane `distance` square to itself, away from the viewer when positive. */
@@ -76,7 +123,9 @@ export class SectionView {
     const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
     const [nx, ny] = [(-(b[1] - a[1]) / length) * distance, ((b[0] - a[0]) / length) * distance];
     this.ends = { a: [a[0] + nx, a[1] + ny], b: [b[0] + nx, b[1] + ny] };
+    this.moved += distance;
     this.viewport.moveSection(nx, ny);
+    this.drawOverview();
     await this.refresh();
   }
 
@@ -118,6 +167,7 @@ export class SectionView {
   close(): void {
     this.ends = null;
     this.group.visible = false;
+    this.overview.hide();
     this.viewport.closeSection();
   }
 

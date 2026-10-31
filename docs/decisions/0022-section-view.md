@@ -23,12 +23,20 @@ in mine grid coordinates, and can be snapped to and exported.
    the snap, draw and select tools come back when it closes. Strings cannot be edited in section yet.
 5. **What is cut:** every visible layer. Solids cut as one mesh per layer, as they draw, and seam models as
    their working horizons' roofs and floors. What takes work to make is kept until its geometry changes, so
-   a step costs only the cut.
+   a step costs only the cut. Each mesh kept carries an index, groups of 2,000 triangles with a bounding
+   circle each, so a cut looks only at the groups the plane can touch.
 6. **Lines have real weights,** drawn with three.js's Line2 on the WebGPU renderer: 2.5 px for surfaces,
    1.5 px for solids and seams, 2 px for strings, and a layer can set its own in the Layers panel while a
-   section is open. Weights are display state and are not saved.
+   section is open. Weights are display state and are not saved. Keeping them on the layer is a stopgap:
+   colouring, filtering and attributes come later, and the weight may move there.
 7. **It frames the stretch between the two points,** with the first on the left. `[` and `]` or the toolbar
    step the plane square to itself, 25 m by default, keeping the view.
+8. **A plan map stays in the corner while a section is open,** so the section is never lost. It shows the
+   surfaces and strings from above, the section line with its A and B ends, a tick for the way it looks, the
+   step lines either side when they stand far enough apart to read, and how far it has moved from the start.
+   A press or drag on the map moves the section to the pointer in whole steps, so it lands on the same
+   sections the keys do. The map is a picture, taken when the section opens and again when the section walks
+   off it, never under a drag, so a step does not draw the scene twice.
 
 ## Evidence
 
@@ -40,16 +48,21 @@ in mine grid coordinates, and can be snapped to and exported.
   near string shows. Stepping reuses what was made, until a solid is added.
 - PIT A, 41 sections 25 m apart:
 
-  | Mesh | Triangles | Section | Result |
-  |---|---|---|---|
-  | Topography | 8.06 M | 8.6 ms p50, 11 ms worst | one line |
-  | Solids | 3.59 M | 8.2 ms p50, 10 ms worst | 485 lines, all closed |
+  | Mesh | Triangles | Index built | Section | Result |
+  |---|---|---|---|---|
+  | Topography | 8.06 M | 97 ms | 2.4 ms p50, 3.6 ms worst | one line |
+  | Solids | 3.59 M | 59 ms | 5.7 ms p50, 8.4 ms worst | 485 lines, all closed |
 
-  Every point lies within 6e-11 m of the plane.
+  Every point lies within 6e-11 m of the plane. Without the index these took 8.6 and 8.2 ms at p50. On a
+  test mesh the index finds every crossing a full scan finds.
 - The release app on the full scene, through the real toolbar and canvas: 11.7 M triangles, 21,469 solids and
-  5,724 strings of about a million vertices. A step takes 46 ms at p50 from request to frame submitted, 34 ms of
-  that in the engine, and 63 ms at worst, so the gate's 50 ms holds typically and not every time. The section
-  holds 60 fps.
+  5,724 strings of about a million vertices. A step takes 29 ms at p50 from request to frame submitted, about
+  20 ms of that in the engine, and 47 ms at worst across six runs, so the gate's 50 ms holds on every step.
+  Before the index it was 46 ms at p50 and 63 ms at worst. The section holds 60 fps.
+- The plan map in the same run, by pointer events on the canvas: a press moved the section in whole 25 m
+  steps, and moving the pointer at the same place left it there, so it goes to the pointer and the map holds
+  still. The saved pictures show the topography, contours and pit outlines under the section, step lines at
+  200 m, and a new picture taken after a 2 km move walked the section off the old one.
 
-Not covered: seam models in a section have only been tested through their parts, not on screen, and the
-line weight input is untested by the bench.
+Not covered: seam models in a section have only been tested through their parts, not on screen, the line
+weight input is untested by the bench, and a drag across the map has not been tried by hand.

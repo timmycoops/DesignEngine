@@ -360,6 +360,25 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   engine.sort((a, b) => a - b);
   const frames = await orbitless(viewport);
 
+  // The overview: a drag across it moves the section in whole steps.
+  const map = section.overviewCanvas;
+  const shown = !map.hidden;
+  const atStart = section.offset;
+  const mapBox = map.getBoundingClientRect();
+  const drag = (type: string, x: number, y: number) =>
+    map.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons: 1, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+  const [dragX, dragY] = [mapBox.left + mapBox.width * 0.5, mapBox.top + mapBox.height * 0.2];
+  drag('pointerdown', dragX, dragY);
+  await settle();
+  const dragged = section.offset - atStart;
+  const whole = dragged !== 0 && dragged % section.stepSize === 0;
+  // Moving the wrong way, or the map sliding, would carry it on from here.
+  drag('pointermove', dragX, dragY);
+  await settle();
+  const stayed = section.offset - atStart === dragged;
+  drag('pointerup', dragX, dragY);
+  await settle();
+
   // A section as a planner would pick one: 1.5 km across the first solid cut, not the whole view.
   const o = summary.origin ?? [0, 0, 0];
   const across = section.firstSolidPoint();
@@ -369,10 +388,19 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
     await section.show([x - 750, y - 200], [x + 750, y + 200], summary);
     await settle();
     close = picture(viewport);
+    await section.step(125);
+    await settle();
   }
+  // Step lines stand apart at 200 m on this map, and a long move walks the section off it.
+  section.stepSize = 200;
+  const overview = map.toDataURL('image/png');
+  await section.step(2_000);
+  await settle();
+  const walked = map.toDataURL('image/png');
+  section.stepSize = 25;
   button('Section')?.click();
   await settle();
-  return { opened, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, wide, close };
+  return { opened, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, wide, close, overview, walked };
 }
 
 /** What the viewport shows now, as a PNG data URL: drawn again and copied before the frame is gone. */
