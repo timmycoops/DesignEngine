@@ -514,6 +514,8 @@ export interface BenchConfig {
   /** Strings to load into the same scene first. */
   strings: string[];
   seam: string | null;
+  /** Grids to step a wall up on the section, bottom first. */
+  walls: string[];
   results_path: string;
   scale_targets: number[];
   transfer_cells: number[];

@@ -1,0 +1,239 @@
+//! Walls through the registry, as the app calls them, then stepping between real grids. The second is
+//! opt-in, because the data stays local: `ZD_WALL_GRIDS` lists Vulcan grid files, bottom of the wall
+//! first, separated by `;`.
+
+use std::path::Path;
+use std::time::Instant;
+
+use serde_json::json;
+use zd_commands::{RunRecord, Session};
+use zd_core::{Body, ChangeKind, Grid, ObjectId, Polyline, TriMesh};
+use zd_geom::{COINCIDENT, OffsetSide, SectionPlane, WallStep, drape_string, find_crossings, next_toe, project_wall, slice_mesh, triangulate_grid};
+
+const E: f64 = 650_000.0;
+const N: f64 = 7_450_000.0;
+
+fn created(record: &RunRecord) -> Vec<ObjectId> {
+    record.outputs.iter().filter(|o| o.change == ChangeKind::Created).map(|o| o.id).collect()
+}
+
+fn line(s: &Session, id: ObjectId) -> Polyline {
+    match &s.project().object(id).expect("live string").body {
+        Body::String(line) => line.clone(),
+        other => panic!("expected a string, found {:?}", other.kind()),
+    }
+}
+
+/// A level surface on a 10 m grid, as an XYZ file, imported.
+fn level_surface(s: &mut Session, name: &str, rl: f64) -> ObjectId {
+    let dir = std::env::temp_dir().join(format!("zd-walls-{}-{}", std::process::id(), zd_core::RunId::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut xyz = String::new();
+    for row in 0..=30 {
+        for col in 0..=30 {
+            xyz += &format!("{} {} {rl}\n", E + col as f64 * 10.0, N + row as f64 * 10.0);
+        }
+    }
+    let path = dir.join(format!("{name}.xyz"));
+    std::fs::write(&path, xyz).unwrap();
+    let id = created(&s.run("surface.import", json!({ "path": path.to_string_lossy(), "layer": "surfaces" })).unwrap())[0];
+    std::fs::remove_dir_all(&dir).unwrap();
+    id
+}
+
+#[test]
+fn a_step_makes_a_crest_a_wall_and_the_next_toe_and_leaves_the_string_alone() {
+    let mut s = Session::with_builtins();
+    let target = level_surface(&mut s, "roof", 120.0);
+    let points = [[E + 50.0, N + 50.0, 100.0], [E + 250.0, N + 50.0, 100.0]];
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "design", "points": points })).unwrap())[0];
+
+    let record = s.run("face.project_step", json!({ "string": toe, "target": target, "batter": 45.0, "side": "left", "berm": 10.0 })).unwrap();
+    let made = created(&record);
+    assert_eq!(made.len(), 3, "{:?}", record.messages);
+    assert!(record.messages[0].starts_with("wall at 45° to "), "{:?}", record.messages);
+    assert_eq!(s.project().object(toe).unwrap().revision, 1, "the string is an input, and stays as it was");
+
+    // 45 degrees and 20 m up is 20 m out, and the berm is 10 m on from there.
+    let crest = line(&s, made[0]);
+    assert_eq!(crest.vertices.first().map(|p| (p[1] - N, p[2])), Some((70.0, 120.0)));
+    let next = line(&s, made[2]);
+    assert!(next.vertices.iter().all(|p| (p[1] - N - 80.0).abs() < 1e-6 && p[2] == 120.0), "{:?}", next.vertices);
+    let Body::Surface(wall) = &s.project().object(made[1]).unwrap().body else { panic!("the wall is a surface") };
+    assert!((wall.mesh().area() - 200.0 * 20.0 * 2f64.sqrt()).abs() < 1e-3, "{}", wall.mesh().area());
+    assert_eq!(wall.validity().non_self_intersecting, Some(true));
+    assert_eq!(s.project().layer(s.project().object(made[1]).unwrap().layer).unwrap().name, "design");
+
+    // A second step from the next toe, at once and with the same side.
+    let upper = level_surface(&mut s, "upper", 150.0);
+    let second = s.run("face.project_step", json!({ "string": made[2], "target": upper, "batter": 45.0, "side": "left" })).unwrap();
+    let top = line(&s, created(&second)[0]);
+    assert!(top.vertices.iter().all(|p| (p[1] - N - 110.0).abs() < 1e-6), "{:?}", top.vertices);
+
+    // The second step, the surface it rose to, then the first step.
+    for _ in 0..3 {
+        s.undo().unwrap();
+    }
+    assert!(s.project().object(made[0]).is_none(), "undone with one undo a run");
+}
+
+#[test]
+fn a_bad_step_is_refused_with_its_reason() {
+    let mut s = Session::with_builtins();
+    let target = level_surface(&mut s, "roof", 120.0);
+    let points = [[E + 50.0, N + 50.0, 100.0], [E + 250.0, N + 50.0, 100.0]];
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "design", "points": points })).unwrap())[0];
+    for (batter, berm, reason) in [(0.0, 0.0, "the batter"), (95.0, 0.0, "the batter"), (45.0, -1.0, "the berm")] {
+        let error = s.run("face.project_step", json!({ "string": toe, "target": target, "batter": batter, "side": "left", "berm": berm })).unwrap_err();
+        assert!(error.to_string().contains(reason), "{error}");
+    }
+}
+
+/// The node nearest the middle of the live grid, and the way the grid dips there.
+fn middle_and_strike(grid: &Grid) -> ([f64; 2], [f64; 2]) {
+    let live: Vec<[f64; 3]> = (0..grid.rows)
+        .flat_map(|row| (0..grid.cols).map(move |col| (col, row)))
+        .filter_map(|(col, row)| {
+            let (z, [x, y]) = (grid.z_at(col, row), grid.node_xy(col, row));
+            (!z.is_nan()).then_some([x, y, z])
+        })
+        .collect();
+    let n = live.len() as f64;
+    let (mx, my, mz) = (live.iter().map(|p| p[0]).sum::<f64>() / n, live.iter().map(|p| p[1]).sum::<f64>() / n, live.iter().map(|p| p[2]).sum::<f64>() / n);
+    // The best-fit plane's gradient, by least squares about the middle.
+    let (mut xx, mut xy, mut yy, mut xz, mut yz) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for p in &live {
+        let (x, y, z) = (p[0] - mx, p[1] - my, p[2] - mz);
+        (xx, xy, yy, xz, yz) = (xx + x * x, xy + x * y, yy + y * y, xz + x * z, yz + y * z);
+    }
+    let det = xx * yy - xy * xy;
+    let (gx, gy) = ((xz * yy - yz * xy) / det, (yz * xx - xz * xy) / det);
+    let length = gx.hypot(gy);
+    ([mx, my], [-gy / length, gx / length])
+}
+
+/// A string running along strike through the middle, bending gently in plan.
+fn along_strike(middle: [f64; 2], strike: [f64; 2], half_length: f64) -> Polyline {
+    let across = [-strike[1], strike[0]];
+    let vertices = (-20..=20)
+        .map(|k| {
+            let along = half_length * k as f64 / 20.0;
+            let bend = 40.0 * (along / 300.0).sin();
+            [middle[0] + along * strike[0] + bend * across[0], middle[1] + along * strike[1] + bend * across[1], 0.0]
+        })
+        .collect();
+    Polyline { vertices, closed: false }
+}
+
+fn turns_over(line: &Polyline, degrees: f64) -> usize {
+    let bearing = |a: &[f64; 3], b: &[f64; 3]| (b[1] - a[1]).atan2(b[0] - a[0]);
+    line.vertices
+        .windows(3)
+        .filter(|w| {
+            let turn = (bearing(&w[1], &w[2]) - bearing(&w[0], &w[1])).to_degrees().rem_euclid(360.0);
+            turn.min(360.0 - turn) > degrees
+        })
+        .count()
+}
+
+fn report(name: &str, toe: &Polyline, target: &TriMesh, side: OffsetSide) -> Option<WallStep> {
+    let start = Instant::now();
+    let step = project_wall(toe, side, 70.0, target);
+    let ms = start.elapsed().as_secs_f64() * 1e3;
+    match step {
+        Ok(step) => {
+            let v = step.wall.validity();
+            let crossing_pairs = find_crossings(&step.wall, COINCIDENT).pairs;
+            println!(
+                "{name} {side:?}: {} target triangles, {} toe vertices, {ms:.1} ms, {} walls, {} squeezed out, {} crest vertices, {} wall triangles, {} boundary edges, {} non-manifold, {crossing_pairs} crossing pairs, {} no-height stretches, crest turns over 30 deg: {}",
+                target.triangles.len(),
+                toe.vertices.len(),
+                step.log.walls,
+                step.log.squeezed_out,
+                step.crest.vertices.len(),
+                step.wall.triangles.len(),
+                v.boundary_edges,
+                v.non_manifold_edges,
+                step.log.no_height.len(),
+                turns_over(&step.crest, 30.0),
+            );
+            Some(step)
+        }
+        Err(e) => {
+            println!("{name} {side:?}: refused after {ms:.1} ms: {e}");
+            None
+        }
+    }
+}
+
+/// Heights of a mesh along a line in plan, by a section through it.
+fn height_on(mesh: &TriMesh, plane: &SectionPlane, p: [f64; 3]) -> Option<f64> {
+    let along = plane.along(p);
+    slice_mesh(mesh, plane).iter().flat_map(|l| l.points.windows(2)).find_map(|w| {
+        let (a, b) = (plane.along(w[0]), plane.along(w[1]));
+        ((a - along) * (b - along) <= 0.0 && a != b).then(|| w[0][2] + (along - a) / (b - a) * (w[1][2] - w[0][2]))
+    })
+}
+
+/// What a section square to each stretch of a wall reads: the batter, and how far each end sits off the
+/// grid it should be on. Returns the lowest and highest batter and the furthest end, for the sections
+/// that cut one wall line from toe to crest.
+fn read_in_section(plan: &Polyline, step: &WallStep, from: &TriMesh, to: &TriMesh, side: OffsetSide) -> (usize, f64, f64, f64) {
+    let (mut count, mut low, mut high, mut off) = (0, f64::MAX, f64::MIN, 0.0f64);
+    let sign = if side == OffsetSide::Left { 1.0 } else { -1.0 };
+    for w in plan.vertices.windows(2) {
+        let (dx, dy) = (w[1][0] - w[0][0], w[1][1] - w[0][1]);
+        let length = dx.hypot(dy);
+        let middle = [(w[0][0] + w[1][0]) / 2.0, (w[0][1] + w[1][1]) / 2.0];
+        let out = [-dy / length * sign, dx / length * sign];
+        let plane = SectionPlane::through(middle, [middle[0] + out[0], middle[1] + out[1]]).unwrap();
+        let lines = slice_mesh(&step.wall, &plane);
+        let [wall_line] = lines.as_slice() else { continue };
+        let (Some(first), Some(last)) = (wall_line.points.first(), wall_line.points.last()) else { continue };
+        let (toe, crest) = if first[2] < last[2] { (*first, *last) } else { (*last, *first) };
+        let run = (plane.along(crest) - plane.along(toe)).abs();
+        let batter = (crest[2] - toe[2]).atan2(run).to_degrees();
+        let (Some(floor), Some(roof)) = (height_on(from, &plane, toe), height_on(to, &plane, crest)) else { continue };
+        (count, low, high, off) = (count + 1, low.min(batter), high.max(batter), off.max((floor - toe[2]).abs()).max((roof - crest[2]).abs()));
+    }
+    (count, low, high, off)
+}
+
+#[test]
+#[ignore = "needs ZD_WALL_GRIDS"]
+fn a_wall_steps_between_real_grids() {
+    let files = std::env::var("ZD_WALL_GRIDS").expect("ZD_WALL_GRIDS lists the grids, bottom first");
+    let grids: Vec<Grid> = files.split(';').map(|f| zd_io::read_vulcan_grid(Path::new(f.trim())).unwrap().grid).collect();
+    for (k, g) in grids.iter().enumerate() {
+        let live = g.z.iter().filter(|z| !z.is_nan()).count();
+        let (low, high) = g.z.iter().filter(|z| !z.is_nan()).fold((f64::MAX, f64::MIN), |(a, b), &z| (a.min(z), b.max(z)));
+        println!("grid {k}: {} x {} at {} x {} m, {live} live of {}, RL range {:.0} m", g.cols, g.rows, g.cell_size[0], g.cell_size[1], g.z.len(), high - low);
+    }
+    let meshes: Vec<TriMesh> = grids.iter().map(triangulate_grid).collect();
+    let (middle, strike) = middle_and_strike(&grids[0]);
+    for half in [300.0, 1000.0, 2500.0] {
+        println!("--- string {} m long", 2.0 * half);
+        let plan = along_strike(middle, strike, half);
+        let (toe, log) = drape_string(&plan, &meshes[0], true).unwrap();
+        println!("toe: {} vertices, {} off the grid", toe.vertices.len(), log.off_surface);
+        for side in [OffsetSide::Left, OffsetSide::Right] {
+            for (tolerance, berm) in [(0.0, 0.0), (0.1, 10.0), (0.25, 10.0), (0.5, 20.0)] {
+                println!("- {side:?}, tolerance {tolerance} m, berm {berm} m");
+                let mut from = toe.clone();
+                let mut shape = plan.clone();
+                for (k, target) in meshes.iter().enumerate().skip(1) {
+                    let Some(step) = report(&format!("step {k}"), &from, target, side) else { break };
+                    let (count, low, high, off) = read_in_section(&shape, &step, &meshes[k - 1], target, side);
+                    println!("   in section: {count} sections read {low:.4} to {high:.4} degrees, ends within {:.3} mm of their grids", off * 1e3);
+                    if count > 0 && tolerance > 0.0 {
+                        assert!((low - 70.0).abs() < 1e-6 && (high - 70.0).abs() < 1e-6 && off < 1e-3, "{low} {high} {off}");
+                    }
+                    let (toes, log) = next_toe(&step.crest, berm, side, tolerance, target).unwrap();
+                    println!("   next toe: {log:?}, {} piece(s)", toes.len());
+                    from = toes.into_iter().max_by_key(|t| t.vertices.len()).unwrap();
+                    shape = zd_geom::filter_string(&Polyline { vertices: from.vertices.iter().map(|v| [v[0], v[1], 0.0]).collect(), closed: false }, 1e-6).unwrap();
+                }
+            }
+        }
+    }
+}

@@ -21,7 +21,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 | Solid booleans | Manifold via `manifold-csg` / `manifold3d` crate (64-bit MeshGL64) |
 | Spatial queries | `parry3d` (BVH ray casting) |
 | Triangulation | `spade` or Manifold's constrained Delaunay |
-| Wall offsets | Weighted straight skeleton in `zd-geom` (edge speed from batter, berms as delayed starts); no offset-then-repair |
+| Wall offsets | Straight skeleton on wall planes in `zd-geom` (each segment's plane set by its batter, hips where planes meet); a berm is the conditioned crest moved out and registered back on the grid; no offset-then-repair (`docs/decisions/0023-wall-step.md`) |
 | Planar offsets | Clipper2 or Manifold `CrossSection` for plain 2D offsets |
 | Viewport | three.js with `WebGPURenderer` (auto WebGL2 fallback) |
 | Interface | React + TypeScript, shadcn/ui, Tailwind, dockview, TanStack Table |
@@ -71,9 +71,11 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 - `Rule`: a function from a string to one value per edge. Types: fixed, fixed list, inside polygon,
   inside solid, segment azimuth, by horizon. Later: block model, geotech solid with transition distance.
   Blending between rules may only widen berms and flatten slopes.
-- `FaceProfile`: an ordered list of steps, each "project from surface A up to surface B or an RL at a batter
-  rule" or "berm of a width rule", with berm on roof and berm on floor per horizon, minimum and maximum bench
-  height, wall type (face, side, end), and side (left or right for open highwall strings).
+- `FaceProfile`: the grid the toe registers to, then ordered steps up from it and down from it, each "project
+  to surface B or an RL at a batter rule" or "berm of a width rule", with berm on roof and berm on floor per
+  horizon, minimum and maximum bench height, a conditioning tolerance, wall type (face, side, end), and side
+  (left or right for open highwall strings). A face is built oversized, RL to RL and past the pit shell, and
+  the cut does the fitting (`docs/decisions/0023-wall-step.md`).
 - `Ramp`: centreline or start point, direction, start and end bench, width, grade (%, ratio or degrees,
   measured on the inside edge by default), inside and outside taper, entry type, flat or graded switchbacks
   with radius. It reports the bench where the grade can't be met instead of drifting.
@@ -169,9 +171,9 @@ $env:VIRTUAL_ENV = "$PWD\.venv"; .venv\Scripts\maturin develop --release -m crat
 
 ## Current phase
 
-**Phase 3 — face projection and ramps.** No plan tab yet: the roadmap is on the Build Plan doc's main tab.
-Editing surfaces in section comes with this phase. PIT A's seam grids are a load test only: judge seam work on
-PIT B, which holds the only real coal seam models.
+**Phase 3 — walls and ramps.** The gate, workstreams and decisions are on the "Phase 3 plan" tab of the Build
+Plan doc. Grid to grid is the hard part, so it comes first (`docs/decisions/0023-wall-step.md`). PIT A's seam
+grids are a load test only: judge seam work on PIT B, which holds the only real coal seam models.
 
 The Phase 2 gate passed on 2026-10-31: a two-point section with an overview, RL grid, fills and string editing
 (`docs/decisions/0022-section-view.md`, `bench/RESULTS.md`), passed by Tim on look and feel without a side-by-side

@@ -3,6 +3,7 @@
 //! from DXF and CSV, objects out to DXF and CSV.
 
 mod exchange;
+mod face;
 mod grid;
 mod layer;
 mod object;
@@ -12,6 +13,7 @@ mod string;
 mod surface;
 
 pub use exchange::{ExportCsv, ExportDxf, ExportParams, ImportStrings, ImportStringsParams};
+pub use face::{ProjectStep, ProjectStepParams};
 pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
 pub use layer::{CreateLayer, CreateLayerParams};
 pub use object::{DeleteObject, ObjectParams, RenameObject, RenameParams};
@@ -53,6 +55,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(ImportSolid);
     registry.register(ImportSolids);
     registry.register(CutBySurface);
+    registry.register(ProjectStep);
     registry.register(ImportVulcanSeam);
     registry.register(SuggestSeamDefinition);
     registry.register(BuildSeamModel);

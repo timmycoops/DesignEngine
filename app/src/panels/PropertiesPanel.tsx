@@ -207,7 +207,7 @@ function Choice<T extends string>({ value, options, onChange }: { value: T; opti
 
 /**
  * Commands on the selected string. Vertex numbers are as listed below (from 1). Grade, RL, drape,
- * reverse and close write a new revision; offset makes a new string. All undo.
+ * reverse and close write a new revision; offset and wall make new objects. All undo.
  */
 function StringTools({ id, closed }: { id: string; closed: boolean }) {
   const { run, summary } = useWorkspace();
@@ -225,6 +225,10 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
   const [joinWith, setJoinWith] = useState<string | null>(null);
   const [spacing, setSpacing] = useState('5');
   const [tolerance, setTolerance] = useState('');
+  const [wallTarget, setWallTarget] = useState<string | null>(null);
+  const [batter, setBatter] = useState('70');
+  const [berm, setBerm] = useState('');
+  const [conditioning, setConditioning] = useState('0.1');
   const others = (summary?.objects ?? []).filter((o) => o.kind === 'string' && o.id !== id && !o.closed);
   const partner = others.find((o) => o.id === joinWith) ?? others[0];
 
@@ -233,6 +237,7 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
   const optional = (v: number | null) => v === null || Number.isFinite(v);
   const surfaces = (summary?.objects ?? []).filter((o) => o.drawn && (o.kind === 'surface' || o.kind === 'grid'));
   const target = surfaces.find((s) => s.id === surface) ?? surfaces[0];
+  const riseTo = surfaces.find((s) => s.id === wallTarget) ?? surfaces[0];
 
   const gradeParams = () => {
     const params: Record<string, unknown> = { string: id, from: Math.round(num(from) ?? 1) - 1, grade: num(grade) };
@@ -284,6 +289,34 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
         <label className="flex items-center gap-1 text-muted-foreground" title="Add vertices where the string crosses the surface's triangle edges">
           <input type="checkbox" checked={crossings} onChange={(e) => setCrossings(e.target.checked)} /> follow
         </label>
+      </ToolRow>
+      <ToolRow
+        label="Wall"
+        disabled={!riseTo || !ok(num(batter)) || !optional(num(berm)) || !ok(num(conditioning))}
+        onApply={() =>
+          riseTo && void run('face.project_step', { string: id, target: riseTo.id, batter: num(batter), side, berm: num(berm) ?? 0, tolerance: num(conditioning) })
+        }
+      >
+        {surfaces.length === 0 ? (
+          <span className="text-muted-foreground">no surface loaded</span>
+        ) : (
+          <select
+            className="h-6 max-w-40 rounded border bg-background px-1 text-xs"
+            value={riseTo?.id}
+            onChange={(e) => setWallTarget(e.target.value)}
+            aria-label="Surface or grid the wall rises to"
+          >
+            {surfaces.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        )}
+        <SmallInput value={batter} onChange={setBatter} placeholder="deg" title="Batter in degrees from horizontal, square to the string" />
+        <Choice value={side} onChange={setSide} options={[['left', 'Left'], ['right', 'Right']]} />
+        <SmallInput value={berm} onChange={setBerm} placeholder="berm" title="Width of the berm at the crest, for the next toe (m)" />
+        <SmallInput value={conditioning} onChange={setConditioning} placeholder="tol" title="How far the next toe's plan shape may leave the crest (m)" />
       </ToolRow>
       <ToolRow label="Split" disabled={!ok(num(splitAt))} onApply={() => void run('string.split', { string: id, at: Math.round(num(splitAt)!) - 1 })}>
         <span className="text-muted-foreground">at vertex</span>
