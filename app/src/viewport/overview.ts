@@ -19,10 +19,10 @@ const EASE = 0.25;
 /** Step lines drawn either side of the section. */
 const STEP_LINES = 4;
 
-const SECTION = '#ffd23f';
-const STEPS = 'rgba(255, 210, 63, 0.3)';
-const TEXT = '#ffffff';
-const SHADE = 'rgba(10, 14, 20, 0.7)';
+export const SECTION = '#ffd23f';
+export const STEPS = 'rgba(255, 210, 63, 0.3)';
+export const TEXT = '#ffffff';
+export const SHADE = 'rgba(10, 14, 20, 0.7)';
 
 export class SectionOverview {
   private canvas = Object.assign(document.createElement('canvas'), { className: 'section-overview', hidden: true });

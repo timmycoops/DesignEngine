@@ -39,6 +39,12 @@ in mine grid coordinates, and can be snapped to and exported.
    to the edge, and when it ends the map eases back round the section. Stepping keeps the section near the
    map's centre, with the plan ahead in view. The map slides over a picture of the plan three times its width,
    so it follows at every step without drawing the scene, and the picture is taken again when it nears its edge.
+9. **An RL grid sits over the section,** with RL lines and distance along the section from A, read from the
+   section camera each frame so a line sits exactly where that RL and distance are drawn. The spacing is the
+   smallest 1, 2 or 5 times a power of ten that keeps lines 64 px apart, the same both ways so the grid stays
+   square on a true-scale section, and labels gain decimals as the spacing drops below a metre. RLs read on
+   both sides, and distances along the top with A and B marked, because the plan map takes the bottom left
+   and A falls under it. A step moves the plane, not the distances or RLs, so it leaves the grid alone.
 
 ## Evidence
 
@@ -70,6 +76,11 @@ in mine grid coordinates, and can be snapped to and exported.
   usual, so what looked like a slow map was the old map waiting to move. Its place on screen is checked as well, as
   those pictures can't show it: 240 px in the corner, the middle of the viewport still the section, and gone
   before a section opens and after it closes.
+
+- The RL grid on the full scene, by the real wheel and pan controls. Read off the labels as a planner would,
+  the ends of 9,708 cut points match the engine's own mine grid RLs and distances to 0.12 mm. Through 350 wheel
+  ticks and a pan, every line sits within 4e-6 px of where the camera draws that RL and distance, the spacing
+  runs from 0.05 m to 2 km with lines 64 to 158 px apart, and a drawing takes at most 1.4 ms.
 
 Tim tried the map by hand on PIT A's solids: the drag, the run past the data and the step size.
 
