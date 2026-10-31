@@ -9,6 +9,7 @@ import {
   FolderOpen,
   Layers,
   Layers3,
+  Magnet,
   Map as MapIcon,
   MousePointer2,
   PanelsTopLeft,
@@ -113,6 +114,7 @@ export default function App() {
   const [status, setStatus] = useState<Status>({ text: 'Open a project or import a surface to start.' });
   const [mode, setModeState] = useState<Mode>('select');
   const [plan, setPlan] = useState(false);
+  const [snapping, setSnapping] = useState(true);
   const [activeLayer, setActiveLayerState] = useState('design');
   const [selected, setSelected] = useState<string | null>(null);
   const [seamView, setSeamView] = useState<SeamShown | null>(null);
@@ -233,6 +235,8 @@ export default function App() {
         layer: () => layerRef.current,
       });
       strings.onSelect = setSelected;
+      strings.onSnapping = setSnapping;
+      created.pickPoint = (x, y) => strings.pick(x, y);
       stringsRef.current = strings;
       detach = strings.attach();
       show(await projectSummary());
@@ -560,7 +564,14 @@ export default function App() {
             <PenLine /> Draw string
           </ToolButton>
           <ToolButton
-            tip={plan ? 'Back to the 3D view' : 'Plan view: straight down, north up; left-drag pans'}
+            tip={snapping ? 'Snap is on: to strings, then surfaces (S turns it off)' : 'Snap is off: points go on the working plane (S turns it on)'}
+            active={snapping}
+            onClick={() => stringsRef.current?.toggleSnapping()}
+          >
+            <Magnet /> Snap
+          </ToolButton>
+          <ToolButton
+            tip={plan ? 'Back to the 3D view' : 'Plan view: straight down, north up; left-drag pans; the wheel zooms where the cursor is'}
             active={plan}
             onClick={() => {
               viewportRef.current?.setPlanView(!plan);

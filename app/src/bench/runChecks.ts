@@ -11,6 +11,7 @@ import {
   prepareSynthetic,
   type ProjectSummary,
   runCommand,
+  type SnapHit,
   snapRay,
   stageObject,
   type Transport,
@@ -50,7 +51,7 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
 
   try {
     if (config.solids) {
-      results.solids = await checkSolids(viewport, config.solids, config.orbit_seconds, log, show);
+      results.solids = await checkSolids(viewport, config, config.solids, log, show);
     } else {
       results.load = await loadSurfaces(viewport, config.surfaces, log);
       viewport.fitView();
@@ -69,7 +70,10 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
 }
 
 /** A zip or folder of solids by the app's own path: import, draw, snap index, orbit, snap, undo. */
-async function checkSolids(viewport: Viewport, path: string, orbitSeconds: number, log: (line: string) => void, show: Show) {
+async function checkSolids(viewport: Viewport, config: BenchConfig, path: string, log: (line: string) => void, show: Show) {
+  const orbitSeconds = config.orbit_seconds;
+  for (const surface of config.surfaces) await show((await runCommand('surface.import', { path: surface, layer: 'surfaces' })).summary);
+  for (const strings of config.strings) await show((await runCommand('string.import', { path: strings })).summary);
   log(`solids: importing ${path}`);
   const start = performance.now();
   const reply = await runCommand('solid.import_many', { paths: [path], layer: 'solids', repair: true });
@@ -99,6 +103,10 @@ async function checkSolids(viewport: Viewport, path: string, orbitSeconds: numbe
     snaps.push(performance.now() - t);
   }
   snaps.sort((a, b) => a - b);
+  const pick = await checkPickTime(viewport);
+  const camera = await checkCamera(viewport);
+  const snapSwitch = await checkSnapSwitch(viewport);
+  const stringPick = await checkStringPick(viewport, show);
   const undoStart = performance.now();
   await show(await undo());
   return {
@@ -112,11 +120,206 @@ async function checkSolids(viewport: Viewport, path: string, orbitSeconds: numbe
     table_rows_in_page: rowsInPage,
     last_solid_in_last_row: scrolledTo?.includes(reply.summary.objects[reply.summary.objects.length - 1].name) ?? false,
     orbit: orbited,
+    pick,
+    camera,
+    snap_switch: snapSwitch,
+    string_pick: stringPick,
     snap_p50_ms: snaps[100],
     snap_p95_ms: snaps[190],
     undo_ms: performance.now() - undoStart,
     messages: reply.record.messages.slice(0, 2),
   };
+}
+
+/** What a press or a wheel tick costs: the time to pick, across the view, with everything loaded. */
+async function checkPickTime(viewport: Viewport) {
+  const box = viewport.renderer.domElement.getBoundingClientRect();
+  const times: number[] = [];
+  for (let k = 0; k < 200; k++) {
+    const [x, y] = [box.left + box.width * (0.1 + (k % 20) * 0.04), box.top + box.height * (0.1 + Math.floor(k / 20) * 0.08)];
+    const start = performance.now();
+    await viewport.pickPoint?.(x, y);
+    times.push(performance.now() - start);
+  }
+  times.sort((a, b) => a - b);
+  return { p50_ms: times[100], p95_ms: times[190], max_ms: times[199] };
+}
+
+/**
+ * Drags and wheels the real canvas with a point of the scene under the cursor: that point must stay
+ * under the cursor (px), while the view turns and closes in on it (m).
+ */
+async function checkCamera(viewport: Viewport) {
+  const canvas = viewport.renderer.domElement;
+  const box = canvas.getBoundingClientRect();
+  const settle = async () => {
+    for (let i = 0; i < 4; i++) await viewport.nextFrame();
+  };
+  let found: { x: number; y: number; point: THREE.Vector3 } | null = null;
+  for (let k = 0; k < 40 && !found; k++) {
+    const [x, y] = [box.left + box.width * (0.25 + (k % 8) * 0.07), box.top + box.height * (0.3 + Math.floor(k / 8) * 0.1)];
+    const hit = await viewport.pickPoint?.(x, y);
+    if (hit) {
+      // Start exactly on the point: a pick can land on a string a few pixels from the cursor.
+      const point = new THREE.Vector3(...hit);
+      const [px, py] = viewport.projectToClient(point);
+      found = { x: px, y: py, point };
+    }
+  }
+  if (!found) return { error: 'nothing under the cursor' };
+  const { x, y, point } = found;
+  const drift = () => {
+    const [sx, sy] = viewport.projectToClient(point);
+    return Math.hypot(sx - x, sy - y);
+  };
+  const send = (type: string, dx: number, dy: number) =>
+    canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons: 1, clientX: x + dx, clientY: y + dy, pointerId: 1, pointerType: 'mouse' }));
+
+  const startDistance = viewport.camera.position.distanceTo(point);
+  const startPosition = viewport.camera.position.clone();
+  send('pointerdown', 0, 0);
+  await settle();
+  for (let k = 1; k <= 12; k++) {
+    send('pointermove', 10 * k, 5 * k);
+    await viewport.nextFrame();
+  }
+  const pivotMark = viewport.pivotMark.position?.distanceTo(point);
+  send('pointerup', 120, 60);
+  await settle();
+  const turned = {
+    drift_px: drift(),
+    camera_moved_m: viewport.camera.position.distanceTo(startPosition),
+    pivot_mark_off_point_m: pivotMark ?? null,
+    pivot_mark_gone_after: viewport.pivotMark.position === null,
+  };
+
+  const turnedDistance = viewport.camera.position.distanceTo(point);
+  for (let k = 0; k < 12; k++) {
+    canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: x, clientY: y, deltaY: -120 }));
+    await viewport.nextFrame();
+  }
+  await settle();
+  return { start_distance_m: startDistance, turned, zoom: { drift_px: drift(), from_m: turnedDistance, to_m: viewport.camera.position.distanceTo(point) } };
+}
+
+/** Draws through the real toolbar, canvas and key: a click snaps, S, then a click lands on the plane. */
+async function checkSnapSwitch(viewport: Viewport) {
+  const canvas = viewport.renderer.domElement;
+  const box = canvas.getBoundingClientRect();
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await viewport.nextFrame();
+  };
+  const button = (label: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.includes(label));
+  const screen = () => document.body.innerText;
+  const key = (name: string) => window.dispatchEvent(new KeyboardEvent('keydown', { key: name }));
+  const click = async (x: number, y: number) => {
+    for (const type of ['pointerdown', 'pointerup']) {
+      canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons: 1, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+    }
+    await settle();
+  };
+  const [x, y] = [box.left + box.width * 0.5, box.top + box.height * 0.5];
+  viewport.fitView();
+  await settle();
+  button('Draw string')?.click();
+  await settle();
+  const hover = async (hx: number, hy: number) => {
+    canvas.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, buttons: 0, clientX: hx, clientY: hy, pointerId: 1, pointerType: 'mouse' }));
+    await settle();
+    return document.querySelector<HTMLElement>('.snap-label')?.textContent ?? '';
+  };
+  const overSurface = await hover(x, y);
+  await click(x, y);
+  const first = screen().includes('1 vertices') && !screen().includes('1 vertices (on the working plane');
+  key('s');
+  await settle();
+  const switchedOff = screen().includes('Snap off');
+  const overPlane = await hover(x + 60, y + 30);
+  await click(x + 60, y + 30);
+  const second = screen().includes('2 vertices (on the working plane at RL');
+  key('Escape');
+  key('s');
+  await settle();
+  const switchedOn = screen().includes('Snap on');
+  button('Select')?.click();
+  await settle();
+  return {
+    first_click_snapped: first,
+    s_turned_it_off: switchedOff,
+    second_click_on_the_plane: second,
+    s_turned_it_on: switchedOn,
+    label_over_a_solid: overSurface.replace(/[-\d.]+$/, '<RL>'),
+    label_snap_off: overPlane.replace(/[-\d.]+$/, '<RL>'),
+  };
+}
+
+/**
+ * A real string held 50 m above the surface, so a pick that only sees surfaces lands elsewhere:
+ * turning from its vertex or its segment must pivot on the string, and hovering must name it.
+ */
+async function checkStringPick(viewport: Viewport, show: Show) {
+  const canvas = viewport.renderer.domElement;
+  const box = canvas.getBoundingClientRect();
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await viewport.nextFrame();
+  };
+  viewport.fitView();
+  await settle();
+  // The solids have gaps: the first row of the view with three surface points along it.
+  let hits: SnapHit[] = [];
+  for (let down = 0.25; down < 0.8 && hits.length < 3; down += 0.05) {
+    hits = [];
+    for (let across = 0.2; across < 0.85 && hits.length < 3; across += 0.1) {
+      const ray = viewport.rayFromNdc(...viewport.clientToNdc(box.left + box.width * across, box.top + box.height * down));
+      const hit = await snapRay(ray.origin, ray.direction);
+      if (hit) hits.push(hit);
+    }
+  }
+  if (hits.length < 3) return { error: 'the string needs three points on a surface' };
+  const reply = await runCommand('string.create', { name: 'bench string', layer: 'design', points: hits.map((h) => [h.world[0], h.world[1], h.world[2] + 50]) });
+  await show(reply.summary);
+  await settle();
+
+  const points = hits.map((h) => new THREE.Vector3(h.local[0], h.local[1], h.local[2] + 50));
+  const middle = points[0].clone().lerp(points[1], 0.5);
+  const send = (type: string, x: number, y: number, buttons: number) =>
+    canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+  /** Close in on `p`, so the string stands clear of anything dense behind it. */
+  const closeIn = async (p: THREE.Vector3) => {
+    viewport.focusOn([p.x, p.y, p.z], 300);
+    await settle();
+  };
+  /** How far the rotation point lands from `p` when a drag starts on it. */
+  const turnFrom = async (p: THREE.Vector3) => {
+    await closeIn(p);
+    const [x, y] = viewport.projectToClient(p);
+    send('pointerdown', x, y, 1);
+    await settle();
+    send('pointermove', x + 12, y + 6, 1);
+    await settle();
+    const off = viewport.pivotMark.position?.distanceTo(p) ?? null;
+    send('pointerup', x + 12, y + 6, 0);
+    await settle();
+    return off;
+  };
+  const label = async (p: THREE.Vector3) => {
+    await closeIn(p);
+    const [x, y] = viewport.projectToClient(p);
+    send('pointermove', x, y, 0);
+    await settle();
+    return document.querySelector<HTMLElement>('.snap-label')?.textContent?.replace(/[-\d.]+$/, '<RL>') ?? '';
+  };
+  const fromVertex = await turnFrom(points[1]);
+  const fromSegment = await turnFrom(middle);
+  const button = (name: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.includes(name));
+  button('Draw string')?.click();
+  await settle();
+  const overVertex = await label(points[1]);
+  const overSegment = await label(middle);
+  button('Select')?.click();
+  await settle();
+  await show(await undo());
+  return { turn_from_vertex_off_m: fromVertex, turn_from_segment_off_m: fromSegment, label_over_vertex: overVertex, label_over_segment: overSegment };
 }
 
 async function loadSurfaces(viewport: Viewport, paths: string[], log: (line: string) => void) {

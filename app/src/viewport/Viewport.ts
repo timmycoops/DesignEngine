@@ -3,6 +3,7 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { DecodedMesh, Vec3 } from '../bridge';
+import { PointMark } from './markers';
 import { valueColours } from './ramp';
 
 interface GpuAdapterLike {
@@ -33,6 +34,9 @@ export interface FrameTiming {
 
 const SURFACE_COLOURS = [0xa8916b, 0x5b6b7d, 0x8c9aa6, 0xc9a227, 0x6f8f5f];
 
+const PIVOT_MARK_PX = 9;
+const PIVOT_MARK_COLOUR = 0xffd23f;
+
 export class Viewport {
   readonly scene = new THREE.Scene();
   /** Loaded surfaces and their scale-test copies. */
@@ -42,6 +46,10 @@ export class Viewport {
   /** Hooks run at the start of every frame with `performance.now()`. */
   readonly beforeRender = new Set<(now: number) => void>();
   onStats?: (stats: FrameStats) => void;
+  /** What is drawn under a screen point, scene-local: what the view turns on and zooms to. */
+  pickPoint?: (clientX: number, clientY: number) => Promise<Vec3 | null>;
+  /** The rotation point, shown while a drag turns the view. */
+  readonly pivotMark: PointMark;
 
   private surfaces: THREE.Group[] = [];
   private copies: THREE.Object3D[] = [];
@@ -59,6 +67,10 @@ export class Viewport {
   private plan = false;
   /** The 3D view's direction from its target, kept while in plan view. */
   private savedDirection = new THREE.Vector3(0.45, -0.75, 0.6).normalize();
+  /** A left drag turning the 3D view: the point it turns on, and where the pointer last was. */
+  private turning: { pivot: THREE.Vector3; x: number; y: number } | null = null;
+  /** A wheel pick in flight: ticks that arrive meanwhile keep the depth it finds. */
+  private settling = false;
 
   private constructor(
     readonly renderer: THREE.WebGPURenderer,
@@ -74,8 +86,19 @@ export class Viewport {
     const sun = new THREE.DirectionalLight(0xffffff, 1.8);
     sun.position.set(0.5, -0.8, 1.0);
     this.scene.add(sun, this.content, this.overlay);
+    this.pivotMark = new PointMark(this, PIVOT_MARK_PX);
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(host);
+    // The wheel zooms where the cursor is, and left drag is `turnAbout`, so the view works on what
+    // is under the cursor, not on a centre left at the middle of the pit.
+    controls.zoomToCursor = true;
+    controls.mouseButtons.LEFT = null;
+    const canvas = renderer.domElement;
+    canvas.addEventListener('pointerdown', this.startTurn);
+    canvas.addEventListener('pointermove', this.moveTurn);
+    canvas.addEventListener('pointerup', this.endTurn);
+    canvas.addEventListener('pointercancel', this.endTurn);
+    canvas.addEventListener('wheel', this.settleDepth, { capture: true, passive: true });
     renderer.setAnimationLoop(this.frame);
   }
 
@@ -141,7 +164,7 @@ export class Viewport {
       this.perspective.position.copy(target).addScaledVector(this.savedDirection, half / tan);
       this.controls.object = this.perspective;
       this.controls.enableRotate = true;
-      this.controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+      this.controls.mouseButtons.LEFT = null;
     }
     this.plan = on;
     this.controls.update();
@@ -333,6 +356,67 @@ export class Viewport {
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
+
+  private startTurn = (e: PointerEvent): void => {
+    if (e.button !== 0 || this.plan || !this.controls.enabled) return;
+    const turn = { pivot: this.controls.target.clone(), x: e.clientX, y: e.clientY };
+    this.turning = turn;
+    // A drag over empty space keeps the view's centre. The answer takes about a millisecond.
+    void this.pickPoint?.(e.clientX, e.clientY).then((hit) => {
+      if (hit) turn.pivot.set(...hit);
+    });
+  };
+
+  private moveTurn = (e: PointerEvent): void => {
+    const turn = this.turning;
+    if (!turn || !this.controls.enabled) return;
+    const fullTurn = (2 * Math.PI) / (this.renderer.domElement.clientHeight || 1);
+    this.turnAbout(turn.pivot, -fullTurn * (e.clientX - turn.x), fullTurn * (e.clientY - turn.y));
+    this.pivotMark.show(turn.pivot, PIVOT_MARK_COLOUR);
+    turn.x = e.clientX;
+    turn.y = e.clientY;
+  };
+
+  private endTurn = (): void => {
+    this.turning = null;
+    this.pivotMark.hide();
+  };
+
+  /**
+   * Swings the camera and its target together about `pivot`: `yaw` about the vertical, `raise` up
+   * over the top (radians), stopping short of straight up or down. Moving both is what keeps the
+   * pivot where it is on screen; the camera does not jump to look at it.
+   */
+  private turnAbout(pivot: THREE.Vector3, yaw: number, raise: number): void {
+    const camera = this.perspective;
+    const forward = camera.getWorldDirection(new THREE.Vector3());
+    const right = forward.clone().cross(camera.up).normalize();
+    const fromAbove = forward.angleTo(camera.up.clone().negate());
+    const limit = 0.01;
+    const raised = Math.min(raise, fromAbove - limit);
+    const lowered = Math.max(raised, fromAbove - (Math.PI - limit));
+    const swing = new THREE.Quaternion().setFromAxisAngle(camera.up, yaw).multiply(new THREE.Quaternion().setFromAxisAngle(right, -lowered));
+    for (const point of [camera.position, this.controls.target]) {
+      point.sub(pivot).applyQuaternion(swing).add(pivot);
+    }
+  }
+
+  /**
+   * Puts the view's target at the depth of what is under the cursor, along the line of sight so the
+   * view does not move: zooming then slows as it nears the surface, and stops short of it.
+   */
+  private settleDepth = (e: WheelEvent): void => {
+    if (this.plan || this.settling || !this.pickPoint) return;
+    this.settling = true;
+    void this.pickPoint(e.clientX, e.clientY).then((hit) => {
+      this.settling = false;
+      if (!hit) return;
+      const camera = this.perspective;
+      const forward = camera.getWorldDirection(new THREE.Vector3());
+      const depth = new THREE.Vector3(...hit).sub(camera.position).dot(forward);
+      if (depth > 0) this.controls.target.copy(camera.position).addScaledVector(forward, depth);
+    });
+  };
 
   private frame = (): void => {
     const now = performance.now();
