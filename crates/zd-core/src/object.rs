@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Crossings, Grid, LayerId, MeshValidity, ObjectId, RunId, SeamModel, TriMesh};
+use crate::{Crossings, FaceDesign, Grid, LayerId, MeshValidity, ObjectId, RunId, SeamModel, TriMesh};
 
 /// What kind of thing an object is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -14,6 +14,7 @@ pub enum ObjectKind {
     Solid,
     Grid,
     SeamModel,
+    FaceDesign,
 }
 
 /// A string: ordered f64 vertices, open or closed.
@@ -155,6 +156,8 @@ pub enum Body {
     Grid(Arc<Grid>),
     /// The stack definition and its check results; the grids stay in their files.
     SeamModel(Arc<SeamModel>),
+    /// Lines, profiles and rules; a run makes its strings and surfaces as objects of their own.
+    FaceDesign(Arc<FaceDesign>),
 }
 
 impl Body {
@@ -165,6 +168,7 @@ impl Body {
             Body::Solid(_) => ObjectKind::Solid,
             Body::Grid(_) => ObjectKind::Grid,
             Body::SeamModel(_) => ObjectKind::SeamModel,
+            Body::FaceDesign(_) => ObjectKind::FaceDesign,
         }
     }
 }

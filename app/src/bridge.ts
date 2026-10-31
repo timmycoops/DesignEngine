@@ -257,7 +257,7 @@ export interface Layer {
   visible: boolean;
 }
 
-export type ObjectKind = 'string' | 'surface' | 'solid' | 'grid' | 'seam_model';
+export type ObjectKind = 'string' | 'surface' | 'solid' | 'grid' | 'seam_model' | 'face_design';
 
 export interface ObjectSummary {
   id: string;
@@ -406,6 +406,41 @@ export interface StackIssue {
   blocking: boolean;
 }
 
+export type WallSide = 'left' | 'right';
+
+export type StepTarget = { kind: 'surface'; id: string } | { kind: 'rl'; rl: number };
+
+export type ProfileStep = { step: 'project'; to: StepTarget; rule: string } | { step: 'berm'; rule: string };
+
+export interface FaceProfile {
+  name: string;
+  /** The surface or grid a toe registers to. */
+  register: string;
+  up: ProfileStep[];
+  down: ProfileStep[];
+}
+
+export interface FaceLine {
+  string: string;
+  profile: string;
+  side: WallSide;
+  /** Past the string's start and end, in metres. */
+  run_on: [number, number];
+}
+
+export interface WallRule {
+  name: string;
+  value: { type: 'fixed'; value: number };
+}
+
+export interface FaceDesign {
+  layer: string;
+  tolerance: number;
+  lines: FaceLine[];
+  profiles: FaceProfile[];
+  rules: WallRule[];
+}
+
 export interface SeamModel {
   folder: string;
   density: string;
@@ -431,7 +466,8 @@ export type Measures =
       nulls: number;
       z_range: [number, number] | null;
     }
-  | { kind: 'seam_model'; model: SeamModel };
+  | { kind: 'seam_model'; model: SeamModel }
+  | { kind: 'face_design'; design: FaceDesign };
 
 /** One revision of an object and the run that wrote it. */
 export interface RevisionSummary {

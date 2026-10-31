@@ -13,7 +13,7 @@ use serde_json::Value;
 use tauri::ipc::Response;
 use tauri::{AppHandle, State, Webview};
 use zd_commands::{LogEntry, RunRecord, Session};
-use zd_core::{Attributes, Body, Crossings, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, SeamModel, TriMesh};
+use zd_core::{Attributes, Body, Crossings, FaceDesign, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, SeamModel, TriMesh};
 use zd_geom::{SectionPlane, StackHorizon, SurfaceRayCaster, stack_issue_nodes, triangulate_grid};
 use zd_io::read_stack_grids;
 
@@ -140,6 +140,7 @@ pub enum Measures {
     Solid { vertices: usize, triangles: usize, area: f64, volume: f64, validity: MeshValidity, crossings: Option<Crossings> },
     Grid { origin: [f64; 2], cell_size: [f64; 2], cols: usize, rows: usize, nulls: usize, z_range: Option<[f64; 2]> },
     SeamModel { model: SeamModel },
+    FaceDesign { design: FaceDesign },
 }
 
 fn measure(body: &Body) -> Measures {
@@ -175,6 +176,7 @@ fn measure(body: &Body) -> Measures {
             z_range: g.z_range(),
         },
         Body::SeamModel(m) => Measures::SeamModel { model: (**m).clone() },
+        Body::FaceDesign(d) => Measures::FaceDesign { design: (**d).clone() },
     }
 }
 
@@ -357,7 +359,7 @@ pub async fn stage_object(id: ObjectId, state: State<'_, AppState>) -> Result<St
                 let buffer = encode_grid(g, origin, header);
                 (buffer, "grid", 2 * (g.cols - 1) * (g.rows - 1))
             }
-            Body::String(_) | Body::SeamModel(_) => unreachable!("only drawn surfaces are staged"),
+            Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) => unreachable!("only drawn surfaces are staged"),
         };
         (buffer, kind, triangles, ms(t))
     })
@@ -580,7 +582,7 @@ pub async fn build_snap_index(state: State<'_, AppState>) -> Result<SnapIndex, S
                 let source = match &o.body {
                     Body::Surface(s) => Source::Mesh(s.mesh_arc().clone()),
                     Body::Grid(g) => Source::Grid(g.clone()),
-                    Body::Solid(_) | Body::String(_) | Body::SeamModel(_) => unreachable!("only drawn surfaces are snapped to one by one"),
+                    Body::Solid(_) | Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) => unreachable!("only drawn surfaces are snapped to one by one"),
                 };
                 (Target::Object(o.id, geometry_key(&o.body)), source)
             });

@@ -8,6 +8,10 @@ pub enum GeomError {
     /// A mesh that must be watertight is not; carries the computed flags.
     NotWatertight { what: &'static str, validity: MeshValidity },
     Manifold(String),
+    /// A wall left its target and the target can't be bridged there.
+    OffTarget { at: [f64; 2] },
+    /// The string is on or above the target all the way along.
+    NoHeight,
 }
 
 impl fmt::Display for GeomError {
@@ -20,6 +24,8 @@ impl fmt::Display for GeomError {
                 v.boundary_edges, v.non_manifold_edges, v.inconsistent_edges
             ),
             GeomError::Manifold(message) => write!(f, "manifold: {message}"),
+            GeomError::OffTarget { at } => write!(f, "the wall runs off the target at {:.3}, {:.3}", at[0], at[1]),
+            GeomError::NoHeight => write!(f, "the string is on or above the target all the way along, so there's no wall to make: pick a surface above it"),
         }
     }
 }

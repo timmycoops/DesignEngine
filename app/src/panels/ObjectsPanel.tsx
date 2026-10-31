@@ -46,7 +46,9 @@ export function ObjectsPanel() {
             ? 'Property grid: listed, not drawn'
             : o.kind === 'seam_model'
               ? 'Seam model: its grids stay in their files'
-              : undefined,
+              : o.kind === 'face_design'
+                ? 'Face design: open it in the Face design panel'
+                : undefined,
       }),
     );
   }, [summary]);

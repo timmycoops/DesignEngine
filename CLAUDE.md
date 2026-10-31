@@ -42,7 +42,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 5. **Cuts are solid booleans.** To cut a solid by an open surface, close the surface into a half-space
    just beyond the solid's bounding box, then run a Manifold boolean.
 6. **Projection targets are triangulations.** Grids convert to triangulations on import; one projection path.
-   Handle convoluted surfaces at low angles, and fall back to a level where the projection never hits the surface.
+   Handle convoluted surfaces at low angles, and fall back where the projection never hits the surface: a gap is
+   bridged and reported (`docs/decisions/0024-face-design.md`).
 7. **Large meshes cross the Tauri bridge as binary** (typed arrays), never JSON.
 8. **Validity is explicit.** Every mesh carries computed flags: `Closed`, `Manifold`, `ConsistentWinding`,
    `NonDegenerate`, `NonSelfIntersecting` (Seequent Evo vocabulary). Imports pass through a repair step first
@@ -75,7 +76,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   to surface B or an RL at a batter rule" or "berm of a width rule", with berm on roof and berm on floor per
   horizon, minimum and maximum bench height, a conditioning tolerance, wall type (face, side, end), and side
   (left or right for open highwall strings). A face is built oversized, RL to RL and past the pit shell, and
-  the cut does the fitting (`docs/decisions/0023-wall-step.md`).
+  the cut does the fitting (`docs/decisions/0023-wall-step.md`). `FaceDesign` is the saved object the Face design
+  panel edits: lines, profiles and named rules together (`docs/decisions/0024-face-design.md`).
 - `Ramp`: centreline or start point, direction, start and end bench, width, grade (%, ratio or degrees,
   measured on the inside edge by default), inside and outside taper, entry type, flat or graded switchbacks
   with radius. It reports the bench where the grade can't be met instead of drifting.
