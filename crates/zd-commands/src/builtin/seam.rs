@@ -6,7 +6,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use zd_core::{Attributes, Body, Change, Grid, GridLink, Horizon, IssueKind, Lattice, ObjectKind, SeamModel, StackIssue, blank_no_seam};
 use zd_geom::{StackHorizon, check_seam_stack, suggest_no_seam_rl, suggest_seam_tree};
-use zd_io::{DefinedHorizon, SeamDefinition, read_linked_grid, read_seam_definition, read_vulcan_grid, vulcan_grid_name, write_seam_definition};
+use zd_io::{DefinedHorizon, SeamDefinition, read_linked_grid, read_linked_surface, read_seam_definition, read_vulcan_grid, vulcan_grid_name, write_seam_definition};
 
 use super::in_parallel;
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
@@ -185,10 +185,11 @@ impl Command for SuggestSeamDefinition {
 }
 
 /// `seam.build_model`: a seam model from a stack definition (CSV, decision 0007). Every grid it names
-/// is read in place and fingerprinted, never copied; every grid must be on one lattice. The stack is
-/// then checked, never changed: a floor above its roof, a working horizon crossing the one above, a
-/// daughter outside its parent, and unpaired nulls are each listed with where they are. A model with
-/// blocking issues is still made, so the issues can be seen, but solids and reserves refuse it until
+/// is read in place and fingerprinted, never copied; every grid must be on one lattice. Roofs and floors
+/// read whole, as a seam exists where its roof is above its floor, whatever a file flags (decision 0025).
+/// The stack is then checked, never changed: a floor above its roof, a working horizon crossing the one
+/// above, a daughter outside its parent, and unpaired nulls are each listed with where they are. A model
+/// with blocking issues is still made, so the issues can be seen, but solids and reserves refuse it until
 /// the grids are fixed and the model is rebuilt.
 pub struct BuildSeamModel;
 
@@ -252,25 +253,28 @@ impl Command for BuildSeamModel {
             })
             .collect();
         let read = in_parallel(&jobs, |(_, _, file, keep)| {
-            read_linked_grid(&definition.path(file)).map(|g| (g.fingerprint, Lattice::from(&g.grid), keep.then_some(g.grid)))
+            let linked = if *keep { read_linked_surface(&definition.path(file)) } else { read_linked_grid(&definition.path(file)) };
+            linked.map(|g| (g.fingerprint, Lattice::from(&g.grid), g.note, keep.then_some(g.grid)))
         });
         let read_ms = start.elapsed().as_secs_f64() * 1e3;
 
         // The model's lattice is the first roof's that reads; every grid must be on it.
         let mut problems = Vec::new();
-        let lattice = read.iter().find_map(|r| r.as_ref().ok().map(|(_, l, _)| *l));
+        let lattice = read.iter().find_map(|r| r.as_ref().ok().map(|(_, l, ..)| *l));
         let mut links: Vec<BTreeMap<String, GridLink>> = vec![BTreeMap::new(); definition.horizons.len()];
         let mut grids: Vec<HashMap<String, Grid>> = vec![HashMap::new(); definition.horizons.len()];
+        let mut notes = Vec::new();
         for ((h, variable, file, _), result) in jobs.iter().zip(read) {
             let code = &definition.horizons[*h].code;
             match result {
                 Err(e) => problems.push(format!("horizon '{code}' {variable}: {file}: {e}")),
-                Ok((_, l, _)) if Some(l) != lattice => problems.push(format!(
+                Ok((_, l, ..)) if Some(l) != lattice => problems.push(format!(
                     "horizon '{code}' {variable}: {file} is on a {} x {} lattice at {} m from ({}, {}), not the model's",
                     l.cols, l.rows, l.cell_size[0], l.origin[0], l.origin[1]
                 )),
-                Ok((fingerprint, _, grid)) => {
+                Ok((fingerprint, _, note, grid)) => {
                     links[*h].insert(variable.clone(), GridLink { file: file.clone(), fingerprint });
+                    notes.extend(note.map(|note| format!("{code} {variable}: {note}")));
                     if let Some(grid) = grid {
                         grids[*h].insert(variable.clone(), grid);
                     }
@@ -330,6 +334,9 @@ impl Command for BuildSeamModel {
                 (0, _) | (_, None) => line,
                 (n, Some(rl)) => format!("{line}; {n} nodes at RL {rl} read as no seam"),
             });
+        }
+        for note in notes {
+            outcome = outcome.message(note);
         }
         for issue in &issues {
             outcome = outcome.message(describe_issue(issue));

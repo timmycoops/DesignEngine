@@ -36,6 +36,11 @@ impl Drop for TempDir {
 
 /// A 21 x 11 grid at 10 m in Vulcan's plain layout; `f` takes local x, y in metres.
 fn vulcan_grid(cols: usize, f: impl Fn(f64, f64) -> Option<f32>) -> Vec<u8> {
+    flagged_grid(cols, |x, y| f(x, y).map_or((0.0, 0), |z| (z, 1)))
+}
+
+/// The same with every node's value and flag given.
+fn flagged_grid(cols: usize, f: impl Fn(f64, f64) -> (f32, i32)) -> Vec<u8> {
     let mut out = b"SYNTHETIC SEAM GRID             ".to_vec();
     for v in [E, E + (cols - 1) as f64 * 10.0, N, N + (ROWS - 1) as f64 * 10.0] {
         out.extend_from_slice(&v.to_be_bytes());
@@ -51,9 +56,9 @@ fn vulcan_grid(cols: usize, f: impl Fn(f64, f64) -> Option<f32>) -> Vec<u8> {
     }
     for row in 0..ROWS {
         for col in 0..cols {
-            let v = f(col as f64 * 10.0, row as f64 * 10.0);
-            out.extend_from_slice(&v.unwrap_or(0.0).to_be_bytes());
-            out.extend_from_slice(&i32::from(v.is_some()).to_be_bytes());
+            let (value, flag) = f(col as f64 * 10.0, row as f64 * 10.0);
+            out.extend_from_slice(&value.to_be_bytes());
+            out.extend_from_slice(&flag.to_be_bytes());
         }
     }
     out
@@ -99,6 +104,93 @@ fn build(s: &mut Session, csv: &Path) -> Result<zd_commands::RunRecord, zd_comma
 fn model(s: &Session) -> std::sync::Arc<SeamModel> {
     let objects: Vec<_> = s.project().objects().filter_map(|o| if let Body::SeamModel(m) = &o.body { Some(m.clone()) } else { None }).collect();
     objects.last().expect("a seam model").clone()
+}
+
+/// One or more seams on the 21 x 11 lattice; each `files` entry is a file name and its bytes.
+fn built_from(t: &TempDir, rows: &str, files: Vec<(&str, Vec<u8>)>) -> (Session, zd_commands::RunRecord) {
+    for (name, bytes) in files {
+        std::fs::write(t.0.join(name), bytes).unwrap();
+    }
+    let csv = t.0.join("stack.csv");
+    std::fs::write(&csv, format!("horizon,parent,material,working,roof,floor\n{rows}")).unwrap();
+    let mut s = Session::with_builtins();
+    let record = build(&mut s, &csv).unwrap();
+    (s, record)
+}
+
+/// Flat at `z` west of 100 m, and flagged off holding `held` from 100 m east.
+fn flagged_off_east(z: f32, held: f32) -> Vec<u8> {
+    flagged_grid(COLS, move |x, _| if x < 100.0 { (z, 1) } else { (held, 0) })
+}
+
+/// As on PIT B: roof and floor both flagged off and equal, so the seam has no thickness there. The
+/// surfaces are there for the stack, and the seam stops.
+#[test]
+fn a_seam_with_no_thickness_stays_in_the_stack_and_stops_being_a_seam() {
+    let t = TempDir::new("no-thickness");
+    let (s, record) = built_from(&t, "a,,coal,yes,a.srg,a.sfg\n", vec![("a.srg", flagged_off_east(110.0, 104.0)), ("a.sfg", flagged_off_east(100.0, 104.0))]);
+    let m = model(&s);
+    assert!(m.issues.iter().all(|i| i.kind == IssueKind::NoDensity), "{:?}", m.issues);
+    assert!(record.messages.iter().any(|l| l.starts_with("a: working; coal at 110 of 231 nodes, up to 10.00 m thick")), "{:?}", record.messages);
+    let grids = read_stack_grids(&m).unwrap();
+    let (west, east) = (grids.roofs[0].index(5, 5), grids.roofs[0].index(15, 5));
+    assert_eq!((grids.roofs[0].null_count(), grids.floors[0].null_count()), (0, 0), "both surfaces are whole");
+    assert_eq!((grids.roofs[0].z[east], grids.floors[0].z[east]), (104.0, 104.0));
+    let seams = grids.seams_only();
+    assert!(seams.roofs[0].z[east].is_nan() && seams.floors[0].z[east].is_nan());
+    assert_eq!((seams.roofs[0].z[west], seams.floors[0].z[west]), (110.0, 100.0));
+}
+
+/// As with PIT C's fr4: a roof flagged off where its floor is live, sitting 3 m above that floor. It's
+/// coal, and it used to read as a null over a live floor and block the model.
+#[test]
+fn a_roof_flagged_off_over_real_thickness_is_still_coal() {
+    let t = TempDir::new("flagged-coal");
+    let (s, record) = built_from(&t, "a,,coal,yes,a.srg,a.sfg\n", vec![("a.srg", flagged_off_east(103.0, 103.0)), ("a.sfg", flat(100.0))]);
+    let m = model(&s);
+    assert!(!m.issues.iter().any(|i| i.kind == IssueKind::Unpaired), "{:?}", m.issues);
+    assert!(record.messages.iter().any(|l| l.starts_with("a: working; coal at 231 of 231 nodes, up to 3.00 m thick")), "{:?}", record.messages);
+    assert!(record.messages.iter().any(|l| l == "a roof: 121 nodes flagged off keep the heights they hold"), "{:?}", record.messages);
+    assert_eq!(read_stack_grids(&m).unwrap().seams_only().roofs[0].null_count(), 0);
+}
+
+/// A surface carries on where its seam has no thickness, so it has to be in order there too.
+#[test]
+fn a_crossing_where_a_seam_has_no_thickness_still_blocks() {
+    let t = TempDir::new("flagged-crossing");
+    let files = vec![("a.srg", flagged_off_east(110.0, 90.0)), ("a.sfg", flagged_off_east(100.0, 90.0)), ("b.srg", flat(95.0)), ("b.sfg", flat(92.0))];
+    let (s, _) = built_from(&t, "a,,coal,yes,a.srg,a.sfg\nb,,coal,yes,b.srg,b.sfg\n", files);
+    let m = model(&s);
+    let crossing = m.issues.iter().find(|i| i.kind == IssueKind::Crossing).unwrap_or_else(|| panic!("{:?}", m.issues));
+    assert_eq!((crossing.horizon.as_str(), crossing.other.as_deref(), crossing.nodes, crossing.worst), ("b", Some("a"), 121, 5.0));
+    assert!(crossing.blocking);
+}
+
+/// A node with nothing in it is still a gap: flagged off holding zero, over a live floor.
+#[test]
+fn a_roof_with_nothing_in_a_node_is_still_unpaired() {
+    let t = TempDir::new("empty-node");
+    let (s, _) = built_from(&t, "a,,coal,yes,a.srg,a.sfg\n", vec![("a.srg", flagged_off_east(103.0, 0.0)), ("a.sfg", flat(100.0))]);
+    let m = model(&s);
+    let unpaired = m.issues.iter().find(|i| i.kind == IssueKind::Unpaired).unwrap_or_else(|| panic!("{:?}", m.issues));
+    assert_eq!((unpaired.nodes, unpaired.blocking), (121, true));
+}
+
+/// What the checks find on real models. `ZD_SEAM_DEFINITIONS` lists definition files with `;`.
+#[test]
+#[ignore = "needs ZD_SEAM_DEFINITIONS"]
+fn a_seam_model_on_real_grids() {
+    let definitions = std::env::var("ZD_SEAM_DEFINITIONS").expect("ZD_SEAM_DEFINITIONS lists definition files");
+    for definition in definitions.split(';') {
+        let mut s = Session::with_builtins();
+        let start = std::time::Instant::now();
+        let record = s.run("seam.build_model", json!({ "definition": definition, "layer": "seams" })).unwrap();
+        let m = model(&s);
+        let blocking: Vec<_> = m.issues.iter().filter(|i| i.blocking).collect();
+        println!("{} horizons in {:.1} s, {} issues, {} blocking", m.horizons.len(), start.elapsed().as_secs_f64(), m.issues.len(), blocking.len());
+        record.messages.iter().filter(|l| l.contains("flagged off")).for_each(|l| println!("  {l}"));
+        blocking.iter().for_each(|i| println!("  {:?} {} with {:?}: {} nodes, worst {:.3} m", i.kind, i.horizon, i.other, i.nodes, i.worst));
+    }
 }
 
 #[test]

@@ -763,12 +763,21 @@ impl Command for CutBySurface {
         let mut worst: (f64, &str, f64) = (0.0, "", 0.0);
         let (mut uncovered, mut uncut, mut recut) = (Vec::new(), Vec::new(), 0usize);
         for ((object, solid), cut) in solids.iter().zip(cuts) {
-            let mut cut = cut.map_err(|e| CommandError::Geometry(format!("'{}': {e}", object.name)))?;
+            // One solid that can't be cut doesn't lose the rest of a batch.
+            let mut cut = match cut {
+                Ok(cut) => cut,
+                Err(e) if solids.len() > 1 => {
+                    uncut.push(format!("'{}' ({e})", object.name));
+                    continue;
+                }
+                Err(e) => return Err(CommandError::Geometry(format!("'{}': {e}", object.name))),
+            };
             let mut checked = checked_parts(&cut, p.keep);
             // Manifold's tolerance scales with what it is given: where a part of the cut made with
             // the surface near the solid fails its check, the cut is made again with all of it.
-            if let (Err(_), Some(design)) = (&checked, &design) {
-                let whole = cut_solid_by_whole_surface(solid.mesh(), design).map_err(|e| CommandError::Geometry(format!("'{}': {e}", object.name)))?;
+            if let (Err(_), Some(design)) = (&checked, &design)
+                && let Ok(whole) = cut_solid_by_whole_surface(solid.mesh(), design)
+            {
                 let again = checked_parts(&whole, p.keep);
                 if again.is_ok() {
                     recut += 1;

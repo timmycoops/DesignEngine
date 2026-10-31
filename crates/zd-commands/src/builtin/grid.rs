@@ -10,9 +10,9 @@ use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcom
 /// `grid.import_vulcan_seam`: every grid of one seam from a folder of Vulcan grids
 /// (`<prefix><seam>.<variable>g`), each as a grid object named "<SEAM> <variable>" (e.g. "UPPER sr")
 /// with its seam, variable, header text and file name as attributes, and a `role`: `elevation` for
-/// roof, floor and topography (RLs, drawn as surfaces) or `property` for everything else
-/// (thicknesses, qualities). Plain and compressed (`vulZ`) files both read. Roof and floor must read;
-/// other grids that cannot be read are skipped and listed.
+/// roof, floor and topography (RLs, drawn as surfaces, whole across nodes flagged off) or `property`
+/// for everything else (thicknesses, qualities). Plain and compressed (`vulZ`) files both read. Roof and
+/// floor must read; other grids that cannot be read are skipped and listed.
 pub struct ImportVulcanSeam;
 
 /// Vulcan model variables that hold elevations rather than thicknesses or qualities.
@@ -54,13 +54,16 @@ impl Command for ImportVulcanSeam {
         let code = seam.seam.to_ascii_uppercase();
         let mut outcome = Outcome::default();
         for (variable, vulcan) in seam.grids {
-            let log = &vulcan.log;
+            let log = vulcan.log.clone();
+            let elevation = ELEVATION_VARIABLES.contains(&variable.as_str());
+            let surface = elevation.then(|| vulcan.surface());
             let mut line = format!("{variable}: {} of {} nodes live", log.live, log.nodes);
-            if log.stale_nulls + log.odd_flags + log.non_finite > 0 {
-                line += &format!(
-                    "; null nodes holding old values {}, unknown flags {}, non-finite values {}",
-                    log.stale_nulls, log.odd_flags, log.non_finite
-                );
+            let ignored = if elevation { 0 } else { log.held };
+            if ignored + log.odd_flags + log.non_finite > 0 {
+                line += &format!("; null nodes holding old values {ignored}, unknown flags {}, non-finite values {}", log.odd_flags, log.non_finite);
+            }
+            if let Some(report) = surface.as_ref().and_then(|s| s.report()) {
+                line += &format!("; {report}");
             }
             if log.compressed_blocks > 0 {
                 line += &format!("; unpacked from the compressed layout ({} blocks)", log.compressed_blocks);
@@ -72,7 +75,7 @@ impl Command for ImportVulcanSeam {
             let mut attributes = Attributes::new();
             attributes.insert("seam".into(), AttrValue::Text(code.clone()));
             attributes.insert("variable".into(), AttrValue::Text(variable.clone()));
-            let role = if ELEVATION_VARIABLES.contains(&variable.as_str()) { "elevation" } else { "property" };
+            let role = if elevation { "elevation" } else { "property" };
             attributes.insert("role".into(), AttrValue::Text(role.into()));
             attributes.insert("vulcan_header".into(), AttrValue::Text(vulcan.description));
             attributes.insert("source".into(), AttrValue::Text(format!("{}{}.{variable}g", p.prefix, p.seam).to_ascii_lowercase()));
@@ -80,7 +83,7 @@ impl Command for ImportVulcanSeam {
                 name: format!("{code} {variable}"),
                 layer: p.layer.clone(),
                 attributes,
-                body: Body::Grid(Arc::new(vulcan.grid)),
+                body: Body::Grid(Arc::new(surface.map_or(vulcan.grid, |s| s.grid))),
             });
         }
         for (variable, reason) in seam.skipped {

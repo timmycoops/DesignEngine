@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use zd_core::{Fingerprint, Grid, GridLink, SeamModel, blank_no_seam};
+use zd_core::{Fingerprint, Grid, GridLink, SeamModel, blank_no_seam, blank_no_thickness};
 
 use crate::text::{csv_cell, csv_fields, decode_text};
 use crate::{IoError, XyzOptions, parse_vulcan_grid, parse_xyz_grid, vulcan_grid_name};
@@ -248,24 +248,45 @@ pub fn write_seam_definition(path: &Path, definition: &SeamDefinition) -> Result
 pub struct LinkedGrid {
     pub grid: Grid,
     pub fingerprint: Fingerprint,
+    /// What became of any heights held at nodes flagged off, for a run's report.
+    pub note: Option<String>,
 }
 
 /// Reads a grid file without copying it anywhere: Vulcan grids (`.<variable>g`, plain or
 /// compressed) and XYZ/CSV text grids (`.xyz`, `.csv`, `.txt`, `.asc`).
 pub fn read_linked_grid(path: &Path) -> Result<LinkedGrid, IoError> {
+    read_linked(path, false)
+}
+
+/// The same for a roof or floor, whole: a node flagged off keeps the height it holds (decision 0025).
+pub fn read_linked_surface(path: &Path) -> Result<LinkedGrid, IoError> {
+    read_linked(path, true)
+}
+
+fn read_linked(path: &Path, whole: bool) -> Result<LinkedGrid, IoError> {
     let bytes = std::fs::read(path)?;
     let fingerprint = Fingerprint { bytes: bytes.len() as u64, modified_unix_ms: modified_ms(path)?, checksum: fnv1a(&bytes) };
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    let grid = match ext.as_str() {
-        "xyz" | "csv" | "txt" | "asc" => parse_xyz_grid(&bytes, &XyzOptions::default())?.grid,
-        _ if vulcan_grid_name(&name).is_some() => parse_vulcan_grid(&bytes)?.grid,
+    let (grid, note) = match ext.as_str() {
+        "xyz" | "csv" | "txt" | "asc" => (parse_xyz_grid(&bytes, &XyzOptions::default())?.grid, None),
+        _ if vulcan_grid_name(&name).is_some() => {
+            let read = parse_vulcan_grid(&bytes)?;
+            if whole {
+                let surface = read.surface();
+                let note = surface.report();
+                (surface.grid, note)
+            } else {
+                (read.grid, None)
+            }
+        }
         _ => return Err(IoError::Unsupported(format!("no grid reader for '{name}'"))),
     };
-    Ok(LinkedGrid { grid, fingerprint })
+    Ok(LinkedGrid { grid, fingerprint, note })
 }
 
-/// A model's roofs and floors, read in place, top first, with any node its `no_seam` marks blanked.
+/// A model's roofs and floors, read in place and whole, top first, with any node its `no_seam` marks
+/// blanked. A surface carries on where its seam has no thickness.
 #[derive(Debug, Clone)]
 pub struct StackGrids {
     pub roofs: Vec<Grid>,
@@ -274,12 +295,22 @@ pub struct StackGrids {
     pub changed: Vec<String>,
 }
 
+impl StackGrids {
+    /// The same blanked to where the seams are, for what shows a seam rather than a surface.
+    pub fn seams_only(mut self) -> Self {
+        for (roof, floor) in self.roofs.iter_mut().zip(&mut self.floors) {
+            blank_no_thickness(roof, floor);
+        }
+        self
+    }
+}
+
 /// Reads every horizon's roof and floor at once, one thread per file, and notes any file that has
 /// changed since the model was built.
 pub fn read_stack_grids(model: &SeamModel) -> Result<StackGrids, IoError> {
     let links: Vec<&GridLink> = model.horizons.iter().flat_map(|h| [&h.roof, &h.floor]).collect();
     let read: Vec<Result<LinkedGrid, IoError>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = links.iter().map(|link| scope.spawn(|| read_linked_grid(&model.path(link)))).collect();
+        let handles: Vec<_> = links.iter().map(|link| scope.spawn(|| read_linked_surface(&model.path(link)))).collect();
         handles.into_iter().map(|h| h.join().expect("grid reader thread")).collect()
     });
     let (mut grids, mut changed) = (Vec::with_capacity(links.len()), Vec::new());
@@ -442,6 +473,11 @@ mod tests {
         let linked = read_linked_grid(&path).unwrap();
         assert_eq!((linked.grid.cols, linked.grid.rows, linked.grid.z[1]), (4, 3, 101.0));
         assert!(linked.grid.z[5].is_nan());
+        // A roof or floor reads whole, and says what it did about it.
+        let whole = read_linked_surface(&path).unwrap();
+        assert_eq!(whole.grid.z[5], f64::from(0.36f32));
+        assert_eq!(whole.fingerprint, linked.fingerprint);
+        assert!(linked.note.is_none() && whole.note.is_some_and(|n| n.contains("nodes flagged off keep")));
         assert_eq!(linked.fingerprint.bytes, bytes.len() as u64);
         assert_eq!(fingerprint_file(&path).unwrap(), linked.fingerprint);
 

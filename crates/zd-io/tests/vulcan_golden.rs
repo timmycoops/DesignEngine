@@ -30,6 +30,36 @@ fn live(z: &[f64]) -> impl Iterator<Item = f64> + '_ {
 /// The independent check of the format: Vulcan's own text export of a grid must match what we read
 /// from the binary file at every node, value for value (the export writes single-precision values in
 /// full, so equality is exact), with nulls in the same places.
+/// What every roof, floor and topography in `ZD_VULCAN_GRIDS` holds at nodes flagged off, and what becomes
+/// of it on a surface.
+#[test]
+#[ignore]
+fn held_heights_in_a_folder() {
+    let Some(dir) = env("ZD_VULCAN_GRIDS") else { return };
+    let (mut grids, mut held, mut kept, mut rough) = (0, 0, 0, 0);
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        if !["srg", "sfg", "tpg"].contains(&ext.as_str()) {
+            continue;
+        }
+        let Ok(read) = read_vulcan_grid(&path) else { continue };
+        grids += 1;
+        if read.log.held == 0 {
+            continue;
+        }
+        held += 1;
+        let surface = read.surface();
+        assert_eq!(surface.grid.null_count(), read.log.nulls - read.log.held);
+        kept += surface.kept;
+        if let Some([edge, live]) = surface.rough {
+            rough += 1;
+            println!("large steps: {} of {} nodes, {edge:.2} m against {live:.2} m, {:.1} times", read.log.held, read.log.nodes, edge / live);
+        }
+    }
+    println!("{grids} surfaces read, {held} hold heights at nodes flagged off, {kept} nodes kept, {rough} with large steps");
+}
+
 #[test]
 #[ignore]
 fn grid_matches_vulcan_export_node_for_node() {

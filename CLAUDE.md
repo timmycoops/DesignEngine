@@ -58,12 +58,15 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 - `Polyline` (string): ordered `[f64; 3]` vertices, closed flag, attributes.
 - `Surface`: triangulated mesh (vertices f64, triangles u32), name, layer.
 - `Solid`: closed manifold mesh; must always be watertight.
-- `Grid`: regular raster (origin, cell size, rows, cols, z values with NaN for nulls).
+- `Grid`: regular raster (origin, cell size, rows, cols, z values with NaN for nulls). A Vulcan roof, floor or
+  topography reads whole: a node flagged off keeps the height it holds, with a warning if it steps far from the
+  live nodes (`docs/decisions/0025-a-grid-stays-in-space.md`).
 - `SeamModel`: an explicit, ordered stack of horizons (the Deswik "surface stacking" pattern), defined in a CSV
   the user edits; `seam.suggest_definition` writes a starting one from the grids' geometry, never from names.
   Each horizon has a code, material, parent horizon (for splits), working flag, roof and floor grids, quality
   grids and a density grid. The model links to its grid files in place (fingerprinted, never copied into the
-  project); grids used for design are imported as objects. The stack is checked, never fixed: a floor above
+  project); grids used for design are imported as objects. A seam exists where its roof is above its floor,
+  whatever a file flags, and its surfaces carry on where it has no thickness. The stack is checked, never fixed: a floor above
   its roof, a crossing in the working section or a daughter outside its parent is flagged with its location,
   and blocks solids and reserves until the source grids are corrected. A definition may name an RL that means no
   seam, for models that mark absence that way (`docs/decisions/0020-no-seam-rl.md`). Existence polygons and a crop surface

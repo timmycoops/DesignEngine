@@ -108,6 +108,85 @@ fn many_solids_are_cut_by_a_grid_in_one_run_and_summed_up() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Two 100 m squares of level surface at RL 105 that meet only at one corner, which a cut can't close
+/// round, a cube over that corner and a cube well clear of it.
+fn cubes_and_a_bow_tie() -> (Session, ObjectId, ObjectId, ObjectId) {
+    let at = |x: f64, y: f64| [E + x, N + y, 105.0];
+    let vertices = vec![at(0.0, 0.0), at(100.0, 0.0), at(100.0, 100.0), at(0.0, 100.0), at(200.0, 100.0), at(200.0, 200.0), at(100.0, 200.0)];
+    let tie = TriMesh::new(vertices, vec![[0, 1, 2], [0, 2, 3], [2, 4, 5], [2, 5, 6]]);
+    let mut project = Project::new();
+    let solid = |name: &str, x: f64, y: f64| Change::Create {
+        name: name.into(),
+        layer: "blocks".into(),
+        attributes: Attributes::new(),
+        body: Body::Solid(Solid::new(box_mesh([x, y, 100.0], [x + 10.0, y + 10.0, 110.0])).unwrap()),
+    };
+    let surface = Change::Create { name: "tie".into(), layer: "design".into(), attributes: Attributes::new(), body: Body::Surface(zd_core::Surface::new(tie)) };
+    project.apply(RunId::new(), vec![solid("at the corner", E + 95.0, N + 95.0), solid("clear", E + 20.0, N + 20.0), surface]).unwrap();
+    let id = |name: &str| project.objects().find(|o| o.name == name).unwrap().id;
+    let (corner, clear, tie) = (id("at the corner"), id("clear"), id("tie"));
+    let dir = std::env::temp_dir().join(format!("zd-cut-tie-{}-{}", std::process::id(), RunId::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    ProjectStore::create(dir.join("pit.zdproj")).unwrap().save(&project, "[]").unwrap();
+    (Session::open(dir.join("pit.zdproj")).unwrap(), corner, clear, tie)
+}
+
+#[test]
+fn a_solid_that_cant_be_cut_is_named_and_the_rest_go_on() {
+    let (mut s, corner, clear, tie) = cubes_and_a_bow_tie();
+    let record = s.run("solid.cut_by_surface", json!({ "solids": [corner, clear], "surface": tie, "layer": "cut" })).unwrap();
+    let parts = created(&record);
+    assert_eq!(parts.len(), 2, "both parts of the clear cube: {:?}", record.messages);
+    let volumes: Vec<f64> = parts.iter().map(|&id| solid_volume(&s, id)).collect();
+    assert!((volumes[0] - 500.0).abs() < 1e-6 && (volumes[1] - 500.0).abs() < 1e-6, "{volumes:?}");
+    let uncut = record.messages.iter().find(|m| m.starts_with("1 solids left uncut")).unwrap_or_else(|| panic!("{:?}", record.messages));
+    assert!(uncut.contains("'at the corner'") && uncut.contains("touches itself"), "{uncut}");
+
+    // On its own a solid that can't be cut is still refused: there's nothing else to go on with.
+    let refused = s.run("solid.cut_by_surface", json!({ "solid": corner, "surface": tie, "layer": "cut" })).unwrap_err();
+    assert!(refused.to_string().contains("touches itself"), "{refused}");
+}
+
+/// A 5 m Vulcan grid (plain layout) over the cubes of `pit(1)`, level at RL 104, flagged off over the
+/// eastern half where it holds the same level.
+fn held_grid() -> Vec<u8> {
+    let (cols, rows) = (9usize, 7usize);
+    let (x0, y0) = (E - 10.0, N - 10.0);
+    let mut out = b"SYNTHETIC HELD GRID             ".to_vec();
+    for v in [x0, x0 + (cols - 1) as f64 * 5.0, y0, y0 + (rows - 1) as f64 * 5.0] {
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    for v in [(cols * rows) as i32, 0] {
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    out.extend_from_slice(&5.0f32.to_be_bytes());
+    out.extend_from_slice(&5.0f32.to_be_bytes());
+    out.extend_from_slice(&(cols as i32).to_be_bytes());
+    out.extend_from_slice(&(rows as i32).to_be_bytes());
+    for node in 0..cols * rows {
+        out.extend_from_slice(&104.0f32.to_be_bytes());
+        out.extend_from_slice(&i32::from(node % cols < 4).to_be_bytes());
+    }
+    out
+}
+
+/// The grid is flagged off across the cube, which would leave it uncovered; held, it cuts it exactly.
+#[test]
+fn a_grid_cuts_across_nodes_flagged_off() {
+    let (mut s, cubes, _, dir) = pit(1);
+    let path = dir.join("pitlower.sfg");
+    std::fs::write(&path, held_grid()).unwrap();
+    let grid = created(&s.run("surface.import", json!({ "path": path.to_string_lossy(), "layer": "design" })).unwrap())[0];
+    let record = s.run("solid.cut_by_surface", json!({ "solid": cubes[0], "surface": grid, "layer": "cut" })).unwrap();
+    assert!(!record.messages.iter().any(|m| m.contains("does not cover")), "{:?}", record.messages);
+    let parts = created(&record);
+    assert_eq!(parts.len(), 2);
+    // A 10 m cube from RL 100 to 110, cut level at RL 104.
+    assert!((solid_volume(&s, parts[0]) - 400.0).abs() < 1e-6, "{}", solid_volume(&s, parts[0]));
+    assert!((solid_volume(&s, parts[1]) - 600.0).abs() < 1e-6, "{}", solid_volume(&s, parts[1]));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn a_cut_needs_one_cutter_and_names_only_one_solids_parts() {
     let (mut s, cubes, bow, dir) = pit(2);
