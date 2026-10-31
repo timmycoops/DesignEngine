@@ -18,8 +18,7 @@
 //! Nodes run row by row, x fastest, from the south-west corner. Files may end in zero padding, or
 //! in copies of the first node's f64 x and y, which Deswik writes (two to four in samples).
 //! Values are single precision and widen to f64 exactly. A node flagged off can still hold a height:
-//! in a roof or floor the flag says the seam has no thickness there, not that the surface stops
-//! (decision 0025).
+//! the flag doesn't say the surface stops there (decision 0025).
 //!
 //! The compressed layout holds the plain layout's bytes cut into fixed-size blocks, each compressed
 //! with LZF (liblzf's format). Little-endian:
@@ -51,14 +50,15 @@ pub(crate) const VULZ: &[u8; 4] = b"vulZ";
 const VULZ_HEADER: usize = 40;
 const VULZ_PAGE_ENTRIES: usize = 256;
 
-/// How many times the usual step between live nodes a held height may step from the live node beside it.
+/// How many times the usual large step between live nodes a held height steps from the live node beside
+/// it before the import says so.
 const ROUGH_STEPS: f64 = 3.0;
-/// A step up to this is never rough, however flat the live nodes are (m).
+/// A step up to this is never worth saying, however flat the live nodes are (m).
 const SMALLEST_ROUGH_STEP: f64 = 1.0;
 
 #[derive(Debug, Clone)]
 pub struct VulcanGrid {
-    /// Live nodes only, with every other node NaN. A seam model reads this: the flag says where the seam is.
+    /// Live nodes only, with every other node NaN, for qualities and thicknesses.
     pub grid: Grid,
     /// The heights the file holds at nodes flagged off, by node.
     pub held: Vec<(usize, f64)>,
@@ -91,20 +91,21 @@ pub struct VulcanLog {
 #[derive(Debug, Clone)]
 pub struct VulcanSurface {
     pub grid: Grid,
-    /// Nodes flagged off that kept the height they hold.
+    /// Nodes flagged off that keep the height they hold.
     pub kept: usize,
-    /// Set when held heights were left out because they don't run on from the live nodes: the usual large
-    /// step (95th percentile) from a live node to a held one beside it, then between live nodes, in metres.
+    /// Set when held heights step far from the live nodes beside them: the usual large step (95th
+    /// percentile) from a live node to a held one, then between live nodes, in metres. It's only a warning,
+    /// as a fault along the edge of the flagged area does this to good data.
     pub rough: Option<[f64; 2]>,
 }
 
 impl VulcanSurface {
     /// What became of the held heights, for a run's report.
-    pub fn report(&self, log: &VulcanLog) -> Option<String> {
+    pub fn report(&self) -> Option<String> {
         match self.rough {
             Some([edge, live]) => Some(format!(
-                "warning: {} nodes flagged off were left null, as what they hold doesn't run on from the live nodes: it steps {edge:.1} m from them, against {live:.1} m between them",
-                log.held
+                "warning: {} nodes flagged off keep the heights they hold, which step {edge:.1} m from the live nodes against {live:.1} m between them: a fault does that, and so would leftover data",
+                self.kept
             )),
             None => (self.kept > 0).then(|| format!("{} nodes flagged off keep the heights they hold", self.kept)),
         }
@@ -112,20 +113,20 @@ impl VulcanSurface {
 }
 
 impl VulcanGrid {
-    /// This grid as a surface in space, for a roof, floor or topography. Nodes flagged off keep the heights
-    /// they hold, unless those don't run on from the live nodes, when they're left null and said so.
+    /// This grid as a surface in space, for a roof, floor or topography: nodes flagged off keep the heights
+    /// they hold. A step that looks rough is reported, not held back, because a grid on its own can't
+    /// tell a fault from bad data. The stack check is what shows whether the heights fit.
     pub fn surface(&self) -> VulcanSurface {
         let (edge, live) = steps_from_live_nodes(&self.grid, &self.held);
-        if let (Some(edge), Some(live)) = (usual_large_step(edge), usual_large_step(live))
-            && edge > (ROUGH_STEPS * live).max(SMALLEST_ROUGH_STEP)
-        {
-            return VulcanSurface { grid: self.grid.clone(), kept: 0, rough: Some([edge, live]) };
-        }
+        let rough = match (usual_large_step(edge), usual_large_step(live)) {
+            (Some(edge), Some(live)) if edge > (ROUGH_STEPS * live).max(SMALLEST_ROUGH_STEP) => Some([edge, live]),
+            _ => None,
+        };
         let mut grid = self.grid.clone();
         for &(node, z) in &self.held {
             grid.z[node] = z;
         }
-        VulcanSurface { grid, kept: self.held.len(), rough: None }
+        VulcanSurface { grid, kept: self.held.len(), rough }
     }
 }
 
@@ -581,7 +582,7 @@ pub(crate) mod tests {
         for (col, row) in [(0, 0), (5, 0), (9, 7)] {
             assert_eq!(surface.grid.z_at(col, row), 120.0 + col as f64, "node {col}, {row}");
         }
-        assert_eq!(surface.report(&read.log).unwrap(), "40 nodes flagged off keep the heights they hold");
+        assert_eq!(surface.report().unwrap(), "40 nodes flagged off keep the heights they hold");
 
         // The compressed layout holds the same.
         let packed = vulz_grid(&half_flagged_off(|col, _| (120.0 + col as f32, 0)), 64, 4, 0);
@@ -606,29 +607,30 @@ pub(crate) mod tests {
         assert!(surface.grid.z_at(6, 0).is_nan() && surface.grid.z_at(6, 1).is_nan() && surface.grid.z_at(6, 2).is_nan());
     }
 
+    /// A fault along the edge of the flagged area steps good heights just as leftovers would, and a grid
+    /// on its own can't tell them apart, so they're kept and it's said.
     #[test]
-    fn heights_that_dont_run_on_from_the_live_nodes_stay_null_and_are_reported() {
-        // A leftover from something else: live nodes step 1 m, and these 30 m from them.
+    fn heights_that_step_far_from_the_live_nodes_are_kept_and_reported() {
+        // Live nodes step 1 m, and these 31 m from them.
         let read = parse_vulcan_grid(&half_flagged_off(|col, _| (150.0 + col as f32, 0))).unwrap();
         let surface = read.surface();
-        assert_eq!((surface.kept, surface.grid.null_count()), (0, 40));
-        let [edge, live] = surface.rough.unwrap();
-        assert_eq!(edge, 31.0);
-        assert_eq!(live, 1.0);
-        assert_eq!(surface.report(&read.log).unwrap(), "warning: 40 nodes flagged off were left null, as what they hold doesn't run on from the live nodes: it steps 31.0 m from them, against 1.0 m between them");
+        assert_eq!((surface.kept, surface.grid.null_count()), (40, 0));
+        assert_eq!(surface.grid.z_at(9, 7), 159.0);
+        assert_eq!(surface.rough, Some([31.0, 1.0]));
+        assert_eq!(surface.report().unwrap(), "warning: 40 nodes flagged off keep the heights they hold, which step 31.0 m from the live nodes against 1.0 m between them: a fault does that, and so would leftover data");
     }
 
     #[test]
-    fn the_step_that_counts_as_rough_scales_with_the_grid() {
-        // Three times the live step passes and just past it doesn't.
-        assert_eq!(parse_vulcan_grid(&half_flagged_off(|col, _| (122.0 + col as f32, 0))).unwrap().surface().kept, 40);
+    fn the_step_worth_reporting_scales_with_the_grid() {
+        // Three times the live step isn't said and just past it is.
+        assert!(parse_vulcan_grid(&half_flagged_off(|col, _| (122.0 + col as f32, 0))).unwrap().surface().rough.is_none());
         assert!(parse_vulcan_grid(&half_flagged_off(|col, _| (122.5 + col as f32, 0))).unwrap().surface().rough.is_some());
-        // Flat live nodes don't make every step rough: up to a metre is fine.
+        // Flat live nodes don't make every step worth saying: up to a metre isn't.
         let flat = |held: f32| {
             let nodes: Vec<(f32, i32)> = (0..16).map(|i| if i % 4 < 2 { (100.0, 1) } else { (held, 0) }).collect();
             parse_vulcan_grid(&flagged_grid("flat", [E, N], 10.0, 4, 4, &nodes, 0)).unwrap().surface()
         };
-        assert_eq!(flat(100.5).kept, 8);
+        assert!(flat(100.5).rough.is_none());
         assert!(flat(102.0).rough.is_some());
     }
 

@@ -156,12 +156,13 @@ fn section_inputs(app: &mut AppInner) -> Result<Arc<SectionInputs>, String> {
                 meshes.push((object.layer, "surface", mesh));
             }
             Body::SeamModel(model) => {
-                // Every grid reads at once, and only if one of them has to be made.
+                // Every grid reads at once, and only if one of them has to be made. A section shows the
+                // seams, so it stops where a roof meets its floor, though the surfaces carry on.
                 let mut read: Option<StackGrids> = None;
                 for i in model.horizons.iter().enumerate().filter(|(_, h)| h.working).map(|(i, _)| i) {
                     let mut surface = |pick: fn(&StackGrids, usize) -> &zd_core::Grid| -> Result<Arc<TriMesh>, String> {
                         if read.is_none() {
-                            read = Some(read_stack_grids(model).map_err(|e| e.to_string())?);
+                            read = Some(read_stack_grids(model).map_err(|e| e.to_string())?.seams_only());
                         }
                         Ok(Arc::new(triangulate_grid(pick(read.as_ref().expect("read above"), i))))
                     };
@@ -270,6 +271,11 @@ mod tests {
 
     /// A 21 x 11 grid at 10 m in Vulcan's plain layout, flat at `rl`.
     fn flat_grid(rl: f32) -> Vec<u8> {
+        flagged_grid(rl, None)
+    }
+
+    /// The same, flagged off from 100 m east and holding `held` there.
+    fn flagged_grid(rl: f32, held: Option<f32>) -> Vec<u8> {
         let (cols, rows) = (21usize, 11usize);
         let mut out = b"SYNTHETIC SEAM GRID             ".to_vec();
         for v in [E, E + 200.0, N, N + 100.0] {
@@ -284,9 +290,10 @@ mod tests {
         for v in [cols as i32, rows as i32] {
             out.extend_from_slice(&v.to_be_bytes());
         }
-        for _ in 0..cols * rows {
-            out.extend_from_slice(&rl.to_be_bytes());
-            out.extend_from_slice(&1i32.to_be_bytes());
+        for node in 0..cols * rows {
+            let (value, flag) = held.filter(|_| node % cols >= 10).map_or((rl, 1i32), |held| (held, 0));
+            out.extend_from_slice(&value.to_be_bytes());
+            out.extend_from_slice(&flag.to_be_bytes());
         }
         out
     }
@@ -331,6 +338,27 @@ mod tests {
         assert!((area(&seam.fill) - 3_000.0).abs() < 1e-6, "200 by 10 and 200 by 5: {}", area(&seam.fill));
         let lines_only = section_groups(&mut app, &plane, 1.0, false).unwrap();
         assert!(lines_only[0].fill.triangles.is_empty() && !lines_only[0].segments.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A roof flagged off from 100 m east, sitting on its floor there as a seam with no thickness does.
+    #[test]
+    fn a_seam_section_stops_where_the_roof_meets_the_floor() {
+        let dir = std::env::temp_dir().join(format!("zd-section-{}-{}", std::process::id(), zd_core::RunId::new()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("c.srg"), flagged_grid(110.0, Some(100.0))).unwrap();
+        std::fs::write(dir.join("c.sfg"), flat_grid(100.0)).unwrap();
+        let definition = dir.join("stack.csv");
+        std::fs::write(&definition, "horizon,parent,material,working,roof,floor\nc,,coal,yes,c.srg,c.sfg\n").unwrap();
+        let mut s = Session::with_builtins();
+        s.run("seam.build_model", json!({ "definition": definition.to_string_lossy(), "layer": "seams" })).unwrap();
+        let mut app = AppInner::new(s, None);
+        let plane = SectionPlane::through([E - 10.0, N + 33.0], [E + 210.0, N + 33.0]).unwrap();
+        let groups = section_groups(&mut app, &plane, 1.0, true).unwrap();
+        let seam = group(&groups, app.session.project(), "seams", "seam").expect("the model's cut");
+        // Nodes to 90 m east are coal, so roof and floor each run 90 m, and they fill 90 by 10.
+        assert!((length(&seam.segments) - 180.0).abs() < 1e-6, "{}", length(&seam.segments));
+        assert!((area(&seam.fill) - 900.0).abs() < 1e-6, "{}", area(&seam.fill));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

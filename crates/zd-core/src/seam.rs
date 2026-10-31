@@ -167,9 +167,34 @@ impl SeamModel {
     }
 }
 
+/// Blanks a horizon where it has no thickness: a seam exists only where its roof is above its floor,
+/// though both surfaces carry on. Returns the nodes blanked.
+pub fn blank_no_thickness(roof: &mut Grid, floor: &mut Grid) -> usize {
+    let mut blanked = 0;
+    for (r, f) in roof.z.iter_mut().zip(&mut floor.z) {
+        let seam = *r > *f;
+        if !seam {
+            blanked += 1;
+            *r = f64::NAN;
+            *f = f64::NAN;
+        }
+    }
+    blanked
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_seam_exists_only_where_its_roof_is_above_its_floor() {
+        let lattice = |z: Vec<f64>| Grid::new([650_000.0, 7_450_000.0], [25.0, 25.0], 2, 2, z);
+        let mut roof = lattice(vec![105.0, 100.0, 99.0, f64::NAN]);
+        let mut floor = lattice(vec![100.0, 100.0, 100.0, 100.0]);
+        assert_eq!(blank_no_thickness(&mut roof, &mut floor), 3, "equal, below, and a node with no roof");
+        assert_eq!((roof.z[0], floor.z[0]), (105.0, 100.0));
+        assert!(roof.z[1..].iter().chain(&floor.z[1..]).all(|z| z.is_nan()));
+    }
 
     #[test]
     fn a_node_at_the_no_seam_rl_goes_null_in_roof_and_floor_alike() {

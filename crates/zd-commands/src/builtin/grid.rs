@@ -62,7 +62,7 @@ impl Command for ImportVulcanSeam {
             if ignored + log.odd_flags + log.non_finite > 0 {
                 line += &format!("; null nodes holding old values {ignored}, unknown flags {}, non-finite values {}", log.odd_flags, log.non_finite);
             }
-            if let Some(report) = surface.as_ref().and_then(|s| s.report(&log)) {
+            if let Some(report) = surface.as_ref().and_then(|s| s.report()) {
                 line += &format!("; {report}");
             }
             if log.compressed_blocks > 0 {

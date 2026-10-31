@@ -98,7 +98,7 @@ impl Command for ImportSurface {
                     return Err(CommandError::Invalid(format!("{} holds no live cells", p.path)));
                 }
                 let lattice = "a grid has nothing to weld or orient, and cannot cross itself: one elevation per node on a regular plan lattice";
-                let messages = std::iter::once(read).chain(whole.report(log)).chain([lattice.to_string()]).collect();
+                let messages = std::iter::once(read).chain(whole.report()).chain([lattice.to_string()]).collect();
                 (Surface::new(mesh).with_crossings(Crossings::lattice()), messages)
             }
             SurfaceImport::Grid(xyz) => {

@@ -50,20 +50,14 @@ fn held_heights_in_a_folder() {
         }
         held += 1;
         let surface = read.surface();
-        match surface.rough {
-            Some([edge, live]) => {
-                rough += 1;
-                println!("left null: {} of {} nodes, steps {edge:.2} m against {live:.2} m, {:.1} times", read.log.held, read.log.nodes, edge / live);
-            }
-            None => {
-                kept += 1;
-                assert_eq!(surface.grid.null_count(), read.log.nulls - read.log.held);
-                let (live, nulls) = (read.log.live, read.log.nulls);
-                println!("kept: {} of {} nodes flagged off, {live} live, {nulls} null as read", surface.kept, read.log.nodes);
-            }
+        assert_eq!(surface.grid.null_count(), read.log.nulls - read.log.held);
+        kept += surface.kept;
+        if let Some([edge, live]) = surface.rough {
+            rough += 1;
+            println!("large steps: {} of {} nodes, {edge:.2} m against {live:.2} m, {:.1} times", read.log.held, read.log.nodes, edge / live);
         }
     }
-    println!("{grids} surfaces read, {held} hold heights at nodes flagged off: {kept} kept, {rough} left null");
+    println!("{grids} surfaces read, {held} hold heights at nodes flagged off, {kept} nodes kept, {rough} with large steps");
 }
 
 #[test]

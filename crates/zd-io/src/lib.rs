@@ -25,7 +25,7 @@ pub use error::IoError;
 pub use mesh_files::{MeshFile, MeshSelection, find_mesh_files};
 pub use seam::{
     DefinedHorizon, LinkedGrid, SeamDefinition, StackGrids, fingerprint_file, format_seam_definition, parse_seam_definition,
-    read_linked_grid, read_seam_definition, read_stack_grids, write_seam_definition,
+    read_linked_grid, read_linked_surface, read_seam_definition, read_stack_grids, write_seam_definition,
 };
 pub use store::{Opened, ProjectStore, SaveReport, StoreError};
 pub use string_csv::{CsvLog, CsvString, CsvStrings, format_csv_strings, parse_csv_strings, read_csv_strings, write_csv_strings};

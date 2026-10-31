@@ -1,4 +1,4 @@
-# 0025 — A grid stays in space where a seam has no thickness
+# 0025 — A grid stays in space
 
 Date: 2026-11-01 · Status: accepted (Tim, 2026-11-01)
 
@@ -13,41 +13,63 @@ outright.
 
 ## What the files hold
 
-PIT B, 10 seams, 266,031 nodes a grid, 20 roofs and floors:
+**PIT B**, 10 seams, 266,031 nodes a grid, 20 roofs and floors:
 
 - Every node flagged off holds a height. None is empty.
-- Roof equals floor exactly at every one of those nodes, and roof is above floor at every live node. The flag says
+- Roof equals floor exactly at every one of those nodes, and roof is above floor at every live node. Here the flag says
   the thickness is above zero, and nothing else.
 - The thickness grid is live everywhere, and reads 0 at those nodes.
 - Those heights run on from the live nodes: a median step of 0.3 to 0.5 m from a live node to a held one, against
   0.4 to 0.5 m between live nodes.
-- With every node's height, no seam crosses the next in any of the 9 pairs, to 1 mm.
+- With every node's height, no seam crosses the next in any of the 9 pairs.
 - At 38.9 % of nodes all 20 surfaces are one height. The held top of the stack sits on a live-everywhere grid to 1 mm.
 
-This isn't every folder. PIT A and a third folder have nothing flagged off: they mark zero thickness on live nodes. In
-a fourth, 1 of 198 surfaces has nodes flagged off, and what those hold steps 35.8 m from the live nodes against 4.8 m
-between them, so it isn't a surface. One other PIT B grid is the same: its live nodes are the model's own area, and the
-65,520 flagged off are a margin outside it.
+**PIT C**, 179 surfaces on one 533 x 505 lattice, marks zero thickness on live nodes, with one exception. Its `fr4` roof
+has 83,778 nodes flagged off, and there the flag doesn't mean zero thickness:
+
+- The roof is above the floor at 56,940 of them, 40.6 M m³ of the seam's 163.4 M m³.
+- Roof minus floor equals the thickness grid to 1 mm at 73 % of them, against 87 % of live nodes.
+- Those heights are in order with the seams either side, with no crossing.
+- They step 35.8 m from the live nodes at the 95th percentile, against 4.8 m between live nodes, and the floor, which is
+  live on both sides, steps the same across the same edge: within 10 cm at 2,489 of 3,000 node pairs, up to 144 m.
+
+So that step is a break in the geology, most likely a fault, and the flag there has some other cause. The file's header
+says it was made from a triangulation, unlike its neighbours.
+
+PIT A and a third folder have nothing flagged off.
 
 ## Decision
 
-1. **A roof, floor or topography imports whole.** `surface.import` and the elevation grids of
-   `grid.import_vulcan_seam` read `VulcanGrid::surface`, where a node flagged off keeps the height it holds.
-2. **A seam model reads the flag as before.** It's where the seam is, and it agrees with thickness at every PIT B node,
-   so sections, fills and the stack checks don't change. `VulcanGrid::grid` stays live nodes only.
-3. **Qualities and thicknesses stay as they read.** A quality at a node with no seam isn't a value to fill in.
+1. **A roof, floor or topography reads whole, everywhere.** `VulcanGrid::surface` gives `surface.import`, the elevation
+   grids of `grid.import_vulcan_seam` and a seam model's roofs and floors every height the file holds.
+2. **A seam exists where its roof is above its floor**, not where a flag says, as Tim first put it in decision 0020. The
+   seam view draws the whole roof with no coal in grey. A section stops where the roof meets the floor, so PIT B's
+   sections don't change. The stack check covers every node, because a surface that carries on has to be in order.
+3. **Qualities and thicknesses stay as they read.** `VulcanGrid::grid` is live nodes only.
 4. **A node with nothing in it stays null**: flagged off holding zero or a NaN, or carrying an unknown flag.
-5. **Held heights that don't run on from the live nodes stay null, with a warning.** The test is the 95th percentile
-   step from a live node to a held one beside it, against the same between live nodes: more than 3 times, and over
-   1 m so flat live nodes don't make every step rough. PIT B's seams reach 1.9 times, and the two files it catches
-   6.6 and 7.4. A grid with no live nodes has nothing to judge by, and keeps what it holds.
-6. **The import says what it did**, nodes kept or left null, in the run log.
-7. **One solid that can't be cut doesn't lose a batch.** It's left uncut and named, as one whose parts fail their
-   check already was. A single solid is still refused, as there's nothing else to go on with.
+5. **A large step is reported, never held back.** The import warns when the 95th percentile step from a live node to a
+   held one is more than 3 times the same between live nodes, and over 1 m. The first version of this decision left such
+   heights null and called them not a surface, and that was wrong: a grid on its own can't tell a fault from bad data,
+   and it held back a good roof. Whether the heights fit is what the stack check shows.
+6. **The import says what it did**, nodes kept and any large steps, in the run log.
+7. **One solid that can't be cut doesn't lose a batch.** It's left uncut and named, as one whose parts fail their check
+   already was. A single solid is still refused, as there's nothing else to go on with.
 
 Decision 0024's bridging stays for gaps that really are gaps, such as the edge of a `.00t`.
 
 ## Evidence
+
+Seam models through the engine, with every node checked:
+
+| Model | Horizons | Blocking issues |
+|---|---:|---:|
+| PIT B | 10 | 0 |
+| PIT C, the suggested stack | 92 | 7, each a crossing, up to 279 m |
+| PIT C, Tim's stacking order | 92 | 0 |
+
+The suggestion has those 7 neighbouring pairs the wrong way up: it compares median gaps, and where surfaces sit exactly on
+each other over most of the area the median is zero. In Tim's order there's no crossing in any of the 178 neighbouring
+pairs. `fr4` was also blocking, as an unpaired roof and floor at 83,778 nodes, until this decision.
 
 Tim's 620 m string on PIT B, up and down, on five seam grids of 530,000 triangles and the real topography:
 
@@ -61,9 +83,7 @@ Tim's 620 m string on PIT B, up and down, on five seam grids of 530,000 triangle
 | Triangles out, up | 5,199 to 5,312 | 5,840 to 5,914 |
 | Triangles out, down | 417 to 441 | 449 to 473 |
 
-Every face has one boundary loop, no crossing triangles and consistent winding, either way. Through the real app with
-41,917 solids, the topography and the seam model loaded, a design going both ways saves and runs in 386 ms including
-the screen update, a re-run replaces 14 objects for 14, and section steps are 46 ms.
+Every face has one boundary loop, no crossing triangles and consistent winding, either way.
 
 All 41,917 PIT B solids, 205.0 M m³, cut by a grid:
 
@@ -78,8 +98,14 @@ would cross itself (decision 0016). That and the parts add up the same.
 
 ## Known limits
 
+- **A truly leftover height would now be used.** The warning and the stack check are the only guards. At 27 % of `fr4`'s
+  flagged nodes roof minus floor doesn't match the thickness grid, against 13 % of its live nodes, and those grids were
+  written months apart, so that alone doesn't settle it.
 - **Not checked against an export.** What a flag means comes from the files and from Tim, not from Vulcan or Deswik
   reading a grid with nodes flagged off. Decision 0006's open item stands.
-- **A surface already in a project stays as it was imported.** Import it again to get the whole grid.
-- **Whole seam grids sit on each other** where the stack has closed up, so walls between them have no height there,
-  and imported as surfaces they draw as one line in a section. The seam model doesn't, as it stops at the flag.
+- **Import again and rebuild.** A surface already in a project stays as it was imported, and a saved seam model keeps the
+  issues it was built with.
+- **The suggested stack still has that fault.** A definition from `seam.suggest_definition` wants checking against the
+  planner's own order.
+- **Whole seam grids sit on each other** where the stack has closed up, so walls between them have no height there, and
+  imported as surfaces they draw as one line in a section. The seam model doesn't, as it stops where a roof meets its floor.
