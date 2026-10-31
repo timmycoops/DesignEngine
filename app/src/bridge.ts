@@ -503,6 +503,10 @@ export interface SnapHit {
 
 export const snapRay = (origin: Vec3, direction: Vec3) => invoke<SnapHit | null>('snap_ray', { origin, direction });
 
+/** Where a cursor at a distance along the section and an RL snaps to the last cut, if anywhere near. */
+export const sectionSnap = (along: number, rl: number, vertexReach: number, segmentReach: number, ignoring: [number, number] | null) =>
+  invoke<SnapHit | null>('section_snap', { along, rl, vertexReach, segmentReach, ignoring });
+
 export interface BenchConfig {
   surfaces: string[];
   /** A zip or folder of solids: time this import and nothing else. */

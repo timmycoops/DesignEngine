@@ -4,10 +4,11 @@
 import { LineSegments2 } from 'three/addons/lines/webgpu/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import * as THREE from 'three/webgpu';
-import { type ProjectSummary, type SectionLines, sectionLines, type SectionKind, type Vec3 } from '../bridge';
+import { type ProjectSummary, type SectionLines, sectionLines, sectionSnap, type SectionKind, type SnapHit, type Vec3 } from '../bridge';
 import { colourOf } from './load';
 import { SectionOverview } from './overview';
-import { type GridLines, SectionGrid } from './sectionGrid';
+import { type GridLines, type SectionFrame, SectionGrid } from './sectionGrid';
+import type { SectionTools } from './strings';
 import type { Viewport } from './Viewport';
 
 /** Strings this close to the plane (m) draw flat on it: a string crosses a thin slice, not lies in it. */
@@ -175,22 +176,68 @@ export class SectionView {
     this.grid.show();
   }
 
-  /** The grid for where the camera is now: distances from A, RLs in mine grid. */
-  private drawGrid(): void {
-    if (!this.ends || !this.grid.shown) return;
+  /** The view as the grid and the cursor read it: distances from A, RLs in mine grid. */
+  private frame(): SectionFrame | null {
+    if (!this.ends) return null;
     const { a, b } = this.ends;
     const o = this.summary?.origin ?? [0, 0, 0];
     const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
     const camera = this.viewport.sectionCamera;
     const { x, y, z } = camera.position;
-    this.grid.draw({
+    return {
       along: ((x + o[0] - a[0]) * (b[0] - a[0]) + (y + o[1] - a[1]) * (b[1] - a[1])) / length,
       rl: z + o[2],
       length,
       across: (camera.right - camera.left) / camera.zoom,
       up: (camera.top - camera.bottom) / camera.zoom,
-    });
+    };
   }
+
+  private drawGrid(): void {
+    const frame = this.frame();
+    if (frame && this.grid.shown) this.grid.draw(frame);
+  }
+
+  /** The cursor as a distance along the section and an RL. */
+  private cursor(x: number, y: number, frame: SectionFrame): [number, number] {
+    const [nx, ny] = this.viewport.clientToNdc(x, y);
+    return [frame.along + (nx * frame.across) / 2, frame.rl + (ny * frame.up) / 2];
+  }
+
+  /** A scene-local point as a distance along the section and an RL. */
+  private flat(p: THREE.Vector3): [number, number] {
+    const { a, b } = this.ends ?? { a: [0, 0], b: [1, 0] };
+    const o = this.summary?.origin ?? [0, 0, 0];
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    return [((p.x + o[0] - a[0]) * (b[0] - a[0]) + (p.y + o[1] - a[1]) * (b[1] - a[1])) / length, p.z + o[2]];
+  }
+
+  /** What the string tools use while this section is open. */
+  readonly tools: SectionTools = {
+    width: STRING_WIDTH,
+    offset: (p) => {
+      const { a, b } = this.ends ?? { a: [0, 0], b: [1, 0] };
+      const o = this.summary?.origin ?? [0, 0, 0];
+      const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      return ((b[0] - a[0]) * (p.y + o[1] - a[1]) - (b[1] - a[1]) * (p.x + o[0] - a[0])) / length;
+    },
+    onPlane: (x, y) => {
+      const [frame, ends] = [this.frame(), this.ends];
+      if (!frame || !ends) return null;
+      const [along, rl] = this.cursor(x, y, frame);
+      const o = this.summary?.origin ?? [0, 0, 0];
+      const { a, b } = ends;
+      const world: Vec3 = [a[0] + ((b[0] - a[0]) / frame.length) * along, a[1] + ((b[1] - a[1]) / frame.length) * along, rl];
+      return { local: [world[0] - o[0], world[1] - o[1], world[2] - o[2]], world, object: null, kind: 'plane', label: `the section at RL ${rl.toFixed(2)}` };
+    },
+    snap: async (x, y, vertexPx, segmentPx, skip): Promise<SnapHit | null> => {
+      const frame = this.frame();
+      if (!frame) return null;
+      const [along, rl] = this.cursor(x, y, frame);
+      const metres = frame.across / this.viewport.renderer.domElement.clientWidth;
+      return sectionSnap(along, rl, vertexPx * metres, segmentPx * metres, skip ? this.flat(skip) : null);
+    },
+  };
 
   private drawOverview(): void {
     if (!this.ends || !this.summary) return;

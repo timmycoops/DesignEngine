@@ -13,6 +13,11 @@
 // those a level working plane: at the dragged vertex's RL while dragging, the last vertex's while
 // drawing, else the RL at the centre of the view. With snapping off (S, or the toolbar), every point
 // goes straight on that plane.
+//
+// With a section open the section plane is the working plane, and points snap to its cut lines. The
+// strings stay ordinary 3D strings, and stepping between clicks draws one across several sections.
+// Only what lies within the section's width can be picked, shown a handle or dragged, and a dragged
+// vertex lands on the plane.
 import * as THREE from 'three/webgpu';
 import type { Layer, ProjectSummary, SnapHit, Vec3 } from '../bridge';
 import { colourOf } from './load';
@@ -41,6 +46,18 @@ interface Shown {
   closed: boolean;
   revision: number;
   name: string;
+}
+
+/** What the string tools work on while a section is open. */
+export interface SectionTools {
+  /** Strings this close to the plane show on the section (m). */
+  width: number;
+  /** How far a scene-local point lies off the plane (m). */
+  offset(p: THREE.Vector3): number;
+  /** The point on the plane under the cursor. */
+  onPlane(x: number, y: number): SnapHit | null;
+  /** The cut line near the cursor, if any, leaving out the segments of a vertex being dragged. */
+  snap(x: number, y: number, vertexPx: number, segmentPx: number, skip?: THREE.Vector3): Promise<SnapHit | null>;
 }
 
 /**
@@ -118,8 +135,8 @@ export class StringLayer {
   private layers = new Map<string, Layer>();
   private names = 0;
   private snapping = true;
-  /** A section is showing: strings are not drawn or edited over it. */
-  private frozen = false;
+  /** A section is showing: the plane to work on. The strings draw through it, as its cut lines. */
+  private section: SectionTools | null = null;
   private snapMark: PointMark;
   private snapLabel: HTMLElement;
   private hovering: { x: number; y: number } | null = null;
@@ -167,13 +184,29 @@ export class StringLayer {
     return this.group;
   }
 
-  /** Takes the strings off the view while a section is showing, and puts them back. */
-  setFrozen(frozen: boolean): void {
-    this.frozen = frozen;
-    this.group.visible = !frozen;
-    this.handles.visible = !frozen;
+  /** Works on a section's plane while one is open, and on the view again when it closes. */
+  setSection(section: SectionTools | null): void {
+    this.section = section;
+    this.group.visible = !section;
     this.clearSnapMark();
     this.recolour();
+    this.placeHandles();
+  }
+
+  /** Whether a scene-local point shows on the section, if one is open. */
+  private onSection(p: THREE.Vector3): boolean {
+    return !this.section || Math.abs(this.section.offset(p)) <= this.section.width;
+  }
+
+  /** The part of a segment that shows on the section, if one is open. */
+  private shownPart(a: THREE.Vector3, b: THREE.Vector3): [THREE.Vector3, THREE.Vector3] | null {
+    if (!this.section) return [a, b];
+    const { width } = this.section;
+    const [da, db] = [this.section.offset(a), this.section.offset(b)];
+    if (da === db) return Math.abs(da) <= width ? [a, b] : null;
+    const [enter, leave] = [(-width - da) / (db - da), (width - da) / (db - da)];
+    const [from, to] = [Math.max(0, Math.min(enter, leave)), Math.min(1, Math.max(enter, leave))];
+    return from < to ? [a.clone().lerp(b, from), a.clone().lerp(b, to)] : null;
   }
 
   /** Works mid-string or mid-drag too: the next point takes the new setting. */
@@ -289,7 +322,7 @@ export class StringLayer {
   }
 
   private pointerDown(e: PointerEvent): void {
-    if (e.button !== 0 || this.frozen) return;
+    if (e.button !== 0) return;
     if (this.mode === 'select' && this.selected) {
       const index = this.handleAt(this.selected, e.clientX, e.clientY);
       if (index >= 0) {
@@ -310,7 +343,7 @@ export class StringLayer {
       return;
     }
     // A held button is the view turning or panning, not a point being placed.
-    if (e.buttons !== 0 || this.frozen) return this.clearSnapMark();
+    if (e.buttons !== 0) return this.clearSnapMark();
     if (this.mode !== 'select') {
       this.hovering = { x: e.clientX, y: e.clientY };
       void this.pumpHover();
@@ -369,8 +402,12 @@ export class StringLayer {
       const shown = this.shown.get(this.drag.id);
       if (shown) {
         const points = shown.points.map((p) => p.clone());
-        points[this.drag.index].set(...hit.local);
-        this.showPreview(shown.closed ? [...points, points[0]] : points);
+        const { index } = this.drag;
+        points[index].set(...hit.local);
+        const n = points.length;
+        // On a section only its neighbours: the rest of a string may lie far off the plane.
+        const nearby = [shown.closed || index > 0 ? points[(index + n - 1) % n] : null, points[index], shown.closed || index < n - 1 ? points[(index + 1) % n] : null];
+        this.showPreview(this.section ? nearby.filter((p) => p !== null) : shown.closed ? [...points, points[0]] : points);
       }
     }
     this.inFlight = false;
@@ -425,7 +462,7 @@ export class StringLayer {
   }
 
   private keyDown(e: KeyboardEvent): void {
-    if (e.target instanceof HTMLInputElement || this.frozen) return;
+    if (e.target instanceof HTMLInputElement) return;
     if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey && !e.altKey) return this.toggleSnapping();
     if (this.mode !== 'select') {
       if (e.key === 'Enter') void this.finishDrawing();
@@ -484,7 +521,7 @@ export class StringLayer {
 
   private recolour(): void {
     const shown = this.selected ? this.shown.get(this.selected) : undefined;
-    this.highlight.visible = !!shown?.visible && !this.frozen;
+    this.highlight.visible = !!shown?.visible && !this.section;
     if (!shown) return;
     this.highlight.geometry.dispose();
     this.highlight.geometry = new THREE.BufferGeometry().setFromPoints(shown.closed ? [...shown.points, shown.points[0]] : shown.points);
@@ -498,6 +535,9 @@ export class StringLayer {
         : this.selected
           ? (this.shown.get(this.selected)?.points ?? [])
           : [];
+    // On a section the selected string lights up only if it lies on the plane, which a step can change.
+    const lying = this.section && this.mode === 'select' && this.selected ? this.shown.get(this.selected) : undefined;
+    if (lying) this.highlight.visible = lying.visible && lying.points.every((p) => this.onSection(p));
     // A densely draped string would bury itself in handles: draw one only where it stands clear of
     // the last one drawn, plus both ends and the one under the cursor.
     const hovered = this.hovered?.id === this.selected ? this.hovered.index : -1;
@@ -507,6 +547,7 @@ export class StringLayer {
     let last: [number, number] | null = null;
     let n = 0;
     for (let i = 0; i < points.length && n < MAX_HANDLES; i++) {
+      if (this.mode === 'select' && !this.onSection(points[i])) continue;
       at.copy(points[i]).project(camera);
       const s: [number, number] = [((at.x + 1) / 2) * w, ((1 - at.y) / 2) * h];
       const clear = !last || Math.hypot(s[0] - last[0], s[1] - last[1]) >= HANDLE_SPACING_PX;
@@ -563,6 +604,7 @@ export class StringLayer {
    * surface under the cursor. `skip` leaves out a vertex being dragged and its two segments.
    */
   private async snapAt(x: number, y: number, skip?: { id: string; index: number }): Promise<SnapHit | null> {
+    if (this.section) return this.snapOnSection(this.section, x, y, skip);
     const workingPlane = () => {
       const dragged = skip ? this.shown.get(skip.id)?.points[skip.index] : undefined;
       const last = this.pending[this.pending.length - 1];
@@ -574,6 +616,19 @@ export class StringLayer {
     const surface = await this.actions.snap(x, y);
     if (surface) return { ...surface, kind: 'surface' };
     return workingPlane();
+  }
+
+  /** On a section: a vertex of the string being drawn, else the cut lines, else the plane itself. */
+  private async snapOnSection(section: SectionTools, x: number, y: number, skip?: { id: string; index: number }): Promise<SnapHit | null> {
+    if (!this.snapping) return section.onPlane(x, y);
+    const screen = this.screen();
+    const drawn = this.pending.find((hit) => {
+      const [sx, sy] = screen(new THREE.Vector3(...hit.local));
+      return Math.hypot(sx - x, sy - y) <= HANDLE_PX;
+    });
+    if (drawn) return drawn;
+    const dragged = skip ? this.shown.get(skip.id)?.points[skip.index] : undefined;
+    return (await section.snap(x, y, HANDLE_PX, PICK_PX, dragged)) ?? section.onPlane(x, y);
   }
 
   /** What a drag or the wheel works on at a screen point: a string near it, else the surface under it. */
@@ -747,6 +802,7 @@ export class StringLayer {
     let best = -1;
     let bestDist = HANDLE_PX * HANDLE_PX;
     shown.points.forEach((p, i) => {
+      if (!this.onSection(p)) return;
       const [sx, sy] = screen(p);
       const d = (sx - x) ** 2 + (sy - y) ** 2;
       if (d <= bestDist) {
@@ -766,7 +822,9 @@ export class StringLayer {
     let best = -1;
     let bestDist = PICK_PX;
     for (let i = 0; i < n; i++) {
-      const d = distanceToSegment([x, y], screen(shown.points[i]), screen(shown.points[(i + 1) % shown.points.length]));
+      const part = this.shownPart(shown.points[i], shown.points[(i + 1) % shown.points.length]);
+      if (!part) continue;
+      const d = distanceToSegment([x, y], screen(part[0]), screen(part[1]));
       if (d <= bestDist) {
         best = i;
         bestDist = d;
@@ -781,7 +839,9 @@ export class StringLayer {
     let bestDist = PICK_PX;
     for (const { id, shown, first, count } of this.runsNear(x, y, PICK_PX)) {
       for (let i = first; i < first + count; i++) {
-        const d = distanceToSegment([x, y], screen(shown.points[i]), screen(shown.points[(i + 1) % shown.points.length]));
+        const part = this.shownPart(shown.points[i], shown.points[(i + 1) % shown.points.length]);
+        if (!part) continue;
+        const d = distanceToSegment([x, y], screen(part[0]), screen(part[1]));
         if (d <= bestDist) {
           best = id;
           bestDist = d;

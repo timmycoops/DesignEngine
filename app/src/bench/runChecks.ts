@@ -8,7 +8,9 @@ import {
   buildSnapIndex,
   defaultTransport,
   exitApp,
+  objectDetails,
   prepareSynthetic,
+  projectSummary,
   type ProjectSummary,
   runCommand,
   type SnapHit,
@@ -109,7 +111,7 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
   const camera = await checkCamera(viewport);
   const snapSwitch = await checkSnapSwitch(viewport);
   const stringPick = await checkStringPick(viewport, show);
-  const sectionCheck = await checkSection(viewport, section(), reply.summary);
+  const sectionCheck = await checkSection(viewport, section(), reply.summary, show);
   const undoStart = performance.now();
   await show(await undo());
   return {
@@ -327,7 +329,7 @@ async function checkStringPick(viewport: Viewport, show: Show) {
 }
 
 /** Picks a section through the real toolbar and canvas, then steps it: the gate's 50 ms a step. */
-async function checkSection(viewport: Viewport, section: SectionView | null, summary: ProjectSummary) {
+async function checkSection(viewport: Viewport, section: SectionView | null, summary: ProjectSummary, show: Show) {
   if (!section) return { error: 'no section view' };
   const hiddenBefore = getComputedStyle(section.overviewCanvas).display === 'none';
   const gridHiddenBefore = getComputedStyle(section.gridCanvas).display === 'none';
@@ -402,6 +404,7 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   let close = '';
   let grid = {};
   let fill = {};
+  let editing = {};
   if (across) {
     const [x, y] = [across.x + o[0], across.y + o[1]];
     await section.show([x - 750, y - 200], [x + 750, y + 200], summary);
@@ -409,6 +412,7 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
     close = picture(viewport);
     fill = await checkFill(viewport, section, button, settle);
     grid = await checkGrid(viewport, section, box, settle);
+    editing = await checkEditing(viewport, section, box, button, settle, show);
     await section.step(125);
     await settle();
   }
@@ -433,7 +437,93 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   await settle();
   const hiddenAfter = getComputedStyle(map).display === 'none';
   const gridHiddenAfter = getComputedStyle(section.gridCanvas).display === 'none';
-  return { opened, open_ms: openMs, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_pictures_ms: pictures, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, overview_carried_m: carried, overview_carried_on_map: carriedOnMap, overview_stays_on_map: staysOnMap, grid_hidden_before: gridHiddenBefore, grid_hidden_after: gridHiddenAfter, grid, fill, wide, close, overview, walked };
+  return { opened, open_ms: openMs, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_pictures_ms: pictures, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, overview_carried_m: carried, overview_carried_on_map: carriedOnMap, overview_stays_on_map: staysOnMap, grid_hidden_before: gridHiddenBefore, grid_hidden_after: gridHiddenAfter, grid, fill, editing, wide, close, overview, walked };
+}
+
+/**
+ * A string drawn on the section and edited there through the real toolbar, canvas and keys. Its
+ * vertices must be what the engine snapped to, to the bit, and on the plane; it must then be an
+ * ordinary string, and undo.
+ */
+async function checkEditing(viewport: Viewport, section: SectionView, box: DOMRect, button: (name: string) => HTMLButtonElement | undefined, settle: () => Promise<void>, show: Show) {
+  const canvas = viewport.renderer.domElement;
+  const send = (type: string, x: number, y: number, buttons: number) =>
+    canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+  const click = async (x: number, y: number) => {
+    send('pointermove', x, y, 0);
+    await viewport.nextFrame();
+    send('pointerdown', x, y, 1);
+    send('pointerup', x, y, 0);
+    await settle();
+  };
+  // Three cut points well apart on screen, clear of the plan map.
+  const positions = section.lastCut?.positions ?? new Float32Array();
+  const targets: [number, number][] = [];
+  for (let k = 0; k + 2 < positions.length && targets.length < 3; k += 3) {
+    const [x, y] = viewport.projectToClient(new THREE.Vector3(positions[k], positions[k + 1], positions[k + 2]));
+    const inside = x > box.left + 280 && x < box.right - 90 && y > box.top + 40 && y < box.bottom - 40;
+    if (inside && targets.every((t) => Math.hypot(t[0] - x, t[1] - y) > 120)) targets.push([x, y]);
+  }
+  if (targets.length < 3) return { error: 'three cut points were not on screen' };
+  // A snap's cost, as the cursor moves.
+  const times: number[] = [];
+  for (let i = 0; i < 200; i++) {
+    const started = performance.now();
+    await section.tools.snap(targets[0][0] + (i % 40), targets[0][1] + (i % 25), 10, 8);
+    times.push(performance.now() - started);
+  }
+  times.sort((a, b) => a - b);
+
+  const [planX, planY] = [box.right - 200, box.top + 60];
+  const expected = await Promise.all(targets.map(([x, y]) => section.tools.snap(x, y, 10, 8)));
+  const emptySpot = await section.tools.snap(planX, planY, 10, 8);
+  const onPlane = section.tools.onPlane(planX, planY);
+  const before = await projectSummary();
+  const known = new Set(before.objects.map((o) => o.id));
+  const origin = before.origin ?? [0, 0, 0];
+  button('Draw string')?.click();
+  await settle();
+  for (const [x, y] of targets) await click(x, y);
+  await click(planX, planY);
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+  await settle();
+  await settle();
+  const made = (await projectSummary()).objects.find((o) => !known.has(o.id));
+  if (!made) return { error: 'no string was made' };
+  const details = await objectDetails(made.id);
+  if (details.measures.kind !== 'string') return { error: 'what was made is not a string' };
+  const points = details.measures.points;
+  const exact = expected.every((hit, i) => hit?.world.every((c, k) => c === points[i][k]));
+  const off = (p: [number, number, number]) => Math.abs(section.tools.offset(new THREE.Vector3(p[0] - origin[0], p[1] - origin[1], p[2] - origin[2])));
+  const worstOff = Math.max(...points.map(off));
+  const free = points[3].every((c, k) => Math.abs(c - (onPlane?.world[k] ?? 0)) < 1e-6);
+  const cutSegments = (section.lastCut?.groups ?? []).filter((g) => g.kind === 'string').reduce((sum, g) => sum + g.segments, 0);
+  const drawn = screen(viewport, [section.gridCanvas, section.overviewCanvas]);
+
+  // Selected by a click on it, then its free end dragged to an empty spot.
+  button('Select')?.click();
+  await settle();
+  await click((targets[0][0] + targets[1][0]) / 2, (targets[0][1] + targets[1][1]) / 2);
+  const [toX, toY] = [planX - 70, planY + 45];
+  send('pointermove', planX, planY, 0);
+  await viewport.nextFrame();
+  send('pointerdown', planX, planY, 1);
+  await settle();
+  send('pointermove', toX, toY, 1);
+  await settle();
+  const target = section.tools.onPlane(toX, toY);
+  send('pointerup', toX, toY, 0);
+  await settle();
+  await settle();
+  const after = await objectDetails(made.id);
+  const moved = after.measures.kind === 'string' ? after.measures.points[3] : null;
+  const dragged = !!moved && !!target && moved.every((c, k) => Math.abs(c - target.world[k]) < 1e-6);
+
+  await show(await undo());
+  await show(await undo());
+  await settle();
+  const gone = !(await projectSummary()).objects.some((o) => o.id === made.id);
+  return { targets: expected.map((hit) => hit?.kind), snap_p50_ms: times[100], snap_max_ms: times[199], empty_spot_snapped: !!emptySpot, vertices: points.length, exact, worst_off_plane_m: worstOff, free_point_on_plane: free, string_segments_in_cut: cutSegments, dragged, undone: gone, drawn };
 }
 
 /** The fills on, as they first show, then off and on again by the toolbar's Fill button. */
