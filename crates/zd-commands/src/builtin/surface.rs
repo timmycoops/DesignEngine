@@ -77,7 +77,8 @@ impl Command for ImportSurface {
                 (Surface::new(mesh).with_crossings(crossings), messages)
             }
             SurfaceImport::VulcanGrid(vulcan) => {
-                let (g, log) = (&vulcan.grid, &vulcan.log);
+                let (whole, log) = (vulcan.surface(), &vulcan.log);
+                let g = &whole.grid;
                 let read = format!(
                     "Vulcan grid {} x {} nodes at {} x {} m: {} live, {} null{}",
                     g.cols,
@@ -85,7 +86,7 @@ impl Command for ImportSurface {
                     g.cell_size[0],
                     g.cell_size[1],
                     log.live,
-                    log.nulls,
+                    g.null_count(),
                     match (log.compressed_blocks, log.origin_copies) {
                         (0, 0) => String::new(),
                         (0, n) => format!("; {n} copies of the first node's position after the last node, passed over"),
@@ -97,7 +98,8 @@ impl Command for ImportSurface {
                     return Err(CommandError::Invalid(format!("{} holds no live cells", p.path)));
                 }
                 let lattice = "a grid has nothing to weld or orient, and cannot cross itself: one elevation per node on a regular plan lattice";
-                (Surface::new(mesh).with_crossings(Crossings::lattice()), vec![read, lattice.to_string()])
+                let messages = std::iter::once(read).chain(whole.report(log)).chain([lattice.to_string()]).collect();
+                (Surface::new(mesh).with_crossings(Crossings::lattice()), messages)
             }
             SurfaceImport::Grid(xyz) => {
                 let (g, log) = (&xyz.grid, &xyz.log);

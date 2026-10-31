@@ -58,7 +58,9 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 - `Polyline` (string): ordered `[f64; 3]` vertices, closed flag, attributes.
 - `Surface`: triangulated mesh (vertices f64, triangles u32), name, layer.
 - `Solid`: closed manifold mesh; must always be watertight.
-- `Grid`: regular raster (origin, cell size, rows, cols, z values with NaN for nulls).
+- `Grid`: regular raster (origin, cell size, rows, cols, z values with NaN for nulls). A Vulcan roof, floor or
+  topography imports whole: a node flagged off has no thickness, not no surface, so it keeps the height it holds
+  unless that doesn't run on from the live nodes (`docs/decisions/0025-a-grid-stays-in-space.md`).
 - `SeamModel`: an explicit, ordered stack of horizons (the Deswik "surface stacking" pattern), defined in a CSV
   the user edits; `seam.suggest_definition` writes a starting one from the grids' geometry, never from names.
   Each horizon has a code, material, parent horizon (for splits), working flag, roof and floor grids, quality

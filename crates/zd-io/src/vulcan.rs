@@ -17,7 +17,9 @@
 //!
 //! Nodes run row by row, x fastest, from the south-west corner. Files may end in zero padding, or
 //! in copies of the first node's f64 x and y, which Deswik writes (two to four in samples).
-//! Values are single precision and widen to f64 exactly.
+//! Values are single precision and widen to f64 exactly. A node flagged off can still hold a height:
+//! in a roof or floor the flag says the seam has no thickness there, not that the surface stops
+//! (decision 0025).
 //!
 //! The compressed layout holds the plain layout's bytes cut into fixed-size blocks, each compressed
 //! with LZF (liblzf's format). Little-endian:
@@ -49,10 +51,17 @@ pub(crate) const VULZ: &[u8; 4] = b"vulZ";
 const VULZ_HEADER: usize = 40;
 const VULZ_PAGE_ENTRIES: usize = 256;
 
+/// How many times the usual step between live nodes a held height may step from the live node beside it.
+const ROUGH_STEPS: f64 = 3.0;
+/// A step up to this is never rough, however flat the live nodes are (m).
+const SMALLEST_ROUGH_STEP: f64 = 1.0;
+
 #[derive(Debug, Clone)]
 pub struct VulcanGrid {
-    /// Null nodes are NaN.
+    /// Live nodes only, with every other node NaN. A seam model reads this: the flag says where the seam is.
     pub grid: Grid,
+    /// The heights the file holds at nodes flagged off, by node.
+    pub held: Vec<(usize, f64)>,
     /// The free-text header (bytes 0..32), trimmed.
     pub description: String,
     pub log: VulcanLog,
@@ -64,8 +73,8 @@ pub struct VulcanLog {
     pub nodes: usize,
     pub live: usize,
     pub nulls: usize,
-    /// Null nodes that still hold a non-zero value, which was ignored.
-    pub stale_nulls: usize,
+    /// Null nodes flagged off that still hold a value.
+    pub held: usize,
     /// Flags other than 0 and 1, read as null.
     pub odd_flags: usize,
     /// Live nodes holding NaN or infinity, read as null.
@@ -76,6 +85,82 @@ pub struct VulcanLog {
     pub origin_copies: usize,
     /// Blocks unpacked from the compressed layout; zero for a plain file.
     pub compressed_blocks: usize,
+}
+
+/// A roof, floor or topography as a surface in space.
+#[derive(Debug, Clone)]
+pub struct VulcanSurface {
+    pub grid: Grid,
+    /// Nodes flagged off that kept the height they hold.
+    pub kept: usize,
+    /// Set when held heights were left out because they don't run on from the live nodes: the usual large
+    /// step (95th percentile) from a live node to a held one beside it, then between live nodes, in metres.
+    pub rough: Option<[f64; 2]>,
+}
+
+impl VulcanSurface {
+    /// What became of the held heights, for a run's report.
+    pub fn report(&self, log: &VulcanLog) -> Option<String> {
+        match self.rough {
+            Some([edge, live]) => Some(format!(
+                "warning: {} nodes flagged off were left null, as what they hold doesn't run on from the live nodes: it steps {edge:.1} m from them, against {live:.1} m between them",
+                log.held
+            )),
+            None => (self.kept > 0).then(|| format!("{} nodes flagged off keep the heights they hold", self.kept)),
+        }
+    }
+}
+
+impl VulcanGrid {
+    /// This grid as a surface in space, for a roof, floor or topography. Nodes flagged off keep the heights
+    /// they hold, unless those don't run on from the live nodes, when they're left null and said so.
+    pub fn surface(&self) -> VulcanSurface {
+        let (edge, live) = steps_from_live_nodes(&self.grid, &self.held);
+        if let (Some(edge), Some(live)) = (usual_large_step(edge), usual_large_step(live))
+            && edge > (ROUGH_STEPS * live).max(SMALLEST_ROUGH_STEP)
+        {
+            return VulcanSurface { grid: self.grid.clone(), kept: 0, rough: Some([edge, live]) };
+        }
+        let mut grid = self.grid.clone();
+        for &(node, z) in &self.held {
+            grid.z[node] = z;
+        }
+        VulcanSurface { grid, kept: self.held.len(), rough: None }
+    }
+}
+
+/// Steps between neighbouring nodes: from a live node to a held one, then between live nodes.
+fn steps_from_live_nodes(grid: &Grid, held: &[(usize, f64)]) -> (Vec<f64>, Vec<f64>) {
+    let mut holding = vec![f64::NAN; grid.z.len()];
+    for &(node, z) in held {
+        holding[node] = z;
+    }
+    let (mut edge, mut live) = (Vec::new(), Vec::new());
+    let mut compare = |a: usize, b: usize| match (grid.z[a].is_nan(), grid.z[b].is_nan()) {
+        (false, false) => live.push((grid.z[a] - grid.z[b]).abs()),
+        (false, true) if !holding[b].is_nan() => edge.push((grid.z[a] - holding[b]).abs()),
+        (true, false) if !holding[a].is_nan() => edge.push((grid.z[b] - holding[a]).abs()),
+        _ => {}
+    };
+    for row in 0..grid.rows {
+        for col in 0..grid.cols {
+            if col + 1 < grid.cols {
+                compare(grid.index(col, row), grid.index(col + 1, row));
+            }
+            if row + 1 < grid.rows {
+                compare(grid.index(col, row), grid.index(col, row + 1));
+            }
+        }
+    }
+    (edge, live)
+}
+
+/// The 95th percentile.
+fn usual_large_step(mut steps: Vec<f64>) -> Option<f64> {
+    let last = steps.len().checked_sub(1)?;
+    let place = (steps.len() * 95 / 100).min(last);
+    let (_, step, _) = steps.select_nth_unstable_by(place, f64::total_cmp);
+    Some(*step)
 }
 
 pub fn read_vulcan_grid(path: &Path) -> Result<VulcanGrid, IoError> {
@@ -242,6 +327,7 @@ fn parse_plain_grid(bytes: &[u8]) -> Result<VulcanGrid, IoError> {
 
     let mut log = VulcanLog { nodes, padding_bytes, origin_copies, ..VulcanLog::default() };
     let mut z = Vec::with_capacity(nodes);
+    let mut held = Vec::new();
     for i in 0..nodes {
         let value = f32_at(HEADER + 8 * i);
         let flag = i32_at(HEADER + 8 * i + 4);
@@ -253,15 +339,14 @@ fn parse_plain_grid(bytes: &[u8]) -> Result<VulcanGrid, IoError> {
         log.nulls += 1;
         match flag {
             1 => log.non_finite += 1,
+            0 if value.is_finite() && value != 0.0 => held.push((i, f64::from(value))),
             0 => {}
             _ => log.odd_flags += 1,
         }
-        if flag != 1 && value != 0.0 {
-            log.stale_nulls += 1;
-        }
         z.push(f64::NAN);
     }
-    Ok(VulcanGrid { grid: Grid::new([x0, y0], [dx, dy], cols, rows, z), description, log })
+    log.held = held.len();
+    Ok(VulcanGrid { grid: Grid::new([x0, y0], [dx, dy], cols, rows, z), held, description, log })
 }
 
 /// Splits a Vulcan grid file name into its stem (project prefix plus seam) and variable, lower case:
@@ -343,6 +428,13 @@ pub(crate) mod tests {
 
     /// Writes the plain layout, for tests: `values` row by row from the south-west, `None` = null.
     pub fn plain_grid(description: &str, origin: [f64; 2], cell: f32, cols: usize, rows: usize, values: &[Option<f32>], padding: usize) -> Vec<u8> {
+        // Nulls keep a stale value.
+        let nodes: Vec<(f32, i32)> = values.iter().map(|v| (v.unwrap_or(0.36), i32::from(v.is_some()))).collect();
+        flagged_grid(description, origin, cell, cols, rows, &nodes, padding)
+    }
+
+    /// The same with every node's value and flag given.
+    fn flagged_grid(description: &str, origin: [f64; 2], cell: f32, cols: usize, rows: usize, nodes: &[(f32, i32)], padding: usize) -> Vec<u8> {
         let mut out = vec![b' '; 32];
         out[..description.len()].copy_from_slice(description.as_bytes());
         let x1 = origin[0] + (cols - 1) as f64 * f64::from(cell);
@@ -356,9 +448,9 @@ pub(crate) mod tests {
         out.extend_from_slice(&cell.to_be_bytes());
         out.extend_from_slice(&(cols as i32).to_be_bytes());
         out.extend_from_slice(&(rows as i32).to_be_bytes());
-        for v in values {
-            out.extend_from_slice(&v.unwrap_or(0.36).to_be_bytes()); // nulls keep a stale value
-            out.extend_from_slice(&i32::from(v.is_some()).to_be_bytes());
+        for (value, flag) in nodes {
+            out.extend_from_slice(&value.to_be_bytes());
+            out.extend_from_slice(&flag.to_be_bytes());
         }
         out.extend(std::iter::repeat_n(0u8, padding));
         out
@@ -462,8 +554,91 @@ pub(crate) mod tests {
         assert!(g.z_at(1, 1).is_nan());
         assert_eq!(
             read.log,
-            VulcanLog { nodes: 12, live: 11, nulls: 1, stale_nulls: 1, odd_flags: 0, non_finite: 0, padding_bytes: 640, origin_copies: 0, compressed_blocks: 0 }
+            VulcanLog { nodes: 12, live: 11, nulls: 1, held: 1, odd_flags: 0, non_finite: 0, padding_bytes: 640, origin_copies: 0, compressed_blocks: 0 }
         );
+    }
+
+    /// A 10 x 8 lattice at 10 m on a plane rising 0.1 in 1 to the east, flagged off east of column 4 and
+    /// holding what `held` gives there.
+    fn half_flagged_off(held: impl Fn(usize, usize) -> (f32, i32)) -> Vec<u8> {
+        let (cols, rows) = (10, 8);
+        let nodes: Vec<(f32, i32)> = (0..cols * rows)
+            .map(|i| {
+                let (col, row) = (i % cols, i / cols);
+                if col < 5 { (120.0 + col as f32, 1) } else { held(col, row) }
+            })
+            .collect();
+        flagged_grid("PITLOWER.SFG    01Nov20260900", [E, N], 10.0, cols, rows, &nodes, 0)
+    }
+
+    #[test]
+    fn nodes_flagged_off_keep_their_heights_on_a_surface_and_stay_null_in_the_grid() {
+        let read = parse_vulcan_grid(&half_flagged_off(|col, _| (120.0 + col as f32, 0))).unwrap();
+        assert_eq!((read.log.live, read.log.nulls, read.log.held), (40, 40, 40));
+        assert!(read.grid.z_at(5, 0).is_nan(), "the grid still says where the seam is");
+        let surface = read.surface();
+        assert_eq!((surface.kept, surface.rough, surface.grid.null_count()), (40, None, 0));
+        for (col, row) in [(0, 0), (5, 0), (9, 7)] {
+            assert_eq!(surface.grid.z_at(col, row), 120.0 + col as f64, "node {col}, {row}");
+        }
+        assert_eq!(surface.report(&read.log).unwrap(), "40 nodes flagged off keep the heights they hold");
+
+        // The compressed layout holds the same.
+        let packed = vulz_grid(&half_flagged_off(|col, _| (120.0 + col as f32, 0)), 64, 4, 0);
+        assert_eq!(parse_vulcan_grid(&packed).unwrap().surface().grid.z, surface.grid.z);
+    }
+
+    #[test]
+    fn a_node_with_nothing_in_it_stays_null_on_a_surface() {
+        // Zero is what an empty node holds, and neither an unknown flag nor a NaN is a height to trust.
+        let read = parse_vulcan_grid(&half_flagged_off(|col, row| match (col, row % 3) {
+            (5, _) => (120.0 + col as f32, 0),
+            (_, 0) => (0.0, 0),
+            (_, 1) => (f32::NAN, 0),
+            _ => (120.0 + col as f32, 7),
+        }))
+        .unwrap();
+        assert_eq!((read.log.held, read.log.odd_flags, read.log.non_finite), (8, 8, 0));
+        let surface = read.surface();
+        assert_eq!(surface.kept, 8);
+        assert_eq!(surface.grid.null_count(), 32);
+        assert_eq!(surface.grid.z_at(5, 3), 125.0);
+        assert!(surface.grid.z_at(6, 0).is_nan() && surface.grid.z_at(6, 1).is_nan() && surface.grid.z_at(6, 2).is_nan());
+    }
+
+    #[test]
+    fn heights_that_dont_run_on_from_the_live_nodes_stay_null_and_are_reported() {
+        // A leftover from something else: live nodes step 1 m, and these 30 m from them.
+        let read = parse_vulcan_grid(&half_flagged_off(|col, _| (150.0 + col as f32, 0))).unwrap();
+        let surface = read.surface();
+        assert_eq!((surface.kept, surface.grid.null_count()), (0, 40));
+        let [edge, live] = surface.rough.unwrap();
+        assert_eq!(edge, 31.0);
+        assert_eq!(live, 1.0);
+        assert_eq!(surface.report(&read.log).unwrap(), "warning: 40 nodes flagged off were left null, as what they hold doesn't run on from the live nodes: it steps 31.0 m from them, against 1.0 m between them");
+    }
+
+    #[test]
+    fn the_step_that_counts_as_rough_scales_with_the_grid() {
+        // Three times the live step passes and just past it doesn't.
+        assert_eq!(parse_vulcan_grid(&half_flagged_off(|col, _| (122.0 + col as f32, 0))).unwrap().surface().kept, 40);
+        assert!(parse_vulcan_grid(&half_flagged_off(|col, _| (122.5 + col as f32, 0))).unwrap().surface().rough.is_some());
+        // Flat live nodes don't make every step rough: up to a metre is fine.
+        let flat = |held: f32| {
+            let nodes: Vec<(f32, i32)> = (0..16).map(|i| if i % 4 < 2 { (100.0, 1) } else { (held, 0) }).collect();
+            parse_vulcan_grid(&flagged_grid("flat", [E, N], 10.0, 4, 4, &nodes, 0)).unwrap().surface()
+        };
+        assert_eq!(flat(100.5).kept, 8);
+        assert!(flat(102.0).rough.is_some());
+    }
+
+    #[test]
+    fn a_grid_with_no_live_nodes_keeps_what_it_holds() {
+        // Nothing to judge them by, so they stand: a seam with no thickness anywhere is still a surface.
+        let nodes: Vec<(f32, i32)> = (0..12).map(|i| (200.0 + i as f32, 0)).collect();
+        let read = parse_vulcan_grid(&flagged_grid("none", [E, N], 10.0, 4, 3, &nodes, 0)).unwrap();
+        assert_eq!(read.log.live, 0);
+        assert_eq!(read.surface().kept, 12);
     }
 
     #[test]

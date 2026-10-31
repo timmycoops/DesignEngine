@@ -2,6 +2,7 @@
 //! opt-in, because the data stays local: `ZD_WALL_GRIDS` lists Vulcan grid files, bottom of the wall
 //! first, separated by `;`.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Instant;
 
@@ -505,6 +506,39 @@ fn a_whole_face_on_real_grids() {
             }
             Err(e) => println!("{side}: refused after {:.1} ms: {e}", start.elapsed().as_secs_f64() * 1e3),
         }
+    }
+}
+
+/// Every real solid cut by real grids. `ZD_CUT_SOLIDS` is a zip or folder of solids and `ZD_CUT_GRIDS`
+/// lists grids with `;`. What's kept and any solid left uncut must add up to what went in, to one part in
+/// a million, and every solid must lie under the grid.
+#[test]
+#[ignore = "needs ZD_CUT_SOLIDS and ZD_CUT_GRIDS"]
+fn a_cut_by_real_grids() {
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is needed"));
+    let mut s = Session::with_builtins();
+    let start = Instant::now();
+    s.run("solid.import_many", json!({ "paths": [var("ZD_CUT_SOLIDS")], "layer": "solids" })).unwrap();
+    let volume_of = |o: &zd_core::Object| if let Body::Solid(solid) = &o.body { Some(solid.volume()) } else { None };
+    let solids: Vec<ObjectId> = s.project().objects().filter(|o| matches!(o.body, Body::Solid(_))).map(|o| o.id).collect();
+    let total: f64 = s.project().objects().filter_map(|o| volume_of(o)).sum();
+    println!("{} solids, {total:.1} m3, imported in {:.1} s", solids.len(), start.elapsed().as_secs_f64());
+    for (k, path) in var("ZD_CUT_GRIDS").split(';').enumerate() {
+        let imported = s.run("surface.import", json!({ "path": path, "layer": "grids" })).unwrap();
+        imported.messages.iter().take(2).for_each(|m| println!("  {m}"));
+        let layer = format!("cut {k}");
+        let start = Instant::now();
+        let record = s.run("solid.cut_by_surface", json!({ "solids": solids, "surface": created(&imported)[0], "layer": layer })).unwrap();
+        println!("grid {k}: {:.1} s", start.elapsed().as_secs_f64());
+        let on_layer = s.project().layer_named(&layer).map(|l| l.id);
+        let parts: Vec<_> = s.project().objects().filter(|o| Some(o.layer) == on_layer).collect();
+        let kept: f64 = parts.iter().filter_map(|o| volume_of(o)).sum();
+        let cut: BTreeSet<&str> = parts.iter().filter_map(|o| o.name.rsplit_once(" below ").or(o.name.rsplit_once(" above ")).map(|(solid, _)| solid)).collect();
+        let uncut: Vec<_> = s.project().objects().filter(|o| solids.contains(&o.id) && !cut.contains(o.name.as_str())).collect();
+        let left: f64 = uncut.iter().filter_map(|o| volume_of(o)).sum();
+        println!("  {} parts, {kept:.1} m3, and {} solids left uncut, {left:.1} m3, of {total:.1} m3: difference {:.3}", parts.len(), uncut.len(), kept + left - total);
+        assert!((kept + left - total).abs() <= 1e-6 * total, "{kept} and {left} of {total}");
+        assert!(!record.messages.iter().any(|m| m.contains("does not cover")), "{:?}", record.messages);
     }
 }
 

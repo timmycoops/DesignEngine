@@ -29,7 +29,7 @@ pub use seam::{
 };
 pub use store::{Opened, ProjectStore, SaveReport, StoreError};
 pub use string_csv::{CsvLog, CsvString, CsvStrings, format_csv_strings, parse_csv_strings, read_csv_strings, write_csv_strings};
-pub use vulcan::{VulcanGrid, VulcanLog, VulcanSeam, parse_vulcan_grid, read_vulcan_grid, read_vulcan_seam, vulcan_grid_name};
+pub use vulcan::{VulcanGrid, VulcanLog, VulcanSeam, VulcanSurface, parse_vulcan_grid, read_vulcan_grid, read_vulcan_seam, vulcan_grid_name};
 pub use vulcan_tri::{VulcanTriLog, VulcanTriangulation, parse_vulcan_triangulation, plain_triangulation_bytes, read_vulcan_triangulation};
 pub use xyz::{GridImport, XyzLog, XyzOptions, parse_xyz_grid, read_xyz_grid, write_xyz_grid};
 

@@ -266,6 +266,12 @@ fn save_and_open_carry_the_project_and_its_run_log() {
 
 /// A small grid in Vulcan's plain layout (big-endian; nodes from the south-west, x fastest).
 fn vulcan_grid(values: &[Option<f32>], cols: usize, rows: usize) -> Vec<u8> {
+    let nodes: Vec<(f32, i32)> = values.iter().map(|v| (v.unwrap_or(0.0), i32::from(v.is_some()))).collect();
+    flagged_grid(&nodes, cols, rows)
+}
+
+/// The same with every node's value and flag given.
+fn flagged_grid(nodes: &[(f32, i32)], cols: usize, rows: usize) -> Vec<u8> {
     let mut out = b"SYNTHETIC TEST GRID             ".to_vec();
     let x1 = 500_025.0 + (cols - 1) as f64 * 25.0;
     let y1 = 7_000_625.0 + (rows - 1) as f64 * 25.0;
@@ -279,11 +285,48 @@ fn vulcan_grid(values: &[Option<f32>], cols: usize, rows: usize) -> Vec<u8> {
     out.extend_from_slice(&25.0f32.to_be_bytes());
     out.extend_from_slice(&(cols as i32).to_be_bytes());
     out.extend_from_slice(&(rows as i32).to_be_bytes());
-    for v in values {
-        out.extend_from_slice(&v.unwrap_or(0.0).to_be_bytes());
-        out.extend_from_slice(&i32::from(v.is_some()).to_be_bytes());
+    for (value, flag) in nodes {
+        out.extend_from_slice(&value.to_be_bytes());
+        out.extend_from_slice(&flag.to_be_bytes());
     }
     out
+}
+
+/// Roof and floor flagged off and equal east of the middle, where a seam has no thickness: both are there
+/// as surfaces, and the quality isn't filled in.
+#[test]
+fn a_seam_with_no_thickness_still_imports_as_surfaces_and_its_qualities_stay_as_they_are() {
+    let dir = std::env::temp_dir().join(format!("zd-commands-held-{}-{}", std::process::id(), zd_core::RunId::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let surface = |offset: f32| -> Vec<(f32, i32)> { (0..12).map(|i| if i % 4 < 2 { (100.0 + offset + (i % 4) as f32, 1) } else { (100.0 + (i % 4) as f32, 0) }).collect() };
+    let ash: Vec<(f32, i32)> = (0..12).map(|i| if i % 4 < 2 { (30.5, 1) } else { (12.0, 0) }).collect();
+    std::fs::write(dir.join("pitupper.srg"), flagged_grid(&surface(1.5), 4, 3)).unwrap();
+    std::fs::write(dir.join("pitupper.sfg"), flagged_grid(&surface(0.0), 4, 3)).unwrap();
+    std::fs::write(dir.join("pitupper.rag"), flagged_grid(&ash, 4, 3)).unwrap();
+
+    let mut s = Session::with_builtins();
+    let record = s.run("grid.import_vulcan_seam", json!({ "dir": dir.to_string_lossy(), "prefix": "pit", "seam": "upper", "layer": "geology" })).unwrap();
+    assert!(record.messages.iter().any(|m| m == "sr: 6 of 12 nodes live; 6 nodes flagged off keep the heights they hold"), "{:?}", record.messages);
+    assert!(record.messages.iter().any(|m| m == "ra: 6 of 12 nodes live; null nodes holding old values 6, unknown flags 0, non-finite values 0"), "{:?}", record.messages);
+    let grid = |name: &str| match &s.project().objects().find(|o| o.name == name).unwrap().body {
+        Body::Grid(g) => g.clone(),
+        other => panic!("expected a grid, found {:?}", other.kind()),
+    };
+    assert_eq!(grid("UPPER sr").null_count(), 0);
+    assert_eq!(grid("UPPER sf").z_at(3, 2), 103.0);
+    assert_eq!(grid("UPPER sr").z_at(3, 2), 103.0, "roof and floor meet where the seam has no thickness");
+    assert_eq!(grid("UPPER ra").null_count(), 6, "a quality has no value where there's no seam");
+
+    // As a surface the roof covers every cell.
+    let path = dir.join("pitupper.srg");
+    let imported = s.run("surface.import", json!({ "path": path.to_string_lossy(), "layer": "design" })).unwrap();
+    assert!(imported.messages.iter().any(|m| m == "6 nodes flagged off keep the heights they hold"), "{:?}", imported.messages);
+    assert!(imported.messages[0].ends_with("6 live, 0 null"), "{:?}", imported.messages);
+    match &s.project().object(created(&imported)[0]).unwrap().body {
+        Body::Surface(surface) => assert_eq!(surface.mesh().triangle_count(), 2 * 3 * 2),
+        other => panic!("expected a surface, found {:?}", other.kind()),
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
