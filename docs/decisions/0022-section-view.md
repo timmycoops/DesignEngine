@@ -71,5 +71,7 @@ in mine grid coordinates, and can be snapped to and exported.
   those pictures can't show it: 240 px in the corner, the middle of the viewport still the section, and gone
   before a section opens and after it closes.
 
-Not covered: seam models in a section have only been tested through their parts, not on screen, the line
-weight input is untested by the bench, and a drag across the map has not been tried by hand.
+Tim tried the map by hand on PIT A's solids: the drag, the run past the data and the step size.
+
+Not covered: seam models in a section have only been tested through their parts, not on screen, and the line
+weight input is untested by the bench.
