@@ -469,7 +469,7 @@ export interface StagedHorizon {
   /** Grid files changed since the model was built. */
   changed: string[];
   /** Every horizon, top first, to choose from. */
-  horizons: { code: string; working: boolean }[];
+  horizons: { code: string; material: string; working: boolean }[];
 }
 
 /** Reads a seam model's grids in place and stages one horizon (the first working one if none is named). */

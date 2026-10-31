@@ -420,6 +420,7 @@ interface HorizonRow {
   code: string;
   depth: number;
   parent: string;
+  material: string;
   working: boolean;
   grids: string;
 }
@@ -431,6 +432,7 @@ const horizonColumns = horizonHelper.columns([
     cell: (c) => <span style={{ paddingLeft: `${c.row.original.depth * 0.75}rem` }}>{c.getValue()}</span>,
   }),
   horizonHelper.accessor('parent', { header: 'Parent' }),
+  horizonHelper.accessor('material', { header: 'Material' }),
   horizonHelper.accessor('working', { header: 'Working', cell: (c) => (c.getValue() ? 'Yes' : '') }),
   horizonHelper.accessor('grids', { header: 'Grids', cell: (c) => <span className="text-muted-foreground">{c.getValue()}</span> }),
 ]);
@@ -450,6 +452,7 @@ function Horizons({ id, model }: { id: string; model: SeamModel }) {
       code: h.code,
       depth: depth(h.code),
       parent: h.parent ?? '',
+      material: h.material,
       working: h.working,
       grids: ['srg', 'sfg', ...Object.keys(h.grids)].join(' '),
     }));

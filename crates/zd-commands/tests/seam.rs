@@ -303,6 +303,23 @@ fn an_edited_definition_is_what_gets_built() {
     assert_eq!(m.folder, t.0.join(".").to_string_lossy());
 }
 
+#[test]
+fn a_waste_horizon_keeps_its_material_and_wants_no_density() {
+    let t = TempDir::new("waste");
+    write_pit(&t.0);
+    let csv = t.0.join("stack.csv");
+    std::fs::write(&csv, "folder,.
+horizon,parent,material,working,roof,floor
+N,,Waste,yes,pitn.srg,pitn.sfg
+C,,coal,yes,pitc.srg,pitc.sfg
+").unwrap();
+    let mut s = Session::with_builtins();
+    build(&mut s, &csv).unwrap();
+    let m = model(&s);
+    assert_eq!(m.horizons.iter().map(|h| h.material.as_str()).collect::<Vec<_>>(), ["Waste", "coal"], "as typed");
+    assert_eq!(m.issues.iter().map(|i| (i.kind, i.horizon.as_str())).collect::<Vec<_>>(), [(IssueKind::NoDensity, "C")], "the coal wants a density, the waste doesn't");
+}
+
 /// Suggests a definition for a real folder, builds the model from it and prints both run logs with
 /// timings. Asserts only that both runs succeed: what the stack holds is the data's business.
 #[test]

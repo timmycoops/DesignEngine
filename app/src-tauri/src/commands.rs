@@ -425,6 +425,7 @@ pub struct StagedHorizon {
 #[derive(Serialize)]
 pub struct HorizonChoice {
     code: String,
+    material: String,
     working: bool,
 }
 
@@ -451,7 +452,7 @@ pub async fn stage_seam_horizon(id: ObjectId, horizon: Option<String>, state: St
         None => model.working_section().next().or(model.horizons.first()).ok_or("the model has no horizons")?.code.clone(),
     };
     let title = name.clone();
-    let horizons = model.horizons.iter().map(|h| HorizonChoice { code: h.code.clone(), working: h.working }).collect();
+    let horizons = model.horizons.iter().map(|h| HorizonChoice { code: h.code.clone(), material: h.material.clone(), working: h.working }).collect();
     let (buffer, triangles, staged_horizon, encode_ms) = blocking(move || -> Result<_, String> {
         let t = Instant::now();
         let index = model.horizons.iter().position(|h| h.code == code).ok_or_else(|| format!("no horizon '{code}' in the model"))?;
