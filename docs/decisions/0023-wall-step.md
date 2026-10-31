@@ -68,8 +68,8 @@ line with a berm along it, and a stretch where two grids cross came back as havi
 Tim's first run in the app found what the tests above hadn't. An unlabelled tolerance box took a 30 that was
 meant for the berm, and a next toe stepped to the grid it already lay on came apart in rounding. On his string,
 every half degree of batter to each side, with seven tolerances and seven berms, through a second step: about
-15,500 steps, none failing in the crest walk. With the rounding fix switched off, 640 of them did. A correct
-30 m berm sits 29.91 to 30.09 m from its crest at 0.1 m tolerance. One message from his run, "won't
+15,500 steps, none failing in the crest walk. With the rounding fix switched off, stepping to the same grid
+failed the walk 641 times in about 10,400 steps. A correct 30 m berm sits 29.91 to 30.09 m from its crest at 0.1 m tolerance. One message from his run, "won't
 triangulate", wasn't reproduced with the fix on or off, and its input isn't known.
 
 Known answers hold to 1 mm: a 45° batter from a flat toe, mitres on both sides of a corner, a closed toe's
