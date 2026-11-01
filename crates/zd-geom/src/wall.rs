@@ -443,7 +443,7 @@ pub(crate) fn segment_count(line: &Polyline) -> usize {
 }
 
 /// The height of the nearest point on a line in plan.
-fn height_on(line: &Polyline, p: [f64; 3]) -> f64 {
+pub(crate) fn height_on(line: &Polyline, p: [f64; 3]) -> f64 {
     let n = line.vertices.len();
     let mut nearest = (f64::INFINITY, line.vertices.first().map_or(p[2], |v| v[2]));
     for i in 0..segment_count(line) {

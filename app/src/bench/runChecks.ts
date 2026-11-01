@@ -795,13 +795,13 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
   // A road from the middle of the toe up through the walls, each way along it.
   const roadFrom = async (heading: 'along' | 'back') => {
     try {
-      const start = { step: 'ramp_start', start: [at[0], at[1]], heading, width: 30, grade: 10 };
-      const profiles = content.profiles.map((profile) => (profile.name === 'Highwall' ? { ...profile, steps: [start, ...profile.steps, { step: 'ramp_stop' }] } : profile));
+      const ramps = [{ name: 'A', string: toe.id, fixed: 'start', at: [at[0], at[1]], heading, width: 30, grade: 10 }];
+      const profiles = content.profiles.map((profile) => (profile.name === 'Highwall' ? { ...profile, ramps, steps: profile.steps.map((step) => (step.step === 'project' ? { ...step, ramp: 'A' } : step)) } : profile));
       const withRoad = { ...content, profiles, layer: `bench road ${heading}`, lines: [{ string: toe.id, profile: 'Highwall', side: 'left', run_on: [100, 100] }] };
       const saved = (await run('face.save_design', { name: `Bench road ${heading}`, content: withRoad })).fresh[0];
       const started = performance.now();
       const made = await run('face.project', { design: saved.id });
-      return { ms: performance.now() - started, made: made.fresh.length, messages: made.messages };
+      return { ms: performance.now() - started, made: made.fresh.length, messages: made.messages, labels: document.querySelectorAll('.road-label').length };
     } catch (e) {
       return { error: String(e) };
     }

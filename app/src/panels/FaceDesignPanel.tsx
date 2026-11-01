@@ -1,9 +1,10 @@
 import { ArrowDown, ArrowUp, Crosshair, Play, Plus, Save, Trash2 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
-import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, objectDetails, type ObjectSummary, type ProfileStep, type RampHeading, type RuleValue, type StepTarget, type StepValue, type WallRule, type WallSide } from '@/bridge';
+import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampFixed, type RampHeading, type RuleValue, type StepTarget, type StepValue, type WallRule, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
+import { rampColour } from '@/viewport/rampColours';
 import { useWorkspace } from '@/workspace/context';
 
 const selectClass = 'h-7 min-w-0 rounded border bg-background px-1 text-xs';
@@ -119,11 +120,6 @@ function Choice<T extends string>({ value, options, onChange }: { value: T; opti
 const SIDES: readonly WallSide[] = ['left', 'right'];
 const DIRECTIONS: readonly FaceDirection[] = ['up', 'down'];
 const HEADINGS: readonly RampHeading[] = ['along', 'back'];
-
-/** A row with a wall or a berm on it, as against a ramp's start or stop. */
-type WallRow = Extract<ProfileStep, { step: 'project' | 'berm' }>;
-
-const isWallRow = (step: ProfileStep): step is WallRow => step.step === 'project' || step.step === 'berm';
 
 /** A picked point to the millimetre. */
 const toMillimetres = (metres: number) => Math.round(metres * 1000) / 1000;
@@ -315,12 +311,10 @@ function RuleDetail({ rule, polygons, solidName, selectedSolid, surfaces, onChan
 }
 
 function stepValueOf(step: ProfileStep) {
-  if (!isWallRow(step)) return undefined;
   return step.step === 'project' ? step.batter : step.width;
 }
 
 function targetOf(step: ProfileStep) {
-  if (!isWallRow(step)) return null;
   return step.step === 'project' ? step.to : step.on;
 }
 
@@ -334,18 +328,18 @@ function nextTarget(steps: ProfileStep[], surfaces: ObjectSummary[], register: s
 }
 
 /** A new step of a kind, starting from the table's last one of that kind. */
-function blankStep(kind: WallRow['step'], steps: ProfileStep[], surfaces: ObjectSummary[], register: string, condition: number | null): WallRow {
+function blankStep(kind: ProfileStep['step'], steps: ProfileStep[], surfaces: ObjectSummary[], register: string, condition: number | null): ProfileStep {
   const last = [...steps].reverse().find((s) => s.step === kind);
-  const value = last && stepValueOf(last);
-  if (kind === 'project') return { step: 'project', to: nextTarget(steps, surfaces, register), batter: value ?? usualBatter, condition };
+  if (kind === 'project') return { step: 'project', to: nextTarget(steps, surfaces, register), batter: last ? stepValueOf(last) : usualBatter, condition };
   const minBench = last?.step === 'berm' ? last.min_bench : usualMinBench;
-  return { step: 'berm', on: null, width: value ?? usualBerm, register: true, condition, min_bench: minBench };
+  return { step: 'berm', on: null, width: last ? stepValueOf(last) : usualBerm, register: true, condition, min_bench: minBench };
 }
 
 /** Whether a row hands its crest on as one wall with the row below: same batter, no berm between. */
 function carriesOn(steps: ProfileStep[], at: number, rules: WallRule[]) {
   const [step, next] = [steps[at], steps[at + 1]];
   if (step.step !== 'project' || next?.step !== 'project') return false;
+  if ((step.ramp ?? null) !== (next.ramp ?? null)) return false;
   // A rule that changes along the wall is the same wall if both rows name it. By horizon goes row by row.
   const rule = rules.find((r) => r.name === step.batter)?.value;
   if (step.batter === next.batter && rule && rule.type !== 'by_horizon') return true;
@@ -378,7 +372,7 @@ function SurfaceOptions({ surfaces }: { surfaces: ObjectSummary[] }) {
 }
 
 /** One step of a profile. A row says where it finishes: a wall's target, or the surface a berm's line registers on. */
-function StepRow({ number, step, surfaces, rules, above, carries, blank, onChange, onMove, onRemove }: { number: number; step: WallRow; surfaces: ObjectSummary[]; rules: WallRule[]; above: string; carries: boolean; blank: (kind: WallRow['step']) => WallRow; onChange: (s: ProfileStep) => void; onMove: (by: number) => void; onRemove: () => void }) {
+function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged, blank, onChange, onMove, onRemove }: { number: number; step: ProfileStep; surfaces: ObjectSummary[]; rules: WallRule[]; above: string; carries: boolean; ramps: Ramp[]; bridged: string | null; blank: (kind: ProfileStep['step']) => ProfileStep; onChange: (s: ProfileStep) => void; onMove: (by: number) => void; onRemove: () => void }) {
   const target = targetOf(step);
   const surfaceValue = target?.kind === 'surface' ? target.id : target?.kind === 'rl' ? 'rl' : '';
   const setSurface = (value: string) => {
@@ -392,7 +386,7 @@ function StepRow({ number, step, surfaces, rules, above, carries, blank, onChang
     <tr className="border-t">
       <td className={`${cellClass} tabular-nums text-muted-foreground`}>{number}</td>
       <td className={cellClass}>
-        <select className={selectClass} value={step.step} aria-label="Type" onChange={(e) => onChange({ ...blank(e.target.value as WallRow['step']), condition: step.condition })}>
+        <select className={selectClass} value={step.step} aria-label="Type" onChange={(e) => onChange({ ...blank(e.target.value as ProfileStep['step']), condition: step.condition })}>
           <option value="project">Project</option>
           <option value="berm">Berm</option>
         </select>
@@ -417,72 +411,112 @@ function StepRow({ number, step, surfaces, rules, above, carries, blank, onChang
       <td className={cellClass}>
         {step.step === 'berm' && <NumberBox width="w-12" value={step.min_bench ?? null} title="No berm where the wall below it is lower than this (m). Blank or 0 is off" onChange={(height) => onChange({ ...step, min_bench: height > 0 ? height : null })} />}
       </td>
+      <td className={cellClass}>
+        {step.step === 'project' ? <RampCell value={step.ramp ?? null} ramps={ramps} onChange={(ramp) => onChange({ ...step, ramp })} /> : bridged && <span className="ml-1.5 block h-6 w-1" style={{ background: rampColour(bridged) }} title={`Ramp ${bridged} crosses this berm: the road is the bench here`} />}
+      </td>
       <td className={cellClass}>{step.step === 'berm' ? <RegisterCell checked={step.register} onChange={(register) => onChange({ ...step, register })} /> : step.to.kind === 'surface' && <RegisterCell checked />}</td>
       <td className={cellClass}>
         <ConditionCell value={step.condition} carries={carries} onChange={(condition) => onChange({ ...step, condition })} />
       </td>
-      <RowActions onMove={onMove} onRemove={onRemove} />
-    </tr>
-  );
-}
-
-/** The up and down arrows and the bin at the end of a row. */
-function RowActions({ onMove, onRemove }: { onMove: (by: number) => void; onRemove: () => void }) {
-  return (
-    <td className="whitespace-nowrap py-0.5 text-right">
-      <IconButton title="Move up" onClick={() => onMove(-1)}>
-        <ArrowUp className="size-3" />
-      </IconButton>
-      <IconButton title="Move down" onClick={() => onMove(1)}>
-        <ArrowDown className="size-3" />
-      </IconButton>
-      <IconButton title="Remove this step" onClick={onRemove}>
-        <Trash2 className="size-3" />
-      </IconButton>
-    </td>
-  );
-}
-
-/** A road's start or stop, in among the walls it runs through. */
-function RampRow({ number, step, picking, onPick, onChange, onMove, onRemove }: { number: number; step: Exclude<ProfileStep, WallRow>; picking: boolean; onPick: (use: (start: [number, number]) => void) => void; onChange: (s: ProfileStep) => void; onMove: (by: number) => void; onRemove: () => void }) {
-  return (
-    <tr className="border-t bg-selection/40">
-      <td className={`${cellClass} tabular-nums text-muted-foreground`}>{number}</td>
-      <td className={`${cellClass} whitespace-nowrap px-2`}>{step.step === 'ramp_start' ? 'Ramp start' : 'Ramp stop'}</td>
-      <td className={cellClass} colSpan={6}>
-        {step.step === 'ramp_stop' ? (
-          <span className="text-muted-foreground">The road finishes at the top of the wall above this row</span>
-        ) : (
-          <span className="flex flex-wrap items-center gap-2">
-            <Labelled label="Start">
-              <NumberBox width="w-20" value={step.start[0]} title="Easting of the start: the road starts on the nearest point of the next wall's toe" onChange={(e) => onChange({ ...step, start: [e, step.start[1]] })} />
-              <NumberBox width="w-20" value={step.start[1]} title="Northing of the start" onChange={(n) => onChange({ ...step, start: [step.start[0], n] })} />
-              <IconButton title="Pick the start in the viewport" disabled={picking} onClick={() => onPick((start) => onChange({ ...step, start }))}>
-                <Crosshair className="size-3" />
-              </IconButton>
-            </Labelled>
-            <Choice value={step.heading} options={HEADINGS} onChange={(heading) => onChange({ ...step, heading })} />
-            <Labelled label="Width, m">
-              <NumberBox width="w-12" value={step.width} title="Road width in metres, square to the road" onChange={(width) => onChange({ ...step, width })} />
-            </Labelled>
-            <Labelled label="Grade, %">
-              <NumberBox width="w-12" value={step.grade} title="Rise over plan run in percent, on the pit-side edge" onChange={(grade) => onChange({ ...step, grade })} />
-            </Labelled>
-          </span>
-        )}
+      <td className="whitespace-nowrap py-0.5 text-right">
+        <IconButton title="Move up" onClick={() => onMove(-1)}>
+          <ArrowUp className="size-3" />
+        </IconButton>
+        <IconButton title="Move down" onClick={() => onMove(1)}>
+          <ArrowDown className="size-3" />
+        </IconButton>
+        <IconButton title="Remove this step" onClick={onRemove}>
+          <Trash2 className="size-3" />
+        </IconButton>
       </td>
-      <RowActions onMove={onMove} onRemove={onRemove} />
     </tr>
+  );
+}
+
+/** Which ramp climbs a wall: a letter in its colour, or nothing. */
+function RampCell({ value, ramps, onChange }: { value: string | null; ramps: Ramp[]; onChange: (ramp: string | null) => void }) {
+  return (
+    <select
+      className={`${selectClass} w-12 font-medium`}
+      style={value ? { background: rampColour(value), color: 'white' } : undefined}
+      value={value ?? ''}
+      aria-label="Ramp on this wall"
+      title="The ramp that climbs this wall. Walls with the same letter carry one road, across any berms between them"
+      disabled={ramps.length === 0 && !value}
+      onChange={(e) => onChange(e.target.value || null)}
+    >
+      <option value="">–</option>
+      {value && !ramps.some((r) => r.name === value) && <option value={value}>{value}</option>}
+      {ramps.map((r) => (
+        <option key={r.name} value={r.name}>
+          {r.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** One ramp: what it's on, what's held, the road, and how far the last run got it. */
+function RampRow({ ramp, strings, results, picking, onPick, onChange, onRemove }: { ramp: Ramp; strings: ObjectSummary[]; results: string[]; picking: boolean; onPick: (use: (at: [number, number]) => void) => void; onChange: (r: Partial<Ramp>) => void; onRemove: () => void }) {
+  return (
+    <div className="border-t py-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="w-7 rounded px-1 py-0.5 text-center font-medium text-white" style={{ background: rampColour(ramp.name) }}>
+          {ramp.name}
+        </span>
+        <select className={`${selectClass} max-w-36`} value={ramp.string} aria-label="String" title="The string this road goes on" onChange={(e) => onChange({ string: e.target.value })}>
+          {!strings.some((s) => s.id === ramp.string) && <option value={ramp.string}>not on a line</option>}
+          {strings.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+        <select className={selectClass} value={ramp.fixed} aria-label="Which end is held" title="Ends at: the run moves the start along the toe until the road comes out here" onChange={(e) => onChange({ fixed: e.target.value as RampFixed })}>
+          <option value="end">Ends at</option>
+          <option value="start">Starts at</option>
+        </select>
+        <span className="flex items-center gap-1">
+          <NumberBox width="w-20" value={ramp.at[0]} title="Easting" onChange={(e) => onChange({ at: [e, ramp.at[1]] })} />
+          <NumberBox width="w-20" value={ramp.at[1]} title="Northing" onChange={(n) => onChange({ at: [ramp.at[0], n] })} />
+          <IconButton title="Pick it in the viewport" disabled={picking} onClick={() => onPick((at) => onChange({ at }))}>
+            <Crosshair className="size-3" />
+          </IconButton>
+        </span>
+        <Choice value={ramp.heading} options={HEADINGS} onChange={(heading) => onChange({ heading })} />
+        <Labelled label="Width, m">
+          <NumberBox width="w-12" value={ramp.width} title="Road width in metres, square to the road" onChange={(width) => onChange({ width })} />
+        </Labelled>
+        <Labelled label="Grade, %">
+          <NumberBox width="w-12" value={ramp.grade} title="Rise over plan run in percent, on the pit-side edge" onChange={(grade) => onChange({ grade })} />
+        </Labelled>
+        <span className="ml-auto">
+          <IconButton title="Remove this ramp" onClick={onRemove}>
+            <Trash2 className="size-3" />
+          </IconButton>
+        </span>
+      </div>
+      {results.map((line, k) => (
+        <p key={k} className={`pt-0.5 ${/stopped|isn't|comes out/.test(line) ? 'text-primary' : 'text-muted-foreground'}`}>
+          {line.replace(/^Ramp [^:]*: /, '')}
+        </p>
+      ))}
+    </div>
   );
 }
 
 /** A profile as one table, read top to bottom: the toe's Register row, then each step going one way from it. */
-function StepTable({ profile, surfaces, rules, picking, pickStart, onChange }: { profile: FaceProfile; surfaces: ObjectSummary[]; rules: WallRule[]; picking: boolean; pickStart: (use: (start: [number, number]) => void) => void; onChange: (p: Partial<FaceProfile>) => void }) {
+function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfile; surfaces: ObjectSummary[]; rules: WallRule[]; onChange: (p: Partial<FaceProfile>) => void }) {
   const { steps, register } = profile;
-  const blank = (kind: WallRow['step']) => blankStep(kind, steps, surfaces, register, usualTolerance);
-  const add = (kind: WallRow['step']) => onChange({ steps: [...steps, blank(kind)] });
-  /** A road through every wall of the profile, to start with: its two rows then move to where it's wanted. */
-  const addRamp = () => pickStart((start) => onChange({ steps: [{ step: 'ramp_start', start, heading: 'along', width: usualRoadWidth, grade: usualGrade }, ...steps, { step: 'ramp_stop' }] }));
+  const ramps = profile.ramps ?? [];
+  const blank = (kind: ProfileStep['step']) => blankStep(kind, steps, surfaces, register, usualTolerance);
+  const add = (kind: ProfileStep['step']) => onChange({ steps: [...steps, blank(kind)] });
+  /** The ramp crossing the berm at a row: the one on the walls either side of it. */
+  const bridged = (at: number) => {
+    const wall = (from: ProfileStep[]) => from.find((s) => s.step === 'project');
+    const [below, above] = [wall(steps.slice(0, at).reverse()), wall(steps.slice(at + 1))];
+    return below?.step === 'project' && above?.step === 'project' && below.ramp && below.ramp === above.ramp ? below.ramp : null;
+  };
   const setSteps = (next: ProfileStep[]) => onChange({ steps: next });
   const nameOf = (target: StepTarget) => (target.kind === 'rl' ? `RL ${target.rl}` : (surfaces.find((s) => s.id === target.id)?.name ?? 'missing'));
   /** What the rows above a row last reached, which a berm registers on unless it names another. */
@@ -506,6 +540,9 @@ function StepTable({ profile, surfaces, rules, picking, pickStart, onChange }: {
               <th className={headClass} title="No berm where the wall below it is lower than this, as where grids sit on each other">
                 Min bench, m
               </th>
+              <th className={headClass} title="The ramp that climbs this wall">
+                Ramp
+              </th>
               <th className={headClass}>Register</th>
               <th className={headClass} title="Clean the line before the next step, to within this many metres">
                 Condition, m
@@ -525,6 +562,7 @@ function StepTable({ profile, surfaces, rules, picking, pickStart, onChange }: {
               <td />
               <td />
               <td />
+              <td />
               <td className={cellClass}>
                 <RegisterCell checked />
               </td>
@@ -533,10 +571,23 @@ function StepTable({ profile, surfaces, rules, picking, pickStart, onChange }: {
               </td>
               <td />
             </tr>
-            {steps.map((step, k) => {
-              const row = { number: k + 1, onChange: (s: ProfileStep) => setSteps(replaceAt(steps, k, s)), onMove: (by: number) => setSteps(moved(steps, k, by)), onRemove: () => setSteps(steps.filter((_, j) => j !== k)) };
-              return isWallRow(step) ? <StepRow key={k} {...row} step={step} surfaces={surfaces} rules={rules} above={reached(k)} carries={carriesOn(steps, k, rules)} blank={blank} /> : <RampRow key={k} {...row} step={step} picking={picking} onPick={pickStart} />;
-            })}
+            {steps.map((step, k) => (
+              <StepRow
+                key={k}
+                number={k + 1}
+                step={step}
+                surfaces={surfaces}
+                rules={rules}
+                above={reached(k)}
+                carries={carriesOn(steps, k, rules)}
+                ramps={ramps}
+                bridged={step.step === 'berm' ? bridged(k) : null}
+                blank={blank}
+                onChange={(s) => setSteps(replaceAt(steps, k, s))}
+                onMove={(by) => setSteps(moved(steps, k, by))}
+                onRemove={() => setSteps(steps.filter((_, j) => j !== k))}
+              />
+            ))}
           </tbody>
         </table>
       </div>
@@ -547,10 +598,6 @@ function StepTable({ profile, surfaces, rules, picking, pickStart, onChange }: {
         <SmallButton onClick={() => add('berm')}>
           <Plus className="size-3" /> Berm
         </SmallButton>
-        <SmallButton disabled={picking || steps.length === 0} title="Then click the toe in the viewport. It adds a start row and a stop row around the walls: move them to the walls the road should climb" onClick={addRamp}>
-          <Plus className="size-3" /> Ramp
-        </SmallButton>
-        {picking && <span className="text-xs text-primary">Click the toe where the road starts. Esc cancels.</span>}
       </div>
     </div>
   );
@@ -692,7 +739,7 @@ export function FaceDesignPanel() {
     setProfileName(null);
   };
   const renameRule = (from: string, to: string) => {
-    const follow = (s: ProfileStep): ProfileStep => (!isWallRow(s) || stepValueOf(s) !== from ? s : s.step === 'project' ? { ...s, batter: to } : { ...s, width: to });
+    const follow = (s: ProfileStep): ProfileStep => (stepValueOf(s) !== from ? s : s.step === 'project' ? { ...s, batter: to } : { ...s, width: to });
     edit((d) => ({
       ...d,
       rules: d.rules.map((r) => (r.name === from ? { ...r, name: to } : r)),
@@ -733,13 +780,51 @@ export function FaceDesignPanel() {
         return { type, values: [], otherwise: at };
     }
   };
-  /** The next click in the viewport as a road's start. */
-  const pickStart = async (use: (start: [number, number]) => void) => {
+  /** The next click in the viewport, as a ramp's point. */
+  const pickRampPoint = async (use: (at: [number, number]) => void, prompt = 'Click where the road has to come out. Esc cancels') => {
     setPicking(true);
-    const point = await pickPoint('Click the toe where the road starts. Esc cancels');
+    const point = await pickPoint(prompt);
     setPicking(false);
     if (point) use([toMillimetres(point[0]), toMillimetres(point[1])]);
   };
+  /** The strings a profile runs on: each line's own, and what's on a line's layer. */
+  const stringsOf = (name: string) => strings.filter((s) => draft.lines.some((l) => l.profile === name && (l.string === s.id || l.layer === s.layer)));
+  /** Of those, the one nearest a point in plan, as what a click on a line most likely meant. */
+  const nearestString = (name: string, at: [number, number]) => {
+    const origin = summary?.origin ?? [0, 0, 0];
+    const [x, y] = [at[0] - origin[0], at[1] - origin[1]];
+    const gap = (s: ObjectSummary) => {
+      const line = s.vertices_local ?? [];
+      let least = Infinity;
+      for (let k = 1; k < line.length; k++) {
+        const [a, b] = [line[k - 1], line[k]];
+        const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+        const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+        least = Math.min(least, Math.hypot(a[0] + t * dx - x, a[1] + t * dy - y));
+      }
+      return least;
+    };
+    return stringsOf(name).reduce<ObjectSummary | undefined>((best, s) => (!best || gap(s) < gap(best) ? s : best), undefined)?.id;
+  };
+  /** A new ramp where the next click says, up the walls that have no ramp yet and finish on a surface. */
+  const addRamp = () => {
+    if (!profile) return;
+    void pickRampPoint((at) => {
+      const taken = (profile.ramps ?? []).map((r) => r.name);
+      const name = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').find((letter) => !taken.includes(letter)) ?? freeName('R', taken);
+      const string = nearestString(profile.name, at);
+      if (!string) return;
+      const ramp: Ramp = { name, string, fixed: 'end', at, heading: 'along', width: usualRoadWidth, grade: usualGrade };
+      setProfile({ ramps: [...(profile.ramps ?? []), ramp], steps: profile.steps.map((s) => (s.step === 'project' && !s.ramp && s.to.kind === 'surface' ? { ...s, ramp: name } : s)) });
+    });
+  };
+  const setRamp = (at: number, change: Partial<Ramp>) => profile && setProfile({ ramps: replaceAt(profile.ramps ?? [], at, { ...(profile.ramps ?? [])[at], ...change }) });
+  const removeRamp = (at: number) => {
+    if (!profile) return;
+    const name = (profile.ramps ?? [])[at].name;
+    setProfile({ ramps: (profile.ramps ?? []).filter((_, k) => k !== at), steps: profile.steps.map((s) => (s.step === 'project' && s.ramp === name ? { ...s, ramp: null } : s)) });
+  };
+  const rampLine = (line: string) => /^Ramp [^:]*: /.test(line);
   const lineName = (line: FaceLine) => {
     if (!line.layer) return nameOf(line.string ?? '');
     const on = strings.filter((s) => s.layer === line.layer && s.attributes.face_design !== id).length;
@@ -874,7 +959,28 @@ export function FaceDesignPanel() {
             <span className="ml-auto text-muted-foreground">Direction</span>
             <Choice value={profile.direction} options={DIRECTIONS} onChange={(direction) => setProfile({ direction })} />
           </div>
-          <StepTable profile={profile} surfaces={surfaces} rules={draft.rules} picking={picking} pickStart={(use) => void pickStart(use)} onChange={setProfile} />
+          <StepTable profile={profile} surfaces={surfaces} rules={draft.rules} onChange={setProfile} />
+          <div className="px-3 pt-1 text-xs">
+            <div className="flex items-center gap-2 pb-1">
+              <span className="text-muted-foreground">Ramps</span>
+              <SmallButton disabled={picking || profile.steps.length === 0 || stringsOf(profile.name).length === 0} title="Then click where the road has to come out" onClick={addRamp}>
+                <Plus className="size-3" /> Ramp
+              </SmallButton>
+              {picking && <span className="text-primary">Click where the road has to come out. Esc cancels.</span>}
+            </div>
+            {(profile.ramps ?? []).map((ramp, k) => (
+              <RampRow
+                key={ramp.name}
+                ramp={ramp}
+                strings={stringsOf(profile.name)}
+                results={report.lines.filter((line) => line.startsWith(`Ramp ${ramp.name}: `))}
+                picking={picking}
+                onPick={(use) => void pickRampPoint(use, ramp.fixed === 'end' ? undefined : 'Click the toe where the road starts. Esc cancels')}
+                onChange={(change) => setRamp(k, change)}
+                onRemove={() => removeRamp(k)}
+              />
+            ))}
+          </div>
         </>
       )}
 
@@ -953,11 +1059,13 @@ export function FaceDesignPanel() {
         </Button>
       </div>
       {report.error && <p className="px-3 pt-2 text-xs text-destructive">{report.error}</p>}
-      {report.lines.map((line, k) => (
-        <p key={k} className="px-3 pt-2 text-xs text-muted-foreground">
-          {line}
-        </p>
-      ))}
+      {report.lines
+        .filter((line) => !rampLine(line))
+        .map((line, k) => (
+          <p key={k} className="px-3 pt-2 text-xs text-muted-foreground">
+            {line}
+          </p>
+        ))}
     </div>
   );
 }

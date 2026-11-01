@@ -59,6 +59,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './desi
 import { IssueMarkers } from './viewport/markers';
 import { type SeamShown, SceneSync } from './viewport/sceneSync';
 import { planPoint, SectionView } from './viewport/section';
+import { RoadLayer } from './viewport/roads';
 import { type Mode, StringLayer } from './viewport/strings';
 import { type FrameStats, Viewport } from './viewport/Viewport';
 import { Input } from '@/design-system/ui/input';
@@ -125,6 +126,7 @@ export default function App() {
   const viewportRef = useRef<Viewport | null>(null);
   const syncRef = useRef<SceneSync | null>(null);
   const stringsRef = useRef<StringLayer | null>(null);
+  const roadsRef = useRef<RoadLayer | null>(null);
   const layerRef = useRef('design');
   const dockRef = useRef<DockviewApi | null>(null);
   const [viewportHost] = useState(() => Object.assign(document.createElement('div'), { className: 'viewport-host' }));
@@ -204,6 +206,7 @@ export default function App() {
     setSummary(next);
     void runLog().then(setLog);
     stringsRef.current?.sync(next);
+    roadsRef.current?.sync(next);
     void sectionRef.current?.refresh(next);
     const sync = syncRef.current;
     const viewport = viewportRef.current;
@@ -222,6 +225,7 @@ export default function App() {
     if (!section || !project) return;
     strings?.setMode('select');
     strings?.setSection(section.tools);
+    roadsRef.current?.setShown(false);
     setModeState('select');
     setSectionOpen(true);
     setStatus({ text: 'Section: [ and ] step along it, or drag on the plan map; Draw string works on the plane; the wheel zooms where the cursor is, left drag pans' });
@@ -231,6 +235,7 @@ export default function App() {
   const closeSection = useCallback(() => {
     sectionRef.current?.close();
     stringsRef.current?.setSection(null);
+    roadsRef.current?.setShown(true);
     setSectionOpen(false);
   }, []);
 
@@ -310,6 +315,7 @@ export default function App() {
       section.onUnfilled = (count) => setStatus({ text: `${count === 1 ? 'A closed loop' : `${count} closed loops`} in this section could not be filled: the lines show as cut` });
       created.pickPoint = (x, y) => strings.pick(x, y);
       stringsRef.current = strings;
+      roadsRef.current = new RoadLayer(created);
       detach = strings.attach();
       show(await projectSummary());
       const config = await benchConfig();

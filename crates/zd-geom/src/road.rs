@@ -64,6 +64,9 @@ pub struct FaceRamp {
     pub width: f64,
     /// Rise over plan run on the pit-side edge, as a fraction.
     pub grade: f64,
+    /// Where it has to come out on the crest of its last wall, if that's what's held. `start` is then worked
+    /// out by the run, moving it along the toe as a planner would.
+    pub ends_at: Option<[f64; 2]>,
 }
 
 /// A road a face has cut.
@@ -77,6 +80,8 @@ pub struct FaceRoad {
     pub pit_edge: Polyline,
     /// From the bottom of the road to the top.
     pub wall_edge: Polyline,
+    /// How far along the toe it came out from its held end, if that's further than the tolerance (m).
+    pub off_end: Option<f64>,
 }
 
 /// A ramp that stopped short of its stop row, where it stopped and why. Any walls it had climbed keep it.
@@ -295,6 +300,28 @@ fn nearest_place(line: &Polyline, p: P3) -> f64 {
     let along = |i: usize| nearest_along(line.vertices[i], line.vertices[i + 1], p);
     let nearest = (0..line.vertices.len() - 1).min_by(|a, b| along(*a).1.total_cmp(&along(*b).1)).expect("a line has a segment");
     nearest as f64 + along(nearest).0
+}
+
+/// How far along a line a point in plan is nearest to, in metres from its start.
+pub(crate) fn metres_along(line: &Polyline, p: P3) -> f64 {
+    let place = nearest_place(line, p);
+    let whole = place.floor() as usize;
+    let before: f64 = line.vertices.windows(2).take(whole).map(|w| plan_gap(w[0], w[1])).sum();
+    before + plan_gap(line.vertices[whole], point_at(line, place))
+}
+
+/// The point a distance in metres along a line, kept to the line's ends.
+pub(crate) fn point_along(line: &Polyline, metres: f64) -> P3 {
+    let mut left = metres.max(0.0);
+    for w in line.vertices.windows(2) {
+        let length = plan_gap(w[0], w[1]);
+        if left <= length && length > 0.0 {
+            let t = left / length;
+            return [w[0][0] + t * (w[1][0] - w[0][0]), w[0][1] + t * (w[1][1] - w[0][1]), w[0][2] + t * (w[1][2] - w[0][2])];
+        }
+        left -= length;
+    }
+    line.vertices[line.vertices.len() - 1]
 }
 
 fn point_at(line: &Polyline, place: f64) -> P3 {
@@ -683,7 +710,7 @@ fn plan_unit(a: P3) -> [f64; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::face::{Face, FaceStep, FaceTarget, project_face};
+    use crate::face::{END_TOLERANCE, Face, FaceStep, FaceTarget, project_face};
     use crate::{EdgeRule, find_crossings, triangulate_grid};
     use zd_core::{FaceDirection, Grid};
 
@@ -692,7 +719,7 @@ mod tests {
     const FLOOR: f64 = 100.0;
     /// cos of the angle a 10 % road climbs a 45 degree wall at, where sin(angle) = grade / slope.
     const COS: f64 = 0.994_987_437_106_62;
-    const RAMP: FaceRamp = FaceRamp { start: [E + 100.0, N], back: false, width: 10.0, grade: 0.1 };
+    const RAMP: FaceRamp = FaceRamp { start: [E + 100.0, N], back: false, width: 10.0, grade: 0.1, ends_at: None };
 
     fn level(rl: f64) -> TriMesh {
         triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 30, 20, |_, _| rl))
@@ -702,21 +729,23 @@ mod tests {
         Polyline { vertices: points.iter().map(|p| [E + p[0], N + p[1], rl]).collect(), closed: false }
     }
 
+    /// A wall the road climbs.
     fn wall(to: FaceTarget<'_>, batter: f64) -> FaceStep<'_> {
-        FaceStep::Project { to, batter: EdgeRule::Fixed(batter), condition: None }
+        FaceStep::Project { to, batter: EdgeRule::Fixed(batter), condition: None, ramp: Some(0) }
+    }
+
+    fn plain_wall(to: FaceTarget<'_>, batter: f64) -> FaceStep<'_> {
+        FaceStep::Project { to, batter: EdgeRule::Fixed(batter), condition: None, ramp: None }
     }
 
     fn berm<'a>(on: FaceTarget<'a>, width: f64) -> FaceStep<'a> {
         FaceStep::Berm { on: Some(on), width: EdgeRule::Fixed(width), register: true, condition: None, min_bench: None }
     }
 
-    /// A face from a level toe along +x, rising to the north, with a ramp through all of its steps.
-    fn ramped<'a>(ramp: FaceRamp, steps: Vec<FaceStep<'a>>, floor: &TriMesh) -> Face {
+    /// A face from a level toe along +x, rising to the north.
+    fn ramped(ramp: FaceRamp, steps: Vec<FaceStep<'_>>, floor: &TriMesh) -> Face {
         let toe = string(&[[0.0, 0.0], [600.0, 0.0]], FLOOR);
-        let mut rows = vec![FaceStep::RampStart(Some(ramp))];
-        rows.extend(steps);
-        rows.push(FaceStep::RampStop);
-        project_face(&toe, floor, OffsetSide::Left, FaceDirection::Up, &rows).unwrap()
+        project_face(&toe, floor, OffsetSide::Left, FaceDirection::Up, &steps, &[ramp]).unwrap()
     }
 
     fn wall_to(rl: f64, batter: f64, ramp: FaceRamp) -> Face {
@@ -858,8 +887,7 @@ mod tests {
     #[test]
     fn a_road_works_with_the_wall_on_the_right() {
         let toe = string(&[[600.0, 0.0], [0.0, 0.0]], FLOOR);
-        let rows = [FaceStep::RampStart(Some(FaceRamp { start: [E + 500.0, N], ..RAMP })), wall(FaceTarget::Rl(120.0), 45.0), FaceStep::RampStop];
-        let face = project_face(&toe, &level(FLOOR), OffsetSide::Right, FaceDirection::Up, &rows).unwrap();
+        let face = project_face(&toe, &level(FLOOR), OffsetSide::Right, FaceDirection::Up, &[wall(FaceTarget::Rl(120.0), 45.0)], &[FaceRamp { start: [E + 500.0, N], ..RAMP }]).unwrap();
         assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
         let top = *face.roads[0].pit_edge.vertices.last().unwrap();
         assert!((top[1] - N - 20.0).abs() < 1e-3, "the wall rises north of a string running west: {top:?}");
@@ -891,8 +919,7 @@ mod tests {
     fn a_toe_climbing_faster_than_the_road_is_named() {
         let toe = Polyline { vertices: vec![[E, N, 100.0], [E + 600.0, N, 190.0]], closed: false };
         let floor = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 20, 20, |x, _| 100.0 + 0.15 * (x - E)));
-        let rows = [FaceStep::RampStart(Some(RAMP)), wall(FaceTarget::Rl(300.0), 45.0), FaceStep::RampStop];
-        let face = project_face(&toe, &floor, OffsetSide::Left, FaceDirection::Up, &rows).unwrap();
+        let face = project_face(&toe, &floor, OffsetSide::Left, FaceDirection::Up, &[wall(FaceTarget::Rl(300.0), 45.0)], &[RAMP]).unwrap();
         assert!(face.roads.is_empty(), "{:?}", face.roads);
         assert!(face.no_roads[0].why.contains("can't leave the toe"), "{}", face.no_roads[0].why);
     }
@@ -930,8 +957,7 @@ mod tests {
         let bumps = |x: f64| 100.0 + 2.0 * (x / 40.0).sin();
         let toe = Polyline { vertices: (0..=60).map(|k| [E + k as f64 * 10.0, N, bumps(k as f64 * 10.0)]).collect(), closed: false };
         let floor = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [10.0, 10.0], 180, 100, |x, _| bumps(x - E)));
-        let rows = [FaceStep::RampStart(Some(RAMP)), wall(FaceTarget::Rl(125.0), 60.0), FaceStep::RampStop];
-        let face = project_face(&toe, &floor, OffsetSide::Left, FaceDirection::Up, &rows).unwrap();
+        let face = project_face(&toe, &floor, OffsetSide::Left, FaceDirection::Up, &[wall(FaceTarget::Rl(125.0), 60.0)], &[RAMP]).unwrap();
         assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
         let pit = &face.roads[0].pit_edge;
         for grade in rise_over_run(pit) {
@@ -951,7 +977,7 @@ mod tests {
         assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
         let road = &face.roads[0];
         assert_eq!(face.roads.len(), 1);
-        assert_eq!(road.steps, [1, 3]);
+        assert_eq!(road.steps, [0, 2]);
         let pit = &road.pit_edge;
         assert!((pit.plan_length() - 400.0).abs() < 1e-3, "{}", pit.plan_length());
         for grade in rise_over_run(pit) {
@@ -977,18 +1003,11 @@ mod tests {
     fn a_road_climbs_three_walls_with_the_wall_on_the_right_going_back() {
         let toe = string(&[[0.0, 0.0], [900.0, 0.0]], FLOOR);
         let (one, two) = (FaceTarget::Rl(115.0), FaceTarget::Rl(130.0));
-        let rows = [
-            FaceStep::RampStart(Some(FaceRamp { start: [E + 800.0, N], back: true, width: 10.0, grade: 0.1 })),
-            wall(one, 60.0),
-            berm(one, 10.0),
-            wall(two, 60.0),
-            berm(two, 10.0),
-            wall(FaceTarget::Rl(145.0), 60.0),
-            FaceStep::RampStop,
-        ];
-        let face = project_face(&toe, &level(FLOOR), OffsetSide::Right, FaceDirection::Up, &rows).unwrap();
+        let rows = [wall(one, 60.0), berm(one, 10.0), wall(two, 60.0), berm(two, 10.0), wall(FaceTarget::Rl(145.0), 60.0)];
+        let ramp = FaceRamp { start: [E + 800.0, N], back: true, ..RAMP };
+        let face = project_face(&toe, &level(FLOOR), OffsetSide::Right, FaceDirection::Up, &rows, &[ramp]).unwrap();
         assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
-        assert_eq!(face.roads[0].steps, [1, 5]);
+        assert_eq!(face.roads[0].steps, [0, 4]);
         assert!((face.roads[0].pit_edge.plan_length() - 450.0).abs() < 1e-3, "{}", face.roads[0].pit_edge.plan_length());
         one_clean_sheet(&face);
     }
@@ -998,22 +1017,22 @@ mod tests {
     fn a_road_stops_at_the_last_wall_it_can_make() {
         let toe = string(&[[0.0, 0.0], [350.0, 0.0]], FLOOR);
         let on = FaceTarget::Rl(120.0);
-        let rows = [FaceStep::RampStart(Some(RAMP)), wall(on, 45.0), berm(on, 10.0), wall(FaceTarget::Rl(160.0), 45.0), FaceStep::RampStop];
-        let face = project_face(&toe, &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows).unwrap();
-        assert_eq!(face.roads[0].steps, [1, 1], "{:?}", face.no_roads);
-        assert_eq!(face.no_roads[0].step, 3);
+        let rows = [wall(on, 45.0), berm(on, 10.0), wall(FaceTarget::Rl(160.0), 45.0)];
+        let face = project_face(&toe, &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows, &[RAMP]).unwrap();
+        assert_eq!(face.roads[0].steps, [0, 0], "{:?}", face.no_roads);
+        assert_eq!(face.no_roads[0].step, 2);
         assert!(face.no_roads[0].why.contains("runs out of wall"), "{}", face.no_roads[0].why);
         assert_eq!(face.benches.len(), 2);
         one_clean_sheet(&face);
     }
 
-    /// Past its stop row a road's done: the next berm follows the crest round its top.
+    /// Past its last wall a road's done: the next berm follows the crest round its top.
     #[test]
     fn a_berm_and_a_wall_carry_on_above_a_road() {
         let toe = string(&[[0.0, 0.0], [600.0, 0.0]], FLOOR);
         let on = FaceTarget::Rl(120.0);
-        let rows = [FaceStep::RampStart(Some(RAMP)), wall(on, 45.0), FaceStep::RampStop, berm(on, 10.0), wall(FaceTarget::Rl(140.0), 45.0)];
-        let face = project_face(&toe, &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows).unwrap();
+        let rows = [wall(on, 45.0), berm(on, 10.0), plain_wall(FaceTarget::Rl(140.0), 45.0)];
+        let face = project_face(&toe, &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows, &[RAMP]).unwrap();
         assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
         one_clean_sheet(&face);
         // Beside the road the next wall starts a road width and a berm behind the plain crest.
@@ -1026,28 +1045,61 @@ mod tests {
     fn a_profile_can_hold_two_ramps() {
         let toe = string(&[[0.0, 0.0], [900.0, 0.0]], FLOOR);
         let on = FaceTarget::Rl(120.0);
-        let rows = [
-            FaceStep::RampStart(Some(RAMP)),
-            wall(on, 45.0),
-            FaceStep::RampStop,
-            berm(on, 10.0),
-            FaceStep::RampStart(Some(FaceRamp { start: [E + 600.0, N + 30.0], ..RAMP })),
-            wall(FaceTarget::Rl(140.0), 45.0),
-            FaceStep::RampStop,
-        ];
-        let face = project_face(&toe, &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows).unwrap();
+        let above = FaceStep::Project { to: FaceTarget::Rl(140.0), batter: EdgeRule::Fixed(45.0), condition: None, ramp: Some(1) };
+        let rows = [wall(on, 45.0), berm(on, 10.0), above];
+        let ramps = [RAMP, FaceRamp { start: [E + 600.0, N + 30.0], ..RAMP }];
+        let face = project_face(&toe, &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows, &ramps).unwrap();
         assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
-        assert_eq!(face.roads.iter().map(|r| (r.ramp, r.steps)).collect::<Vec<_>>(), [(0, [1, 1]), (1, [5, 5])]);
+        assert_eq!(face.roads.iter().map(|r| (r.ramp, r.steps)).collect::<Vec<_>>(), [(0, [0, 0]), (1, [2, 2])]);
         one_clean_sheet(&face);
     }
 
-    /// A row whose ramp is on another string does nothing here.
+    /// Two rows that would be one wall are two where the ramp changes, so a road can finish part way up.
     #[test]
-    fn a_ramp_on_another_string_leaves_this_one_plain() {
-        let toe = string(&[[0.0, 0.0], [600.0, 0.0]], FLOOR);
-        let rows = [FaceStep::RampStart(None), wall(FaceTarget::Rl(120.0), 45.0), FaceStep::RampStop];
-        let face = project_face(&toe, &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows).unwrap();
-        assert!(face.roads.is_empty() && face.no_roads.is_empty());
+    fn a_road_can_finish_at_a_row_part_way_up_one_batter() {
+        let (lower, upper) = (wall(FaceTarget::Rl(120.0), 45.0), plain_wall(FaceTarget::Rl(140.0), 45.0));
+        let face = ramped(RAMP, vec![lower, upper], &level(FLOOR));
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        assert_eq!(face.roads[0].steps, [0, 0]);
+        assert!((face.roads[0].pit_edge.vertices.last().unwrap()[2] - 120.0).abs() < 1e-6);
+        assert_eq!(face.benches.len(), 2);
+    }
+
+    /// With its end held, the run moves the start along the toe until the road comes out there, up one wall.
+    #[test]
+    fn a_road_with_its_end_held_comes_out_there() {
+        let face = wall_to(120.0, 45.0, FaceRamp { ends_at: Some([E + 400.0, N + 20.0]), ..RAMP });
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        let pit = &face.roads[0].pit_edge;
+        assert!((pit.vertices.last().unwrap()[0] - E - 400.0).abs() <= END_TOLERANCE, "{:?}", pit.vertices.last());
+        assert!((pit.vertices[0][0] - E - (400.0 - 200.0 * COS)).abs() <= END_TOLERANCE, "the start moved 199 m back: {:?}", pit.vertices[0]);
+    }
+
+    /// The same running back along the string, through a berm, with the walls wandering.
+    #[test]
+    fn a_road_through_two_walls_comes_out_where_its_held() {
+        let surface = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [20.0, 20.0], 90, 50, |x, _| 118.0 + 2.0 * ((x - E) / 60.0).sin()));
+        let rows = [
+            FaceStep::Project { to: FaceTarget::Surface(&surface), batter: EdgeRule::Fixed(60.0), condition: Some(0.1), ramp: Some(0) },
+            FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: Some(0.1), min_bench: None },
+            wall(FaceTarget::Rl(140.0), 60.0),
+        ];
+        let ramp = FaceRamp { back: true, ends_at: Some([E + 150.0, N + 40.0]), ..RAMP };
+        let toe = string(&[[0.0, 0.0], [900.0, 0.0]], FLOOR);
+        let face = project_face(&toe, &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows, &[ramp]).unwrap();
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        let top = *face.roads[0].pit_edge.vertices.last().unwrap();
+        assert!((top[0] - E - 150.0).abs() <= END_TOLERANCE, "{top:?}");
+        assert!((top[2] - 140.0).abs() < 1e-6, "{top:?}");
+        assert_eq!(face.roads[0].steps, [0, 2]);
+        assert_eq!(face.roads[0].off_end, None);
+    }
+
+    /// A held end too close to the end of the string for the road's length says so.
+    #[test]
+    fn a_held_end_the_string_cant_reach_says_how_far_short() {
+        let face = wall_to(120.0, 45.0, FaceRamp { ends_at: Some([E + 100.0, N + 20.0]), ..RAMP });
+        assert!(face.no_roads[0].why.contains("past the end of the string"), "{:?}", face.no_roads);
     }
 
     /// A start off the line takes the nearest point on it.
@@ -1069,19 +1121,15 @@ mod tests {
     fn wandering_face(x: f64, rise: f64, height: f64, width: f64, side: OffsetSide, through: bool) -> Result<Face, crate::GeomError> {
         let target = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [10.0, 10.0], 180, 100, |px, _| FLOOR + height + rise * (px - E - x) + 2.0 * ((px - E) / 30.0).sin()));
         let road = FaceRamp { start: [E + x, N], width, ..RAMP };
-        let first = FaceStep::Project { to: FaceTarget::Surface(&target), batter: EdgeRule::Fixed(70.0), condition: Some(0.1) };
+        let first = FaceStep::Project { to: FaceTarget::Surface(&target), batter: EdgeRule::Fixed(70.0), condition: Some(0.1), ramp: Some(0) };
         let bench = FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: Some(0.1), min_bench: Some(5.0) };
-        let second = FaceStep::Project { to: FaceTarget::Rl(140.0), batter: EdgeRule::Fixed(70.0), condition: Some(0.1) };
-        let rows: Vec<FaceStep<'_>> = if through {
-            vec![FaceStep::RampStart(Some(road)), first, bench, second, FaceStep::RampStop]
-        } else {
-            vec![FaceStep::RampStart(Some(road)), first, FaceStep::RampStop, bench, second]
-        };
+        let second = FaceStep::Project { to: FaceTarget::Rl(140.0), batter: EdgeRule::Fixed(70.0), condition: Some(0.1), ramp: through.then_some(0) };
+        let rows = [first, bench, second];
         let toe = match side {
             OffsetSide::Left => string(&[[0.0, 0.0], [600.0, 0.0]], FLOOR),
             OffsetSide::Right => string(&[[600.0, 0.0], [0.0, 0.0]], FLOOR),
         };
-        project_face(&toe, &level(FLOOR), side, FaceDirection::Up, &rows)
+        project_face(&toe, &level(FLOOR), side, FaceDirection::Up, &rows, &[road])
     }
 
     /// Walls wandering round the minimum bench, both sides, with the road on one wall or through to the next.
@@ -1119,18 +1167,16 @@ mod tests {
         let target = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [10.0, 10.0], 180, 100, |x, _| FLOOR + 7.0 + 0.01 * (x - E - 120.0) + 2.0 * ((x - E) / 30.0).sin()));
         let shelf = FaceTarget::Rl(FLOOR + 4.0);
         let rows = [
-            FaceStep::RampStart(Some(FaceRamp { start: [E + 120.0, N], ..RAMP })),
-            FaceStep::Project { to: shelf, batter: EdgeRule::Fixed(70.0), condition: None },
+            wall(shelf, 70.0),
             FaceStep::Berm { on: Some(shelf), width: EdgeRule::Fixed(10.0), register: true, condition: None, min_bench: None },
-            FaceStep::Project { to: FaceTarget::Surface(&target), batter: EdgeRule::Fixed(70.0), condition: Some(0.1) },
+            FaceStep::Project { to: FaceTarget::Surface(&target), batter: EdgeRule::Fixed(70.0), condition: Some(0.1), ramp: Some(0) },
             FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: Some(0.1), min_bench: Some(5.0) },
-            FaceStep::Project { to: FaceTarget::Rl(140.0), batter: EdgeRule::Fixed(70.0), condition: Some(0.1) },
-            FaceStep::RampStop,
+            FaceStep::Project { to: FaceTarget::Rl(140.0), batter: EdgeRule::Fixed(70.0), condition: Some(0.1), ramp: Some(0) },
         ];
         let toe = string(&[[0.0, 0.0], [600.0, 0.0]], FLOOR);
-        let face = project_face(&toe, &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows).unwrap();
-        assert_eq!(face.roads.iter().map(|r| r.steps).collect::<Vec<_>>(), [[1, 1]], "{:?}", face.no_roads);
-        assert_eq!(face.no_roads[0].step, 3, "{:?}", face.no_roads);
+        let face = project_face(&toe, &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows, &[FaceRamp { start: [E + 120.0, N], ..RAMP }]).unwrap();
+        assert_eq!(face.roads.iter().map(|r| r.steps).collect::<Vec<_>>(), [[0, 0]], "{:?}", face.no_roads);
+        assert_eq!(face.no_roads[0].step, 2, "{:?}", face.no_roads);
         assert!(face.no_roads[0].why.contains("what's built on it can't be"), "{:?}", face.no_roads);
         assert_eq!(face.benches.len(), 3, "all three walls are there");
     }

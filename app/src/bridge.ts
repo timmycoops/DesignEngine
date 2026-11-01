@@ -421,14 +421,31 @@ export type StepValue = number | string;
 
 /** `condition` is how far the line may move in plan when it's cleaned (m); null leaves it as it is. */
 export type ProfileStep =
-  | { step: 'project'; to: StepTarget; batter: StepValue; condition: number | null }
-  | { step: 'berm'; on: StepTarget | null; width: StepValue; register: boolean; condition: number | null; min_bench?: number | null }
-  /** A road starts here, and the walls down to the Ramp stop row carry it. The width is square to the road, and grade is rise over plan run on the pit-side edge, in percent. */
-  | { step: 'ramp_start'; start: [number, number]; heading: RampHeading; width: number; grade: number }
-  | { step: 'ramp_stop' };
+  /** `ramp` names the ramp that climbs this wall. */
+  | { step: 'project'; to: StepTarget; batter: StepValue; condition: number | null; ramp?: string | null }
+  | { step: 'berm'; on: StepTarget | null; width: StepValue; register: boolean; condition: number | null; min_bench?: number | null };
 
 /** The way a road runs along its string. */
 export type RampHeading = 'along' | 'back';
+
+/** Which end of a road is held. With its end held, the run moves its start along the toe until it comes out there. */
+export type RampFixed = 'start' | 'end';
+
+/** A road up the walls that name it. */
+export interface Ramp {
+  /** What a wall row calls it: a letter, usually. */
+  name: string;
+  /** The string it goes on, one of those the profile runs on. */
+  string: string;
+  fixed: RampFixed;
+  /** Where the road starts or has to come out, in plan (E, N). */
+  at: [number, number];
+  heading: RampHeading;
+  /** Square to the road, in metres. */
+  width: number;
+  /** Rise over plan run on the inside edge, the pit side, in percent. */
+  grade: number;
+}
 
 export type FaceDirection = 'up' | 'down';
 
@@ -439,6 +456,7 @@ export interface FaceProfile {
   register: string;
   condition: number | null;
   steps: ProfileStep[];
+  ramps?: Ramp[];
 }
 
 export interface FaceLine {
