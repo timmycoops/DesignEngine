@@ -750,6 +750,12 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
   const whole = await run('face.project', { design: design.id });
   const designMs = performance.now() - designed;
   const again = await run('face.project', { design: design.id });
+  // A line on a layer, in place of the string: the toe, going up.
+  await run('object.move', { objects: [toe.id], layer: 'bench toes' });
+  const toes = (await projectSummary()).layers.find((l) => l.name === 'bench toes')?.id;
+  const onLayer = { ...content, layer: 'bench layer faces', lines: [{ layer: toes, profile: 'Highwall', side: 'left', run_on: [100, 100] }] };
+  const layerDesign = (await run('face.save_design', { name: 'Bench layer design', content: onLayer })).fresh[0];
+  const byLayer = await run('face.project', { design: layerDesign.id });
   const close = async (half: number) => {
     await section.show([at[0] - half * ux, at[1] - half * uy], [at[0] + half * ux, at[1] + half * uy], summary);
     await settle();
@@ -759,7 +765,7 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
   const wide = await close(400);
   const tight = await close(120);
   const surfaces = (section.lastCut?.groups ?? []).filter((g) => g.kind === 'surface').reduce((sum, g) => sum + g.segments, 0);
-  return { steps, ms, surface_segments_in_cut: surfaces, design_ms: designMs, design_messages: whole.messages, design_made: whole.fresh.length, design_rerun_made: again.fresh.length, wide, tight };
+  return { steps, ms, surface_segments_in_cut: surfaces, design_ms: designMs, design_messages: whole.messages, design_made: whole.fresh.length, design_by_layer_made: byLayer.fresh.length, design_by_layer_messages: byLayer.messages, design_rerun_made: again.fresh.length, wide, tight };
 }
 
 /** The fills on, as they first show, then off and on again by the toolbar's Fill button. */

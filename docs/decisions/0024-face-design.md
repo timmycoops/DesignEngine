@@ -16,8 +16,11 @@ out as one table instead, a row per step, "easier to use", and asked for everyth
 1. **A face design is one saved object**: its lines, the profiles they use and any rules those share, so an edit
    is one revision and one undo. It saves with the project. `Fixed` is the only rule type so far, and ramp rules can
    sit beside them later.
-2. **A line is a string, a profile, a side and a run-on past each end.** Lines come from the selection, a list,
-   or a whole layer, as selection is one object at a time.
+2. **A line is a string or a layer, a profile, a side and a run-on past each end.** A line on a layer takes the strings on
+   it at each run, hidden or not, so a string added since comes in on the next run and nothing rebuilds by itself. It
+   leaves out what this design made last time, and a string a design reaches twice under one profile runs once. One side
+   covers the whole layer, so strings on it want digitising the same way round. Tim, 2026-11-01: "a layer or string inside
+   a layer". The layer is held by its id, so renaming it doesn't lose it.
 3. **`face.project` runs every line in one run, one undo.** A run makes toe and crest strings for each wall and
    one face surface per line, on the design's layer, and replaces what the last run of that design made.
 4. **Each line gets its own oversized face.** Faces that cross are fine, because the cut does the fitting.

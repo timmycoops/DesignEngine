@@ -436,7 +436,10 @@ export interface FaceProfile {
 }
 
 export interface FaceLine {
-  string: string;
+  /** One string to run on; or, in its place, `layer`. */
+  string?: string;
+  /** Every string on this layer (its id) as it stands at each run. */
+  layer?: string;
   profile: string;
   side: WallSide;
   /** Past the string's start and end, in metres. */
