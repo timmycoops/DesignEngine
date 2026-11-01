@@ -114,8 +114,8 @@ fn one_seam_reads_and_agrees_with_itself() {
     let seam = read_vulcan_seam(&PathBuf::from(dir), &prefix, &seam_code).unwrap();
     println!("{} grids read in {:.0} ms; skipped {:?}", seam.grids.len(), start.elapsed().as_secs_f64() * 1e3, seam.skipped);
 
-    let roof = &seam.roof().grid;
-    let floor = &seam.floor().grid;
+    let roof = &seam.roof().unwrap().grid;
+    let floor = &seam.floor().unwrap().grid;
     println!("lattice {} x {} at {} m", roof.cols, roof.rows, roof.cell_size[0]);
     assert_eq!(roof.z.iter().zip(&floor.z).filter(|(r, f)| f > r).count(), 0, "floor never above roof");
 
@@ -159,7 +159,7 @@ fn every_seam_with_roof_and_floor_reads() {
         let set = read_vulcan_seam(&dir, &prefix, seam).unwrap_or_else(|e| panic!("{seam}: {e}"));
         grids += set.grids.len();
         skipped += set.skipped.len();
-        crossed += usize::from(set.roof().grid.z.iter().zip(&set.floor().grid.z).any(|(r, f)| f > r));
+        crossed += usize::from(set.roof().unwrap().grid.z.iter().zip(&set.floor().unwrap().grid.z).any(|(r, f)| f > r));
     }
     println!(
         "{} seams, {grids} grids read in {:.1} s; {skipped} skipped; seams with floor above roof: {crossed}",

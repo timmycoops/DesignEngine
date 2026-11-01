@@ -363,8 +363,12 @@ pub fn vulcan_grid_name(file_name: &str) -> Option<(String, String)> {
     Some((stem.to_ascii_lowercase(), variable.to_string()))
 }
 
-/// Every grid of one seam: `<prefix><seam>.<variable>g`, matched case-insensitively on the whole
-/// stem (so seam `upper` does not pick up `upperp15`).
+/// Vulcan model variables that hold elevations rather than thicknesses or qualities.
+pub const ELEVATION_VARIABLES: [&str; 3] = ["sr", "sf", "tp"];
+
+/// Every grid of one name: `<prefix><seam>.<variable>g`, matched case-insensitively on the whole
+/// stem (so seam `upper` does not pick up `upperp15`). A roof and floor make a seam. One of them on its
+/// own, such as a topography or a stage plan saved as `.sfg`, is a single surface.
 #[derive(Debug, Clone)]
 pub struct VulcanSeam {
     pub seam: String,
@@ -375,17 +379,18 @@ pub struct VulcanSeam {
 }
 
 impl VulcanSeam {
-    pub fn roof(&self) -> &VulcanGrid {
-        &self.grids["sr"]
+    pub fn roof(&self) -> Option<&VulcanGrid> {
+        self.grids.get("sr")
     }
 
-    pub fn floor(&self) -> &VulcanGrid {
-        &self.grids["sf"]
+    pub fn floor(&self) -> Option<&VulcanGrid> {
+        self.grids.get("sf")
     }
 }
 
-/// Reads a seam's grids from `dir`. The roof (`sr`) and floor (`sf`) must read; another variable that
-/// cannot be read is skipped and listed. Every grid must share the roof's lattice.
+/// Reads the grids of one name from `dir`. It needs a roof (`sr`), floor (`sf`) or topography (`tp`), and
+/// a roof or floor that is there must read; another variable that cannot be read is skipped and listed.
+/// Every grid must share the lattice of the first of those.
 pub fn read_vulcan_seam(dir: &Path, prefix: &str, seam: &str) -> Result<VulcanSeam, IoError> {
     let stem = format!("{prefix}{seam}").to_ascii_lowercase();
     let mut files: Vec<(String, std::path::PathBuf)> = Vec::new();
@@ -411,14 +416,11 @@ pub fn read_vulcan_seam(dir: &Path, prefix: &str, seam: &str) -> Result<VulcanSe
             Err(e) => return Err(e),
         }
     }
-    for needed in ["sr", "sf"] {
-        if !out.grids.contains_key(needed) {
-            return Err(IoError::Unsupported(format!("seam '{seam}' has no {needed} grid ({stem}.{needed}g) in {}", dir.display())));
-        }
-    }
-    let lattice = out.roof().grid.clone();
-    if let Some((variable, _)) = out.grids.iter().find(|(_, g)| !g.grid.same_lattice(&lattice)) {
-        return Err(IoError::Binary(format!("{stem}.{variable}g is on a different lattice from {stem}.srg")));
+    let Some((first, lattice)) = ELEVATION_VARIABLES.iter().find_map(|v| Some((*v, &out.grids.get(*v)?.grid))) else {
+        return Err(IoError::Unsupported(format!("'{seam}' has no roof, floor or topography grid ({stem}.srg, .sfg or .tpg) in {}", dir.display())));
+    };
+    if let Some((variable, _)) = out.grids.iter().find(|(_, g)| !g.grid.same_lattice(lattice)) {
+        return Err(IoError::Binary(format!("{stem}.{variable}g is on a different lattice from {stem}.{first}g")));
     }
     Ok(out)
 }
@@ -795,15 +797,24 @@ pub(crate) mod tests {
 
         let seam = read_vulcan_seam(&dir, "pit", "UPPER").unwrap();
         assert_eq!(seam.grids.keys().collect::<Vec<_>>(), ["ra", "rd", "sf", "sr"]);
-        assert_eq!(seam.roof().grid.z_at(2, 1) - seam.floor().grid.z_at(2, 1), 1.5);
-        assert_eq!(seam.roof().log.compressed_blocks, 3, "136 bytes in 64-byte blocks");
+        assert_eq!(seam.roof().unwrap().grid.z_at(2, 1) - seam.floor().unwrap().grid.z_at(2, 1), 1.5);
+        assert_eq!(seam.roof().unwrap().log.compressed_blocks, 3, "136 bytes in 64-byte blocks");
         assert_eq!(seam.grids["rd"].grid.z_at(0, 0), 1.5);
         assert_eq!(seam.skipped.len(), 1, "damaged ts skipped and listed");
         assert_eq!(seam.skipped[0].0, "ts");
 
         std::fs::write(dir.join("pitupper.tkg"), plain_grid("t", [E, N], 50.0, 3, 2, &[Some(1.5); 6], 0)).unwrap();
         assert!(matches!(read_vulcan_seam(&dir, "pit", "upper"), Err(IoError::Binary(m)) if m.contains("different lattice")));
-        assert!(read_vulcan_seam(&dir, "pit", "lower").is_err(), "no roof or floor");
+        std::fs::write(dir.join("pitlower.rag"), grid(30.5)).unwrap();
+        assert!(matches!(read_vulcan_seam(&dir, "pit", "lower"), Err(IoError::Unsupported(m)) if m.contains("no roof, floor or topography")));
+
+        // A floor on its own is one surface, and its lattice is the one the rest must share.
+        std::fs::write(dir.join("pittopo.sfg"), grid(118.5)).unwrap();
+        let topo = read_vulcan_seam(&dir, "pit", "topo").unwrap();
+        assert!(topo.roof().is_none());
+        assert_eq!(topo.floor().unwrap().grid.z_at(2, 1), 118.5);
+        std::fs::write(dir.join("pittopo.tkg"), plain_grid("t", [E, N], 50.0, 3, 2, &[Some(1.5); 6], 0)).unwrap();
+        assert!(matches!(read_vulcan_seam(&dir, "pit", "topo"), Err(IoError::Binary(m)) if m.contains("different lattice from pittopo.sfg")));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

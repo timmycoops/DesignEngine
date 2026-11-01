@@ -3,20 +3,19 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, ObjectKind};
-use zd_io::read_vulcan_seam;
+use zd_io::{ELEVATION_VARIABLES, read_vulcan_seam};
 
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
-/// `grid.import_vulcan_seam`: every grid of one seam from a folder of Vulcan grids
+/// `grid.import_vulcan_seam`: every grid of one name from a folder of Vulcan grids
 /// (`<prefix><seam>.<variable>g`), each as a grid object named "<SEAM> <variable>" (e.g. "UPPER sr")
 /// with its seam, variable, header text and file name as attributes, and a `role`: `elevation` for
 /// roof, floor and topography (RLs, drawn as surfaces, whole across nodes flagged off) or `property`
-/// for everything else (thicknesses, qualities). Plain and compressed (`vulZ`) files both read. Roof and
-/// floor must read; other grids that cannot be read are skipped and listed.
+/// for everything else (thicknesses, qualities). Plain and compressed (`vulZ`) files both read. A roof or
+/// floor that is there must read; other grids that cannot be read are skipped and listed. A name needs
+/// one elevation grid, and one without a roof and floor pair, such as a topography or a stage plan saved
+/// as `.sfg`, comes in as a single surface.
 pub struct ImportVulcanSeam;
-
-/// Vulcan model variables that hold elevations rather than thicknesses or qualities.
-const ELEVATION_VARIABLES: [&str; 3] = ["sr", "sf", "tp"];
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,7 +36,7 @@ impl Command for ImportVulcanSeam {
     fn spec(&self) -> CommandSpec {
         CommandSpec {
             name: Self::NAME,
-            summary: "Import a seam's Vulcan grids: roof, floor, thickness and qualities",
+            summary: "Import the Vulcan grids of one name: roof, floor or both, thickness and qualities",
             inputs: vec![],
             params: vec![
                 Field::new("dir", FieldType::Path, "Folder of Vulcan grids"),
@@ -53,6 +52,9 @@ impl Command for ImportVulcanSeam {
         let seam = read_vulcan_seam(Path::new(&p.dir), &p.prefix, &p.seam).map_err(|e| CommandError::Io(e.to_string()))?;
         let code = seam.seam.to_ascii_uppercase();
         let mut outcome = Outcome::default();
+        if seam.roof().is_none() || seam.floor().is_none() {
+            outcome = outcome.message(format!("{code} has no roof and floor pair: one surface, not a seam"));
+        }
         for (variable, vulcan) in seam.grids {
             let log = vulcan.log.clone();
             let elevation = ELEVATION_VARIABLES.contains(&variable.as_str());
