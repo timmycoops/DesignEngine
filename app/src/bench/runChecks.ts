@@ -94,6 +94,7 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
   const tree = await checkTree(reply.summary);
   const hide = await checkHide(viewport, reply.summary, show);
   const click = await checkClickObjects(viewport, reply.summary, show);
+  const layerCommands = await checkLayerCommands(viewport, reply.summary, show);
   const triangles = viewport.triangleCount;
   for (let i = 0; i < WARM_UP_FRAMES; i++) await viewport.nextFrame();
   log(`solids: orbiting ${triangles.toLocaleString()} triangles`);
@@ -125,6 +126,7 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
     tree,
     hide,
     click,
+    layer_commands: layerCommands,
     orbit: orbited,
     pick,
     camera,
@@ -188,6 +190,30 @@ async function checkHide(viewport: Viewport, summary: ProjectSummary, show: Show
     show_one: await timed(() => setObjectsVisible([one.id], true)),
     hide_layer: await timed(() => setLayerVisible(one.layer, false)),
     show_layer: await timed(() => setLayerVisible(one.layer, true)),
+  };
+}
+
+/** Layer commands on the layer of solids, each timed to the frame that shows it, then undone. */
+async function checkLayerCommands(viewport: Viewport, summary: ProjectSummary, show: Show) {
+  const before = viewport.triangleCount;
+  const timed = async (name: string, params: Record<string, unknown>) => {
+    const start = performance.now();
+    const reply = await runCommand(name, params);
+    await show(reply.summary);
+    await viewport.nextFrame();
+    const ms = performance.now() - start;
+    const triangles = viewport.triangleCount;
+    const undoing = performance.now();
+    await show(await undo());
+    await viewport.nextFrame();
+    return { ms, triangles, undo_ms: performance.now() - undoing, back: viewport.triangleCount === before };
+  };
+  const solid = summary.objects.find((o) => o.kind === 'solid');
+  return {
+    rename: await timed('layer.rename', { layer: 'solids', name: 'solids renamed' }),
+    recolour: await timed('layer.recolour', { layer: 'solids', colour: [10, 20, 30] }),
+    move_one: await timed('object.move', { objects: [solid?.id], layer: 'bench moved' }),
+    delete_layer: await timed('layer.delete', { layer: 'solids' }),
   };
 }
 

@@ -57,7 +57,12 @@ fn registry_lists_every_builtin_with_a_spec() {
             "face.save_design",
             "grid.import_vulcan_seam",
             "layer.create",
+            "layer.delete",
+            "layer.recolour",
+            "layer.rename",
             "object.delete",
+            "object.delete_many",
+            "object.move",
             "object.rename",
             "seam.build_model",
             "seam.suggest_definition",
@@ -85,7 +90,7 @@ fn registry_lists_every_builtin_with_a_spec() {
         ]
     );
     let specs = serde_json::to_value(session.registry().specs()).unwrap();
-    assert_eq!(specs[11]["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
+    assert_eq!(specs[16]["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
     assert_eq!(specs[1]["inputs"][0]["type"], json!({ "kind": "objects" }));
 }
 
@@ -392,6 +397,91 @@ fn a_hidden_object_stays_hidden_through_undo_and_a_save_and_a_command_still_take
     reopened.save(&path).unwrap();
     assert!(!Session::open(&path).unwrap().project().is_hidden(a), "and keeps it shown");
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A layer's name, colour and being there at all are changes like any other: each undoes and redoes,
+/// and whether it's shown is left as it is.
+#[test]
+fn a_layer_is_renamed_recoloured_and_deleted_and_each_undoes() {
+    let mut s = Session::with_builtins();
+    let string = |name: &str, layer: &str| json!({ "name": name, "layer": layer, "points": [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]] });
+    let a = created(&s.run("string.create", string("a", "design")).unwrap())[0];
+    let b = created(&s.run("string.create", string("b", "design")).unwrap())[0];
+    let other = created(&s.run("string.create", string("c", "other")).unwrap())[0];
+    let names = |s: &Session| s.project().layers().iter().map(|l| l.name.clone()).collect::<Vec<_>>();
+    let colour = s.project().layer_named("design").unwrap().colour;
+
+    s.run("layer.rename", json!({ "layer": "design", "name": "highwall" })).unwrap();
+    assert_eq!(names(&s), ["highwall", "other"]);
+    assert_eq!(s.project().object(a).unwrap().layer, s.project().layer_named("highwall").unwrap().id, "objects stay on it");
+    assert_eq!(s.project().object(a).unwrap().revision, 1, "no object changes");
+    let duplicate = s.run("layer.rename", json!({ "layer": "highwall", "name": "other" })).unwrap_err();
+    assert!(duplicate.to_string().contains("already exists"), "{duplicate}");
+    assert!(s.run("layer.rename", json!({ "layer": "highwall", "name": "  " })).is_err());
+    assert!(s.run("layer.rename", json!({ "layer": "nothing", "name": "x" })).is_err());
+
+    // Hidden after the rename: undoing the name doesn't undo that.
+    let id = s.project().layer_named("highwall").unwrap().id;
+    s.set_layer_visible(id, false);
+    s.undo().unwrap();
+    assert_eq!(names(&s), ["design", "other"]);
+    assert!(!s.project().layer(id).unwrap().visible, "being shown isn't undone");
+    s.redo().unwrap();
+    assert_eq!(names(&s), ["highwall", "other"]);
+    assert!(!s.project().layer(id).unwrap().visible);
+    s.set_layer_visible(id, true);
+
+    s.run("layer.recolour", json!({ "layer": "highwall", "colour": [10, 20, 30] })).unwrap();
+    assert_eq!(s.project().layer(id).unwrap().colour, [10, 20, 30]);
+    s.undo().unwrap();
+    assert_eq!(s.project().layer(id).unwrap().colour, colour);
+
+    let deleted = s.run("layer.delete", json!({ "layer": "highwall" })).unwrap();
+    assert_eq!(deleted.messages, ["highwall deleted with 2 objects"]);
+    assert_eq!(names(&s), ["other"]);
+    assert!(s.project().object(a).is_none() && s.project().object(b).is_none());
+    assert!(s.project().object(other).is_some(), "another layer's objects stay");
+    s.undo().unwrap();
+    assert_eq!(names(&s), ["highwall", "other"], "back in its place");
+    assert_eq!(s.project().object(b).unwrap().layer, id);
+    s.redo().unwrap();
+    assert_eq!(names(&s), ["other"]);
+    s.undo().unwrap();
+
+    // Refused as a change on its own, with something still on it.
+    let mut project = zd_core::Project::new();
+    project.apply(zd_core::RunId::new(), vec![zd_core::Change::Create { name: "a".into(), layer: "kept".into(), attributes: Default::default(), body: s.project().object(a).unwrap().body.clone() }]).unwrap();
+    let kept = project.layer_named("kept").unwrap().id;
+    assert_eq!(project.apply(zd_core::RunId::new(), vec![zd_core::Change::DeleteLayer { id: kept }]).unwrap_err(), zd_core::ProjectError::LayerInUse("kept".into()));
+}
+
+#[test]
+fn objects_move_between_layers_in_one_run_and_it_undoes() {
+    let mut s = Session::with_builtins();
+    let string = |name: &str, layer: &str| json!({ "name": name, "layer": layer, "points": [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]] });
+    let a = created(&s.run("string.create", string("a", "design")).unwrap())[0];
+    let b = created(&s.run("string.create", string("b", "design")).unwrap())[0];
+    let c = created(&s.run("string.create", string("c", "other")).unwrap())[0];
+    let layer_of = |s: &Session, id| s.project().layer(s.project().object(id).unwrap().layer).unwrap().name.clone();
+
+    let moved = s.run("object.move", json!({ "objects": [a, b, c], "layer": "other" })).unwrap();
+    assert_eq!(moved.outputs.len(), 2, "the one already there has nothing to do");
+    assert_eq!((layer_of(&s, a), layer_of(&s, b), layer_of(&s, c)), ("other".into(), "other".into(), "other".into()));
+    assert_eq!(s.project().object(a).unwrap().revision, 2);
+    assert_eq!(s.project().object(c).unwrap().revision, 1);
+    s.undo().unwrap();
+    assert_eq!(layer_of(&s, a), "design");
+    assert_eq!(s.project().object(a).unwrap().revision, 1);
+
+    s.run("object.move", json!({ "objects": [a], "layer": "new" })).unwrap();
+    assert_eq!(layer_of(&s, a), "new", "a new layer is made");
+    s.undo().unwrap();
+    assert!(s.project().layer_named("new").is_none(), "and goes again");
+
+    s.run("object.delete_many", json!({ "objects": [a, b] })).unwrap();
+    assert!(s.project().object(a).is_none() && s.project().object(b).is_none());
+    s.undo().unwrap();
+    assert!(s.project().object(a).is_some() && s.project().object(b).is_some(), "one undo brings both back");
 }
 
 #[test]

@@ -32,6 +32,10 @@ pub enum Change {
     Delete { id: ObjectId, base: u32 },
     /// A new layer. Creating a layer that already exists is an error.
     CreateLayer { name: String, colour: Option<[u8; 3]> },
+    /// A layer's new name or colour. Fields left `None` carry over.
+    ReviseLayer { id: LayerId, name: Option<String>, colour: Option<[u8; 3]> },
+    /// Removes a layer, which must hold nothing once this run's changes are counted.
+    DeleteLayer { id: LayerId },
 }
 
 impl Change {
@@ -72,6 +76,9 @@ pub enum ProjectError {
     /// The command read revision `base`, but the object has moved on to `current`.
     Stale { id: ObjectId, base: u32, current: u32 },
     DuplicateLayer(String),
+    MissingLayer(LayerId),
+    /// A layer can go only when nothing is left on it.
+    LayerInUse(String),
     EmptyName,
     /// A revision may not turn a string into a surface, or the like.
     KindChanged(ObjectId),
@@ -90,6 +97,8 @@ impl fmt::Display for ProjectError {
                 write!(f, "object {id} is at revision {current}, but the command read revision {base}")
             }
             ProjectError::DuplicateLayer(name) => write!(f, "layer '{name}' already exists"),
+            ProjectError::MissingLayer(id) => write!(f, "no layer {id}"),
+            ProjectError::LayerInUse(name) => write!(f, "layer '{name}' still has objects on it"),
             ProjectError::EmptyName => write!(f, "names cannot be empty"),
             ProjectError::KindChanged(id) => write!(f, "a revision cannot change the kind of object {id}"),
             ProjectError::ChangedTwice(id) => write!(f, "object {id} is changed twice in one run"),
@@ -107,11 +116,21 @@ struct Entry {
     object: Option<Arc<Object>>,
 }
 
+/// A layer as it stood and as a run left it (`None` if removed), with its place in the list. Whether
+/// it's shown is display state, so undo and redo leave that as it is.
+#[derive(Debug, Clone)]
+struct LayerEdit {
+    place: usize,
+    before: Layer,
+    after: Option<Layer>,
+}
+
 /// Everything one run added, kept so undo can take it off and redo can put it back.
 #[derive(Debug, Clone)]
 struct Transaction {
     run: RunId,
     layers: Vec<Layer>,
+    layer_edits: Vec<LayerEdit>,
     entries: Vec<(ObjectId, Entry)>,
 }
 
@@ -261,16 +280,16 @@ impl Project {
     /// Applies one run's changes together, or none of them if any is refused. A new run clears
     /// the redo stack; a run that changes nothing (a report, or a file written) adds no undo step.
     pub fn apply(&mut self, run: RunId, changes: Vec<Change>) -> Result<Applied, ProjectError> {
-        let mut staged = Staged { project: self, run, layers: Vec::new(), entries: Vec::new(), touched: HashSet::new(), applied: Applied::default() };
+        let mut staged = Staged { project: self, run, layers: Vec::new(), layer_edits: Vec::new(), entries: Vec::new(), touched: HashSet::new(), applied: Applied::default() };
         for change in changes {
             staged.stage(change)?;
         }
-        let Staged { layers, entries, mut applied, .. } = staged;
-        if layers.is_empty() && entries.is_empty() {
+        let Staged { layers, layer_edits, entries, mut applied, .. } = staged;
+        if layers.is_empty() && layer_edits.is_empty() && entries.is_empty() {
             return Ok(applied);
         }
         applied.layers_created = layers.clone();
-        let transaction = Transaction { run, layers, entries };
+        let transaction = Transaction { run, layers, layer_edits, entries };
         self.push(&transaction);
         self.done.push(transaction);
         self.undone.clear();
@@ -292,6 +311,12 @@ impl Project {
             }
         }
         self.order.retain(|o| !gone.contains(o));
+        for edit in transaction.layer_edits.iter().rev() {
+            match self.layers.iter_mut().find(|l| l.id == edit.before.id) {
+                Some(layer) => *layer = Layer { visible: layer.visible, ..edit.before.clone() },
+                None => self.layers.insert(edit.place.min(self.layers.len()), edit.before.clone()),
+            }
+        }
         let added: HashSet<LayerId> = transaction.layers.iter().map(|l| l.id).collect();
         self.layers.retain(|l| !added.contains(&l.id));
         let run = transaction.run;
@@ -319,6 +344,12 @@ impl Project {
             }
             history.push(entry.clone());
         }
+        for edit in &transaction.layer_edits {
+            match (&edit.after, self.layers.iter_mut().find(|l| l.id == edit.before.id)) {
+                (Some(after), Some(layer)) => *layer = Layer { visible: layer.visible, ..after.clone() },
+                _ => self.layers.retain(|l| l.id != edit.before.id),
+            }
+        }
     }
 
     fn current(&self, id: ObjectId) -> Result<(u32, &Arc<Object>), ProjectError> {
@@ -333,6 +364,7 @@ struct Staged<'a> {
     project: &'a Project,
     run: RunId,
     layers: Vec<Layer>,
+    layer_edits: Vec<LayerEdit>,
     entries: Vec<(ObjectId, Entry)>,
     touched: HashSet<ObjectId>,
     applied: Applied,
@@ -346,6 +378,26 @@ impl Staged<'_> {
                     return Err(ProjectError::DuplicateLayer(name));
                 }
                 self.add_layer(name, colour)?;
+            }
+            Change::ReviseLayer { id, name, colour } => {
+                let (place, before) = self.existing_layer(id)?;
+                if let Some(name) = &name {
+                    non_empty(name)?;
+                    if *name != before.name && self.layer_id(name).is_some() {
+                        return Err(ProjectError::DuplicateLayer(name.clone()));
+                    }
+                }
+                let after = Layer { name: name.unwrap_or_else(|| before.name.clone()), colour: colour.unwrap_or(before.colour), ..before.clone() };
+                self.layer_edits.push(LayerEdit { place, before, after: Some(after) });
+            }
+            Change::DeleteLayer { id } => {
+                let (place, before) = self.existing_layer(id)?;
+                let staying_off: HashSet<ObjectId> = self.entries.iter().filter(|(_, e)| e.object.as_ref().is_none_or(|o| o.layer != id)).map(|(id, _)| *id).collect();
+                let arriving = self.entries.iter().any(|(_, e)| e.object.as_ref().is_some_and(|o| o.layer == id));
+                if arriving || self.project.objects().any(|o| o.layer == id && !staying_off.contains(&o.id)) {
+                    return Err(ProjectError::LayerInUse(before.name));
+                }
+                self.layer_edits.push(LayerEdit { place, before, after: None });
             }
             Change::Create { name, layer, attributes, body } => {
                 non_empty(&name)?;
@@ -398,6 +450,12 @@ impl Staged<'_> {
             return Err(ProjectError::Stale { id, base, current });
         }
         Ok(object.clone())
+    }
+
+    /// A layer already in the project, with its place in the list.
+    fn existing_layer(&self, id: LayerId) -> Result<(usize, Layer), ProjectError> {
+        let place = self.project.layers.iter().position(|l| l.id == id).ok_or(ProjectError::MissingLayer(id))?;
+        Ok((place, self.project.layers[place].clone()))
     }
 
     fn layer_id(&self, name: &str) -> Option<LayerId> {

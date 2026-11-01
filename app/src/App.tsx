@@ -459,7 +459,9 @@ export default function App() {
       if (!picked || Array.isArray(picked)) return;
       setStatus({ text: `Building the seam model from ${picked}…` });
       try {
-        const reply = await runCommand('seam.build_model', { definition: picked, layer: 'seam models' });
+        // Each model on a layer of its own, so it can be told apart and hidden.
+        const [, file] = splitPath(picked);
+        const reply = await runCommand('seam.build_model', { definition: picked, layer: `Seam models\\${file.slice(0, file.lastIndexOf('.'))}` });
         show(reply.summary);
         setStatus({ text: describe(reply.record) });
         const made = reply.record.outputs.find((o) => o.change === 'created');

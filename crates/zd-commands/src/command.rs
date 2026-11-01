@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use zd_core::{Body, Change, Object, ObjectId, ObjectKind, ObjectRef, Polyline, Project, Solid, Surface};
+use zd_core::{Body, Change, Layer, LayerId, Object, ObjectId, ObjectKind, ObjectRef, Polyline, Project, Solid, Surface};
 
 use crate::{CommandError, CommandSpec};
 
@@ -54,6 +54,17 @@ impl<'a> Inputs<'a> {
 
     pub(crate) fn into_read(self) -> Vec<ObjectRef> {
         self.read.into_inner()
+    }
+
+    /// A layer by name, which must exist.
+    pub fn layer(&self, name: &str) -> Result<&'a Layer, CommandError> {
+        self.project.layer_named(name).ok_or_else(|| CommandError::Invalid(format!("no layer '{name}'")))
+    }
+
+    /// Every live object on a layer.
+    pub fn objects_on(&self, layer: LayerId) -> Result<Vec<&'a Arc<Object>>, CommandError> {
+        let ids: Vec<ObjectId> = self.project.objects().filter(|o| o.layer == layer).map(|o| o.id).collect();
+        ids.into_iter().map(|id| self.object(id)).collect()
     }
 
     /// The current revision of a live object.

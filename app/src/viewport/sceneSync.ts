@@ -106,6 +106,7 @@ export class SceneSync {
       const shown = this.shown.get(object.id);
       if (shown) {
         shown.group.visible = on(object);
+        if (layer && !seam(object.kind)) this.viewport.setColour(shown.group, colourOf(layer.colour));
         continue;
       }
       // Loaded when first shown: a model hidden in a saved project shouldn't read its grids.
@@ -136,6 +137,7 @@ export class SceneSync {
       const shown = this.shown.get(solidsOf(id));
       if (shown?.key === key) {
         shown.group.visible = layer?.visible ?? true;
+        if (layer) this.viewport.setColour(shown.group, colourOf(layer.colour));
         continue;
       }
       const staged = await stageLayerSolids(id);

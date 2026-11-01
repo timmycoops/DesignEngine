@@ -370,6 +370,12 @@ export class Viewport {
     (group.userData.release as (() => void) | undefined)?.();
   }
 
+  /** The colour a drawn surface takes from its layer. */
+  setColour(group: THREE.Group, colour: number): void {
+    const mesh = group.children[0] as THREE.Mesh | undefined;
+    (mesh?.material as THREE.MeshStandardMaterial | undefined)?.color.setHex(colour);
+  }
+
   /** Lights a drawn surface up in `colour`, or with null puts it back. */
   setLit(group: THREE.Group, colour: number | null): void {
     const mesh = group.children[0] as THREE.Mesh | undefined;
