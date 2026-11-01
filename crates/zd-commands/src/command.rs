@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -44,16 +43,16 @@ impl Outcome {
 /// command reads, so the run record lists its real inputs.
 pub struct Inputs<'a> {
     project: &'a Project,
-    read: RefCell<Vec<ObjectRef>>,
+    read: Mutex<Vec<ObjectRef>>,
 }
 
 impl<'a> Inputs<'a> {
     pub(crate) fn new(project: &'a Project) -> Self {
-        Inputs { project, read: RefCell::new(Vec::new()) }
+        Inputs { project, read: Mutex::new(Vec::new()) }
     }
 
     pub(crate) fn into_read(self) -> Vec<ObjectRef> {
-        self.read.into_inner()
+        self.read.into_inner().expect("reads aren't left half done")
     }
 
     /// A layer by name, which must exist.
@@ -71,7 +70,7 @@ impl<'a> Inputs<'a> {
     pub fn object(&self, id: ObjectId) -> Result<&'a Arc<Object>, CommandError> {
         let object = self.project.object(id).ok_or(CommandError::MissingObject(id))?;
         let reference = ObjectRef { id, revision: object.revision };
-        let mut read = self.read.borrow_mut();
+        let mut read = self.read.lock().expect("reads aren't left half done");
         if !read.contains(&reference) {
             read.push(reference);
         }
