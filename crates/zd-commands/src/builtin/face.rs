@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, Ramp, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
-use zd_geom::{COINCIDENT, EdgeRule, FaceRamp, FaceStep, FaceTarget, GeomError, OffsetSide, SolidRegion, conditioned_toe, find_crossings, next_toe, project_face_with_roads, project_wall, register_toe, run_on, triangulate_grid};
+use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
+use zd_geom::{COINCIDENT, EdgeRule, FaceRamp, FaceStep, FaceTarget, GeomError, OffsetSide, SolidRegion, conditioned_toe, find_crossings, next_toe, project_face, project_wall, register_toe, run_on, triangulate_grid};
 
 use super::SideParam;
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
@@ -234,7 +234,7 @@ impl Command for ProjectDesign {
                 }
             }
         }
-        for (line, id) in runs {
+        for &(line, id) in &runs {
             let (string, path) = inputs.string(id)?;
             let profile = design.profile(&line.profile).ok_or_else(|| CommandError::Invalid(format!("no profile called {}", line.profile)))?;
             let base = format!("{} {}", string.name, line.profile);
@@ -251,9 +251,9 @@ impl Command for ProjectDesign {
                 WallSide::Right => (OffsetSide::Right, OffsetSide::Left),
             };
             let rules = LineRules { design, string: path, string_name: &string.name, faces, regions: &regions, inputs };
-            let steps = steps_of(&rules, &profile.steps, &targets)?;
-            let ramps = ramps_on(inputs, line, id, p.design)?;
-            let face = project_face_with_roads(&toe, registered, side, profile.direction, &steps, &ramps.iter().map(face_ramp).collect::<Vec<_>>()).map_err(refuse)?;
+            let sharing: Vec<ObjectId> = runs.iter().filter(|(other, _)| other.profile == line.profile).map(|(_, id)| *id).collect();
+            let steps = steps_of(&rules, &profile.steps, &targets, |start| Ok(nearest_string(inputs, &sharing, start)? == Some(id)))?;
+            let face = project_face(&toe, registered, side, profile.direction, &steps).map_err(refuse)?;
             messages.push(line_report(&base, &face, [extended.vertices.len(), shaped.vertices.len()], register.off_grid));
             let attributes = || Attributes::from([(MADE_BY.to_string(), AttrValue::Text(p.design.to_string()))]);
             let create = |name: String, body: Body| Change::Create { name, layer: design.layer.clone(), attributes: attributes(), body };
@@ -294,17 +294,16 @@ fn strings_of(inputs: &Inputs<'_>, line: &FaceLine, design: ObjectId) -> Result<
     Ok(strings)
 }
 
-/// A line's ramps that go on one of its strings. A line on a layer gives each to the string nearest its start.
-fn ramps_on(inputs: &Inputs<'_>, line: &FaceLine, string: ObjectId, design: ObjectId) -> Result<Vec<Ramp>, CommandError> {
-    if line.ramps.is_empty() || matches!(line.on, LineOn::String(_)) {
-        return Ok(line.ramps.clone());
+/// Of the strings a profile runs on, the one a ramp starting here goes on: the nearest in plan.
+fn nearest_string(inputs: &Inputs<'_>, strings: &[ObjectId], start: [f64; 2]) -> Result<Option<ObjectId>, CommandError> {
+    let mut nearest: Option<(f64, ObjectId)> = None;
+    for &id in strings {
+        let gap = plan_distance(inputs.string(id)?.1, start);
+        if nearest.is_none_or(|(least, _)| gap < least) {
+            nearest = Some((gap, id));
+        }
     }
-    let mut paths = Vec::new();
-    for id in strings_of(inputs, line, design)? {
-        paths.push((id, inputs.string(id)?.1));
-    }
-    let nearest = |ramp: &Ramp| paths.iter().min_by(|a, b| plan_distance(a.1, ramp.start).total_cmp(&plan_distance(b.1, ramp.start))).map(|(id, _)| *id);
-    Ok(line.ramps.iter().filter(|ramp| nearest(ramp) == Some(string)).copied().collect())
+    Ok(nearest.map(|(_, id)| id))
 }
 
 /// How far a point is from a string in plan.
@@ -316,10 +315,6 @@ fn plan_distance(line: &Polyline, p: [f64; 2]) -> f64 {
         (a[0] + t * dx - p[0]).hypot(a[1] + t * dy - p[1])
     };
     line.vertices.windows(2).map(|w| gap(w[0], w[1])).fold(f64::INFINITY, f64::min)
-}
-
-fn face_ramp(ramp: &Ramp) -> FaceRamp {
-    FaceRamp { start: ramp.start, back: ramp.heading == RampHeading::Back, step: ramp.from_step - 1, width: ramp.width, grade: ramp.grade / 100.0 }
 }
 
 /// The surfaces a profile names.
@@ -428,7 +423,7 @@ impl<'a> LineRules<'a, '_> {
     }
 }
 
-fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'t Targets<'_, '_>) -> Result<Vec<FaceStep<'t>>, CommandError> {
+fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'t Targets<'_, '_>, here: impl Fn([f64; 2]) -> Result<bool, CommandError>) -> Result<Vec<FaceStep<'t>>, CommandError> {
     let surface_of = |to: &StepTarget| match to {
         StepTarget::Surface { id } => Some(*id),
         StepTarget::Rl { .. } => None,
@@ -451,6 +446,8 @@ fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'
                     let horizon = on.as_ref().map_or(reached, surface_of);
                     FaceStep::Berm { on: on.as_ref().map(target).transpose()?, width: rules.edge_rule(width, horizon)?, register: *register, condition: *condition, min_bench: *min_bench }
                 }
+                ProfileStep::RampStart { start, heading, width, grade } => FaceStep::RampStart(here(*start)?.then_some(FaceRamp { start: *start, back: *heading == RampHeading::Back, width: *width, grade: *grade / 100.0 })),
+                ProfileStep::RampStop => FaceStep::RampStop,
             })
         })
         .collect()
@@ -489,10 +486,11 @@ fn line_report(name: &str, face: &zd_geom::Face, [toe_in, toe_out]: [usize; 2], 
     }
     for road in &face.roads {
         let (Some(bottom), Some(top)) = (road.pit_edge.vertices.first(), road.pit_edge.vertices.last()) else { continue };
-        report += &format!("; road {} up step {}: {:.1} m from RL {:.1} to {:.1}", road.ramp + 1, road.step + 1, road.pit_edge.plan_length(), bottom[2], top[2]);
+        let steps = if road.steps[0] == road.steps[1] { format!("step {}", road.steps[0] + 1) } else { format!("steps {} to {}", road.steps[0] + 1, road.steps[1] + 1) };
+        report += &format!("; road {} up {steps}: {:.1} m from RL {:.1} to {:.1}", road.ramp + 1, road.pit_edge.plan_length(), bottom[2], top[2]);
     }
     for stopped in &face.no_roads {
-        report += &format!("; road {} not built on step {}, stopped at {:.1}, {:.1}: {}", stopped.ramp + 1, stopped.step + 1, stopped.at[0], stopped.at[1], stopped.why);
+        report += &format!("; road {} stopped on step {}, at {:.1}, {:.1}: {}", stopped.ramp + 1, stopped.step + 1, stopped.at[0], stopped.at[1], stopped.why);
     }
     report
 }

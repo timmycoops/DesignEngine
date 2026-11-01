@@ -45,27 +45,6 @@ pub struct FaceLine {
     /// How far the toe is extended past its start and end (m).
     #[serde(default)]
     pub run_on: [f64; 2],
-    /// Roads cut into this line's walls. On a line that names a layer, each goes on the string nearest its
-    /// start.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub ramps: Vec<Ramp>,
-}
-
-/// A road up a wall. It's cut back into the wall as the wall is projected, so running the design again
-/// rebuilds it. See `docs/decisions/0028-ramps.md`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Ramp {
-    /// Where it leaves the wall: the nearest point in plan on the line its first step starts from (E, N).
-    pub start: [f64; 2],
-    pub heading: RampHeading,
-    /// The step it starts from and the step it finishes on, numbered as the table numbers them.
-    pub from_step: usize,
-    pub to_step: usize,
-    /// Square to the road (m).
-    pub width: f64,
-    /// Rise over plan run on the inside edge, the pit side (%).
-    pub grade: f64,
 }
 
 /// The way a road runs along its string.
@@ -136,6 +115,20 @@ pub enum ProfileStep {
         #[serde(default)]
         condition: Option<f64>,
     },
+    /// A road starts here, and every wall from here to the Ramp stop row carries it. It's cut back into
+    /// the walls as they're projected, so running the design again rebuilds it. A profile can run on several
+    /// strings, and a ramp goes on the one nearest its start. See `docs/decisions/0028-ramps.md`.
+    RampStart {
+        /// Where it leaves the wall: the nearest point in plan on the line the next wall starts from (E, N).
+        start: [f64; 2],
+        heading: RampHeading,
+        /// Square to the road (m).
+        width: f64,
+        /// Rise over plan run on the inside edge, the pit side (%).
+        grade: f64,
+    },
+    /// The road started above finishes at the top of the wall above this row.
+    RampStop,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -276,9 +269,6 @@ impl FaceDesign {
                 let what = if matches!(line.on, LineOn::Layer(_)) { "layer" } else { "string" };
                 problems.push(format!("A {what} is in twice with the profile {}", line.profile));
             }
-            for (r, ramp) in line.ramps.iter().enumerate() {
-                self.check_ramp(&format!("Ramp {} on {}", r + 1, line.profile), ramp, line, &mut problems);
-            }
         }
         for profile in &self.profiles {
             if profile.steps.is_empty() {
@@ -288,6 +278,7 @@ impl FaceDesign {
             for (k, step) in profile.steps.iter().enumerate() {
                 self.check_step(&format!("{} step {}", profile.name, k + 1), step, &mut problems);
             }
+            check_ramps(profile, &mut problems);
         }
         let steps = || self.profiles.iter().flat_map(|p| &p.steps);
         for rule in &self.rules {
@@ -302,34 +293,11 @@ impl FaceDesign {
         problems
     }
 
-    fn check_ramp(&self, row: &str, ramp: &Ramp, line: &FaceLine, problems: &mut Vec<String>) {
-        if !ramp.start.iter().all(|c| c.is_finite()) {
-            problems.push(format!("{row} needs a start point"));
-        }
-        if !(ramp.width.is_finite() && ramp.width > 0.0) {
-            problems.push(format!("{row}: a road's width must be more than zero"));
-        }
-        if !(ramp.grade.is_finite() && ramp.grade > 0.0 && ramp.grade < 100.0) {
-            problems.push(format!("{row}: a road's grade must be between 0 and 100 %"));
-        }
-        let Some(profile) = self.profile(&line.profile) else { return };
-        if profile.direction == FaceDirection::Down {
-            problems.push(format!("{row}: a ramp only goes on a profile going up for now"));
-        }
-        for number in [ramp.from_step, ramp.to_step] {
-            if !matches!(number.checked_sub(1).and_then(|k| profile.steps.get(k)), Some(ProfileStep::Project { .. })) {
-                problems.push(format!("{row}: step {number} isn't a wall of {}", profile.name));
-            }
-        }
-        if ramp.from_step != ramp.to_step {
-            problems.push(format!("{row}: a ramp climbs one wall for now, so it finishes on the step it starts from"));
-        }
-    }
-
     fn check_step(&self, row: &str, step: &ProfileStep, problems: &mut Vec<String>) {
         let (given, condition, is_batter) = match step {
             ProfileStep::Project { batter, condition, .. } => (batter, condition, true),
             ProfileStep::Berm { width, condition, .. } => (width, condition, false),
+            ProfileStep::RampStart { .. } | ProfileStep::RampStop => return,
         };
         check_tolerance(row, *condition, problems);
         if let ProfileStep::Berm { min_bench: Some(height), .. } = step
@@ -353,6 +321,48 @@ impl FaceDesign {
     }
 }
 
+/// A profile's ramp rows: each start has a stop after it with a wall between, and they don't overlap.
+fn check_ramps(profile: &FaceProfile, problems: &mut Vec<String>) {
+    let mut open: Option<(usize, usize)> = None;
+    for (k, step) in profile.steps.iter().enumerate() {
+        let row = format!("{} step {}", profile.name, k + 1);
+        match step {
+            ProfileStep::RampStart { start, width, grade, .. } => {
+                if profile.direction == FaceDirection::Down {
+                    problems.push(format!("{row}: a ramp only goes on a profile going up for now"));
+                }
+                if !start.iter().all(|c| c.is_finite()) {
+                    problems.push(format!("{row} needs a start point"));
+                }
+                if !(width.is_finite() && *width > 0.0) {
+                    problems.push(format!("{row}: a road's width must be more than zero"));
+                }
+                if !(grade.is_finite() && *grade > 0.0 && *grade < 100.0) {
+                    problems.push(format!("{row}: a road's grade must be between 0 and 100 %"));
+                }
+                if open.is_some() {
+                    problems.push(format!("{row} starts a ramp before the last one has stopped"));
+                }
+                open = Some((k, 0));
+            }
+            ProfileStep::RampStop => match open.take() {
+                None => problems.push(format!("{row} stops a ramp that hasn't started")),
+                Some((_, 0)) => problems.push(format!("{row}: a ramp needs a wall between its start and stop")),
+                Some(_) => {}
+            },
+            ProfileStep::Project { .. } => {
+                if let Some((_, walls)) = &mut open {
+                    *walls += 1;
+                }
+            }
+            ProfileStep::Berm { .. } => {}
+        }
+    }
+    if let Some((k, _)) = open {
+        problems.push(format!("{} step {}: this ramp needs a Ramp stop row", profile.name, k + 1));
+    }
+}
+
 fn check_tolerance(row: &str, condition: Option<f64>, problems: &mut Vec<String>) {
     if let Some(tolerance) = condition
         && !(tolerance.is_finite() && (0.0..=MOST_TOLERANCE).contains(&tolerance))
@@ -369,7 +379,7 @@ mod tests {
         let id = ObjectId::new();
         FaceDesign {
             layer: "faces".into(),
-            lines: vec![FaceLine { on: LineOn::String(id), profile: "Highwall".into(), side: WallSide::Right, run_on: [100.0, 100.0], ramps: Vec::new() }],
+            lines: vec![FaceLine { on: LineOn::String(id), profile: "Highwall".into(), side: WallSide::Right, run_on: [100.0, 100.0] }],
             profiles: vec![FaceProfile {
                 name: "Highwall".into(),
                 direction: FaceDirection::Up,
@@ -472,38 +482,52 @@ mod tests {
         assert!(d.problems().iter().any(|p| p.contains("Highwall's toe: a conditioning tolerance must be")));
     }
 
-    fn ramp() -> Ramp {
-        Ramp { start: [650_000.0, 7_450_000.0], heading: RampHeading::Along, from_step: 1, to_step: 1, width: 30.0, grade: 10.0 }
+    fn ramp_start() -> ProfileStep {
+        ProfileStep::RampStart { start: [650_000.0, 7_450_000.0], heading: RampHeading::Along, width: 30.0, grade: 10.0 }
+    }
+
+    /// The design with a ramp from before its first wall to after its last.
+    fn with_a_ramp() -> FaceDesign {
+        let mut d = design();
+        d.profiles[0].steps.insert(0, ramp_start());
+        d.profiles[0].steps.push(ProfileStep::RampStop);
+        d
     }
 
     #[test]
-    fn a_ramp_saves_with_its_line_and_a_design_without_one_saves_as_it_did() {
-        let mut d = design();
-        assert!(!serde_json::to_string(&d).unwrap().contains("ramps"));
-        d.lines[0].ramps.push(ramp());
+    fn ramp_rows_save_in_the_table_and_read_back_as_they_were() {
+        let d = with_a_ramp();
         assert_eq!(serde_json::from_str::<FaceDesign>(&serde_json::to_string(&d).unwrap()).unwrap(), d);
         assert!(d.problems().is_empty(), "{:?}", d.problems());
+        let row: ProfileStep = serde_json::from_str(r#"{ "step": "ramp_stop" }"#).unwrap();
+        assert_eq!(row, ProfileStep::RampStop);
     }
 
     #[test]
     fn what_is_wrong_with_a_ramp_is_said_in_plain_words() {
-        let with = |change: fn(&mut Ramp)| {
-            let mut d = design();
-            let mut r = ramp();
-            change(&mut r);
-            d.lines[0].ramps.push(r);
+        let with = |width: f64, grade: f64, start: [f64; 2]| {
+            let mut d = with_a_ramp();
+            d.profiles[0].steps[0] = ProfileStep::RampStart { start, heading: RampHeading::Back, width, grade };
             d.problems()
         };
-        assert!(with(|r| r.width = 0.0).iter().any(|p| p.contains("Ramp 1 on Highwall: a road's width")));
-        assert!(with(|r| r.grade = 0.0).iter().any(|p| p.contains("a road's grade")));
-        assert!(with(|r| r.start = [f64::NAN, 0.0]).iter().any(|p| p.contains("needs a start point")));
-        assert!(with(|r| r.from_step = 2).iter().any(|p| p.contains("step 2 isn't a wall")), "a berm row is no wall to climb");
-        assert!(with(|r| r.to_step = 9).iter().any(|p| p.contains("step 9 isn't a wall")));
-        assert!(with(|r| r.from_step = 0).iter().any(|p| p.contains("step 0 isn't a wall")));
-        assert!(with(|r| r.to_step = 3).iter().any(|p| p.contains("climbs one wall for now")));
-        let mut d = design();
+        let here = [650_000.0, 7_450_000.0];
+        assert!(with(0.0, 10.0, here).iter().any(|p| p.contains("Highwall step 1: a road's width")));
+        assert!(with(30.0, 0.0, here).iter().any(|p| p.contains("a road's grade")));
+        assert!(with(30.0, 10.0, [f64::NAN, 0.0]).iter().any(|p| p.contains("needs a start point")));
+        let mut d = with_a_ramp();
+        d.profiles[0].steps.pop();
+        assert!(d.problems().iter().any(|p| p.contains("step 1: this ramp needs a Ramp stop row")), "{:?}", d.problems());
+        let mut d = with_a_ramp();
+        d.profiles[0].steps.remove(0);
+        assert!(d.problems().iter().any(|p| p.contains("stops a ramp that hasn't started")), "{:?}", d.problems());
+        let mut d = with_a_ramp();
+        d.profiles[0].steps.insert(1, ProfileStep::RampStop);
+        assert!(d.problems().iter().any(|p| p.contains("a ramp needs a wall between")), "{:?}", d.problems());
+        let mut d = with_a_ramp();
+        d.profiles[0].steps.insert(2, ramp_start());
+        assert!(d.problems().iter().any(|p| p.contains("before the last one has stopped")), "{:?}", d.problems());
+        let mut d = with_a_ramp();
         d.profiles[0].direction = FaceDirection::Down;
-        d.lines[0].ramps.push(ramp());
         assert!(d.problems().iter().any(|p| p.contains("only goes on a profile going up")));
     }
 

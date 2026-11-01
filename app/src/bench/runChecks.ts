@@ -792,11 +792,12 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
       return { error: String(e) };
     }
   })();
-  // A road up the first wall, from the middle of the toe, each way along it.
+  // A road from the middle of the toe up through the walls, each way along it.
   const roadFrom = async (heading: 'along' | 'back') => {
     try {
-      const ramps = [{ start: [at[0], at[1]], heading, from_step: 1, to_step: 1, width: 30, grade: 10 }];
-      const withRoad = { ...content, layer: `bench road ${heading}`, lines: [{ string: toe.id, profile: 'Highwall', side: 'left', run_on: [100, 100], ramps }] };
+      const start = { step: 'ramp_start', start: [at[0], at[1]], heading, width: 30, grade: 10 };
+      const profiles = content.profiles.map((profile) => (profile.name === 'Highwall' ? { ...profile, steps: [start, ...profile.steps, { step: 'ramp_stop' }] } : profile));
+      const withRoad = { ...content, profiles, layer: `bench road ${heading}`, lines: [{ string: toe.id, profile: 'Highwall', side: 'left', run_on: [100, 100] }] };
       const saved = (await run('face.save_design', { name: `Bench road ${heading}`, content: withRoad })).fresh[0];
       const started = performance.now();
       const made = await run('face.project', { design: saved.id });

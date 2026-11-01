@@ -86,9 +86,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   lines, profiles and any shared rules together (`docs/decisions/0024-face-design.md`).
 - `Ramp`: centreline or start point, direction, start and end bench, width, grade (%, ratio or degrees,
   measured on the inside edge by default, which is the pit side), inside and outside taper, entry type, flat or
-  graded switchbacks with radius. It sits on a line of a `FaceDesign` and is cut back into the wall as the wall is
-  projected, so running the design again rebuilds it. It reports the bench where the grade can't be met instead
-  of drifting (`docs/decisions/0028-ramps.md`).
+  graded switchbacks with radius. It's a Ramp start row and a Ramp stop row in a `FaceProfile`, and the walls between
+  carry it, cut back as they're projected, so running the design again rebuilds it. The toe behind its start moves
+  back by the road for an entrance, and it's the bench where it crosses a berm. It reports the bench where the grade
+  can't be met instead of drifting (`docs/decisions/0028-ramps.md`).
 - Every object has a stable id (128-bit, generated in-house), a name, a layer, and provenance (the command
   run that made it). Edits write a new revision of the same object; earlier revisions stay for undo
   (see `docs/decisions/0004-phase1-foundations.md`). A project is a `<name>.zdproj/` folder of Parquet files.

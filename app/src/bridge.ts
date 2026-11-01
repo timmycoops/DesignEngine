@@ -422,7 +422,13 @@ export type StepValue = number | string;
 /** `condition` is how far the line may move in plan when it's cleaned (m); null leaves it as it is. */
 export type ProfileStep =
   | { step: 'project'; to: StepTarget; batter: StepValue; condition: number | null }
-  | { step: 'berm'; on: StepTarget | null; width: StepValue; register: boolean; condition: number | null; min_bench?: number | null };
+  | { step: 'berm'; on: StepTarget | null; width: StepValue; register: boolean; condition: number | null; min_bench?: number | null }
+  /** A road starts here, and the walls down to the Ramp stop row carry it. The width is square to the road, and grade is rise over plan run on the pit-side edge, in percent. */
+  | { step: 'ramp_start'; start: [number, number]; heading: RampHeading; width: number; grade: number }
+  | { step: 'ramp_stop' };
+
+/** The way a road runs along its string. */
+export type RampHeading = 'along' | 'back';
 
 export type FaceDirection = 'up' | 'down';
 
@@ -444,25 +450,6 @@ export interface FaceLine {
   side: WallSide;
   /** Past the string's start and end, in metres. */
   run_on: [number, number];
-  /** Roads cut into this line's walls. */
-  ramps?: Ramp[];
-}
-
-/** The way a road runs along its string. */
-export type RampHeading = 'along' | 'back';
-
-/** A road up a wall, cut back into it as the wall is projected. */
-export interface Ramp {
-  /** Where it leaves the toe, in plan (E, N): the nearest point on the toe to this. */
-  start: [number, number];
-  heading: RampHeading;
-  /** The step it starts from and finishes on, numbered as the table numbers them. */
-  from_step: number;
-  to_step: number;
-  /** Square to the road, in metres. */
-  width: number;
-  /** Rise over plan run on the inside edge, the pit side, in percent. */
-  grade: number;
 }
 
 /** Azimuths clockwise from `from` to `to`, in degrees from grid north, and their value. */

@@ -65,6 +65,11 @@ const LEAST_WIDTH: f64 = 1e-3;
 const BENCH_SAMPLE: f64 = 5.0;
 /// The turn past which a line has a corner, where walls meet in a hip (degrees).
 const CORNER_TURN: f64 = 30.0;
+/// Slopes this close, as a share of the steeper, are one batter where a string turns at all. A wall above a
+/// road differs from the wall behind it by this little, on purpose, so the two are parallel.
+const SAME_SLOPE: f64 = 0.02;
+/// How far a string has to turn for two walls to have a hip of their own: the sine of the angle.
+const TURNS: f64 = 1e-3;
 /// Neither a wall nor a string end: the edge a wall stands on.
 const FOOT: usize = usize::MAX;
 /// The level edge left at the top of the sweep.
@@ -785,7 +790,7 @@ fn wall_of(a: P3, b: P3, slope: f64) -> Wall {
 /// Whether two neighbouring walls need a transition: they differ, and the line their planes share doesn't
 /// run out between the ways they face. On a straight run it's the string itself.
 fn needs_transition(a: &Wall, b: &Wall) -> bool {
-    if a.slope == b.slope {
+    if a.slope == b.slope || ((a.slope - b.slope).abs() <= SAME_SLOPE * a.slope.max(b.slope) && cross2(a.out, b.out).abs() > TURNS) {
         return false;
     }
     let shared = cross(a.plane.normal, b.plane.normal);
