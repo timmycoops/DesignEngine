@@ -118,11 +118,16 @@ pub fn add_selected(app: &AppInner, plane: &SectionPlane, width: f64, groups: &m
     }
 }
 
+/// A mesh to cut: its layer, kind, and the surface it is, if it is one object.
+type CutMesh = (LayerId, &'static str, Option<ObjectId>, Arc<SectionMesh>);
+/// A seam horizon to cut: its layer, model, material, roof and floor.
+type CutSeam = (LayerId, ObjectId, String, Arc<SectionMesh>, Arc<SectionMesh>);
+
 /// Everything a section cuts, as the project stood at `generation`.
 pub struct SectionInputs {
     generation: u64,
-    meshes: Vec<(LayerId, &'static str, Option<ObjectId>, Arc<SectionMesh>)>,
-    seams: Vec<(LayerId, ObjectId, String, Arc<SectionMesh>, Arc<SectionMesh>)>,
+    meshes: Vec<CutMesh>,
+    seams: Vec<CutSeam>,
     strings: Vec<Arc<Object>>,
 }
 
@@ -167,8 +172,8 @@ fn section_inputs(app: &mut AppInner) -> Result<Arc<SectionInputs>, String> {
     let project = app.session.project();
     let visible = |layer: LayerId| project.layer(layer).is_some_and(|l| l.visible);
     let shown = |object: &Object| visible(object.layer) && !project.is_hidden(object.id);
-    let mut meshes: Vec<(LayerId, &'static str, Option<ObjectId>, Arc<SectionMesh>)> = Vec::new();
-    let mut seams: Vec<(LayerId, ObjectId, String, Arc<SectionMesh>, Arc<SectionMesh>)> = Vec::new();
+    let mut meshes: Vec<CutMesh> = Vec::new();
+    let mut seams: Vec<CutSeam> = Vec::new();
     let mut made = std::mem::take(&mut app.section_meshes);
     let mut kept = SectionMeshes::new();
     let mut keep = |key: String, stamp: String, make: &mut dyn FnMut() -> Result<Arc<TriMesh>, String>| -> Result<Arc<SectionMesh>, String> {
