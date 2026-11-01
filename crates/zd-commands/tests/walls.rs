@@ -289,6 +289,131 @@ fn a_line_that_names_a_layer_takes_what_is_on_it_at_each_run() {
     assert!(refused.to_string().contains("no strings on it"), "{refused}");
 }
 
+/// One wall of a design from a floor to a roof 20 m above it, from a string running east along y = 60 and
+/// rising to the north, so it faces south, with the rules given. What the run made, by name.
+fn run_with_rule(s: &mut Session, name: &str, points: &[[f64; 3]], steps: serde_json::Value, rules: serde_json::Value, floor: ObjectId) -> Result<Polyline, zd_commands::CommandError> {
+    let string = created(&s.run("string.create", json!({ "name": name, "layer": "rule toes", "points": points })).unwrap())[0];
+    let content = json!({
+        "layer": name,
+        "lines": [{ "string": string, "profile": "Wall", "side": "left", "run_on": [0.0, 0.0] }],
+        "profiles": [{ "name": "Wall", "direction": "up", "register": floor, "steps": steps }],
+        "rules": rules,
+    });
+    let design = created(&s.run("face.save_design", json!({ "name": name, "content": content }))?)[0];
+    s.run("face.project", json!({ "design": design }))?;
+    Ok(line(s, s.project().objects().find(|o| o.name == format!("{name} Wall crest 1")).unwrap().id))
+}
+
+fn has(line: &Polyline, x: f64, y: f64) -> bool {
+    line.vertices.iter().any(|p| (p[0] - E - x).abs() < 1e-5 && (p[1] - N - y).abs() < 1e-5)
+}
+
+/// Rise of 2 over 1: 10 m out in a 20 m rise, against 20 m at 45 degrees.
+fn steep() -> f64 {
+    2f64.atan().to_degrees()
+}
+
+#[test]
+fn a_rule_gives_a_wall_a_batter_for_each_edge() {
+    let mut s = Session::with_builtins();
+    let (floor, roof) = (level_surface(&mut s, "floor", 100.0), level_surface(&mut s, "roof", 120.0));
+    let toe = [[E + 50.0, N + 60.0, 0.0], [E + 250.0, N + 60.0, 0.0]];
+    let up = |batter: &str| json!([{ "step": "project", "to": { "kind": "surface", "id": roof }, "batter": batter, "condition": null }]);
+    let square = [[E + 100.0, N, 0.0], [E + 150.0, N, 0.0], [E + 150.0, N + 300.0, 0.0], [E + 100.0, N + 300.0, 0.0]];
+    let polygon = created(&s.run("string.create", json!({ "name": "domain", "layer": "domains", "points": square, "closed": true })).unwrap())[0];
+
+    // Inside the polygon it's 45 degrees and outside steeper. The change falls on the polygon's edges,
+    // though the string has no vertex there, and the crest bevels into the steeper side each time.
+    let rules = json!([{ "name": "Batter", "value": { "type": "inside_polygon", "polygon": polygon, "inside": 45.0, "outside": steep() } }]);
+    let crest = run_with_rule(&mut s, "by polygon", &toe, up("Batter"), rules, floor).unwrap();
+    assert!(has(&crest, 50.0, 70.0) && has(&crest, 250.0, 70.0), "{:?}", crest.vertices);
+    assert!(has(&crest, 100.0, 80.0) && has(&crest, 150.0, 80.0), "{:?}", crest.vertices);
+    assert!(has(&crest, 90.0, 70.0) && has(&crest, 160.0, 70.0), "{:?}", crest.vertices);
+
+    // Facing south, in the sector; and a sector that doesn't hold it gives the other value.
+    let rules = json!([{ "name": "Batter", "value": { "type": "segment_azimuth", "sectors": [{ "from": 135.0, "to": 225.0, "value": steep() }], "otherwise": 45.0 } }]);
+    let crest = run_with_rule(&mut s, "facing south", &toe, up("Batter"), rules, floor).unwrap();
+    assert!(crest.vertices.iter().all(|p| (p[1] - N - 70.0).abs() < 1e-5), "{:?}", crest.vertices);
+    let rules = json!([{ "name": "Batter", "value": { "type": "segment_azimuth", "sectors": [{ "from": 315.0, "to": 45.0, "value": steep() }], "otherwise": 45.0 } }]);
+    let crest = run_with_rule(&mut s, "not north", &toe, up("Batter"), rules, floor).unwrap();
+    assert!(crest.vertices.iter().all(|p| (p[1] - N - 80.0).abs() < 1e-5), "{:?}", crest.vertices);
+
+    // A value for each of a string's two segments.
+    let two = [toe[0], [E + 150.0, N + 60.0, 0.0], toe[1]];
+    let rules = json!([{ "name": "Batter", "value": { "type": "fixed_list", "values": [45.0, steep()] } }]);
+    let crest = run_with_rule(&mut s, "by segment", &two, up("Batter"), rules.clone(), floor).unwrap();
+    assert!(has(&crest, 150.0, 80.0) && has(&crest, 160.0, 70.0), "{:?}", crest.vertices);
+    let refused = run_with_rule(&mut s, "wrong count", &toe, up("Batter"), rules, floor).unwrap_err();
+    assert!(refused.to_string().contains("Batter has 2 values for the 1 segments of wrong count"), "{refused}");
+
+    // A solid from 150 to 180 east, around the toe's RL: the wall goes by where its string is.
+    let v: Vec<[f64; 3]> = (0..8).map(|i| [E + 150.0 + (i & 1) as f64 * 30.0, N + (i >> 1 & 1) as f64 * 300.0, 90.0 + (i >> 2) as f64 * 20.0]).collect();
+    let t = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+    let solid = s.run("solid.from_mesh", json!({ "name": "weak zone", "layer": "domains", "vertices": v, "triangles": t })).unwrap().outputs[0].id;
+    let rules = json!([{ "name": "Batter", "value": { "type": "inside_solid", "solid": solid, "inside": 45.0, "outside": steep() } }]);
+    let crest = run_with_rule(&mut s, "by solid", &toe, up("Batter"), rules, floor).unwrap();
+    assert!(has(&crest, 150.0, 80.0) && has(&crest, 180.0, 80.0), "{:?}", crest.vertices);
+}
+
+/// By horizon goes row by row: a wall takes the value for what it finishes on, and a berm the value for
+/// what the wall below it reached.
+#[test]
+fn by_horizon_gives_each_row_the_value_for_the_surface_it_finishes_on() {
+    let mut s = Session::with_builtins();
+    let (floor, roof) = (level_surface(&mut s, "floor", 100.0), level_surface(&mut s, "roof", 120.0));
+    let toe = [[E + 50.0, N + 60.0, 0.0], [E + 250.0, N + 60.0, 0.0]];
+    let rules = json!([
+        { "name": "Batter", "value": { "type": "by_horizon", "values": [{ "surface": roof, "value": 45.0 }], "otherwise": steep() } },
+        { "name": "Berm", "value": { "type": "by_horizon", "values": [{ "surface": roof, "value": 7.0 }], "otherwise": 1.0 } },
+    ]);
+    let steps = json!([
+        { "step": "project", "to": { "kind": "surface", "id": roof }, "batter": "Batter", "condition": null },
+        { "step": "berm", "width": "Berm", "condition": null },
+        { "step": "project", "to": { "kind": "rl", "rl": 140.0 }, "batter": "Batter", "condition": null },
+    ]);
+    run_with_rule(&mut s, "by horizon", &toe, steps, rules, floor).unwrap();
+    let crest = |s: &Session, n: usize| line(s, s.project().objects().find(|o| o.name == format!("by horizon Wall crest {n}")).unwrap().id);
+    assert!(crest(&s, 1).vertices.iter().all(|p| (p[1] - N - 80.0).abs() < 1e-5), "the roof's batter, 20 m out");
+    // Then a 7 m berm, and from the roof to RL 140 at the other batter, 10 m out.
+    assert!(crest(&s, 2).vertices.iter().all(|p| (p[1] - N - 97.0).abs() < 1e-5), "{:?}", crest(&s, 2).vertices);
+}
+
+/// A berm wider inside a polygon, on a straight crest: the line steps out at the polygon's edge, reaching
+/// back over the narrower stretch, so the change only ever widens.
+#[test]
+fn a_rule_gives_a_berm_a_width_for_each_edge() {
+    let mut s = Session::with_builtins();
+    let (floor, roof) = (level_surface(&mut s, "floor", 100.0), level_surface(&mut s, "roof", 120.0));
+    let toe = [[E + 50.0, N + 60.0, 0.0], [E + 250.0, N + 60.0, 0.0]];
+    let square = [[E + 150.0, N, 0.0], [E + 300.0, N, 0.0], [E + 300.0, N + 300.0, 0.0], [E + 150.0, N + 300.0, 0.0]];
+    let polygon = created(&s.run("string.create", json!({ "name": "wide", "layer": "domains", "points": square, "closed": true })).unwrap())[0];
+    let rules = json!([{ "name": "Berm", "value": { "type": "inside_polygon", "polygon": polygon, "inside": 10.0, "outside": 5.0 } }]);
+    let steps = json!([
+        { "step": "project", "to": { "kind": "surface", "id": roof }, "batter": 45.0, "condition": null },
+        { "step": "berm", "width": "Berm", "condition": null },
+        { "step": "project", "to": { "kind": "rl", "rl": 130.0 }, "batter": 45.0, "condition": null },
+    ]);
+    run_with_rule(&mut s, "wider berm", &toe, steps, rules, floor).unwrap();
+    let toe_two = line(&s, s.project().objects().find(|o| o.name == "wider berm Wall toe 2").unwrap().id);
+    assert!(has(&toe_two, 50.0, 85.0) && has(&toe_two, 250.0, 90.0), "{:?}", toe_two.vertices);
+    assert!(has(&toe_two, 145.0, 85.0) && has(&toe_two, 150.0, 90.0), "{:?}", toe_two.vertices);
+}
+
+#[test]
+fn a_rule_that_cant_work_says_why() {
+    let mut s = Session::with_builtins();
+    let (floor, roof) = (level_surface(&mut s, "floor", 100.0), level_surface(&mut s, "roof", 120.0));
+    let toe = [[E + 50.0, N + 60.0, 0.0], [E + 250.0, N + 60.0, 0.0]];
+    let up = json!([{ "step": "project", "to": { "kind": "surface", "id": roof }, "batter": "Batter", "condition": null }]);
+    let open = created(&s.run("string.create", json!({ "name": "open", "layer": "domains", "points": toe })).unwrap())[0];
+    let rules = json!([{ "name": "Batter", "value": { "type": "inside_polygon", "polygon": open, "inside": 45.0, "outside": 60.0 } }]);
+    let refused = run_with_rule(&mut s, "open polygon", &toe, up.clone(), rules, floor).unwrap_err();
+    assert!(refused.to_string().contains("needs a closed string"), "{refused}");
+    let rules = json!([{ "name": "Batter", "value": { "type": "segment_azimuth", "sectors": [{ "from": 0.0, "to": 90.0, "value": 95.0 }], "otherwise": 60.0 } }]);
+    let refused = run_with_rule(&mut s, "too steep", &toe, up, rules, floor).unwrap_err();
+    assert!(refused.to_string().contains("a batter must be between 0 and 90 degrees"), "{refused}");
+}
+
 #[test]
 fn a_design_that_cant_run_says_why_and_changes_nothing() {
     let mut s = Session::with_builtins();

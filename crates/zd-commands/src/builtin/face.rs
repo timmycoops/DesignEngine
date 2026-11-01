@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, ProfileStep, StepTarget, StepValue, Surface, TriMesh, WallSide};
-use zd_geom::{COINCIDENT, FaceStep, FaceTarget, GeomError, OffsetSide, conditioned_toe, find_crossings, next_toe, project_face, project_wall, register_toe, run_on, triangulate_grid};
+use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
+use zd_geom::{COINCIDENT, EdgeRule, FaceStep, FaceTarget, GeomError, OffsetSide, SolidRegion, conditioned_toe, find_crossings, next_toe, project_face, project_wall, register_toe, run_on, triangulate_grid};
 
 use super::SideParam;
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
@@ -223,6 +223,7 @@ impl Command for ProjectDesign {
         for id in design.profiles.iter().flat_map(surfaces_of) {
             targets.prepare(id)?;
         }
+        let regions = solid_regions(inputs, design)?;
         let mut changes: Vec<Change> = inputs.objects().filter(|o| o.attributes.get(MADE_BY) == Some(&AttrValue::Text(p.design.to_string()))).map(|o| Change::Delete { id: o.id, base: o.revision }).collect();
         let mut messages = Vec::new();
         let mut runs: Vec<(&FaceLine, ObjectId)> = Vec::new();
@@ -245,11 +246,12 @@ impl Command for ProjectDesign {
             };
             let registered = targets.mesh(profile.register)?;
             let (toe, register) = register_toe(&shaped, registered).map_err(refuse)?;
-            let steps = steps_of(design, &profile.steps, &targets)?;
-            let side = match line.side {
-                WallSide::Left => OffsetSide::Left,
-                WallSide::Right => OffsetSide::Right,
+            let (side, faces) = match line.side {
+                WallSide::Left => (OffsetSide::Left, OffsetSide::Right),
+                WallSide::Right => (OffsetSide::Right, OffsetSide::Left),
             };
+            let rules = LineRules { design, string: path, string_name: &string.name, faces, regions: &regions, inputs };
+            let steps = steps_of(&rules, &profile.steps, &targets)?;
             let face = project_face(&toe, registered, side, profile.direction, &steps).map_err(refuse)?;
             messages.push(line_report(&base, &face, [extended.vertices.len(), shaped.vertices.len()], register.off_grid));
             let attributes = || Attributes::from([(MADE_BY.to_string(), AttrValue::Text(p.design.to_string()))]);
@@ -329,8 +331,77 @@ impl Targets<'_, '_> {
     }
 }
 
-fn steps_of<'t>(design: &FaceDesign, steps: &[ProfileStep], targets: &'t Targets<'_, '_>) -> Result<Vec<FaceStep<'t>>, CommandError> {
-    let value = |given: &StepValue| design.value_of(given).ok_or_else(|| CommandError::Invalid(format!("no rule called {given:?}")));
+/// The solids a design's rules go by, each ready to ask once.
+fn solid_regions(inputs: &Inputs<'_>, design: &FaceDesign) -> Result<HashMap<ObjectId, SolidRegion>, CommandError> {
+    let mut regions = HashMap::new();
+    for rule in &design.rules {
+        if let RuleValue::InsideSolid { solid, .. } = rule.value {
+            let object = inputs.object(solid)?;
+            let Body::Solid(body) = &object.body else {
+                return Err(CommandError::WrongKind { id: solid, expected: ObjectKind::Solid, found: object.kind() });
+            };
+            regions.insert(solid, SolidRegion::new(body.mesh()).map_err(|e| CommandError::Invalid(format!("{}: {e}", rule.name)))?);
+        }
+    }
+    Ok(regions)
+}
+
+/// What a line's rules look at.
+struct LineRules<'a, 'b> {
+    design: &'a FaceDesign,
+    string: &'a Polyline,
+    string_name: &'a str,
+    /// The side of the string its walls look towards.
+    faces: OffsetSide,
+    regions: &'a HashMap<ObjectId, SolidRegion>,
+    inputs: &'a Inputs<'b>,
+}
+
+impl<'a> LineRules<'a, '_> {
+    /// A step's value along a line. `horizon` is the surface the row finishes on.
+    fn edge_rule(&self, given: &'a StepValue, horizon: Option<ObjectId>) -> Result<EdgeRule<'a>, CommandError> {
+        let name = match given {
+            StepValue::Number(value) => return Ok(EdgeRule::Fixed(*value)),
+            StepValue::Rule(name) => name,
+        };
+        let rule = self.design.rule(name).ok_or_else(|| CommandError::Invalid(format!("no rule called {name}")))?;
+        Ok(match &rule.value {
+            RuleValue::Fixed { value } => EdgeRule::Fixed(*value),
+            RuleValue::FixedList { values } => {
+                let n = self.string.vertices.len();
+                let segments = if self.string.closed { n } else { n.saturating_sub(1) };
+                if values.len() != segments {
+                    return Err(CommandError::Invalid(format!("{name} has {} values for the {segments} segments of {}", values.len(), self.string_name)));
+                }
+                EdgeRule::List { string: self.string, values }
+            }
+            RuleValue::InsidePolygon { polygon, inside, outside } => {
+                let (object, line) = self.inputs.string(*polygon)?;
+                if !line.closed {
+                    return Err(CommandError::Invalid(format!("{name} needs a closed string, and {} is open", object.name)));
+                }
+                EdgeRule::Polygon { polygon: line, inside: *inside, outside: *outside }
+            }
+            RuleValue::InsideSolid { solid, inside, outside } => {
+                let region = self.regions.get(solid).ok_or_else(|| CommandError::Invalid(format!("{name} has no solid")))?;
+                EdgeRule::Solid { region, inside: *inside, outside: *outside, upside_down: false }
+            }
+            RuleValue::SegmentAzimuth { sectors, otherwise } => EdgeRule::Azimuth { string: self.string, faces: self.faces, sectors, otherwise: *otherwise },
+            RuleValue::ByHorizon { values, otherwise } => {
+                let value = values.iter().find(|v| Some(v.surface) == horizon).map_or(*otherwise, |v| v.value);
+                EdgeRule::Fixed(value)
+            }
+        })
+    }
+}
+
+fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'t Targets<'_, '_>) -> Result<Vec<FaceStep<'t>>, CommandError> {
+    let surface_of = |to: &StepTarget| match to {
+        StepTarget::Surface { id } => Some(*id),
+        StepTarget::Rl { .. } => None,
+    };
+    // What the wall below a berm reached is the berm's horizon, unless it names its own.
+    let mut reached = None;
     let target = |to: &StepTarget| match to {
         StepTarget::Surface { id } => targets.mesh(*id).map(FaceTarget::Surface),
         StepTarget::Rl { rl } => Ok(FaceTarget::Rl(*rl)),
@@ -339,8 +410,14 @@ fn steps_of<'t>(design: &FaceDesign, steps: &[ProfileStep], targets: &'t Targets
         .iter()
         .map(|step| {
             Ok(match step {
-                ProfileStep::Project { to, batter, condition } => FaceStep::Project { to: target(to)?, batter: value(batter)?, condition: *condition },
-                ProfileStep::Berm { on, width, register, condition } => FaceStep::Berm { on: on.as_ref().map(target).transpose()?, width: value(width)?, register: *register, condition: *condition },
+                ProfileStep::Project { to, batter, condition } => {
+                    reached = surface_of(to);
+                    FaceStep::Project { to: target(to)?, batter: rules.edge_rule(batter, reached)?, condition: *condition }
+                }
+                ProfileStep::Berm { on, width, register, condition } => {
+                    let horizon = on.as_ref().map_or(reached, surface_of);
+                    FaceStep::Berm { on: on.as_ref().map(target).transpose()?, width: rules.edge_rule(width, horizon)?, register: *register, condition: *condition }
+                }
             })
         })
         .collect()

@@ -446,9 +446,30 @@ export interface FaceLine {
   run_on: [number, number];
 }
 
+/** Azimuths clockwise from `from` to `to`, in degrees from grid north, and their value. */
+export interface AzimuthSector {
+  from: number;
+  to: number;
+  value: number;
+}
+
+export interface HorizonValue {
+  surface: string;
+  value: number;
+}
+
+/** How a rule gives its value: one value for each edge of the line a step works from. */
+export type RuleValue =
+  | { type: 'fixed'; value: number }
+  | { type: 'fixed_list'; values: number[] }
+  | { type: 'inside_polygon'; polygon: string; inside: number; outside: number }
+  | { type: 'inside_solid'; solid: string; inside: number; outside: number }
+  | { type: 'segment_azimuth'; sectors: AzimuthSector[]; otherwise: number }
+  | { type: 'by_horizon'; values: HorizonValue[]; otherwise: number };
+
 export interface WallRule {
   name: string;
-  value: { type: 'fixed'; value: number };
+  value: RuleValue;
 }
 
 export interface FaceDesign {

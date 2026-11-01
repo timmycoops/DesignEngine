@@ -15,7 +15,7 @@ use zd_core::{FaceDirection, Polyline, TriMesh};
 
 use crate::string::TriangleBins;
 use crate::wall::{Stretch, at_crest_heights, next_line, triangles_of, with_crest_vertices};
-use crate::{GeomError, OffsetSide, drape_string, filter_string, next_toe, project_wall};
+use crate::{EdgeRule, GeomError, OffsetSide, drape_string, filter_string, next_toe, project_wall_by_edge};
 
 /// What a wall rises to.
 #[derive(Debug, Clone, Copy)]
@@ -28,11 +28,11 @@ pub enum FaceTarget<'a> {
 #[derive(Debug, Clone, Copy)]
 pub enum FaceStep<'a> {
     /// A wall at a batter in degrees. With a tolerance, its crest is conditioned for the next step.
-    Project { to: FaceTarget<'a>, batter: f64, condition: Option<f64> },
+    Project { to: FaceTarget<'a>, batter: EdgeRule<'a>, condition: Option<f64> },
     /// A berm of a width in metres. Its line registers on `on`, or on what the last wall reached if that's
     /// left out. With `register` off it keeps its crest's heights instead. With a tolerance it's
     /// conditioned after it's moved out.
-    Berm { on: Option<FaceTarget<'a>>, width: f64, register: bool, condition: Option<f64> },
+    Berm { on: Option<FaceTarget<'a>>, width: EdgeRule<'a>, register: bool, condition: Option<f64> },
 }
 
 /// One wall of a face.
@@ -188,8 +188,8 @@ pub fn project_face(toe: &Polyline, register: &TriMesh, side: OffsetSide, direct
                 .iter()
                 .zip(&surfaces)
                 .map(|(step, mesh)| match *step {
-                    FaceStep::Project { to, batter, condition } => FaceStep::Project { to: mirrored_target(to, mesh.as_ref()), batter, condition },
-                    FaceStep::Berm { on, width, register, condition } => FaceStep::Berm { on: on.map(|on| mirrored_target(on, mesh.as_ref())), width, register, condition },
+                    FaceStep::Project { to, batter, condition } => FaceStep::Project { to: mirrored_target(to, mesh.as_ref()), batter: batter.upside_down(), condition },
+                    FaceStep::Berm { on, width, register, condition } => FaceStep::Berm { on: on.map(|on| mirrored_target(on, mesh.as_ref())), width: width.upside_down(), register, condition },
                 })
                 .collect();
             run_steps(&toe, &surface, swapped, &mirrored, &mut face)?;
@@ -275,7 +275,7 @@ fn sheet_reach(line: &Polyline, rl: f64, batter: f64) -> f64 {
 }
 
 /// A level sheet at an RL over a string's plan area, as a target.
-fn level_sheet(line: &Polyline, rl: f64, reach: f64) -> TriMesh {
+pub(crate) fn level_sheet(line: &Polyline, rl: f64, reach: f64) -> TriMesh {
     let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
     for p in &line.vertices {
         lo = [lo[0].min(p[0]), lo[1].min(p[1])];
@@ -315,18 +315,21 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                         None => crest,
                     };
                 }
+                let (line, batters) = batter.applied_to(&from).map_err(|e| fail(k, e))?;
+                from = line;
+                let flattest = batters.iter().copied().fold(f64::INFINITY, f64::min);
                 // Steps at one batter with no berm between them are one wall carrying straight on: the
                 // targets on the way only mark where its crest lines fall.
                 let wall: Vec<(usize, FaceTarget<'a>, Option<f64>)> = (k..steps.len())
                     .map_while(|j| match steps[j] {
-                        FaceStep::Project { to, batter: b, condition } if b == batter => Some((j, to, condition)),
+                        FaceStep::Project { to, batter: b, condition } if b.same_as(&batter) => Some((j, to, condition)),
                         _ => None,
                     })
                     .collect();
                 let (&(last, to, condition), marks) = wall.split_last().expect("this step at least");
                 for &(j, to, _) in marks {
-                    let target = Resting::of(to, &from, batter);
-                    match project_wall(&from, side, batter, target.mesh()) {
+                    let target = Resting::of(to, &from, flattest);
+                    match project_wall_by_edge(&from, side, &batters, target.mesh()) {
                         Ok(wall) => {
                             face.steps.push(wall_report(j, &wall));
                             face.benches.push(FaceBench { step: j, toe: from.clone(), crest: wall.crest });
@@ -335,8 +338,8 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                         Err(_) => face.steps.push(no_wall_report(j)),
                     }
                 }
-                let target = Resting::of(to, &from, batter);
-                match project_wall(&from, side, batter, target.mesh()) {
+                let target = Resting::of(to, &from, flattest);
+                match project_wall_by_edge(&from, side, &batters, target.mesh()) {
                     Ok(wall) => {
                         face.steps.push(wall_report(last, &wall));
                         let toe = if wall.log.no_height.is_empty() { from.clone() } else { with_touches(&from, &wall.crest) };
@@ -548,11 +551,11 @@ mod tests {
 
     /// A wall and a berm as the table starts them, conditioned at 0.1 m.
     fn wall<'a>(to: FaceTarget<'a>, batter: f64) -> FaceStep<'a> {
-        FaceStep::Project { to, batter, condition: Some(0.1) }
+        FaceStep::Project { to, batter: batter.into(), condition: Some(0.1) }
     }
 
     fn berm<'a>(width: f64) -> FaceStep<'a> {
-        FaceStep::Berm { on: None, width, register: true, condition: Some(0.1) }
+        FaceStep::Berm { on: None, width: width.into(), register: true, condition: Some(0.1) }
     }
 
     /// Tim's sequence on level surfaces, where every line has a known place: the toe on Grid A at RL 100,
@@ -656,7 +659,7 @@ mod tests {
         let a = surface(|_, _| 100.0);
         let rolling = surface(|x, y| 120.0 + 0.2 * (y - 120.0) + 4.0 * (x / 41.0).sin());
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
-        let steps = |register| [wall(FaceTarget::Surface(&rolling), 60.0), FaceStep::Berm { on: None, width: 10.0, register, condition: Some(0.1) }, wall(FaceTarget::Rl(160.0), 60.0)];
+        let steps = |register| [wall(FaceTarget::Surface(&rolling), 60.0), FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register, condition: Some(0.1) }, wall(FaceTarget::Rl(160.0), 60.0)];
         let held = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps(false)).unwrap();
         let crest = &held.benches[0].crest;
         let next = &held.benches[1].toe;
@@ -680,7 +683,7 @@ mod tests {
         let (a, b, c) = (surface(|_, _| 100.0), surface(|_, _| 120.0), surface(|_, _| 125.0));
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
         for (on, want) in [(FaceTarget::Surface(&c), 125.0), (FaceTarget::Rl(123.0), 123.0)] {
-            let steps = [wall(FaceTarget::Surface(&b), 45.0), FaceStep::Berm { on: Some(on), width: 5.0, register: true, condition: None }, wall(FaceTarget::Rl(160.0), 45.0)];
+            let steps = [wall(FaceTarget::Surface(&b), 45.0), FaceStep::Berm { on: Some(on), width: EdgeRule::Fixed(5.0), register: true, condition: None }, wall(FaceTarget::Rl(160.0), 45.0)];
             let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps).unwrap();
             for p in &face.benches[1].toe.vertices {
                 close(p[2], want, 1e-6);
@@ -696,7 +699,7 @@ mod tests {
         let rolling = surface(|x, y| 120.0 + 3.0 * (x / 29.0).sin() + 2.0 * (y / 17.0).cos());
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
         let corners_of_next_toe = |crest: Option<f64>, after: Option<f64>| {
-            let steps = [FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: 60.0, condition: crest }, FaceStep::Berm { on: None, width: 10.0, register: true, condition: after }, wall(FaceTarget::Rl(170.0), 60.0)];
+            let steps = [FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: EdgeRule::Fixed(60.0), condition: crest }, FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: after }, wall(FaceTarget::Rl(170.0), 60.0)];
             let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps).unwrap();
             plan_corners(&face.benches[1].toe)
         };
@@ -709,7 +712,7 @@ mod tests {
     fn a_change_of_batter_with_conditioning_off_starts_on_the_crest() {
         let (a, b) = (surface(|_, _| 100.0), surface(|_, _| 120.0));
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
-        let steps = |condition| [FaceStep::Project { to: FaceTarget::Surface(&b), batter: 45.0, condition }, wall(FaceTarget::Rl(140.0), 60.0)];
+        let steps = |condition| [FaceStep::Project { to: FaceTarget::Surface(&b), batter: EdgeRule::Fixed(45.0), condition }, wall(FaceTarget::Rl(140.0), 60.0)];
         let walls = 20.0 * 2f64.sqrt() + 20.0 / 60f64.to_radians().sin();
         let on_the_crest = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps(None)).unwrap();
         close(on_the_crest.surface.area(), 300.0 * walls, 1e-3);
@@ -722,7 +725,7 @@ mod tests {
         let (a, topo) = (surface(|_, _| 100.0), surface(|x, y| 130.0 + 3.0 * (x / 29.0).sin() + 2.0 * (y / 17.0).cos()));
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
         let run = |condition| {
-            let steps = [FaceStep::Project { to: FaceTarget::Surface(&topo), batter: 70.0, condition }, wall(FaceTarget::Rl(200.0), 70.0)];
+            let steps = [FaceStep::Project { to: FaceTarget::Surface(&topo), batter: EdgeRule::Fixed(70.0), condition }, wall(FaceTarget::Rl(200.0), 70.0)];
             project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps).unwrap()
         };
         let (on, off) = (run(Some(1.0)), run(None));
@@ -735,7 +738,7 @@ mod tests {
     fn conditioning_the_last_crest_cleans_the_string_and_leaves_the_sheet_alone() {
         let (a, rolling) = (surface(|_, _| 100.0), surface(|x, y| 130.0 + 3.0 * (x / 29.0).sin() + 2.0 * (y / 17.0).cos()));
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
-        let run = |condition| project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &[FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: 70.0, condition }]).unwrap();
+        let run = |condition| project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &[FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: EdgeRule::Fixed(70.0), condition }]).unwrap();
         let (raw, clean) = (run(None), run(Some(1.0)));
         // The cleaned crest is laid back on the target with a vertex at every triangle, so it's its plan
         // shape that's simpler.

@@ -126,12 +126,53 @@ pub struct WallRule {
     pub value: RuleValue,
 }
 
-/// How a rule gives its value. The other kinds (azimuth, inside polygon, by horizon) come next, and each
-/// gives one value per edge of a string.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// How a rule gives its value: one value per edge of whatever line a step works from. Blending between
+/// values happens in the wall and only ever flattens a slope or widens a berm.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuleValue {
     Fixed { value: f64 },
+    /// One value for each segment of a line's string, in order.
+    FixedList { values: Vec<f64> },
+    /// One value inside a closed string in plan and another outside.
+    InsidePolygon { polygon: ObjectId, inside: f64, outside: f64 },
+    /// One value inside a solid and another outside.
+    InsideSolid { solid: ObjectId, inside: f64, outside: f64 },
+    /// A value by the way the wall faces.
+    SegmentAzimuth { sectors: Vec<AzimuthSector>, otherwise: f64 },
+    /// A value by the surface a row finishes on: for a berm, the one the wall below it reached.
+    ByHorizon { values: Vec<HorizonValue>, otherwise: f64 },
+}
+
+/// A sector of azimuths, clockwise from `from` to `to` in degrees from grid north, and its value. One
+/// from a number back to the same number holds every azimuth.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AzimuthSector {
+    pub from: f64,
+    pub to: f64,
+    pub value: f64,
+}
+
+/// A surface and the value for a row that finishes on it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HorizonValue {
+    pub surface: ObjectId,
+    pub value: f64,
+}
+
+impl RuleValue {
+    /// Every number the rule can give, to check against what a batter or a berm can be.
+    pub fn numbers(&self) -> Vec<f64> {
+        match self {
+            RuleValue::Fixed { value } => vec![*value],
+            RuleValue::FixedList { values } => values.clone(),
+            RuleValue::InsidePolygon { inside, outside, .. } | RuleValue::InsideSolid { inside, outside, .. } => vec![*inside, *outside],
+            RuleValue::SegmentAzimuth { sectors, otherwise } => sectors.iter().map(|s| s.value).chain([*otherwise]).collect(),
+            RuleValue::ByHorizon { values, otherwise } => values.iter().map(|v| v.value).chain([*otherwise]).collect(),
+        }
+    }
 }
 
 impl FaceDesign {
@@ -144,13 +185,22 @@ impl FaceDesign {
     }
 
     /// The number a step's batter or width comes to.
+    /// A step's value if it's one number all along: typed on the row, or a fixed rule.
     pub fn value_of(&self, given: &StepValue) -> Option<f64> {
         match given {
             StepValue::Number(value) => Some(*value),
-            StepValue::Rule(name) => self.rule(name).map(|rule| {
-                let RuleValue::Fixed { value } = rule.value;
-                value
-            }),
+            StepValue::Rule(name) => match self.rule(name)?.value {
+                RuleValue::Fixed { value } => Some(value),
+                _ => None,
+            },
+        }
+    }
+
+    /// Every number a step's value can come to, or nothing if it names no rule.
+    fn numbers_of(&self, given: &StepValue) -> Option<Vec<f64>> {
+        match given {
+            StepValue::Number(value) => Some(vec![*value]),
+            StepValue::Rule(name) => self.rule(name).map(|rule| rule.value.numbers()),
         }
     }
 
@@ -175,6 +225,11 @@ impl FaceDesign {
         };
         twice(self.profiles.iter().map(|p| p.name.as_str()).collect(), "profile", &mut problems);
         twice(self.rules.iter().map(|r| r.name.as_str()).collect(), "rule", &mut problems);
+        for rule in &self.rules {
+            if matches!(&rule.value, RuleValue::FixedList { values } if values.is_empty()) {
+                problems.push(format!("{} has no values", rule.name));
+            }
+        }
         for (k, line) in self.lines.iter().enumerate() {
             if self.profile(&line.profile).is_none() {
                 problems.push(format!("A line uses a profile that isn't there: {}", line.profile));
@@ -215,17 +270,17 @@ impl FaceDesign {
             ProfileStep::Berm { width, condition, .. } => (width, condition, false),
         };
         check_tolerance(row, *condition, problems);
-        let Some(value) = self.value_of(given) else {
+        let Some(numbers) = self.numbers_of(given) else {
             match given {
                 StepValue::Rule(name) if !name.trim().is_empty() => problems.push(format!("{row} uses a rule that isn't there: {name}")),
                 _ => problems.push(format!("{row} needs {}", if is_batter { "a batter" } else { "a width" })),
             }
             return;
         };
-        if is_batter && !(value > 0.0 && value < 90.0) {
+        if is_batter && !numbers.iter().all(|value| *value > 0.0 && *value < 90.0) {
             problems.push(format!("{row}: a batter must be between 0 and 90 degrees"));
         }
-        if !is_batter && !(value.is_finite() && value >= 0.0) {
+        if !is_batter && !numbers.iter().all(|value| value.is_finite() && *value >= 0.0) {
             problems.push(format!("{row}: a berm must be zero or more"));
         }
     }
