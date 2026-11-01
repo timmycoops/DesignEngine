@@ -143,8 +143,8 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
 /** The tree with every solid on one layer: opening it, and its frames from one end to the other. */
 async function checkTree(summary: ProjectSummary) {
   const tree = document.querySelector('[data-slot="tree"]');
-  const opener = document.querySelector<HTMLElement>('[aria-label="Open solids"]');
-  if (!tree || !opener) return { error: 'no tree with a closed layer of solids in the page' };
+  const opener = document.querySelector<HTMLElement>('[aria-label="Open Solids on solids"]');
+  if (!tree || !opener) return { error: 'no tree with a closed group of solids in the page' };
   const nextPaint = () => new Promise(requestAnimationFrame);
   const start = performance.now();
   opener.click();
