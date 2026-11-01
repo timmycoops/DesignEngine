@@ -15,8 +15,8 @@ mod surface;
 pub use exchange::{ExportCsv, ExportDxf, ExportParams, ImportStrings, ImportStringsParams};
 pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParams, SaveDesign, SaveDesignParams};
 pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
-pub use layer::{CreateLayer, CreateLayerParams};
-pub use object::{DeleteObject, ObjectParams, RenameObject, RenameParams};
+pub use layer::{CreateLayer, CreateLayerParams, DeleteLayer, DeleteLayerParams, RecolourLayer, RecolourLayerParams, RenameLayer, RenameLayerParams};
+pub use object::{DeleteObject, DeleteObjects, MoveObjects, MoveObjectsParams, ObjectParams, ObjectsParams, RenameObject, RenameParams};
 pub use seam::{BuildSeamModel, BuildSeamModelParams, SuggestSeamDefinition, SuggestSeamDefinitionParams};
 pub(crate) use solid::check_solids_made;
 pub use solid::{CutBySurface, CutBySurfaceParams, ImportSolid, ImportSolidParams, ImportSolids, ImportSolidsParams, SolidFromMesh};
@@ -32,6 +32,11 @@ use crate::{CommandError, Registry};
 
 pub fn register_all(registry: &mut Registry) {
     registry.register(CreateLayer);
+    registry.register(RenameLayer);
+    registry.register(RecolourLayer);
+    registry.register(DeleteLayer);
+    registry.register(DeleteObjects);
+    registry.register(MoveObjects);
     registry.register(RenameObject);
     registry.register(DeleteObject);
     registry.register(CreateString);

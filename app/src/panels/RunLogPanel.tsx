@@ -39,7 +39,7 @@ function toRows(log: LogEntry[]): LogRow[] {
         const failed = e.status !== 'ok';
         const outputs = e.outputs.slice(0, OUTPUTS_IN_A_ROW).map((o) => `${o.name} (${o.change})`);
         const more = e.outputs.length > OUTPUTS_IN_A_ROW ? ` and ${e.outputs.length - OUTPUTS_IN_A_ROW} more` : '';
-        const result = failed ? (e.status as { failed: string }).failed : outputs.join(', ') + more || 'no change';
+        const result = failed ? (e.status as { failed: string }).failed : outputs.join(', ') + more || (e.messages[0] ?? 'no change');
         return { index, at: e.started_unix_ms, what: e.command, result, ms: e.duration_ms, outcome: failed ? 'failed' : undone.has(e.run) ? 'undone' : 'ok', record: e };
       }
       case 'undo':

@@ -7,7 +7,7 @@ Date: 2026-11-01 · Status: accepted (Tim, 2026-11-01)
 Tim, with two seam models on one layer: "Shows two seam models and two surfaces - but i cant see which one is which ?
 This feels very weird". Layers and Objects were separate lists, only a whole layer could be hidden, and selecting showed
 nothing on screen. The Layers plan on the Build Plan doc fixes that in six workstreams. This records the decisions Tim
-agreed, the first workstream, the tree, the second, showing and hiding one object, and the third, seeing what you pick.
+agreed and the first four workstreams: the tree, showing and hiding one object, seeing what you pick, and layer commands.
 
 ## Decision
 
@@ -44,6 +44,17 @@ agreed, the first workstream, the tree, the second, showing and hiding one objec
     up or down. Clicking nothing clears the selection.
 16. **The tree follows a pick.** It opens the object's layer and brings its row into view. The label beside the cursor
     now names a solid too.
+17. **Layer changes are runs.** `layer.rename`, `layer.recolour` and `layer.delete` are typed commands that undo and redo
+    like any other, and whether a layer is shown stays display state, so undoing a rename leaves its tick alone. An undo
+    puts a deleted layer back in its place.
+18. **Deleting a layer takes what's on it.** The menu says how many objects, and one undo brings them all back, so there's
+    no second question. On its own, the engine refuses to remove a layer with anything left on it.
+19. **Moving objects is a revision of each.** `object.move` takes a list and makes the layer if it's new. An object
+    already there is left alone. `object.delete_many` does the same for deletes, so a list is one run and one undo.
+20. **Several rows act together.** Ctrl and Shift mark rows in the tree, and a tick or the right-click menu then takes all
+    of them. The mark is the tree's own and doesn't change what's selected.
+21. **Each seam model built from the app gets its own layer,** `Seam models\<definition file>`. It reads as a flat name
+    until workstream 5 makes it a folder.
 
 ## Evidence
 
@@ -84,6 +95,18 @@ Clicks in the real app, through the canvas, with only the layer under test showi
 
 The solid's copy adds its own 70 triangles and goes when the selection clears. Orbit stays at 60.0 fps.
 
+Layer commands in the real app on that layer of 42,218 solids, each undone, with the scene back as it was every time:
+
+| Command | ms | Undo, ms |
+|---|---:|---:|
+| Rename the layer | 140 | 166 |
+| Recolour it | 156 | 169 |
+| Move one solid to a new layer | 2,268 | 2,201 |
+| Delete the layer | 554 | 513 |
+
+Moving a solid changes what two layers' snap indexes hold, so the 1.9 s is those being built, in the background and after
+the move is on screen. Snapping to those two layers' solids stops until they're done.
+
 The tree with all 42,218 solids on one layer, in the real app:
 
 | | |
@@ -101,7 +124,10 @@ The tree with all 42,218 solids on one layer, in the real app:
   where that goes.
 - **The Objects table's sorting and columns are gone.** Objects list in the order they were made, which keeps a face's
   toes and crests together. A revision shows beside the name once it's past 1. Filtering comes in workstream 6.
-- **One selected object at a time.** Selecting several, and hiding or moving them together, waits for workstream 6.
+- **One selected object at a time.** Rows can be marked to act together, but Properties and the highlight show one.
+- **A moved solid costs a snap index on each layer**, as above. It's not worth a smarter index until moving solids in bulk
+  is common.
+- **A face design keeps the layer name it was given.** Rename its layer and the next run makes one of the old name.
 - **A solid is found straight up and down from a click on a section.** That's right for solids on a section, and one with
   an overhang could name its neighbour.
 - **Seam horizons are picked in the page**, triangle by triangle within the tiles under the cursor. It's fine for a click,
