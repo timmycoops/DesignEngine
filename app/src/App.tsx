@@ -258,6 +258,8 @@ export default function App() {
 
   const run = useCallback(async (name: string, params: Record<string, unknown>) => !!(await runRecord(name, params)).record, [runRecord]);
 
+  const clearRefusal = useCallback(() => setStatus((was) => (was.error ? { text: '' } : was)), []);
+
   const viewportMounted = useCallback(() => setHostMounted(true), []);
 
   const toggleMark = useCallback((id: string) => {
@@ -564,13 +566,14 @@ export default function App() {
       setLineWeight: (layer, px) => sectionRef.current?.setWeight(layer, px),
       showSeamHorizon,
       focusIssue,
+      clearRefusal,
       markCrossings,
       flyTo,
       pickPoint,
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, marked, toggleMark, setActiveLayer, setVisible, setObjectsShown, run, runRecord, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, pickPoint, mode, typeVertex],
+    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, marked, toggleMark, setActiveLayer, setVisible, setObjectsShown, run, runRecord, clearRefusal, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, pickPoint, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';

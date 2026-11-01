@@ -396,7 +396,6 @@ fn check_ramps(profile: &FaceProfile, problems: &mut Vec<String>) {
         let climbed: Vec<usize> = walls.iter().enumerate().filter(|(_, (_, wall))| *wall == Some(ramp.name.as_str())).map(|(place, _)| place).collect();
         match (climbed.first(), climbed.last()) {
             (Some(first), Some(last)) if last - first + 1 != climbed.len() => problems.push(format!("{name} has another wall in among its walls: a road climbs walls that come together")),
-            (None, _) => problems.push(format!("{name} isn't on a wall: name it in a wall's Ramp box")),
             _ => {}
         }
     }
@@ -581,15 +580,20 @@ mod tests {
         assert!(with(|r| r.grade = 0.0).iter().any(|p| p.contains("a road's grade")));
         assert!(with(|r| r.at = [f64::NAN, 0.0]).iter().any(|p| p.contains("needs a point")));
         assert!(with(|r| r.name = "B".into()).iter().any(|p| p.contains("uses a ramp that isn't there: A")));
-        let mut d = design();
-        d.profiles[0].ramps.push(ramp());
-        assert!(d.problems().iter().any(|p| p.contains("isn't on a wall")), "{:?}", d.problems());
         let mut d = with_a_ramp();
         d.profiles[0].ramps.push(ramp());
         assert!(d.problems().iter().any(|p| p.contains("Two ramps on Highwall are called A")));
         let mut d = with_a_ramp();
         d.profiles[0].direction = FaceDirection::Down;
         assert!(d.problems().iter().any(|p| p.contains("only goes on a profile going up")));
+    }
+
+    /// A ramp set up but not on a wall yet builds no road, and the rest of the design still runs.
+    #[test]
+    fn a_ramp_with_no_walls_is_no_problem() {
+        let mut d = design();
+        d.profiles[0].ramps.push(ramp());
+        assert!(d.problems().is_empty(), "{:?}", d.problems());
     }
 
     #[test]

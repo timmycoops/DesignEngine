@@ -958,6 +958,38 @@ fn a_ramp_goes_on_the_string_it_names() {
     assert!(record.messages.iter().any(|m| m == "Ramp A: its string isn't on a line using Wall"), "{:?}", record.messages);
 }
 
+/// A ramp set up but not on a wall yet, held at either end, makes no road and says so. The wall and the road
+/// that is on it still build.
+#[test]
+fn a_ramp_not_on_a_wall_yet_leaves_the_run_going() {
+    let mut s = Session::with_builtins();
+    let floor = level_surface(&mut s, "floor", 100.0);
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E + 10.0, N + 30.0, 0.0], [E + 290.0, N + 30.0, 0.0]] })).unwrap())[0];
+    let road = |name: &str, fixed: &str| json!({ "name": name, "string": toe, "fixed": fixed, "at": [E + 40.0, N + 30.0], "heading": "along", "width": 10.0, "grade": 10.0 });
+    let mut content = ramped_content(toe, floor, road("A", "start"));
+    content["profiles"][0]["ramps"] = json!([road("A", "start"), road("B", "start"), road("D", "end")]);
+    let design = created(&s.run("face.save_design", json!({ "name": "part set up", "content": content })).unwrap())[0];
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    for name in ["B", "D"] {
+        assert!(record.messages.iter().any(|m| *m == format!("Ramp {name}: it isn't on a wall yet, so it made no road")), "{:?}", record.messages);
+    }
+    assert!(record.messages.iter().any(|m| m.starts_with("Ramp A: step 1, 200.0 m")), "{:?}", record.messages);
+    assert!(s.project().objects().any(|o| o.name == "toe Wall face"));
+    assert!(!s.project().objects().any(|o| o.name.contains("road B") || o.name.contains("road D")));
+}
+
+/// A refused run names everything that's wrong, so they don't come one run at a time.
+#[test]
+fn a_refused_run_names_everything_wrong() {
+    let mut s = Session::with_builtins();
+    let floor = level_surface(&mut s, "floor", 100.0);
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E + 10.0, N + 30.0, 0.0], [E + 290.0, N + 30.0, 0.0]] })).unwrap())[0];
+    let content = ramped_content(toe, floor, json!({ "name": "A", "string": toe, "fixed": "start", "at": [E + 40.0, N + 30.0], "heading": "along", "width": 0.0, "grade": 0.0 }));
+    let design = created(&s.run("face.save_design", json!({ "name": "wrong twice", "content": content })).unwrap())[0];
+    let error = s.run("face.project", json!({ "design": design })).unwrap_err().to_string();
+    assert!(error.contains("a road's width") && error.contains("a road's grade"), "{error}");
+}
+
 /// Every real solid cut by real grids. `ZD_CUT_SOLIDS` is a zip or folder of solids and `ZD_CUT_GRIDS`
 /// lists grids with `;`. What's kept and any solid left uncut must add up to what went in, to one part in
 /// a million, and every solid must lie under the grid.

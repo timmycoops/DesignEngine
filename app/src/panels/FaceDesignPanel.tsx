@@ -609,7 +609,7 @@ function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfil
  * and steps every line in one run, one undo.
  */
 export function FaceDesignPanel() {
-  const { summary, selected, marked, setMarked, runRecord, pickPoint } = useWorkspace();
+  const { summary, selected, marked, setMarked, runRecord, clearRefusal, pickPoint } = useWorkspace();
   const objects = useMemo(() => summary?.objects ?? [], [summary]);
   const designs = useMemo(() => objects.filter((o) => o.kind === 'face_design'), [objects]);
   const [id, setId] = useState<string | null>(null);
@@ -653,7 +653,10 @@ export function FaceDesignPanel() {
   const edit = useCallback((change: (d: FaceDesign) => FaceDesign) => {
     setDraft((d) => (d ? change(d) : d));
     setDirty(true);
-  }, []);
+    // What a refused run said was about the design as it was. How far ramps got stays until the next run.
+    setReport((was) => (was.error ? { lines: was.lines } : was));
+    clearRefusal();
+  }, [clearRefusal]);
 
   const start = () => {
     if (!surfaces[0]) {
@@ -1058,7 +1061,7 @@ export function FaceDesignPanel() {
           <Play className="size-3" /> Run all lines
         </Button>
       </div>
-      {report.error && <p className="px-3 pt-2 text-xs text-destructive">{report.error}</p>}
+      {report.error && <p className="whitespace-pre-line px-3 pt-2 text-xs text-destructive">{report.error}</p>}
       {report.lines
         .filter((line) => !rampLine(line))
         .map((line, k) => (

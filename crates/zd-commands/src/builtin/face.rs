@@ -219,8 +219,10 @@ impl Command for ProjectDesign {
         let Body::FaceDesign(design) = &object.body else {
             return Err(CommandError::WrongKind { id: p.design, expected: ObjectKind::FaceDesign, found: object.kind() });
         };
-        if let Some(problem) = design.problems().into_iter().next() {
-            return Err(CommandError::Invalid(problem));
+        let problems = design.problems();
+        if !problems.is_empty() {
+            return Err(CommandError::Invalid(problems.join("
+")));
         }
         let mut targets = Targets { inputs, grids: HashMap::new() };
         for id in design.profiles.iter().flat_map(surfaces_of) {
@@ -254,7 +256,7 @@ impl Command for ProjectDesign {
                 WallSide::Right => (OffsetSide::Right, OffsetSide::Left),
             };
             let rules = LineRules { design, string: path, string_name: &string.name, faces, regions: &regions, inputs };
-            let ramps: Vec<&Ramp> = profile.ramps.iter().filter(|ramp| ramp.string == id).collect();
+            let ramps: Vec<&Ramp> = profile.ramps.iter().filter(|ramp| ramp.string == id && on_a_wall(profile, ramp)).collect();
             let steps = steps_of(&rules, &profile.steps, &targets, &ramps)?;
             let face = project_face(&toe, registered, side, profile.direction, &steps, &ramps.iter().map(|ramp| face_ramp(ramp)).collect::<Vec<_>>()).map_err(refuse)?;
             messages.push(line_report(&base, &face, [extended.vertices.len(), shaped.vertices.len()], register.off_grid));
@@ -283,8 +285,12 @@ impl Command for ProjectDesign {
             changes.push(create(format!("{base} face"), Body::Surface(Surface::new(face.surface).with_crossings(crossings))));
         }
         for profile in &design.profiles {
-            for ramp in profile.ramps.iter().filter(|ramp| !runs.iter().any(|(line, id)| line.profile == profile.name && *id == ramp.string)) {
-                messages.push(format!("Ramp {}: its string isn't on a line using {}", ramp.name, profile.name));
+            for ramp in &profile.ramps {
+                if !on_a_wall(profile, ramp) {
+                    messages.push(format!("Ramp {}: it isn't on a wall yet, so it made no road", ramp.name));
+                } else if !runs.iter().any(|(line, id)| line.profile == profile.name && *id == ramp.string) {
+                    messages.push(format!("Ramp {}: its string isn't on a line using {}", ramp.name, profile.name));
+                }
             }
         }
         let mut outcome = Outcome::new(changes);
@@ -308,6 +314,11 @@ fn strings_of(inputs: &Inputs<'_>, line: &FaceLine, design: ObjectId) -> Result<
         return Err(CommandError::Invalid("A line names a layer with no strings on it".to_string()));
     }
     Ok(strings)
+}
+
+/// Whether a wall row names a ramp. One that isn't on a wall yet is left out of the run, not refused.
+fn on_a_wall(profile: &FaceProfile, ramp: &Ramp) -> bool {
+    profile.steps.iter().any(|step| matches!(step, ProfileStep::Project { ramp: Some(name), .. } if *name == ramp.name))
 }
 
 fn face_ramp(ramp: &Ramp) -> FaceRamp {
