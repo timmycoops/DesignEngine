@@ -4,6 +4,7 @@ import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
 import { css, ISSUE, NO_COAL, rampCss } from '@/viewport/ramp';
+import type { SeamShown } from '@/viewport/sceneSync';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
 
@@ -16,14 +17,26 @@ function Swatch({ colour, label }: { colour: string; label: string }) {
   );
 }
 
-/** The seam horizon on show: which one (and a picker for the others), the thickness ramp, and its issues. */
-function SeamLegend() {
-  const { seamView, showSeamHorizon, select, sectionOpen } = useWorkspace();
-  if (!seamView) return null;
+/** Every seam model on show, nearest the top the first in the project. */
+function SeamLegends() {
+  const { seamViews, sectionOpen } = useWorkspace();
+  if (seamViews.length === 0) return null;
+  return (
+    <div className={`absolute left-3 z-10 flex max-h-[calc(100%-1.5rem)] w-64 flex-col gap-2 overflow-auto ${sectionOpen ? 'bottom-[264px]' : 'bottom-3'}`}>
+      {seamViews.map((view) => (
+        <SeamLegend key={view.id} seamView={view} />
+      ))}
+    </div>
+  );
+}
+
+/** A seam model's horizon on show: which one (and a picker for the others), the thickness ramp, and its issues. */
+function SeamLegend({ seamView }: { seamView: SeamShown }) {
+  const { showSeamHorizon, select } = useWorkspace();
   const r = seamView.result;
   const material = (r.horizons.find((h) => h.code === r.horizon)?.material ?? 'coal').toLowerCase();
   return (
-    <div className={`absolute left-3 z-10 w-64 rounded-md border bg-card/90 p-2 text-xs shadow-md backdrop-blur-sm ${sectionOpen ? 'bottom-[264px]' : 'bottom-3'}`}>
+    <div className="shrink-0 rounded-md border bg-card/90 p-2 text-xs shadow-md backdrop-blur-sm">
       <div className="flex items-center gap-1">
         <button className="min-w-0 truncate font-medium hover:underline" title="Show the model's horizons and issues" onClick={() => select(seamView.id)}>
           {seamView.name}
@@ -106,7 +119,7 @@ export function ViewportPanel() {
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#161e29]">
       <div ref={ref} className="absolute inset-0" />
-      <SeamLegend />
+      <SeamLegends />
       <TypedEntry />
     </div>
   );

@@ -269,6 +269,8 @@ export interface ObjectSummary {
   attributes: Record<string, boolean | number | string>;
   /** Drawn as a surface: surfaces, solids and elevation grids. */
   drawn: boolean;
+  /** Hidden on its own: not drawn, snapped to or cut by a section. */
+  hidden: boolean;
   /** Changes only when the geometry does. */
   geometry_key: string;
   /** String vertices, offset from the scene origin. */
@@ -334,6 +336,8 @@ export const openProject = (path: string) => invoke<ProjectSummary>('open_projec
 export const saveProject = (path?: string) => invoke<SaveReply>('save_project', { path: path ?? null });
 export const setLayerVisible = (layer: string, visible: boolean) =>
   invoke<ProjectSummary>('set_layer_visible', { layer, visible });
+export const setObjectsVisible = (objects: string[], visible: boolean) =>
+  invoke<ProjectSummary>('set_objects_visible', { objects, visible });
 
 /** The session's run log, oldest first: every run (failed ones too), undo, redo, save and open. */
 export type LogEntry =

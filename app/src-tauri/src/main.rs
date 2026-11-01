@@ -22,6 +22,7 @@ fn main() {
             commands::open_project,
             commands::save_project,
             commands::set_layer_visible,
+            commands::set_objects_visible,
             commands::run_log,
             commands::stage_object,
             commands::stage_layer_solids,

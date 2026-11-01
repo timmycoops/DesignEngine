@@ -13,6 +13,8 @@ import {
   projectSummary,
   type ProjectSummary,
   runCommand,
+  setLayerVisible,
+  setObjectsVisible,
   type SnapHit,
   snapRay,
   stageObject,
@@ -89,6 +91,7 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
   await viewport.nextFrame();
   const painted = performance.now();
   const tree = await checkTree(reply.summary);
+  const hide = await checkHide(viewport, reply.summary, show);
   const triangles = viewport.triangleCount;
   for (let i = 0; i < WARM_UP_FRAMES; i++) await viewport.nextFrame();
   log(`solids: orbiting ${triangles.toLocaleString()} triangles`);
@@ -118,6 +121,7 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
     total_to_ready_ms: ready - start,
     total_to_painted_ms: painted - start,
     tree,
+    hide,
     orbit: orbited,
     pick,
     camera,
@@ -159,6 +163,28 @@ async function checkTree(summary: ProjectSummary) {
     last_solid_in_last_row: rows[rows.length - 1]?.textContent?.includes(summary.objects[summary.objects.length - 1].name) ?? false,
     scroll_p50_ms: frames[Math.floor(frames.length / 2)],
     scroll_max_ms: frames[frames.length - 1],
+  };
+}
+
+/** Hiding one solid of a layer and showing it again, then the whole layer, to the frame that shows it. */
+async function checkHide(viewport: Viewport, summary: ProjectSummary, show: Show) {
+  const solids = summary.objects.filter((o) => o.kind === 'solid');
+  const one = solids[Math.floor(solids.length / 2)];
+  const timed = async (change: () => Promise<ProjectSummary>) => {
+    const start = performance.now();
+    const next = await change();
+    const replied = performance.now();
+    await show(next);
+    await viewport.nextFrame();
+    return { reply_ms: replied - start, total_ms: performance.now() - start, triangles: viewport.triangleCount };
+  };
+  return {
+    solids: solids.length,
+    triangles_before: viewport.triangleCount,
+    hide_one: await timed(() => setObjectsVisible([one.id], false)),
+    show_one: await timed(() => setObjectsVisible([one.id], true)),
+    hide_layer: await timed(() => setLayerVisible(one.layer, false)),
+    show_layer: await timed(() => setLayerVisible(one.layer, true)),
   };
 }
 

@@ -16,12 +16,14 @@ export interface Workspace {
   select: (id: string | null) => void;
   setActiveLayer: (name: string) => void;
   setLayerVisible: (layer: string, visible: boolean) => void;
+  /** Shows or hides objects one by one, under their layer's tick. Display only: not undone. */
+  setObjectsVisible: (objects: string[], visible: boolean) => void;
   /** Runs an engine command; reports the outcome on the status line. False if it failed. */
   run: (name: string, params: Record<string, unknown>) => Promise<boolean>;
   /** The same, handing back the run's record, or why it failed, for a panel to show. */
   runRecord: (name: string, params: Record<string, unknown>) => Promise<{ record?: RunRecord; error?: string }>;
-  /** The seam horizon the viewport shows coloured by thickness, if any. */
-  seamView: SeamShown | null;
+  /** Each seam model the viewport shows, on the horizon it shows coloured by thickness. */
+  seamViews: SeamShown[];
   /** A section is showing in place of the plan view. */
   sectionOpen: boolean;
   /** A layer's own line weight in the section (px), or null for the defaults. Display only. */

@@ -356,6 +356,44 @@ fn a_floor_grid_on_its_own_imports_as_one_surface() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Hiding an object is display state: no revision and no undo, kept by a save, and a command that
+/// names the object still takes it.
+#[test]
+fn a_hidden_object_stays_hidden_through_undo_and_a_save_and_a_command_still_takes_it() {
+    let mut s = Session::with_builtins();
+    let string = |name: &str| json!({ "name": name, "layer": "design", "points": [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]] });
+    let a = created(&s.run("string.create", string("a")).unwrap())[0];
+    let b = created(&s.run("string.create", string("b")).unwrap())[0];
+
+    assert_eq!(s.set_objects_visible(&[a], false), 1);
+    assert_eq!(s.set_objects_visible(&[a], false), 0, "already hidden");
+    assert!(s.project().is_hidden(a) && !s.project().is_hidden(b));
+    assert_eq!(s.project().object(a).unwrap().revision, 1, "not a revision");
+    s.undo().unwrap();
+    assert!(s.project().object(b).is_none(), "undo took off the last run, not the hide");
+    assert!(s.project().is_hidden(a));
+    s.redo().unwrap();
+
+    s.run("object.rename", json!({ "object": a, "name": "named" })).unwrap();
+    assert_eq!(s.project().object(a).unwrap().name, "named", "a command takes a hidden object");
+    assert!(s.project().is_hidden(a), "and it stays hidden");
+
+    s.run("object.delete", json!({ "object": a })).unwrap();
+    assert_eq!(s.set_objects_visible(&[a], true), 0, "nothing to show");
+    s.undo().unwrap();
+    assert!(s.project().is_hidden(a), "a delete undone brings it back hidden");
+
+    let dir = std::env::temp_dir().join(format!("zd-commands-hidden-{}-{}", std::process::id(), zd_core::RunId::new()));
+    let path = dir.join("pit.zdproj");
+    s.save(&path).unwrap();
+    let mut reopened = Session::open(&path).unwrap();
+    assert!(reopened.project().is_hidden(a) && !reopened.project().is_hidden(b), "a save keeps it");
+    assert_eq!(reopened.set_objects_visible(&[a], true), 1);
+    reopened.save(&path).unwrap();
+    assert!(!Session::open(&path).unwrap().project().is_hidden(a), "and keeps it shown");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn a_vulcan_seam_imports_as_grids_and_survives_a_save() {
     let dir = std::env::temp_dir().join(format!("zd-commands-vulcan-{}-{}", std::process::id(), zd_core::RunId::new()));

@@ -89,6 +89,9 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 - Every object has a stable id (128-bit, generated in-house), a name, a layer, and provenance (the command
   run that made it). Edits write a new revision of the same object; earlier revisions stay for undo
   (see `docs/decisions/0004-phase1-foundations.md`). A project is a `<name>.zdproj/` folder of Parquet files.
+- An object can be hidden on its own, under its layer's tick. That's display state saved with the project, not a
+  revision and not undone. Hidden means not drawn, snapped to or cut by a section; a command that names the object
+  still takes it (`docs/decisions/0026-one-layer-tree.md`).
 
 ## Scope limits for v1
 
