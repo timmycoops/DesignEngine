@@ -120,6 +120,9 @@ export class StringLayer {
   mode: Mode = 'select';
   /** A panel is waiting on the next click for a point. */
   private wanted: ((point: Vec3 | null) => void) | null = null;
+  /** Where a pick landed, in local coordinates, and where a line being picked starts from. */
+  private lastPick = new THREE.Vector3();
+  private pickFrom: THREE.Vector3 | null = null;
   selected: string | null = null;
   onSelect?: (id: string | null) => void;
 
@@ -190,6 +193,17 @@ export class StringLayer {
     return new Promise((resolve) => {
       this.wanted = resolve;
     });
+  }
+
+  /** Two clicks, with a line following the cursor from the first. Null if either is cancelled. */
+  async pickLine(first: string, second: string): Promise<[Vec3, Vec3] | null> {
+    const from = await this.pickPoint(first);
+    if (!from) return null;
+    this.pickFrom = this.lastPick.clone();
+    const to = await this.pickPoint(second);
+    this.pickFrom = null;
+    this.preview.visible = false;
+    return to && [from, to];
   }
 
   private finishPick(point: Vec3 | null): void {
@@ -405,6 +419,7 @@ export class StringLayer {
     const hit = await this.snapAt(at.x, at.y);
     this.hoverInFlight = false;
     if (this.mode !== 'select' || this.wanted) this.showSnap(hit, at);
+    if (this.wanted && this.pickFrom && hit) this.showPreview([this.pickFrom, new THREE.Vector3(...hit.local)]);
     void this.pumpHover();
   }
 
@@ -475,6 +490,7 @@ export class StringLayer {
     if (this.wanted) {
       const hit = await this.snapAt(e.clientX, e.clientY);
       if (!hit) return this.actions.status('No point there: tilt the view down or use plan view');
+      this.lastPick.set(...hit.local);
       return this.finishPick(hit.world);
     }
     if (this.mode === 'section') {

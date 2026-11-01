@@ -958,6 +958,22 @@ fn a_ramp_goes_on_the_string_it_names() {
     assert!(record.messages.iter().any(|m| m == "Ramp A: its string isn't on a line using Wall"), "{:?}", record.messages);
 }
 
+/// Everything a run makes from a strip keeps its number, road edges and face included.
+#[test]
+fn what_a_run_makes_keeps_its_strips_number() {
+    let mut s = Session::with_builtins();
+    let floor = level_surface(&mut s, "floor", 100.0);
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E + 10.0, N + 30.0, 0.0], [E + 290.0, N + 30.0, 0.0]] })).unwrap())[0];
+    s.run("string.number_across", json!({ "strings": [toe], "from": [E + 150.0, N, 0.0], "to": [E + 150.0, N + 60.0, 0.0], "start": 20.0 })).unwrap();
+    let content = ramped_content(toe, floor, json!({ "name": "A", "string": toe, "fixed": "start", "at": [E + 40.0, N + 30.0], "heading": "along", "width": 10.0, "grade": 10.0 }));
+    let design = created(&s.run("face.save_design", json!({ "name": "numbered", "content": content })).unwrap())[0];
+    s.run("face.project", json!({ "design": design })).unwrap();
+    for name in ["Strip 20 Wall toe 1", "Strip 20 Wall crest 1", "Strip 20 Wall road A pit edge", "Strip 20 Wall face"] {
+        let made = s.project().objects().find(|o| o.name == name).unwrap_or_else(|| panic!("{name} wasn't made"));
+        assert_eq!(made.attributes.get("strip"), Some(&AttrValue::Number(20.0)), "{name}");
+    }
+}
+
 /// A ramp set up but not on a wall yet, held at either end, makes no road and says so. The wall and the road
 /// that is on it still build.
 #[test]

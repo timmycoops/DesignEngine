@@ -10,6 +10,44 @@ use manifold_csg::{CrossSection, FillRule};
 use zd_core::{Polyline, TriMesh};
 
 use crate::GeomError;
+use crate::section_snap::crossing;
+
+/// Where a string crosses a line in plan.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlanCrossing {
+    /// How far along the line, from its start (m).
+    pub along: f64,
+    pub at: [f64; 2],
+}
+
+/// Crossings closer together along a line than this are the one crossing, as where a string's vertex lies on it (m).
+const SAME_CROSSING: f64 = 1e-6;
+
+/// Each stretch of a string in plan, with the last back to the first if it's closed.
+fn plan_stretches(line: &Polyline) -> impl Iterator<Item = [[f64; 2]; 2]> + '_ {
+    let n = line.vertices.len();
+    let flat = move |k: usize| [line.vertices[k % n][0], line.vertices[k % n][1]];
+    (0..if line.closed { n } else { n.saturating_sub(1) }).map(move |k| [flat(k), flat(k + 1)])
+}
+
+/// Everywhere a string crosses a line in plan, nearest the line's start first.
+pub fn plan_crossings(line: &Polyline, string: &Polyline) -> Vec<PlanCrossing> {
+    let mut found = Vec::new();
+    let mut walked = 0.0;
+    for stretch in plan_stretches(line) {
+        let [a, b] = stretch;
+        let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+        for other in plan_stretches(string) {
+            if let Some(t) = crossing(stretch, other) {
+                found.push(PlanCrossing { along: walked + t * length, at: [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])] });
+            }
+        }
+        walked += length;
+    }
+    found.sort_by(|p, q| p.along.total_cmp(&q.along));
+    found.dedup_by(|later, earlier| later.along - earlier.along < SAME_CROSSING);
+    found
+}
 
 /// Which side of the string, looking along its direction from above.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -623,6 +661,44 @@ fn ccw(mut ring: Vec<[f64; 2]>) -> Vec<[f64; 2]> {
 
 #[cfg(test)]
 mod tests {
+    fn open(points: &[[f64; 2]]) -> Polyline {
+        Polyline { vertices: points.iter().map(|p| [p[0], p[1], 0.0]).collect(), closed: false }
+    }
+
+    #[test]
+    fn a_line_finds_each_string_crossing_it_in_order() {
+        let line = open(&[[0.0, 0.0], [100.0, 0.0], [100.0, 100.0]]);
+        let across = |x: f64, y: f64| open(&[[x, y - 10.0], [x + 20.0, y + 10.0]]);
+        let found = plan_crossings(&line, &across(30.0, 0.0));
+        assert_eq!(found.len(), 1);
+        assert!((found[0].along - 40.0).abs() < 1e-9 && (found[0].at[0] - 40.0).abs() < 1e-9 && found[0].at[1].abs() < 1e-9, "{found:?}");
+        // On the line's second leg it's measured round the corner.
+        let found = plan_crossings(&line, &open(&[[90.0, 60.0], [110.0, 60.0]]));
+        assert!((found[0].along - 160.0).abs() < 1e-9, "{found:?}");
+        assert!(plan_crossings(&line, &across(30.0, 40.0)).is_empty(), "short of the line");
+    }
+
+    #[test]
+    fn a_string_through_a_line_at_a_vertex_crosses_once() {
+        let line = open(&[[0.0, 0.0], [100.0, 0.0]]);
+        assert_eq!(plan_crossings(&line, &open(&[[50.0, -10.0], [50.0, 0.0], [60.0, 10.0]])).len(), 1);
+        let along_it = open(&[[10.0, 0.0], [90.0, 0.0]]);
+        assert!(plan_crossings(&line, &along_it).is_empty(), "running together isn't crossing");
+    }
+
+    #[test]
+    fn a_string_crossing_twice_comes_back_nearest_first_and_a_closed_one_counts_its_last_side() {
+        let line = open(&[[0.0, 0.0], [100.0, 0.0]]);
+        let hairpin = open(&[[70.0, -10.0], [70.0, 10.0], [20.0, 10.0], [20.0, -10.0]]);
+        let along: Vec<f64> = plan_crossings(&line, &hairpin).iter().map(|c| c.along).collect();
+        assert_eq!(along, [20.0, 70.0]);
+        let mut triangle = open(&[[70.0, -10.0], [70.0, 10.0], [20.0, 10.0]]);
+        assert_eq!(plan_crossings(&line, &triangle).len(), 1);
+        triangle.closed = true;
+        let along: Vec<f64> = plan_crossings(&line, &triangle).iter().map(|c| c.along).collect();
+        assert_eq!(along, [45.0, 70.0]);
+    }
+
     use super::*;
     use crate::triangulate_grid;
     use zd_core::Grid;

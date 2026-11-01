@@ -3,7 +3,7 @@
 
 use serde_json::json;
 use zd_commands::{RunRecord, Session};
-use zd_core::{Body, ChangeKind, ObjectId};
+use zd_core::{AttrValue, Body, ChangeKind, ObjectId};
 
 const E: f64 = 650_000.0;
 const N: f64 = 7_450_000.0;
@@ -23,6 +23,62 @@ fn vertices(s: &Session, id: ObjectId) -> Vec<[f64; 3]> {
 fn local(points: &[[f64; 3]]) -> Vec<[f64; 3]> {
     let r = |v: f64| (v * 1e6).round() / 1e6;
     points.iter().map(|p| [r(p[0] - E), r(p[1] - N), r(p[2])]).collect()
+}
+
+/// A base string offset down dip in one go: each is measured from the base, so nothing builds up.
+#[test]
+fn offset_makes_as_many_strings_as_it_is_asked() {
+    let mut s = Session::with_builtins();
+    let id = toe(&mut s);
+    let record = s.run("string.offset", json!({ "string": id, "distance": 10.0, "side": "right", "times": 3 })).unwrap();
+    let made = created(&record);
+    assert_eq!(made.len(), 3);
+    for (k, &string) in made.iter().enumerate() {
+        let d = 10.0 * (k as f64 + 1.0);
+        assert_eq!(local(&vertices(&s, string)), [[0.0, -d, 50.0], [100.0 + d, -d, 50.0], [100.0 + d, 100.0, 50.0]]);
+        assert_eq!(s.project().object(string).unwrap().name, format!("toe offset {d} m right"));
+    }
+    let named = s.run("string.offset", json!({ "string": id, "distance": 10.0, "side": "right", "times": 2, "name": "S" })).unwrap();
+    let names: Vec<String> = created(&named).iter().map(|&o| s.project().object(o).unwrap().name.clone()).collect();
+    assert_eq!(names, ["S 1", "S 2"]);
+    assert!(s.run("string.offset", json!({ "string": id, "distance": 10.0, "side": "right", "times": 0 })).is_err());
+    s.undo().unwrap();
+    s.undo().unwrap();
+    assert_eq!(s.project().objects().count(), 1, "one undo takes back every string a run made");
+}
+
+/// Three parallel strings and one off to the side. A line drawn across numbers them in the order it crosses,
+/// whichever order they came in or the way the line is drawn.
+#[test]
+fn a_line_across_numbers_strings_in_the_order_it_crosses_them() {
+    let mut s = Session::with_builtins();
+    let string = |s: &mut Session, name: &str, y: f64, x: f64| created(&s.run("string.create", json!({ "name": name, "layer": "strips", "points": [[E + x, N + y, 50.0], [E + x + 100.0, N + y, 50.0]] })).unwrap())[0];
+    let (far, near, middle) = (string(&mut s, "far", 120.0, 0.0), string(&mut s, "near", 0.0, 0.0), string(&mut s, "middle", 60.0, 0.0));
+    let aside = string(&mut s, "aside", 60.0, 500.0);
+    let strings = [far, near, middle, aside];
+    let named = |s: &Session, id: ObjectId| s.project().object(id).unwrap().name.clone();
+    let number = |s: &Session, id: ObjectId, key: &str| s.project().object(id).unwrap().attributes.get(key).cloned();
+
+    let record = s.run("string.number_across", json!({ "strings": strings, "from": [E + 50.0, N - 10.0, 0.0], "to": [E + 50.0, N + 130.0, 0.0], "start": 20.0 })).unwrap();
+    assert_eq!([near, middle, far].map(|id| named(&s, id)), ["Strip 20", "Strip 21", "Strip 22"]);
+    assert_eq!(number(&s, middle, "strip"), Some(AttrValue::Number(21.0)));
+    assert_eq!(named(&s, aside), "aside", "the line doesn't reach it");
+    assert_eq!(number(&s, aside, "strip"), None);
+    assert!(record.messages.iter().any(|m| m == "Numbered 3 strings from 20 to 22"), "{:?}", record.messages);
+    assert!(record.messages.iter().any(|m| m == "The line didn't cross aside: left as they were"), "{:?}", record.messages);
+
+    // Drawn the other way, counting down, in a name of Tim's own. Geometry doesn't change.
+    let before = vertices(&s, far);
+    s.run("string.number_across", json!({ "strings": strings, "from": [E + 50.0, N + 130.0, 0.0], "to": [E + 50.0, N - 10.0, 0.0], "start": 9.0, "step": -2.0, "name": "S#N" })).unwrap();
+    assert_eq!([far, middle, near].map(|id| named(&s, id)), ["S9N", "S7N", "S5N"]);
+    assert_eq!(vertices(&s, far), before);
+    s.undo().unwrap();
+    assert_eq!(named(&s, far), "Strip 22", "one undo takes the whole numbering back");
+
+    assert!(s.run("string.number_across", json!({ "strings": strings, "from": [E, N, 0.0], "to": [E, N, 5.0], "start": 1.0 })).is_err(), "a line needs length in plan");
+    assert!(s.run("string.number_across", json!({ "strings": strings, "from": [E + 50.0, N - 10.0, 0.0], "to": [E + 50.0, N + 130.0, 0.0], "start": 1.0, "step": 0.0 })).is_err());
+    let error = s.run("string.number_across", json!({ "strings": [aside], "from": [E + 50.0, N - 10.0, 0.0], "to": [E + 50.0, N + 130.0, 0.0], "start": 1.0 })).unwrap_err();
+    assert!(error.to_string().contains("doesn't cross any"), "{error}");
 }
 
 /// A toe string: east 100 m, then north 100 m, all at RL 50.

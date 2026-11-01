@@ -98,7 +98,7 @@ fn crossing_near(near: &[Near], at: [f64; 2], reach: f64) -> Option<SectionSnap>
 }
 
 /// Where along `p`, from 0 to 1, it crosses `q`. Lines that run together don't cross.
-fn crossing(p: [[f64; 2]; 2], q: [[f64; 2]; 2]) -> Option<f64> {
+pub(crate) fn crossing(p: [[f64; 2]; 2], q: [[f64; 2]; 2]) -> Option<f64> {
     let r = [p[1][0] - p[0][0], p[1][1] - p[0][1]];
     let s = [q[1][0] - q[0][0], q[1][1] - q[0][1]];
     let denominator = r[0] * s[1] - r[1] * s[0];
