@@ -16,6 +16,7 @@ import {
   setLayerVisible,
   setObjectsVisible,
   type SnapHit,
+  type Vec3,
   snapRay,
   stageObject,
   type Transport,
@@ -92,6 +93,7 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
   const painted = performance.now();
   const tree = await checkTree(reply.summary);
   const hide = await checkHide(viewport, reply.summary, show);
+  const click = await checkClickObjects(viewport, reply.summary, show);
   const triangles = viewport.triangleCount;
   for (let i = 0; i < WARM_UP_FRAMES; i++) await viewport.nextFrame();
   log(`solids: orbiting ${triangles.toLocaleString()} triangles`);
@@ -122,6 +124,7 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
     total_to_painted_ms: painted - start,
     tree,
     hide,
+    click,
     orbit: orbited,
     pick,
     camera,
@@ -185,6 +188,86 @@ async function checkHide(viewport: Viewport, summary: ProjectSummary, show: Show
     show_one: await timed(() => setObjectsVisible([one.id], true)),
     hide_layer: await timed(() => setLayerVisible(one.layer, false)),
     show_layer: await timed(() => setLayerVisible(one.layer, true)),
+  };
+}
+
+/**
+ * Clicks in the viewport: on a solid with everything else off, then at the same spot on a seam model and
+ * on a surface. Each should select what is on top there, light it up and find its row in the tree.
+ */
+async function checkClickObjects(viewport: Viewport, summary: ProjectSummary, show: Show) {
+  const canvas = viewport.renderer.domElement;
+  const box = canvas.getBoundingClientRect();
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await viewport.nextFrame();
+  };
+  const layerOf = (name: string) => summary.layers.find((l) => l.name === name);
+  const setLayers = async (on: (name: string) => boolean) => {
+    for (const layer of summary.layers) await show(await setLayerVisible(layer.id, on(layer.name)));
+  };
+  await setLayers((name) => name === 'solids');
+  viewport.fitView();
+  await settle();
+  let spot: { x: number; y: number; id: string; local: Vec3 } | null = null;
+  for (let down = 0.3; down < 0.8 && !spot; down += 0.05) {
+    for (let across = 0.2; across < 0.85 && !spot; across += 0.05) {
+      const [x, y] = [box.left + box.width * across, box.top + box.height * down];
+      const ray = viewport.rayFromNdc(...viewport.clientToNdc(x, y));
+      const hit = await snapRay(ray.origin, ray.direction);
+      if (hit?.object) spot = { x, y, id: hit.object, local: hit.local };
+    }
+  }
+  if (!spot || !layerOf('solids')) return { error: 'no solid under the view' };
+  const { x, y, id, local } = spot;
+  const row = () => document.querySelector('[data-slot="tree"] [data-state="selected"]');
+  const clear = async () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    for (let i = 0; i < 300 && row(); i++) await viewport.nextFrame();
+    await settle();
+  };
+  const click = async () => {
+    const start = performance.now();
+    for (const [type, buttons] of [['pointerdown', 1], ['pointerup', 0]] as const) {
+      canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+    }
+    for (let i = 0; i < 300 && !row(); i++) await viewport.nextFrame();
+    return { selected_ms: performance.now() - start, row: row()?.textContent ?? null };
+  };
+
+  const before = viewport.triangleCount;
+  const onSolid = await click();
+  const selectedAt = performance.now();
+  for (let i = 0; i < 300 && viewport.triangleCount === before; i++) await viewport.nextFrame();
+  const litMs = performance.now() - selectedAt + onSolid.selected_ms;
+  const copyTriangles = viewport.triangleCount - before;
+  const inPlace = picture(viewport);
+  viewport.focusOn(local, 200);
+  await settle();
+  const solidPicture = picture(viewport);
+  await clear();
+  const cleared = viewport.triangleCount === before;
+
+  await setLayers((name) => name === 'seam models');
+  await settle();
+  const onSeam = await click();
+  await settle();
+  const seamPicture = picture(viewport);
+  await clear();
+
+  await setLayers((name) => name === 'surfaces');
+  await settle();
+  const onSurface = await click();
+  await settle();
+  const surfacePicture = picture(viewport);
+  await clear();
+
+  await setLayers(() => true);
+  viewport.fitView();
+  await settle();
+  return {
+    solid: { ...onSolid, lit_ms: litMs, expected: summary.objects.find((o) => o.id === id)?.name, copy_triangles: copyTriangles, cleared, in_place: inPlace, picture: solidPicture },
+    seam: { ...onSeam, expected: summary.objects.find((o) => o.kind === 'seam_model')?.name, picture: seamPicture },
+    surface: { ...onSurface, expected: summary.objects.find((o) => o.kind === 'surface')?.name, picture: surfacePicture },
   };
 }
 
@@ -453,6 +536,7 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   // A section as a planner would pick one: 1.5 km across the first solid cut, not the whole view.
   const o = summary.origin ?? [0, 0, 0];
   let close = '';
+  let selected = {};
   let grid = {};
   let fill = {};
   let editing = {};
@@ -462,6 +546,14 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
     await section.show([x - 750, y - 200], [x + 750, y + 200], summary);
     await settle();
     close = picture(viewport);
+    const solid = summary.objects.find((o) => o.kind === 'surface');
+    if (solid) {
+      section.setSelected(solid.id);
+      await settle();
+      selected = { lines: section.lastCut?.groups.find((g) => g.kind === 'selected')?.segments ?? 0, picture: picture(viewport) };
+      section.setSelected(null);
+      await settle();
+    }
     fill = await checkFill(viewport, section, button, settle);
     grid = await checkGrid(viewport, section, box, settle);
     editing = await checkEditing(viewport, section, box, button, settle, show);
@@ -490,7 +582,7 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   await settle();
   const hiddenAfter = getComputedStyle(map).display === 'none';
   const gridHiddenAfter = getComputedStyle(section.gridCanvas).display === 'none';
-  return { opened, open_ms: openMs, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_pictures_ms: pictures, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, overview_carried_m: carried, overview_carried_on_map: carriedOnMap, overview_stays_on_map: staysOnMap, grid_hidden_before: gridHiddenBefore, grid_hidden_after: gridHiddenAfter, grid, fill, editing, wall, wide, close, overview, walked };
+  return { opened, open_ms: openMs, closed: !section.open && !viewport.sectionView, step_p50_ms: times[20], step_max_ms: times[39], engine_p50_ms: engine[20], fps: frames, overview_shown: shown, overview_place: place, overview_in_corner: inCorner, overview_section_clear: sectionClear, overview_hidden_before: hiddenBefore, overview_hidden_after: hiddenAfter, overview_pictures_ms: pictures, overview_drag_m: dragged, overview_whole_steps: whole, overview_stayed: stayed, overview_carried_m: carried, overview_carried_on_map: carriedOnMap, overview_stays_on_map: staysOnMap, grid_hidden_before: gridHiddenBefore, grid_hidden_after: gridHiddenAfter, grid, fill, editing, wall, wide, close, selected, overview, walked };
 }
 
 /**

@@ -209,12 +209,14 @@ export interface StagedMesh {
 export const stageObject = (id: string) => invoke<StagedMesh>('stage_object', { id });
 export const stageLayerSolids = (layer: string) => invoke<StagedMesh>('stage_layer_solids', { layer });
 
-export type SectionKind = 'surface' | 'solid' | 'seam' | 'string';
+export type SectionKind = 'surface' | 'solid' | 'seam' | 'string' | 'selected';
 
 /** Where a section cuts one layer's objects of one kind. */
 export interface SectionGroup {
   layer: string;
   kind: SectionKind;
+  /** The surface or seam model the lines belong to, or the selected object. */
+  object: string | null;
   /** A seam horizon's material in lower case; empty for anything else. */
   material: string;
   segments: number;
@@ -235,8 +237,8 @@ export interface SectionLines {
 }
 
 /** The section through two plan points (mine grid): lines and fills as `f32`, then a JSON header and its length. */
-export async function sectionLines(a: [number, number], b: [number, number], width: number, fill: boolean): Promise<SectionLines> {
-  const buffer = await invoke<ArrayBuffer>('section_lines', { a, b, width, fill });
+export async function sectionLines(a: [number, number], b: [number, number], width: number, fill: boolean, selected: string | null): Promise<SectionLines> {
+  const buffer = await invoke<ArrayBuffer>('section_lines', { a, b, width, fill, selected });
   const length = new DataView(buffer).getUint32(buffer.byteLength - 4, true);
   const start = buffer.byteLength - 4 - length;
   const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, start, length)));
@@ -552,6 +554,7 @@ export interface SnapHit {
 export const snapRay = (origin: Vec3, direction: Vec3) => invoke<SnapHit | null>('snap_ray', { origin, direction });
 
 /** Where a cursor at a distance along the section and an RL snaps to the last cut, if anywhere near. */
+export const sectionPick = (along: number, rl: number, reach: number) => invoke<string | null>('section_pick', { along, rl, reach });
 export const sectionSnap = (along: number, rl: number, vertexReach: number, segmentReach: number, ignoring: [number, number] | null) =>
   invoke<SnapHit | null>('section_snap', { along, rl, vertexReach, segmentReach, ignoring });
 

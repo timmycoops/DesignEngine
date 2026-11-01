@@ -4,8 +4,8 @@
 import { LineSegments2 } from 'three/addons/lines/webgpu/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import * as THREE from 'three/webgpu';
-import { type ProjectSummary, type SectionLines, sectionLines, sectionSnap, type SectionKind, type SnapHit, type Vec3 } from '../bridge';
-import { colourOf } from './load';
+import { type ProjectSummary, type SectionLines, sectionLines, sectionPick, sectionSnap, type SectionKind, type SnapHit, type Vec3 } from '../bridge';
+import { colourOf, SELECTED } from './load';
 import { SectionOverview } from './overview';
 import { type GridLines, type SectionFrame, SectionGrid } from './sectionGrid';
 import type { SectionTools } from './strings';
@@ -15,10 +15,10 @@ import type { Viewport } from './Viewport';
 const STRING_WIDTH = 1;
 
 /** Line weights by kind (px), until a layer sets its own. */
-const WEIGHTS: Record<SectionKind, number> = { surface: 2.5, seam: 1.5, solid: 1.5, string: 2 };
+const WEIGHTS: Record<SectionKind, number> = { surface: 2.5, seam: 1.5, solid: 1.5, string: 2, selected: 3 };
 
 /** Each kind's own lines draw over the next: strings, then seams, surfaces and solids. */
-const ORDER: Record<SectionKind, number> = { solid: 10, surface: 11, seam: 12, string: 13 };
+const ORDER: Record<SectionKind, number> = { solid: 10, surface: 11, seam: 12, string: 13, selected: 14 };
 
 /** How much of a fill shows: enough to read the layer, with its cut lines standing out in the same colour. */
 const FILL_OPACITY = 0.3;
@@ -38,6 +38,7 @@ export class SectionView {
   private lines = new Map<string, LineSegments2>();
   private fills = new Map<string, THREE.Mesh>();
   private filling = true;
+  private selected: string | null = null;
   private weights = new Map<string, number>();
   private fetching: Promise<void> | null = null;
   private fetchAgain = false;
@@ -141,6 +142,12 @@ export class SectionView {
     void this.refresh();
   }
 
+  /** Draws an object's cut lines over the rest, or with null none. */
+  setSelected(id: string | null): void {
+    this.selected = id;
+    void this.refresh();
+  }
+
   /** The kinds' weight for a layer: its own, or null while it uses the defaults. */
   weightOf(layer: string): number | null {
     return this.weights.get(layer) ?? null;
@@ -158,7 +165,7 @@ export class SectionView {
     this.grid.hide();
     this.ends = { a, b };
     this.summary = summary;
-    const lines = await sectionLines(a, b, STRING_WIDTH, this.filling);
+    const lines = await sectionLines(a, b, STRING_WIDTH, this.filling, this.selected);
     if (!this.ends) return;
     this.draw(lines);
     const o = summary.origin ?? [0, 0, 0];
@@ -237,6 +244,12 @@ export class SectionView {
       const metres = frame.across / this.viewport.renderer.domElement.clientWidth;
       return sectionSnap(along, rl, vertexPx * metres, segmentPx * metres, skip ? this.flat(skip) : null);
     },
+    pick: async (x, y, px): Promise<string | null> => {
+      const frame = this.frame();
+      if (!frame) return null;
+      const [along, rl] = this.cursor(x, y, frame);
+      return sectionPick(along, rl, (px * frame.across) / this.viewport.renderer.domElement.clientWidth);
+    },
   };
 
   private drawOverview(): void {
@@ -279,7 +292,7 @@ export class SectionView {
       const ends = this.ends;
       if (!ends) return;
       const start = performance.now();
-      const lines = await sectionLines(ends.a, ends.b, STRING_WIDTH, this.filling);
+      const lines = await sectionLines(ends.a, ends.b, STRING_WIDTH, this.filling, this.selected);
       if (this.ends) this.draw(lines);
       const frame = await this.viewport.nextFrame();
       this.lastMs = frame.submitted - start;
@@ -308,8 +321,8 @@ export class SectionView {
     const layers = new Map(this.summary?.layers.map((l) => [l.id, l]));
     const seen = new Set<string>();
     let [from, fillFrom, unfilled] = [0, 0, 0];
-    for (const { layer, kind, material, segments, triangles, unfilled: left } of groups) {
-      const key = `${layer} ${kind} ${material}`;
+    for (const { layer, kind, object, material, segments, triangles, unfilled: left } of groups) {
+      const key = kind === 'selected' ? kind : `${layer} ${kind} ${object ?? ''} ${material}`;
       seen.add(key);
       const geometry = new LineSegmentsGeometry();
       geometry.setPositions(positions.slice(from, from + segments * 6));
@@ -327,7 +340,7 @@ export class SectionView {
         this.lines.set(key, line);
       }
       const layerColour = layers.get(layer)?.colour;
-      const colour = MATERIAL_COLOURS[material] ?? (layerColour ? colourOf(layerColour) : 0xffffff);
+      const colour = kind === 'selected' ? SELECTED : (MATERIAL_COLOURS[material] ?? (layerColour ? colourOf(layerColour) : 0xffffff));
       (line.material as THREE.Line2NodeMaterial).color.setHex(colour);
       line.visible = true;
       if (triangles > 0) this.drawFill(key, fills.slice(fillFrom, fillFrom + triangles * 9), colour);
@@ -364,7 +377,7 @@ export class SectionView {
   private reweigh(): void {
     for (const line of this.lines.values()) {
       const { layer, kind } = line.userData as { layer: string; kind: SectionKind };
-      (line.material as THREE.Line2NodeMaterial).linewidth = this.weights.get(layer) ?? WEIGHTS[kind];
+      (line.material as THREE.Line2NodeMaterial).linewidth = (kind === 'selected' ? null : this.weights.get(layer)) ?? WEIGHTS[kind];
     }
   }
 }

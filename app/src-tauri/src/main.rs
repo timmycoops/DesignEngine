@@ -34,6 +34,7 @@ fn main() {
             commands::build_snap_index,
             commands::snap_ray,
             commands::section_snap,
+            commands::section_pick,
             commands::bench_config,
             commands::write_results,
             commands::exit_app,

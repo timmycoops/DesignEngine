@@ -20,7 +20,7 @@
 // vertex lands on the plane.
 import * as THREE from 'three/webgpu';
 import type { Layer, ProjectSummary, SnapHit, Vec3 } from '../bridge';
-import { colourOf } from './load';
+import { colourOf, SELECTED } from './load';
 import { PointMark } from './markers';
 import type { Viewport } from './Viewport';
 
@@ -37,6 +37,8 @@ export interface StringActions {
   layer(): string;
   /** The second point of a section was picked. */
   section(a: Vec3, b: Vec3): void;
+  /** A click that met no string: selects what's under it, or nothing. */
+  pick(clientX: number, clientY: number): void;
 }
 
 interface Shown {
@@ -58,6 +60,8 @@ export interface SectionTools {
   onPlane(x: number, y: number): SnapHit | null;
   /** The cut line near the cursor, if any, leaving out the segments of a vertex being dragged. */
   snap(x: number, y: number, vertexPx: number, segmentPx: number, skip?: THREE.Vector3): Promise<SnapHit | null>;
+  /** What a click picks on the section, within `px` of the cursor: an object's id. */
+  pick(x: number, y: number, px: number): Promise<string | null>;
 }
 
 /**
@@ -98,7 +102,6 @@ const HANDLE_PX = 10;
 /** Handles closer than this on screen to the last one drawn are skipped (they can still be grabbed). */
 const HANDLE_SPACING_PX = 12;
 const CLICK_SLOP_PX = 4;
-const SELECTED = 0xffd23f;
 const PREVIEW = 0x66d9ff;
 const MAX_HANDLES = 8192;
 const SNAP_MARK_PX = 7;
@@ -228,7 +231,7 @@ export class StringLayer {
   sync(summary: ProjectSummary): void {
     this.layers = new Map(summary.layers.map((l) => [l.id, l]));
     this.origin = summary.origin ?? [0, 0, 0];
-    this.surfaceNames = new Map(summary.objects.filter((o) => o.drawn && o.kind !== 'solid').map((o) => [o.id, o.name]));
+    this.surfaceNames = new Map(summary.objects.filter((o) => o.drawn).map((o) => [o.id, o.name]));
     const everyString = summary.objects.filter((o) => o.kind === 'string' && o.vertices_local);
     this.names = Math.max(this.names, everyString.length);
     const strings = everyString.filter((o) => !o.hidden);
@@ -459,7 +462,9 @@ export class StringLayer {
       if (hit) await this.actions.run('string.insert_vertex', { string: this.selected, index: segment + 1, point: hit.world });
       return;
     }
-    this.select(this.stringAt(e.clientX, e.clientY));
+    const string = this.stringAt(e.clientX, e.clientY);
+    if (string) this.select(string);
+    else this.actions.pick(e.clientX, e.clientY);
   }
 
   private keyDown(e: KeyboardEvent): void {

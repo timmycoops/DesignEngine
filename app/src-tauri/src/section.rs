@@ -9,9 +9,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use zd_core::{Body, LayerId, Object, ObjectKind, TriMesh};
+use zd_core::{Body, LayerId, Object, ObjectId, ObjectKind, TriMesh};
 use zd_geom::{
-    CutSegment, SectionFill, SectionPlane, SectionSnapKind, SliceIndex, SliceLine, fill_between_lines, fill_section_loops, slice_indexed, snap_to_section, string_near_plane, triangulate_grid,
+    CutSegment, SectionFill, SectionPlane, SectionSnapKind, SliceIndex, SliceLine, fill_between_lines, fill_section_loops, slice_indexed, slice_mesh, snap_to_section, string_near_plane, triangulate_grid,
 };
 use zd_io::{StackGrids, read_stack_grids};
 
@@ -20,10 +20,13 @@ use crate::state::{AppInner, geometry_key, is_drawn_surface, joined_meshes, laye
 /// Two ends of a segment, in mine grid coordinates.
 pub type Segment = CutSegment;
 
-/// One layer's lines of one kind.
+/// One layer's lines of one kind, one object's for a surface or seam model.
 pub struct SectionGroup {
     pub layer: LayerId,
     pub kind: &'static str,
+    /// The surface or seam model the lines belong to, or the selected object in a group of its own.
+    /// Solids and strings share a group for each layer, so they name nothing here.
+    pub object: Option<ObjectId>,
     /// A seam horizon's material in lower case, which sets its colour; empty for anything else.
     pub material: String,
     pub segments: Vec<Segment>,
@@ -61,8 +64,10 @@ pub fn snap_on_section(app: &AppInner, at: [f64; 2], vertex_reach: f64, segment_
     let snap = snap_to_section(&groups, &cut.plane, at, vertex_reach, segment_reach, ignoring)?;
     let name = |group: usize| {
         let group = &cut.groups[group];
-        let layer = app.session.project().layer(group.layer).map_or("a layer", |l| l.name.as_str());
-        if group.material.is_empty() { layer.to_string() } else { format!("{layer} ({})", group.material) }
+        let project = app.session.project();
+        let owner = group.object.and_then(|id| project.object(id)).map(|o| o.name.as_str());
+        let name = owner.or(project.layer(group.layer).map(|l| l.name.as_str())).unwrap_or("a layer");
+        if group.material.is_empty() { name.to_string() } else { format!("{name} ({})", group.material) }
     };
     let (kind, label) = match snap.kind {
         SectionSnapKind::Crossing => ("intersection", format!("the crossing of {} and {}", name(snap.group), name(snap.other.unwrap_or(snap.group)))),
@@ -72,11 +77,52 @@ pub fn snap_on_section(app: &AppInner, at: [f64; 2], vertex_reach: f64, segment_
     Some(SectionPoint { point: snap.point, kind, label })
 }
 
+/// What a click at `at` (distance along the section, RL) picks: the surface or seam model whose line is
+/// within `reach`, else the solid the point is in or within `reach` of straight up or down.
+pub fn pick_on_section(app: &AppInner, at: [f64; 2], reach: f64) -> Option<ObjectId> {
+    let cut = app.section_cut.as_ref()?;
+    let groups: Vec<&[Segment]> = cut.groups.iter().map(|g| g.segments.as_slice()).collect();
+    if let Some(object) = snap_to_section(&groups, &cut.plane, at, reach, reach, None).and_then(|snap| cut.groups[snap.group].object) {
+        return Some(object);
+    }
+    let project = app.session.project();
+    let (origin, along) = (cut.plane.origin, cut.plane.direction);
+    let point = [origin[0] + along[0] * at[0], origin[1] + along[1] * at[0], at[1]];
+    let height = |hit: &(ObjectId, [f64; 3])| (hit.1[2] - at[1]).abs();
+    let nearest = |direction: [f64; 3]| {
+        app.solid_casters
+            .iter()
+            .filter(|(layer, (key, _))| app.solid_keys.get(layer) == Some(key) && project.layer(**layer).is_some_and(|l| l.visible))
+            .filter_map(|(_, (_, caster))| caster.cast(point, direction, project.hidden()))
+            .min_by(|a, b| height(a).total_cmp(&height(b)))
+    };
+    match (nearest([0.0, 0.0, 1.0]), nearest([0.0, 0.0, -1.0])) {
+        (Some(up), Some(down)) if up.0 == down.0 => Some(up.0),
+        (up, down) => up.into_iter().chain(down).filter(|hit| height(hit) <= reach).min_by(|a, b| height(a).total_cmp(&height(b))).map(|hit| hit.0),
+    }
+}
+
+/// Adds the selected object's lines as a group of their own, to draw over everything else.
+pub fn add_selected(app: &AppInner, plane: &SectionPlane, width: f64, groups: &mut Vec<SectionGroup>, id: ObjectId) {
+    let project = app.session.project();
+    let Some(object) = project.object(id).filter(|o| !project.is_hidden(id) && project.layer(o.layer).is_some_and(|l| l.visible)) else {
+        return;
+    };
+    let segments: Vec<Segment> = match &object.body {
+        Body::Solid(solid) => segments_of(slice_mesh(solid.mesh(), plane)),
+        Body::String(line) => string_near_plane(&line.vertices, line.closed, plane, width),
+        _ => groups.iter().filter(|g| g.object == Some(id)).flat_map(|g| g.segments.iter().copied()).collect(),
+    };
+    if !segments.is_empty() {
+        groups.push(SectionGroup { layer: object.layer, kind: "selected", object: Some(id), material: String::new(), segments, fill: SectionFill::default() });
+    }
+}
+
 /// Everything a section cuts, as the project stood at `generation`.
 pub struct SectionInputs {
     generation: u64,
-    meshes: Vec<(LayerId, &'static str, Arc<SectionMesh>)>,
-    seams: Vec<(LayerId, String, Arc<SectionMesh>, Arc<SectionMesh>)>,
+    meshes: Vec<(LayerId, &'static str, Option<ObjectId>, Arc<SectionMesh>)>,
+    seams: Vec<(LayerId, ObjectId, String, Arc<SectionMesh>, Arc<SectionMesh>)>,
     strings: Vec<Arc<Object>>,
 }
 
@@ -85,28 +131,28 @@ pub struct SectionInputs {
 pub fn section_groups(app: &mut AppInner, plane: &SectionPlane, width: f64, fill: bool) -> Result<Vec<SectionGroup>, String> {
     let inputs = section_inputs(app)?;
     let mut groups: Vec<SectionGroup> = Vec::new();
-    for (layer, kind, section) in &inputs.meshes {
+    for (layer, kind, object, section) in &inputs.meshes {
         let lines = slice_indexed(&section.mesh, &section.index, plane);
         let filled = if fill && *kind == "solid" { fill_section_loops(&lines, plane) } else { SectionFill::default() };
-        add(&mut groups, *layer, kind, "", segments_of(lines), filled);
+        add(&mut groups, *layer, kind, *object, "", segments_of(lines), filled);
     }
     // A model has a roof and floor for every horizon, and each pair stands alone.
-    let cut: Vec<(LayerId, &str, Vec<Segment>, SectionFill)> = std::thread::scope(|scope| {
-        let horizons = inputs.seams.iter().map(|(layer, material, roof, floor)| {
+    let cut: Vec<(LayerId, ObjectId, &str, Vec<Segment>, SectionFill)> = std::thread::scope(|scope| {
+        let horizons = inputs.seams.iter().map(|(layer, model, material, roof, floor)| {
             scope.spawn(move || {
                 let (top, base) = (slice_indexed(&roof.mesh, &roof.index, plane), slice_indexed(&floor.mesh, &floor.index, plane));
                 let filled = if fill { fill_between_lines(&top, &base, plane) } else { SectionFill::default() };
-                (*layer, material.as_str(), segments_of(top.into_iter().chain(base)), filled)
+                (*layer, *model, material.as_str(), segments_of(top.into_iter().chain(base)), filled)
             })
         });
         horizons.collect::<Vec<_>>().into_iter().map(|horizon| horizon.join().expect("seam worker")).collect()
     });
-    for (layer, material, segments, filled) in cut {
-        add(&mut groups, layer, "seam", material, segments, filled);
+    for (layer, model, material, segments, filled) in cut {
+        add(&mut groups, layer, "seam", Some(model), material, segments, filled);
     }
     for object in &inputs.strings {
         if let Body::String(line) = &object.body {
-            add(&mut groups, object.layer, "string", "", string_near_plane(&line.vertices, line.closed, plane, width), SectionFill::default());
+            add(&mut groups, object.layer, "string", None, "", string_near_plane(&line.vertices, line.closed, plane, width), SectionFill::default());
         }
     }
     Ok(groups)
@@ -121,8 +167,8 @@ fn section_inputs(app: &mut AppInner) -> Result<Arc<SectionInputs>, String> {
     let project = app.session.project();
     let visible = |layer: LayerId| project.layer(layer).is_some_and(|l| l.visible);
     let shown = |object: &Object| visible(object.layer) && !project.is_hidden(object.id);
-    let mut meshes: Vec<(LayerId, &'static str, Arc<SectionMesh>)> = Vec::new();
-    let mut seams: Vec<(LayerId, String, Arc<SectionMesh>, Arc<SectionMesh>)> = Vec::new();
+    let mut meshes: Vec<(LayerId, &'static str, Option<ObjectId>, Arc<SectionMesh>)> = Vec::new();
+    let mut seams: Vec<(LayerId, ObjectId, String, Arc<SectionMesh>, Arc<SectionMesh>)> = Vec::new();
     let mut made = std::mem::take(&mut app.section_meshes);
     let mut kept = SectionMeshes::new();
     let mut keep = |key: String, stamp: String, make: &mut dyn FnMut() -> Result<Arc<TriMesh>, String>| -> Result<Arc<SectionMesh>, String> {
@@ -142,7 +188,7 @@ fn section_inputs(app: &mut AppInner) -> Result<Arc<SectionInputs>, String> {
     for (layer, key) in solid_layer_keys(project) {
         if visible(layer) {
             let mesh = keep(format!("solids {layer}"), key, &mut || Ok(Arc::new(joined_meshes(&layer_solids(project, layer)))))?;
-            meshes.push((layer, "solid", mesh));
+            meshes.push((layer, "solid", None, mesh));
         }
     }
     for object in project.objects().filter(|o| shown(o)) {
@@ -150,11 +196,11 @@ fn section_inputs(app: &mut AppInner) -> Result<Arc<SectionInputs>, String> {
         match &object.body {
             Body::Surface(s) => {
                 let mesh = keep(object.id.to_string(), stamp, &mut || Ok(s.mesh_arc().clone()))?;
-                meshes.push((object.layer, "surface", mesh));
+                meshes.push((object.layer, "surface", Some(object.id), mesh));
             }
             Body::Grid(g) if is_drawn_surface(object) => {
                 let mesh = keep(object.id.to_string(), stamp, &mut || Ok(Arc::new(triangulate_grid(g))))?;
-                meshes.push((object.layer, "surface", mesh));
+                meshes.push((object.layer, "surface", Some(object.id), mesh));
             }
             Body::SeamModel(model) => {
                 // Every grid reads at once, and only if one of them has to be made. A section shows the
@@ -169,7 +215,7 @@ fn section_inputs(app: &mut AppInner) -> Result<Arc<SectionInputs>, String> {
                     };
                     let roof = keep(format!("{} roof {i}", object.id), stamp.clone(), &mut || surface(|g, i| &g.roofs[i]))?;
                     let floor = keep(format!("{} floor {i}", object.id), stamp.clone(), &mut || surface(|g, i| &g.floors[i]))?;
-                    seams.push((object.layer, model.horizons[i].material.to_ascii_lowercase(), roof, floor));
+                    seams.push((object.layer, object.id, model.horizons[i].material.to_ascii_lowercase(), roof, floor));
                 }
             }
             _ => {}
@@ -192,18 +238,18 @@ fn segments_of(lines: impl IntoIterator<Item = SliceLine>) -> Vec<Segment> {
     segments
 }
 
-/// Adds segments to the layer's group of that kind and material.
-fn add(groups: &mut Vec<SectionGroup>, layer: LayerId, kind: &'static str, material: &str, segments: Vec<Segment>, fill: SectionFill) {
+/// Adds segments to the layer's group of that kind, object and material.
+fn add(groups: &mut Vec<SectionGroup>, layer: LayerId, kind: &'static str, object: Option<ObjectId>, material: &str, segments: Vec<Segment>, fill: SectionFill) {
     if segments.is_empty() {
         return;
     }
-    match groups.iter_mut().find(|g| g.layer == layer && g.kind == kind && g.material == material) {
+    match groups.iter_mut().find(|g| g.layer == layer && g.kind == kind && g.object == object && g.material == material) {
         Some(group) => {
             group.segments.extend(segments);
             group.fill.triangles.extend(fill.triangles);
             group.fill.unfilled += fill.unfilled;
         }
-        None => groups.push(SectionGroup { layer, kind, material: material.to_string(), segments, fill }),
+        None => groups.push(SectionGroup { layer, kind, object, material: material.to_string(), segments, fill }),
     }
 }
 
@@ -214,6 +260,7 @@ mod tests {
     use zd_core::Project;
 
     use super::*;
+    use crate::state::{SolidCaster, every_layer_solid, solid_snap_keys};
 
     const E: f64 = 650_000.0;
     const N: f64 = 7_450_000.0;
@@ -223,6 +270,57 @@ mod tests {
         let v = (0..8).map(|i| [E + x + (i & 1) as f64 * 10.0, N + (i >> 1 & 1) as f64 * 10.0, 100.0 + (i >> 2) as f64 * 10.0]).collect::<Vec<_>>();
         let t = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
         json!({ "name": name, "layer": layer, "vertices": v, "triangles": t })
+    }
+
+    /// A flat sheet at RL 200 over the section, as `surface.from_mesh` parameters.
+    fn sheet() -> serde_json::Value {
+        let v = [[E - 50.0, N - 50.0, 200.0], [E + 150.0, N - 50.0, 200.0], [E + 150.0, N + 50.0, 200.0], [E - 50.0, N + 50.0, 200.0]];
+        json!({ "name": "topo", "layer": "surfaces", "vertices": v, "triangles": [[0, 1, 2], [0, 2, 3]] })
+    }
+
+    /// Two cubes and a sheet over them, cut along the middle of the cubes.
+    fn cut_scene() -> (AppInner, ObjectId, ObjectId, ObjectId, SectionPlane) {
+        let mut s = Session::with_builtins();
+        let a = s.run("solid.from_mesh", cube("a", "coal", 0.0)).unwrap().outputs[0].id;
+        let b = s.run("solid.from_mesh", cube("b", "coal", 20.0)).unwrap().outputs[0].id;
+        let sheet = s.run("surface.from_mesh", sheet()).unwrap().outputs[0].id;
+        let mut app = AppInner::new(s, None);
+        let layer = app.session.project().object(a).unwrap().layer;
+        let solids = every_layer_solid(app.session.project(), layer);
+        let keys = solid_snap_keys(app.session.project());
+        app.solid_casters.insert(layer, (keys[&layer].clone(), Arc::new(SolidCaster::new(&solids).unwrap())));
+        app.solid_keys = keys;
+        (app, a, b, sheet, SectionPlane::through([E, N + 5.0], [E + 100.0, N + 5.0]).unwrap())
+    }
+
+    #[test]
+    fn the_selected_object_is_cut_again_as_a_group_of_its_own() {
+        let (mut app, a, _, sheet, plane) = cut_scene();
+        let selected = |app: &mut AppInner, id: ObjectId| {
+            let mut groups = section_groups(app, &plane, 1.0, true).unwrap();
+            add_selected(app, &plane, 1.0, &mut groups, id);
+            groups.iter().filter(|g| g.kind == "selected").map(|g| length(&g.segments)).sum::<f64>()
+        };
+        assert!((selected(&mut app, a) - 40.0).abs() < 1e-9, "one 10 m cube's outline, not both");
+        assert!((selected(&mut app, sheet) - 200.0).abs() < 1e-9, "the sheet from one side to the other");
+        app.session.set_objects_visible(&[a], false);
+        assert_eq!(selected(&mut app, a), 0.0, "nothing hidden is drawn");
+    }
+
+    /// Cube `a` spans 0 to 10 m along the section and RL 100 to 110, `b` 20 to 30 m, and the sheet is at RL 200.
+    #[test]
+    fn a_click_on_a_section_names_the_solid_it_is_in_or_the_line_it_is_on() {
+        let (mut app, a, b, sheet, plane) = cut_scene();
+        let groups = section_groups(&mut app, &plane, 1.0, true).unwrap();
+        app.section_cut = Some(SectionCut { plane, groups });
+        assert_eq!(pick_on_section(&app, [5.0, 105.0], 1.0), Some(a), "inside");
+        assert_eq!(pick_on_section(&app, [25.0, 105.0], 1.0), Some(b), "inside the other");
+        assert_eq!(pick_on_section(&app, [5.0, 110.5], 1.0), Some(a), "just over its roof");
+        assert_eq!(pick_on_section(&app, [50.0, 200.4], 1.0), Some(sheet), "on a surface's line");
+        assert_eq!(pick_on_section(&app, [15.0, 105.0], 1.0), None, "between the two");
+        assert_eq!(pick_on_section(&app, [5.0, 150.0], 1.0), None, "well over it");
+        app.session.set_objects_visible(&[a], false);
+        assert_eq!(pick_on_section(&app, [5.0, 105.0], 1.0), None, "a hidden solid isn't picked");
     }
 
     fn length(segments: &[Segment]) -> f64 {

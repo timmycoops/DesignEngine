@@ -7,7 +7,7 @@
 // own is only switched off.
 import * as THREE from 'three/webgpu';
 import { type ObjectSummary, type ProjectSummary, type StagedHorizon, stageLayerSolids, stageObject, stageSeamHorizon } from '../bridge';
-import { colourOf, loadStaged } from './load';
+import { colourOf, loadStaged, SELECTED } from './load';
 import type { Viewport } from './Viewport';
 
 interface Shown {
@@ -30,12 +30,14 @@ export interface SeamShown {
 export class SceneSync {
   private shown = new Map<string, Shown>();
   private queue: Promise<number> = Promise.resolve(0);
-  private last: ProjectSummary | null = null;
   /** The newest summary asked for: any older one still waiting is skipped. */
   private latest: ProjectSummary | null = null;
   /** The horizon shown for each seam model: the first working one until another is chosen. */
   private horizons = new Map<string, string>();
   private seams: SeamShown[] = [];
+  private selected: string | null = null;
+  /** The object lit up: its own surface, or for a solid a copy over its layer's mesh. */
+  private lit: { id: string; key: string; group: THREE.Group; copy: boolean } | null = null;
   /** The seam models on show changed: one loaded or hidden, or a new name or horizon. */
   onSeams?: (showing: SeamShown[]) => void;
   onError?: (message: string) => void;
@@ -55,7 +57,24 @@ export class SceneSync {
   /** Shows another horizon of a seam model. */
   showHorizon(id: string, code: string): Promise<number> {
     this.horizons.set(id, code);
-    return this.last ? this.apply(this.last) : Promise.resolve(0);
+    return this.latest ? this.apply(this.latest) : Promise.resolve(0);
+  }
+
+  /** Lights up the selected object, or with null nothing. */
+  select(id: string | null): Promise<number> {
+    this.selected = id;
+    return this.latest ? this.apply(this.latest) : Promise.resolve(0);
+  }
+
+  /** The nearest seam horizon on show at a point on screen, and how far along the ray it is. */
+  seamAt(x: number, y: number): { id: string; distance: number } | null {
+    let nearest: { id: string; distance: number } | null = null;
+    for (const [id, shown] of this.shown) {
+      if (!shown.seam || !shown.group.visible) continue;
+      const distance = this.viewport.distanceTo(shown.group, x, y);
+      if (distance !== null && (!nearest || distance < nearest.distance)) nearest = { id, distance };
+    }
+    return nearest;
   }
 
   get count(): number {
@@ -63,7 +82,6 @@ export class SceneSync {
   }
 
   private async applyNow(summary: ProjectSummary): Promise<number> {
-    this.last = summary;
     const layers = new Map(summary.layers.map((l) => [l.id, l]));
     const seam = (kind: string) => kind === 'seam_model';
     const wanted = new Map(summary.objects.filter((o) => (o.drawn && o.kind !== 'solid') || seam(o.kind)).map((o) => [o.id, o]));
@@ -128,7 +146,37 @@ export class SceneSync {
       loaded++;
     }
     this.reportSeams(summary);
+    await this.light(summary, on).catch((e) => this.onError?.(String(e)));
     return loaded;
+  }
+
+  /** Brings the highlight in line with what is selected and how it is drawn now. */
+  private async light(summary: ProjectSummary, on: (o: ObjectSummary) => boolean): Promise<void> {
+    const object = this.selected ? summary.objects.find((o) => o.id === this.selected) : undefined;
+    const lit = this.lit;
+    if (lit && lit.copy && object?.id === lit.id && object.geometry_key === lit.key) {
+      lit.group.visible = on(object);
+      return;
+    }
+    if (lit && !lit.copy && object?.id === lit.id && this.shown.get(lit.id)?.group === lit.group) return;
+    if (lit) {
+      if (lit.copy) this.viewport.removeMesh(lit.group);
+      else this.viewport.setLit(lit.group, null);
+      this.lit = null;
+    }
+    if (!object) return;
+    if (object.kind === 'solid') {
+      if (!on(object)) return;
+      const staged = await stageObject(object.id);
+      const { group } = await loadStaged(this.viewport, staged, { colour: SELECTED, over: true });
+      this.lit = { id: object.id, key: object.geometry_key, group, copy: true };
+      return;
+    }
+    const group = this.shown.get(object.id)?.group;
+    if (group) {
+      this.viewport.setLit(group, SELECTED);
+      this.lit = { id: object.id, key: object.geometry_key, group, copy: false };
+    }
   }
 
   /** Tells the app which seam models are on show, under their current names, if that has changed. */

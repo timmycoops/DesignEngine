@@ -107,6 +107,20 @@ function ToolButton({ tip, active, children, ...props }: { tip: string; active?:
   );
 }
 
+/** How near a click on a section must be to a line to pick it (px). */
+const PICK_PX = 8;
+
+/** What a click in the viewport picks: the nearest surface, solid or seam horizon on show. */
+async function objectAt(viewport: Viewport, sync: SceneSync, section: SectionView, x: number, y: number): Promise<string | null> {
+  if (section.open) return section.tools.pick(x, y, PICK_PX);
+  const [nx, ny] = viewport.clientToNdc(x, y);
+  const ray = viewport.rayFromNdc(nx, ny);
+  const hit = await snapRay(ray.origin, ray.direction);
+  const distance = hit ? Math.hypot(hit.local[0] - ray.origin[0], hit.local[1] - ray.origin[1], hit.local[2] - ray.origin[2]) : Infinity;
+  const seam = sync.seamAt(nx, ny);
+  return seam && seam.distance < distance ? seam.id : (hit?.object ?? null);
+}
+
 export default function App() {
   const viewportRef = useRef<Viewport | null>(null);
   const syncRef = useRef<SceneSync | null>(null);
@@ -238,6 +252,14 @@ export default function App() {
 
   const viewportMounted = useCallback(() => setHostMounted(true), []);
 
+  const select = useCallback((id: string | null) => {
+    const strings = stringsRef.current;
+    const isString = summaryRef.current?.objects.some((o) => o.id === id && o.kind === 'string' && !o.hidden);
+    // The string layer reports its own selection (null for anything that isn't a string).
+    strings?.select(isString ? id : null);
+    if (!isString) setSelected(id);
+  }, []);
+
   // The viewport is made once its canvas host is in the page (the viewport panel mounts it).
   useEffect(() => {
     if (!hostMounted) return;
@@ -269,6 +291,7 @@ export default function App() {
         snapDown: (x, y) => snapRay([x, y, 1e6], [0, 0, -1]),
         status: (text) => setStatus({ text }),
         layer: () => layerRef.current,
+        pick: (x, y) => void objectAt(created, sync, section, x, y).then(select),
       });
       strings.onSelect = setSelected;
       strings.onSnapping = setSnapping;
@@ -292,7 +315,12 @@ export default function App() {
       detach();
       viewport?.dispose();
     };
-  }, [hostMounted, viewportHost, run, show, onSeams, openSection]);
+  }, [hostMounted, viewportHost, run, show, onSeams, openSection, select]);
+
+  useEffect(() => {
+    void syncRef.current?.select(selected);
+    sectionRef.current?.setSelected(selected);
+  }, [selected]);
 
   const attempt = useCallback(async (work: () => Promise<void>) => {
     try {
@@ -300,14 +328,6 @@ export default function App() {
     } catch (e) {
       setStatus({ text: String(e), error: true });
     }
-  }, []);
-
-  const select = useCallback((id: string | null) => {
-    const strings = stringsRef.current;
-    const isString = summaryRef.current?.objects.some((o) => o.id === id && o.kind === 'string' && !o.hidden);
-    // The string layer reports its own selection (null for anything that isn't a string).
-    strings?.select(isString ? id : null);
-    if (!isString) setSelected(id);
   }, []);
 
   const setActiveLayer = useCallback((name: string) => {

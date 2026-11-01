@@ -7,7 +7,7 @@ Date: 2026-11-01 · Status: accepted (Tim, 2026-11-01)
 Tim, with two seam models on one layer: "Shows two seam models and two surfaces - but i cant see which one is which ?
 This feels very weird". Layers and Objects were separate lists, only a whole layer could be hidden, and selecting showed
 nothing on screen. The Layers plan on the Build Plan doc fixes that in six workstreams. This records the decisions Tim
-agreed, the first workstream, the tree, and the second, showing and hiding one object.
+agreed, the first workstream, the tree, the second, showing and hiding one object, and the third, seeing what you pick.
 
 ## Decision
 
@@ -36,6 +36,14 @@ agreed, the first workstream, the tree, and the second, showing and hiding one o
     command that names a hidden object still takes it.
 13. **The seam legend follows what's on show.** There's one legend for each seam model showing, under its current name,
     and hiding a model or its layer takes its legend and issue markers away.
+14. **Selecting shows everywhere, in one colour.** A surface, grid or seam horizon glows faintly, enough to find it with
+    its shading and thickness colours still readable. A solid gets a copy of its own mesh drawn over everything, as a
+    selected string is, so one inside the pit still shows. In a section its cut lines draw over the rest.
+15. **A click selects what's on top.** Strings come first, then the nearest surface, solid or seam horizon on show. On a
+    section it's the surface or seam line within 8 px, else the solid the point is in, or within that reach of straight
+    up or down. Clicking nothing clears the selection.
+16. **The tree follows a pick.** It opens the object's layer and brings its row into view. The label beside the cursor
+    now names a solid too.
 
 ## Evidence
 
@@ -66,6 +74,16 @@ Hiding in the real app, on that layer with 8.7 M triangles drawn, each to the fr
 
 About 130 ms of each is the reply, as every change sends the whole project summary back. That was already so for a layer.
 
+Clicks in the real app, through the canvas, with only the layer under test showing:
+
+| Click on | Selected | Row found |
+|---|---:|---|
+| A solid of 42,218 | 32 ms, lit by 51 ms | yes |
+| A seam model | 41 ms | yes |
+| A surface of about 3.8 M triangles | 19 ms | yes |
+
+The solid's copy adds its own 70 triangles and goes when the selection clears. Orbit stays at 60.0 fps.
+
 The tree with all 42,218 solids on one layer, in the real app:
 
 | | |
@@ -83,5 +101,9 @@ The tree with all 42,218 solids on one layer, in the real app:
   where that goes.
 - **The Objects table's sorting and columns are gone.** Objects list in the order they were made, which keeps a face's
   toes and crests together. A revision shows beside the name once it's past 1. Filtering comes in workstream 6.
-- **The tree doesn't move to an object picked in the viewport.** That comes with workstream 3.
+- **One selected object at a time.** Selecting several, and hiding or moving them together, waits for workstream 6.
+- **A solid is found straight up and down from a click on a section.** That's right for solids on a section, and one with
+  an overhang could name its neighbour.
+- **Seam horizons are picked in the page**, triangle by triangle within the tiles under the cursor. It's fine for a click,
+  and they aren't snapped to.
 - **The panel layout resets once**, as a saved layout names the Objects panel.
