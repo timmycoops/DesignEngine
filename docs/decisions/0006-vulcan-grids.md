@@ -12,6 +12,10 @@ plain binary layout directly (`read_vulcan_grid`, `read_vulcan_seam`), and the
 `grid.import_vulcan_seam` command brings a seam's grids into a project. The compressed layout
 (`vulZ`) reads too (below, added 2026-10-29).
 
+A name with only a roof or a floor, such as a topography, base of weathering or stage plan saved as `.sfg`,
+is one surface and imports as that, said in the run log (added 2026-11-01). A name with no roof, floor or
+topography is still refused.
+
 There is no public specification. The layout was worked out from a client's folder of about 3,000
 grids (client data: kept local, never committed, and not quoted here). Big-endian:
 
