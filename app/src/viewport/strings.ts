@@ -118,6 +118,8 @@ const SNAP_COLOURS: Record<NonNullable<SnapHit['kind']>, number> = {
 
 export class StringLayer {
   mode: Mode = 'select';
+  /** A panel is waiting on the next click for a point. */
+  private wanted: ((point: Vec3 | null) => void) | null = null;
   selected: string | null = null;
   onSelect?: (id: string | null) => void;
 
@@ -181,7 +183,24 @@ export class StringLayer {
     viewport.renderer.domElement.parentElement?.append(this.snapLabel);
   }
 
+  /** The next click, snapped, in world coordinates. Esc, or asking again, gives null. */
+  pickPoint(prompt: string): Promise<Vec3 | null> {
+    this.finishPick(null);
+    this.actions.status(prompt);
+    return new Promise((resolve) => {
+      this.wanted = resolve;
+    });
+  }
+
+  private finishPick(point: Vec3 | null): void {
+    const wanted = this.wanted;
+    this.wanted = null;
+    this.clearSnapMark();
+    wanted?.(point);
+  }
+
   setMode(mode: Mode): void {
+    this.finishPick(null);
     this.mode = mode;
     this.pending = [];
     this.clearSnapMark();
@@ -346,7 +365,7 @@ export class StringLayer {
 
   private pointerDown(e: PointerEvent): void {
     if (e.button !== 0) return;
-    if (this.mode === 'select' && this.selected) {
+    if (this.mode === 'select' && this.selected && !this.wanted) {
       const index = this.handleAt(this.selected, e.clientX, e.clientY);
       if (index >= 0) {
         this.drag = { id: this.selected, index, hit: null };
@@ -367,7 +386,7 @@ export class StringLayer {
     }
     // A held button is the view turning or panning, not a point being placed.
     if (e.buttons !== 0) return this.clearSnapMark();
-    if (this.mode !== 'select') {
+    if (this.mode !== 'select' || this.wanted) {
       this.hovering = { x: e.clientX, y: e.clientY };
       void this.pumpHover();
     }
@@ -385,7 +404,7 @@ export class StringLayer {
     this.hovering = null;
     const hit = await this.snapAt(at.x, at.y);
     this.hoverInFlight = false;
-    if (this.mode !== 'select') this.showSnap(hit, at);
+    if (this.mode !== 'select' || this.wanted) this.showSnap(hit, at);
     void this.pumpHover();
   }
 
@@ -453,6 +472,11 @@ export class StringLayer {
     this.down = null;
     if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > CLICK_SLOP_PX) return;
 
+    if (this.wanted) {
+      const hit = await this.snapAt(e.clientX, e.clientY);
+      if (!hit) return this.actions.status('No point there: tilt the view down or use plan view');
+      return this.finishPick(hit.world);
+    }
     if (this.mode === 'section') {
       const hit = await this.snapAt(e.clientX, e.clientY);
       if (!hit) return this.actions.status('No point there: tilt the view down or use plan view');
@@ -494,6 +518,7 @@ export class StringLayer {
   private keyDown(e: KeyboardEvent): void {
     if (e.target instanceof HTMLInputElement) return;
     if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey && !e.altKey) return this.toggleSnapping();
+    if (e.key === 'Escape' && this.wanted) return this.finishPick(null);
     if (this.mode !== 'select') {
       if (e.key === 'Enter') void this.finishDrawing();
       if (e.key === 'Escape') {

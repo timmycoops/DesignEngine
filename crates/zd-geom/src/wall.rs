@@ -63,6 +63,8 @@ const BERM_MITRE_LIMIT: f64 = 4.0;
 const LEAST_WIDTH: f64 = 1e-3;
 /// How often along a line a wall's height is read, to find where it passes a minimum bench (m).
 const BENCH_SAMPLE: f64 = 5.0;
+/// The turn past which a line has a corner, where walls meet in a hip (degrees).
+const CORNER_TURN: f64 = 30.0;
 /// Neither a wall nor a string end: the edge a wall stands on.
 const FOOT: usize = usize::MAX;
 /// The level edge left at the top of the sweep.
@@ -245,20 +247,35 @@ pub(crate) fn next_line(crest: &Polyline, berm: EdgeRule<'_>, least: Option<Leas
     let shape = filter_string(&flat, before)?;
     let mut log = ConditionLog { vertices_in: crest.vertices.len(), plan_vertices: shape.vertices.len(), ..ConditionLog::default() };
     // The rule looks at the line where it really is, but the offset is a plan job.
-    let (mut placed, mut widths) = berm.applied_to(&at_crest_heights(&shape, crest))?;
+    let (placed, widths) = berm.applied_to(&at_crest_heights(&shape, crest))?;
     if !widths.iter().all(|w| w.is_finite() && *w >= 0.0) {
         return Err(GeomError::InvalidInput("the berm width must be zero or more".into()));
     }
-    if let Some(least) = least {
-        (placed, widths, log.no_berm) = without_low_benches(&placed, widths, crest, least, before);
-    }
-    let width = widths.first().copied().unwrap_or(0.0);
-    let pieces = if widths.iter().any(|w| *w != width) {
-        vec![offset_by_edge(&placed, &widths, side)?]
-    } else if width > 0.0 {
-        offset_string(&shape, width, side, Corner::Mitre { limit: BERM_MITRE_LIMIT }, None)?
-    } else {
-        vec![shape]
+    let moved_out = |line: &Polyline, widths: &[f64]| -> Result<Vec<Polyline>, GeomError> {
+        let width = widths.first().copied().unwrap_or(0.0);
+        if widths.iter().any(|w| *w != width) {
+            Ok(vec![offset_by_edge(line, widths, side)?])
+        } else if width > 0.0 {
+            offset_string(&shape, width, side, Corner::Mitre { limit: BERM_MITRE_LIMIT }, None)
+        } else {
+            Ok(vec![shape.clone()])
+        }
+    };
+    let pieces = match least {
+        None => moved_out(&placed, &widths)?,
+        Some(least) => {
+            let (line, narrowed, no_berm) = without_low_benches(&placed, widths.clone(), crest, least, before, after, false);
+            log.no_berm = no_berm;
+            match moved_out(&line, &narrowed) {
+                Ok(pieces) => pieces,
+                // A change of width just short of a corner has no room to bevel, as beside a road.
+                Err(refused) => {
+                    let (line, narrowed, no_berm) = without_low_benches(&placed, widths, crest, least, before, after, true);
+                    log.no_berm = no_berm;
+                    moved_out(&line, &narrowed).map_err(|_| refused)?
+                }
+            }
+        }
     };
     let lines = pieces.iter().map(|piece| Ok(at_crest_heights(&filter_string(piece, after)?, crest))).collect::<Result<_, GeomError>>()?;
     Ok((lines, log))
@@ -274,10 +291,11 @@ pub(crate) struct LeastBench<'a> {
 /// A line split wherever the wall below it passes the least height, and no width along the stretches
 /// where it's lower. A stretch too short to matter takes on its neighbours, so a berm doesn't stutter on
 /// and off along an undulating seam: a dip shorter than the berm is wide is bermed across, and so short
-/// a stretch of height isn't bermed at all. A conditioned line weaves either side of its crest, so with no
-/// berm it stands clear of it by the tolerance. A line that isn't conditioned is the crest, vertex for
-/// vertex, and stays that way, so it isn't split.
-fn without_low_benches(line: &Polyline, widths: Vec<f64>, crest: &Polyline, least: LeastBench<'_>, tolerance: f64) -> (Polyline, Vec<f64>, Vec<Stretch>) {
+/// a stretch of height isn't bermed at all. The crest is simplified by `before` and the line by `after`, and
+/// each can weave that far, so with no berm it stands clear by the two together. A line that isn't
+/// conditioned is the crest, vertex for vertex, and stays that way, so it isn't split. With `at_corners`, a
+/// change of width near a corner moves to it.
+fn without_low_benches(line: &Polyline, widths: Vec<f64>, crest: &Polyline, least: LeastBench<'_>, before: f64, after: f64, at_corners: bool) -> (Polyline, Vec<f64>, Vec<Stretch>) {
     let low = |p: [f64; 3]| height_on(crest, p) - height_on(least.toe, p) < least.height;
     let n = line.vertices.len();
     let (mut vertices, mut split) = (Vec::with_capacity(n), Vec::with_capacity(widths.len()));
@@ -285,7 +303,7 @@ fn without_low_benches(line: &Polyline, widths: Vec<f64>, crest: &Polyline, leas
         let (a, b) = (line.vertices[i], line.vertices[(i + 1) % n]);
         let at = |t: f64| [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])];
         vertices.push(a);
-        let samples = if tolerance > 0.0 { (plan_gap(a, b) / BENCH_SAMPLE).ceil().max(1.0) as usize } else { 0 };
+        let samples = if before > 0.0 { (plan_gap(a, b) / BENCH_SAMPLE).ceil().max(1.0) as usize } else { 0 };
         let (mut from, mut was) = (0.0, low(a));
         for k in 1..=samples {
             let to = k as f64 / samples as f64;
@@ -322,6 +340,9 @@ fn without_low_benches(line: &Polyline, widths: Vec<f64>, crest: &Polyline, leas
     for short in [true, false] {
         even_out(&mut lows, &lengths, widest, short);
     }
+    if at_corners {
+        move_changes_to_corners(&mut lows, &result, &lengths, widest);
+    }
     let mut no_berm = Vec::new();
     let mut stretch: Option<[f64; 3]> = None;
     for i in 0..=lows.len() {
@@ -334,8 +355,37 @@ fn without_low_benches(line: &Polyline, widths: Vec<f64>, crest: &Polyline, leas
             _ => {}
         }
     }
-    let widths = split.iter().zip(&lows).map(|(width, low)| if *low { width.min(tolerance) } else { *width }).collect();
+    let widths = split.iter().zip(&lows).map(|(width, low)| if *low { width.min(before + after) } else { *width }).collect();
     (result, widths, no_berm)
+}
+
+/// A change of width bevels over as far as the berm is wide, and it can't do that round a corner. One nearer
+/// a corner than that moves to the corner, where the walls can meet in a hip with no bevel.
+fn move_changes_to_corners(lows: &mut [bool], line: &Polyline, lengths: &[f64], reach: f64) {
+    let n = line.vertices.len();
+    let corner = |i: usize| {
+        let (a, b, c) = (line.vertices[i - 1], line.vertices[i], line.vertices[(i + 1) % n]);
+        let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+        cross2(u, v).abs().atan2(u[0] * v[0] + u[1] * v[1]).to_degrees() > CORNER_TURN
+    };
+    for i in 1..lows.len() {
+        if lows[i - 1] == lows[i] || corner(i) {
+            continue;
+        }
+        let ahead = (i + 1..lows.len()).take_while(|&j| lengths[i..j].iter().sum::<f64>() < reach).find(|&j| corner(j));
+        let behind = (1..i).rev().take_while(|&j| lengths[j..i].iter().sum::<f64>() < reach).find(|&j| corner(j));
+        match (ahead, behind) {
+            (Some(j), _) => {
+                let before = lows[i - 1];
+                lows[i..j].fill(before);
+            }
+            (None, Some(j)) => {
+                let after = lows[i];
+                lows[j..i].fill(after);
+            }
+            (None, None) => {}
+        }
+    }
 }
 
 /// Turns over any run of `state` shorter than `reach`.
@@ -1489,7 +1539,7 @@ fn world(p: P3, origin: P3) -> P3 {
     [p[0] + origin[0], p[1] + origin[1], p[2] + origin[2]]
 }
 
-fn plan_gap(a: P3, b: P3) -> f64 {
+pub(crate) fn plan_gap(a: P3, b: P3) -> f64 {
     (b[0] - a[0]).hypot(b[1] - a[1])
 }
 

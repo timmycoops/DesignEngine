@@ -792,6 +792,20 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
       return { error: String(e) };
     }
   })();
+  // A road up the first wall, from the middle of the toe, each way along it.
+  const roadFrom = async (heading: 'along' | 'back') => {
+    try {
+      const ramps = [{ start: [at[0], at[1]], heading, from_step: 1, to_step: 1, width: 30, grade: 10 }];
+      const withRoad = { ...content, layer: `bench road ${heading}`, lines: [{ string: toe.id, profile: 'Highwall', side: 'left', run_on: [100, 100], ramps }] };
+      const saved = (await run('face.save_design', { name: `Bench road ${heading}`, content: withRoad })).fresh[0];
+      const started = performance.now();
+      const made = await run('face.project', { design: saved.id });
+      return { ms: performance.now() - started, made: made.fresh.length, messages: made.messages };
+    } catch (e) {
+      return { error: String(e) };
+    }
+  };
+  const rampRun = { along: await roadFrom('along'), back: await roadFrom('back') };
   const close = async (half: number) => {
     await section.show([at[0] - half * ux, at[1] - half * uy], [at[0] + half * ux, at[1] + half * uy], summary);
     await settle();
@@ -801,7 +815,7 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
   const wide = await close(400);
   const tight = await close(120);
   const surfaces = (section.lastCut?.groups ?? []).filter((g) => g.kind === 'surface').reduce((sum, g) => sum + g.segments, 0);
-  return { steps, ms, surface_segments_in_cut: surfaces, design_ms: designMs, design_messages: whole.messages, design_made: whole.fresh.length, design_by_layer_made: byLayer.fresh.length, design_by_layer_messages: byLayer.messages, design_rule_run: ruleRun, design_rerun_made: again.fresh.length, wide, tight };
+  return { steps, ms, surface_segments_in_cut: surfaces, design_ms: designMs, design_messages: whole.messages, design_made: whole.fresh.length, design_by_layer_made: byLayer.fresh.length, design_by_layer_messages: byLayer.messages, design_rule_run: ruleRun, design_ramp_run: rampRun, design_rerun_made: again.fresh.length, wide, tight };
 }
 
 /** The fills on, as they first show, then off and on again by the toolbar's Fill button. */

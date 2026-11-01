@@ -1,6 +1,6 @@
-import { ArrowDown, ArrowUp, Play, Plus, Save, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Crosshair, Play, Plus, Save, Trash2 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
-import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, objectDetails, type ObjectSummary, type ProfileStep, type RuleValue, type StepTarget, type StepValue, type WallRule, type WallSide } from '@/bridge';
+import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampHeading, type RuleValue, type StepTarget, type StepValue, type WallRule, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
@@ -15,6 +15,8 @@ const usualTolerance = 0.1;
 const usualBatter = 70;
 const usualBerm = 10;
 const usualMinBench = 1;
+const usualRoadWidth = 30;
+const usualGrade = 10;
 
 /** A number that can be typed through half-finished values: it only reports what parses, and goes back to what's held on leaving it. */
 function NumberBox({ value, onChange, title, width = 'w-16', disabled }: { value: number | null; onChange: (v: number) => void; title: string; width?: string; disabled?: boolean }) {
@@ -116,6 +118,15 @@ function Choice<T extends string>({ value, options, onChange }: { value: T; opti
 
 const SIDES: readonly WallSide[] = ['left', 'right'];
 const DIRECTIONS: readonly FaceDirection[] = ['up', 'down'];
+const HEADINGS: readonly RampHeading[] = ['along', 'back'];
+
+/** The steps of a profile a road can climb, by the number the table gives them. */
+function wallsOf(profile: FaceProfile | undefined) {
+  return (profile?.steps ?? []).flatMap((step, k) => (step.step === 'project' ? [k + 1] : []));
+}
+
+/** A picked point to the millimetre. */
+const toMillimetres = (metres: number) => Math.round(metres * 1000) / 1000;
 
 const blankDesign = (register: string): FaceDesign => ({
   layer: 'faces',
@@ -513,7 +524,7 @@ function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfil
  * and steps every line in one run, one undo.
  */
 export function FaceDesignPanel() {
-  const { summary, selected, marked, setMarked, runRecord } = useWorkspace();
+  const { summary, selected, marked, setMarked, runRecord, pickPoint } = useWorkspace();
   const objects = useMemo(() => summary?.objects ?? [], [summary]);
   const designs = useMemo(() => objects.filter((o) => o.kind === 'face_design'), [objects]);
   const [id, setId] = useState<string | null>(null);
@@ -523,6 +534,7 @@ export function FaceDesignPanel() {
   const [profileName, setProfileName] = useState<string | null>(null);
   const [addingLayer, setAddingLayer] = useState('');
   const [report, setReport] = useState<{ lines: string[]; error?: string }>({ lines: [] });
+  const [picking, setPicking] = useState(false);
 
   const open = designs.find((d) => d.id === id);
   const revision = open?.revision;
@@ -683,6 +695,21 @@ export function FaceDesignPanel() {
         return { type, values: [], otherwise: at };
     }
   };
+  /** The next click in the viewport as a road's start. */
+  const pickStart = async (use: (start: [number, number]) => void) => {
+    setPicking(true);
+    const point = await pickPoint('Click the toe where the road starts. Esc cancels');
+    setPicking(false);
+    if (point) use([toMillimetres(point[0]), toMillimetres(point[1])]);
+  };
+  const setRamps = (l: number, change: (ramps: Ramp[]) => Ramp[]) => edit((d) => ({ ...d, lines: replaceAt(d.lines, l, { ...d.lines[l], ramps: change(d.lines[l].ramps ?? []) }) }));
+  /** A new road on the first line, starting where the next click puts it, up that line's first wall. */
+  const addRamp = () =>
+    void pickStart((start) => {
+      const step = wallsOf(draft.profiles.find((p) => p.name === draft.lines[0].profile))[0] ?? 1;
+      setRamps(0, (ramps) => [...ramps, { start, heading: 'along', from_step: step, to_step: step, width: usualRoadWidth, grade: usualGrade }]);
+    });
+  const ramps = draft.lines.flatMap((line, l) => (line.ramps ?? []).map((ramp, r) => ({ ramp, l, r, line })));
   const lineName = (line: FaceLine) => {
     if (!line.layer) return nameOf(line.string ?? '');
     const on = strings.filter((s) => s.layer === line.layer && s.attributes.face_design !== id).length;
@@ -887,7 +914,104 @@ export function FaceDesignPanel() {
         </table>
       </div>
 
-      <Heading>4. Run</Heading>
+      <Heading
+        action={
+          <SmallButton disabled={draft.lines.length === 0 || picking} title="Then click the toe in the viewport where the road starts" onClick={addRamp}>
+            <Plus className="size-3" /> Add ramp
+          </SmallButton>
+        }
+      >
+        4. Ramps
+      </Heading>
+      <p className="px-3 pb-1 text-xs text-muted-foreground">
+        A ramp cuts a road back into a wall as the wall is projected, from the toe to the top of that wall. The wall above moves back a road width, and grade is held on the pit-side edge.
+        {picking && <span className="text-primary"> Click the toe where the road starts. Esc cancels.</span>}
+      </p>
+      {ramps.length > 0 && (
+        <div className="overflow-x-auto px-3">
+          <table className="w-full text-xs">
+            <thead className="text-left text-muted-foreground">
+              <tr>
+                <th className={headClass}>Line</th>
+                <th className={headClass} title="The string it goes on is the one nearest this point, and the road starts on the nearest point of the wall's toe">
+                  Start E, N
+                </th>
+                <th className={headClass} title="Along the way the string runs, or back against it">
+                  Way
+                </th>
+                <th className={headClass} title="The step of the profile whose wall it climbs">
+                  Step
+                </th>
+                <th className={headClass}>Width, m</th>
+                <th className={headClass} title="Rise over plan run on the pit-side edge">
+                  Grade, %
+                </th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {ramps.map(({ ramp, l, r, line }) => {
+                const change = (c: Partial<Ramp>) => setRamps(l, (all) => replaceAt(all, r, { ...ramp, ...c }));
+                const walls = wallsOf(draft.profiles.find((p) => p.name === line.profile));
+                return (
+                  <tr key={`${l}.${r}`} className="border-t">
+                    <td className={cellClass}>
+                      <select
+                        className={`${selectClass} max-w-32`}
+                        value={l}
+                        aria-label="Line"
+                        onChange={(e) => {
+                          const to = Number(e.target.value);
+                          edit((d) => ({ ...d, lines: d.lines.map((other, k) => (k === l ? { ...other, ramps: (other.ramps ?? []).filter((_, j) => j !== r) } : k === to ? { ...other, ramps: [...(other.ramps ?? []), ramp] } : other)) }));
+                        }}
+                      >
+                        {draft.lines.map((other, k) => (
+                          <option key={k} value={k}>
+                            {lineName(other)}, {other.profile}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className={`${cellClass} whitespace-nowrap`}>
+                      <NumberBox width="w-20" value={ramp.start[0]} title="Easting of the start" onChange={(e) => change({ start: [e, ramp.start[1]] })} />{' '}
+                      <NumberBox width="w-20" value={ramp.start[1]} title="Northing of the start" onChange={(n) => change({ start: [ramp.start[0], n] })} />
+                      <IconButton title="Pick the start in the viewport" disabled={picking} onClick={() => void pickStart((start) => change({ start }))}>
+                        <Crosshair className="size-3" />
+                      </IconButton>
+                    </td>
+                    <td className={cellClass}>
+                      <Choice value={ramp.heading} options={HEADINGS} onChange={(heading) => change({ heading })} />
+                    </td>
+                    <td className={cellClass}>
+                      <select className={selectClass} value={ramp.from_step} aria-label="Step" onChange={(e) => change({ from_step: Number(e.target.value), to_step: Number(e.target.value) })}>
+                        {!walls.includes(ramp.from_step) && <option value={ramp.from_step}>{ramp.from_step}: no wall</option>}
+                        {walls.map((step) => (
+                          <option key={step} value={step}>
+                            {step}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className={cellClass}>
+                      <NumberBox width="w-12" value={ramp.width} title="Road width in metres, square to the road" onChange={(width) => change({ width })} />
+                    </td>
+                    <td className={cellClass}>
+                      <NumberBox width="w-12" value={ramp.grade} title="Rise over plan run in percent, on the pit-side edge" onChange={(grade) => change({ grade })} />
+                    </td>
+                    <td className="py-0.5 text-right">
+                      <IconButton title="Remove this ramp" onClick={() => setRamps(l, (all) => all.filter((_, j) => j !== r))}>
+                        <Trash2 className="size-3" />
+                      </IconButton>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Heading>5. Run</Heading>
       <div className="flex items-center gap-1 px-3 text-xs">
         <span className="text-muted-foreground">On layer</span>
         <Input className="h-7 min-w-0 flex-1 px-1 text-xs" value={draft.layer} aria-label="Layer for what a run makes" onChange={(e) => edit((d) => ({ ...d, layer: e.target.value }))} />

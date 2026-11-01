@@ -760,6 +760,146 @@ fn a_whole_face_on_real_grids() {
     }
 }
 
+/// A road up each wall of a real face, through the commands. `ZD_WALL_STRING`, `ZD_FACE_GRIDS` and
+/// `ZD_FACE_TOPO` are as above. Each road starts part way along the toe of a wall, in turn, each way along.
+#[test]
+#[ignore = "needs ZD_WALL_STRING, ZD_FACE_GRIDS and ZD_FACE_TOPO"]
+fn a_road_on_real_grids() {
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is needed"));
+    let mut s = Session::with_builtins();
+    let mut import = |path: &str| created(&s.run("surface.import", json!({ "path": path, "layer": "surfaces" })).unwrap())[0];
+    let grids: Vec<ObjectId> = var("ZD_FACE_GRIDS").split(';').map(&mut import).collect();
+    let topo = import(&var("ZD_FACE_TOPO"));
+    let numbers = |p: &str| p.split(',').map(|n| n.trim().parse::<f64>().unwrap()).collect::<Vec<_>>();
+    let points: Vec<Vec<f64>> = var("ZD_WALL_STRING").split(';').map(numbers).collect();
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "design", "points": points.clone() })).unwrap())[0];
+    let mut steps = Vec::new();
+    for grid in &grids[1..] {
+        steps.push(json!({ "step": "project", "to": { "kind": "surface", "id": grid }, "batter": 70.0, "condition": 0.1 }));
+        steps.push(json!({ "step": "berm", "width": 10.0, "condition": 0.1, "min_bench": 5.0 }));
+    }
+    steps.push(json!({ "step": "project", "to": { "kind": "surface", "id": topo }, "batter": 45.0, "condition": 0.1 }));
+    let walls = (0..steps.len()).step_by(2).collect::<Vec<_>>();
+    for side in ["right", "left"] {
+        for (heading, at) in [("along", 0.3), ("back", 0.7)] {
+            for &wall in &walls {
+                let (a, b) = (&points[0], &points[points.len() - 1]);
+                let start = [a[0] + at * (b[0] - a[0]), a[1] + at * (b[1] - a[1])];
+                let ramp = json!({ "start": start, "heading": heading, "from_step": wall + 1, "to_step": wall + 1, "width": 30.0, "grade": 10.0 });
+                let layer = format!("road {side} {heading} step {}", wall + 1);
+                let content = json!({
+                    "layer": layer,
+                    "lines": [{ "string": toe, "profile": "Up", "side": side, "run_on": [300.0, 300.0], "ramps": [ramp] }],
+                    "profiles": [{ "name": "Up", "direction": "up", "register": grids[0], "steps": steps }],
+                    "rules": [],
+                });
+                let design = created(&s.run("face.save_design", json!({ "name": layer, "content": content })).unwrap())[0];
+                let started = Instant::now();
+                match s.run("face.project", json!({ "design": design })) {
+                    Ok(record) => {
+                        let ms = started.elapsed().as_secs_f64() * 1e3;
+                        let face = record.outputs.iter().filter_map(|o| s.project().object(o.id)).find(|o| o.name.ends_with("face")).unwrap();
+                        let Body::Surface(sheet) = &face.body else { panic!("a face is a surface") };
+                        let v = sheet.validity();
+                        let road: Vec<&str> = record.messages[0].split("; ").filter(|m| m.starts_with("road")).collect();
+                        let loops = zd_geom::boundary_loops(sheet.mesh()).unwrap().len();
+                        println!("{layer}: {ms:.0} ms, {} triangles, {loops} loop(s): {road:?}", sheet.mesh().triangles.len());
+                        assert_eq!(v.non_self_intersecting, Some(true), "{layer} crosses itself");
+                        assert_eq!(loops, 1, "{layer} has a hole in it");
+                    }
+                    Err(e) => println!("{layer}: refused after {:.0} ms: {e}", started.elapsed().as_secs_f64() * 1e3),
+                }
+            }
+        }
+    }
+}
+
+/// A wall 20 m high with a road 200 m long up it, as the panel saves one. Running it again rebuilds the lot
+/// from the same design, as a road is part of how the wall is built.
+#[test]
+fn a_ramp_on_a_line_cuts_a_road_and_a_rerun_rebuilds_it() {
+    let mut s = Session::with_builtins();
+    let floor = level_surface(&mut s, "floor", 100.0);
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E + 10.0, N + 30.0, 0.0], [E + 290.0, N + 30.0, 0.0]] })).unwrap())[0];
+    let content = |grade: f64| {
+        json!({
+            "layer": "faces",
+            "lines": [{
+                "string": toe, "profile": "Wall", "side": "left", "run_on": [0.0, 0.0],
+                "ramps": [{ "start": [E + 40.0, N + 30.0], "heading": "along", "from_step": 1, "to_step": 1, "width": 10.0, "grade": grade }]
+            }],
+            "profiles": [{ "name": "Wall", "direction": "up", "register": floor, "steps": [{ "step": "project", "to": { "kind": "rl", "rl": 120.0 }, "batter": 45.0 }] }],
+            "rules": [],
+        })
+    };
+    let design = created(&s.run("face.save_design", json!({ "name": "with a road", "content": content(10.0) })).unwrap())[0];
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    assert!(record.messages[0].contains("road 1 up step 1: 200.0 m from RL 100.0 to 120.0"), "{:?}", record.messages);
+    let edge = |s: &Session, name: &str| line(s, s.project().objects().find(|o| o.name == name).unwrap().id);
+    let pit = edge(&s, "toe Wall road 1 pit edge");
+    assert!((pit.plan_length() - 200.0).abs() < 1e-3, "{}", pit.plan_length());
+    assert!(!edge(&s, "toe Wall road 1 wall edge").vertices.is_empty());
+    let face = s.project().objects().find(|o| o.name == "toe Wall face").unwrap();
+    let Body::Surface(sheet) = &face.body else { panic!("a face is a surface") };
+    assert_eq!(sheet.validity().non_self_intersecting, Some(true));
+
+    // Steeper, the same height takes half the road.
+    s.run("face.save_design", json!({ "design": design, "name": "with a road", "content": content(20.0) })).unwrap();
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    assert!(record.messages[0].contains("road 1 up step 1: 100.0 m"), "{:?}", record.messages);
+    assert_eq!(s.project().objects().filter(|o| o.name == "toe Wall road 1 pit edge").count(), 1, "the last run's road went with it");
+    s.undo().unwrap();
+    assert!((edge(&s, "toe Wall road 1 pit edge").plan_length() - 200.0).abs() < 1e-3, "a run undoes in one go");
+}
+
+/// Too steep a climb for the string's length leaves the face standing and says why, by step and place.
+#[test]
+fn a_ramp_that_cant_reach_names_the_step_and_the_face_still_builds() {
+    let mut s = Session::with_builtins();
+    let floor = level_surface(&mut s, "floor", 100.0);
+    let points = [[E + 10.0, N + 30.0, 0.0], [E + 100.0, N + 30.0, 0.0]];
+    let string = created(&s.run("string.create", json!({ "name": "short", "layer": "strings", "points": points })).unwrap())[0];
+    let content = json!({
+        "layer": "faces",
+        "lines": [{
+            "string": string, "profile": "Wall", "side": "left", "run_on": [0.0, 0.0],
+            "ramps": [{ "start": [E + 40.0, N + 30.0], "heading": "along", "from_step": 1, "to_step": 1, "width": 10.0, "grade": 10.0 }]
+        }],
+        "profiles": [{ "name": "Wall", "direction": "up", "register": floor, "steps": [{ "step": "project", "to": { "kind": "rl", "rl": 120.0 }, "batter": 45.0 }] }],
+        "rules": [],
+    });
+    let design = created(&s.run("face.save_design", json!({ "name": "too short", "content": content })).unwrap())[0];
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    assert!(record.messages[0].contains("road 1 not built on step 1, stopped at"), "{:?}", record.messages);
+    assert!(record.messages[0].contains("runs out of wall at RL 106.0"), "60 m along at 10 %: {:?}", record.messages);
+    assert!(s.project().objects().any(|o| o.name == "short Wall face"));
+    assert!(!s.project().objects().any(|o| o.name.contains("road")));
+}
+
+/// A line on a layer gives a ramp to the string nearest its start, and the others run plain.
+#[test]
+fn a_ramp_on_a_layer_goes_on_the_string_nearest_its_start() {
+    let mut s = Session::with_builtins();
+    let floor = level_surface(&mut s, "floor", 100.0);
+    let string = |s: &mut Session, name: &str, y: f64| created(&s.run("string.create", json!({ "name": name, "layer": "toes", "points": [[E + 10.0, N + y, 0.0], [E + 290.0, N + y, 0.0]] })).unwrap())[0];
+    let south = string(&mut s, "south", 30.0);
+    string(&mut s, "north", 150.0);
+    let layer = s.project().object(south).unwrap().layer;
+    let content = json!({
+        "layer": "faces",
+        "lines": [{
+            "layer": layer, "profile": "Wall", "side": "left", "run_on": [0.0, 0.0],
+            "ramps": [{ "start": [E + 40.0, N + 140.0], "heading": "along", "from_step": 1, "to_step": 1, "width": 10.0, "grade": 10.0 }]
+        }],
+        "profiles": [{ "name": "Wall", "direction": "up", "register": floor, "steps": [{ "step": "project", "to": { "kind": "rl", "rl": 120.0 }, "batter": 45.0 }] }],
+        "rules": [],
+    });
+    let design = created(&s.run("face.save_design", json!({ "name": "layer", "content": content })).unwrap())[0];
+    s.run("face.project", json!({ "design": design })).unwrap();
+    assert!(s.project().objects().any(|o| o.name == "north Wall road 1 pit edge"));
+    assert!(!s.project().objects().any(|o| o.name == "south Wall road 1 pit edge"));
+}
+
 /// Every real solid cut by real grids. `ZD_CUT_SOLIDS` is a zip or folder of solids and `ZD_CUT_GRIDS`
 /// lists grids with `;`. What's kept and any solid left uncut must add up to what went in, to one part in
 /// a million, and every solid must lie under the grid.
