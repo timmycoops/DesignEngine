@@ -399,6 +399,38 @@ fn a_hidden_object_stays_hidden_through_undo_and_a_save_and_a_command_still_take
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A tick means what it says: showing an object on a layer that's off shows that object and nothing else.
+#[test]
+fn showing_an_object_on_a_layer_that_is_off_shows_it_alone() {
+    let mut s = Session::with_builtins();
+    let string = |name: &str, layer: &str| json!({ "name": name, "layer": layer, "points": [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]] });
+    let mut made = |name: &str, layer: &str| created(&s.run("string.create", string(name, layer)).unwrap())[0];
+    let (a, b, c, other) = (made("a", "design"), made("b", "design"), made("c", "design"), made("d", "other"));
+    let design = s.project().layer_named("design").unwrap().id;
+    let hidden = |s: &Session| [a, b, c, other].map(|id| s.project().is_hidden(id));
+
+    s.set_layer_visible(design, false);
+    assert_eq!(s.set_objects_visible(&[a], true), 1, "it wasn't hidden on its own, but it wasn't showing");
+    assert!(s.project().layer(design).unwrap().visible, "the layer comes on");
+    assert_eq!(hidden(&s), [false, true, true, false], "with only that object, and another layer's left alone");
+
+    // Off and on again, it comes back as it was.
+    s.set_layer_visible(design, false);
+    s.set_layer_visible(design, true);
+    assert_eq!(hidden(&s), [false, true, true, false]);
+
+    assert_eq!(s.set_objects_visible(&[b, c], true), 2);
+    assert_eq!(hidden(&s), [false, false, false, false]);
+
+    // Several at once, and hiding on a layer that's off leaves it off.
+    s.set_layer_visible(design, false);
+    assert_eq!(s.set_objects_visible(&[a, b], true), 2);
+    assert_eq!(hidden(&s), [false, false, true, false]);
+    s.set_layer_visible(design, false);
+    assert_eq!(s.set_objects_visible(&[a], false), 1);
+    assert!(!s.project().layer(design).unwrap().visible);
+}
+
 /// A layer's name, colour and being there at all are changes like any other: each undoes and redoes,
 /// and whether it's shown is left as it is.
 #[test]

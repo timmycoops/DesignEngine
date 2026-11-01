@@ -190,6 +190,13 @@ async function checkHide(viewport: Viewport, summary: ProjectSummary, show: Show
     show_one: await timed(() => setObjectsVisible([one.id], true)),
     hide_layer: await timed(() => setLayerVisible(one.layer, false)),
     show_layer: await timed(() => setLayerVisible(one.layer, true)),
+    // The layer off, then one solid ticked on: it shows alone, and the rest come back.
+    show_alone: await (async () => {
+      await show(await setLayerVisible(one.layer, false));
+      const alone = await timed(() => setObjectsVisible([one.id], true));
+      const all = await timed(() => setObjectsVisible(solids.map((o) => o.id), true));
+      return { alone, all };
+    })(),
   };
 }
 

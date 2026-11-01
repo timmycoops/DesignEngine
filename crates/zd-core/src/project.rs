@@ -224,24 +224,33 @@ impl Project {
         }
     }
 
-    /// Shows or hides live objects one by one, under their layer's tick. Display state only: not a
-    /// change, not undone. Hidden means not drawn, snapped to or cut by a section; a command that names
-    /// the object still takes it. Returns how many changed.
+    /// Shows or hides live objects one by one. Display state only: not a change, not undone. Hidden means
+    /// not drawn, snapped to or cut by a section; a command that names the object still takes it. Showing
+    /// an object on a layer that's off brings the layer on with only that object showing, as nothing else
+    /// on it was showing before. Returns how many changed.
     pub fn set_objects_visible(&mut self, ids: &[ObjectId], visible: bool) -> usize {
-        let live: Vec<ObjectId> = ids.iter().copied().filter(|&id| self.object(id).is_some() && self.is_hidden(id) == visible).collect();
-        if live.is_empty() {
+        let live: Vec<(ObjectId, LayerId)> = ids.iter().filter_map(|&id| self.object(id).map(|o| (id, o.layer))).collect();
+        let off: HashSet<LayerId> = live.iter().map(|&(_, layer)| layer).filter(|&layer| visible && self.layer(layer).is_some_and(|l| !l.visible)).collect();
+        let changing: HashSet<ObjectId> = live.iter().filter(|&&(id, layer)| off.contains(&layer) || self.is_hidden(id) == visible).map(|&(id, _)| id).collect();
+        if changing.is_empty() {
             return 0;
         }
+        let named: HashSet<ObjectId> = live.iter().map(|&(id, _)| id).collect();
+        let others: Vec<ObjectId> = self.objects().filter(|o| off.contains(&o.layer) && !named.contains(&o.id)).map(|o| o.id).collect();
         let hidden = Arc::make_mut(&mut self.hidden);
-        for id in &live {
+        hidden.extend(others);
+        for id in &changing {
             if visible {
                 hidden.remove(id);
             } else {
                 hidden.insert(*id);
             }
         }
+        for layer in self.layers.iter_mut().filter(|l| off.contains(&l.id)) {
+            layer.visible = true;
+        }
         self.generation = next_generation();
-        live.len()
+        changing.len()
     }
 
     pub fn is_hidden(&self, id: ObjectId) -> bool {
