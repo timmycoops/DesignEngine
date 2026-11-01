@@ -246,8 +246,16 @@ impl Command for ProjectDesign {
         }
         // Strips stand alone, so they run side by side.
         let run = FaceRun { design, id: p.design, inputs, targets: &targets, regions: &regions, ramp_strings: &ramp_strings };
+        let mut not_built = Vec::new();
         for strip in in_parallel(&runs, |&(line, id)| run.strip(line, id)) {
-            let strip = strip?;
+            let strip = match strip {
+                Ok(strip) => strip,
+                Err(CommandError::Invalid(why)) => {
+                    not_built.push(why.replace("invalid input: ", ""));
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             changes.extend(strip.changes);
             messages.extend(strip.messages);
             crossing.extend(strip.crossing.iter().map(|ramp| (strip.profile, *ramp)));
@@ -255,6 +263,11 @@ impl Command for ProjectDesign {
                 not_crossing.entry((strip.profile, *ramp)).or_default().push(strip.name);
             }
         }
+        // A strip that can't be built leaves the others standing, and only a run with nothing to show is refused.
+        if !not_built.is_empty() && not_built.len() == runs.len() {
+            return Err(CommandError::Invalid(not_built.join("\n")));
+        }
+        messages.extend(not_built.iter().map(|why| format!("{why}. {NOT_BUILT}")));
         for profile in &design.profiles {
             for ramp in &profile.ramps {
                 let key = (profile.name.as_str(), ramp.name.as_str());
@@ -276,6 +289,9 @@ impl Command for ProjectDesign {
         Ok(outcome)
     }
 }
+
+/// How the run ends a line about a strip it couldn't build. The panel shows these in red.
+const NOT_BUILT: &str = "Nothing is built on this string";
 
 /// What every line of a run shares.
 struct FaceRun<'a, 'b> {
@@ -374,17 +390,15 @@ struct PlacedRamps<'r> {
     notes: Vec<String>,
 }
 
-/// Where each ramp lands on a strip: where its string crosses the toe of its first wall, or with its end held
-/// the crest of its last. A wall takes one road a strip for now, so the first ramp listed keeps it.
+/// Where each ramp lands on a strip: where its string crosses the toe of its first wall. With its end held
+/// that says how far along the strip it comes out, so either way a strip's own stretch of string sets its road.
+/// A wall takes one road a strip for now, so the first ramp listed keeps it.
 fn place_ramps<'r>(profile: &'r FaceProfile, plain: &Face, ramp_strings: &HashMap<ObjectId, &Polyline>, strip: &str) -> PlacedRamps<'r> {
     let mut placed = PlacedRamps::default();
     for ramp in &profile.ramps {
         let (Some([first, last]), Some(string)) = (profile.walls_of(&ramp.name), ramp_strings.get(&ramp.string)) else { continue };
-        let line = match ramp.fixed {
-            RampFixed::Start => plain.benches.iter().find(|bench| bench.step >= first).map(|bench| &bench.toe),
-            RampFixed::End => plain.benches.iter().rev().find(|bench| bench.step <= last).map(|bench| &bench.crest),
-        };
-        let crossings = line.map_or_else(Vec::new, |line| plan_crossings(string, line));
+        let toe = plain.benches.iter().find(|bench| bench.step >= first && bench.step <= last).map(|bench| &bench.toe);
+        let crossings = toe.map_or_else(Vec::new, |toe| plan_crossings(string, toe));
         let Some(crossed) = crossings.first() else {
             placed.missing.push(&ramp.name);
             continue;
