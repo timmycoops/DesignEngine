@@ -44,7 +44,7 @@ pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_no
 pub use face::{Face, FaceBench, FaceStep, FaceTarget, RegisterLog, StepReport, conditioned_toe, project_face, register_toe, run_on};
 pub use road::{FaceRamp, FaceRoad, NoRoad};
 pub use wall::{ConditionLog, Stretch, WallLog, WallStep, next_toe, project_wall, project_wall_by_edge};
-pub use string::{Corner, DrapeLog, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, smooth_string, split_string};
+pub use string::{Corner, DrapeLog, OffsetSide, PlanCrossing, drape_string, filter_string, grade_string, join_strings, offset_string, plan_crossings, smooth_string, split_string};
 
 /// Below this many triangles a search stays on one thread.
 const ONE_THREAD_BELOW: usize = 2_000;

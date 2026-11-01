@@ -31,6 +31,12 @@ const GROUPS: { id: string; label: string; icon: LucideIcon; holds: (o: ObjectSu
 /** Fewer than this of a kind on a layer just list. */
 const GROUP_FROM = 2;
 
+/** A strip's number, which its string and everything a run makes from it carry. */
+const stripOf = (o: ObjectSummary) => (typeof o.attributes.strip === 'number' ? o.attributes.strip : null);
+const stripGroup = (strip: number) => `strip ${strip}`;
+/** Names in the order a person would put them: Strip 9 before Strip 10. */
+const byName = new Intl.Collator(undefined, { numeric: true }).compare;
+
 const kindIcon: Record<ObjectKind, LucideIcon> = {
   string: Spline,
   surface: Mountain,
@@ -48,15 +54,28 @@ const groupKey = (layer: string, group: string) => `${layer} ${group}`;
 
 /** Each open layer's objects, then a row for what comes in numbers, with its objects if it's open. */
 function layerRows(layer: Layer, on: ObjectSummary[], toggled: Map<string, boolean>): TreeRow[] {
-  const groups = GROUPS.map((group) => ({ group, objects: on.filter(group.holds) })).filter(({ objects }) => objects.length >= GROUP_FROM);
-  const grouped = new Set(groups.flatMap(({ objects }) => objects));
-  const rows: TreeRow[] = on.filter((o) => !grouped.has(o)).map((object) => ({ kind: 'object', object, inGroup: false }));
-  for (const { group, objects } of groups) {
-    const key = groupKey(layer.id, group.id);
-    const open = toggled.get(key) ?? false;
-    rows.push({ kind: 'group', key, layer, label: group.label, icon: group.icon, objects, open });
-    if (open) rows.push(...objects.map((object): TreeRow => ({ kind: 'object', object, inGroup: true })));
+  const strips = new Map<number, ObjectSummary[]>();
+  for (const object of on) {
+    const strip = stripOf(object);
+    if (strip === null) continue;
+    const held = strips.get(strip);
+    if (held) held.push(object);
+    else strips.set(strip, [object]);
   }
+  const stripRows = [...strips].filter(([, objects]) => objects.length >= GROUP_FROM).sort(([a], [b]) => a - b);
+  const inStrips = new Set(stripRows.flatMap(([, objects]) => objects));
+  const rest = on.filter((o) => !inStrips.has(o));
+  const groups = GROUPS.map((group) => ({ group, objects: rest.filter(group.holds) })).filter(({ objects }) => objects.length >= GROUP_FROM);
+  const grouped = new Set(groups.flatMap(({ objects }) => objects));
+  const rows: TreeRow[] = rest.filter((o) => !grouped.has(o)).map((object) => ({ kind: 'object', object, inGroup: false }));
+  const add = (id: string, label: string, icon: LucideIcon, objects: ObjectSummary[]) => {
+    const key = groupKey(layer.id, id);
+    const open = toggled.get(key) ?? false;
+    rows.push({ kind: 'group', key, layer, label, icon, objects, open });
+    if (open) rows.push(...[...objects].sort((a, b) => byName(a.name, b.name)).map((object): TreeRow => ({ kind: 'object', object, inGroup: true })));
+  };
+  for (const [strip, objects] of stripRows) add(stripGroup(strip), `Strip ${strip}`, Spline, objects);
+  for (const { group, objects } of groups) add(group.id, group.label, group.icon, objects);
   return rows;
 }
 
@@ -327,8 +346,10 @@ export function LayersPanel() {
     if (!object) return;
     revealing.current = object.id;
     const group = GROUPS.find((g) => g.holds(object));
+    const strip = stripOf(object);
     setToggled((was) => {
       const next = new Map(was).set(object.layer, true);
+      if (strip !== null) next.set(groupKey(object.layer, stripGroup(strip)), true);
       return group ? next.set(groupKey(object.layer, group.id), true) : next;
     });
   }, [selected]);

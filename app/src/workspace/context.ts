@@ -46,6 +46,8 @@ export interface Workspace {
   flyTo: (point: Vec3) => void;
   /** The next click in the viewport, snapped, in world coordinates. Null if it's cancelled with Esc. */
   pickPoint: (prompt: string) => Promise<Vec3 | null>;
+  /** Two clicks in the viewport, with a line following the cursor from the first. Null if it's cancelled. */
+  pickLine: (first: string, second: string) => Promise<[Vec3, Vec3] | null>;
   /** In Draw string mode. */
   drawing: boolean;
   /** Adds a typed vertex while drawing (`E N [RL]` or `@distance<bearing [RL|grade%]`); an error to show, or null. */
