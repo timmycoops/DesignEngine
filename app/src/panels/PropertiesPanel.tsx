@@ -657,7 +657,7 @@ export function PropertiesPanel() {
 
   useEffect(() => setName(object?.name ?? ''), [object?.id, object?.name]);
 
-  if (!object) return <p className="p-3 text-xs text-muted-foreground">Select an object in the viewport or the objects list.</p>;
+  if (!object) return <p className="p-3 text-xs text-muted-foreground">Select an object in the viewport or the layer tree.</p>;
 
   const rename = () => {
     const next = name.trim();
