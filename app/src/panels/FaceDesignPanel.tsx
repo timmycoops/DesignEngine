@@ -14,6 +14,7 @@ const cellClass = 'px-1 py-0.5';
 const usualTolerance = 0.1;
 const usualBatter = 70;
 const usualBerm = 10;
+const usualMinBench = 1;
 
 /** A number that can be typed through half-finished values: it only reports what parses, and goes back to what's held on leaving it. */
 function NumberBox({ value, onChange, title, width = 'w-16', disabled }: { value: number | null; onChange: (v: number) => void; title: string; width?: string; disabled?: boolean }) {
@@ -323,7 +324,8 @@ function nextTarget(steps: ProfileStep[], surfaces: ObjectSummary[], register: s
 function blankStep(kind: ProfileStep['step'], steps: ProfileStep[], surfaces: ObjectSummary[], register: string, condition: number | null): ProfileStep {
   const last = [...steps].reverse().find((s) => s.step === kind);
   if (kind === 'project') return { step: 'project', to: nextTarget(steps, surfaces, register), batter: last ? stepValueOf(last) : usualBatter, condition };
-  return { step: 'berm', on: null, width: last ? stepValueOf(last) : usualBerm, register: true, condition };
+  const minBench = last?.step === 'berm' ? last.min_bench : usualMinBench;
+  return { step: 'berm', on: null, width: last ? stepValueOf(last) : usualBerm, register: true, condition, min_bench: minBench };
 }
 
 /** Whether a row hands its crest on as one wall with the row below: same batter, no berm between. */
@@ -398,6 +400,9 @@ function StepRow({ number, step, surfaces, rules, above, carries, blank, onChang
           <ValueBox value={step.width} unit="m" what="Width in metres" rules={rules} onChange={(width) => onChange({ ...step, width })} />
         )}
       </td>
+      <td className={cellClass}>
+        {step.step === 'berm' && <NumberBox width="w-12" value={step.min_bench ?? null} title="No berm where the wall below it is lower than this (m). Blank or 0 is off" onChange={(height) => onChange({ ...step, min_bench: height > 0 ? height : null })} />}
+      </td>
       <td className={cellClass}>{step.step === 'berm' ? <RegisterCell checked={step.register} onChange={(register) => onChange({ ...step, register })} /> : step.to.kind === 'surface' && <RegisterCell checked />}</td>
       <td className={cellClass}>
         <ConditionCell value={step.condition} carries={carries} onChange={(condition) => onChange({ ...step, condition })} />
@@ -442,6 +447,9 @@ function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfil
               </th>
               <th className={headClass}>RL</th>
               <th className={headClass}>Batter / Width</th>
+              <th className={headClass} title="No berm where the wall below it is lower than this, as where grids sit on each other">
+                Min bench, m
+              </th>
               <th className={headClass}>Register</th>
               <th className={headClass} title="Clean the line before the next step, to within this many metres">
                 Condition, m
@@ -458,6 +466,7 @@ function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfil
                   <SurfaceOptions surfaces={surfaces} />
                 </select>
               </td>
+              <td />
               <td />
               <td />
               <td className={cellClass}>
@@ -504,7 +513,7 @@ function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfil
  * and steps every line in one run, one undo.
  */
 export function FaceDesignPanel() {
-  const { summary, selected, runRecord } = useWorkspace();
+  const { summary, selected, marked, setMarked, runRecord } = useWorkspace();
   const objects = useMemo(() => summary?.objects ?? [], [summary]);
   const designs = useMemo(() => objects.filter((o) => o.kind === 'face_design'), [objects]);
   const [id, setId] = useState<string | null>(null);
@@ -512,7 +521,6 @@ export function FaceDesignPanel() {
   const [draft, setDraft] = useState<FaceDesign | null>(null);
   const [dirty, setDirty] = useState(false);
   const [profileName, setProfileName] = useState<string | null>(null);
-  const [adding, setAdding] = useState('');
   const [addingLayer, setAddingLayer] = useState('');
   const [report, setReport] = useState<{ lines: string[]; error?: string }>({ lines: [] });
 
@@ -652,7 +660,7 @@ export function FaceDesignPanel() {
       return { ...d, lines: [...d.lines, line] };
     });
   };
-  const selectedString = strings.find((s) => s.id === selected);
+  const chosen = strings.filter((s) => s.id === selected || marked.includes(s.id));
   const layers = (summary?.layers ?? []).filter((l) => strings.some((s) => s.layer === l.id));
   const nameOf = (objectId: string) => objects.find((o) => o.id === objectId)?.name ?? 'missing';
   const polygons = strings.filter((s) => s.closed);
@@ -761,19 +769,15 @@ export function FaceDesignPanel() {
         </div>
       )}
       <div className="flex flex-wrap items-center gap-1 px-3 pt-1">
-        <SmallButton disabled={!selectedString} title="Adds the string selected in the viewport or the layer tree" onClick={() => selectedString && addLine({ string: selectedString.id })}>
-          <Plus className="size-3" /> Selected string
-        </SmallButton>
-        <select className={`${selectClass} max-w-32`} value={adding} aria-label="A string to add" onChange={(e) => setAdding(e.target.value)}>
-          <option value="">A string…</option>
-          {strings.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-        <SmallButton disabled={!adding} onClick={() => (addLine({ string: adding }), setAdding(''))}>
-          Add
+        <SmallButton
+          disabled={chosen.length === 0}
+          title="A line for each string selected. Ctrl-click strings in the viewport, or Ctrl or Shift in the tree, to select several"
+          onClick={() => {
+            chosen.forEach((s) => addLine({ string: s.id }));
+            setMarked([]);
+          }}
+        >
+          <Plus className="size-3" /> Apply to selected{chosen.length > 0 ? ` (${chosen.length})` : ''}
         </SmallButton>
         <select className={`${selectClass} max-w-32`} value={addingLayer} aria-label="A layer of strings to add" onChange={(e) => setAddingLayer(e.target.value)}>
           <option value="">A layer…</option>
@@ -784,7 +788,7 @@ export function FaceDesignPanel() {
           ))}
         </select>
         <SmallButton disabled={!addingLayer} title="One line for the layer: each run takes the strings on it at the time" onClick={() => (addLine({ layer: addingLayer }), setAddingLayer(''))}>
-          Add layer
+          Apply to layer
         </SmallButton>
       </div>
 

@@ -19,8 +19,8 @@
 //! hip at a corner, but along a straight run they share only the string, so the crest would step sideways
 //! with nothing but a vertical wall to carry it. There a transition stands at the vertex: one plane with
 //! no foot, through the fall line of the flatter wall and a hip that runs back across the steeper one. The
-//! crest then bevels from one to the other, and the flatter batter reaches into the steeper stretch and
-//! never the other way, so blending between batters can only flatten a slope.
+//! crest then bevels from one to the other at 45 degrees in plan, and the flatter batter reaches into the
+//! steeper stretch and never the other way, so blending between batters can only flatten a slope.
 //!
 //! The target is a surface single-valued in plan, wound either way. Where it has no data under a wall,
 //! in a no-seam hole or past its edge, it's bridged and the stretch is reported: straight across a hole
@@ -55,15 +55,14 @@ const PARALLEL: f64 = 1e-20;
 const AREA_TOLERANCE: f64 = 1e-6;
 /// How many times the plan distance a hip that doesn't rise is run out, more than a sharp mitre needs.
 const MITRE_REACH: f64 = 8.0;
-/// How far a transition's hip leans back across the steeper wall from square to it, in degrees, past any
-/// turn of the string towards that wall. At 45 the crest bevels over as far as the steeper wall reaches.
-const TRANSITION_LEAN: f64 = 45.0;
 /// The most a transition's hip leans, short of running along the string.
-const MOST_LEAN: f64 = 85.0;
+const MOST_LEAN: f64 = 89.9999;
 /// Mitres on a berm's inside line reaching farther than this many widths are bevelled.
 const BERM_MITRE_LIMIT: f64 = 4.0;
 /// A berm of no width on one edge next to a wider one, which a plane can't quite be (m).
 const LEAST_WIDTH: f64 = 1e-3;
+/// How often along a line a wall's height is read, to find where it passes a minimum bench (m).
+const BENCH_SAMPLE: f64 = 5.0;
 /// Neither a wall nor a string end: the edge a wall stands on.
 const FOOT: usize = usize::MAX;
 /// The level edge left at the top of the sweep.
@@ -206,7 +205,7 @@ fn local_string(toe: &Polyline, slopes: &[f64], side: OffsetSide, log: &mut Wall
 }
 
 /// What getting a line ready for the next step did.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ConditionLog {
     pub vertices_in: usize,
     /// Vertices left in the plan shape.
@@ -215,6 +214,8 @@ pub struct ConditionLog {
     pub vertices_out: usize,
     /// Vertices with no surface under them, which keep their elevations.
     pub off_surface: usize,
+    /// Stretches of berm left out, as the wall below is under the minimum bench.
+    pub no_berm: Vec<Stretch>,
 }
 
 /// The string the next step starts from: `crest` simplified in plan to within `tolerance` metres, moved
@@ -225,7 +226,7 @@ pub struct ConditionLog {
 /// share a wall's azimuth however they rise and fall, and the line still lies exactly on the surface.
 /// An offset can come back in pieces, as `offset_string` says, and each piece is a string to go on with.
 pub fn next_toe(crest: &Polyline, berm: f64, side: OffsetSide, tolerance: f64, surface: &TriMesh) -> Result<(Vec<Polyline>, ConditionLog), GeomError> {
-    let (pieces, mut log) = next_line(crest, berm.into(), side, tolerance, 0.0)?;
+    let (pieces, mut log) = next_line(crest, berm.into(), None, side, tolerance, 0.0)?;
     let mut toes = Vec::with_capacity(pieces.len());
     for piece in &pieces {
         let (toe, draped) = drape_string(piece, surface, true)?;
@@ -239,14 +240,17 @@ pub fn next_toe(crest: &Polyline, berm: f64, side: OffsetSide, tolerance: f64, s
 /// The next line before it's registered: `crest` simplified in plan to within `before` metres, moved out
 /// a berm of `berm` metres on `side` if there is one, and simplified to within `after`. Each vertex takes
 /// the height of the nearest point on the crest, which it keeps if there's no surface under it.
-pub(crate) fn next_line(crest: &Polyline, berm: EdgeRule<'_>, side: OffsetSide, before: f64, after: f64) -> Result<(Vec<Polyline>, ConditionLog), GeomError> {
+pub(crate) fn next_line(crest: &Polyline, berm: EdgeRule<'_>, least: Option<LeastBench<'_>>, side: OffsetSide, before: f64, after: f64) -> Result<(Vec<Polyline>, ConditionLog), GeomError> {
     let flat = Polyline { vertices: crest.vertices.iter().map(|v| [v[0], v[1], 0.0]).collect(), closed: crest.closed };
     let shape = filter_string(&flat, before)?;
-    let log = ConditionLog { vertices_in: crest.vertices.len(), plan_vertices: shape.vertices.len(), ..ConditionLog::default() };
+    let mut log = ConditionLog { vertices_in: crest.vertices.len(), plan_vertices: shape.vertices.len(), ..ConditionLog::default() };
     // The rule looks at the line where it really is, but the offset is a plan job.
-    let (placed, widths) = berm.applied_to(&at_crest_heights(&shape, crest))?;
+    let (mut placed, mut widths) = berm.applied_to(&at_crest_heights(&shape, crest))?;
     if !widths.iter().all(|w| w.is_finite() && *w >= 0.0) {
         return Err(GeomError::InvalidInput("the berm width must be zero or more".into()));
+    }
+    if let Some(least) = least {
+        (placed, widths, log.no_berm) = without_low_benches(&placed, widths, crest, least, before);
     }
     let width = widths.first().copied().unwrap_or(0.0);
     let pieces = if widths.iter().any(|w| *w != width) {
@@ -260,6 +264,92 @@ pub(crate) fn next_line(crest: &Polyline, berm: EdgeRule<'_>, side: OffsetSide, 
     Ok((lines, log))
 }
 
+/// What a berm needs under it: a wall from `toe` at least `height` high.
+#[derive(Clone, Copy)]
+pub(crate) struct LeastBench<'a> {
+    pub toe: &'a Polyline,
+    pub height: f64,
+}
+
+/// A line split wherever the wall below it passes the least height, and no width along the stretches
+/// where it's lower. A stretch too short to matter takes on its neighbours, so a berm doesn't stutter on
+/// and off along an undulating seam: a dip shorter than the berm is wide is bermed across, and so short
+/// a stretch of height isn't bermed at all. A conditioned line weaves either side of its crest, so with no
+/// berm it stands clear of it by the tolerance. A line that isn't conditioned is the crest, vertex for
+/// vertex, and stays that way, so it isn't split.
+fn without_low_benches(line: &Polyline, widths: Vec<f64>, crest: &Polyline, least: LeastBench<'_>, tolerance: f64) -> (Polyline, Vec<f64>, Vec<Stretch>) {
+    let low = |p: [f64; 3]| height_on(crest, p) - height_on(least.toe, p) < least.height;
+    let n = line.vertices.len();
+    let (mut vertices, mut split) = (Vec::with_capacity(n), Vec::with_capacity(widths.len()));
+    for (i, &width) in widths.iter().enumerate() {
+        let (a, b) = (line.vertices[i], line.vertices[(i + 1) % n]);
+        let at = |t: f64| [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])];
+        vertices.push(a);
+        let samples = if tolerance > 0.0 { (plan_gap(a, b) / BENCH_SAMPLE).ceil().max(1.0) as usize } else { 0 };
+        let (mut from, mut was) = (0.0, low(a));
+        for k in 1..=samples {
+            let to = k as f64 / samples as f64;
+            if low(at(to)) != was {
+                let (mut before, mut after) = (from, to);
+                for _ in 0..24 {
+                    let middle = (before + after) / 2.0;
+                    if low(at(middle)) == was {
+                        before = middle;
+                    } else {
+                        after = middle;
+                    }
+                }
+                vertices.push(at(after));
+                split.push(width);
+                was = !was;
+            }
+            from = to;
+        }
+        split.push(width);
+    }
+    if !line.closed {
+        vertices.push(line.vertices[n - 1]);
+    }
+    let result = Polyline { vertices, closed: line.closed };
+    let m = result.vertices.len();
+    let middle = |i: usize| {
+        let (a, b) = (result.vertices[i], result.vertices[(i + 1) % m]);
+        [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, (a[2] + b[2]) / 2.0]
+    };
+    let mut lows: Vec<bool> = (0..split.len()).map(|i| low(middle(i))).collect();
+    let lengths: Vec<f64> = (0..split.len()).map(|i| plan_gap(result.vertices[i], result.vertices[(i + 1) % m])).collect();
+    let widest = split.iter().copied().fold(0.0, f64::max);
+    for short in [true, false] {
+        even_out(&mut lows, &lengths, widest, short);
+    }
+    let mut no_berm = Vec::new();
+    let mut stretch: Option<[f64; 3]> = None;
+    for i in 0..=lows.len() {
+        match (stretch, lows.get(i).copied().unwrap_or(false)) {
+            (None, true) => stretch = Some(result.vertices[i]),
+            (Some(from), false) => {
+                no_berm.push(Stretch { from, to: result.vertices[i % m] });
+                stretch = None;
+            }
+            _ => {}
+        }
+    }
+    let widths = split.iter().zip(&lows).map(|(width, low)| if *low { width.min(tolerance) } else { *width }).collect();
+    (result, widths, no_berm)
+}
+
+/// Turns over any run of `state` shorter than `reach`.
+fn even_out(flags: &mut [bool], lengths: &[f64], reach: f64, state: bool) {
+    let mut i = 0;
+    while i < flags.len() {
+        let same = flags[i..].iter().take_while(|f| **f == flags[i]).count();
+        if flags[i] == state && lengths[i..i + same].iter().sum::<f64>() < reach {
+            flags[i..i + same].fill(!state);
+        }
+        i += same;
+    }
+}
+
 /// A line moved out by a width for each edge: a wall up a metre over the width of each edge, read off at
 /// that height, so the walls' hips and transitions do what a mitre can't.
 fn offset_by_edge(line: &Polyline, widths: &[f64], side: OffsetSide) -> Result<Polyline, GeomError> {
@@ -267,7 +357,22 @@ fn offset_by_edge(line: &Polyline, widths: &[f64], side: OffsetSide) -> Result<P
     let batters: Vec<f64> = widths.iter().map(|w| w.max(LEAST_WIDTH).recip().atan().to_degrees()).collect();
     let widest = widths.iter().copied().fold(0.0, f64::max);
     let sheet = level_sheet(&flat, 1.0, 100.0 + 8.0 * widest);
-    Ok(project_wall_by_edge(&flat, side, &batters, &sheet)?.crest)
+    let mut moved = project_wall_by_edge(&flat, side, &batters, &sheet)?.crest;
+    // An edge of no width stays on the line exactly.
+    let n = flat.vertices.len();
+    let still: Vec<([f64; 3], [f64; 3])> = (0..widths.len()).filter(|&i| widths[i] == 0.0).map(|i| (flat.vertices[i], flat.vertices[(i + 1) % n])).collect();
+    for p in &mut moved.vertices {
+        let nearest = still.iter().map(|&(a, b)| (a, b, nearest_along(a, b, *p))).min_by(|x, y| x.2.1.total_cmp(&y.2.1));
+        if let Some((a, b, (t, gap))) = nearest
+            && gap <= 2.0 * LEAST_WIDTH
+        {
+            let on = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), p[2]];
+            let corner = [a, b].into_iter().find(|v| plan_gap(*v, on) <= 2.0 * LEAST_WIDTH);
+            *p = corner.map_or(on, |v| [v[0], v[1], p[2]]);
+        }
+    }
+    moved.vertices.dedup_by(|a, b| plan_gap(*a, *b) < SAME_POINT);
+    Ok(moved)
 }
 
 /// How far along a segment in plan the nearest point to `p` is, from 0 to 1, and how far off it is.
@@ -282,21 +387,23 @@ pub(crate) fn segment_count(line: &Polyline) -> usize {
     if line.closed { line.vertices.len() } else { line.vertices.len().saturating_sub(1) }
 }
 
+/// The height of the nearest point on a line in plan.
+fn height_on(line: &Polyline, p: [f64; 3]) -> f64 {
+    let n = line.vertices.len();
+    let mut nearest = (f64::INFINITY, line.vertices.first().map_or(p[2], |v| v[2]));
+    for i in 0..segment_count(line) {
+        let (a, b) = (line.vertices[i], line.vertices[(i + 1) % n]);
+        let (t, gap) = nearest_along(a, b, p);
+        if gap < nearest.0 {
+            nearest = (gap, a[2] + t * (b[2] - a[2]));
+        }
+    }
+    nearest.1
+}
+
 /// A line's vertices at the height of the nearest point on `crest` in plan.
 pub(crate) fn at_crest_heights(line: &Polyline, crest: &Polyline) -> Polyline {
-    let n = crest.vertices.len();
-    let height = |p: [f64; 3]| {
-        let mut nearest = (f64::INFINITY, crest.vertices.first().map_or(p[2], |v| v[2]));
-        for i in 0..segment_count(crest) {
-            let (a, b) = (crest.vertices[i], crest.vertices[(i + 1) % n]);
-            let (t, gap) = nearest_along(a, b, p);
-            if gap < nearest.0 {
-                nearest = (gap, a[2] + t * (b[2] - a[2]));
-            }
-        }
-        nearest.1
-    };
-    Polyline { vertices: line.vertices.iter().map(|p| [p[0], p[1], height(*p)]).collect(), closed: line.closed }
+    Polyline { vertices: line.vertices.iter().map(|p| [p[0], p[1], height_on(crest, *p)]).collect(), closed: line.closed }
 }
 
 /// A line with a new vertex wherever `place` puts one for a crest vertex. It's given the crest vertex, the
@@ -656,10 +763,12 @@ fn transition_at(vertex: P3, a: &Wall, b: &Wall) -> Wall {
     let (steep, flat, sign) = if a.slope > b.slope { (a, b, -1.0) } else { (b, a, 1.0) };
     let along = [steep.out[1], -steep.out[0]];
     let back = [along[0] * sign, along[1] * sign];
-    // A string turning towards the steeper wall takes the flatter wall's fall line with it, and the hip
-    // has to stay beyond that.
-    let towards = (flat.out[0] * back[0] + flat.out[1] * back[1]).clamp(-1.0, 1.0).asin().to_degrees().max(0.0);
-    let lean = (towards + TRANSITION_LEAN).min(MOST_LEAN).to_radians();
+    // At any height the flatter wall's fall line stands off the steeper wall's crest by some distance, and
+    // the crest runs back along the steeper wall by that distance again to bevel at 45 degrees in plan.
+    let (flat_reach, steep_reach) = (flat.slope.recip(), steep.slope.recip());
+    let beyond = flat_reach * (flat.out[0] * steep.out[0] + flat.out[1] * steep.out[1]) - steep_reach;
+    let behind = flat_reach * (flat.out[0] * back[0] + flat.out[1] * back[1]);
+    let lean = (behind + beyond.max(0.0)).atan2(steep_reach).to_degrees().clamp(0.0, MOST_LEAN).to_radians();
     let plan = [steep.out[0] * lean.cos() + back[0] * lean.sin(), steep.out[1] * lean.cos() + back[1] * lean.sin()];
     let normal = unit(cross(across_plane(flat, flat.out), across_plane(steep, plan)));
     let normal = if normal[2] < 0.0 { scale(normal, -1.0) } else { normal };

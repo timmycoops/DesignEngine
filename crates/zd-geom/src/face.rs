@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use zd_core::{FaceDirection, Polyline, TriMesh};
 
 use crate::string::TriangleBins;
-use crate::wall::{Stretch, at_crest_heights, next_line, triangles_of, with_crest_vertices};
+use crate::wall::{LeastBench, Stretch, at_crest_heights, nearest_along, next_line, triangles_of, with_crest_vertices};
 use crate::{EdgeRule, GeomError, OffsetSide, drape_string, filter_string, next_toe, project_wall_by_edge};
 
 /// What a wall rises to.
@@ -31,8 +31,8 @@ pub enum FaceStep<'a> {
     Project { to: FaceTarget<'a>, batter: EdgeRule<'a>, condition: Option<f64> },
     /// A berm of a width in metres. Its line registers on `on`, or on what the last wall reached if that's
     /// left out. With `register` off it keeps its crest's heights instead. With a tolerance it's
-    /// conditioned after it's moved out.
-    Berm { on: Option<FaceTarget<'a>>, width: EdgeRule<'a>, register: bool, condition: Option<f64> },
+    /// conditioned after it's moved out. With `min_bench` there's no berm where the wall below it is lower.
+    Berm { on: Option<FaceTarget<'a>>, width: EdgeRule<'a>, register: bool, condition: Option<f64>, min_bench: Option<f64> },
 }
 
 /// One wall of a face.
@@ -60,6 +60,8 @@ pub struct StepReport {
     pub off_surface: usize,
     /// Pieces of a berm line left out when an offset pinched into several.
     pub pieces_dropped: usize,
+    /// Stretches of a berm left out, as the wall below is under the minimum bench.
+    pub no_berm: Vec<Stretch>,
 }
 
 /// A whole face.
@@ -189,7 +191,7 @@ pub fn project_face(toe: &Polyline, register: &TriMesh, side: OffsetSide, direct
                 .zip(&surfaces)
                 .map(|(step, mesh)| match *step {
                     FaceStep::Project { to, batter, condition } => FaceStep::Project { to: mirrored_target(to, mesh.as_ref()), batter: batter.upside_down(), condition },
-                    FaceStep::Berm { on, width, register, condition } => FaceStep::Berm { on: on.map(|on| mirrored_target(on, mesh.as_ref())), width: width.upside_down(), register, condition },
+                    FaceStep::Berm { on, width, register, condition, min_bench } => FaceStep::Berm { on: on.map(|on| mirrored_target(on, mesh.as_ref())), width: width.upside_down(), register, condition, min_bench },
                 })
                 .collect();
             run_steps(&toe, &surface, swapped, &mirrored, &mut face)?;
@@ -359,13 +361,14 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 }
                 k = last + 1;
             }
-            FaceStep::Berm { on: named, width, register, condition } => {
+            FaceStep::Berm { on: named, width, register, condition, min_bench } => {
                 let Waiting { crest, condition: before } = waiting.take().unwrap_or_else(|| Waiting { crest: from.clone(), condition: None });
                 finish_berm(&mut berm_from, &from, face).map_err(|e| fail(k, e))?;
                 if let Some(target) = named {
                     on = Resting::of(target, &crest, BERM_BATTER);
                 }
-                let (lines, _) = next_line(&crest, width, side, before.unwrap_or(0.0), condition.unwrap_or(0.0)).map_err(|e| fail(k, e))?;
+                let least = min_bench.filter(|h| *h > 0.0).map(|height| LeastBench { toe: &from, height });
+                let (lines, log) = next_line(&crest, width, least, side, before.unwrap_or(0.0), condition.unwrap_or(0.0)).map_err(|e| fail(k, e))?;
                 let dropped = lines.len().saturating_sub(1);
                 let line = longest(lines);
                 let mut report = no_wall_report(k);
@@ -378,7 +381,7 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                     at_crest_heights(&with_crest_vertices(&line, &crest, |_, on, _| Some(on)), &crest)
                 };
                 berm_from = Some(crest);
-                (report.no_wall, report.pieces_dropped) = (false, dropped);
+                (report.no_wall, report.pieces_dropped, report.no_berm) = (false, dropped, log.no_berm);
                 face.steps.push(report);
                 k += 1;
             }
@@ -456,7 +459,7 @@ fn wall_report(step: usize, wall: &crate::WallStep) -> StepReport {
 }
 
 fn no_wall_report(step: usize) -> StepReport {
-    StepReport { step, walls: 0, squeezed_out: 0, no_wall: true, no_height: Vec::new(), no_target: Vec::new(), off_surface: 0, pieces_dropped: 0 }
+    StepReport { step, walls: 0, squeezed_out: 0, no_wall: true, no_height: Vec::new(), no_target: Vec::new(), off_surface: 0, pieces_dropped: 0, no_berm: Vec::new() }
 }
 
 fn longest(toes: Vec<Polyline>) -> Polyline {
@@ -497,12 +500,91 @@ fn band(a: &Polyline, b: &Polyline) -> Result<TriMesh, GeomError> {
     if a.vertices.len() < 2 || b.vertices.len() < 2 || a.vertices == b.vertices {
         return Ok(TriMesh::default());
     }
+    let along: Vec<Option<f64>> = b.vertices.iter().map(|p| place_on(a, *p)).collect();
+    if along.iter().all(Option::is_some) {
+        return Ok(TriMesh::default());
+    }
+    if along.iter().all(Option::is_none) {
+        return whole_band(a, b);
+    }
+    match along.iter().position(Option::is_some) {
+        // A closed pair opens where they touch, so each stretch apart has two ends.
+        Some(first) if a.closed => {
+            let start = along[first].expect("it's on the line").round() as usize % a.vertices.len();
+            band_where_apart(&opened(a, start), &opened(b, first))
+        }
+        _ => band_where_apart(a, b),
+    }
+}
+
+/// How far along a line a point on it lies, as a segment number and a fraction, if it's on it.
+fn place_on(line: &Polyline, p: [f64; 3]) -> Option<f64> {
+    let n = line.vertices.len();
+    let segments = if line.closed { n } else { n - 1 };
+    (0..segments).find_map(|i| {
+        let (a, b) = (line.vertices[i], line.vertices[(i + 1) % n]);
+        let (t, gap) = nearest_along(a, b, p);
+        (gap <= WELD && (a[2] + t * (b[2] - a[2]) - p[2]).abs() <= WELD).then_some(i as f64 + t)
+    })
+}
+
+/// A closed line as an open one, from one vertex round to the same vertex.
+fn opened(line: &Polyline, start: usize) -> Polyline {
+    let n = line.vertices.len();
+    Polyline { vertices: (0..=n).map(|k| line.vertices[(start + k) % n]).collect(), closed: false }
+}
+
+/// The part of an open line between two places along it.
+fn stretch_of(line: &Polyline, from: f64, to: f64) -> Polyline {
+    let at = |place: f64| {
+        let i = (place.floor() as usize).min(line.vertices.len() - 2);
+        let (a, b, t) = (line.vertices[i], line.vertices[i + 1], place - i as f64);
+        [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])]
+    };
+    let mut vertices = vec![at(from)];
+    vertices.extend((from.floor() as usize + 1..=to.ceil() as usize - 1).map(|i| line.vertices[i]));
+    vertices.push(at(to));
+    vertices.dedup_by(|p, q| (p[0] - q[0]).hypot(p[1] - q[1]) <= WELD);
+    Polyline { vertices, closed: false }
+}
+
+/// A band for each stretch where two open lines stand apart. Where they share a stretch there's no berm.
+fn band_where_apart(a: &Polyline, b: &Polyline) -> Result<TriMesh, GeomError> {
+    let along: Vec<Option<f64>> = b.vertices.iter().map(|p| place_on(a, *p)).collect();
+    let last = b.vertices.len() - 1;
+    let mut mesh = TriMesh::default();
+    let mut i = 0;
+    while i < last {
+        if along[i].is_some() && along[i + 1].is_some() {
+            i += 1;
+            continue;
+        }
+        let end = (i + 1..=last).find(|&j| along[j].is_some()).unwrap_or(last);
+        let reach = [along[i].unwrap_or(0.0), along[end].unwrap_or((a.vertices.len() - 1) as f64)];
+        let piece = whole_band(&stretch_of(a, reach[0], reach[1]), &Polyline { vertices: b.vertices[i..=end].to_vec(), closed: false })?;
+        let offset = mesh.vertices.len() as u32;
+        mesh.vertices.extend(piece.vertices);
+        mesh.triangles.extend(piece.triangles.iter().map(|t| t.map(|v| v + offset)));
+        i = end;
+    }
+    Ok(mesh)
+}
+
+/// The berm between two lines that stand apart all along, or touch only at their ends.
+fn whole_band(a: &Polyline, b: &Polyline) -> Result<TriMesh, GeomError> {
     let mut outline: Vec<[f64; 3]> = a.vertices.clone();
     if a.closed {
         outline.push(a.vertices[0]);
         outline.push(b.vertices[0]);
     }
     outline.extend(b.vertices.iter().rev());
+    if !a.closed {
+        // Stretches between places the lines touch start and end on one point.
+        outline.dedup_by(|p, q| (p[0] - q[0]).hypot(p[1] - q[1]) <= WELD);
+        if outline.len() > 1 && (outline[0][0] - outline[outline.len() - 1][0]).hypot(outline[0][1] - outline[outline.len() - 1][1]) <= WELD {
+            outline.pop();
+        }
+    }
     if a.closed {
         outline.pop();
         outline.insert(a.vertices.len() + 2, b.vertices[0]);
@@ -555,7 +637,7 @@ mod tests {
     }
 
     fn berm<'a>(width: f64) -> FaceStep<'a> {
-        FaceStep::Berm { on: None, width: width.into(), register: true, condition: Some(0.1) }
+        FaceStep::Berm { on: None, width: width.into(), register: true, condition: Some(0.1), min_bench: None }
     }
 
     /// Tim's sequence on level surfaces, where every line has a known place: the toe on Grid A at RL 100,
@@ -659,7 +741,7 @@ mod tests {
         let a = surface(|_, _| 100.0);
         let rolling = surface(|x, y| 120.0 + 0.2 * (y - 120.0) + 4.0 * (x / 41.0).sin());
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
-        let steps = |register| [wall(FaceTarget::Surface(&rolling), 60.0), FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register, condition: Some(0.1) }, wall(FaceTarget::Rl(160.0), 60.0)];
+        let steps = |register| [wall(FaceTarget::Surface(&rolling), 60.0), FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register, condition: Some(0.1), min_bench: None }, wall(FaceTarget::Rl(160.0), 60.0)];
         let held = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps(false)).unwrap();
         let crest = &held.benches[0].crest;
         let next = &held.benches[1].toe;
@@ -683,7 +765,7 @@ mod tests {
         let (a, b, c) = (surface(|_, _| 100.0), surface(|_, _| 120.0), surface(|_, _| 125.0));
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
         for (on, want) in [(FaceTarget::Surface(&c), 125.0), (FaceTarget::Rl(123.0), 123.0)] {
-            let steps = [wall(FaceTarget::Surface(&b), 45.0), FaceStep::Berm { on: Some(on), width: EdgeRule::Fixed(5.0), register: true, condition: None }, wall(FaceTarget::Rl(160.0), 45.0)];
+            let steps = [wall(FaceTarget::Surface(&b), 45.0), FaceStep::Berm { on: Some(on), width: EdgeRule::Fixed(5.0), register: true, condition: None, min_bench: None }, wall(FaceTarget::Rl(160.0), 45.0)];
             let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps).unwrap();
             for p in &face.benches[1].toe.vertices {
                 close(p[2], want, 1e-6);
@@ -699,7 +781,7 @@ mod tests {
         let rolling = surface(|x, y| 120.0 + 3.0 * (x / 29.0).sin() + 2.0 * (y / 17.0).cos());
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
         let corners_of_next_toe = |crest: Option<f64>, after: Option<f64>| {
-            let steps = [FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: EdgeRule::Fixed(60.0), condition: crest }, FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: after }, wall(FaceTarget::Rl(170.0), 60.0)];
+            let steps = [FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: EdgeRule::Fixed(60.0), condition: crest }, FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: after, min_bench: None }, wall(FaceTarget::Rl(170.0), 60.0)];
             let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps).unwrap();
             plan_corners(&face.benches[1].toe)
         };

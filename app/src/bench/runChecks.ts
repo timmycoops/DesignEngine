@@ -780,7 +780,7 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
       { name: 'Batter', value: { type: 'inside_polygon', polygon: polygon.id, inside: 60, outside: 70 } },
       { name: 'Berm', value: { type: 'inside_polygon', polygon: polygon.id, inside: 15, outside: 10 } },
     ],
-    profiles: content.profiles.map((profile) => ({ ...profile, steps: profile.steps.map((step) => (step.step === 'berm' ? { ...step, width: 'Berm' } : step)) })),
+    profiles: content.profiles.map((profile) => ({ ...profile, steps: profile.steps.map((step) => (step.step === 'berm' ? { ...step, width: 'Berm', min_bench: 5 } : step)) })),
   };
   const ruleRun = await (async () => {
     try {

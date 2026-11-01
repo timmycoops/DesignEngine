@@ -308,9 +308,9 @@ const plural = (count: number) => `${fmt(count)} object${count === 1 ? '' : 's'}
  * menu to act on together.
  */
 export function LayersPanel() {
-  const { summary, selected, select, activeLayer, setActiveLayer, setObjectsVisible, run } = useWorkspace();
+  const { summary, selected, select, marked: markedIds, setMarked, toggleMark, activeLayer, setActiveLayer, setObjectsVisible, run } = useWorkspace();
   const [toggled, setToggled] = useState(new Map<string, boolean>());
-  const [marked, setMarked] = useState<ReadonlySet<string>>(new Set());
+  const marked = useMemo(() => new Set(markedIds), [markedIds]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [target, setTarget] = useState<TreeRow | null>(null);
   /** The last row clicked, where a Shift-click's run starts. */
@@ -345,19 +345,15 @@ export function LayersPanel() {
   const clickObject = (e: MouseEvent, at: number, id: string) => {
     if (e.shiftKey && anchor.current !== null) {
       const [from, to] = [Math.min(anchor.current, at), Math.max(anchor.current, at)];
-      setMarked(new Set(rows.slice(from, to + 1).flatMap((r) => (r.kind === 'object' ? [r.object.id] : []))));
+      setMarked(rows.slice(from, to + 1).flatMap((r) => (r.kind === 'object' ? [r.object.id] : [])));
       return;
     }
     anchor.current = at;
     if (e.ctrlKey || e.metaKey) {
-      setMarked((was) => {
-        const next = new Set(was.size === 0 && selected ? [selected] : was);
-        if (!next.delete(id)) next.add(id);
-        return next;
-      });
+      toggleMark(id);
       return;
     }
-    setMarked(new Set());
+    setMarked([]);
     select(id);
   };
 
@@ -390,7 +386,7 @@ export function LayersPanel() {
   const objectsMenu = (taken: string[], layer: string) => {
     const label = taken.length > 1 ? ` ${plural(taken.length)}` : '';
     const act = (name: string, params: Record<string, unknown>) => {
-      setMarked(new Set());
+      setMarked([]);
       void run(name, params);
     };
     return (
