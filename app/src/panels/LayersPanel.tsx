@@ -153,9 +153,16 @@ interface LayerRowProps {
 }
 
 function LayerRow({ entry: { layer, count, hidden, open }, renaming, onRenamed, onToggle }: LayerRowProps) {
-  const { activeLayer, setActiveLayer, setLayerVisible, sectionOpen } = useWorkspace();
+  const { summary, activeLayer, setActiveLayer, setLayerVisible, setObjectsVisible, sectionOpen } = useWorkspace();
   const Chevron = open ? ChevronDown : ChevronRight;
   const active = layer.name === activeLayer;
+  // The tick says what is on screen: all of the layer, none of it, or some.
+  const tick = !layer.visible || (count > 0 && hidden === count) ? false : hidden === 0 ? true : 'indeterminate';
+  const tickLayer = (on: boolean) => {
+    // Turned off and on, a layer comes back as it was. With nothing to come back to, or some showing, it all shows.
+    if (!on || (!layer.visible && (count === 0 || hidden < count))) setLayerVisible(layer.id, on);
+    else setObjectsVisible(summary?.objects.filter((o) => o.layer === layer.id).map((o) => o.id) ?? [], true);
+  };
   return (
     <div
       data-slot="tree-row"
@@ -181,16 +188,16 @@ function LayerRow({ entry: { layer, count, hidden, open }, renaming, onRenamed, 
         <span className="size-4 shrink-0" />
       )}
       <Checkbox
-        checked={layer.visible}
+        checked={tick}
         onClick={(e) => e.stopPropagation()}
-        onCheckedChange={(checked) => setLayerVisible(layer.id, checked === true)}
+        onCheckedChange={(checked) => tickLayer(checked === true)}
         aria-label={`Show ${layer.name}`}
       />
       <Swatch layer={layer} />
       {renaming ? <RenameBox layer={layer} onDone={onRenamed} /> : <span className={cn('min-w-0 flex-1 truncate', active && 'text-primary')}>{layer.name}</span>}
       {sectionOpen && <LineWeight layer={layer.id} />}
-      <span className="text-muted-foreground tabular-nums" title={hidden > 0 ? `${hidden} of ${count} hidden` : undefined}>
-        {hidden > 0 ? `${count - hidden} of ${count}` : count}
+      <span className="text-muted-foreground tabular-nums" title={layer.visible && hidden > 0 ? `${hidden} of ${count} hidden` : undefined}>
+        {layer.visible && hidden > 0 ? `${count - hidden} of ${count}` : count}
       </span>
     </div>
   );
@@ -198,16 +205,19 @@ function LayerRow({ entry: { layer, count, hidden, open }, renaming, onRenamed, 
 
 interface ObjectRowProps {
   object: ObjectSummary;
+  /** Its layer's on, so its own tick is what decides. */
+  layerOn: boolean;
   /** Ticked along with others by Ctrl or Shift: what a tick or the menu acts on. */
   marked: boolean;
   onClick: (e: MouseEvent) => void;
   onTick: (shown: boolean) => void;
 }
 
-function ObjectRow({ object, marked, onClick, onTick }: ObjectRowProps) {
+function ObjectRow({ object, layerOn, marked, onClick, onTick }: ObjectRowProps) {
   const { selected } = useWorkspace();
   const Icon = kindIcon[object.kind];
   const note = noteOf(object);
+  const showing = layerOn && !object.hidden;
   return (
     <div
       data-slot="tree-row"
@@ -217,14 +227,14 @@ function ObjectRow({ object, marked, onClick, onTick }: ObjectRowProps) {
       onClick={onClick}
     >
       {canHide(object) ? (
-        <Checkbox checked={!object.hidden} onClick={(e) => e.stopPropagation()} onCheckedChange={(checked) => onTick(checked === true)} aria-label={`Show ${object.name}`} />
+        <Checkbox checked={showing} onClick={(e) => e.stopPropagation()} onCheckedChange={(checked) => onTick(checked === true)} aria-label={`Show ${object.name}`} />
       ) : (
         <span className="size-4 shrink-0" />
       )}
       <span title={kindLabel[object.kind]}>
         <Icon className="size-3.5 shrink-0 text-muted-foreground" />
       </span>
-      <span className={cn('min-w-0 flex-1 truncate', object.hidden && 'text-muted-foreground')} title={note ?? object.name}>
+      <span className={cn('min-w-0 flex-1 truncate', canHide(object) && !showing && 'text-muted-foreground')} title={note ?? object.name}>
         {object.name}
         {note && <span className="ml-1 text-muted-foreground">·</span>}
       </span>
@@ -382,6 +392,7 @@ export function LayersPanel() {
                 <ObjectRow
                   key={row.object.id}
                   object={row.object}
+                  layerOn={summary?.layers.find((l) => l.id === row.object.layer)?.visible ?? true}
                   marked={marked.has(row.object.id)}
                   onClick={(e) => clickObject(e, first + k, row.object.id)}
                   onTick={(shown) => setObjectsVisible(takenWith(row.object.id), shown)}

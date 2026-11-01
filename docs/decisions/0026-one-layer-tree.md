@@ -29,9 +29,11 @@ agreed and the first four workstreams: the tree, showing and hiding one object, 
 10. **Hiding one solid builds no new snap index.** An index takes 1.9 s on a pit, so it keeps every solid and knows which
     solid each triangle came from, and a cast passes over hidden ones. Snapping never pauses, and nothing hidden is ever
     snapped to. The same table will let a click in the viewport name a solid (workstream 3).
-11. **The tick on an object sits under its layer's tick.** A layer turned off hides everything on it, and turning it back
-    on leaves what was hidden one by one still hidden. A layer shows how many of its objects are showing. A property grid
-    or a face design has nothing to show or hide, so it has no tick.
+11. **A tick says what's on screen.** Tim, trying the first version, where a layer's tick overrode its objects': ticking a
+    seam model with its layer off showed nothing. So with a layer off, its objects read as unticked, and ticking one
+    brings the layer on with only that object showing. A layer that's partly showing has a dash, and clicking it shows
+    the lot. Turned off and on, a layer comes back as it was. A layer shows how many of its objects are showing. A
+    property grid or a face design has nothing to show or hide, so it has no tick.
 12. **"Visible" means this too.** Export of everything visible, and a cut of what's visible, leave hidden objects out. A
     command that names a hidden object still takes it.
 13. **The seam legend follows what's on show.** There's one legend for each seam model showing, under its current name,
