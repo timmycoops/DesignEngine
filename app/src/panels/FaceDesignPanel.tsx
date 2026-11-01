@@ -148,13 +148,13 @@ function numberOf(value: StepValue, rules: WallRule[]) {
   return rule?.type === 'fixed' ? rule.value : undefined;
 }
 
-const RULE_TYPES: { type: RuleValue['type']; label: string }[] = [
-  { type: 'fixed', label: 'Fixed' },
-  { type: 'fixed_list', label: 'By segment' },
-  { type: 'inside_polygon', label: 'Inside polygon' },
-  { type: 'inside_solid', label: 'Inside solid' },
-  { type: 'segment_azimuth', label: 'By azimuth' },
-  { type: 'by_horizon', label: 'By horizon' },
+const RULE_TYPES: { type: RuleValue['type']; label: string; does: string }[] = [
+  { type: 'fixed', label: 'Fixed', does: 'One value all along. Change it here and every row that names it follows.' },
+  { type: 'fixed_list', label: 'By segment', does: 'One value for each segment of the string, in order.' },
+  { type: 'inside_polygon', label: 'Inside polygon', does: 'Changes where a line crosses the polygon.' },
+  { type: 'inside_solid', label: 'Inside solid', does: 'Changes where the line a step starts from enters the solid.' },
+  { type: 'segment_azimuth', label: 'By azimuth', does: 'By the way the wall faces, clockwise from grid north.' },
+  { type: 'by_horizon', label: 'By horizon', does: 'By the surface the row finishes on.' },
 ];
 
 /** A first number to carry over when a rule changes type. */
@@ -187,6 +187,17 @@ function ListBox({ values, onChange }: { values: number[]; onChange: (values: nu
         onChange(e.target.value.split(/[\s,]+/).filter(Boolean).map(Number).filter(Number.isFinite));
       }}
     />
+  );
+}
+
+/** What a rule of its type does, and which rows use it, as it does nothing until one does. */
+function RuleNote({ rule, profiles }: { rule: WallRule; profiles: FaceProfile[] }) {
+  const rows = profiles.flatMap((p) => p.steps.flatMap((step, k) => (stepValueOf(step) === rule.name ? [`${p.name} step ${k + 1}`] : [])));
+  return (
+    <p className="mt-0.5 text-muted-foreground">
+      {RULE_TYPES.find((t) => t.type === rule.value.type)?.does}{' '}
+      {rows.length > 0 ? `Used by ${rows.join(', ')}.` : <span className="text-primary">No row uses it yet.</span>}
+    </p>
   );
 }
 
@@ -816,7 +827,7 @@ export function FaceDesignPanel() {
         3. Rules
       </Heading>
       <p className="px-3 pb-1 text-xs text-muted-foreground">
-        Name a value here to share it across steps, then type its name on a row. A value can change along a wall, with the flatter batter or wider berm reaching across the change.
+        A rule does nothing until a row names it: type or pick its name in that row's Batter / Width in place of a number. A rule can change along a wall, with the flatter batter or wider berm reaching across the change.
       </p>
       <div className="px-3">
         <table className="w-full text-xs">
@@ -859,6 +870,7 @@ export function FaceDesignPanel() {
                     surfaces={surfaces}
                     onChange={(value) => changeRule(k, value)}
                   />
+                  <RuleNote rule={rule} profiles={draft.profiles} />
                 </td>
                 <td className="py-0.5 text-right">
                   <IconButton title="Remove this rule" disabled={stepValues.includes(rule.name)} onClick={() => edit((d) => ({ ...d, rules: d.rules.filter((_, j) => j !== k) }))}>
