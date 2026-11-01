@@ -147,6 +147,8 @@ export default function App() {
   const summaryRef = useRef(summary);
   summaryRef.current = summary;
   const seamsRef = useRef<SeamShown[]>([]);
+  const selectedRef = useRef<string | null>(null);
+  const [marked, setMarked] = useState<string[]>([]);
   const markersRef = useRef<IssueMarkers | null>(null);
   const crossingMarkersRef = useRef<IssueMarkers | null>(null);
   /** An issue to fly to once its horizon has loaded. */
@@ -252,6 +254,13 @@ export default function App() {
 
   const viewportMounted = useCallback(() => setHostMounted(true), []);
 
+  const toggleMark = useCallback((id: string) => {
+    setMarked((was) => {
+      const from = was.length === 0 && selectedRef.current ? [selectedRef.current] : was;
+      return from.includes(id) ? from.filter((other) => other !== id) : [...from, id];
+    });
+  }, []);
+
   const select = useCallback((id: string | null) => {
     const strings = stringsRef.current;
     const isString = summaryRef.current?.objects.some((o) => o.id === id && o.kind === 'string' && !o.hidden);
@@ -292,6 +301,7 @@ export default function App() {
         status: (text) => setStatus({ text }),
         layer: () => layerRef.current,
         pick: (x, y) => void objectAt(created, sync, section, x, y).then(select),
+        mark: (id) => (id ? toggleMark(id) : setMarked([])),
       });
       strings.onSelect = setSelected;
       strings.onSnapping = setSnapping;
@@ -315,12 +325,15 @@ export default function App() {
       detach();
       viewport?.dispose();
     };
-  }, [hostMounted, viewportHost, run, show, onSeams, openSection, select]);
+  }, [hostMounted, viewportHost, run, show, onSeams, openSection, select, toggleMark]);
 
   useEffect(() => {
+    selectedRef.current = selected;
     void syncRef.current?.select(selected);
     sectionRef.current?.setSelected(selected);
   }, [selected]);
+
+  useEffect(() => stringsRef.current?.setMarked(marked), [marked, summary]);
 
   const attempt = useCallback(async (work: () => Promise<void>) => {
     try {
@@ -530,6 +543,9 @@ export default function App() {
       viewportHost,
       viewportMounted,
       select,
+      marked,
+      setMarked,
+      toggleMark,
       setActiveLayer,
       setLayerVisible: setVisible,
       setObjectsVisible: setObjectsShown,
@@ -546,7 +562,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, setObjectsShown, run, runRecord, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, mode, typeVertex],
+    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, marked, toggleMark, setActiveLayer, setVisible, setObjectsShown, run, runRecord, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';

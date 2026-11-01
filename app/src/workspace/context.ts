@@ -14,6 +14,11 @@ export interface Workspace {
   viewportHost: HTMLDivElement;
   viewportMounted: () => void;
   select: (id: string | null) => void;
+  /** Objects picked out together, from the tree or by Ctrl-clicking in the viewport. */
+  marked: string[];
+  setMarked: (ids: string[]) => void;
+  /** Adds an object to the marks or takes it off, starting from what's selected. */
+  toggleMark: (id: string) => void;
   setActiveLayer: (name: string) => void;
   setLayerVisible: (layer: string, visible: boolean) => void;
   /** Shows or hides objects one by one, under their layer's tick. Display only: not undone. */

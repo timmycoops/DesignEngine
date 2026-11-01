@@ -93,6 +93,10 @@ pub enum ProfileStep {
     /// out. With `register` off it keeps its crest's heights instead. `condition` is how far the line may
     /// move in plan when it's cleaned after moving out (m).
     Berm {
+        /// No berm where the wall below it is lower than this (m): where grids sit on each other there's
+        /// nothing to stand it on, and a berm for every grid would run out flat for no reason.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_bench: Option<f64>,
         #[serde(default)]
         on: Option<StepTarget>,
         width: StepValue,
@@ -270,6 +274,11 @@ impl FaceDesign {
             ProfileStep::Berm { width, condition, .. } => (width, condition, false),
         };
         check_tolerance(row, *condition, problems);
+        if let ProfileStep::Berm { min_bench: Some(height), .. } = step
+            && !(height.is_finite() && *height >= 0.0)
+        {
+            problems.push(format!("{row}: a minimum bench must be zero or more"));
+        }
         let Some(numbers) = self.numbers_of(given) else {
             match given {
                 StepValue::Rule(name) if !name.trim().is_empty() => problems.push(format!("{row} uses a rule that isn't there: {name}")),
@@ -310,7 +319,7 @@ mod tests {
                 condition: None,
                 steps: vec![
                     ProfileStep::Project { to: StepTarget::Surface { id }, batter: StepValue::Rule("HW batter".into()), condition: Some(0.1) },
-                    ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: true, condition: Some(0.1) },
+                    ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: true, condition: Some(0.1), min_bench: None },
                     ProfileStep::Project { to: StepTarget::Rl { rl: 500.0 }, batter: StepValue::Rule("HW batter".into()), condition: None },
                 ],
             }],
@@ -363,7 +372,7 @@ mod tests {
         let design: FaceDesign = serde_json::from_str(saved).unwrap();
         assert!(design.problems().is_empty(), "{:?}", design.problems());
         assert_eq!(design.profiles[1].direction, FaceDirection::Down);
-        assert_eq!(design.profiles[0].steps[1], ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: false, condition: Some(0.1) });
+        assert_eq!(design.profiles[0].steps[1], ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: false, condition: Some(0.1), min_bench: None });
         assert_eq!(design.value_of(&StepValue::Rule("Highwall batter".into())), Some(72.0));
     }
 
@@ -374,7 +383,7 @@ mod tests {
         assert_eq!(d.value_of(&StepValue::Rule("HW batter".into())), Some(70.0));
         assert_eq!(d.value_of(&StepValue::Rule("Endwall batter".into())), None);
         let row: ProfileStep = serde_json::from_str(r#"{ "step": "berm", "width": 30 }"#).unwrap();
-        assert_eq!(row, ProfileStep::Berm { on: None, width: StepValue::Number(30.0), register: true, condition: None });
+        assert_eq!(row, ProfileStep::Berm { on: None, width: StepValue::Number(30.0), register: true, condition: None, min_bench: None });
     }
 
     #[test]
@@ -389,10 +398,10 @@ mod tests {
         d.rules.remove(0);
         assert!(d.problems().iter().any(|p| p.contains("Highwall step 1 uses a rule that isn't there: HW batter")));
         let mut d = design();
-        d.profiles[0].steps[1] = ProfileStep::Berm { on: None, width: StepValue::Rule(String::new()), register: true, condition: None };
+        d.profiles[0].steps[1] = ProfileStep::Berm { on: None, width: StepValue::Rule(String::new()), register: true, condition: None, min_bench: None };
         assert!(d.problems().iter().any(|p| p.contains("Highwall step 2 needs a width")));
         let mut d = design();
-        d.profiles[0].steps[1] = ProfileStep::Berm { on: None, width: StepValue::Rule("HW batter".into()), register: true, condition: None };
+        d.profiles[0].steps[1] = ProfileStep::Berm { on: None, width: StepValue::Rule("HW batter".into()), register: true, condition: None, min_bench: None };
         assert!(d.problems().iter().any(|p| p.contains("HW batter is used as both")));
         let mut d = design();
         d.profiles.push(d.profiles[0].clone());

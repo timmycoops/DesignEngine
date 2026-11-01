@@ -16,8 +16,8 @@ the rule types and says "Blending between rules may only widen berms and flatten
 2. **At a corner, different batters meet in a hip.** Planes at different slopes meet in a line like any others.
 3. **On a straight run they can't.** Two planes through one line share only that line, so the crest would step sideways with
    a vertical wall to carry it. So a transition stands at the vertex: one plane with no foot, through the fall line of the
-   flatter wall and a hip leaning back 45 degrees across the steeper one. The crest bevels over as far as the steeper wall
-   reaches there, so a 20 m rise going from 45 degrees to 2 in 1 steps 10 m out over 10 m along.
+   flatter wall and a hip back across the steeper one. The crest bevels at 45 degrees in plan, so a 20 m rise going from 45
+   degrees to 2 in 1 steps 10 m out over 10 m along.
 4. **The flatter side always wins.** The transition sits on the steeper wall, so the flatter batter reaches into the steeper
    stretch and never the other way. Nothing is steeper than its rule asks for.
 5. **A berm does the same.** With widths that differ, its line is read off a wall one metre high with a slope for each edge,
@@ -46,6 +46,12 @@ the rule types and says "Blending between rules may only widen berms and flatten
     names, or else what the wall below it reached. It's one number for the row, so it never makes a transition.
 11. **Rows naming one rule are one wall.** Steps with no berm between them carry straight on, as they do at one batter. By
     horizon is the exception, as its rows can differ.
+12. **A berm can have a minimum bench.** Tim: where grids sit on each other "you will end up berming all this flat distance
+    and it will look weird". A berm row takes a Min bench, and along any stretch where the wall below is lower than that,
+    the berm goes to nothing and tapers in at 45 degrees beside it. It's measured from the crest to the toe below it, so it
+    covers grids that touch as well as grids a little apart. A stretch shorter than the berm is wide doesn't count, either
+    way, so a berm doesn't stutter on an undulating seam. With the row conditioned, the line stands clear of the crest by the
+    tolerance, as it does anywhere there's no berm. A new berm row starts at 1 m, and a saved row stays off until set.
 
 ## Evidence
 
@@ -60,7 +66,7 @@ to 60 and the berm from 10 to 15 m part way along: 5 walls and 6,021 triangles i
 
 ## Known limits
 
-- **A change is one step.** The bevel's length is fixed by the 45 degrees, and there's no gradual change over a distance.
+- **A change is one step.** The bevel is fixed at 45 degrees in plan, and there's no gradual change over a distance.
   Deswik has a smoothing rate, and the geotech solid rule with a transition distance comes later.
 - **One polygon or solid to a rule.** Deswik takes a layer of them with values in an attribute, which fits once attributes
   land (Layers workstream 6). Nested rules can't be written yet.

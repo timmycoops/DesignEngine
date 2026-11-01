@@ -414,9 +414,9 @@ fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'
                     reached = surface_of(to);
                     FaceStep::Project { to: target(to)?, batter: rules.edge_rule(batter, reached)?, condition: *condition }
                 }
-                ProfileStep::Berm { on, width, register, condition } => {
+                ProfileStep::Berm { on, width, register, condition, min_bench } => {
                     let horizon = on.as_ref().map_or(reached, surface_of);
-                    FaceStep::Berm { on: on.as_ref().map(target).transpose()?, width: rules.edge_rule(width, horizon)?, register: *register, condition: *condition }
+                    FaceStep::Berm { on: on.as_ref().map(target).transpose()?, width: rules.edge_rule(width, horizon)?, register: *register, condition: *condition, min_bench: *min_bench }
                 }
             })
         })
@@ -449,6 +449,9 @@ fn line_report(name: &str, face: &zd_geom::Face, [toe_in, toe_out]: [usize; 2], 
         }
         if step.pieces_dropped > 0 {
             report += &format!("; step {number}: a berm pinched into pieces and {} were left out", step.pieces_dropped);
+        }
+        if let Some(first) = step.no_berm.first() {
+            report += &format!("; step {number}: no berm along {} stretch(es) under the minimum bench, the first from {:.1}, {:.1}", step.no_berm.len(), first.from[0], first.from[1]);
         }
     }
     report

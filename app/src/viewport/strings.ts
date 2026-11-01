@@ -39,6 +39,8 @@ export interface StringActions {
   section(a: Vec3, b: Vec3): void;
   /** A click that met no string: selects what's under it, or nothing. */
   pick(clientX: number, clientY: number): void;
+  /** A Ctrl-click: adds a string to the marks or takes it off. With null, clears them. */
+  mark(id: string | null): void;
 }
 
 interface Shown {
@@ -126,6 +128,7 @@ export class StringLayer {
   private layerLines = new Map<string, THREE.LineSegments>();
   /** The selected string, over its layer's lines. */
   private highlight: THREE.Line;
+  private markedLines: THREE.LineSegments;
   private preview: THREE.Line;
   private handles: THREE.InstancedMesh;
   private dummy = new THREE.Object3D();
@@ -163,11 +166,15 @@ export class StringLayer {
     this.highlight.renderOrder = 11;
     this.highlight.frustumCulled = false;
     this.highlight.visible = false;
+    this.markedLines = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: SELECTED, depthTest: false }));
+    this.markedLines.renderOrder = 11;
+    this.markedLines.frustumCulled = false;
+    this.markedLines.visible = false;
     this.handles = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false }), MAX_HANDLES);
     this.handles.count = 0;
     this.handles.renderOrder = 13;
     this.handles.frustumCulled = false;
-    viewport.overlay.add(this.group, this.highlight, this.preview, this.handles);
+    viewport.overlay.add(this.group, this.highlight, this.markedLines, this.preview, this.handles);
     viewport.beforeRender.add(() => this.placeHandles());
     this.snapMark = new PointMark(viewport, SNAP_MARK_PX);
     this.snapLabel = Object.assign(document.createElement('div'), { className: 'snap-label', hidden: true });
@@ -266,6 +273,18 @@ export class StringLayer {
     if (this.selected && !this.shown.has(this.selected)) this.select(null);
     this.recolour();
     this.placeHandles();
+  }
+
+  /** Draws the marked strings over everything, as a selected one is. */
+  setMarked(ids: string[]): void {
+    const strings = ids.flatMap((id) => this.shown.get(id) ?? []).filter((s) => s.visible);
+    const points = strings.flatMap((s) => {
+      const line = s.closed ? [...s.points, s.points[0]] : s.points;
+      return line.slice(1).flatMap((p, k) => [line[k], p]);
+    });
+    this.markedLines.geometry.dispose();
+    this.markedLines.geometry = new THREE.BufferGeometry().setFromPoints(points);
+    this.markedLines.visible = points.length > 0 && !this.section;
   }
 
   /** Makes a layer's lines again from its strings. */
@@ -463,6 +482,11 @@ export class StringLayer {
       return;
     }
     const string = this.stringAt(e.clientX, e.clientY);
+    if (e.ctrlKey || e.metaKey) {
+      if (string) this.actions.mark(string);
+      return;
+    }
+    this.actions.mark(null);
     if (string) this.select(string);
     else this.actions.pick(e.clientX, e.clientY);
   }
@@ -485,7 +509,10 @@ export class StringLayer {
       }
       return;
     }
-    if (e.key === 'Escape') this.select(null);
+    if (e.key === 'Escape') {
+      this.actions.mark(null);
+      this.select(null);
+    }
     if ((e.key === 'Delete' || e.key === 'Backspace') && this.hovered) {
       const { id, index } = this.hovered;
       this.hovered = null;

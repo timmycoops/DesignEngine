@@ -422,7 +422,7 @@ export type StepValue = number | string;
 /** `condition` is how far the line may move in plan when it's cleaned (m); null leaves it as it is. */
 export type ProfileStep =
   | { step: 'project'; to: StepTarget; batter: StepValue; condition: number | null }
-  | { step: 'berm'; on: StepTarget | null; width: StepValue; register: boolean; condition: number | null };
+  | { step: 'berm'; on: StepTarget | null; width: StepValue; register: boolean; condition: number | null; min_bench?: number | null };
 
 export type FaceDirection = 'up' | 'down';
 

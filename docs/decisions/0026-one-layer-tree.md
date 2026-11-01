@@ -56,8 +56,10 @@ agreed and the first four workstreams: the tree, showing and hiding one object, 
     no second question. On its own, the engine refuses to remove a layer with anything left on it.
 19. **Moving objects is a revision of each.** `object.move` takes a list and makes the layer if it's new. An object
     already there is left alone. `object.delete_many` does the same for deletes, so a list is one run and one undo.
-20. **Several rows act together.** Ctrl and Shift mark rows in the tree, and a tick or the right-click menu then takes all
-    of them. The mark is the tree's own and doesn't change what's selected.
+20. **Several rows act together.** Ctrl and Shift mark rows in the tree and Ctrl-click marks strings in the viewport, where
+    they light up as a selected string does. A tick, the right-click menu or the Face design panel's Apply to selected then
+    takes all of them. Tim, 2026-11-01: "selecting multiple strings and just saying apply to selected or apply to a whole
+    layer is easier".
 21. **Each seam model built from the app gets its own layer,** `Seam models\<definition file>`. It reads as a flat name
     until workstream 5 makes it a folder.
 

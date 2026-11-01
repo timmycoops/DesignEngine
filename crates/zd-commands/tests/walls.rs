@@ -399,6 +399,78 @@ fn a_rule_gives_a_berm_a_width_for_each_edge() {
     assert!(has(&toe_two, 145.0, 85.0) && has(&toe_two, 150.0, 90.0), "{:?}", toe_two.vertices);
 }
 
+/// A surface that's on the floor west of x = 100, and climbs to `top` by x = 200.
+fn parting_surface(s: &mut Session, name: &str, top: f64) -> ObjectId {
+    let dir = std::env::temp_dir().join(format!("zd-walls-{}-{}", std::process::id(), zd_core::RunId::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut xyz = String::new();
+    for row in 0..=30 {
+        for col in 0..=30 {
+            let x = col as f64 * 10.0;
+            xyz += &format!("{} {} {}\n", E + x, N + row as f64 * 10.0, 100.0 + top * ((x - 100.0) / 100.0).clamp(0.0, 1.0));
+        }
+    }
+    let path = dir.join(format!("{name}.xyz"));
+    std::fs::write(&path, xyz).unwrap();
+    let id = created(&s.run("surface.import", json!({ "path": path.to_string_lossy(), "layer": "grids" })).unwrap())[0];
+    std::fs::remove_dir_all(&dir).unwrap();
+    id
+}
+
+/// Three grids on one another to the west that part to the east: a wall and a 30 m berm to each. With no
+/// minimum bench a berm runs out flat for every grid, wall or no wall, and with one the line stays put until
+/// there's height to stand it on. Where the berm starts it tapers in at 45 degrees.
+#[test]
+fn a_berm_needs_a_wall_under_it_where_the_grids_sit_on_each_other() {
+    let mut s = Session::with_builtins();
+    let floor = level_surface(&mut s, "floor", 100.0);
+    let (one, two) = (parting_surface(&mut s, "one", 20.0), parting_surface(&mut s, "two", 40.0));
+    let toe = [[E + 20.0, N + 60.0, 0.0], [E + 280.0, N + 60.0, 0.0]];
+    let steps = |min_bench: Option<f64>| {
+        json!([
+            { "step": "project", "to": { "kind": "surface", "id": one }, "batter": 45.0, "condition": null },
+            { "step": "berm", "width": 30.0, "condition": null, "min_bench": min_bench },
+            { "step": "project", "to": { "kind": "surface", "id": two }, "batter": 45.0, "condition": null },
+            { "step": "berm", "width": 30.0, "condition": null, "min_bench": min_bench },
+            { "step": "project", "to": { "kind": "rl", "rl": 160.0 }, "batter": 45.0, "condition": null },
+        ])
+    };
+    let west_of = |line: &Polyline, x: f64| line.vertices.iter().filter(|p| p[0] - E < x).map(|p| p[1] - N).fold(f64::NEG_INFINITY, f64::max);
+    let toe_three = |s: &Session, name: &str| line(s, s.project().objects().find(|o| o.name == format!("{name} Wall toe 3")).unwrap().id);
+
+    run_with_rule(&mut s, "no limit", &toe, steps(None), json!([]), floor).unwrap();
+    assert!((west_of(&toe_three(&s, "no limit"), 50.0) - 120.0).abs() < 1e-3, "two 30 m berms over nothing");
+
+    run_with_rule(&mut s, "with limit", &toe, steps(Some(1.0)), json!([]), floor).unwrap();
+    let third = toe_three(&s, "with limit");
+    assert!((west_of(&third, 50.0) - 60.0).abs() < 1e-3, "no berm at all to the west: {:?}", third.vertices);
+    // East of the parting there's the full pair: 20 m of wall, 30 of berm, 20 of wall and 30 more.
+    let east = third.vertices.iter().filter(|p| p[0] - E > 240.0).map(|p| p[1] - N).fold(f64::INFINITY, f64::min);
+    assert!((east - 160.0).abs() < 1e-3, "{east}");
+    let record = s.project().objects().find(|o| o.name == "with limit Wall face").unwrap().clone();
+    let Body::Surface(sheet) = &record.body else { panic!("a face is a surface") };
+    assert_eq!(sheet.validity().non_self_intersecting, Some(true));
+
+    // The first berm tapers out towards the west at 45 degrees, not in a square step.
+    let second = line(&s, s.project().objects().find(|o| o.name == "with limit Wall toe 2").unwrap().id);
+    let turned = second.vertices.windows(2).filter(|w| (w[1][1] - w[0][1]).abs() > 1.0).map(|w| ((w[1][1] - w[0][1]) / (w[1][0] - w[0][0])).abs()).fold(0.0, f64::max);
+    assert!(turned < 1.5, "the steepest stretch in plan is {turned} in 1: {:?}", second.vertices);
+
+    // Conditioned, as the table starts a row, a line stands clear of its crest by the tolerance instead.
+    let conditioned = |h: f64| {
+        json!([
+            { "step": "project", "to": { "kind": "surface", "id": one }, "batter": 45.0, "condition": 0.1 },
+            { "step": "berm", "width": 30.0, "condition": 0.1, "min_bench": h },
+            { "step": "project", "to": { "kind": "surface", "id": two }, "batter": 45.0, "condition": 0.1 },
+            { "step": "berm", "width": 30.0, "condition": 0.1, "min_bench": h },
+            { "step": "project", "to": { "kind": "rl", "rl": 160.0 }, "batter": 45.0, "condition": 0.1 },
+        ])
+    };
+    run_with_rule(&mut s, "conditioned", &toe, conditioned(1.0), json!([]), floor).unwrap();
+    let third = toe_three(&s, "conditioned");
+    assert!(west_of(&third, 50.0) - 60.0 < 0.5, "{:?}", third.vertices);
+}
+
 #[test]
 fn a_rule_that_cant_work_says_why() {
     let mut s = Session::with_builtins();
