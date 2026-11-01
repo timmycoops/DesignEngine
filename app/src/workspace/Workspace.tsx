@@ -9,7 +9,6 @@ import {
 } from 'dockview-react';
 import { FaceDesignPanel } from '@/panels/FaceDesignPanel';
 import { LayersPanel } from '@/panels/LayersPanel';
-import { ObjectsPanel } from '@/panels/ObjectsPanel';
 import { PropertiesPanel } from '@/panels/PropertiesPanel';
 import { RunLogPanel } from '@/panels/RunLogPanel';
 import { ViewportPanel } from '@/panels/ViewportPanel';
@@ -17,7 +16,6 @@ import { ViewportPanel } from '@/panels/ViewportPanel';
 const components = {
   viewport: ViewportPanel,
   layers: LayersPanel,
-  objects: ObjectsPanel,
   properties: PropertiesPanel,
   runlog: RunLogPanel,
   face: FaceDesignPanel,
@@ -33,24 +31,22 @@ export type PanelId = Exclude<keyof typeof components, 'viewport'>;
 /** The panels that can be closed and reopened, with where each goes and its size there. */
 export const PANELS: { id: PanelId; title: string; place: AddPanelOptions['position']; size: { width?: number; height?: number } }[] = [
   { id: 'layers', title: 'Layers', place: { referencePanel: 'viewport', direction: 'left' }, size: { width: 280 } },
-  { id: 'objects', title: 'Objects', place: { referencePanel: 'viewport', direction: 'left' }, size: { width: 280 } },
   { id: 'properties', title: 'Properties', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 320 } },
   { id: 'runlog', title: 'Run log', place: { referencePanel: 'viewport', direction: 'below' }, size: { height: 200 } },
   { id: 'face', title: 'Face design', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 680 } },
 ];
 
-const LAYOUT_KEY = 'zd.workspace.layout.v2';
+const LAYOUT_KEY = 'zd.workspace.layout.v3';
 
 function addViewport(api: DockviewApi) {
   // 'always' keeps the canvas in the page while other tabs share its group.
   api.addPanel({ id: 'viewport', component: 'viewport', tabComponent: 'fixed', title: 'Viewport', renderer: 'always' });
 }
 
-/** Layers over objects on the left, properties on the right, the run log under the viewport. */
+/** The layer tree on the left, properties on the right, the run log under the viewport. */
 function defaultLayout(api: DockviewApi) {
   addViewport(api);
   api.addPanel({ id: 'layers', component: 'layers', title: 'Layers', position: { referencePanel: 'viewport', direction: 'left' } });
-  api.addPanel({ id: 'objects', component: 'objects', title: 'Objects', position: { referencePanel: 'layers', direction: 'below' } });
   api.addPanel({ id: 'properties', component: 'properties', title: 'Properties', position: { referencePanel: 'viewport', direction: 'right' } });
   api.addPanel({ id: 'runlog', component: 'runlog', title: 'Run log', position: { referencePanel: 'viewport', direction: 'below' } });
   // Splits start even; give the viewport the room.
