@@ -19,8 +19,11 @@ agreed and the first four workstreams: the tree, showing and hiding one object, 
 4. **Hidden means not drawn, not snapped to and not cut by a section**, but still usable by a command that names it.
 5. **Each seam model goes on its own layer under `Seam models`**, named after its definition file (workstream 4).
 6. **Colour stays on the layer**, and line weight stays there as a stopgap until workstream 6.
-7. **A layer of more than 50 objects starts closed**, and the rest start open, so a face run shows its strings and a pit's
-   solids don't fill the tree. Opening or closing one by hand holds for the session.
+7. **What comes in numbers shares a row.** Tim, three face runs in: "the tree structure is already out of control". A run
+   makes four strings a wall, and a seam's import brings forty quality grids. So two or more strings, solids or quality
+   grids on a layer sit behind one shut row with a count and a tick for all of them. It opens to list each one, and a pick
+   in the viewport opens it. Surfaces, elevation grids, seam models and face designs still list, as there are few of them
+   and which one it is matters. Layers start open. Opening or closing anything by hand holds for the session.
 8. **The tree draws only the rows on screen.** Scrolled down a layer, its row stays pinned at the top, so it can be closed
    from anywhere in it, and closing it there lands on that layer.
 9. **Hiding one solid rebuilds its layer's mesh without it.** The rebuild was measured first, because a layer's solids

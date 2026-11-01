@@ -18,8 +18,18 @@ import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { fmt, kindLabel } from './format';
 
-/** A layer holding more objects than this starts closed. */
-const OPEN_UP_TO = 50;
+/**
+ * What comes in numbers shares a row on its layer, shut until it's wanted: a face run makes four strings a
+ * wall and a seam's import brings forty quality grids, and a row for each of those is no use to anyone.
+ */
+const GROUPS: { id: string; label: string; icon: LucideIcon; holds: (o: ObjectSummary) => boolean }[] = [
+  { id: 'strings', label: 'Strings', icon: Spline, holds: (o) => o.kind === 'string' },
+  { id: 'solids', label: 'Solids', icon: Box, holds: (o) => o.kind === 'solid' },
+  { id: 'quality', label: 'Quality grids', icon: Grid3x3, holds: (o) => o.kind === 'grid' && !o.drawn },
+];
+
+/** Fewer than this of a kind on a layer just list. */
+const GROUP_FROM = 2;
 
 const kindIcon: Record<ObjectKind, LucideIcon> = {
   string: Spline,
@@ -31,9 +41,26 @@ const kindIcon: Record<ObjectKind, LucideIcon> = {
 };
 
 type LayerEntry = { kind: 'layer'; layer: Layer; count: number; hidden: number; open: boolean };
-type TreeRow = LayerEntry | { kind: 'object'; object: ObjectSummary };
+type GroupEntry = { kind: 'group'; key: string; layer: Layer; label: string; icon: LucideIcon; objects: ObjectSummary[]; open: boolean };
+type TreeRow = LayerEntry | GroupEntry | { kind: 'object'; object: ObjectSummary; inGroup: boolean };
 
-/** Each layer, followed by its objects if it is open. `toggled` holds the layers opened or closed by hand. */
+const groupKey = (layer: string, group: string) => `${layer} ${group}`;
+
+/** Each open layer's objects, then a row for what comes in numbers, with its objects if it's open. */
+function layerRows(layer: Layer, on: ObjectSummary[], toggled: Map<string, boolean>): TreeRow[] {
+  const groups = GROUPS.map((group) => ({ group, objects: on.filter(group.holds) })).filter(({ objects }) => objects.length >= GROUP_FROM);
+  const grouped = new Set(groups.flatMap(({ objects }) => objects));
+  const rows: TreeRow[] = on.filter((o) => !grouped.has(o)).map((object) => ({ kind: 'object', object, inGroup: false }));
+  for (const { group, objects } of groups) {
+    const key = groupKey(layer.id, group.id);
+    const open = toggled.get(key) ?? false;
+    rows.push({ kind: 'group', key, layer, label: group.label, icon: group.icon, objects, open });
+    if (open) rows.push(...objects.map((object): TreeRow => ({ kind: 'object', object, inGroup: true })));
+  }
+  return rows;
+}
+
+/** Each layer, followed by what's on it if it is open. `toggled` holds what was opened or closed by hand. */
 function treeRows(layers: Layer[], objects: ObjectSummary[], toggled: Map<string, boolean>): TreeRow[] {
   const held = new Map<string, ObjectSummary[]>();
   for (const object of objects) {
@@ -44,16 +71,16 @@ function treeRows(layers: Layer[], objects: ObjectSummary[], toggled: Map<string
   const rows: TreeRow[] = [];
   for (const layer of layers) {
     const on = held.get(layer.id) ?? [];
-    const open = toggled.get(layer.id) ?? on.length <= OPEN_UP_TO;
+    const open = toggled.get(layer.id) ?? true;
     rows.push({ kind: 'layer', layer, count: on.length, hidden: on.filter((o) => o.hidden).length, open });
-    if (open) for (const object of on) rows.push({ kind: 'object', object });
+    if (open) rows.push(...layerRows(layer, on, toggled));
   }
   return rows;
 }
 
 /** The layer whose objects fill the top of the tree, once its own row has scrolled away. */
 function layerAbove(rows: TreeRow[], row: number): { entry: LayerEntry; at: number } | undefined {
-  if (rows[row]?.kind !== 'object') return undefined;
+  if (!rows[row] || rows[row].kind === 'layer') return undefined;
   for (let at = row - 1; at >= 0; at--) {
     const entry = rows[at];
     if (entry.kind === 'layer') return { entry, at };
@@ -203,8 +230,34 @@ function LayerRow({ entry: { layer, count, hidden, open }, renaming, onRenamed, 
   );
 }
 
+/** One row for what comes in numbers on a layer: its tick takes them all, and it opens to list them. */
+function GroupRow({ entry, onToggle, onTick }: { entry: GroupEntry; onToggle: () => void; onTick: (shown: boolean) => void }) {
+  const Chevron = entry.open ? ChevronDown : ChevronRight;
+  const Icon = entry.icon;
+  const count = entry.objects.length;
+  const hidden = entry.objects.filter((o) => o.hidden).length;
+  const tick = !entry.layer.visible || hidden === count ? false : hidden === 0 ? true : 'indeterminate';
+  return (
+    <div data-slot="tree-row" className="flex cursor-pointer items-center gap-1 pr-2 pl-4 text-xs hover:bg-accent" style={{ height: ROW_HEIGHT }} onClick={onToggle} title={`${entry.open ? 'Close' : 'Open'} to ${entry.open ? 'hide' : 'see'} each one; right-click for more`}>
+      <span className="grid size-4 shrink-0 place-items-center text-muted-foreground" aria-label={`${entry.open ? 'Close' : 'Open'} ${entry.label} on ${entry.layer.name}`} role="button">
+        <Chevron className="size-3.5" />
+      </span>
+      {entry.objects.some(canHide) ? (
+        <Checkbox checked={tick} onClick={(e) => e.stopPropagation()} onCheckedChange={(checked) => onTick(checked === true)} aria-label={`Show ${entry.label} on ${entry.layer.name}`} />
+      ) : (
+        <span className="size-4 shrink-0" />
+      )}
+      <Icon className="ml-0.5 size-3.5 shrink-0 text-muted-foreground" />
+      <span className="ml-0.5 min-w-0 flex-1 truncate">{entry.label}</span>
+      <span className="text-muted-foreground tabular-nums">{entry.layer.visible && hidden > 0 ? `${count - hidden} of ${count}` : fmt(count)}</span>
+    </div>
+  );
+}
+
 interface ObjectRowProps {
   object: ObjectSummary;
+  /** One of a group's, a step further in. */
+  inGroup: boolean;
   /** Its layer's on, so its own tick is what decides. */
   layerOn: boolean;
   /** Ticked along with others by Ctrl or Shift: what a tick or the menu acts on. */
@@ -213,7 +266,7 @@ interface ObjectRowProps {
   onTick: (shown: boolean) => void;
 }
 
-function ObjectRow({ object, layerOn, marked, onClick, onTick }: ObjectRowProps) {
+function ObjectRow({ object, inGroup, layerOn, marked, onClick, onTick }: ObjectRowProps) {
   const { selected } = useWorkspace();
   const Icon = kindIcon[object.kind];
   const note = noteOf(object);
@@ -222,7 +275,7 @@ function ObjectRow({ object, layerOn, marked, onClick, onTick }: ObjectRowProps)
     <div
       data-slot="tree-row"
       data-state={object.id === selected ? 'selected' : undefined}
-      className={cn('flex cursor-pointer items-center gap-1.5 pr-2 pl-9 text-xs hover:bg-accent data-[state=selected]:bg-selection', marked && 'bg-accent')}
+      className={cn('flex cursor-pointer items-center gap-1.5 pr-2 text-xs hover:bg-accent data-[state=selected]:bg-selection', inGroup ? 'pl-14' : 'pl-9', marked && 'bg-accent')}
       style={{ height: ROW_HEIGHT }}
       onClick={onClick}
     >
@@ -264,7 +317,7 @@ export function LayersPanel() {
   const anchor = useRef<number | null>(null);
   const rows = useMemo(() => treeRows(summary?.layers ?? [], summary?.objects ?? [], toggled), [summary, toggled]);
   const { scroller, top, first, last, onScroll } = useRowWindow(rows.length, true);
-  const toggle = (entry: LayerEntry) => setToggled((was) => new Map(was).set(entry.layer.id, !entry.open));
+  const toggle = (entry: LayerEntry | GroupEntry) => setToggled((was) => new Map(was).set(entry.kind === 'group' ? entry.key : entry.layer.id, !entry.open));
   const pinned = layerAbove(rows, Math.floor(top / ROW_HEIGHT));
 
   // Something picked in the viewport: open its layer, then bring its row into view.
@@ -273,7 +326,11 @@ export function LayersPanel() {
     const object = selected ? summary?.objects.find((o) => o.id === selected) : undefined;
     if (!object) return;
     revealing.current = object.id;
-    setToggled((was) => (rows.some((r) => r.kind === 'layer' && r.layer.id === object.layer && r.open) ? was : new Map(was).set(object.layer, true)));
+    const group = GROUPS.find((g) => g.holds(object));
+    setToggled((was) => {
+      const next = new Map(was).set(object.layer, true);
+      return group ? next.set(groupKey(object.layer, group.id), true) : next;
+    });
   }, [selected]);
   useEffect(() => {
     const at = revealing.current ? rows.findIndex((r) => r.kind === 'object' && r.object.id === revealing.current) : -1;
@@ -329,8 +386,8 @@ export function LayersPanel() {
     <LayerRow key={key} entry={entry} renaming={renaming === entry.layer.name} onRenamed={() => setRenaming(null)} onToggle={onToggle} />
   );
 
-  const objectMenu = (object: ObjectSummary) => {
-    const taken = takenWith(object.id);
+  /** The menu for some objects, from one on a layer to everything in a group. */
+  const objectsMenu = (taken: string[], layer: string) => {
     const label = taken.length > 1 ? ` ${plural(taken.length)}` : '';
     const act = (name: string, params: Record<string, unknown>) => {
       setMarked(new Set());
@@ -344,7 +401,7 @@ export function LayersPanel() {
           <ContextMenuSubTrigger>Move{label} to</ContextMenuSubTrigger>
           <ContextMenuSubContent>
             {summary?.layers
-              .filter((l) => l.id !== object.layer || taken.length > 1)
+              .filter((l) => l.id !== layer || taken.length > 1)
               .map((l) => (
                 <ContextMenuItem key={l.id} onSelect={() => act('object.move', { objects: taken, layer: l.name })}>
                   {l.name}
@@ -388,10 +445,13 @@ export function LayersPanel() {
             {rows.slice(first, last).map((row, k) =>
               row.kind === 'layer' ? (
                 layerRow(row, () => toggle(row), row.layer.id)
+              ) : row.kind === 'group' ? (
+                <GroupRow key={row.key} entry={row} onToggle={() => toggle(row)} onTick={(shown) => setObjectsVisible(row.objects.map((o) => o.id), shown)} />
               ) : (
                 <ObjectRow
                   key={row.object.id}
                   object={row.object}
+                  inGroup={row.inGroup}
                   layerOn={summary?.layers.find((l) => l.id === row.object.layer)?.visible ?? true}
                   marked={marked.has(row.object.id)}
                   onClick={(e) => clickObject(e, first + k, row.object.id)}
@@ -412,7 +472,8 @@ export function LayersPanel() {
               <ContextMenuSeparator />
             </>
           )}
-          {target?.kind === 'object' && objectMenu(target.object)}
+          {target?.kind === 'object' && objectsMenu(takenWith(target.object.id), target.object.layer)}
+          {target?.kind === 'group' && objectsMenu(target.objects.map((o) => o.id), target.layer.id)}
           <ContextMenuItem onSelect={() => void newLayer()}>New layer</ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
