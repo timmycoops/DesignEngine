@@ -50,8 +50,8 @@ the rule types and says "Blending between rules may only widen berms and flatten
     and it will look weird". A berm row takes a Min bench, and along any stretch where the wall below is lower than that,
     the berm goes to nothing and tapers in at 45 degrees beside it. It's measured from the crest to the toe below it, so it
     covers grids that touch as well as grids a little apart. A stretch shorter than the berm is wide doesn't count, either
-    way, so a berm doesn't stutter on an undulating seam. With the row conditioned, the line stands clear of the crest by the
-    tolerance, as it does anywhere there's no berm. A new berm row starts at 1 m, and a saved row stays off until set.
+    way, so a berm doesn't stutter on an undulating seam. With the rows conditioned, the line stands clear of the crest by both
+    tolerances (0028). A new berm row starts at 1 m, and a saved row stays off until set.
 
 ## Evidence
 

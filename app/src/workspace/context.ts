@@ -27,6 +27,8 @@ export interface Workspace {
   run: (name: string, params: Record<string, unknown>) => Promise<boolean>;
   /** The same, handing back the run's record, or why it failed, for a panel to show. */
   runRecord: (name: string, params: Record<string, unknown>) => Promise<{ record?: RunRecord; error?: string }>;
+  /** Takes a refusal off the status line, once what it was about has changed. */
+  clearRefusal: () => void;
   /** Each seam model the viewport shows, on the horizon it shows coloured by thickness. */
   seamViews: SeamShown[];
   /** A section is showing in place of the plan view. */
@@ -42,6 +44,8 @@ export interface Workspace {
   markCrossings: (sites: Vec3[]) => void;
   /** Flies the view to a point in world coordinates. */
   flyTo: (point: Vec3) => void;
+  /** The next click in the viewport, snapped, in world coordinates. Null if it's cancelled with Esc. */
+  pickPoint: (prompt: string) => Promise<Vec3 | null>;
   /** In Draw string mode. */
   drawing: boolean;
   /** Adds a typed vertex while drawing (`E N [RL]` or `@distance<bearing [RL|grade%]`); an error to show, or null. */

@@ -14,6 +14,7 @@ mod halfspace;
 mod orient;
 mod ray;
 mod repair;
+mod road;
 mod rule;
 mod self_union;
 mod seam;
@@ -41,6 +42,7 @@ pub use section_snap::{CutSegment, SectionSnap, SectionSnapKind, snap_to_section
 pub use slice::{SectionPlane, SliceIndex, SliceLine, slice_indexed, slice_mesh, string_near_plane};
 pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_nodes, suggest_no_seam_rl, suggest_seam_tree};
 pub use face::{Face, FaceBench, FaceStep, FaceTarget, RegisterLog, StepReport, conditioned_toe, project_face, register_toe, run_on};
+pub use road::{FaceRamp, FaceRoad, NoRoad};
 pub use wall::{ConditionLog, Stretch, WallLog, WallStep, next_toe, project_wall, project_wall_by_edge};
 pub use string::{Corner, DrapeLog, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, smooth_string, split_string};
 
