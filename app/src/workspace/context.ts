@@ -6,7 +6,7 @@ import type { SeamShown } from '@/viewport/sceneSync';
 export interface Workspace {
   summary: ProjectSummary | null;
   log: LogEntry[];
-  /** The selected object (any kind); strings are also highlighted in the viewport. */
+  /** The selected object (any kind), highlighted wherever it is drawn. */
   selected: string | null;
   /** The layer new strings are drawn on; created by the first string drawn on it. */
   activeLayer: string;

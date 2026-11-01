@@ -16,7 +16,7 @@ export interface LoadTimings {
 export async function loadStaged(
   viewport: Viewport,
   staged: StagedMesh,
-  options: { transport?: Transport; colour?: number } = {},
+  options: { transport?: Transport; colour?: number; over?: boolean } = {},
 ): Promise<{ group: THREE.Group; timings: LoadTimings }> {
   const start = performance.now();
   const fetched = await fetchMesh(staged.handle, options.transport);
@@ -26,7 +26,7 @@ export async function loadStaged(
   // triangulation chunks view the buffer until the surface is removed.
   const grid = decoded.header.kind === 'grid';
   if (grid) fetched.release();
-  const group = viewport.addMesh(decoded, grid ? undefined : fetched.release, options.colour);
+  const group = viewport.addMesh(decoded, grid ? undefined : fetched.release, options.colour, options.over);
   const decodedAt = performance.now();
   const frame = await viewport.nextFrame();
   return {
@@ -40,6 +40,9 @@ export async function loadStaged(
     },
   };
 }
+
+/** What is selected shows in this, wherever it is drawn. */
+export const SELECTED = 0xffd23f;
 
 /** A layer's `[r, g, b]` as a three.js colour number. */
 export function colourOf(rgb: [number, number, number]): number {

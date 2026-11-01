@@ -37,6 +37,16 @@ const SURFACE_COLOURS = [0xa8916b, 0x5b6b7d, 0x8c9aa6, 0xc9a227, 0x6f8f5f];
 const PIVOT_MARK_PX = 9;
 const PIVOT_MARK_COLOUR = 0xffd23f;
 
+/** How strongly something selected glows: enough to find it, with its shading and colours still readable. */
+const LIT = 0.15;
+/** A copy drawn over everything comes after the opaque surfaces. */
+const OVER_ORDER = 20;
+
+function lightUp(material: THREE.MeshStandardMaterial, colour: number | null): void {
+  material.emissive.setHex(colour ?? 0x000000);
+  material.emissiveIntensity = colour === null ? 1 : LIT;
+}
+
 export class Viewport {
   readonly scene = new THREE.Scene();
   /** Loaded surfaces and their scale-test copies. */
@@ -301,7 +311,7 @@ export class Viewport {
    * normal attribute three shades flat from screen-space derivatives. `release` runs when the
    * surface is removed (frees a shared buffer the chunks still view).
    */
-  addMesh(decoded: DecodedMesh, release?: () => void, colour = SURFACE_COLOURS[this.surfaces.length % SURFACE_COLOURS.length]): THREE.Group {
+  addMesh(decoded: DecodedMesh, release?: () => void, colour = SURFACE_COLOURS[this.surfaces.length % SURFACE_COLOURS.length], over = false): THREE.Group {
     // A grid that carries values (seam thickness) is coloured by them, still shaded by the light.
     const value = decoded.header.value;
     const material = new THREE.MeshStandardMaterial({
@@ -309,9 +319,13 @@ export class Viewport {
       vertexColors: value !== undefined,
       roughness: 0.92,
       metalness: 0,
-      side: THREE.DoubleSide,
+      // A copy drawn over everything, as a selected string is, so a solid inside the pit still shows.
+      side: over ? THREE.FrontSide : THREE.DoubleSide,
+      depthTest: !over,
+      depthWrite: !over,
       flatShading: true,
     });
+    if (over) lightUp(material, colour);
     const group = new THREE.Group();
     group.name = decoded.header.name;
     group.userData.triangles = decoded.header.triangles;
@@ -333,7 +347,9 @@ export class Viewport {
       // Bounds come from the shell, so three never walks the positions to find them.
       geometry.boundingBox = new THREE.Box3(new THREE.Vector3(...chunk.min), new THREE.Vector3(...chunk.max));
       geometry.boundingSphere = geometry.boundingBox.getBoundingSphere(new THREE.Sphere());
-      group.add(new THREE.Mesh(geometry, material));
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.renderOrder = over ? OVER_ORDER : 0;
+      group.add(mesh);
     }
     this.surfaces.push(group);
     this.content.add(group);
@@ -352,6 +368,36 @@ export class Viewport {
     }
     material?.dispose();
     (group.userData.release as (() => void) | undefined)?.();
+  }
+
+  /** Lights a drawn surface up in `colour`, or with null puts it back. */
+  setLit(group: THREE.Group, colour: number | null): void {
+    const mesh = group.children[0] as THREE.Mesh | undefined;
+    if (mesh) lightUp(mesh.material as THREE.MeshStandardMaterial, colour);
+  }
+
+  /** How far along the ray through a point on screen it first meets a group, if it does. */
+  distanceTo(group: THREE.Group, x: number, y: number): number | null {
+    this.raycaster.setFromCamera(new THREE.Vector2(x, y), this.camera);
+    const { ray } = this.raycaster;
+    const [a, b, c, hit] = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+    let nearest: number | null = null;
+    // Not three's own raycast: it reads the index through `normalized`, which is on for the WebGPU upload.
+    for (const child of group.children) {
+      const { geometry } = child as THREE.Mesh;
+      if (!geometry.boundingBox || !geometry.index || !ray.intersectsBox(geometry.boundingBox)) continue;
+      const corners = geometry.getAttribute('position').array;
+      const index = geometry.index.array;
+      for (let k = 0; k < index.length; k += 3) {
+        a.fromArray(corners, index[k] * 3);
+        b.fromArray(corners, index[k + 1] * 3);
+        c.fromArray(corners, index[k + 2] * 3);
+        if (!ray.intersectTriangle(a, b, c, false, hit)) continue;
+        const distance = hit.distanceTo(ray.origin);
+        if (nearest === null || distance < nearest) nearest = distance;
+      }
+    }
+    return nearest;
   }
 
   /** Tiles `n - 1` copies of the loaded surfaces beside them, sharing GPU buffers. Returns the scene's triangle count. */

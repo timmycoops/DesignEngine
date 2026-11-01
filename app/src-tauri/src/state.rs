@@ -155,9 +155,9 @@ impl SolidCaster {
         self.ids[self.first_triangles.partition_point(|&first| first <= triangle) - 1]
     }
 
-    /// Nearest hit on a solid that isn't hidden.
-    pub fn cast(&self, from: [f64; 3], direction: [f64; 3], hidden: &HashSet<ObjectId>) -> Option<[f64; 3]> {
-        self.caster.cast_where(from, direction, |triangle| !hidden.contains(&self.solid_of(triangle))).map(|(_, hit)| hit)
+    /// Nearest hit on a solid that isn't hidden, and which solid it is.
+    pub fn cast(&self, from: [f64; 3], direction: [f64; 3], hidden: &HashSet<ObjectId>) -> Option<(ObjectId, [f64; 3])> {
+        self.caster.cast_where(from, direction, |triangle| !hidden.contains(&self.solid_of(triangle))).map(|(triangle, hit)| (self.solid_of(triangle), hit))
     }
 }
 
@@ -262,13 +262,13 @@ mod tests {
         // Straight down through both cubes, either of which can come first in the index.
         let caster = SolidCaster::new(&every_layer_solid(s.project(), layer)).unwrap();
         let (from, down) = ([650_004.0, 7_450_003.0, 500.0], [0.0, 0.0, -1.0]);
-        assert_eq!(caster.cast(from, down, &HashSet::new()).unwrap()[2], 210.0);
-        assert_eq!(caster.cast(from, down, s.project().hidden()).unwrap()[2], 110.0);
+        assert_eq!(caster.cast(from, down, &HashSet::new()).unwrap(), (upper, [from[0], from[1], 210.0]));
+        assert_eq!(caster.cast(from, down, s.project().hidden()).unwrap(), (lower, [from[0], from[1], 110.0]));
         s.set_objects_visible(&[lower], false);
         assert_eq!(caster.cast(from, down, s.project().hidden()), None);
         assert!(solid_layer_keys(s.project()).is_empty(), "a layer with every solid hidden draws nothing");
         s.set_objects_visible(&[upper, lower], true);
         assert_eq!(solid_layer_keys(s.project()), drawn, "shown again, the same key, so nothing is fetched");
-        assert_eq!(caster.cast(from, down, s.project().hidden()).unwrap()[2], 210.0);
+        assert_eq!(caster.cast(from, down, s.project().hidden()).unwrap().0, upper);
     }
 }

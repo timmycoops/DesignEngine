@@ -1,5 +1,5 @@
 import { Box, ChevronDown, ChevronRight, Grid3x3, Layers, type LucideIcon, Mountain, PencilRuler, Spline } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Layer, ObjectKind, ObjectSummary } from '@/bridge';
 import { ROW_HEIGHT, useRowWindow } from '@/design-system/DataTable';
 import { Checkbox } from '@/design-system/ui/checkbox';
@@ -170,12 +170,31 @@ function ObjectRow({ object }: { object: ObjectSummary }) {
  * new strings on it, or an object to select it.
  */
 export function LayersPanel() {
-  const { summary, activeLayer, setActiveLayer } = useWorkspace();
+  const { summary, selected, activeLayer, setActiveLayer } = useWorkspace();
   const [toggled, setToggled] = useState(new Map<string, boolean>());
   const rows = useMemo(() => treeRows(summary?.layers ?? [], summary?.objects ?? [], toggled), [summary, toggled]);
   const { scroller, top, first, last, onScroll } = useRowWindow(rows.length, true);
   const toggle = (entry: LayerEntry) => setToggled((was) => new Map(was).set(entry.layer.id, !entry.open));
   const pinned = layerAbove(rows, Math.floor(top / ROW_HEIGHT));
+
+  // Something picked in the viewport: open its layer, then bring its row into view.
+  const revealing = useRef<string | null>(null);
+  useEffect(() => {
+    const object = selected ? summary?.objects.find((o) => o.id === selected) : undefined;
+    if (!object) return;
+    revealing.current = object.id;
+    setToggled((was) => (rows.some((r) => r.kind === 'layer' && r.layer.id === object.layer && r.open) ? was : new Map(was).set(object.layer, true)));
+  }, [selected]);
+  useEffect(() => {
+    const at = revealing.current ? rows.findIndex((r) => r.kind === 'object' && r.object.id === revealing.current) : -1;
+    const element = scroller.current;
+    if (at < 0 || !element) return;
+    revealing.current = null;
+    const y = at * ROW_HEIGHT;
+    // The row under the pinned one is covered.
+    if (y < element.scrollTop + ROW_HEIGHT || y + ROW_HEIGHT > element.scrollTop + element.clientHeight) element.scrollTo(0, y - element.clientHeight / 2);
+  }, [rows, selected]);
+
   return (
     <div className="flex h-full flex-col">
       <label className="flex items-center gap-2 border-b px-2 py-1.5 text-xs text-muted-foreground">
