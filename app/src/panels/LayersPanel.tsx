@@ -20,7 +20,7 @@ const kindIcon: Record<ObjectKind, LucideIcon> = {
   face_design: PencilRuler,
 };
 
-type LayerEntry = { kind: 'layer'; layer: Layer; count: number; open: boolean };
+type LayerEntry = { kind: 'layer'; layer: Layer; count: number; hidden: number; open: boolean };
 type TreeRow = LayerEntry | { kind: 'object'; object: ObjectSummary };
 
 /** Each layer, followed by its objects if it is open. `toggled` holds the layers opened or closed by hand. */
@@ -35,7 +35,7 @@ function treeRows(layers: Layer[], objects: ObjectSummary[], toggled: Map<string
   for (const layer of layers) {
     const on = held.get(layer.id) ?? [];
     const open = toggled.get(layer.id) ?? on.length <= OPEN_UP_TO;
-    rows.push({ kind: 'layer', layer, count: on.length, open });
+    rows.push({ kind: 'layer', layer, count: on.length, hidden: on.filter((o) => o.hidden).length, open });
     if (open) for (const object of on) rows.push({ kind: 'object', object });
   }
   return rows;
@@ -50,6 +50,9 @@ function layerAbove(rows: TreeRow[], row: number): { entry: LayerEntry; at: numb
   }
   return undefined;
 }
+
+/** A property grid or a face design has nothing to show or hide. */
+const canHide = (object: ObjectSummary) => object.drawn || object.kind === 'string' || object.kind === 'seam_model';
 
 /** What a row's name doesn't say, shown on hover. */
 function noteOf(object: ObjectSummary): string | undefined {
@@ -80,7 +83,7 @@ function LineWeight({ layer }: { layer: string }) {
   );
 }
 
-function LayerRow({ layer, count, open, onToggle }: { layer: Layer; count: number; open: boolean; onToggle: () => void }) {
+function LayerRow({ entry: { layer, count, hidden, open }, onToggle }: { entry: LayerEntry; onToggle: () => void }) {
   const { activeLayer, setActiveLayer, setLayerVisible, sectionOpen } = useWorkspace();
   const Chevron = open ? ChevronDown : ChevronRight;
   const active = layer.name === activeLayer;
@@ -117,27 +120,39 @@ function LayerRow({ layer, count, open, onToggle }: { layer: Layer; count: numbe
       <span className="size-2.5 shrink-0 rounded-sm" style={{ background: `rgb(${layer.colour.join(',')})` }} />
       <span className={cn('min-w-0 flex-1 truncate', active && 'text-primary')}>{layer.name}</span>
       {sectionOpen && <LineWeight layer={layer.id} />}
-      <span className="text-muted-foreground tabular-nums">{count}</span>
+      <span className="text-muted-foreground tabular-nums" title={hidden > 0 ? `${hidden} of ${count} hidden` : undefined}>
+        {hidden > 0 ? `${count - hidden} of ${count}` : count}
+      </span>
     </div>
   );
 }
 
 function ObjectRow({ object }: { object: ObjectSummary }) {
-  const { selected, select } = useWorkspace();
+  const { selected, select, setObjectsVisible } = useWorkspace();
   const Icon = kindIcon[object.kind];
   const note = noteOf(object);
   return (
     <div
       data-slot="tree-row"
       data-state={object.id === selected ? 'selected' : undefined}
-      className="flex cursor-pointer items-center gap-1.5 pr-2 pl-8 text-xs hover:bg-accent data-[state=selected]:bg-selection"
+      className="flex cursor-pointer items-center gap-1.5 pr-2 pl-9 text-xs hover:bg-accent data-[state=selected]:bg-selection"
       style={{ height: ROW_HEIGHT }}
       onClick={() => select(object.id)}
     >
+      {canHide(object) ? (
+        <Checkbox
+          checked={!object.hidden}
+          onClick={(e) => e.stopPropagation()}
+          onCheckedChange={(checked) => setObjectsVisible([object.id], checked === true)}
+          aria-label={`Show ${object.name}`}
+        />
+      ) : (
+        <span className="size-4 shrink-0" />
+      )}
       <span title={kindLabel[object.kind]}>
         <Icon className="size-3.5 shrink-0 text-muted-foreground" />
       </span>
-      <span className="min-w-0 flex-1 truncate" title={note ?? object.name}>
+      <span className={cn('min-w-0 flex-1 truncate', object.hidden && 'text-muted-foreground')} title={note ?? object.name}>
         {object.name}
         {note && <span className="ml-1 text-muted-foreground">·</span>}
       </span>
@@ -178,9 +193,7 @@ export function LayersPanel() {
         {pinned && (
           <div className="sticky top-0 z-10 bg-background" style={{ marginBottom: -ROW_HEIGHT }}>
             <LayerRow
-              layer={pinned.entry.layer}
-              count={pinned.entry.count}
-              open
+              entry={pinned.entry}
               onToggle={() => {
                 toggle(pinned.entry);
                 scroller.current?.scrollTo(0, pinned.at * ROW_HEIGHT);
@@ -191,7 +204,7 @@ export function LayersPanel() {
         <div style={{ height: first * ROW_HEIGHT }} />
         {rows.slice(first, last).map((row) =>
           row.kind === 'layer' ? (
-            <LayerRow key={row.layer.id} layer={row.layer} count={row.count} open={row.open} onToggle={() => toggle(row)} />
+            <LayerRow key={row.layer.id} entry={row} onToggle={() => toggle(row)} />
           ) : (
             <ObjectRow key={row.object.id} object={row.object} />
           ),

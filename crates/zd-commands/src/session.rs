@@ -3,7 +3,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use zd_core::{AppliedChange, LayerId, ObjectRef, Project, RunId};
+use zd_core::{AppliedChange, LayerId, ObjectId, ObjectRef, Project, RunId};
 use zd_io::{ProjectStore, SaveReport};
 
 use crate::builtin::check_solids_made;
@@ -114,6 +114,11 @@ impl Session {
     /// Display state only: not a command, not undone.
     pub fn set_layer_visible(&mut self, layer: LayerId, visible: bool) -> bool {
         self.project.set_layer_visible(layer, visible)
+    }
+
+    /// See [`Project::set_objects_visible`].
+    pub fn set_objects_visible(&mut self, objects: &[ObjectId], visible: bool) -> usize {
+        self.project.set_objects_visible(objects, visible)
     }
 
     /// Runs a command by name with JSON parameters. Its changes apply together or not at all, and

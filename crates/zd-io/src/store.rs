@@ -3,7 +3,8 @@
 //! ```text
 //! <name>.zdproj/
 //!   manifest.json                          format, version, layers, and every live object with
-//!                                          its revision, layer, provenance, attributes and files
+//!                                          its revision, layer, provenance, attributes and files,
+//!                                          and the objects hidden one by one
 //!   run-log-<save>.json                    the session's run log, as the caller passes it
 //!   strings-<save>.parquet                 all string vertices: object (u32, index into the
 //!                                          manifest's objects), x, y, z (f64), in vertex order
@@ -103,6 +104,8 @@ struct Manifest {
     strings: Option<String>,
     layers: Vec<Layer>,
     objects: Vec<StoredObject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hidden: Vec<ObjectId>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -257,7 +260,7 @@ impl ProjectStore {
                 body,
             });
         }
-        let project = Project::from_saved(manifest.layers, objects).map_err(StoreError::Project)?;
+        let project = Project::from_saved(manifest.layers, objects).map_err(StoreError::Project)?.with_hidden(manifest.hidden);
         let run_log = match &manifest.run_log {
             Some(file) => Some(std::fs::read_to_string(dir.join(file))?),
             None => None,
@@ -329,6 +332,7 @@ impl ProjectStore {
             strings: strings.clone(),
             layers: project.layers().to_vec(),
             objects: stored,
+            hidden: project.objects().map(|o| o.id).filter(|&id| project.is_hidden(id)).collect(),
         };
         let text = serde_json::to_vec_pretty(&manifest).map_err(|e| StoreError::Format(e.to_string()))?;
         let staging = self.dir.join(format!("{MANIFEST}.tmp"));

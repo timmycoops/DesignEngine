@@ -229,8 +229,9 @@ export class StringLayer {
     this.layers = new Map(summary.layers.map((l) => [l.id, l]));
     this.origin = summary.origin ?? [0, 0, 0];
     this.surfaceNames = new Map(summary.objects.filter((o) => o.drawn && o.kind !== 'solid').map((o) => [o.id, o.name]));
-    const strings = summary.objects.filter((o) => o.kind === 'string' && o.vertices_local);
-    this.names = Math.max(this.names, strings.length);
+    const everyString = summary.objects.filter((o) => o.kind === 'string' && o.vertices_local);
+    this.names = Math.max(this.names, everyString.length);
+    const strings = everyString.filter((o) => !o.hidden);
     // Layers whose lines must be made again; an edit on one leaves the contours on another alone.
     const changed = new Set<string>();
     const live = new Set(strings.map((s) => s.id));

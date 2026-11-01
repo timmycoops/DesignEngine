@@ -126,6 +126,9 @@ pub struct Project {
     order: Vec<ObjectId>,
     done: Vec<Transaction>,
     undone: Vec<Transaction>,
+    /// Objects hidden one by one. Display state, saved with the project; shared so a snap can read it
+    /// without holding the project.
+    hidden: Arc<HashSet<ObjectId>>,
     /// See [`Project::generation`]. Not saved.
     generation: u64,
 }
@@ -172,6 +175,12 @@ impl Project {
         Ok(project)
     }
 
+    /// The same project with these objects hidden, as saved.
+    pub fn with_hidden(mut self, ids: impl IntoIterator<Item = ObjectId>) -> Project {
+        self.hidden = Arc::new(ids.into_iter().collect());
+        self
+    }
+
     pub fn layers(&self) -> &[Layer] {
         &self.layers
     }
@@ -194,6 +203,36 @@ impl Project {
             }
             None => false,
         }
+    }
+
+    /// Shows or hides live objects one by one, under their layer's tick. Display state only: not a
+    /// change, not undone. Hidden means not drawn, snapped to or cut by a section; a command that names
+    /// the object still takes it. Returns how many changed.
+    pub fn set_objects_visible(&mut self, ids: &[ObjectId], visible: bool) -> usize {
+        let live: Vec<ObjectId> = ids.iter().copied().filter(|&id| self.object(id).is_some() && self.is_hidden(id) == visible).collect();
+        if live.is_empty() {
+            return 0;
+        }
+        let hidden = Arc::make_mut(&mut self.hidden);
+        for id in &live {
+            if visible {
+                hidden.remove(id);
+            } else {
+                hidden.insert(*id);
+            }
+        }
+        self.generation = next_generation();
+        live.len()
+    }
+
+    pub fn is_hidden(&self, id: ObjectId) -> bool {
+        self.hidden.contains(&id)
+    }
+
+    /// Every object hidden one by one. An object deleted while hidden stays here, so undoing the delete
+    /// brings it back hidden.
+    pub fn hidden(&self) -> &Arc<HashSet<ObjectId>> {
+        &self.hidden
     }
 
     /// The current revision of a live object.

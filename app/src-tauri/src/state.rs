@@ -1,10 +1,10 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use zd_commands::Session;
 use zd_core::{AttrValue, Body, LayerId, Object, ObjectId, Project, TriMesh};
-use zd_geom::SurfaceRayCaster;
+use zd_geom::{GeomError, SurfaceRayCaster};
 
 use crate::section::{SectionCut, SectionInputs, SectionMeshes};
 
@@ -34,8 +34,8 @@ pub struct AppInner {
     /// Snap index per drawn object, with the geometry it was built from. Solids are not here.
     pub casters: HashMap<ObjectId, (usize, Arc<SurfaceRayCaster>)>,
     /// Snap index per layer of solids, with the key of the solids it was built from.
-    pub solid_casters: HashMap<LayerId, (String, Arc<SurfaceRayCaster>)>,
-    /// Each layer's solids as they stand: see [`solid_layer_keys`].
+    pub solid_casters: HashMap<LayerId, (String, Arc<SolidCaster>)>,
+    /// Each layer's solids as they stand: see [`solid_snap_keys`].
     pub solid_keys: BTreeMap<LayerId, String>,
     /// Meshes made for the section view, kept between steps.
     pub section_meshes: SectionMeshes,
@@ -82,12 +82,23 @@ pub fn geometry_key(body: &Body) -> usize {
     }
 }
 
-/// A key for each layer holding solids, changed by any change to their geometry. Solids are drawn
-/// and snapped to by layer, so tens of thousands of them are one mesh rather than one each.
+/// A key for each layer holding solids that aren't hidden, changed by any change to their geometry or
+/// by hiding or showing one. Solids are drawn and cut by a section by layer, so tens of thousands of
+/// them are one mesh rather than one each.
 pub fn solid_layer_keys(project: &Project) -> BTreeMap<LayerId, String> {
+    layer_keys(project, |object| !project.is_hidden(object.id))
+}
+
+/// A key for what each layer's snap index holds: all its solids, as a snap passes over hidden ones, so
+/// hiding one needs no new index.
+pub fn solid_snap_keys(project: &Project) -> BTreeMap<LayerId, String> {
+    layer_keys(project, |_| true)
+}
+
+fn layer_keys(project: &Project, keep: impl Fn(&Object) -> bool) -> BTreeMap<LayerId, String> {
     let mut layers: BTreeMap<LayerId, (usize, u64, u64)> = BTreeMap::new();
     for object in project.objects() {
-        if matches!(object.body, Body::Solid(_)) {
+        if matches!(object.body, Body::Solid(_)) && keep(object) {
             let key = (geometry_key(&object.body) as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(23);
             let (count, sum, either) = layers.entry(object.layer).or_default();
             *count += 1;
@@ -98,16 +109,56 @@ pub fn solid_layer_keys(project: &Project) -> BTreeMap<LayerId, String> {
     layers.into_iter().map(|(layer, (count, sum, either))| (layer, format!("{count}-{sum:x}-{either:x}"))).collect()
 }
 
-/// The meshes of a layer's solids.
+/// The meshes of a layer's solids that aren't hidden.
 pub fn layer_solids(project: &Project, layer: LayerId) -> Vec<Arc<TriMesh>> {
+    every_layer_solid(project, layer).into_iter().filter(|(id, _)| !project.is_hidden(*id)).map(|(_, mesh)| mesh).collect()
+}
+
+/// A layer's solids, hidden or not, with their meshes.
+pub fn every_layer_solid(project: &Project, layer: LayerId) -> Vec<(ObjectId, Arc<TriMesh>)> {
     project
         .objects()
         .filter(|o| o.layer == layer)
         .filter_map(|o| match &o.body {
-            Body::Solid(s) => Some(s.mesh_arc().clone()),
+            Body::Solid(s) => Some((o.id, s.mesh_arc().clone())),
             _ => None,
         })
         .collect()
+}
+
+/// A snap index over a layer's solids as one mesh, and which solid each triangle came from. Hiding a
+/// solid then needs no new index, which takes seconds on a pit: a cast passes over it.
+pub struct SolidCaster {
+    caster: SurfaceRayCaster,
+    /// Each solid's first triangle, in order.
+    first_triangles: Vec<u32>,
+    ids: Vec<ObjectId>,
+}
+
+impl SolidCaster {
+    pub fn new(solids: &[(ObjectId, Arc<TriMesh>)]) -> Result<Self, GeomError> {
+        let meshes: Vec<Arc<TriMesh>> = solids.iter().map(|(_, mesh)| mesh.clone()).collect();
+        let caster = SurfaceRayCaster::new(&joined_meshes(&meshes))?;
+        let mut next = 0;
+        let first_triangles = meshes
+            .iter()
+            .map(|mesh| {
+                let first = next;
+                next += mesh.triangle_count() as u32;
+                first
+            })
+            .collect();
+        Ok(SolidCaster { caster, first_triangles, ids: solids.iter().map(|(id, _)| *id).collect() })
+    }
+
+    fn solid_of(&self, triangle: u32) -> ObjectId {
+        self.ids[self.first_triangles.partition_point(|&first| first <= triangle) - 1]
+    }
+
+    /// Nearest hit on a solid that isn't hidden.
+    pub fn cast(&self, from: [f64; 3], direction: [f64; 3], hidden: &HashSet<ObjectId>) -> Option<[f64; 3]> {
+        self.caster.cast_where(from, direction, |triangle| !hidden.contains(&self.solid_of(triangle))).map(|(_, hit)| hit)
+    }
 }
 
 /// Meshes as one, for drawing and snapping only: nothing here is a solid of record.
@@ -163,7 +214,11 @@ mod tests {
 
     /// A 10 m cube at `x` as `solid.from_mesh` parameters.
     fn cube(name: &str, x: f64) -> serde_json::Value {
-        let v = (0..8).map(|i| [650_000.0 + x + (i & 1) as f64 * 10.0, 7_450_000.0 + (i >> 1 & 1) as f64 * 10.0, 100.0 + (i >> 2) as f64 * 10.0]).collect::<Vec<_>>();
+        cube_at(name, x, 100.0)
+    }
+
+    fn cube_at(name: &str, x: f64, z: f64) -> serde_json::Value {
+        let v = (0..8).map(|i| [650_000.0 + x + (i & 1) as f64 * 10.0, 7_450_000.0 + (i >> 1 & 1) as f64 * 10.0, z + (i >> 2) as f64 * 10.0]).collect::<Vec<_>>();
         let t = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
         json!({ "name": name, "layer": "coal", "vertices": v, "triangles": t })
     }
@@ -187,5 +242,33 @@ mod tests {
         assert_ne!(solid_layer_keys(s.project()), keys);
         s.undo();
         assert_eq!(solid_layer_keys(s.project()), keys, "the same solids give the same key, so nothing is fetched again");
+    }
+
+    /// Hiding changes what a layer draws and not what its snap index holds.
+    #[test]
+    fn a_hidden_solid_leaves_the_layers_mesh_and_a_snap_passes_over_it() {
+        let mut s = Session::with_builtins();
+        let upper = s.run("solid.from_mesh", cube_at("upper", 0.0, 200.0)).unwrap().outputs[0].id;
+        let lower = s.run("solid.from_mesh", cube_at("lower", 0.0, 100.0)).unwrap().outputs[0].id;
+        let layer = s.project().objects().next().unwrap().layer;
+        let (drawn, snapped) = (solid_layer_keys(s.project()), solid_snap_keys(s.project()));
+
+        s.set_objects_visible(&[upper], false);
+        assert_ne!(solid_layer_keys(s.project()), drawn, "the layer draws again");
+        assert_eq!(solid_snap_keys(s.project()), snapped, "the snap index stands");
+        let shown = joined_meshes(&layer_solids(s.project(), layer));
+        assert!((shown.signed_volume() - 1000.0).abs() < 1e-6, "{}", shown.signed_volume());
+
+        // Straight down through both cubes, either of which can come first in the index.
+        let caster = SolidCaster::new(&every_layer_solid(s.project(), layer)).unwrap();
+        let (from, down) = ([650_004.0, 7_450_003.0, 500.0], [0.0, 0.0, -1.0]);
+        assert_eq!(caster.cast(from, down, &HashSet::new()).unwrap()[2], 210.0);
+        assert_eq!(caster.cast(from, down, s.project().hidden()).unwrap()[2], 110.0);
+        s.set_objects_visible(&[lower], false);
+        assert_eq!(caster.cast(from, down, s.project().hidden()), None);
+        assert!(solid_layer_keys(s.project()).is_empty(), "a layer with every solid hidden draws nothing");
+        s.set_objects_visible(&[upper, lower], true);
+        assert_eq!(solid_layer_keys(s.project()), drawn, "shown again, the same key, so nothing is fetched");
+        assert_eq!(caster.cast(from, down, s.project().hidden()).unwrap()[2], 210.0);
     }
 }

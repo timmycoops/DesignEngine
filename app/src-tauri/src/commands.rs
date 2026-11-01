@@ -20,7 +20,7 @@ use zd_io::read_stack_grids;
 use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_section, encode_triangulation};
 use crate::section::{SectionCut, section_groups, snap_on_section};
 use crate::shared::post_shared_buffer;
-use crate::state::{AppInner, AppState, bounds, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_layer_keys};
+use crate::state::{AppInner, AppState, SolidCaster, bounds, every_layer_solid, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_layer_keys, solid_snap_keys};
 use crate::synthetic::synthetic_topography;
 
 /// The project as the interface needs it: layers and every live object, with string vertices
@@ -55,6 +55,8 @@ pub struct ObjectSummary {
     attributes: Attributes,
     /// Drawn as a surface (surfaces, solids, elevation grids).
     drawn: bool,
+    /// Hidden on its own: see [`zd_core::Project::set_objects_visible`].
+    hidden: bool,
     /// Changes only when the geometry does; fetch a new render buffer when it changes.
     geometry_key: String,
     /// String vertices, offset from the scene origin.
@@ -82,14 +84,15 @@ fn summary(app: &mut AppInner) -> ProjectSummary {
                 kind: object.kind(),
                 attributes: object.attributes.clone(),
                 drawn: is_drawn_surface(object),
+                hidden: project.is_hidden(object.id),
                 geometry_key: geometry_key(&object.body).to_string(),
                 vertices_local,
                 closed,
             }
         })
         .collect();
-    let keys = solid_layer_keys(project);
-    let solid_layers = keys.iter().map(|(layer, key)| SolidLayer { layer: *layer, key: key.clone() }).collect();
+    let solid_layers = solid_layer_keys(project).into_iter().map(|(layer, key)| SolidLayer { layer, key }).collect();
+    let snap_keys = solid_snap_keys(project);
     let summary = ProjectSummary {
         path: app.path.as_ref().map(|p| p.display().to_string()),
         can_undo: project.can_undo(),
@@ -99,7 +102,7 @@ fn summary(app: &mut AppInner) -> ProjectSummary {
         objects,
         solid_layers,
     };
-    app.solid_keys = keys;
+    app.solid_keys = snap_keys;
     summary
 }
 
@@ -311,6 +314,14 @@ pub async fn save_project(path: Option<String>, state: State<'_, AppState>) -> R
 }
 
 /// Display state only: not a command, not undone.
+/// Shows or hides objects one by one, under their layer's tick. Display state: not a run, not undone.
+#[tauri::command]
+pub fn set_objects_visible(objects: Vec<ObjectId>, visible: bool, state: State<'_, AppState>) -> ProjectSummary {
+    let mut app = state.app.lock().unwrap();
+    app.session.set_objects_visible(&objects, visible);
+    summary(&mut app)
+}
+
 #[tauri::command]
 pub fn set_layer_visible(layer: LayerId, visible: bool, state: State<'_, AppState>) -> ProjectSummary {
     let mut app = state.app.lock().unwrap();
@@ -559,37 +570,34 @@ pub struct SnapIndex {
 #[tauri::command]
 pub async fn build_snap_index(state: State<'_, AppState>) -> Result<SnapIndex, String> {
     enum Source {
-        Mesh(Arc<TriMesh>),
-        Grid(Arc<zd_core::Grid>),
-        Solids(Vec<Arc<TriMesh>>),
+        Mesh(ObjectId, usize, Arc<TriMesh>),
+        Grid(ObjectId, usize, Arc<zd_core::Grid>),
+        Solids(LayerId, String, Vec<(ObjectId, Arc<TriMesh>)>),
     }
-    enum Target {
-        Object(ObjectId, usize),
-        Layer(LayerId, String),
+    enum Built {
+        Object(ObjectId, usize, SurfaceRayCaster),
+        Layer(LayerId, String, SolidCaster),
     }
-    let pending: Vec<(Target, Source)> = {
+    let pending: Vec<Source> = {
         let mut app = state.app.lock().unwrap();
         let live: std::collections::HashSet<ObjectId> = app.session.project().objects().map(|o| o.id).collect();
         app.casters.retain(|id, _| live.contains(id));
-        let keys = solid_layer_keys(app.session.project());
+        let keys = solid_snap_keys(app.session.project());
         app.solid_casters.retain(|layer, _| keys.contains_key(layer));
         let project = app.session.project();
         let objects = project
             .objects()
             .filter(|o| is_drawn_surface(o) && !matches!(o.body, Body::Solid(_)))
             .filter(|o| app.casters.get(&o.id).is_none_or(|(key, _)| *key != geometry_key(&o.body)))
-            .map(|o| {
-                let source = match &o.body {
-                    Body::Surface(s) => Source::Mesh(s.mesh_arc().clone()),
-                    Body::Grid(g) => Source::Grid(g.clone()),
-                    Body::Solid(_) | Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) => unreachable!("only drawn surfaces are snapped to one by one"),
-                };
-                (Target::Object(o.id, geometry_key(&o.body)), source)
+            .map(|o| match &o.body {
+                Body::Surface(s) => Source::Mesh(o.id, geometry_key(&o.body), s.mesh_arc().clone()),
+                Body::Grid(g) => Source::Grid(o.id, geometry_key(&o.body), g.clone()),
+                Body::Solid(_) | Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) => unreachable!("only drawn surfaces are snapped to one by one"),
             });
         let layers = keys
             .iter()
             .filter(|(layer, key)| app.solid_casters.get(layer).is_none_or(|(built, _)| built != *key))
-            .map(|(layer, key)| (Target::Layer(*layer, key.clone()), Source::Solids(layer_solids(project, *layer))));
+            .map(|(layer, key)| Source::Solids(*layer, key.clone(), every_layer_solid(project, *layer)));
         objects.chain(layers).collect()
     };
     let surfaces = pending.len();
@@ -598,14 +606,15 @@ pub async fn build_snap_index(state: State<'_, AppState>) -> Result<SnapIndex, S
         std::thread::scope(|scope| {
             let handles: Vec<_> = pending
                 .into_iter()
-                .map(|(target, source)| {
+                .map(|source| {
                     scope.spawn(move || {
-                        let caster = match &source {
-                            Source::Mesh(mesh) => SurfaceRayCaster::new(mesh),
-                            Source::Grid(grid) => SurfaceRayCaster::new(&triangulate_grid(grid)),
-                            Source::Solids(meshes) => SurfaceRayCaster::new(&joined_meshes(meshes)),
+                        let triangles = c_triangles(&source);
+                        let built = match source {
+                            Source::Mesh(id, key, mesh) => SurfaceRayCaster::new(&mesh).map(|c| Built::Object(id, key, c)),
+                            Source::Grid(id, key, grid) => SurfaceRayCaster::new(&triangulate_grid(&grid)).map(|c| Built::Object(id, key, c)),
+                            Source::Solids(layer, key, solids) => SolidCaster::new(&solids).map(|c| Built::Layer(layer, key, c)),
                         };
-                        caster.map(|c| (target, Arc::new(c), c_triangles(&source)))
+                        built.map(|b| (b, triangles))
                     })
                 })
                 .collect();
@@ -614,15 +623,15 @@ pub async fn build_snap_index(state: State<'_, AppState>) -> Result<SnapIndex, S
     })
     .await??;
     let ms = ms(t);
-    let triangles = built.iter().map(|b| b.2).sum();
+    let triangles = built.iter().map(|b| b.1).sum();
     let mut app = state.app.lock().unwrap();
-    for (target, caster, _) in built {
-        match target {
-            Target::Object(id, key) => {
-                app.casters.insert(id, (key, caster));
+    for (index, _) in built {
+        match index {
+            Built::Object(id, key, caster) => {
+                app.casters.insert(id, (key, Arc::new(caster)));
             }
-            Target::Layer(layer, key) => {
-                app.solid_casters.insert(layer, (key, caster));
+            Built::Layer(layer, key, caster) => {
+                app.solid_casters.insert(layer, (key, Arc::new(caster)));
             }
         }
     }
@@ -630,9 +639,9 @@ pub async fn build_snap_index(state: State<'_, AppState>) -> Result<SnapIndex, S
 
     fn c_triangles(source: &Source) -> usize {
         match source {
-            Source::Mesh(m) => m.triangle_count(),
-            Source::Grid(g) => 2 * (g.cols - 1) * (g.rows - 1),
-            Source::Solids(meshes) => meshes.iter().map(|m| m.triangle_count()).sum(),
+            Source::Mesh(_, _, m) => m.triangle_count(),
+            Source::Grid(_, _, g) => 2 * (g.cols - 1) * (g.rows - 1),
+            Source::Solids(_, _, solids) => solids.iter().map(|(_, m)| m.triangle_count()).sum(),
         }
     }
 }
@@ -652,26 +661,31 @@ pub struct SnapHit {
     label: Option<String>,
 }
 
-/// Nearest hit on a drawn surface of a visible layer, along a ray in scene-local coordinates.
+/// Nearest hit on a drawn surface of a visible layer, along a ray in scene-local coordinates. Hidden
+/// objects are passed over.
 #[tauri::command]
 pub fn snap_ray(origin: [f64; 3], direction: [f64; 3], state: State<'_, AppState>) -> Option<SnapHit> {
-    let (scene_origin, casters) = {
+    let (scene_origin, objects, layers, hidden) = {
         let mut app = state.app.lock().unwrap();
         let scene_origin = app.origin()?;
         let project = app.session.project();
-        let visible = |o: &zd_core::Object| project.layer(o.layer).is_some_and(|l| l.visible);
-        let objects = app.casters.iter().filter_map(|(id, (key, caster))| {
-            let object = project.object(*id)?;
-            (visible(object) && *key == geometry_key(&object.body)).then(|| (Some(*id), caster.clone()))
-        });
-        let layers = app.solid_casters.iter().filter(|(layer, (key, _))| app.solid_keys.get(layer) == Some(key) && project.layer(**layer).is_some_and(|l| l.visible)).map(|(_, (_, caster))| (None, caster.clone()));
-        let casters: Vec<(Option<ObjectId>, Arc<SurfaceRayCaster>)> = objects.chain(layers).collect();
-        (scene_origin, casters)
+        let visible = |o: &zd_core::Object| !project.is_hidden(o.id) && project.layer(o.layer).is_some_and(|l| l.visible);
+        let objects: Vec<(ObjectId, Arc<SurfaceRayCaster>)> = app
+            .casters
+            .iter()
+            .filter_map(|(id, (key, caster))| {
+                let object = project.object(*id)?;
+                (visible(object) && *key == geometry_key(&object.body)).then(|| (*id, caster.clone()))
+            })
+            .collect();
+        let layers: Vec<Arc<SolidCaster>> = app.solid_casters.iter().filter(|(layer, (key, _))| app.solid_keys.get(layer) == Some(key) && project.layer(**layer).is_some_and(|l| l.visible)).map(|(_, (_, caster))| caster.clone()).collect();
+        (scene_origin, objects, layers, project.hidden().clone())
     };
     let from = [origin[0] + scene_origin[0], origin[1] + scene_origin[1], origin[2] + scene_origin[2]];
-    casters
-        .iter()
-        .filter_map(|(id, c)| c.cast(from, direction).map(|hit| (*id, hit)))
+    let on_objects = objects.iter().filter_map(|(id, c)| c.cast(from, direction).map(|hit| (Some(*id), hit)));
+    let on_solids = layers.iter().filter_map(|c| c.cast(from, direction, &hidden).map(|hit| (None, hit)));
+    on_objects
+        .chain(on_solids)
         .min_by(|a, b| distance_sq(from, a.1).total_cmp(&distance_sq(from, b.1)))
         .map(|(object, world)| SnapHit {
             local: [world[0] - scene_origin[0], world[1] - scene_origin[1], world[2] - scene_origin[2]],

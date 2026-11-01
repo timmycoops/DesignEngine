@@ -7,7 +7,7 @@ Date: 2026-11-01 · Status: accepted (Tim, 2026-11-01)
 Tim, with two seam models on one layer: "Shows two seam models and two surfaces - but i cant see which one is which ?
 This feels very weird". Layers and Objects were separate lists, only a whole layer could be hidden, and selecting showed
 nothing on screen. The Layers plan on the Build Plan doc fixes that in six workstreams. This records the decisions Tim
-agreed and the first workstream, the tree.
+agreed, the first workstream, the tree, and the second, showing and hiding one object.
 
 ## Decision
 
@@ -25,10 +25,23 @@ agreed and the first workstream, the tree.
    from anywhere in it, and closing it there lands on that layer.
 9. **Hiding one solid rebuilds its layer's mesh without it.** The rebuild was measured first, because a layer's solids
    draw as one mesh (decision 0019). It makes the 1 s check by a wide margin, so hiding triangles in place isn't needed.
+   The old mesh stays up until the new one is ready, so the rest of the layer doesn't blink.
+10. **Hiding one solid builds no new snap index.** An index takes 1.9 s on a pit, so it keeps every solid and knows which
+    solid each triangle came from, and a cast passes over hidden ones. Snapping never pauses, and nothing hidden is ever
+    snapped to. The same table will let a click in the viewport name a solid (workstream 3).
+11. **The tick on an object sits under its layer's tick.** A layer turned off hides everything on it, and turning it back
+    on leaves what was hidden one by one still hidden. A layer shows how many of its objects are showing. A property grid
+    or a face design has nothing to show or hide, so it has no tick.
+12. **"Visible" means this too.** Export of everything visible, and a cut of what's visible, leave hidden objects out. A
+    command that names a hidden object still takes it.
+13. **The seam legend follows what's on show.** There's one legend for each seam model showing, under its current name,
+    and hiding a model or its layer takes its legend and issue markers away.
 
 ## Evidence
 
-Redrawing PIT B's layer of 41,917 solids, 4.7 M triangles and a 58 MB buffer, in the real app, 3 runs each:
+PIT B's layer is 41,917 solids as read and 42,218 with repair, which is how the app bench imports them. Redrawing it, 3
+runs each. The first three rows are the engine at 41,917 solids, 4.7 M triangles and a 58 MB buffer, and the rest are the
+real app at 42,218 solids and 4.9 M triangles:
 
 | Step | ms |
 |---|---:|
@@ -40,23 +53,34 @@ Redrawing PIT B's layer of 41,917 solids, 4.7 M triangles and a 58 MB buffer, in
 | **On screen** | **about 170** |
 | Snap index, on its own thread | 1,850 to 1,960 |
 
-So the screen is well under the 1 s check, and the snap index is not. It already runs in the background, so hiding doesn't
-wait for it, and workstream 2 has to keep a hidden solid from being snapped to during those 2 s.
+So the screen is well under the 1 s check and the snap index is not, hence item 10.
 
-The tree with all 41,917 solids on one layer, in the real app with 8.7 M triangles drawn:
+Hiding in the real app, on that layer with 8.7 M triangles drawn, each to the frame that shows it:
+
+| | ms | Triangles after |
+|---|---:|---:|
+| Hide one solid | 404 | 8,700,216, the solid's 62 gone |
+| Show it again | 385 | 8,700,278 |
+| Hide the layer | 152 | 3,808,590 |
+| Show the layer | 172 | 8,700,278 |
+
+About 130 ms of each is the reply, as every change sends the whole project summary back. That was already so for a layer.
+
+The tree with all 42,218 solids on one layer, in the real app:
 
 | | |
 |---|---:|
 | Open the layer | 13 ms |
 | Rows in the page | 45 |
-| Frame while scrolling end to end, p50 | 16.7 ms |
-| Frame while scrolling, worst of 120 | 18.1 ms |
+| Frame while scrolling end to end, p50 | 16.6 ms |
+| Frame while scrolling, worst of 120 | 21.1 ms |
 | Last solid in the last row at the far end | yes |
 | Orbit | 60.0 fps, 0 frames over 33 ms |
 
 ## Known limits
 
-- **Object rows have no tick yet.** It arrives with workstream 2, which makes it work. A tick that did nothing would mislead.
+- **One tick at a time.** There's no way yet to hide a run of rows, or everything but one. Filtering in workstream 6 is
+  where that goes.
 - **The Objects table's sorting and columns are gone.** Objects list in the order they were made, which keeps a face's
   toes and crests together. A revision shows beside the name once it's past 1. Filtering comes in workstream 6.
 - **The tree doesn't move to an object picked in the viewport.** That comes with workstream 3.

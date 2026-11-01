@@ -40,6 +40,7 @@ import {
   runLog,
   saveProject,
   setLayerVisible,
+  setObjectsVisible,
   snapRay,
   undo,
   type Vec3,
@@ -128,25 +129,25 @@ export default function App() {
   const sectionRef = useRef<SectionView | null>(null);
   const [activeLayer, setActiveLayerState] = useState('design');
   const [selected, setSelected] = useState<string | null>(null);
-  const [seamView, setSeamView] = useState<SeamShown | null>(null);
+  const [seamViews, setSeamViews] = useState<SeamShown[]>([]);
   const summaryRef = useRef(summary);
   summaryRef.current = summary;
-  const seamRef = useRef<SeamShown | null>(null);
+  const seamsRef = useRef<SeamShown[]>([]);
   const markersRef = useRef<IssueMarkers | null>(null);
   const crossingMarkersRef = useRef<IssueMarkers | null>(null);
   /** An issue to fly to once its horizon has loaded. */
-  const pendingFocus = useRef<{ id: string; issue: number } | null>(null);
+  const pendingFocus = useRef<{ id: string; horizon: string; issue: number } | null>(null);
 
-  /** The seam horizon on show changed (or, with null, the model it belonged to went). */
-  const onSeam = useCallback((id: string, shown: SeamShown | null) => {
-    if (!shown && seamRef.current?.id !== id) return;
-    seamRef.current = shown;
-    setSeamView(shown);
-    markersRef.current?.set(shown?.result.markers.map((m) => m.position) ?? []);
+  /** The seam models on show changed. */
+  const onSeams = useCallback((showing: SeamShown[]) => {
+    seamsRef.current = showing;
+    setSeamViews(showing);
+    markersRef.current?.set(showing.flatMap((s) => s.result.markers.map((m) => m.position)));
     const pending = pendingFocus.current;
-    if (shown && pending?.id === id) {
+    const view = showing.find((s) => s.id === pending?.id && s.result.horizon === pending.horizon);
+    if (pending && view) {
       pendingFocus.current = null;
-      const marker = shown.result.markers.find((m) => m.issue === pending.issue);
+      const marker = view.result.markers.find((m) => m.issue === pending.issue);
       if (marker) viewportRef.current?.focusOn(marker.position);
     }
   }, []);
@@ -161,13 +162,13 @@ export default function App() {
 
   const focusIssue = useCallback(
     (id: string, horizon: string, issue: number) => {
-      const view = seamRef.current;
-      if (view?.id === id && view.result.horizon === horizon) {
+      const view = seamsRef.current.find((s) => s.id === id);
+      if (view?.result.horizon === horizon) {
         const marker = view.result.markers.find((m) => m.issue === issue);
         if (marker) viewportRef.current?.focusOn(marker.position);
         return;
       }
-      pendingFocus.current = { id, issue };
+      pendingFocus.current = { id, horizon, issue };
       showSeamHorizon(id, horizon);
     },
     [showSeamHorizon],
@@ -252,7 +253,7 @@ export default function App() {
       markersRef.current = new IssueMarkers(created);
       crossingMarkersRef.current = new IssueMarkers(created);
       const sync = new SceneSync(created);
-      sync.onSeam = onSeam;
+      sync.onSeams = onSeams;
       sync.onError = (text) => setStatus({ text, error: true });
       syncRef.current = sync;
       const section = new SectionView(created);
@@ -291,7 +292,7 @@ export default function App() {
       detach();
       viewport?.dispose();
     };
-  }, [hostMounted, viewportHost, run, show, onSeam, openSection]);
+  }, [hostMounted, viewportHost, run, show, onSeams, openSection]);
 
   const attempt = useCallback(async (work: () => Promise<void>) => {
     try {
@@ -303,7 +304,7 @@ export default function App() {
 
   const select = useCallback((id: string | null) => {
     const strings = stringsRef.current;
-    const isString = summaryRef.current?.objects.some((o) => o.id === id && o.kind === 'string');
+    const isString = summaryRef.current?.objects.some((o) => o.id === id && o.kind === 'string' && !o.hidden);
     // The string layer reports its own selection (null for anything that isn't a string).
     strings?.select(isString ? id : null);
     if (!isString) setSelected(id);
@@ -405,7 +406,7 @@ export default function App() {
   const visibleObjects = (kinds: Set<string>) => {
     // Objects carry their layer's id.
     const shown = new Set(summary?.layers.filter((l) => l.visible).map((l) => l.id));
-    return summary?.objects.filter((o) => kinds.has(o.kind) && shown.has(o.layer)) ?? [];
+    return summary?.objects.filter((o) => kinds.has(o.kind) && shown.has(o.layer) && !o.hidden) ?? [];
   };
 
   const onImportVulcan = () =>
@@ -493,6 +494,11 @@ export default function App() {
     [attempt, show],
   );
 
+  const setObjectsShown = useCallback(
+    (objects: string[], visible: boolean) => void attempt(async () => show(await setObjectsVisible(objects, visible))),
+    [attempt, show],
+  );
+
   const workspace = useMemo<WorkspaceState>(
     () => ({
       summary,
@@ -504,9 +510,10 @@ export default function App() {
       select,
       setActiveLayer,
       setLayerVisible: setVisible,
+      setObjectsVisible: setObjectsShown,
       run,
       runRecord,
-      seamView,
+      seamViews,
       sectionOpen,
       lineWeight: (layer) => sectionRef.current?.weightOf(layer) ?? null,
       setLineWeight: (layer, px) => sectionRef.current?.setWeight(layer, px),
@@ -517,7 +524,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, run, runRecord, seamView, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, mode, typeVertex],
+    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, setActiveLayer, setVisible, setObjectsShown, run, runRecord, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';

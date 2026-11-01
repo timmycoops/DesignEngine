@@ -388,7 +388,7 @@ function CutTools({ id }: { id: string }) {
   const layerOf = solids.find((o) => o.id === id)?.layer;
   const onLayer = solids.filter((o) => o.layer === layerOf);
   const shown = new Set(summary?.layers.filter((l) => l.visible).map((l) => l.id));
-  const visible = solids.filter((o) => shown.has(o.layer));
+  const visible = solids.filter((o) => shown.has(o.layer) && !o.hidden);
   const picked = scope === 'one' ? solids.filter((o) => o.id === id) : scope === 'layer' ? onLayer : visible;
 
   const cutters = objects.filter((o) => o.drawn && (o.kind === 'surface' || o.kind === 'grid'));
@@ -475,8 +475,8 @@ const horizonColumns = horizonHelper.columns([
 
 /** The model's horizons, top first; click one to show it in the viewport. */
 function Horizons({ id, model }: { id: string; model: SeamModel }) {
-  const { seamView, showSeamHorizon } = useWorkspace();
-  const shown = seamView?.id === id ? seamView.result.horizon : null;
+  const { seamViews, showSeamHorizon } = useWorkspace();
+  const shown = seamViews.find((s) => s.id === id)?.result.horizon ?? null;
   const rows = useMemo(() => {
     const parents = new Map(model.horizons.map((h) => [h.code, h.parent]));
     const depth = (code: string | null): number => {

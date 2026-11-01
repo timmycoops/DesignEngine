@@ -120,6 +120,7 @@ fn section_inputs(app: &mut AppInner) -> Result<Arc<SectionInputs>, String> {
     }
     let project = app.session.project();
     let visible = |layer: LayerId| project.layer(layer).is_some_and(|l| l.visible);
+    let shown = |object: &Object| visible(object.layer) && !project.is_hidden(object.id);
     let mut meshes: Vec<(LayerId, &'static str, Arc<SectionMesh>)> = Vec::new();
     let mut seams: Vec<(LayerId, String, Arc<SectionMesh>, Arc<SectionMesh>)> = Vec::new();
     let mut made = std::mem::take(&mut app.section_meshes);
@@ -144,7 +145,7 @@ fn section_inputs(app: &mut AppInner) -> Result<Arc<SectionInputs>, String> {
             meshes.push((layer, "solid", mesh));
         }
     }
-    for object in project.objects().filter(|o| visible(o.layer)) {
+    for object in project.objects().filter(|o| shown(o)) {
         let stamp = geometry_key(&object.body).to_string();
         match &object.body {
             Body::Surface(s) => {
@@ -174,7 +175,7 @@ fn section_inputs(app: &mut AppInner) -> Result<Arc<SectionInputs>, String> {
             _ => {}
         }
     }
-    let strings = project.objects().filter(|o| o.kind() == ObjectKind::String && visible(o.layer)).cloned().collect();
+    let strings = project.objects().filter(|o| o.kind() == ObjectKind::String && shown(o)).cloned().collect();
     let inputs = Arc::new(SectionInputs { generation, meshes, seams, strings });
     app.section_meshes = kept;
     app.section_inputs = Some(inputs.clone());
@@ -379,8 +380,12 @@ mod tests {
         assert_eq!(cut(&mut app), 0.0, "a layer hidden");
         app.session.set_layer_visible(layer, true);
         assert!((cut(&mut app) - 40.0).abs() < 1e-9, "and shown");
-        app.session.run("solid.from_mesh", cube("b", "coal", 20.0)).unwrap();
+        let added = app.session.run("solid.from_mesh", cube("b", "coal", 20.0)).unwrap().outputs[0].id;
         assert!((cut(&mut app) - 80.0).abs() < 1e-9, "a solid added");
+        app.session.set_objects_visible(&[added], false);
+        assert!((cut(&mut app) - 40.0).abs() < 1e-9, "one solid hidden, the other still cut");
+        app.session.set_objects_visible(&[added], true);
+        assert!((cut(&mut app) - 80.0).abs() < 1e-9, "and shown");
         app.session.undo().unwrap();
         assert!((cut(&mut app) - 40.0).abs() < 1e-9, "and undone");
     }
