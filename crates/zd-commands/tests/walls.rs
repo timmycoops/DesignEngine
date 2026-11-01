@@ -872,9 +872,8 @@ fn ramps_across_real_strips() {
         println!("{}", numbered.messages.join("; "));
         for (heading, shift) in [("along", -120.0), ("back", 120.0)] {
             for fixed in ["start", "end"] {
-                // A vertex a strip, stepping along the toe as ramps do from strip to strip, then on past the crests.
-                let mut bends: Vec<[f64; 3]> = (0..=STRIPS).map(|k| point(f64::from(k) * WIDTH - 30.0, shift + f64::from(k) * 15.0)).collect();
-                bends.push(point(1500.0, shift + f64::from(STRIPS) * 15.0));
+                // A vertex a strip, stepping along the toe as ramps do from strip to strip.
+                let bends: Vec<[f64; 3]> = (0..=STRIPS).map(|k| point(f64::from(k) * WIDTH - 30.0, shift + f64::from(k) * 15.0)).collect();
                 let string = created(&s.run("string.create", json!({ "name": "ramp string", "layer": "ramps", "points": bends })).unwrap())[0];
                 let layer = format!("roads {side} {heading} held at the {fixed}");
                 let lines: Vec<serde_json::Value> = strips.iter().map(|id| json!({ "string": id, "profile": "Up", "side": side, "run_on": [300.0, 300.0] })).collect();
@@ -957,7 +956,7 @@ fn a_ramp_held_at_its_end_finds_its_start() {
     let mut s = Session::with_builtins();
     let floor = level_surface(&mut s, "floor", 100.0);
     let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E + 10.0, N + 30.0, 0.0], [E + 290.0, N + 30.0, 0.0]] })).unwrap())[0];
-    let across = ramp_string(&mut s, &[[260.0, 40.0], [260.0, 60.0]]);
+    let across = ramp_string(&mut s, &[[260.0, 20.0], [260.0, 40.0]]);
     let content = ramped_content(toe, floor, json!({ "name": "A", "string": across, "fixed": "end", "heading": "along", "width": 10.0, "grade": 10.0 }));
     let design = created(&s.run("face.save_design", json!({ "name": "held", "content": content })).unwrap())[0];
     let record = s.run("face.project", json!({ "design": design })).unwrap();
@@ -1005,7 +1004,7 @@ fn a_ramp_that_cant_reach_names_the_step_and_the_face_still_builds() {
     let record = s.run("face.project", json!({ "design": design })).unwrap();
     let line = record.messages.iter().find(|m| m.starts_with("Ramp A:")).unwrap();
     assert!(line.contains("stopped on step 1 at"), "{line}");
-    assert!(line.contains("runs out of wall at RL 106.0"), "60 m along at 10 %: {line}");
+    assert!(line.contains("reaches the end of the wall at RL 106.0"), "60 m along at 10 %: {line}");
     assert!(s.project().objects().any(|o| o.name == "short Wall face"));
     assert!(!s.project().objects().any(|o| o.name.contains("road")));
 }
@@ -1054,11 +1053,11 @@ fn a_ramp_string_across_the_strips_gives_each_its_road() {
 /// With its end held, each road comes out where the string crosses that strip's crest, which is known here as
 /// the walls are 20 m high at 45 degrees, and the run works out each start.
 #[test]
-fn a_ramp_string_held_at_its_end_brings_each_road_out_on_its_crest() {
+fn a_ramp_string_held_at_its_end_brings_each_road_out_level_with_its_toe_crossing() {
     let mut s = Session::with_builtins();
     let floor = level_surface(&mut s, "floor", 100.0);
     let strips = three_strips(&mut s, ["one", "two", "three"]);
-    let across = ramp_string(&mut s, &[[250.0, 40.0], [250.0, 50.0], [260.0, 150.0], [270.0, 250.0], [270.0, 260.0]]);
+    let across = ramp_string(&mut s, &[[250.0, 20.0], [250.0, 30.0], [260.0, 130.0], [270.0, 230.0], [270.0, 240.0]]);
     let content = on_each_strip(&strips, floor, json!([{ "name": "A", "string": across, "fixed": "end", "heading": "along", "width": 10.0, "grade": 10.0 }]));
     let design = created(&s.run("face.save_design", json!({ "name": "held", "content": content })).unwrap())[0];
     let started = Instant::now();
@@ -1068,6 +1067,28 @@ fn a_ramp_string_held_at_its_end_brings_each_road_out_on_its_crest() {
         let top = *pit_edge(&s, &format!("{name} Wall road A pit edge")).vertices.last().unwrap();
         assert!((top[0] - E - x).abs() <= 0.25, "{name} comes out at {top:?}: {:?}", record.messages);
     }
+}
+
+/// A strip that can't be built says why in red and leaves the others standing. With nothing to show, the run is
+/// refused as before.
+#[test]
+fn a_strip_that_cant_be_built_leaves_the_others_standing() {
+    let mut s = Session::with_builtins();
+    let floor = level_surface(&mut s, "floor", 100.0);
+    let mut strips: Vec<ObjectId> = three_strips(&mut s, ["one", "two", "three"]).to_vec();
+    let away = created(&s.run("string.create", json!({ "name": "off the floor", "layer": "strings", "points": [[E + 5000.0, N, 0.0], [E + 5200.0, N, 0.0]] })).unwrap())[0];
+    strips.push(away);
+    let across = ramp_string(&mut s, &[[40.0, 20.0], [40.0, 40.0]]);
+    let road = json!([{ "name": "A", "string": across, "fixed": "start", "heading": "along", "width": 10.0, "grade": 10.0 }]);
+    let design = created(&s.run("face.save_design", json!({ "name": "one bad", "content": on_each_strip(&strips, floor, road.clone()) })).unwrap())[0];
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    assert!(record.messages.iter().any(|m| m.starts_with("off the floor Wall: ") && m.ends_with("Nothing is built on this string")), "{:?}", record.messages);
+    assert!(s.project().objects().any(|o| o.name == "three Wall face"));
+    assert!(!s.project().objects().any(|o| o.name == "off the floor Wall face"));
+
+    let design = created(&s.run("face.save_design", json!({ "name": "all bad", "content": on_each_strip(&[away], floor, road) })).unwrap())[0];
+    let error = s.run("face.project", json!({ "design": design })).unwrap_err().to_string();
+    assert!(error.contains("off the floor Wall: "), "{error}");
 }
 
 /// A strip the string doesn't reach runs plain, and the run names it. One that crosses nothing says so.

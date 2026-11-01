@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use zd_core::{FaceDirection, Polyline, TriMesh};
 
-use crate::road::{FaceRamp, FaceRoad, NoRoad, RoadBottom, RoadCut, RoadTop, berm_round_road, cut_road, metres_along, point_along, with_road_start};
+use crate::road::{FaceRamp, FaceRoad, NO_WALL, NoRoad, RoadBottom, RoadCut, RoadTop, berm_round_road, cut_road, metres_along, point_along, with_road_start};
 use crate::string::TriangleBins;
 use crate::wall::{LeastBench, Stretch, at_crest_heights, height_on, nearest_along, next_line, triangles_of, with_crest_vertices};
 use crate::{EdgeRule, GeomError, OffsetSide, drape_string, filter_string, next_toe, project_wall_by_edge};
@@ -275,8 +275,8 @@ fn face_with_held_ends(toe: &Polyline, register: &TriMesh, side: OffsetSide, dir
         let mut face = face_with_roads(toe, register, side, direction, steps, &spec, &HashMap::new())?;
         let mut worst: f64 = 0.0;
         for road in &mut held {
-            let top_wall = walls_of(steps, road.ramp).map(|w| w[1]);
-            let reached = face.roads.iter_mut().find(|r| r.ramp == road.ramp && Some(r.steps[1]) == top_wall);
+            let stopped_short = face.no_roads.iter().any(|n| n.ramp == road.ramp);
+            let reached = face.roads.iter_mut().find(|r| r.ramp == road.ramp && !stopped_short);
             let Some(reached) = reached else {
                 worst = f64::INFINITY;
                 road.nudged();
@@ -586,7 +586,16 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                                 Some(wall_side) => RoadBottom::CarriedOn { wall_side },
                                 None => RoadBottom::Entrance { floor: lying.then(|| on.mesh()) },
                             };
-                            cut_road(&from, &batters, side, &open.spec, at, bottom, &wall, target.mesh()).map_err(|stopped| face.no_roads.push(NoRoad { ramp: open.ramp, step: last, at: stopped.at, why: stopped.why })).ok()
+                            let last_wall = !steps[last + 1..].iter().any(|step| ramp_of(step) == Some(Some(open.ramp)));
+                            let carried_on = wall_side.is_some();
+                            cut_road(&from, &batters, side, &open.spec, at, bottom, &wall, target.mesh())
+                                .map_err(|stopped| {
+                                    // Up onto ground with no wall left above it, the road has come out.
+                                    if !(carried_on && last_wall && stopped.why == NO_WALL) {
+                                        face.no_roads.push(NoRoad { ramp: open.ramp, step: last, at: stopped.at, why: stopped.why });
+                                    }
+                                })
+                                .ok()
                         });
                         if road_at.is_some() && cut.is_none() {
                             let open = climbing.take().expect("a road was on its way up");
@@ -659,7 +668,7 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 };
                 let road = climbing.as_ref().and_then(|open| Some((open.top?, open.spec.back)));
                 from = match road {
-                    Some((top, back)) => berm_round_road(&line, top, back, &mut lay),
+                    Some((top, back)) => berm_round_road(&line, &crest, top, back, &mut lay),
                     None => lay(&line),
                 }
                 .map_err(|e| fail(k, e))?;
