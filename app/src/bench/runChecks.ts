@@ -763,6 +763,35 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
   const onLayer = { ...content, layer: 'bench layer faces', lines: [{ layer: toes, profile: 'Highwall', side: 'left', run_on: [100, 100] }] };
   const layerDesign = (await run('face.save_design', { name: 'Bench layer design', content: onLayer })).fresh[0];
   const byLayer = await run('face.project', { design: layerDesign.id });
+  // A batter and a berm that change part way along the toe: everything to one side of its middle is a domain.
+  const across = [-uy * 2000, ux * 2000];
+  const domain = [
+    [at[0] - across[0], at[1] - across[1], 0],
+    [at[0] + across[0], at[1] + across[1], 0],
+    [at[0] + across[0] + ux * 2000, at[1] + across[1] + uy * 2000, 0],
+    [at[0] - across[0] + ux * 2000, at[1] - across[1] + uy * 2000, 0],
+  ];
+  const polygon = (await run('string.create', { name: 'bench domain', layer: 'bench domains', points: domain, closed: true })).fresh[0];
+  const changing = {
+    ...content,
+    layer: 'bench rule faces',
+    lines: [{ string: toe.id, profile: 'Highwall', side: 'left', run_on: [100, 100] }],
+    rules: [
+      { name: 'Batter', value: { type: 'inside_polygon', polygon: polygon.id, inside: 60, outside: 70 } },
+      { name: 'Berm', value: { type: 'inside_polygon', polygon: polygon.id, inside: 15, outside: 10 } },
+    ],
+    profiles: content.profiles.map((profile) => ({ ...profile, steps: profile.steps.map((step) => (step.step === 'berm' ? { ...step, width: 'Berm' } : step)) })),
+  };
+  const ruleRun = await (async () => {
+    try {
+      const saved = (await run('face.save_design', { name: 'Bench rule design', content: changing })).fresh[0];
+      const started = performance.now();
+      const made = await run('face.project', { design: saved.id });
+      return { ms: performance.now() - started, made: made.fresh.length, messages: made.messages };
+    } catch (e) {
+      return { error: String(e) };
+    }
+  })();
   const close = async (half: number) => {
     await section.show([at[0] - half * ux, at[1] - half * uy], [at[0] + half * ux, at[1] + half * uy], summary);
     await settle();
@@ -772,7 +801,7 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
   const wide = await close(400);
   const tight = await close(120);
   const surfaces = (section.lastCut?.groups ?? []).filter((g) => g.kind === 'surface').reduce((sum, g) => sum + g.segments, 0);
-  return { steps, ms, surface_segments_in_cut: surfaces, design_ms: designMs, design_messages: whole.messages, design_made: whole.fresh.length, design_by_layer_made: byLayer.fresh.length, design_by_layer_messages: byLayer.messages, design_rerun_made: again.fresh.length, wide, tight };
+  return { steps, ms, surface_segments_in_cut: surfaces, design_ms: designMs, design_messages: whole.messages, design_made: whole.fresh.length, design_by_layer_made: byLayer.fresh.length, design_by_layer_messages: byLayer.messages, design_rule_run: ruleRun, design_rerun_made: again.fresh.length, wide, tight };
 }
 
 /** The fills on, as they first show, then off and on again by the toolbar's Fill button. */

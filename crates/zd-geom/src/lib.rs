@@ -14,6 +14,7 @@ mod halfspace;
 mod orient;
 mod ray;
 mod repair;
+mod rule;
 mod self_union;
 mod seam;
 mod section_fill;
@@ -31,6 +32,7 @@ pub use close::{CloseLog, close_solid};
 pub use crossings::{COINCIDENT, find_crossings, find_solid_crossings};
 pub use orient::{OrientLog, SITES, Separation, boundary_loops, orient_patches, orient_upward, separate_touching_edges, split_patches};
 pub use repair::{RepairLog, repair_mesh};
+pub use rule::{EdgeRule, SolidRegion};
 pub use self_union::{UnionLog, self_union};
 pub use ray::SurfaceRayCaster;
 pub use seam::{SeamLog, SeamSolid, build_seam_solid};
@@ -39,7 +41,7 @@ pub use section_snap::{CutSegment, SectionSnap, SectionSnapKind, snap_to_section
 pub use slice::{SectionPlane, SliceIndex, SliceLine, slice_indexed, slice_mesh, string_near_plane};
 pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_nodes, suggest_no_seam_rl, suggest_seam_tree};
 pub use face::{Face, FaceBench, FaceStep, FaceTarget, RegisterLog, StepReport, conditioned_toe, project_face, register_toe, run_on};
-pub use wall::{ConditionLog, Stretch, WallLog, WallStep, next_toe, project_wall};
+pub use wall::{ConditionLog, Stretch, WallLog, WallStep, next_toe, project_wall, project_wall_by_edge};
 pub use string::{Corner, DrapeLog, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, smooth_string, split_string};
 
 /// Below this many triangles a search stays on one thread.

@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp, Play, Plus, Save, Trash2 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
-import { type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, objectDetails, type ObjectSummary, type ProfileStep, type StepTarget, type StepValue, type WallRule, type WallSide } from '@/bridge';
+import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, objectDetails, type ObjectSummary, type ProfileStep, type RuleValue, type StepTarget, type StepValue, type WallRule, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
@@ -141,9 +141,154 @@ function moved<T>(items: T[], at: number, by: number) {
   return out;
 }
 
-/** The number a value comes to, if it comes to one yet. */
+/** The number a value comes to, if it's one number all along. */
 function numberOf(value: StepValue, rules: WallRule[]) {
-  return typeof value === 'number' ? value : rules.find((r) => r.name === value)?.value.value;
+  if (typeof value === 'number') return value;
+  const rule = rules.find((r) => r.name === value)?.value;
+  return rule?.type === 'fixed' ? rule.value : undefined;
+}
+
+const RULE_TYPES: { type: RuleValue['type']; label: string }[] = [
+  { type: 'fixed', label: 'Fixed' },
+  { type: 'fixed_list', label: 'By segment' },
+  { type: 'inside_polygon', label: 'Inside polygon' },
+  { type: 'inside_solid', label: 'Inside solid' },
+  { type: 'segment_azimuth', label: 'By azimuth' },
+  { type: 'by_horizon', label: 'By horizon' },
+];
+
+/** A first number to carry over when a rule changes type. */
+function firstNumber(rule: RuleValue) {
+  switch (rule.type) {
+    case 'fixed':
+      return rule.value;
+    case 'fixed_list':
+      return rule.values[0] ?? 0;
+    case 'inside_polygon':
+    case 'inside_solid':
+      return rule.inside;
+    default:
+      return rule.otherwise;
+  }
+}
+
+/** One value for each segment of the string, typed in a line. */
+function ListBox({ values, onChange }: { values: number[]; onChange: (values: number[]) => void }) {
+  const [text, setText] = useState(values.join(', '));
+  return (
+    <Input
+      className="h-7 min-w-0 flex-1 px-1 text-xs tabular-nums"
+      value={text}
+      placeholder="70, 65, 60"
+      title="One value for each segment of the string, in order"
+      aria-label="Values by segment"
+      onChange={(e) => {
+        setText(e.target.value);
+        onChange(e.target.value.split(/[\s,]+/).filter(Boolean).map(Number).filter(Number.isFinite));
+      }}
+    />
+  );
+}
+
+function Labelled({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-muted-foreground">
+      {label}
+      {children}
+    </span>
+  );
+}
+
+/** What a rule of its type needs, typed on its row. */
+function RuleDetail({ rule, polygons, solidName, selectedSolid, surfaces, onChange }: { rule: RuleValue; polygons: ObjectSummary[]; solidName: string; selectedSolid: string | null; surfaces: ObjectSummary[]; onChange: (rule: RuleValue) => void }) {
+  const unit = 'Degrees for a batter, metres for a berm';
+  const number = (label: string, value: number, change: (v: number) => void) => (
+    <Labelled label={label}>
+      <NumberBox width="w-14" value={value} title={unit} onChange={change} />
+    </Labelled>
+  );
+  switch (rule.type) {
+    case 'fixed':
+      return <NumberBox value={rule.value} title={unit} onChange={(value) => onChange({ type: 'fixed', value })} />;
+    case 'fixed_list':
+      return <ListBox values={rule.values} onChange={(values) => onChange({ ...rule, values })} />;
+    case 'inside_polygon':
+      return (
+        <span className="flex flex-wrap items-center gap-2">
+          <select className={`${selectClass} max-w-36`} value={rule.polygon} aria-label="Polygon" onChange={(e) => onChange({ ...rule, polygon: e.target.value })}>
+            {polygons.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+          {number('Inside', rule.inside, (inside) => onChange({ ...rule, inside }))}
+          {number('Outside', rule.outside, (outside) => onChange({ ...rule, outside }))}
+        </span>
+      );
+    case 'inside_solid':
+      return (
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="max-w-32 truncate" title={solidName}>
+            {solidName}
+          </span>
+          <SmallButton disabled={!selectedSolid} title="Takes the solid selected in the viewport or the layer tree" onClick={() => selectedSolid && onChange({ ...rule, solid: selectedSolid })}>
+            Use selected
+          </SmallButton>
+          {number('Inside', rule.inside, (inside) => onChange({ ...rule, inside }))}
+          {number('Outside', rule.outside, (outside) => onChange({ ...rule, outside }))}
+        </span>
+      );
+    case 'segment_azimuth':
+      return (
+        <span className="flex flex-col gap-1">
+          {rule.sectors.map((sector, k) => {
+            const change = (c: Partial<AzimuthSector>) => onChange({ ...rule, sectors: replaceAt(rule.sectors, k, { ...sector, ...c }) });
+            return (
+              <span key={k} className="flex items-center gap-2" title="The way the wall faces, clockwise from grid north">
+                {number('Facing', sector.from, (from) => change({ from }))}
+                {number('to', sector.to, (to) => change({ to }))}
+                {number('Value', sector.value, (value) => change({ value }))}
+                <IconButton title="Remove this sector" onClick={() => onChange({ ...rule, sectors: rule.sectors.filter((_, j) => j !== k) })}>
+                  <Trash2 className="size-3" />
+                </IconButton>
+              </span>
+            );
+          })}
+          <span className="flex items-center gap-2">
+            {number('Otherwise', rule.otherwise, (otherwise) => onChange({ ...rule, otherwise }))}
+            <SmallButton onClick={() => onChange({ ...rule, sectors: [...rule.sectors, { from: 0, to: 90, value: rule.otherwise }] })}>
+              <Plus className="size-3" /> Sector
+            </SmallButton>
+          </span>
+        </span>
+      );
+    case 'by_horizon':
+      return (
+        <span className="flex flex-col gap-1">
+          {rule.values.map((entry, k) => {
+            const change = (c: Partial<HorizonValue>) => onChange({ ...rule, values: replaceAt(rule.values, k, { ...entry, ...c }) });
+            return (
+              <span key={k} className="flex items-center gap-2" title="A row that finishes on this surface takes this value">
+                <select className={`${selectClass} max-w-36`} value={entry.surface} aria-label="Horizon" onChange={(e) => change({ surface: e.target.value })}>
+                  <SurfaceOptions surfaces={surfaces} />
+                </select>
+                {number('Value', entry.value, (value) => change({ value }))}
+                <IconButton title="Remove this horizon" onClick={() => onChange({ ...rule, values: rule.values.filter((_, j) => j !== k) })}>
+                  <Trash2 className="size-3" />
+                </IconButton>
+              </span>
+            );
+          })}
+          <span className="flex items-center gap-2">
+            {number('Otherwise', rule.otherwise, (otherwise) => onChange({ ...rule, otherwise }))}
+            <SmallButton disabled={surfaces.length === 0} onClick={() => onChange({ ...rule, values: [...rule.values, { surface: surfaces[0].id, value: rule.otherwise }] })}>
+              <Plus className="size-3" /> Horizon
+            </SmallButton>
+          </span>
+        </span>
+      );
+  }
 }
 
 function stepValueOf(step: ProfileStep) {
@@ -174,6 +319,9 @@ function blankStep(kind: ProfileStep['step'], steps: ProfileStep[], surfaces: Ob
 function carriesOn(steps: ProfileStep[], at: number, rules: WallRule[]) {
   const [step, next] = [steps[at], steps[at + 1]];
   if (step.step !== 'project' || next?.step !== 'project') return false;
+  // A rule that changes along the wall is the same wall if both rows name it. By horizon goes row by row.
+  const rule = rules.find((r) => r.name === step.batter)?.value;
+  if (step.batter === next.batter && rule && rule.type !== 'by_horizon') return true;
   const batter = numberOf(step.batter, rules);
   return batter !== undefined && batter === numberOf(next.batter, rules);
 }
@@ -496,6 +644,26 @@ export function FaceDesignPanel() {
   const selectedString = strings.find((s) => s.id === selected);
   const layers = (summary?.layers ?? []).filter((l) => strings.some((s) => s.layer === l.id));
   const nameOf = (objectId: string) => objects.find((o) => o.id === objectId)?.name ?? 'missing';
+  const polygons = strings.filter((s) => s.closed);
+  const selectedSolid = objects.find((o) => o.id === selected && o.kind === 'solid')?.id ?? null;
+  const changeRule = (k: number, value: RuleValue) => edit((d) => ({ ...d, rules: replaceAt(d.rules, k, { ...d.rules[k], value }) }));
+  /** A rule of a type, starting from a number. Polygons and solids it can't have are kept off the list. */
+  const blankRule = (type: RuleValue['type'], at: number): RuleValue => {
+    switch (type) {
+      case 'fixed':
+        return { type, value: at };
+      case 'fixed_list':
+        return { type, values: [at] };
+      case 'inside_polygon':
+        return { type, polygon: polygons[0].id, inside: at, outside: at };
+      case 'inside_solid':
+        return { type, solid: selectedSolid ?? '', inside: at, outside: at };
+      case 'segment_azimuth':
+        return { type, sectors: [], otherwise: at };
+      case 'by_horizon':
+        return { type, values: [], otherwise: at };
+    }
+  };
   const lineName = (line: FaceLine) => {
     if (!line.layer) return nameOf(line.string ?? '');
     const on = strings.filter((s) => s.layer === line.layer && s.attributes.face_design !== id).length;
@@ -647,14 +815,16 @@ export function FaceDesignPanel() {
       >
         3. Rules
       </Heading>
-      <p className="px-3 pb-1 text-xs text-muted-foreground">Name a value here to share it across steps, then type its name on a row.</p>
+      <p className="px-3 pb-1 text-xs text-muted-foreground">
+        Name a value here to share it across steps, then type its name on a row. A value can change along a wall, with the flatter batter or wider berm reaching across the change.
+      </p>
       <div className="px-3">
         <table className="w-full text-xs">
           <thead className="text-left text-muted-foreground">
             <tr>
               <th className="px-1 font-normal">Name</th>
               <th className="px-1 font-normal">Type</th>
-              <th className="px-1 font-normal" title="Degrees for a batter, metres for a berm">
+              <th className="w-full px-1 font-normal" title="Degrees for a batter, metres for a berm">
                 Value
               </th>
               <th />
@@ -666,9 +836,29 @@ export function FaceDesignPanel() {
                 <td className="px-1 py-0.5">
                   <Input className="h-7 w-32 px-1 text-xs" value={rule.name} aria-label="Rule name" onChange={(e) => renameRule(rule.name, e.target.value)} />
                 </td>
-                <td className="px-1 py-0.5 text-muted-foreground">Fixed</td>
+                <td className="px-1 py-0.5 align-top">
+                  <select
+                    className={`${selectClass} w-28`}
+                    value={rule.value.type}
+                    aria-label="Rule type"
+                    onChange={(e) => changeRule(k, blankRule(e.target.value as RuleValue['type'], firstNumber(rule.value)))}
+                  >
+                    {RULE_TYPES.map(({ type, label }) => (
+                      <option key={type} value={type} disabled={(type === 'inside_polygon' && polygons.length === 0) || (type === 'inside_solid' && !selectedSolid)}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </td>
                 <td className="px-1 py-0.5">
-                  <NumberBox value={rule.value.value} title="Degrees for a batter, metres for a berm" onChange={(value) => edit((d) => ({ ...d, rules: replaceAt(d.rules, k, { ...rule, value: { type: 'fixed', value } }) }))} />
+                  <RuleDetail
+                    rule={rule.value}
+                    polygons={polygons}
+                    solidName={rule.value.type === 'inside_solid' ? nameOf(rule.value.solid) : ''}
+                    selectedSolid={selectedSolid}
+                    surfaces={surfaces}
+                    onChange={(value) => changeRule(k, value)}
+                  />
                 </td>
                 <td className="py-0.5 text-right">
                   <IconButton title="Remove this rule" disabled={stepValues.includes(rule.name)} onClick={() => edit((d) => ({ ...d, rules: d.rules.filter((_, j) => j !== k) }))}>
