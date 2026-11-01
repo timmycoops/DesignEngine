@@ -410,11 +410,11 @@ export default function App() {
 
   const onImportVulcan = () =>
     attempt(async () => {
-      const picked = await open({ title: "Pick the seam's roof or floor grid", filters: [{ name: 'Vulcan grids', extensions: ['srg', 'sfg'] }] });
+      const picked = await open({ title: 'Pick a roof, floor or topography grid: the grids of that name come with it', filters: [{ name: 'Vulcan grids', extensions: ['srg', 'sfg', 'tpg'] }] });
       if (!picked || Array.isArray(picked)) return;
       const [dir, file] = splitPath(picked);
       const stem = file.slice(0, file.lastIndexOf('.'));
-      setStatus({ text: `Importing seam ${stem}…` });
+      setStatus({ text: `Importing ${stem}…` });
       await run('grid.import_vulcan_seam', { dir, prefix: '', seam: stem, layer: stem.toUpperCase() });
     });
 
@@ -565,8 +565,8 @@ export default function App() {
           <ToolButton tip="Import strings (DXF polylines and lines, or CSV with x, y and z columns)" onClick={onImportStrings}>
             <FileInput /> Strings
           </ToolButton>
-          <ToolButton tip="Import a seam's Vulcan grids: pick its roof or floor grid" onClick={onImportVulcan}>
-            <Layers3 /> Vulcan seam
+          <ToolButton tip="Import a Vulcan grid: pick a roof, floor or topography, and the grids of that name come with it" onClick={onImportVulcan}>
+            <Layers3 /> Vulcan grid
           </ToolButton>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

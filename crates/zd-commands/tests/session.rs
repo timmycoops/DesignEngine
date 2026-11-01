@@ -329,6 +329,33 @@ fn a_seam_with_no_thickness_still_imports_as_surfaces_and_its_qualities_stay_as_
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A topography, base of weathering or stage plan saved as `.sfg` has no roof to pair with: it's one
+/// surface, with every height it holds. A name with no surface in it is still refused.
+#[test]
+fn a_floor_grid_on_its_own_imports_as_one_surface() {
+    let dir = std::env::temp_dir().join(format!("zd-commands-lone-{}-{}", std::process::id(), zd_core::RunId::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let heights: Vec<(f32, i32)> = (0..12).map(|i| (100.0 + i as f32, i32::from(i % 4 < 2))).collect();
+    std::fs::write(dir.join("Current_Topo.sfg"), flagged_grid(&heights, 4, 3)).unwrap();
+    std::fs::write(dir.join("ashonly.rag"), flagged_grid(&heights, 4, 3)).unwrap();
+
+    let mut s = Session::with_builtins();
+    let record = s.run("grid.import_vulcan_seam", json!({ "dir": dir.to_string_lossy(), "prefix": "", "seam": "Current_Topo", "layer": "CURRENT_TOPO" })).unwrap();
+    assert_eq!(record.messages[0], "CURRENT_TOPO has no roof and floor pair: one surface, not a seam");
+    assert!(record.messages.iter().any(|m| m == "sf: 6 of 12 nodes live; 6 nodes flagged off keep the heights they hold"), "{:?}", record.messages);
+    let object = s.project().object(created(&record)[0]).unwrap();
+    assert_eq!(object.name, "CURRENT_TOPO sf");
+    assert_eq!(object.attributes["role"], zd_core::AttrValue::Text("elevation".into()));
+    match &object.body {
+        Body::Grid(g) => assert_eq!((g.null_count(), g.z_at(0, 0), g.z_at(3, 2)), (0, 100.0, 111.0)),
+        other => panic!("expected a grid, found {:?}", other.kind()),
+    }
+
+    let refused = s.run("grid.import_vulcan_seam", json!({ "dir": dir.to_string_lossy(), "prefix": "", "seam": "ashonly", "layer": "ASH" })).unwrap_err();
+    assert!(refused.to_string().contains("no roof, floor or topography"), "{refused}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn a_vulcan_seam_imports_as_grids_and_survives_a_save() {
     let dir = std::env::temp_dir().join(format!("zd-commands-vulcan-{}-{}", std::process::id(), zd_core::RunId::new()));
