@@ -120,9 +120,10 @@ export class StringLayer {
   mode: Mode = 'select';
   /** A panel is waiting on the next click for a point. */
   private wanted: ((point: Vec3 | null) => void) | null = null;
-  /** Where a pick landed, in local coordinates, and where a line being picked starts from. */
+  /** Where a pick landed, in local coordinates, what's been picked of a line so far, and if Enter finished it. */
   private lastPick = new THREE.Vector3();
-  private pickFrom: THREE.Vector3 | null = null;
+  private trail: THREE.Vector3[] = [];
+  private trailDone = false;
   selected: string | null = null;
   onSelect?: (id: string | null) => void;
 
@@ -199,11 +200,29 @@ export class StringLayer {
   async pickLine(first: string, second: string): Promise<[Vec3, Vec3] | null> {
     const from = await this.pickPoint(first);
     if (!from) return null;
-    this.pickFrom = this.lastPick.clone();
+    this.trail = [this.lastPick.clone()];
     const to = await this.pickPoint(second);
-    this.pickFrom = null;
-    this.preview.visible = false;
+    this.clearTrail();
     return to && [from, to];
+  }
+
+  /** Clicks until Enter, with a line following the cursor. Null if it's cancelled, or short of two points. */
+  async pickString(prompt: string): Promise<Vec3[] | null> {
+    const points: Vec3[] = [];
+    this.trailDone = false;
+    for (let point = await this.pickPoint(prompt); point; point = await this.pickPoint(prompt)) {
+      const last = points[points.length - 1];
+      if (last?.every((c, i) => c === point?.[i])) continue;
+      points.push(point);
+      this.trail.push(this.lastPick.clone());
+    }
+    this.clearTrail();
+    return this.trailDone && points.length > 1 ? points : null;
+  }
+
+  private clearTrail(): void {
+    this.trail = [];
+    this.preview.visible = false;
   }
 
   private finishPick(point: Vec3 | null): void {
@@ -419,7 +438,7 @@ export class StringLayer {
     const hit = await this.snapAt(at.x, at.y);
     this.hoverInFlight = false;
     if (this.mode !== 'select' || this.wanted) this.showSnap(hit, at);
-    if (this.wanted && this.pickFrom && hit) this.showPreview([this.pickFrom, new THREE.Vector3(...hit.local)]);
+    if (this.wanted && this.trail.length > 0 && hit) this.showPreview([...this.trail, new THREE.Vector3(...hit.local)]);
     void this.pumpHover();
   }
 
@@ -535,6 +554,12 @@ export class StringLayer {
     if (e.target instanceof HTMLInputElement) return;
     if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey && !e.altKey) return this.toggleSnapping();
     if (e.key === 'Escape' && this.wanted) return this.finishPick(null);
+    if (e.key === 'Enter' && this.wanted && this.trail.length > 0) {
+      // A button left with the focus would take this Enter as a click.
+      e.preventDefault();
+      this.trailDone = true;
+      return this.finishPick(null);
+    }
     if (this.mode !== 'select') {
       if (e.key === 'Enter') void this.finishDrawing();
       if (e.key === 'Escape') {

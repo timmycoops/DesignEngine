@@ -48,6 +48,8 @@ export interface Workspace {
   pickPoint: (prompt: string) => Promise<Vec3 | null>;
   /** Two clicks in the viewport, with a line following the cursor from the first. Null if it's cancelled. */
   pickLine: (first: string, second: string) => Promise<[Vec3, Vec3] | null>;
+  /** Clicks in the viewport until Enter, with a line following the cursor. Null if it's cancelled. */
+  pickString: (prompt: string) => Promise<Vec3[] | null>;
   /** In Draw string mode. */
   drawing: boolean;
   /** Adds a typed vertex while drawing (`E N [RL]` or `@distance<bearing [RL|grade%]`); an error to show, or null. */
