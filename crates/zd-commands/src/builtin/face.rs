@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceProfile, MOST_TOLERANCE, ObjectId, ObjectKind, ProfileStep, StepTarget, StepValue, Surface, TriMesh, WallSide};
+use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, ProfileStep, StepTarget, StepValue, Surface, TriMesh, WallSide};
 use zd_geom::{COINCIDENT, FaceStep, FaceTarget, GeomError, OffsetSide, conditioned_toe, find_crossings, next_toe, project_face, project_wall, register_toe, run_on, triangulate_grid};
 
 use super::SideParam;
@@ -225,8 +225,16 @@ impl Command for ProjectDesign {
         }
         let mut changes: Vec<Change> = inputs.objects().filter(|o| o.attributes.get(MADE_BY) == Some(&AttrValue::Text(p.design.to_string()))).map(|o| Change::Delete { id: o.id, base: o.revision }).collect();
         let mut messages = Vec::new();
+        let mut runs: Vec<(&FaceLine, ObjectId)> = Vec::new();
         for line in &design.lines {
-            let (string, path) = inputs.string(line.string)?;
+            for id in strings_of(inputs, line, p.design)? {
+                if !runs.iter().any(|(other, already)| *already == id && other.profile == line.profile) {
+                    runs.push((line, id));
+                }
+            }
+        }
+        for (line, id) in runs {
+            let (string, path) = inputs.string(id)?;
             let profile = design.profile(&line.profile).ok_or_else(|| CommandError::Invalid(format!("no profile called {}", line.profile)))?;
             let base = format!("{} {}", string.name, line.profile);
             let refuse = |e: GeomError| CommandError::Invalid(format!("{base}: {e}"));
@@ -262,6 +270,21 @@ impl Command for ProjectDesign {
         }
         Ok(outcome)
     }
+}
+
+/// The strings a line runs on. For a layer that's what is on it now, hidden or not, less what this design
+/// made last time, which the run is about to replace.
+fn strings_of(inputs: &Inputs<'_>, line: &FaceLine, design: ObjectId) -> Result<Vec<ObjectId>, CommandError> {
+    let layer = match line.on {
+        LineOn::String(id) => return Ok(vec![id]),
+        LineOn::Layer(layer) => layer,
+    };
+    let made_here = AttrValue::Text(design.to_string());
+    let strings: Vec<ObjectId> = inputs.objects_on(layer)?.into_iter().filter(|o| matches!(o.body, Body::String(_)) && o.attributes.get(MADE_BY) != Some(&made_here)).map(|o| o.id).collect();
+    if strings.is_empty() {
+        return Err(CommandError::Invalid("A line names a layer with no strings on it".to_string()));
+    }
+    Ok(strings)
 }
 
 /// The surfaces a profile names.

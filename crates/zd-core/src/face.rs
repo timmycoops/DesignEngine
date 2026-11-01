@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ObjectId;
+use crate::{LayerId, ObjectId};
 
 /// Past this a conditioning tolerance stops tidying a line and starts cutting its corners off (m).
 pub const MOST_TOLERANCE: f64 = 2.0;
@@ -24,11 +24,21 @@ pub struct FaceDesign {
     pub rules: Vec<WallRule>,
 }
 
-/// One string to run, and how. A string can be in twice with different profiles, to go both ways from it.
+/// What a line runs on: one string, or every string on a layer as it stands at each run. Nothing rebuilds
+/// by itself, so a string added to the layer comes in when the design is next run. A layer is held by its
+/// id, so renaming it doesn't lose it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LineOn {
+    String(ObjectId),
+    Layer(LayerId),
+}
+
+/// What to run, and how. A string can be in twice with different profiles, to go both ways from it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct FaceLine {
-    pub string: ObjectId,
+    #[serde(flatten)]
+    pub on: LineOn,
     /// A profile's name.
     pub profile: String,
     pub side: WallSide,
@@ -172,8 +182,9 @@ impl FaceDesign {
             if !line.run_on.iter().all(|d| d.is_finite() && *d >= 0.0) {
                 problems.push("A run-on must be zero or more".to_string());
             }
-            if self.lines[..k].iter().any(|l| l.string == line.string && l.profile == line.profile) {
-                problems.push(format!("A string is in twice with the profile {}", line.profile));
+            if self.lines[..k].iter().any(|l| l.on == line.on && l.profile == line.profile) {
+                let what = if matches!(line.on, LineOn::Layer(_)) { "layer" } else { "string" };
+                problems.push(format!("A {what} is in twice with the profile {}", line.profile));
             }
         }
         for profile in &self.profiles {
@@ -236,7 +247,7 @@ mod tests {
         let id = ObjectId::new();
         FaceDesign {
             layer: "faces".into(),
-            lines: vec![FaceLine { string: id, profile: "Highwall".into(), side: WallSide::Right, run_on: [100.0, 100.0] }],
+            lines: vec![FaceLine { on: LineOn::String(id), profile: "Highwall".into(), side: WallSide::Right, run_on: [100.0, 100.0] }],
             profiles: vec![FaceProfile {
                 name: "Highwall".into(),
                 direction: FaceDirection::Up,
@@ -257,6 +268,18 @@ mod tests {
         let d = design();
         assert_eq!(serde_json::from_str::<FaceDesign>(&serde_json::to_string(&d).unwrap()).unwrap(), d);
         assert!(d.problems().is_empty());
+    }
+
+    #[test]
+    fn a_line_names_a_string_or_a_layer_and_a_string_saved_before_layers_still_reads() {
+        let mut d = design();
+        let text = serde_json::to_string(&d.lines[0]).unwrap();
+        assert!(text.starts_with(r#"{"string":"#), "the field a saved design has: {text}");
+        d.lines.push(FaceLine { on: LineOn::Layer(LayerId::new()), ..d.lines[0].clone() });
+        assert_eq!(serde_json::from_str::<FaceDesign>(&serde_json::to_string(&d).unwrap()).unwrap(), d);
+        assert!(d.problems().is_empty(), "{:?}", d.problems());
+        d.lines.push(d.lines[1].clone());
+        assert!(d.problems().iter().any(|p| p.contains("A layer is in twice with the profile Highwall")), "{:?}", d.problems());
     }
 
     /// Exactly what the Face design panel sent, nulls and whole numbers included.

@@ -483,18 +483,24 @@ export function FaceDesignPanel() {
     }));
   };
   // A string can go in again under another profile, to go both ways from it.
-  const addLine = (string: string) => {
+  const addLine = (on: { string: string } | { layer: string }) => {
+    const same = (l: FaceLine) => ('string' in on ? l.string === on.string : l.layer === on.layer);
     edit((d) => {
-      const taken = d.lines.filter((l) => l.string === string).map((l) => l.profile);
+      const taken = d.lines.filter(same).map((l) => l.profile);
       const free = [profile?.name ?? '', ...d.profiles.map((p) => p.name)].find((p) => p && !taken.includes(p));
       if (!free) return d;
-      const line: FaceLine = { string, profile: free, side: 'right', run_on: [100, 100] };
+      const line: FaceLine = { ...on, profile: free, side: 'right', run_on: [100, 100] };
       return { ...d, lines: [...d.lines, line] };
     });
   };
   const selectedString = strings.find((s) => s.id === selected);
   const layers = (summary?.layers ?? []).filter((l) => strings.some((s) => s.layer === l.id));
   const nameOf = (objectId: string) => objects.find((o) => o.id === objectId)?.name ?? 'missing';
+  const lineName = (line: FaceLine) => {
+    if (!line.layer) return nameOf(line.string ?? '');
+    const on = strings.filter((s) => s.layer === line.layer && s.attributes.face_design !== id).length;
+    return `${summary?.layers.find((l) => l.id === line.layer)?.name ?? 'missing'} (${on} string${on === 1 ? '' : 's'})`;
+  };
 
   return (
     <div className="h-full overflow-auto pb-3">
@@ -544,8 +550,8 @@ export function FaceDesignPanel() {
                 const change = (c: Partial<FaceLine>) => edit((d) => ({ ...d, lines: replaceAt(d.lines, k, { ...line, ...c }) }));
                 return (
                   <tr key={k} className="border-t">
-                    <td className="max-w-28 truncate px-1 py-0.5" title={nameOf(line.string)}>
-                      {nameOf(line.string)}
+                    <td className="max-w-28 truncate px-1 py-0.5" title={line.layer ? `${lineName(line)}: what's on the layer at each run` : lineName(line)}>
+                      {lineName(line)}
                     </td>
                     <td className="px-1 py-0.5">
                       <select className={`${selectClass} max-w-40`} value={line.profile} aria-label="Profile" onChange={(e) => change({ profile: e.target.value })}>
@@ -576,7 +582,7 @@ export function FaceDesignPanel() {
         </div>
       )}
       <div className="flex flex-wrap items-center gap-1 px-3 pt-1">
-        <SmallButton disabled={!selectedString} title="Adds the string selected in the viewport or Objects" onClick={() => selectedString && addLine(selectedString.id)}>
+        <SmallButton disabled={!selectedString} title="Adds the string selected in the viewport or the layer tree" onClick={() => selectedString && addLine({ string: selectedString.id })}>
           <Plus className="size-3" /> Selected string
         </SmallButton>
         <select className={`${selectClass} max-w-32`} value={adding} aria-label="A string to add" onChange={(e) => setAdding(e.target.value)}>
@@ -587,7 +593,7 @@ export function FaceDesignPanel() {
             </option>
           ))}
         </select>
-        <SmallButton disabled={!adding} onClick={() => (addLine(adding), setAdding(''))}>
+        <SmallButton disabled={!adding} onClick={() => (addLine({ string: adding }), setAdding(''))}>
           Add
         </SmallButton>
         <select className={`${selectClass} max-w-32`} value={addingLayer} aria-label="A layer of strings to add" onChange={(e) => setAddingLayer(e.target.value)}>
@@ -598,14 +604,8 @@ export function FaceDesignPanel() {
             </option>
           ))}
         </select>
-        <SmallButton
-          disabled={!addingLayer}
-          onClick={() => {
-            strings.filter((s) => s.layer === addingLayer).forEach((s) => addLine(s.id));
-            setAddingLayer('');
-          }}
-        >
-          Add all
+        <SmallButton disabled={!addingLayer} title="One line for the layer: each run takes the strings on it at the time" onClick={() => (addLine({ layer: addingLayer }), setAddingLayer(''))}>
+          Add layer
         </SmallButton>
       </div>
 

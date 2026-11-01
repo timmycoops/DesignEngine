@@ -235,6 +235,60 @@ fn a_row_can_condition_the_toe_and_name_a_berms_surface() {
     assert_eq!(s.project().object(toe).unwrap().revision, 1, "the string stays as it was drawn");
 }
 
+/// A line on a layer takes what's there at each run. The design's own results land beside the strings
+/// here, and aren't taken as more strings when it runs again.
+#[test]
+fn a_line_that_names_a_layer_takes_what_is_on_it_at_each_run() {
+    let mut s = Session::with_builtins();
+    let (floor, roof) = (level_surface(&mut s, "floor", 100.0), level_surface(&mut s, "roof", 120.0));
+    let string = |s: &mut Session, name: &str, y: f64| {
+        let points = [[E + 50.0, N + y, 0.0], [E + 250.0, N + y, 0.0]];
+        created(&s.run("string.create", json!({ "name": name, "layer": "toes", "points": points })).unwrap())[0]
+    };
+    let one = string(&mut s, "strip 1", 60.0);
+    let two = string(&mut s, "strip 2", 200.0);
+    let layer = s.project().layer_named("toes").unwrap().id;
+    let mut content = level_design(&[], floor, roof);
+    content["layer"] = json!("toes");
+    content["lines"] = json!([{ "layer": layer, "profile": "Highwall", "side": "left", "run_on": [10.0, 10.0] }]);
+    let design = created(&s.run("face.save_design", json!({ "name": "By layer", "content": content.clone() })).unwrap())[0];
+
+    // Each string goes up in two walls, a toe and a crest each, with a face: 2 strings and 2 x 4 made.
+    s.run("face.project", json!({ "design": design })).unwrap();
+    assert_eq!(on_layer(&s, "toes"), (2 + 8, 2));
+    s.run("face.project", json!({ "design": design })).unwrap();
+    assert_eq!(on_layer(&s, "toes"), (2 + 8, 2), "its own results aren't taken for strings");
+
+    string(&mut s, "strip 3", 130.0);
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    assert_eq!(on_layer(&s, "toes"), (3 + 12, 3), "a string added since comes in: {:?}", record.messages);
+    s.run("object.delete", json!({ "object": one })).unwrap();
+    s.run("face.project", json!({ "design": design })).unwrap();
+    assert_eq!(on_layer(&s, "toes"), (2 + 8, 2), "and one deleted goes");
+
+    s.run("layer.rename", json!({ "layer": "toes", "name": "highwall toes" })).unwrap();
+    s.run("face.project", json!({ "design": design })).unwrap();
+    assert_eq!(on_layer(&s, "highwall toes"), (2, 0), "the layer is held by id, and what a run makes goes to the design's own layer");
+    assert_eq!(on_layer(&s, "toes"), (8, 2));
+
+    // Named as well on a line of its own, a string still runs once under a profile.
+    content["lines"] = json!([
+        { "layer": layer, "profile": "Highwall", "side": "left", "run_on": [10.0, 10.0] },
+        { "string": two, "profile": "Highwall", "side": "left", "run_on": [10.0, 10.0] },
+    ]);
+    let both = created(&s.run("face.save_design", json!({ "name": "Both", "content": content.clone() })).unwrap())[0];
+    let record = s.run("face.project", json!({ "design": both })).unwrap();
+    assert_eq!(record.messages.iter().filter(|m| m.starts_with("strip 2 Highwall")).count(), 1, "{:?}", record.messages);
+
+    let empty = s.run("layer.create", json!({ "name": "nothing" })).unwrap();
+    assert!(empty.outputs.is_empty());
+    content["lines"][0]["layer"] = json!(s.project().layer_named("nothing").unwrap().id);
+    content["lines"] = json!([content["lines"][0]]);
+    let none = created(&s.run("face.save_design", json!({ "name": "Empty", "content": content })).unwrap())[0];
+    let refused = s.run("face.project", json!({ "design": none })).unwrap_err();
+    assert!(refused.to_string().contains("no strings on it"), "{refused}");
+}
+
 #[test]
 fn a_design_that_cant_run_says_why_and_changes_nothing() {
     let mut s = Session::with_builtins();
