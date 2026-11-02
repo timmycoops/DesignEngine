@@ -44,7 +44,7 @@ PIT C, each of 11 strips on its own, all three ramps on all four walls, a 50 m r
 | Walls to | Start along | Start back | End along | End back | Stopped by a wall fault |
 |---|---|---|---|---|---|
 | RLs -50, 50, 150, 250 | 10 | 15 | 21 (20) | 30 (21) | 3 of 132 |
-| Tim's grids | 5 | 17 | 17 (16) | 25 (22) | 24 of 132 |
+| Tim's grids | 5 | 17 | 17 (16) | 25 (22) | 23 of 132 |
 
 Roads reaching the top of 33, with those that came out away from where they were held in brackets. Every face is one sheet, and one in 88
 has triangles crossing. The other stops are the ground (the toe rising faster than the road), the strip's length, or two roads wanting
@@ -57,7 +57,7 @@ held at the end.
 ## What this leaves
 
 - **Wrinkled strings.** A line draped on a wavy grid wrinkles along and up and down, and that can still lose a wall. 16 of 64 made-up
-  wrinkled strings fail with or without these fixes, kept as an ignored test, `wrinkled_strings_below_their_target_all_build`. It's the 24
+  wrinkled strings fail with or without these fixes, kept as an ignored test, `wrinkled_strings_below_their_target_all_build`. It's the 23
   above, and why RLs are so much cleaner. It wants looking at before anything else is built on grids.
 - **Roads running opposite ways on one wall.**
 - **Switchbacks.** The road reaching the end of the strip is the commonest stop.
