@@ -1251,6 +1251,77 @@ mod tests {
         assert!(narrowest(&through) < 1e-6, "going through takes the berm in to the road: {}", narrowest(&through));
     }
 
+    /// A face from a level top line along +x at RL `top`, going down to the south.
+    fn ramped_down(ramp: FaceRamp, steps: Vec<FaceStep<'_>>, top: f64) -> Face {
+        let line = string(&[[0.0, 0.0], [600.0, 0.0]], top);
+        project_face(&line, &level(top), OffsetSide::Left, FaceDirection::Down, &steps, &[ramp]).unwrap()
+    }
+
+    /// The first road turned upside down: at 10 % down a 45 degree wall 20 m high, 10 m wide, from a top line at RL
+    /// 120. It leaves the top line where it's put, runs 200 m in plan down to RL 100, and finishes 198.997 m along and
+    /// 20 m out to the south, the way the face goes down. Its pit-side edge is on that side, a road width out.
+    #[test]
+    fn a_road_down_a_straight_wall_holds_its_grade_and_its_width() {
+        let face = ramped_down(RAMP, vec![wall(FaceTarget::Rl(100.0), 45.0)], 120.0);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        let road = &face.roads[0];
+        let (pit, wall) = (&road.pit_edge, &road.wall_edge);
+        close(wall.plan_length(), 200.0, 1e-3);
+        for grade in rise_over_run(pit).into_iter().chain(rise_over_run(wall)) {
+            close(grade, -0.1, 1e-9);
+        }
+        let (start, end) = (wall.vertices[0], wall.vertices[wall.vertices.len() - 1]);
+        assert_eq!([start[0] - E, start[1] - N, start[2]], [100.0, 0.0, 120.0], "it starts on the top line where it's put");
+        close(end[0] - E, 100.0 + 200.0 * COS, 1e-3);
+        close(end[1] - N, -20.0, 1e-3);
+        close(end[2], 100.0, 1e-6);
+        for (p, q) in [(start, pit.vertices[0]), (end, pit.vertices[pit.vertices.len() - 1])] {
+            close(plan_gap(p, q), 10.0, 1e-6);
+            close(p[2], q[2], 1e-6);
+            assert!(q[1] < p[1], "the pit side is the side the face goes down to: {q:?} against {p:?}");
+        }
+        one_clean_sheet(&face);
+        // Half way down, the road is level across its width at RL 110.
+        let (p0, p1) = (pit.vertices[0], pit.vertices[pit.vertices.len() - 1]);
+        let middle = [(start[0] + end[0] + p0[0] + p1[0]) / 4.0 - E, (start[1] + end[1] + p0[1] + p1[1]) / 4.0 - N];
+        close(height(&face.surface, middle[0], middle[1]), 110.0, 1e-6);
+    }
+
+    /// A road's reasons for stopping are written as it climbs a face upside down; going down they're put right.
+    #[test]
+    fn a_road_going_down_says_why_it_stopped_the_right_way_up() {
+        use crate::face::going_down;
+        assert_eq!(going_down("it reaches the end of the wall at RL -105.3, short of the top"), "it reaches the end of the wall at RL 105.3, short of the bottom");
+        assert_eq!(going_down("it drops back to the toe at RL -30.0: the toe rises faster than 10.0 % here"), "it climbs back to the top line at RL 30.0: the top line falls faster than 10.0 % here");
+        assert_eq!(going_down("step 2: no wall at RL 0.0 or RL 12"), "step 2: no wall at RL 0.0 or RL -12");
+    }
+
+    /// Going down after the berm, mirroring the road up: down the first wall 200 m from RL 140 to 120, across the berm
+    /// level on one landing a berm width on along the road, and down the second 200 m more to RL 100. The berm keeps
+    /// its full 10 m.
+    #[test]
+    fn a_road_down_after_the_berm_crosses_it_level_and_goes_on_down() {
+        let on = FaceTarget::Rl(120.0);
+        let face = ramped_down(FaceRamp { after_berm: true, ..RAMP }, vec![wall(on, 45.0), berm(on, 10.0), wall(FaceTarget::Rl(100.0), 45.0)], 140.0);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        let road = &face.roads[0];
+        assert_eq!(road.steps, [0, 2]);
+        let edge = &road.wall_edge;
+        let (going, flat): (Vec<_>, Vec<_>) = edge.vertices.windows(2).filter(|w| plan_gap(w[0], w[1]) > 1e-6).partition(|w| (w[1][2] - w[0][2]).abs() > 1e-9);
+        close(going.iter().map(|w| plan_gap(w[0], w[1])).sum(), 400.0, 1e-3);
+        for w in &going {
+            close((w[1][2] - w[0][2]) / plan_gap(w[0], w[1]), -0.1, 1e-9);
+        }
+        assert_eq!(flat.len(), 1, "one landing: {:?}", edge.vertices);
+        close(flat[0][0][2], 120.0, 1e-6);
+        close(plan_gap(flat[0][0], flat[0][1]), 10.0 * (((1.0 - 0.1) / COS).powi(2) + 1.0).sqrt(), 1e-6);
+        close(edge.vertices.last().unwrap()[2], 100.0, 1e-6);
+        one_clean_sheet(&face);
+        let bench = |step: usize| face.benches.iter().find(|b| b.step == step).unwrap_or_else(|| panic!("no bench {step}"));
+        let (foot, next) = (&bench(0).crest, &bench(2).toe);
+        close(next.vertices.iter().map(|p| off_line(foot, *p)).fold(f64::INFINITY, f64::min), 10.0, 1e-6);
+    }
+
     /// A road bends easily across a berm: nowhere does it turn more than the taper's angle.
     #[test]
     fn a_road_eases_across_a_berm_with_no_step_in_it() {

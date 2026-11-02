@@ -189,15 +189,13 @@ pub fn level_floor(line: &Polyline, rl: f64) -> TriMesh {
 
 /// The whole face from a toe already on its grid, going one way. `register` is the surface the toe lies on.
 ///
-/// Roads are cut back into its walls as they're built, and only go on a face going up for now. If what's
-/// built on a road can't be, the road stops a wall lower, the highest road first, so a road stops at the last
-/// bench it can make, the face still builds and the run says why.
+/// Roads are cut back into its walls as they're built. On a face going down a road comes down from the top
+/// line, as it climbs the face upside down. If what's built on a road can't be, the road stops a wall short,
+/// the furthest road first, so a road stops at the last bench it can make, the face still builds and the run
+/// says why.
 ///
 /// A road with its end held has its start worked out here: see `face_with_held_ends`.
 pub fn project_face(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: FaceDirection, steps: &[FaceStep<'_>], ramps: &[FaceRamp]) -> Result<Face, GeomError> {
-    if direction == FaceDirection::Down && steps.iter().any(|step| ramps_of(step).is_some_and(|ramps| !ramps.is_empty())) {
-        return Err(GeomError::InvalidInput("a road only goes on a face going up for now".into()));
-    }
     if ramps.iter().any(|ramp| ramp.ends_at.is_some()) {
         return face_with_held_ends(toe, register, side, direction, steps, ramps);
     }
@@ -273,7 +271,8 @@ fn face_with_held_ends(toe: &Polyline, register: &TriMesh, side: OffsetSide, dir
         let at = [at[0], at[1], 0.0];
         let end = metres_along(toe, at);
         let bench_at = |step: usize| plain.benches.iter().find(|b| b.step >= step);
-        let rise = walls_of(steps, r).and_then(|[first, last]| Some(height_on(&bench_at(last)?.crest, at) - height_on(&bench_at(first)?.toe, at))).unwrap_or(0.0).max(0.0);
+        // Down as much as up: on a face going down the last crest is the lowest line.
+        let rise = walls_of(steps, r).and_then(|[first, last]| Some(height_on(&bench_at(last)?.crest, at) - height_on(&bench_at(first)?.toe, at))).unwrap_or(0.0).abs();
         let road = rise / ramp.grade;
         held.push(HeldEnd { ramp: r, end, start: (if ramp.back { end + road } else { end - road }).clamp(0.0, length), last: None, nudges: 0 });
     }
@@ -332,7 +331,9 @@ fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, directi
                 let highest = face.last_wall.iter().max_by_key(|(_, step)| **step).map(|(r, step)| (*r, *step));
                 let Some((r, step)) = highest else { return Err(e) };
                 limits.insert(r, face.walls_climbed[&r] - 1);
-                held_back.insert(r, NoRoad { ramp: r, step, at: [ramps[r].start[0], ramps[r].start[1], 0.0], why: format!("what's built on it can't be: {}", e.to_string().replace("invalid input: ", "")) });
+                let why = format!("what's built on it can't be: {}", e.to_string().replace("invalid input: ", ""));
+                let why = if direction == FaceDirection::Down { going_down(&why) } else { why };
+                held_back.insert(r, NoRoad { ramp: r, step, at: [ramps[r].start[0], ramps[r].start[1], 0.0], why });
             }
         }
     }
@@ -410,7 +411,51 @@ impl FaceParts {
             stretch.from[2] = -stretch.from[2];
             stretch.to[2] = -stretch.to[2];
         }
+        // Upside down, the edge a road climbed against its wall is the one under the wall above it the right way
+        // up, so the two edges swap: the pit side is still the side the face goes down to.
+        for road in &mut self.roads {
+            (road.pit_edge, road.wall_edge) = (mirrored_line(&road.wall_edge), mirrored_line(&road.pit_edge));
+        }
+        for stopped in &mut self.no_roads {
+            stopped.at[2] = -stopped.at[2];
+            stopped.why = going_down(&stopped.why);
+        }
     }
+}
+
+/// Why a road stopped, written for a road climbing a face upside down, put right for one coming down it: RLs the
+/// right way up, and the words that say which way it goes.
+pub(crate) fn going_down(why: &str) -> String {
+    const TURNED: [(&str, &str); 8] = [
+        ("the toe rises faster than", "the top line falls faster than"),
+        ("it can't leave the toe", "it can't leave the top line"),
+        ("it drops back to the toe", "it climbs back to the top line"),
+        ("short of the top", "short of the bottom"),
+        ("it starts on the road below it: move it along the toe", "it starts on the road above it: move it along the top line"),
+        ("the wall above it can't be built", "the wall below it can't be built"),
+        ("a way up the wall", "a way down the wall"),
+        ("the road's top isn't on the crest", "the road's foot isn't on the toe"),
+    ];
+    let mut why = TURNED.iter().fold(why.to_string(), |why, (up, down)| why.replace(up, down));
+    // Every RL a message gives comes from the face upside down.
+    let mut out = String::with_capacity(why.len());
+    while let Some(at) = why.find("RL ") {
+        let (before, rest) = why.split_at(at + 3);
+        out.push_str(before);
+        let end = rest.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).unwrap_or(rest.len());
+        match rest[..end].trim_end_matches('.').parse::<f64>() {
+            Ok(rl) => {
+                let number = &rest[..end].trim_end_matches('.');
+                let decimals = number.split('.').nth(1).map_or(0, str::len);
+                // Adding 0.0 turns -0.0 into 0.0, so RL 0 doesn't read "-0.0".
+                out.push_str(&format!("{:.*}", decimals, -rl + 0.0));
+                why = rest[number.len()..].to_string();
+            }
+            Err(_) => why = rest.to_string(),
+        }
+    }
+    out.push_str(&why);
+    out
 }
 
 /// One mesh, sharing vertices within a micrometre. A wall and a berm work out the same point apart, so the

@@ -185,7 +185,8 @@ fn a_design_runs_every_line_in_one_run_and_runs_again_over_itself() {
         Body::String(line) => line.vertices.clone(),
         _ => panic!("a toe is a string"),
     };
-    assert_eq!(toe_of("strip 1 Highwall toe 1"), toe_of("strip 1 Highwall down toe 1"));
+    // Going down, the string is the top of the first wall: its crest.
+    assert_eq!(toe_of("strip 1 Highwall toe 1"), toe_of("strip 1 Highwall down crest 1"));
 
     // Change a rule and run again: it replaces the last run, and one undo brings that back.
     let mut content = level_design(&[one, two], floor, roof);
@@ -1202,6 +1203,31 @@ fn two_ramps_on_one_wall_each_take_their_road() {
 
 /// A toe on an RL lies flat there, whatever heights its string had, and takes no surface: there's none in this
 /// project. At 45 degrees 40 m up is 40 m out, going up or down. A berm as the first row lies on what the toe
+/// A road comes down a face going down, from where its string crosses the top line: 40 m at 10 % is 400 m, from RL
+/// 100 to 60, with its pit-side edge out on the side the face goes down to. The top line is the first wall's crest.
+#[test]
+fn a_road_comes_down_a_face_going_down() {
+    let mut s = Session::with_builtins();
+    let string = created(&s.run("string.create", json!({ "name": "top", "layer": "strips", "points": [[E, N, 100.0], [E + 1000.0, N, 100.0]] })).unwrap())[0];
+    let across = ramp_string(&mut s, &[[100.0, -50.0], [100.0, 50.0]]);
+    let mut down = json!({ "name": "Down", "direction": "down", "register": { "kind": "rl", "rl": 100.0 }, "steps": [{ "step": "project", "to": { "kind": "rl", "rl": 60.0 }, "batter": 45.0, "ramps": ["A"] }] });
+    down["ramps"] = json!([{ "name": "A", "string": across, "fixed": "start", "heading": "along", "width": 10.0, "grade": 10.0 }]);
+    let lines = json!([{ "string": string, "profile": "Down", "side": "left", "run_on": [0.0, 0.0] }]);
+    let design = created(&s.run("face.save_design", json!({ "name": "down", "content": { "layer": "faces", "lines": lines, "profiles": [down] } })).unwrap())[0];
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    assert!(record.messages.iter().any(|m| m.starts_with("Ramp A: top: step 1, 400.0 m from RL 100.0 to 60.0")), "{:?}", record.messages);
+    let crest = pit_edge(&s, "top Down crest 1");
+    assert!(crest.vertices.iter().all(|p| (p[2] - 100.0).abs() < 1e-6), "the top line is the crest: {:?}", crest.vertices);
+    let toe = pit_edge(&s, "top Down toe 1");
+    assert!(toe.vertices.iter().all(|p| (p[2] - 60.0).abs() < 1e-6), "the foot is the toe: {:?}", toe.vertices);
+    let (pit, wall) = (pit_edge(&s, "top Down road A pit edge"), pit_edge(&s, "top Down road A wall edge"));
+    for edge in [&pit, &wall] {
+        assert!((edge.plan_length() - 400.0).abs() < 1e-3, "{}", edge.plan_length());
+        assert!((edge.vertices[0][2] - 100.0).abs() < 1e-6 && (edge.vertices.last().unwrap()[2] - 60.0).abs() < 1e-6, "{:?}", edge.vertices);
+    }
+    assert!(pit.vertices[0][1] < wall.vertices[0][1], "the pit side is south, where the face goes down to");
+}
+
 /// lies on, and a road from a flat toe up 40 m at 10 % is 400 m, with its entrance still on the RL.
 #[test]
 fn a_toe_on_an_rl_lies_flat_and_takes_no_surface() {
@@ -1225,8 +1251,9 @@ fn a_toe_on_an_rl_lies_flat_and_takes_no_surface() {
     };
     on("flat Up toe 1", 0.0, 100.0);
     on("flat Up crest 1", 40.0, 140.0);
-    on("flat Down toe 1", 0.0, 100.0);
-    on("flat Down crest 1", -40.0, 60.0);
+    // A wall going down starts from its crest and comes down to its toe.
+    on("flat Down crest 1", 0.0, 100.0);
+    on("flat Down toe 1", -40.0, 60.0);
     on("flat Berm toe 1", 20.0, 100.0);
     on("flat Berm crest 1", 60.0, 140.0);
 
