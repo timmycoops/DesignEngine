@@ -182,7 +182,7 @@ fn steps_less_old_ramps<'de, D: serde::Deserializer<'de>>(rows: D) -> Result<Vec
         .into_iter()
         .filter_map(|row| match row {
             SavedRow::Step(step) => Some(step),
-            SavedRow::Old(OldRow::Project { to, batter, condition, .. }) => Some(ProfileStep::Project { to, batter, condition, ramps: Vec::new() }),
+            SavedRow::Old(OldRow::Project { to, batter, condition, .. }) => Some(ProfileStep::Project { to, batter, condition, ramps: Vec::new(), turns: Vec::new() }),
             SavedRow::Old(_) => None,
         })
         .collect())
@@ -223,6 +223,10 @@ pub enum ProfileStep {
         /// several roads, one above the other, running the same way.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         ramps: Vec<String>,
+        /// Those of `ramps` that turn back before this wall: a switchback on a flat pad. Each is on the wall before
+        /// too (decision 0038).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        turns: Vec<String>,
     },
     /// A berm of a width (m). Its line registers on `on`, or on what the row above reached if that's left
     /// out. With `register` off it keeps its crest's heights instead. `condition` is how far the line may
@@ -457,6 +461,20 @@ fn check_ramps(profile: &FaceProfile, problems: &mut Vec<String>) {
             (Some(first), Some(last)) if last - first + 1 != climbed.len() => problems.push(format!("{name} has another wall in among its walls: a road climbs walls that come together")),
             _ => {}
         }
+        let turning: Vec<usize> = profile.steps.iter().enumerate().filter(|(_, step)| matches!(step, ProfileStep::Project { turns, .. } if turns.contains(&ramp.name))).map(|(k, _)| k).collect();
+        for k in &turning {
+            let place = walls.iter().position(|(at, _)| at == k);
+            let on_it = place.is_some_and(|p| walls[p].1.contains(&ramp.name));
+            let on_the_one_before = place.is_some_and(|p| p > 0 && walls[p - 1].1.contains(&ramp.name));
+            if !on_it {
+                problems.push(format!("{name} turns on step {} but isn't on that wall", k + 1));
+            } else if !on_the_one_before {
+                problems.push(format!("{name} turns on step {}, its first wall: a road turns back between two walls it's on", k + 1));
+            }
+        }
+        if !turning.is_empty() && ramp.fixed == RampFixed::End {
+            problems.push(format!("{name} has its end held and turns back: a road that turns starts where its string crosses, for now"));
+        }
     }
 }
 
@@ -484,9 +502,9 @@ mod tests {
                 condition: None,
                 ramps: Vec::new(),
                 steps: vec![
-                    ProfileStep::Project { to: StepTarget::Surface { id }, batter: StepValue::Rule("HW batter".into()), condition: Some(0.1), ramps: Vec::new() },
+                    ProfileStep::Project { to: StepTarget::Surface { id }, batter: StepValue::Rule("HW batter".into()), condition: Some(0.1), ramps: Vec::new(), turns: Vec::new() },
                     ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: true, condition: Some(0.1), min_bench: None },
-                    ProfileStep::Project { to: StepTarget::Rl { rl: 500.0 }, batter: StepValue::Rule("HW batter".into()), condition: None, ramps: Vec::new() },
+                    ProfileStep::Project { to: StepTarget::Rl { rl: 500.0 }, batter: StepValue::Rule("HW batter".into()), condition: None, ramps: Vec::new(), turns: Vec::new() },
                 ],
             }],
             rules: vec![WallRule { name: "HW batter".into(), value: RuleValue::Fixed { value: 70.0 } }],
@@ -586,7 +604,7 @@ mod tests {
         d.profiles.push(d.profiles[0].clone());
         assert!(d.problems().iter().any(|p| p.contains("Two profiles are called Highwall")));
         let mut d = design();
-        d.profiles[0].steps[0] = ProfileStep::Project { to: StepTarget::Rl { rl: 0.0 }, batter: StepValue::Number(70.0), condition: Some(30.0), ramps: Vec::new() };
+        d.profiles[0].steps[0] = ProfileStep::Project { to: StepTarget::Rl { rl: 0.0 }, batter: StepValue::Number(70.0), condition: Some(30.0), ramps: Vec::new(), turns: Vec::new() };
         assert!(d.problems().iter().any(|p| p.contains("Highwall step 1: a conditioning tolerance must be")));
         let mut d = design();
         d.profiles[0].condition = Some(5.0);
@@ -715,11 +733,35 @@ mod tests {
     #[test]
     fn a_ramp_climbs_walls_that_come_together() {
         let mut d = with_a_ramp();
-        d.profiles[0].steps.insert(2, ProfileStep::Project { to: StepTarget::Rl { rl: 200.0 }, batter: StepValue::Number(70.0), condition: None, ramps: Vec::new() });
+        d.profiles[0].steps.insert(2, ProfileStep::Project { to: StepTarget::Rl { rl: 200.0 }, batter: StepValue::Number(70.0), condition: None, ramps: Vec::new(), turns: Vec::new() });
         assert!(d.problems().iter().any(|p| p.contains("another wall in among its walls")), "{:?}", d.problems());
         let mut d = with_a_ramp();
         d.profiles[0].steps.insert(1, ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: true, condition: None, min_bench: None });
         assert!(d.problems().is_empty(), "a berm between its walls is fine: {:?}", d.problems());
+    }
+
+    /// A road turns back between two walls it's on, from where its string crosses, and the turn saves with the row
+    /// (decision 0038).
+    #[test]
+    fn a_ramp_turns_back_between_two_walls_it_is_on() {
+        let turning = |at: usize, fixed: RampFixed| {
+            let mut d = with_a_ramp();
+            d.profiles[0].ramps[0].fixed = fixed;
+            let ProfileStep::Project { turns, .. } = &mut d.profiles[0].steps[at] else { panic!("step {at} isn't a wall") };
+            turns.push("A".into());
+            d
+        };
+        let d = turning(2, RampFixed::Start);
+        assert!(d.problems().is_empty(), "{:?}", d.problems());
+        let text = serde_json::to_string(&d).unwrap();
+        assert!(text.contains(r#""turns":["A"]"#), "{text}");
+        assert_eq!(serde_json::from_str::<FaceDesign>(&text).unwrap(), d);
+        assert!(turning(0, RampFixed::Start).problems().iter().any(|p| p.contains("Ramp A on Highwall turns on step 1, its first wall")), "{:?}", turning(0, RampFixed::Start).problems());
+        assert!(turning(2, RampFixed::End).problems().iter().any(|p| p.contains("has its end held and turns back")));
+        let mut off = turning(2, RampFixed::Start);
+        let ProfileStep::Project { ramps, .. } = &mut off.profiles[0].steps[2] else { unreachable!() };
+        ramps.clear();
+        assert!(off.problems().iter().any(|p| p.contains("turns on step 3 but isn't on that wall")), "{:?}", off.problems());
     }
 
     #[test]

@@ -1019,8 +1019,8 @@ fn a_ramp_held_at_its_end_finds_its_start() {
 }
 
 /// A road across a berm through the commands, in the table as the panel saves it. Going after the berm, as a ramp
-/// does unless it says otherwise, it's 200 m up the two walls and a level landing across the 5 m berm, 5 m on along the
-/// road, which climbs at sin(angle) = 0.1 off the strike: 206.7 m. Going through, it's the 200 m in one grade.
+/// does unless it says otherwise, it's 200 m up the two walls and a level landing straight across the 5 m berm: 205.0 m
+/// (decision 0038). Going through, it's the 200 m in one grade.
 #[test]
 fn a_ramp_runs_up_the_walls_that_name_it_across_a_berm() {
     let mut s = Session::with_builtins();
@@ -1047,7 +1047,7 @@ fn a_ramp_runs_up_the_walls_that_name_it_across_a_berm() {
             "rules": [],
         })
     };
-    for (berm, length) in [(None, "206.7"), (Some("after"), "206.7"), (Some("through"), "200.0")] {
+    for (berm, length) in [(None, "205.0"), (Some("after"), "205.0"), (Some("through"), "200.0")] {
         let design = created(&s.run("face.save_design", json!({ "name": format!("across a berm {berm:?}"), "content": content(berm) })).unwrap())[0];
         let record = s.run("face.project", json!({ "design": design })).unwrap();
         let expected = format!("Ramp A: toe: steps 1 to 3, {length} m from RL 100.0 to 120.0");

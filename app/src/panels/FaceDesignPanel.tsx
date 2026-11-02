@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Crosshair, Play, Plus, Save, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Crosshair, Play, Plus, Save, Trash2, Undo2 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampBerm, type RampFixed, type RampHeading, type RuleValue, type StepTarget, type StepValue, type WallRule, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
@@ -341,7 +341,7 @@ function blankStep(kind: ProfileStep['step'], steps: ProfileStep[], surfaces: Ob
 function carriesOn(steps: ProfileStep[], at: number, rules: WallRule[]) {
   const [step, next] = [steps[at], steps[at + 1]];
   if (step.step !== 'project' || next?.step !== 'project') return false;
-  if ((step.ramps ?? []).join() !== (next.ramps ?? []).join()) return false;
+  if ((step.ramps ?? []).join() !== (next.ramps ?? []).join() || (next.turns ?? []).length > 0) return false;
   // A rule that changes along the wall is the same wall if both rows name it. By horizon goes row by row.
   const rule = rules.find((r) => r.name === step.batter)?.value;
   if (step.batter === next.batter && rule && rule.type !== 'by_horizon') return true;
@@ -374,7 +374,7 @@ function SurfaceOptions({ surfaces }: { surfaces: ObjectSummary[] }) {
 }
 
 /** One step of a profile. A row says where it finishes: a wall's target, or the surface a berm's line registers on. */
-function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged, blank, onChange, onMove, onRemove }: { number: number; step: ProfileStep; surfaces: ObjectSummary[]; rules: WallRule[]; above: string; carries: boolean; ramps: Ramp[]; bridged: (ramp: string) => boolean; blank: (kind: ProfileStep['step']) => ProfileStep; onChange: (s: ProfileStep) => void; onMove: (by: number) => void; onRemove: () => void }) {
+function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged, canTurn, blank, onChange, onMove, onRemove }: { number: number; step: ProfileStep; surfaces: ObjectSummary[]; rules: WallRule[]; above: string; carries: boolean; ramps: Ramp[]; bridged: (ramp: string) => Bridge; canTurn: (ramp: string) => boolean; blank: (kind: ProfileStep['step']) => ProfileStep; onChange: (s: ProfileStep) => void; onMove: (by: number) => void; onRemove: () => void }) {
   const target = targetOf(step);
   const surfaceValue = target?.kind === 'surface' ? target.id : target?.kind === 'rl' ? 'rl' : '';
   const setSurface = (value: string) => {
@@ -416,9 +416,9 @@ function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged
       {ramps.map(({ name }) => (
         <td key={name} className="px-0.5 py-0.5">
           {step.step === 'project' ? (
-            <RampCell name={name} on={(step.ramps ?? []).includes(name)} onChange={(on) => onChange({ ...step, ramps: on ? [...(step.ramps ?? []), name] : (step.ramps ?? []).filter((other) => other !== name) })} />
+            <RampCell name={name} on={onWall(step, name)} canTurn={canTurn(name)} onChange={(on) => onChange(withRamp(step, name, on))} />
           ) : (
-            bridged(name) && <span className="mx-auto block h-6 w-1" style={{ background: rampColour(name) }} title={`Ramp ${name} crosses this berm: the road is the bench here`} />
+            bridged(name) !== 'none' && <span className="mx-auto block h-6 w-1" style={{ background: rampColour(name) }} title={bridged(name) === 'turns' ? `Ramp ${name} turns back on this berm: a flat pad of the road both ways and the berm between` : `Ramp ${name} crosses this berm: the road is the bench here`} />
           )}
         </td>
       ))}
@@ -441,19 +441,41 @@ function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged
   );
 }
 
-/** Whether a ramp climbs a wall, filled in its colour if it does, so a ramp's column reads up the walls it climbs. */
-function RampCell({ name, on, onChange }: { name: string; on: boolean; onChange: (on: boolean) => void }) {
+/** How a berm carries a ramp. */
+type Bridge = 'none' | 'crosses' | 'turns';
+
+/** Whether a ramp is on a wall: not, climbing it, or turning back before it. */
+type OnWall = 'off' | 'on' | 'turn';
+
+function onWall(step: Extract<ProfileStep, { step: 'project' }>, ramp: string): OnWall {
+  if (!(step.ramps ?? []).includes(ramp)) return 'off';
+  return (step.turns ?? []).includes(ramp) ? 'turn' : 'on';
+}
+
+function withRamp(step: Extract<ProfileStep, { step: 'project' }>, ramp: string, on: OnWall): ProfileStep {
+  const ramps = (step.ramps ?? []).filter((other) => other !== ramp);
+  const turns = (step.turns ?? []).filter((other) => other !== ramp);
+  return { ...step, ramps: on === 'off' ? ramps : [...ramps, ramp], turns: on === 'turn' ? [...turns, ramp] : turns };
+}
+
+/** Whether a ramp climbs a wall, filled in its colour if it does, so a ramp's column reads up the walls it climbs. A
+ * click goes off, on, then turning back before the wall where the wall before holds the ramp too. */
+function RampCell({ name, on, canTurn, onChange }: { name: string; on: OnWall; canTurn: boolean; onChange: (on: OnWall) => void }) {
   const colour = rampColour(name);
+  const next: OnWall = on === 'off' ? 'on' : on === 'on' && canTurn ? 'turn' : 'off';
+  const what = on === 'turn' ? `Ramp ${name} turns back before this wall, on a flat pad across the berm below, and climbs it the other way. Click to take it off` : `Click if ramp ${name} climbs this wall${canTurn ? ', and again if it turns back before it on a flat pad, a switchback' : ''}. Walls it climbs must come together, and berms between them are crossed. A wall can hold several ramps, one above the other, all running the same way`;
   return (
     <button
       type="button"
-      className="mx-auto block h-6 w-5 rounded-sm border"
-      style={on ? { background: colour, borderColor: colour } : undefined}
-      aria-pressed={on}
-      aria-label={`Ramp ${name} on this wall`}
-      title={`Click if ramp ${name} climbs this wall. Walls it climbs must come together, and berms between them are crossed. A wall can hold several ramps, one above the other, all running the same way`}
-      onClick={() => onChange(!on)}
-    />
+      className="mx-auto flex h-6 w-5 items-center justify-center rounded-sm border text-white"
+      style={on !== 'off' ? { background: colour, borderColor: colour } : undefined}
+      aria-pressed={on !== 'off'}
+      aria-label={on === 'turn' ? `Ramp ${name} turns back before this wall` : `Ramp ${name} on this wall`}
+      title={what}
+      onClick={() => onChange(next)}
+    >
+      {on === 'turn' && <Undo2 className="size-3" />}
+    </button>
   );
 }
 
@@ -480,7 +502,7 @@ function RampRow({ ramp, stringName, onWalls, results, swap, onShow, onChange, o
           className={selectClass}
           value={ramp.berm ?? 'after'}
           aria-label="How it gets past a berm"
-          title="After berm: the berm keeps its full width and opens onto the top of the road, which crosses it level and starts up the next wall from its toe. Through berm: the road carries on up at its grade and the berm narrows to nothing where it comes through"
+          title="After berm: the berm keeps its full width and opens onto the top of the road, which crosses it level and straight across and starts up the next wall from its toe. Through berm: the road carries on up at its grade and the berm narrows to nothing where it comes through. A road that turns back on a berm always crosses it after"
           onChange={(e) => onChange({ berm: e.target.value as RampBerm })}
         >
           <option value="after">After berm</option>
@@ -515,12 +537,17 @@ function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfil
   const blank = (kind: ProfileStep['step']) => blankStep(kind, steps, surfaces, register, usualTolerance);
   const add = (kind: ProfileStep['step']) => onChange({ steps: [...steps, blank(kind)] });
   /** Whether a ramp crosses the berm at a row: it's on the walls either side of it. */
-  const bridged = (at: number, ramp: string) => {
-    const climbs = (from: ProfileStep[]) => {
-      const wall = from.find((s) => s.step === 'project');
-      return wall?.step === 'project' && (wall.ramps ?? []).includes(ramp);
-    };
-    return climbs(steps.slice(0, at).reverse()) && climbs(steps.slice(at + 1));
+  /** The first wall in `from`, if it holds the ramp. */
+  const climbedBy = (from: ProfileStep[], ramp: string) => {
+    const wall = from.find((s) => s.step === 'project');
+    return wall?.step === 'project' && (wall.ramps ?? []).includes(ramp) ? wall : undefined;
+  };
+  const climbsBefore = (at: number, ramp: string) => climbedBy(steps.slice(0, at).reverse(), ramp) !== undefined;
+  /** How a berm carries a ramp: as the bench under a road crossing it, as the pad the road turns back on, or not at all. */
+  const bridged = (at: number, ramp: string): Bridge => {
+    const next = climbedBy(steps.slice(at + 1), ramp);
+    if (!next || !climbsBefore(at, ramp)) return 'none';
+    return (next.turns ?? []).includes(ramp) ? 'turns' : 'crosses';
   };
   const setSteps = (next: ProfileStep[]) => onChange({ steps: next });
   const nameOf = (target: StepTarget) => (target.kind === 'rl' ? `RL ${target.rl}` : (surfaces.find((s) => s.id === target.id)?.name ?? 'missing'));
@@ -594,6 +621,7 @@ function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfil
                 carries={carriesOn(steps, k, rules)}
                 ramps={ramps}
                 bridged={(ramp) => bridged(k, ramp)}
+                canTurn={(ramp) => climbsBefore(k, ramp)}
                 blank={blank}
                 onChange={(s) => setSteps(replaceAt(steps, k, s))}
                 onMove={(by) => setSteps(moved(steps, k, by))}
@@ -810,7 +838,7 @@ export function FaceDesignPanel() {
   const removeRamp = (at: number) => {
     if (!profile) return;
     const { name, string } = (profile.ramps ?? [])[at];
-    setProfile({ ramps: (profile.ramps ?? []).filter((_, k) => k !== at), steps: profile.steps.map((s) => (s.step === 'project' ? { ...s, ramps: (s.ramps ?? []).filter((other) => other !== name) } : s)) });
+    setProfile({ ramps: (profile.ramps ?? []).filter((_, k) => k !== at), steps: profile.steps.map((s) => (s.step === 'project' ? withRamp(s, name, 'off') : s)) });
     // A string drawn for the ramp goes with it. Undo brings it back.
     const used = draft?.profiles.some((p) => (p.ramps ?? []).some((r) => r.string === string && (p !== profile || r.name !== name)));
     if (!used && objects.find((o) => o.id === string)?.name === `Ramp ${name}`) void runRecord('object.delete', { object: string });

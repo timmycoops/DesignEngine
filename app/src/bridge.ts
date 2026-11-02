@@ -430,8 +430,9 @@ export type StepValue = number | string;
 
 /** `condition` is how far the line may move in plan when it's cleaned (m); null leaves it as it is. */
 export type ProfileStep =
-  /** `ramps` names the ramps that climb this wall. A wall takes one road a strip for now. */
-  | { step: 'project'; to: StepTarget; batter: StepValue; condition: number | null; ramps?: string[] }
+  /** `ramps` names the ramps that climb this wall, lowest first. `turns` names those of them that turn back before it, on
+   * a flat pad across the berm below: each is on the wall before too. */
+  | { step: 'project'; to: StepTarget; batter: StepValue; condition: number | null; ramps?: string[]; turns?: string[] }
   | { step: 'berm'; on: StepTarget | null; width: StepValue; register: boolean; condition: number | null; min_bench?: number | null };
 
 /** The way a road runs along its string. */
@@ -440,8 +441,8 @@ export type RampHeading = 'along' | 'back';
 /** Which end of a road is where its string crosses. With its end there, the run moves its start along the toe until it comes out there. */
 export type RampFixed = 'start' | 'end';
 
-/** How a road gets past a berm between two walls it climbs: after it, crossing the full berm level at 45 degrees to
- * start up the next wall from its toe, or through it at its grade, with the berm narrowing to nothing at the road. */
+/** How a road gets past a berm between two walls it climbs: after it, crossing the full berm level and straight across
+ * to start up the next wall from its toe, or through it at its grade, with the berm narrowing to nothing at the road. */
 export type RampBerm = 'after' | 'through';
 
 /** A road up the walls that name it, on every strip its string crosses. */

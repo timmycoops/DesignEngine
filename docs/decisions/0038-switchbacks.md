@@ -1,0 +1,85 @@
+# 0038 — Switchbacks on flat pads, and landings in line with the road
+
+Date: 2026-11-03 · Status: accepted (Tim, 2026-11-03: "Yes, build them"; then "flat rls with a flat pad for a
+switchback would be a standard terrace design for a coal mine and a metals design (metals may have non straight walls
+though)"). The second part after 0037. The line past a turn is still open: see the end.
+
+## Why
+
+Tim's back strip from Deswik (PIT A, kept local) comes down eleven 45° walls of 30 m with 10 m berms, on a 40 m road at
+10 % that turns back six times on flat pads. After 0037 our road came down it but couldn't turn, and crossed each berm a
+berm width on along itself (0035), where Deswik's goes straight across. Tim's message makes this the standard terrace
+design, in coal and in metals, where walls curve.
+
+## Decision
+
+1. **A wall row can turn a ramp back before it** (`turns` on the row, beside `ramps`). The road climbs to the top of the
+   wall below, crosses the berm straight across from its wall-side top, and climbs this wall the other way, from the
+   berm's line, as a fresh road with its own entrance. The pad is the two roads and the berm between them, level. A
+   turning ramp must be on this wall and the wall before; a ramp with its end held can't turn yet. A road that turns
+   always crosses its berm after it, never through.
+2. **A road after the berm crosses it straight across, in line with its top,** as Deswik's does, in place of 0035's
+   landing a berm width on along the road. The road's top crossing is carried on out until it meets the berm's line,
+   and the next stretch starts there. A road climbs at an angle to its wall, so its top runs a little back: 10 m across
+   and a metre back at 10 % on 45°. Deswik's landings measure 10 m out and 1.3 m back.
+3. **Where the road is as wide as the berm or wider,** the next stretch starts on the top of the last, the berm's line runs
+   down that top, and there's no berm where the two roads meet: the road just carries on, shifted the berm's width. A
+   gap under 0.5 m counts as meeting, since a berm that narrow between two walls of no height is no berm. Where the road
+   is narrower, the berm closes in to the road's top by the road's width. Away from the road the berm keeps its full width.
+4. **The berm's line steps round the road ahead of it, the way the road was going.** With a road as wide as the berm, the
+   line behind and the line ahead are about as near the road's top as each other, so nearness can't tell which way to go.
+5. **The sheet is split where two pieces meet part way along an edge.** A road wider than the berm starts its next stretch
+   part way across the last one's top, so the triangles there are split at that point. Nothing moves.
+6. **The Face design panel** cycles a ramp's cell off, on, then turning (a U-turn mark) where the wall before holds the ramp.
+   A berm under a turn says so.
+
+Where the berm's line can't be read this way, the road falls back to 0035's landing, as before.
+
+## Results
+
+Known answers, all exact to 1 µm unless noted:
+
+- Two 45° walls with a 10 m berm and a 10 m road at 10 % after the berm: 400 m of climb, one landing across the first
+  road's top, 10 m across and 1 m back, and the berm 10 m wide everywhere but the roads' own corners. Roads of 4, 9.8,
+  10.2, 25 and 40 m on the same walls each give one clean sheet with the berm whole. The landing is 10.05 m except where
+  road and berm are within 0.5 m of each other's width.
+- The same going down, mirrored.
+- A switchback: 400 m of climb, one pad, the second road starting a road width and the berm out from the first road's
+  top, square to the crest, and running back west to RL 140. The pad is level at RL 120.
+- A wall curving round a centre 600 m away, as a metals pit's does, with a road turning back twice up three walls: 600 m
+  of climb, two pads, RL 160 at the top, one clean sheet with nothing crossing.
+
+Tim's back strip, our road with Deswik's six turns, where each leg's wall-side edge starts and ends against Deswik's:
+
+| | Before (45° landings) | Now |
+|---|---|---|
+| Leg starts and ends off Deswik's | 2.7 to 24 m | 0 to 16.3 m (starts 0 to 13.7 m) |
+| Landing across a berm | 13.5 m along the road | 9.9 m out, 1.1 m back (Deswik: 9.9 m out, 1.3 m back) |
+
+The face is one sheet with nothing crossing: 11 walls, 561 triangles out, 31 ms, road 3,639 m. What's left is Deswik's
+first leg, set to a 37° face, which puts it 10 m further out, carried down every leg below. On top of that, Deswik's legs
+heading west are about 1.5 m shorter along the strip than ours, so the along-strip gap grows by a metre or so per turn.
+
+The made-up grid pit (0034), against the commit before this one:
+
+| Design | Faults before | Now | Roads to the top before | Now |
+|---|---|---|---|---|
+| Grid ramps | 9 roads stopped | 7 | 11 | 13 |
+| Flat toe to grids | 2 | 2 | 18 | 18 |
+| Grid toe to RLs | 3 | 3 | 17 | 17 |
+| Whole pit | 30 faults | 28 | | |
+
+Every road still stopped stopped before too, at the old "a wall reaches past the target with no crest on it". Grid
+ramps runs in 10.9 s against 9.7 s. The ramp template's five strips are clean, each road 1,200 m up and 40 m across its
+two berms.
+
+## What this leaves
+
+- **The line past a turn.** Past the turn the line behind the new leg is pushed out by the road as an entrance is: two road
+  widths as far as the first road's top took the crest back, and one road width from there to the end. Deswik pushes only
+  the corner at the leg's start, a road width, and joins it straight to the line's next vertex, so its join runs 9 to 94 m
+  on the back strip, wherever the string's next vertex happened to be. On a line registered on a grid there's a vertex
+  every grid cell, so the same rule would join within one cell. Tim is to choose between that rule and a set join.
+- **A face angle set on a leg,** as Deswik's first leg has at 37°.
+- **A turn with the end held,** and graded switchbacks with a radius.
+- **The grade on the pit-side edge on bends,** going down.
