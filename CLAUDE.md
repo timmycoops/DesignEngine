@@ -29,6 +29,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 | Python | PyO3 bindings in `crates/zd-py` from Phase 1, built with maturin (reconciliation and test scripts run from Python) |
 | Package manager (JS) | pnpm |
 | Zips | `zip` crate, deflate only (`docs/decisions/0019-solids-by-the-thousand.md`) |
+| Deswik XML | `quick-xml` and `base64` (`docs/decisions/0036-deswik-drawings.md`) |
 
 ## Engine rules (non-negotiable)
 
@@ -130,8 +131,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 - Solids come by the thousand as a zip or a folder (Spry exports a zip; Deswik imports one): `solid.import_many`
   takes either in one run. See `docs/decisions/0019-solids-by-the-thousand.md`.
 - Then: OMF v1 and v2, and an export to Seequent Evo schemas (triangle mesh, design geometry).
-- Vulcan formats are read, not written. Deswik `.dcf` has no public spec; exchange with Deswik through DXF
-  (R12, confirmed reading at the same coordinates) or OMF.
+- Vulcan formats are read, not written. Deswik `.dcf` drawings are read, not written: a zip of VectorDraw XML layers,
+  read by the layers picked, with projection details kept on strings and Deswik's volumes on meshes
+  (`docs/decisions/0036-deswik-drawings.md`). Exchange back into Deswik through DXF (R12, confirmed reading at the same
+  coordinates) or OMF. Spry `.spry` projects (SQLite) come next.
 
 ## Reference material
 

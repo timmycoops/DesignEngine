@@ -496,7 +496,7 @@ impl Reader {
 /// The points strictly between `a` and `b` on the arc of `bulge` (the tangent of a quarter of the
 /// included angle, positive counter-clockwise), with no chord farther than [`ARC_SAGITTA`] from
 /// the arc. Worked about `a`, so mine grid coordinates keep their precision.
-fn arc_points(a: [f64; 2], b: [f64; 2], bulge: f64) -> Vec<[f64; 2]> {
+pub(crate) fn arc_points(a: [f64; 2], b: [f64; 2], bulge: f64) -> Vec<[f64; 2]> {
     let (ux, uy) = (b[0] - a[0], b[1] - a[1]);
     let chord = ux.hypot(uy);
     if chord == 0.0 || !bulge.is_finite() {

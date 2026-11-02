@@ -15,7 +15,7 @@ use tauri::{AppHandle, State, Webview};
 use zd_commands::{LogEntry, RunRecord, Session};
 use zd_core::{Attributes, Body, Crossings, FaceDesign, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, SeamModel, TriMesh};
 use zd_geom::{SectionPlane, StackHorizon, SurfaceRayCaster, stack_issue_nodes, triangulate_grid};
-use zd_io::read_stack_grids;
+use zd_io::{list_deswik_layers, read_stack_grids};
 
 use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_section, encode_triangulation};
 use crate::section::{SectionCut, add_selected, pick_on_section, section_groups, snap_on_section};
@@ -332,6 +332,24 @@ pub fn set_layer_visible(layer: LayerId, visible: bool, state: State<'_, AppStat
 #[tauri::command]
 pub fn run_log(state: State<'_, AppState>) -> Vec<LogEntry> {
     state.app.lock().unwrap().session.log().to_vec()
+}
+
+/// A layer of a Deswik drawing, to pick from before `deswik.import`.
+#[derive(Serialize)]
+pub struct DeswikLayerRow {
+    name: String,
+    bytes: u64,
+}
+
+/// The layers of a Deswik `.dcf`, from its zip's directory alone (decision 0036).
+#[tauri::command]
+pub async fn deswik_layers(path: String) -> Result<Vec<DeswikLayerRow>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let layers = list_deswik_layers(Path::new(&path)).map_err(|e| format!("{path}: {e}"))?;
+        Ok(layers.into_iter().map(|l| DeswikLayerRow { name: l.name, bytes: l.bytes }).collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(Serialize)]

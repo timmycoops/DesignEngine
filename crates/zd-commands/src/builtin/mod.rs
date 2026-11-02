@@ -1,7 +1,8 @@
 //! The engine's own commands. Strings (workstream 6): create, vertex edits, grade, offset, drape,
 //! elevation, reverse, close, split, join, smooth and filter. Exchange (workstream 4): strings in
-//! from DXF and CSV, objects out to DXF and CSV.
+//! from DXF and CSV, objects out to DXF and CSV. Deswik drawings in (decision 0036).
 
+mod deswik;
 mod exchange;
 mod face;
 mod grid;
@@ -12,6 +13,7 @@ mod solid;
 mod string;
 mod surface;
 
+pub use deswik::{ImportDeswik, ImportDeswikParams, MeshesAs};
 pub use exchange::{ExportCsv, ExportDxf, ExportParams, ImportStrings, ImportStringsParams};
 pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParams, SaveDesign, SaveDesignParams};
 pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
@@ -60,6 +62,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(SolidFromMesh);
     registry.register(ImportSolid);
     registry.register(ImportSolids);
+    registry.register(ImportDeswik);
     registry.register(CutBySurface);
     registry.register(ProjectStep);
     registry.register(SaveDesign);

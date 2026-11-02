@@ -4834,7 +4834,9 @@ version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
+ "base64 0.22.1",
  "parquet",
+ "quick-xml",
  "serde",
  "serde_json",
  "zd-core",

@@ -84,7 +84,7 @@ pub struct ImportSolidParams {
     pub fill_limit: f64,
 }
 
-fn default_fill_limit() -> f64 {
+pub(crate) fn default_fill_limit() -> f64 {
     0.10
 }
 
@@ -213,14 +213,14 @@ impl Command for ImportSolids {
 
 /// How a file's mesh is cleaned on its way to a solid.
 #[derive(Debug, Clone, Copy)]
-struct Cleaning {
-    weld_tolerance: f64,
-    repair: bool,
-    fill_limit: f64,
+pub(crate) struct Cleaning {
+    pub(crate) weld_tolerance: f64,
+    pub(crate) repair: bool,
+    pub(crate) fill_limit: f64,
 }
 
 impl Cleaning {
-    fn checked(self) -> Result<Self, CommandError> {
+    pub(crate) fn checked(self) -> Result<Self, CommandError> {
         if !(self.weld_tolerance.is_finite() && self.weld_tolerance >= 0.0) {
             return Err(CommandError::Invalid(format!("tolerance {} must be zero or more", self.weld_tolerance)));
         }
@@ -232,11 +232,11 @@ impl Cleaning {
 }
 
 /// A solid made from one file, with what was done to it on the way.
-struct ImportedSolid {
-    solid: Solid,
-    attributes: Attributes,
+pub(crate) struct ImportedSolid {
+    pub(crate) solid: Solid,
+    pub(crate) attributes: Attributes,
     /// The run record's lines for this file.
-    messages: Vec<String>,
+    pub(crate) messages: Vec<String>,
     log: RepairLog,
     taken_apart: bool,
 }
@@ -268,8 +268,8 @@ fn describe_selection(selection: &MeshSelection) -> String {
 
 /// What a run of many imports did, summed.
 #[derive(Default)]
-struct ImportTally {
-    solids: usize,
+pub(crate) struct ImportTally {
+    pub(crate) solids: usize,
     triangles: usize,
     volume: f64,
     thin: usize,
@@ -283,7 +283,7 @@ struct ImportTally {
 }
 
 impl ImportTally {
-    fn add(&mut self, imported: &ImportedSolid) {
+    pub(crate) fn add(&mut self, imported: &ImportedSolid) {
         let log = &imported.log;
         self.solids += 1;
         self.triangles += imported.solid.mesh().triangle_count();
@@ -298,7 +298,7 @@ impl ImportTally {
         self.triangles_flipped += log.orient.triangles_flipped;
     }
 
-    fn describe(&self, tolerance: f64, ms: f64) -> String {
+    pub(crate) fn describe(&self, tolerance: f64, ms: f64) -> String {
         let mut parts = vec![format!("{} solids imported, {} triangles, {:.3} m3 in all, {ms:.0} ms", self.solids, self.triangles, self.volume)];
         parts.push(format!(
             "repair at {}: {} vertices welded (largest move {}), {} triangles and {} unused vertices dropped, {} triangles flipped",
@@ -323,7 +323,6 @@ impl ImportTally {
 /// A file's mesh as a solid: repaired, closed if asked, checked by the solid rules. `place` says
 /// where the file is, `name` what to call the solid.
 fn solid_from_file(read: SurfaceImport, place: &str, name: &str, cleaning: Cleaning) -> Result<ImportedSolid, CommandError> {
-    let Cleaning { weld_tolerance, repair, fill_limit } = cleaning;
     let (read, read_log) = match read {
         SurfaceImport::Vulcan(vulcan) => {
             let line = describe_vulcan(&vulcan);
@@ -337,8 +336,15 @@ fn solid_from_file(read: SurfaceImport, place: &str, name: &str, cleaning: Clean
             return Err(CommandError::Invalid(format!("{place} is a grid: import it as a surface")));
         }
     };
+    let (welded, log) = repair_mesh(&read, cleaning.weld_tolerance);
+    solid_from_welded(welded, log, read_log, place, name, cleaning)
+}
+
+/// A mesh through the repair step's weld (`log` says what it did) as a solid: closed if asked,
+/// checked by the solid rules. `read_log` says what the reader did.
+pub(crate) fn solid_from_welded(welded: TriMesh, log: RepairLog, read_log: String, place: &str, name: &str, cleaning: Cleaning) -> Result<ImportedSolid, CommandError> {
+    let Cleaning { weld_tolerance, repair, fill_limit } = cleaning;
     let mut attributes = Attributes::new();
-    let (welded, log) = repair_mesh(&read, weld_tolerance);
     if welded.triangles.is_empty() {
         return Err(CommandError::Invalid(format!("{place} holds no triangles ({read_log})")));
     }

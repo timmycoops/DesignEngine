@@ -28,6 +28,8 @@ import { cn } from 'cn';
 import {
   benchConfig,
   buildSnapIndex,
+  type DeswikLayer,
+  deswikLayers,
   type LogEntry,
   newProject,
   type ObjectSummary,
@@ -56,6 +58,7 @@ import {
 } from './design-system/ui/dropdown-menu';
 import { Separator } from './design-system/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './design-system/ui/tooltip';
+import { type DeswikChoice, DeswikImportDialog } from './panels/DeswikImportDialog';
 import { IssueMarkers } from './viewport/markers';
 import { type SeamShown, SceneSync } from './viewport/sceneSync';
 import { planPoint, SectionView } from './viewport/section';
@@ -151,6 +154,7 @@ export default function App() {
   const seamsRef = useRef<SeamShown[]>([]);
   const selectedRef = useRef<string | null>(null);
   const [marked, setMarked] = useState<string[]>([]);
+  const [deswikFile, setDeswikFile] = useState<{ path: string; layers: DeswikLayer[] } | null>(null);
   const markersRef = useRef<IssueMarkers | null>(null);
   const crossingMarkersRef = useRef<IssueMarkers | null>(null);
   /** An issue to fly to once its horizon has loaded. */
@@ -421,6 +425,27 @@ export default function App() {
       await run('solid.import_many', { paths, layer: 'solids', repair });
     });
 
+  /** Lists a Deswik drawing's layers to pick from; the dialog then imports those ticked (decision 0036). */
+  const onImportDeswik = () =>
+    attempt(async () => {
+      const picked = await open({ title: 'Pick a Deswik drawing', filters: [{ name: 'Deswik drawings', extensions: ['dcf'] }] });
+      if (!picked || Array.isArray(picked)) return;
+      setStatus({ text: `Listing the layers of ${picked}…` });
+      const layers = await deswikLayers(picked);
+      setStatus({ text: `${layers.length} layers in ${picked}: tick those to import` });
+      setDeswikFile({ path: picked, layers });
+    });
+
+  const importDeswik = (choice: DeswikChoice) => {
+    const file = deswikFile;
+    setDeswikFile(null);
+    if (!file) return;
+    void attempt(async () => {
+      setStatus({ text: `Importing ${choice.layers.length} layers from ${file.path}…` });
+      await run('deswik.import', { path: file.path, layers: choice.layers, meshes: choice.meshes, repair: choice.repair, layer: choice.layer || null });
+    });
+  };
+
   const onImportStrings = () =>
     attempt(async () => {
       const picked = await open({ multiple: true, filters: [{ name: 'Strings', extensions: ['dxf', 'csv'] }] });
@@ -625,6 +650,9 @@ export default function App() {
           <ToolButton tip="Import strings (DXF polylines and lines, or CSV with x, y and z columns)" onClick={onImportStrings}>
             <FileInput /> Strings
           </ToolButton>
+          <ToolButton tip="Import layers of a Deswik drawing (.dcf): strings with their projection details, surfaces and solids" onClick={onImportDeswik}>
+            <FileInput /> Deswik
+          </ToolButton>
           <ToolButton tip="Import a Vulcan grid: pick a roof, floor or topography, and the grids of that name come with it" onClick={onImportVulcan}>
             <Layers3 /> Vulcan grid
           </ToolButton>
@@ -777,6 +805,7 @@ export default function App() {
           </span>
         </footer>
       </div>
+      <DeswikImportDialog file={deswikFile} onCancel={() => setDeswikFile(null)} onImport={importDeswik} />
     </TooltipProvider>
   );
 }
