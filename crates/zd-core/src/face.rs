@@ -117,12 +117,6 @@ impl FaceProfile {
         let climbs = |step: &ProfileStep| matches!(step, ProfileStep::Project { ramps, .. } if ramps.iter().any(|name| name == ramp));
         Some([self.steps.iter().position(climbs)?, self.steps.iter().rposition(climbs)?])
     }
-
-    /// Whether a wall row names both of two ramps.
-    pub fn share_a_wall(&self, ramp: &str, other: &str) -> bool {
-        let names = |ramps: &[String], ramp: &str| ramps.iter().any(|name| name == ramp);
-        self.steps.iter().any(|step| matches!(step, ProfileStep::Project { ramps, .. } if names(ramps, ramp) && names(ramps, other)))
-    }
 }
 
 /// Rows from earlier ways of saving ramps, which designs saved then still have to open with. Ramps were rows in
@@ -584,7 +578,7 @@ mod tests {
         assert!(d.problems().is_empty(), "{:?}", d.problems());
     }
 
-    /// Two ramps can name one wall: which of them gets a road comes down to the strips their strings cross.
+    /// Two ramps can name one wall, and a strip they both cross takes a road for each.
     #[test]
     fn a_wall_can_name_two_ramps() {
         let mut d = with_a_ramp();
@@ -594,7 +588,6 @@ mod tests {
         assert_eq!(d.profiles[0].walls_of("A"), Some([0, 2]));
         assert_eq!(d.profiles[0].walls_of("B"), Some([0, 0]));
         assert_eq!(d.profiles[0].walls_of("C"), None);
-        assert!(d.profiles[0].share_a_wall("A", "B"));
         name_on_wall(&mut d, 0, "C");
         assert!(d.problems().iter().any(|p| p.contains("step 1 uses a ramp that isn't there: C")), "{:?}", d.problems());
     }
