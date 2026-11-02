@@ -29,3 +29,6 @@ bench/out/
 .venv/
 __pycache__/
 *.pyd
+
+# Made by testdata/synthetic/grid_template.py
+testdata/synthetic/grids/

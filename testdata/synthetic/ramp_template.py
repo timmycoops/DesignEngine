@@ -37,16 +37,17 @@ def made(record):
     return [o["id"] for o in record["outputs"]]
 
 
-def strips(s):
-    base = made(s.run("string.create", name="Base toe", layer="toes", points=[at(x, y) for x, y in BASE]))[0]
-    offsets = made(s.run("string.offset", string=base, distance=STRIP_WIDTH, side="left", times=STRIPS - 1, name="Toe"))
+def strips(s, count=STRIPS, z=TOE_RL):
+    base = made(s.run("string.create", name="Base toe", layer="toes", points=[at(x, y, z) for x, y in BASE]))[0]
+    offsets = made(s.run("string.offset", string=base, distance=STRIP_WIDTH, side="left", times=count - 1, name="Toe"))
     # Numbered south to north by a line across them all.
-    s.run("string.number_across", {"strings": [base, *offsets], "from": at(1750.0, -100.0), "to": at(1750.0, 500.0), "start": 1})
+    north = STRIP_WIDTH * count + 200.0
+    s.run("string.number_across", {"strings": [base, *offsets], "from": at(1750.0, -100.0), "to": at(1750.0, north), "start": 1})
     return [base, *offsets]
 
 
-def ramp_string(s, name, x):
-    return made(s.run("string.create", name=name, layer="ramp strings", points=[at(x, -100.0), at(x, 500.0)]))[0]
+def ramp_string(s, name, x, north=500.0):
+    return made(s.run("string.create", name=name, layer="ramp strings", points=[at(x, -100.0), at(x, north)]))[0]
 
 
 def design(s, toes_layer, ramp_a, ramp_b):
