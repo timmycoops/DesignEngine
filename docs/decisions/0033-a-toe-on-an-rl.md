@@ -64,7 +64,8 @@ the top of 33, with those that came out away from where they were held in bracke
 - **Held ends land more often.** With a toe on his grid going to RLs, 21 of 30 roads at the top land where they were held, against 9
   of 30 before item 5. The one face in 88 with triangles crossing in 0032 was a first guess, and it's gone.
 - **PIT B,** the run of 0030: 8 runs, 44 faces, all one sheet with nothing crossing, 315 to 405 ms held at the start and 1,544 to
-  2,113 ms held at the end.
+  2,113 ms held at the end. Run again the same evening, with and without item 6, it made the same triangles to the one and took 400
+  to 610 ms and 2.2 to 3.3 s, so the first timings were low, not item 6 slow.
 - Toes on grids are no faster: to grids, 473 to 1,247 ms from the toe and 2,551 to 4,658 ms held at the end.
 
 ## What this leaves
