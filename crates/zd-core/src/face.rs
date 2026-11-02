@@ -110,6 +110,22 @@ pub struct Ramp {
     pub width: f64,
     /// Rise over plan run on the inside edge, the pit side (%).
     pub grade: f64,
+    /// How it gets past a berm on its way up. Designs saved before this take the default.
+    #[serde(default)]
+    pub berm: RampBerm,
+}
+
+/// How a road gets past a berm between two walls it climbs. See `docs/decisions/0035-ramps-after-the-berm.md`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RampBerm {
+    /// The berm keeps its full width and opens onto the top of the road. The road crosses it level at 45 degrees
+    /// and starts up the next wall from its toe.
+    #[default]
+    After,
+    /// The road carries on up at its grade. The berm narrows to nothing where the road comes up through it, and
+    /// opens out again ahead of it.
+    Through,
 }
 
 impl FaceProfile {
@@ -581,7 +597,18 @@ mod tests {
     }
 
     fn ramp() -> Ramp {
-        Ramp { name: "A".into(), string: ObjectId::new(), fixed: RampFixed::End, heading: RampHeading::Along, width: 30.0, grade: 10.0 }
+        Ramp { name: "A".into(), string: ObjectId::new(), fixed: RampFixed::End, heading: RampHeading::Along, width: 30.0, grade: 10.0, berm: RampBerm::After }
+    }
+
+    /// A ramp goes past a berm after it unless it says through, and one saved before it could say goes after.
+    #[test]
+    fn a_ramp_goes_after_the_berm_unless_it_says_through() {
+        let through = Ramp { berm: RampBerm::Through, ..ramp() };
+        let text = serde_json::to_string(&through).unwrap();
+        assert!(text.contains(r#""berm":"through""#), "{text}");
+        assert_eq!(serde_json::from_str::<Ramp>(&text).unwrap(), through);
+        let saved = r#"{ "name": "A", "string": "55555555555555555555555555555555", "fixed": "end", "heading": "along", "width": 30, "grade": 10 }"#;
+        assert_eq!(serde_json::from_str::<Ramp>(saved).unwrap().berm, RampBerm::After);
     }
 
     /// Names the ramp on a wall row of the first profile.

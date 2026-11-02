@@ -902,7 +902,7 @@ fn ramps_across_real_strips() {
 /// with a saved design as JSON, and `ZD_STRIP` the strip's name. `ZD_RLS` lists RLs for the walls to step up to,
 /// separated by `;`, or without it the walls go to the design's own surfaces. `ZD_TOE_RL` lays the toe flat on an RL,
 /// or without it the toe goes on the design's own surface. Strings named `Ramp ...` are taken as ramps, all on every
-/// wall.
+/// wall, going past berms as `ZD_RAMP_BERM` says, after them if it's not set.
 #[test]
 #[ignore = "needs ZD_PROJECT, ZD_DESIGN and ZD_STRIP"]
 fn several_roads_on_one_real_strip() {
@@ -927,8 +927,9 @@ fn several_roads_on_one_real_strip() {
         }
         steps.push(json!({ "step": "project", "to": to, "batter": batter, "condition": 0.1, "ramps": names }));
     }
+    let past_berm = std::env::var("ZD_RAMP_BERM").unwrap_or_else(|_| "after".into());
     for (fixed, heading) in [("start", "back"), ("end", "back"), ("start", "along"), ("end", "along")] {
-        let ramps: Vec<serde_json::Value> = strings.iter().map(|(name, id)| json!({ "name": name, "string": id, "fixed": fixed, "heading": heading, "width": width, "grade": 10.0 })).collect();
+        let ramps: Vec<serde_json::Value> = strings.iter().map(|(name, id)| json!({ "name": name, "string": id, "fixed": fixed, "heading": heading, "width": width, "grade": 10.0, "berm": past_berm })).collect();
         let content = json!({ "layer": format!("roads {fixed} {heading}"), "lines": [{ "string": strip, "profile": "Up", "side": "right", "run_on": [100.0, 100.0] }], "profiles": [{ "name": "Up", "direction": "up", "register": register, "condition": 0.1, "steps": steps, "ramps": ramps }], "rules": [] });
         let design = created(&s.run("face.save_design", json!({ "name": format!("{fixed} {heading}"), "content": content })).unwrap())[0];
         let started = Instant::now();
@@ -1016,30 +1017,41 @@ fn a_ramp_held_at_its_end_finds_its_start() {
     assert!((pit.vertices.last().unwrap()[0] - E - 260.0).abs() <= 0.05, "{:?}", pit.vertices.last());
 }
 
-/// A road across a berm through the commands, in the table as the panel saves it.
+/// A road across a berm through the commands, in the table as the panel saves it. Going after the berm, as a ramp
+/// does unless it says otherwise, it's 200 m up the two walls and a level landing across the 5 m berm, 5 m on along the
+/// road, which climbs at sin(angle) = 0.1 off the strike: 206.7 m. Going through, it's the 200 m in one grade.
 #[test]
 fn a_ramp_runs_up_the_walls_that_name_it_across_a_berm() {
     let mut s = Session::with_builtins();
     let floor = level_surface(&mut s, "floor", 100.0);
     let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E + 10.0, N + 30.0, 0.0], [E + 295.0, N + 30.0, 0.0]] })).unwrap())[0];
     let across = ramp_string(&mut s, &[[30.0, 20.0], [30.0, 40.0]]);
-    let content = json!({
-        "layer": "faces",
-        "lines": [{ "string": toe, "profile": "Wall", "side": "left", "run_on": [0.0, 0.0] }],
-        "profiles": [{
-            "name": "Wall", "direction": "up", "register": floor,
-            "steps": [
-                { "step": "project", "to": { "kind": "rl", "rl": 110.0 }, "batter": 45.0, "ramps": ["A"] },
-                { "step": "berm", "width": 5.0, "register": false },
-                { "step": "project", "to": { "kind": "rl", "rl": 120.0 }, "batter": 45.0, "ramps": ["A"] },
-            ],
-            "ramps": [{ "name": "A", "string": across, "fixed": "start", "heading": "along", "width": 10.0, "grade": 10.0 }],
-        }],
-        "rules": [],
-    });
-    let design = created(&s.run("face.save_design", json!({ "name": "across a berm", "content": content })).unwrap())[0];
-    let record = s.run("face.project", json!({ "design": design })).unwrap();
-    assert!(record.messages.iter().any(|m| m.starts_with("Ramp A: toe: steps 1 to 3, 200.0 m from RL 100.0 to 120.0")), "{:?}", record.messages);
+    let content = |berm: Option<&str>| {
+        let mut ramp = json!({ "name": "A", "string": across, "fixed": "start", "heading": "along", "width": 10.0, "grade": 10.0 });
+        if let Some(berm) = berm {
+            ramp["berm"] = json!(berm);
+        }
+        json!({
+            "layer": format!("faces {berm:?}"),
+            "lines": [{ "string": toe, "profile": "Wall", "side": "left", "run_on": [0.0, 0.0] }],
+            "profiles": [{
+                "name": "Wall", "direction": "up", "register": floor,
+                "steps": [
+                    { "step": "project", "to": { "kind": "rl", "rl": 110.0 }, "batter": 45.0, "ramps": ["A"] },
+                    { "step": "berm", "width": 5.0, "register": false },
+                    { "step": "project", "to": { "kind": "rl", "rl": 120.0 }, "batter": 45.0, "ramps": ["A"] },
+                ],
+                "ramps": [ramp],
+            }],
+            "rules": [],
+        })
+    };
+    for (berm, length) in [(None, "206.7"), (Some("after"), "206.7"), (Some("through"), "200.0")] {
+        let design = created(&s.run("face.save_design", json!({ "name": format!("across a berm {berm:?}"), "content": content(berm) })).unwrap())[0];
+        let record = s.run("face.project", json!({ "design": design })).unwrap();
+        let expected = format!("Ramp A: toe: steps 1 to 3, {length} m from RL 100.0 to 120.0");
+        assert!(record.messages.iter().any(|m| m.starts_with(&expected)), "{berm:?}: {:?}", record.messages);
+    }
 }
 
 /// Too steep a climb for the string's length leaves the face standing and says why, by step and place.
@@ -1249,8 +1261,12 @@ fn the_top_end_of_a_road_is_no_gap() {
     assert!(!record.messages.iter().any(|m| m.contains("no height")), "{:#?}", record.messages);
     let roads = s.project().objects().filter(|o| o.name.ends_with("pit edge")).map(|o| line(&s, o.id)).collect::<Vec<_>>();
     assert_eq!(roads.len(), 10);
+    // Going after each berm, a road climbs 1,200 m on the walls and crosses the two berms on level landings.
     for road in roads {
-        assert!((road.plan_length() - 1200.0).abs() < 1e-3 && (road.vertices.last().unwrap()[2] - 20.0).abs() < 1e-6, "{:?}", road.vertices);
+        let steps = road.vertices.windows(2).filter(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]) > 1e-6);
+        let (climbing, level): (Vec<_>, Vec<_>) = steps.partition(|w| (w[1][2] - w[0][2]).abs() > 1e-9);
+        let climbed: f64 = climbing.iter().map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum();
+        assert!((climbed - 1200.0).abs() < 1e-3 && level.len() == 2 && (road.vertices.last().unwrap()[2] - 20.0).abs() < 1e-6, "{climbed}, {}: {:?}", level.len(), road.vertices);
     }
 }
 
