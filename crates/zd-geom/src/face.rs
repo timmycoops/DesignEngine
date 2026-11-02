@@ -178,6 +178,15 @@ fn last_grade(points: &[[f64; 3]], along: &[f64], known: &[usize], at_the_far_en
     if near == far { 0.0 } else { (points[near][2] - points[far][2]) / (along[near] - along[far]) }
 }
 
+/// How far past a toe a level floor reaches, in plan (m): past any entrance or berm laid on it.
+const FLOOR_REACH: f64 = 1000.0;
+
+/// A level floor at an RL under a string, for a toe to register on and lie flat. It goes through the same path as
+/// any other surface: projection targets are triangulations.
+pub fn level_floor(line: &Polyline, rl: f64) -> TriMesh {
+    level_sheet(line, rl, FLOOR_REACH)
+}
+
 /// The whole face from a toe already on its grid, going one way. `register` is the surface the toe lies on.
 ///
 /// Roads are cut back into its walls as they're built, and only go on a face going up for now. If what's
@@ -269,35 +278,37 @@ fn face_with_held_ends(toe: &Polyline, register: &TriMesh, side: OffsetSide, dir
         held.push(HeldEnd { ramp: r, end, start: (if ramp.back { end + road } else { end - road }).clamp(0.0, length), last: None, nudges: 0 });
     }
     let mut spec = ramps.to_vec();
-    let mut best: Option<(f64, Face)> = None;
+    // The face with the most roads at the top, and of those the one with the least left between them. A road that
+    // can't get any closer, as at the end of the string, mustn't hide the others getting there.
+    let mut best: Option<((usize, f64), Face)> = None;
     for _ in 0..MOST_END_RUNS {
         for road in &held {
             let p = point_along(toe, road.start);
             spec[road.ramp].start = [p[0], p[1]];
         }
         let mut face = face_with_roads(toe, register, side, direction, steps, &spec, &HashMap::new())?;
-        let mut worst: f64 = 0.0;
+        let (mut short, mut left) = (0, 0.0);
         let tried: Vec<f64> = held.iter().map(|road| road.start).collect();
         for road in &mut held {
             let stopped_short = face.no_roads.iter().any(|n| n.ramp == road.ramp);
             let reached = face.roads.iter_mut().find(|r| r.ramp == road.ramp && !stopped_short);
             let Some(reached) = reached else {
-                worst = f64::INFINITY;
+                short += 1;
                 road.nudged(length);
                 continue;
             };
             let miss = metres_along(toe, *reached.pit_edge.vertices.last().expect("a road has an end")) - road.end;
             reached.off_end = (miss.abs() > END_TOLERANCE).then_some(miss.abs());
-            worst = worst.max(miss.abs());
             if miss.abs() > END_TOLERANCE {
+                left += miss.abs();
                 road.missed(miss, length);
             }
         }
-        let closer = best.as_ref().is_none_or(|(least, _)| worst < *least);
+        let closer = best.as_ref().is_none_or(|(least, _)| (short, left) < *least);
         if closer {
-            best = Some((worst, face));
+            best = Some(((short, left), face));
         }
-        if worst <= END_TOLERANCE || held.iter().map(|road| road.start).eq(tried) {
+        if (short == 0 && left == 0.0) || held.iter().map(|road| road.start).eq(tried) {
             break;
         }
     }
@@ -1224,6 +1235,18 @@ mod tests {
             close(p[2], 100.0 + 0.1 * (p[0] - E), 1e-6);
         }
         assert!(register_toe(&line(&[[900.0, 100.0, 0.0], [980.0, 100.0, 0.0]]), &grid).is_err());
+    }
+
+    /// A toe on a level floor lies flat at its RL, whatever heights its string had, and stays where it was in plan.
+    #[test]
+    fn a_toe_on_a_level_floor_lies_flat() {
+        let bent = line(&[[20.0, 100.0, 37.0], [200.0, 140.0, -5.0], [380.0, 60.0, 12.0]]);
+        let (toe, log) = register_toe(&bent, &level_floor(&bent, -150.5)).unwrap();
+        assert_eq!(log.off_grid, 0);
+        assert!(toe.vertices.iter().all(|p| (p[2] + 150.5).abs() < 1e-9), "{:?}", toe.vertices);
+        close(toe.plan_length(), bent.plan_length(), 1e-9);
+        assert_eq!(toe.vertices[0][..2], bent.vertices[0][..2]);
+        assert_eq!(toe.vertices.last().unwrap()[..2], bent.vertices[2][..2]);
     }
 
     #[test]

@@ -80,8 +80,9 @@ pub enum FaceDirection {
 pub struct FaceProfile {
     pub name: String,
     pub direction: FaceDirection,
-    /// The surface or grid a toe registers to.
-    pub register: ObjectId,
+    /// What a toe registers to: a surface or grid it follows, or an RL it lies flat on.
+    #[serde(deserialize_with = "register_or_old_id")]
+    pub register: StepTarget,
     /// How far a toe may move in plan when it's conditioned (m); none leaves it as drawn.
     #[serde(default)]
     pub condition: Option<f64>,
@@ -117,6 +118,21 @@ impl FaceProfile {
         let climbs = |step: &ProfileStep| matches!(step, ProfileStep::Project { ramps, .. } if ramps.iter().any(|name| name == ramp));
         Some([self.steps.iter().position(climbs)?, self.steps.iter().rposition(climbs)?])
     }
+}
+
+/// What a toe registers to, as saved. It used to be a surface's id, and designs saved then still have to open.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SavedRegister {
+    Target(StepTarget),
+    Old(ObjectId),
+}
+
+fn register_or_old_id<'de, D: serde::Deserializer<'de>>(register: D) -> Result<StepTarget, D::Error> {
+    Ok(match SavedRegister::deserialize(register)? {
+        SavedRegister::Target(target) => target,
+        SavedRegister::Old(id) => StepTarget::Surface { id },
+    })
 }
 
 /// Rows from earlier ways of saving ramps, which designs saved then still have to open with. Ramps were rows in
@@ -188,7 +204,7 @@ pub enum ProfileStep {
         #[serde(default)]
         condition: Option<f64>,
         /// The ramps that climb this wall, by name. Walls naming one ramp must come together. A wall takes
-        /// one road a strip for now, so the ramps here should cross different strips.
+        /// several roads, one above the other, running the same way.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         ramps: Vec<String>,
     },
@@ -451,7 +467,7 @@ mod tests {
             profiles: vec![FaceProfile {
                 name: "Highwall".into(),
                 direction: FaceDirection::Up,
-                register: id,
+                register: StepTarget::Surface { id },
                 condition: None,
                 ramps: Vec::new(),
                 steps: vec![
@@ -469,6 +485,19 @@ mod tests {
         let d = design();
         assert_eq!(serde_json::from_str::<FaceDesign>(&serde_json::to_string(&d).unwrap()).unwrap(), d);
         assert!(d.problems().is_empty());
+    }
+
+    /// A toe goes on a surface or an RL, and a design saved when it could only go on a surface holds just the id.
+    #[test]
+    fn a_toe_registers_to_a_surface_or_an_rl_and_a_design_saved_with_an_id_still_reads() {
+        let mut d = design();
+        d.profiles[0].register = StepTarget::Rl { rl: -150.5 };
+        assert_eq!(serde_json::from_str::<FaceDesign>(&serde_json::to_string(&d).unwrap()).unwrap(), d);
+        assert!(serde_json::to_string(&d).unwrap().contains(r#""register":{"kind":"rl","rl":-150.5}"#));
+
+        let id = ObjectId::new();
+        let old = format!(r#"{{ "name": "Highwall", "direction": "up", "register": "{id}", "steps": [] }}"#);
+        assert_eq!(serde_json::from_str::<FaceProfile>(&old).unwrap().register, StepTarget::Surface { id });
     }
 
     #[test]

@@ -123,7 +123,7 @@ const HEADINGS: readonly RampHeading[] = ['along', 'back'];
 
 /** A picked point to the millimetre. */
 
-const blankDesign = (register: string): FaceDesign => ({
+const blankDesign = (register: StepTarget): FaceDesign => ({
   layer: 'faces',
   lines: [],
   profiles: [{ name: 'Highwall', direction: 'up', register, condition: usualTolerance, steps: [] }],
@@ -317,17 +317,20 @@ function targetOf(step: ProfileStep) {
   return step.step === 'project' ? step.to : step.on;
 }
 
+/** What a new profile's toe starts on: the first surface, or an RL if there's none. */
+const firstRegister = (surfaces: ObjectSummary[]): StepTarget => (surfaces[0] ? { kind: 'surface', id: surfaces[0].id } : { kind: 'rl', rl: 0 });
+
 /** Where a new step should start: the surface after the last one the table went to, or after the toe's own. */
-function nextTarget(steps: ProfileStep[], surfaces: ObjectSummary[], register: string): StepTarget {
+function nextTarget(steps: ProfileStep[], surfaces: ObjectSummary[], register: StepTarget): StepTarget {
   const last = [...steps].reverse().find((s) => s.step === 'project' && s.to.kind === 'surface');
-  const from = last?.step === 'project' && last.to.kind === 'surface' ? last.to.id : register;
-  // Past the last surface a face goes on to an RL.
-  const next = surfaces[surfaces.findIndex((s) => s.id === from) + 1];
+  const from = last?.step === 'project' ? last.to : register;
+  // A toe on an RL stays on RLs until a row names a surface, and past the last surface a face goes on to an RL.
+  const next = from.kind === 'surface' ? surfaces[surfaces.findIndex((s) => s.id === from.id) + 1] : undefined;
   return next ? { kind: 'surface', id: next.id } : { kind: 'rl', rl: 0 };
 }
 
 /** A new step of a kind, starting from the table's last one of that kind. */
-function blankStep(kind: ProfileStep['step'], steps: ProfileStep[], surfaces: ObjectSummary[], register: string, condition: number | null): ProfileStep {
+function blankStep(kind: ProfileStep['step'], steps: ProfileStep[], surfaces: ObjectSummary[], register: StepTarget, condition: number | null): ProfileStep {
   const last = [...steps].reverse().find((s) => s.step === kind);
   if (kind === 'project') return { step: 'project', to: nextTarget(steps, surfaces, register), batter: last ? stepValueOf(last) : usualBatter, condition };
   const minBench = last?.step === 'berm' ? last.min_bench : usualMinBench;
@@ -514,7 +517,7 @@ function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfil
   /** What the rows above a row last reached, which a berm registers on unless it names another. */
   const reached = (at: number) => {
     const last = steps.slice(0, at).reverse().map(targetOf).find((t) => t);
-    return nameOf(last ?? { kind: 'surface', id: register });
+    return nameOf(last ?? register);
   };
   return (
     <div className="px-3 pb-1">
@@ -551,19 +554,20 @@ function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfil
               <td />
               <td className={`${cellClass} px-2`}>Register</td>
               <td className={cellClass}>
-                <select className={`${selectClass} w-full max-w-36`} value={register} aria-label="Register toe to" onChange={(e) => onChange({ register: e.target.value })}>
+                <select className={`${selectClass} w-full max-w-36`} value={register.kind === 'surface' ? register.id : 'rl'} aria-label="Register toe to" title="What the toe registers to: a surface it follows, or – for an RL it lies flat on" onChange={(e) => onChange({ register: e.target.value === 'rl' ? { kind: 'rl', rl: 0 } : { kind: 'surface', id: e.target.value } })}>
                   <SurfaceOptions surfaces={surfaces} />
+                  <option value="rl">–</option>
                 </select>
               </td>
-              <td />
+              <td className={cellClass}>
+                <NumberBox width="w-14" value={register.kind === 'rl' ? register.rl : null} title="The RL the toe lies flat on" onChange={(rl) => onChange({ register: { kind: 'rl', rl } })} />
+              </td>
               <td />
               <td />
               {ramps.map(({ name }) => (
                 <td key={name} />
               ))}
-              <td className={cellClass}>
-                <RegisterCell checked />
-              </td>
+              <td className={cellClass}>{register.kind === 'surface' && <RegisterCell checked />}</td>
               <td className={cellClass}>
                 <ConditionCell value={profile.condition} onChange={(condition) => onChange({ condition })} />
               </td>
@@ -657,12 +661,8 @@ export function FaceDesignPanel() {
   }, [clearRefusal]);
 
   const start = () => {
-    if (!surfaces[0]) {
-      setReport({ lines: [], error: 'Import a grid or surface first: a profile registers its toes to one' });
-      return;
-    }
     setId(null);
-    setDraft(blankDesign(surfaces[0].id));
+    setDraft(blankDesign(firstRegister(surfaces)));
     setName(freeName('Face design', designs.map((d) => d.name)));
     setProfileName(null);
     setDirty(true);
@@ -730,7 +730,7 @@ export function FaceDesignPanel() {
   };
   const addProfile = (copy: boolean) => {
     const fresh = freeName(copy && profile ? `${profile.name} copy` : 'Profile', profileNames);
-    const made_: FaceProfile = copy && profile ? { ...profile, name: fresh } : { name: fresh, direction: profile?.direction ?? 'up', register: profile?.register ?? surfaces[0]?.id ?? '', condition: usualTolerance, steps: [] };
+    const made_: FaceProfile = copy && profile ? { ...profile, name: fresh } : { name: fresh, direction: profile?.direction ?? 'up', register: profile?.register ?? firstRegister(surfaces), condition: usualTolerance, steps: [] };
     edit((d) => ({ ...d, profiles: [...d.profiles, made_] }));
     setProfileName(fresh);
   };

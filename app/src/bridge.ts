@@ -450,8 +450,8 @@ export type FaceDirection = 'up' | 'down';
 export interface FaceProfile {
   name: string;
   direction: FaceDirection;
-  /** The surface or grid a toe registers to. */
-  register: string;
+  /** What a toe registers to: a surface or grid it follows, or an RL it lies flat on. */
+  register: StepTarget;
   condition: number | null;
   steps: ProfileStep[];
   ramps?: Ramp[];

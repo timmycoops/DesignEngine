@@ -778,12 +778,13 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
   // The same grids as a whole design, as the Face design panel runs it: the toe going up and going down.
   const wall = (to: unknown) => ({ step: 'project', to, batter: 'Batter', condition: 0.1 });
   const up = targets.slice(1).flatMap((id) => [wall({ kind: 'surface', id }), { step: 'berm', on: null, width: 10, register: true, condition: 0.1 }]);
+  const register = { kind: 'surface', id: targets[0] };
   const content = {
     layer: 'bench faces',
     lines: ['Highwall', 'Highwall down'].map((profile) => ({ string: toe.id, profile, side: 'left', run_on: [100, 100] })),
     profiles: [
-      { name: 'Highwall', direction: 'up', register: targets[0], condition: null, steps: [...up, wall({ kind: 'rl', rl: 500 })] },
-      { name: 'Highwall down', direction: 'down', register: targets[0], condition: null, steps: [wall({ kind: 'rl', rl: -500 })] },
+      { name: 'Highwall', direction: 'up', register, condition: null, steps: [...up, wall({ kind: 'rl', rl: 500 })] },
+      { name: 'Highwall down', direction: 'down', register, condition: null, steps: [wall({ kind: 'rl', rl: -500 })] },
     ],
     rules: [{ name: 'Batter', value: { type: 'fixed', value: 70 } }],
   };
