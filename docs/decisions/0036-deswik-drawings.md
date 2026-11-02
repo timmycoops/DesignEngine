@@ -87,7 +87,8 @@ Read cold from Tim's USB drive the first two take about three minutes, which is 
   sliver. The largest, about 1 %, are solids with a cavity: a closed piece inside another, wound inward. The repair step
   turns every closed piece outward, so it adds the cavity where Deswik takes it away. A box of 50,000 m³ with a 4.5 m³
   tetrahedral cavity comes in at 50,004.5 m³ against Deswik's 49,995.5 m³, reported in the run record. That's a fault
-  of the repair step, for every format, to be fixed on its own.
+  of the repair step, for every format. Fixed by decision 0010's amendment of 2026-11-03 (cavities face in): the box
+  comes in at Deswik's 49,995.5 m³, and 278 and 250 differ, every one a mesh the weld changed.
 - **The whole pit shell through `deswik.import`:** 214,000 objects (87,372 solids, 2,795 surfaces, 123,831 strings) in
   55 s, the crossing check the most of it. 382 closed meshes kept as surfaces, mostly with edges of three faces or
   crossings.
@@ -102,5 +103,4 @@ Read cold from Tim's USB drive the first two take about three minutes, which is 
 - **A real wall beside Deswik's.** The design layers hold hand-edited fragments, and settings are recorded only on the
   last projection of each piece, so a toe and its result can't be paired by machine. That needs Tim to name one clean
   case: a toe, its profile and Deswik's face.
-- **The repair step and cavities** (above).
 - **Spry,** next.

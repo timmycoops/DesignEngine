@@ -287,6 +287,30 @@ mod tests {
     }
 
     #[test]
+    fn a_cavity_is_wound_to_face_in_so_its_volume_is_taken_away() {
+        // A 100 x 100 x 5 m box at RL 95 with a cavity inside it: a tetrahedron with 3 m legs at a
+        // corner, 4.5 m3. Read with the box scrambled and the cavity facing out, the repair step
+        // turns the box out and the cavity in: 50,000 - 4.5 m3, to a micro-cubic metre.
+        let mut v: Vec<[f64; 3]> = (0..8).map(|i| [E + (i & 1) as f64 * 100.0, N + (i >> 1 & 1) as f64 * 100.0, 95.0 + (i >> 2) as f64 * 5.0]).collect();
+        let box_out = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+        v.extend([[E + 40.0, N + 40.0, 96.0], [E + 43.0, N + 40.0, 96.0], [E + 40.0, N + 43.0, 96.0], [E + 40.0, N + 40.0, 99.0]]);
+        let tetra_out = [[8, 10, 9], [8, 9, 11], [8, 11, 10], [9, 10, 11]];
+        let scrambled: Vec<[u32; 3]> = box_out.iter().enumerate().map(|(i, &[a, b, c])| if i % 3 == 0 { [a, c, b] } else { [a, b, c] }).chain(tetra_out).collect();
+        let (solid, log) = repair_mesh(&TriMesh::new(v.clone(), scrambled), 0.001);
+        assert_eq!((log.orient.patches, log.orient.closed_patches, log.orient.cavities), (2, 2, 1));
+        assert_eq!(log.orient.triangles_flipped, 4 + 4, "four box faces turned out, the cavity's four turned in");
+        assert!(solid.validity().is_watertight());
+        assert!((solid.signed_volume() - 49_995.5).abs() < 1e-6, "{}", solid.signed_volume());
+
+        // As Deswik writes it, the box out and the cavity in: nothing to turn.
+        let as_written: Vec<[u32; 3]> = box_out.into_iter().chain(tetra_out.map(|[a, b, c]| [a, c, b])).collect();
+        let (solid, log) = repair_mesh(&TriMesh::new(v, as_written.clone()), 0.001);
+        assert_eq!((log.orient.cavities, log.orient.triangles_flipped), (1, 0));
+        assert_eq!(solid.triangles, as_written);
+        assert!((solid.signed_volume() - 49_995.5).abs() < 1e-6, "{}", solid.signed_volume());
+    }
+
+    #[test]
     fn edges_with_three_faces_are_listed_and_stop_the_fill() {
         // Three fins on one edge.
         let v = vec![[E, N, 0.0], [E, N, 10.0], [E + 10.0, N, 5.0], [E, N + 10.0, 5.0], [E - 10.0, N, 5.0]];

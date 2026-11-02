@@ -192,6 +192,9 @@ pub(crate) fn describe_repair(log: &RepairLog, mesh: &TriMesh) -> String {
         "{} triangles flipped to agree with their neighbours and face up, or out where closed ({} patches, {} closed)",
         o.triangles_flipped, o.patches, o.closed_patches
     ));
+    if o.cavities > 0 {
+        parts.push(format!("{} closed patches inside others wound to face in, as cavities", o.cavities));
+    }
     if o.non_manifold_edges > 0 {
         parts.push(format!("{} edges with three or more faces, the first at {}", o.non_manifold_edges, site(&o.non_manifold_at[0])));
     }
