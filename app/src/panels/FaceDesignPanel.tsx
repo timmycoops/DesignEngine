@@ -448,7 +448,7 @@ function RampCell({ name, on, onChange }: { name: string; on: boolean; onChange:
       style={on ? { background: colour, borderColor: colour } : undefined}
       aria-pressed={on}
       aria-label={`Ramp ${name} on this wall`}
-      title={`Click if ramp ${name} climbs this wall. Walls it climbs must come together, and berms between them are crossed`}
+      title={`Click if ramp ${name} climbs this wall. Walls it climbs must come together, and berms between them are crossed. A wall can hold several ramps, one above the other, all running the same way`}
       onClick={() => onChange(!on)}
     />
   );
@@ -487,7 +487,7 @@ function RampRow({ ramp, stringName, onWalls, results, swap, onShow, onChange, o
       </div>
       {!onWalls && <p className="pt-0.5 text-primary">Not on a wall yet: click the walls it climbs in its column above.</p>}
       {results.map((line, k) => (
-        <p key={k} className={`pt-0.5 ${/stopped|isn't|doesn't|comes out|gone|shares/.test(line) ? 'text-primary' : 'text-muted-foreground'}`}>
+        <p key={k} className={`pt-0.5 ${/stopped|isn't|doesn't|comes out|gone/.test(line) ? 'text-primary' : 'text-muted-foreground'}`}>
           {line.replace(/^Ramp [^:]*: /, '')}
         </p>
       ))}
@@ -781,7 +781,7 @@ export function FaceDesignPanel() {
         return { type, values: [], otherwise: at };
     }
   };
-  /** A new ramp along a string drawn across the strips, up every wall that finishes on a surface. */
+  /** A new ramp along a string drawn across the strips, up every wall. */
   const addRamp = async () => {
     if (!profile) return;
     setPicking(true);
@@ -794,7 +794,7 @@ export function FaceDesignPanel() {
     const string = made.record?.outputs[0]?.id;
     if (!string) return;
     const ramp: Ramp = { name, string, fixed: 'end', heading: 'along', width: usualRoadWidth, grade: usualGrade };
-    setProfile({ ramps: [...(profile.ramps ?? []), ramp], steps: profile.steps.map((s) => (s.step === 'project' && s.to.kind === 'surface' ? { ...s, ramps: [...(s.ramps ?? []), name] } : s)) });
+    setProfile({ ramps: [...(profile.ramps ?? []), ramp], steps: profile.steps.map((s) => (s.step === 'project' ? { ...s, ramps: [...(s.ramps ?? []), name] } : s)) });
   };
   const setRamp = (at: number, change: Partial<Ramp>) => profile && setProfile({ ramps: replaceAt(profile.ramps ?? [], at, { ...(profile.ramps ?? [])[at], ...change }) });
   const removeRamp = (at: number) => {
