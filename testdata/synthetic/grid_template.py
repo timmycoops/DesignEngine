@@ -21,7 +21,8 @@ and five designs, each on its own layer of faces:
 
 Writes the grids as XYZ files in grids/ beside this script, which import by hand with the Surface button, and
 "Grid template.zdproj" with them imported, beside this script or in the folder given. Then it runs every design
-without saving the runs and prints what each strip made, which is the list of faults to work through.
+without saving the runs and prints what each strip didn't build, any face with triangles crossing or that isn't one
+sheet, and every road that stopped: the list of faults to work through.
 """
 
 import math
@@ -170,6 +171,31 @@ def designs(s, g, toes_layer, ramp_a, ramp_b):
     return saved
 
 
+def boundary_loops(mesh):
+    """How many loops of open edges a mesh has: one for a single sheet with no holes in it."""
+    uses = {}
+    for a, b, c in mesh["triangles"]:
+        for edge in ((a, b), (b, c), (c, a)):
+            key = (min(edge), max(edge))
+            uses[key] = uses.get(key, 0) + 1
+    links = {}
+    for u, w in (edge for edge, n in uses.items() if n == 1):
+        links.setdefault(u, []).append(w)
+        links.setdefault(w, []).append(u)
+    seen, loops = set(), 0
+    for start in links:
+        if start in seen:
+            continue
+        loops += 1
+        stack = [start]
+        while stack:
+            x = stack.pop()
+            if x not in seen:
+                seen.add(x)
+                stack.extend(links[x])
+    return loops
+
+
 def local(text):
     """A message with grid coordinates as metres from the template's origin."""
     return re.sub(r"(\d{6}\.\d+), (\d{7}\.\d+)", lambda m: f"({float(m.group(1)) - E:.0f}, {float(m.group(2)) - N:.0f})", text)
@@ -189,6 +215,7 @@ def check(s, saved):
         ms = (time.perf_counter() - started) * 1000.0
         faces = {o["name"]: o["id"] for o in s.objects(layer=f"faces {name}") if o["kind"] == "surface"}
         crossing = sum(s.object(face)["crossings"]["pairs"] > 0 for face in faces.values())
+        in_pieces = sorted(name for name, face in faces.items() if boundary_loops(s.mesh(face)) != 1)
         triangles = sum(s.object(face)["triangles"] for face in faces.values())
         lines = [local(m) for m in record["messages"]]
         not_built = [m for m in lines if "Nothing is built" in m]
@@ -196,10 +223,10 @@ def check(s, saved):
         roads = [m for m in lines if re.match(r"Ramp \w: Strip \d+: steps", m)]
         stopped = [m for m in lines if m.startswith("Ramp ") and m not in roads]
         print(f"\n{name}: {ms:,.0f} ms, {len(faces)} of {STRIPS} faces, {triangles:,} triangles, {crossing} with triangles crossing, "
-              f"{len(no_height)} with walls of no height, {len(roads)} roads to the top")
-        for m in not_built + stopped + no_height:
+              f"{len(in_pieces)} not one sheet, {len(no_height)} with walls of no height, {len(roads)} roads to the top")
+        for m in not_built + stopped + [f"{face} isn't one sheet" for face in in_pieces] + no_height:
             print("  " + m[:240])
-        faults += len(not_built) + crossing + len(stopped)
+        faults += len(not_built) + crossing + len(in_pieces) + len(stopped)
     return faults
 
 
