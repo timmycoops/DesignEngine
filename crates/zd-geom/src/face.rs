@@ -582,13 +582,14 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                             Some(cut) => (cut.toe.clone(), cut.crest.clone()),
                             None => (from.clone(), wall.crest.clone()),
                         };
-                        let no_height = !wall.log.no_height.is_empty() || cut.as_ref().is_some_and(|cut| cut.logs.iter().any(|log| !log.no_height.is_empty()));
+                        let gaps: Vec<Stretch> = cut.as_ref().map_or_else(Vec::new, |cut| cut.logs.iter().flat_map(|log| &log.no_height).filter(|stretch| !across_a_road_end(stretch, &cut.roads)).copied().collect());
+                        let no_height = !wall.log.no_height.is_empty() || !gaps.is_empty();
                         let toe = if no_height { with_touches(&foot, &crest) } else { foot };
                         finish_berm(&mut berm_from, &toe, face).map_err(|e| fail(last, e))?;
                         match cut {
                             Some(cut) => {
+                                merge_stretches(&mut report.no_height, &gaps);
                                 for log in &cut.logs {
-                                    merge_stretches(&mut report.no_height, &log.no_height);
                                     merge_stretches(&mut report.no_target, &log.no_target);
                                 }
                                 for (r, pit_edge, wall_edge) in &cut.roads {
@@ -693,6 +694,17 @@ fn merge_stretches(stretches: &mut Vec<Stretch>, more: &[Stretch]) {
             stretches.push(*stretch);
         }
     }
+}
+
+/// Whether a stretch runs across the top end of a road on its wall. A road comes out level with the crest, so
+/// there's no wall there, and that's where it was meant to finish, not a gap: rounding decides whether the
+/// walk sees it at all.
+fn across_a_road_end(stretch: &Stretch, roads: &[(usize, Polyline, Polyline)]) -> bool {
+    const SAME_POINT: f64 = 1e-6;
+    roads.iter().any(|(_, pit_edge, wall_edge)| {
+        let ends = [pit_edge.vertices.last(), wall_edge.vertices.last()];
+        [stretch.from, stretch.to].iter().all(|p| ends.iter().flatten().any(|end| (p[0] - end[0]).hypot(p[1] - end[1]) < SAME_POINT))
+    })
 }
 
 /// The berm waiting on a crest, now the line it runs out to is known.

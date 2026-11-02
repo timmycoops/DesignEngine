@@ -2,7 +2,7 @@
 
 Date: 2026-11-02 · Status: accepted. Tim asked how to register a toe to an RL, and it couldn't be done: the Register row took a grid or
 surface only. He said "Yep we need that". This changes `FaceProfile.register`, which was a surface's id. Item 5 is a fault the first
-real run showed up
+real run showed up, and item 6 one the template to try it in the app showed up.
 
 ## Why
 
@@ -23,12 +23,27 @@ Tim asked for in 0032.
    so one road that never built, or one stuck at the end of the string, froze every other road on the strip at its first guess, out
    by 2 to 70 m on a bent strip. Now it keeps the face with the most roads at the top, and of those the one with the least distance
    left between them.
+6. **The top end of a road is no gap.** A road comes out level with its crest, so there's no wall across its top end, and
+   that's where it was meant to finish. Rounding decided whether the run saw it: on two strips of the template's five it
+   said a wall had no height there. It's no longer reported, and the next toe is built as it is where rounding went the
+   other way.
+
+## Trying it
+
+`testdata/synthetic/ramp_template.py` writes `Ramp template.zdproj` at made-up coordinates: five strips 80 m apart from a
+bent base toe, numbered by a line across, two ramp strings across them, and the design Ramps on RLs. It runs every strip
+on the toes layer: the toe flat on RL -100, walls to RL -60 and -20 at 70 degrees and RL 20 at 65, 20 m berms, and two
+30 m roads at 10 % up all three walls, A held at its start and B at its end. The script runs the design once without
+saving it and prints what each strip made.
 
 ## Results
 
 Known answers, with no surface in the project: a toe on RL 100 under walls at 45 degrees to RL 140 and RL 60 has its crest 40 m out
 each way, to 1 µm; a berm as the first row lies on RL 100; a road up the wall at 10 % is 400 m to 1 mm, its entrance stays on RL 100,
 and the toe moves back 9.95 m, a 10 m road square to itself. A design holding the grid's id builds the same as one naming it.
+On the template's five strips every road is 1,200.0 m from RL -100 to 20, every face is one sheet with nothing crossing, and
+no wall is said to have no height. One thing differs where the strips are the same shape: on Strips 1 to 3, road A's wall
+edge has a kink 1.7 m long where it leaves the second berm, rising 0.3 m, and on Strips 4 and 5 it doesn't.
 
 PIT C, each of 11 strips on its own, all three ramps on all four walls, a 50 m road at 10 %, 70 degrees and 30 m berms. Roads reaching
 the top of 33, with those that came out away from where they were held in brackets:
@@ -56,3 +71,4 @@ the top of 33, with those that came out away from where they were held in bracke
 
 - **Lines draped on grids.** That's where every wall fault left is, including the new one on Strip 1. It's the next piece of work.
 - **Held ends to grids are slow,** up to 5 s for three roads on one strip.
+- **The kink in road A's wall edge** on three of the template's strips, which isn't chased yet.

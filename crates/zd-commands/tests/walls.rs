@@ -1228,6 +1228,32 @@ fn a_toe_on_an_rl_lies_flat_and_takes_no_surface() {
     assert!(toe.vertices.iter().any(|p| (p[1] - N - back).abs() < 1e-6), "the toe moves back a road width: {:?}", toe.vertices);
 }
 
+/// A road comes out level with its crest, so there's no wall across its top end, and that's where it was meant to
+/// finish, not a gap. These are the strips of testdata/synthetic/ramp_template.py, where rounding had the walk see
+/// it on two strips of five, and the run said so.
+#[test]
+fn the_top_end_of_a_road_is_no_gap() {
+    let mut s = Session::with_builtins();
+    let base = [[0.0, 0.0], [1200.0, 60.0], [2400.0, 40.0], [3500.0, 150.0]].map(|p| [E + p[0], N + p[1], -100.0]);
+    let base = created(&s.run("string.create", json!({ "name": "toe", "layer": "toes", "points": base })).unwrap())[0];
+    s.run("string.offset", json!({ "string": base, "distance": 80.0, "side": "left", "times": 4 })).unwrap();
+    let layer = s.project().object(base).unwrap().layer;
+    let (a, b) = (ramp_string(&mut s, &[[400.0, -100.0], [400.0, 500.0]]), ramp_string(&mut s, &[[3100.0, -100.0], [3100.0, 500.0]]));
+    let wall = |rl: f64, batter: f64| json!({ "step": "project", "to": { "kind": "rl", "rl": rl }, "batter": batter, "ramps": ["A", "B"] });
+    let berm = json!({ "step": "berm", "width": 20.0 });
+    let ramp = |name: &str, string: ObjectId, fixed: &str| json!({ "name": name, "string": string, "fixed": fixed, "heading": "along", "width": 30.0, "grade": 10.0 });
+    let profile = json!({ "name": "Highwall", "direction": "up", "register": { "kind": "rl", "rl": -100.0 }, "steps": [wall(-60.0, 70.0), berm, wall(-20.0, 70.0), berm, wall(20.0, 65.0)], "ramps": [ramp("A", a, "start"), ramp("B", b, "end")] });
+    let content = json!({ "layer": "faces", "lines": [{ "layer": layer, "profile": "Highwall", "side": "left", "run_on": [100.0, 100.0] }], "profiles": [profile] });
+    let design = created(&s.run("face.save_design", json!({ "name": "template", "content": content })).unwrap())[0];
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    assert!(!record.messages.iter().any(|m| m.contains("no height")), "{:#?}", record.messages);
+    let roads = s.project().objects().filter(|o| o.name.ends_with("pit edge")).map(|o| line(&s, o.id)).collect::<Vec<_>>();
+    assert_eq!(roads.len(), 10);
+    for road in roads {
+        assert!((road.plan_length() - 1200.0).abs() < 1e-3 && (road.vertices.last().unwrap()[2] - 20.0).abs() < 1e-6, "{:?}", road.vertices);
+    }
+}
+
 /// A design on a grid runs the same whether it holds the grid's id, as designs did, or names it as a surface.
 #[test]
 fn a_toe_saved_as_an_id_still_registers_to_its_surface() {
