@@ -1613,6 +1613,43 @@ mod tests {
         close(at(1500.0), 30.0, 1e-6);
     }
 
+    /// A switchback on a seam floor: the berm lies on a floor dipping 5 % into the wall, as a seam's does, and the pad lies
+    /// on it, so no coal is left under it (Tim, 2026-11-03). The first road climbs to the floor at RL 120 on the crest, as
+    /// on a level berm, crosses its own top level to its wall-side corner, a road width across, then goes down the floor
+    /// across the berm to where the second road starts on the berm's line, on the floor about 19.9 m out from the crest,
+    /// so about a metre below the first road's top. The second road climbs from there at 10 % to RL 140. Every vertex of
+    /// the line the second wall stands on lies on the floor but the second road's own wall-side corner, which is level
+    /// with its start across the road.
+    #[test]
+    fn a_road_turns_back_on_a_pad_on_a_dipping_floor() {
+        const DIP: f64 = 0.05;
+        let plane = |y: f64| 120.0 - DIP * (y - N - 20.0);
+        let floor = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 30, 20, |_, y| plane(y)));
+        let on = FaceTarget::Surface(&floor);
+        let face = long_face(&[climbed_by(on, &[0]), berm(on, 10.0), turned_on(FaceTarget::Rl(140.0))], &[ramp_at(500.0)]);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        one_clean_sheet(&face);
+        let road = road_of(&face, 0);
+        let pit = &road.pit_edge.vertices;
+        let top = pit.iter().position(|p| (p[2] - 120.0).abs() < 1e-6).expect("the first road's top");
+        let (crest_top, corner, start) = (pit[top], pit[top + 1], pit[top + 2]);
+        close(crest_top[1] - N, 20.0, 1e-6);
+        close(corner[2], 120.0, 1e-6);
+        close(corner[1] - crest_top[1], 10.0 * COS, 1e-6);
+        close(plan_gap(corner, start), 10.0, 0.1);
+        close(start[2], plane(start[1]), 1e-6);
+        assert!(start[2] < 119.1, "the pad goes down the floor: {start:?}");
+        let climb: f64 = pit[top + 2..].windows(2).map(|w| plan_gap(w[0], w[1])).sum();
+        close(climb, (140.0 - start[2]) / 0.1, 1e-3);
+        close(pit.last().unwrap()[2], 140.0, 1e-6);
+        let wall_side = *road.wall_edge.vertices.iter().rev().find(|p| (p[2] - start[2]).abs() < 1e-6).expect("the second road's wall-side start");
+        let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe;
+        assert!(toe.vertices.iter().any(|p| plan_gap(*p, start) < 1e-6), "the second road starts on the berm's line");
+        for p in toe.vertices.iter().filter(|p| plan_gap(**p, wall_side) > 1e-6) {
+            close(p[2], plane(p[1]), 1e-6);
+        }
+    }
+
     /// Past a turn the toe of the wall above runs from the second road's wall-side start straight back to the berm's
     /// line the ramp's join on from the turn, along the road, then carries on as the berm's line, whatever vertices the
     /// string has: one only at its ends, one 9 m past the turn, or one every 25 m as on a line from a grid. A road wider

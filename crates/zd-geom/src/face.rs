@@ -555,18 +555,27 @@ struct Climbing {
     top: Option<RoadTop>,
     /// It turned back on a pad, so its next stretch starts afresh with the toe past the turn joining back.
     turned: bool,
+    /// The wall-side top of the road before a turn, which its crossing of the pad passes.
+    pad_corner: Option<[f64; 3]>,
     pit_edge: Vec<[f64; 3]>,
     wall_edge: Vec<[f64; 3]>,
 }
 
 impl Climbing {
     fn new(ramp: usize, spec: FaceRamp) -> Self {
-        Climbing { ramp, spec, steps: None, top: None, turned: false, pit_edge: Vec::new(), wall_edge: Vec::new() }
+        Climbing { ramp, spec, steps: None, top: None, turned: false, pad_corner: None, pit_edge: Vec::new(), wall_edge: Vec::new() }
     }
 
     /// Takes in a wall's stretch of road, and where the road has got to.
     fn climbed(&mut self, step: usize, pit_edge: &Polyline, wall_edge: &Polyline) {
         self.steps = Some([self.steps.map_or(step, |s| s[0]), step]);
+        // A pad on a floor that isn't level is crossed level across the top of the last road, then down or up the floor.
+        if let (Some(corner), Some(last), Some(first)) = (self.pad_corner.take(), self.pit_edge.last(), pit_edge.vertices.first()) {
+            let apart = |p: &[f64; 3]| (p[0] - corner[0]).hypot(p[1] - corner[1]) > WELD;
+            if (last[2] - first[2]).abs() > WELD && apart(last) && apart(first) {
+                self.pit_edge.push(corner);
+            }
+        }
         for (edge, more) in [(&mut self.pit_edge, pit_edge), (&mut self.wall_edge, wall_edge)] {
             let skip = usize::from(edge.last() == more.vertices.first());
             edge.extend_from_slice(&more.vertices[skip..]);
@@ -574,11 +583,13 @@ impl Climbing {
         self.top = Some(RoadTop { pit: *self.pit_edge.last().expect("it's climbed"), wall: *self.wall_edge.last().expect("it's climbed") });
     }
 
-    /// Turns back: a switchback on a flat pad. The next wall's stretch starts afresh at `at`, the other way along
-    /// the string, and the line behind it, the side past the turn, comes out to its wall-side edge and joins back.
+    /// Turns back: a switchback on a pad, level on an RL and on the floor on a grid. The next wall's stretch starts
+    /// afresh at `at`, the other way along the string, and the line behind it, the side past the turn, comes out to its
+    /// wall-side edge and joins back.
     fn turn_at(&mut self, at: [f64; 3]) {
         self.spec.start = [at[0], at[1]];
         self.spec.back = !self.spec.back;
+        self.pad_corner = self.top.map(|top| top.wall);
         self.top = None;
         self.turned = true;
     }
@@ -753,19 +764,20 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 let dropped = lines.len().saturating_sub(1);
                 let line = longest(lines);
                 let mut report = no_wall_report(k);
+                let turning: &[usize] = steps[k + 1..].iter().find_map(|step| if let FaceStep::Project { turns, .. } = step { Some(*turns) } else { None }).unwrap_or(&[]);
+                let pads: Vec<RoadTop> = climbing.iter().filter(|open| turning.contains(&open.ramp)).filter_map(|open| open.top).collect();
                 let mut lay = |part: &Polyline| -> Result<Polyline, GeomError> {
                     if !register {
                         return Ok(at_crest_heights(&with_crest_vertices(part, &crest, |_, on, _| Some(on)), &crest));
                     }
                     let (mut toe, draped) = drape_string(part, on.mesh(), true)?;
-                    hold_above_the_target(&mut toe, &crest, on.mesh());
+                    hold_above_the_target(&mut toe, &crest, on.mesh(), &pads);
                     report.off_surface += draped.off_surface;
                     Ok(toe)
                 };
                 // A road going up through the berm takes it in to its top. One going after it leaves it whole, and
                 // carries on from where the berm's line steps round its top. One turning back at the next wall
                 // leaves it whole too, and starts that wall straight across the berm from its wall-side top.
-                let turning: &[usize] = steps[k + 1..].iter().find_map(|step| if let FaceStep::Project { turns, .. } = step { Some(*turns) } else { None }).unwrap_or(&[]);
                 let through: Vec<RoadTop> = climbing.iter().filter(|open| !open.spec.after_berm && !turning.contains(&open.ramp)).filter_map(|open| open.top).collect();
                 let back = climbing.iter().find(|open| !turning.contains(&open.ramp)).is_some_and(|open| open.spec.back);
                 from = if through.is_empty() { lay(&line) } else { berm_round_roads(&line, &crest, &through, back, &mut lay) }.map_err(|e| fail(k, e))?;
@@ -890,8 +902,10 @@ fn longest(toes: Vec<Polyline>) -> Polyline {
 }
 
 /// A crest that ran along its string where the target is below it stays up there: a toe beside that
-/// stretch keeps the crest's elevation instead of dropping onto the target.
-fn hold_above_the_target(toe: &mut Polyline, crest: &Polyline, surface: &TriMesh) {
+/// stretch keeps the crest's elevation instead of dropping onto the target. Round the top of a road that turns back on
+/// this berm, one of `pads`, the crest is up only because the road's top is level across, so the toe there lies on the
+/// target, and the pad on it with it, on the seam floor where the target is one (decision 0038).
+fn hold_above_the_target(toe: &mut Polyline, crest: &Polyline, surface: &TriMesh, pads: &[RoadTop]) {
     if surface.triangles.is_empty() {
         return;
     }
@@ -902,9 +916,28 @@ fn hold_above_the_target(toe: &mut Polyline, crest: &Polyline, surface: &TriMesh
     }
     let bins = TriangleBins::new(surface, lo, hi);
     let n = crest.vertices.len();
+    let above = |i: usize| bins.height(surface, [crest.vertices[i][0], crest.vertices[i][1]]).is_some_and(|z| crest.vertices[i][2] > z + 1e-6);
+    // The crest each road's top holds up: from its top edge out to where the crest comes back down onto the target.
+    let lifted: Vec<[f64; 2]> = pads
+        .iter()
+        .filter_map(|top| {
+            let (a, b) = (place_on(crest, top.pit)?, place_on(crest, top.wall)?);
+            let (mut first, mut last) = (a.min(b).floor() as usize, (a.max(b).ceil() as usize).min(n - 1));
+            while first > 0 && above(first) {
+                first -= 1;
+            }
+            while last + 1 < n && above(last) {
+                last += 1;
+            }
+            Some([first as f64, last as f64])
+        })
+        .collect();
     for p in &mut toe.vertices {
         let along = |i: usize| nearest_along(crest.vertices[i], crest.vertices[(i + 1) % n], *p);
         let Some(i) = (0..segment_count(crest)).min_by(|a, b| along(*a).1.total_cmp(&along(*b).1)) else { continue };
+        if lifted.iter().any(|stretch| (stretch[0]..=stretch[1]).contains(&(i as f64 + along(i).0))) {
+            continue;
+        }
         let (a, b, t) = (crest.vertices[i], crest.vertices[(i + 1) % n], along(i).0);
         let on = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])];
         if bins.height(surface, [on[0], on[1]]).is_some_and(|z| on[2] > z + 1e-6) {

@@ -16,7 +16,8 @@ design, in coal and in metals, where walls curve.
 
 1. **A wall row can turn a ramp back before it** (`turns` on the row, beside `ramps`). The road climbs to the top of the
    wall below, crosses the berm straight across from its wall-side top, and climbs this wall the other way, from the
-   berm's line, as a fresh road with its own entrance. The pad is the two roads and the berm between them, level. A
+   berm's line, as a fresh road with its own entrance. The pad is the two roads and the berm between them, level on an RL
+   and on the floor on a grid (item 9). A
    turning ramp must be on this wall and the wall before; a ramp with its end held can't turn yet. A road that turns
    always crosses its berm after it, never through.
 2. **A road after the berm crosses it straight across, in line with its top,** as Deswik's does, in place of 0035's
@@ -47,6 +48,13 @@ design, in coal and in metals, where walls curve.
    design saved before it takes 50 m. The Face design panel shows it on a ramp that turns somewhere. A join longer than
    the line goes on past the turn runs straight from the corner to the end of the string, which is how to taper the toe
    to the strip's end as Tim's back strip does.
+9. **On a berm registered to a grid the pad lies on the floor** (Tim, 2026-11-03: "On the seam floor", over a level pad
+   with coal left under it). The road tops out on the crest as anywhere and crosses its own top level, a road width, to
+   its wall-side corner; from there the pad is the berm, lying on its grid, and the next road starts on the berm's line,
+   on the floor. Round a turning road's top the crest stands above the grid only because the road's top is level
+   across, so the berm's line there isn't held up to the crest's height as it is elsewhere a crest stands above its
+   target; it lies on the grid. On a seam floor dipping into the wall the pad falls across the berm, and the next road
+   starts lower and climbs further. On an RL the floor is level, so the pad is too, as before.
 
 Where the berm's line can't be read this way, the road falls back to 0035's landing, as before.
 
@@ -114,8 +122,29 @@ tapers end is what's left: ours ends on the berm's line, so the berm is 10 m aga
 50 to 60 m further out, a berm some 60 m wide at the end at RL 50 and 100 m at RL -40. The walls below carry that down,
 so below the west turn our lines sit up to 60 m behind his at the strip's end, against 78 m with a 50 m join.
 
+A pad on a seam floor, known answers exact to 1 µm: two 45° walls and a 10 m berm on a floor dipping 5 % into the wall,
+with a 10 m road turning back on it. The first road tops out at RL 120 on the crest, crosses its top level to its corner
+a road width across, and the second road starts on the berm's line on the floor about a metre lower, climbing at 10 %
+from there to RL 140. Every vertex of the berm's line lies on the floor but the second road's own corner, which is level
+with its start across the road. Holding the line up as before starts the second road at RL 119.59 instead of 119.005.
+
+The made-up grid pit (0034) has two designs for this, with a ramp C turning back on every berm. RL switchbacks: 9 of 10
+roads reach RL 140 with three turns each on level pads at RL 50, 80 and 110, every face one sheet, 0.11 s for ten strips;
+Strip 5's road stops on its first wall, before any turn, at fault 3 of 0034. Grid switchbacks, with the walls finishing
+on the seam grids and the pads on the M floor, the U floor and the base of weathering: every road holds 10 %. Held up
+level, the pads sat across the M seam up to 5.5 m above its floor, the berm's line climbing 3.6 m in 26 m beside them
+and the M roof wall with no height under each second road's start; all 10 roads reached the topography. On the floor,
+each pad is crossed level over the first road's top and then down the berm at 12 to 16 %, 6 to 8 % over the 60 m, on the
+M and U floors; on the base of weathering, which is nearly flat there, within 1.3 %. The walls of no height at the turns
+are gone. Strip 2's road now stops after its second turn on the BOW wall, at fault 3 of 0034, so 9 of 10 reach the
+topography. Strips 1 to 3 aren't one sheet, as in Grid walls with no roads. Tim's back strip, on RLs, is unchanged: 509
+triangles with a 50 m join, 333 with the join past the strip's end, the road 3,639 m. The test pit's check now counts a
+road that climbs some walls and then stops as stopped; before, one that climbed more than one wall counted as reaching
+the top. No other design's count changed.
+
 ## What this leaves
 
+- **Fault 3 of 0034 after a turn on a seam floor,** as on Strip 2 of Grid switchbacks.
 - **Where a taper ends,** if the planner wants it off the line at the string's end, as Tim's back strip has it (probably
   moved by hand, he says).
 - **A join per turn,** rather than one for every turn a ramp makes.
