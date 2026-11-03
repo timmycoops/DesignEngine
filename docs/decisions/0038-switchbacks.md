@@ -3,7 +3,8 @@
 Date: 2026-11-03 · Status: accepted (Tim, 2026-11-03: "Yes, build them"; then "flat rls with a flat pad for a
 switchback would be a standard terrace design for a coal mine and a metals design (metals may have non straight walls
 though)"; on the toe past a turn, "the set joint length make sense from a default position"; and on making that length
-a setting on each ramp, "Ok go for it"). The second part after 0037.
+a setting on each ramp, "Ok go for it"; on pads on grids, "On the seam floor"; and after trying it in the app, "From the
+toe of a ramp we will need the ramp width at least of flat entrance"). The second part after 0037.
 
 ## Why
 
@@ -34,9 +35,10 @@ design, in coal and in metals, where walls curve.
    part way across the last one's top, so the triangles there are split at that point. Nothing moves.
 6. **The Face design panel** cycles a ramp's cell off, on, then turning (a U-turn mark) where the wall before holds the ramp.
    A berm under a turn says so.
-7. **Past a turn the toe of the wall above joins back a set length on.** It comes out to the next road's wall-side start,
-   the pushed corner, and runs straight from there back to the line the ramp's join on from the turn, 50 m unless the
-   ramp says otherwise, measured along the road, then follows the line. Deswik joins the pushed corner to the line's next
+7. **Past a turn the toe of the wall above joins back a set length on.** It comes out to the wall-side corner of the next
+   road's flat entrance (item 10), the pushed corner, and runs straight from there back to the line the ramp's join on
+   from the turn, 50 m unless the ramp says otherwise, measured along the line from where the road comes onto it, then
+   follows the line. Deswik joins the pushed corner to the line's next
    vertex instead, so its join runs wherever the string happens to have one: 9 to 94 m on Tim's back strip, which he says
    he moved by hand, and one grid cell on a line from a grid. A set length gives the same pad whatever vertices the string
    has. On its way the join can pass over a bend of the line out into the pad, as where the berm's line goes round the
@@ -55,6 +57,19 @@ design, in coal and in metals, where walls curve.
    across, so the berm's line there isn't held up to the crest's height as it is elsewhere a crest stands above its
    target; it lies on the grid. On a seam floor dipping into the wall the pad falls across the berm, and the next road
    starts lower and climbs further. On an RL the floor is level, so the pad is too, as before.
+10. **After a turn the road runs flat a road width before it climbs** (Tim, 2026-11-03: "From the toe of a ramp we will
+    need the ramp width at least of flat entrance - trucks cant turn that tight"). It comes onto the berm's line across the
+    pad, runs along the line a road width, and climbs from there. Beside that stretch the toe of the wall above moves
+    back as far as the road's wall-side edge starts from the line, so the flat road is cut into the wall at the pad's
+    level. Its pit side follows the line, on the floor, which runs near enough along strike; its wall side stands level
+    across the road with it, as the road's own ends do. The first stretch of a ramp needs none: trucks come along the
+    floor behind its entrance and drive straight on.
+11. **Where a wall crosses a target on its way, its line goes round the roads in it.** Steps at one batter with no berm
+    between them are one wall, and the targets on the way only mark where it crosses them, as at a seam's roof. That line
+    was drawn from the wall's plain toe, as if there were no road, so round a road's entrance and past a turn it crossed
+    the toe of the wall above it. Now the roads that went into the wall are cut into it up to each target too, so the
+    line goes round their entrances and flat stretches and across them where they pass that height, and stands on the
+    same toe as the wall it's part of. A road that can't be cut to the target leaves the plain line, as before.
 
 Where the berm's line can't be read this way, the road falls back to 0035's landing, as before.
 
@@ -142,9 +157,39 @@ triangles with a 50 m join, 333 with the join past the strip's end, the road 3,6
 road that climbs some walls and then stops as stopped; before, one that climbed more than one wall counted as reaching
 the top. No other design's count changed.
 
+The flat entrance and the lines on the way, known answers exact to 1 µm: on the level pad the second road comes onto the
+berm's line, runs exactly a road width (10 m) along it at RL 120, and climbs its 200 m from there; the flat stretch's
+wall-side corner stands a road width across from where it came on, and the join is 50 m on from there along the line.
+Joins of 20, 50 and 90 m with 10 m and 25 m roads still land where they say, whatever vertices the string has. On the
+floor dipping 5 % the flat stretch is 10 m along the line, within 1 % of level, its wall side level across with it.
+Walls carried straight on through RL 110 and RL 130, with a road and a turn: the line at each RL is at that RL
+everywhere, stands on the same toe as the wall above, and crosses neither that toe nor the crest above; drawn from the
+plain toe it doesn't stand on it. Through the commands a 30 m join meets the line exactly 20 m nearer the turn than a
+50 m one, and the second road runs 10 m flat at RL 110.
+
+On the grid pit, as Tim ran it in the app, a 50 m road and a 75 m join: Strips 2, 4 and 6 stopped before; now 9 of 10
+roads reach the topography, Strip 2's stopping at fault 3 of 0034. With the template's 30 m road and 50 m join, 9 of 10,
+Strip 4's stopping at fault 3. Every RL switchbacks face has no lines crossing. In Grid switchbacks the lines that
+crossed round each road start and turn are gone; what's left are walls of no height: at the washout and where U runs
+into the weathering, as Grid walls has with no roads at all (9 pairs), and on Strips 1 and 8 with a 50 m road, where the
+flat stretch's wall side stands some 2.5 m above a floor dipping into the wall, more than the U seam is thick, so the U
+roof line runs onto the toe and touches it. One face is wrong: with a 30 m road and a 75 m join, Strip 1's last road, on
+a Topo wall 21 m across with a 30 m road after a turn where the minimum bench drops the berm, has its wall-side edge bend
+back to its pit side at the top, and the run-out from that bent end goes 57 m the wrong way: 6 pairs of triangles cross,
+and the face says so. With a 50 m join, or a 50 m road, or no flat stretch, it doesn't happen.
+
+Tim's back strip with the flat entrance: one sheet, nothing crossing, 555 triangles with a 50 m join and 433 with the
+join past the strip's end, the road 3,854 m against 3,639 m, each of its six turns adding a 40 m flat stretch. Tim's
+Deswik turns have none, so the legs after the turns heading east now start 31 to 40 m further along than his, where
+before every leg started within 14 m.
+
 ## What this leaves
 
-- **Fault 3 of 0034 after a turn on a seam floor,** as on Strip 2 of Grid switchbacks.
+- **The flat entrance's length as a setting,** if a road width isn't always what's wanted; Tim's Deswik back strip has
+  none.
+- **A road's wall-side edge running out from a bent end,** as on Strip 1 of Grid switchbacks with a 30 m road and a 75 m
+  join.
+- **Fault 3 of 0034 after a turn on a seam floor,** as on Strip 2 or 4 of Grid switchbacks.
 - **Where a taper ends,** if the planner wants it off the line at the string's end, as Tim's back strip has it (probably
   moved by hand, he says).
 - **A join per turn,** rather than one for every turn a ramp makes.

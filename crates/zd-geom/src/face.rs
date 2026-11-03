@@ -553,8 +553,9 @@ struct Climbing {
     /// The steps with a wall it's climbed so far.
     steps: Option<[usize; 2]>,
     top: Option<RoadTop>,
-    /// It turned back on a pad, so its next stretch starts afresh with the toe past the turn joining back.
-    turned: bool,
+    /// Where it came onto the line across a pad, if it turned back, so its next stretch runs flat along the line from
+    /// there a road width before it climbs, and the toe past the turn joins back.
+    turned: Option<[f64; 2]>,
     /// The wall-side top of the road before a turn, which its crossing of the pad passes.
     pad_corner: Option<[f64; 3]>,
     pit_edge: Vec<[f64; 3]>,
@@ -563,7 +564,7 @@ struct Climbing {
 
 impl Climbing {
     fn new(ramp: usize, spec: FaceRamp) -> Self {
-        Climbing { ramp, spec, steps: None, top: None, turned: false, pad_corner: None, pit_edge: Vec::new(), wall_edge: Vec::new() }
+        Climbing { ramp, spec, steps: None, top: None, turned: None, pad_corner: None, pit_edge: Vec::new(), wall_edge: Vec::new() }
     }
 
     /// Takes in a wall's stretch of road, and where the road has got to.
@@ -583,15 +584,17 @@ impl Climbing {
         self.top = Some(RoadTop { pit: *self.pit_edge.last().expect("it's climbed"), wall: *self.wall_edge.last().expect("it's climbed") });
     }
 
-    /// Turns back: a switchback on a pad, level on an RL and on the floor on a grid. The next wall's stretch starts
-    /// afresh at `at`, the other way along the string, and the line behind it, the side past the turn, comes out to its
-    /// wall-side edge and joins back.
-    fn turn_at(&mut self, at: [f64; 3]) {
-        self.spec.start = [at[0], at[1]];
+    /// Turns back: a switchback on a pad, level on an RL and on the floor on a grid. The next wall's stretch comes onto
+    /// `line` at `at` and runs the other way along it, flat for a road width so trucks don't turn straight onto the
+    /// grade, then climbs. The line behind it, the side past the turn, comes out to its wall-side edge and joins back.
+    fn turn_at(&mut self, at: [f64; 3], line: &Polyline) {
         self.spec.back = !self.spec.back;
+        let along = metres_along(line, at);
+        let start = point_along(line, if self.spec.back { along - self.spec.width } else { along + self.spec.width });
+        self.spec.start = [start[0], start[1]];
         self.pad_corner = self.top.map(|top| top.wall);
         self.top = None;
-        self.turned = true;
+        self.turned = Some([at[0], at[1]]);
     }
 
     /// The road as far as it got.
@@ -619,21 +622,6 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
     while k < steps.len() {
         match steps[k] {
             FaceStep::Project { batter, ramps: here, turns, .. } => {
-                // A road turning back with no berm since its last wall turns on the crest, from its wall-side top.
-                for open in climbing.iter_mut().filter(|open| turns.contains(&open.ramp)) {
-                    if let Some(top) = open.top {
-                        open.turn_at(top.wall);
-                    }
-                }
-                let joining: Vec<usize> = here.iter().copied().filter(|r| !stopped.contains(r) && limits.get(r) != Some(&0) && !climbing.iter().any(|open| open.ramp == *r)).collect();
-                for r in joining {
-                    if climbing.first().is_some_and(|open| open.spec.back != ramps[r].back) {
-                        face.no_roads.push(NoRoad { ramp: r, step: k, at: [ramps[r].start[0], ramps[r].start[1], 0.0], why: OTHER_WAY.into() });
-                        stopped.push(r);
-                    } else {
-                        climbing.push(Climbing::new(r, ramps[r]));
-                    }
-                }
                 if let Some(Waiting { crest, condition }) = waiting.take() {
                     from = match condition.filter(|t| *t > 0.0) {
                         // A conditioned line weaves either side of its crest, so with no berm here it
@@ -646,6 +634,21 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                         }
                         None => crest,
                     };
+                }
+                // A road turning back with no berm since its last wall turns on the crest, from its wall-side top.
+                for open in climbing.iter_mut().filter(|open| turns.contains(&open.ramp)) {
+                    if let Some(top) = open.top {
+                        open.turn_at(top.wall, &from);
+                    }
+                }
+                let joining: Vec<usize> = here.iter().copied().filter(|r| !stopped.contains(r) && limits.get(r) != Some(&0) && !climbing.iter().any(|open| open.ramp == *r)).collect();
+                for r in joining {
+                    if climbing.first().is_some_and(|open| open.spec.back != ramps[r].back) {
+                        face.no_roads.push(NoRoad { ramp: r, step: k, at: [ramps[r].start[0], ramps[r].start[1], 0.0], why: OTHER_WAY.into() });
+                        stopped.push(r);
+                    } else {
+                        climbing.push(Climbing::new(r, ramps[r]));
+                    }
                 }
                 let (line, mut batters) = batter.applied_to(&from).map_err(|e| fail(k, e))?;
                 from = line;
@@ -671,23 +674,33 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 for road in &on_wall {
                     (from, batters, ..) = start_on(&from, &batters, road);
                 }
+                let target = Resting::of(to, &from, flattest);
+                let built = project_wall_by_edge(&from, side, &batters, target.mesh());
+                let mut gave_up: Vec<(usize, Stopped)> = Vec::new();
+                let cut: Option<WallCut> = built.as_ref().ok().and_then(|wall| cut_roads(&from, &batters, side, &on_wall, wall, target.mesh(), &mut |r, stop| gave_up.push((r, stop))));
+                // Where the wall crosses each target on its way, with the roads that went into it cut in too, so the
+                // line runs round their entrances and pads and across them as the wall does, and stands on its foot.
+                let kept: Vec<RoadOnWall<'_>> = on_wall.iter().enumerate().filter(|(r, _)| !gave_up.iter().any(|(gone, _)| gone == r)).map(|(_, road)| *road).collect();
                 for &(j, to, _) in marks {
-                    let target = Resting::of(to, &from, flattest);
-                    match project_wall_by_edge(&from, side, &batters, target.mesh()) {
+                    let mark = Resting::of(to, &from, flattest);
+                    match project_wall_by_edge(&from, side, &batters, mark.mesh()) {
                         Ok(wall) => {
                             face.steps.push(wall_report(j, &wall));
-                            face.benches.push(FaceBench { step: j, toe: from.clone(), crest: wall.crest });
+                            let mut all_in = true;
+                            let with_roads = if cut.is_some() && !kept.is_empty() { cut_roads(&from, &batters, side, &kept, &wall, mark.mesh(), &mut |_, _| all_in = false) } else { None };
+                            let (toe, crest) = match with_roads.filter(|_| all_in) {
+                                Some(marked) => (marked.toe, marked.crest),
+                                None => (from.clone(), wall.crest),
+                            };
+                            face.benches.push(FaceBench { step: j, toe, crest });
                         }
                         // The wall carries on through here whatever this target does.
                         Err(_) => face.steps.push(no_wall_report(j)),
                     }
                 }
-                let target = Resting::of(to, &from, flattest);
-                match project_wall_by_edge(&from, side, &batters, target.mesh()) {
+                match built {
                     Ok(wall) => {
                         let mut report = wall_report(last, &wall);
-                        let mut gave_up: Vec<(usize, Stopped)> = Vec::new();
-                        let cut: Option<WallCut> = cut_roads(&from, &batters, side, &on_wall, &wall, target.mesh(), &mut |r, stop| gave_up.push((r, stop)));
                         let (foot, crest) = match &cut {
                             Some(cut) => (cut.toe.clone(), cut.crest.clone()),
                             None => (from.clone(), wall.crest.clone()),
@@ -695,6 +708,10 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                         let gaps: Vec<Stretch> = cut.as_ref().map_or_else(Vec::new, |cut| cut.logs.iter().flat_map(|log| &log.no_height).filter(|stretch| !across_a_road_end(stretch, &cut.roads)).copied().collect());
                         let no_height = !wall.log.no_height.is_empty() || !gaps.is_empty();
                         let toe = if no_height { with_touches(&foot, &crest) } else { foot };
+                        // The targets on the way are all on this one wall, which stands on this toe.
+                        for bench in face.benches.iter_mut().filter(|bench| marks.iter().any(|(j, ..)| *j == bench.step)) {
+                            bench.toe = toe.clone();
+                        }
                         finish_berm(&mut berm_from, &toe, face).map_err(|e| fail(last, e))?;
                         match cut {
                             Some(cut) => {
@@ -790,7 +807,7 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 }
                 for open in climbing.iter_mut().filter(|open| turning.contains(&open.ramp)) {
                     if let Some(top) = open.top {
-                        open.turn_at(straight_across(&from, &crest, top, width, side));
+                        open.turn_at(straight_across(&from, &crest, top, width, side), &from);
                     }
                 }
                 lying = register;

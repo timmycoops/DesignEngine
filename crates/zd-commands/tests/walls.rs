@@ -1056,9 +1056,9 @@ fn a_ramp_runs_up_the_walls_that_name_it_across_a_berm() {
 }
 
 /// A switchback through the commands, in the table as the panel saves it: past the turn the toe of the wall above
-/// joins back to the berm's line, at RL 110 and 20 m out from the toe, the ramp's join on from the turn along the road,
-/// and 50 m on when the ramp doesn't say. A 30 m join meets the line 20 m nearer the turn along the road, and the road
-/// climbs a 45 degree wall at 10 % at sin(angle) = 0.1 to it, so 20 / cos(angle) = 20.10 m nearer along the line.
+/// joins back to the berm's line, at RL 110 and 20 m out from the toe, the ramp's join on from the turn along the line,
+/// and 50 m on when the ramp doesn't say. A 30 m join meets the line 20 m nearer the turn. The second road runs a road
+/// width flat along the line before it climbs: it comes onto the line at RL 110 and is still there 10 m on.
 #[test]
 fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
     let mut s = Session::with_builtins();
@@ -1095,10 +1095,13 @@ fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
         let corner = toe_two.vertices.iter().position(|p| p[1] - N > 65.0).unwrap_or_else(|| panic!("{join:?}: the toe runs round the next road's start: {:?}", toe_two.vertices));
         let on_line = toe_two.vertices[corner..].iter().find(|p| (p[1] - N - 50.0).abs() < 1e-6).unwrap_or_else(|| panic!("{join:?}: the toe joins the line: {:?}", toe_two.vertices));
         joins.push(on_line[0] - E);
+        let pit = line(&s, s.project().objects().find(|o| o.name == "toe Wall road A pit edge" && s.project().layer(o.layer).is_some_and(|l| l.name == layer(join))).unwrap().id);
+        let onto = pit.vertices.iter().position(|p| (p[2] - 110.0).abs() < 1e-6).expect("the first road's top") + 1;
+        let (from, to) = (pit.vertices[onto], pit.vertices[onto + 1]);
+        assert!((from[2] - 110.0).abs() < 1e-6 && (to[2] - 110.0).abs() < 1e-6 && ((to[0] - from[0]).abs() - 10.0).abs() < 1e-6, "{join:?}: flat a road width along the line: {from:?} to {to:?}");
     }
     assert!((joins[0] - joins[1]).abs() < 1e-6, "{joins:?}");
-    let cos = (1.0f64 - 0.01).sqrt();
-    assert!((joins[1] - joins[2] - 20.0 / cos).abs() < 1e-6, "{joins:?}");
+    assert!((joins[1] - joins[2] - 20.0).abs() < 1e-6, "{joins:?}");
 }
 
 /// Too steep a climb for the string's length leaves the face standing and says why, by step and place.
