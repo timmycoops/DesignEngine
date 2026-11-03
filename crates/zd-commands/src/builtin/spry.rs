@@ -12,12 +12,10 @@ use zd_io::{SPRY_LEVELS, SpryLog, SpryRead, read_spry};
 
 use super::deswik::{Made, MeshesAs, SurfaceTally, import_mesh};
 use super::in_parallel;
-use super::solid::{Cleaning, ImportTally, default_fill_limit};
+use super::solid::{Cleaning, ImportTally, NOT_A_SOLID, VOLUME_AGREES, default_fill_limit};
 use super::surface::default_tolerance;
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
-/// A solid's volume and Spry's own figure for it differ when they are more than this share apart.
-const VOLUME_AGREES: f64 = 1e-6;
 /// Run records give a line to each mesh when there are no more than this many, and name this many of
 /// the solids that differ most.
 const LINES_PER_MESH_UP_TO: usize = 10;
@@ -155,6 +153,7 @@ impl Command for ImportSpry {
                     }
                     if let Some(why) = refused_as_solid {
                         kept_as_surfaces.push(format!("{name} ({}): {why}", mesh.layer));
+                        attributes.insert(NOT_A_SOLID.into(), AttrValue::Text(why));
                     }
                     on_layer(&mesh.layer, name, attributes, Body::Surface(surface));
                 }

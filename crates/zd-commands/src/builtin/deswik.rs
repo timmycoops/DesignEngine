@@ -11,12 +11,10 @@ use zd_geom::repair_mesh;
 use zd_io::{DESWIK_LEVELS, DeswikLog, DeswikMesh, read_deswik_layers};
 
 use super::in_parallel;
-use super::solid::{Cleaning, ImportTally, ImportedSolid, default_fill_limit, solid_from_welded};
+use super::solid::{Cleaning, ImportTally, ImportedSolid, NOT_A_SOLID, VOLUME_AGREES, default_fill_limit, solid_from_welded};
 use super::surface::{check_crossings, default_tolerance, describe_repair};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
-/// A solid's volume and Deswik's own figure for it differ when they are more than this share apart.
-const VOLUME_AGREES: f64 = 1e-6;
 /// Run records give a line to each mesh when there are no more than this many.
 const LINES_PER_MESH_UP_TO: usize = 10;
 
@@ -151,6 +149,7 @@ impl Command for ImportDeswik {
                     }
                     if let Some(why) = refused_as_solid {
                         kept_as_surfaces.push(format!("{name} ({}): {why}", mesh.layer));
+                        attributes.insert(NOT_A_SOLID.into(), AttrValue::Text(why));
                     }
                     on_layer(&mesh.layer, attributes, Body::Surface(surface), &mut names);
                 }

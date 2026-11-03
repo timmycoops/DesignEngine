@@ -211,6 +211,135 @@ impl Command for ImportSolids {
     }
 }
 
+/// The attribute an import puts on a closed mesh it kept as a surface, saying why it isn't a solid
+/// (decision 0040); `solid.repair` takes it off what it fixes.
+pub(crate) const NOT_A_SOLID: &str = "not_a_solid";
+
+/// A solid agrees with another package's own volume of it to within this share.
+pub(crate) const VOLUME_AGREES: f64 = 1e-6;
+
+/// The attributes holding another package's own volume of a mesh, to check a repaired solid against.
+const SOURCE_VOLUMES: [(&str, &str); 2] = [("spry_volume_m3", "Spry"), ("deswik_volume_m3", "Deswik")];
+
+/// `solid.repair`: closed surfaces made solids by the repair of decision 0013 (fins off, cracks
+/// joined, holes filled up to `fill_limit`, crossings and edges of three faces rebuilt by the union
+/// and checked along rays), each fixed one replacing its surface in the one run, with its name,
+/// layer and attributes (decision 0040). One that still can't be a solid stays a surface, its
+/// `not_a_solid` saying why now. Undo brings the surfaces back.
+pub struct RepairSolids;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepairSolidsParams {
+    pub surfaces: Vec<ObjectId>,
+    /// Vertices closer than this (m) are welded, and crossings by less than it are not counted.
+    #[serde(default = "default_tolerance")]
+    pub weld_tolerance: f64,
+    /// The most hole area to fill, as a share of a solid's surface (0.1 = 10 %).
+    #[serde(default = "default_fill_limit")]
+    pub fill_limit: f64,
+}
+
+impl Command for RepairSolids {
+    type Params = RepairSolidsParams;
+    const NAME: &'static str = "solid.repair";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Make closed surfaces solids by repair, each fixed one replacing its surface",
+            inputs: vec![Field::new("surfaces", FieldType::Objects, "Closed surfaces, such as those an import kept as not a solid")],
+            params: vec![
+                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "Weld vertices closer than this; 1 mm by default"),
+                Field::new("fill_limit", FieldType::Number { unit: "share" }, "The most hole area to fill, as a share of the surface; 0.1 by default"),
+            ],
+            outputs: vec![Field::new("solids", FieldType::Objects, "One solid for each surface fixed")],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let cleaning = Cleaning { weld_tolerance: p.weld_tolerance, repair: true, fill_limit: p.fill_limit }.checked()?;
+        let mut seen = HashSet::new();
+        let ids: Vec<ObjectId> = p.surfaces.iter().copied().filter(|id| seen.insert(*id)).collect();
+        if ids.is_empty() {
+            return Err(CommandError::Invalid("no surfaces given".into()));
+        }
+        let surfaces = ids.iter().map(|&id| inputs.surface(id)).collect::<Result<Vec<_>, _>>()?;
+        let start = Instant::now();
+        let results = in_parallel(&surfaces, |(object, surface)| repair_surface(surface.mesh(), &object.name, cleaning));
+        let ms = start.elapsed().as_secs_f64() * 1e3;
+
+        let mut tally = ImportTally::default();
+        let (mut changes, mut still, mut differ) = (Vec::new(), Vec::new(), Vec::new());
+        let mut change_m3 = 0.0;
+        for ((object, _), result) in surfaces.iter().zip(results) {
+            match result {
+                Ok(imported) => {
+                    tally.add(&imported);
+                    if let Some(AttrValue::Number(change)) = imported.attributes.get("repair_volume_change_m3") {
+                        change_m3 += change;
+                    }
+                    let ours = imported.solid.volume();
+                    for (key, source) in SOURCE_VOLUMES {
+                        if let Some(&AttrValue::Number(theirs)) = object.attributes.get(key)
+                            && (ours - theirs).abs() > VOLUME_AGREES * theirs.abs()
+                        {
+                            differ.push((object.name.clone(), source, ours, theirs));
+                        }
+                    }
+                    let mut attributes = object.attributes.clone();
+                    attributes.remove(NOT_A_SOLID);
+                    attributes.extend(imported.attributes);
+                    changes.push(Change::Delete { id: object.id, base: object.revision });
+                    changes.push(Change::Create { name: object.name.clone(), layer: inputs.layer_name(object), attributes, body: Body::Solid(imported.solid) });
+                }
+                Err(why) => {
+                    still.push(format!("{}: {why}", object.name));
+                    let why = AttrValue::Text(why);
+                    if object.attributes.get(NOT_A_SOLID) != Some(&why) {
+                        let mut attributes = object.attributes.clone();
+                        attributes.insert(NOT_A_SOLID.into(), why);
+                        changes.push(Change::Revise { id: object.id, base: object.revision, name: None, layer: None, attributes: Some(attributes), body: None });
+                    }
+                }
+            }
+        }
+        if tally.solids == 0 {
+            let first = still.iter().take(LINES_PER_SOLID_UP_TO).cloned().collect::<Vec<_>>().join("; ");
+            return Err(CommandError::Invalid(format!("none of the {} surfaces could be made a solid by repair: {first}", surfaces.len())));
+        }
+
+        let mut outcome = Outcome::new(changes).message(format!(
+            "{} of {} surfaces made solids by repair, each replacing its surface; {change_m3:+.3} m3 changed by the union where it ran",
+            tally.solids,
+            surfaces.len()
+        ));
+        outcome = outcome.message(tally.describe(cleaning.weld_tolerance, ms));
+        if !differ.is_empty() {
+            differ.sort_by(|a, b| (b.2 - b.3).abs().total_cmp(&(a.2 - a.3).abs()));
+            outcome = outcome.message(format!("{} repaired solids differ from the source's own volume by more than a millionth, the largest first:", differ.len()));
+            outcome.messages.extend(differ.iter().take(LINES_PER_SOLID_UP_TO).map(|(name, source, ours, theirs)| {
+                format!("{name}: {ours:.3} m3 here, {theirs:.3} m3 in {source} ({:+.4} %)", 100.0 * (ours - theirs) / theirs)
+            }));
+        }
+        if !still.is_empty() {
+            outcome = outcome.message(format!("{} still not solids, kept as surfaces with why on each:", still.len()));
+            outcome.messages.extend(still.into_iter().take(LINES_PER_SOLID_UP_TO));
+        }
+        Ok(outcome)
+    }
+}
+
+/// A surface's mesh as a solid by repair. A panic in the geometry is this surface's refusal, not the run's.
+fn repair_surface(mesh: &TriMesh, name: &str, cleaning: Cleaning) -> Result<ImportedSolid, String> {
+    let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let read = format!("surface: {} vertices, {} triangles", mesh.vertices.len(), mesh.triangle_count());
+        let (welded, log) = repair_mesh(mesh, cleaning.weld_tolerance);
+        solid_from_welded(welded, log, read, name, name, cleaning).map_err(|e| e.to_string())
+    }));
+    attempt.unwrap_or_else(|_| Err("the repair stopped on an error in the geometry".into()))
+}
+
 /// How a file's mesh is cleaned on its way to a solid.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Cleaning {

@@ -71,6 +71,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "solid.from_mesh",
             "solid.import",
             "solid.import_many",
+            "solid.repair",
             "spry.import",
             "string.create",
             "string.delete_vertex",
