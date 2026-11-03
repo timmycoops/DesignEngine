@@ -465,10 +465,10 @@ function RampRow({ ramp, stringName, onWalls, results, swap, onShow, onChange, o
         <button type="button" className={`max-w-36 truncate hover:text-primary ${stringName ? '' : 'text-primary'}`} title={stringName ? `The string across the strips. Click to light it up, then drag its vertices and run again` : 'Its string has gone'} onClick={onShow}>
           {stringName ?? 'String gone'}
         </button>
-        <IconButton title="Use the string selected in the viewport instead" disabled={!swap} onClick={() => swap?.()}>
+        <IconButton title="Use the string selected in the viewport instead. It has to run across the strips, so a strip itself can't be one" disabled={!swap} onClick={() => swap?.()}>
           <Crosshair className="size-3" />
         </IconButton>
-        <select className={selectClass} value={ramp.fixed} aria-label="Which end is on the string" title="Ends at: the road comes out where the string crosses the crest of its last wall, and the run moves each start along the toe to get it there. Starts at: it starts where the string crosses the toe of its first wall" onChange={(e) => onChange({ fixed: e.target.value as RampFixed })}>
+        <select className={selectClass} value={ramp.fixed} aria-label="Which end is on the string" title="Ends at: the road comes out on the top crest level with where the string crosses each strip, and the run moves its start along the toe to get it there. Starts at: it starts where the string crosses each strip" onChange={(e) => onChange({ fixed: e.target.value as RampFixed })}>
           <option value="end">Ends at</option>
           <option value="start">Starts at</option>
         </select>
@@ -969,7 +969,7 @@ export function FaceDesignPanel() {
                 stringName={objects.find((o) => o.id === ramp.string)?.name ?? null}
                 onWalls={profile.steps.some((s) => s.step === 'project' && (s.ramps ?? []).includes(ramp.name))}
                 results={report.lines.filter((line) => line.startsWith(`Ramp ${ramp.name}: `))}
-                swap={objects.some((o) => o.id === selected && o.kind === 'string') && selected !== ramp.string ? () => selected && setRamp(k, { string: selected }) : null}
+                swap={objects.some((o) => o.id === selected && o.kind === 'string') && selected !== ramp.string && !strings.some((s) => s.id === selected && (s.attributes.strip !== undefined || draft.lines.some((line) => line.string === s.id))) ? () => selected && setRamp(k, { string: selected }) : null}
                 onShow={() => select(ramp.string)}
                 onChange={(change) => setRamp(k, change)}
                 onRemove={() => removeRamp(k)}
@@ -1057,7 +1057,7 @@ export function FaceDesignPanel() {
       {report.lines
         .filter((line) => !rampLine(line))
         .map((line, k) => (
-          <p key={k} className="px-3 pt-2 text-xs text-muted-foreground">
+          <p key={k} className={`px-3 pt-2 text-xs ${line.endsWith('Nothing is built on this string') ? 'text-destructive' : 'text-muted-foreground'}`}>
             {line}
           </p>
         ))}

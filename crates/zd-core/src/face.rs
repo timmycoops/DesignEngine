@@ -101,7 +101,8 @@ pub struct Ramp {
     pub name: String,
     /// A string drawn across the strips. Each line it crosses gets a road.
     pub string: ObjectId,
-    /// Which end of the road is where the string crosses: the toe of its first wall, or the crest of its last.
+    /// Which end of the road goes by where the string crosses the toe of its first wall: it starts there, or it
+    /// comes out on its last crest that far along the strip.
     pub fixed: RampFixed,
     pub heading: RampHeading,
     /// Square to the road (m).
