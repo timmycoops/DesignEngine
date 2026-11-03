@@ -22,6 +22,10 @@
 //! crest then bevels from one to the other at 45 degrees in plan, and the flatter batter reaches into the
 //! steeper stretch and never the other way, so blending between batters can only flatten a slope.
 //!
+//! Walls of one batter fold over each other where a string turns as it climbs just so, that the two all but lie in
+//! one plane and the line they share runs along the string. A hip there would run out across the walls beside it,
+//! so a fold stands at the vertex instead: a transition at 45 degrees in plan (decision 0034).
+//!
 //! The target is a surface single-valued in plan, wound either way. Where it has no data under a wall,
 //! in a no-seam hole or past its edge, it's bridged and the stretch is reported: straight across a hole
 //! between its edges, and level with the nearest edge past the outside, so the crest stays whole and a
@@ -70,6 +74,18 @@ const CORNER_TURN: f64 = 30.0;
 const SAME_SLOPE: f64 = 0.02;
 /// How far a string has to turn for two walls to have a hip of their own: the sine of the angle.
 const TURNS: f64 = 1e-3;
+/// Walls whose planes are this close to one, as the sine of the angle between them, need no fold between them: they
+/// part by less than a millimetre in a kilometre. A wall above a road is parallel to the wall behind it on purpose.
+const ONE_PLANE: f64 = 1e-9;
+/// How far a hip between walls of one batter has to lean out from both feet, as the sine of the angle, to stand
+/// clear of the walls beside them.
+const CLEAR_OF_FEET: f64 = 1e-2;
+/// Under this, as a share of the way out, a hip after a closing goes neither out nor in: its neighbours are back to
+/// back.
+const BACK_TO_BACK: f64 = 1e-3;
+/// The most a target has to stand clear of a string for a crest to leave it, where it only just lifts off at a vertex
+/// and the crest comes straight back down (m).
+const MOST_LIFT: f64 = 1e-2;
 /// Neither a wall nor a string end: the edge a wall stands on.
 const FOOT: usize = usize::MAX;
 /// The level edge left at the top of the sweep.
@@ -645,14 +661,27 @@ impl Sweep {
             return Some(unit([real.out[0], real.out[1], real.slope]));
         }
         let c = scale(c, 1.0 / length);
-        let out = [a.out[0] + b.out[0], a.out[1] + b.out[1]];
-        if out[0] * out[0] + out[1] * out[1] < 1e-12 {
-            return None;
-        }
+        let out = self.way_out(behind, ahead)?;
         let outward = c[0] * out[0] + c[1] * out[1];
         // Square to the way out, which only a level ridge can be, a hip rises.
         let flip = if outward.abs() > 1e-12 { outward < 0.0 } else { c[2] < 0.0 };
         Some(if flip { scale(c, -1.0) } else { c })
+    }
+
+    /// Which way is out from between two walls in plan, unscaled; none from walls back to back. A transition faces
+    /// halfway between its neighbours, and a hip beside one can lean out from the other's foot by less than that, so
+    /// only a wall standing on a foot says which way is out.
+    fn way_out(&self, behind: usize, ahead: usize) -> Option<[f64; 2]> {
+        let (a, b) = (&self.walls[behind], &self.walls[ahead]);
+        let out = [a.out[0] + b.out[0], a.out[1] + b.out[1]];
+        if out[0] * out[0] + out[1] * out[1] < 1e-12 {
+            return None;
+        }
+        Some(match (self.is_transition(behind), self.is_transition(ahead)) {
+            (true, false) => b.out,
+            (false, true) => a.out,
+            _ => out,
+        })
     }
 
     /// Closes walls wherever two hips meet below `top`, then runs every hip left out to `top`, or as
@@ -741,11 +770,15 @@ impl Sweep {
         if behind == ahead || (self.is_end(behind) && self.is_end(ahead)) {
             return None;
         }
-        // Neighbours squeezed together may be back to back. The hip runs on away from the closed wall.
+        // Neighbours squeezed together may be back to back, with no way out between them. The hip runs on away
+        // from the closed wall then. Otherwise the way out says, as at the string: a short wall closing at the end
+        // of its foot leaves its neighbours meeting in a line nearly along the string, and away from that foot is
+        // back along the string, behind both of theirs.
         let foot = self.walls[wall].foot;
         let from_foot = sub(at, scale(add(foot[0], foot[1]), 0.5));
         let mut direction = self.hip_direction(behind, ahead).unwrap_or_else(|| unit([from_foot[0], from_foot[1], 0.0]));
-        if direction[0] * from_foot[0] + direction[1] * from_foot[1] < 0.0 {
+        let decided = self.way_out(behind, ahead).is_some_and(|out| (direction[0] * out[0] + direction[1] * out[1]).abs() > BACK_TO_BACK);
+        if !decided && direction[0] * from_foot[0] + direction[1] * from_foot[1] < 0.0 {
             direction = scale(direction, -1.0);
         }
         let hip = self.hips.len();
@@ -781,23 +814,39 @@ fn wall_of(a: P3, b: P3, slope: f64) -> Wall {
     Wall { plane: Plane { normal, through: a }, out, slope, foot: [a, b], start_side: Vec::new(), end_side: Vec::new(), closed_at: None }
 }
 
-/// Whether two neighbouring walls need a transition: they differ, and the line their planes share doesn't
-/// run out between the ways they face. On a straight run it's the string itself.
-fn needs_transition(a: &Wall, b: &Wall) -> bool {
-    if a.slope == b.slope || ((a.slope - b.slope).abs() <= SAME_SLOPE * a.slope.max(b.slope) && cross2(a.out, b.out).abs() > TURNS) {
-        return false;
-    }
+/// How two neighbouring walls meet.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Join {
+    /// In the line their planes share.
+    Hip,
+    /// Their batters differ, and the line they share doesn't run out between the ways they face. On a straight
+    /// run it's the string itself.
+    Bevel,
+    /// One batter on a string that turns as it climbs, so their planes all but lie in one, and the line they share
+    /// runs along the string or back behind a foot: a hip there would cross the walls beside them.
+    Fold,
+}
+
+fn join_of(a: &Wall, b: &Wall) -> Join {
     let shared = cross(a.plane.normal, b.plane.normal);
+    if norm(shared) < ONE_PLANE {
+        return Join::Hip;
+    }
     let plan = shared[0].hypot(shared[1]);
+    let one_batter = a.slope == b.slope || ((a.slope - b.slope).abs() <= SAME_SLOPE * a.slope.max(b.slope) && cross2(a.out, b.out).abs() > TURNS);
     if plan < 1e-12 {
-        return true;
+        return if one_batter { Join::Hip } else { Join::Bevel };
     }
     let outward = shared[0] * (a.out[0] + b.out[0]) + shared[1] * (a.out[1] + b.out[1]);
     let way = if outward < 0.0 { -1.0 } else { 1.0 };
     let p = [way * shared[0] / plan, way * shared[1] / plan];
+    if one_batter {
+        let off_feet = (p[0] * a.out[0] + p[1] * a.out[1]).min(p[0] * b.out[0] + p[1] * b.out[1]);
+        return if off_feet < CLEAR_OF_FEET { Join::Fold } else { Join::Hip };
+    }
     let turn = cross2(a.out, b.out);
     let reaches = |out: [f64; 2]| p[0] * out[0] + p[1] * out[1] > 1e-9;
-    !(reaches(a.out) && reaches(b.out) && cross2(a.out, p) * turn >= 0.0 && cross2(p, b.out) * turn >= 0.0)
+    if reaches(a.out) && reaches(b.out) && cross2(a.out, p) * turn >= 0.0 && cross2(p, b.out) * turn >= 0.0 { Join::Hip } else { Join::Bevel }
 }
 
 /// A direction in `wall`'s plane over a plan step.
@@ -826,6 +875,23 @@ fn transition_at(vertex: P3, a: &Wall, b: &Wall) -> Wall {
     Wall { plane: Plane { normal, through: vertex }, out: [out[0] / length, out[1] / length], slope: flat.slope, foot: [vertex, vertex], start_side: Vec::new(), end_side: Vec::new(), closed_at: None }
 }
 
+/// The transition at `vertex` between walls `a` and `b` that fold over each other: through the fall line of the
+/// one lower out from the vertex, and a hip across the other leaning back along its foot at 45 degrees in plan.
+/// The two all but lie in one plane, so the transition does too, and its hips are well apart.
+fn fold_at(vertex: P3, a: &Wall, b: &Wall) -> Wall {
+    let out = [a.out[0] + b.out[0], a.out[1] + b.out[1]];
+    let length = out[0].hypot(out[1]);
+    let out = [out[0] / length, out[1] / length];
+    let rise = |wall: &Wall| across_plane(wall, out)[2];
+    let (steep, flat, sign) = if rise(a) > rise(b) { (a, b, -1.0) } else { (b, a, 1.0) };
+    let back = [steep.out[1] * sign, -steep.out[0] * sign];
+    let lean = std::f64::consts::FRAC_PI_4;
+    let plan = [steep.out[0] * lean.cos() + back[0] * lean.sin(), steep.out[1] * lean.cos() + back[1] * lean.sin()];
+    let normal = unit(cross(across_plane(flat, flat.out), across_plane(steep, plan)));
+    let normal = if normal[2] < 0.0 { scale(normal, -1.0) } else { normal };
+    Wall { plane: Plane { normal, through: vertex }, out, slope: flat.slope, foot: [vertex, vertex], start_side: Vec::new(), end_side: Vec::new(), closed_at: None }
+}
+
 /// The string and its walls with a transition wherever neighbours need one. A transition is a segment of
 /// no length, so its vertex is in the string twice.
 fn with_transitions(string: &[P3], plain: &[Wall], closed: bool) -> (Vec<P3>, Vec<Wall>) {
@@ -840,11 +906,14 @@ fn with_transitions(string: &[P3], plain: &[Wall], closed: bool) -> (Vec<P3>, Ve
             continue;
         }
         let after = &plain[next % count];
-        if needs_transition(wall, after) {
-            let vertex = string[next % string.len()];
-            points.push(vertex);
-            walls.push(transition_at(vertex, wall, after));
-        }
+        let vertex = string[next % string.len()];
+        let transition = match join_of(wall, after) {
+            Join::Hip => continue,
+            Join::Bevel => transition_at(vertex, wall, after),
+            Join::Fold => fold_at(vertex, wall, after),
+        };
+        points.push(vertex);
+        walls.push(transition);
     }
     if !closed {
         points.push(string[string.len() - 1]);
@@ -1102,16 +1171,18 @@ impl<'a> Walk<'a> {
 
     /// The first place up the stretch `p`-`q` where the target stops being above it.
     fn target_met(&self, p: P3, q: P3) -> Result<Option<P3>, GeomError> {
-        self.crossing_on(p, q, |gap| gap > ON_TARGET)
+        self.crossing_on(p, q, |gap| gap > ON_TARGET, 0.0)
     }
 
-    /// The first place along the stretch `p`-`q` where the target goes back above it.
-    fn target_rises_over(&self, p: P3, q: P3) -> Result<Option<P3>, GeomError> {
-        self.crossing_on(p, q, |gap| gap <= ON_TARGET)
+    /// The first place along the stretch `p`-`q` where the target goes back above it, or where it's `lift` above it
+    /// if that's more than rounding.
+    fn target_rises_over(&self, p: P3, q: P3, lift: f64) -> Result<Option<P3>, GeomError> {
+        self.crossing_on(p, q, |gap| gap <= lift, if lift > ON_TARGET { lift } else { 0.0 })
     }
 
-    /// The first place along `p`-`q` where the gap up to the target leaves the state `before` holds.
-    fn crossing_on(&self, p: P3, q: P3, before: impl Fn(f64) -> bool) -> Result<Option<P3>, GeomError> {
+    /// The first place along `p`-`q` where the gap up to the target leaves the state `before` holds: where it's
+    /// `level`, between the two places either side.
+    fn crossing_on(&self, p: P3, q: P3, before: impl Fn(f64) -> bool, level: f64) -> Result<Option<P3>, GeomError> {
         let height = |s: P3| self.target_at(s).ok_or_else(|| self.off_target(s));
         let at = |t: f64| add(p, scale(sub(q, p), t));
         let mut last = (0.0, height(p)? - p[2]);
@@ -1127,7 +1198,7 @@ impl<'a> Walk<'a> {
             let t = along(s);
             let gap = s[2] - at(t)[2];
             if before(last.1) && !before(gap) {
-                let share = (last.1 / (last.1 - gap)).clamp(0.0, 1.0);
+                let share = ((last.1 - level) / (last.1 - gap)).clamp(0.0, 1.0);
                 return Ok(Some(at(last.0 + share * (t - last.0))));
             }
             last = (t, gap);
@@ -1148,6 +1219,8 @@ impl<'a> Walk<'a> {
         keep(&mut walked.crest, position.at);
         let mut piece = Piece { entry: stop_on(&self.edges[position.wall], position.entered, position.at), exit: Stop { edge: 0, along: 0.0 }, points: vec![position.at] };
         let limit = 8 * (self.near.triangles.len() + self.sweep.walls.len()) + 1_000;
+        // Where the crest last left the string, and how far clear of it the target had to be.
+        let (mut last_resume, mut lift): (Option<P3>, f64) = (None, ON_TARGET);
         // Where the crest went over a gap in the target.
         let mut gap_from: Option<P3> = None;
         let mut note_gap = |at: P3, triangle: u32, log: &mut WallLog| {
@@ -1185,8 +1258,13 @@ impl<'a> Walk<'a> {
                     return Ok(walked);
                 }
                 if across == FOOT {
-                    match self.resume_along(position.wall, point, &mut walked, log)? {
+                    // A target that only just lifts off the string, at a vertex, can send the crest straight back down
+                    // where it left, on neither wall beside it. It goes on along the string to where the target
+                    // stands clear by more, a tenfold more each time round.
+                    lift = if last_resume.is_some_and(|p| norm(sub(p, point)) < SAME_POINT) { (lift * 10.0).min(MOST_LIFT) } else { ON_TARGET };
+                    match self.resume_along(position.wall, point, &mut walked, log, lift)? {
                         Some(resumed) => {
+                            last_resume = Some(resumed.at);
                             piece.entry = stop_on(&self.edges[resumed.wall], resumed.entered, resumed.at);
                             piece.points = vec![resumed.at];
                             position = resumed;
@@ -1234,7 +1312,7 @@ impl<'a> Walk<'a> {
         let height = self.target_at(foot[0]).ok_or_else(|| self.off_target(foot[0]))?;
         if height <= foot[0][2] + ON_TARGET {
             walked.crest.push(foot[0]);
-            return self.resume_along(0, foot[0], walked, log);
+            return self.resume_along(0, foot[0], walked, log, ON_TARGET);
         }
         let (start, _) = self.sweep.ends().expect("an open string");
         self.start_up(|across| across == start).map(Some)
@@ -1271,13 +1349,13 @@ impl<'a> Walk<'a> {
     }
 
     /// The crest where it's come down onto the string: on along the string until the target rises
-    /// over it again.
-    fn resume_along(&self, wall: usize, from: P3, walked: &mut Walked, log: &mut WallLog) -> Result<Option<Position>, GeomError> {
+    /// over it again by more than `lift`.
+    fn resume_along(&self, wall: usize, from: P3, walked: &mut Walked, log: &mut WallLog, lift: f64) -> Result<Option<Position>, GeomError> {
         let mut wall = wall;
         let mut at = from;
         loop {
             let foot = self.sweep.walls[wall].foot;
-            if let Some(point) = self.target_rises_over(at, foot[1])? {
+            if let Some(point) = self.target_rises_over(at, foot[1], lift)? {
                 keep(&mut walked.crest, point);
                 log.no_height.push(Stretch { from: world(from, self.origin), to: world(point, self.origin) });
                 let plane = self.sweep.walls[wall].plane;
@@ -1657,26 +1735,120 @@ mod tests {
         assert!(!no_width(&[edge([0.0, 0.0], [5.0, 5.0]), edge([5.0, 5.0], [5.0, 6.0]), edge([5.0, 6.0], [0.0, 0.0])]));
     }
 
-    /// A known fault. A string that wrinkles along and up and down, as a line draped on a wavy grid does, can lose
-    /// its way: the crest runs off along the wrong plane and the wall is refused, 16 times in the 64 here. Strings
-    /// lying on an RL don't wrinkle like this.
+    /// A target rolling up to 10 m either way every few hundred metres.
+    fn wavy_target() -> TriMesh {
+        triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [25.0, 25.0], 300, 120, |x, y| 150.0 + 6.0 * ((x - E) / 90.0).sin() + 4.0 * ((y - N) / 70.0).cos()))
+    }
+
+    /// 900 segments of 6 m that wander `plan` metres either way and rise and fall `rl` metres, as a line draped on a
+    /// wavy grid does.
+    fn wrinkled(plan: f64, rl: f64) -> Polyline {
+        let vertices = (0..900).map(|i| {
+            let i = f64::from(i);
+            [E + 6.0 * i, N + plan * (0.37 * i).sin() + 0.6 * plan * (1.9 * i).sin(), 100.0 + 0.012 * i + rl * (0.21 * i).sin() + 0.7 * rl * (1.3 * i).sin()]
+        });
+        Polyline { vertices: vertices.collect(), closed: false }
+    }
+
+    /// Strings that wrinkle along and up and down, as lines draped on a wavy grid do, all build, and each crest lies on
+    /// the target. Before 0034, 16 of these 64 were refused: 11 where two walls of one batter met in a line along the
+    /// string or behind a foot, so the hip ran out hundreds of metres across the walls beside it and the crest walked
+    /// off along the wrong plane, and 5 where a short wall closing at the end of its foot turned the hip after it the
+    /// same way.
     #[test]
-    #[ignore = "known fault, in decision 0032: wrinkled strings"]
     fn wrinkled_strings_below_their_target_all_build() {
-        let target = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [25.0, 25.0], 300, 120, |x, y| 150.0 + 6.0 * ((x - E) / 90.0).sin() + 4.0 * ((y - N) / 70.0).cos()));
+        let target = wavy_target();
+        let bins = TriangleBins::new(&target, [E - 500.0, N - 500.0], [E + 7000.0, N + 2500.0]);
         for plan in [0.05, 0.2, 0.5, 1.0] {
             for rl in [0.5, 1.0, 2.0, 4.0] {
                 for batter in [45.0, 55.0, 65.0, 70.0] {
-                    let vertices = (0..900).map(|i| {
-                        let i = f64::from(i);
-                        [E + 6.0 * i, N + plan * (0.37 * i).sin() + 0.6 * plan * (1.9 * i).sin(), 100.0 + 0.012 * i + rl * (0.21 * i).sin() + 0.7 * rl * (1.3 * i).sin()]
-                    });
-                    let toe = Polyline { vertices: vertices.collect(), closed: false };
-                    let batters = vec![batter; toe.vertices.len() - 1];
-                    let wall = project_wall_by_edge(&toe, OffsetSide::Left, &batters, &target);
-                    assert!(wall.is_ok(), "plan {plan}, RL {rl}, batter {batter}: {:?}", wall.err());
+                    let toe = wrinkled(plan, rl);
+                    let step = project_wall_by_edge(&toe, OffsetSide::Left, &vec![batter; toe.vertices.len() - 1], &target).unwrap_or_else(|e| panic!("plan {plan}, RL {rl}, batter {batter}: {e}"));
+                    for p in &step.crest.vertices {
+                        close(bins.height(&target, [p[0], p[1]]).unwrap(), p[2], 1e-6);
+                    }
+                    let v = step.wall.validity();
+                    assert_eq!(v.non_manifold_edges + v.inconsistent_edges, 0, "plan {plan}, RL {rl}, batter {batter}: {v:?}");
                 }
             }
+        }
+    }
+
+    /// Where a target only just lifts off the string at a vertex, the crest can leave the string onto neither wall
+    /// beside it, and come straight back down where it left. This line and target are cut from the grid test pit: the
+    /// wall up to the U roof on Strip 1 of Every horizon, where the U roof lies on the U floor and lifts off it at a
+    /// grid line. The walk went back and forth there until it gave up. Now it goes on along the string to where the
+    /// target stands clear, and the wall builds with its crest on the target.
+    #[test]
+    fn a_target_lifting_off_the_string_at_a_vertex_starts_a_crest() {
+        let (mut toe, mut nodes, mut on_target) = (Vec::new(), Vec::new(), false);
+        for line in include_str!("../../../testdata/synthetic/lift_off.txt").lines() {
+            if let Some(heading) = line.strip_prefix('#') {
+                on_target = heading.trim() == "target";
+                continue;
+            }
+            let p: Vec<f64> = line.split_whitespace().map(|v| v.parse().unwrap()).collect();
+            if on_target { nodes.push([p[0], p[1], p[2]]) } else { toe.push([p[0], p[1], p[2]]) }
+        }
+        let (low, high) = nodes.iter().fold(([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]), |(l, h), p| ([l[0].min(p[0]), l[1].min(p[1])], [h[0].max(p[0]), h[1].max(p[1])]));
+        let (cols, rows) = (((high[0] - low[0]) / 25.0).round() as usize + 1, ((high[1] - low[1]) / 25.0).round() as usize + 1);
+        let mut z = vec![f64::NAN; cols * rows];
+        for p in &nodes {
+            z[((p[1] - low[1]) / 25.0).round() as usize * cols + ((p[0] - low[0]) / 25.0).round() as usize] = p[2];
+        }
+        let target = triangulate_grid(&Grid::new(low, [25.0, 25.0], cols, rows, z));
+        let step = project_wall(&Polyline { vertices: toe, closed: false }, OffsetSide::Left, 65.0, &target).unwrap();
+        let bins = TriangleBins::new(&target, low, high);
+        for p in &step.crest.vertices {
+            close(bins.height(&target, [p[0], p[1]]).unwrap(), p[2], 1e-6);
+        }
+    }
+
+    /// Two walls of one batter where the string turns 0.05 rad left and steepens from 2 % to 7 % just so, that the two
+    /// planes climb along the string alike: they meet in the string itself, and a hip there would run along it
+    /// forever. A transition folds between them instead. A level corner and a straight run that steepens keep
+    /// their hips.
+    #[test]
+    fn walls_of_one_batter_that_meet_along_the_string_fold() {
+        let (turn, grade) = (0.05f64, 0.02);
+        let steeper = (grade + turn.sin()) / turn.cos();
+        let v = [0.0, 0.0, 0.0];
+        let a = wall_of([-6.0, 0.0, -6.0 * grade], v, 1.0);
+        let b = wall_of(v, [6.0 * turn.cos(), 6.0 * turn.sin(), 6.0 * steeper], 1.0);
+        assert_eq!(join_of(&a, &b), Join::Fold);
+        let level = |to: [f64; 3]| join_of(&wall_of([-6.0, 0.0, 0.0], v, 1.0), &wall_of(v, to, 1.0));
+        assert_eq!(level([6.0 * 0.5f64.cos(), 6.0 * 0.5f64.sin(), 0.0]), Join::Hip);
+        assert_eq!(join_of(&wall_of([-6.0, 0.0, 0.0], v, 1.0), &wall_of(v, [6.0, 0.0, 0.6], 1.0)), Join::Hip);
+        // The fold holds the fall line of the wall lower out from the corner, and a line across the other at 45 degrees.
+        let fold = fold_at(v, &a, &b);
+        let (flat, steep) = if across_plane(&a, fold.out)[2] < across_plane(&b, fold.out)[2] { (&a, &b) } else { (&b, &a) };
+        close(fold.plane.above(across_plane(flat, flat.out)), 0.0, 1e-12);
+        let sign = if std::ptr::eq(steep, &a) { -1.0 } else { 1.0 };
+        let leaning = [steep.out[0] + steep.out[1] * sign, steep.out[1] - steep.out[0] * sign];
+        close(fold.plane.above(across_plane(steep, leaning)), 0.0, 1e-12);
+        // And the wall from the three points stands on its toe and meets a level target along its whole length.
+        let toe = string(&[[100.0, 100.0, 100.0 - 60.0 * grade], [160.0, 100.0, 100.0], [160.0 + 60.0 * turn.cos(), 100.0 + 60.0 * turn.sin(), 100.0 + 60.0 * steeper]], false);
+        let step = project_wall(&toe, OffsetSide::Left, 45.0, &target(|_, _| 130.0)).unwrap();
+        watertight_between_walls(&step, 2);
+        for p in crest(&step) {
+            close(p[2], 130.0, 1e-6);
+        }
+    }
+
+    /// A berm that narrows from 30 m to nothing on a line wavering a millimetre either way. The wide wall is 1.9
+    /// degrees and the narrow one 89.9, so the hip between the transition and the narrow wall runs back along its foot
+    /// leaning out less than the line turns: deciding which way is out by the transition's facing, halfway between,
+    /// sent it the wrong way and the offset was refused. The line moves out 30 m, bevels at 45 degrees into the narrow
+    /// stretch and stays on the line after that, to 5 cm: the wavering turns the bevel by up to a centimetre.
+    #[test]
+    fn a_berm_narrowing_to_nothing_on_a_wavering_line_moves_out() {
+        let line = Polyline { vertices: (0..=40).map(|i| [E + 6.0 * f64::from(i), N + 1e-3 * if i % 2 == 0 { 1.0 } else { -1.0 }, 0.0]).collect(), closed: false };
+        let widths: Vec<f64> = (0..40).map(|i| if i < 20 { 30.0 } else { 0.0 }).collect();
+        let moved = offset_by_edge(&line, &widths, OffsetSide::Left).unwrap();
+        for p in &moved.vertices {
+            let (x, y) = (p[0] - E, p[1] - N);
+            let expected = (30.0 - (x - 120.0).max(0.0)).max(0.0);
+            close(y, expected, 0.05);
         }
     }
 

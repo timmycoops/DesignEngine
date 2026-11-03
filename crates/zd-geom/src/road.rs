@@ -1618,18 +1618,22 @@ mod tests {
         one_clean_sheet(&face);
     }
 
-    /// A road that climbs two walls, up to a third with no height where it gets there and more wall above that
-    /// can't be built on the road, stops a wall lower: at the last bench it can make. It says so, and everything
-    /// else still builds.
+    /// A road that climbs two walls, up to a third with no height where it gets there and a fourth above that
+    /// it would need 400 m of and has 300 m left on, stops on the second, 200 m from RL 100 to 120. It says the
+    /// fourth runs out short of the top, and everything else builds. Before folds (0034) the wall above it on the
+    /// fourth couldn't be built, and that's what it said.
     #[test]
-    fn a_road_stops_a_wall_lower_if_whats_built_on_it_cant_be() {
+    fn a_road_stops_below_a_wall_too_short_for_it() {
         let ground = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [10.0, 10.0], 180, 100, |x, _| 110.0 + 30.0 * ((260.0 - (x - E)) / 60.0).clamp(0.0, 1.0)));
         let (low, on) = (FaceTarget::Rl(110.0), FaceTarget::Rl(120.0));
         let rows = vec![wall(low, 45.0), berm(low, 10.0), wall(on, 45.0), berm(on, 10.0), wall(FaceTarget::Surface(&ground), 45.0), berm(on, 10.0), wall(FaceTarget::Rl(160.0), 45.0)];
         let face = ramped(RAMP, rows, &level(FLOOR));
-        assert_eq!(face.roads.iter().map(|r| r.steps).collect::<Vec<_>>(), [[0, 0]], "{:?}", face.no_roads);
-        assert_eq!(face.no_roads[0].step, 2, "{:?}", face.no_roads);
-        assert!(face.no_roads[0].why.contains("what's built on it can't be"), "{:?}", face.no_roads);
+        one_clean_sheet(&face);
+        assert_eq!(face.roads.iter().map(|r| r.steps).collect::<Vec<_>>(), [[0, 2]], "{:?}", face.no_roads);
+        let edge = &face.roads[0].pit_edge;
+        assert!((edge.plan_length() - 200.0).abs() < 1e-6 && (edge.vertices.last().unwrap()[2] - 120.0).abs() < 1e-6, "{:?}", edge.vertices);
+        assert_eq!(face.no_roads[0].step, 6, "{:?}", face.no_roads);
+        assert!(face.no_roads[0].why.contains("short of the top"), "{:?}", face.no_roads);
         assert_eq!(face.benches.iter().map(|b| b.step).collect::<Vec<_>>(), [0, 2, 4, 6], "all four walls are there");
     }
 }
