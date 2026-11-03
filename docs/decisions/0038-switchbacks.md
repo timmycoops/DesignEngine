@@ -57,9 +57,11 @@ design, in coal and in metals, where walls curve.
    across, so the berm's line there isn't held up to the crest's height as it is elsewhere a crest stands above its
    target; it lies on the grid. On a seam floor dipping into the wall the pad falls across the berm, and the next road
    starts lower and climbs further. On an RL the floor is level, so the pad is too, as before.
-10. **After a turn the road runs flat a road width before it climbs** (Tim, 2026-11-03: "From the toe of a ramp we will
-    need the ramp width at least of flat entrance - trucks cant turn that tight"). It comes onto the berm's line across the
-    pad, runs along the line a road width, and climbs from there. Beside that stretch the toe of the wall above moves
+10. **After a turn the road runs flat before it climbs** (Tim, 2026-11-03: "From the toe of a ramp we will need the ramp
+    width at least of flat entrance - trucks cant turn that tight", then "Yes, a setting"). It comes onto the berm's line
+    across the pad, runs along the line as far as the ramp's `turn_flat` says, its width unless it says otherwise, and
+    climbs from there; 0 climbs straight away, as Deswik's does. The join past the turn is measured along the line from
+    where the road came onto it, however long the flat stretch. Beside that stretch the toe of the wall above moves
     back as far as the road's wall-side edge starts from the line, so the flat road is cut into the wall at the pad's
     level. Its pit side follows the line, on the floor, which runs near enough along strike; its wall side stands level
     across the road with it, as the road's own ends do. The first stretch of a ramp needs none: trucks come along the
@@ -181,12 +183,17 @@ and the face says so. With a 50 m join, or a 50 m road, or no flat stretch, it d
 Tim's back strip with the flat entrance: one sheet, nothing crossing, 555 triangles with a 50 m join and 433 with the
 join past the strip's end, the road 3,854 m against 3,639 m, each of its six turns adding a 40 m flat stretch. Tim's
 Deswik turns have none, so the legs after the turns heading east now start 31 to 40 m further along than his, where
-before every leg started within 14 m.
+before every leg started within 14 m. With the ramp's flat set to 0 it's as it was: the road 3,639.3 m, every leg
+starting within 0 to 13.7 m of Deswik's, one sheet, 504 triangles.
+
+The flat as a setting, known answers exact to 1 µm: on a 10 m road turning on a level pad, flats of 0, 10 and 25 m each
+run that far along the line at RL 120, then the road climbs its 200 m, finishing that much further on, and the toe past
+the turn joins back 50 m on from where the road came onto the line each time. A ramp that doesn't say runs flat its
+width, one saved before it could say does too, and less than zero is refused. Through the commands a 25 m flat runs
+25 m at RL 110 and leaves the join where it was.
 
 ## What this leaves
 
-- **The flat entrance's length as a setting,** if a road width isn't always what's wanted; Tim's Deswik back strip has
-  none.
 - **A road's wall-side edge running out from a bent end,** as on Strip 1 of Grid switchbacks with a 30 m road and a 75 m
   join.
 - **Fault 3 of 0034 after a turn on a seam floor,** as on Strip 2 or 4 of Grid switchbacks.

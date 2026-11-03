@@ -79,9 +79,12 @@ pub struct FaceRamp {
     pub ends_at: Option<[f64; 2]>,
     /// It goes past a berm after it, crossing the full berm level, rather than up through it.
     pub after_berm: bool,
-    /// Where it turns back, how far on from the turn, along the road, the toe past it joins back to the line from the
-    /// next road's wall-side start (m). A set length, so the pad doesn't depend on where the string has vertices.
+    /// Where it turns back, how far on from the turn, along the line, the toe past it joins back to the line from the
+    /// corner of the next road's flat stretch (m). A set length, so the pad doesn't depend on where the string has
+    /// vertices.
     pub turn_join: f64,
+    /// Where it turns back, how far it runs flat along the line before it climbs (m).
+    pub turn_flat: f64,
 }
 
 /// A road a face has cut.
@@ -462,8 +465,8 @@ fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from
         let (p, q) = (toe.vertices[m], toe.vertices[m + 1]);
         [p[0] + s * (q[0] - p[0]), p[1] + s * (q[1] - p[1]), p[2] + s * (q[2] - p[2])]
     };
-    // Back along the road from the turn: along the flat stretch, or up the climb if there's none.
-    let (a, b) = if across < at { (toe.vertices[across], toe.vertices[across + 1]) } else { (pit_edge.vertices[0], pit_edge.vertices[1]) };
+    // Back along the line from where the road came onto it, or back down the climb at the end of the string.
+    let (a, b) = if across + 1 < toe.vertices.len() { (toe.vertices[across], toe.vertices[across + 1]) } else { (pit_edge.vertices[0], pit_edge.vertices[1]) };
     let length = plan_gap(a, b);
     let back = [(a[0] - b[0]) / length, (a[1] - b[1]) / length];
     let turn = toe.vertices[across];
@@ -1193,7 +1196,7 @@ mod tests {
     const FLOOR: f64 = 100.0;
     /// cos of the angle a 10 % road climbs a 45 degree wall at, where sin(angle) = grade / slope.
     const COS: f64 = 0.994_987_437_106_62;
-    const RAMP: FaceRamp = FaceRamp { start: [E + 100.0, N], back: false, width: 10.0, grade: 0.1, ends_at: None, after_berm: false, turn_join: 50.0 };
+    const RAMP: FaceRamp = FaceRamp { start: [E + 100.0, N], back: false, width: 10.0, grade: 0.1, ends_at: None, after_berm: false, turn_join: 50.0, turn_flat: 10.0 };
 
     fn level(rl: f64) -> TriMesh {
         triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 30, 20, |_, _| rl))
@@ -1685,6 +1688,34 @@ mod tests {
         close(at(1500.0), 30.0, 1e-6);
     }
 
+    /// The flat stretch after a turn is as long as the ramp says: none, so the road climbs straight from where it comes
+    /// onto the line, as Deswik's does; its 10 m width; or 25 m. Each way it climbs its 200 m to RL 140, finishing that
+    /// much further on, and the toe past the turn joins back 50 m on along the line from where the road came onto it.
+    #[test]
+    fn the_flat_stretch_after_a_turn_is_as_long_as_the_ramp_says() {
+        let low = FaceTarget::Rl(120.0);
+        let rows = [climbed_by(low, &[0]), berm(low, 10.0), turned_on(FaceTarget::Rl(140.0))];
+        for turn_flat in [0.0, 10.0, 25.0] {
+            let face = long_face(&rows, &[FaceRamp { turn_flat, ..ramp_at(500.0) }]);
+            assert!(face.no_roads.is_empty(), "{turn_flat}: {:?}", face.no_roads);
+            one_clean_sheet(&face);
+            let road = road_of(&face, 0);
+            close(climbs_and_landings(road).0, 400.0, 1e-3);
+            let pit = &road.pit_edge.vertices;
+            let top = pit.iter().position(|p| (p[2] - 120.0).abs() < 1e-6).expect("the first road's top");
+            let onto = pit[top + 1];
+            let climbs = pit[top + 1 + pit[top + 1..].windows(2).take_while(|w| (w[1][2] - w[0][2]).abs() < 1e-9).count()];
+            close(onto[0] - climbs[0], turn_flat, 1e-6);
+            close(climbs[1], onto[1], 1e-6);
+            let end = pit[pit.len() - 1];
+            close(end[0] - onto[0], -(turn_flat + 200.0 * COS), 1e-6);
+            close(end[2], 140.0, 1e-6);
+            let [_, _, _, join] = second_road_start(&face);
+            close(join[1] - N, 30.0, 1e-6);
+            close(join[0] - onto[0], 50.0, 1e-6);
+        }
+    }
+
     /// A switchback on a seam floor: the berm lies on a floor dipping 5 % into the wall, as a seam's does, and the pad lies
     /// on it, so no coal is left under it (Tim, 2026-11-03). The first road climbs to the floor at RL 120 on the crest, as
     /// on a level berm, crosses its own top level to its wall-side corner, a road width across, then goes down the floor
@@ -1756,7 +1787,7 @@ mod tests {
             for turn_join in [20.0, 50.0, 90.0] {
                 let mut joins = Vec::new();
                 for points in [&ends, &near, &cells] {
-                    let ramp = FaceRamp { width, turn_join, ..ramp_at(500.0) };
+                    let ramp = FaceRamp { width, turn_join, turn_flat: width, ..ramp_at(500.0) };
                     let face = project_face(&string(points, FLOOR), &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows, &[ramp]).unwrap();
                     assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
                     one_clean_sheet(&face);

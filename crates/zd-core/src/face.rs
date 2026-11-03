@@ -119,10 +119,21 @@ pub struct Ramp {
     /// How it gets past a berm on its way up. Designs saved before this take the default.
     #[serde(default)]
     pub berm: RampBerm,
-    /// Where it turns back, how far on from the turn, along the road, the toe of the wall above joins back to the
+    /// Where it turns back, how far on from the turn, along the line, the toe of the wall above joins back to the
     /// berm's line (m). Designs saved before this take 50 m. See `docs/decisions/0038-switchbacks.md`.
     #[serde(default = "usual_turn_join")]
     pub turn_join: f64,
+    /// Where it turns back, how far it runs flat along the berm's line before it climbs (m): its width if it doesn't
+    /// say, as designs saved before this don't.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_flat: Option<f64>,
+}
+
+impl Ramp {
+    /// How far it runs flat after a turn before it climbs (m).
+    pub fn flat_after_turn(&self) -> f64 {
+        self.turn_flat.unwrap_or(self.width)
+    }
 }
 
 /// How a road gets past a berm between two walls it climbs. See `docs/decisions/0035-ramps-after-the-berm.md`.
@@ -469,6 +480,9 @@ fn check_ramps(profile: &FaceProfile, problems: &mut Vec<String>) {
         if !(ramp.turn_join.is_finite() && ramp.turn_join > 0.0) {
             problems.push(format!("{name}: the join past a turn must be more than zero"));
         }
+        if ramp.turn_flat.is_some_and(|flat| !(flat.is_finite() && flat >= 0.0)) {
+            problems.push(format!("{name}: the flat stretch after a turn can't be less than zero"));
+        }
         let climbed: Vec<usize> = walls.iter().enumerate().filter(|(_, (_, names))| names.contains(&ramp.name)).map(|(place, _)| place).collect();
         match (climbed.first(), climbed.last()) {
             (Some(first), Some(last)) if last - first + 1 != climbed.len() => problems.push(format!("{name} has another wall in among its walls: a road climbs walls that come together")),
@@ -625,7 +639,29 @@ mod tests {
     }
 
     fn ramp() -> Ramp {
-        Ramp { name: "A".into(), string: ObjectId::new(), fixed: RampFixed::End, heading: RampHeading::Along, width: 30.0, grade: 10.0, berm: RampBerm::After, turn_join: USUAL_TURN_JOIN }
+        Ramp { name: "A".into(), string: ObjectId::new(), fixed: RampFixed::End, heading: RampHeading::Along, width: 30.0, grade: 10.0, berm: RampBerm::After, turn_join: USUAL_TURN_JOIN, turn_flat: None }
+    }
+
+    /// A ramp runs flat its own width after a turn unless it says otherwise, and one saved before it could say does
+    /// too; what it says is saved, and can be nothing but not less.
+    #[test]
+    fn a_ramp_runs_flat_its_width_after_a_turn_unless_it_says_otherwise() {
+        assert_eq!(ramp().flat_after_turn(), 30.0);
+        assert!(!serde_json::to_string(&ramp()).unwrap().contains("turn_flat"), "nothing said, nothing saved");
+        let longer = Ramp { turn_flat: Some(45.0), ..ramp() };
+        let text = serde_json::to_string(&longer).unwrap();
+        assert!(text.contains(r#""turn_flat":45.0"#), "{text}");
+        assert_eq!(serde_json::from_str::<Ramp>(&text).unwrap(), longer);
+        assert_eq!(longer.flat_after_turn(), 45.0);
+        let saved = r#"{ "name": "A", "string": "55555555555555555555555555555555", "fixed": "end", "heading": "along", "width": 40, "grade": 10, "turn_join": 50 }"#;
+        assert_eq!(serde_json::from_str::<Ramp>(saved).unwrap().flat_after_turn(), 40.0);
+        let mut d = with_a_ramp();
+        d.profiles[0].ramps[0].turn_flat = Some(0.0);
+        assert!(d.problems().is_empty(), "{:?}", d.problems());
+        for flat in [-1.0, f64::NAN] {
+            d.profiles[0].ramps[0].turn_flat = Some(flat);
+            assert!(d.problems().iter().any(|p| p.contains("Ramp A on Highwall: the flat stretch after a turn can't be less than zero")), "{flat}: {:?}", d.problems());
+        }
     }
 
     /// A ramp goes past a berm after it unless it says through, and one saved before it could say goes after.

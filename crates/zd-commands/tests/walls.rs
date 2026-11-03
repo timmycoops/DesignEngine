@@ -1057,22 +1057,26 @@ fn a_ramp_runs_up_the_walls_that_name_it_across_a_berm() {
 
 /// A switchback through the commands, in the table as the panel saves it: past the turn the toe of the wall above
 /// joins back to the berm's line, at RL 110 and 20 m out from the toe, the ramp's join on from the turn along the line,
-/// and 50 m on when the ramp doesn't say. A 30 m join meets the line 20 m nearer the turn. The second road runs a road
-/// width flat along the line before it climbs: it comes onto the line at RL 110 and is still there 10 m on.
+/// and 50 m on when the ramp doesn't say. A 30 m join meets the line 20 m nearer the turn. The second road runs flat
+/// along the line before it climbs, its 10 m width when the ramp doesn't say and 25 m when it says so: it comes onto
+/// the line at RL 110 and is still there that far on.
 #[test]
 fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
     let mut s = Session::with_builtins();
     let floor = level_surface(&mut s, "floor", 100.0);
     let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E + 10.0, N + 30.0, 0.0], [E + 295.0, N + 30.0, 0.0]] })).unwrap())[0];
     let across = ramp_string(&mut s, &[[60.0, 20.0], [60.0, 40.0]]);
-    let layer = |join: Option<f64>| format!("faces {join:?}");
-    let content = |join: Option<f64>| {
+    let layer = |join: Option<f64>, flat: Option<f64>| format!("faces {join:?} {flat:?}");
+    let content = |join: Option<f64>, flat: Option<f64>| {
         let mut ramp = json!({ "name": "A", "string": across, "fixed": "start", "heading": "along", "width": 10.0, "grade": 10.0 });
         if let Some(join) = join {
             ramp["turn_join"] = json!(join);
         }
+        if let Some(flat) = flat {
+            ramp["turn_flat"] = json!(flat);
+        }
         json!({
-            "layer": layer(join),
+            "layer": layer(join, flat),
             "lines": [{ "string": toe, "profile": "Wall", "side": "left", "run_on": [0.0, 0.0] }],
             "profiles": [{
                 "name": "Wall", "direction": "up", "register": floor,
@@ -1087,21 +1091,24 @@ fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
         })
     };
     let mut joins = Vec::new();
-    for join in [None, Some(50.0), Some(30.0)] {
-        let design = created(&s.run("face.save_design", json!({ "name": format!("turning {join:?}"), "content": content(join) })).unwrap())[0];
+    for (join, flat) in [(None, None), (Some(50.0), None), (Some(30.0), None), (None, Some(25.0))] {
+        let design = created(&s.run("face.save_design", json!({ "name": format!("turning {join:?} {flat:?}"), "content": content(join, flat) })).unwrap())[0];
         let record = s.run("face.project", json!({ "design": design })).unwrap();
         assert!(record.messages.iter().any(|m| m.starts_with("Ramp A: toe: steps 1 to 3")), "{join:?}: {:?}", record.messages);
-        let toe_two = s.project().objects().find(|o| o.name == "toe Wall toe 2" && s.project().layer(o.layer).is_some_and(|l| l.name == layer(join))).map(|o| line(&s, o.id)).expect("the second wall's toe");
+        let on = |o: &zd_core::Object| s.project().layer(o.layer).is_some_and(|l| l.name == layer(join, flat));
+        let toe_two = s.project().objects().find(|o| o.name == "toe Wall toe 2" && on(o)).map(|o| line(&s, o.id)).expect("the second wall's toe");
         let corner = toe_two.vertices.iter().position(|p| p[1] - N > 65.0).unwrap_or_else(|| panic!("{join:?}: the toe runs round the next road's start: {:?}", toe_two.vertices));
         let on_line = toe_two.vertices[corner..].iter().find(|p| (p[1] - N - 50.0).abs() < 1e-6).unwrap_or_else(|| panic!("{join:?}: the toe joins the line: {:?}", toe_two.vertices));
         joins.push(on_line[0] - E);
-        let pit = line(&s, s.project().objects().find(|o| o.name == "toe Wall road A pit edge" && s.project().layer(o.layer).is_some_and(|l| l.name == layer(join))).unwrap().id);
+        let pit = line(&s, s.project().objects().find(|o| o.name == "toe Wall road A pit edge" && on(o)).unwrap().id);
         let onto = pit.vertices.iter().position(|p| (p[2] - 110.0).abs() < 1e-6).expect("the first road's top") + 1;
         let (from, to) = (pit.vertices[onto], pit.vertices[onto + 1]);
-        assert!((from[2] - 110.0).abs() < 1e-6 && (to[2] - 110.0).abs() < 1e-6 && ((to[0] - from[0]).abs() - 10.0).abs() < 1e-6, "{join:?}: flat a road width along the line: {from:?} to {to:?}");
+        let long = flat.unwrap_or(10.0);
+        assert!((from[2] - 110.0).abs() < 1e-6 && (to[2] - 110.0).abs() < 1e-6 && ((to[0] - from[0]).abs() - long).abs() < 1e-6, "{join:?} {flat:?}: flat {long} m along the line: {from:?} to {to:?}");
     }
     assert!((joins[0] - joins[1]).abs() < 1e-6, "{joins:?}");
     assert!((joins[1] - joins[2] - 20.0).abs() < 1e-6, "{joins:?}");
+    assert!((joins[0] - joins[3]).abs() < 1e-6, "the join doesn't move with the flat stretch: {joins:?}");
 }
 
 /// Too steep a climb for the string's length leaves the face standing and says why, by step and place.

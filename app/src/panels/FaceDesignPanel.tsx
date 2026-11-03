@@ -525,6 +525,16 @@ function RampRow({ ramp, stringName, onWalls, turns, results, swap, onShow, onCh
             />
           </Labelled>
         )}
+        {turns && (
+          <Labelled label="Flat, m">
+            <NumberBox
+              width="w-12"
+              value={ramp.turn_flat ?? ramp.width}
+              title="Where the road turns back, how far it runs flat along the berm's line before it climbs, in metres, so trucks don't turn straight onto the grade. The road's width unless you set it; 0 climbs straight away"
+              onChange={(turn_flat) => onChange({ turn_flat })}
+            />
+          </Labelled>
+        )}
         <span className="ml-auto">
           <IconButton title="Remove this ramp" onClick={onRemove}>
             <Trash2 className="size-3" />

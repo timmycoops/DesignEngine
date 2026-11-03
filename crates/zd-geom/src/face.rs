@@ -585,12 +585,13 @@ impl Climbing {
     }
 
     /// Turns back: a switchback on a pad, level on an RL and on the floor on a grid. The next wall's stretch comes onto
-    /// `line` at `at` and runs the other way along it, flat for a road width so trucks don't turn straight onto the
-    /// grade, then climbs. The line behind it, the side past the turn, comes out to its wall-side edge and joins back.
+    /// `line` at `at` and runs the other way along it, flat as far as the ramp says, its width unless it says otherwise,
+    /// so trucks don't turn straight onto the grade, then climbs. The line behind it, the side past the turn, comes out
+    /// to its wall-side edge and joins back.
     fn turn_at(&mut self, at: [f64; 3], line: &Polyline) {
         self.spec.back = !self.spec.back;
         let along = metres_along(line, at);
-        let start = point_along(line, if self.spec.back { along - self.spec.width } else { along + self.spec.width });
+        let start = point_along(line, if self.spec.back { along - self.spec.turn_flat } else { along + self.spec.turn_flat });
         self.spec.start = [start[0], start[1]];
         self.pad_corner = self.top.map(|top| top.wall);
         self.top = None;
