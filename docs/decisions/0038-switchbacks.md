@@ -2,8 +2,8 @@
 
 Date: 2026-11-03 · Status: accepted (Tim, 2026-11-03: "Yes, build them"; then "flat rls with a flat pad for a
 switchback would be a standard terrace design for a coal mine and a metals design (metals may have non straight walls
-though)"; and on the toe past a turn, "the set joint length make sense from a default position"). The second part after
-0037.
+though)"; on the toe past a turn, "the set joint length make sense from a default position"; and on making that length
+a setting on each ramp, "Ok go for it"). The second part after 0037.
 
 ## Why
 
@@ -34,13 +34,19 @@ design, in coal and in metals, where walls curve.
 6. **The Face design panel** cycles a ramp's cell off, on, then turning (a U-turn mark) where the wall before holds the ramp.
    A berm under a turn says so.
 7. **Past a turn the toe of the wall above joins back a set length on.** It comes out to the next road's wall-side start,
-   the pushed corner, and runs straight from there back to the line 50 m on from the turn, measured along the road, then
-   follows the line. Deswik joins the pushed corner to the line's next vertex instead, so its join runs wherever the string
-   happens to have one: 9 to 94 m on Tim's back strip, which he says he moved by hand, and one grid cell on a line from a
-   grid. A set length gives the same pad whatever vertices the string has. On its way the join can pass over a bend of the
-   line out into the pad, as where the berm's line goes round the first road's top, if the stretch beyond the line is
-   shorter than the road is wide; a longer one would cut the berm, so the join stops where it first meets the line. This
-   replaces pushing the whole line behind out by the road, as an entrance does, which carried the pad to the string's end.
+   the pushed corner, and runs straight from there back to the line the ramp's join on from the turn, 50 m unless the
+   ramp says otherwise, measured along the road, then follows the line. Deswik joins the pushed corner to the line's next
+   vertex instead, so its join runs wherever the string happens to have one: 9 to 94 m on Tim's back strip, which he says
+   he moved by hand, and one grid cell on a line from a grid. A set length gives the same pad whatever vertices the string
+   has. On its way the join can pass over a bend of the line out into the pad, as where the berm's line goes round the
+   first road's top, if the stretch beyond the line is shorter than the road is wide; a longer one would cut the berm, so
+   the join stops where it first meets the line. A join that only touches the line at a vertex goes out and straight back
+   in, so it passes over too. This replaces pushing the whole line behind out by the road, as an entrance does, which
+   carried the pad to the string's end.
+8. **The join is a setting on each ramp** (`turn_join`, in metres, more than zero), for every turn that ramp makes. A
+   design saved before it takes 50 m. The Face design panel shows it on a ramp that turns somewhere. A join longer than
+   the line goes on past the turn runs straight from the corner to the end of the string, which is how to taper the toe
+   to the strip's end as Tim's back strip does.
 
 Where the berm's line can't be read this way, the road falls back to 0035's landing, as before.
 
@@ -94,10 +100,25 @@ On the back strip the face stays one sheet with nothing crossing: 11 walls, 509 
 Tim's own lines past the east turns taper out to the strip's end instead, some 700 m, so there our walls below the turns
 sit up to 80 m behind his.
 
+The join as a setting, known answers exact to 1 µm: joins of 20, 50 and 90 m, with 10 m and 25 m roads, each meet the
+berm's line as far on from the turn as they say, at the same point whatever vertices the string has. At 20 m with a 10 m
+road the join passes exactly through the vertex where the berm's line steps round the first road's top, only touching
+the line there; it goes on to 20 m. A 5,000 m join on a 2 km toe runs straight from the corner to the string's end, with
+the pad under it level. Through the commands, a ramp saved without a join and one saved with 50 m give the same toe, and
+one saved with 30 m meets the line 20 / cos(5.74°) = 20.10 m nearer the turn.
+
+On the back strip with the join set past the strip's end, the face is one sheet with nothing crossing: 11 walls, 333
+triangles, 29 ms, the road unchanged at 3,639 m. The line past each turn now tapers straight from the corner to the end
+of the string, as Tim's does: some 800 m past the west turn at RL 50, 640 m past the east turn at RL -40. Where the
+tapers end is what's left: ours ends on the berm's line, so the berm is 10 m again at the strip's end, and Tim's ends
+50 to 60 m further out, a berm some 60 m wide at the end at RL 50 and 100 m at RL -40. The walls below carry that down,
+so below the west turn our lines sit up to 60 m behind his at the strip's end, against 78 m with a 50 m join.
+
 ## What this leaves
 
-- **The join's length as a setting,** per ramp or per turn, so a design like the back strip can taper the toe past a turn
-  as far as the planner wants. It's fixed at 50 m for now: a setting changes the ramp's saved object, which waits for Tim.
+- **Where a taper ends,** if the planner wants it off the line at the string's end, as Tim's back strip has it (probably
+  moved by hand, he says).
+- **A join per turn,** rather than one for every turn a ramp makes.
 - **A face angle set on a leg,** as Deswik's first leg has at 37°.
 - **A turn with the end held,** and graded switchbacks with a radius.
 - **The grade on the pit-side edge on bends,** going down.

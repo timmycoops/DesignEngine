@@ -459,6 +459,9 @@ export interface Ramp {
   grade: number;
   /** After the berm if it's left out, as designs saved before it could be set. */
   berm?: RampBerm;
+  /** Where it turns back, how far on from the turn, along the road, the toe of the wall above joins back to the berm's
+   * line, in metres. 50 m if it's left out, as designs saved before it could be set. */
+  turn_join?: number;
 }
 
 export type FaceDirection = 'up' | 'down';

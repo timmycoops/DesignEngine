@@ -8,9 +8,15 @@ use crate::{LayerId, ObjectId};
 
 /// Past this a conditioning tolerance stops tidying a line and starts cutting its corners off (m).
 pub const MOST_TOLERANCE: f64 = 2.0;
+/// How far on from a turn the toe past it joins back to the line, unless the ramp says otherwise (m).
+pub const USUAL_TURN_JOIN: f64 = 50.0;
 
 fn yes() -> bool {
     true
+}
+
+fn usual_turn_join() -> f64 {
+    USUAL_TURN_JOIN
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -113,6 +119,10 @@ pub struct Ramp {
     /// How it gets past a berm on its way up. Designs saved before this take the default.
     #[serde(default)]
     pub berm: RampBerm,
+    /// Where it turns back, how far on from the turn, along the road, the toe of the wall above joins back to the
+    /// berm's line (m). Designs saved before this take 50 m. See `docs/decisions/0038-switchbacks.md`.
+    #[serde(default = "usual_turn_join")]
+    pub turn_join: f64,
 }
 
 /// How a road gets past a berm between two walls it climbs. See `docs/decisions/0035-ramps-after-the-berm.md`.
@@ -456,6 +466,9 @@ fn check_ramps(profile: &FaceProfile, problems: &mut Vec<String>) {
         if !(ramp.grade.is_finite() && ramp.grade > 0.0 && ramp.grade < 100.0) {
             problems.push(format!("{name}: a road's grade must be between 0 and 100 %"));
         }
+        if !(ramp.turn_join.is_finite() && ramp.turn_join > 0.0) {
+            problems.push(format!("{name}: the join past a turn must be more than zero"));
+        }
         let climbed: Vec<usize> = walls.iter().enumerate().filter(|(_, (_, names))| names.contains(&ramp.name)).map(|(place, _)| place).collect();
         match (climbed.first(), climbed.last()) {
             (Some(first), Some(last)) if last - first + 1 != climbed.len() => problems.push(format!("{name} has another wall in among its walls: a road climbs walls that come together")),
@@ -612,7 +625,7 @@ mod tests {
     }
 
     fn ramp() -> Ramp {
-        Ramp { name: "A".into(), string: ObjectId::new(), fixed: RampFixed::End, heading: RampHeading::Along, width: 30.0, grade: 10.0, berm: RampBerm::After }
+        Ramp { name: "A".into(), string: ObjectId::new(), fixed: RampFixed::End, heading: RampHeading::Along, width: 30.0, grade: 10.0, berm: RampBerm::After, turn_join: USUAL_TURN_JOIN }
     }
 
     /// A ramp goes past a berm after it unless it says through, and one saved before it could say goes after.
@@ -624,6 +637,23 @@ mod tests {
         assert_eq!(serde_json::from_str::<Ramp>(&text).unwrap(), through);
         let saved = r#"{ "name": "A", "string": "55555555555555555555555555555555", "fixed": "end", "heading": "along", "width": 30, "grade": 10 }"#;
         assert_eq!(serde_json::from_str::<Ramp>(saved).unwrap().berm, RampBerm::After);
+    }
+
+    /// A ramp saves the join past a turn it's given, one saved before it could say joins 50 m on, and the join must be
+    /// more than zero.
+    #[test]
+    fn a_ramp_joins_the_toe_past_a_turn_50_m_on_unless_it_says_otherwise() {
+        let long = Ramp { turn_join: 700.0, ..ramp() };
+        let text = serde_json::to_string(&long).unwrap();
+        assert!(text.contains(r#""turn_join":700.0"#), "{text}");
+        assert_eq!(serde_json::from_str::<Ramp>(&text).unwrap(), long);
+        let saved = r#"{ "name": "A", "string": "55555555555555555555555555555555", "fixed": "end", "heading": "along", "width": 30, "grade": 10, "berm": "after" }"#;
+        assert_eq!(serde_json::from_str::<Ramp>(saved).unwrap().turn_join, 50.0);
+        for join in [0.0, -10.0, f64::NAN] {
+            let mut d = with_a_ramp();
+            d.profiles[0].ramps[0].turn_join = join;
+            assert!(d.problems().iter().any(|p| p.contains("Ramp A on Highwall: the join past a turn must be more than zero")), "{join}: {:?}", d.problems());
+        }
     }
 
     /// Names the ramp on a wall row of the first profile.

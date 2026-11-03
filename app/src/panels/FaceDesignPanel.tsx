@@ -18,6 +18,7 @@ const usualBerm = 10;
 const usualMinBench = 1;
 const usualRoadWidth = 30;
 const usualGrade = 10;
+const usualTurnJoin = 50;
 
 /** A number that can be typed through half-finished values: it only reports what parses, and goes back to what's held on leaving it. */
 function NumberBox({ value, onChange, title, width = 'w-16', disabled }: { value: number | null; onChange: (v: number) => void; title: string; width?: string; disabled?: boolean }) {
@@ -480,7 +481,7 @@ function RampCell({ name, on, canTurn, onChange }: { name: string; on: OnWall; c
 }
 
 /** One ramp: its string, what's held, the road, and how far the last run got it on each strip. */
-function RampRow({ ramp, stringName, onWalls, results, swap, onShow, onChange, onRemove }: { ramp: Ramp; stringName: string | null; onWalls: boolean; results: string[]; swap: (() => void) | null; onShow: () => void; onChange: (r: Partial<Ramp>) => void; onRemove: () => void }) {
+function RampRow({ ramp, stringName, onWalls, turns, results, swap, onShow, onChange, onRemove }: { ramp: Ramp; stringName: string | null; onWalls: boolean; turns: boolean; results: string[]; swap: (() => void) | null; onShow: () => void; onChange: (r: Partial<Ramp>) => void; onRemove: () => void }) {
   return (
     <div className="border-t py-1">
       <div className="flex flex-wrap items-center gap-2">
@@ -514,6 +515,16 @@ function RampRow({ ramp, stringName, onWalls, results, swap, onShow, onChange, o
         <Labelled label="Grade, %">
           <NumberBox width="w-12" value={ramp.grade} title="Rise over plan run in percent, on the pit-side edge" onChange={(grade) => onChange({ grade })} />
         </Labelled>
+        {turns && (
+          <Labelled label="Join, m">
+            <NumberBox
+              width="w-12"
+              value={ramp.turn_join ?? usualTurnJoin}
+              title="Where the road turns back, how far on from the turn, along the road, the toe of the wall above runs straight back to the berm's line from the next road's corner, in metres. Longer than the line goes on, it runs to the end of the string"
+              onChange={(turn_join) => onChange({ turn_join })}
+            />
+          </Labelled>
+        )}
         <span className="ml-auto">
           <IconButton title="Remove this ramp" onClick={onRemove}>
             <Trash2 className="size-3" />
@@ -831,7 +842,7 @@ export function FaceDesignPanel() {
     const made = await runRecord('string.create', { name: `Ramp ${name}`, layer: 'ramps', points });
     const string = made.record?.outputs[0]?.id;
     if (!string) return;
-    const ramp: Ramp = { name, string, fixed: 'end', heading: 'along', width: usualRoadWidth, grade: usualGrade, berm: 'after' };
+    const ramp: Ramp = { name, string, fixed: 'end', heading: 'along', width: usualRoadWidth, grade: usualGrade, berm: 'after', turn_join: usualTurnJoin };
     setProfile({ ramps: [...(profile.ramps ?? []), ramp], steps: profile.steps.map((s) => (s.step === 'project' ? { ...s, ramps: [...(s.ramps ?? []), name] } : s)) });
   };
   const setRamp = (at: number, change: Partial<Ramp>) => profile && setProfile({ ramps: replaceAt(profile.ramps ?? [], at, { ...(profile.ramps ?? [])[at], ...change }) });
@@ -1006,6 +1017,7 @@ export function FaceDesignPanel() {
                 ramp={ramp}
                 stringName={objects.find((o) => o.id === ramp.string)?.name ?? null}
                 onWalls={profile.steps.some((s) => s.step === 'project' && (s.ramps ?? []).includes(ramp.name))}
+                turns={profile.steps.some((s) => s.step === 'project' && (s.turns ?? []).includes(ramp.name))}
                 results={report.lines.filter((line) => line.startsWith(`Ramp ${ramp.name}: `))}
                 swap={objects.some((o) => o.id === selected && o.kind === 'string') && selected !== ramp.string && !strings.some((s) => s.id === selected && (s.attributes.strip !== undefined || draft.lines.some((line) => line.string === s.id))) ? () => selected && setRamp(k, { string: selected }) : null}
                 onShow={() => select(ramp.string)}
