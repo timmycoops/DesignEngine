@@ -26,6 +26,7 @@ import {
 import { loadStaged } from '../viewport/load';
 import { PolylineTool } from '../viewport/PolylineTool';
 import type { SectionView } from '../viewport/section';
+import type { StringLayer } from '../viewport/strings';
 import type { Viewport } from '../viewport/Viewport';
 
 interface FrameSummary {
@@ -45,7 +46,7 @@ const TREE_SCROLL_STEPS = 120;
 /** Shows a summary as the app does: panels, strings, geometry and the snap index. */
 type Show = (summary: ProjectSummary) => Promise<void> | undefined;
 
-export async function runChecks(viewport: Viewport, config: BenchConfig, log: (line: string) => void, show: Show, section: () => SectionView | null): Promise<void> {
+export async function runChecks(viewport: Viewport, config: BenchConfig, log: (line: string) => void, show: Show, section: () => SectionView | null, strings: () => StringLayer | null): Promise<void> {
   const tool = new PolylineTool(viewport);
   const canvas = viewport.renderer.domElement;
   const results: Record<string, unknown> = {
@@ -59,7 +60,7 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
 
   try {
     if (config.solids) {
-      results.solids = await checkSolids(viewport, config, config.solids, log, show, section);
+      results.solids = await checkSolids(viewport, config, config.solids, log, show, section, strings);
     } else {
       results.load = await loadSurfaces(viewport, config.surfaces, log);
       viewport.fitView();
@@ -78,7 +79,7 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
 }
 
 /** A zip or folder of solids by the app's own path: import, draw, snap index, orbit, snap, undo. */
-async function checkSolids(viewport: Viewport, config: BenchConfig, path: string, log: (line: string) => void, show: Show, section: () => SectionView | null) {
+async function checkSolids(viewport: Viewport, config: BenchConfig, path: string, log: (line: string) => void, show: Show, section: () => SectionView | null, stringLayer: () => StringLayer | null) {
   const orbitSeconds = config.orbit_seconds;
   for (const surface of config.surfaces) await show((await runCommand('surface.import', { path: surface, layer: 'surfaces' })).summary);
   for (const strings of config.strings) await show((await runCommand('string.import', { path: strings })).summary);
@@ -110,6 +111,8 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
   snaps.sort((a, b) => a - b);
   const pick = await checkPickTime(viewport);
   const camera = await checkCamera(viewport);
+  const layer = stringLayer();
+  const picks = layer ? await checkPicks(viewport, layer) : null;
   const snapSwitch = await checkSnapSwitch(viewport);
   const stringPick = await checkStringPick(viewport, show);
   const sectionCheck = await checkSection(viewport, section(), reply.summary, show, config.walls);
@@ -130,6 +133,7 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
     orbit: orbited,
     pick,
     camera,
+    picks,
     snap_switch: snapSwitch,
     string_pick: stringPick,
     section: sectionCheck,
@@ -316,6 +320,37 @@ async function checkPickTime(viewport: Viewport) {
   }
   times.sort((a, b) => a - b);
   return { p50_ms: times[100], p95_ms: times[190], max_ms: times[199] };
+}
+
+/** A line and a string picked by real clicks and Enter, and one abandoned, as Number and + Ramp take them. */
+async function checkPicks(viewport: Viewport, strings: StringLayer) {
+  const canvas = viewport.renderer.domElement;
+  const box = canvas.getBoundingClientRect();
+  const click = async (k: number) => {
+    const [x, y] = [box.left + box.width * (0.35 + k * 0.1), box.top + box.height * 0.5];
+    for (const [type, buttons] of [['pointerdown', 1], ['pointerup', 0]] as const) {
+      canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+    }
+    for (let i = 0; i < 8; i++) await viewport.nextFrame();
+  };
+  const key = (name: string) => window.dispatchEvent(new KeyboardEvent('keydown', { key: name, cancelable: true }));
+  const within = <T,>(pick: Promise<T>) => Promise.race([pick, new Promise<'timed out'>((done) => setTimeout(() => done('timed out'), 5000))]);
+  const count = (picked: Vec3[] | null | 'timed out') => (Array.isArray(picked) ? picked.length : picked);
+  const line = strings.pickLine('Bench: first', 'Bench: second');
+  await click(0);
+  await click(1);
+  const twoClicks = await within(line);
+  const drawn = strings.pickString('Bench: a string');
+  await click(0);
+  await click(1);
+  await click(2);
+  key('Enter');
+  const string = await within(drawn);
+  const dropped = strings.pickString('Bench: abandoned');
+  await click(0);
+  key('Escape');
+  const abandoned = await within(dropped);
+  return { line_points: count(twoClicks), string_points: count(string), abandoned };
 }
 
 /**
@@ -795,8 +830,9 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
   // A road from the middle of the toe up through the walls, each way along it.
   const roadFrom = async (heading: 'along' | 'back') => {
     try {
-      const ramps = [{ name: 'A', string: toe.id, fixed: 'start', at: [at[0], at[1]], heading, width: 30, grade: 10 }];
-      const profiles = content.profiles.map((profile) => (profile.name === 'Highwall' ? { ...profile, ramps, steps: profile.steps.map((step) => (step.step === 'project' ? { ...step, ramp: 'A' } : step)) } : profile));
+      const rampString = (await run('string.create', { name: `Bench ramp ${heading}`, layer: 'bench ramps', points: [[at[0] - 200 * ux, at[1] - 200 * uy, 0], [at[0] + 200 * ux, at[1] + 200 * uy, 0]] })).fresh[0];
+      const ramps = [{ name: 'A', string: rampString.id, fixed: 'start', heading, width: 30, grade: 10 }];
+      const profiles = content.profiles.map((profile) => (profile.name === 'Highwall' ? { ...profile, ramps, steps: profile.steps.map((step) => (step.step === 'project' ? { ...step, ramps: ['A'] } : step)) } : profile));
       const withRoad = { ...content, profiles, layer: `bench road ${heading}`, lines: [{ string: toe.id, profile: 'Highwall', side: 'left', run_on: [100, 100] }] };
       const saved = (await run('face.save_design', { name: `Bench road ${heading}`, content: withRoad })).fresh[0];
       const started = performance.now();
@@ -807,6 +843,24 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
     }
   };
   const rampRun = { along: await roadFrom('along'), back: await roadFrom('back') };
+  // A toe offset into strips, numbered by a line across them, and one ramp string across the lot.
+  const stripRun = await (async () => {
+    try {
+      const strips = (await run('string.offset', { string: toe.id, distance: 60, side: 'left', times: 4 })).fresh.map((o) => o.id);
+      const point = (out: number): Vec3 => [at[0] + out * ux, at[1] + out * uy, 0];
+      const numbered = await run('string.number_across', { strings: strips, from: point(0), to: point(300), start: 20, name: 'Bench strip #' });
+      const rampString = (await run('string.create', { name: 'Bench ramp across', layer: 'bench ramps', points: [point(0), point(2000)] })).fresh[0];
+      const ramps = [{ name: 'A', string: rampString.id, fixed: 'start', heading: 'along', width: 30, grade: 10 }];
+      const profiles = content.profiles.map((profile) => (profile.name === 'Highwall' ? { ...profile, ramps, steps: profile.steps.map((step) => (step.step === 'project' ? { ...step, ramps: ['A'] } : step)) } : profile));
+      const lines = strips.map((string) => ({ string, profile: 'Highwall', side: 'left', run_on: [100, 100] }));
+      const saved = (await run('face.save_design', { name: 'Bench strips', content: { ...content, profiles, layer: 'bench strips', lines } })).fresh[0];
+      const started = performance.now();
+      const made = await run('face.project', { design: saved.id });
+      return { ms: performance.now() - started, numbered: numbered.messages, made: made.fresh.length, roads: made.messages.filter((m) => m.startsWith('Ramp A')).length, messages: made.messages };
+    } catch (e) {
+      return { error: String(e) };
+    }
+  })();
   const close = async (half: number) => {
     await section.show([at[0] - half * ux, at[1] - half * uy], [at[0] + half * ux, at[1] + half * uy], summary);
     await settle();
@@ -816,7 +870,7 @@ async function checkWall(viewport: Viewport, section: SectionView, grids: string
   const wide = await close(400);
   const tight = await close(120);
   const surfaces = (section.lastCut?.groups ?? []).filter((g) => g.kind === 'surface').reduce((sum, g) => sum + g.segments, 0);
-  return { steps, ms, surface_segments_in_cut: surfaces, design_ms: designMs, design_messages: whole.messages, design_made: whole.fresh.length, design_by_layer_made: byLayer.fresh.length, design_by_layer_messages: byLayer.messages, design_rule_run: ruleRun, design_ramp_run: rampRun, design_rerun_made: again.fresh.length, wide, tight };
+  return { steps, ms, surface_segments_in_cut: surfaces, design_ms: designMs, design_messages: whole.messages, design_made: whole.fresh.length, design_by_layer_made: byLayer.fresh.length, design_by_layer_messages: byLayer.messages, design_rule_run: ruleRun, design_ramp_run: rampRun, design_strip_run: stripRun, design_rerun_made: again.fresh.length, wide, tight };
 }
 
 /** The fills on, as they first show, then off and on again by the toolbar's Fill button. */

@@ -327,7 +327,7 @@ fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, directi
                 let highest = face.last_wall.iter().max_by_key(|(_, step)| **step).map(|(r, step)| (*r, *step));
                 let Some((r, step)) = highest else { return Err(e) };
                 limits.insert(r, face.walls_climbed[&r] - 1);
-                held_back.insert(r, NoRoad { ramp: r, step, at: [ramps[r].start[0], ramps[r].start[1], 0.0], why: format!("what's built on it can't be: {e}") });
+                held_back.insert(r, NoRoad { ramp: r, step, at: [ramps[r].start[0], ramps[r].start[1], 0.0], why: format!("what's built on it can't be: {}", e.to_string().replace("invalid input: ", "")) });
             }
         }
     }

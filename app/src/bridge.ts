@@ -421,25 +421,23 @@ export type StepValue = number | string;
 
 /** `condition` is how far the line may move in plan when it's cleaned (m); null leaves it as it is. */
 export type ProfileStep =
-  /** `ramp` names the ramp that climbs this wall. */
-  | { step: 'project'; to: StepTarget; batter: StepValue; condition: number | null; ramp?: string | null }
+  /** `ramps` names the ramps that climb this wall. A wall takes one road a strip for now. */
+  | { step: 'project'; to: StepTarget; batter: StepValue; condition: number | null; ramps?: string[] }
   | { step: 'berm'; on: StepTarget | null; width: StepValue; register: boolean; condition: number | null; min_bench?: number | null };
 
 /** The way a road runs along its string. */
 export type RampHeading = 'along' | 'back';
 
-/** Which end of a road is held. With its end held, the run moves its start along the toe until it comes out there. */
+/** Which end of a road is where its string crosses. With its end there, the run moves its start along the toe until it comes out there. */
 export type RampFixed = 'start' | 'end';
 
-/** A road up the walls that name it. */
+/** A road up the walls that name it, on every strip its string crosses. */
 export interface Ramp {
   /** What a wall row calls it: a letter, usually. */
   name: string;
-  /** The string it goes on, one of those the profile runs on. */
+  /** A string drawn across the strips. Each line it crosses gets a road. */
   string: string;
   fixed: RampFixed;
-  /** Where the road starts or has to come out, in plan (E, N). */
-  at: [number, number];
   heading: RampHeading;
   /** Square to the road, in metres. */
   width: number;

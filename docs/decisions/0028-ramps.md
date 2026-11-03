@@ -2,6 +2,9 @@
 
 Date: 2026-11-01 · Status: accepted for a road through one set of walls. Tim agreed the Ramps plan's decisions on 2026-11-01, then changed them as he tried each version: the entry became the moved toe, and a ramp became a named thing the wall rows point to, with either end held
 
+Decision 0030 changes items 1 to 3: a ramp is now a string drawn across the strips, with a column in the grid, and its point and
+the one string it named have gone. The road itself is as this record says.
+
 ## Why
 
 A ramp is the hardest thing left in Phase 3, because it changes the walls it runs through. It goes in as each wall is

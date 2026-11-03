@@ -179,6 +179,7 @@ export default function App() {
   const typeVertex = useCallback(async (text: string) => (stringsRef.current ? stringsRef.current.addTyped(text) : 'The viewport is not ready'), []);
   const pickPoint = useCallback((prompt: string) => stringsRef.current?.pickPoint(prompt) ?? Promise.resolve(null), []);
   const pickLine = useCallback((first: string, second: string) => stringsRef.current?.pickLine(first, second) ?? Promise.resolve(null), []);
+  const pickString = useCallback((prompt: string) => stringsRef.current?.pickString(prompt) ?? Promise.resolve(null), []);
 
   const focusIssue = useCallback(
     (id: string, horizon: string, issue: number) => {
@@ -327,7 +328,7 @@ export default function App() {
         if (!config.solids) dockRef.current?.getPanel('viewport')?.api.maximize();
         await created.nextFrame();
         await created.nextFrame();
-        await runChecks(created, config, (text) => setStatus({ text }), show, () => sectionRef.current);
+        await runChecks(created, config, (text) => setStatus({ text }), show, () => sectionRef.current, () => stringsRef.current);
       }
     });
     return () => {
@@ -572,10 +573,11 @@ export default function App() {
       flyTo,
       pickPoint,
       pickLine,
+      pickString,
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, marked, toggleMark, setActiveLayer, setVisible, setObjectsShown, run, runRecord, clearRefusal, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, pickPoint, pickLine, mode, typeVertex],
+    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, marked, toggleMark, setActiveLayer, setVisible, setObjectsShown, run, runRecord, clearRefusal, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, pickPoint, pickLine, pickString, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';
