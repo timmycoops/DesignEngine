@@ -162,7 +162,7 @@ impl<'a> EdgeRule<'a> {
     }
 
     /// The value at the middle of an edge.
-    fn value_at(&self, middle: [f64; 3]) -> f64 {
+    pub(crate) fn value_at(&self, middle: [f64; 3]) -> f64 {
         match *self {
             EdgeRule::Fixed(value) => value,
             EdgeRule::List { string, values } => nearest_segment(string, middle).map_or(0.0, |i| values[i]),

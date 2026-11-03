@@ -442,7 +442,7 @@ fn strings_of(inputs: &Inputs<'_>, line: &FaceLine, design: ObjectId, ramp_strin
 
 fn face_ramp(ramp: &Ramp, at: [f64; 2]) -> FaceRamp {
     let ends_at = (ramp.fixed == RampFixed::End).then_some(at);
-    FaceRamp { start: at, back: ramp.heading == RampHeading::Back, width: ramp.width, grade: ramp.grade / 100.0, ends_at, after_berm: ramp.berm == RampBerm::After }
+    FaceRamp { start: at, back: ramp.heading == RampHeading::Back, width: ramp.width, grade: ramp.grade / 100.0, ends_at, after_berm: ramp.berm == RampBerm::After, turn_join: ramp.turn_join, turn_flat: ramp.flat_after_turn() }
 }
 
 /// The surfaces a profile names.
@@ -554,13 +554,13 @@ impl<'a> LineRules<'a, '_> {
     }
 }
 
-/// Which of a strip's ramps climb each row, as places in `ramps`.
-fn walls_ramps(steps: &[ProfileStep], ramps: &[&Ramp]) -> Vec<Vec<usize>> {
+/// Which of a strip's ramps climb each row, and which of those turn back before it, as places in `ramps`.
+fn walls_ramps(steps: &[ProfileStep], ramps: &[&Ramp]) -> Vec<[Vec<usize>; 2]> {
     let places = |named: &[String]| named.iter().filter_map(|name| ramps.iter().position(|r| r.name == *name)).collect();
-    steps.iter().map(|step| if let ProfileStep::Project { ramps: named, .. } = step { places(named) } else { Vec::new() }).collect()
+    steps.iter().map(|step| if let ProfileStep::Project { ramps: named, turns, .. } = step { [places(named), places(turns)] } else { [Vec::new(), Vec::new()] }).collect()
 }
 
-fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'t Targets<'_, '_>, on_walls: &'t [Vec<usize>]) -> Result<Vec<FaceStep<'t>>, CommandError> {
+fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'t Targets<'_, '_>, on_walls: &'t [[Vec<usize>; 2]]) -> Result<Vec<FaceStep<'t>>, CommandError> {
     let surface_of = |to: &StepTarget| match to {
         StepTarget::Surface { id } => Some(*id),
         StepTarget::Rl { .. } => None,
@@ -574,11 +574,11 @@ fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'
     steps
         .iter()
         .zip(on_walls)
-        .map(|(step, ramps)| {
+        .map(|(step, [ramps, turns])| {
             Ok(match step {
                 ProfileStep::Project { to, batter, condition, .. } => {
                     reached = surface_of(to);
-                    FaceStep::Project { to: target(to)?, batter: rules.edge_rule(batter, reached)?, condition: *condition, ramps }
+                    FaceStep::Project { to: target(to)?, batter: rules.edge_rule(batter, reached)?, condition: *condition, ramps, turns }
                 }
                 ProfileStep::Berm { on, width, register, condition, min_bench } => {
                     let horizon = on.as_ref().map_or(reached, surface_of);

@@ -31,6 +31,8 @@ across them. There are five designs, each with faces on its own layer:
 | Flat toe to grids | RL -20 | As Grid walls | As Grid ramps |
 | Grid toe to RLs | L floor | RL 50, 80 and 110 at 65 degrees, RL 140 at 45, 30 m berms | As Grid ramps |
 | Every horizon | L floor | A wall to every grid, with 10 m berms and a 3 m minimum bench | None |
+| Grid switchbacks | L floor | As Grid walls | C held at its start, turning back on every berm (0038) |
+| RL switchbacks | L floor | As Grid toe to RLs | C held at its start, turning back on every berm (0038) |
 
 The script runs each design once without saving the runs, and prints what each strip didn't build. In the app, open the project and run
 the designs from the Face design panel.

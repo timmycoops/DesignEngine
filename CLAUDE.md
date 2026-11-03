@@ -96,7 +96,12 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   roads running the same way, lowest first, each cut into the wall above the one below (`docs/decisions/0032-roads-on-one-wall.md`).
   The toe behind its start moves back by the road for an entrance. Each ramp goes past a berm after it, by default, crossing
   the full berm level to climb on from the next toe, or through it at its grade, the berm narrowing to nothing at the road
-  (`docs/decisions/0035-ramps-after-the-berm.md`). On a profile going down a road comes down from the top line, notching it
+  (`docs/decisions/0035-ramps-after-the-berm.md`). After the berm it crosses straight across, in line with its top, as
+  Deswik's does; a road wider than the berm starts its next stretch on the top of the last. A wall row can turn a ramp
+  back before it: a switchback on a pad of the two roads and the berm between, level on an RL and on the seam floor on a
+  grid (no coal left under it), on straight or curved walls, each leg running flat before it climbs (its width unless the ramp says otherwise), with
+  the toe past the turn joining back a length on set on the ramp (50 m by default), whatever vertices the string has;
+  one longer than the line runs to the string's end (`docs/decisions/0038-switchbacks.md`). On a profile going down a road comes down from the top line, notching it
   for its entrance, and the walls below it move out towards the pit (`docs/decisions/0037-roads-going-down.md`). It reports
   the bench where the grade can't be met instead of drifting (`docs/decisions/0028-ramps.md`, `0030-ramp-strings.md`).
 - Every object has a stable id (128-bit, generated in-house), a name, a layer, and provenance (the command

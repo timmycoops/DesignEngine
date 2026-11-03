@@ -7,8 +7,8 @@ zone and a topography with a creek across the strips. Three things in it are the
 - a washout where M thins to nothing, so its roof lies on its floor;
 - U running into the base of weathering at the south end and under the creek, so it lies on the weathering there.
 
-Ten strips 80 m apart from the bent base toe of ramp_template.py, draped on the L floor, with ramp strings A and B,
-and five designs, each on its own layer of faces:
+Ten strips 80 m apart from the bent base toe of ramp_template.py, draped on the L floor, with ramp strings A, B and C,
+and seven designs, each on its own layer of faces:
 - Grid walls: the toe on the L floor and walls to the grids, 65 degrees through rock and 45 through the weathering,
   with 30 m berms. No ramps, so a fault is the wall's own.
 - Grid ramps: the same with ramps A (held at its start) and B (held at its end) up every wall.
@@ -16,6 +16,10 @@ and five designs, each on its own layer of faces:
 - Grid toe to RLs: the toe on the L floor, walls to RL 50, 80, 110 and 140, with the ramps.
 - Every horizon: a wall to every roof and floor with 10 m berms and a 3 m minimum bench, so coal too thin to stand
   a berm on, the washout and the weathered U all leave a berm out.
+- Grid switchbacks: the walls of Grid walls with ramp C, held at its start, turning back on every berm, so its pads
+  lie on the M floor, the U floor and the base of weathering (decision 0038).
+- RL switchbacks: the walls of Grid toe to RLs with ramp C turning back on every berm, on level pads at RL 50, 80 and
+  110.
 
     .venv\\Scripts\\python testdata/synthetic/grid_template.py [folder]
 
@@ -104,8 +108,8 @@ def import_grids(s, paths):
     return {name: made(s.run("surface.import", path=str(path), layer="grids", name=name))[0] for name, path in paths.items()}
 
 
-def wall(to, batter, ramps):
-    return {"step": "project", "to": to, "batter": batter, "ramps": ramps}
+def wall(to, batter, ramps, turns=()):
+    return {"step": "project", "to": to, "batter": batter, "ramps": ramps, **({"turns": list(turns)} if turns else {})}
 
 
 def berm(width, least=None):
@@ -120,47 +124,55 @@ def rl(value):
     return {"kind": "rl", "rl": value}
 
 
-def grid_rows(g, ramps):
+def grid_rows(g, ramps, turns=()):
     """Walls to the grids: through L and its interburden to the M floor, through M to the U floor, through U to the
     base of weathering, then the weathering to the topography. A row on to a grid at the same batter with no berm
-    carries the wall straight on, and marks where it crosses."""
+    carries the wall straight on, and marks where it crosses. Ramps in `turns` turn back on every berm."""
     rock = 65.0
     return [
         wall(surface(g["L roof"]), rock, ramps),
         wall(surface(g["M floor"]), rock, ramps),
         berm(30.0, 3.0),
-        wall(surface(g["M roof"]), rock, ramps),
+        wall(surface(g["M roof"]), rock, ramps, turns),
         wall(surface(g["U floor"]), rock, ramps),
         berm(30.0, 3.0),
-        wall(surface(g["U roof"]), rock, ramps),
+        wall(surface(g["U roof"]), rock, ramps, turns),
         wall(surface(g["BOW"]), rock, ramps),
         berm(30.0, 3.0),
-        wall(surface(g["Topo"]), 45.0, ramps),
+        wall(surface(g["Topo"]), 45.0, ramps, turns),
     ]
 
 
-def designs(s, g, toes_layer, ramp_a, ramp_b):
+def rl_rows(ramps, turns=()):
+    """Walls to RL 50, 80, 110 and 140, with 30 m berms. Ramps in `turns` turn back on every berm."""
+    rows = []
+    for k, value in enumerate([50.0, 80.0, 110.0, 140.0]):
+        if k > 0:
+            rows.append(berm(30.0, 3.0))
+        rows.append(wall(rl(value), 45.0 if value == 140.0 else 65.0, ramps, turns if k > 0 else ()))
+    return rows
+
+
+def designs(s, g, toes_layer, ramp_a, ramp_b, ramp_c):
     two = ["A", "B"]
     ramps = [
         {"name": "A", "string": ramp_a, "fixed": "start", "heading": "along", **ROAD},
         {"name": "B", "string": ramp_b, "fixed": "end", "heading": "along", **ROAD},
     ]
+    turning = [{"name": "C", "string": ramp_c, "fixed": "start", "heading": "along", **ROAD}]
     every = []
     for k, name in enumerate(GRIDS[1:]):
         if k > 0:
             every.append(berm(10.0, 3.0))
         every.append(wall(surface(g[name]), 45.0 if name == "Topo" else 65.0, []))
-    to_rls = []
-    for k, value in enumerate([50.0, 80.0, 110.0, 140.0]):
-        if k > 0:
-            to_rls.append(berm(30.0, 3.0))
-        to_rls.append(wall(rl(value), 45.0 if value == 140.0 else 65.0, two))
     plans = [
         ("Grid walls", surface(g["L floor"]), grid_rows(g, []), []),
         ("Grid ramps", surface(g["L floor"]), grid_rows(g, two), ramps),
         ("Flat toe to grids", rl(-20.0), grid_rows(g, two), ramps),
-        ("Grid toe to RLs", surface(g["L floor"]), to_rls, ramps),
+        ("Grid toe to RLs", surface(g["L floor"]), rl_rows(two), ramps),
         ("Every horizon", surface(g["L floor"]), every, []),
+        ("Grid switchbacks", surface(g["L floor"]), grid_rows(g, ["C"], ["C"]), turning),
+        ("RL switchbacks", surface(g["L floor"]), rl_rows(["C"], ["C"]), turning),
     ]
     saved = {}
     for name, register, steps, its_ramps in plans:
@@ -220,7 +232,7 @@ def check(s, saved):
         lines = [local(m) for m in record["messages"]]
         not_built = [m for m in lines if "Nothing is built" in m]
         no_height = [m for m in lines if "no height" in m]
-        roads = [m for m in lines if re.match(r"Ramp \w: Strip \d+: steps", m)]
+        roads = [m for m in lines if re.match(r"Ramp \w: Strip \d+: steps? ", m) and "stopped" not in m]
         stopped = [m for m in lines if m.startswith("Ramp ") and m not in roads]
         print(f"\n{name}: {ms:,.0f} ms, {len(faces)} of {STRIPS} faces, {triangles:,} triangles, {crossing} with triangles crossing, "
               f"{len(in_pieces)} not one sheet, {len(no_height)} with walls of no height, {len(roads)} roads to the top")
@@ -241,11 +253,12 @@ def main():
         s.run("string.drape", string=toe, surface=g["L floor"], crossings=False)
     north = 80.0 * STRIPS + 300.0
     ramp_a, ramp_b = ramp_string(s, "Ramp A", 400.0, north), ramp_string(s, "Ramp B", 3100.0, north)
+    ramp_c = ramp_string(s, "Ramp C", 1000.0, north)
     toes_layer = next(layer["id"] for layer in s.layers() if layer["name"] == "toes")
-    saved = designs(s, g, toes_layer, ramp_a, ramp_b)
+    saved = designs(s, g, toes_layer, ramp_a, ramp_b, ramp_c)
     path = folder / "Grid template.zdproj"
     s.save(path)
-    print(f"Saved {path}: {len(GRIDS)} grids, {len(toes)} strips, 2 ramp strings, designs {', '.join(saved)}")
+    print(f"Saved {path}: {len(GRIDS)} grids, {len(toes)} strips, 3 ramp strings, designs {', '.join(saved)}")
     faults = check(s, saved)
     print(f"\n{faults} faults")
     sys.exit(1 if faults else 0)
