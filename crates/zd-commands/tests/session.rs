@@ -78,6 +78,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "string.insert_vertex",
             "string.join",
             "string.move_vertex",
+            "string.number_across",
             "string.offset",
             "string.reverse",
             "string.set_closed",

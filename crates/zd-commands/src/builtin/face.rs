@@ -261,7 +261,12 @@ impl Command for ProjectDesign {
             let face = project_face(&toe, registered, side, profile.direction, &steps, &ramps.iter().map(|ramp| face_ramp(ramp)).collect::<Vec<_>>()).map_err(refuse)?;
             messages.push(line_report(&base, &face, [extended.vertices.len(), shaped.vertices.len()], register.off_grid));
             messages.extend(ramps.iter().enumerate().map(|(r, ramp)| ramp_report(&ramp.name, r, &face)));
-            let attributes = || Attributes::from([(MADE_BY.to_string(), AttrValue::Text(p.design.to_string()))]);
+            // What a run makes keeps its string's attributes, so a strip's number carries on to its face.
+            let attributes = || {
+                let mut kept = string.attributes.clone();
+                kept.insert(MADE_BY.to_string(), AttrValue::Text(p.design.to_string()));
+                kept
+            };
             let create = |name: String, body: Body| Change::Create { name, layer: design.layer.clone(), attributes: attributes(), body };
             for (k, bench) in face.benches.iter().enumerate() {
                 changes.push(create(format!("{base} toe {}", k + 1), Body::String(bench.toe.clone())));

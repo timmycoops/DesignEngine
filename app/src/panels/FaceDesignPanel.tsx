@@ -609,7 +609,7 @@ function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfil
  * and steps every line in one run, one undo.
  */
 export function FaceDesignPanel() {
-  const { summary, selected, marked, setMarked, runRecord, clearRefusal, pickPoint } = useWorkspace();
+  const { summary, selected, select, marked, setMarked, runRecord, clearRefusal, pickPoint } = useWorkspace();
   const objects = useMemo(() => summary?.objects ?? [], [summary]);
   const designs = useMemo(() => objects.filter((o) => o.kind === 'face_design'), [objects]);
   const [id, setId] = useState<string | null>(null);
@@ -828,6 +828,15 @@ export function FaceDesignPanel() {
     setProfile({ ramps: (profile.ramps ?? []).filter((_, k) => k !== at), steps: profile.steps.map((s) => (s.step === 'project' && s.ramp === name ? { ...s, ramp: null } : s)) });
   };
   const rampLine = (line: string) => /^Ramp [^:]*: /.test(line);
+  /** A click on a line lights up what it runs on, in the viewport and the tree. */
+  const showLine = (line: FaceLine) => {
+    if (line.string) {
+      setMarked([]);
+      select(line.string);
+    } else {
+      setMarked(strings.filter((s) => s.layer === line.layer && s.attributes.face_design !== id).map((s) => s.id));
+    }
+  };
   const lineName = (line: FaceLine) => {
     if (!line.layer) return nameOf(line.string ?? '');
     const on = strings.filter((s) => s.layer === line.layer && s.attributes.face_design !== id).length;
@@ -882,7 +891,11 @@ export function FaceDesignPanel() {
                 const change = (c: Partial<FaceLine>) => edit((d) => ({ ...d, lines: replaceAt(d.lines, k, { ...line, ...c }) }));
                 return (
                   <tr key={k} className="border-t">
-                    <td className="max-w-28 truncate px-1 py-0.5" title={line.layer ? `${lineName(line)}: what's on the layer at each run` : lineName(line)}>
+                    <td
+                      className={`max-w-28 cursor-pointer truncate px-1 py-0.5 hover:text-primary ${line.string && line.string === selected ? 'text-primary' : ''}`}
+                      title={`${line.layer ? `${lineName(line)}: what's on the layer at each run` : lineName(line)}. Click to light it up`}
+                      onClick={() => showLine(line)}
+                    >
                       {lineName(line)}
                     </td>
                     <td className="px-1 py-0.5">

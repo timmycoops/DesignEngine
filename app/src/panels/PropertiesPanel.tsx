@@ -210,12 +210,16 @@ function Choice<T extends string>({ value, options, onChange }: { value: T; opti
  * reverse and close write a new revision; offset and wall make new objects. All undo.
  */
 function StringTools({ id, closed }: { id: string; closed: boolean }) {
-  const { run, summary } = useWorkspace();
+  const { run, summary, marked, pickLine } = useWorkspace();
   const [from, setFrom] = useState('1');
   const [to, setTo] = useState('');
   const [grade, setGrade] = useState('');
   const [startRl, setStartRl] = useState('');
   const [distance, setDistance] = useState('');
+  const [times, setTimes] = useState('');
+  const [numberName, setNumberName] = useState('Strip #');
+  const [numberStart, setNumberStart] = useState('');
+  const [numberStep, setNumberStep] = useState('1');
   const [side, setSide] = useState<'left' | 'right'>('right');
   const [corners, setCorners] = useState<'mitre' | 'round'>('mitre');
   const [level, setLevel] = useState('');
@@ -239,6 +243,16 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
   const target = surfaces.find((s) => s.id === surface) ?? surfaces[0];
   const riseTo = surfaces.find((s) => s.id === wallTarget) ?? surfaces[0];
 
+  const strings = (summary?.objects ?? []).filter((o) => o.kind === 'string' && !o.hidden);
+  const chosen = strings.filter((o) => marked.includes(o.id));
+  const layer = summary?.objects.find((o) => o.id === id)?.layer;
+  /** What's marked, or else what's on this string's layer and wasn't made by a face run. */
+  const toNumber = chosen.length > 0 ? chosen : strings.filter((o) => o.layer === layer && o.attributes.face_design === undefined);
+  const numberAcross = async () => {
+    const line = await pickLine('Click where the numbering starts. Esc cancels', 'Click across the strings to where it ends. Esc cancels');
+    if (line) void run('string.number_across', { strings: toNumber.map((o) => o.id), from: line[0], to: line[1], start: num(numberStart), step: num(numberStep), name: numberName });
+  };
+
   const gradeParams = () => {
     const params: Record<string, unknown> = { string: id, from: Math.round(num(from) ?? 1) - 1, grade: num(grade) };
     if (num(to) !== null) params.to = Math.round(num(to)!) - 1;
@@ -259,12 +273,18 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
       </ToolRow>
       <ToolRow
         label="Offset"
-        disabled={!(ok(num(distance)) && num(distance)! > 0)}
-        onApply={() => void run('string.offset', { string: id, distance: num(distance), side, corners })}
+        disabled={!(ok(num(distance)) && num(distance)! > 0 && (num(times) === null || (Number.isInteger(num(times)) && num(times)! >= 1)))}
+        onApply={() => void run('string.offset', { string: id, distance: num(distance), side, corners, times: num(times) ?? 1 })}
       >
         <SmallInput value={distance} onChange={setDistance} placeholder="m" title="Horizontal distance (m)" />
+        <SmallInput value={times} onChange={setTimes} placeholder="times" title="How many strings, each the distance further out" />
         <Choice value={side} onChange={setSide} options={[['left', 'Left'], ['right', 'Right']]} />
         <Choice value={corners} onChange={setCorners} options={[['mitre', 'Mitre'], ['round', 'Round']]} />
+      </ToolRow>
+      <ToolRow label="Number" apply={`Draw across (${toNumber.length})`} disabled={!ok(num(numberStart)) || !ok(num(numberStep)) || num(numberStep) === 0 || !numberName.trim() || toNumber.length === 0} onApply={() => void numberAcross()}>
+        <SmallInput value={numberName} onChange={setNumberName} placeholder="name" title="Each string's name, with its number in place of #. Numbers what's marked, or else what's on this layer that a face run didn't make" />
+        <SmallInput value={numberStart} onChange={setNumberStart} placeholder="from" title="The first number" />
+        <SmallInput value={numberStep} onChange={setNumberStep} placeholder="step" title="Added each time, negative to count down" />
       </ToolRow>
       <ToolRow label="Set RL" disabled={!ok(num(level))} onApply={() => void run('string.set_elevation', { string: id, rl: num(level) })}>
         <SmallInput value={level} onChange={setLevel} placeholder="RL" title="Every vertex to this RL" />

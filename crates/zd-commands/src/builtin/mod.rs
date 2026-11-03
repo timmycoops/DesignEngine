@@ -22,8 +22,8 @@ pub(crate) use solid::check_solids_made;
 pub use solid::{CutBySurface, CutBySurfaceParams, ImportSolid, ImportSolidParams, ImportSolids, ImportSolidsParams, SolidFromMesh};
 pub use string::{
     CornerParam, CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, DrapeString, DrapeStringParams, FilterString,
-    FilterStringParams, InsertVertex, InsertVertexParams, JoinStrings, JoinStringsParams, MoveVertex, MoveVertexParams, OffsetString,
-    OffsetStringParams, ReverseString, SetClosed, SetClosedParams, SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam,
+    FilterStringParams, InsertVertex, InsertVertexParams, JoinStrings, JoinStringsParams, MoveVertex, MoveVertexParams, NumberStrings,
+    NumberStringsParams, OffsetString, OffsetStringParams, ReverseString, SetClosed, SetClosedParams, SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam,
     SmoothString, SmoothStringParams, SplitString, SplitStringParams, StringParams,
 };
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
@@ -45,6 +45,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(DeleteVertex);
     registry.register(SetGrade);
     registry.register(OffsetString);
+    registry.register(NumberStrings);
     registry.register(DrapeString);
     registry.register(SetElevation);
     registry.register(ReverseString);

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use zd_core::{Attributes, Body, Change, ObjectId, ObjectKind, Polyline};
+use zd_core::{AttrValue, Attributes, Body, Change, ObjectId, ObjectKind, Polyline};
 use zd_geom::{
-    Corner, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, smooth_string, split_string, triangulate_grid,
+    Corner, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, plan_crossings, smooth_string, split_string, triangulate_grid,
 };
 
 use super::finite;
@@ -272,10 +272,14 @@ fn default_mitre_limit() -> f64 {
     4.0
 }
 
+fn once() -> u32 {
+    1
+}
+
 /// `string.offset`: a new string `distance` metres in plan to the left or right of this one (looking
 /// along it from above), with mitred or round outside corners. Each new vertex takes the elevation of
 /// the nearest point on the source, or `rl`. The source is not changed; an offset that pinches off
-/// makes one string per piece.
+/// makes one string per piece. With `times`, a string at each multiple of the distance.
 pub struct OffsetString;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -298,6 +302,9 @@ pub struct OffsetStringParams {
     /// Defaults to the source's name with the offset.
     #[serde(default)]
     pub name: Option<String>,
+    /// How many strings, each `distance` further out, all measured from the source.
+    #[serde(default = "once")]
+    pub times: u32,
 }
 
 impl Command for OffsetString {
@@ -317,8 +324,9 @@ impl Command for OffsetString {
                 Field::new("rl", FieldType::Number { unit: "m" }, "Fixed elevation; the source's by default"),
                 Field::new("layer", FieldType::Layer, "Layer for the new string; the source's by default"),
                 Field::new("name", FieldType::Text, "Optional"),
+                Field::new("times", FieldType::Integer, "How many strings, each the distance further out; 1 by default"),
             ],
-            outputs: vec![Field::object("strings", ObjectKind::String, "The offset string, one per piece")],
+            outputs: vec![Field::object("strings", ObjectKind::String, "The offset strings, one per piece")],
         }
     }
 
@@ -335,31 +343,153 @@ impl Command for OffsetString {
             CornerParam::Mitre => Corner::Mitre { limit: p.mitre_limit },
             CornerParam::Round => Corner::Round,
         };
-        let pieces = offset_string(line, p.distance, side, corner, p.rl).map_err(|e| CommandError::Invalid(e.to_string()))?;
+        if p.times == 0 {
+            return Err(CommandError::Invalid("An offset needs to be made at least once".into()));
+        }
         let side_word = match p.side {
             SideParam::Left => "left",
             SideParam::Right => "right",
         };
-        let base = p.name.clone().unwrap_or_else(|| format!("{} offset {} m {side_word}", object.name, p.distance));
         let layer = p.layer.clone().unwrap_or_else(|| inputs.layer_name(object));
-        let count = pieces.len();
-        let message = format!(
-            "offset {} m to the {side_word} with {} corners: {count} string(s), {} vertices",
-            p.distance,
-            if matches!(p.corners, CornerParam::Round) { "round" } else { "mitred" },
-            pieces.iter().map(|l| l.vertices.len()).sum::<usize>()
-        );
-        let changes = pieces
-            .into_iter()
-            .enumerate()
-            .map(|(i, piece)| Change::Create {
+        let mut changes = Vec::new();
+        let mut vertices = 0;
+        for time in 1..=p.times {
+            let distance = p.distance * f64::from(time);
+            let pieces = offset_string(line, distance, side, corner, p.rl).map_err(|e| CommandError::Invalid(if p.times > 1 { format!("at {distance} m: {e}") } else { e.to_string() }))?;
+            let base = match &p.name {
+                Some(name) if p.times > 1 => format!("{name} {time}"),
+                Some(name) => name.clone(),
+                None => format!("{} offset {distance} m {side_word}", object.name),
+            };
+            let count = pieces.len();
+            vertices += pieces.iter().map(|l| l.vertices.len()).sum::<usize>();
+            changes.extend(pieces.into_iter().enumerate().map(|(i, piece)| Change::Create {
                 name: if count == 1 { base.clone() } else { format!("{base} ({})", i + 1) },
                 layer: layer.clone(),
                 attributes: Attributes::new(),
                 body: Body::String(piece),
-            })
-            .collect();
+            }));
+        }
+        let message = format!(
+            "offset {} m to the {side_word}{} with {} corners: {} string(s), {vertices} vertices",
+            p.distance,
+            if p.times > 1 { format!(", {} times", p.times) } else { String::new() },
+            if matches!(p.corners, CornerParam::Round) { "round" } else { "mitred" },
+            changes.len(),
+        );
         Ok(Outcome::new(changes).message(message))
+    }
+}
+
+fn default_step() -> f64 {
+    1.0
+}
+
+fn default_attribute() -> String {
+    "strip".into()
+}
+
+fn default_number_name() -> String {
+    "Strip #".into()
+}
+
+/// `string.number_across`: strings numbered in the order a line drawn across them crosses them, as a pit's
+/// strips are numbered by direction. Each takes its number as an attribute, and a name with it in. A string
+/// the line doesn't cross stays as it is, and one it crosses more than once goes by the first.
+pub struct NumberStrings;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NumberStringsParams {
+    pub strings: Vec<ObjectId>,
+    /// The two ends of the line, in plan. Numbers run from `from` to `to`.
+    pub from: [f64; 3],
+    pub to: [f64; 3],
+    pub start: f64,
+    /// Negative to count down.
+    #[serde(default = "default_step")]
+    pub step: f64,
+    /// The attribute that holds the number.
+    #[serde(default = "default_attribute")]
+    pub attribute: String,
+    /// Each string's name, with its number in place of `#`, or on the end if there's no `#`.
+    #[serde(default = "default_number_name")]
+    pub name: String,
+}
+
+impl NumberStringsParams {
+    fn name_of(&self, number: f64) -> String {
+        if self.name.contains('#') { self.name.replace('#', &number.to_string()) } else { format!("{} {number}", self.name) }
+    }
+}
+
+impl Command for NumberStrings {
+    type Params = NumberStringsParams;
+    const NAME: &'static str = "string.number_across";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Number strings in the order a line crosses them",
+            inputs: vec![Field::new("strings", FieldType::Objects, "The strings to number")],
+            params: vec![
+                Field::new("from", FieldType::Point, "Where the line starts, and the numbers with it; plan only"),
+                Field::new("to", FieldType::Point, "Where the line ends; plan only"),
+                Field::new("start", FieldType::Number { unit: "" }, "The first number"),
+                Field::new("step", FieldType::Number { unit: "" }, "Added each time, negative to count down; 1 by default"),
+                Field::new("attribute", FieldType::Text, "The attribute that holds the number; strip by default"),
+                Field::new("name", FieldType::Text, "Each string's name, with its number in place of #; Strip # by default"),
+            ],
+            outputs: vec![Field::object("strings", ObjectKind::String, "The strings numbered")],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        finite(&p.from)?;
+        finite(&p.to)?;
+        finite(&[p.start, p.step, 0.0])?;
+        if p.step == 0.0 {
+            return Err(CommandError::Invalid("A step of zero would give every string the same number".into()));
+        }
+        if p.attribute.trim().is_empty() {
+            return Err(CommandError::Invalid("The number needs an attribute to go in".into()));
+        }
+        let across = Polyline { vertices: vec![p.from, p.to], closed: false };
+        if across.plan_length() == 0.0 {
+            return Err(CommandError::Invalid("The line's two ends are the same point in plan".into()));
+        }
+        let mut crossed = Vec::new();
+        let mut missed = Vec::new();
+        let mut messages = Vec::new();
+        for &id in &p.strings {
+            let (object, line) = inputs.string(id)?;
+            let crossings = plan_crossings(&across, line);
+            match crossings.first() {
+                Some(first) => crossed.push((first.along, object)),
+                None => missed.push(object.name.as_str()),
+            }
+            if crossings.len() > 1 {
+                messages.push(format!("{} crosses the line {} times: numbered where it first does", object.name, crossings.len()));
+            }
+        }
+        if crossed.is_empty() {
+            return Err(CommandError::Invalid("The line doesn't cross any of these strings".into()));
+        }
+        crossed.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let number = |k: usize| p.start + k as f64 * p.step;
+        let changes = crossed.iter().enumerate().map(|(k, (_, object))| {
+            let mut attributes = object.attributes.clone();
+            attributes.insert(p.attribute.clone(), AttrValue::Number(number(k)));
+            Change::Revise { id: object.id, base: object.revision, name: Some(p.name_of(number(k))), layer: None, attributes: Some(attributes), body: None }
+        });
+        let mut outcome = Outcome::new(changes.collect()).message(format!("Numbered {} strings from {} to {}", crossed.len(), number(0), number(crossed.len() - 1)));
+        if !missed.is_empty() {
+            outcome = outcome.message(format!("The line didn't cross {}: left as they were", missed.join(", ")));
+        }
+        for message in messages {
+            outcome = outcome.message(message);
+        }
+        Ok(outcome)
     }
 }
 

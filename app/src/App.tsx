@@ -178,6 +178,7 @@ export default function App() {
   /** Shows the horizon an issue is on and flies to its worst node. */
   const typeVertex = useCallback(async (text: string) => (stringsRef.current ? stringsRef.current.addTyped(text) : 'The viewport is not ready'), []);
   const pickPoint = useCallback((prompt: string) => stringsRef.current?.pickPoint(prompt) ?? Promise.resolve(null), []);
+  const pickLine = useCallback((first: string, second: string) => stringsRef.current?.pickLine(first, second) ?? Promise.resolve(null), []);
 
   const focusIssue = useCallback(
     (id: string, horizon: string, issue: number) => {
@@ -570,10 +571,11 @@ export default function App() {
       markCrossings,
       flyTo,
       pickPoint,
+      pickLine,
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, marked, toggleMark, setActiveLayer, setVisible, setObjectsShown, run, runRecord, clearRefusal, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, pickPoint, mode, typeVertex],
+    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, marked, toggleMark, setActiveLayer, setVisible, setObjectsShown, run, runRecord, clearRefusal, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, pickPoint, pickLine, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';
