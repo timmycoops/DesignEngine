@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
+use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceDirection, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
 use zd_geom::{COINCIDENT, EdgeRule, Face, FaceRamp, FaceStep, FaceTarget, GeomError, OffsetSide, SolidRegion, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_face, project_wall, register_toe, run_on, triangulate_grid};
 
 use super::{SideParam, in_parallel};
@@ -364,9 +364,14 @@ impl<'a> FaceRun<'a, '_> {
             kept
         };
         let create = |name: String, body: Body| Change::Create { name, layer: design.layer.clone(), attributes: attributes(), body };
+        // A wall going down starts from its crest and comes down to its toe.
+        let (start, end) = match profile.direction {
+            FaceDirection::Up => ("toe", "crest"),
+            FaceDirection::Down => ("crest", "toe"),
+        };
         for (k, bench) in face.benches.iter().enumerate() {
-            changes.push(create(format!("{base} toe {}", k + 1), Body::String(bench.toe.clone())));
-            changes.push(create(format!("{base} crest {}", k + 1), Body::String(bench.crest.clone())));
+            changes.push(create(format!("{base} {start} {}", k + 1), Body::String(bench.toe.clone())));
+            changes.push(create(format!("{base} {end} {}", k + 1), Body::String(bench.crest.clone())));
         }
         for road in &face.roads {
             let name = &ramps[road.ramp].name;

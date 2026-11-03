@@ -446,9 +446,6 @@ fn check_ramps(profile: &FaceProfile, problems: &mut Vec<String>) {
         } else if profile.ramps[..r].iter().any(|other| other.name == ramp.name) {
             problems.push(format!("Two ramps on {} are called {}", profile.name, ramp.name));
         }
-        if profile.direction == FaceDirection::Down {
-            problems.push(format!("{name}: a ramp only goes on a profile going up for now"));
-        }
         if !(ramp.width.is_finite() && ramp.width > 0.0) {
             problems.push(format!("{name}: a road's width must be more than zero"));
         }
@@ -701,9 +698,10 @@ mod tests {
         let mut d = with_a_ramp();
         d.profiles[0].ramps.push(ramp());
         assert!(d.problems().iter().any(|p| p.contains("Two ramps on Highwall are called A")));
+        // A road comes down a profile going down (decision 0037).
         let mut d = with_a_ramp();
         d.profiles[0].direction = FaceDirection::Down;
-        assert!(d.problems().iter().any(|p| p.contains("only goes on a profile going up")));
+        assert!(d.problems().is_empty(), "{:?}", d.problems());
     }
 
     /// A ramp set up but not on a wall yet builds no road, and the rest of the design still runs.
