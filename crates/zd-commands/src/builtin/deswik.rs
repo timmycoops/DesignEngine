@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Change, Surface};
+use zd_core::{AttrValue, Attributes, Body, Change, Surface, TriMesh};
 use zd_geom::repair_mesh;
 use zd_io::{DESWIK_LEVELS, DeswikLog, DeswikMesh, read_deswik_layers};
 
@@ -118,7 +118,7 @@ impl Command for ImportDeswik {
         } else {
             &drawing.meshes
         };
-        let made = in_parallel(meshes, |m| import_mesh(m, p.meshes, cleaning));
+        let made = in_parallel(meshes, |m| import_mesh(&m.mesh, &m.layer, "Deswik", p.meshes, cleaning));
         let few = meshes.len() <= LINES_PER_MESH_UP_TO;
         let mut tally = ImportTally::default();
         let mut surfaces = SurfaceTally::default();
@@ -195,20 +195,20 @@ impl Command for ImportDeswik {
     }
 }
 
-/// A Deswik mesh as made: a solid, a surface (with why, if it was closed but refused as a solid), or
+/// A mesh as made: a solid, a surface (with why, if it was closed but refused as a solid), or
 /// nothing.
-enum Made {
+pub(super) enum Made {
     Solid(ImportedSolid),
     Surface { surface: Surface, messages: Vec<String>, refused_as_solid: Option<String> },
     Nothing(String),
 }
 
-/// One mesh through the repair step, then to a solid or a surface. A panic in the geometry is this
-/// mesh's refusal, not the run's.
-fn import_mesh(mesh: &DeswikMesh, meshes: MeshesAs, cleaning: Cleaning) -> Made {
+/// One mesh read from `source` (Deswik, Spry) through the repair step, then to a solid or a surface.
+/// A panic in the geometry is this mesh's refusal, not the run's.
+pub(super) fn import_mesh(mesh: &TriMesh, layer: &str, source: &str, meshes: MeshesAs, cleaning: Cleaning) -> Made {
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let read = format!("Deswik mesh: {} vertices, {} triangles", mesh.mesh.vertices.len(), mesh.mesh.triangle_count());
-        let (welded, log) = repair_mesh(&mesh.mesh, cleaning.weld_tolerance);
+        let read = format!("{source} mesh: {} vertices, {} triangles", mesh.vertices.len(), mesh.triangle_count());
+        let (welded, log) = repair_mesh(mesh, cleaning.weld_tolerance);
         if welded.triangles.is_empty() {
             return Made::Nothing(format!("no triangles left after the weld ({read})"));
         }
@@ -220,7 +220,7 @@ fn import_mesh(mesh: &DeswikMesh, meshes: MeshesAs, cleaning: Cleaning) -> Made 
         };
         let mut refused_as_solid = None;
         if as_solid {
-            match solid_from_welded(welded.clone(), log.clone(), read.clone(), &mesh.layer, &mesh.layer, cleaning) {
+            match solid_from_welded(welded.clone(), log.clone(), read.clone(), layer, layer, cleaning) {
                 Ok(imported) => return Made::Solid(imported),
                 Err(why) if meshes == MeshesAs::Auto => refused_as_solid = Some(why.to_string()),
                 Err(why) => return Made::Nothing(why.to_string()),
@@ -255,20 +255,20 @@ impl Names {
 
 /// What a run's surfaces came to.
 #[derive(Default)]
-struct SurfaceTally {
-    count: usize,
+pub(super) struct SurfaceTally {
+    pub(super) count: usize,
     triangles: usize,
     crossings: usize,
 }
 
 impl SurfaceTally {
-    fn add(&mut self, surface: &Surface) {
+    pub(super) fn add(&mut self, surface: &Surface) {
         self.count += 1;
         self.triangles += surface.mesh().triangle_count();
         self.crossings += surface.crossings().map_or(0, |c| c.pairs);
     }
 
-    fn describe(&self, tolerance: f64) -> String {
+    pub(super) fn describe(&self, tolerance: f64) -> String {
         format!(
             "{} surfaces imported, {} triangles, through the repair at {} mm; {} pairs of triangles crossing, kept and flagged",
             self.count,

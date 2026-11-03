@@ -1,7 +1,7 @@
 //! Import and export for the Zovlyn Pit Design Engine.
 //!
 //! Reads triangulations and strings from DXF, Vulcan triangulations (one by one, or by the thousand
-//! from folders and zips), strings and meshes from Deswik drawings, strings from CSV, regular grids from XYZ/CSV text and Vulcan grids, and
+//! from folders and zips), strings and meshes from Deswik drawings, solids, strings and attributes from Spry projects, strings from CSV, regular grids from XYZ/CSV text and Vulcan grids, and
 //! writes DXF R12 and CSV strings. Saves and opens projects
 //! as `<name>.zdproj/` folders of Parquet files. Coordinates stay f64 from file to engine and back
 //! out. Every clean-up or conversion done on the way in (welding, dropped faces, arcs to chords,
@@ -12,6 +12,7 @@ mod dxf;
 mod error;
 mod mesh_files;
 mod seam;
+mod spry;
 mod store;
 mod string_csv;
 mod text;
@@ -29,6 +30,9 @@ pub use seam::{
     DefinedHorizon, LinkedGrid, SeamDefinition, StackGrids, fingerprint_file, format_seam_definition, parse_seam_definition,
     read_linked_grid, read_linked_surface, read_seam_definition, read_stack_grids, write_seam_definition,
 };
+#[cfg(feature = "spry-fixtures")]
+pub use spry::fixtures as spry_fixtures;
+pub use spry::{NODE_LEVELS, SPRY_LEVELS, SpryContents, SpryLayer, SpryLog, SpryMesh, SpryProject, SpryRead, SpryString, SprySolidField, list_spry, read_spry, unpack_spry_blob};
 pub use store::{Opened, ProjectStore, SaveReport, StoreError};
 pub use string_csv::{CsvLog, CsvString, CsvStrings, format_csv_strings, parse_csv_strings, read_csv_strings, write_csv_strings};
 pub use vulcan::{ELEVATION_VARIABLES, VulcanGrid, VulcanLog, VulcanSeam, VulcanSurface, parse_vulcan_grid, read_vulcan_grid, read_vulcan_seam, vulcan_grid_name};

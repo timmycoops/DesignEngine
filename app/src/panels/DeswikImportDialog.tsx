@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { Dialog } from 'radix-ui';
-import type { DeswikLayer } from '../bridge';
 import { Button } from '../design-system/ui/button';
 import { Checkbox } from '../design-system/ui/checkbox';
 import { Input } from '../design-system/ui/input';
@@ -15,20 +14,46 @@ export interface DeswikChoice {
   layer: string;
 }
 
-/** A size in bytes, unzipped, as kB or MB. */
+/** A layer to pick: its name (levels joined by `\`), its size, and what it holds where that is known. */
+export interface PickableLayer {
+  name: string;
+  bytes: number;
+  detail?: string;
+}
+
+/** What the dialog says about the file it lists. */
+export interface ImportSource {
+  /** Deswik, Spry. */
+  from: string;
+  description: string;
+  /** The filter box's hint. */
+  placeholder: string;
+}
+
+const DESWIK: ImportSource = {
+  from: 'Deswik',
+  description:
+    'Pick the layers to read. Strings keep their attributes and projection details; a closed mesh becomes a solid and an open one a surface, each on a layer named as in Deswik.',
+  placeholder: 'Filter layers: words in any order, e.g. design strip 12',
+};
+
+/** A size in bytes, as kB or MB. */
 const size = (bytes: number) => (bytes < 1e6 ? `${Math.max(1, Math.round(bytes / 1e3))} kB` : `${(bytes / 1e6).toFixed(1)} MB`);
 
 /**
- * Picks the layers of a Deswik drawing to import (decision 0036). The list comes from the zip's
- * directory alone, so even a file of gigabytes opens at once; the sizes are of the XML unzipped,
- * and a layer of a few tens of kB holds little or nothing.
+ * Picks the layers of a Deswik drawing (decision 0036) or the Solid fields and layers of a Spry
+ * project (decision 0039) to import. The list comes without reading any geometry, so even a file of
+ * gigabytes opens at once; for Deswik the sizes are of the XML unzipped, and a layer of a few tens
+ * of kB holds little or nothing.
  */
 export function DeswikImportDialog({
   file,
+  source = DESWIK,
   onCancel,
   onImport,
 }: {
-  file: { path: string; layers: DeswikLayer[] } | null;
+  file: { path: string; layers: PickableLayer[] } | null;
+  source?: ImportSource;
   onCancel: () => void;
   onImport: (choice: DeswikChoice) => void;
 }) {
@@ -72,14 +97,13 @@ export function DeswikImportDialog({
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
         <Dialog.Content className="fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-[min(960px,92vw)] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-lg border bg-card p-4 text-sm shadow-lg">
           <div>
-            <Dialog.Title className="font-semibold">Import from Deswik: {fileName}</Dialog.Title>
-            <Dialog.Description className="text-xs text-muted-foreground">
-              Pick the layers to read. Strings keep their attributes and projection details; a closed mesh becomes a solid and an open one a
-              surface, each on a layer named as in Deswik.
-            </Dialog.Description>
+            <Dialog.Title className="font-semibold">
+              Import from {source.from}: {fileName}
+            </Dialog.Title>
+            <Dialog.Description className="text-xs text-muted-foreground">{source.description}</Dialog.Description>
           </div>
           <div className="flex items-center gap-2">
-            <Input placeholder="Filter layers: words in any order, e.g. design strip 12" value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />
+            <Input placeholder={source.placeholder} value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />
             <Button variant="outline" size="sm" onClick={() => choose(shown.map((l) => l.name), true)}>
               Tick shown
             </Button>
@@ -97,6 +121,7 @@ export function DeswikImportDialog({
                     <span className="text-muted-foreground">{l.name.slice(0, cut + 1)}</span>
                     {l.name.slice(cut + 1)}
                   </span>
+                  {l.detail && <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{l.detail}</span>}
                   <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{size(l.bytes)}</span>
                 </label>
               );
@@ -119,7 +144,7 @@ export function DeswikImportDialog({
             </label>
             <label className="flex items-center gap-1.5">
               One layer for all
-              <Input className="h-7 w-48" placeholder="blank: as in Deswik" value={layer} onChange={(e) => setLayer(e.target.value)} />
+              <Input className="h-7 w-48" placeholder={`blank: as in ${source.from}`} value={layer} onChange={(e) => setLayer(e.target.value)} />
             </label>
           </div>
           <div className="flex items-center justify-between gap-2">

@@ -15,7 +15,7 @@ use tauri::{AppHandle, State, Webview};
 use zd_commands::{LogEntry, RunRecord, Session};
 use zd_core::{Attributes, Body, Crossings, FaceDesign, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, SeamModel, TriMesh};
 use zd_geom::{SectionPlane, StackHorizon, SurfaceRayCaster, stack_issue_nodes, triangulate_grid};
-use zd_io::{list_deswik_layers, read_stack_grids};
+use zd_io::{list_deswik_layers, list_spry, read_stack_grids};
 
 use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_section, encode_triangulation};
 use crate::section::{SectionCut, add_selected, pick_on_section, section_groups, snap_on_section};
@@ -347,6 +347,38 @@ pub async fn deswik_layers(path: String) -> Result<Vec<DeswikLayerRow>, String> 
     tauri::async_runtime::spawn_blocking(move || {
         let layers = list_deswik_layers(Path::new(&path)).map_err(|e| format!("{path}: {e}"))?;
         Ok(layers.into_iter().map(|l| DeswikLayerRow { name: l.name, bytes: l.bytes }).collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// A Solid field of a Spry project, to pick from before `spry.import`.
+#[derive(Serialize)]
+pub struct SprySolidFieldRow {
+    name: String,
+    solids: usize,
+    bytes: u64,
+}
+
+/// What a Spry project holds to import.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpryContentsRow {
+    database_version: i64,
+    solid_fields: Vec<SprySolidFieldRow>,
+    layers: Vec<DeswikLayerRow>,
+}
+
+/// The Solid fields and design layers of a Spry `.spry`, from its tables alone (decision 0039).
+#[tauri::command]
+pub async fn spry_contents(path: String) -> Result<SpryContentsRow, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let contents = list_spry(Path::new(&path)).map_err(|e| format!("{path}: {e}"))?;
+        Ok(SpryContentsRow {
+            database_version: contents.database_version,
+            solid_fields: contents.solid_fields.into_iter().map(|f| SprySolidFieldRow { name: f.name, solids: f.solids, bytes: f.bytes }).collect(),
+            layers: contents.layers.into_iter().map(|l| DeswikLayerRow { name: l.name, bytes: l.bytes }).collect(),
+        })
     })
     .await
     .map_err(|e| e.to_string())?

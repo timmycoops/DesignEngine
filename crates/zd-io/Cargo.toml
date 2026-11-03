@@ -16,6 +16,12 @@ arrow-schema.workspace = true
 zip.workspace = true
 quick-xml.workspace = true
 base64.workspace = true
+rusqlite.workspace = true
+lz4_flex.workspace = true
+
+[features]
+# Writes small `.spry` files laid out as Spry lays them out, for tests only (the reader's known answers).
+spry-fixtures = []
 
 [dev-dependencies]
 zd-geom.workspace = true

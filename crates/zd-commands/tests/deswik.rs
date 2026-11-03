@@ -145,14 +145,15 @@ fn a_drawing_comes_in_with_its_layers_strings_solids_and_surfaces() {
     assert!(matches!(&surface.body, Body::Surface(_)), "open, so a surface");
     assert!(!surface.attributes.contains_key("deswik_volume_m3"), "Deswik writes -1 where it worked out no volume");
 
-    // The repair step turns every closed piece outward, so a cavity is added, not taken away: a
-    // fault of the repair step (to be fixed apart), reported against Deswik's volume.
+    // A closed piece inside another is a cavity: the repair step keeps it facing in, so its 4.5 m3 is
+    // taken away, as Deswik takes it, and no volume differs from Deswik's.
     let (cavity, _) = object(&s, made[3]);
     let Body::Solid(c) = &cavity.body else { panic!("a solid") };
-    assert!((c.volume() - (50_000.0 + 4.5)).abs() < 1e-6, "{} m3", c.volume());
+    assert!((c.volume() - (50_000.0 - 4.5)).abs() < 1e-6, "{} m3", c.volume());
     let lines = record.messages.join("\n");
-    assert!(lines.contains("1 solids whose volume differs from Deswik's own by more than a millionth, +9.000 m3 in all"), "{lines}");
-    assert!(lines.contains("CAVITY 1: 50004.500 m3 here, 49995.500 m3 in Deswik"), "{lines}");
+    assert!(lines.contains("CAVITY 1: repair at 1 mm; 0 triangles flipped to agree with their neighbours and face up, or out where closed (2 patches, 2 closed); 1 closed patches inside others wound to face in, as cavities"), "{lines}");
+    assert!(lines.contains("1 closed patches inside others wound to face in, as cavities"), "{lines}");
+    assert!(!lines.contains("differs from Deswik's own"), "{lines}");
     assert!(lines.contains("Deswik: 4 layers read (VectorDraw 10.1004.0.3), 1 strings and 3 meshes of 18 faces; 12 four-cornered faces split in two"), "{lines}");
     assert!(lines.contains("2 solids imported"), "{lines}");
     assert!(lines.contains("1 surfaces imported"), "{lines}");

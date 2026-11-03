@@ -15,3 +15,4 @@ serde_json.workspace = true
 
 [dev-dependencies]
 zip.workspace = true
+zd-io = { workspace = true, features = ["spry-fixtures"] }

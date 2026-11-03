@@ -280,6 +280,7 @@ pub(crate) struct ImportTally {
     triangles_dropped: usize,
     vertices_dropped: usize,
     triangles_flipped: usize,
+    cavities: usize,
 }
 
 impl ImportTally {
@@ -296,6 +297,7 @@ impl ImportTally {
         self.triangles_dropped += log.collapsed_dropped + log.degenerate_dropped + log.duplicates_dropped;
         self.vertices_dropped += log.unused_dropped;
         self.triangles_flipped += log.orient.triangles_flipped;
+        self.cavities += log.orient.cavities;
     }
 
     pub(crate) fn describe(&self, tolerance: f64, ms: f64) -> String {
@@ -309,6 +311,9 @@ impl ImportTally {
             self.vertices_dropped,
             self.triangles_flipped
         ));
+        if self.cavities > 0 {
+            parts.push(format!("{} closed patches inside others wound to face in, as cavities", self.cavities));
+        }
         if self.repaired > 0 {
             parts.push(format!("{} closed by repair, each noted on the solid", self.repaired));
         }

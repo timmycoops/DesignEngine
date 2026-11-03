@@ -132,15 +132,19 @@ pub struct OrientLog {
     pub non_manifold_at: Vec<[f64; 3]>,
     /// Patches that cannot be wound consistently (one-sided), left as read.
     pub non_orientable_patches: usize,
+    /// Closed patches inside an odd number of the others, wound to face in: cavities, with the
+    /// material round them. A piece inside a cavity faces out again.
+    pub cavities: usize,
 }
 
 /// Most sites listed for one kind of problem.
 pub const SITES: usize = 100;
 
 /// Makes winding consistent across each connected patch by flood fill, then turns each patch to
-/// face out if it is closed (positive volume) or up if it is open (area-weighted normal). Edges with
-/// three or more faces stop the fill and are listed; a patch that cannot be wound consistently is
-/// left as read and counted. Nothing is refused, unlike [`orient_upward`].
+/// face out if it is closed (positive volume) or up if it is open (area-weighted normal). A closed
+/// patch inside an odd number of the others is a cavity and is turned to face in (decision 0010,
+/// amended). Edges with three or more faces stop the fill and are listed; a patch that cannot
+/// be wound consistently is left as read and counted. Nothing is refused, unlike [`orient_upward`].
 pub fn orient_patches(mesh: &TriMesh) -> (TriMesh, OrientLog) {
     let tri_count = mesh.triangles.len();
     let mut log = OrientLog::default();
@@ -160,6 +164,8 @@ pub fn orient_patches(mesh: &TriMesh) -> (TriMesh, OrientLog) {
     let mut flip: Vec<Option<bool>> = vec![None; tri_count];
     let mut oriented = mesh.clone();
     let mut queue = VecDeque::new();
+    // Closed patches are wound once it is known which lie inside others.
+    let mut shells = Vec::new();
     for seed in 0..tri_count {
         if flip[seed].is_some() {
             continue;
@@ -203,6 +209,10 @@ pub fn orient_patches(mesh: &TriMesh) -> (TriMesh, OrientLog) {
             .sum();
         log.closed_patches += usize::from(closed);
         let turn_patch = measure < 0.0;
+        if closed {
+            shells.push(Shell { triangles: patch, turn: turn_patch, volume: measure.abs() });
+            continue;
+        }
         for &t in &patch {
             if flip[t].unwrap() ^ turn_patch {
                 let [a, b, c] = oriented.triangles[t];
@@ -211,7 +221,213 @@ pub fn orient_patches(mesh: &TriMesh) -> (TriMesh, OrientLog) {
             }
         }
     }
+    let inward = if shells.len() > 1 { odd_depth(mesh, &shells, &neighbours) } else { vec![false; shells.len()] };
+    for (shell, inward) in shells.iter().zip(inward) {
+        log.cavities += usize::from(inward);
+        for &t in &shell.triangles {
+            if flip[t].unwrap() ^ shell.turn ^ inward {
+                let [a, b, c] = oriented.triangles[t];
+                oriented.triangles[t] = [a, c, b];
+                log.triangles_flipped += 1;
+            }
+        }
+    }
     (oriented, log)
+}
+
+/// A closed patch waiting to be wound: its triangles, whether the fill's winding is turned to face
+/// out, and six times the volume it encloses.
+struct Shell {
+    triangles: Vec<usize>,
+    turn: bool,
+    volume: f64,
+}
+
+/// A corner this close to another patch's surface along the ray (m) is on it, and says nothing
+/// about which side of it the patch lies.
+const ON_SURFACE: f64 = 1e-6;
+
+/// Whether each closed patch lies inside an odd number of the others, so bounds a cavity (or a
+/// cavity in a piece inside a cavity). A patch is inside another when its box is, it encloses less,
+/// and every corner it does not share with the other is inside it by ray parity, with at least one
+/// such corner. A patch with corners both in and out crosses the other: it is not inside it, and is
+/// left facing out for the crossing check to find. Only patches whose every edge is used an even
+/// number of times by their own triangles count, on either side: a sheet that is "closed" only
+/// because its open edges have three or more faces encloses nothing.
+fn odd_depth(mesh: &TriMesh, shells: &[Shell], neighbours: &[[(u32, bool); 3]]) -> Vec<bool> {
+    // Corners in a frame whose third axis is the rays' direction, about the mesh's centre.
+    let origin = mesh.bounds().map_or([0.0; 3], |b| b.centre());
+    let frame = ray_frame();
+    let at: Vec<[f64; 3]> = mesh
+        .vertices
+        .iter()
+        .map(|p| {
+            let d = sub(*p, origin);
+            frame.map(|axis| dot(d, axis))
+        })
+        .collect();
+    let sealed: Vec<bool> = shells.iter().map(|s| closes(mesh, &s.triangles, neighbours)).collect();
+    let boxes: Vec<[[f64; 3]; 2]> = shells
+        .iter()
+        .map(|s| {
+            s.triangles.iter().flat_map(|&t| mesh.triangles[t]).fold([[f64::INFINITY; 3], [f64::NEG_INFINITY; 3]], |[lo, hi], v| {
+                let p = at[v as usize];
+                [[0, 1, 2].map(|i| lo[i].min(p[i])), [0, 1, 2].map(|i| hi[i].max(p[i]))]
+            })
+        })
+        .collect();
+    let within = |p: usize, q: usize| (0..3).all(|i| boxes[p][0][i] >= boxes[q][0][i] && boxes[p][1][i] <= boxes[q][1][i]);
+
+    let mut depth = vec![0usize; shells.len()];
+    let mut on_outer = vec![false; mesh.vertices.len()];
+    let mut stamp = vec![0u32; mesh.vertices.len()];
+    let mut visit = 0u32;
+    for (q, outer) in shells.iter().enumerate().filter(|(q, _)| sealed[*q]) {
+        let inner: Vec<usize> = (0..shells.len()).filter(|&p| p != q && sealed[p] && shells[p].volume < outer.volume && within(p, q)).collect();
+        if inner.is_empty() {
+            continue;
+        }
+        outer.triangles.iter().flat_map(|&t| mesh.triangles[t]).for_each(|v| on_outer[v as usize] = true);
+        // Each candidate's corners the outer patch does not share, once each, with whose they are.
+        let (mut owner, mut points) = (Vec::new(), Vec::new());
+        for (k, &p) in inner.iter().enumerate() {
+            visit += 1;
+            for v in shells[p].triangles.iter().flat_map(|&t| mesh.triangles[t]) {
+                if !on_outer[v as usize] && stamp[v as usize] != visit {
+                    stamp[v as usize] = visit;
+                    owner.push(k);
+                    points.push(at[v as usize]);
+                }
+            }
+        }
+        let mut tally = vec![(0usize, 0usize); inner.len()];
+        for (k, side) in owner.into_iter().zip(sides(mesh, &outer.triangles, &at, &points)) {
+            match side {
+                Some(true) => tally[k].0 += 1,
+                Some(false) => tally[k].1 += 1,
+                None => {}
+            }
+        }
+        for (&p, (inside, outside)) in inner.iter().zip(tally) {
+            depth[p] += usize::from(inside > 0 && outside == 0);
+        }
+        outer.triangles.iter().flat_map(|&t| mesh.triangles[t]).for_each(|v| on_outer[v as usize] = false);
+    }
+    depth.iter().map(|d| d % 2 == 1).collect()
+}
+
+/// Whether every edge of a closed patch is used an even number of times by its own triangles: it
+/// encloses a volume. An edge with a neighbour across is used twice; only edges of three or more
+/// faces, with none, need counting.
+fn closes(mesh: &TriMesh, patch: &[usize], neighbours: &[[(u32, bool); 3]]) -> bool {
+    let mut edges: Vec<(u32, u32)> = patch
+        .iter()
+        .flat_map(|&t| (0..3).filter(move |&s| neighbours[t][s].0 == NONE).map(move |s| (t, s)))
+        .map(|(t, s)| {
+            let (u, v) = (mesh.triangles[t][s], mesh.triangles[t][(s + 1) % 3]);
+            (u.min(v), u.max(v))
+        })
+        .collect();
+    edges.sort_unstable();
+    edges.chunk_by(|x, y| x == y).all(|run| run.len() % 2 == 0)
+}
+
+/// The nesting test's axes: the third is the rays' direction, a little off the vertical so that no
+/// face of a solid drawn square to the grid lies along it; the first two span the plane the
+/// patches are seen on along it.
+fn ray_frame() -> [[f64; 3]; 3] {
+    let along = unit([0.0923, 0.0371, 1.0]).expect("a direction");
+    let across = unit(cross([0.0, 1.0, 0.0], along)).expect("not along north");
+    [across, cross(along, across), along]
+}
+
+/// For each point (in the ray frame), whether it is inside the closed surface of `triangles`: an odd
+/// number of them cross the ray from it. `None` where it lies on the surface. The points are
+/// bucketed on a grid in the plane square to the rays, so each triangle meets only those it might
+/// cover.
+fn sides(mesh: &TriMesh, triangles: &[usize], at: &[[f64; 3]], points: &[[f64; 3]]) -> Vec<Option<bool>> {
+    let n = (points.len() as f64).sqrt().ceil().max(1.0) as usize;
+    let lo = [0, 1].map(|i| points.iter().map(|p| p[i]).fold(f64::INFINITY, f64::min));
+    let hi = [0, 1].map(|i| points.iter().map(|p| p[i]).fold(f64::NEG_INFINITY, f64::max));
+    let size = [0, 1].map(|i| if hi[i] > lo[i] { (hi[i] - lo[i]) / n as f64 } else { 1.0 });
+    let cell = |c: f64, i: usize| (((c - lo[i]) / size[i]).floor().max(0.0) as usize).min(n - 1);
+    let mut start = vec![0usize; n * n + 1];
+    let home: Vec<usize> = points.iter().map(|p| cell(p[1], 1) * n + cell(p[0], 0)).collect();
+    home.iter().for_each(|&h| start[h + 1] += 1);
+    for i in 0..n * n {
+        start[i + 1] += start[i];
+    }
+    let mut fill = start.clone();
+    let mut order = vec![0usize; points.len()];
+    for (k, &h) in home.iter().enumerate() {
+        order[fill[h]] = k;
+        fill[h] += 1;
+    }
+
+    let mut crossings = vec![0u32; points.len()];
+    let mut on = vec![false; points.len()];
+    for &t in triangles {
+        let tri = mesh.triangles[t];
+        let corners = tri.map(|v| at[v as usize]);
+        let low = [0, 1].map(|i| corners.iter().map(|p| p[i]).fold(f64::INFINITY, f64::min));
+        let high = [0, 1].map(|i| corners.iter().map(|p| p[i]).fold(f64::NEG_INFINITY, f64::max));
+        if (0..2).any(|i| high[i] < lo[i] || low[i] > hi[i]) {
+            continue;
+        }
+        for row in cell(low[1], 1)..=cell(high[1], 1) {
+            for column in cell(low[0], 0)..=cell(high[0], 0) {
+                for &k in &order[start[row * n + column]..start[row * n + column + 1]] {
+                    let q = points[k];
+                    if (0..2).any(|i| q[i] < low[i] || q[i] > high[i]) {
+                        continue;
+                    }
+                    match depth_beyond(tri, at, q) {
+                        Some(d) if d.abs() <= ON_SURFACE => on[k] = true,
+                        Some(d) if d > 0.0 => crossings[k] += 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    crossings.iter().zip(on).map(|(&n, on)| (!on).then_some(n % 2 == 1)).collect()
+}
+
+/// How far along the ray from `q` triangle `tri` is (negative behind it), if the ray meets it; all
+/// in the ray frame. Seen along the ray, `q` is taken as nudged by (ε, ε²), so it is never on an edge
+/// or corner: of two triangles either side of an edge exactly one holds it, and two folded over
+/// each other hold it both or neither, which leaves the parity right.
+fn depth_beyond(tri: [u32; 3], at: &[[f64; 3]], q: [f64; 3]) -> Option<f64> {
+    let [a, b, c] = tri;
+    let side = [edge_side(at, a, b, q), edge_side(at, b, c, q), edge_side(at, c, a, q)];
+    if side[0] == 0 || side[0] != side[1] || side[1] != side[2] {
+        return None;
+    }
+    let [pa, pb, pc] = tri.map(|v| at[v as usize]);
+    let area = orient(pa, pb, pc);
+    if area == 0.0 {
+        return None;
+    }
+    let (wa, wb) = (orient(pb, pc, q) / area, orient(pc, pa, q) / area);
+    Some(wa * pa[2] + wb * pb[2] + (1.0 - wa - wb) * pc[2] - q[2])
+}
+
+/// Which side of the edge from corner `i` to `j` the nudged `q` is seen on: 1 left, -1 right, 0 if
+/// the edge has no length seen along the ray. Worked out from the lower-numbered corner, so both
+/// triangles on an edge see `q` on the same side of it.
+fn edge_side(at: &[[f64; 3]], i: u32, j: u32, q: [f64; 3]) -> i8 {
+    let (low, high, sign) = if i < j { (i, j, 1) } else { (j, i, -1) };
+    let (a, b) = (at[low as usize], at[high as usize]);
+    let (du, dv) = (b[0] - a[0], b[1] - a[1]);
+    let o = du * (q[1] - a[1]) - dv * (q[0] - a[0]);
+    // On the line, the nudge decides: -dv ε first, then du ε².
+    let s = [o, -dv, du].into_iter().find(|x| *x != 0.0).map_or(0, |x| if x > 0.0 { 1 } else { -1 });
+    s * sign
+}
+
+/// Twice the signed area of a, b, c seen along the ray.
+fn orient(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {
+    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 }
 
 /// The mesh cut into its patches (triangles joined across edges with exactly two faces), in the
@@ -742,6 +958,156 @@ mod tests {
         assert_eq!(apart.vertices.len(), slab.vertices.len() + 1);
         assert_eq!(apart.vertices.last(), Some(&[20.0, 15.0, 10.0]), "the added vertex is the edge's midpoint");
         assert!(slab.vertices.iter().zip(&apart.vertices).all(|(p, q)| p == q), "no vertex moves");
+    }
+
+    /// A box's faces, wound outward, on corners numbered x + 2y + 4z.
+    const BOX_FACES: [[u32; 3]; 12] = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+
+    /// A box from `low` of `size`, wound outward.
+    fn block(low: [f64; 3], size: [f64; 3]) -> TriMesh {
+        let corners = (0..8).map(|i| [low[0] + (i & 1) as f64 * size[0], low[1] + (i >> 1 & 1) as f64 * size[1], low[2] + (i >> 2) as f64 * size[2]]).collect();
+        TriMesh::new(corners, BOX_FACES.to_vec())
+    }
+
+    /// The pieces in one mesh, each keeping its own vertices.
+    fn joined(pieces: &[TriMesh]) -> TriMesh {
+        let (mut vertices, mut triangles) = (Vec::new(), Vec::new());
+        for piece in pieces {
+            let base = vertices.len() as u32;
+            vertices.extend(&piece.vertices);
+            triangles.extend(piece.triangles.iter().map(|t| t.map(|i| i + base)));
+        }
+        TriMesh::new(vertices, triangles)
+    }
+
+    #[test]
+    fn a_piece_inside_a_cavity_inside_a_solid_faces_out_in_out_in() {
+        // A 100 x 100 x 20 m block with a 60 x 60 x 10 m cavity, a 20 x 20 x 4 m piece in the cavity
+        // and a 10 x 10 x 2 m cavity in that, each read wound the wrong way for its depth.
+        let pieces = [
+            block([0.0, 0.0, 0.0], [100.0, 100.0, 20.0]).flipped(),
+            block([20.0, 20.0, 5.0], [60.0, 60.0, 10.0]),
+            block([40.0, 40.0, 8.0], [20.0, 20.0, 4.0]).flipped(),
+            block([45.0, 45.0, 9.0], [10.0, 10.0, 2.0]),
+        ];
+        let (oriented, log) = orient_patches(&joined(&pieces));
+        assert_eq!((log.closed_patches, log.cavities, log.triangles_flipped), (4, 2, 48));
+        let volumes: Vec<f64> = split_patches(&oriented).iter().map(TriMesh::signed_volume).collect();
+        let expected = [200_000.0, -36_000.0, 1_600.0, -200.0];
+        // Exact to a micro-cubic metre: every corner is on the metre grid.
+        assert!(volumes.iter().zip(expected).all(|(v, e)| (v - e).abs() < 1e-6), "{volumes:?}");
+        assert!((oriented.signed_volume() - 165_400.0).abs() < 1e-6, "{}", oriented.signed_volume());
+    }
+
+    #[test]
+    fn separate_pieces_face_out_even_inside_anothers_box() {
+        // Two 10 m boxes side by side: 2,000 m3.
+        let (apart, log) = orient_patches(&joined(&[block([0.0; 3], [10.0; 3]), block([20.0, 0.0, 0.0], [10.0; 3]).flipped()]));
+        assert_eq!(log.cavities, 0);
+        assert!((apart.signed_volume() - 2_000.0).abs() < 1e-6, "{}", apart.signed_volume());
+
+        // An L of three 10 m cells with a 6 m box in its notch: the box is inside the L's box, and
+        // smaller, but outside it, so it faces out: 3,000 + 216 m3.
+        let l = cells_surface(&[[0, 0, 0], [1, 0, 0], [0, 1, 0]], 10.0);
+        let (notched, log) = orient_patches(&joined(&[l.clone(), block([12.0, 12.0, 2.0], [6.0; 3]).flipped()]));
+        assert_eq!((log.closed_patches, log.cavities), (2, 0));
+        assert!((notched.signed_volume() - 3_216.0).abs() < 1e-6, "{}", notched.signed_volume());
+
+        // A 10 x 10 x 6 m box across the L's inside corner, three corners in the L and one in the
+        // notch, crosses it: not inside, so left facing out for the crossing check, 3,000 + 600 m3.
+        let (crossing, log) = orient_patches(&joined(&[l, block([5.0, 5.0, 2.0], [10.0, 10.0, 6.0]).flipped()]));
+        assert_eq!(log.cavities, 0);
+        assert!((crossing.signed_volume() - 3_600.0).abs() < 1e-6, "{}", crossing.signed_volume());
+    }
+
+    #[test]
+    fn a_patch_closed_only_by_edges_of_three_faces_holds_nothing() {
+        // Two 10 m cells with a wall between them: the wall's edges have three faces, so the box
+        // comes apart into two open halves and the wall, each "closed" (no edge of one face) but
+        // none enclosing anything. A tetrahedron inside the first cell is in no closed surface:
+        // it keeps facing out, as read.
+        let mut cells = cells_surface(&[[0, 0, 0], [1, 0, 0]], 10.0);
+        let corner = |p: [f64; 3]| cells.vertices.iter().position(|v| *v == p).unwrap() as u32;
+        let wall = [[10.0, 0.0, 0.0], [10.0, 10.0, 0.0], [10.0, 10.0, 10.0], [10.0, 0.0, 10.0]].map(corner);
+        cells.triangles.extend([[wall[0], wall[1], wall[2]], [wall[0], wall[2], wall[3]]]);
+        let tetra = TriMesh::new(vec![[2.0, 2.0, 2.0], [5.0, 2.0, 2.0], [2.0, 5.0, 2.0], [2.0, 2.0, 5.0]], vec![[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]]);
+        let (oriented, log) = orient_patches(&joined(&[cells, tetra]));
+        assert_eq!((log.closed_patches, log.non_manifold_edges, log.cavities), (4, 4, 0));
+        let pieces = split_patches(&oriented);
+        assert!((pieces.last().unwrap().signed_volume() - 4.5).abs() < 1e-9, "the tetrahedron, 4.5 m3, faces out");
+    }
+
+    #[test]
+    fn a_cavity_of_many_faces_in_a_box_of_many_faces_is_found() {
+        // A 6 m cube of 1 m cells, its surface 432 triangles, round a 2 m cube of 1 m cells, 26
+        // corners each tested against it: 216 - 8 m3.
+        let cube = |from: i32, to: i32| -> Vec<[i32; 3]> { (from..to).flat_map(|x| (from..to).flat_map(move |y| (from..to).map(move |z| [x, y, z]))).collect() };
+        let (oriented, log) = orient_patches(&joined(&[cells_surface(&cube(0, 6), 1.0), cells_surface(&cube(2, 4), 1.0)]));
+        assert_eq!((log.closed_patches, log.cavities), (2, 1));
+        assert!((oriented.signed_volume() - (216.0 - 8.0)).abs() < 1e-9, "{}", oriented.signed_volume());
+    }
+
+    #[test]
+    #[ignore = "timing: cargo test -p zd-geom --release timing_a_slab -- --ignored --nocapture"]
+    fn timing_a_slab_of_four_million_triangles_with_a_thousand_cavities() {
+        // A rolling slab 2 km square and 50 m thick at mine grid coordinates: a 2 m grid on top, the
+        // same 50 m lower beneath, walls round it. Then 1,000 tetrahedral cavities with 3 m legs at
+        // RL 70, between the two everywhere, read facing out.
+        let (e, n) = (650_000.0, 7_450_000.0);
+        let top = triangulate_grid(&Grid::from_fn([e, n], [2.0, 2.0], 1001, 1001, |x, y| 100.0 + 15.0 * (x / 300.0).sin() * (y / 200.0).cos()));
+        let below = top.vertices.len() as u32;
+        let mut vertices = top.vertices.clone();
+        vertices.extend(top.vertices.iter().map(|p| [p[0], p[1], p[2] - 50.0]));
+        let mut triangles = top.triangles.clone();
+        triangles.extend(top.triangles.iter().map(|&[a, b, c]| [a + below, c + below, b + below]));
+        let ring = &boundary_loops(&top).unwrap()[0];
+        for (k, &a) in ring.iter().enumerate() {
+            let b = ring[(k + 1) % ring.len()];
+            triangles.extend([[b, a, a + below], [b, a + below, b + below]]);
+        }
+        let slab = TriMesh::new(vertices, triangles);
+        let start = std::time::Instant::now();
+        let (alone, log) = orient_patches(&slab);
+        let alone_ms = start.elapsed().as_secs_f64() * 1e3;
+        assert_eq!((log.closed_patches, log.triangles_flipped), (1, 0));
+
+        let tetra = |x: f64, y: f64| TriMesh::new(vec![[x, y, 70.0], [x + 3.0, y, 70.0], [x, y + 3.0, 70.0], [x, y, 73.0]], vec![[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]]);
+        let cavities: Vec<TriMesh> = (0..1000).map(|k| tetra(e + 30.0 + (k % 32) as f64 * 61.7, n + 30.0 + (k / 32) as f64 * 61.3)).collect();
+        let holed = joined(&[vec![slab], cavities].concat());
+        let start = std::time::Instant::now();
+        let (oriented, log) = orient_patches(&holed);
+        let holed_ms = start.elapsed().as_secs_f64() * 1e3;
+        assert_eq!((log.closed_patches, log.cavities, log.triangles_flipped), (1001, 1000, 4000));
+        // The slab is 2,000 x 2,000 x 50 m wherever it is, less 1,000 x 4.5 m3; to a hundredth of a
+        // cubic metre in 200 million.
+        assert!((alone.signed_volume() - 2e8).abs() < 0.01, "{}", alone.signed_volume());
+        assert!((oriented.signed_volume() - (2e8 - 4_500.0)).abs() < 0.01, "{}", oriented.signed_volume());
+        println!(
+            "{} triangles in: oriented in {alone_ms:.0} ms alone; with 1,000 cavities ({} triangles) {holed_ms:.0} ms, so {:.0} ms to find them; {} triangles out",
+            alone.triangle_count(),
+            holed.triangle_count(),
+            holed_ms - alone_ms,
+            oriented.triangle_count()
+        );
+    }
+
+    #[test]
+    fn a_ray_through_an_edge_or_a_corner_meets_one_triangle() {
+        // A 2 m square of four triangles round its centre (corner 4), 5 m along the ray, in the ray
+        // frame. Points on the edges between them and on the centre itself are each held once,
+        // whichever way the triangles are wound.
+        let at = [[0.0, 0.0, 5.0], [2.0, 0.0, 5.0], [2.0, 2.0, 5.0], [0.0, 2.0, 5.0], [1.0, 1.0, 5.0], [0.5, 0.0, 6.0]];
+        let held = |q: [f64; 3], fan: &[[u32; 3]]| fan.iter().filter_map(|&t| depth_beyond(t, &at, q)).collect::<Vec<f64>>();
+        for fan in [[[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]], [[0, 1, 4], [2, 1, 4], [2, 3, 4], [0, 3, 4]]] {
+            for q in [[1.0, 1.0, 0.0], [0.5, 0.5, 0.0], [1.5, 0.5, 0.0], [1.5, 1.5, 0.0], [0.5, 1.5, 0.0], [1.0, 0.3, 0.0]] {
+                let depths = held(q, &fan);
+                assert!(depths.len() == 1 && (depths[0] - 5.0).abs() < 1e-12, "{q:?} in {fan:?}: {depths:?}");
+            }
+        }
+        // Two triangles folded over each other on edge 1-4 (corners 0 and 5 on the same side of it)
+        // hold a point on it both or neither.
+        let folded = held([1.5, 0.5, 0.0], &[[0, 1, 4], [4, 1, 5]]).len();
+        assert!(folded % 2 == 0, "{folded}");
     }
 
     #[test]

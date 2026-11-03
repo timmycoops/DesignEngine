@@ -60,8 +60,11 @@ fn a_real_drawing_reads_whole() {
         by_layer.entry(&s.layer).or_default().0 += 1;
     }
     // Where Deswik stored a volume: the mesh as read, where it is closed and wound one way, checks the
-    // reader; the mesh through the repair step (welded at 1 mm, wound outward) checks what an import makes.
+    // reader; the mesh through the repair step (welded at 1 mm, wound out, cavities in) checks what an import makes.
     let (mut as_read, mut repaired, mut open) = (Comparison::default(), Comparison::default(), 0);
+    // The repair step's time over every mesh with a volume, and over those with more than one closed
+    // patch, which alone pay for the nesting test; and the cavities it found.
+    let (mut repair_ms, mut nested_ms, mut nested, mut cavities) = (0.0, 0.0, 0, 0);
     for m in &drawing.meshes {
         assert!(m.mesh.vertices.iter().flatten().all(|c| c.is_finite()), "a mesh on {} with a coordinate that is not a number", m.layer);
         let row = by_layer.entry(&m.layer).or_default();
@@ -73,17 +76,27 @@ fn a_real_drawing_reads_whole() {
             as_read.add(m.mesh.signed_volume().abs(), theirs, &m.layer, &m.mesh, String::new());
         }
         let (mesh, log) = repair_mesh(&m.mesh, 0.001);
+        repair_ms += log.ms;
+        if log.orient.closed_patches > 1 {
+            (nested_ms, nested) = (nested_ms + log.ms, nested + 1);
+        }
+        cavities += log.orient.cavities;
         if mesh.validity().is_watertight() {
             let what = format!(
-                "; repair: {} welded (largest move {:.2} mm), {} collapsed, {} degenerate, {} duplicates dropped, {} flipped",
+                "; repair: {} welded (largest move {:.2} mm), {} collapsed, {} degenerate, {} duplicates dropped, {} flipped, {} closed patches, {} cavities",
                 log.vertices_welded,
                 log.largest_move * 1e3,
                 log.collapsed_dropped,
                 log.degenerate_dropped,
                 log.duplicates_dropped,
-                log.orient.triangles_flipped
+                log.orient.triangles_flipped,
+                log.orient.closed_patches,
+                log.orient.cavities
             );
-            repaired.add(mesh.signed_volume(), theirs, &m.layer, &m.mesh, what);
+            let welded = log.vertices_welded + log.collapsed_dropped + log.degenerate_dropped + log.duplicates_dropped > 0;
+            if repaired.add(mesh.signed_volume(), theirs, &m.layer, &m.mesh, what) && !welded {
+                repaired.only_wound += 1;
+            }
         } else {
             open += 1;
         }
@@ -95,6 +108,7 @@ fn a_real_drawing_reads_whole() {
     }
     as_read.report("closed and wound one way as read");
     repaired.report("closed after the repair step");
+    println!("repair step: {repair_ms:.0} ms over the meshes with a Deswik volume; {nested_ms:.0} ms of it on the {nested} with more than one closed patch; {cavities} cavities wound to face in");
     println!("{open} meshes with a Deswik volume are open after the repair step, so have no volume to compare");
     assert!(as_read.differ.is_empty(), "meshes read whole whose volume differs from Deswik's");
 }
@@ -104,20 +118,26 @@ fn a_real_drawing_reads_whole() {
 struct Comparison {
     compared: usize,
     differ: Vec<(f64, String, usize, f64, f64, String)>,
+    /// Of those differing, the ones the weld left alone: only their winding changed.
+    only_wound: usize,
 }
 
 impl Comparison {
-    fn add(&mut self, ours: f64, theirs: f64, layer: &str, read: &TriMesh, note: String) {
+    /// Whether the volumes differ.
+    fn add(&mut self, ours: f64, theirs: f64, layer: &str, read: &TriMesh, note: String) -> bool {
         self.compared += 1;
         let share = (ours - theirs).abs() / theirs;
         if share > 1e-6 {
             self.differ.push((share, layer.to_string(), read.triangle_count(), ours, theirs, note));
         }
+        share > 1e-6
     }
 
     fn report(&mut self, what: &str) {
         self.differ.sort_by(|a, b| b.0.total_cmp(&a.0));
         println!("{} meshes with a Deswik volume {what}: {} differ by more than a millionth", self.compared, self.differ.len());
+        let over = |share: f64| self.differ.iter().filter(|d| d.0 > share).count();
+        println!("  by more than a thousandth {}, a ten-thousandth {}, a hundred-thousandth {}; {} the weld left alone", over(1e-3), over(1e-4), over(1e-5), self.only_wound);
         for (share, layer, triangles, ours, theirs, note) in self.differ.iter().take(8) {
             println!("  {share:.2e} on {layer}: {triangles} triangles as read, ours {ours:.3} m3, Deswik {theirs:.3} m3{note}");
         }
