@@ -131,6 +131,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 - Solids come by the thousand as a zip or a folder (Spry exports a zip; Deswik imports one): `solid.import_many`
   takes either in one run. See `docs/decisions/0019-solids-by-the-thousand.md`.
 - Then: OMF v1 and v2, and an export to Seequent Evo schemas (triangle mesh, design geometry).
+- Spry `.spry` projects are read, not written: block solids by node path with Spry's values and volume, design-layer
+  strings and solids with their attributes (`docs/decisions/0039-spry-projects.md`).
 - Vulcan formats are read, not written. Deswik `.dcf` drawings are read, not written: a zip of VectorDraw XML layers,
   read by the layers picked, with projection details kept on strings and Deswik's volumes on meshes
   (`docs/decisions/0036-deswik-drawings.md`). Exchange back into Deswik through DXF (R12, confirmed reading at the same

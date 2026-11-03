@@ -350,6 +350,17 @@ export interface DeswikLayer {
 /** The layers of a Deswik `.dcf`, read from its zip's directory alone (decision 0036). */
 export const deswikLayers = (path: string) => invoke<DeswikLayer[]>('deswik_layers', { path });
 
+/** What a Spry project holds to import, listed without unpacking any geometry (decision 0039). */
+export interface SpryContents {
+  databaseVersion: number;
+  /** A table's Solid fields, named by table, folders and field joined by `\`, with how many nodes have a solid. */
+  solidFields: { name: string; solids: number; bytes: number }[];
+  /** Design layers, folders and layer joined by `\`, with their size as stored. */
+  layers: { name: string; bytes: number }[];
+}
+
+export const spryContents = (path: string) => invoke<SpryContents>('spry_contents', { path });
+
 /** The session's run log, oldest first: every run (failed ones too), undo, redo, save and open. */
 export type LogEntry =
   | ({ event: 'run' } & RunRecord)

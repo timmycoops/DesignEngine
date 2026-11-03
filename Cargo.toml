@@ -35,6 +35,10 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 # already in the app's build through Tauri.
 quick-xml = "0.38.4"
 base64 = "0.22.1"
+# Spry projects (.spry) are SQLite with LZ4 blocks (decision 0039), agreed by Tim (2026-11-03). bundled: SQLite
+# is built in, so nothing is installed beside the app.
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+lz4_flex = { version = "0.14.0", default-features = false, features = ["std", "safe-decode", "safe-encode"] }
 parry3d-f64 = "0.31.1"
 spade = "2.15.1"
 

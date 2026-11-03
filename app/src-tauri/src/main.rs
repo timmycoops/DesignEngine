@@ -25,6 +25,7 @@ fn main() {
             commands::set_objects_visible,
             commands::run_log,
             commands::deswik_layers,
+            commands::spry_contents,
             commands::stage_object,
             commands::stage_layer_solids,
             commands::section_lines,

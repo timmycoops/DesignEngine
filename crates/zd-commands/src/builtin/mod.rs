@@ -1,6 +1,6 @@
 //! The engine's own commands. Strings (workstream 6): create, vertex edits, grade, offset, drape,
 //! elevation, reverse, close, split, join, smooth and filter. Exchange (workstream 4): strings in
-//! from DXF and CSV, objects out to DXF and CSV. Deswik drawings in (decision 0036).
+//! from DXF and CSV, objects out to DXF and CSV. Deswik drawings in (decision 0036), Spry projects in (decision 0039).
 
 mod deswik;
 mod exchange;
@@ -10,6 +10,7 @@ mod layer;
 mod object;
 mod seam;
 mod solid;
+mod spry;
 mod string;
 mod surface;
 
@@ -21,6 +22,7 @@ pub use layer::{CreateLayer, CreateLayerParams, DeleteLayer, DeleteLayerParams, 
 pub use object::{DeleteObject, DeleteObjects, MoveObjects, MoveObjectsParams, ObjectParams, ObjectsParams, RenameObject, RenameParams};
 pub use seam::{BuildSeamModel, BuildSeamModelParams, SuggestSeamDefinition, SuggestSeamDefinitionParams};
 pub(crate) use solid::check_solids_made;
+pub use spry::{ImportSpry, ImportSpryParams};
 pub use solid::{CutBySurface, CutBySurfaceParams, ImportSolid, ImportSolidParams, ImportSolids, ImportSolidsParams, SolidFromMesh};
 pub use string::{
     CornerParam, CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, DrapeString, DrapeStringParams, FilterString,
@@ -63,6 +65,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(ImportSolid);
     registry.register(ImportSolids);
     registry.register(ImportDeswik);
+    registry.register(ImportSpry);
     registry.register(CutBySurface);
     registry.register(ProjectStep);
     registry.register(SaveDesign);
