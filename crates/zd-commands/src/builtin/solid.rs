@@ -673,7 +673,7 @@ fn describe_close(close: &CloseLog) -> String {
 }
 
 /// The middle of the first edge only one triangle has, in triangle order.
-fn first_open_edge(mesh: &TriMesh) -> Option<[f64; 3]> {
+pub(crate) fn first_open_edge(mesh: &TriMesh) -> Option<[f64; 3]> {
     let mut faces: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
     for t in &mesh.triangles {
         for k in 0..3 {

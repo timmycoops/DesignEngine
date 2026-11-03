@@ -121,6 +121,50 @@ fn an_import_flags_a_block_that_crosses_itself_and_repair_replaces_it_with_the_s
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[test]
+fn an_open_block_is_flagged_with_its_holes_and_repair_fills_them() {
+    let dir = scratch("open");
+    let path = dir.join("plan.spry");
+    // A 10 m cube missing one top triangle: a hole of 50 m², 8.3 % of its 600 m² surface.
+    let mut holed = cuboid([E, N, 100.0], [10.0; 3]);
+    holed.triangles.remove(2);
+    let fixture = SpryFixture {
+        tables: vec![FixtureTable {
+            name: "Deposit".into(),
+            levels: vec!["Pit".into(), "Strip".into(), "Block".into()],
+            folder: "Coal".into(),
+            solid_field: "Solid".into(),
+            nodes: vec![FixtureNode { path: vec!["PIT A".into(), "12".into(), "5".into()], solid: Some(node_solid(holed)), values: vec![("Volume".into(), AttrValue::Number(1_000.0))] }],
+        }],
+        layers: vec![FixtureLayer { path: vec!["TOPO".into()], strings: vec![], solids: vec![(sheet(), Default::default())] }],
+        split_solids_at: None,
+    };
+    write_spry_fixture(&path, &fixture).unwrap();
+
+    let mut s = Session::with_builtins();
+    let record = s.run("spry.import", json!({ "path": path.to_string_lossy() })).unwrap();
+    let [block, topo] = created(&record)[..] else { panic!("{:#?}", record.messages) };
+    let o = s.project().object(block).unwrap();
+    assert!(matches!(o.body, Body::Surface(_)));
+    let Some(AttrValue::Text(why)) = o.attributes.get("not_a_solid") else { panic!("an open block is flagged: {:?}", o.attributes) };
+    assert!(why.starts_with("open: 3 edges on holes, the first at "), "{why}");
+    // On a design layer an open mesh is a surface, as asked, and not flagged.
+    assert!(s.project().object(topo).unwrap().attributes.get("not_a_solid").is_none());
+    assert!(record.messages.iter().any(|m| m == "1 meshes kept as surfaces, as they could not be solids, each flagged not_a_solid:"), "{:#?}", record.messages);
+
+    let record = s.run("solid.repair", json!({ "surfaces": [block] })).unwrap();
+    let fixed = created(&record)[0];
+    assert!((volume(&s, fixed) - 1_000.0).abs() < 1e-6, "{} m3", volume(&s, fixed));
+    let Some(AttrValue::Number(filled)) = s.project().object(fixed).unwrap().attributes.get("repair_filled_m2") else { panic!() };
+    assert!((filled - 50.0).abs() < 1e-9, "{filled} m2");
+
+    // With repair asked for on the import, the block comes in closed.
+    let mut s = Session::with_builtins();
+    let record = s.run("spry.import", json!({ "path": path.to_string_lossy(), "repair": true })).unwrap();
+    assert!((volume(&s, created(&record)[0]) - 1_000.0).abs() < 1e-6);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Opt-in on a real project: `ZD_SPRY_FILE` names a `.spry`, read whole; the closed meshes it flags
 /// are then repaired, with timings and what was left. Run in release.
 #[test]

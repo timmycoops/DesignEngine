@@ -102,6 +102,8 @@ export class SceneSync {
     }
     let loaded = 0;
     for (const object of wanted.values()) {
+      // A newer summary is waiting: it is applied next, so stop loading this one's surfaces.
+      if (summary !== this.latest) return loaded;
       const layer = layers.get(object.layer);
       const shown = this.shown.get(object.id);
       if (shown) {
@@ -125,7 +127,15 @@ export class SceneSync {
           group = new THREE.Group();
         }
       } else {
-        const staged = await stageObject(object.id);
+        let staged: Awaited<ReturnType<typeof stageObject>>;
+        try {
+          staged = await stageObject(object.id);
+        } catch (e) {
+          // Deleted by a run since this summary was taken (a repair replacing a surface while
+          // the import's were still loading): the summary that run returns says so.
+          if (String(e).includes('no such object')) continue;
+          throw e;
+        }
         group = (await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined })).group;
       }
       group.visible = on(object);

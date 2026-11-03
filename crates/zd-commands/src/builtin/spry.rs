@@ -120,7 +120,7 @@ impl Command for ImportSpry {
         } else {
             project.meshes
         };
-        let made = in_parallel(&meshes, |m| import_mesh(&m.mesh, &m.layer, "Spry", p.meshes, cleaning));
+        let made = in_parallel(&meshes, |m| import_mesh(&m.mesh, &m.layer, "Spry", p.meshes, cleaning, m.node.is_some()));
         let few = meshes.len() <= LINES_PER_MESH_UP_TO;
         let mut tally = ImportTally::default();
         let mut surfaces = SurfaceTally::default();
@@ -191,7 +191,7 @@ impl Command for ImportSpry {
             }));
         }
         if !kept_as_surfaces.is_empty() {
-            outcome = outcome.message(format!("{} closed meshes kept as surfaces, as they could not be solids:", kept_as_surfaces.len()));
+            outcome = outcome.message(format!("{} meshes kept as surfaces, as they could not be solids, each flagged not_a_solid:", kept_as_surfaces.len()));
             outcome.messages.extend(kept_as_surfaces.into_iter().take(LINES_PER_MESH_UP_TO));
         }
         if !refused.is_empty() {
