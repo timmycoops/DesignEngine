@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, Ramp, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
-use zd_geom::{COINCIDENT, EdgeRule, Face, FaceRamp, FaceStep, FaceTarget, GeomError, OffsetSide, SolidRegion, conditioned_toe, find_crossings, next_toe, plan_crossings, project_face, project_wall, register_toe, run_on, triangulate_grid};
+use zd_geom::{COINCIDENT, EdgeRule, Face, FaceRamp, FaceStep, FaceTarget, GeomError, OffsetSide, SolidRegion, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_face, project_wall, register_toe, run_on, triangulate_grid};
 
 use super::{SideParam, in_parallel};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
@@ -327,7 +327,14 @@ impl<'a> FaceRun<'a, '_> {
             Some(tolerance) if tolerance > 0.0 => conditioned_toe(&extended, tolerance).map_err(refuse)?,
             _ => extended.clone(),
         };
-        let registered = targets.mesh(profile.register)?;
+        let floor;
+        let registered = match profile.register {
+            StepTarget::Surface { id } => targets.mesh(id)?,
+            StepTarget::Rl { rl } => {
+                floor = level_floor(&shaped, rl);
+                &floor
+            }
+        };
         let (toe, register) = register_toe(&shaped, registered).map_err(refuse)?;
         let (side, faces) = match line.side {
             WallSide::Left => (OffsetSide::Left, OffsetSide::Right),
@@ -435,7 +442,10 @@ fn face_ramp(ramp: &Ramp, at: [f64; 2]) -> FaceRamp {
 
 /// The surfaces a profile names.
 fn surfaces_of(profile: &FaceProfile) -> Vec<ObjectId> {
-    let mut ids = vec![profile.register];
+    let mut ids = Vec::new();
+    if let StepTarget::Surface { id } = profile.register {
+        ids.push(id);
+    }
     for step in &profile.steps {
         if let ProfileStep::Project { to: StepTarget::Surface { id }, .. } | ProfileStep::Berm { on: Some(StepTarget::Surface { id }), .. } = step {
             ids.push(*id);

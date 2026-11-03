@@ -77,8 +77,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   inside solid, segment azimuth, by horizon. Later: block model, geotech solid with transition distance.
   Blending between rules may only widen berms and flatten slopes: where a value changes along a straight run, a
   transition bevels the crest across the steeper or narrower side (`docs/decisions/0027-rules.md`).
-- `FaceProfile`: one table for one type of string, going one way from its toe, up or down: the grid the toe
-  registers to, then ordered steps, each "project to surface B or an RL at a batter" or "berm of a width", with the
+- `FaceProfile`: one table for one type of string, going one way from its toe, up or down: the grid, surface or RL
+  the toe registers to, then ordered steps, each "project to surface B or an RL at a batter" or "berm of a width", with the
   batter or width a number or a rule, and each row saying how its line registers and conditions. A string going both
   ways takes a profile for each, and the top or bottom string is made by hand after the run. Still to come: berm on
   roof and berm on floor per horizon, minimum and maximum bench height, wall type (face, side, end). Side (left or

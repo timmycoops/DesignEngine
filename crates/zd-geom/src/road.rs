@@ -1509,6 +1509,19 @@ mod tests {
         assert!((miss - (200.0 * COS - 100.0)).abs() < 1e-3, "{miss}");
     }
 
+    /// A road that can't go in doesn't stop the others finding their held ends. The first here is well inside the
+    /// strip, and the other two want the end of the string, where only one fits. At 45 degrees a first guess is 2 m out.
+    #[test]
+    fn a_road_that_cant_go_in_leaves_the_others_finding_their_ends() {
+        let held = |x: f64| FaceRamp { back: true, ends_at: Some([E + x, N + 40.0]), ..RAMP };
+        let face = long_face(&[climbed_by(FaceTarget::Rl(140.0), &[0, 1, 2])], &[held(1200.0), held(1900.0), held(1950.0)]);
+        assert!(face.no_roads.iter().any(|n| n.ramp == 2 && n.why.contains("it starts on the road below it")), "{:?}", face.no_roads);
+        let top = *road_of(&face, 0).pit_edge.vertices.last().unwrap();
+        assert!((top[0] - E - 1200.0).abs() <= END_TOLERANCE, "{top:?}");
+        assert_eq!(road_of(&face, 0).off_end, None);
+        assert!((road_of(&face, 1).off_end.unwrap() - (400.0 * COS - 100.0)).abs() < 1e-3, "the end of the string is as close as it gets");
+    }
+
     /// A toe that rises along the strip leaves a bench with no height at a road's start. The road starts on the
     /// first wall with height there, from the same place on the floor.
     #[test]
