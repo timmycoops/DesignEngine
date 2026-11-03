@@ -30,6 +30,7 @@ import {
   buildSnapIndex,
   type DeswikLayer,
   deswikLayers,
+  spryContents,
   type LogEntry,
   newProject,
   type ObjectSummary,
@@ -58,7 +59,7 @@ import {
 } from './design-system/ui/dropdown-menu';
 import { Separator } from './design-system/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './design-system/ui/tooltip';
-import { type DeswikChoice, DeswikImportDialog } from './panels/DeswikImportDialog';
+import { type DeswikChoice, DeswikImportDialog, type ImportSource, type PickableLayer } from './panels/DeswikImportDialog';
 import { IssueMarkers } from './viewport/markers';
 import { type SeamShown, SceneSync } from './viewport/sceneSync';
 import { planPoint, SectionView } from './viewport/section';
@@ -125,6 +126,14 @@ async function objectAt(viewport: Viewport, sync: SceneSync, section: SectionVie
   return seam && seam.distance < distance ? seam.id : (hit?.object ?? null);
 }
 
+
+/** How the import dialog speaks of a Spry project (decision 0039). */
+const SPRY: ImportSource = {
+  from: 'Spry',
+  description:
+    "Pick the Solid fields and design layers to read. A block solid is named by its node path and keeps its position on each level, the values beside its Solid field and Spry's volume; strings and layer solids keep their attributes.",
+  placeholder: 'Filter: words in any order, e.g. coal solid or design toe',
+};
 export default function App() {
   const viewportRef = useRef<Viewport | null>(null);
   const syncRef = useRef<SceneSync | null>(null);
@@ -155,6 +164,7 @@ export default function App() {
   const selectedRef = useRef<string | null>(null);
   const [marked, setMarked] = useState<string[]>([]);
   const [deswikFile, setDeswikFile] = useState<{ path: string; layers: DeswikLayer[] } | null>(null);
+  const [spryFile, setSpryFile] = useState<{ path: string; layers: PickableLayer[]; solidFields: Set<string> } | null>(null);
   const markersRef = useRef<IssueMarkers | null>(null);
   const crossingMarkersRef = useRef<IssueMarkers | null>(null);
   /** An issue to fly to once its horizon has loaded. */
@@ -446,6 +456,35 @@ export default function App() {
     });
   };
 
+  /** Lists a Spry project's Solid fields and design layers to pick from; the dialog then imports those ticked (decision 0039). */
+  const onImportSpry = () =>
+    attempt(async () => {
+      const picked = await open({ title: 'Pick a Spry project', filters: [{ name: 'Spry projects', extensions: ['spry'] }] });
+      if (!picked || Array.isArray(picked)) return;
+      setStatus({ text: `Listing what ${picked} holds…` });
+      const contents = await spryContents(picked);
+      const fields = contents.solidFields.map((f) => ({ name: f.name, bytes: f.bytes, detail: `${f.solids.toLocaleString()} solids` }));
+      setStatus({ text: `${fields.length} Solid fields and ${contents.layers.length} layers in ${picked}: tick those to import` });
+      setSpryFile({ path: picked, layers: [...fields, ...contents.layers], solidFields: new Set(fields.map((f) => f.name)) });
+    });
+
+  const importSpry = (choice: DeswikChoice) => {
+    const file = spryFile;
+    setSpryFile(null);
+    if (!file) return;
+    void attempt(async () => {
+      setStatus({ text: `Importing ${choice.layers.length} Solid fields and layers from ${file.path}…` });
+      await run('spry.import', {
+        path: file.path,
+        solid_fields: choice.layers.filter((name) => file.solidFields.has(name)),
+        layers: choice.layers.filter((name) => !file.solidFields.has(name)),
+        meshes: choice.meshes,
+        repair: choice.repair,
+        layer: choice.layer || null,
+      });
+    });
+  };
+
   const onImportStrings = () =>
     attempt(async () => {
       const picked = await open({ multiple: true, filters: [{ name: 'Strings', extensions: ['dxf', 'csv'] }] });
@@ -653,6 +692,9 @@ export default function App() {
           <ToolButton tip="Import layers of a Deswik drawing (.dcf): strings with their projection details, surfaces and solids" onClick={onImportDeswik}>
             <FileInput /> Deswik
           </ToolButton>
+          <ToolButton tip="Import from a Spry project (.spry): block solids named by their node paths with Spry's values, and design-layer strings and solids" onClick={onImportSpry}>
+            <FileInput /> Spry
+          </ToolButton>
           <ToolButton tip="Import a Vulcan grid: pick a roof, floor or topography, and the grids of that name come with it" onClick={onImportVulcan}>
             <Layers3 /> Vulcan grid
           </ToolButton>
@@ -806,6 +848,7 @@ export default function App() {
         </footer>
       </div>
       <DeswikImportDialog file={deswikFile} onCancel={() => setDeswikFile(null)} onImport={importDeswik} />
+      <DeswikImportDialog file={spryFile} source={SPRY} onCancel={() => setSpryFile(null)} onImport={importSpry} />
     </TooltipProvider>
   );
 }
