@@ -341,6 +341,15 @@ export const setLayerVisible = (layer: string, visible: boolean) =>
 export const setObjectsVisible = (objects: string[], visible: boolean) =>
   invoke<ProjectSummary>('set_objects_visible', { objects, visible });
 
+/** A layer of a Deswik drawing, named as Deswik shows it (levels joined by `\`), and its size unzipped. */
+export interface DeswikLayer {
+  name: string;
+  bytes: number;
+}
+
+/** The layers of a Deswik `.dcf`, read from its zip's directory alone (decision 0036). */
+export const deswikLayers = (path: string) => invoke<DeswikLayer[]>('deswik_layers', { path });
+
 /** The session's run log, oldest first: every run (failed ones too), undo, redo, save and open. */
 export type LogEntry =
   | ({ event: 'run' } & RunRecord)

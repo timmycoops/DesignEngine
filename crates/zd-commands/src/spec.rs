@@ -43,6 +43,8 @@ pub enum FieldType {
     Number { unit: &'static str },
     Integer,
     Text,
+    /// A list of names.
+    Texts,
     Bool,
     /// One `[x, y, z]` in mine grid coordinates.
     Point,

@@ -31,6 +31,10 @@ arrow-schema = "60"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # float_roundtrip: run logs must give back the exact f64 coordinates they were given.
 serde_json = { version = "1", features = ["float_roundtrip"] }
+# Deswik .dcf drawings are zips of VectorDraw XML with base64 arrays (decision 0036); both crates were
+# already in the app's build through Tauri.
+quick-xml = "0.38.4"
+base64 = "0.22.1"
 parry3d-f64 = "0.31.1"
 spade = "2.15.1"
 
