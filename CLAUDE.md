@@ -91,7 +91,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   the string crosses gets a road, starting where it crosses the toe of its first wall, or with its end held, coming out
   on its last crest level with that place along the strip, with the run moving the start along the toe to get there
   (`docs/decisions/0031-ramps-on-real-strips.md`). Wall rows name the ramps
-  that climb them, one road a strip for now, and it's cut back as they're projected, so running the design again rebuilds it.
+  that climb them, and it's cut back as they're projected, so running the design again rebuilds it. A wall can hold several
+  roads running the same way, lowest first, each cut into the wall above the one below (`docs/decisions/0032-roads-on-one-wall.md`).
   The toe behind its start moves back by the road for an entrance, and it's the bench where it crosses a berm. It reports
   the bench where the grade can't be met instead of drifting (`docs/decisions/0028-ramps.md`, `0030-ramp-strings.md`).
 - Every object has a stable id (128-bit, generated in-house), a name, a layer, and provenance (the command

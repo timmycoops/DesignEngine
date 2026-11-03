@@ -540,19 +540,19 @@ struct Hip {
     live: bool,
 }
 
-/// Two hips meeting, which closes the wall between them.
+/// Two hips meeting, which closes the wall between them. Closings go lowest first. A wall that closes changes
+/// which walls its neighbours meet, so a higher closing next to it has to wait for it, and on a toe that rises and
+/// falls how far a wall is from its own foot says nothing about what happens next to it.
 #[derive(Debug, Clone, Copy)]
 struct Closing {
     at: P3,
-    /// How far out from its foot the wall closes: only the order to look at closings in.
-    reach: f64,
     start: usize,
     end: usize,
 }
 
 impl PartialEq for Closing {
     fn eq(&self, other: &Self) -> bool {
-        self.reach == other.reach
+        self.at[2] == other.at[2]
     }
 }
 impl Eq for Closing {}
@@ -564,7 +564,7 @@ impl PartialOrd for Closing {
 impl Ord for Closing {
     /// The nearest first, out of a max-heap.
     fn cmp(&self, other: &Self) -> Ordering {
-        other.reach.total_cmp(&self.reach)
+        other.at[2].total_cmp(&self.at[2])
     }
 }
 
@@ -721,23 +721,17 @@ impl Sweep {
             // Head on along one line: two walls meeting in a level ridge.
             let along = dot(gap, a.direction);
             let aside = norm(sub(gap, scale(a.direction, along)));
-            return (along > 0.0 && dot(a.direction, b.direction) < 0.0 && aside < NEAR).then(|| self.closing_at(scale(add(a.from, b.from), 0.5), start, end));
+            return (along > 0.0 && dot(a.direction, b.direction) < 0.0 && aside < NEAR).then_some(Closing { at: scale(add(a.from, b.from), 0.5), start, end });
         }
         let s = dot(cross(gap, b.direction), n) / nn;
         let t = dot(cross(gap, a.direction), n) / nn;
-        (s >= -NEAR && t >= -NEAR).then(|| self.closing_at(add(a.from, scale(a.direction, s.max(0.0))), start, end))
-    }
-
-    fn closing_at(&self, at: P3, start: usize, end: usize) -> Closing {
-        let wall = &self.walls[self.hips[start].ahead];
-        let from_foot = sub(at, wall.foot[0]);
-        Closing { at, reach: wall.out[0] * from_foot[0] + wall.out[1] * from_foot[1], start, end }
+        (s >= -NEAR && t >= -NEAR).then_some(Closing { at: add(a.from, scale(a.direction, s.max(0.0))), start, end })
     }
 
     /// Takes a wall out: its hips end where they meet, and a new hip joins its neighbours. No hip
     /// comes back when nothing is left.
     fn close_wall(&mut self, event: Closing) -> Option<usize> {
-        let Closing { at, start, end, .. } = event;
+        let Closing { at, start, end } = event;
         let wall = self.hips[start].ahead;
         let (behind, ahead) = (self.hips[start].behind, self.hips[end].ahead);
         let (before, after) = (self.hips[start].before, self.hips[end].after);
@@ -1208,7 +1202,12 @@ impl<'a> Walk<'a> {
                         point[1] + self.origin[1]
                     )));
                 }
-                let entered = self.edges[across].iter().position(|e| e.across == position.wall).ok_or_else(|| self.off_target(point))?;
+                // A transition with no width has nothing on it to walk, so the crest steps straight over it.
+                let (from_wall, across) = match self.edges[across].iter().find(|e| e.across != position.wall && e.across != TOP) {
+                    Some(beyond) if self.sweep.is_transition(across) && no_width(&self.edges[across]) && beyond.across != FOOT => (across, beyond.across),
+                    _ => (position.wall, across),
+                };
+                let entered = self.edges[across].iter().position(|e| e.across == from_wall).ok_or_else(|| self.off_target(point))?;
                 if self.sweep.closed && across == first.wall && entered == first.entered && norm(sub(point, first.at)) < SAME_POINT {
                     note_gap(point, 0, log);
                     walked.crest.pop();
@@ -1316,6 +1315,8 @@ fn first_exit(edges: &[Edge], a: P3, b: P3, entered: usize) -> Option<(usize, P3
     if d[0] * d[0] + d[1] * d[1] < 1e-24 {
         return None;
     }
+    // A short step starting on a wall's corner can land just past the next edge, so the slack is in metres.
+    let behind = -NEAR / (d[0] * d[0] + d[1] * d[1]).sqrt();
     let mut best: Option<(usize, f64, f64)> = None;
     for (i, edge) in edges.iter().enumerate() {
         if i == entered {
@@ -1330,7 +1331,7 @@ fn first_exit(edges: &[Edge], a: P3, b: P3, entered: usize) -> Option<(usize, P3
         let gap = [edge.from[0] - a[0], edge.from[1] - a[1]];
         let t = cross2(gap, s) / denominator;
         let along = cross2(gap, d) / denominator;
-        if (-1e-12..=1.0).contains(&t) && (-1e-9..=1.0 + 1e-9).contains(&along) && best.is_none_or(|b| t < b.1) {
+        if (behind..=1.0).contains(&t) && (-1e-9..=1.0 + 1e-9).contains(&along) && best.is_none_or(|b| t < b.1) {
             best = Some((i, t.max(0.0), along.clamp(0.0, 1.0)));
         }
     }
@@ -1344,6 +1345,11 @@ fn crossing_of_edge(near: &TriMesh, plane: &Plane, u: u32, v: u32) -> P3 {
     let (dp, dq) = (plane.above(p), plane.above(q));
     let t = dp / (dp - dq);
     add(p, scale(sub(q, p), t))
+}
+
+/// Whether a wall's boundary encloses nothing in plan.
+fn no_width(edges: &[Edge]) -> bool {
+    edges.iter().map(|e| cross2([e.from[0], e.from[1]], [e.to[0], e.to[1]])).sum::<f64>().abs() < AREA_TOLERANCE
 }
 
 /// Whether a triangle holds `p` in plan.
@@ -1414,6 +1420,8 @@ fn wall_mesh(sweep: &Sweep, edges: &[Vec<Edge>], walked: &Walked, origin: P3) ->
 /// The parts of a wall below its crest, each anticlockwise: round the wall from where the crest comes
 /// in to where it next leaves, then back along the crest.
 fn outlines_below(edges: &[Edge], pieces: &[Piece]) -> Result<Vec<Vec<P3>>, GeomError> {
+    // A crest that only touches a wall, at a corner sitting on the target, leaves a piece with no length.
+    let pieces: Vec<&Piece> = pieces.iter().filter(|piece| piece.points.len() > 1).collect();
     let position = |s: Stop| (s.edge, s.along);
     let mut stops: Vec<(usize, f64, usize, bool)> = Vec::with_capacity(pieces.len() * 2);
     for (k, piece) in pieces.iter().enumerate() {
@@ -1608,6 +1616,68 @@ mod tests {
     /// Crest vertices about the test origin.
     fn crest(step: &WallStep) -> Vec<[f64; 3]> {
         step.crest.vertices.iter().map(|p| [p[0] - E, p[1] - N, p[2]]).collect()
+    }
+
+
+    /// A wall that closes changes what its neighbours meet, so a higher closing next to it has to wait for it,
+    /// however near that one is to its own foot.
+    #[test]
+    fn closings_go_lowest_first() {
+        let closing = |rl: f64, start: usize| Closing { at: [0.0, 0.0, rl], start, end: start + 1 };
+        let mut heap: BinaryHeap<Closing> = [closing(77.8, 0), closing(62.9, 1), closing(71.5, 2)].into_iter().collect();
+        let order: Vec<f64> = std::iter::from_fn(|| heap.pop()).map(|c| c.at[2]).collect();
+        assert_eq!(order, [62.9, 71.5, 77.8]);
+    }
+
+    /// A crest that only touches a corner of a wall, where the wall meets its target, leaves a piece with no length.
+    /// It isn't part of any outline, and what's left of the crest on that wall closes on its own.
+    #[test]
+    fn a_crest_touching_a_corner_of_a_wall_closes() {
+        let edge = |from: [f64; 2], to: [f64; 2], across: usize| Edge { from: [from[0], from[1], 0.0], to: [to[0], to[1], 10.0], across };
+        let edges = [edge([0.0, 0.0], [10.0, 0.0], FOOT), edge([10.0, 0.0], [10.0, 10.0], 1), edge([10.0, 10.0], [0.0, 10.0], TOP), edge([0.0, 10.0], [0.0, 0.0], 2)];
+        let at = |edge: usize, along: f64| Stop { edge, along };
+        let touch = Piece { entry: at(0, 0.0), exit: at(3, 1.0), points: vec![[0.0, 0.0, 0.0]] };
+        let crest = Piece { entry: at(3, 1.0), exit: at(1, 0.5), points: vec![[0.0, 0.0, 0.0], [10.0, 5.0, 5.0]] };
+        assert_eq!(outlines_below(&edges, &[touch, crest]).unwrap().len(), 1);
+    }
+
+    /// A short step starting on a wall's corner can land just past the next edge. It still leaves by that edge.
+    #[test]
+    fn a_short_step_from_a_corner_leaves_by_the_next_edge() {
+        let edges = [Edge { from: [0.0, 0.0, 0.0], to: [10.0, 0.0, 0.0], across: FOOT }, Edge { from: [10.0, 0.0, 0.0], to: [10.0, 10.0, 0.0], across: 1 }];
+        let (a, b) = ([10.0 + 2e-10, 5.0, 0.0], [10.0 + 1e-3, 5.0, 0.0]);
+        assert_eq!(first_exit(&edges, a, b, NONE).map(|(edge, ..)| edge), Some(1));
+    }
+
+    /// A transition between walls of nearly one slope can have no width, and a wall with some does.
+    #[test]
+    fn a_wall_with_its_two_hips_on_one_line_has_no_width() {
+        let edge = |from: [f64; 2], to: [f64; 2]| Edge { from: [from[0], from[1], 0.0], to: [to[0], to[1], 0.0], across: 1 };
+        assert!(no_width(&[edge([0.0, 0.0], [5.0, 5.0]), edge([5.0, 5.0], [5.0, 5.0]), edge([5.0, 5.0], [0.0, 0.0])]));
+        assert!(!no_width(&[edge([0.0, 0.0], [5.0, 5.0]), edge([5.0, 5.0], [5.0, 6.0]), edge([5.0, 6.0], [0.0, 0.0])]));
+    }
+
+    /// A known fault. A string that wrinkles along and up and down, as a line draped on a wavy grid does, can lose
+    /// its way: the crest runs off along the wrong plane and the wall is refused, 16 times in the 64 here. Strings
+    /// lying on an RL don't wrinkle like this.
+    #[test]
+    #[ignore = "known fault, in decision 0032: wrinkled strings"]
+    fn wrinkled_strings_below_their_target_all_build() {
+        let target = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [25.0, 25.0], 300, 120, |x, y| 150.0 + 6.0 * ((x - E) / 90.0).sin() + 4.0 * ((y - N) / 70.0).cos()));
+        for plan in [0.05, 0.2, 0.5, 1.0] {
+            for rl in [0.5, 1.0, 2.0, 4.0] {
+                for batter in [45.0, 55.0, 65.0, 70.0] {
+                    let vertices = (0..900).map(|i| {
+                        let i = f64::from(i);
+                        [E + 6.0 * i, N + plan * (0.37 * i).sin() + 0.6 * plan * (1.9 * i).sin(), 100.0 + 0.012 * i + rl * (0.21 * i).sin() + 0.7 * rl * (1.3 * i).sin()]
+                    });
+                    let toe = Polyline { vertices: vertices.collect(), closed: false };
+                    let batters = vec![batter; toe.vertices.len() - 1];
+                    let wall = project_wall_by_edge(&toe, OffsetSide::Left, &batters, &target);
+                    assert!(wall.is_ok(), "plan {plan}, RL {rl}, batter {batter}: {:?}", wall.err());
+                }
+            }
+        }
     }
 
     #[test]

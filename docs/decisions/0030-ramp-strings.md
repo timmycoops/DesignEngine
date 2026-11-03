@@ -1,6 +1,6 @@
 # 0030 — A ramp is a string across the strips
 
-Date: 2026-11-02 · Status: accepted. Tim agreed it after trying 0028 on five strips of PIT C. This changes items 1 to 3 of 0028, and the road itself is as it was. 0031 changes item 2: a held end goes by where the string crosses the toe, not the crest
+Date: 2026-11-02 · Status: accepted. Tim agreed it after trying 0028 on five strips of PIT C. This changes items 1 to 3 of 0028, and the road itself is as it was. 0031 changes item 2: a held end goes by where the string crosses the toe, not the crest. 0032 changes item 6: a wall takes several roads
 
 ## Why
 

@@ -898,6 +898,56 @@ fn ramps_across_real_strips() {
     }
 }
 
+/// Several roads on one real strip. `ZD_PROJECT` is a project holding the strip and ramp strings, `ZD_DESIGN` a file
+/// with a saved design as JSON, and `ZD_STRIP` the strip's name. `ZD_RLS` lists RLs for the walls to step up to,
+/// separated by `;`, or without it the walls go to the design's own surfaces. Strings named `Ramp ...` are taken
+/// as ramps, all on every wall.
+#[test]
+#[ignore = "needs ZD_PROJECT, ZD_DESIGN and ZD_STRIP"]
+fn several_roads_on_one_real_strip() {
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is needed"));
+    let mut s = Session::open(var("ZD_PROJECT")).unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(var("ZD_DESIGN")).unwrap()).unwrap();
+    let profile = &saved[0]["body"]["design"]["profiles"][0];
+    let register = profile["register"].clone();
+    let strip = s.project().objects().find(|o| o.name == var("ZD_STRIP") && !o.attributes.contains_key("face_design")).unwrap().id;
+    let mut strings: Vec<(String, ObjectId)> = s.project().objects().filter(|o| o.name.starts_with("Ramp ") && matches!(o.body, Body::String(_))).map(|o| (o.name.trim_start_matches("Ramp ").to_string(), o.id)).collect();
+    strings.sort();
+    let names: Vec<&str> = strings.iter().map(|(name, _)| name.as_str()).collect();
+    let (batter, berm, width) = (70.0, 30.0, 50.0);
+    let targets: Vec<serde_json::Value> = match std::env::var("ZD_RLS") {
+        Ok(rls) => rls.split(';').map(|rl| json!({ "kind": "rl", "rl": rl.trim().parse::<f64>().unwrap() })).collect(),
+        Err(_) => profile["steps"].as_array().unwrap().iter().filter(|step| step["step"] == "project").map(|step| step["to"].clone()).collect(),
+    };
+    let mut steps = Vec::new();
+    for to in &targets {
+        if !steps.is_empty() {
+            steps.push(json!({ "step": "berm", "width": berm, "condition": 0.1 }));
+        }
+        steps.push(json!({ "step": "project", "to": to, "batter": batter, "condition": 0.1, "ramps": names }));
+    }
+    for (fixed, heading) in [("start", "back"), ("end", "back"), ("start", "along"), ("end", "along")] {
+        let ramps: Vec<serde_json::Value> = strings.iter().map(|(name, id)| json!({ "name": name, "string": id, "fixed": fixed, "heading": heading, "width": width, "grade": 10.0 })).collect();
+        let content = json!({ "layer": format!("roads {fixed} {heading}"), "lines": [{ "string": strip, "profile": "Up", "side": "right", "run_on": [100.0, 100.0] }], "profiles": [{ "name": "Up", "direction": "up", "register": register, "condition": 0.1, "steps": steps, "ramps": ramps }], "rules": [] });
+        let design = created(&s.run("face.save_design", json!({ "name": format!("{fixed} {heading}"), "content": content })).unwrap())[0];
+        let started = Instant::now();
+        match s.run("face.project", json!({ "design": design })) {
+            Ok(record) => {
+                let ms = started.elapsed().as_secs_f64() * 1e3;
+                let faces: Vec<&zd_core::Surface> = record.outputs.iter().filter_map(|o| s.project().object(o.id)).filter_map(|o| if let Body::Surface(sheet) = &o.body { Some(sheet) } else { None }).collect();
+                let clean = faces.iter().filter(|sheet| sheet.validity().non_self_intersecting == Some(true)).count();
+                let loops: Vec<usize> = faces.iter().map(|sheet| zd_geom::boundary_loops(sheet.mesh()).map_or(0, |l| l.len())).collect();
+                let triangles: usize = faces.iter().map(|sheet| sheet.mesh().triangles.len()).sum();
+                println!("--- {fixed} {heading}: {ms:.0} ms, {} face, {clean} with nothing crossing, boundary loops {loops:?}, {triangles} triangles", faces.len());
+                for message in &record.messages {
+                    println!("  {message}");
+                }
+            }
+            Err(e) => println!("--- {fixed} {heading}: refused: {e}"),
+        }
+    }
+}
+
 /// A ramp string through these points, in metres from the origin.
 fn ramp_string(s: &mut Session, points: &[[f64; 2]]) -> ObjectId {
     let points: Vec<[f64; 3]> = points.iter().map(|p| [E + p[0], N + p[1], 0.0]).collect();
@@ -1117,25 +1167,24 @@ fn a_strip_a_ramp_string_misses_runs_plain_and_the_run_says_so() {
     assert!(s.project().objects().any(|o| o.name == "one Wall face"), "the walls still build");
 }
 
-/// Two ramps can name one wall, for strips their strings cross apart. Where both cross one strip the first
-/// listed keeps the wall, and the other says so and still builds on its other strips.
+/// Two ramps can name one wall. A strip one crosses takes its road, and a strip both cross takes both.
 #[test]
-fn two_ramps_on_one_wall_take_a_strip_each() {
+fn two_ramps_on_one_wall_each_take_their_road() {
     let mut s = Session::with_builtins();
     let floor = level_surface(&mut s, "floor", 100.0);
     let strips = three_strips(&mut s, ["one", "two", "three"]);
-    let first = ramp_string(&mut s, &[[40.0, 10.0], [40.0, 140.0]]);
+    let first = ramp_string(&mut s, &[[20.0, 10.0], [20.0, 140.0]]);
     let second = ramp_string(&mut s, &[[60.0, 120.0], [60.0, 250.0]]);
     let road = |name: &str, string: ObjectId| json!({ "name": name, "string": string, "fixed": "start", "heading": "along", "width": 10.0, "grade": 10.0 });
     let mut content = on_each_strip(&strips, floor, json!([road("A", first), road("B", second)]));
     content["profiles"][0]["steps"][0]["ramps"] = json!(["A", "B"]);
     let design = created(&s.run("face.save_design", json!({ "name": "two", "content": content })).unwrap())[0];
     let record = s.run("face.project", json!({ "design": design })).unwrap();
-    assert!(s.project().objects().any(|o| o.name == "one Wall road A pit edge"));
-    assert!(s.project().objects().any(|o| o.name == "two Wall road A pit edge"), "A was listed first");
-    assert!(!s.project().objects().any(|o| o.name == "two Wall road B pit edge"));
-    assert!(s.project().objects().any(|o| o.name == "three Wall road B pit edge"));
-    assert!(record.messages.iter().any(|m| m == "Ramp B: two: it shares a wall with ramp A here, and a wall takes one road for now"), "{:?}", record.messages);
+    for name in ["one Wall road A pit edge", "two Wall road A pit edge", "two Wall road B pit edge", "three Wall road B pit edge"] {
+        assert!(s.project().objects().any(|o| o.name == name), "{name}: {:?}", record.messages);
+    }
+    assert!(!s.project().objects().any(|o| o.name == "three Wall road A pit edge"));
+    assert!(!record.messages.iter().any(|m| m.contains("shares a wall")), "{:?}", record.messages);
 }
 
 /// A ramp string left on a layer of strips isn't run as a strip.

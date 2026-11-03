@@ -15,9 +15,9 @@ use std::collections::HashMap;
 
 use zd_core::{FaceDirection, Polyline, TriMesh};
 
-use crate::road::{FaceRamp, FaceRoad, NO_WALL, NoRoad, RoadBottom, RoadCut, RoadTop, berm_round_road, cut_road, metres_along, point_along, with_road_start};
+use crate::road::{FaceRamp, FaceRoad, NO_WALL, NoRoad, OTHER_WAY, RoadOnWall, RoadTop, Stopped, WallCut, berm_round_roads, cut_roads, metres_along, point_along, start_on};
 use crate::string::TriangleBins;
-use crate::wall::{LeastBench, Stretch, at_crest_heights, height_on, nearest_along, next_line, triangles_of, with_crest_vertices};
+use crate::wall::{LeastBench, Stretch, at_crest_heights, height_on, nearest_along, next_line, segment_count, triangles_of, with_crest_vertices};
 use crate::{EdgeRule, GeomError, OffsetSide, drape_string, filter_string, next_toe, project_wall_by_edge};
 
 /// What a wall rises to.
@@ -30,9 +30,9 @@ pub enum FaceTarget<'a> {
 /// One step of a face.
 #[derive(Debug, Clone, Copy)]
 pub enum FaceStep<'a> {
-    /// A wall at a batter in degrees. With a tolerance, its crest is conditioned for the next step. `ramp` is
-    /// the road that climbs it, as a place in the face's ramps. Walls with the same one carry one road.
-    Project { to: FaceTarget<'a>, batter: EdgeRule<'a>, condition: Option<f64>, ramp: Option<usize> },
+    /// A wall at a batter in degrees. With a tolerance, its crest is conditioned for the next step. `ramps` are
+    /// the roads that climb it, as places in the face's ramps. A road carries on up the walls that name it.
+    Project { to: FaceTarget<'a>, batter: EdgeRule<'a>, condition: Option<f64>, ramps: &'a [usize] },
     /// A berm of a width in metres. Its line registers on `on`, or on what the last wall reached if that's
     /// left out. With `register` off it keeps its crest's heights instead. With a tolerance it's
     /// conditioned after it's moved out. With `min_bench` there's no berm where the wall below it is lower.
@@ -186,7 +186,7 @@ fn last_grade(points: &[[f64; 3]], along: &[f64], known: &[usize], at_the_far_en
 ///
 /// A road with its end held has its start worked out here: see `face_with_held_ends`.
 pub fn project_face(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: FaceDirection, steps: &[FaceStep<'_>], ramps: &[FaceRamp]) -> Result<Face, GeomError> {
-    if direction == FaceDirection::Down && steps.iter().any(|step| matches!(step, FaceStep::Project { ramp: Some(_), .. })) {
+    if direction == FaceDirection::Down && steps.iter().any(|step| ramps_of(step).is_some_and(|ramps| !ramps.is_empty())) {
         return Err(GeomError::InvalidInput("a road only goes on a face going up for now".into()));
     }
     if ramps.iter().any(|ramp| ramp.ends_at.is_some()) {
@@ -195,14 +195,14 @@ pub fn project_face(toe: &Polyline, register: &TriMesh, side: OffsetSide, direct
     face_with_roads(toe, register, side, direction, steps, ramps, &HashMap::new())
 }
 
-/// A wall step's ramp, if it's a wall.
-fn ramp_of(step: &FaceStep<'_>) -> Option<Option<usize>> {
-    if let FaceStep::Project { ramp, .. } = step { Some(*ramp) } else { None }
+/// A wall step's ramps, if it's a wall.
+fn ramps_of<'a>(step: &FaceStep<'a>) -> Option<&'a [usize]> {
+    if let FaceStep::Project { ramps, .. } = step { Some(ramps) } else { None }
 }
 
 /// The first and last steps a ramp climbs.
 fn walls_of(steps: &[FaceStep<'_>], ramp: usize) -> Option<[usize; 2]> {
-    let on = |step: &FaceStep<'_>| ramp_of(step) == Some(Some(ramp));
+    let on = |step: &FaceStep<'_>| ramps_of(step).is_some_and(|ramps| ramps.contains(&ramp));
     Some([steps.iter().position(on)?, steps.iter().rposition(on)?])
 }
 
@@ -230,31 +230,34 @@ struct HeldEnd {
 impl HeldEnd {
     /// Takes in what a run missed by, and where to start next. Moving the start usually moves the end by as
     /// much, but a surface that rises along the wall stretches that, so the last two runs say by how much.
-    fn missed(&mut self, miss: f64) {
+    /// A road can't start past the end of its string, so it stays on it.
+    fn missed(&mut self, miss: f64, length: f64) {
         let by_one = -miss;
         let step = match self.last {
             Some((start, before)) if (miss - before).abs() > 1e-9 && start != self.start => -miss * (self.start - start) / (miss - before),
             _ => by_one,
         };
         self.last = Some((self.start, miss));
-        self.start += step.clamp(-MOST_END_STEP * miss.abs(), MOST_END_STEP * miss.abs());
+        self.start = (self.start + step.clamp(-MOST_END_STEP * miss.abs(), MOST_END_STEP * miss.abs())).clamp(0.0, length);
     }
 
     /// A start that didn't get to the top: try a little either side of the last one that was going to.
-    fn nudged(&mut self) {
+    fn nudged(&mut self, length: f64) {
         self.nudges += 1;
         let way = if self.nudges % 2 == 1 { 1.0 } else { -1.0 };
-        self.start += way * self.nudges as f64 * END_NUDGE;
+        self.start = (self.start + way * self.nudges as f64 * END_NUDGE).clamp(0.0, length);
     }
 }
 
 /// A face whose roads come out where they have to. A road's height is settled by its walls, so its length
 /// nearly is, and moving its start along the toe moves its end. The first guess comes from the walls' heights
 /// at the end, and each run moves the start as a planner would by hand. It's usually there in three or four
-/// runs. If it can't get there, the closest it came is what's kept, and the road says how far off it is.
+/// runs. If it can't get there, as when it would have to start past the end of the string, the closest it came
+/// is what's kept, and the road says how far off it is.
 fn face_with_held_ends(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: FaceDirection, steps: &[FaceStep<'_>], ramps: &[FaceRamp]) -> Result<Face, GeomError> {
     let no_roads: HashMap<usize, usize> = (0..ramps.len()).map(|r| (r, 0)).collect();
     let plain = face_with_roads(toe, register, side, direction, steps, ramps, &no_roads)?;
+    let length = toe.plan_length();
     let mut held: Vec<HeldEnd> = Vec::new();
     for (r, ramp) in ramps.iter().enumerate() {
         let Some(at) = ramp.ends_at else { continue };
@@ -262,8 +265,8 @@ fn face_with_held_ends(toe: &Polyline, register: &TriMesh, side: OffsetSide, dir
         let end = metres_along(toe, at);
         let bench_at = |step: usize| plain.benches.iter().find(|b| b.step >= step);
         let rise = walls_of(steps, r).and_then(|[first, last]| Some(height_on(&bench_at(last)?.crest, at) - height_on(&bench_at(first)?.toe, at))).unwrap_or(0.0).max(0.0);
-        let length = rise / ramp.grade;
-        held.push(HeldEnd { ramp: r, end, start: if ramp.back { end + length } else { end - length }, last: None, nudges: 0 });
+        let road = rise / ramp.grade;
+        held.push(HeldEnd { ramp: r, end, start: (if ramp.back { end + road } else { end - road }).clamp(0.0, length), last: None, nudges: 0 });
     }
     let mut spec = ramps.to_vec();
     let mut best: Option<(f64, Face)> = None;
@@ -274,40 +277,31 @@ fn face_with_held_ends(toe: &Polyline, register: &TriMesh, side: OffsetSide, dir
         }
         let mut face = face_with_roads(toe, register, side, direction, steps, &spec, &HashMap::new())?;
         let mut worst: f64 = 0.0;
+        let tried: Vec<f64> = held.iter().map(|road| road.start).collect();
         for road in &mut held {
             let stopped_short = face.no_roads.iter().any(|n| n.ramp == road.ramp);
             let reached = face.roads.iter_mut().find(|r| r.ramp == road.ramp && !stopped_short);
             let Some(reached) = reached else {
                 worst = f64::INFINITY;
-                road.nudged();
+                road.nudged(length);
                 continue;
             };
             let miss = metres_along(toe, *reached.pit_edge.vertices.last().expect("a road has an end")) - road.end;
             reached.off_end = (miss.abs() > END_TOLERANCE).then_some(miss.abs());
             worst = worst.max(miss.abs());
             if miss.abs() > END_TOLERANCE {
-                road.missed(miss);
+                road.missed(miss, length);
             }
         }
         let closer = best.as_ref().is_none_or(|(least, _)| worst < *least);
         if closer {
             best = Some((worst, face));
         }
-        if worst <= END_TOLERANCE {
+        if worst <= END_TOLERANCE || held.iter().map(|road| road.start).eq(tried) {
             break;
         }
     }
-    let (_, mut face) = best.expect("a face was run");
-    let length = toe.plan_length();
-    for road in &held {
-        if !(0.0..=length).contains(&road.start) && face.roads.iter().all(|r| r.ramp != road.ramp || r.off_end.is_some()) {
-            let over = if road.start < 0.0 { -road.start } else { road.start - length };
-            let at = point_along(toe, road.start);
-            face.no_roads.retain(|n| n.ramp != road.ramp);
-            face.no_roads.push(NoRoad { ramp: road.ramp, step: walls_of(steps, road.ramp).map_or(0, |w| w[0]), at, why: format!("to come out where it's held it would have to start {over:.1} m past the end of the string") });
-            face.no_roads.sort_by_key(|n| n.ramp);
-        }
-    }
+    let (_, face) = best.expect("a face was run");
     Ok(face)
 }
 
@@ -352,7 +346,7 @@ fn run_face(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: Fac
                 .iter()
                 .zip(&surfaces)
                 .map(|(step, mesh)| match *step {
-                    FaceStep::Project { to, batter, condition, ramp } => FaceStep::Project { to: mirrored_target(to, mesh.as_ref()), batter: batter.upside_down(), condition, ramp },
+                    FaceStep::Project { to, batter, condition, ramps } => FaceStep::Project { to: mirrored_target(to, mesh.as_ref()), batter: batter.upside_down(), condition, ramps },
                     FaceStep::Berm { on, width, register, condition, min_bench } => FaceStep::Berm { on: on.map(|on| mirrored_target(on, mesh.as_ref())), width: width.upside_down(), register, condition, min_bench },
                 })
                 .collect();
@@ -493,25 +487,6 @@ impl Climbing {
     }
 }
 
-/// Where a road starts on a wall's toe: its vertex, and if the road's carrying on, the vertex its wall-side
-/// edge comes in at. The toe and its batters take any vertex they need.
-fn road_start_on(toe: &mut Polyline, batters: &mut Vec<f64>, climbing: &Climbing) -> (usize, Option<usize>) {
-    let mut vertex_at = |place: [f64; 2]| {
-        let (line, widened, at) = with_road_start(toe, batters, place);
-        (*toe, *batters) = (line, widened);
-        at
-    };
-    match climbing.top {
-        None => (vertex_at(climbing.spec.start), None),
-        Some(top) => {
-            let (wall, pit) = ([top.wall[0], top.wall[1]], [top.pit[0], top.pit[1]]);
-            vertex_at(wall);
-            let at = vertex_at(pit);
-            (at, Some(vertex_at(wall)))
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps: &[FaceStep<'a>], ramps: &[FaceRamp], limits: &HashMap<usize, usize>, face: &mut FaceParts) -> Result<(), GeomError> {
     let mut from = toe.clone();
@@ -522,18 +497,22 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
     let mut on = Resting::Surface(register);
     // Whether `from` lies on `on`. A berm that isn't registered keeps its crest's heights.
     let mut lying = true;
-    let mut climbing: Option<Climbing> = None;
+    let mut climbing: Vec<Climbing> = Vec::new();
     // Roads that have stopped, which walls further up can't start again.
     let mut stopped: Vec<usize> = Vec::new();
     let fail = |k: usize, e: GeomError| GeomError::InvalidInput(format!("step {}: {e}", k + 1));
     let mut k = 0;
     while k < steps.len() {
         match steps[k] {
-            FaceStep::Project { batter, ramp, .. } => {
-                if climbing.is_none()
-                    && let Some(r) = ramp.filter(|r| !stopped.contains(r) && limits.get(r) != Some(&0))
-                {
-                    climbing = Some(Climbing::new(r, ramps[r]));
+            FaceStep::Project { batter, ramps: here, .. } => {
+                let joining: Vec<usize> = here.iter().copied().filter(|r| !stopped.contains(r) && limits.get(r) != Some(&0) && !climbing.iter().any(|open| open.ramp == *r)).collect();
+                for r in joining {
+                    if climbing.first().is_some_and(|open| open.spec.back != ramps[r].back) {
+                        face.no_roads.push(NoRoad { ramp: r, step: k, at: [ramps[r].start[0], ramps[r].start[1], 0.0], why: OTHER_WAY.into() });
+                        stopped.push(r);
+                    } else {
+                        climbing.push(Climbing::new(r, ramps[r]));
+                    }
                 }
                 if let Some(Waiting { crest, condition }) = waiting.take() {
                     from = match condition.filter(|t| *t > 0.0) {
@@ -555,17 +534,22 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 // targets on the way only mark where its crest lines fall.
                 let wall: Vec<(usize, FaceTarget<'a>, Option<f64>)> = (k..steps.len())
                     .map_while(|j| match steps[j] {
-                        FaceStep::Project { to, batter: b, condition, ramp: r } if b.same_as(&batter) && r == ramp => Some((j, to, condition)),
+                        FaceStep::Project { to, batter: b, condition, ramps: r } if b.same_as(&batter) && r == here => Some((j, to, condition)),
                         _ => None,
                     })
                     .collect();
                 let (&(last, to, condition), marks) = wall.split_last().expect("this step at least");
-                if from.closed && let Some(open) = climbing.take() {
-                    face.no_roads.push(NoRoad { ramp: open.ramp, step: k, at: from.vertices[0], why: "a ramp needs an open string for now".into() });
-                    stopped.push(open.ramp);
-                    face.roads.extend(open.road());
+                if from.closed {
+                    for open in climbing.drain(..) {
+                        face.no_roads.push(NoRoad { ramp: open.ramp, step: k, at: from.vertices[0], why: "a ramp needs an open string for now".into() });
+                        stopped.push(open.ramp);
+                        face.roads.extend(open.road());
+                    }
                 }
-                let road_at = climbing.as_ref().map(|open| road_start_on(&mut from, &mut batters, open));
+                let on_wall: Vec<RoadOnWall<'_>> = climbing.iter().map(|open| RoadOnWall { spec: open.spec, top: open.top, floor: lying.then(|| on.mesh()) }).collect();
+                for road in &on_wall {
+                    (from, batters, ..) = start_on(&from, &batters, road);
+                }
                 for &(j, to, _) in marks {
                     let target = Resting::of(to, &from, flattest);
                     match project_wall_by_edge(&from, side, &batters, target.mesh()) {
@@ -581,45 +565,46 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 match project_wall_by_edge(&from, side, &batters, target.mesh()) {
                     Ok(wall) => {
                         let mut report = wall_report(last, &wall);
-                        let cut: Option<RoadCut> = climbing.as_ref().zip(road_at).and_then(|(open, (at, wall_side))| {
-                            let bottom = match wall_side {
-                                Some(wall_side) => RoadBottom::CarriedOn { wall_side },
-                                None => RoadBottom::Entrance { floor: lying.then(|| on.mesh()) },
-                            };
-                            let last_wall = !steps[last + 1..].iter().any(|step| ramp_of(step) == Some(Some(open.ramp)));
-                            let carried_on = wall_side.is_some();
-                            cut_road(&from, &batters, side, &open.spec, at, bottom, &wall, target.mesh())
-                                .map_err(|stopped| {
-                                    // Up onto ground with no wall left above it, the road has come out.
-                                    if !(carried_on && last_wall && stopped.why == NO_WALL) {
-                                        face.no_roads.push(NoRoad { ramp: open.ramp, step: last, at: stopped.at, why: stopped.why });
-                                    }
-                                })
-                                .ok()
-                        });
-                        if road_at.is_some() && cut.is_none() {
-                            let open = climbing.take().expect("a road was on its way up");
-                            stopped.push(open.ramp);
-                            face.roads.extend(open.road());
-                        }
+                        let mut gave_up: Vec<(usize, Stopped)> = Vec::new();
+                        let cut: Option<WallCut> = cut_roads(&from, &batters, side, &on_wall, &wall, target.mesh(), &mut |r, stop| gave_up.push((r, stop)));
                         let (foot, crest) = match &cut {
                             Some(cut) => (cut.toe.clone(), cut.crest.clone()),
                             None => (from.clone(), wall.crest.clone()),
                         };
-                        let no_height = !wall.log.no_height.is_empty() || cut.as_ref().is_some_and(|cut| !cut.upper_log.no_height.is_empty());
+                        let no_height = !wall.log.no_height.is_empty() || cut.as_ref().is_some_and(|cut| cut.logs.iter().any(|log| !log.no_height.is_empty()));
                         let toe = if no_height { with_touches(&foot, &crest) } else { foot };
                         finish_berm(&mut berm_from, &toe, face).map_err(|e| fail(last, e))?;
                         match cut {
                             Some(cut) => {
-                                merge_stretches(&mut report.no_height, &cut.upper_log.no_height);
-                                merge_stretches(&mut report.no_target, &cut.upper_log.no_target);
-                                let open = climbing.as_mut().expect("a cut comes from a road on its way up");
-                                open.climbed(last, &cut.pit_edge, &cut.wall_edge);
-                                *face.walls_climbed.entry(open.ramp).or_default() += 1;
-                                face.last_wall.insert(open.ramp, last);
-                                face.meshes.extend([cut.lower, cut.road, cut.upper]);
+                                for log in &cut.logs {
+                                    merge_stretches(&mut report.no_height, &log.no_height);
+                                    merge_stretches(&mut report.no_target, &log.no_target);
+                                }
+                                for (r, pit_edge, wall_edge) in &cut.roads {
+                                    let open = &mut climbing[*r];
+                                    open.climbed(last, pit_edge, wall_edge);
+                                    *face.walls_climbed.entry(open.ramp).or_default() += 1;
+                                    face.last_wall.insert(open.ramp, last);
+                                }
+                                face.meshes.extend(cut.meshes);
                             }
                             None => face.meshes.push(wall.wall),
+                        }
+                        gave_up.sort_by_key(|(r, _)| std::cmp::Reverse(*r));
+                        for (r, stop) in gave_up {
+                            // A wall with no height where a road gets there has nothing to cut, so the road goes
+                            // on to the next wall that names it.
+                            let more_walls = steps[last + 1..].iter().any(|step| ramps_of(step).is_some_and(|ramps| ramps.contains(&climbing[r].ramp)));
+                            if stop.why == NO_WALL && more_walls {
+                                continue;
+                            }
+                            let open = climbing.remove(r);
+                            // With none left and a road already on its way, it has come out of the pit.
+                            if open.top.is_none() || stop.why != NO_WALL {
+                                face.no_roads.push(NoRoad { ramp: open.ramp, step: last, at: stop.at, why: stop.why });
+                            }
+                            stopped.push(open.ramp);
+                            face.roads.extend(open.road());
                         }
                         face.steps.push(report);
                         face.benches.push(FaceBench { step: last, toe, crest: crest.clone() });
@@ -637,11 +622,11 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 }
                 k = last + 1;
                 // A road finishes at the top of its last wall, or where it's held back to.
-                let next_wall = steps[k..].iter().find_map(ramp_of).flatten();
-                if let Some(open) = &climbing
-                    && (Some(open.ramp) != next_wall || face.walls_climbed.get(&open.ramp).is_some_and(|walls| limits.get(&open.ramp).is_some_and(|limit| walls >= limit)))
-                {
-                    let open = climbing.take().expect("it's on its way up");
+                let next_wall = steps[k..].iter().find_map(ramps_of).unwrap_or(&[]);
+                let finished = |open: &Climbing| !next_wall.contains(&open.ramp) || face.walls_climbed.get(&open.ramp).is_some_and(|walls| limits.get(&open.ramp).is_some_and(|limit| walls >= limit));
+                let (done, going): (Vec<Climbing>, Vec<Climbing>) = climbing.drain(..).partition(|open| finished(open));
+                climbing = going;
+                for open in done {
                     stopped.push(open.ramp);
                     face.roads.extend(open.road());
                 }
@@ -666,12 +651,9 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                     report.off_surface += draped.off_surface;
                     Ok(toe)
                 };
-                let road = climbing.as_ref().and_then(|open| Some((open.top?, open.spec.back)));
-                from = match road {
-                    Some((top, back)) => berm_round_road(&line, &crest, top, back, &mut lay),
-                    None => lay(&line),
-                }
-                .map_err(|e| fail(k, e))?;
+                let tops: Vec<RoadTop> = climbing.iter().filter_map(|open| open.top).collect();
+                let back = climbing.first().is_some_and(|open| open.spec.back);
+                from = if tops.is_empty() { lay(&line) } else { berm_round_roads(&line, &crest, &tops, back, &mut lay) }.map_err(|e| fail(k, e))?;
                 lying = register;
                 berm_from = Some(crest);
                 (report.no_wall, report.pieces_dropped, report.no_berm) = (false, dropped, log.no_berm);
@@ -681,7 +663,7 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
         }
     }
     finish_berm(&mut berm_from, &from, face).map_err(|e| fail(steps.len().saturating_sub(1), e))?;
-    face.roads.extend(climbing.take().and_then(Climbing::road));
+    face.roads.extend(climbing.drain(..).filter_map(Climbing::road));
     // The last crest goes nowhere, so conditioning it only cleans the string: the sheet keeps its own edge.
     if let Some(Waiting { crest, condition: Some(tolerance) }) = waiting
         && tolerance > 0.0
@@ -781,17 +763,14 @@ fn hold_above_the_target(toe: &mut Polyline, crest: &Polyline, surface: &TriMesh
         hi = [hi[0].max(p[0]), hi[1].max(p[1])];
     }
     let bins = TriangleBins::new(surface, lo, hi);
-    let raised: Vec<bool> = crest.vertices.iter().map(|p| bins.height(surface, [p[0], p[1]]).is_some_and(|z| p[2] > z + 1e-6)).collect();
-    if !raised.contains(&true) {
-        return;
-    }
+    let n = crest.vertices.len();
     for p in &mut toe.vertices {
-        let nearest = (0..crest.vertices.len()).min_by(|&a, &b| {
-            let gap = |k: usize| (crest.vertices[k][0] - p[0]).hypot(crest.vertices[k][1] - p[1]);
-            gap(a).total_cmp(&gap(b))
-        });
-        if let Some(k) = nearest.filter(|&k| raised[k]) {
-            p[2] = p[2].max(crest.vertices[k][2]);
+        let along = |i: usize| nearest_along(crest.vertices[i], crest.vertices[(i + 1) % n], *p);
+        let Some(i) = (0..segment_count(crest)).min_by(|a, b| along(*a).1.total_cmp(&along(*b).1)) else { continue };
+        let (a, b, t) = (crest.vertices[i], crest.vertices[(i + 1) % n], along(i).0);
+        let on = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])];
+        if bins.height(surface, [on[0], on[1]]).is_some_and(|z| on[2] > z + 1e-6) {
+            p[2] = p[2].max(on[2]);
         }
     }
 }
@@ -804,7 +783,7 @@ pub(crate) fn band(a: &Polyline, b: &Polyline) -> Result<TriMesh, GeomError> {
         return Ok(TriMesh::default());
     }
     let along: Vec<Option<f64>> = b.vertices.iter().map(|p| place_on(a, *p)).collect();
-    if along.iter().all(Option::is_some) {
+    if (0..b.vertices.len() - 1).all(|i| runs_along(a, &along, i, b)) && !b.closed {
         return Ok(TriMesh::default());
     }
     if along.iter().all(Option::is_none) {
@@ -818,6 +797,15 @@ pub(crate) fn band(a: &Polyline, b: &Polyline) -> Result<TriMesh, GeomError> {
         }
         _ => band_where_apart(a, b),
     }
+}
+
+/// Whether a segment of `b` runs along `a`. Both its ends have to lie on `a`, and all of `a` between them on the
+/// segment: an end on either side of a corner in `a` leaves a piece of berm between the two lines.
+fn runs_along(a: &Polyline, along: &[Option<f64>], i: usize, b: &Polyline) -> bool {
+    let (Some(from), Some(to)) = (along[i], along[i + 1]) else { return false };
+    let (from, to) = (from.min(to), from.max(to));
+    let n = a.vertices.len();
+    (from.floor() as usize + 1..=to.ceil() as usize - usize::from(to.ceil() > 0.0)).filter(|k| (*k as f64) > from && (*k as f64) < to).all(|k| nearest_along(b.vertices[i], b.vertices[i + 1], a.vertices[k % n]).1 <= WELD)
 }
 
 /// How far along a line a point on it lies, as a segment number and a fraction, if it's on it.
@@ -858,12 +846,16 @@ fn band_where_apart(a: &Polyline, b: &Polyline) -> Result<TriMesh, GeomError> {
     let mut mesh = TriMesh::default();
     let mut i = 0;
     while i < last {
-        if along[i].is_some() && along[i + 1].is_some() {
+        if runs_along(a, &along, i, b) {
             i += 1;
             continue;
         }
         let end = (i + 1..=last).find(|&j| along[j].is_some()).unwrap_or(last);
         let reach = [along[i].unwrap_or(0.0), along[end].unwrap_or((a.vertices.len() - 1) as f64)];
+        if reach[0] >= reach[1] {
+            i = end;
+            continue;
+        }
         let piece = whole_band(&stretch_of(a, reach[0], reach[1]), &Polyline { vertices: b.vertices[i..=end].to_vec(), closed: false })?;
         let offset = mesh.vertices.len() as u32;
         mesh.vertices.extend(piece.vertices);
@@ -936,7 +928,7 @@ mod tests {
 
     /// A wall and a berm as the table starts them, conditioned at 0.1 m.
     fn wall<'a>(to: FaceTarget<'a>, batter: f64) -> FaceStep<'a> {
-        FaceStep::Project { to, batter: batter.into(), condition: Some(0.1), ramp: None }
+        FaceStep::Project { to, batter: batter.into(), condition: Some(0.1), ramps: &[] }
     }
 
     fn berm<'a>(width: f64) -> FaceStep<'a> {
@@ -1084,7 +1076,7 @@ mod tests {
         let rolling = surface(|x, y| 120.0 + 3.0 * (x / 29.0).sin() + 2.0 * (y / 17.0).cos());
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
         let corners_of_next_toe = |crest: Option<f64>, after: Option<f64>| {
-            let steps = [FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: EdgeRule::Fixed(60.0), condition: crest, ramp: None }, FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: after, min_bench: None }, wall(FaceTarget::Rl(170.0), 60.0)];
+            let steps = [FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: EdgeRule::Fixed(60.0), condition: crest, ramps: &[] }, FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: after, min_bench: None }, wall(FaceTarget::Rl(170.0), 60.0)];
             let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps, &[]).unwrap();
             plan_corners(&face.benches[1].toe)
         };
@@ -1097,7 +1089,7 @@ mod tests {
     fn a_change_of_batter_with_conditioning_off_starts_on_the_crest() {
         let (a, b) = (surface(|_, _| 100.0), surface(|_, _| 120.0));
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
-        let steps = |condition| [FaceStep::Project { to: FaceTarget::Surface(&b), batter: EdgeRule::Fixed(45.0), condition, ramp: None }, wall(FaceTarget::Rl(140.0), 60.0)];
+        let steps = |condition| [FaceStep::Project { to: FaceTarget::Surface(&b), batter: EdgeRule::Fixed(45.0), condition, ramps: &[] }, wall(FaceTarget::Rl(140.0), 60.0)];
         let walls = 20.0 * 2f64.sqrt() + 20.0 / 60f64.to_radians().sin();
         let on_the_crest = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps(None), &[]).unwrap();
         close(on_the_crest.surface.area(), 300.0 * walls, 1e-3);
@@ -1110,7 +1102,7 @@ mod tests {
         let (a, topo) = (surface(|_, _| 100.0), surface(|x, y| 130.0 + 3.0 * (x / 29.0).sin() + 2.0 * (y / 17.0).cos()));
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
         let run = |condition| {
-            let steps = [FaceStep::Project { to: FaceTarget::Surface(&topo), batter: EdgeRule::Fixed(70.0), condition, ramp: None }, wall(FaceTarget::Rl(200.0), 70.0)];
+            let steps = [FaceStep::Project { to: FaceTarget::Surface(&topo), batter: EdgeRule::Fixed(70.0), condition, ramps: &[] }, wall(FaceTarget::Rl(200.0), 70.0)];
             project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps, &[]).unwrap()
         };
         let (on, off) = (run(Some(1.0)), run(None));
@@ -1123,7 +1115,7 @@ mod tests {
     fn conditioning_the_last_crest_cleans_the_string_and_leaves_the_sheet_alone() {
         let (a, rolling) = (surface(|_, _| 100.0), surface(|x, y| 130.0 + 3.0 * (x / 29.0).sin() + 2.0 * (y / 17.0).cos()));
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
-        let run = |condition| project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &[FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: EdgeRule::Fixed(70.0), condition, ramp: None }], &[]).unwrap();
+        let run = |condition| project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &[FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: EdgeRule::Fixed(70.0), condition, ramps: &[] }], &[]).unwrap();
         let (raw, clean) = (run(None), run(Some(1.0)));
         // The cleaned crest is laid back on the target with a vertex at every triangle, so it's its plan
         // shape that's simpler.
@@ -1185,9 +1177,9 @@ mod tests {
         let floor = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 20, 20, |_, _| 100.0));
         let target = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [10.0, 10.0], 180, 100, |x, _| 104.0 + 0.03 * (x - E - 80.0) + 2.0 * ((x - E) / 30.0).sin()));
         let steps = [
-            FaceStep::Project { to: FaceTarget::Surface(&target), batter: EdgeRule::Fixed(70.0), condition: Some(0.1), ramp: None },
+            FaceStep::Project { to: FaceTarget::Surface(&target), batter: EdgeRule::Fixed(70.0), condition: Some(0.1), ramps: &[] },
             FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: Some(0.1), min_bench: Some(5.0) },
-            FaceStep::Project { to: FaceTarget::Rl(140.0), batter: EdgeRule::Fixed(70.0), condition: Some(0.1), ramp: None },
+            FaceStep::Project { to: FaceTarget::Rl(140.0), batter: EdgeRule::Fixed(70.0), condition: Some(0.1), ramps: &[] },
         ];
         let face = project_face(&toe, &floor, OffsetSide::Left, FaceDirection::Up, &steps, &[]).unwrap();
         assert_eq!(crate::find_crossings(&face.surface, crate::COINCIDENT).pairs, 0);

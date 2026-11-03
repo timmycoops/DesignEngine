@@ -337,12 +337,14 @@ impl<'a> FaceRun<'a, '_> {
         // Where a ramp lands on this strip comes from the strip's face with no roads on it.
         let mut placed = PlacedRamps::default();
         if profile.ramps.iter().any(|ramp| profile.walls_of(&ramp.name).is_some()) {
-            let plain = project_face(&toe, registered, side, profile.direction, &steps_of(&rules, &profile.steps, targets, &[])?, &[]).map_err(refuse)?;
+            let none = walls_ramps(&profile.steps, &[]);
+            let plain = project_face(&toe, registered, side, profile.direction, &steps_of(&rules, &profile.steps, targets, &none)?, &[]).map_err(refuse)?;
             placed = place_ramps(profile, &plain, self.ramp_strings, &string.name);
         }
         let ramps: Vec<&Ramp> = placed.on_strip.iter().map(|(ramp, _)| *ramp).collect();
         let specs: Vec<FaceRamp> = placed.on_strip.iter().map(|(_, spec)| *spec).collect();
-        let steps = steps_of(&rules, &profile.steps, targets, &ramps)?;
+        let on_walls = walls_ramps(&profile.steps, &ramps);
+        let steps = steps_of(&rules, &profile.steps, targets, &on_walls)?;
         let face = project_face(&toe, registered, side, profile.direction, &steps, &specs).map_err(refuse)?;
         let mut changes = Vec::new();
         let mut messages = vec![line_report(&base, &face, [extended.vertices.len(), shaped.vertices.len()], register.off_grid)];
@@ -392,7 +394,6 @@ struct PlacedRamps<'r> {
 
 /// Where each ramp lands on a strip: where its string crosses the toe of its first wall. With its end held
 /// that says how far along the strip it comes out, so either way a strip's own stretch of string sets its road.
-/// A wall takes one road a strip for now, so the first ramp listed keeps it.
 fn place_ramps<'r>(profile: &'r FaceProfile, plain: &Face, ramp_strings: &HashMap<ObjectId, &Polyline>, strip: &str) -> PlacedRamps<'r> {
     let mut placed = PlacedRamps::default();
     for ramp in &profile.ramps {
@@ -404,10 +405,6 @@ fn place_ramps<'r>(profile: &'r FaceProfile, plain: &Face, ramp_strings: &HashMa
             continue;
         };
         placed.crossing.push(&ramp.name);
-        if let Some((other, _)) = placed.on_strip.iter().find(|(other, _)| profile.share_a_wall(&other.name, &ramp.name)) {
-            placed.notes.push(format!("Ramp {}: {strip}: it shares a wall with ramp {} here, and a wall takes one road for now", ramp.name, other.name));
-            continue;
-        }
         if crossings.len() > 1 {
             placed.notes.push(format!("Ramp {}: {strip}: its string crosses {} times, and the road goes where it first does", ramp.name, crossings.len()));
         }
@@ -542,7 +539,13 @@ impl<'a> LineRules<'a, '_> {
     }
 }
 
-fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'t Targets<'_, '_>, ramps: &[&Ramp]) -> Result<Vec<FaceStep<'t>>, CommandError> {
+/// Which of a strip's ramps climb each row, as places in `ramps`.
+fn walls_ramps(steps: &[ProfileStep], ramps: &[&Ramp]) -> Vec<Vec<usize>> {
+    let places = |named: &[String]| named.iter().filter_map(|name| ramps.iter().position(|r| r.name == *name)).collect();
+    steps.iter().map(|step| if let ProfileStep::Project { ramps: named, .. } = step { places(named) } else { Vec::new() }).collect()
+}
+
+fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'t Targets<'_, '_>, on_walls: &'t [Vec<usize>]) -> Result<Vec<FaceStep<'t>>, CommandError> {
     let surface_of = |to: &StepTarget| match to {
         StepTarget::Surface { id } => Some(*id),
         StepTarget::Rl { .. } => None,
@@ -555,12 +558,12 @@ fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'
     };
     steps
         .iter()
-        .map(|step| {
+        .zip(on_walls)
+        .map(|(step, ramps)| {
             Ok(match step {
-                ProfileStep::Project { to, batter, condition, ramps: named } => {
+                ProfileStep::Project { to, batter, condition, .. } => {
                     reached = surface_of(to);
-                    let ramp = named.iter().find_map(|name| ramps.iter().position(|r| r.name == *name));
-                    FaceStep::Project { to: target(to)?, batter: rules.edge_rule(batter, reached)?, condition: *condition, ramp }
+                    FaceStep::Project { to: target(to)?, batter: rules.edge_rule(batter, reached)?, condition: *condition, ramps }
                 }
                 ProfileStep::Berm { on, width, register, condition, min_bench } => {
                     let horizon = on.as_ref().map_or(reached, surface_of);
