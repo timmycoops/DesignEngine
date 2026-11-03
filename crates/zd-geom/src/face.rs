@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use zd_core::{FaceDirection, Polyline, TriMesh};
 
-use crate::road::{FaceRamp, FaceRoad, NO_WALL, NoRoad, OTHER_WAY, RoadOnWall, RoadTop, Stopped, WallCut, across_the_berm, berm_round_roads, cut_roads, metres_along, point_along, start_on, straight_across};
+use crate::road::{FaceRamp, FaceRoad, NO_WALL, NoRoad, OTHER_WAY, RoadOnWall, RoadTop, Stopped, WallCut, across_the_berm, berm_round_roads, cut_roads, metres_along, point_along, start_on, straight_across, with_road_top};
 use crate::string::TriangleBins;
 use crate::wall::{LeastBench, Stretch, at_crest_heights, height_on, nearest_along, next_line, segment_count, triangles_of, with_crest_vertices};
 use crate::{EdgeRule, GeomError, OffsetSide, drape_string, filter_string, next_toe, project_wall_by_edge};
@@ -177,6 +177,26 @@ fn last_grade(points: &[[f64; 3]], along: &[f64], known: &[usize], at_the_far_en
         (first, known.iter().copied().find(|&k| along[k] - along[first] >= GRADE_OVER).unwrap_or(last))
     };
     if near == far { 0.0 } else { (points[near][2] - points[far][2]) / (along[near] - along[far]) }
+}
+
+/// A toe registered from a line a design run made, the crest of the design below, put back at that line's heights
+/// wherever it runs within `within` of it in plan. That crest is already where its design left it: on its grid, above it
+/// where the wall below had no height, and level across a road's top, so laying it on the grid again would move it off
+/// what's below. Past the line's ends, where it was run on, the toe keeps the grid's heights (decision 0041).
+pub fn at_line_heights(toe: &Polyline, line: &Polyline, within: f64) -> Polyline {
+    let n = line.vertices.len();
+    let height = |p: [f64; 3]| {
+        (0..segment_count(line))
+            .map(|i| {
+                let (a, b) = (line.vertices[i], line.vertices[(i + 1) % n]);
+                let (t, gap) = nearest_along(a, b, p);
+                (gap, a[2] + t * (b[2] - a[2]))
+            })
+            .min_by(|x, y| x.0.total_cmp(&y.0))
+            .filter(|(gap, _)| *gap <= within)
+            .map_or(p[2], |(_, z)| z)
+    };
+    Polyline { vertices: toe.vertices.iter().map(|p| [p[0], p[1], height(*p)]).collect(), closed: toe.closed }
 }
 
 /// How far past a toe a level floor reaches, in plan (m): past any entrance or berm laid on it.
@@ -601,7 +621,7 @@ impl Climbing {
     /// The road as far as it got.
     fn road(self) -> Option<FaceRoad> {
         let steps = self.steps?;
-        Some(FaceRoad { ramp: self.ramp, steps, pit_edge: Polyline { vertices: self.pit_edge, closed: false }, wall_edge: Polyline { vertices: self.wall_edge, closed: false }, off_end: None })
+        Some(FaceRoad { ramp: self.ramp, steps, pit_edge: Polyline { vertices: self.pit_edge, closed: false }, wall_edge: Polyline { vertices: self.wall_edge, closed: false }, off_end: None, back: self.spec.back })
     }
 }
 
@@ -616,6 +636,17 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
     // Whether `from` lies on `on`. A berm that isn't registered keeps its crest's heights.
     let mut lying = true;
     let mut climbing: Vec<Climbing> = Vec::new();
+    // A road that came out on this toe in the design below is already on its way, if the first wall is one of its own.
+    // The toe takes its top back in, level across the road, as the crest it came out on had it, and its edges start
+    // there, so a pad crossed level across that top keeps its corner.
+    let first_wall = steps.iter().find_map(ramps_of).unwrap_or(&[]);
+    for (r, ramp) in ramps.iter().enumerate() {
+        if let Some(came_out) = ramp.carries_on.filter(|_| first_wall.contains(&r) && limits.get(&r) != Some(&0)) {
+            let top;
+            (from, top) = with_road_top(&from, came_out);
+            climbing.push(Climbing { top: Some(top), pit_edge: vec![top.pit], wall_edge: vec![top.wall], ..Climbing::new(r, *ramp) });
+        }
+    }
     // Roads that have stopped, which walls further up can't start again.
     let mut stopped: Vec<usize> = Vec::new();
     let fail = |k: usize, e: GeomError| GeomError::InvalidInput(format!("step {}: {e}", k + 1));
@@ -772,12 +803,16 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 }
             }
             FaceStep::Berm { on: named, width, register, condition, min_bench } => {
-                let Waiting { crest, condition: before } = waiting.take().unwrap_or_else(|| Waiting { crest: from.clone(), condition: None });
+                let waited = waiting.take();
+                // With no wall below it in this design, as where it starts from the crest of the one below, there's no
+                // height to hold a minimum bench to, so the berm stays.
+                let walled = waited.is_some();
+                let Waiting { crest, condition: before } = waited.unwrap_or_else(|| Waiting { crest: from.clone(), condition: None });
                 finish_berm(&mut berm_from, &from, face).map_err(|e| fail(k, e))?;
                 if let Some(target) = named {
                     on = Resting::of(target, &crest, BERM_BATTER);
                 }
-                let least = min_bench.filter(|h| *h > 0.0).map(|height| LeastBench { toe: &from, height });
+                let least = min_bench.filter(|h| *h > 0.0 && walled).map(|height| LeastBench { toe: &from, height });
                 let (lines, log) = next_line(&crest, width, least, side, before.unwrap_or(0.0), condition.unwrap_or(0.0)).map_err(|e| fail(k, e))?;
                 let dropped = lines.len().saturating_sub(1);
                 let line = longest(lines);

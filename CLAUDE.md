@@ -102,7 +102,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   grid (no coal left under it), on straight or curved walls, each leg running flat before it climbs (its width unless the ramp says otherwise), with
   the toe past the turn joining back a length on set on the ramp (50 m by default), whatever vertices the string has;
   one longer than the line runs to the string's end (`docs/decisions/0038-switchbacks.md`). On a profile going down a road comes down from the top line, notching it
-  for its entrance, and the walls below it move out towards the pit (`docs/decisions/0037-roads-going-down.md`). It reports
+  for its entrance, and the walls below it move out towards the pit (`docs/decisions/0037-roads-going-down.md`). A crest
+  records each road that came out on it as `road_top` attributes, and a ramp set to carry on from the line takes it on
+  from there in a design run from that crest, with no entrance; a crest a run made keeps its heights as a line, so two
+  designs give one design's face (`docs/decisions/0041-roads-carry-on.md`). It reports
   the bench where the grade can't be met instead of drifting (`docs/decisions/0028-ramps.md`, `0030-ramp-strings.md`).
 - Every object has a stable id (128-bit, generated in-house), a name, a layer, and provenance (the command
   run that made it). Edits write a new revision of the same object; earlier revisions stay for undo

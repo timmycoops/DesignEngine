@@ -480,25 +480,58 @@ function RampCell({ name, on, canTurn, onChange }: { name: string; on: OnWall; c
   );
 }
 
+/** The roads the design below left on these strings, by ramp name, each with the width and grade it was built at. */
+function roadTops(on: ObjectSummary[]): Map<string, { width: number; grade: number }> {
+  const tops = new Map<string, { width: number; grade: number }>();
+  for (const s of on) {
+    for (const key of Object.keys(s.attributes)) {
+      const name = /^road_top (.+) pit$/.exec(key)?.[1];
+      if (!name || tops.has(name)) continue;
+      const number = (what: string, otherwise: number) => {
+        const value = s.attributes[`road_top ${name} ${what}`];
+        return typeof value === 'number' ? value : otherwise;
+      };
+      tops.set(name, { width: number('width', usualRoadWidth), grade: number('grade', usualGrade) });
+    }
+  }
+  return tops;
+}
+
 /** One ramp: its string, what's held, the road, and how far the last run got it on each strip. */
 function RampRow({ ramp, stringName, onWalls, turns, results, swap, onShow, onChange, onRemove }: { ramp: Ramp; stringName: string | null; onWalls: boolean; turns: boolean; results: string[]; swap: (() => void) | null; onShow: () => void; onChange: (r: Partial<Ramp>) => void; onRemove: () => void }) {
+  const fromLine = ramp.fixed === 'line';
   return (
     <div className="border-t py-1">
       <div className="flex flex-wrap items-center gap-2">
         <span className="w-7 rounded px-1 py-0.5 text-center font-medium text-white" style={{ background: rampColour(ramp.name) }}>
           {ramp.name}
         </span>
-        <button type="button" className={`max-w-36 truncate hover:text-primary ${stringName ? '' : 'text-primary'}`} title={stringName ? `The string across the strips. Click to light it up, then drag its vertices and run again` : 'Its string has gone'} onClick={onShow}>
-          {stringName ?? 'String gone'}
-        </button>
-        <IconButton title="Use the string selected in the viewport instead. It has to run across the strips, so a strip itself can't be one" disabled={!swap} onClick={() => swap?.()}>
-          <Crosshair className="size-3" />
-        </IconButton>
-        <select className={selectClass} value={ramp.fixed} aria-label="Which end is on the string" title="Ends at: the road comes out on the top crest level with where the string crosses each strip, and the run moves its start along the toe to get it there. Starts at: it starts where the string crosses each strip" onChange={(e) => onChange({ fixed: e.target.value as RampFixed })}>
+        {fromLine ? (
+          <span className="max-w-36 truncate text-muted-foreground" title={`No string: each line carries on road ${ramp.name} from where the design below left it, heading the way it was`}>
+            From the line
+          </span>
+        ) : (
+          <>
+            <button type="button" className={`max-w-36 truncate hover:text-primary ${stringName ? '' : 'text-primary'}`} title={stringName ? `The string across the strips. Click to light it up, then drag its vertices and run again` : 'Its string has gone'} onClick={onShow}>
+              {stringName ?? 'String gone'}
+            </button>
+            <IconButton title="Use the string selected in the viewport instead. It has to run across the strips, so a strip itself can't be one" disabled={!swap} onClick={() => swap?.()}>
+              <Crosshair className="size-3" />
+            </IconButton>
+          </>
+        )}
+        <select
+          className={selectClass}
+          value={ramp.fixed}
+          aria-label="Which end is on the string"
+          title={`Ends at: the road comes out on the top crest level with where the string crosses each strip, and the run moves its start along the toe to get it there. Starts at: it starts where the string crosses each strip. From line: no string, and each line carries on road ${ramp.name} from where it came out on that line, as the design below left it`}
+          onChange={(e) => onChange({ fixed: e.target.value as RampFixed })}
+        >
           <option value="end">Ends at</option>
           <option value="start">Starts at</option>
+          <option value="line">From line</option>
         </select>
-        <Choice value={ramp.heading} options={HEADINGS} onChange={(heading) => onChange({ heading })} />
+        {!fromLine && <Choice value={ramp.heading} options={HEADINGS} onChange={(heading) => onChange({ heading })} />}
         <select
           className={selectClass}
           value={ramp.berm ?? 'after'}
@@ -684,9 +717,10 @@ export function FaceDesignPanel() {
 
   const open = designs.find((d) => d.id === id);
   const revision = open?.revision;
-  // What a design's own runs made are results, not things to design with.
+  // What a design's own runs made are results, not things to design with. Another design's crest can be a line, as a
+  // planner designs bottom up from the crest of the last (decision 0041).
   const made = (o: ObjectSummary) => o.attributes.face_design !== undefined;
-  const strings = useMemo(() => objects.filter((o) => o.kind === 'string' && !made(o)), [objects]);
+  const strings = useMemo(() => objects.filter((o) => o.kind === 'string' && o.attributes.face_design !== id), [objects, id]);
   const surfaces = useMemo(() => objects.filter((o) => o.drawn && (o.kind === 'surface' || o.kind === 'grid') && !made(o)), [objects]);
 
   useEffect(() => {
@@ -855,6 +889,21 @@ export function FaceDesignPanel() {
     const ramp: Ramp = { name, string, fixed: 'end', heading: 'along', width: usualRoadWidth, grade: usualGrade, berm: 'after', turn_join: usualTurnJoin };
     setProfile({ ramps: [...(profile.ramps ?? []), ramp], steps: profile.steps.map((s) => (s.step === 'project' ? { ...s, ramps: [...(s.ramps ?? []), name] } : s)) });
   };
+  /** The roads the design below left on this profile's lines that it has no ramp for yet. */
+  const newTops = (() => {
+    if (!profile || !draft) return new Map<string, { width: number; grade: number }>();
+    const on = draft.lines.filter((l) => l.profile === profile.name).flatMap((l) => strings.filter((s) => (l.string ? s.id === l.string : s.layer === l.layer)));
+    const tops = roadTops(on);
+    for (const ramp of profile.ramps ?? []) tops.delete(ramp.name);
+    return tops;
+  })();
+  /** A ramp for each road the design below left on the lines, carrying it on from there, up every wall. */
+  const addFromLine = () => {
+    if (!profile || newTops.size === 0) return;
+    const added: Ramp[] = [...newTops].map(([name, { width, grade }]) => ({ name, fixed: 'line', heading: 'along', width, grade, berm: 'after', turn_join: usualTurnJoin }));
+    const names = added.map((r) => r.name);
+    setProfile({ ramps: [...(profile.ramps ?? []), ...added], steps: profile.steps.map((s) => (s.step === 'project' ? { ...s, ramps: [...(s.ramps ?? []), ...names] } : s)) });
+  };
   const setRamp = (at: number, change: Partial<Ramp>) => profile && setProfile({ ramps: replaceAt(profile.ramps ?? [], at, { ...(profile.ramps ?? [])[at], ...change }) });
   const removeRamp = (at: number) => {
     if (!profile) return;
@@ -862,7 +911,7 @@ export function FaceDesignPanel() {
     setProfile({ ramps: (profile.ramps ?? []).filter((_, k) => k !== at), steps: profile.steps.map((s) => (s.step === 'project' ? withRamp(s, name, 'off') : s)) });
     // A string drawn for the ramp goes with it. Undo brings it back.
     const used = draft?.profiles.some((p) => (p.ramps ?? []).some((r) => r.string === string && (p !== profile || r.name !== name)));
-    if (!used && objects.find((o) => o.id === string)?.name === `Ramp ${name}`) void runRecord('object.delete', { object: string });
+    if (string && !used && objects.find((o) => o.id === string)?.name === `Ramp ${name}`) void runRecord('object.delete', { object: string });
   };
   const rampLine = (line: string) => /^Ramp [^:]*: /.test(line);
   /** A click on a line lights up what it runs on, in the viewport and the tree. */
@@ -1019,6 +1068,17 @@ export function FaceDesignPanel() {
               <SmallButton disabled={picking || profile.steps.length === 0} title="Then draw a string across the strips. Each line it crosses gets a road" onClick={() => void addRamp()}>
                 <Plus className="size-3" /> Ramp
               </SmallButton>
+              <SmallButton
+                disabled={picking || profile.steps.length === 0 || newTops.size === 0}
+                title={
+                  newTops.size > 0
+                    ? `Carry on ${[...newTops.keys()].map((n) => `road ${n}`).join(', ')} from where the design below left ${newTops.size === 1 ? 'it' : 'them'} on these lines, with no string`
+                    : "None of this profile's lines has a road that came out on it. Run the design below, then add its top crests here as lines"
+                }
+                onClick={addFromLine}
+              >
+                <Plus className="size-3" /> From the line{newTops.size > 0 ? ` (${newTops.size})` : ''}
+              </SmallButton>
               {picking && <span className="text-primary">Click across the strips, a point on each. Enter finishes, Esc cancels.</span>}
             </div>
             {(profile.ramps ?? []).map((ramp, k) => (
@@ -1029,8 +1089,8 @@ export function FaceDesignPanel() {
                 onWalls={profile.steps.some((s) => s.step === 'project' && (s.ramps ?? []).includes(ramp.name))}
                 turns={profile.steps.some((s) => s.step === 'project' && (s.turns ?? []).includes(ramp.name))}
                 results={report.lines.filter((line) => line.startsWith(`Ramp ${ramp.name}: `))}
-                swap={objects.some((o) => o.id === selected && o.kind === 'string') && selected !== ramp.string && !strings.some((s) => s.id === selected && (s.attributes.strip !== undefined || draft.lines.some((line) => line.string === s.id))) ? () => selected && setRamp(k, { string: selected }) : null}
-                onShow={() => select(ramp.string)}
+                swap={ramp.fixed !== 'line' && objects.some((o) => o.id === selected && o.kind === 'string') && selected !== ramp.string && !strings.some((s) => s.id === selected && (s.attributes.strip !== undefined || draft.lines.some((line) => line.string === s.id))) ? () => selected && setRamp(k, { string: selected }) : null}
+                onShow={() => ramp.string && select(ramp.string)}
                 onChange={(change) => setRamp(k, change)}
                 onRemove={() => removeRamp(k)}
               />

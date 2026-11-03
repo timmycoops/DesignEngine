@@ -1111,6 +1111,185 @@ fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
     assert!((joins[0] - joins[3]).abs() < 1e-6, "the join doesn't move with the flat stretch: {joins:?}");
 }
 
+/// Every point of each line on the other, to 1 µm in plan and height, so two strings that differ only in vertices along
+/// a straight run are the same.
+fn same_line(a: &Polyline, b: &Polyline, what: &str) {
+    let on = |p: &[f64; 3], line: &Polyline| {
+        line.vertices.windows(2).any(|w| {
+            let (d, q) = ([w[1][0] - w[0][0], w[1][1] - w[0][1]], [p[0] - w[0][0], p[1] - w[0][1]]);
+            let length = d[0] * d[0] + d[1] * d[1];
+            let t = if length > 0.0 { ((q[0] * d[0] + q[1] * d[1]) / length).clamp(0.0, 1.0) } else { 0.0 };
+            (q[0] - t * d[0]).hypot(q[1] - t * d[1]) <= 1e-6 && (w[0][2] + t * (w[1][2] - w[0][2]) - p[2]).abs() <= 1e-6
+        })
+    };
+    for (one, other) in [(a, b), (b, a)] {
+        for p in &one.vertices {
+            assert!(on(p, other), "{what}: {p:?} isn't on {:?}", other.vertices);
+        }
+    }
+    assert!((a.plan_length() - b.plan_length()).abs() < 1e-6, "{what}: {} against {}", a.plan_length(), b.plan_length());
+}
+
+/// A road carries on from the crest of the design below, through the commands, as a planner designs bottom up. One design
+/// up two walls and a 5 m berm, and the same split in two at the first crest, with the second design's ramp set to carry
+/// on from the line, give the same road, toes and crests to 1 µm. The crest the road came out on says where, in its
+/// attributes, and what's made from that crest doesn't carry the old top on (decision 0041).
+#[test]
+fn a_road_carries_on_from_the_crest_it_came_out_on() {
+    let mut s = Session::with_builtins();
+    let floor = level_surface(&mut s, "floor", 100.0);
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E + 10.0, N + 30.0, 0.0], [E + 295.0, N + 30.0, 0.0]] })).unwrap())[0];
+    let across = ramp_string(&mut s, &[[30.0, 20.0], [30.0, 40.0]]);
+    let wall = |rl: f64| json!({ "step": "project", "to": { "kind": "rl", "rl": rl }, "batter": 45.0, "ramps": ["A"] });
+    let berm = json!({ "step": "berm", "width": 5.0, "register": false });
+    let design = |s: &mut Session, name: &str, line: ObjectId, register: serde_json::Value, steps: serde_json::Value, ramp: serde_json::Value| {
+        let content = json!({
+            "layer": name,
+            "lines": [{ "string": line, "profile": name, "side": "left", "run_on": [0.0, 0.0] }],
+            "profiles": [{ "name": name, "direction": "up", "register": register, "steps": steps, "ramps": [ramp] }],
+            "rules": [],
+        });
+        let id = created(&s.run("face.save_design", json!({ "name": name, "content": content })).unwrap())[0];
+        s.run("face.project", json!({ "design": id })).unwrap()
+    };
+    let on_string = json!({ "name": "A", "string": across, "fixed": "start", "heading": "along", "width": 10.0, "grade": 10.0 });
+    let from_line = json!({ "name": "A", "fixed": "line", "heading": "along", "width": 10.0, "grade": 10.0 });
+    design(&mut s, "Whole", toe, json!(floor), json!([wall(110.0), berm, wall(120.0)]), on_string.clone());
+    design(&mut s, "Lower", toe, json!(floor), json!([wall(110.0)]), on_string);
+    let named = |s: &Session, name: &str| s.project().objects().find(|o| o.name == name).unwrap_or_else(|| panic!("{name} wasn't made")).clone();
+    let crest = named(&s, "toe Lower crest 1");
+    let top = |what: &str| crest.attributes.get(&format!("road_top A {what}")).cloned();
+    let Some(AttrValue::Text(pit)) = top("pit") else { panic!("no top on the crest: {:?}", crest.attributes) };
+    let pit: Vec<f64> = pit.split(' ').map(|c| c.parse().unwrap()).collect();
+    let lower_pit = line(&s, named(&s, "toe Lower road A pit edge").id);
+    assert_eq!(pit, lower_pit.vertices.last().unwrap().to_vec(), "the road's top, exactly");
+    assert_eq!(top("heading"), Some(AttrValue::Text("along".into())));
+    assert_eq!((top("width"), top("grade")), (Some(AttrValue::Number(10.0)), Some(AttrValue::Number(10.0))));
+    assert!(named(&s, "toe Lower toe 1").attributes.keys().all(|key| !key.starts_with("road_top")), "only the crest it came out on");
+
+    let record = design(&mut s, "Upper", crest.id, json!({ "kind": "rl", "rl": 110.0 }), json!([berm, wall(120.0)]), from_line.clone());
+    assert!(record.messages.iter().any(|m| m.starts_with("Ramp A: toe Lower crest 1: step 2, ")), "{:?}", record.messages);
+    let base = "toe Lower crest 1 Upper";
+    for edge in ["pit", "wall"] {
+        let (lower, upper) = (line(&s, named(&s, &format!("toe Lower road A {edge} edge")).id), line(&s, named(&s, &format!("{base} road A {edge} edge")).id));
+        let mut joined = lower.clone();
+        joined.vertices.extend_from_slice(&upper.vertices);
+        same_line(&line(&s, named(&s, &format!("toe Whole road A {edge} edge")).id), &joined, edge);
+    }
+    for (whole, split) in [("toe Whole toe 1", "toe Lower toe 1".to_string()), ("toe Whole crest 1", "toe Lower crest 1".into()), ("toe Whole toe 2", format!("{base} toe 1")), ("toe Whole crest 2", format!("{base} crest 1"))] {
+        same_line(&line(&s, named(&s, whole).id), &line(&s, named(&s, &split).id), whole);
+    }
+    // The upper design's toe came from a crest with a top on it, which it has carried on; its own crest has the new top.
+    assert!(named(&s, &format!("{base} toe 1")).attributes.keys().all(|key| !key.starts_with("road_top")));
+    let Some(AttrValue::Text(high)) = named(&s, &format!("{base} crest 1")).attributes.get("road_top A pit").cloned() else { panic!("no top on the upper crest") };
+    assert!(high.ends_with(" 120"), "{high}");
+
+    // From a line no road came out on, there's nothing to carry on.
+    let record = design(&mut s, "Bare", toe, json!(floor), json!([wall(110.0)]), from_line);
+    assert!(record.messages.iter().any(|m| m == "Ramp A: no road A came out on any line using Bare, so it has nothing to carry on from"), "{:?}", record.messages);
+    assert!(!s.project().objects().any(|o| o.name == "toe Bare road A pit edge"));
+}
+
+/// A surface on a 10 m grid from a height at each place, as an XYZ file, imported.
+fn surface_of(s: &mut Session, name: &str, height: impl Fn(f64, f64) -> f64) -> ObjectId {
+    let dir = std::env::temp_dir().join(format!("zd-walls-{}-{}", std::process::id(), zd_core::RunId::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut xyz = String::new();
+    for row in 0..=30 {
+        for col in 0..=30 {
+            let (x, y) = (col as f64 * 10.0, row as f64 * 10.0);
+            xyz += &format!("{} {} {}\n", E + x, N + y, height(x, y));
+        }
+    }
+    let path = dir.join(format!("{name}.xyz"));
+    std::fs::write(&path, xyz).unwrap();
+    let id = created(&s.run("surface.import", json!({ "path": path.to_string_lossy(), "layer": "surfaces" })).unwrap())[0];
+    std::fs::remove_dir_all(&dir).unwrap();
+    id
+}
+
+/// The same on a seam floor dipping 5 % into the wall, as a grid's does. The road's top is level across the road, so its
+/// wall-side corner stands half a metre above the floor. The second design registers its toe to the floor, and takes
+/// the road's top back in level, so it comes out as one design to 1 µm (decision 0041).
+#[test]
+fn a_road_carries_on_from_a_crest_on_a_dipping_floor() {
+    let mut s = Session::with_builtins();
+    let floor = level_surface(&mut s, "floor", 100.0);
+    let seam = surface_of(&mut s, "seam floor", |_, y| 110.0 - 0.05 * (y - 40.0));
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E + 10.0, N + 30.0, 0.0], [E + 295.0, N + 30.0, 0.0]] })).unwrap())[0];
+    let across = ramp_string(&mut s, &[[30.0, 20.0], [30.0, 40.0]]);
+    let to_seam = json!({ "step": "project", "to": { "kind": "surface", "id": seam }, "batter": 45.0, "ramps": ["A"] });
+    let berm = json!({ "step": "berm", "width": 5.0 });
+    let up = json!({ "step": "project", "to": { "kind": "rl", "rl": 125.0 }, "batter": 45.0, "ramps": ["A"] });
+    let design = |s: &mut Session, name: &str, line: ObjectId, register: serde_json::Value, steps: serde_json::Value, ramp: serde_json::Value| {
+        let content = json!({
+            "layer": name,
+            "lines": [{ "string": line, "profile": name, "side": "left", "run_on": [0.0, 0.0] }],
+            "profiles": [{ "name": name, "direction": "up", "register": register, "steps": steps, "ramps": [ramp] }],
+            "rules": [],
+        });
+        let id = created(&s.run("face.save_design", json!({ "name": name, "content": content })).unwrap())[0];
+        s.run("face.project", json!({ "design": id })).unwrap()
+    };
+    let on_string = json!({ "name": "A", "string": across, "fixed": "start", "heading": "along", "width": 10.0, "grade": 10.0 });
+    design(&mut s, "Whole", toe, json!(floor), json!([to_seam, berm, up]), on_string.clone());
+    design(&mut s, "Lower", toe, json!(floor), json!([to_seam]), on_string);
+    let named = |s: &Session, name: &str| s.project().objects().find(|o| o.name == name).unwrap_or_else(|| panic!("{name} wasn't made")).clone();
+    let crest = named(&s, "toe Lower crest 1");
+    let record = design(&mut s, "Upper", crest.id, json!({ "kind": "surface", "id": seam }), json!([berm, up]), json!({ "name": "A", "fixed": "line", "heading": "along", "width": 10.0, "grade": 10.0 }));
+    assert!(record.messages.iter().any(|m| m.starts_with("Ramp A: toe Lower crest 1: step 2, ")), "{:?}", record.messages);
+    let lower_wall = line(&s, named(&s, "toe Lower road A wall edge").id);
+    let corner = lower_wall.vertices.last().unwrap();
+    assert!(corner[2] - (110.0 - 0.05 * (corner[1] - N - 40.0)) > 0.4, "the wall-side top stands above the floor: {corner:?}");
+    let base = "toe Lower crest 1 Upper";
+    for edge in ["pit", "wall"] {
+        let mut joined = line(&s, named(&s, &format!("toe Lower road A {edge} edge")).id);
+        joined.vertices.extend_from_slice(&line(&s, named(&s, &format!("{base} road A {edge} edge")).id).vertices);
+        same_line(&line(&s, named(&s, &format!("toe Whole road A {edge} edge")).id), &joined, edge);
+    }
+    same_line(&line(&s, named(&s, "toe Whole toe 2").id), &line(&s, named(&s, &format!("{base} toe 1")).id), "the berm's line");
+    same_line(&line(&s, named(&s, "toe Whole crest 2").id), &line(&s, named(&s, &format!("{base} crest 1")).id), "the top crest");
+}
+
+/// A seam floor at RL 110 that falls away east of 150 m, below the toe at RL 100 past 175 m, so the wall to it has no
+/// height there and its crest stays up on the toe. The design run from that crest registers its toe to the floor, but
+/// a crest a run made is already where its design left it, so the toe keeps its heights, the berm beside it stays up at
+/// RL 100 as in one design, and the two designs give the same lines as one to 1 µm. Laid on the floor again, the berm
+/// would drop as far as RL 52 (decision 0041).
+#[test]
+fn a_crest_a_run_made_keeps_its_heights_in_the_design_above() {
+    let mut s = Session::with_builtins();
+    let floor = level_surface(&mut s, "floor", 100.0);
+    let seam = surface_of(&mut s, "seam floor", |x, _| if x <= 150.0 { 110.0 } else { 110.0 - 0.4 * (x - 150.0) });
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E + 10.0, N + 30.0, 0.0], [E + 295.0, N + 30.0, 0.0]] })).unwrap())[0];
+    let to_seam = json!({ "step": "project", "to": { "kind": "surface", "id": seam }, "batter": 45.0 });
+    let berm = json!({ "step": "berm", "width": 5.0 });
+    let up = json!({ "step": "project", "to": { "kind": "rl", "rl": 125.0 }, "batter": 45.0 });
+    let design = |s: &mut Session, name: &str, line: ObjectId, register: serde_json::Value, steps: serde_json::Value| {
+        let content = json!({
+            "layer": name,
+            "lines": [{ "string": line, "profile": name, "side": "left", "run_on": [0.0, 0.0] }],
+            "profiles": [{ "name": name, "direction": "up", "register": register, "steps": steps }],
+            "rules": [],
+        });
+        let id = created(&s.run("face.save_design", json!({ "name": name, "content": content })).unwrap())[0];
+        s.run("face.project", json!({ "design": id })).unwrap();
+    };
+    design(&mut s, "Whole", toe, json!(floor), json!([to_seam, berm, up]));
+    design(&mut s, "Lower", toe, json!(floor), json!([to_seam]));
+    let named = |s: &Session, name: &str| s.project().objects().find(|o| o.name == name).unwrap_or_else(|| panic!("{name} wasn't made")).clone();
+    let crest = line(&s, named(&s, "toe Lower crest 1").id);
+    assert!(crest.vertices.iter().any(|p| p[0] - E > 250.0 && (p[2] - 100.0).abs() < 1e-6), "the crest stays up on the toe: {:?}", crest.vertices);
+    let from = named(&s, "toe Lower crest 1").id;
+    design(&mut s, "Upper", from, json!({ "kind": "surface", "id": seam }), json!([berm, up]));
+    let base = "toe Lower crest 1 Upper";
+    let berm_line = line(&s, named(&s, &format!("{base} toe 1")).id);
+    same_line(&line(&s, named(&s, "toe Whole toe 2").id), &berm_line, "the berm's line");
+    same_line(&line(&s, named(&s, "toe Whole crest 2").id), &line(&s, named(&s, &format!("{base} crest 1")).id), "the top crest");
+    let past: Vec<&[f64; 3]> = berm_line.vertices.iter().filter(|p| p[0] - E > 200.0).collect();
+    assert!(!past.is_empty() && past.iter().all(|p| (p[2] - 100.0).abs() < 1e-6), "the berm stays up past 200 m: {past:?}");
+}
+
 /// Too steep a climb for the string's length leaves the face standing and says why, by step and place.
 #[test]
 fn a_ramp_that_cant_reach_names_the_step_and_the_face_still_builds() {
