@@ -12,12 +12,10 @@ use zd_io::{SPRY_LEVELS, SpryLog, SpryRead, read_spry};
 
 use super::deswik::{Made, MeshesAs, SurfaceTally, import_mesh};
 use super::in_parallel;
-use super::solid::{Cleaning, ImportTally, default_fill_limit};
+use super::solid::{Cleaning, ImportTally, NOT_A_SOLID, VOLUME_AGREES, default_fill_limit};
 use super::surface::default_tolerance;
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
-/// A solid's volume and Spry's own figure for it differ when they are more than this share apart.
-const VOLUME_AGREES: f64 = 1e-6;
 /// Run records give a line to each mesh when there are no more than this many, and name this many of
 /// the solids that differ most.
 const LINES_PER_MESH_UP_TO: usize = 10;
@@ -122,7 +120,7 @@ impl Command for ImportSpry {
         } else {
             project.meshes
         };
-        let made = in_parallel(&meshes, |m| import_mesh(&m.mesh, &m.layer, "Spry", p.meshes, cleaning));
+        let made = in_parallel(&meshes, |m| import_mesh(&m.mesh, &m.layer, "Spry", p.meshes, cleaning, m.node.is_some()));
         let few = meshes.len() <= LINES_PER_MESH_UP_TO;
         let mut tally = ImportTally::default();
         let mut surfaces = SurfaceTally::default();
@@ -155,6 +153,7 @@ impl Command for ImportSpry {
                     }
                     if let Some(why) = refused_as_solid {
                         kept_as_surfaces.push(format!("{name} ({}): {why}", mesh.layer));
+                        attributes.insert(NOT_A_SOLID.into(), AttrValue::Text(why));
                     }
                     on_layer(&mesh.layer, name, attributes, Body::Surface(surface));
                 }
@@ -192,7 +191,7 @@ impl Command for ImportSpry {
             }));
         }
         if !kept_as_surfaces.is_empty() {
-            outcome = outcome.message(format!("{} closed meshes kept as surfaces, as they could not be solids:", kept_as_surfaces.len()));
+            outcome = outcome.message(format!("{} meshes kept as surfaces, as they could not be solids, each flagged not_a_solid:", kept_as_surfaces.len()));
             outcome.messages.extend(kept_as_surfaces.into_iter().take(LINES_PER_MESH_UP_TO));
         }
         if !refused.is_empty() {

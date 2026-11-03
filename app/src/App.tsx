@@ -60,6 +60,7 @@ import {
 import { Separator } from './design-system/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './design-system/ui/tooltip';
 import { type DeswikChoice, DeswikImportDialog, type ImportSource, type PickableLayer } from './panels/DeswikImportDialog';
+import { type NotASolid, RepairDialog } from './panels/RepairDialog';
 import { IssueMarkers } from './viewport/markers';
 import { type SeamShown, SceneSync } from './viewport/sceneSync';
 import { planPoint, SectionView } from './viewport/section';
@@ -165,6 +166,7 @@ export default function App() {
   const [marked, setMarked] = useState<string[]>([]);
   const [deswikFile, setDeswikFile] = useState<{ path: string; layers: DeswikLayer[] } | null>(null);
   const [spryFile, setSpryFile] = useState<{ path: string; layers: PickableLayer[]; solidFields: Set<string> } | null>(null);
+  const [notSolids, setNotSolids] = useState<NotASolid[] | null>(null);
   const markersRef = useRef<IssueMarkers | null>(null);
   const crossingMarkersRef = useRef<IssueMarkers | null>(null);
   /** An issue to fly to once its horizon has loaded. */
@@ -261,7 +263,7 @@ export default function App() {
         const reply = await runCommand(name, params);
         show(reply.summary);
         setStatus({ text: describe(reply.record) });
-        return { record: reply.record };
+        return { record: reply.record, summary: reply.summary };
       } catch (e) {
         setStatus({ text: String(e), error: true });
         // A failed run is in the log too.
@@ -452,7 +454,7 @@ export default function App() {
     if (!file) return;
     void attempt(async () => {
       setStatus({ text: `Importing ${choice.layers.length} layers from ${file.path}…` });
-      await run('deswik.import', { path: file.path, layers: choice.layers, meshes: choice.meshes, repair: choice.repair, layer: choice.layer || null });
+      offerRepair(await runRecord('deswik.import', { path: file.path, layers: choice.layers, meshes: choice.meshes, repair: choice.repair, layer: choice.layer || null }));
     });
   };
 
@@ -474,14 +476,34 @@ export default function App() {
     if (!file) return;
     void attempt(async () => {
       setStatus({ text: `Importing ${choice.layers.length} Solid fields and layers from ${file.path}…` });
-      await run('spry.import', {
+      offerRepair(await runRecord('spry.import', {
         path: file.path,
         solid_fields: choice.layers.filter((name) => file.solidFields.has(name)),
         layers: choice.layers.filter((name) => !file.solidFields.has(name)),
         meshes: choice.meshes,
         repair: choice.repair,
         layer: choice.layer || null,
-      });
+      }));
+    });
+  };
+
+  /** After an import, offers to fix the closed meshes it kept as surfaces, as they couldn't be solids (decision 0040). */
+  const offerRepair = (reply: { record?: RunRecord; summary?: ProjectSummary }) => {
+    if (!reply.record || !reply.summary) return;
+    const made = new Set(reply.record.outputs.filter((o) => o.change === 'created').map((o) => o.id));
+    const flagged = reply.summary.objects.flatMap((o) => {
+      const why = o.attributes.not_a_solid;
+      return made.has(o.id) && typeof why === 'string' ? [{ id: o.id, name: o.name, why }] : [];
+    });
+    if (flagged.length > 0) setNotSolids(flagged);
+  };
+
+  /** Repairs those alone, each one fixed replacing its surface; undo brings them back. */
+  const fixNotSolids = (ids: string[]) => {
+    setNotSolids(null);
+    void attempt(async () => {
+      setStatus({ text: `Repairing ${ids.length} closed meshes into solids…` });
+      await run('solid.repair', { surfaces: ids });
     });
   };
 
@@ -849,6 +871,7 @@ export default function App() {
       </div>
       <DeswikImportDialog file={deswikFile} onCancel={() => setDeswikFile(null)} onImport={importDeswik} />
       <DeswikImportDialog file={spryFile} source={SPRY} onCancel={() => setSpryFile(null)} onImport={importSpry} />
+      <RepairDialog meshes={notSolids} onLeave={() => setNotSolids(null)} onFix={fixNotSolids} />
     </TooltipProvider>
   );
 }

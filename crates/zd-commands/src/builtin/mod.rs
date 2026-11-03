@@ -1,6 +1,7 @@
 //! The engine's own commands. Strings (workstream 6): create, vertex edits, grade, offset, drape,
 //! elevation, reverse, close, split, join, smooth and filter. Exchange (workstream 4): strings in
-//! from DXF and CSV, objects out to DXF and CSV. Deswik drawings in (decision 0036), Spry projects in (decision 0039).
+//! from DXF and CSV, objects out to DXF and CSV. Deswik drawings in (decision 0036), Spry projects in (decision 0039),
+//! and closed surfaces an import couldn't make solids fixed by repair (decision 0040).
 
 mod deswik;
 mod exchange;
@@ -23,7 +24,7 @@ pub use object::{DeleteObject, DeleteObjects, MoveObjects, MoveObjectsParams, Ob
 pub use seam::{BuildSeamModel, BuildSeamModelParams, SuggestSeamDefinition, SuggestSeamDefinitionParams};
 pub(crate) use solid::check_solids_made;
 pub use spry::{ImportSpry, ImportSpryParams};
-pub use solid::{CutBySurface, CutBySurfaceParams, ImportSolid, ImportSolidParams, ImportSolids, ImportSolidsParams, SolidFromMesh};
+pub use solid::{CutBySurface, CutBySurfaceParams, ImportSolid, ImportSolidParams, ImportSolids, ImportSolidsParams, RepairSolids, RepairSolidsParams, SolidFromMesh};
 pub use string::{
     CornerParam, CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, DrapeString, DrapeStringParams, FilterString,
     FilterStringParams, InsertVertex, InsertVertexParams, JoinStrings, JoinStringsParams, MoveVertex, MoveVertexParams, NumberStrings,
@@ -66,6 +67,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(ImportSolids);
     registry.register(ImportDeswik);
     registry.register(ImportSpry);
+    registry.register(RepairSolids);
     registry.register(CutBySurface);
     registry.register(ProjectStep);
     registry.register(SaveDesign);

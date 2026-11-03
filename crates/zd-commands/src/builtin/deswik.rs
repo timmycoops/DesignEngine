@@ -11,12 +11,10 @@ use zd_geom::repair_mesh;
 use zd_io::{DESWIK_LEVELS, DeswikLog, DeswikMesh, read_deswik_layers};
 
 use super::in_parallel;
-use super::solid::{Cleaning, ImportTally, ImportedSolid, default_fill_limit, solid_from_welded};
-use super::surface::{check_crossings, default_tolerance, describe_repair};
+use super::solid::{Cleaning, ImportTally, ImportedSolid, NOT_A_SOLID, VOLUME_AGREES, default_fill_limit, first_open_edge, solid_from_welded};
+use super::surface::{check_crossings, default_tolerance, describe_repair, site};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
-/// A solid's volume and Deswik's own figure for it differ when they are more than this share apart.
-const VOLUME_AGREES: f64 = 1e-6;
 /// Run records give a line to each mesh when there are no more than this many.
 const LINES_PER_MESH_UP_TO: usize = 10;
 
@@ -118,7 +116,7 @@ impl Command for ImportDeswik {
         } else {
             &drawing.meshes
         };
-        let made = in_parallel(meshes, |m| import_mesh(&m.mesh, &m.layer, "Deswik", p.meshes, cleaning));
+        let made = in_parallel(meshes, |m| import_mesh(&m.mesh, &m.layer, "Deswik", p.meshes, cleaning, false));
         let few = meshes.len() <= LINES_PER_MESH_UP_TO;
         let mut tally = ImportTally::default();
         let mut surfaces = SurfaceTally::default();
@@ -151,6 +149,7 @@ impl Command for ImportDeswik {
                     }
                     if let Some(why) = refused_as_solid {
                         kept_as_surfaces.push(format!("{name} ({}): {why}", mesh.layer));
+                        attributes.insert(NOT_A_SOLID.into(), AttrValue::Text(why));
                     }
                     on_layer(&mesh.layer, attributes, Body::Surface(surface), &mut names);
                 }
@@ -184,7 +183,7 @@ impl Command for ImportDeswik {
             }));
         }
         if !kept_as_surfaces.is_empty() {
-            outcome = outcome.message(format!("{} closed meshes kept as surfaces, as they could not be solids:", kept_as_surfaces.len()));
+            outcome = outcome.message(format!("{} meshes kept as surfaces, as they could not be solids, each flagged not_a_solid:", kept_as_surfaces.len()));
             outcome.messages.extend(kept_as_surfaces);
         }
         if !refused.is_empty() {
@@ -204,21 +203,28 @@ pub(super) enum Made {
 }
 
 /// One mesh read from `source` (Deswik, Spry) through the repair step, then to a solid or a surface.
+/// `meant_solid`: the source holds it as a solid (a Spry block), so by default an open one is kept as
+/// a surface flagged with its holes (decision 0040), or with `repair` closed if it can be.
 /// A panic in the geometry is this mesh's refusal, not the run's.
-pub(super) fn import_mesh(mesh: &TriMesh, layer: &str, source: &str, meshes: MeshesAs, cleaning: Cleaning) -> Made {
+pub(super) fn import_mesh(mesh: &TriMesh, layer: &str, source: &str, meshes: MeshesAs, cleaning: Cleaning, meant_solid: bool) -> Made {
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let read = format!("{source} mesh: {} vertices, {} triangles", mesh.vertices.len(), mesh.triangle_count());
         let (welded, log) = repair_mesh(mesh, cleaning.weld_tolerance);
         if welded.triangles.is_empty() {
             return Made::Nothing(format!("no triangles left after the weld ({read})"));
         }
-        let closed = welded.validity().boundary_edges == 0;
+        let open_edges = welded.validity().boundary_edges;
+        let closed = open_edges == 0;
         let as_solid = match meshes {
             MeshesAs::Solids => true,
             MeshesAs::Surfaces | MeshesAs::None => false,
-            MeshesAs::Auto => closed,
+            MeshesAs::Auto => closed || (meant_solid && cleaning.repair),
         };
         let mut refused_as_solid = None;
+        if meshes == MeshesAs::Auto && meant_solid && !as_solid {
+            let at = first_open_edge(&welded).map(|p| format!(", the first at {}", site(&p))).unwrap_or_default();
+            refused_as_solid = Some(format!("open: {open_edges} edges on holes{at}"));
+        }
         if as_solid {
             match solid_from_welded(welded.clone(), log.clone(), read.clone(), layer, layer, cleaning) {
                 Ok(imported) => return Made::Solid(imported),
