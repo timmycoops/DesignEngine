@@ -1,7 +1,7 @@
 # 0041 — Roads carry on from the crest they came out on
 
 Date: 2026-11-04 · Status: accepted (Tim, 2026-11-04: "either attributes for the ramp crests", then on the plan, "Okay
-start the plan"). After 0038.
+start the plan", and on a crest a run made keeping its heights, "Yes, keep them"). After 0038.
 
 ## Why
 
@@ -39,7 +39,7 @@ nowhere else.
    below had no height, and level across a road's top. Registered again, it dropped off what's below it by up to 2 m
    on the made-up grid pit, and the berm beside it with it. The register row still sets what the run-on and the first
    berm lie on. This applies to every design run from a crest, with or without roads: it's what makes two designs give
-   the same face as one. **Tim to confirm.**
+   the same face as one (Tim, 2026-11-04: "Yes, keep them").
 6. **A berm with no wall below it in its own design keeps its full width,** whatever its minimum bench. As the first row
    of a design from a crest, it had always been dropped, because the toe under it had no height.
 7. **A ramp from the line may turn back on the profile's first wall,** as the wall before it was in the design below.
