@@ -553,13 +553,15 @@ struct Climbing {
     /// The steps with a wall it's climbed so far.
     steps: Option<[usize; 2]>,
     top: Option<RoadTop>,
+    /// It turned back on a pad, so its next stretch starts afresh with the toe past the turn joining back.
+    turned: bool,
     pit_edge: Vec<[f64; 3]>,
     wall_edge: Vec<[f64; 3]>,
 }
 
 impl Climbing {
     fn new(ramp: usize, spec: FaceRamp) -> Self {
-        Climbing { ramp, spec, steps: None, top: None, pit_edge: Vec::new(), wall_edge: Vec::new() }
+        Climbing { ramp, spec, steps: None, top: None, turned: false, pit_edge: Vec::new(), wall_edge: Vec::new() }
     }
 
     /// Takes in a wall's stretch of road, and where the road has got to.
@@ -573,11 +575,12 @@ impl Climbing {
     }
 
     /// Turns back: a switchback on a flat pad. The next wall's stretch starts afresh at `at`, the other way along
-    /// the string, so its entrance moves the line behind it, the side past the turn, back to its wall-side edge.
+    /// the string, and the line behind it, the side past the turn, comes out to its wall-side edge and joins back.
     fn turn_at(&mut self, at: [f64; 3]) {
         self.spec.start = [at[0], at[1]];
         self.spec.back = !self.spec.back;
         self.top = None;
+        self.turned = true;
     }
 
     /// The road as far as it got.
@@ -653,7 +656,7 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                         face.roads.extend(open.road());
                     }
                 }
-                let on_wall: Vec<RoadOnWall<'_>> = climbing.iter().map(|open| RoadOnWall { spec: open.spec, top: open.top, floor: lying.then(|| on.mesh()) }).collect();
+                let on_wall: Vec<RoadOnWall<'_>> = climbing.iter().map(|open| RoadOnWall { spec: open.spec, top: open.top, floor: lying.then(|| on.mesh()), turned: open.turned }).collect();
                 for road in &on_wall {
                     (from, batters, ..) = start_on(&from, &batters, road);
                 }

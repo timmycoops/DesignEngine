@@ -2,7 +2,8 @@
 
 Date: 2026-11-03 · Status: accepted (Tim, 2026-11-03: "Yes, build them"; then "flat rls with a flat pad for a
 switchback would be a standard terrace design for a coal mine and a metals design (metals may have non straight walls
-though)"). The second part after 0037. The line past a turn is still open: see the end.
+though)"; and on the toe past a turn, "the set joint length make sense from a default position"). The second part after
+0037.
 
 ## Why
 
@@ -32,6 +33,14 @@ design, in coal and in metals, where walls curve.
    part way across the last one's top, so the triangles there are split at that point. Nothing moves.
 6. **The Face design panel** cycles a ramp's cell off, on, then turning (a U-turn mark) where the wall before holds the ramp.
    A berm under a turn says so.
+7. **Past a turn the toe of the wall above joins back a set length on.** It comes out to the next road's wall-side start,
+   the pushed corner, and runs straight from there back to the line 50 m on from the turn, measured along the road, then
+   follows the line. Deswik joins the pushed corner to the line's next vertex instead, so its join runs wherever the string
+   happens to have one: 9 to 94 m on Tim's back strip, which he says he moved by hand, and one grid cell on a line from a
+   grid. A set length gives the same pad whatever vertices the string has. On its way the join can pass over a bend of the
+   line out into the pad, as where the berm's line goes round the first road's top, if the stretch beyond the line is
+   shorter than the road is wide; a longer one would cut the berm, so the join stops where it first meets the line. This
+   replaces pushing the whole line behind out by the road, as an entrance does, which carried the pad to the string's end.
 
 Where the berm's line can't be read this way, the road falls back to 0035's landing, as before.
 
@@ -56,7 +65,7 @@ Tim's back strip, our road with Deswik's six turns, where each leg's wall-side e
 | Leg starts and ends off Deswik's | 2.7 to 24 m | 0 to 16.3 m (starts 0 to 13.7 m) |
 | Landing across a berm | 13.5 m along the road | 9.9 m out, 1.1 m back (Deswik: 9.9 m out, 1.3 m back) |
 
-The face is one sheet with nothing crossing: 11 walls, 561 triangles out, 31 ms, road 3,639 m. What's left is Deswik's
+The face is one sheet with nothing crossing, road 3,639 m (561 triangles out before the join below). What's left is Deswik's
 first leg, set to a 37° face, which puts it 10 m further out, carried down every leg below. On top of that, Deswik's legs
 heading west are about 1.5 m shorter along the strip than ours, so the along-strip gap grows by a metre or so per turn.
 
@@ -73,13 +82,22 @@ Every road still stopped stopped before too, at the old "a wall reaches past the
 ramps runs in 10.9 s against 9.7 s. The ramp template's five strips are clean, each road 1,200 m up and 40 m across its
 two berms.
 
+The toe past a turn, known answers exact to 1 µm: with a 10 m road and with a 25 m road, the join meets the berm's line
+50 m on from the turn along the road, at the same point whether the string has vertices only at its ends, one 9 m past
+the turn, or one every 25 m; past it the toe is the berm's line, the pad inside is level, and the face is one sheet. A
+line that jogs 15 m back into the wall just past the turn is joined 50 m on as a straight one is; one that jogs 15 m out
+towards the pit stops the join where it first meets the line, before the jog, so the berm keeps its width.
+
+On the back strip the face stays one sheet with nothing crossing: 11 walls, 509 triangles, 29 ms, the road unchanged at
+3,639 m. Each turn's corner stands about 80 m back from the line, a road width for each road, so each join climbs 80 m in
+50 m along; below a turn the walls carry the join down, so the lines past the lower turns step back in a stair of joins.
+Tim's own lines past the east turns taper out to the strip's end instead, some 700 m, so there our walls below the turns
+sit up to 80 m behind his.
+
 ## What this leaves
 
-- **The line past a turn.** Past the turn the line behind the new leg is pushed out by the road as an entrance is: two road
-  widths as far as the first road's top took the crest back, and one road width from there to the end. Deswik pushes only
-  the corner at the leg's start, a road width, and joins it straight to the line's next vertex, so its join runs 9 to 94 m
-  on the back strip, wherever the string's next vertex happened to be. On a line registered on a grid there's a vertex
-  every grid cell, so the same rule would join within one cell. Tim is to choose between that rule and a set join.
+- **The join's length as a setting,** per ramp or per turn, so a design like the back strip can taper the toe past a turn
+  as far as the planner wants. It's fixed at 50 m for now: a setting changes the ramp's saved object, which waits for Tim.
 - **A face angle set on a leg,** as Deswik's first leg has at 37°.
 - **A turn with the end held,** and graded switchbacks with a radius.
 - **The grade on the pit-side edge on bends,** going down.

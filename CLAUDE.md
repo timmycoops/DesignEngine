@@ -98,7 +98,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   the full berm level to climb on from the next toe, or through it at its grade, the berm narrowing to nothing at the road
   (`docs/decisions/0035-ramps-after-the-berm.md`). After the berm it crosses straight across, in line with its top, as
   Deswik's does; a road wider than the berm starts its next stretch on the top of the last. A wall row can turn a ramp
-  back before it: a switchback on a flat pad of the two roads and the berm between, on straight or curved walls
+  back before it: a switchback on a flat pad of the two roads and the berm between, on straight or curved walls, with
+  the toe past the turn joining back a set length on (50 m), whatever vertices the string has
   (`docs/decisions/0038-switchbacks.md`). On a profile going down a road comes down from the top line, notching it
   for its entrance, and the walls below it move out towards the pit (`docs/decisions/0037-roads-going-down.md`). It reports
   the bench where the grade can't be met instead of drifting (`docs/decisions/0028-ramps.md`, `0030-ramp-strings.md`).
