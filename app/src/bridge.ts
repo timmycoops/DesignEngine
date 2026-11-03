@@ -431,6 +431,10 @@ export type RampHeading = 'along' | 'back';
 /** Which end of a road is where its string crosses. With its end there, the run moves its start along the toe until it comes out there. */
 export type RampFixed = 'start' | 'end';
 
+/** How a road gets past a berm between two walls it climbs: after it, crossing the full berm level at 45 degrees to
+ * start up the next wall from its toe, or through it at its grade, with the berm narrowing to nothing at the road. */
+export type RampBerm = 'after' | 'through';
+
 /** A road up the walls that name it, on every strip its string crosses. */
 export interface Ramp {
   /** What a wall row calls it: a letter, usually. */
@@ -443,6 +447,8 @@ export interface Ramp {
   width: number;
   /** Rise over plan run on the inside edge, the pit side, in percent. */
   grade: number;
+  /** After the berm if it's left out, as designs saved before it could be set. */
+  berm?: RampBerm;
 }
 
 export type FaceDirection = 'up' | 'down';

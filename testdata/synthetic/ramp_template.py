@@ -2,8 +2,9 @@
 
 Five strips offset 80 m from one bent base toe and numbered by a line across, two ramp strings across them,
 and a face design that runs every strip on the toes layer: the toe flat on RL -100, three walls to RL -60,
--20 and 20 with 20 m berms between, and two 30 m roads at 10 % up all three walls. Ramp A starts where its
-string crosses each toe; ramp B comes out on the top crest where its string crosses.
+-20 and 20 with 20 m berms between, and two 30 m roads at 10 % up all three walls, each crossing the berms
+level after them (decision 0035). Ramp A starts where its string crosses each toe; ramp B comes out on the top
+crest where its string crosses.
 
     .venv\\Scripts\\python testdata/synthetic/ramp_template.py [folder]
 
@@ -70,12 +71,14 @@ def design(s, toes_layer, ramp_a, ramp_b):
     return made(s.run("face.save_design", name="Ramps on RLs", content=content))[0]
 
 
-def plan_length(points):
-    return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(points, points[1:]))
+def climb_and_landings(points):
+    """How far a road climbs in plan, and how far it runs level across berms."""
+    steps = [(math.hypot(b[0] - a[0], b[1] - a[1]), b[2] - a[2]) for a, b in zip(points, points[1:])]
+    return sum(d for d, dz in steps if abs(dz) > 1e-9), sum(d for d, dz in steps if abs(dz) <= 1e-9)
 
 
 def check(s, design_id):
-    """Runs the design and says what each strip made: its face, and each road's length and heights."""
+    """Runs the design and says what each strip made: its face, and each road's climb, landings and heights."""
     record = s.run("face.project", design=design_id)
     print(f"face.project: {record['duration_ms']:.0f} ms, {len(record['outputs'])} objects")
     for message in record["messages"]:
@@ -96,8 +99,8 @@ def check(s, design_id):
                 faults += 1
                 continue
             points = s.object(edge)["points"]
-            length, low, high = plan_length(points), points[0][2], points[-1][2]
-            line += f"; road {ramp} {length:,.1f} m from RL {low:.1f} to {high:.1f}"
+            (climb, landings), low, high = climb_and_landings(points), points[0][2], points[-1][2]
+            line += f"; road {ramp} {climb:,.1f} m up and {landings:,.1f} m across berms, from RL {low:.1f} to {high:.1f}"
             faults += abs(high - top) > 1e-6 or abs(low - TOE_RL) > 1e-6
         print(line)
     print(f"Each road up RL {TOE_RL:g} to {top:g} at {ROAD['grade']:g} % is {rise_over_grade:,.0f} m on its walls.")

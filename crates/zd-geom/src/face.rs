@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use zd_core::{FaceDirection, Polyline, TriMesh};
 
-use crate::road::{FaceRamp, FaceRoad, NO_WALL, NoRoad, OTHER_WAY, RoadOnWall, RoadTop, Stopped, WallCut, berm_round_roads, cut_roads, metres_along, point_along, start_on};
+use crate::road::{FaceRamp, FaceRoad, NO_WALL, NoRoad, OTHER_WAY, RoadOnWall, RoadTop, Stopped, WallCut, across_the_berm, berm_round_roads, cut_roads, metres_along, point_along, start_on};
 use crate::string::TriangleBins;
 use crate::wall::{LeastBench, Stretch, at_crest_heights, height_on, nearest_along, next_line, segment_count, triangles_of, with_crest_vertices};
 use crate::{EdgeRule, GeomError, OffsetSide, drape_string, filter_string, next_toe, project_wall_by_edge};
@@ -663,9 +663,17 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                     report.off_surface += draped.off_surface;
                     Ok(toe)
                 };
-                let tops: Vec<RoadTop> = climbing.iter().filter_map(|open| open.top).collect();
+                // A road going up through the berm takes it in to its top. One going after it leaves it whole, and
+                // carries on from where the berm's line steps round its top.
+                let through: Vec<RoadTop> = climbing.iter().filter(|open| !open.spec.after_berm).filter_map(|open| open.top).collect();
                 let back = climbing.first().is_some_and(|open| open.spec.back);
-                from = if tops.is_empty() { lay(&line) } else { berm_round_roads(&line, &crest, &tops, back, &mut lay) }.map_err(|e| fail(k, e))?;
+                from = if through.is_empty() { lay(&line) } else { berm_round_roads(&line, &crest, &through, back, &mut lay) }.map_err(|e| fail(k, e))?;
+                for open in climbing.iter_mut().filter(|open| open.spec.after_berm) {
+                    if let Some(top) = open.top {
+                        let (line, landing) = across_the_berm(&from, top);
+                        (from, open.top) = (line, Some(landing));
+                    }
+                }
                 lying = register;
                 berm_from = Some(crest);
                 (report.no_wall, report.pieces_dropped, report.no_berm) = (false, dropped, log.no_berm);

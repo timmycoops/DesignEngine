@@ -77,6 +77,8 @@ pub struct FaceRamp {
     /// Where it has to come out on the crest of its last wall, if that's what's held. `start` is then worked
     /// out by the run, moving it along the toe as a planner would.
     pub ends_at: Option<[f64; 2]>,
+    /// It goes past a berm after it, crossing the full berm level, rather than up through it.
+    pub after_berm: bool,
 }
 
 /// A road a face has cut.
@@ -405,6 +407,24 @@ pub(crate) fn berm_round_roads(line: &Polyline, crest: &Polyline, tops: &[RoadTo
         return Ok(backwards(&turned));
     }
     berm_round_roads_along(line, crest, tops, lay)
+}
+
+/// Where a road that goes past a berm after it carries on from, and the berm's line to suit. The full berm runs
+/// round the top of the road, as the crest does, so its line steps round that end a berm width on. The road crosses
+/// the berm level to the foot of the step, and climbs the next wall from there, its wall-side edge at the top of the
+/// step, where the line behind runs on. The foot of that stretch of road is a straight edge across it, so the line
+/// runs straight across too: on a grid the step's corner can stand off it a little, and would leave a sliver
+/// between the berm and the road. Where there's no berm, it's the top of the road.
+pub(crate) fn across_the_berm(line: &Polyline, top: RoadTop) -> (Polyline, RoadTop) {
+    let at_pit = nearest_place(line, top.pit);
+    let pit = point_at(line, at_pit);
+    let at_wall = nearest_place(line, [pit[0] + top.wall[0] - top.pit[0], pit[1] + top.wall[1] - top.pit[1], 0.0]);
+    let wall = point_at(line, at_wall);
+    let (from, to) = if at_wall < at_pit { (at_wall, at_pit) } else { (at_pit, at_wall) };
+    let mut vertices = stretch_of(line, 0.0, from).vertices;
+    vertices.extend(stretch_of(line, to, (line.vertices.len() - 1) as f64).vertices);
+    vertices.dedup_by(|a, b| plan_gap(*a, *b) < SAME_POINT);
+    (Polyline { vertices, closed: line.closed }, RoadTop { pit, wall })
 }
 
 /// The berm opening out ahead of a road. Each crest vertex over the taper moves towards the berm line, by a
@@ -913,7 +933,7 @@ mod tests {
     const FLOOR: f64 = 100.0;
     /// cos of the angle a 10 % road climbs a 45 degree wall at, where sin(angle) = grade / slope.
     const COS: f64 = 0.994_987_437_106_62;
-    const RAMP: FaceRamp = FaceRamp { start: [E + 100.0, N], back: false, width: 10.0, grade: 0.1, ends_at: None };
+    const RAMP: FaceRamp = FaceRamp { start: [E + 100.0, N], back: false, width: 10.0, grade: 0.1, ends_at: None, after_berm: false };
 
     fn level(rl: f64) -> TriMesh {
         triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 30, 20, |_, _| rl))
@@ -1183,6 +1203,54 @@ mod tests {
         assert!((height(&face.surface, 200.0, 20.0 + 10.0 * COS + 5.0) - 120.0).abs() < 1e-6, "and behind it");
     }
 
+    fn close(a: f64, b: f64, tolerance: f64) {
+        assert!((a - b).abs() <= tolerance, "{a} is not {b} to {tolerance}");
+    }
+
+    /// How far a point is from a line in plan.
+    fn off_line(line: &Polyline, p: [f64; 3]) -> f64 {
+        line.vertices.windows(2).map(|w| nearest_along(w[0], w[1], p).1).fold(f64::INFINITY, f64::min)
+    }
+
+    /// The same two walls and berm with the road going after the berm. It climbs the first wall, 200 m from RL 100
+    /// to 120, crosses the berm level from its top to the foot of the step the berm's line makes round it, a berm
+    /// width on along the road, and climbs the second from there, 200 m more to RL 140. The berm keeps its full 10 m
+    /// everywhere, where going through it narrows it to nothing at the road.
+    #[test]
+    fn a_road_after_the_berm_crosses_it_level_and_climbs_on_from_the_next_toe() {
+        let on = FaceTarget::Rl(120.0);
+        let steps = || vec![wall(on, 45.0), berm(on, 10.0), wall(FaceTarget::Rl(140.0), 45.0)];
+        let face = ramped(FaceRamp { after_berm: true, ..RAMP }, steps(), &level(FLOOR));
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        let road = &face.roads[0];
+        assert_eq!(road.steps, [0, 2]);
+        let pit = &road.pit_edge;
+        let (climbing, flat): (Vec<_>, Vec<_>) = pit.vertices.windows(2).filter(|w| plan_gap(w[0], w[1]) > 1e-6).partition(|w| (w[1][2] - w[0][2]).abs() > 1e-9);
+        let climbed: f64 = climbing.iter().map(|w| plan_gap(w[0], w[1])).sum();
+        assert!((climbed - 400.0).abs() < 1e-3, "{climbed}");
+        for w in &climbing {
+            close((w[1][2] - w[0][2]) / plan_gap(w[0], w[1]), 0.1, 1e-9);
+        }
+        assert_eq!(flat.len(), 1, "one landing: {:?}", pit.vertices);
+        let (top, foot) = (flat[0][0], flat[0][1]);
+        close(top[2], 120.0, 1e-6);
+        close(foot[2], 120.0, 1e-6);
+        // Across the berm's width, and a berm width on along the road, which climbs at sin(angle) = 0.1 off the strike.
+        close(plan_gap(top, foot), 10.0 * (((1.0 - 0.1) / COS).powi(2) + 1.0).sqrt(), 1e-6);
+        close(height(&face.surface, (top[0] + foot[0]) / 2.0 - E, (top[1] + foot[1]) / 2.0 - N), 120.0, 1e-6);
+        close(pit.vertices.last().unwrap()[2], 140.0, 1e-6);
+        one_clean_sheet(&face);
+
+        let narrowest = |face: &Face| {
+            let bench = |step: usize| face.benches.iter().find(|b| b.step == step).unwrap_or_else(|| panic!("no bench {step}"));
+            let (crest, toe) = (&bench(0).crest, &bench(2).toe);
+            toe.vertices.iter().map(|p| off_line(crest, *p)).fold(f64::INFINITY, f64::min)
+        };
+        close(narrowest(&face), 10.0, 1e-6);
+        let through = ramped(RAMP, steps(), &level(FLOOR));
+        assert!(narrowest(&through) < 1e-6, "going through takes the berm in to the road: {}", narrowest(&through));
+    }
+
     /// A road bends easily across a berm: nowhere does it turn more than the taper's angle.
     #[test]
     fn a_road_eases_across_a_berm_with_no_step_in_it() {
@@ -1281,6 +1349,43 @@ mod tests {
         holds_its_grade_to(road_of(&face, 0), 140.0, 400.0);
         holds_its_grade_to(road_of(&face, 1), 140.0, 400.0);
         one_clean_sheet(&face);
+    }
+
+    /// How much of a road climbs, in plan, and how many level stretches it has: its landings.
+    fn climbs_and_landings(road: &FaceRoad) -> (f64, usize) {
+        let gaps = road.pit_edge.vertices.windows(2).filter(|w| plan_gap(w[0], w[1]) > 1e-6);
+        let (climbing, flat): (Vec<_>, Vec<_>) = gaps.partition(|w| (w[1][2] - w[0][2]).abs() > 1e-9);
+        for w in &climbing {
+            close((w[1][2] - w[0][2]) / plan_gap(w[0], w[1]), 0.1, 1e-9);
+        }
+        (climbing.iter().map(|w| plan_gap(w[0], w[1])).sum(), flat.len())
+    }
+
+    /// Going after the berm works however roads come: three up three walls together, two close together, two stacked
+    /// on one wall running back with the wall on the right. Each climbs its 20 m a wall at 10 % and crosses each berm
+    /// on one level landing, and each face is one sheet with nothing crossing.
+    #[test]
+    fn roads_after_the_berm_go_together_close_together_and_back() {
+        let after = |x: f64| FaceRamp { after_berm: true, ..ramp_at(x) };
+        let (low, high, all) = (FaceTarget::Rl(120.0), FaceTarget::Rl(140.0), &[0, 1, 2]);
+        let rows = [climbed_by(low, all), berm(low, 10.0), climbed_by(high, all), berm(high, 10.0), climbed_by(FaceTarget::Rl(160.0), all)];
+        let three = long_face(&rows, &[after(100.0), after(500.0), after(900.0)]);
+        let two_rows = [climbed_by(low, &[0, 1]), berm(low, 10.0), climbed_by(high, &[0, 1])];
+        let close_together = long_face(&two_rows, &[after(300.0), after(400.0)]);
+        let toe = string(&[[2000.0, 0.0], [0.0, 0.0]], FLOOR);
+        let back = |x: f64| FaceRamp { back: true, ..after(x) };
+        let stacked = project_face(&toe, &level(FLOOR), OffsetSide::Right, FaceDirection::Up, &two_rows, &[back(200.0), back(500.0)]).unwrap();
+        for (face, roads, walls) in [(&three, 3, 3), (&close_together, 2, 2), (&stacked, 2, 2)] {
+            assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+            for ramp in 0..roads {
+                let road = road_of(face, ramp);
+                let (climbed, landings) = climbs_and_landings(road);
+                close(climbed, 200.0 * walls as f64, 1e-3);
+                assert_eq!(landings, walls - 1, "{:?}", road.pit_edge.vertices);
+                close(road.pit_edge.vertices.last().unwrap()[2], FLOOR + 20.0 * walls as f64, 1e-6);
+            }
+            one_clean_sheet(face);
+        }
     }
 
     /// Running back against the string is the same thing the other way round.

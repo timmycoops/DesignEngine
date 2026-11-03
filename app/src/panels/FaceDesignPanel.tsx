@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp, Crosshair, Play, Plus, Save, Trash2 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
-import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampFixed, type RampHeading, type RuleValue, type StepTarget, type StepValue, type WallRule, type WallSide } from '@/bridge';
+import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampBerm, type RampFixed, type RampHeading, type RuleValue, type StepTarget, type StepValue, type WallRule, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
@@ -476,6 +476,16 @@ function RampRow({ ramp, stringName, onWalls, results, swap, onShow, onChange, o
           <option value="start">Starts at</option>
         </select>
         <Choice value={ramp.heading} options={HEADINGS} onChange={(heading) => onChange({ heading })} />
+        <select
+          className={selectClass}
+          value={ramp.berm ?? 'after'}
+          aria-label="How it gets past a berm"
+          title="After berm: the berm keeps its full width and opens onto the top of the road, which crosses it level and starts up the next wall from its toe. Through berm: the road carries on up at its grade and the berm narrows to nothing where it comes through"
+          onChange={(e) => onChange({ berm: e.target.value as RampBerm })}
+        >
+          <option value="after">After berm</option>
+          <option value="through">Through berm</option>
+        </select>
         <Labelled label="Width, m">
           <NumberBox width="w-12" value={ramp.width} title="Road width in metres, square to the road" onChange={(width) => onChange({ width })} />
         </Labelled>
@@ -793,7 +803,7 @@ export function FaceDesignPanel() {
     const made = await runRecord('string.create', { name: `Ramp ${name}`, layer: 'ramps', points });
     const string = made.record?.outputs[0]?.id;
     if (!string) return;
-    const ramp: Ramp = { name, string, fixed: 'end', heading: 'along', width: usualRoadWidth, grade: usualGrade };
+    const ramp: Ramp = { name, string, fixed: 'end', heading: 'along', width: usualRoadWidth, grade: usualGrade, berm: 'after' };
     setProfile({ ramps: [...(profile.ramps ?? []), ramp], steps: profile.steps.map((s) => (s.step === 'project' ? { ...s, ramps: [...(s.ramps ?? []), name] } : s)) });
   };
   const setRamp = (at: number, change: Partial<Ramp>) => profile && setProfile({ ramps: replaceAt(profile.ramps ?? [], at, { ...(profile.ramps ?? [])[at], ...change }) });
