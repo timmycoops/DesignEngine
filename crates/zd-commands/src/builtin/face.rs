@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
-use zd_geom::{COINCIDENT, EdgeRule, FaceStep, FaceTarget, GeomError, OffsetSide, SolidRegion, conditioned_toe, find_crossings, next_toe, project_face, project_wall, register_toe, run_on, triangulate_grid};
+use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, Ramp, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
+use zd_geom::{COINCIDENT, EdgeRule, FaceRamp, FaceStep, FaceTarget, GeomError, OffsetSide, SolidRegion, conditioned_toe, find_crossings, next_toe, project_face, project_wall, register_toe, run_on, triangulate_grid};
 
 use super::SideParam;
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
@@ -196,6 +196,9 @@ pub struct ProjectDesignParams {
 
 /// The attribute that ties what a run made to its design.
 const MADE_BY: &str = "face_design";
+/// The attributes on a road's edges: its ramp, and the face it's cut into, so it can be shown with it.
+const ROAD: &str = "road";
+const ROAD_FACE: &str = "road_face";
 
 impl Command for ProjectDesign {
     type Params = ProjectDesignParams;
@@ -216,8 +219,10 @@ impl Command for ProjectDesign {
         let Body::FaceDesign(design) = &object.body else {
             return Err(CommandError::WrongKind { id: p.design, expected: ObjectKind::FaceDesign, found: object.kind() });
         };
-        if let Some(problem) = design.problems().into_iter().next() {
-            return Err(CommandError::Invalid(problem));
+        let problems = design.problems();
+        if !problems.is_empty() {
+            return Err(CommandError::Invalid(problems.join("
+")));
         }
         let mut targets = Targets { inputs, grids: HashMap::new() };
         for id in design.profiles.iter().flat_map(surfaces_of) {
@@ -234,7 +239,7 @@ impl Command for ProjectDesign {
                 }
             }
         }
-        for (line, id) in runs {
+        for &(line, id) in &runs {
             let (string, path) = inputs.string(id)?;
             let profile = design.profile(&line.profile).ok_or_else(|| CommandError::Invalid(format!("no profile called {}", line.profile)))?;
             let base = format!("{} {}", string.name, line.profile);
@@ -251,20 +256,42 @@ impl Command for ProjectDesign {
                 WallSide::Right => (OffsetSide::Right, OffsetSide::Left),
             };
             let rules = LineRules { design, string: path, string_name: &string.name, faces, regions: &regions, inputs };
-            let steps = steps_of(&rules, &profile.steps, &targets)?;
-            let face = project_face(&toe, registered, side, profile.direction, &steps).map_err(refuse)?;
+            let ramps: Vec<&Ramp> = profile.ramps.iter().filter(|ramp| ramp.string == id && on_a_wall(profile, ramp)).collect();
+            let steps = steps_of(&rules, &profile.steps, &targets, &ramps)?;
+            let face = project_face(&toe, registered, side, profile.direction, &steps, &ramps.iter().map(|ramp| face_ramp(ramp)).collect::<Vec<_>>()).map_err(refuse)?;
             messages.push(line_report(&base, &face, [extended.vertices.len(), shaped.vertices.len()], register.off_grid));
+            messages.extend(ramps.iter().enumerate().map(|(r, ramp)| ramp_report(&ramp.name, r, &face)));
             let attributes = || Attributes::from([(MADE_BY.to_string(), AttrValue::Text(p.design.to_string()))]);
             let create = |name: String, body: Body| Change::Create { name, layer: design.layer.clone(), attributes: attributes(), body };
             for (k, bench) in face.benches.iter().enumerate() {
                 changes.push(create(format!("{base} toe {}", k + 1), Body::String(bench.toe.clone())));
                 changes.push(create(format!("{base} crest {}", k + 1), Body::String(bench.crest.clone())));
             }
+            for road in &face.roads {
+                let name = &ramps[road.ramp].name;
+                let edge = |which: &str, line: &Polyline| {
+                    let mut marked = attributes();
+                    marked.insert(ROAD.to_string(), AttrValue::Text(name.clone()));
+                    marked.insert(ROAD_FACE.to_string(), AttrValue::Text(format!("{base} face")));
+                    Change::Create { name: format!("{base} road {name} {which} edge"), layer: design.layer.clone(), attributes: marked, body: Body::String(line.clone()) }
+                };
+                changes.push(edge("pit", &road.pit_edge));
+                changes.push(edge("wall", &road.wall_edge));
+            }
             let crossings = find_crossings(&face.surface, COINCIDENT);
             if crossings.pairs > 0 {
                 messages.push(format!("{base}: {} pairs of face triangles cross", crossings.pairs));
             }
             changes.push(create(format!("{base} face"), Body::Surface(Surface::new(face.surface).with_crossings(crossings))));
+        }
+        for profile in &design.profiles {
+            for ramp in &profile.ramps {
+                if !on_a_wall(profile, ramp) {
+                    messages.push(format!("Ramp {}: it isn't on a wall yet, so it made no road", ramp.name));
+                } else if !runs.iter().any(|(line, id)| line.profile == profile.name && *id == ramp.string) {
+                    messages.push(format!("Ramp {}: its string isn't on a line using {}", ramp.name, profile.name));
+                }
+            }
         }
         let mut outcome = Outcome::new(changes);
         for message in messages {
@@ -287,6 +314,16 @@ fn strings_of(inputs: &Inputs<'_>, line: &FaceLine, design: ObjectId) -> Result<
         return Err(CommandError::Invalid("A line names a layer with no strings on it".to_string()));
     }
     Ok(strings)
+}
+
+/// Whether a wall row names a ramp. One that isn't on a wall yet is left out of the run, not refused.
+fn on_a_wall(profile: &FaceProfile, ramp: &Ramp) -> bool {
+    profile.steps.iter().any(|step| matches!(step, ProfileStep::Project { ramp: Some(name), .. } if *name == ramp.name))
+}
+
+fn face_ramp(ramp: &Ramp) -> FaceRamp {
+    let ends_at = (ramp.fixed == RampFixed::End).then_some(ramp.at);
+    FaceRamp { start: ramp.at, back: ramp.heading == RampHeading::Back, width: ramp.width, grade: ramp.grade / 100.0, ends_at }
 }
 
 /// The surfaces a profile names.
@@ -395,7 +432,7 @@ impl<'a> LineRules<'a, '_> {
     }
 }
 
-fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'t Targets<'_, '_>) -> Result<Vec<FaceStep<'t>>, CommandError> {
+fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'t Targets<'_, '_>, ramps: &[&Ramp]) -> Result<Vec<FaceStep<'t>>, CommandError> {
     let surface_of = |to: &StepTarget| match to {
         StepTarget::Surface { id } => Some(*id),
         StepTarget::Rl { .. } => None,
@@ -410,9 +447,10 @@ fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'
         .iter()
         .map(|step| {
             Ok(match step {
-                ProfileStep::Project { to, batter, condition } => {
+                ProfileStep::Project { to, batter, condition, ramp } => {
                     reached = surface_of(to);
-                    FaceStep::Project { to: target(to)?, batter: rules.edge_rule(batter, reached)?, condition: *condition }
+                    let ramp = ramp.as_ref().and_then(|name| ramps.iter().position(|r| r.name == *name));
+                    FaceStep::Project { to: target(to)?, batter: rules.edge_rule(batter, reached)?, condition: *condition, ramp }
                 }
                 ProfileStep::Berm { on, width, register, condition, min_bench } => {
                     let horizon = on.as_ref().map_or(reached, surface_of);
@@ -455,4 +493,24 @@ fn line_report(name: &str, face: &zd_geom::Face, [toe_in, toe_out]: [usize; 2], 
         }
     }
     report
+}
+
+/// How far one ramp got, as a line of its own that the panel shows against it.
+fn ramp_report(name: &str, ramp: usize, face: &zd_geom::Face) -> String {
+    let mut parts = Vec::new();
+    for road in face.roads.iter().filter(|road| road.ramp == ramp) {
+        let (Some(bottom), Some(top)) = (road.pit_edge.vertices.first(), road.pit_edge.vertices.last()) else { continue };
+        let steps = if road.steps[0] == road.steps[1] { format!("step {}", road.steps[0] + 1) } else { format!("steps {} to {}", road.steps[0] + 1, road.steps[1] + 1) };
+        parts.push(format!("{steps}, {:.1} m from RL {:.1} to {:.1}, starts at {:.1}, {:.1}", road.pit_edge.plan_length(), bottom[2], top[2], bottom[0], bottom[1]));
+        if let Some(miss) = road.off_end {
+            parts.push(format!("it comes out {miss:.1} m from where it's held"));
+        }
+    }
+    for stopped in face.no_roads.iter().filter(|stopped| stopped.ramp == ramp) {
+        parts.push(format!("stopped on step {} at {:.1}, {:.1}: {}", stopped.step + 1, stopped.at[0], stopped.at[1], stopped.why));
+    }
+    if parts.is_empty() {
+        parts.push("it isn't on a wall of this string".to_string());
+    }
+    format!("Ramp {name}: {}", parts.join("; "))
 }
