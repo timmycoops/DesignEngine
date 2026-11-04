@@ -1068,8 +1068,8 @@ fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
     let floor = level_surface(&mut s, "floor", 100.0);
     let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E + 10.0, N + 30.0, 0.0], [E + 295.0, N + 30.0, 0.0]] })).unwrap())[0];
     let across = ramp_string(&mut s, &[[60.0, 20.0], [60.0, 40.0]]);
-    let layer = |join: Option<f64>, flat: Option<f64>| format!("faces {join:?} {flat:?}");
-    let content = |join: Option<f64>, flat: Option<f64>| {
+    let layer = |join: Option<f64>, flat: Option<f64>, end: Option<f64>| format!("faces {join:?} {flat:?} {end:?}");
+    let content = |join: Option<f64>, flat: Option<f64>, end: Option<f64>| {
         let mut ramp = json!({ "name": "A", "string": across, "fixed": "start", "heading": "along", "width": 10.0, "grade": 10.0 });
         if let Some(join) = join {
             ramp["turn_join"] = json!(join);
@@ -1077,8 +1077,11 @@ fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
         if let Some(flat) = flat {
             ramp["turn_flat"] = json!(flat);
         }
+        if let Some(end) = end {
+            ramp["turn_end"] = json!(end);
+        }
         json!({
-            "layer": layer(join, flat),
+            "layer": layer(join, flat, end),
             "lines": [{ "string": toe, "profile": "Wall", "side": "left", "run_on": [0.0, 0.0] }],
             "profiles": [{
                 "name": "Wall", "direction": "up", "register": floor,
@@ -1093,17 +1096,23 @@ fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
         })
     };
     let mut joins = Vec::new();
-    for (join, flat) in [(None, Some(0.0)), (Some(50.0), Some(0.0)), (Some(30.0), Some(0.0)), (None, None), (Some(30.0), Some(25.0))] {
-        let design = created(&s.run("face.save_design", json!({ "name": format!("turning {join:?} {flat:?}"), "content": content(join, flat) })).unwrap())[0];
+    for (join, flat, end) in [(None, Some(0.0), None), (Some(50.0), Some(0.0), None), (Some(30.0), Some(0.0), None), (None, None, None), (Some(30.0), Some(25.0), None), (None, Some(25.0), Some(45.0))] {
+        let design = created(&s.run("face.save_design", json!({ "name": format!("turning {join:?} {flat:?} {end:?}"), "content": content(join, flat, end) })).unwrap())[0];
         let record = s.run("face.project", json!({ "design": design })).unwrap();
         assert!(record.messages.iter().any(|m| m.starts_with("Ramp A: toe: steps 1 to 3")), "{join:?}: {:?}", record.messages);
-        let on = |o: &zd_core::Object| s.project().layer(o.layer).is_some_and(|l| l.name == layer(join, flat));
+        let on = |o: &zd_core::Object| s.project().layer(o.layer).is_some_and(|l| l.name == layer(join, flat, end));
         let toe_two = s.project().objects().find(|o| o.name == "toe Wall toe 2" && on(o)).map(|o| line(&s, o.id)).expect("the second wall's toe");
         let corner = toe_two.vertices.iter().position(|p| p[1] - N > 65.0).unwrap_or_else(|| panic!("{join:?}: the toe runs round the next road's start: {:?}", toe_two.vertices));
         let pit = line(&s, s.project().objects().find(|o| o.name == "toe Wall road A pit edge" && on(o)).unwrap().id);
         let top = pit.vertices[pit.vertices.iter().position(|p| (p[2] - 110.0).abs() < 1e-6).expect("the first road's top")];
         let long = flat.unwrap_or(10.0);
-        if long > 0.0 {
+        if let Some(angle) = end {
+            // Flared at 45 degrees: from the box's back corner, 30 m out from the crest at 25 m on past the top, straight
+            // out to the berm's line past the box, 10 m out, 20 m further on; not down the far end.
+            let back = toe_two.vertices.iter().position(|p| (p[0] - top[0] - long).abs() < 1e-6 && (p[1] - N - 70.0).abs() < 1e-6).unwrap_or_else(|| panic!("{angle}: the box's back corner: {:?}", toe_two.vertices));
+            let foot = toe_two.vertices.iter().position(|p| (p[0] - top[0] - long - 20.0).abs() < 1e-6 && (p[1] - N - 50.0).abs() < 1e-6).unwrap_or_else(|| panic!("{angle}: the flare's foot: {:?}", toe_two.vertices));
+            assert!(toe_two.vertices[back.min(foot)..=back.max(foot)].iter().all(|p| (p[0] - top[0] - long + p[1] - N - 70.0).abs() < 1e-6), "{angle}: straight at 45 degrees: {:?}", toe_two.vertices);
+        } else if long > 0.0 {
             let far = toe_two.vertices[corner..].iter().find(|p| (p[1] - N - 60.0).abs() < 1e-6).unwrap_or_else(|| panic!("{join:?} {flat:?}: the toe comes down to the line beside the box: {:?}", toe_two.vertices));
             assert!((far[0] - top[0] - long).abs() < 1e-6, "{join:?} {flat:?}: the box's far end {long} m on past the top: {far:?} against {top:?}");
             // Squared off: down the far end to the berm's line past the box, with no berm round its end.

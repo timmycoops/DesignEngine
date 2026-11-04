@@ -432,3 +432,39 @@ Results:
   s for ten strips (179,172 triangles); the berm's line with no box is offset once more at each berm with a box.
 - **Tim's back strip on RLs:** the road reaches RL -190 through all six turns with a box its width, 3,635.1 m, 694
   triangles, one sheet, nothing crossing, 23 ms. With no box it's as before, 3,639.3 m and 504 triangles.
+
+## Changed since: a box's far end can flare out (2026-11-04)
+
+Tim, on the squared-off box: "I wonder if we should add a 45 degree option from the back of the flat pad to the front berm
+to take away the 90 degree corner." Shown two readings, he picked the one out past the end, as an option. Asked whether the
+option should be an angle or just square or 45°, he agreed to the angle.
+
+- **Each ramp has an end angle** (`turn_end`, "End, °" in the panel beside Flat), the angle in plan between the box's far
+  end and the strip, 30° to 90°. 90°, square across, unless it says, as designs saved before it are.
+- **Below 90° the wall above runs from the box's back corner** at that angle, on the way the line runs past the turn and
+  back towards the pit, out to the berm's line past the box. Past the box and the triangle it leaves is flat ground like
+  the box, on the floor on a grid. Where it doesn't reach the line before the string ends, it runs to the end.
+- **Where it lands on a line that's also the crest below** (the berm dropped past the box by the minimum bench), the sheet
+  is split there so the two meet with no slit.
+
+With a box 100 m deep from its back to the berm's line past it, as Tim's (50 + 30 + 50 − 30), 45° runs 100 m on past the
+box and 60° 57.7 m.
+
+Known answers, exact to 1 µm unless they say:
+- **20 m road, 10 m berm, 25 m box, at 45° and 60°, climbing east and climbing west:** the toe runs from the box's back
+  corner, 50 m out, straight to the berm's line past the box, 10 m out, 40 m on at 45° and 23.094 m at 60°, every vertex
+  between on that line. Flat at RL 120 in the flare and on the berm past it; 2 m out past the flare's middle the wall
+  above is at RL 122. One sheet, nothing crossing.
+- **Through the commands:** a ramp saved at 45° flares its 25 m box from the back corner, 30 m out, to the berm's line,
+  10 m out, 20 m on.
+- **Saved:** a ramp is 90° unless it says, one saved before it could say is 90°, what it says is saved, and anything
+  outside 30° to 90° is refused.
+
+Results:
+- **Tim's seven-row design** (turns on the U floor and Topo walls, 50 m road, 100 m box): all 10 roads to the top at 90°,
+  60° and 45°, nothing crossing, and every strip has no more holes than square.
+- **Grid pit:** unchanged, 23 faults (its designs are square).
+- **Tim's back strip on RLs, going down, 40 m road and box:** at 60°, 75° and 89° the road reaches RL -190 through all
+  six turns, one sheet, nothing crossing (610 triangles at 60°). At 45° it stops at the turn before RL -100: two walls
+  below, a wall whose toe carries the flares of the boxes above as notches runs about 600 m out past the strip ("the wall
+  runs off the target"). Still open.

@@ -442,7 +442,7 @@ fn strings_of(inputs: &Inputs<'_>, line: &FaceLine, design: ObjectId, ramp_strin
 
 fn face_ramp(ramp: &Ramp, at: [f64; 2]) -> FaceRamp {
     let ends_at = (ramp.fixed == RampFixed::End).then_some(at);
-    FaceRamp { start: at, back: ramp.heading == RampHeading::Back, width: ramp.width, grade: ramp.grade / 100.0, ends_at, after_berm: ramp.berm == RampBerm::After, turn_join: ramp.turn_join, turn_flat: ramp.flat_before_turn() }
+    FaceRamp { start: at, back: ramp.heading == RampHeading::Back, width: ramp.width, grade: ramp.grade / 100.0, ends_at, after_berm: ramp.berm == RampBerm::After, turn_join: ramp.turn_join, turn_flat: ramp.flat_before_turn(), turn_end: ramp.box_end() }
 }
 
 /// The surfaces a profile names.

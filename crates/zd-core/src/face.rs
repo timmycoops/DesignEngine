@@ -130,12 +130,29 @@ pub struct Ramp {
     /// before this don't; 0 turns at the top with no box.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_flat: Option<f64>,
+    /// Where it turns back on a box, the angle in plan between the box's far end and the strip, in degrees: 90, square
+    /// across, if it doesn't say, as designs saved before this don't. Less flares the far end out past the box, from its
+    /// back corner to the berm's line past it (Tim, 2026-11-04).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_end: Option<f64>,
 }
+
+/// A switchback box's far end square across the strip (degrees).
+pub const SQUARE_END: f64 = 90.0;
+
+/// The flattest a switchback box's far end can flare out past the box (degrees): flatter, it runs on along the strip
+/// many times as far as the box is deep.
+pub const LEAST_END: f64 = 30.0;
 
 impl Ramp {
     /// How far the flat box it turns back on runs past its top (m).
     pub fn flat_before_turn(&self) -> f64 {
         self.turn_flat.unwrap_or(self.width)
+    }
+
+    /// The angle in plan between the far end of the box it turns back on and the strip (degrees).
+    pub fn box_end(&self) -> f64 {
+        self.turn_end.unwrap_or(SQUARE_END)
     }
 }
 
@@ -486,6 +503,9 @@ fn check_ramps(profile: &FaceProfile, problems: &mut Vec<String>) {
         if ramp.turn_flat.is_some_and(|flat| !(flat.is_finite() && flat >= 0.0)) {
             problems.push(format!("{name}: the flat stretch after a turn can't be less than zero"));
         }
+        if ramp.turn_end.is_some_and(|end| !(LEAST_END..=SQUARE_END).contains(&end)) {
+            problems.push(format!("{name}: a box's far end must be at {LEAST_END}° to 90° to the strip"));
+        }
         let climbed: Vec<usize> = walls.iter().enumerate().filter(|(_, (_, names))| names.contains(&ramp.name)).map(|(place, _)| place).collect();
         match (climbed.first(), climbed.last()) {
             (Some(first), Some(last)) if last - first + 1 != climbed.len() => problems.push(format!("{name} has another wall in among its walls: a road climbs walls that come together")),
@@ -642,7 +662,7 @@ mod tests {
     }
 
     fn ramp() -> Ramp {
-        Ramp { name: "A".into(), string: ObjectId::new(), fixed: RampFixed::End, heading: RampHeading::Along, width: 30.0, grade: 10.0, berm: RampBerm::After, turn_join: USUAL_TURN_JOIN, turn_flat: None }
+        Ramp { name: "A".into(), string: ObjectId::new(), fixed: RampFixed::End, heading: RampHeading::Along, width: 30.0, grade: 10.0, berm: RampBerm::After, turn_join: USUAL_TURN_JOIN, turn_flat: None, turn_end: None }
     }
 
     /// A ramp runs flat its own width after a turn unless it says otherwise, and one saved before it could say does
@@ -664,6 +684,30 @@ mod tests {
         for flat in [-1.0, f64::NAN] {
             d.profiles[0].ramps[0].turn_flat = Some(flat);
             assert!(d.problems().iter().any(|p| p.contains("Ramp A on Highwall: the flat stretch after a turn can't be less than zero")), "{flat}: {:?}", d.problems());
+        }
+    }
+
+    /// A box's far end is square unless the ramp says otherwise, and one saved before it could say is square; what it
+    /// says is saved, from 30 to 90 degrees.
+    #[test]
+    fn a_box_is_square_at_its_far_end_unless_the_ramp_says_otherwise() {
+        assert_eq!(ramp().box_end(), 90.0);
+        assert!(!serde_json::to_string(&ramp()).unwrap().contains("turn_end"), "nothing said, nothing saved");
+        let flared = Ramp { turn_end: Some(45.0), ..ramp() };
+        let text = serde_json::to_string(&flared).unwrap();
+        assert!(text.contains(r#""turn_end":45.0"#), "{text}");
+        assert_eq!(serde_json::from_str::<Ramp>(&text).unwrap(), flared);
+        assert_eq!(flared.box_end(), 45.0);
+        let saved = r#"{ "name": "A", "string": "55555555555555555555555555555555", "fixed": "end", "heading": "along", "width": 40, "grade": 10, "turn_join": 50, "turn_flat": 100 }"#;
+        assert_eq!(serde_json::from_str::<Ramp>(saved).unwrap().box_end(), 90.0);
+        let mut d = with_a_ramp();
+        for end in [30.0, 45.0, 90.0] {
+            d.profiles[0].ramps[0].turn_end = Some(end);
+            assert!(d.problems().is_empty(), "{end}: {:?}", d.problems());
+        }
+        for end in [29.0, 91.0, 0.0, f64::NAN] {
+            d.profiles[0].ramps[0].turn_end = Some(end);
+            assert!(d.problems().iter().any(|p| p.contains("Ramp A on Highwall: a box's far end must be at 30° to 90° to the strip")), "{end}: {:?}", d.problems());
         }
     }
 

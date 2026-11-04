@@ -87,6 +87,9 @@ pub struct FaceRamp {
     /// on (m): the road, the berm and the next road wide. The next road climbs from straight across the berm from the top,
     /// at the box's near end, and the wall above goes round the box.
     pub turn_flat: f64,
+    /// Where it turns back on a box, the angle in plan between the box's far end and the strip (degrees): 90 is square
+    /// across, and less flares it out past the box, from its back corner to the berm's line past it.
+    pub turn_end: f64,
 }
 
 /// A road a face has cut.
@@ -173,6 +176,8 @@ struct RoadCut {
     /// The flat stretch a road that turned back runs before it climbs, its pit side and its wall side, each up to
     /// where the edges above start. None for a road that didn't turn.
     flat: Option<[Vec<P3>; 2]>,
+    /// Points the sheet is to be split at, where the toe behind comes onto a line part way along it.
+    meets: Vec<P3>,
 }
 
 /// The wall above a road, which is where the next road up goes.
@@ -195,6 +200,8 @@ pub(crate) struct WallCut {
     /// both as the toe has them.
     pub flats: Vec<(usize, Vec<P3>, Vec<P3>)>,
     pub logs: Vec<WallLog>,
+    /// Points the sheet is to be split at, where a toe comes onto a line part way along it.
+    pub meets: Vec<P3>,
 }
 
 /// A line with a vertex at the nearest point to `start` in plan, its batters to match, and where that
@@ -312,6 +319,7 @@ fn cut_roads_along(toe: &Polyline, batters: &[f64], side: OffsetSide, roads: &[R
     let mut meshes = Vec::with_capacity(2 * cuts.len() + 1);
     let mut cut_roads = Vec::with_capacity(cuts.len());
     let mut flats = Vec::new();
+    let meets: Vec<P3> = cuts.iter().flat_map(|(_, cut)| cut.meets.iter().copied()).collect();
     for (r, cut) in cuts {
         meshes.extend([cut.lower, cut.road]);
         let turned = cut.flat.is_some();
@@ -326,7 +334,7 @@ fn cut_roads_along(toe: &Polyline, batters: &[f64], side: OffsetSide, roads: &[R
         cut_roads.push((r, Polyline { vertices: pit, closed: false }, Polyline { vertices: wall_side, closed: false }));
     }
     meshes.push(wall.wall);
-    Some(WallCut { meshes, toe, crest, roads: cut_roads, flats, logs })
+    Some(WallCut { meshes, toe, crest, roads: cut_roads, flats, logs, meets })
 }
 
 /// The foot of a wall with roads in it. Each road up changes the toe behind the start of the one below it, and
@@ -367,7 +375,7 @@ fn cut_road(toe: &Polyline, batters: &[f64], side: OffsetSide, ramp: &FaceRamp, 
     let (behind, foot, mut wall_edge) = match bottom {
         RoadBottom::Entrance { floor, from, turned, pad } => {
             let behind = match turned {
-                Some(across) => toe_past_turn(toe, batters, at, across, from, offset.vertices[0], side, &pit_edge, ramp.turn_join, pad, floor).map(|(behind, wall_side)| {
+                Some(across) => toe_past_turn(toe, batters, at, across, from, offset.vertices[0], side, &pit_edge, (ramp.turn_join, ramp.turn_end), pad, floor).map(|(behind, wall_side)| {
                     flat = Some([toe.vertices[across..at].to_vec(), wall_side]);
                     behind
                 }),
@@ -378,7 +386,7 @@ fn cut_road(toe: &Polyline, batters: &[f64], side: OffsetSide, ramp: &FaceRamp, 
             (behind, Polyline { vertices: round, closed: false }, offset)
         }
         RoadBottom::CarriedOn { wall_side } => {
-            let behind = Behind { vertices: toe.vertices[..wall_side].to_vec(), batters: batters[..wall_side].to_vec() };
+            let behind = Behind { vertices: toe.vertices[..wall_side].to_vec(), batters: batters[..wall_side].to_vec(), meets: Vec::new() };
             (behind, toe.clone(), carried_on(toe.vertices[wall_side], &offset, &pit_edge, ramp.grade))
         }
     };
@@ -389,7 +397,7 @@ fn cut_road(toe: &Polyline, batters: &[f64], side: OffsetSide, ramp: &FaceRamp, 
     let top = *pit_edge.vertices.last().expect("a climb has an end");
     let place = place_on(&wall.crest, top).ok_or_else(|| stopped("the road's top isn't on the crest".into()))?;
     let lower = facets.wall_below(&climb.cuts, &removed_by_road(toe, at, &pit_edge, &wall.crest, place));
-    let cut = RoadCut { lower, road, toe: foot, behind: behind.vertices.len(), up_the_road: wall_edge.vertices.len(), crest: wall.crest.clone(), place, pit_edge, wall_edge, flat };
+    let cut = RoadCut { lower, road, toe: foot, behind: behind.vertices.len(), up_the_road: wall_edge.vertices.len(), crest: wall.crest.clone(), place, pit_edge, wall_edge, flat, meets: behind.meets };
     Ok((cut, Above { wall: upper, string, slopes }))
 }
 
@@ -397,6 +405,9 @@ fn cut_road(toe: &Polyline, batters: &[f64], side: OffsetSide, ramp: &FaceRamp, 
 struct Behind {
     vertices: Vec<P3>,
     batters: Vec<f64>,
+    /// Where it comes onto a line part way along a stretch of it that's also a crest below, for the sheet to be split at:
+    /// the foot of a box's far end flared out onto the berm's line past it.
+    meets: Vec<P3>,
 }
 
 /// The toe behind a road's start, moved back by the road so trucks can drive along the floor straight onto
@@ -405,7 +416,7 @@ struct Behind {
 /// a floor that isn't level at the start of the road has room to meet it. Behind the vertex `from` it stays where
 /// it is, for a road coming up through it, and comes across to the moved toe at 45 degrees.
 fn entrance_toe(toe: &Polyline, batters: &[f64], at: usize, from: usize, wall_start: P3, side: OffsetSide, floor: Option<&TriMesh>) -> Result<Behind, GeomError> {
-    let stays = |to: usize| Behind { vertices: toe.vertices[..to].to_vec(), batters: batters[..to].to_vec() };
+    let stays = |to: usize| Behind { vertices: toe.vertices[..to].to_vec(), batters: batters[..to].to_vec(), meets: Vec::new() };
     if at == from {
         return Ok(stays(from));
     }
@@ -429,7 +440,7 @@ fn entrance_toe(toe: &Polyline, batters: &[f64], at: usize, from: usize, wall_st
     });
     if from == 0 {
         let batters = moved_batters.collect();
-        return Ok(Behind { vertices: laid, batters });
+        return Ok(Behind { vertices: laid, batters, meets: Vec::new() });
     }
     let mut kept = stays(from + 1);
     kept.batters.extend(moved_batters);
@@ -445,9 +456,11 @@ fn entrance_toe(toe: &Polyline, batters: &[f64], at: usize, from: usize, wall_st
 /// On its way it can pass over a bend of the toe out into the pad, as where the berm's line goes round the last road's
 /// top, if the stretch beyond the toe is shorter than the road is wide; a longer one stops the join where it first meets
 /// the toe. It goes no further than the end of the string, or than a road coming up through the toe at the vertex
-/// `from`. Gives the toe behind, and the flat stretch's wall side up to where the road's wall-side edge starts.
+/// `from`. Round a box `pad` it goes along the box's back to its far end, and from there square down it to the line, or
+/// at `end` degrees to the strip out past it to the line there (Tim, 2026-11-04). Gives the toe behind, and the flat
+/// stretch's wall side up to where the road's wall-side edge starts.
 #[allow(clippy::too_many_arguments)]
-fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from: usize, wall_start: P3, side: OffsetSide, pit_edge: &Polyline, turn_join: f64, pad: Option<[P3; 2]>, floor: Option<&TriMesh>) -> Result<(Behind, Vec<P3>), GeomError> {
+fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from: usize, wall_start: P3, side: OffsetSide, pit_edge: &Polyline, (turn_join, end): (f64, f64), pad: Option<[P3; 2]>, floor: Option<&TriMesh>) -> Result<(Behind, Vec<P3>), GeomError> {
     let laid_on = |line: Polyline| -> Result<Vec<P3>, GeomError> {
         Ok(match floor {
             Some(floor) => drape_string(&line, floor, true)?.0.vertices,
@@ -475,7 +488,7 @@ fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from
         behind.vertices.extend(&flat);
         (behind, flat.clone())
     };
-    let stays = |to: usize| Behind { vertices: toe.vertices[..to].to_vec(), batters: batters[..to].to_vec() };
+    let stays = |to: usize| Behind { vertices: toe.vertices[..to].to_vec(), batters: batters[..to].to_vec(), meets: Vec::new() };
     if across == from {
         return Ok(with_flat(stays(from)));
     }
@@ -511,7 +524,10 @@ fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from
     // A box's far end is where the end of it on the crest, carried on square across, meets the line. The berm's line
     // comes square down the far end from there (`Flat::squared_end`), so that's the first vertex of the toe on it from
     // the box's wall side out, the wall side's end itself where there's no berm beside the box; a line that doesn't, it
-    // crosses.
+    // crosses. Its back corner is a road width on out from there.
+    let road = plan_gap(corner, turn);
+    let mut back_corner = None;
+    let mut flared_onto = None;
     if let (true, Some([pit, wall])) = (boxed, pad) {
         let across_end = plan_gap(pit, wall);
         let reach = 3.0 * (across_end + plan_gap(wall, turn));
@@ -524,9 +540,27 @@ fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from
         } else if let Some((m, u)) = (from..across).rev().find_map(|m| segment_crossing(ray.0, ray.1, plan(toe.vertices[m]), plan(toe.vertices[m + 1])).map(|(_, u)| (m, u))) {
             (kept, join) = (m + 1, point(m, u));
         }
+        let corner_out = [join[0] + way[0] * road, join[1] + way[1] * road, join[2]];
+        back_corner = Some(corner_out);
+        // Flared out past the box: from its back corner at the end's angle to the strip, on the way the line runs past the
+        // turn and back towards the pit, out to the line past the box, or the end of the string if it doesn't get there.
+        let (sin, cos) = end.to_radians().sin_cos();
+        if cos > 1e-9 {
+            let square = [way[1], -way[0]];
+            let along = if square[0] * back[0] + square[1] * back[1] >= 0.0 { square } else { [-square[0], -square[1]] };
+            let slant = [along[0] * cos - way[0] * sin, along[1] * cos - way[1] * sin];
+            let reach = 4.0 * (out(corner_out).abs() + road) / sin.max(0.1);
+            let ray = (plan(corner_out), [corner_out[0] + slant[0] * reach, corner_out[1] + slant[1] * reach]);
+            let met = (from..kept - 1).rev().find_map(|m| segment_crossing(ray.0, ray.1, plan(toe.vertices[m]), plan(toe.vertices[m + 1])).map(|(_, u)| (m, u)));
+            (kept, join) = match met {
+                Some((m, u)) => (m + 1, point(m, u)),
+                None => (from + 1, toe.vertices[from]),
+            };
+            flared_onto = Some(join);
+        }
     }
     // Where the join crosses the toe on its way, nearest the corner first: out over it, back in, and so on.
-    let (span, road) = (plan_gap(corner, join), plan_gap(corner, turn));
+    let span = plan_gap(corner, join);
     let mut crossings: Vec<(f64, usize, f64)> = (kept..across).filter_map(|m| segment_crossing(plan(corner), plan(join), plan(toe.vertices[m]), plan(toe.vertices[m + 1])).map(|(t, u)| (t * span, m, u))).collect();
     crossings.sort_by(|x, y| x.0.total_cmp(&y.0));
     // Through a vertex of the toe the join crosses it once. One that only touches it there goes out and straight back in.
@@ -543,22 +577,17 @@ fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from
         }
     }
     let mut behind = stays(kept);
+    behind.meets.extend(flared_onto);
     if behind.vertices.last().is_some_and(|last| plan_gap(*last, join) < SAME_POINT) {
         behind.vertices.pop();
         behind.batters.pop();
     }
-    // A box pad's far end runs square off the line to its back corner, a road width in from the line as the next road's
-    // wall-side start is, and its back runs from there to that start: the wall above stands round it.
+    // A box pad's far end runs off the line, square or flared, to its back corner, a road width in from the line as the
+    // next road's wall-side start is, and its back runs from there to that start: the wall above stands round it.
     let mut laid: Vec<P3> = Vec::new();
     let mut from_join = join;
     if boxed {
-        let back_corner = match pad {
-            Some([pit, wall]) => {
-                let across_end = plan_gap(pit, wall);
-                [join[0] + (wall[0] - pit[0]) / across_end * road, join[1] + (wall[1] - pit[1]) / across_end * road, join[2]]
-            }
-            None => [join[0] + corner[0] - turn[0], join[1] + corner[1] - turn[1], join[2]],
-        };
+        let back_corner = back_corner.unwrap_or([join[0] + corner[0] - turn[0], join[1] + corner[1] - turn[1], join[2]]);
         laid = laid_on(Polyline { vertices: vec![join, back_corner], closed: false })?;
         from_join = laid.pop().unwrap_or(back_corner);
     }
@@ -1530,7 +1559,7 @@ mod tests {
     const FLOOR: f64 = 100.0;
     /// cos of the angle a 10 % road climbs a 45 degree wall at, where sin(angle) = grade / slope.
     const COS: f64 = 0.994_987_437_106_62;
-    const RAMP: FaceRamp = FaceRamp { start: [E + 100.0, N], back: false, width: 10.0, grade: 0.1, ends_at: None, after_berm: false, turn_join: 50.0, turn_flat: 10.0 };
+    const RAMP: FaceRamp = FaceRamp { start: [E + 100.0, N], back: false, width: 10.0, grade: 0.1, ends_at: None, after_berm: false, turn_join: 50.0, turn_flat: 10.0, turn_end: 90.0 };
 
     fn level(rl: f64) -> TriMesh {
         triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 30, 20, |_, _| rl))
@@ -2069,6 +2098,41 @@ mod tests {
             }
             close(at(27.0, 15.0), 122.0, 1e-6);
             close(at(27.0, 40.0), 122.0, 1e-6);
+        }
+    }
+
+    /// A box's far end flared out past the box at 45 and 60 degrees to the strip, for a 20 m road, a 10 m berm and a 25 m
+    /// box, on a road climbing east and one climbing west (Tim, 2026-11-04). The toe of the wall above runs along the box's
+    /// back, 50 m out from the crest, to its back corner 25 m on past the road's top, and from there straight out at the
+    /// angle to the berm's line past the box, 10 m out: 40 m down, so 40 / tan(angle) on, 40 m at 45 and 23.094 m at 60.
+    /// The flare is flat at RL 120 like the box; 2 m out past its middle the wall above is at RL 122. One sheet, nothing
+    /// crossing.
+    #[test]
+    fn a_box_end_flared_out_past_the_box_runs_from_its_back_corner_at_the_angle() {
+        let low = FaceTarget::Rl(120.0);
+        let rows = [climbed_by(low, &[0]), berm(low, 10.0), turned_on(FaceTarget::Rl(140.0))];
+        for end in [45.0f64, 60.0] {
+            for (ramp, way) in [(ramp_at(500.0), 1.0), (FaceRamp { back: true, ..ramp_at(1000.0) }, -1.0)] {
+                let face = long_face(&rows, &[FaceRamp { width: 20.0, turn_flat: 25.0, turn_end: end, ..ramp }]);
+                assert!(face.no_roads.is_empty(), "{end} {way}: {:?}", face.no_roads);
+                one_clean_sheet(&face);
+                let top = *road_of(&face, 0).pit_edge.vertices.iter().find(|p| (p[2] - 120.0).abs() < 1e-6).expect("the road's top");
+                close(top[1] - N, 20.0, 1e-6);
+                let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe.vertices;
+                let on = 40.0 / end.to_radians().tan();
+                let corner = [top[0] + way * 25.0, top[1] + 50.0];
+                let foot = [top[0] + way * (25.0 + on), top[1] + 10.0];
+                let at = |q: [f64; 2]| toe.iter().position(|p| (p[0] - q[0]).abs() < 1e-6 && (p[1] - q[1]).abs() < 1e-6);
+                let (b, d) = (at(corner).unwrap_or_else(|| panic!("{end} {way}: the back corner: {toe:?}")), at(foot).unwrap_or_else(|| panic!("{end} {way}: the foot of the flare: {toe:?}")));
+                let slant = |p: &P3| ((p[0] - corner[0]) * (foot[1] - corner[1]) - (p[1] - corner[1]) * (foot[0] - corner[0])).abs() / plan_gap([corner[0], corner[1], 0.0], [foot[0], foot[1], 0.0]);
+                assert!(toe[b.min(d)..=b.max(d)].iter().all(|p| slant(p) < 1e-6), "{end} {way}: straight from the back corner to the line: {:?}", &toe[b.min(d)..=b.max(d)]);
+                let height = |x: f64, y: f64| height(&face.surface, x - E, y - N);
+                close(height(top[0] + way * (25.0 + on / 3.0), top[1] + 70.0 / 3.0), 120.0, 1e-6);
+                close(height(foot[0] + way * 5.0, top[1] + 5.0), 120.0, 1e-6);
+                let (sin, cos) = end.to_radians().sin_cos();
+                let middle = [(corner[0] + foot[0]) / 2.0 + way * sin * 2.0, (corner[1] + foot[1]) / 2.0 + cos * 2.0];
+                close(height(middle[0], middle[1]), 122.0, 1e-6);
+            }
         }
     }
 

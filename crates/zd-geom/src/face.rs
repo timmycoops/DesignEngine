@@ -750,6 +750,7 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                                     face.last_wall.insert(open.ramp, last);
                                 }
                                 face.meshes.extend(cut.meshes);
+                                face.meets.extend(cut.meets);
                             }
                             None => face.meshes.push(wall.wall),
                         }

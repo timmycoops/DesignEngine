@@ -19,6 +19,8 @@ const usualMinBench = 1;
 const usualRoadWidth = 30;
 const usualGrade = 10;
 const usualTurnJoin = 50;
+/** A switchback box's far end square across the strip, unless a ramp says otherwise (degrees). */
+const squareEnd = 90;
 
 /** A number that can be typed through half-finished values: it only reports what parses, and goes back to what's held on leaving it. */
 function NumberBox({ value, onChange, title, width = 'w-16', disabled }: { value: number | null; onChange: (v: number) => void; title: string; width?: string; disabled?: boolean }) {
@@ -532,6 +534,16 @@ function RampRow({ ramp, stringName, onWalls, turns, results, swap, onShow, onCh
               value={ramp.turn_flat ?? ramp.width}
               title="Where the road turns back, how long the flat box past its top is, in line with it and on the floor on a grid, in metres, for trucks to turn on: the road, the berm and the next road wide. The next road climbs the other way from its near end, straight across the berm from the top, and the wall above goes round the box. The road's width unless you set it; 0 turns at the top with no box"
               onChange={(turn_flat) => onChange({ turn_flat })}
+            />
+          </Labelled>
+        )}
+        {turns && (
+          <Labelled label="End, °">
+            <NumberBox
+              width="w-12"
+              value={ramp.turn_end ?? squareEnd}
+              title="Where the road turns back on a box, the angle in plan between the box's far end and the strip, in degrees, 30 to 90. 90 is square across, the wall above coming straight down the far end. Less flares it out past the box: the wall runs from the box's back corner at that angle out to the berm's line past it, and the ground it leaves is flat like the box. With a 100 m deep box, 45 runs 100 m on past the box"
+              onChange={(turn_end) => onChange({ turn_end })}
             />
           </Labelled>
         )}

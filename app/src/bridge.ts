@@ -478,6 +478,10 @@ export interface Ramp {
    * across the berm from the top, and the wall above goes round the box. Its width if it's left out, as designs saved
    * before it could be set; 0 turns at the top with no box. */
   turn_flat?: number | null;
+  /** Where it turns back on a box, the angle in plan between the box's far end and the strip, in degrees, 30 to 90: 90,
+   * square across, if it's left out, as designs saved before it could be set. Less flares the far end out past the box,
+   * from its back corner to the berm's line past it. */
+  turn_end?: number | null;
 }
 
 export type FaceDirection = 'up' | 'down';
