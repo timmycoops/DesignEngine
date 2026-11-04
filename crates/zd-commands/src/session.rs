@@ -3,7 +3,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use zd_core::{AppliedChange, LayerId, ObjectId, ObjectRef, Project, RunId};
+use zd_core::{AppliedChange, Colouring, Contours, LayerId, ObjectId, ObjectRef, Project, RunId};
 use zd_io::{ProjectStore, SaveReport};
 
 use crate::builtin::check_solids_made;
@@ -119,6 +119,21 @@ impl Session {
     /// See [`Project::set_objects_visible`].
     pub fn set_objects_visible(&mut self, objects: &[ObjectId], visible: bool) -> usize {
         self.project.set_objects_visible(objects, visible)
+    }
+
+    /// See [`Project::set_looks`]. Display state only: not a command, not undone.
+    pub fn set_looks(&mut self, objects: &[ObjectId], colouring: Option<Colouring>, opacity: Option<f64>) -> usize {
+        self.project.set_looks(objects, colouring, opacity)
+    }
+
+    /// See [`Project::set_layer_opacity`]. Display state only.
+    pub fn set_layer_opacity(&mut self, layer: LayerId, opacity: f64) -> bool {
+        self.project.set_layer_opacity(layer, opacity)
+    }
+
+    /// See [`Project::set_contours`]. Display state only.
+    pub fn set_contours(&mut self, contours: Contours) -> bool {
+        self.project.set_contours(contours)
     }
 
     /// Runs a command by name with JSON parameters. Its changes apply together or not at all, and
