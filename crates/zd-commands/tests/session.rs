@@ -56,6 +56,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "face.project",
             "face.project_step",
             "face.save_design",
+            "face.step",
             "grid.import_vulcan_seam",
             "layer.create",
             "layer.delete",
@@ -94,7 +95,7 @@ fn registry_lists_every_builtin_with_a_spec() {
         ]
     );
     let specs = serde_json::to_value(session.registry().specs()).unwrap();
-    assert_eq!(specs[17]["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
+    assert_eq!(specs[18]["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
     assert_eq!(specs[2]["inputs"][0]["type"], json!({ "kind": "objects" }));
     assert_eq!(specs[0]["params"][1]["type"], json!({ "kind": "texts" }));
 }

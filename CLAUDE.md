@@ -85,7 +85,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   roof and berm on floor per horizon, minimum and maximum bench height, wall type (face, side, end). Side (left or
   right for open highwall strings) is on the line. A face is built oversized, past the pit shell, and the cut does
   the fitting (`docs/decisions/0023-wall-step.md`). `FaceDesign` is the saved object the Face design panel edits:
-  lines, profiles and any shared rules together (`docs/decisions/0024-face-design.md`).
+  lines, profiles and any shared rules together (`docs/decisions/0024-face-design.md`). A face built by hand is a step
+  design: a face design on one string that saves and runs whole as each step is added (`face.step`, one undo a step),
+  with ramps placed by clicking. Faces are built from strings, never by moving a surface's points
+  (`docs/decisions/0044-step-design.md`).
 - `Ramp`: centreline or start point, direction, start and end bench, width, grade (%, ratio or degrees,
   measured on the inside edge by default, which is the pit side), inside and outside taper, entry type, flat or
   graded switchbacks with radius. It's a named ramp in a `FaceProfile`, set by a string drawn across the strips: each line

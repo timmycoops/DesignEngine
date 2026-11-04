@@ -1175,6 +1175,117 @@ fn a_straight_ramp_and_a_switchback_share_a_face() {
     assert!(record.messages.iter().any(|m| m.starts_with("Ramp A: toe: steps 1 to 3") && !m.contains("stopped")), "{:?}", record.messages);
 }
 
+/// A step design, a face design on one string, with `steps` of its profile: a toe 1 km long lying flat on RL 100, and
+/// ramp A, 10 m wide at 10 %, starting 100 m along it.
+fn step_content(toe: ObjectId, ramp: ObjectId, steps: &[serde_json::Value]) -> serde_json::Value {
+    json!({
+        "layer": "steps",
+        "lines": [{ "string": toe, "profile": "Steps", "side": "left", "run_on": [0.0, 0.0] }],
+        "profiles": [{
+            "name": "Steps", "direction": "up", "register": { "kind": "rl", "rl": 100.0 },
+            "steps": steps,
+            "ramps": [{ "name": "A", "string": ramp, "fixed": "start", "heading": "along", "width": 10.0, "grade": 10.0 }],
+        }],
+        "rules": [],
+    })
+}
+
+/// The objects a design's runs made, by name, as the strings and surfaces they are.
+fn made_by(s: &Session, design: ObjectId) -> std::collections::BTreeMap<String, Body> {
+    let mark = AttrValue::Text(design.to_string());
+    s.project().objects().filter(|o| o.attributes.get("face_design") == Some(&mark)).map(|o| (o.name.clone(), o.body.clone())).collect()
+}
+
+/// A face built a step at a time (Tim, 2026-11-05: "create these from a certain position and do these in steps"): each
+/// step saves the design and runs it whole, in one undo. Up from a toe on RL 100: a 45 degree wall to RL 120 with ramp
+/// A on it, a 10 m berm, and a wall to RL 140 that the ramp carries on up. After each step what's there is where it
+/// belongs, ending on a berm hands on the berm's line, and the last step gives exactly what the same design run whole
+/// from the Face design panel does, to 1 µm. Undo takes the last step off, and a step that can't run adds nothing.
+#[test]
+fn a_face_built_a_step_at_a_time_is_the_design_run_whole() {
+    let mut s = Session::with_builtins();
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E, N + 60.0, 0.0], [E + 1000.0, N + 60.0, 0.0]] })).unwrap())[0];
+    let ramp = ramp_string(&mut s, &[[100.0, 40.0], [100.0, 70.0]]);
+    let first = json!({ "step": "project", "to": { "kind": "rl", "rl": 120.0 }, "batter": 45.0, "condition": 0.1, "ramps": ["A"] });
+    let berm = json!({ "step": "berm", "width": 10.0, "condition": 0.1 });
+    let second = json!({ "step": "project", "to": { "kind": "rl", "rl": 140.0 }, "batter": 45.0, "condition": 0.1, "ramps": ["A"] });
+    let design = created(&s.run("face.save_design", json!({ "name": "Steps from toe", "content": step_content(toe, ramp, &[]) })).unwrap())[0];
+    let named = |s: &Session, name: &str| match made_by(s, design).remove(name) {
+        Some(Body::String(line)) => line,
+        other => panic!("{name}: {other:?}"),
+    };
+
+    let one = s.run("face.step", json!({ "design": design, "name": "Steps from toe", "content": step_content(toe, ramp, &[first.clone()]) })).unwrap();
+    assert!(one.messages.iter().any(|m| m.starts_with("Ramp A: toe: step 1,")), "{:?}", one.messages);
+    // 20 m up at 45 degrees is 20 m out, and the road behind the ramp's start moves the toe back.
+    let crest = named(&s, "toe Steps crest 1");
+    assert!(crest.vertices.iter().any(|p| (p[1] - N - 80.0).abs() < 1e-6 && (p[2] - 120.0).abs() < 1e-6), "{:?}", crest.vertices);
+    assert_eq!(s.project().object(design).unwrap().revision, 2, "the step saved the design");
+
+    s.run("face.step", json!({ "design": design, "name": "Steps from toe", "content": step_content(toe, ramp, &[first.clone(), berm.clone()]) })).unwrap();
+    let next = named(&s, "toe Steps next toe");
+    assert!(next.vertices.iter().all(|p| (p[2] - 120.0).abs() < 1e-6), "the berm's line lies on RL 120: {:?}", next.vertices);
+    let east = next.vertices.last().unwrap();
+    assert!((east[0] - E - 1000.0).abs() < 1e-6 && (east[1] - N - 90.0).abs() < 1e-6, "10 m past the crest, clear of the road: {east:?}");
+
+    let all = [first.clone(), berm.clone(), second.clone()];
+    let three = s.run("face.step", json!({ "design": design, "name": "Steps from toe", "content": step_content(toe, ramp, &all) })).unwrap();
+    assert!(three.messages.iter().any(|m| m.starts_with("Ramp A: toe: steps 1 to 3") && !m.contains("stopped")), "{:?}", three.messages);
+    let stepped = made_by(&s, design);
+    assert!(!stepped.contains_key("toe Steps next toe"), "a design ending on a wall has no berm line");
+    let top = named(&s, "toe Steps road A pit edge");
+    assert!((top.vertices.last().unwrap()[2] - 140.0).abs() < 1e-6, "{:?}", top.vertices.last());
+
+    let whole = created(&s.run("face.save_design", json!({ "name": "Whole", "content": step_content(toe, ramp, &all) })).unwrap())[0];
+    s.run("face.project", json!({ "design": whole })).unwrap();
+    let run_whole = made_by(&s, whole);
+    assert_eq!(stepped.keys().collect::<Vec<_>>(), run_whole.keys().collect::<Vec<_>>());
+    for (name, body) in &stepped {
+        let points = |body: &Body| match body {
+            Body::String(line) => line.vertices.clone(),
+            Body::Surface(sheet) => sheet.mesh().vertices.clone(),
+            other => panic!("{name}: {other:?}"),
+        };
+        let (a, b) = (points(body), points(&run_whole[name]));
+        assert_eq!(a.len(), b.len(), "{name}");
+        assert!(a.iter().zip(&b).all(|(p, q)| (0..3).all(|k| (p[k] - q[k]).abs() < 1e-6)), "{name} differs");
+    }
+
+    // Ramp B placed by clicking on the berm's line at 600 m, as the panel places one: a string 5 m either side of the line,
+    // square to it, starting there and running east. The next wall climbs it, and ramp A turns back on that berm beside it.
+    let placed = created(&s.run("string.create", json!({ "name": "Ramp B", "layer": "ramps", "points": [[E + 600.0, N + 85.0, 120.0], [E + 600.0, N + 95.0, 120.0]] })).unwrap())[0];
+    let mut content = step_content(toe, ramp, &[first.clone(), berm.clone(), json!({ "step": "project", "to": { "kind": "rl", "rl": 140.0 }, "batter": 45.0, "condition": 0.1, "ramps": ["A", "B"], "turns": ["A"] })]);
+    content["profiles"][0]["ramps"].as_array_mut().unwrap().push(json!({ "name": "B", "string": placed, "fixed": "start", "heading": "along", "width": 10.0, "grade": 10.0 }));
+    let both = s.run("face.step", json!({ "design": design, "name": "Steps from toe", "content": content })).unwrap();
+    assert!(both.messages.iter().any(|m| m.starts_with("Ramp B: toe: step 3,") && !m.contains("stopped")), "{:?}", both.messages);
+    let b = named(&s, "toe Steps road B pit edge");
+    let (start, end) = (b.vertices[0], *b.vertices.last().unwrap());
+    assert!((start[0] - E - 600.0).abs() < 1e-6 && (start[1] - N - 90.0).abs() < 1e-6 && (start[2] - 120.0).abs() < 1e-6, "B starts where it was placed: {start:?}");
+    let plan = 200.0 * 0.1f64.asin().cos();
+    assert!((end[2] - 140.0).abs() < 1e-6 && (end[0] - start[0] - plan).abs() < 1e-6, "and climbs 20 m east to RL 140, 200 m of road at 10 %: {end:?}");
+    let a = named(&s, "toe Steps road A pit edge");
+    assert!(a.vertices.last().unwrap()[0] < a.vertices.iter().map(|p| p[0]).fold(f64::NEG_INFINITY, f64::max) - 150.0, "A turns back: {:?}", a.vertices);
+    // That step, and placing B's string.
+    s.undo().unwrap();
+    s.undo().unwrap();
+
+    // Undo takes the last step off, once the design run whole is undone too: the design has two steps again, and ends on
+    // the berm's line.
+    for _ in 0..3 {
+        s.undo().unwrap();
+    }
+    let Body::FaceDesign(content) = &s.project().object(design).unwrap().body else { panic!("a design") };
+    assert_eq!(content.profiles[0].steps.len(), 2);
+    assert!(made_by(&s, design).contains_key("toe Steps next toe"));
+
+    // A step that can't run, here a batter from a rule that isn't there, saves nothing and leaves what was built.
+    let broken = json!({ "step": "project", "to": { "kind": "rl", "rl": 140.0 }, "batter": "HW batter" });
+    let before = made_by(&s, design).len();
+    assert!(s.run("face.step", json!({ "design": design, "name": "Steps from toe", "content": step_content(toe, ramp, &[first, berm, broken]) })).is_err());
+    assert_eq!(s.project().object(design).unwrap().revision, 3);
+    assert_eq!(made_by(&s, design).len(), before);
+}
+
 /// Every point of each line on the other, to 1 µm in plan and height, so two strings that differ only in vertices along
 /// a straight run are the same.
 fn same_line(a: &Polyline, b: &Polyline, what: &str) {

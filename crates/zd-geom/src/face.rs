@@ -79,6 +79,9 @@ pub struct Face {
     pub roads: Vec<FaceRoad>,
     /// Ramps that didn't go in. The face is built without them.
     pub no_roads: Vec<NoRoad>,
+    /// Where the face ends on a berm, the berm's line: where a wall after it would start. A step design shows it, and
+    /// its next step starts there.
+    pub berm_line: Option<Polyline>,
 }
 
 /// What registering a toe did.
@@ -346,7 +349,7 @@ fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, directi
             Ok(()) => {
                 face.no_roads.extend(held_back.into_values());
                 face.no_roads.sort_by_key(|n| n.ramp);
-                return Ok(Face { surface: split_at(weld(&face.meshes), &face.meets), benches: face.benches, steps: face.steps, roads: face.roads, no_roads: face.no_roads });
+                return Ok(Face { surface: split_at(weld(&face.meshes), &face.meets), benches: face.benches, steps: face.steps, roads: face.roads, no_roads: face.no_roads, berm_line: face.berm_line });
             }
             Err(e) => {
                 let highest = face.last_wall.iter().max_by_key(|(_, step)| **step).map(|(r, step)| (*r, *step));
@@ -417,6 +420,7 @@ struct FaceParts {
     steps: Vec<StepReport>,
     roads: Vec<FaceRoad>,
     no_roads: Vec<NoRoad>,
+    berm_line: Option<Polyline>,
     /// By ramp: how many walls it's climbed so far, and the last of them.
     walls_climbed: HashMap<usize, usize>,
     last_wall: HashMap<usize, usize>,
@@ -433,6 +437,9 @@ impl FaceParts {
         for bench in &mut self.benches {
             bench.toe = mirrored_line(&bench.toe);
             bench.crest = mirrored_line(&bench.crest);
+        }
+        if let Some(line) = &mut self.berm_line {
+            *line = mirrored_line(line);
         }
         for stretch in self.steps.iter_mut().flat_map(|s| s.no_height.iter_mut().chain(s.no_target.iter_mut())) {
             stretch.from[2] = -stretch.from[2];
@@ -918,6 +925,9 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
             }
         }
     }
+    if matches!(steps.last(), Some(FaceStep::Berm { .. })) {
+        face.berm_line = Some(from.clone());
+    }
     finish_berm(&mut berm_from, &from, face).map_err(|e| fail(steps.len().saturating_sub(1), e))?;
     face.roads.extend(climbing.drain(..).filter_map(Climbing::road));
     // The last crest goes nowhere, so conditioning it only cleans the string: the sheet keeps its own edge.
@@ -1343,6 +1353,27 @@ mod tests {
         close(face.benches[1].crest.vertices[0][1] - N, 145.0, 1e-6);
         close(face.benches[1].crest.vertices[0][2], 50.0, 1e-6);
         close(face.surface.area(), 300.0 * ((20.0 + 30.0) * 2f64.sqrt() + 5.0), 1e-3);
+    }
+
+    /// A face ending on a berm gives the berm's line, where the next wall would start (a step design shows it). Up from
+    /// a level toe at RL 100, a 45 degree wall to RL 120 and a 10 m berm: the line is 30 m out at RL 120. Down from the
+    /// same toe to RL 80, the same the other way. A face ending on a wall has none.
+    #[test]
+    fn a_face_ending_on_a_berm_gives_the_berms_line() {
+        let a = surface(|_, _| 100.0);
+        let toe = line(&[[50.0, 200.0, 100.0], [350.0, 200.0, 100.0]]);
+        for (direction, rl, y) in [(FaceDirection::Up, 120.0, 230.0), (FaceDirection::Down, 80.0, 170.0)] {
+            let face = project_face(&toe, &a, OffsetSide::Left, direction, &[wall(FaceTarget::Rl(rl), 45.0), berm(10.0)], &[]).unwrap();
+            let berm_line = face.berm_line.unwrap_or_else(|| panic!("{direction:?}: no berm line"));
+            for p in &berm_line.vertices {
+                close(p[1] - N, y, 1e-6);
+                close(p[2], rl, 1e-6);
+            }
+            close(berm_line.vertices[0][0] - E, 50.0, 1e-6);
+            close(berm_line.vertices.last().unwrap()[0] - E, 350.0, 1e-6);
+            let walled = project_face(&toe, &a, OffsetSide::Left, direction, &[wall(FaceTarget::Rl(rl), 45.0)], &[]).unwrap();
+            assert!(walled.berm_line.is_none());
+        }
     }
 
     #[test]

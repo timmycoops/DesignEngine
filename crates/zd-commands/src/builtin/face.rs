@@ -270,81 +270,126 @@ impl Command for ProjectDesign {
         let Body::FaceDesign(design) = &object.body else {
             return Err(CommandError::WrongKind { id: p.design, expected: ObjectKind::FaceDesign, found: object.kind() });
         };
-        let problems = design.problems();
-        if !problems.is_empty() {
-            return Err(CommandError::Invalid(problems.join("\n")));
+        run_design(inputs, p.design, design)
+    }
+}
+
+/// `face.step`: a face design saved and run in one go, so each step of a design built a step at a time is one undo.
+/// A step design is a face design on one string, run whole each time a step is added or changed, so a change low down
+/// flows up to the top (the Step design plan in the build plan).
+pub struct Step;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StepParams {
+    /// The design to revise. A step design is saved empty first, as what a run makes is marked with its id.
+    pub design: ObjectId,
+    pub name: String,
+    pub content: FaceDesign,
+}
+
+impl Command for Step {
+    type Params = StepParams;
+    const NAME: &'static str = "face.step";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Save a face design and run it, as one step",
+            inputs: vec![Field::object("design", ObjectKind::FaceDesign, "The design to revise and run")],
+            params: vec![Field::new("name", FieldType::Text, "Name of the design"), Field::new("content", FieldType::Text, "Lines, profiles and rules")],
+            outputs: vec![Field::object("design", ObjectKind::FaceDesign, "The saved design"), Field::object("faces", ObjectKind::Surface, "One face per line, with its toe and crest strings")],
         }
-        let mut targets = Targets { inputs, grids: HashMap::new() };
-        for id in design.profiles.iter().flat_map(surfaces_of) {
-            targets.prepare(id)?;
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let object = inputs.object(p.design)?;
+        if !matches!(object.body, Body::FaceDesign(_)) {
+            return Err(CommandError::WrongKind { id: p.design, expected: ObjectKind::FaceDesign, found: object.kind() });
         }
-        let regions = solid_regions(inputs, design)?;
-        let mut changes: Vec<Change> = inputs.objects().filter(|o| o.attributes.get(MADE_BY) == Some(&AttrValue::Text(p.design.to_string()))).map(|o| Change::Delete { id: o.id, base: o.revision }).collect();
-        let mut messages = Vec::new();
-        let ramp_strings: HashMap<ObjectId, &Polyline> = design.profiles.iter().flat_map(|profile| &profile.ramps).filter(|ramp| ramp.fixed != RampFixed::Line).filter_map(|ramp| Some((ramp.string?, inputs.string(ramp.string?).ok()?.1))).collect();
-        let mut crossing: HashSet<(&str, &str)> = HashSet::new();
-        let mut not_crossing: HashMap<(&str, &str), Vec<&str>> = HashMap::new();
-        let mut runs: Vec<(&FaceLine, ObjectId)> = Vec::new();
-        for line in &design.lines {
-            for id in strings_of(inputs, line, p.design, &ramp_strings)? {
-                if !runs.iter().any(|(other, already)| *already == id && other.profile == line.profile) {
-                    runs.push((line, id));
-                }
-            }
-        }
-        for &(_, id) in &runs {
-            inputs.string(id)?;
-        }
-        // Strips stand alone, so they run side by side.
-        let run = FaceRun { design, id: p.design, inputs, targets: &targets, regions: &regions, ramp_strings: &ramp_strings };
-        let mut not_built = Vec::new();
-        for strip in in_parallel(&runs, |&(line, id)| run.strip(line, id)) {
-            let strip = match strip {
-                Ok(strip) => strip,
-                Err(CommandError::Invalid(why)) => {
-                    not_built.push(why.replace("invalid input: ", ""));
-                    continue;
-                }
-                Err(e) => return Err(e),
-            };
-            changes.extend(strip.changes);
-            messages.extend(strip.messages);
-            crossing.extend(strip.crossing.iter().map(|ramp| (strip.profile, *ramp)));
-            for ramp in &strip.missing {
-                not_crossing.entry((strip.profile, *ramp)).or_default().push(strip.name);
-            }
-        }
-        // A strip that can't be built leaves the others standing, and only a run with nothing to show is refused.
-        if !not_built.is_empty() && not_built.len() == runs.len() {
-            return Err(CommandError::Invalid(not_built.join("\n")));
-        }
-        messages.extend(not_built.iter().map(|why| format!("{why}. {NOT_BUILT}")));
-        for profile in &design.profiles {
-            for ramp in &profile.ramps {
-                let key = (profile.name.as_str(), ramp.name.as_str());
-                if profile.walls_of(&ramp.name).is_none() {
-                    messages.push(format!("Ramp {}: it isn't on a wall yet, so it made no road", ramp.name));
-                } else if ramp.fixed == RampFixed::Line {
-                    if !crossing.contains(&key) {
-                        messages.push(format!("Ramp {}: no road {} came out on any line using {}, so it has nothing to carry on from", ramp.name, ramp.name, profile.name));
-                    } else if let Some(missed) = not_crossing.get(&key) {
-                        messages.push(format!("Ramp {}: no road {} came out on {}, so it has nothing to carry on from there", ramp.name, ramp.name, missed.join(", ")));
-                    }
-                } else if !ramp.string.is_some_and(|id| ramp_strings.contains_key(&id)) {
-                    messages.push(format!("Ramp {}: its string has gone, so it made no road", ramp.name));
-                } else if !crossing.contains(&key) {
-                    messages.push(format!("Ramp {}: its string doesn't cross any line using {}", ramp.name, profile.name));
-                } else if let Some(missed) = not_crossing.get(&key) {
-                    messages.push(format!("Ramp {}: its string doesn't cross {}", ramp.name, missed.join(", ")));
-                }
-            }
-        }
-        let mut outcome = Outcome::new(changes);
-        for message in messages {
-            outcome = outcome.message(message);
-        }
+        let mut outcome = run_design(inputs, p.design, &p.content)?;
+        let body = Body::FaceDesign(Arc::new(p.content.clone()));
+        outcome.changes.insert(0, Change::Revise { id: p.design, base: object.revision, name: Some(p.name.clone()), layer: None, attributes: None, body: Some(body) });
         Ok(outcome)
     }
+}
+
+/// Every line of a design through its profile, in place of what the last run of the design made.
+fn run_design(inputs: &Inputs<'_>, design_id: ObjectId, design: &FaceDesign) -> Result<Outcome, CommandError> {
+    let problems = design.problems();
+    if !problems.is_empty() {
+        return Err(CommandError::Invalid(problems.join("\n")));
+    }
+    let mut targets = Targets { inputs, grids: HashMap::new() };
+    for id in design.profiles.iter().flat_map(surfaces_of) {
+        targets.prepare(id)?;
+    }
+    let regions = solid_regions(inputs, design)?;
+    let mut changes: Vec<Change> = inputs.objects().filter(|o| o.attributes.get(MADE_BY) == Some(&AttrValue::Text(design_id.to_string()))).map(|o| Change::Delete { id: o.id, base: o.revision }).collect();
+    let mut messages = Vec::new();
+    let ramp_strings: HashMap<ObjectId, &Polyline> = design.profiles.iter().flat_map(|profile| &profile.ramps).filter(|ramp| ramp.fixed != RampFixed::Line).filter_map(|ramp| Some((ramp.string?, inputs.string(ramp.string?).ok()?.1))).collect();
+    let mut crossing: HashSet<(&str, &str)> = HashSet::new();
+    let mut not_crossing: HashMap<(&str, &str), Vec<&str>> = HashMap::new();
+    let mut runs: Vec<(&FaceLine, ObjectId)> = Vec::new();
+    for line in &design.lines {
+        for id in strings_of(inputs, line, design_id, &ramp_strings)? {
+            if !runs.iter().any(|(other, already)| *already == id && other.profile == line.profile) {
+                runs.push((line, id));
+            }
+        }
+    }
+    for &(_, id) in &runs {
+        inputs.string(id)?;
+    }
+    // Strips stand alone, so they run side by side.
+    let run = FaceRun { design, id: design_id, inputs, targets: &targets, regions: &regions, ramp_strings: &ramp_strings };
+    let mut not_built = Vec::new();
+    for strip in in_parallel(&runs, |&(line, id)| run.strip(line, id)) {
+        let strip = match strip {
+            Ok(strip) => strip,
+            Err(CommandError::Invalid(why)) => {
+                not_built.push(why.replace("invalid input: ", ""));
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        changes.extend(strip.changes);
+        messages.extend(strip.messages);
+        crossing.extend(strip.crossing.iter().map(|ramp| (strip.profile, *ramp)));
+        for ramp in &strip.missing {
+            not_crossing.entry((strip.profile, *ramp)).or_default().push(strip.name);
+        }
+    }
+    // A strip that can't be built leaves the others standing, and only a run with nothing to show is refused.
+    if !not_built.is_empty() && not_built.len() == runs.len() {
+        return Err(CommandError::Invalid(not_built.join("\n")));
+    }
+    messages.extend(not_built.iter().map(|why| format!("{why}. {NOT_BUILT}")));
+    for profile in &design.profiles {
+        for ramp in &profile.ramps {
+            let key = (profile.name.as_str(), ramp.name.as_str());
+            if profile.walls_of(&ramp.name).is_none() {
+                messages.push(format!("Ramp {}: it isn't on a wall yet, so it made no road", ramp.name));
+            } else if ramp.fixed == RampFixed::Line {
+                if !crossing.contains(&key) {
+                    messages.push(format!("Ramp {}: no road {} came out on any line using {}, so it has nothing to carry on from", ramp.name, ramp.name, profile.name));
+                } else if let Some(missed) = not_crossing.get(&key) {
+                    messages.push(format!("Ramp {}: no road {} came out on {}, so it has nothing to carry on from there", ramp.name, ramp.name, missed.join(", ")));
+                }
+            } else if !ramp.string.is_some_and(|id| ramp_strings.contains_key(&id)) {
+                messages.push(format!("Ramp {}: its string has gone, so it made no road", ramp.name));
+            } else if !crossing.contains(&key) {
+                messages.push(format!("Ramp {}: its string doesn't cross any line using {}", ramp.name, profile.name));
+            } else if let Some(missed) = not_crossing.get(&key) {
+                messages.push(format!("Ramp {}: its string doesn't cross {}", ramp.name, missed.join(", ")));
+            }
+        }
+    }
+    let mut outcome = Outcome::new(changes);
+    for message in messages {
+        outcome = outcome.message(message);
+    }
+    Ok(outcome)
 }
 
 /// How the run ends a line about a strip it couldn't build. The panel shows these in red.
@@ -451,6 +496,10 @@ impl<'a> FaceRun<'a, '_> {
                 attributes.extend(top);
             }
             changes.push(crest);
+        }
+        // A design ending on a berm hands on the berm's line, where the next wall would start.
+        if let Some(line) = &face.berm_line {
+            changes.push(create(format!("{base} next {start}"), Body::String(line.clone())));
         }
         for road in &face.roads {
             let name = &ramps[road.ramp].name;
