@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceDirection, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
-use zd_geom::{COINCIDENT, EdgeRule, Face, FaceRamp, FaceStep, FaceTarget, GeomError, OffsetSide, SolidRegion, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_face, project_wall, register_toe, run_on, triangulate_grid};
+use zd_geom::{COINCIDENT, EdgeRule, Face, FaceRamp, FaceRoad, FaceStep, FaceTarget, GeomError, OffsetSide, RoadTop, SolidRegion, at_line_heights, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_face, project_wall, register_toe, run_on, triangulate_grid};
 
 use super::{SideParam, in_parallel};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
@@ -199,6 +199,57 @@ const MADE_BY: &str = "face_design";
 /// The attributes on a road's edges: its ramp, and the face it's cut into, so it can be shown with it.
 const ROAD: &str = "road";
 const ROAD_FACE: &str = "road_face";
+/// Where a road came out on a crest, so a design run from that crest carries it on: `road_top A pit` and
+/// `road_top A wall` are its top corners as "x y z", then its heading along the string, width and grade
+/// (decision 0041).
+const ROAD_TOP: &str = "road_top";
+
+fn road_top_key(ramp: &str, what: &str) -> String {
+    format!("{ROAD_TOP} {ramp} {what}")
+}
+
+/// What a road leaves on the crest it came out on.
+fn road_top_attributes(ramp: &Ramp, road: &FaceRoad) -> Attributes {
+    let point = |p: Option<&[f64; 3]>| p.map(|p| AttrValue::Text(format!("{} {} {}", p[0], p[1], p[2])));
+    let heading = AttrValue::Text(if road.back { "back" } else { "along" }.into());
+    [("pit", point(road.pit_edge.vertices.last())), ("wall", point(road.wall_edge.vertices.last())), ("heading", Some(heading)), ("width", Some(AttrValue::Number(ramp.width))), ("grade", Some(AttrValue::Number(ramp.grade)))]
+        .into_iter()
+        .filter_map(|(what, value)| Some((road_top_key(&ramp.name, what), value?)))
+        .collect()
+}
+
+/// Where the design below left a ramp's road on a line, and whether it was running back against the string.
+fn road_top_on(attributes: &Attributes, ramp: &str) -> Option<(RoadTop, bool)> {
+    let point = |what: &str| -> Option<[f64; 3]> {
+        let AttrValue::Text(text) = attributes.get(&road_top_key(ramp, what))? else { return None };
+        let numbers: Vec<f64> = text.split_whitespace().map(str::parse).collect::<Result<_, _>>().ok()?;
+        match numbers[..] {
+            [x, y, z] if numbers.iter().all(|c| c.is_finite()) => Some([x, y, z]),
+            _ => None,
+        }
+    };
+    let back = attributes.get(&road_top_key(ramp, "heading")) == Some(&AttrValue::Text("back".into()));
+    Some((RoadTop { pit: point("pit")?, wall: point("wall")? }, back))
+}
+
+/// How far a line passes from a point, in plan (m).
+fn plan_gap_to(line: &Polyline, p: [f64; 3]) -> f64 {
+    line.vertices
+        .windows(2)
+        .map(|w| {
+            let (d, q) = ([w[1][0] - w[0][0], w[1][1] - w[0][1]], [p[0] - w[0][0], p[1] - w[0][1]]);
+            let length = d[0] * d[0] + d[1] * d[1];
+            let t = if length > 0.0 { ((q[0] * d[0] + q[1] * d[1]) / length).clamp(0.0, 1.0) } else { 0.0 };
+            (q[0] - t * d[0]).hypot(q[1] - t * d[1])
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// How far a road's top may be off the line it carries on from before the run says so (m): further than conditioning
+/// can move a line.
+const TOP_OFF_LINE: f64 = MOST_TOLERANCE;
+/// How close a registered toe has to be to the line it came from, past what conditioning moved it, to be on it (m).
+const ON_THE_LINE: f64 = 1e-6;
 
 impl Command for ProjectDesign {
     type Params = ProjectDesignParams;
@@ -230,7 +281,7 @@ impl Command for ProjectDesign {
         let regions = solid_regions(inputs, design)?;
         let mut changes: Vec<Change> = inputs.objects().filter(|o| o.attributes.get(MADE_BY) == Some(&AttrValue::Text(p.design.to_string()))).map(|o| Change::Delete { id: o.id, base: o.revision }).collect();
         let mut messages = Vec::new();
-        let ramp_strings: HashMap<ObjectId, &Polyline> = design.profiles.iter().flat_map(|profile| &profile.ramps).filter_map(|ramp| Some((ramp.string, inputs.string(ramp.string).ok()?.1))).collect();
+        let ramp_strings: HashMap<ObjectId, &Polyline> = design.profiles.iter().flat_map(|profile| &profile.ramps).filter(|ramp| ramp.fixed != RampFixed::Line).filter_map(|ramp| Some((ramp.string?, inputs.string(ramp.string?).ok()?.1))).collect();
         let mut crossing: HashSet<(&str, &str)> = HashSet::new();
         let mut not_crossing: HashMap<(&str, &str), Vec<&str>> = HashMap::new();
         let mut runs: Vec<(&FaceLine, ObjectId)> = Vec::new();
@@ -273,7 +324,13 @@ impl Command for ProjectDesign {
                 let key = (profile.name.as_str(), ramp.name.as_str());
                 if profile.walls_of(&ramp.name).is_none() {
                     messages.push(format!("Ramp {}: it isn't on a wall yet, so it made no road", ramp.name));
-                } else if !ramp_strings.contains_key(&ramp.string) {
+                } else if ramp.fixed == RampFixed::Line {
+                    if !crossing.contains(&key) {
+                        messages.push(format!("Ramp {}: no road {} came out on any line using {}, so it has nothing to carry on from", ramp.name, ramp.name, profile.name));
+                    } else if let Some(missed) = not_crossing.get(&key) {
+                        messages.push(format!("Ramp {}: no road {} came out on {}, so it has nothing to carry on from there", ramp.name, ramp.name, missed.join(", ")));
+                    }
+                } else if !ramp.string.is_some_and(|id| ramp_strings.contains_key(&id)) {
                     messages.push(format!("Ramp {}: its string has gone, so it made no road", ramp.name));
                 } else if !crossing.contains(&key) {
                     messages.push(format!("Ramp {}: its string doesn't cross any line using {}", ramp.name, profile.name));
@@ -335,7 +392,12 @@ impl<'a> FaceRun<'a, '_> {
                 &floor
             }
         };
-        let (toe, register) = register_toe(&shaped, registered).map_err(refuse)?;
+        let (mut toe, register) = register_toe(&shaped, registered).map_err(refuse)?;
+        // A crest another design's run made is already where that design left it, so a design run from it starts from
+        // the same line as one design would, and only its run-on lies on the grid.
+        if string.attributes.get(MADE_BY).is_some_and(|by| *by != AttrValue::Text(self.id.to_string())) {
+            toe = at_line_heights(&toe, path, profile.condition.unwrap_or(0.0) + ON_THE_LINE);
+        }
         let (side, faces) = match line.side {
             WallSide::Left => (OffsetSide::Left, OffsetSide::Right),
             WallSide::Right => (OffsetSide::Right, OffsetSide::Left),
@@ -343,11 +405,12 @@ impl<'a> FaceRun<'a, '_> {
         let rules = LineRules { design, string: path, string_name: &string.name, faces, regions: self.regions, inputs };
         // Where a ramp lands on this strip comes from the strip's face with no roads on it.
         let mut placed = PlacedRamps::default();
-        if profile.ramps.iter().any(|ramp| profile.walls_of(&ramp.name).is_some()) {
+        if profile.ramps.iter().any(|ramp| ramp.fixed != RampFixed::Line && profile.walls_of(&ramp.name).is_some()) {
             let none = walls_ramps(&profile.steps, &[]);
             let plain = project_face(&toe, registered, side, profile.direction, &steps_of(&rules, &profile.steps, targets, &none)?, &[]).map_err(refuse)?;
             placed = place_ramps(profile, &plain, self.ramp_strings, &string.name);
         }
+        carry_on_ramps(profile, &toe, &string.attributes, &string.name, &mut placed);
         let ramps: Vec<&Ramp> = placed.on_strip.iter().map(|(ramp, _)| *ramp).collect();
         let specs: Vec<FaceRamp> = placed.on_strip.iter().map(|(_, spec)| *spec).collect();
         let on_walls = walls_ramps(&profile.steps, &ramps);
@@ -358,9 +421,10 @@ impl<'a> FaceRun<'a, '_> {
         messages.extend(placed.notes);
         let names: Vec<&str> = ramps.iter().map(|ramp| ramp.name.as_str()).collect();
         messages.extend((0..ramps.len()).map(|r| ramp_report(&names, &string.name, r, &face)));
-        // What a run makes keeps its string's attributes, so a strip's number carries on to its face.
+        // What a run makes keeps its string's attributes, so a strip's number carries on to its face. Not the roads that
+        // came out on the string, which this run has carried on or left.
         let attributes = || {
-            let mut kept = string.attributes.clone();
+            let mut kept: Attributes = string.attributes.iter().filter(|(key, _)| !key.starts_with(&format!("{ROAD_TOP} "))).map(|(key, value)| (key.clone(), value.clone())).collect();
             kept.insert(MADE_BY.to_string(), AttrValue::Text(self.id.to_string()));
             kept
         };
@@ -370,9 +434,23 @@ impl<'a> FaceRun<'a, '_> {
             FaceDirection::Up => ("toe", "crest"),
             FaceDirection::Down => ("crest", "toe"),
         };
+        // A road that came out on a crest leaves its top there, for a design run from that crest to carry it on. One that
+        // stopped short has nowhere to go, and going down waits.
+        let mut tops: HashMap<usize, Attributes> = HashMap::new();
+        if profile.direction == FaceDirection::Up {
+            for road in face.roads.iter().filter(|road| !face.no_roads.iter().any(|stopped| stopped.ramp == road.ramp)) {
+                if let Some(k) = face.benches.iter().position(|bench| bench.step == road.steps[1]) {
+                    tops.entry(k).or_default().extend(road_top_attributes(ramps[road.ramp], road));
+                }
+            }
+        }
         for (k, bench) in face.benches.iter().enumerate() {
             changes.push(create(format!("{base} {start} {}", k + 1), Body::String(bench.toe.clone())));
-            changes.push(create(format!("{base} {end} {}", k + 1), Body::String(bench.crest.clone())));
+            let mut crest = create(format!("{base} {end} {}", k + 1), Body::String(bench.crest.clone()));
+            if let (Change::Create { attributes, .. }, Some(top)) = (&mut crest, tops.remove(&k)) {
+                attributes.extend(top);
+            }
+            changes.push(crest);
         }
         for road in &face.roads {
             let name = &ramps[road.ramp].name;
@@ -409,8 +487,8 @@ struct PlacedRamps<'r> {
 /// that says how far along the strip it comes out, so either way a strip's own stretch of string sets its road.
 fn place_ramps<'r>(profile: &'r FaceProfile, plain: &Face, ramp_strings: &HashMap<ObjectId, &Polyline>, strip: &str) -> PlacedRamps<'r> {
     let mut placed = PlacedRamps::default();
-    for ramp in &profile.ramps {
-        let (Some([first, last]), Some(string)) = (profile.walls_of(&ramp.name), ramp_strings.get(&ramp.string)) else { continue };
+    for ramp in profile.ramps.iter().filter(|ramp| ramp.fixed != RampFixed::Line) {
+        let (Some([first, last]), Some(string)) = (profile.walls_of(&ramp.name), ramp.string.and_then(|id| ramp_strings.get(&id))) else { continue };
         let toe = plain.benches.iter().find(|bench| bench.step >= first && bench.step <= last).map(|bench| &bench.toe);
         let crossings = toe.map_or_else(Vec::new, |toe| plan_crossings(string, toe));
         let Some(crossed) = crossings.first() else {
@@ -424,6 +502,28 @@ fn place_ramps<'r>(profile: &'r FaceProfile, plain: &Face, ramp_strings: &HashMa
         placed.on_strip.push((ramp, face_ramp(ramp, crossed.at)));
     }
     placed
+}
+
+/// The ramps that carry on from the line: each starts where the design below left its road on this strip's string,
+/// heading the way it was. One that isn't on the first wall starts afresh on its first wall, from the nearest place.
+fn carry_on_ramps<'r>(profile: &'r FaceProfile, toe: &Polyline, attributes: &Attributes, strip: &str, placed: &mut PlacedRamps<'r>) {
+    let first_wall = profile.steps.iter().position(|step| matches!(step, ProfileStep::Project { .. }));
+    for ramp in profile.ramps.iter().filter(|ramp| ramp.fixed == RampFixed::Line) {
+        let Some([first, _]) = profile.walls_of(&ramp.name) else { continue };
+        let Some((top, back)) = road_top_on(attributes, &ramp.name) else {
+            placed.missing.push(&ramp.name);
+            continue;
+        };
+        placed.crossing.push(&ramp.name);
+        let off = plan_gap_to(toe, top.pit).max(plan_gap_to(toe, top.wall));
+        if off > TOP_OFF_LINE {
+            placed.notes.push(format!("Ramp {}: {strip}: its top is {off:.1} m off this line, so it carries on from the nearest place on it", ramp.name));
+        }
+        if Some(first) != first_wall {
+            placed.notes.push(format!("Ramp {}: {strip}: it isn't on the first wall, so it starts afresh on step {} from the nearest place to its top", ramp.name, first + 1));
+        }
+        placed.on_strip.push((ramp, FaceRamp { back, carries_on: Some(top), ..face_ramp(ramp, [top.wall[0], top.wall[1]]) }));
+    }
 }
 
 /// The strings a line runs on. For a layer that's what is on it now, hidden or not, less ramp strings and what
@@ -443,7 +543,7 @@ fn strings_of(inputs: &Inputs<'_>, line: &FaceLine, design: ObjectId, ramp_strin
 
 fn face_ramp(ramp: &Ramp, at: [f64; 2]) -> FaceRamp {
     let ends_at = (ramp.fixed == RampFixed::End).then_some(at);
-    FaceRamp { start: at, back: ramp.heading == RampHeading::Back, width: ramp.width, grade: ramp.grade / 100.0, ends_at, after_berm: ramp.berm == RampBerm::After, turn_join: ramp.turn_join, turn_flat: ramp.flat_before_turn(), turn_end: ramp.box_end() }
+    FaceRamp { start: at, back: ramp.heading == RampHeading::Back, width: ramp.width, grade: ramp.grade / 100.0, ends_at, after_berm: ramp.berm == RampBerm::After, turn_join: ramp.turn_join, turn_flat: ramp.flat_before_turn(), carries_on: None, turn_end: ramp.box_end() }
 }
 
 /// The surfaces a profile names.

@@ -104,12 +104,13 @@ pub struct FaceProfile {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Ramp {
-    /// What a wall row calls it: a letter, usually.
+    /// What a wall row calls it: a letter, usually. A ramp from the line carries on the road of that name.
     pub name: String,
-    /// A string drawn across the strips. Each line it crosses gets a road.
-    pub string: ObjectId,
+    /// A string drawn across the strips. Each line it crosses gets a road. A ramp from the line has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub string: Option<ObjectId>,
     /// Which end of the road goes by where the string crosses the toe of its first wall: it starts there, or it
-    /// comes out on its last crest that far along the strip.
+    /// comes out on its last crest that far along the strip. Or it has no string and carries on from the line.
     pub fixed: RampFixed,
     pub heading: RampHeading,
     /// Square to the road (m).
@@ -248,6 +249,9 @@ fn ramps_less_old_ones<'de, D: serde::Deserializer<'de>>(ramps: D) -> Result<Vec
 pub enum RampFixed {
     Start,
     End,
+    /// It carries on from where its road came out on each line's string, as the design run from below left it there,
+    /// with no string of its own. See `docs/decisions/0041-roads-carry-on.md`.
+    Line,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -516,14 +520,22 @@ fn check_ramps(profile: &FaceProfile, problems: &mut Vec<String>) {
             let place = walls.iter().position(|(at, _)| at == k);
             let on_it = place.is_some_and(|p| walls[p].1.contains(&ramp.name));
             let on_the_one_before = place.is_some_and(|p| p > 0 && walls[p - 1].1.contains(&ramp.name));
+            // A road from the line climbed the wall before this design's first in the design below.
+            let carried_on = ramp.fixed == RampFixed::Line && place == Some(0);
             if !on_it {
                 problems.push(format!("{name} turns on step {} but isn't on that wall", k + 1));
-            } else if !on_the_one_before {
+            } else if !on_the_one_before && !carried_on {
                 problems.push(format!("{name} turns on step {}, its first wall: a road turns back between two walls it's on", k + 1));
             }
         }
         if !turning.is_empty() && ramp.fixed == RampFixed::End {
             problems.push(format!("{name} has its end held and turns back: a road that turns starts where its string crosses, for now"));
+        }
+        if ramp.string.is_none() && ramp.fixed != RampFixed::Line {
+            problems.push(format!("{name} has no string: draw one across the strips, or set it to carry on from the line"));
+        }
+        if ramp.fixed == RampFixed::Line && profile.direction == FaceDirection::Down {
+            problems.push(format!("{name} carries on from the line, which a profile going down can't do yet"));
         }
     }
 }
@@ -662,7 +674,32 @@ mod tests {
     }
 
     fn ramp() -> Ramp {
-        Ramp { name: "A".into(), string: ObjectId::new(), fixed: RampFixed::End, heading: RampHeading::Along, width: 30.0, grade: 10.0, berm: RampBerm::After, turn_join: USUAL_TURN_JOIN, turn_flat: None, turn_end: None }
+        Ramp { name: "A".into(), string: Some(ObjectId::new()), fixed: RampFixed::End, heading: RampHeading::Along, width: 30.0, grade: 10.0, berm: RampBerm::After, turn_join: USUAL_TURN_JOIN, turn_flat: None, turn_end: None }
+    }
+
+    /// A ramp that carries on from the line has no string, saves without one, and may turn back on its first wall,
+    /// which in the design below was the wall before. One that starts or ends on a string needs it, and a profile
+    /// going down can't carry a ramp on yet (decision 0041).
+    #[test]
+    fn a_ramp_from_the_line_has_no_string_and_may_turn_on_the_first_wall() {
+        let mut d = with_a_ramp();
+        d.profiles[0].ramps[0].fixed = RampFixed::Line;
+        d.profiles[0].ramps[0].string = None;
+        assert!(d.problems().is_empty(), "{:?}", d.problems());
+        let text = serde_json::to_string(&d).unwrap();
+        assert!(text.contains(r#""ramps":[{"name":"A","fixed":"line","#), "saved with no string: {text}");
+        assert_eq!(serde_json::from_str::<FaceDesign>(&text).unwrap(), d);
+        let ProfileStep::Project { turns, .. } = &mut d.profiles[0].steps[0] else { panic!("step 1 isn't a wall") };
+        turns.push("A".into());
+        assert!(d.problems().is_empty(), "{:?}", d.problems());
+        d.profiles[0].ramps[0].fixed = RampFixed::Start;
+        let problems = d.problems();
+        assert!(problems.iter().any(|p| p.contains("Ramp A on Highwall has no string")), "{problems:?}");
+        assert!(problems.iter().any(|p| p.contains("turns on step 1, its first wall")), "{problems:?}");
+        let mut down = with_a_ramp();
+        down.profiles[0].ramps[0].fixed = RampFixed::Line;
+        down.profiles[0].direction = FaceDirection::Down;
+        assert!(down.problems().iter().any(|p| p.contains("carries on from the line, which a profile going down can't do yet")), "{:?}", down.problems());
     }
 
     /// A ramp runs flat its own width after a turn unless it says otherwise, and one saved before it could say does

@@ -449,8 +449,9 @@ export type ProfileStep =
 /** The way a road runs along its string. */
 export type RampHeading = 'along' | 'back';
 
-/** Which end of a road is where its string crosses. With its end there, the run moves its start along the toe until it comes out there. */
-export type RampFixed = 'start' | 'end';
+/** Which end of a road is where its string crosses. With its end there, the run moves its start along the toe until it comes out there.
+ * `line`: it has no string, and carries on the road of its name from where the design below left it on each line. */
+export type RampFixed = 'start' | 'end' | 'line';
 
 /** How a road gets past a berm between two walls it climbs: after it, crossing the full berm level and straight across
  * to start up the next wall from its toe, or through it at its grade, with the berm narrowing to nothing at the road. */
@@ -460,8 +461,8 @@ export type RampBerm = 'after' | 'through';
 export interface Ramp {
   /** What a wall row calls it: a letter, usually. */
   name: string;
-  /** A string drawn across the strips. Each line it crosses gets a road. */
-  string: string;
+  /** A string drawn across the strips. Each line it crosses gets a road. A ramp from the line has none. */
+  string?: string | null;
   fixed: RampFixed;
   heading: RampHeading;
   /** Square to the road, in metres. */
