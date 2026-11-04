@@ -28,7 +28,10 @@ import { cn } from 'cn';
 import {
   benchConfig,
   buildSnapIndex,
+  type Colouring,
+  type Contours,
   type DeswikLayer,
+  type Display,
   deswikLayers,
   spryContents,
   type LogEntry,
@@ -42,11 +45,16 @@ import {
   runCommand,
   runLog,
   saveProject,
+  setContours,
+  setLayerOpacity,
   setLayerVisible,
+  setLooks,
   setObjectsVisible,
   snapRay,
   undo,
   type Vec3,
+  withLayerOpacity,
+  withLooks,
 } from './bridge';
 import { runChecks } from './bench/runChecks';
 import { Button } from './design-system/ui/button';
@@ -62,7 +70,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './desi
 import { type DeswikChoice, DeswikImportDialog, type ImportSource, type PickableLayer } from './panels/DeswikImportDialog';
 import { type NotASolid, RepairDialog } from './panels/RepairDialog';
 import { IssueMarkers } from './viewport/markers';
-import { type SeamShown, SceneSync } from './viewport/sceneSync';
+import { type RlShown, type SeamShown, SceneSync } from './viewport/sceneSync';
 import { planPoint, SectionView } from './viewport/section';
 import { RoadLayer } from './viewport/roads';
 import { type Mode, StringLayer } from './viewport/strings';
@@ -159,6 +167,7 @@ export default function App() {
   const [activeLayer, setActiveLayerState] = useState('design');
   const [selected, setSelected] = useState<string | null>(null);
   const [seamViews, setSeamViews] = useState<SeamShown[]>([]);
+  const [rlShown, setRlShown] = useState<RlShown>({ shared: false, objects: [] });
   const summaryRef = useRef(summary);
   summaryRef.current = summary;
   const seamsRef = useRef<SeamShown[]>([]);
@@ -301,7 +310,8 @@ export default function App() {
     let viewport: Viewport | null = null;
     let detach = () => {};
     let cancelled = false;
-    void Viewport.create(viewportHost).then(async (created) => {
+    // In bench mode `--webgl` runs the viewport on WebGL2, so the fallback can be checked where WebGPU is there.
+    void benchConfig().then((config) => Viewport.create(viewportHost, { webgl: config?.webgl ?? false })).then(async (created) => {
       if (cancelled) return created.dispose();
       viewport = created;
       viewportRef.current = created;
@@ -311,6 +321,7 @@ export default function App() {
       crossingMarkersRef.current = new IssueMarkers(created);
       const sync = new SceneSync(created);
       sync.onSeams = onSeams;
+      sync.onRl = setRlShown;
       sync.onError = (text) => setStatus({ text, error: true });
       syncRef.current = sync;
       const section = new SectionView(created);
@@ -631,6 +642,46 @@ export default function App() {
     [attempt, show],
   );
 
+  /** Puts new looks on screen: no geometry moves, so only the summary's display and the materials change. */
+  const restyle = useCallback((display: Display) => {
+    const current = summaryRef.current;
+    if (!current) return;
+    const next = { ...current, display };
+    summaryRef.current = next;
+    setSummary(next);
+    void syncRef.current?.apply(next);
+  }, []);
+
+  const changeLooks = useCallback(
+    (objects: string[], colouring: Colouring | null, opacity: number | null, commit = true) => {
+      const current = summaryRef.current;
+      if (!current) return;
+      restyle(withLooks(current.display, objects, colouring, opacity));
+      if (commit) void attempt(async () => restyle(await setLooks(objects, colouring, opacity)));
+    },
+    [attempt, restyle],
+  );
+
+  const changeLayerOpacity = useCallback(
+    (layer: string, opacity: number, commit = true) => {
+      const current = summaryRef.current;
+      if (!current) return;
+      restyle(withLayerOpacity(current.display, layer, opacity));
+      if (commit) void attempt(async () => restyle(await setLayerOpacity(layer, opacity)));
+    },
+    [attempt, restyle],
+  );
+
+  const changeContours = useCallback(
+    (contours: Contours) => {
+      const current = summaryRef.current;
+      if (!current) return;
+      restyle({ ...current.display, contours });
+      void attempt(async () => restyle(await setContours(contours)));
+    },
+    [attempt, restyle],
+  );
+
   const workspace = useMemo<WorkspaceState>(
     () => ({
       summary,
@@ -646,6 +697,10 @@ export default function App() {
       setActiveLayer,
       setLayerVisible: setVisible,
       setObjectsVisible: setObjectsShown,
+      setLooks: changeLooks,
+      setLayerOpacity: changeLayerOpacity,
+      setContours: changeContours,
+      rlShown,
       run,
       runRecord,
       seamViews,
@@ -663,7 +718,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, marked, toggleMark, setActiveLayer, setVisible, setObjectsShown, run, runRecord, clearRefusal, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, pickPoint, pickLine, pickString, mode, typeVertex],
+    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, marked, toggleMark, setActiveLayer, setVisible, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, pickPoint, pickLine, pickString, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';

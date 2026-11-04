@@ -4,10 +4,12 @@
 // coloured by thickness; choosing another horizon reloads that model alone. A layer's solids draw as
 // one mesh, so a pit's tens of thousands of them are a few chunks; any change to one, hiding it included,
 // reloads the layer, and the old mesh stays up until the new one is ready. Anything else hidden on its
-// own is only switched off.
+// own is only switched off. How each one looks (by RL or its layer's colour, and how see-through) is
+// uniforms on its material, so a change of look never refetches anything.
 import * as THREE from 'three/webgpu';
-import { type ObjectSummary, type ProjectSummary, type StagedHorizon, stageLayerSolids, stageObject, stageSeamHorizon } from '../bridge';
+import { type Contours, layerOpacityOf, lookOf, type ObjectSummary, type ProjectSummary, type StagedHorizon, stageLayerSolids, stageObject, stageSeamHorizon } from '../bridge';
 import { colourOf, loadStaged, SELECTED } from './load';
+import { type Bands, bandsFor } from './rlColour';
 import type { Viewport } from './Viewport';
 
 interface Shown {
@@ -27,6 +29,15 @@ export interface SeamShown {
   result: StagedHorizon;
 }
 
+/** What's coloured by RL on show, for the legend: each object's bands, or one set shared by all. */
+export interface RlShown {
+  shared: boolean;
+  /** Under each object's current name. */
+  objects: { id: string; name: string; bands: Bands }[];
+}
+
+export const DEFAULT_CONTOURS: Contours = { interval: null, lines: true, shared: false };
+
 export class SceneSync {
   private shown = new Map<string, Shown>();
   private queue: Promise<number> = Promise.resolve(0);
@@ -40,6 +51,9 @@ export class SceneSync {
   private lit: { id: string; key: string; group: THREE.Group; copy: boolean } | null = null;
   /** The seam models on show changed: one loaded or hidden, or a new name or horizon. */
   onSeams?: (showing: SeamShown[]) => void;
+  /** What's coloured by RL on show changed, or its bands did. */
+  onRl?: (shown: RlShown) => void;
+  private rl = '';
   onError?: (message: string) => void;
 
   constructor(private viewport: Viewport) {}
@@ -93,6 +107,8 @@ export class SceneSync {
       return seam(o.kind) ? `${o.geometry_key}#${this.horizons.get(id) ?? ''}` : o.geometry_key;
     };
     const on = (o: ObjectSummary) => (layers.get(o.layer)?.visible ?? true) && !o.hidden;
+    // Before anything loads, so a surface's first frame has its bands on round RLs.
+    this.viewport.originZ = summary.origin?.[2] ?? 0;
     for (const [id, shown] of this.shown) {
       if (keyOf(id) !== shown.key && !solids.has(id)) {
         this.viewport.removeMesh(shown.group);
@@ -108,7 +124,6 @@ export class SceneSync {
       const shown = this.shown.get(object.id);
       if (shown) {
         shown.group.visible = on(object);
-        if (layer && !seam(object.kind)) this.viewport.setColour(shown.group, colourOf(layer.colour));
         continue;
       }
       // Loaded when first shown: a model hidden in a saved project shouldn't read its grids.
@@ -136,7 +151,8 @@ export class SceneSync {
           if (String(e).includes('no such object')) continue;
           throw e;
         }
-        group = (await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined })).group;
+        const byRl = lookOf(summary.display, object.id).colouring === 'by_rl';
+        group = (await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined, byRl })).group;
       }
       group.visible = on(object);
       this.shown.set(object.id, { key: keyOf(object.id)!, group, seam: view });
@@ -147,19 +163,65 @@ export class SceneSync {
       const shown = this.shown.get(solidsOf(id));
       if (shown?.key === key) {
         shown.group.visible = layer?.visible ?? true;
-        if (layer) this.viewport.setColour(shown.group, colourOf(layer.colour));
         continue;
       }
       const staged = await stageLayerSolids(id);
-      const { group } = await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined });
+      const { group } = await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined, byRl: false });
       group.visible = layer?.visible ?? true;
       if (shown) this.viewport.removeMesh(shown.group);
       this.shown.set(solidsOf(id), { key, group });
       loaded++;
     }
     this.reportSeams(summary);
+    this.restyle(summary);
     await this.light(summary, on).catch((e) => this.onError?.(String(e)));
     return loaded;
+  }
+
+  /**
+   * Gives everything drawn its look: colour by RL in its bands or its layer's colour, and its opacity,
+   * its own times its layer's. Bands are over each object's own RLs, or over everything coloured by RL
+   * on show when they're shared, so an RL is one colour on every surface.
+   */
+  private restyle(summary: ProjectSummary): void {
+    const { display } = summary;
+    const contours = display?.contours ?? DEFAULT_CONTOURS;
+    const originZ = this.viewport.originZ;
+    const layers = new Map(summary.layers.map((l) => [l.id, l]));
+    const surfaces = summary.objects.flatMap((object) => {
+      const shown = this.shown.get(object.id);
+      return shown && !shown.seam ? [{ object, group: shown.group, range: this.viewport.zRange(shown.group) }] : [];
+    });
+    const byRl = surfaces.filter((s) => s.group.visible && s.range && lookOf(display, s.object.id).colouring === 'by_rl');
+    const shared: [number, number] | null =
+      contours.shared && byRl.length > 0 ? [Math.min(...byRl.map((s) => s.range![0])), Math.max(...byRl.map((s) => s.range![1]))] : null;
+    const bandsOf = (range: [number, number]) => bandsFor(range[0] + originZ, range[1] + originZ, originZ, contours.interval);
+    for (const { object, group, range } of surfaces) {
+      const look = lookOf(display, object.id);
+      const layer = layers.get(object.layer);
+      this.viewport.setLook(group, {
+        colour: layer ? colourOf(layer.colour) : 0xffffff,
+        byRl: look.colouring === 'by_rl',
+        bands: range ? bandsOf(shared ?? range) : undefined,
+        lines: contours.lines,
+        opacity: look.opacity * layerOpacityOf(display, object.layer),
+      });
+    }
+    for (const [id, shown] of this.shown) {
+      const seam = shown.seam && summary.objects.find((o) => o.id === id);
+      if (seam) this.viewport.setLook(shown.group, { colour: 0xffffff, byRl: false, lines: false, opacity: lookOf(display, id).opacity * layerOpacityOf(display, seam.layer) });
+    }
+    for (const { layer: id } of summary.solid_layers) {
+      const shown = this.shown.get(solidsOf(id));
+      const layer = layers.get(id);
+      if (shown) this.viewport.setLook(shown.group, { colour: layer ? colourOf(layer.colour) : 0xffffff, byRl: false, lines: false, opacity: layerOpacityOf(display, id) });
+    }
+    const report: RlShown = { shared: shared !== null, objects: byRl.map((s) => ({ id: s.object.id, name: s.object.name, bands: bandsOf(shared ?? s.range!) })) };
+    const key = JSON.stringify(report);
+    if (key !== this.rl) {
+      this.rl = key;
+      this.onRl?.(report);
+    }
   }
 
   /** Brings the highlight in line with what is selected and how it is drawn now. */

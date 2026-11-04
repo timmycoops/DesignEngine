@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react';
-import type { LogEntry, ProjectSummary, RunRecord, Vec3 } from '@/bridge';
-import type { SeamShown } from '@/viewport/sceneSync';
+import type { Colouring, Contours, LogEntry, ProjectSummary, RunRecord, Vec3 } from '@/bridge';
+import type { RlShown, SeamShown } from '@/viewport/sceneSync';
 
 /** What every panel reads, and the actions they share. App owns the state. */
 export interface Workspace {
@@ -23,6 +23,18 @@ export interface Workspace {
   setLayerVisible: (layer: string, visible: boolean) => void;
   /** Shows or hides objects one by one, under their layer's tick. Display only: not undone. */
   setObjectsVisible: (objects: string[], visible: boolean) => void;
+  /**
+   * Colours objects by RL or their layer, sets their opacity (0 to 1), or both; null leaves that part.
+   * Display only: saved with the project, not undone. It shows at once; `commit` false is a preview, as a
+   * slider moves, that the engine doesn't keep until a call that commits.
+   */
+  setLooks: (objects: string[], colouring: Colouring | null, opacity: number | null, commit?: boolean) => void;
+  /** A layer's opacity, which multiplies its objects'; for solids it's the only one. As above. */
+  setLayerOpacity: (layer: string, opacity: number, commit?: boolean) => void;
+  /** The bands of colour by RL. Display only. */
+  setContours: (contours: Contours) => void;
+  /** What's coloured by RL on show, with its bands, for the legend. */
+  rlShown: RlShown;
   /** Runs an engine command; reports the outcome on the status line. False if it failed. */
   run: (name: string, params: Record<string, unknown>) => Promise<boolean>;
   /** The same, handing back the run's record, or why it failed, for a panel to show. */

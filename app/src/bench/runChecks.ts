@@ -24,6 +24,7 @@ import {
   writeResults,
 } from '../bridge';
 import { loadStaged } from '../viewport/load';
+import { takePictures } from './pictures';
 import { PolylineTool } from '../viewport/PolylineTool';
 import type { SectionView } from '../viewport/section';
 import type { StringLayer } from '../viewport/strings';
@@ -59,10 +60,13 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
   };
 
   try {
-    if (config.solids) {
+    if (config.pictures) {
+      results.pictures = await takePictures(viewport, config.surfaces, config.strings, log, show);
+    } else if (config.solids) {
       results.solids = await checkSolids(viewport, config, config.solids, log, show, section, strings);
     } else {
-      results.load = await loadSurfaces(viewport, config.surfaces, log);
+      results.load = await loadSurfaces(viewport, config.surfaces, log, config.opacity);
+      results.opacity = config.opacity ?? 1;
       viewport.fitView();
       results.check1 = await checkViewport(viewport, config, log);
       results.check3 = await checkTransfer(viewport, config.transfer_cells, log);
@@ -1026,7 +1030,8 @@ async function orbitless(viewport: Viewport): Promise<number> {
   return (frames * 1000) / (performance.now() - start);
 }
 
-async function loadSurfaces(viewport: Viewport, paths: string[], log: (line: string) => void) {
+/** Loads each surface coloured by RL over its own range, and with `opacity` under 1, seen through, all stacked. */
+async function loadSurfaces(viewport: Viewport, paths: string[], log: (line: string) => void, opacity: number | null) {
   const loads = [];
   for (const path of paths) {
     log(`loading ${path}`);
@@ -1035,7 +1040,8 @@ async function loadSurfaces(viewport: Viewport, paths: string[], log: (line: str
     const reply = await runCommand('surface.import', { path, layer: 'bench' });
     const staged = await stageObject(reply.record.outputs[0].id);
     const opened = performance.now();
-    const { timings } = await loadStaged(viewport, staged);
+    const { group, timings } = await loadStaged(viewport, staged);
+    if (opacity !== null && opacity < 1) viewport.setLook(group, { colour: 0xffffff, byRl: true, lines: true, opacity });
     loads.push({
       name: staged.name,
       kind: staged.kind,

@@ -13,7 +13,7 @@ use serde_json::Value;
 use tauri::ipc::Response;
 use tauri::{AppHandle, State, Webview};
 use zd_commands::{LogEntry, RunRecord, Session};
-use zd_core::{Attributes, Body, Crossings, FaceDesign, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, SeamModel, TriMesh};
+use zd_core::{Attributes, Body, Colouring, Contours, Crossings, Display, FaceDesign, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, SeamModel, TriMesh};
 use zd_geom::{SectionPlane, StackHorizon, SurfaceRayCaster, stack_issue_nodes, triangulate_grid};
 use zd_io::{list_deswik_layers, list_spry, read_stack_grids};
 
@@ -35,6 +35,8 @@ pub struct ProjectSummary {
     objects: Vec<ObjectSummary>,
     /// The layers holding solids, each drawn as one mesh.
     solid_layers: Vec<SolidLayer>,
+    /// How objects and layers look: colour by RL or the layer's, opacity, contour bands.
+    display: Display,
 }
 
 /// A layer's solids as the viewport draws them.
@@ -101,6 +103,7 @@ fn summary(app: &mut AppInner) -> ProjectSummary {
         layers: project.layers().to_vec(),
         objects,
         solid_layers,
+        display: project.display().clone(),
     };
     app.solid_keys = snap_keys;
     summary
@@ -327,6 +330,32 @@ pub fn set_layer_visible(layer: LayerId, visible: bool, state: State<'_, AppStat
     let mut app = state.app.lock().unwrap();
     app.session.set_layer_visible(layer, visible);
     summary(&mut app)
+}
+
+/// Colours objects by RL or by their layer, sets how see-through they are, or both. Display state: not a
+/// run, not undone. Only the looks come back, not the whole summary: nothing else changes, and a slider
+/// shouldn't wait on a pit's worth of summary.
+#[tauri::command]
+pub fn set_looks(objects: Vec<ObjectId>, colouring: Option<Colouring>, opacity: Option<f64>, state: State<'_, AppState>) -> Display {
+    let mut app = state.app.lock().unwrap();
+    app.session.set_looks(&objects, colouring, opacity);
+    app.session.project().display().clone()
+}
+
+/// How see-through a layer is. Display state, as above.
+#[tauri::command]
+pub fn set_layer_opacity(layer: LayerId, opacity: f64, state: State<'_, AppState>) -> Display {
+    let mut app = state.app.lock().unwrap();
+    app.session.set_layer_opacity(layer, opacity);
+    app.session.project().display().clone()
+}
+
+/// The bands of colour by RL. Display state, as above.
+#[tauri::command]
+pub fn set_contours(contours: Contours, state: State<'_, AppState>) -> Display {
+    let mut app = state.app.lock().unwrap();
+    app.session.set_contours(contours);
+    app.session.project().display().clone()
 }
 
 #[tauri::command]
@@ -782,6 +811,13 @@ pub struct BenchConfig {
     transfer_cells: Vec<usize>,
     orbit_seconds: f64,
     drag_updates: usize,
+    /// With `--opacity 0.5`, every surface is drawn that see-through: stacked see-through surfaces timed.
+    opacity: Option<f64>,
+    /// With `--pictures <folder>`, the `--surfaces` are drawn in their looks and saved there as pictures, and
+    /// nothing is timed.
+    pictures: Option<String>,
+    /// With `--webgl`, the viewport runs on three's WebGL2 backend, as it does where there's no WebGPU.
+    webgl: bool,
 }
 
 /// Present when the app was started with `--bench`: the viewport then runs Checks 1, 3 and 4
@@ -819,7 +855,27 @@ pub fn bench_config() -> Option<BenchConfig> {
         transfer_cells: vec![1000, 2000, 3000],
         orbit_seconds: 8.0,
         drag_updates: 300,
+        opacity: args.iter().position(|a| a == "--opacity").and_then(|i| args.get(i + 1)).and_then(|s| s.parse().ok()),
+        pictures: args.iter().position(|a| a == "--pictures").and_then(|i| args.get(i + 1)).cloned(),
+        webgl: args.iter().any(|a| a == "--webgl"),
     })
+}
+
+/// Saves one picture of the viewport, a PNG data URL, as `<name>.png` in the `--pictures` folder. Bench only,
+/// and only there.
+#[tauri::command]
+pub fn write_picture(name: String, data_url: String) -> Result<String, String> {
+    use base64::Engine;
+    let folder = bench_config().and_then(|c| c.pictures).ok_or("not taking pictures")?;
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(format!("'{name}' isn't a plain file name"));
+    }
+    let png = data_url.strip_prefix("data:image/png;base64,").ok_or("not a PNG data URL")?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(png).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    let path = Path::new(&folder).join(format!("{name}.png"));
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
 }
 
 #[tauri::command]

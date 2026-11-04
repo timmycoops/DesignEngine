@@ -5,6 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { DecodedMesh, Vec3 } from '../bridge';
 import { PointMark } from './markers';
 import { valueColours } from './ramp';
+import { type Bands, bandsFor, colourByRl, type RlUniforms, setBands } from './rlColour';
 
 interface GpuAdapterLike {
   limits: Record<string, number>;
@@ -39,10 +40,22 @@ const PIVOT_MARK_COLOUR = 0xffd23f;
 
 /** How strongly something selected glows: enough to find it, with its shading and colours still readable. */
 const LIT = 0.15;
-/** A copy drawn over everything comes after the opaque surfaces. */
+/** A copy drawn over everything comes after the opaque surfaces and the see-through ones, which sort below 1. */
 const OVER_ORDER = 20;
 
-function lightUp(material: THREE.MeshStandardMaterial, colour: number | null): void {
+/** How a drawn surface looks; see `Viewport.setLook`. */
+export interface SurfaceLook {
+  /** The layer's colour, drawn when not by RL. */
+  colour: number;
+  /** In bands by RL, where the surface can be: a seam horizon keeps its thickness colours. */
+  byRl: boolean;
+  bands?: Bands;
+  lines: boolean;
+  /** 1 is solid. */
+  opacity: number;
+}
+
+function lightUp(material: THREE.MeshStandardMaterial | THREE.MeshStandardNodeMaterial, colour: number | null): void {
   material.emissive.setHex(colour ?? 0x000000);
   material.emissiveIntensity = colour === null ? 1 : LIT;
 }
@@ -71,6 +84,8 @@ export class Viewport {
   private lastFrame = performance.now();
   private worstFrame = 0;
   private sceneRadius = 1000;
+  /** The scene origin's RL, a whole metre: local z plus this is the true RL. */
+  originZ = 0;
   private raycaster = new THREE.Raycaster();
   private resizeObserver: ResizeObserver;
 
@@ -120,7 +135,8 @@ export class Viewport {
     renderer.setAnimationLoop(this.frame);
   }
 
-  static async create(host: HTMLElement): Promise<Viewport> {
+  /** With `webgl`, three's WebGL2 backend even where WebGPU is there: what a machine without WebGPU gets. */
+  static async create(host: HTMLElement, { webgl = false }: { webgl?: boolean } = {}): Promise<Viewport> {
     // Ask for the adapter's real buffer limits: the defaults (256 MB) are below one
     // multi-million-triangle index buffer.
     const gpu = (navigator as Navigator & { gpu?: GpuLike }).gpu;
@@ -131,7 +147,7 @@ export class Viewport {
           maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
         }
       : undefined;
-    const options = { antialias: true, powerPreference: 'high-performance', requiredLimits, reversedDepthBuffer: true };
+    const options = { antialias: true, powerPreference: 'high-performance', requiredLimits, reversedDepthBuffer: true, forceWebGL: webgl };
     const renderer = new THREE.WebGPURenderer(options as ConstructorParameters<typeof THREE.WebGPURenderer>[0]);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(host.clientWidth, host.clientHeight);
@@ -222,7 +238,7 @@ export class Viewport {
     target.drawImage(source, (source.width - side) / 2, (source.height - side) / 2, side, side, 0, 0, target.canvas.width, target.canvas.height);
     for (const [o, visible] of changed) o.visible = visible;
     // What the canvas shows at the end of this task is the frame, not the picture.
-    this.renderer.render(this.scene, this.camera);
+    this.draw();
   }
 
   /** Slides the section's camera with its plane, so a step keeps the same view of the section. */
@@ -309,12 +325,14 @@ export class Viewport {
   /**
    * Adds a surface as one mesh per chunk, all sharing one material. Normals are left out: with no
    * normal attribute three shades flat from screen-space derivatives. `release` runs when the
-   * surface is removed (frees a shared buffer the chunks still view).
+   * surface is removed (frees a shared buffer the chunks still view). A surface is coloured by RL
+   * over its own range unless `byRl` is false; `setLook` changes that afterwards.
    */
-  addMesh(decoded: DecodedMesh, release?: () => void, colour = SURFACE_COLOURS[this.surfaces.length % SURFACE_COLOURS.length], over = false): THREE.Group {
+  addMesh(decoded: DecodedMesh, release?: () => void, options: { colour?: number; over?: boolean; byRl?: boolean } = {}): THREE.Group {
+    const { colour = SURFACE_COLOURS[this.surfaces.length % SURFACE_COLOURS.length], over = false } = options;
     // A grid that carries values (seam thickness) is coloured by them, still shaded by the light.
     const value = decoded.header.value;
-    const material = new THREE.MeshStandardMaterial({
+    const material = new (over ? THREE.MeshStandardMaterial : THREE.MeshStandardNodeMaterial)({
       color: value ? 0xffffff : colour,
       vertexColors: value !== undefined,
       roughness: 0.92,
@@ -325,11 +343,26 @@ export class Viewport {
       depthWrite: !over,
       flatShading: true,
     });
+    // Seen through, a surface is drawn once, not back faces then front: it's open, so that order buys nothing.
+    material.forceSinglePass = true;
+    // A copy over everything goes with the see-through surfaces, last, so none of them draws over it.
+    if (over) material.transparent = true;
     if (over) lightUp(material, colour);
     const group = new THREE.Group();
     group.name = decoded.header.name;
     group.userData.triangles = decoded.header.triangles;
     group.userData.release = release;
+    const z = decoded.chunks.reduce((r, c) => [Math.min(r[0], c.min[2]), Math.max(r[1], c.max[2])], [Infinity, -Infinity]);
+    group.userData.zRange = z[0] <= z[1] ? z : null;
+    // Where the surface lies up and down, by its chunks weighted by triangles: what see-through surfaces sort by.
+    const weight = decoded.chunks.reduce((n, c) => n + c.indices.length, 0);
+    group.userData.meanZ = weight > 0 ? decoded.chunks.reduce((sum, c) => sum + ((c.min[2] + c.max[2]) / 2) * c.indices.length, 0) / weight : 0;
+    if (!over && !value && material instanceof THREE.MeshStandardNodeMaterial) {
+      const rl = colourByRl(material, colour);
+      rl.byRl.value = options.byRl === false ? 0 : 1;
+      if (group.userData.zRange) setBands(rl, bandsFor(z[0] + this.originZ, z[1] + this.originZ, this.originZ, null), true);
+      group.userData.rl = rl;
+    }
     // Grid tiles of one size share an index array; share the attribute so it uploads once.
     const indexAttributes = new Map<Uint16Array, THREE.BufferAttribute>();
     for (const chunk of decoded.chunks) {
@@ -370,16 +403,60 @@ export class Viewport {
     (group.userData.release as (() => void) | undefined)?.();
   }
 
-  /** The colour a drawn surface takes from its layer. */
-  setColour(group: THREE.Group, colour: number): void {
+  /** The local z a drawn surface spans, or null if it has nothing in it. */
+  zRange(group: THREE.Group): [number, number] | null {
+    return (group.userData.zRange as [number, number] | null | undefined) ?? null;
+  }
+
+  /**
+   * How a drawn surface looks: by RL in `look.bands` or in the layer's colour, and how see-through.
+   * Colour is uniforms only. Seen-through surfaces draw after the solid ones, back to front by chunk,
+   * and don't hide what's behind them from the depth test.
+   */
+  setLook(group: THREE.Group, look: SurfaceLook): void {
     const mesh = group.children[0] as THREE.Mesh | undefined;
-    (mesh?.material as THREE.MeshStandardMaterial | undefined)?.color.setHex(colour);
+    const material = mesh?.material as THREE.MeshStandardNodeMaterial | undefined;
+    if (!material) return;
+    const rl = group.userData.rl as RlUniforms | undefined;
+    if (rl) {
+      rl.layerColour.value.setHex(look.colour);
+      rl.byRl.value = look.byRl ? 1 : 0;
+      if (look.bands) setBands(rl, look.bands, look.lines);
+    } else if (!material.vertexColors) {
+      material.color.setHex(look.colour);
+    }
+    const through = look.opacity < 1;
+    if (material.transparent !== through) {
+      material.transparent = through;
+      material.depthWrite = !through;
+      material.needsUpdate = true;
+      if (!through) for (const child of group.children) child.renderOrder = 0;
+    }
+    material.opacity = look.opacity;
+    group.userData.seeThrough = through;
+  }
+
+  /**
+   * Orders the see-through surfaces on show a whole surface at a time, farthest up or down from the camera
+   * first: looking down on a pit, the floor, then the roof, then the topography. Left to three, each chunk
+   * sorts on its own and grid tiles of two surfaces interleave, a patchwork of which is on top. Returns how
+   * many there are.
+   */
+  private orderSeeThrough(): number {
+    const through = this.surfaces.filter((s) => s.visible && s.userData.seeThrough);
+    const height = this.camera.position.z;
+    const far = (g: THREE.Group) => Math.abs(height - (g.userData.meanZ as number));
+    through.sort((a, b) => far(b) - far(a));
+    through.forEach((group, k) => {
+      for (const child of group.children) child.renderOrder = (k + 1) / (through.length + 1);
+    });
+    return through.length;
   }
 
   /** Lights a drawn surface up in `colour`, or with null puts it back. */
   setLit(group: THREE.Group, colour: number | null): void {
     const mesh = group.children[0] as THREE.Mesh | undefined;
-    if (mesh) lightUp(mesh.material as THREE.MeshStandardMaterial, colour);
+    if (mesh) lightUp(mesh.material as THREE.MeshStandardNodeMaterial, colour);
   }
 
   /** How far along the ray through a point on screen it first meets a group, if it does. */
@@ -571,7 +648,7 @@ export class Viewport {
     this.controls.update();
     for (const hook of this.cameraMoved) hook();
     this.updateClipPlanes();
-    this.renderer.render(this.scene, this.camera);
+    this.draw();
     const submitted = performance.now();
     this.tickStats(now);
     if (this.frameWaiters.length > 0) {
@@ -585,6 +662,30 @@ export class Viewport {
       });
     }
   };
+
+  /**
+   * Draws the scene as it stands with the camera in use. Strings, handles and markers draw over everything,
+   * in the solid pass; a see-through surface comes after that and would dim them, so with one on show they're
+   * drawn again on top, in a pass of their own.
+   */
+  draw(): void {
+    if (this.orderSeeThrough() === 0 || !this.content.visible || this.overlay.children.length === 0) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+    this.overlay.visible = false;
+    this.renderer.render(this.scene, this.camera);
+    this.overlay.visible = true;
+    this.content.visible = false;
+    // A background colour clears the frame whatever autoClear says, so it's off for the second pass.
+    const [autoClear, background] = [this.renderer.autoClear, this.scene.background];
+    this.renderer.autoClear = false;
+    this.scene.background = null;
+    this.renderer.render(this.scene, this.camera);
+    this.renderer.autoClear = autoClear;
+    this.scene.background = background;
+    this.content.visible = true;
+  }
 
   /** Near and far planes follow the orbit distance; the reversed depth buffer keeps precision. */
   private updateClipPlanes(): void {

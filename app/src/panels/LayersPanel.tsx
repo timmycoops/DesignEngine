@@ -1,6 +1,6 @@
 import { Box, ChevronDown, ChevronRight, Grid3x3, Layers, type LucideIcon, Mountain, PencilRuler, Spline } from 'lucide-react';
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
-import type { Layer, ObjectKind, ObjectSummary } from '@/bridge';
+import { type Colouring, type Layer, layerOpacityOf, lookOf, type ObjectKind, type ObjectSummary } from '@/bridge';
 import { ROW_HEIGHT, useRowWindow } from '@/design-system/DataTable';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import {
@@ -242,6 +242,7 @@ function LayerRow({ entry: { layer, count, hidden, open }, renaming, onRenamed, 
       <Swatch layer={layer} />
       {renaming ? <RenameBox layer={layer} onDone={onRenamed} /> : <span className={cn('min-w-0 flex-1 truncate', active && 'text-primary')}>{layer.name}</span>}
       {sectionOpen && <LineWeight layer={layer.id} />}
+      <OpacityNote opacity={layerOpacityOf(summary?.display, layer.id)} title="Layer opacity: right-click to change it" />
       <span className="text-muted-foreground tabular-nums" title={layer.visible && hidden > 0 ? `${hidden} of ${count} hidden` : undefined}>
         {layer.visible && hidden > 0 ? `${count - hidden} of ${count}` : count}
       </span>
@@ -286,7 +287,7 @@ interface ObjectRowProps {
 }
 
 function ObjectRow({ object, inGroup, layerOn, marked, onClick, onTick }: ObjectRowProps) {
-  const { selected } = useWorkspace();
+  const { selected, summary } = useWorkspace();
   const Icon = kindIcon[object.kind];
   const note = noteOf(object);
   const showing = layerOn && !object.hidden;
@@ -310,6 +311,7 @@ function ObjectRow({ object, inGroup, layerOn, marked, onClick, onTick }: Object
         {object.name}
         {note && <span className="ml-1 text-muted-foreground">·</span>}
       </span>
+      <OpacityNote opacity={lookOf(summary?.display, object.id).opacity} title="Opacity: right-click or Properties to change it" />
       {object.revision > 1 && (
         <span className="text-muted-foreground tabular-nums" title={`Revision ${object.revision}`}>
           r{object.revision}
@@ -321,13 +323,32 @@ function ObjectRow({ object, inGroup, layerOn, marked, onClick, onTick }: Object
 
 const plural = (count: number) => `${fmt(count)} object${count === 1 ? '' : 's'}`;
 
+/** The opacities the menus offer; Properties has a slider for the rest. */
+const OPACITIES = [1, 0.75, 0.5, 0.25];
+const percent = (opacity: number) => `${Math.round(opacity * 100)}%`;
+
+/** Coloured by RL or its layer: surfaces and elevation grids. A seam horizon keeps its thickness colours. */
+const canColour = (o: ObjectSummary) => o.drawn && o.kind !== 'solid';
+/** Seen through on its own: what canColour takes, and seam horizons. A layer's solids go by the layer. */
+const canSeeThrough = (o: ObjectSummary) => canColour(o) || o.kind === 'seam_model';
+
+/** An opacity under 100 %, beside a row's name. */
+function OpacityNote({ opacity, title }: { opacity: number; title: string }) {
+  if (opacity >= 1) return null;
+  return (
+    <span className="text-muted-foreground tabular-nums" title={title}>
+      {percent(opacity)}
+    </span>
+  );
+}
+
 /**
  * Every layer and what is on it, in one tree that draws only the rows on screen. Click a layer to draw
  * new strings on it, or an object to select it; Ctrl and Shift mark several for a tick or the right-click
  * menu to act on together.
  */
 export function LayersPanel() {
-  const { summary, selected, select, marked: markedIds, setMarked, toggleMark, activeLayer, setActiveLayer, setObjectsVisible, run } = useWorkspace();
+  const { summary, selected, select, marked: markedIds, setMarked, toggleMark, activeLayer, setActiveLayer, setObjectsVisible, setLooks, setLayerOpacity, run } = useWorkspace();
   const [toggled, setToggled] = useState(new Map<string, boolean>());
   const marked = useMemo(() => new Set(markedIds), [markedIds]);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -403,6 +424,45 @@ export function LayersPanel() {
     <LayerRow key={key} entry={entry} renaming={renaming === entry.layer.name} onRenamed={() => setRenaming(null)} onToggle={onToggle} />
   );
 
+  /**
+   * Colour by RL or the layer's, for the objects that can take it, and an opacity, set by `opacity` (the
+   * objects' own, or for a layer the layer's). A tick shows the value they all share, if they do.
+   */
+  const lookMenu = (objects: ObjectSummary[], opacity: (o: number) => void, currentOpacity: number | null) => {
+    const coloured = objects.filter(canColour);
+    const colourings = new Set(coloured.map((o) => lookOf(summary?.display, o.id).colouring));
+    const colour = (colouring: Colouring) => setLooks(coloured.map((o) => o.id), colouring, null);
+    const tick = (on: boolean) => <span className="w-3 text-primary">{on ? '✓' : ''}</span>;
+    return (
+      <>
+        {coloured.length > 0 && (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>Colour</ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem onSelect={() => colour('by_rl')}>
+                {tick(colourings.size === 1 && colourings.has('by_rl'))}By RL
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => colour('layer')}>
+                {tick(colourings.size === 1 && colourings.has('layer'))}Layer colour
+              </ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        )}
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>Opacity</ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            {OPACITIES.map((o) => (
+              <ContextMenuItem key={o} onSelect={() => opacity(o)}>
+                {tick(currentOpacity === o)}
+                {percent(o)}
+              </ContextMenuItem>
+            ))}
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+      </>
+    );
+  };
+
   /** The menu for some objects, from one on a layer to everything in a group. */
   const objectsMenu = (taken: string[], layer: string) => {
     const label = taken.length > 1 ? ` ${plural(taken.length)}` : '';
@@ -410,10 +470,15 @@ export function LayersPanel() {
       setMarked([]);
       void run(name, params);
     };
+    const ids = new Set(taken);
+    const looking = summary?.objects.filter((o) => ids.has(o.id) && canSeeThrough(o)) ?? [];
+    const opacities = new Set(looking.map((o) => lookOf(summary?.display, o.id).opacity));
     return (
       <>
         <ContextMenuItem onSelect={() => setObjectsVisible(taken, true)}>Show{label}</ContextMenuItem>
         <ContextMenuItem onSelect={() => setObjectsVisible(taken, false)}>Hide{label}</ContextMenuItem>
+        {looking.length > 0 &&
+          lookMenu(looking, (o) => setLooks(looking.map((x) => x.id), null, o), opacities.size === 1 ? [...opacities][0] : null)}
         <ContextMenuSub>
           <ContextMenuSubTrigger>Move{label} to</ContextMenuSubTrigger>
           <ContextMenuSubContent>
@@ -482,6 +547,11 @@ export function LayersPanel() {
         <ContextMenuContent onCloseAutoFocus={(e) => e.preventDefault()}>
           {target?.kind === 'layer' && (
             <>
+              {lookMenu(
+                summary?.objects.filter((o) => o.layer === target.layer.id) ?? [],
+                (o) => setLayerOpacity(target.layer.id, o),
+                layerOpacityOf(summary?.display, target.layer.id),
+              )}
               <ContextMenuItem onSelect={() => setRenaming(target.layer.name)}>Rename</ContextMenuItem>
               <ContextMenuItem variant="destructive" onSelect={() => void run('layer.delete', { layer: target.layer.name })}>
                 Delete{target.count > 0 ? ` with ${plural(target.count)}` : ''}

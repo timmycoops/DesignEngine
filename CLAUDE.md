@@ -109,7 +109,9 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   (see `docs/decisions/0004-phase1-foundations.md`). A project is a `<name>.zdproj/` folder of Parquet files.
 - An object can be hidden on its own, under its layer's tick. That's display state saved with the project, not a
   revision and not undone. Hidden means not drawn, snapped to or cut by a section; a command that names the object
-  still takes it (`docs/decisions/0026-one-layer-tree.md`).
+  still takes it (`docs/decisions/0026-one-layer-tree.md`). So is how it looks: surfaces and grids colour by RL in
+  bands on round RLs, in the shader, over each one's own range by default, or in the layer's colour; and an opacity per
+  object and per layer, which multiply (`docs/decisions/0043-colour-by-rl-and-opacity.md`).
 
 ## Scope limits for v1
 
