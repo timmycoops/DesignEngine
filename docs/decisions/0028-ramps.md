@@ -101,3 +101,30 @@ what was built on them, none refused. Every road built was one sheet with nothin
 - **Grade is in percent for now.** Ratio and degrees are a matter of the box.
 - **A start point, not a digitised centreline,** as Phase 3 decision 7 agreed. CLAUDE.md still lists a centreline.
 - **Not compared with Deswik.** That waits for a real ramp.
+
+## Fixed since: a berm dropped round a corner (2026-11-04)
+
+Tim found a berm on the made-up grid pit that "just ends and runs into a wall": the BOW berm of Grid switchbacks, Strip
+1, above the pad on the U floor. West of there the wall below it is 1.7 to 2.1 m high, under the row's 3 m minimum
+bench, so the berm is left out, as item 12 of 0027 has it. But the stretch with no berm ran 5.5 m round the bend where
+the crest turns into the wall over the pad's toe, and a berm tapers in over as far as it's wide, into the stretch with
+none, so the taper would have had to go back round the bend. The walls gave a line that stood up square from the crest,
+leaning back 4 m over 26 m, and the Topo wall rose straight off the end of the bench. Item 15 moves a change of width
+like that to the corner only when the plain offset is refused, and here it wasn't.
+
+Now, wherever a stretch with no berm runs round a corner and stops short of a berm's width past it, the berm runs full
+width to the corner and tapers in from there, whether or not the offset would have been refused. Berms only widen.
+Item 15 still moves any other change too near a corner when the offset is refused.
+
+Known answer: a 30 m berm with a 3 m minimum bench along a crest that runs east and turns 53.13 degrees into the wall,
+the wall below 2 m high to 9 m past the corner and 10 m beyond. The stretch with no berm ends at the corner, to 1e-9 m;
+the line leaves the crest 42 m short of it, to the 1 mm a berm of no width stands off as a plane, and climbs at 45
+degrees in plan to the wide leg's line 24 m back and 18 m out from the corner, to 1 µm, then runs along that line,
+30 m out, to 1 µm. Before, the stretch with no berm ran on 9 m round the corner, and the line stood up from the crest
+15 m short of it, leaning back 3.6 m over 25 m.
+
+On the grid pit, 67 of 69 faces are the same surface as before, to 0.01 m³ under each. Grid switchbacks Strip 1's BOW
+berm now tapers in from 650,707.5 to full width at 650,725.9, 7,450,191.1. Flat toe to grids Strip 1 has a BOW berm end
+round a corner too: there ramp B, held at its end, now starts 19 m further along the toe and is 23.5 m longer (1,621.6
+m), which moves the walls along most of that strip. The pit's own check stays at 33 faults, nothing crosses, and the
+timings are as before. Tim's back strip has no minimum bench and is unchanged.

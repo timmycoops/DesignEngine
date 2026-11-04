@@ -361,6 +361,7 @@ fn without_low_benches(line: &Polyline, widths: Vec<f64>, crest: &Polyline, leas
     for short in [true, false] {
         even_out(&mut lows, &lengths, widest, short);
     }
+    widen_to_corners(&mut lows, &result, &lengths, widest);
     if at_corners {
         move_changes_to_corners(&mut lows, &result, &lengths, widest);
     }
@@ -380,15 +381,37 @@ fn without_low_benches(line: &Polyline, widths: Vec<f64>, crest: &Polyline, leas
     (result, widths, no_berm)
 }
 
+/// Whether a line turns at its vertex `i` by more than a corner does.
+fn is_corner(line: &Polyline, i: usize) -> bool {
+    let n = line.vertices.len();
+    let (a, b, c) = (line.vertices[i - 1], line.vertices[i], line.vertices[(i + 1) % n]);
+    let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+    cross2(u, v).abs().atan2(u[0] * v[0] + u[1] * v[1]).to_degrees() > CORNER_TURN
+}
+
+/// A berm tapers in at 45 degrees beside a stretch with none, over as far as it's wide, into that stretch (0027
+/// item 12), and it can't taper round a corner. Where the stretch with none runs round a corner and stops short of
+/// that reach past it, the berm runs full width to the corner instead, and tapers in from there: berms only widen.
+fn widen_to_corners(lows: &mut [bool], line: &Polyline, lengths: &[f64], reach: f64) {
+    for i in 1..lows.len() {
+        if lows[i - 1] == lows[i] || is_corner(line, i) {
+            continue;
+        }
+        let corner = if lows[i - 1] {
+            (1..i).rev().take_while(|&j| lengths[j..i].iter().sum::<f64>() < reach).find(|&j| is_corner(line, j)).map(|j| j..i)
+        } else {
+            (i + 1..lows.len()).take_while(|&j| lengths[i..j].iter().sum::<f64>() < reach).find(|&j| is_corner(line, j)).map(|j| i..j)
+        };
+        if let Some(stretch) = corner {
+            lows[stretch].fill(false);
+        }
+    }
+}
+
 /// A change of width bevels over as far as the berm is wide, and it can't do that round a corner. One nearer
 /// a corner than that moves to the corner, where the walls can meet in a hip with no bevel.
 fn move_changes_to_corners(lows: &mut [bool], line: &Polyline, lengths: &[f64], reach: f64) {
-    let n = line.vertices.len();
-    let corner = |i: usize| {
-        let (a, b, c) = (line.vertices[i - 1], line.vertices[i], line.vertices[(i + 1) % n]);
-        let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
-        cross2(u, v).abs().atan2(u[0] * v[0] + u[1] * v[1]).to_degrees() > CORNER_TURN
-    };
+    let corner = |i: usize| is_corner(line, i);
     for i in 1..lows.len() {
         if lows[i - 1] == lows[i] || corner(i) {
             continue;
@@ -1689,6 +1712,38 @@ mod tests {
         let v = step.wall.validity();
         assert_eq!(v.non_manifold_edges + v.inconsistent_edges + v.degenerate_triangles, 0, "{v:?}");
         assert_eq!(v.boundary_edges, toe_segments + step.crest.vertices.len() - 1 + 2, "{v:?}");
+    }
+
+    /// A berm dropped by a 3 m minimum bench, 30 m wide, along a crest that runs east and then turns 53.13 degrees into the
+    /// wall at x 300. The wall below is 2 m high to 9 m past the corner and 10 m beyond, so the stretch with no berm runs
+    /// round the corner and stops short there, as above a switchback's pad on the made-up grid pit (Strip 1, 2026-11-04).
+    /// The berm can't taper round the corner, so it runs full width to it, and tapers in from there at 45 degrees in plan
+    /// back along the stretch with none: the line leaves the crest 42 m short of the corner and meets the wide leg's line
+    /// square across from the corner, 24 m back and 18 m out. Before, it stood up square from the crest at the stretch's
+    /// end, leaning back 4 m over 25 m, with no taper.
+    #[test]
+    fn a_berm_dropped_round_a_corner_tapers_in_from_the_corner() {
+        let corner = 300.0;
+        let crest = string(&[[0.0, 0.0, 110.0], [corner, 0.0, 110.0], [corner + 5.4, 7.2, 110.0], [corner + 120.0, 160.0, 110.0]], false);
+        let toe = string(&[[0.0, 0.0, 108.0], [corner, 0.0, 108.0], [corner + 5.4, 7.2, 108.0], [corner + 8.4, 11.2, 100.0], [corner + 120.0, 160.0, 100.0]], false);
+        let least = LeastBench { toe: &toe, height: 3.0 };
+        let (lines, log) = next_line(&crest, EdgeRule::Fixed(30.0), Some(least), OffsetSide::Left, 0.0, 0.0).unwrap();
+        assert_eq!(log.no_berm.len(), 1);
+        close(log.no_berm[0].to[0] - E, corner, 1e-9);
+        close(log.no_berm[0].to[1] - N, 0.0, 1e-9);
+        assert_eq!(lines.len(), 1);
+        let line: Vec<[f64; 3]> = lines[0].vertices.iter().map(|p| [p[0] - E, p[1] - N, p[2]]).collect();
+        let leaves = line.iter().position(|p| p[1] > 1e-6).expect("the berm comes in") - 1;
+        let (from, to) = (line[leaves], line[leaves + 1]);
+        // Where it leaves the crest is a bevel off a berm of no width, which a plane can only be at 1 mm (LEAST_WIDTH).
+        close(from[0], corner - 42.0, LEAST_WIDTH + 1e-6);
+        close(from[1], 0.0, 1e-6);
+        close(to[0], corner - 24.0, 1e-6);
+        close(to[1], 18.0, 1e-6);
+        // From there it's the wide leg's line, 30 m out from it.
+        for p in &line[leaves + 1..] {
+            close((p[0] - corner) * -0.8 + p[1] * 0.6, 30.0, 1e-6);
+        }
     }
 
     /// Crest vertices about the test origin.
