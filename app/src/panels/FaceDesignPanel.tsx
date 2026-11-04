@@ -466,7 +466,7 @@ function withRamp(step: Extract<ProfileStep, { step: 'project' }>, ramp: string,
 function RampCell({ name, on, canTurn, onChange }: { name: string; on: OnWall; canTurn: boolean; onChange: (on: OnWall) => void }) {
   const colour = rampColour(name);
   const next: OnWall = on === 'off' ? 'on' : on === 'on' && canTurn ? 'turn' : 'off';
-  const what = on === 'turn' ? `Ramp ${name} turns back before this wall, on a flat box past its top on the berm below, and climbs it the other way. Click to take it off` : `Click if ramp ${name} climbs this wall${canTurn ? ', and again if it turns back before it on a flat pad, a switchback' : ''}. Walls it climbs must come together, and berms between them are crossed. A wall can hold several ramps, one above the other, all running the same way`;
+  const what = on === 'turn' ? `Ramp ${name} turns back before this wall, on a flat box past its top on the berm below, and climbs it the other way. Click to take it off` : `Click if ramp ${name} climbs this wall${canTurn ? ', and again if it turns back before it on a flat pad, a switchback' : ''}. Walls it climbs must come together, and berms between them are crossed. A wall can hold several ramps: running one way they stack one above the other, and running opposite ways, as a straight ramp beside a switchback, they sit side by side along it`;
   return (
     <button
       type="button"

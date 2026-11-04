@@ -93,7 +93,9 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   on its last crest level with that place along the strip, with the run moving the start along the toe to get there
   (`docs/decisions/0031-ramps-on-real-strips.md`). Wall rows name the ramps
   that climb them, and it's cut back as they're projected, so running the design again rebuilds it. A wall can hold several
-  roads running the same way, lowest first, each cut into the wall above the one below (`docs/decisions/0032-roads-on-one-wall.md`).
+  roads running the same way, lowest first, each cut into the wall above the one below (`docs/decisions/0032-roads-on-one-wall.md`),
+  and roads running opposite ways side by side, as a straight ramp beside a switchback, each cut its own way in its own part of
+  the wall, never within a road's width of each other (`docs/decisions/0042-roads-both-ways.md`).
   The toe behind its start moves back by the road for an entrance. Each ramp goes past a berm after it, by default, crossing
   the full berm level to climb on from the next toe, or through it at its grade, the berm narrowing to nothing at the road
   (`docs/decisions/0035-ramps-after-the-berm.md`). After the berm it crosses straight across, in line with its top, as

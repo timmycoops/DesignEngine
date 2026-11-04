@@ -356,7 +356,8 @@ impl<'a> FaceRun<'a, '_> {
         let mut changes = Vec::new();
         let mut messages = vec![line_report(&base, &face, [extended.vertices.len(), shaped.vertices.len()], register.off_grid)];
         messages.extend(placed.notes);
-        messages.extend(ramps.iter().enumerate().map(|(r, ramp)| ramp_report(&ramp.name, &string.name, r, &face)));
+        let names: Vec<&str> = ramps.iter().map(|ramp| ramp.name.as_str()).collect();
+        messages.extend((0..ramps.len()).map(|r| ramp_report(&names, &string.name, r, &face)));
         // What a run makes keeps its string's attributes, so a strip's number carries on to its face.
         let attributes = || {
             let mut kept = string.attributes.clone();
@@ -623,8 +624,9 @@ fn line_report(name: &str, face: &zd_geom::Face, [toe_in, toe_out]: [usize; 2], 
     report
 }
 
-/// How far one ramp got, as a line of its own that the panel shows against it.
-fn ramp_report(name: &str, strip: &str, ramp: usize, face: &Face) -> String {
+/// How far one ramp got, as a line of its own that the panel shows against it. `names` are the profile's ramps.
+fn ramp_report(names: &[&str], strip: &str, ramp: usize, face: &Face) -> String {
+    let name = names[ramp];
     let mut parts = Vec::new();
     for road in face.roads.iter().filter(|road| road.ramp == ramp) {
         let (Some(bottom), Some(top)) = (road.pit_edge.vertices.first(), road.pit_edge.vertices.last()) else { continue };
@@ -638,7 +640,11 @@ fn ramp_report(name: &str, strip: &str, ramp: usize, face: &Face) -> String {
         }
     }
     for stopped in face.no_roads.iter().filter(|stopped| stopped.ramp == ramp) {
-        parts.push(format!("stopped on step {} at {:.1}, {:.1}: {}", stopped.step + 1, stopped.at[0], stopped.at[1], stopped.why));
+        let why = match stopped.crosses.and_then(|other| names.get(other)) {
+            Some(other) => format!("it would cross ramp {other} running the other way on this wall, or come within a road's width of it: move one of them along the strip"),
+            None => stopped.why.clone(),
+        };
+        parts.push(format!("stopped on step {} at {:.1}, {:.1}: {why}", stopped.step + 1, stopped.at[0], stopped.at[1]));
     }
     format!("Ramp {name}: {strip}: {}", parts.join("; "))
 }
