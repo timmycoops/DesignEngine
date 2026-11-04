@@ -1,8 +1,8 @@
 // Full-window three.js viewport on WebGPURenderer (falls back to WebGL2 by itself).
 // The scene is in local coordinates: offsets from the shell's scene origin, so f32 is enough.
 import * as THREE from 'three/webgpu';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { DecodedMesh, Vec3 } from '../bridge';
+import { CameraController } from './camera';
 import { PointMark } from './markers';
 import { valueColours } from './ramp';
 
@@ -35,7 +35,6 @@ export interface FrameTiming {
 const SURFACE_COLOURS = [0xa8916b, 0x5b6b7d, 0x8c9aa6, 0xc9a227, 0x6f8f5f];
 
 const PIVOT_MARK_PX = 9;
-const PIVOT_MARK_COLOUR = 0xffd23f;
 
 /** How strongly something selected glows: enough to find it, with its shading and colours still readable. */
 const LIT = 0.15;
@@ -62,6 +61,8 @@ export class Viewport {
   pickPoint?: (clientX: number, clientY: number) => Promise<Vec3 | null>;
   /** The rotation point, shown while a drag turns the view. */
   readonly pivotMark: PointMark;
+  /** Turns, pans and zooms whichever camera is in use (decision 0044). */
+  readonly controls: CameraController;
 
   private surfaces: THREE.Group[] = [];
   private copies: THREE.Object3D[] = [];
@@ -84,15 +85,10 @@ export class Viewport {
   private beforeSection = new THREE.Vector3();
   /** The 3D view's direction from its target, kept while in plan view. */
   private savedDirection = new THREE.Vector3(0.45, -0.75, 0.6).normalize();
-  /** A left drag turning the 3D view: the point it turns on, and where the pointer last was. */
-  private turning: { pivot: THREE.Vector3; x: number; y: number } | null = null;
-  /** A wheel pick in flight: ticks that arrive meanwhile keep the depth it finds. */
-  private settling = false;
 
   private constructor(
     readonly renderer: THREE.WebGPURenderer,
     readonly perspective: THREE.PerspectiveCamera,
-    readonly controls: OrbitControls,
     readonly backend: string,
     readonly adapter: string,
     private host: HTMLElement,
@@ -107,16 +103,7 @@ export class Viewport {
     this.pivotMark = new PointMark(this, PIVOT_MARK_PX);
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(host);
-    // The wheel zooms where the cursor is, and left drag is `turnAbout`, so the view works on what
-    // is under the cursor, not on a centre left at the middle of the pit.
-    controls.zoomToCursor = true;
-    controls.mouseButtons.LEFT = null;
-    const canvas = renderer.domElement;
-    canvas.addEventListener('pointerdown', this.startTurn);
-    canvas.addEventListener('pointermove', this.moveTurn);
-    canvas.addEventListener('pointerup', this.endTurn);
-    canvas.addEventListener('pointercancel', this.endTurn);
-    canvas.addEventListener('wheel', this.settleDepth, { capture: true, passive: true });
+    this.controls = new CameraController(this);
     renderer.setAnimationLoop(this.frame);
   }
 
@@ -142,14 +129,13 @@ export class Viewport {
     const camera = new THREE.PerspectiveCamera(45, host.clientWidth / host.clientHeight, 1, 100_000);
     camera.up.set(0, 0, 1); // mine grid: z is up
     camera.position.set(0, -2000, 1500);
-    const controls = new OrbitControls(camera, renderer.domElement);
 
     const backend = (renderer.backend as DeviceBackend).isWebGPUBackend ? 'WebGPU' : 'WebGL2';
     const info = adapter?.info;
     const adapterName = info
       ? info.description || [info.vendor, info.architecture, info.device].filter(Boolean).join(' ') || 'unknown'
       : 'no WebGPU adapter';
-    return new Viewport(renderer, camera, controls, backend, adapterName, host);
+    return new Viewport(renderer, camera, backend, adapterName, host);
   }
 
   /** The camera in use: the 3D one, the plan one or the section one. */
@@ -192,10 +178,7 @@ export class Viewport {
     camera.lookAt(centre);
     this.sectioned = true;
     this.content.visible = false;
-    this.controls.object = camera;
     this.controls.target.copy(centre);
-    this.controls.enableRotate = false;
-    this.controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
     this.controls.update();
   }
 
@@ -237,16 +220,13 @@ export class Viewport {
   closeSection(): void {
     this.sectioned = false;
     this.content.visible = true;
-    this.controls.object = this.camera;
     this.controls.target.copy(this.beforeSection);
-    this.controls.enableRotate = !this.plan;
-    this.controls.mouseButtons.LEFT = this.plan ? THREE.MOUSE.PAN : null;
     this.controls.update();
   }
 
   /**
    * Switches between 3D and plan view over the same spot at about the same scale. Plan view pans
-   * with the left button and zooms; it does not rotate.
+   * with the left button and zooms; it does not rotate (`CameraController`).
    */
   setPlanView(on: boolean): void {
     if (on === this.plan) return;
@@ -258,15 +238,9 @@ export class Viewport {
       this.setPlanHalfHeight(offset.length() * tan);
       this.orthographic.zoom = 1;
       this.placePlanCamera(target);
-      this.controls.object = this.orthographic;
-      this.controls.enableRotate = false;
-      this.controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
     } else {
       const half = (this.orthographic.top - this.orthographic.bottom) / 2 / this.orthographic.zoom;
       this.perspective.position.copy(target).addScaledVector(this.savedDirection, half / tan);
-      this.controls.object = this.perspective;
-      this.controls.enableRotate = true;
-      this.controls.mouseButtons.LEFT = null;
     }
     this.plan = on;
     this.controls.update();
@@ -503,67 +477,6 @@ export class Viewport {
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
-
-  private startTurn = (e: PointerEvent): void => {
-    if (e.button !== 0 || this.flatView || !this.controls.enabled) return;
-    const turn = { pivot: this.controls.target.clone(), x: e.clientX, y: e.clientY };
-    this.turning = turn;
-    // A drag over empty space keeps the view's centre. The answer takes about a millisecond.
-    void this.pickPoint?.(e.clientX, e.clientY).then((hit) => {
-      if (hit) turn.pivot.set(...hit);
-    });
-  };
-
-  private moveTurn = (e: PointerEvent): void => {
-    const turn = this.turning;
-    if (!turn || !this.controls.enabled) return;
-    const fullTurn = (2 * Math.PI) / (this.renderer.domElement.clientHeight || 1);
-    this.turnAbout(turn.pivot, -fullTurn * (e.clientX - turn.x), fullTurn * (e.clientY - turn.y));
-    this.pivotMark.show(turn.pivot, PIVOT_MARK_COLOUR);
-    turn.x = e.clientX;
-    turn.y = e.clientY;
-  };
-
-  private endTurn = (): void => {
-    this.turning = null;
-    this.pivotMark.hide();
-  };
-
-  /**
-   * Swings the camera and its target together about `pivot`: `yaw` about the vertical, `raise` up
-   * over the top (radians), stopping short of straight up or down. Moving both is what keeps the
-   * pivot where it is on screen; the camera does not jump to look at it.
-   */
-  private turnAbout(pivot: THREE.Vector3, yaw: number, raise: number): void {
-    const camera = this.perspective;
-    const forward = camera.getWorldDirection(new THREE.Vector3());
-    const right = forward.clone().cross(camera.up).normalize();
-    const fromAbove = forward.angleTo(camera.up.clone().negate());
-    const limit = 0.01;
-    const raised = Math.min(raise, fromAbove - limit);
-    const lowered = Math.max(raised, fromAbove - (Math.PI - limit));
-    const swing = new THREE.Quaternion().setFromAxisAngle(camera.up, yaw).multiply(new THREE.Quaternion().setFromAxisAngle(right, -lowered));
-    for (const point of [camera.position, this.controls.target]) {
-      point.sub(pivot).applyQuaternion(swing).add(pivot);
-    }
-  }
-
-  /**
-   * Puts the view's target at the depth of what is under the cursor, along the line of sight so the
-   * view does not move: zooming then slows as it nears the surface, and stops short of it.
-   */
-  private settleDepth = (e: WheelEvent): void => {
-    if (this.flatView || this.settling || !this.pickPoint) return;
-    this.settling = true;
-    void this.pickPoint(e.clientX, e.clientY).then((hit) => {
-      this.settling = false;
-      if (!hit) return;
-      const camera = this.perspective;
-      const forward = camera.getWorldDirection(new THREE.Vector3());
-      const depth = new THREE.Vector3(...hit).sub(camera.position).dot(forward);
-      if (depth > 0) this.controls.target.copy(camera.position).addScaledVector(forward, depth);
-    });
-  };
 
   private frame = (): void => {
     const now = performance.now();

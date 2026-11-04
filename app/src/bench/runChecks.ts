@@ -401,13 +401,59 @@ async function checkCamera(viewport: Viewport) {
     pivot_mark_gone_after: viewport.pivotMark.position === null,
   };
 
+  // The same drag sent at once, with no frame between the press and the first move: the turn waits
+  // for its pick, so the point still holds (0044).
+  const [qx, qy] = viewport.projectToClient(point);
+  const quickSend = (type: string, dx: number, dy: number) =>
+    canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons: 1, clientX: qx + dx, clientY: qy + dy, pointerId: 1, pointerType: 'mouse' }));
+  quickSend('pointerdown', 0, 0);
+  for (let k = 1; k <= 6; k++) quickSend('pointermove', 15 * k, -4 * k);
+  await settle();
+  quickSend('pointerup', 90, -24);
+  const [ax, ay] = viewport.projectToClient(point);
+  const quickTurn = { drift_px: Math.hypot(ax - qx, ay - qy) };
+
   const turnedDistance = viewport.camera.position.distanceTo(point);
+  const [zx, zy] = viewport.projectToClient(point);
   for (let k = 0; k < 12; k++) {
-    canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: x, clientY: y, deltaY: -120 }));
+    canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: zx, clientY: zy, deltaY: -120 }));
     await viewport.nextFrame();
   }
   await settle();
-  return { start_distance_m: startDistance, turned, zoom: { drift_px: drift(), from_m: turnedDistance, to_m: viewport.camera.position.distanceTo(point) } };
+  const [wx, wy] = viewport.projectToClient(point);
+  return {
+    start_distance_m: startDistance,
+    turned,
+    quick_turn: quickTurn,
+    zoom: { drift_px: Math.hypot(wx - zx, wy - zy), from_m: turnedDistance, to_m: viewport.camera.position.distanceTo(point) },
+    pan: await checkPan(viewport, point),
+  };
+}
+
+/**
+ * A right-drag pan of 200 px from `point`: how far that point ends up from the cursor. Panning still
+ * moves at the target's depth, so it is not on the cursor yet; 0044 makes it stick.
+ */
+async function checkPan(viewport: Viewport, point: THREE.Vector3) {
+  const canvas = viewport.renderer.domElement;
+  const [x, y] = viewport.projectToClient(point);
+  const [position, target] = [viewport.camera.position.clone(), viewport.controls.target.clone()];
+  const send = (type: string, dx: number, dy: number) =>
+    canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 2, buttons: 2, clientX: x + dx, clientY: y + dy, pointerId: 1, pointerType: 'mouse' }));
+  send('pointerdown', 0, 0);
+  for (let k = 1; k <= 10; k++) {
+    send('pointermove', 16 * k, 12 * k);
+    await viewport.nextFrame();
+  }
+  send('pointerup', 160, 120);
+  await viewport.nextFrame();
+  const [px, py] = viewport.projectToClient(point);
+  // Back to where it was, so the checks after this one see the same view as before.
+  viewport.camera.position.copy(position);
+  viewport.controls.target.copy(target);
+  viewport.controls.update();
+  await viewport.nextFrame();
+  return { dragged_px: 200, point_off_cursor_px: Math.hypot(px - (x + 160), py - (y + 120)) };
 }
 
 /** Draws through the real toolbar, canvas and key: a click snaps, S, then a click lands on the plane. */
