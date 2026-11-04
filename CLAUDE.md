@@ -99,10 +99,12 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   (`docs/decisions/0035-ramps-after-the-berm.md`). After the berm it crosses straight across, in line with its top, as
   Deswik's does; a road wider than the berm starts its next stretch on the top of the last. A wall row can turn a ramp
   back before it: a switchback on a pad of the two roads and the berm between, level on an RL and on the seam floor on a
-  grid (no coal left under it), on straight or curved walls, the road coming up running flat past its top before it turns, in line
-  with itself and on the floor on a grid (its width unless the ramp says otherwise), the next road climbing from straight across the berm from
-  its end, with the toe past the turn joining back a length on set on the ramp (50 m by default), whatever vertices the string has;
-  one longer than the line runs to the string's end (`docs/decisions/0038-switchbacks.md`). On a profile going down a road comes down from the top line, notching it
+  grid (no coal left under it), on straight or curved walls. The road coming up ends at its top and turns on a flat box past it,
+  in line with it and on the floor on a grid (its width long unless the ramp says otherwise): the road, the berm and the next
+  road wide, the next road climbing the other way from its near end, straight across the berm from the top, and the wall above
+  going round the box, its far end square across. With no box the toe past the turn joins back a length on set on the ramp
+  (50 m by default), whatever vertices the string has; one longer than the line runs to the string's end
+  (`docs/decisions/0038-switchbacks.md`). On a profile going down a road comes down from the top line, notching it
   for its entrance, and the walls below it move out towards the pit (`docs/decisions/0037-roads-going-down.md`). It reports
   the bench where the grade can't be met instead of drifting (`docs/decisions/0028-ramps.md`, `0030-ramp-strings.md`).
 - Every object has a stable id (128-bit, generated in-house), a name, a layer, and provenance (the command

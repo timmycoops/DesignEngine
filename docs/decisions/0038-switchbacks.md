@@ -309,3 +309,71 @@ every berm with a 50 m flat, it gets 9 of 10.
 Tim's back strip on RLs is the same road with no flat (3,639.3 m, 504 triangles). With a flat its width the road is
 3,904.9 m against 3,853.7 m, each of its six turns now running flat on the road coming up, 900 triangles, nothing
 crossing. Grid switchbacks takes 2.1 s for ten strips.
+
+## Changed since: the switchback is a box (2026-11-04)
+
+Tim looked at a 100 m flat in the app and asked what it meant: the road ran flat 100 m along the crest and only then
+turned. "The ramp should be the 10% up to the surface and the flat section should be after that (for trucks to turn
+around), then for a switchback it would need to align to the ramp going up to the next seam in the opposite direction."
+He drew his standard switchback as a white box on a design: "the ramp comes to the top, a flat box is built, offset is
+added after the ramp and then the other ramp is heading opposite direction up." Then: "there may also be a berm in that as
+well, so the new ramp would be after the berm as well, which makes it wider (if the berm is in the rule)." Item 10
+changes again:
+
+- **The road ends at its top.** Its edges no longer run on along the flat.
+- **The box runs on past the top,** in line with the road, `turn_flat` metres (the road's width unless the ramp says), on
+  what the berm lies on, so on a seam floor it's on the floor. It's three strips wide: the road's width along the crest,
+  the berm beyond it, and the next road's width beyond that.
+- **The next road starts at the box's near end,** straight across the berm from the top, on the line nearest the road's
+  wall-side top, and climbs the other way at once. Its start is the same whatever the box's length.
+- **The wall above goes round the box.** Its toe runs from the next road's wall-side corner along the box's back to the
+  far end, square across from the end of the box on the crest, then down to the berm's line, which goes on from there.
+  The berm stands out round the box's first two strips as round a road's top.
+- **The join** is used only with no box (`turn_flat` 0): then the road turns at its top, the next road starts in line with
+  the top crossing, and the toe past the turn joins back the ramp's join on, 50 m by default, as before.
+- **A box on a floor steeper along than the road's grade** is still reported on the ramp's line.
+
+Known answers, all exact to 1 µm unless they say:
+- **Level pad, 10 m road, berm and box:** the road climbs 200 m from RL 100 to 120 to its top. The next road comes onto the
+  line straight across the berm from the top, 10 m from the road's wall-side top to 0.01 m, and climbs back 200 m to RL
+  140. The box is flat at RL 120. Its far end is 10 m on past the top, and its back corner 10 m out from the line.
+- **Boxes of 0, 10 and 25 m:** each far end is that far on. With a box the next road starts in the same place whatever
+  its length. With none it starts in line with the top crossing, and the join is 50 m on.
+- **On a floor dipping 5 %:** the box's pit side is on the crest at RL 120, its wall side on the floor 0.5 m lower, and the
+  berm beyond lower again. The next road starts on the floor at RL 119 and climbs 210 m to RL 140. Every vertex of the line
+  the second wall stands on is on the floor, but the next road's own wall-side start, level with its start across the
+  road. The box's back leads up to it from the floor over the last road width.
+- **A skewed top on a seam rising 5 % into the wall:** the box runs on the way the road came, on the seam 5 m on past the
+  top, and square across from the end of it on the crest 10 m on, not back over the road below.
+- **Through the commands:** with no box, joins of 50 m (and none) and 30 m meet the line 20 m apart. With boxes of 10 and
+  25 m the toe comes down to the line beside the box, a road width further out, at the box's far end that far on past the
+  road's top.
+
+### Fixed on the way: a bevel with no width
+
+On the grid pit the box moved Strip 2's third road to start 10 m nearer the turn, and its wall would not build: "a wall
+reaches past the target with no crest on it". The road's wall edge ends in two stretches all but in line, climbing at 10 %,
+with batters a millionth apart as the road leaves them. The bevel between them has no width, and the crest walk steps
+straight over it, as it has since #61, but the wall's mesh still asked it for a crest. Now a transition with no width that
+the walk stepped over builds nothing. Known answer: those five vertices and batters as the run had them, with a target
+rising 2.25 % east to meet the string's end: every crest point is on the target to 1 mm, the crest ends on the string's
+end, and the wall is one sheet with nothing crossing.
+
+The same fault stopped ten other roads on the grid pit. Grid ramps now gets 20 of its roads to the top against 13, Grid
+toe to RLs 19 against 17, and Grid switchbacks all 10. The pit's check goes from 32 faults to 23 (from 32 to 23 with #72
+to #75 as well). Three new ones show where roads now get further:
+- Grid ramps on Strip 1 and Grid toe to RLs on Strip 8 have triangles crossing where a road as wide as its berm crosses it
+  straight and starts its next stretch on its last one's wall-side top. There the berm's crest and its next line touch at
+  a point.
+- Ramp A on Grid toe to RLs, Strip 7, stops later than it did, at a berm fold at the strip's west end.
+
+Tim's seven-row design (turns on the U floor and Topo walls, a 50 m road, a 100 m box, a 10 m minimum bench) gets 8 of 10
+roads to the top. Strips 1 and 2 stop at the second box. The minimum bench drops the berm west of the box, so along the
+box's far end its line has no width, but beyond the box the berm is back to full width: the line runs through the box's
+back corner and the band folds there. #75 doesn't reach this, since the change of width is at a corner. Whether the berm
+should wrap round the far end of a box at all, or the far end be one straight wall across the road, the berm and the next
+road, is for Tim's strings to settle.
+
+Tim's back strip on RLs gets its road to RL -190 through all six turns with a box its width: 3,635.1 m, 848 triangles, one
+sheet, nothing crossing, 23 ms. With no box it's as before, 3,639.3 m and 504 triangles. Grid switchbacks takes 2.1 s for
+ten strips and 177,185 triangles.
