@@ -1055,11 +1055,12 @@ fn a_ramp_runs_up_the_walls_that_name_it_across_a_berm() {
     }
 }
 
-/// A switchback through the commands, in the table as the panel saves it: past the turn the toe of the wall above
-/// joins back to the berm's line, at RL 110 and 20 m out from the toe, the ramp's join on from the turn along the line,
-/// and 50 m on when the ramp doesn't say. A 30 m join meets the line 20 m nearer the turn. The road coming up runs flat
-/// past its top before it turns, along the crest at RL 110, its 10 m width when the ramp doesn't say and 25 m when it
-/// says so, and the turn, and the join with it, moves on that much further (decision 0038, 2026-11-04).
+/// A switchback through the commands, in the table as the panel saves it. With a flat of 0 there's no box: past the turn
+/// the toe of the wall above joins back to the berm's line, at RL 110 and 20 m out from the toe, the ramp's join on from
+/// the turn along the line, and 50 m on when the ramp doesn't say. A 30 m join meets the line 20 m nearer the turn. With
+/// a box, its 10 m width when the ramp doesn't say and 25 m when it says so, the toe goes round it instead: its far end
+/// square across from the end of it on the crest that far on past the road's top, where the toe comes down to the line
+/// beside the box, a road width further out at 30 m, whatever the join says (decision 0038, 2026-11-04).
 #[test]
 fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
     let mut s = Session::with_builtins();
@@ -1091,25 +1092,26 @@ fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
         })
     };
     let mut joins = Vec::new();
-    for (join, flat) in [(None, None), (Some(50.0), None), (Some(30.0), None), (None, Some(25.0))] {
+    for (join, flat) in [(None, Some(0.0)), (Some(50.0), Some(0.0)), (Some(30.0), Some(0.0)), (None, None), (Some(30.0), Some(25.0))] {
         let design = created(&s.run("face.save_design", json!({ "name": format!("turning {join:?} {flat:?}"), "content": content(join, flat) })).unwrap())[0];
         let record = s.run("face.project", json!({ "design": design })).unwrap();
         assert!(record.messages.iter().any(|m| m.starts_with("Ramp A: toe: steps 1 to 3")), "{join:?}: {:?}", record.messages);
         let on = |o: &zd_core::Object| s.project().layer(o.layer).is_some_and(|l| l.name == layer(join, flat));
         let toe_two = s.project().objects().find(|o| o.name == "toe Wall toe 2" && on(o)).map(|o| line(&s, o.id)).expect("the second wall's toe");
         let corner = toe_two.vertices.iter().position(|p| p[1] - N > 65.0).unwrap_or_else(|| panic!("{join:?}: the toe runs round the next road's start: {:?}", toe_two.vertices));
-        let on_line = toe_two.vertices[corner..].iter().find(|p| (p[1] - N - 50.0).abs() < 1e-6).unwrap_or_else(|| panic!("{join:?}: the toe joins the line: {:?}", toe_two.vertices));
-        joins.push(on_line[0] - E);
         let pit = line(&s, s.project().objects().find(|o| o.name == "toe Wall road A pit edge" && on(o)).unwrap().id);
-        let top = pit.vertices.iter().position(|p| (p[2] - 110.0).abs() < 1e-6).expect("the first road's top");
-        let from = pit.vertices[top];
-        let to = *pit.vertices[top..].iter().take_while(|p| (p[2] - 110.0).abs() < 1e-6 && (p[1] - from[1]).abs() < 1e-6).last().expect("the flat along the crest");
+        let top = pit.vertices[pit.vertices.iter().position(|p| (p[2] - 110.0).abs() < 1e-6).expect("the first road's top")];
         let long = flat.unwrap_or(10.0);
-        assert!((to[2] - 110.0).abs() < 1e-6 && (to[1] - from[1]).abs() < 1e-6 && (to[0] - from[0] - long).abs() < 1e-6, "{join:?} {flat:?}: flat {long} m on along the crest past the top: {from:?} to {to:?}");
+        if long > 0.0 {
+            let far = toe_two.vertices[corner..].iter().find(|p| (p[1] - N - 60.0).abs() < 1e-6).unwrap_or_else(|| panic!("{join:?} {flat:?}: the toe comes down to the line beside the box: {:?}", toe_two.vertices));
+            assert!((far[0] - top[0] - long).abs() < 1e-6, "{join:?} {flat:?}: the box's far end {long} m on past the top: {far:?} against {top:?}");
+        } else {
+            let on_line = toe_two.vertices[corner..].iter().find(|p| (p[1] - N - 50.0).abs() < 1e-6).unwrap_or_else(|| panic!("{join:?}: the toe joins the line: {:?}", toe_two.vertices));
+            joins.push(on_line[0] - E);
+        }
     }
     assert!((joins[0] - joins[1]).abs() < 1e-6, "{joins:?}");
     assert!((joins[1] - joins[2] - 20.0).abs() < 1e-6, "{joins:?}");
-    assert!((joins[3] - joins[0] - 15.0).abs() < 1e-6, "the turn moves on with the flat, and the join with it: {joins:?}");
 }
 
 /// Too steep a climb for the string's length leaves the face standing and says why, by step and place.

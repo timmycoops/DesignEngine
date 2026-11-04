@@ -1478,7 +1478,8 @@ fn wall_mesh(sweep: &Sweep, edges: &[Vec<Edge>], walked: &Walked, origin: P3) ->
     for (wall, around) in edges.iter().enumerate() {
         let pieces = &walked.pieces[wall];
         if pieces.is_empty() {
-            if walked.footless[wall] {
+            // A transition with no width is stepped straight over by the crest walk, and has nothing on it to build.
+            if walked.footless[wall] || (sweep.is_transition(wall) && no_width(around)) {
                 continue;
             }
             if sweep.walls[wall].closed_at.is_none() {
@@ -1863,6 +1864,37 @@ mod tests {
             close(p[2], 120.0, 1e-3);
         }
         close(step.wall.area(), 160.0 * 20.0 * 2f64.sqrt(), 1e-3);
+    }
+
+    /// The top of a road's wall edge from the grid pit's Strip 2, climbing at 10 %, its stretches all but in line and
+    /// their batters a millionth apart as the road leaves them (2026-11-04). The bevel between the last two has no width,
+    /// so the crest walk steps straight over it, and the wall builds without it, one sheet. The target rises 2.25 % east
+    /// and meets the string at its end: every crest point is on it, to 1 mm, and the crest ends on the string's end.
+    #[test]
+    fn a_bevel_with_no_width_between_stretches_all_but_in_line_is_stepped_over() {
+        let toe = Polyline {
+            vertices: vec![
+                [650825.09802825, 7450315.372709796, 110.31636437853734],
+                [650845.3970060945, 7450316.356536292, 112.48254874304114],
+                [650903.7449611351, 7450321.801501609, 118.3411171942294],
+                [650951.1874379665, 7450326.2081006095, 123.1054708109529],
+                [650955.9636356949, 7450326.651728125, 123.58514643170335],
+            ],
+            closed: false,
+        };
+        let end = toe.vertices[4];
+        let height = |x: f64| end[2] + 0.0225 * (x - end[0]);
+        let target = triangulate_grid(&Grid::from_fn([E + 800.0, N + 300.0], [10.0, 10.0], 41, 41, |x, _| height(x)));
+        let batters = [64.97615246601654, 64.97620972720827, 64.97619721818528, 64.97619686103701];
+        let step = project_wall_by_edge(&toe, OffsetSide::Left, &batters, &target).unwrap();
+        for p in &step.crest.vertices {
+            close(p[2], height(p[0]), 1e-3);
+        }
+        let last = *step.crest.vertices.last().unwrap();
+        assert!(plan_gap(last, end) < 1e-3 && (last[2] - end[2]).abs() < 1e-3, "the crest ends on the string's end: {last:?}");
+        let v = step.wall.validity();
+        assert_eq!(v.non_manifold_edges + v.inconsistent_edges + v.degenerate_triangles, 0, "{v:?}");
+        assert_eq!(crate::boundary_loops(&step.wall).unwrap().len(), 1, "one sheet, with one edge round it");
     }
 
     fn triangle_area(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {
