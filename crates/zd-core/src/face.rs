@@ -123,15 +123,16 @@ pub struct Ramp {
     /// berm's line (m). Designs saved before this take 50 m. See `docs/decisions/0038-switchbacks.md`.
     #[serde(default = "usual_turn_join")]
     pub turn_join: f64,
-    /// Where it turns back, how far it runs flat along the berm's line before it climbs (m): its width if it doesn't
-    /// say, as designs saved before this don't.
+    /// Where it turns back, how far it runs flat past its top before it turns, in line with itself, on what the berm lies
+    /// on (m); the next road climbs from straight across the berm from its end. Its width if it doesn't say, as designs
+    /// saved before this don't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_flat: Option<f64>,
 }
 
 impl Ramp {
-    /// How far it runs flat after a turn before it climbs (m).
-    pub fn flat_after_turn(&self) -> f64 {
+    /// How far it runs flat past its top before it turns back (m).
+    pub fn flat_before_turn(&self) -> f64 {
         self.turn_flat.unwrap_or(self.width)
     }
 }
@@ -646,15 +647,15 @@ mod tests {
     /// too; what it says is saved, and can be nothing but not less.
     #[test]
     fn a_ramp_runs_flat_its_width_after_a_turn_unless_it_says_otherwise() {
-        assert_eq!(ramp().flat_after_turn(), 30.0);
+        assert_eq!(ramp().flat_before_turn(), 30.0);
         assert!(!serde_json::to_string(&ramp()).unwrap().contains("turn_flat"), "nothing said, nothing saved");
         let longer = Ramp { turn_flat: Some(45.0), ..ramp() };
         let text = serde_json::to_string(&longer).unwrap();
         assert!(text.contains(r#""turn_flat":45.0"#), "{text}");
         assert_eq!(serde_json::from_str::<Ramp>(&text).unwrap(), longer);
-        assert_eq!(longer.flat_after_turn(), 45.0);
+        assert_eq!(longer.flat_before_turn(), 45.0);
         let saved = r#"{ "name": "A", "string": "55555555555555555555555555555555", "fixed": "end", "heading": "along", "width": 40, "grade": 10, "turn_join": 50 }"#;
-        assert_eq!(serde_json::from_str::<Ramp>(saved).unwrap().flat_after_turn(), 40.0);
+        assert_eq!(serde_json::from_str::<Ramp>(saved).unwrap().flat_before_turn(), 40.0);
         let mut d = with_a_ramp();
         d.profiles[0].ramps[0].turn_flat = Some(0.0);
         assert!(d.problems().is_empty(), "{:?}", d.problems());

@@ -1057,9 +1057,9 @@ fn a_ramp_runs_up_the_walls_that_name_it_across_a_berm() {
 
 /// A switchback through the commands, in the table as the panel saves it: past the turn the toe of the wall above
 /// joins back to the berm's line, at RL 110 and 20 m out from the toe, the ramp's join on from the turn along the line,
-/// and 50 m on when the ramp doesn't say. A 30 m join meets the line 20 m nearer the turn. The second road runs flat
-/// along the line before it climbs, its 10 m width when the ramp doesn't say and 25 m when it says so: it comes onto
-/// the line at RL 110 and is still there that far on.
+/// and 50 m on when the ramp doesn't say. A 30 m join meets the line 20 m nearer the turn. The road coming up runs flat
+/// past its top before it turns, along the crest at RL 110, its 10 m width when the ramp doesn't say and 25 m when it
+/// says so, and the turn, and the join with it, moves on that much further (decision 0038, 2026-11-04).
 #[test]
 fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
     let mut s = Session::with_builtins();
@@ -1101,14 +1101,15 @@ fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
         let on_line = toe_two.vertices[corner..].iter().find(|p| (p[1] - N - 50.0).abs() < 1e-6).unwrap_or_else(|| panic!("{join:?}: the toe joins the line: {:?}", toe_two.vertices));
         joins.push(on_line[0] - E);
         let pit = line(&s, s.project().objects().find(|o| o.name == "toe Wall road A pit edge" && on(o)).unwrap().id);
-        let onto = pit.vertices.iter().position(|p| (p[2] - 110.0).abs() < 1e-6).expect("the first road's top") + 1;
-        let (from, to) = (pit.vertices[onto], pit.vertices[onto + 1]);
+        let top = pit.vertices.iter().position(|p| (p[2] - 110.0).abs() < 1e-6).expect("the first road's top");
+        let from = pit.vertices[top];
+        let to = *pit.vertices[top..].iter().take_while(|p| (p[2] - 110.0).abs() < 1e-6 && (p[1] - from[1]).abs() < 1e-6).last().expect("the flat along the crest");
         let long = flat.unwrap_or(10.0);
-        assert!((from[2] - 110.0).abs() < 1e-6 && (to[2] - 110.0).abs() < 1e-6 && ((to[0] - from[0]).abs() - long).abs() < 1e-6, "{join:?} {flat:?}: flat {long} m along the line: {from:?} to {to:?}");
+        assert!((to[2] - 110.0).abs() < 1e-6 && (to[1] - from[1]).abs() < 1e-6 && (to[0] - from[0] - long).abs() < 1e-6, "{join:?} {flat:?}: flat {long} m on along the crest past the top: {from:?} to {to:?}");
     }
     assert!((joins[0] - joins[1]).abs() < 1e-6, "{joins:?}");
     assert!((joins[1] - joins[2] - 20.0).abs() < 1e-6, "{joins:?}");
-    assert!((joins[0] - joins[3]).abs() < 1e-6, "the join doesn't move with the flat stretch: {joins:?}");
+    assert!((joins[3] - joins[0] - 15.0).abs() < 1e-6, "the turn moves on with the flat, and the join with it: {joins:?}");
 }
 
 /// Too steep a climb for the string's length leaves the face standing and says why, by step and place.

@@ -258,3 +258,54 @@ and nothing crosses. RL switchbacks and Grid ramps keep the same surface to 0.01
 (fault 3 of 0034 and, with a 100 m flat, fault 1), and Grid switchbacks still takes 2.2 s for ten strips. Tim's back
 strip, on RLs: the same roads, 3,853.7, 3,639.3 and 3,865.3 m, nothing crossing, 567, 504 and 449 triangles against
 555, 504 and 433.
+
+## Changed since: the flat is on the road coming up (2026-11-04)
+
+Tim looked at the top of a ramp in the app and found it weird: the flat was on the next road, running back along the
+berm's line above the road below before it climbed. "What I'm expecting is the ramp flat pad would actually be in front
+of the ramp start, not move the flat to the other side." Asked where, he chose the flat on the road coming up, and on a
+coal seam: "we will have to match the switchback to the floor grid. Otherwise we will end up with coal in the wrong strip
+because of the dip." Item 10 changes:
+
+- **The road coming up runs flat past its top** before it turns, on along the crest the way it came, `turn_flat` metres,
+  a road wide on the wall side of the crest: its pit side is the crest itself and its wall side the crest moved back by
+  the road. It lies on what the berm lies on, so on a seam floor it's on the floor, dipping into the wall with the seam,
+  and no coal is left under it. The berm stands its full width out beyond the flat, round it as round a road's top.
+- **The next road climbs straight away,** from straight across the berm from the flat's end. Nothing sits back over the
+  road below.
+- **The join past the turn** is measured from where the next road comes onto the line, as before, so it moves on with the
+  flat.
+- **A flat on a floor steeper along than the road's grade** is reported on the ramp's line, with where it ends and how
+  steep it goes: under Tim's single turn on the Topo wall the base of weathering falls 10.5 to 12.5 % along it.
+- **With no berm since its last wall** a road turns on the crest, as before, with no flat: there's no berm for one to lie
+  on.
+
+The next road's climb stays level across, as every road is, so on a floor dipping into the wall its wall-side start stands
+above the floor by the dip over its width (0.5 m for a 10 m road at 5 %), and the toe past the turn leads up to it over a
+road width, as #74 has it. Tim was told and didn't ask for that start on the floor.
+
+Known answers, all exact to 1 µm unless they say:
+- **Level pad, 10 m road and flat:** the flat ends 10 m on along the crest at RL 120. Its wall side is 10 m into the
+  wall, and the next road comes onto the line 20 m in from the crest, straight across from the flat's end, and climbs
+  from there 200 m to RL 140. The join is 50 m on from there along the line.
+- **Flats of 0, 10 and 25 m:** each ends that far on. With none, the next road is in line with the road below's top
+  crossing.
+- **On a floor dipping 5 %:** the flat's pit side is on the crest at RL 120 and its wall side on the floor 0.5 m lower. The
+  face across the flat and the berm beyond is the floor. The next road starts on the floor at RL 119 and climbs 210 m.
+- **Two switchbacks on two dipping floors, one turning each way:** both road edges are on the face everywhere, and each
+  flat and berm is on its floor.
+- **A floor falling 12 % along the strip:** the flat follows it, 11.91 % along a crest running off square by 12 in 100,
+  and the road reports it.
+- **Joins:** an inward jog 16 m past the flat's end gets its join on the jogged line, and a bump into the wall makes a
+  150 m join stop where it meets the line round the bump.
+- **Through the commands:** a flat of 25 m moves the join 15 m on from a 10 m one.
+
+On the grid pit, Grid switchbacks with the template's settings now gets all 10 roads to the topography, against 9, and
+the pit's own check goes from 33 faults to 32. Every road edge is on the face with a 30 m road and its flat, a 50 m road
+and no flat, and a 50 m road and a 100 m flat. With a 100 m flat, Strips 1, 2, 4 and 9 stop, against Strip 3 before.
+Tim's seven-row design with one turn on the Topo wall and a 50 m flat gets 7 of 10 to the top, against 3. Turning on
+every berm with a 50 m flat, it gets 9 of 10.
+
+Tim's back strip on RLs is the same road with no flat (3,639.3 m, 504 triangles). With a flat its width the road is
+3,904.9 m against 3,853.7 m, each of its six turns now running flat on the road coming up, 900 triangles, nothing
+crossing. Grid switchbacks takes 2.1 s for ten strips.

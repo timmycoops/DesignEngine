@@ -473,8 +473,9 @@ export interface Ramp {
   /** Where it turns back, how far on from the turn, along the road, the toe of the wall above joins back to the berm's
    * line, in metres. 50 m if it's left out, as designs saved before it could be set. */
   turn_join?: number;
-  /** Where it turns back, how far it runs flat along the berm's line before it climbs, in metres. Its width if it's
-   * left out, as designs saved before it could be set. */
+  /** Where it turns back, how far it runs flat past its top before it turns, in line with itself and on the floor on a
+   * grid, in metres; the next road climbs from straight across the berm from its end. Its width if it's left out, as
+   * designs saved before it could be set. */
   turn_flat?: number | null;
 }
 

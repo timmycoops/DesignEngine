@@ -442,7 +442,7 @@ fn strings_of(inputs: &Inputs<'_>, line: &FaceLine, design: ObjectId, ramp_strin
 
 fn face_ramp(ramp: &Ramp, at: [f64; 2]) -> FaceRamp {
     let ends_at = (ramp.fixed == RampFixed::End).then_some(at);
-    FaceRamp { start: at, back: ramp.heading == RampHeading::Back, width: ramp.width, grade: ramp.grade / 100.0, ends_at, after_berm: ramp.berm == RampBerm::After, turn_join: ramp.turn_join, turn_flat: ramp.flat_after_turn() }
+    FaceRamp { start: at, back: ramp.heading == RampHeading::Back, width: ramp.width, grade: ramp.grade / 100.0, ends_at, after_berm: ramp.berm == RampBerm::After, turn_join: ramp.turn_join, turn_flat: ramp.flat_before_turn() }
 }
 
 /// The surfaces a profile names.
@@ -632,6 +632,9 @@ fn ramp_report(name: &str, strip: &str, ramp: usize, face: &Face) -> String {
         parts.push(format!("{steps}, {:.1} m from RL {:.1} to {:.1}, starts at {:.1}, {:.1}", road.pit_edge.plan_length(), bottom[2], top[2], bottom[0], bottom[1]));
         if let Some(miss) = road.off_end {
             parts.push(format!("it comes out {miss:.1} m from where it's held"));
+        }
+        for (at, steepest) in &road.steep_flats {
+            parts.push(format!("its flat before the turn at {:.1}, {:.1} follows the floor at up to {:.1} %, steeper than the road", at[0], at[1], steepest * 100.0));
         }
     }
     for stopped in face.no_roads.iter().filter(|stopped| stopped.ramp == ramp) {

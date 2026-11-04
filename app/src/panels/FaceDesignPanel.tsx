@@ -530,7 +530,7 @@ function RampRow({ ramp, stringName, onWalls, turns, results, swap, onShow, onCh
             <NumberBox
               width="w-12"
               value={ramp.turn_flat ?? ramp.width}
-              title="Where the road turns back, how far it runs flat along the berm's line before it climbs, in metres, so trucks don't turn straight onto the grade. The road's width unless you set it; 0 climbs straight away"
+              title="Where the road turns back, how far it runs flat past its top before it turns, in line with itself and on the floor on a grid, in metres, so trucks don't turn straight off the grade. The next road climbs from straight across the berm from its end. The road's width unless you set it; 0 turns at the top"
               onChange={(turn_flat) => onChange({ turn_flat })}
             />
           </Labelled>
