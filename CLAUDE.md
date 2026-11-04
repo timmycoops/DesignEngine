@@ -88,7 +88,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   lines, profiles and any shared rules together (`docs/decisions/0024-face-design.md`). A face built by hand is a step
   design: a face design on one string that saves and runs whole as each step is added (`face.step`, one undo a step),
   with ramps placed by clicking. Faces are built from strings, never by moving a surface's points
-  (`docs/decisions/0044-step-design.md`).
+  (`docs/decisions/0045-step-design.md`).
 - `Ramp`: centreline or start point, direction, start and end bench, width, grade (%, ratio or degrees,
   measured on the inside edge by default, which is the pit side), inside and outside taper, entry type, flat or
   graded switchbacks with radius. It's a named ramp in a `FaceProfile`, set by a string drawn across the strips: each line

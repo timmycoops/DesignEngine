@@ -1,4 +1,4 @@
-# 0044 — Step design: a face built by hand, a step at a time
+# 0045 — Step design: a face built by hand, a step at a time
 
 Date: 2026-11-05 · Status: accepted (Tim, 2026-11-05: "how we can manually edit a face as well ... create these from a
 certain position and do these in steps", then on doing it with strings and steps rather than moving surface points,
