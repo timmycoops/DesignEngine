@@ -470,12 +470,13 @@ export interface Ramp {
   grade: number;
   /** After the berm if it's left out, as designs saved before it could be set. */
   berm?: RampBerm;
-  /** Where it turns back, how far on from the turn, along the road, the toe of the wall above joins back to the berm's
-   * line, in metres. 50 m if it's left out, as designs saved before it could be set. */
+  /** Where it turns back with no box past its top (a flat of 0), how far on from the turn, along the road, the toe of the
+   * wall above joins back to the berm's line, in metres. 50 m if it's left out, as designs saved before it could be set. */
   turn_join?: number;
-  /** Where it turns back, how far it runs flat past its top before it turns, in line with itself and on the floor on a
-   * grid, in metres; the next road climbs from straight across the berm from its end. Its width if it's left out, as
-   * designs saved before it could be set. */
+  /** Where it turns back, how far the flat box it turns on runs past its top, in line with it and on the floor on a grid,
+   * in metres: the road, the berm and the next road wide. The next road climbs the other way from its near end, straight
+   * across the berm from the top, and the wall above goes round the box. Its width if it's left out, as designs saved
+   * before it could be set; 0 turns at the top with no box. */
   turn_flat?: number | null;
 }
 

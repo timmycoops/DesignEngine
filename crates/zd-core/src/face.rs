@@ -119,19 +119,21 @@ pub struct Ramp {
     /// How it gets past a berm on its way up. Designs saved before this take the default.
     #[serde(default)]
     pub berm: RampBerm,
-    /// Where it turns back, how far on from the turn, along the line, the toe of the wall above joins back to the
-    /// berm's line (m). Designs saved before this take 50 m. See `docs/decisions/0038-switchbacks.md`.
+    /// Where it turns back with no box past its top (a flat of 0), how far on from the turn, along the line, the toe of
+    /// the wall above joins back to the berm's line (m). Designs saved before this take 50 m. See
+    /// `docs/decisions/0038-switchbacks.md`.
     #[serde(default = "usual_turn_join")]
     pub turn_join: f64,
-    /// Where it turns back, how far it runs flat past its top before it turns, in line with itself, on what the berm lies
-    /// on (m); the next road climbs from straight across the berm from its end. Its width if it doesn't say, as designs
-    /// saved before this don't.
+    /// Where it turns back, how far the flat box it turns on runs past its top, in line with it, on what the berm lies on
+    /// (m): the road, the berm and the next road wide. The next road climbs the other way from its near end, straight
+    /// across the berm from the top, and the wall above goes round the box. Its width if it doesn't say, as designs saved
+    /// before this don't; 0 turns at the top with no box.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_flat: Option<f64>,
 }
 
 impl Ramp {
-    /// How far it runs flat past its top before it turns back (m).
+    /// How far the flat box it turns back on runs past its top (m).
     pub fn flat_before_turn(&self) -> f64 {
         self.turn_flat.unwrap_or(self.width)
     }
