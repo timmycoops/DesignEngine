@@ -508,13 +508,20 @@ fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from
             break;
         }
     }
-    // A box's far end is where the end of it on the crest, carried on square across, meets the line.
+    // A box's far end is where the end of it on the crest, carried on square across, meets the line. The berm's line
+    // comes square down the far end from there (`Flat::squared_end`), so that's the first vertex of the toe on it from
+    // the box's wall side out, the wall side's end itself where there's no berm beside the box; a line that doesn't, it
+    // crosses.
     if let (true, Some([pit, wall])) = (boxed, pad) {
         let across_end = plan_gap(pit, wall);
         let reach = 3.0 * (across_end + plan_gap(wall, turn));
         let way = [(wall[0] - pit[0]) / across_end, (wall[1] - pit[1]) / across_end];
+        let off = |q: P3| ((q[0] - pit[0]) * way[1] - (q[1] - pit[1]) * way[0]).abs();
+        let out = |q: P3| (q[0] - pit[0]) * way[0] + (q[1] - pit[1]) * way[1];
         let ray = (plan(pit), [pit[0] + way[0] * reach, pit[1] + way[1] * reach]);
-        if let Some((m, u)) = (from..across).rev().find_map(|m| segment_crossing(ray.0, ray.1, plan(toe.vertices[m]), plan(toe.vertices[m + 1])).map(|(_, u)| (m, u))) {
+        if let Some(m) = (from..across).rev().find(|&m| off(toe.vertices[m]) < 1e-6 && out(toe.vertices[m]) > across_end - SAME_POINT) {
+            (kept, join) = (m + 1, toe.vertices[m]);
+        } else if let Some((m, u)) = (from..across).rev().find_map(|m| segment_crossing(ray.0, ray.1, plan(toe.vertices[m]), plan(toe.vertices[m + 1])).map(|(_, u)| (m, u))) {
             (kept, join) = (m + 1, point(m, u));
         }
     }
@@ -734,7 +741,11 @@ pub(crate) fn flat_past_top(crest: &Polyline, top: RoadTop, length: f64, berm: E
     } else {
         wall.insert(0, top.wall);
     }
-    let flat = Flat { pit: Polyline { vertices: pit, closed: false }, wall: Polyline { vertices: wall, closed: false }, square, from: at, to: last, to_on_vertex: on_vertex, forward };
+    // Its far end, square across from the end of it on the crest, laid as its sides are.
+    let (end, wall_end) = (*pit.last().expect("a flat has an end"), *wall.last().expect("a flat has a wall side"));
+    let far_end = lay(&Polyline { vertices: vec![wall_end, end], closed: false })?.vertices;
+    let far = far_end.get(1..far_end.len().saturating_sub(1)).unwrap_or(&[]).to_vec();
+    let flat = Flat { pit: Polyline { vertices: pit, closed: false }, wall: Polyline { vertices: wall, closed: false }, far, square, from: at, to: last, to_on_vertex: on_vertex, forward };
     Ok(Some(flat))
 }
 
@@ -745,6 +756,8 @@ pub(crate) fn flat_past_top(crest: &Polyline, top: RoadTop, length: f64, berm: E
 pub(crate) struct Flat {
     pub pit: Polyline,
     pub wall: Polyline,
+    /// The far end between the two sides' ends, from the wall side's: the points it's laid on between them.
+    pub far: Vec<P3>,
     /// Where the wall side comes square across from the pit side: after the road's own corner, if its top is skewed.
     pub square: usize,
     pub from: usize,
@@ -765,6 +778,7 @@ impl Flat {
         if self.forward {
             vertices.extend_from_slice(&c[..self.from]);
             vertices.extend_from_slice(wall);
+            vertices.extend_from_slice(&self.far);
             vertices.push(end);
             let after = if self.to_on_vertex { self.to + 1 } else { self.to };
             vertices.extend_from_slice(&c[after.min(c.len())..]);
@@ -772,11 +786,120 @@ impl Flat {
             let before = if self.to_on_vertex { self.to } else { self.to + 1 };
             vertices.extend_from_slice(&c[..before]);
             vertices.push(end);
+            vertices.extend(self.far.iter().rev());
             vertices.extend(wall.iter().rev());
             vertices.extend_from_slice(&c[self.from + 1..]);
         }
         vertices.dedup_by(|a, b| plan_gap(*a, *b) < SAME_POINT);
         Polyline { vertices, closed: crest.closed }
+    }
+
+    /// The road's strip of the box, as a band: its pit side along the crest and round its far end, and its wall side.
+    pub(crate) fn road_strip(&self) -> (Polyline, Polyline) {
+        let pit = self.pit.vertices.iter().copied().chain(self.far.iter().rev().copied()).collect();
+        (Polyline { vertices: pit, closed: false }, self.wall.clone())
+    }
+
+    /// The berm's line round the box squared off at its far end (Tim, 2026-11-04). The berm stands out into the wall from
+    /// the crest, not on past the box along it, so the line runs beside the box, out from its wall side, only as far as
+    /// the box's far end carried on square across, and comes straight back down that to `plain`, the berm's line with no
+    /// box, along the crest's own far end where the two run together. It goes on along `plain` till it's back on `line`.
+    /// `line` is the berm's line from the crest with the box in it, which stands round the far end too. Gives the squared
+    /// line and where it comes onto the crest's far end part way along it, for the sheet to be split at; None, and the
+    /// line as it is, where the far end doesn't meet the two lines that way.
+    pub(crate) fn squared_end(&self, line: &Polyline, plain: &Polyline) -> Option<(Polyline, Option<P3>)> {
+        if !self.forward {
+            let (squared, meets) = self.squared_ahead(&backwards(line), &backwards(plain))?;
+            return Some((backwards(&squared), meets));
+        }
+        self.squared_ahead(line, plain)
+    }
+
+    /// The same for a box running the way the lines do.
+    fn squared_ahead(&self, line: &Polyline, plain: &Polyline) -> Option<(Polyline, Option<P3>)> {
+        let (end, wall_end) = (*self.pit.vertices.last()?, *self.wall.vertices.last()?);
+        let across = plan_gap(end, wall_end);
+        if across < SAME_POINT {
+            return None;
+        }
+        let out = [(wall_end[0] - end[0]) / across, (wall_end[1] - end[1]) / across];
+        // The far end, from the end on the crest out to the wall side, by how far out each of its points is.
+        let mut far: Vec<(f64, P3)> = once(end).chain(self.far.iter().rev().copied()).chain(once(wall_end)).map(|p| ((p[0] - end[0]) * out[0] + (p[1] - end[1]) * out[1], p)).collect();
+        far.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let height_out = |t: f64| {
+            let k = far.windows(2).position(|w| t <= w[1].0).unwrap_or(far.len() - 2);
+            let ((ta, a), (tb, b)) = (far[k], far[k + 1]);
+            let s = if tb > ta { ((t - ta) / (tb - ta)).clamp(0.0, 1.0) } else { 0.0 };
+            a[2] + s * (b[2] - a[2])
+        };
+        // Where a line crosses the far end carried on both ways: how far out, on which segment and how far along it.
+        let crossings = |l: &Polyline| -> Vec<(f64, usize, f64)> {
+            l.vertices
+                .windows(2)
+                .enumerate()
+                .filter_map(|(i, w)| {
+                    let d = [w[1][0] - w[0][0], w[1][1] - w[0][1]];
+                    let denom = d[0] * out[1] - d[1] * out[0];
+                    if denom.abs() < 1e-9 * (d[0].hypot(d[1]) + 1.0) {
+                        return None;
+                    }
+                    let e = [end[0] - w[0][0], end[1] - w[0][1]];
+                    let s = (e[0] * out[1] - e[1] * out[0]) / denom;
+                    let t = (w[0][0] + s * d[0] - end[0]) * out[0] + (w[0][1] + s * d[1] - end[1]) * out[1];
+                    (-1e-9..=1.0 + 1e-9).contains(&s).then_some((t, i, s.clamp(0.0, 1.0)))
+                })
+                .collect()
+        };
+        let at = |l: &Polyline, i: usize, s: f64| {
+            let (a, b) = (l.vertices[i], l.vertices[i + 1]);
+            [a[0] + s * (b[0] - a[0]), a[1] + s * (b[1] - a[1]), a[2] + s * (b[2] - a[2])]
+        };
+        // Beside the box: the line out from its wall side, where it crosses the far end beyond the wall side's end. Where
+        // the berm has no width along the far end, as where the minimum bench drops it past the box, the line comes down
+        // onto the far end there and runs down it through the wall side's end: from where it comes onto it, which is the
+        // wall side's end itself where the berm has none beside the box either.
+        let off = |q: P3| ((q[0] - end[0]) * out[1] - (q[1] - end[1]) * out[0]).abs();
+        let out_to = |q: P3| (q[0] - end[0]) * out[0] + (q[1] - end[1]) * out[1];
+        let onto_end = (0..line.vertices.len().saturating_sub(1)).find(|&m| nearest_along(line.vertices[m], line.vertices[m + 1], wall_end).1 < ON_THE_END && off(line.vertices[m]) < ON_THE_END).map(|mut j| {
+            while j > 0 && off(line.vertices[j - 1]) < ON_THE_END && out_to(line.vertices[j - 1]) >= out_to(line.vertices[j]) - SAME_POINT {
+                j -= 1;
+            }
+            j
+        });
+        let (t_beside, i, beside) = match onto_end {
+            Some(j) if j > 0 => {
+                let q = line.vertices[j];
+                let t = out_to(q);
+                (t, j - 1, [end[0] + out[0] * t, end[1] + out[1] * t, q[2]])
+            }
+            _ => {
+                let (t, i, s) = crossings(line).into_iter().filter(|c| c.0 > across + SAME_POINT).min_by(|a, b| a.0.total_cmp(&b.0))?;
+                (t, i, at(line, i, s))
+            }
+        };
+        // Past it: the berm's line with no box, nearest the crest.
+        let (t_past, k, _) = crossings(plain).into_iter().filter(|c| c.0 > -SAME_POINT).min_by(|a, b| a.0.total_cmp(&b.0))?;
+        if t_beside < across - SAME_POINT || t_past >= t_beside - SAME_POINT {
+            return None;
+        }
+        let past = [end[0] + out[0] * t_past.max(0.0), end[1] + out[1] * t_past.max(0.0), height_out(t_past.max(0.0))];
+        let mut vertices: Vec<P3> = line.vertices[..=i].to_vec();
+        vertices.push(beside);
+        // Down the far end, on the crest's own far end where the two run together.
+        vertices.extend(far.iter().rev().filter(|(t, _)| *t > t_past + SAME_POINT && *t < t_beside - SAME_POINT).map(|(_, p)| *p));
+        vertices.push(past);
+        // On along the line with no box, until it's back on the line round the box.
+        let back_on = plain.vertices[k + 1..].iter().enumerate().find_map(|(q, v)| line.vertices[i + 1..].iter().position(|w| plan_gap(*v, *w) < SAME_POINT).map(|r| (k + 1 + q, i + 1 + r)));
+        match back_on {
+            Some((q, r)) => {
+                vertices.extend_from_slice(&plain.vertices[k + 1..q]);
+                vertices.extend_from_slice(&line.vertices[r..]);
+            }
+            None => vertices.extend_from_slice(&plain.vertices[k + 1..]),
+        }
+        vertices.dedup_by(|a, b| plan_gap(*a, *b) < SAME_POINT);
+        let part_way = (t_past > SAME_POINT && t_past < across - SAME_POINT).then_some(past);
+        Some((Polyline { vertices, closed: line.closed }, part_way))
     }
 
     /// The steepest the flat's two sides rise or fall along it, as a fraction: not across the road from a skewed top.
@@ -790,6 +913,10 @@ impl Flat {
 pub(crate) fn nearest_on(line: &Polyline, p: P3) -> P3 {
     point_at(line, nearest_place(line, p))
 }
+
+/// A berm's line nearer the far end of a switchback box than this runs along it (m): a line with no width there comes
+/// out of the offset that close to it.
+const ON_THE_END: f64 = 0.1;
 
 /// Where a road turning back starts the next wall: straight across the berm from its wall-side top. That's a road width
 /// plus the berm out from where the road came up, so the pad it turns on is the two roads and the berm between them.
@@ -1892,13 +2019,88 @@ mod tests {
         // Its far end square across, out to its back corner the next road's width from the line.
         close(back_corner[0], far[0], 1e-6);
         close(back_corner[1] - far[1], 10.0, 1e-6);
-        // Flat in the box, its three strips; the wall above past its far end; and the berm's line from there to the end.
+        // Squared off: from the line beside the box the toe comes straight back down the far end to the berm's line past
+        // it, 10 m out from the crest, where the box's wall-side corner is too, and goes on along that.
+        let down = toe[c + 3];
+        close(down[0], far[0], 1e-6);
+        close(down[1] - N, 30.0, 1e-6);
+        // Flat in the box, its three strips; the wall above past its far end, with no berm round it; and the berm's line
+        // from there to the end.
         for (along, out) in [(5.0, 5.0), (5.0, 15.0), (5.0, 25.0), (9.0, 28.0)] {
             close(height(&face.surface, top[0] - E + along, top[1] - N + out), 120.0, 1e-6);
         }
         assert!(height(&face.surface, top[0] - E + 15.0, top[1] - N + 25.0) > 121.0, "the wall above stands past the box");
+        close(height(&face.surface, top[0] - E + 15.0, top[1] - N + 15.0), 125.0, 1e-6);
         let at = |x: f64| toe.windows(2).find(|w| w[0][0] - E <= x && w[1][0] - E >= x).map(|w| w[0][1] - N).expect("the toe runs there");
         close(at(1500.0), 30.0, 1e-6);
+    }
+
+    /// A box for a 20 m road and a 10 m berm, 25 m long, squared off at its far end, on a road climbing east and on one
+    /// climbing west (Tim, 2026-11-04): the berm stands out into the wall from the crest, not on past the box along it.
+    /// Along the far end, 25 m on past the road's top, the toe of the wall above has the box's back corner, 50 m out from
+    /// the crest; the berm's line beside the box, 30 m out; the box's wall-side corner, 20 m out; and the berm's line past
+    /// the box, 10 m out, where it goes on. Flat at RL 120 in the box and on the berm past it. The wall above rises from
+    /// the far end at 45 degrees: 2 m past it and 15 m out it's at RL 122, the nose where the two walls meet.
+    #[test]
+    fn a_box_for_a_road_wider_than_its_berm_is_squared_off_at_its_far_end() {
+        let low = FaceTarget::Rl(120.0);
+        let rows = [climbed_by(low, &[0]), berm(low, 10.0), turned_on(FaceTarget::Rl(140.0))];
+        for (ramp, way) in [(ramp_at(500.0), 1.0), (FaceRamp { back: true, ..ramp_at(1000.0) }, -1.0)] {
+            let face = long_face(&rows, &[FaceRamp { width: 20.0, turn_flat: 25.0, ..ramp }]);
+            assert!(face.no_roads.is_empty(), "{way}: {:?}", face.no_roads);
+            one_clean_sheet(&face);
+            let top = *road_of(&face, 0).pit_edge.vertices.iter().find(|p| (p[2] - 120.0).abs() < 1e-6).expect("the road's top");
+            close(top[1] - N, 20.0, 1e-6);
+            let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe.vertices;
+            let end = top[0] + way * 25.0;
+            let far: Vec<f64> = toe.iter().filter(|p| (p[0] - end).abs() < 1e-6).map(|p| p[1] - top[1]).collect();
+            for want in [10.0, 20.0, 30.0, 50.0] {
+                assert!(far.iter().any(|got| (got - want).abs() < 1e-6), "{way}: the toe along the far end has {want} m out: {far:?}");
+            }
+            assert!(far.iter().all(|got| (10.0 - 1e-6..=50.0 + 1e-6).contains(got)), "{way}: nothing past the far end: {far:?}");
+            assert!(toe.iter().all(|p| (p[0] - end) * way <= 1e-6 || p[1] - top[1] < 10.0 + 1e-6), "{way}: no berm round the far end: {toe:?}");
+            let past = toe.iter().position(|p| (p[0] - end).abs() < 1e-6 && (p[1] - top[1] - 10.0).abs() < 1e-6).expect("down to the berm's line");
+            let on = [toe.get(past + 1), past.checked_sub(1).and_then(|q| toe.get(q))].into_iter().flatten().find(|p| (p[0] - end).abs() > 1e-6).expect("then along it");
+            close(on[1] - top[1], 10.0, 1e-6);
+            assert!((on[0] - end) * way > 0.0, "{way}: on past the box, not back over it: {on:?}");
+            let at = |along: f64, out: f64| height(&face.surface, top[0] - E + way * along, top[1] - N + out);
+            for (along, out) in [(5.0, 5.0), (24.0, 5.0), (24.0, 15.0), (24.0, 25.0), (24.0, 45.0), (27.0, 5.0), (40.0, 8.0)] {
+                close(at(along, out), 120.0, 1e-6);
+            }
+            close(at(27.0, 15.0), 122.0, 1e-6);
+            close(at(27.0, 40.0), 122.0, 1e-6);
+        }
+    }
+
+    /// A box where the minimum bench drops the berm, all along and past it, as on Tim's seven-row design (2026-11-04): a
+    /// 30 m least bench over a 20 m wall. The box is then the two roads, 10 m each, with no berm between, 25 m long and
+    /// squared off at its far end: along it the toe of the wall above has the box's back corner 20 m out from the crest,
+    /// its wall-side corner 10 m out, and the crest itself, which it runs along on past the box with no berm. Flat at RL
+    /// 120 in the box; the wall above rises from its far end and from the crest past it at 45 degrees, so 2 m past the end
+    /// and 5 m out it's at RL 122, the nose where the two meet. Nothing crosses. (A berm the minimum bench drops all along
+    /// on an RL leaves the sheet split along the crest with no turn at all, as before: the crest and the toe on it have
+    /// their vertices in different places.)
+    #[test]
+    fn a_box_with_no_berm_is_the_two_roads_squared_off() {
+        let low = FaceTarget::Rl(120.0);
+        let bench = FaceStep::Berm { on: Some(low), width: EdgeRule::Fixed(10.0), register: true, condition: None, min_bench: Some(30.0) };
+        let face = long_face(&[climbed_by(low, &[0]), bench, turned_on(FaceTarget::Rl(140.0))], &[FaceRamp { turn_flat: 25.0, ..ramp_at(500.0) }]);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        assert_eq!(find_crossings(&face.surface, crate::COINCIDENT).pairs, 0, "nothing crossing");
+        let top = *road_of(&face, 0).pit_edge.vertices.iter().find(|p| (p[2] - 120.0).abs() < 1e-6).expect("the road's top");
+        close(top[1] - N, 20.0, 1e-6);
+        let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe.vertices;
+        let end = top[0] + 25.0;
+        let far: Vec<f64> = toe.iter().filter(|p| (p[0] - end).abs() < 1e-6).map(|p| p[1] - top[1]).collect();
+        for want in [0.0, 10.0, 20.0] {
+            assert!(far.iter().any(|got| (got - want).abs() < 1e-6), "the toe along the far end has {want} m out: {far:?}");
+        }
+        assert!(toe.iter().all(|p| p[0] - end <= 1e-6 || (p[1] - top[1]).abs() < 1e-6), "on past the box it's the crest: {toe:?}");
+        let at = |along: f64, out: f64| height(&face.surface, top[0] - E + along, top[1] - N + out);
+        for (along, out) in [(5.0, 5.0), (24.0, 5.0), (24.0, 15.0)] {
+            close(at(along, out), 120.0, 1e-6);
+        }
+        close(at(27.0, 5.0), 122.0, 1e-6);
     }
 
     /// The box past a turn is as long as the ramp says: 10 m, the road's width, or 25 m, its far end that far on past the

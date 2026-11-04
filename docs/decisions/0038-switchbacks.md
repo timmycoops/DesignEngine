@@ -377,3 +377,58 @@ road, is for Tim's strings to settle.
 Tim's back strip on RLs gets its road to RL -190 through all six turns with a box its width: 3,635.1 m, 848 triangles, one
 sheet, nothing crossing, 23 ms. With no box it's as before, 3,639.3 m and 504 triangles. Grid switchbacks takes 2.1 s for
 ten strips and 177,185 triangles.
+
+## Changed since: the box squared off at its far end (2026-11-04)
+
+Tim looked at the box in the app and asked where the flat is measured from. It's measured from the road's top, where its
+edges reach the crest, along the crest. The box's road and berm strips then had the berm standing 30 m on round their far
+end, because the box was put into the crest and the berm went out from all of it. Tim: "why is it 30 m berm but in the wrong
+direction?" Asked whether the far end should be one straight wall across all three strips, he said "Yes, square it off".
+
+- **The berm stands out into the wall from the crest, beside the box and past it, never round its end.** The berm's line
+  beside the box runs only as far as the box's far end carried on square across. From there it comes straight down the
+  far end to the berm's line past the box, the one there'd be with no box, and goes on along that
+  (`Flat::squared_end`). Where the two run along the crest's own far end, the line takes the crest's points, so the berm
+  splits there with no slit.
+- **The wall above** goes round the box's back and straight down its far end, one straight wall across the next road,
+  the berm and as much of the road strip as stands past the berm's line.
+- **Where the minimum bench drops the berm** along the far end only, the line beside the box comes down onto the far end
+  and runs down it. Where it drops it all along the box too, the box is the two roads with nothing between. Either way the
+  far end is square. This is what folded Strips 1 and 2 of Tim's seven-row design.
+- **The box's far end is laid on the floor** with its sides, so on a seam floor the box, its far end and the berm past it
+  are all on the floor.
+
+### Fixed on the way: a wall that closes just on the target
+
+The westbound known answer below left a hole in the wall above: a stretch of wall closing exactly at RL 140 had its crest
+only touching it at that point, and was dropped. A wall whose crest only touches it where it closes is now built whole,
+as one closing lower is, with the crest's own point there so it welds to its neighbours.
+
+Known answers, exact to 1 µm unless they say:
+- **Level pad, 10 m road and berm, 10 m box:** the toe comes down the far end from the line beside the box, 20 m out from
+  the crest, to the berm's line past it, 10 m out. 5 m past the end and 15 m out the wall above is at RL 125, not berm.
+- **20 m road, 10 m berm, 25 m box, climbing east and climbing west:** along the far end the toe has the back corner 50 m
+  out, the line beside the box 30 m, the box's wall-side corner 20 m and the berm's line past it 10 m, and nothing past the
+  far end above that. Flat at RL 120 in the box and on the berm past it. 2 m past the end it's RL 122, 15 m out and 40 m
+  out. One sheet, nothing crossing.
+- **A berm the minimum bench drops everywhere (30 m least over a 20 m wall), 25 m box:** the toe along the far end has the
+  back corner 20 m out, the wall-side corner 10 m out and the crest, and runs along the crest past the box. Flat in the box,
+  RL 122 2 m past its end. Nothing crosses. That face isn't one sheet, as it isn't with no box or turn at all: with the
+  berm dropped all along on an RL, the crest and the toe on it have their vertices in different places. That's still open.
+- **Through the commands:** with boxes of 10 and 25 m the toe comes down the far end to the berm's line past the box, and
+  nothing stands past the far end above it.
+- **A wall closing just on the target:** a toe turning north at (100, 30) with vertices at 40 and 50 m up the far end, a
+  45 degree wall 20 m high. The nose's hip meets the target just where the stretch from 40 to 50 closes. The wall's area is
+  its plan area √2 times over, to 1 µm², and it's one sheet. Without the fix it was 150 √2 m² short.
+
+Results:
+- **Tim's seven-row design** (turns on the U floor and Topo walls, 50 m road, 100 m box, 10 m minimum bench): all 10
+  roads reach the top, against 8. No face has triangles crossing. Every face has the same holes as before the square-off
+  (2 to 9 small slits a strip, which predate #76), but Strip 2, whose third road now gets to the top.
+- **His single turn on the Topo wall with a 50 m box:** 3 of 10 reach the top, as before #76. The flat on the road coming
+  up had moved the next road 50 m along, which got 7. The box starts it straight above the top, and on Strips 1 to 7 the
+  floor under the Topo berm rises 10.5 to 12.5 % the way it climbs, faster than its grade: it says so.
+- **Grid pit:** still 23 faults. Grid switchbacks and RL switchbacks get all 10 roads to the top. Grid switchbacks takes 2.9
+  s for ten strips (179,172 triangles); the berm's line with no box is offset once more at each berm with a box.
+- **Tim's back strip on RLs:** the road reaches RL -190 through all six turns with a box its width, 3,635.1 m, 694
+  triangles, one sheet, nothing crossing, 23 ms. With no box it's as before, 3,639.3 m and 504 triangles.

@@ -1060,7 +1060,8 @@ fn a_ramp_runs_up_the_walls_that_name_it_across_a_berm() {
 /// the turn along the line, and 50 m on when the ramp doesn't say. A 30 m join meets the line 20 m nearer the turn. With
 /// a box, its 10 m width when the ramp doesn't say and 25 m when it says so, the toe goes round it instead: its far end
 /// square across from the end of it on the crest that far on past the road's top, where the toe comes down to the line
-/// beside the box, a road width further out at 30 m, whatever the join says (decision 0038, 2026-11-04).
+/// beside the box, a road width further out at 30 m, whatever the join says, and on straight down to the berm's line
+/// past the box at 20 m, with no berm round the box's end (decision 0038, 2026-11-04).
 #[test]
 fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
     let mut s = Session::with_builtins();
@@ -1105,6 +1106,10 @@ fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
         if long > 0.0 {
             let far = toe_two.vertices[corner..].iter().find(|p| (p[1] - N - 60.0).abs() < 1e-6).unwrap_or_else(|| panic!("{join:?} {flat:?}: the toe comes down to the line beside the box: {:?}", toe_two.vertices));
             assert!((far[0] - top[0] - long).abs() < 1e-6, "{join:?} {flat:?}: the box's far end {long} m on past the top: {far:?} against {top:?}");
+            // Squared off: down the far end to the berm's line past the box, with no berm round its end.
+            let end = far[0];
+            assert!(toe_two.vertices.iter().any(|p| (p[0] - end).abs() < 1e-6 && (p[1] - N - 50.0).abs() < 1e-6), "{flat:?}: down to the berm's line at the far end: {:?}", toe_two.vertices);
+            assert!(toe_two.vertices.iter().all(|p| p[0] - end <= 1e-6 || p[1] - N <= 50.0 + 1e-6), "{flat:?}: no berm round the far end: {:?}", toe_two.vertices);
         } else {
             let on_line = toe_two.vertices[corner..].iter().find(|p| (p[1] - N - 50.0).abs() < 1e-6).unwrap_or_else(|| panic!("{join:?}: the toe joins the line: {:?}", toe_two.vertices));
             joins.push(on_line[0] - E);

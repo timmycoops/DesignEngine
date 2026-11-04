@@ -806,6 +806,8 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 // along the crest, the berm beyond, and the next road's width beyond that, where the wall above goes round
                 // it. The next road starts at its near end, straight across the berm from the top.
                 let mut crest = crest;
+                let plain_crest = crest.clone();
+                let mut boxes: Vec<Flat> = Vec::new();
                 // The crest each turning road's pad holds up, from its wall-side top before any flat to its pit-side
                 // corner at the end: the berm's line beside it lies on the target.
                 let mut pads: Vec<RoadTop> = Vec::new();
@@ -818,18 +820,31 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                         pads.push(top);
                         continue;
                     };
-                    face.meshes.push(band(&flat.pit, &flat.wall).map_err(|e| fail(k, e))?);
+                    let (strip_pit, strip_wall) = flat.road_strip();
+                    face.meshes.push(band(&strip_pit, &strip_wall).map_err(|e| fail(k, e))?);
                     if !flat.to_on_vertex {
                         face.meets.extend(flat.pit.vertices.last().copied());
                     }
                     open.boxed(&flat);
                     crest = flat.round(&crest);
                     pads.push(RoadTop { pit: *flat.pit.vertices.last().expect("a flat has an end"), wall: top.wall });
+                    boxes.push(flat);
                 }
                 let least = min_bench.filter(|h| *h > 0.0).map(|height| LeastBench { toe: &from, height });
                 let (lines, log) = next_line(&crest, width, least, side, before.unwrap_or(0.0), condition.unwrap_or(0.0)).map_err(|e| fail(k, e))?;
                 let dropped = lines.len().saturating_sub(1);
-                let line = longest(lines);
+                let mut line = longest(lines);
+                // Each box's far end square across, with the berm standing out into the wall beside it and past it, not on
+                // round its end (Tim, 2026-11-04): past the box it's the berm's line with no box.
+                if !boxes.is_empty() {
+                    let plain = longest(next_line(&plain_crest, width, least, side, before.unwrap_or(0.0), condition.unwrap_or(0.0)).map_err(|e| fail(k, e))?.0);
+                    for flat in &boxes {
+                        if let Some((squared, part_way)) = flat.squared_end(&line, &plain) {
+                            line = squared;
+                            face.meets.extend(part_way);
+                        }
+                    }
+                }
                 let mut report = no_wall_report(k);
                 let mut lay = |part: &Polyline| -> Result<Polyline, GeomError> {
                     if !register {
