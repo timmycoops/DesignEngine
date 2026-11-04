@@ -220,3 +220,41 @@ wall, their inside edges never turning back toward the pit and their wall-side e
 one sheet with nothing crossing; before, the inside edge turned back. On the grid pit, folds go from 2 to 0 in Grid
 ramps and from 1 to 0 in Flat toe to grids, with roads of 20, 25 and 30 m, after the berm or through it; the pit's own
 check stays at 33 faults, and the other five designs and Tim's back strip are unchanged.
+
+## Fixed since: the face on a pad on a seam floor (2026-11-04)
+
+Tim couldn't tell in the app whether the face followed the road strings through Grid switchbacks' turns. It didn't. On
+every turn on a seam floor the road's edges were off the face: with the template's 30 m road, by up to 0.7 m on the pit
+side and 2.4 m on the wall side; with a 50 m road and a 100 m flat, by 2.4 m and 3.7 m. Three things did it:
+
+- **The berm under a pad ran as one band** from the crest to the toe of the wall above, and beside a flat stretch that
+  toe is the road's wall side. The berm's line, which the flat stretch's pit side runs along on the floor, wasn't in it,
+  so the level road wasn't there: the face sloped from the last road's top past the road and down toward the floor.
+  Now the berm runs out to the line beside the flat stretch, from the last road's wall-side top straight across to where
+  the next road came onto the line, and the flat stretch is a piece of its own between the line and its wall side. Past
+  the turn the berm runs out to the toe as before.
+- **The toe past the turn lay on the floor right up to the flat stretch's wall-side corner,** which is level with the
+  road's start and so stands above a floor dipping into the wall: the toe stepped up 2 m in under a metre there, and the
+  walls above it bent round the step. Now it lies on the floor to a road width short of the corner and leads straight up
+  to it, as an entrance's toe does. Where the corner is on the floor, as on any level pad, nothing changes. This leaves
+  a wedge above the floor past the turn, no thicker than the road's wall-side corner stands above it, for Tim to confirm
+  against "no coal left under the pad".
+- **The wall-side edge crossed the end of the pad in one straight line** from the last road's wall-side top to the next
+  road's wall-side corner, up to 2 m above the pad where it bends at the berm's line. It now passes where the next road
+  came onto the line, as the pit-side edge does.
+
+Known answers, two switchbacks on two seam floors dipping 5 % into the wall, one turning each way: both road edges lie on
+the face everywhere to 1 µm, the berm beside each flat stretch lies on the floor to 1 µm, the toe past each turn reaches
+the corner straight from the floor a road width short of it, exact to 1 µm, and the wall-side edge passes where each
+road came onto the line. Across the flat stretch the face keeps within the heights the line has along it, here within
+21 mm, where it bends off strike near the turn; where the line runs along strike the road stands 0.125, 0.25 and
+0.375 m above the floor 2.5, 5 and 7.5 m into the wall. Each of the three changes, switched off, fails it.
+
+On the grid pit, Grid switchbacks with the template's settings, a 50 m road with no flat, and a 50 m road with a 100 m
+flat: every road edge on every strip is on the face. The faces change only round the turns, where the walls above each
+pad corner now meet on a straight hip from it, moving the crests above by up to 7.5 m in plan; no triangle faces down
+and nothing crosses. RL switchbacks and Grid ramps keep the same surface to 0.01 m³ under every face (RL switchbacks has
+72 more triangles, the pads in pieces). The pit's own check stays at 33 faults, with the same strips stopping as before
+(fault 3 of 0034 and, with a 100 m flat, fault 1), and Grid switchbacks still takes 2.2 s for ten strips. Tim's back
+strip, on RLs: the same roads, 3,853.7, 3,639.3 and 3,865.3 m, nothing crossing, 567, 504 and 449 triangles against
+555, 504 and 433.

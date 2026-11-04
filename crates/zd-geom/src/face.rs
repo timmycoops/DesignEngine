@@ -570,11 +570,18 @@ impl Climbing {
     /// Takes in a wall's stretch of road, and where the road has got to.
     fn climbed(&mut self, step: usize, pit_edge: &Polyline, wall_edge: &Polyline) {
         self.steps = Some([self.steps.map_or(step, |s| s[0]), step]);
-        // A pad on a floor that isn't level is crossed level across the top of the last road, then down or up the floor.
-        if let (Some(corner), Some(last), Some(first)) = (self.pad_corner.take(), self.pit_edge.last(), pit_edge.vertices.first()) {
-            let apart = |p: &[f64; 3]| (p[0] - corner[0]).hypot(p[1] - corner[1]) > WELD;
-            if (last[2] - first[2]).abs() > WELD && apart(last) && apart(first) {
+        // A pad on a floor that isn't level is crossed level across the top of the last road, then down or up the floor
+        // to where this stretch came onto the line, and from there it's level across the road. The pit-side edge turns
+        // at the last road's wall-side top, and the wall-side edge comes from there to where this one came onto the line
+        // before it crosses this road, as the pad does.
+        if let (Some(corner), Some(&last), Some(&first)) = (self.pad_corner.take(), self.pit_edge.last(), pit_edge.vertices.first()) {
+            let apart = |p: &[f64; 3], q: &[f64; 3]| (p[0] - q[0]).hypot(p[1] - q[1]) > WELD;
+            if (last[2] - first[2]).abs() > WELD && apart(&last, &corner) && apart(&first, &corner) {
                 self.pit_edge.push(corner);
+            }
+            let from_the_top = self.wall_edge.last().is_some_and(|wall| !apart(wall, &corner));
+            if (corner[2] - first[2]).abs() > WELD && from_the_top && apart(&first, &corner) && wall_edge.vertices.first().is_some_and(|w| apart(w, &first)) {
+                self.wall_edge.push(first);
             }
         }
         for (edge, more) in [(&mut self.pit_edge, pit_edge), (&mut self.wall_edge, wall_edge)] {
@@ -713,7 +720,8 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                         for bench in face.benches.iter_mut().filter(|bench| marks.iter().any(|(j, ..)| *j == bench.step)) {
                             bench.toe = toe.clone();
                         }
-                        finish_berm(&mut berm_from, &toe, face).map_err(|e| fail(last, e))?;
+                        let pads: Vec<Pad> = cut.iter().flat_map(|cut| &cut.flats).filter_map(|(r, pit, wall)| climbing[*r].pad_corner.map(|top| Pad { top, pit: pit.clone(), wall: wall.clone() })).collect();
+                        finish_berm_round_pads(&mut berm_from, &toe, &pads, face).map_err(|e| fail(last, e))?;
                         match cut {
                             Some(cut) => {
                                 merge_stretches(&mut report.no_height, &gaps);
@@ -857,6 +865,73 @@ fn finish_berm(berm_from: &mut Option<Polyline>, line: &Polyline, face: &mut Fac
     if let Some(crest) = berm_from.take() {
         face.meshes.push(band(&crest, line)?);
     }
+    Ok(())
+}
+
+/// A road that turned back on the berm below a wall: its wall-side top on the crest before the turn, and the flat
+/// stretch it runs before it climbs, along the line from where it came onto it to where it climbs, and its wall side from
+/// its corner past the turn to where the climb's wall-side edge starts, each in the road's own direction.
+struct Pad {
+    top: [f64; 3],
+    pit: Vec<[f64; 3]>,
+    wall: Vec<[f64; 3]>,
+}
+
+/// The berm waiting on a crest, out to the toe of the wall above, where roads turned back on it (decision 0038). A flat
+/// stretch is a road, level across from the line to its wall side, so it's a piece of its own, and the berm runs out to
+/// the line beside it: from the last road's wall-side top straight across to where the next came onto the line, then
+/// along the line. Past the turn it runs out to the toe as it does everywhere else. A pad that isn't on the crest and the
+/// toe as they are leaves the berm one band out to the toe there, as it was before.
+fn finish_berm_round_pads(berm_from: &mut Option<Polyline>, toe: &Polyline, pads: &[Pad], face: &mut FaceParts) -> Result<(), GeomError> {
+    let Some(crest) = berm_from.take() else { return Ok(()) };
+    let at = |line: &[[f64; 3]], p: &[f64; 3]| line.iter().position(|q| (p[0] - q[0]).hypot(p[1] - q[1]) <= WELD);
+    let (c, t) = (&crest.vertices, &toe.vertices);
+    // Each pad by where it is on the crest and the toe: the top, the flat stretch's corner, where the climb's wall-side
+    // edge starts and where its pit side starts.
+    let mut placed: Vec<(usize, usize, usize, usize, &Pad)> = pads
+        .iter()
+        .filter_map(|pad| Some((at(c, &pad.top)?, at(t, pad.wall.first()?)?, at(t, pad.wall.last()?)?, at(t, pad.pit.last()?)?, pad)))
+        .filter(|&(_, corner, wall_start, start, _)| (corner <= wall_start && wall_start < start) || (start < wall_start && wall_start <= corner))
+        .collect();
+    if placed.is_empty() {
+        face.meshes.push(band(&crest, toe)?);
+        return Ok(());
+    }
+    placed.sort_by_key(|&(_, corner, ..)| corner);
+    let piece = |inner: &[[f64; 3]], outer: &[[f64; 3]]| band(&Polyline { vertices: inner.to_vec(), closed: false }, &Polyline { vertices: outer.to_vec(), closed: false });
+    let (mut inner, mut outer): (Vec<[f64; 3]>, Vec<[f64; 3]>) = (Vec::new(), Vec::new());
+    let (mut ci, mut ti) = (0, 0);
+    for (top, corner, wall_start, start, pad) in placed {
+        let onto = pad.pit[0];
+        if top < ci || corner.min(start) < ti {
+            continue;
+        }
+        if corner <= wall_start {
+            // The road runs the way the string does: the berm before it ends straight across the pad from the top to
+            // where the road came onto the line, and from there out to the flat stretch's corner past the turn.
+            inner.extend(&c[ci..=top]);
+            inner.push(onto);
+            outer.extend(&t[ti..=corner]);
+            face.meshes.push(piece(&inner, &outer)?);
+            face.meshes.push(piece(&pad.pit, &t[corner..=wall_start])?);
+            (inner, outer) = (Vec::new(), pad.pit.clone());
+            (ci, ti) = (top, start + 1);
+        } else {
+            // It runs back against the string: the berm before it runs out to the line up to the flat stretch, and the
+            // one after it starts across the pad from where the road came onto the line.
+            inner.extend(&c[ci..=top]);
+            outer.extend(&t[ti..start]);
+            outer.extend(pad.pit.iter().rev());
+            face.meshes.push(piece(&inner, &outer)?);
+            let pit: Vec<[f64; 3]> = pad.pit.iter().rev().copied().collect();
+            face.meshes.push(piece(&pit, &t[wall_start..=corner])?);
+            (inner, outer) = (vec![onto], Vec::new());
+            (ci, ti) = (top, corner);
+        }
+    }
+    inner.extend(&c[ci..]);
+    outer.extend(&t[ti..]);
+    face.meshes.push(piece(&inner, &outer)?);
     Ok(())
 }
 
