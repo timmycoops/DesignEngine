@@ -5,8 +5,8 @@ Date: 2026-11-05 · Status: plan agreed (Tim, 2026-11-05); accepted once the sid
 ## Why
 
 Tim uses Spry every day, and next to it our camera feels wrong in two ways: **orbit** and **pan**. Zoom and
-the field of view are not the complaint, but he wants zoom to push through a surface, and a perspective
-switch.
+the field of view are not the complaint (after PR 1 he called zoom and its speed "amazing"), but he wants a
+perspective switch.
 
 ## What we have now (0021, `app/src/viewport/Viewport.ts`)
 
@@ -38,8 +38,8 @@ How the others do it:
 1. **Pivot is surer.** Turn about what is under the cursor. Over empty space, turn about the **nearest
    thing to the cursor**, never the view centre.
 2. **Pan sticks.** The point you grab stays under the cursor the whole drag, near or far.
-3. **Zoom slows, then pushes through.** Each tick goes a share of the way to what is under the cursor, but
-   carries on past it once close, into a cavity or out the far side.
+3. **Zoom stays as it is.** Each tick goes a share of the way to what is under the cursor and slows near it.
+   It never goes through a surface: Tim checked Spry, and you can't zoom through one there either.
 4. **Perspective, with a switch** to orthographic in 3D. Plan and section stay flat. The field of view stays
    45°.
 5. **Stop dead.** No glide.
@@ -51,7 +51,7 @@ How the others do it:
 ### 1. Our own controller replaces `OrbitControls`
 A `CameraController` in a new `app/src/viewport/camera.ts` handles every pointer, wheel and key input for
 the 3D, plan and section cameras. `OrbitControls` only gets in the way now: we already override its orbit,
-and pan and push-through zoom both need what is under the cursor, which it has no way to use. The
+and pan needs what is under the point grabbed, which it has no way to use. The
 controller keeps the two things other code uses, `enabled` and `target`, so strings, sections and the bench
 change little. `Viewport.ts` loses its turn and wheel code, and only wires the controller in. That keeps
 merges with the RL colour work, which edits `addMesh` there, small.
@@ -73,20 +73,19 @@ merges with the RL colour work, which edits `addMesh` there, small.
 ### 3. Orbit
 Same as now about the picked point: camera and target swing together so the point stays put on screen,
 up stays vertical, and it stops just short of straight up and down. The turn rate stays one full turn per
-viewport height until the side-by-side says otherwise (a constant, tuned in PR 6).
+viewport height until the side-by-side says otherwise (a constant, tuned in PR 5).
 
 ### 4. Pan that sticks
 The grabbed point P sets a plane square to the line of sight through P. Each move puts P back under the
 cursor on that plane by moving the camera and target together. That is exact in perspective and in
 orthographic. In plan and section P is just the point on the view plane.
 
-### 5. Zoom that pushes through
-Each wheel tick moves the camera along the ray through the cursor by
-`step = max(share × distance to the hit, floor)`, with `share` about 15 % and the floor a few pixels'
-worth at the hit. Far off it slows as now. Close in the floor takes over, the camera goes past the surface,
-and the next tick picks whatever is beyond. Zooming out uses the same share the other way. With no hit it
-uses the last depth. The near plane follows the distance to the hit, not to the view centre, so a surface
-just in front doesn't clip. In plan, section and orthographic 3D the wheel scales the view about the cursor.
+### 5. Zoom as it is
+Each wheel tick moves the camera along the ray through the cursor by 5 % of the distance to what is under
+it, so it slows near a surface and stops short of it, as Spry's does. Zooming out uses the same share the
+other way. With no hit it uses the last depth. In plan and section the wheel scales the view about the
+cursor, and in orthographic 3D it will too. The share is a constant, left alone unless the side by side
+says otherwise.
 
 ### 6. Orthographic in 3D
 A toolbar switch and a key (P by default). Switching keeps the scale at the pivot depth (half height =
@@ -115,15 +114,15 @@ Damping. A navigation cube. Saved views and R (reset). A field-of-view setting. 
 
 - **Bench**, on the 11.7 M-triangle scene and the 4.9 M whole pit, through real pointer and wheel events:
   the turned-about point stays under the cursor (below 1e-6 px); a grabbed point stays under the cursor
-  through a 500 px pan, near and far (below 0.5 px); 40 wheel ticks over a surface pass through it and the
-  next pick is the surface beyond; a press over empty space beside a solid pivots on the solid; the
+  through a 500 px pan, near and far (below 0.5 px); the point under the cursor holds through a wheel zoom
+  (below 1 px); a press over empty space beside a solid pivots on the solid; the
   orthographic switch keeps the scale at the pivot within 1 %; orbit holds 60 fps. Timings: pick at press
   p50 and p95, the ray fan p50 and p95 (budget 5 ms), triangles in the scene.
 - **Rust test** for `snap_rays`: a flat synthetic surface with a square hole; a fan centred over the hole
   returns the hit on the hole's nearest edge, with its known screen distance.
 - **Tim, side by side with Spry on the same pit** (PIT B), Spry layout on: turn about a point on the
-  highwall, about a string, and over the sky beside the pit; pan near and far; zoom into a ramp and out
-  through the pit floor; plan and section; the keys. He says what still feels off; constants are tuned in PR 6.
+  highwall, about a string, and over the sky beside the pit; pan near and far; zoom into a ramp and down
+  to the pit floor; plan and section; the keys. He says what still feels off; constants are tuned in PR 5.
 
 ## Pull requests (each off `main`, small)
 
@@ -133,15 +132,15 @@ Damping. A navigation cube. Saved views and R (reset). A field-of-view setting. 
 2. **Pan that sticks** in 3D, plan and section, with its bench check.
 3. **The surer pivot:** `snap_rays` in `app/src-tauri` with its Rust test, the fallback to the nearest
    thing then the last pivot, and the bench check.
-4. **Zoom that pushes through**, and the near plane following the hit.
-5. **Orthographic 3D switch**, with the `flatView` split.
-6. **Spry layout and the keys:** the View controls dialog, `localStorage`, clash checks. Then the side by
+4. **Orthographic 3D switch**, with the `flatView` split.
+5. **Spry layout and the keys:** the View controls dialog, `localStorage`, clash checks. Then the side by
    side with Spry, tuning, and this record goes to accepted.
 
-PRs 2 to 5 each depend only on 1 and touch separate parts of `camera.ts`, but they are small enough to run
+PRs 2 to 4 each depend only on 1 and touch separate parts of `camera.ts`, but they are small enough to run
 one after another.
 
 ## Settled with Tim
 
 - Between a string near the cursor and the surface under it, **the one nearer the camera** is the pivot.
 - In the Spry layout, **middle drag on its own pans**, as middle + right does.
+- **Zoom stays as PR 1 has it** (2026-11-05): no push-through. Spry doesn't zoom through a surface either.
