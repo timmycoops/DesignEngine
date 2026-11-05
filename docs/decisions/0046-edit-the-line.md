@@ -126,6 +126,15 @@ The made-up grid pit, strip 5 as one line, through the commands the panel uses (
 In section the bench lies on the M floor out to your line and the walls above project from it to M roof, U floor, BOW
 and Topo; the box's pad lies on the U floor out to your line and the walls above stand back from it.
 
+Tim's case on grids (Tim, 2026-11-06: "a switchback that needs to join, similar to the RL example"): Grid switchbacks
+on strip 5 with a second ramp, D, climbing west from 3,100 m beside ramp C climbing east from 1,000 m, both turning on
+boxes on the U floor before the wall to BOW, 50 m roads at 10 %. The wall to BOW goes round each box and stands out
+about 170 m wide and 100 m deep between them. Row 4's line redrawn straight from the back corner of C's box to the back
+corner of D's: one pad on the U floor, 10 to 110 m wide, the walls to BOW and Topo straight behind both, C to RL 141.1
+and D to RL 133.8 as before, nothing crossing. 939 ms with no edit, 1,076 ms copied, 1,045 ms joined; 17,836 triangles
+to 17,071. Saved as `testdata/synthetic/Grid template joined.zdproj` (git-ignored). D starting at 2,900 m stopped on
+the wall to BOW, as its leg after the turn would have come within a road's width of C's (0042), with or without an edit.
+
 Copied unchanged on Grid switchbacks' row 4, where ramp C turns on its box, the face differs by up to 7.6 cm next to
 where the road leaves the box, and road C's wall-side edge starts 0.8 m off: carried on from your line, the road's
 wall-side edge starts from your line's corner rather than its own offset. Its pit-side edge is the same: a turned road
