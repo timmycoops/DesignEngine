@@ -106,6 +106,31 @@ Redraw a stretch from the back corner of A's box to the back corner of B's, then
 69.3 m wide, the walls above run straight behind both boxes, both roads reach RL 175, nothing crosses. It's saved as
 `testdata/synthetic/Step template joined.zdproj` (git-ignored).
 
+## On grids
+
+Tim, 2026-11-06: "could you try this in some grids as well". Where your line leaves the line the steps made, a stretch
+between two of your vertices now follows what it lies on, with a vertex wherever the floor bends (in line with its
+neighbours in 3D, it adds nothing), as the steps' own lines on a floor do. Before, it ran straight between your vertices,
+above or below a seam floor between clicks. Where it runs on the steps' line it still keeps that line's vertices and
+heights. Tested: on a floor rising 1 in 10 to a ridge, a stretch moved out across the ridge gets one vertex on it at the
+floor's height, to 1 µm, and the rest of the line keeps the steps' vertices, held 2 m off the floor where they were.
+
+The made-up grid pit, strip 5 as one line, through the commands the panel uses (release build), saved as
+`testdata/synthetic/Grid template edits.zdproj` (git-ignored):
+
+| Design | Edit | No edit | Copied | Redrawn | Triangles |
+|---|---|---|---|---|---|
+| Grid walls | Row 3 (toe of the wall to M roof, on the M floor): a 40 m wider bench from 640 to 1,260 m, 45° ends | 708 ms | 734 ms, the same | 572 ms: berm 30 to 70.1 m | 18,608 → 17,379 |
+| Grid switchbacks | Row 4 (toe of the wall to BOW round ramp C's box, on the U floor): the back of the box carried on 150 m, back at 45° | 865 ms | 1,049 ms | 1,057 ms: berm 10 to 110 m | 18,311 → 17,980 |
+
+In section the bench lies on the M floor out to your line and the walls above project from it to M roof, U floor, BOW
+and Topo; the box's pad lies on the U floor out to your line and the walls above stand back from it.
+
+Copied unchanged on Grid switchbacks' row 4, where ramp C turns on its box, the face differs by up to 7.6 cm next to
+where the road leaves the box, and road C's wall-side edge starts 0.8 m off: carried on from your line, the road's
+wall-side edge starts from your line's corner rather than its own offset. Its pit-side edge is the same: a turned road
+carried on from your line keeps the corner its edges take across a pad that isn't level, which it lost at first.
+
 ## What this leaves
 
 - **A crest with a road on its wall:** re-forming the wall and its road cut together.
