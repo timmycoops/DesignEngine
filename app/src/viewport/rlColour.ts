@@ -8,51 +8,53 @@
 import * as THREE from 'three/webgpu';
 import { clamp, float, floor, fract, fwidth, min, mix, positionLocal, smoothstep, texture, uniform, vec2 } from 'three/tsl';
 import type { Bands } from './bands';
+import { DEFAULT_RL_PALETTE, paletteColour, RL_PALETTES, type RlPaletteName } from './rlPalettes';
 
 export { autoInterval, type Bands, bandsFor, INTERVALS } from './bands';
 
-/**
- * The RL ramp: a perceptually even blue to green to ochre to pink (Crameri's batlow), not the seam
- * thickness ramp (viridis), so an RL is never read as a thickness.
- */
-const STOPS: [number, number, number][] = [
-  [16, 63, 96],
-  [28, 90, 98],
-  [60, 109, 86],
-  [104, 123, 62],
-  [157, 137, 43],
-  [210, 147, 67],
-  [248, 161, 123],
-  [253, 183, 188],
-  [250, 204, 250],
-];
+/** The ramp RLs are coloured on (`rlPalettes.ts`), one for every surface at once. */
+let palette: RlPaletteName = DEFAULT_RL_PALETTE;
+
+export const rlPalette = (): RlPaletteName => palette;
+
+/** Colours every surface on another ramp: the one texture they all sample is rewritten, no shader is rebuilt. */
+export function setRlPalette(name: RlPaletteName): void {
+  if (name === palette || !(name in RL_PALETTES)) return;
+  palette = name;
+  if (rampTexture) {
+    fillRamp(rampTexture.image.data as Uint8Array);
+    rampTexture.needsUpdate = true;
+  }
+}
 
 /** The ramp colour at `t` in [0, 1], as sRGB bytes. */
 export function rlColour(t: number): [number, number, number] {
-  const x = Math.min(Math.max(t, 0), 1) * (STOPS.length - 1);
-  const i = Math.min(Math.floor(x), STOPS.length - 2);
-  const f = x - i;
-  const [a, b] = [STOPS[i], STOPS[i + 1]];
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  return paletteColour(RL_PALETTES[palette].stops, t);
 }
 
 /** The ramp as a CSS gradient, low RL on the left. */
 export function rlRampCss(): string {
-  const stops = STOPS.map(([r, g, b], i) => `rgb(${r} ${g} ${b}) ${((100 * i) / (STOPS.length - 1)).toFixed(1)}%`);
-  return `linear-gradient(to right, ${stops.join(', ')})`;
+  const stops = RL_PALETTES[palette].stops;
+  const css = stops.map(([r, g, b], i) => `rgb(${r} ${g} ${b}) ${((100 * i) / (stops.length - 1)).toFixed(1)}%`);
+  return `linear-gradient(to right, ${css.join(', ')})`;
 }
 
-/** The ramp as a texture the shader samples, made once. */
+const RAMP_WIDTH = 256;
+
+function fillRamp(data: Uint8Array): void {
+  for (let i = 0; i < RAMP_WIDTH; i++) {
+    const [r, g, b] = rlColour(i / (RAMP_WIDTH - 1));
+    data.set([Math.round(r), Math.round(g), Math.round(b), 255], 4 * i);
+  }
+}
+
+/** The ramp as a texture the shader samples, made once and shared by every surface. */
 let rampTexture: THREE.DataTexture | null = null;
 function ramp(): THREE.DataTexture {
   if (rampTexture) return rampTexture;
-  const width = 256;
-  const data = new Uint8Array(width * 4);
-  for (let i = 0; i < width; i++) {
-    const [r, g, b] = rlColour(i / (width - 1));
-    data.set([Math.round(r), Math.round(g), Math.round(b), 255], 4 * i);
-  }
-  const t = new THREE.DataTexture(data, width, 1, THREE.RGBAFormat);
+  const data = new Uint8Array(RAMP_WIDTH * 4);
+  fillRamp(data);
+  const t = new THREE.DataTexture(data, RAMP_WIDTH, 1, THREE.RGBAFormat);
   t.colorSpace = THREE.SRGBColorSpace;
   t.magFilter = THREE.LinearFilter;
   t.minFilter = THREE.LinearFilter;

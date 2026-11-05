@@ -24,7 +24,7 @@ import {
   writeResults,
 } from '../bridge';
 import { loadStaged } from '../viewport/load';
-import { takePictures } from './pictures';
+import { takePalettePictures, takePictures } from './pictures';
 import { PolylineTool } from '../viewport/PolylineTool';
 import type { SectionView } from '../viewport/section';
 import type { StringLayer } from '../viewport/strings';
@@ -61,7 +61,8 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
 
   try {
     if (config.pictures) {
-      results.pictures = await takePictures(viewport, config.surfaces, config.strings, log, show);
+      const take = config.palettes ? takePalettePictures : takePictures;
+      results.pictures = await take(viewport, config.surfaces, config.strings, log, show);
     } else if (config.solids) {
       results.solids = await checkSolids(viewport, config, config.solids, log, show, section, strings);
     } else {
