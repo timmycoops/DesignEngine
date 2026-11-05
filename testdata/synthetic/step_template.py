@@ -31,10 +31,10 @@ TOE_RL = 100.0
 TOE = [(0.0, 0.0), (600.0, 30.0), (1100.0, 10.0), (1500.0, 70.0)]
 YOUR_TOE = [(0.0, -400.0), (600.0, -370.0), (1100.0, -390.0), (1500.0, -330.0)]
 SIDE = "left"
-# Where ramp A is placed on the first berm's line, east of the toe's start (m), and how far its string reaches
-# either side of the line, as the panel's Place ramp does.
+# Where ramp A is placed on the first berm's line, east of the toe's start (m), and how far its string reaches behind
+# the line and out the way the walls build, as the panel's Place ramp does.
 RAMP_AT = 150.0
-RAMP_REACH = 5.0
+RAMP_BEHIND, RAMP_OUT = 5.0, 40.0
 ROAD = {"width": 30.0, "grade": 10.0, "berm": "after", "turn_join": 50.0}
 
 
@@ -64,7 +64,7 @@ def content(toe, steps, ramps=()):
 
 def place_ramp(s, name, line, x):
     """A ramp as Place ramp makes one: started where the line is clicked, east along it, its string a short one
-    square across the line there."""
+    square across the line there, reaching out the way the walls build (north, on the toe's left)."""
     points = s.object(line)["points"]
     k = next(i for i in range(1, len(points)) if points[i][0] - E >= x)
     a, b = points[k - 1], points[k]
@@ -72,7 +72,7 @@ def place_ramp(s, name, line, x):
     p = [a[j] + t * (b[j] - a[j]) for j in range(3)]
     length = math.hypot(b[0] - a[0], b[1] - a[1])
     way = ((b[0] - a[0]) / length, (b[1] - a[1]) / length)
-    string = made(s.run("string.create", name=f"Ramp {name}", layer="ramps", points=[[p[0] - way[1] * d, p[1] + way[0] * d, p[2]] for d in (-RAMP_REACH, RAMP_REACH)]))[0]
+    string = made(s.run("string.create", name=f"Ramp {name}", layer="ramps", points=[[p[0] - way[1] * d, p[1] + way[0] * d, p[2]] for d in (-RAMP_BEHIND, RAMP_OUT)]))[0]
     return {"name": name, "string": string, "fixed": "start", "heading": "along", **ROAD}, p
 
 

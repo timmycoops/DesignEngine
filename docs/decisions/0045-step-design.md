@@ -27,9 +27,13 @@ validity has to be checked again after every move, so it isn't built.
    up to the top, and a profile built by hand runs the same over other strips from the Face design panel.
 4. **A face ending on a berm hands on the berm's line** as its `next toe` (going down, `next crest`): where the next
    wall will start. Any design ending on a berm does, not just a step design.
-5. **A ramp is placed by clicking** (Place ramp): where it starts on the line the next step starts from, then along the
-   line the way it runs. It's a ramp string 5 m either side of the line, square to it, held at its start, 30 m wide at
-   10 % until changed. The next wall added climbs it.
+5. **A ramp is placed by clicking** (Place ramp): where it starts on one of the design's lines, then along the line the
+   way it runs. It's a ramp string square across the line, 5 m behind it on the pit side and 40 m out the way the walls
+   build, so it still crosses where the next wall starts if a berm goes in first; held at its start, 30 m wide at 10 %
+   until changed. On a toe or a berm's line it climbs that wall and every wall above at once; on the top line (the last
+   crest, or the last berm's line) it waits, and the next wall added climbs it. Its row reads in words: how far along
+   the design's string it starts, from which step, and the way it climbs, with Move and a button to flip it. Each wall's
+   toe and crest carry its row of the profile as a `step` attribute, which is how the panel knows the wall a line starts.
 6. **In a step design a new wall carries on the roads of the wall below,** and any ramp placed since, so a road climbs
    every wall from where it was placed until it's clicked off a wall. Turning it back is a second click on its cell,
    as before. In a design with Run each step off, a new wall has no ramps, as before.
@@ -73,6 +77,17 @@ ramp A placed on the berm's line 150 m along as Place ramp places it, a wall to 
 degree wall to RL 145 carrying it on), and a second toe with no design to start one on. Each step takes 1 ms; the
 face is clean, road A starts where it was placed and climbs from RL 115 to 145, and the design run whole gives the same
 face, vertex for vertex.
+
+A second ramp (Tim, 2026-11-05: "I can't get two ramps on the same design"). Placed on the top crest of a design ending
+on a wall, with the next wall going straight on at the same batter, it made no road ("its string doesn't cross any
+line"). The face built with no roads, which places the ramps, ran those two walls as one, standing on the lower toe,
+and the ramp's string didn't reach it. A ramp's first wall straight on from the one below now starts on that wall's
+crest. A test places one across a 45 degree wall's crest at 500 m and the road starts there, within the 0.1 m the
+crest is conditioned to, and climbs 200 m of road to RL 140. On the step template a second ramp now builds each way
+it can be placed: on the top crest then a wall, on the top crest then a berm and a wall, on a berm's line then a wall,
+on the toe up every wall, and on the first berm's line climbing the other way. Where it starts on a crest with no berm
+under it, the wall splits there, and ramp A climbing through it crosses the top of the lower part before going on up,
+as a road does from wall to wall; a berm under the new ramp's start is the bench for it.
 
 ## What this leaves
 

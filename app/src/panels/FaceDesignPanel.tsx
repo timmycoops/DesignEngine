@@ -146,9 +146,26 @@ function levelOf(string: ObjectSummary, origin: Vec3 | null | undefined): StepTa
   return Math.max(...zs) - Math.min(...zs) < 0.001 && rl !== 0 ? { kind: 'rl', rl } : null;
 }
 
-/** How far a ramp placed by clicking reaches either side of the line, square to it (m): enough to cross the toe it starts
- * on wherever conditioning moves it, and short of the line beyond a berm. */
-const RAMP_REACH = 5;
+/** How far a ramp placed by clicking reaches square across the line, behind it on the pit side and out the way the walls
+ * build (m). Behind, enough to cross the line wherever conditioning moves it; out, past a berm put in before the wall
+ * that climbs it. Only where it crosses the toe of the first wall it climbs counts. */
+const RAMP_BEHIND = 5;
+const RAMP_OUT = 40;
+/** How near one of the design's lines a ramp has to be placed to start on it (m). Clicks snap to strings. */
+const ON_A_LINE = 2;
+
+/** How far a point is from a string, in 3D. */
+function gapTo(points: Vec3[], at: Vec3): number {
+  let best = Infinity;
+  for (let k = 1; k < points.length; k++) {
+    const [a, b] = [points[k - 1], points[k]];
+    const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const length = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+    const t = length > 0 ? Math.max(0, Math.min(1, ((at[0] - a[0]) * d[0] + (at[1] - a[1]) * d[1] + (at[2] - a[2]) * d[2]) / length)) : 0;
+    best = Math.min(best, Math.hypot(a[0] + t * d[0] - at[0], a[1] + t * d[1] - at[1], a[2] + t * d[2] - at[2]));
+  }
+  return best;
+}
 
 /** The way a string runs in plan at the place on it nearest `at`, as a unit vector. */
 const wayAt = (points: [number, number][], at: Vec3) => chainageAt(points, at)?.way ?? null;
@@ -1045,44 +1062,81 @@ export function FaceDesignPanel() {
   };
   /** The string a step design runs on. */
   const stepLine = draft && onOneString(draft) ? objects.find((o) => o.id === draft.lines[0].string) : undefined;
-  /** A ramp placed by clicking, in a step design: it starts where it's clicked on the line the next step starts from,
-   * running the way clicked along it, and the next wall added climbs it. Its string is a short one square across the
-   * line there. */
-  const pickRampStart = async (): Promise<{ heading: RampHeading; points: Vec3[] } | null> => {
+  /** A ramp placed by clicking, in a step design: it starts where it's clicked on one of the design's lines, running the
+   * way clicked along it. Its string is a short one square across the line there. */
+  const pickRampStart = async (): Promise<{ at: Vec3; heading: RampHeading; points: Vec3[] } | null> => {
     const origin = summary?.origin;
-    if (!stepLine?.vertices_local || !origin) return null;
+    if (!stepLine?.vertices_local || !origin || !draft) return null;
     setPicking(true);
-    const picked = await pickLine('Click where the ramp starts, on the line the next step starts from. Esc cancels', 'Click along the line the way the road runs. Esc cancels');
+    const picked = await pickLine('Click where the ramp starts: on a toe or a berm line it climbs every wall above, on the top line it waits for the next wall. Esc cancels', 'Click along the line the way the road runs. Esc cancels');
     setPicking(false);
     if (!picked) return null;
     const [at, towards] = picked;
     const way = wayAt(stepLine.vertices_local.map((v) => [v[0] + origin[0], v[1] + origin[1]]), at);
     if (!way) return null;
     const heading: RampHeading = (towards[0] - at[0]) * way[0] + (towards[1] - at[1]) * way[1] >= 0 ? 'along' : 'back';
-    return { heading, points: [-RAMP_REACH, RAMP_REACH].map((d): Vec3 => [at[0] - way[1] * d, at[1] + way[0] * d, at[2]]) };
+    const out: [number, number] = draft.lines[0].side === 'left' ? [-way[1], way[0]] : [way[1], -way[0]];
+    return { at, heading, points: [-RAMP_BEHIND, RAMP_OUT].map((d): Vec3 => [at[0] + out[0] * d, at[1] + out[1] * d, at[2]]) };
   };
+  /** The row of the wall a ramp placed at `at` climbs first, from the design's own line it's on: the wall that line is the
+   * start of, or for a crest the next wall up, past any berm. Null where no wall starts from it yet, on the berm's line
+   * or the top crest: the next wall added climbs it. Undefined where it isn't on one of the design's lines. */
+  const firstWallAt = (at: Vec3): number | null | undefined => {
+    const origin = summary?.origin;
+    if (!origin || !profile || !stepLine?.vertices_local || !id) return undefined;
+    const [start, end] = profile.direction === 'up' ? ['toe', 'crest'] : ['crest', 'toe'];
+    const base = `${stepLine.name} ${profile.name}`;
+    const wallAfter = (row: number) => {
+      const next = profile.steps.findIndex((s, k) => k > row && s.step === 'project');
+      return next < 0 ? null : next;
+    };
+    const world = (v: Vec3): Vec3 => [v[0] + origin[0], v[1] + origin[1], v[2] + origin[2]];
+    // The design's own string starts the first wall, wherever its register puts the toe: measured in plan.
+    const flat = (v: Vec3): Vec3 => [v[0] + origin[0], v[1] + origin[1], at[2]];
+    let best = { gap: gapTo(stepLine.vertices_local.map(flat), at), row: wallAfter(-1) };
+    for (const o of objects) {
+      if (o.kind !== 'string' || o.attributes.face_design !== id || !o.vertices_local) continue;
+      const step = o.attributes.step;
+      const row = o.name === `${base} next ${start}` ? null : typeof step !== 'number' ? undefined : o.name.startsWith(`${base} ${start} `) ? step - 1 : o.name.startsWith(`${base} ${end} `) ? wallAfter(step - 1) : undefined;
+      if (row === undefined) continue;
+      const gap = gapTo(o.vertices_local.map(world), at);
+      if (gap < best.gap) best = { gap, row };
+    }
+    return best.gap <= ON_A_LINE ? best.row : undefined;
+  };
+  /** A ramp on every wall from `row` up, and off those below; none at all while it waits for the next wall. A wall it
+   * turns back before keeps the turn. */
+  const onWallsFrom = (steps: ProfileStep[], name: string, row: number | null) =>
+    steps.map((s, k) => (s.step !== 'project' ? s : withRamp(s, name, row === null || k < row ? 'off' : onWall(s, name) === 'off' ? 'on' : onWall(s, name))));
+  const notOnALine = "Click on one of this design's lines: the toe, a crest, or a berm's line";
   const placeRamp = async () => {
     if (!profile) return;
     const start = await pickRampStart();
     if (!start) return;
-    const { heading, points } = start;
+    const { at, heading, points } = start;
+    const row = firstWallAt(at);
+    if (row === undefined) return setReport((was) => ({ lines: was.lines, error: notOnALine }));
     const taken = (profile.ramps ?? []).map((r) => r.name);
     const name = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').find((letter) => !taken.includes(letter)) ?? freeName('R', taken);
     const made = await runRecord('string.create', { name: `Ramp ${name}`, layer: 'ramps', points });
     const string = made.record?.outputs[0]?.id;
     if (!string) return;
     const ramp: Ramp = { name, string, fixed: 'start', heading, width: usualRoadWidth, grade: usualGrade, berm: 'after', turn_join: usualTurnJoin };
-    setProfile({ ramps: [...(profile.ramps ?? []), ramp] });
+    // On a wall's line it climbs that wall and every one above at once; on the berm's line or the top crest it waits.
+    setProfile({ ramps: [...(profile.ramps ?? []), ramp], steps: onWallsFrom(profile.steps, name, row) });
   };
   /** A placed ramp moved: its short string goes where the new start is clicked, and the step runs again. */
   const moveRamp = async (at: number) => {
-    const string = profile?.ramps?.[at]?.string;
-    if (!string) return;
+    const ramp = profile?.ramps?.[at];
+    if (!profile || !ramp?.string) return;
     const start = await pickRampStart();
     if (!start) return;
+    const row = firstWallAt(start.at);
+    if (row === undefined) return setReport((was) => ({ lines: was.lines, error: notOnALine }));
+    const string = ramp.string;
     for (const [index, to] of start.points.entries()) if (!(await runRecord('string.move_vertex', { string, index, to })).record) return;
-    // The string moved, not the design, so the way set again is what runs the step.
-    setRamp(at, { heading: start.heading });
+    // The walls it climbs go with it, and the design changing runs the step.
+    setProfile({ ramps: replaceAt(profile.ramps ?? [], at, { ...ramp, heading: start.heading }), steps: onWallsFrom(profile.steps, ramp.name, row) });
   };
   /** Where a placed ramp starts and the way it climbs, in words, from its short string: a step design's ramps held at
    * their start. A ramp on a longer string reads as one across the strips. */
@@ -1090,8 +1144,11 @@ export function FaceDesignPanel() {
     const origin = summary?.origin;
     const stub = objects.find((o) => o.id === ramp.string)?.vertices_local;
     if (!stepping || ramp.fixed !== 'start' || !stepLine?.vertices_local || !origin || !profile || stub?.length !== 2) return null;
-    const middle = [0, 1, 2].map((j) => (stub[0][j] + stub[1][j]) / 2 + origin[j]) as Vec3;
-    const on = chainageAt(stepLine.vertices_local.map((v) => [v[0] + origin[0], v[1] + origin[1]]), middle);
+    // Where it was clicked: its string's length behind the line from the end on the pit side.
+    const reach = Math.hypot(stub[1][0] - stub[0][0], stub[1][1] - stub[0][1]);
+    const t = reach > 0 ? Math.min(1, RAMP_BEHIND / reach) : 0;
+    const clicked = [0, 1, 2].map((j) => stub[0][j] + t * (stub[1][j] - stub[0][j]) + origin[j]) as Vec3;
+    const on = chainageAt(stepLine.vertices_local.map((v) => [v[0] + origin[0], v[1] + origin[1]]), clicked);
     if (!on) return null;
     const way: [number, number] = ramp.heading === 'along' ? on.way : [-on.way[0], -on.way[1]];
     const first = profile.steps.findIndex((s) => s.step === 'project' && (s.ramps ?? []).includes(ramp.name));
@@ -1283,7 +1340,7 @@ export function FaceDesignPanel() {
             <div className="flex items-center gap-2 pb-1">
               <span className="text-muted-foreground">Ramps</span>
               {stepping && (
-                <SmallButton disabled={picking || !stepLine} title="Click where the road starts on the line the next step starts from, then along the line the way it runs. The next wall you add climbs it, and each wall after carries it on until you click it off" onClick={() => void placeRamp()}>
+                <SmallButton disabled={picking || !stepLine} title="Click where the road starts on one of the design's lines, then along the line the way it runs. On a toe or a berm's line it climbs every wall above at once; on the top line it waits, and the next wall you add climbs it. Click it off a wall in its column to stop it there" onClick={() => void placeRamp()}>
                   <Plus className="size-3" /> Place ramp
                 </SmallButton>
               )}

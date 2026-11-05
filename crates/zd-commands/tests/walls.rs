@@ -1215,7 +1215,7 @@ fn a_face_built_a_step_at_a_time_is_the_design_run_whole() {
         other => panic!("{name}: {other:?}"),
     };
 
-    let one = s.run("face.step", json!({ "design": design, "name": "Steps from toe", "content": step_content(toe, ramp, &[first.clone()]) })).unwrap();
+    let one = s.run("face.step", json!({ "design": design, "name": "Steps from toe", "content": step_content(toe, ramp, std::slice::from_ref(&first)) })).unwrap();
     assert!(one.messages.iter().any(|m| m.starts_with("Ramp A: toe: step 1,")), "{:?}", one.messages);
     // 20 m up at 45 degrees is 20 m out, and the road behind the ramp's start moves the toe back.
     let crest = named(&s, "toe Steps crest 1");
@@ -1284,6 +1284,40 @@ fn a_face_built_a_step_at_a_time_is_the_design_run_whole() {
     assert!(s.run("face.step", json!({ "design": design, "name": "Steps from toe", "content": step_content(toe, ramp, &[first, berm, broken]) })).is_err());
     assert_eq!(s.project().object(design).unwrap().revision, 3);
     assert_eq!(made_by(&s, design).len(), before);
+}
+
+/// A ramp placed on the top crest of a step design, as Place ramp places one, starts there when the next wall goes straight
+/// on at the same batter with no berm between (Tim, 2026-11-05: "I can't get two ramps on the same design"). The face
+/// built with no roads, which places the ramps, runs two such walls as one, standing on the lower toe, so the ramp's
+/// short string crossed nothing there and it made no road. Up from a toe on RL 100: a 45 degree wall to RL 120, its
+/// crest 20 m out, then ramp A placed across that crest at 500 m and a 45 degree wall to RL 140 climbing it. The road
+/// starts on the crest at 500 m, within the 0.1 m the crest is conditioned to, and climbs 200 m of road east (198.997 m
+/// in plan) to RL 140, to 1 µm. Each wall's toe and crest say which row of the profile it is.
+#[test]
+fn a_ramp_placed_on_the_top_crest_starts_there_when_the_wall_goes_straight_on() {
+    let mut s = Session::with_builtins();
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E, N + 60.0, 0.0], [E + 1000.0, N + 60.0, 0.0]] })).unwrap())[0];
+    let placed = created(&s.run("string.create", json!({ "name": "Ramp A", "layer": "ramps", "points": [[E + 500.0, N + 75.0, 120.0], [E + 500.0, N + 85.0, 120.0]] })).unwrap())[0];
+    let wall = |rl: f64, ramps: &[&str]| json!({ "step": "project", "to": { "kind": "rl", "rl": rl }, "batter": 45.0, "condition": 0.1, "ramps": ramps });
+    let content = step_content(toe, placed, &[wall(120.0, &[]), wall(140.0, &["A"])]);
+    let design = created(&s.run("face.save_design", json!({ "name": "Steps from toe", "content": step_content(toe, placed, &[]) })).unwrap())[0];
+    let run = s.run("face.step", json!({ "design": design, "name": "Steps from toe", "content": content })).unwrap();
+    assert!(run.messages.iter().any(|m| m.starts_with("Ramp A: toe: step 2,") && !m.contains("stopped")), "{:?}", run.messages);
+    let made = made_by(&s, design);
+    let Some(Body::String(road)) = made.get("toe Steps road A pit edge") else { panic!("no road: {:?}", run.messages) };
+    let (start, end) = (road.vertices[0], *road.vertices.last().unwrap());
+    // The crest is conditioned to 0.1 m before the wall above goes on it, which stands that wall's toe up to 0.1 m out.
+    assert!((start[0] - E - 500.0).abs() < 1e-6 && (start[1] - N - 80.0).abs() <= 0.1 + 1e-6 && (start[2] - 120.0).abs() < 1e-6, "A starts on the crest where it was placed: {start:?}");
+    let Some(Body::String(toe_2)) = made.get("toe Steps toe 2") else { panic!("no toe 2") };
+    assert!(toe_2.vertices.iter().any(|p| (0..3).all(|k| (p[k] - start[k]).abs() < 1e-6)), "on the toe of the wall it climbs: {:?}", toe_2.vertices);
+    let plan = 200.0 * 0.1f64.asin().cos();
+    assert!((end[2] - 140.0).abs() < 1e-6 && (end[0] - start[0] - plan).abs() < 1e-6, "and climbs 20 m east to RL 140: {end:?}");
+
+    let row = |name: &str| s.project().objects().find(|o| o.name == name && o.attributes.get("face_design") == Some(&AttrValue::Text(design.to_string()))).and_then(|o| o.attributes.get("step").cloned());
+    for (name, step) in [("toe Steps toe 1", 1.0), ("toe Steps crest 1", 1.0), ("toe Steps toe 2", 2.0), ("toe Steps crest 2", 2.0)] {
+        assert_eq!(row(name), Some(AttrValue::Number(step)), "{name}");
+    }
+    assert_eq!(row("toe Steps face"), None, "only a wall's lines say which row");
 }
 
 /// Every point of each line on the other, to 1 µm in plan and height, so two strings that differ only in vertices along

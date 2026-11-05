@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceDirection, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
-use zd_geom::{COINCIDENT, EdgeRule, Face, FaceRamp, FaceRoad, FaceStep, FaceTarget, GeomError, OffsetSide, RoadTop, SolidRegion, at_line_heights, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_face, project_wall, register_toe, run_on, triangulate_grid};
+use zd_geom::{COINCIDENT, EdgeRule, Face, FaceBench, FaceRamp, FaceRoad, FaceStep, FaceTarget, GeomError, OffsetSide, RoadTop, SolidRegion, at_line_heights, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_face, project_wall, register_toe, run_on, triangulate_grid};
 
 use super::{SideParam, in_parallel};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
@@ -203,6 +203,9 @@ const ROAD_FACE: &str = "road_face";
 /// `road_top A wall` are its top corners as "x y z", then its heading along the string, width and grade
 /// (decision 0041).
 const ROAD_TOP: &str = "road_top";
+/// On each wall's toe and crest, the row of its profile it is, from 1 as the panel numbers them, so a ramp placed on a
+/// wall's line can be put on that wall.
+const STEP_ROW: &str = "step";
 
 fn road_top_key(ramp: &str, what: &str) -> String {
     format!("{ROAD_TOP} {ramp} {what}")
@@ -467,9 +470,9 @@ impl<'a> FaceRun<'a, '_> {
         let names: Vec<&str> = ramps.iter().map(|ramp| ramp.name.as_str()).collect();
         messages.extend((0..ramps.len()).map(|r| ramp_report(&names, &string.name, r, &face)));
         // What a run makes keeps its string's attributes, so a strip's number carries on to its face. Not the roads that
-        // came out on the string, which this run has carried on or left.
+        // came out on the string, which this run has carried on or left, nor the row it was in its own design.
         let attributes = || {
-            let mut kept: Attributes = string.attributes.iter().filter(|(key, _)| !key.starts_with(&format!("{ROAD_TOP} "))).map(|(key, value)| (key.clone(), value.clone())).collect();
+            let mut kept: Attributes = string.attributes.iter().filter(|(key, _)| !key.starts_with(&format!("{ROAD_TOP} ")) && key.as_str() != STEP_ROW).map(|(key, value)| (key.clone(), value.clone())).collect();
             kept.insert(MADE_BY.to_string(), AttrValue::Text(self.id.to_string()));
             kept
         };
@@ -490,11 +493,18 @@ impl<'a> FaceRun<'a, '_> {
             }
         }
         for (k, bench) in face.benches.iter().enumerate() {
-            changes.push(create(format!("{base} {start} {}", k + 1), Body::String(bench.toe.clone())));
+            let row = (STEP_ROW.to_string(), AttrValue::Number((bench.step + 1) as f64));
+            let mut toe = create(format!("{base} {start} {}", k + 1), Body::String(bench.toe.clone()));
             let mut crest = create(format!("{base} {end} {}", k + 1), Body::String(bench.crest.clone()));
+            for line in [&mut toe, &mut crest] {
+                if let Change::Create { attributes, .. } = line {
+                    attributes.extend([row.clone()]);
+                }
+            }
             if let (Change::Create { attributes, .. }, Some(top)) = (&mut crest, tops.remove(&k)) {
                 attributes.extend(top);
             }
+            changes.push(toe);
             changes.push(crest);
         }
         // A design ending on a berm hands on the berm's line, where the next wall would start.
@@ -538,7 +548,7 @@ fn place_ramps<'r>(profile: &'r FaceProfile, plain: &Face, ramp_strings: &HashMa
     let mut placed = PlacedRamps::default();
     for ramp in profile.ramps.iter().filter(|ramp| ramp.fixed != RampFixed::Line) {
         let (Some([first, last]), Some(string)) = (profile.walls_of(&ramp.name), ramp.string.and_then(|id| ramp_strings.get(&id))) else { continue };
-        let toe = plain.benches.iter().find(|bench| bench.step >= first && bench.step <= last).map(|bench| &bench.toe);
+        let toe = plain.benches.iter().position(|bench| bench.step >= first && bench.step <= last).map(|k| first_toe(&plain.benches, k));
         let crossings = toe.map_or_else(Vec::new, |toe| plan_crossings(string, toe));
         let Some(crossed) = crossings.first() else {
             placed.missing.push(&ramp.name);
@@ -551,6 +561,16 @@ fn place_ramps<'r>(profile: &'r FaceProfile, plain: &Face, ramp_strings: &HashMa
         placed.on_strip.push((ramp, face_ramp(ramp, crossed.at)));
     }
     placed
+}
+
+/// Where a ramp's first wall starts on the face built with no roads, which places the ramps. A wall going straight on from
+/// the one below, at its batter with no berm between, is run as one wall with it there, as no roads set them apart, so
+/// the bench shares the lower one's toe. A road placed on that crest starts from the crest, as the run with roads has it.
+fn first_toe(benches: &[FaceBench], k: usize) -> &Polyline {
+    match k.checked_sub(1).map(|j| &benches[j]) {
+        Some(below) if below.step + 1 == benches[k].step && below.toe == benches[k].toe => &below.crest,
+        _ => &benches[k].toe,
+    }
 }
 
 /// The ramps that carry on from the line: each starts where the design below left its road on this strip's string,
