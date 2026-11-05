@@ -1,7 +1,8 @@
 # 0043 — Colour by RL and see-through surfaces
 
 Date: 2026-11-05 · Status: proposed (Tim agreed the plan on 2026-11-05: "each object" for the colour range, and saving
-in the manifest beside hidden objects; the look is his to judge)
+in the manifest beside hidden objects. On the PIT B pictures he judged the look good and good enough for now, but isn't
+convinced by the palette)
 
 ## Why
 
@@ -80,6 +81,8 @@ under it with the strings on top at full strength; all three at 50 % show no til
 
 ## Known limits
 
+- **The palette isn't settled.** Tim isn't convinced by batlow. The ramp is one table of stops in
+  `app/src/viewport/rlColour.ts`, so trying others, or letting the user pick one, touches nothing else.
 - **See-through surfaces sort whole.** Where two see-through surfaces cross (a roof left in the air over a mined-out
   pit floor, both see-through), the one drawn later shows on top everywhere. Order-independent transparency would fix
   it, at the cost of more render targets and a composite pass; not done until it's needed.
