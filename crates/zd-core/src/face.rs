@@ -51,6 +51,20 @@ pub struct FaceLine {
     /// How far the toe is extended past its start and end (m).
     #[serde(default)]
     pub run_on: [f64; 2],
+    /// Lines of this line's design redrawn by hand, on one string only. Kept here and not in the profile, so the profile
+    /// still runs over other strips without them. See `docs/decisions/0046-edit-the-line.md`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edits: Vec<LineEdit>,
+}
+
+/// A line redrawn by hand: the line a row ends on, a wall's crest or a berm's line, is your string. The row it ends
+/// re-forms to meet it, and the rows above start from it, with any road on it carrying on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineEdit {
+    /// The row whose line it is, from 1 as the panel numbers them.
+    pub row: usize,
+    pub string: ObjectId,
 }
 
 /// The way a road runs along its string.
@@ -429,6 +443,7 @@ impl FaceDesign {
                 let what = if matches!(line.on, LineOn::Layer(_)) { "layer" } else { "string" };
                 problems.push(format!("A {what} is in twice with the profile {}", line.profile));
             }
+            self.check_edits(line, &mut problems);
         }
         for profile in &self.profiles {
             if profile.steps.is_empty() {
@@ -451,6 +466,24 @@ impl FaceDesign {
         }
         problems.dedup();
         problems
+    }
+
+    /// A line's lines redrawn by hand: on one string, each after a row that's there, one to a row.
+    fn check_edits(&self, line: &FaceLine, problems: &mut Vec<String>) {
+        if line.edits.is_empty() {
+            return;
+        }
+        if matches!(line.on, LineOn::Layer(_)) {
+            problems.push("A line on a layer can't have lines redrawn by hand: they're for one string".to_string());
+        }
+        let rows = self.profile(&line.profile).map_or(0, |profile| profile.steps.len());
+        for (k, edit) in line.edits.iter().enumerate() {
+            if edit.row == 0 || edit.row > rows {
+                problems.push(format!("A line redrawn by hand is after row {}, and {} has {rows} rows", edit.row, line.profile));
+            } else if line.edits[..k].iter().any(|other| other.row == edit.row) {
+                problems.push(format!("Row {} has two lines redrawn by hand", edit.row));
+            }
+        }
     }
 
     fn check_step(&self, row: &str, step: &ProfileStep, problems: &mut Vec<String>) {
@@ -556,7 +589,7 @@ mod tests {
         let id = ObjectId::new();
         FaceDesign {
             layer: "faces".into(),
-            lines: vec![FaceLine { on: LineOn::String(id), profile: "Highwall".into(), side: WallSide::Right, run_on: [100.0, 100.0] }],
+            lines: vec![FaceLine { on: LineOn::String(id), profile: "Highwall".into(), side: WallSide::Right, run_on: [100.0, 100.0], edits: Vec::new() }],
             profiles: vec![FaceProfile {
                 name: "Highwall".into(),
                 direction: FaceDirection::Up,
@@ -603,6 +636,33 @@ mod tests {
         assert!(d.problems().is_empty(), "{:?}", d.problems());
         d.lines.push(d.lines[1].clone());
         assert!(d.problems().iter().any(|p| p.contains("A layer is in twice with the profile Highwall")), "{:?}", d.problems());
+    }
+
+    /// A line redrawn by hand is kept on the design's line, after a row that's there, one to a row, and only on a line on
+    /// one string. A design saved before them reads with none, and one with none saves as it did.
+    #[test]
+    fn lines_redrawn_by_hand_are_kept_on_the_line_after_a_row_that_is_there() {
+        let mut d = design();
+        let before = serde_json::to_string(&d).unwrap();
+        assert!(!before.contains("edits"), "a design with none saves as it did: {before}");
+        d.lines[0].edits.push(LineEdit { row: 2, string: ObjectId::new() });
+        let text = serde_json::to_string(&d).unwrap();
+        assert!(text.contains(r#""edits":[{"row":2,"string":"#), "{text}");
+        assert_eq!(serde_json::from_str::<FaceDesign>(&text).unwrap(), d);
+        assert!(d.problems().is_empty(), "{:?}", d.problems());
+
+        let mut out = d.clone();
+        out.lines[0].edits.push(LineEdit { row: 4, string: ObjectId::new() });
+        assert!(out.problems().iter().any(|p| p == "A line redrawn by hand is after row 4, and Highwall has 3 rows"), "{:?}", out.problems());
+        let mut nought = d.clone();
+        nought.lines[0].edits[0].row = 0;
+        assert!(nought.problems().iter().any(|p| p.contains("after row 0")), "{:?}", nought.problems());
+        let mut twice = d.clone();
+        twice.lines[0].edits.push(LineEdit { row: 2, string: ObjectId::new() });
+        assert!(twice.problems().iter().any(|p| p == "Row 2 has two lines redrawn by hand"), "{:?}", twice.problems());
+        let mut layer = d.clone();
+        layer.lines[0].on = LineOn::Layer(LayerId::new());
+        assert!(layer.problems().iter().any(|p| p.starts_with("A line on a layer can't have lines redrawn by hand")), "{:?}", layer.problems());
     }
 
     /// Exactly what the Face design panel sent, nulls and whole numbers included.

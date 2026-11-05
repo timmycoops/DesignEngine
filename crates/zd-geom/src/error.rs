@@ -12,6 +12,9 @@ pub enum GeomError {
     OffTarget { at: [f64; 2] },
     /// The string is on or above the target all the way along.
     NoHeight,
+    /// What was asked for can't be built as asked, and nothing else is tried: a line redrawn by hand that crosses the line
+    /// below it, say. The words are for the person who asked.
+    Refused(String),
 }
 
 impl fmt::Display for GeomError {
@@ -26,6 +29,7 @@ impl fmt::Display for GeomError {
             GeomError::Manifold(message) => write!(f, "manifold: {message}"),
             GeomError::OffTarget { at } => write!(f, "the wall runs off the target at {:.3}, {:.3}", at[0], at[1]),
             GeomError::NoHeight => write!(f, "the string is on or above the target all the way along, so there's no wall to make: pick a surface above it"),
+            GeomError::Refused(message) => write!(f, "{message}"),
         }
     }
 }
