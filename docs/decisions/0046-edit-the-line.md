@@ -85,9 +85,29 @@ placed with your line, not before it. Step designs place ramps held at their sta
 moved 10 m out as a whole is refused where it comes within a few centimetres of a crest that juts out where the wall
 below has no height: "between the line below and your line, the berm near 651340.2, 7450442.3 folds over itself".
 
+## In the panel (workstream 3c)
+
+- **✎ on each row of a step design** (Edit from here) copies the line that row ends on, as the last step made it, to a
+  string of your own on the "edited lines" layer, "Toe Steps your line 8", puts it on the row and selects it. Nothing
+  changes until you change it. Where a row can't be redrawn, the ✎ says why: a road climbs that wall, or there's no line
+  yet. On a row with your line, ✎ shows in blue and selects it.
+- **Your lines** under the table, one to a row: select it, **Redraw a stretch**, or take it off (its string goes too;
+  undo brings it back). Drag, insert or delete its vertices in the viewport as for any string.
+- **Redraw a stretch** is a command, `string.redraw_stretch`: click on your line where the new stretch leaves it, the
+  new path, and where it comes back (Enter). The first and last points come onto the string within a metre, and the
+  points between take the place of everything between those places, drawn either way, in one undo. Tested: a straight
+  line with its middle redrawn out round 5 m keeps its ends and its heights there, drawn either way, and a line with the
+  same vertex twice, as a toe can have at a box, redraws as well.
+- **Your line changing runs the step again,** as the design changing does, 0.4 s after the last change. Rows moved or
+  taken out take their lines with them.
+
+The panel's flow on Tim's template, through the commands: Edit from here on row 8 runs in 6 ms and changes nothing;
+Redraw a stretch from the back corner of A's box to the back corner of B's, then the step, 4 ms: the berm is 10 to
+69.3 m wide, the walls above run straight behind both boxes, both roads reach RL 175, nothing crosses. It's saved as
+`testdata/synthetic/Step template joined.zdproj` (git-ignored).
+
 ## What this leaves
 
-- **The panel** (workstream 3c): Edit from here, Redraw a stretch, the ✎ row, Remove.
 - **A crest with a road on its wall:** re-forming the wall and its road cut together.
 - **Two switchbacks on one berm on a straight toe,** with both roads starting on the first wall: the second road's box
   folds the berm, with or without an edit (found while building the tests here; Tim's bent template builds).

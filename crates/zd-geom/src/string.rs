@@ -286,6 +286,62 @@ pub fn join_strings(a: &Polyline, b: &Polyline) -> Result<(Polyline, f64), GeomE
     Ok((Polyline { vertices, closed: false }, gap))
 }
 
+/// How far from a string the first and last points of a stretch redrawn on it may be, in plan (m): a click that missed
+/// it by a little.
+pub const ON_THE_STRING: f64 = 1.0;
+
+/// An open string with a stretch of it redrawn, as a planner redraws part of a line by hand: the first and last of
+/// `through` come onto the string at the nearest places to them in plan, at its height there, and every vertex between
+/// those places gives way to the points between, in the order drawn. Drawn against the way the string runs, the new
+/// stretch goes in turned round. The vertices either side stay as they are.
+pub fn redraw_stretch(line: &Polyline, through: &[[f64; 3]]) -> Result<Polyline, GeomError> {
+    if line.closed {
+        return Err(GeomError::InvalidInput("a stretch is redrawn on an open string".into()));
+    }
+    let n = line.vertices.len();
+    if n < 2 {
+        return Err(GeomError::InvalidInput("the string needs at least two vertices".into()));
+    }
+    let (Some(&first), Some(&last)) = (through.first(), through.last()) else {
+        return Err(GeomError::InvalidInput("draw where the new stretch leaves the string and where it comes back".into()));
+    };
+    if through.len() < 2 {
+        return Err(GeomError::InvalidInput("draw where the new stretch leaves the string and where it comes back".into()));
+    }
+    let plan: Vec<[f64; 2]> = line.vertices.iter().map(|p| [p[0], p[1]]).collect();
+    let (off_from, from) = nearest_on(&plan, false, [first[0], first[1]]);
+    let (off_to, to) = nearest_on(&plan, false, [last[0], last[1]]);
+    if off_from > ON_THE_STRING {
+        return Err(GeomError::InvalidInput(format!("start the new stretch on the string: the first point is {off_from:.1} m from it")));
+    }
+    if off_to > ON_THE_STRING {
+        return Err(GeomError::InvalidInput(format!("end the new stretch on the string: the last point is {off_to:.1} m from it")));
+    }
+    if (to - from).abs() < 1e-9 {
+        return Err(GeomError::InvalidInput("the new stretch leaves the string and comes back at the same place".into()));
+    }
+    let mut path = through.to_vec();
+    let (from, to) = if from < to {
+        (from, to)
+    } else {
+        path.reverse();
+        (to, from)
+    };
+    let at = |place: f64| {
+        let i = (place.floor() as usize).min(n - 2);
+        let (a, b, t) = (line.vertices[i], line.vertices[i + 1], place - i as f64);
+        [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])]
+    };
+    let ends = path.len() - 1;
+    (path[0], path[ends]) = (at(from), at(to));
+    const SAME: f64 = 1e-9;
+    let mut vertices: Vec<[f64; 3]> = line.vertices.iter().enumerate().filter(|(i, _)| (*i as f64) < from - SAME).map(|(_, p)| *p).collect();
+    vertices.extend(path);
+    vertices.extend(line.vertices.iter().enumerate().filter(|(i, _)| (*i as f64) > to + SAME).map(|(_, p)| *p));
+    vertices.dedup_by(|p, q| (p[0] - q[0]).hypot(p[1] - q[1]) <= SAME);
+    Ok(Polyline { vertices, closed: false })
+}
+
 /// A smooth curve through every vertex (a centripetal Catmull-Rom spline, which neither loops nor
 /// cusps), with vertices added so no step is longer than `spacing` in plan. The original vertices
 /// stay exactly where they are; elevations follow the same curve.
@@ -584,7 +640,9 @@ fn nearest_on(plan: &[[f64; 2]], closed: bool, p: [f64; 2]) -> (f64, f64) {
         .map(|i| {
             let (a, b) = (plan[i], plan[(i + 1) % n]);
             let ab = sub(b, a);
-            let t = (dot(sub(p, a), ab) / dot(ab, ab)).clamp(0.0, 1.0);
+            // A stretch with no length, as where a line has the same vertex twice, is the one point.
+            let length = dot(ab, ab);
+            let t = if length > 0.0 { (dot(sub(p, a), ab) / length).clamp(0.0, 1.0) } else { 0.0 };
             let d = sub(p, add(a, scale(ab, t)));
             (dot(d, d).sqrt(), i as f64 + t)
         })
@@ -722,6 +780,31 @@ mod tests {
     }
 
     const MITRE: Corner = Corner::Mitre { limit: 4.0 };
+
+    /// A stretch of a line redrawn by hand, as for a berm's line taken straight across behind two switchbacks: from a
+    /// straight line rising 1 m in every 10 m, the stretch from 10 m to 30 m redrawn out round 5 m. The ends come onto
+    /// the line where the clicks were nearest, at its height there, the vertex at 20 m gives way to the new path, and the
+    /// rest stay. Drawn the other way, it's the same line. A click more than a metre off is refused.
+    #[test]
+    fn a_stretch_redrawn_takes_the_place_of_what_was_between_its_ends() {
+        let rising = line(&[[0.0, 0.0, 100.0], [10.0, 0.0, 101.0], [20.0, 0.0, 102.0], [30.0, 0.0, 103.0], [40.0, 0.0, 104.0]], false);
+        let drawn = [[E + 10.0, N + 0.5, 0.0], [E + 15.0, N + 5.0, 90.0], [E + 25.0, N + 5.0, 90.0], [E + 29.0, N - 0.3, 0.0]];
+        let redrawn = redraw_stretch(&rising, &drawn).unwrap();
+        let expected = line(&[[0.0, 0.0, 100.0], [10.0, 0.0, 101.0], [15.0, 5.0, 90.0], [25.0, 5.0, 90.0], [29.0, 0.0, 102.9], [30.0, 0.0, 103.0], [40.0, 0.0, 104.0]], false);
+        assert_eq!(redrawn.vertices.len(), expected.vertices.len(), "{:?}", redrawn.vertices);
+        for (p, q) in redrawn.vertices.iter().zip(&expected.vertices) {
+            assert!((0..3).all(|k| (p[k] - q[k]).abs() < 1e-9), "{p:?} against {q:?}");
+        }
+        let backwards: Vec<[f64; 3]> = drawn.iter().rev().copied().collect();
+        assert_eq!(redraw_stretch(&rising, &backwards).unwrap(), redrawn);
+        let off = [[E + 10.0, N + 3.0, 0.0], [E + 29.0, N, 0.0]];
+        assert!(redraw_stretch(&rising, &off).unwrap_err().to_string().contains("the first point is 3.0 m from it"));
+        assert!(redraw_stretch(&Polyline { closed: true, ..rising.clone() }, &drawn).is_err());
+        assert!(redraw_stretch(&rising, &[[E + 10.0, N, 0.0], [E + 10.0, N, 0.0]]).is_err());
+        // A line with the same vertex twice, as a toe can have at a switchback box, redraws as well.
+        let twice = line(&[[0.0, 0.0, 100.0], [10.0, 0.0, 101.0], [20.0, 0.0, 102.0], [20.0, 0.0, 102.0], [30.0, 0.0, 103.0], [40.0, 0.0, 104.0]], false);
+        assert_eq!(redraw_stretch(&twice, &drawn).unwrap(), redrawn);
+    }
 
     /// A 100 m square, anticlockwise from above.
     fn square() -> Polyline {

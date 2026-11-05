@@ -84,6 +84,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "string.move_vertex",
             "string.number_across",
             "string.offset",
+            "string.redraw_stretch",
             "string.reverse",
             "string.set_closed",
             "string.set_elevation",
@@ -112,6 +113,12 @@ fn string_edits_are_exact_and_keep_every_revision() {
     s.run("string.move_vertex", json!({ "string": id, "index": 3, "to": [E + 100.5, N + 10.5, 123.0] })).unwrap();
     s.run("string.delete_vertex", json!({ "string": id, "index": 2 })).unwrap();
     assert_eq!(vertices(&s, id), [[E, N, 120.25], [E + 25.0, N - 2.0, 121.0], [E + 100.5, N + 10.5, 123.0]]);
+
+    // A stretch redrawn by hand, one revision: from where it leaves the line at the first vertex to where it comes back
+    // at the last, so every vertex between gives way.
+    s.run("string.redraw_stretch", json!({ "string": id, "through": [[E, N, 0.0], [E + 50.0, N + 20.0, 125.0], [E + 100.5, N + 10.5, 0.0]] })).unwrap();
+    assert_eq!(vertices(&s, id), [[E, N, 120.25], [E + 50.0, N + 20.0, 125.0], [E + 100.5, N + 10.5, 123.0]]);
+    s.undo().unwrap();
 
     // Commands never modify inputs: revision 1 still holds the string as created.
     let first = s.project().revision(id, 1).unwrap();
