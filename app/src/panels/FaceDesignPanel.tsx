@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Crosshair, Footprints, Play, Plus, Save, Trash2, Undo2 } from 'lucide-react';
+import { ArrowDown, ArrowLeftRight, ArrowUp, Crosshair, Footprints, Move, Play, Plus, Save, Trash2, Undo2 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampBerm, type RampFixed, type RampHeading, type RuleValue, type StepTarget, type StepValue, type Vec3, type WallRule, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
@@ -151,8 +151,12 @@ function levelOf(string: ObjectSummary, origin: Vec3 | null | undefined): StepTa
 const RAMP_REACH = 5;
 
 /** The way a string runs in plan at the place on it nearest `at`, as a unit vector. */
-function wayAt(points: [number, number][], at: Vec3): [number, number] | null {
-  let best: { gap: number; way: [number, number] } | null = null;
+const wayAt = (points: [number, number][], at: Vec3) => chainageAt(points, at)?.way ?? null;
+
+/** How far along a string, from its first vertex in plan, the place on it nearest `at` is (m), and its way there. */
+function chainageAt(points: [number, number][], at: Vec3): { metres: number; way: [number, number] } | null {
+  let best: { gap: number; metres: number; way: [number, number] } | null = null;
+  let walked = 0;
   for (let k = 1; k < points.length; k++) {
     const [a, b] = [points[k - 1], points[k]];
     const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
@@ -160,10 +164,23 @@ function wayAt(points: [number, number][], at: Vec3): [number, number] | null {
     if (length === 0) continue;
     const t = Math.max(0, Math.min(1, ((at[0] - a[0]) * dx + (at[1] - a[1]) * dy) / (length * length)));
     const gap = Math.hypot(a[0] + t * dx - at[0], a[1] + t * dy - at[1]);
-    if (!best || gap < best.gap) best = { gap, way: [dx / length, dy / length] };
+    if (!best || gap < best.gap) best = { gap, metres: walked + t * length, way: [dx / length, dy / length] };
+    walked += length;
   }
-  return best?.way ?? null;
+  return best && { metres: best.metres, way: best.way };
 }
+
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+
+/** A way in plan as one of eight compass points. */
+function compassOf([x, y]: [number, number]): string {
+  const bearing = ((Math.atan2(x, y) * 180) / Math.PI + 360) % 360;
+  return COMPASS[Math.round(bearing / 45) % 8];
+}
+
+/** Where a ramp placed by clicking starts, in words: how far along the design's string, the step it climbs from, and
+ * the way it climbs, and the way it would climb flipped. */
+type Placed = { line: string; metres: number; from: number | null; climbs: string; flipped: string };
 
 /** A design on one string, as a step design is. */
 const onOneString = (design: FaceDesign) => design.lines.length === 1 && design.lines[0].string !== undefined;
@@ -539,40 +556,62 @@ function roadTops(on: ObjectSummary[]): Map<string, { width: number; grade: numb
 }
 
 /** One ramp: its string, what's held, the road, and how far the last run got it on each strip. */
-function RampRow({ ramp, stringName, onWalls, waits, turns, results, swap, onShow, onChange, onRemove }: { ramp: Ramp; stringName: string | null; onWalls: boolean; waits: boolean; turns: boolean; results: string[]; swap: (() => void) | null; onShow: () => void; onChange: (r: Partial<Ramp>) => void; onRemove: () => void }) {
+function RampRow({ ramp, stringName, placed, onWalls, waits, turns, results, swap, onShow, onMove, onChange, onRemove }: { ramp: Ramp; stringName: string | null; placed: Placed | null; onWalls: boolean; waits: boolean; turns: boolean; results: string[]; swap: (() => void) | null; onShow: () => void; onMove: (() => void) | null; onChange: (r: Partial<Ramp>) => void; onRemove: () => void }) {
   const fromLine = ramp.fixed === 'line';
+  const flip = () => onChange({ heading: ramp.heading === 'along' ? 'back' : 'along' });
   return (
     <div className="border-t py-1">
       <div className="flex flex-wrap items-center gap-2">
         <span className="w-7 rounded px-1 py-0.5 text-center font-medium text-white" style={{ background: rampColour(ramp.name) }}>
           {ramp.name}
         </span>
-        {fromLine ? (
-          <span className="max-w-36 truncate text-muted-foreground" title={`No string: each line carries on road ${ramp.name} from where the design below left it, heading the way it was`}>
-            From the line
-          </span>
+        {placed ? (
+          <>
+            <button type="button" className="truncate hover:text-primary" title="Where the road starts, measured along the string the design runs on. Click to light up its marker" onClick={onShow}>
+              Starts {Math.round(placed.metres).toLocaleString()} m along {placed.line}
+              {placed.from !== null && `, up from step ${placed.from}`}
+            </button>
+            <SmallButton disabled={!onMove} title="Click a new start on the line, then the way the road runs" onClick={() => onMove?.()}>
+              <Move className="size-3" /> Move
+            </SmallButton>
+            <SmallButton title={`Climbs ${placed.climbs}. Click to climb ${placed.flipped} instead, from the same start`} onClick={flip}>
+              <ArrowLeftRight className="size-3" /> Climbs {placed.climbs}
+            </SmallButton>
+          </>
         ) : (
           <>
-            <button type="button" className={`max-w-36 truncate hover:text-primary ${stringName ? '' : 'text-primary'}`} title={stringName ? `The string across the strips. Click to light it up, then drag its vertices and run again` : 'Its string has gone'} onClick={onShow}>
-              {stringName ?? 'String gone'}
-            </button>
-            <IconButton title="Use the string selected in the viewport instead. It has to run across the strips, so a strip itself can't be one" disabled={!swap} onClick={() => swap?.()}>
-              <Crosshair className="size-3" />
-            </IconButton>
+            <select
+              className={selectClass}
+              value={ramp.fixed}
+              aria-label="Where the road is set"
+              title={`Starts: the road starts where the string crosses each strip. Ends: it comes out on the top crest level with where the string crosses each strip, and the run moves its start along the toe to get it there. From line: no string, and each line carries on road ${ramp.name} from where it came out on that line, as the design below left it`}
+              onChange={(e) => onChange({ fixed: e.target.value as RampFixed })}
+            >
+              <option value="start">Starts</option>
+              <option value="end">Ends</option>
+              <option value="line">From line</option>
+            </select>
+            {fromLine ? (
+              <span className="text-muted-foreground" title={`No string: each line carries on road ${ramp.name} from where the design below left it, heading the way it was`}>
+                carries on from the design below
+              </span>
+            ) : (
+              <>
+                <span className="text-muted-foreground">where</span>
+                <button type="button" className={`max-w-36 truncate hover:text-primary ${stringName ? '' : 'text-primary'}`} title={stringName ? `The string across the strips. Click to light it up, then drag its vertices and run again` : 'Its string has gone'} onClick={onShow}>
+                  {stringName ?? 'String gone'}
+                </button>
+                <IconButton title="Use the string selected in the viewport instead. It has to run across the strips, so a strip itself can't be one" disabled={!swap} onClick={() => swap?.()}>
+                  <Crosshair className="size-3" />
+                </IconButton>
+                <span className="text-muted-foreground">crosses, climbing</span>
+                <span title="Along: the way each strip's string runs, from its first vertex to its last. Back: the other way">
+                  <Choice value={ramp.heading} options={HEADINGS} onChange={(heading) => onChange({ heading })} />
+                </span>
+              </>
+            )}
           </>
         )}
-        <select
-          className={selectClass}
-          value={ramp.fixed}
-          aria-label="Which end is on the string"
-          title={`Ends at: the road comes out on the top crest level with where the string crosses each strip, and the run moves its start along the toe to get it there. Starts at: it starts where the string crosses each strip. From line: no string, and each line carries on road ${ramp.name} from where it came out on that line, as the design below left it`}
-          onChange={(e) => onChange({ fixed: e.target.value as RampFixed })}
-        >
-          <option value="end">Ends at</option>
-          <option value="start">Starts at</option>
-          <option value="line">From line</option>
-        </select>
-        {!fromLine && <Choice value={ramp.heading} options={HEADINGS} onChange={(heading) => onChange({ heading })} />}
         <select
           className={selectClass}
           value={ramp.berm ?? 'after'}
@@ -1009,18 +1048,24 @@ export function FaceDesignPanel() {
   /** A ramp placed by clicking, in a step design: it starts where it's clicked on the line the next step starts from,
    * running the way clicked along it, and the next wall added climbs it. Its string is a short one square across the
    * line there. */
-  const placeRamp = async () => {
+  const pickRampStart = async (): Promise<{ heading: RampHeading; points: Vec3[] } | null> => {
     const origin = summary?.origin;
-    if (!profile || !stepLine?.vertices_local || !origin) return;
+    if (!stepLine?.vertices_local || !origin) return null;
     setPicking(true);
     const picked = await pickLine('Click where the ramp starts, on the line the next step starts from. Esc cancels', 'Click along the line the way the road runs. Esc cancels');
     setPicking(false);
-    if (!picked) return;
+    if (!picked) return null;
     const [at, towards] = picked;
     const way = wayAt(stepLine.vertices_local.map((v) => [v[0] + origin[0], v[1] + origin[1]]), at);
-    if (!way) return;
+    if (!way) return null;
     const heading: RampHeading = (towards[0] - at[0]) * way[0] + (towards[1] - at[1]) * way[1] >= 0 ? 'along' : 'back';
-    const points = [-RAMP_REACH, RAMP_REACH].map((d) => [at[0] - way[1] * d, at[1] + way[0] * d, at[2]]);
+    return { heading, points: [-RAMP_REACH, RAMP_REACH].map((d): Vec3 => [at[0] - way[1] * d, at[1] + way[0] * d, at[2]]) };
+  };
+  const placeRamp = async () => {
+    if (!profile) return;
+    const start = await pickRampStart();
+    if (!start) return;
+    const { heading, points } = start;
     const taken = (profile.ramps ?? []).map((r) => r.name);
     const name = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').find((letter) => !taken.includes(letter)) ?? freeName('R', taken);
     const made = await runRecord('string.create', { name: `Ramp ${name}`, layer: 'ramps', points });
@@ -1028,6 +1073,29 @@ export function FaceDesignPanel() {
     if (!string) return;
     const ramp: Ramp = { name, string, fixed: 'start', heading, width: usualRoadWidth, grade: usualGrade, berm: 'after', turn_join: usualTurnJoin };
     setProfile({ ramps: [...(profile.ramps ?? []), ramp] });
+  };
+  /** A placed ramp moved: its short string goes where the new start is clicked, and the step runs again. */
+  const moveRamp = async (at: number) => {
+    const string = profile?.ramps?.[at]?.string;
+    if (!string) return;
+    const start = await pickRampStart();
+    if (!start) return;
+    for (const [index, to] of start.points.entries()) if (!(await runRecord('string.move_vertex', { string, index, to })).record) return;
+    // The string moved, not the design, so the way set again is what runs the step.
+    setRamp(at, { heading: start.heading });
+  };
+  /** Where a placed ramp starts and the way it climbs, in words, from its short string: a step design's ramps held at
+   * their start. A ramp on a longer string reads as one across the strips. */
+  const placedAt = (ramp: Ramp): Placed | null => {
+    const origin = summary?.origin;
+    const stub = objects.find((o) => o.id === ramp.string)?.vertices_local;
+    if (!stepping || ramp.fixed !== 'start' || !stepLine?.vertices_local || !origin || !profile || stub?.length !== 2) return null;
+    const middle = [0, 1, 2].map((j) => (stub[0][j] + stub[1][j]) / 2 + origin[j]) as Vec3;
+    const on = chainageAt(stepLine.vertices_local.map((v) => [v[0] + origin[0], v[1] + origin[1]]), middle);
+    if (!on) return null;
+    const way: [number, number] = ramp.heading === 'along' ? on.way : [-on.way[0], -on.way[1]];
+    const first = profile.steps.findIndex((s) => s.step === 'project' && (s.ramps ?? []).includes(ramp.name));
+    return { line: stepLine.name, metres: on.metres, from: first < 0 ? null : first + 1, climbs: compassOf(way), flipped: compassOf([-way[0], -way[1]]) };
   };
   /** The roads the design below left on this profile's lines that it has no ramp for yet. */
   const newTops = (() => {
@@ -1240,12 +1308,14 @@ export function FaceDesignPanel() {
                 key={ramp.name}
                 ramp={ramp}
                 stringName={objects.find((o) => o.id === ramp.string)?.name ?? null}
+                placed={placedAt(ramp)}
                 onWalls={profile.steps.some((s) => s.step === 'project' && (s.ramps ?? []).includes(ramp.name))}
                 waits={stepping}
                 turns={profile.steps.some((s) => s.step === 'project' && (s.turns ?? []).includes(ramp.name))}
                 results={report.lines.filter((line) => line.startsWith(`Ramp ${ramp.name}: `))}
                 swap={ramp.fixed !== 'line' && objects.some((o) => o.id === selected && o.kind === 'string') && selected !== ramp.string && !strings.some((s) => s.id === selected && (s.attributes.strip !== undefined || draft.lines.some((line) => line.string === s.id))) ? () => selected && setRamp(k, { string: selected }) : null}
                 onShow={() => ramp.string && select(ramp.string)}
+                onMove={picking ? null : () => void moveRamp(k)}
                 onChange={(change) => setRamp(k, change)}
                 onRemove={() => removeRamp(k)}
               />
