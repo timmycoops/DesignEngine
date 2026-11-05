@@ -436,8 +436,8 @@ async function checkCamera(viewport: Viewport) {
 
 /**
  * Changing the field of view keeps the view centre one size on screen (scale_off below 1e-9), and zoom to
- * extents frames the whole scene at a narrow and a wide field of view (every corner of the scene's box on
- * screen, the box at least half the screen across). Puts the camera back after.
+ * extents frames the scene the same at the default and at 45 (box_across_screen equal; it was about 1.1 at
+ * 45 before, so a corner of the box can sit just off screen). Puts the camera back after.
  */
 async function checkFieldOfView(viewport: Viewport) {
   const [position, target] = [viewport.camera.position.clone(), viewport.controls.target.clone()];

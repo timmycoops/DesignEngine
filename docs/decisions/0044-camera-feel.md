@@ -99,7 +99,11 @@ which is how Spry's view reads. Tim tried 45, 30, 20, 12 and 6° beside Spry and
   45°), fly to a point (600 m at 45°) and the bench's polyline handles (now in pixels). Pan, zoom, the plan
   switch and marker sizes already used the field of view.
 - The bench always runs at the default, whatever is saved, and checks the scale holds through a change
-  (below 1e-9) and that zoom to extents frames the scene at 6° and 45°.
+  (below 1e-9) and that zoom to extents frames the scene the same at 6° as at 45°.
+- On PIT B (2026-11-05) at 6°: scale off by 2e-16 through a change; extents 1.11 screens across at 6° and
+  1.13 at 45°; turn drift 1.4e-12 px; orbit 60 fps; pick p50 1.2 ms. The grabbed point is 0.0001 px off the
+  cursor after a 200 px pan, against 23.9 px at 45°: at a narrow lens every depth pans at nearly the same
+  rate, so pan sticks already. PR 2 still makes it exact, for the wider settings.
 - Lighting like Spry's (ambient 0.4, diffuse 0.6, straight down) was tried on its own first and didn't fix
   the flat look; it isn't in this change.
 
