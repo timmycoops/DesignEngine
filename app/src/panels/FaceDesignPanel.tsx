@@ -19,6 +19,8 @@ const usualTolerance = 0.1;
 const usualBatter = 70;
 const usualBerm = 10;
 const usualMinBench = 1;
+/** How far a new wall to an RL rises past the one before it, or past the toe (m). */
+const usualBenchHeight = 10;
 const usualRoadWidth = 30;
 const usualGrade = 10;
 const usualTurnJoin = 50;
@@ -356,19 +358,23 @@ function targetOf(step: ProfileStep) {
 /** What a new profile's toe starts on: the first surface, or an RL if there's none. */
 const firstRegister = (surfaces: ObjectSummary[]): StepTarget => (surfaces[0] ? { kind: 'surface', id: surfaces[0].id } : { kind: 'rl', rl: 0 });
 
-/** Where a new step should start: the surface after the last one the table went to, or after the toe's own. */
-function nextTarget(steps: ProfileStep[], surfaces: ObjectSummary[], register: StepTarget): StepTarget {
-  const last = [...steps].reverse().find((s) => s.step === 'project' && s.to.kind === 'surface');
-  const from = last?.step === 'project' ? last.to : register;
+/** Where a new step should start: the surface after the last one the table went to, or after the toe's own. On RLs,
+ * a bench height past the last RL, up or down the way the profile goes. */
+function nextTarget(steps: ProfileStep[], surfaces: ObjectSummary[], register: StepTarget, direction: FaceDirection): StepTarget {
+  const lastWall = [...steps].reverse().find((s) => s.step === 'project');
+  const from = lastWall?.step === 'project' ? lastWall.to : register;
   // A toe on an RL stays on RLs until a row names a surface, and past the last surface a face goes on to an RL.
   const next = from.kind === 'surface' ? surfaces[surfaces.findIndex((s) => s.id === from.id) + 1] : undefined;
-  return next ? { kind: 'surface', id: next.id } : { kind: 'rl', rl: 0 };
+  if (next) return { kind: 'surface', id: next.id };
+  const lastRl = [...steps].reverse().find((s) => s.step === 'project' && s.to.kind === 'rl');
+  const rl = lastRl?.step === 'project' && lastRl.to.kind === 'rl' ? lastRl.to.rl : register.kind === 'rl' ? register.rl : null;
+  return { kind: 'rl', rl: rl === null ? 0 : rl + (direction === 'down' ? -usualBenchHeight : usualBenchHeight) };
 }
 
 /** A new step of a kind, starting from the table's last one of that kind. */
-function blankStep(kind: ProfileStep['step'], steps: ProfileStep[], surfaces: ObjectSummary[], register: StepTarget, condition: number | null): ProfileStep {
+function blankStep(kind: ProfileStep['step'], steps: ProfileStep[], surfaces: ObjectSummary[], register: StepTarget, direction: FaceDirection, condition: number | null): ProfileStep {
   const last = [...steps].reverse().find((s) => s.step === kind);
-  if (kind === 'project') return { step: 'project', to: nextTarget(steps, surfaces, register), batter: last ? stepValueOf(last) : usualBatter, condition };
+  if (kind === 'project') return { step: 'project', to: nextTarget(steps, surfaces, register, direction), batter: last ? stepValueOf(last) : usualBatter, condition };
   const minBench = last?.step === 'berm' ? last.min_bench : usualMinBench;
   return { step: 'berm', on: null, width: last ? stepValueOf(last) : usualBerm, register: true, condition, min_bench: minBench };
 }
@@ -633,7 +639,7 @@ function RampRow({ ramp, stringName, onWalls, waits, turns, results, swap, onSho
 function StepTable({ profile, surfaces, rules, carryRamps, onChange }: { profile: FaceProfile; surfaces: ObjectSummary[]; rules: WallRule[]; carryRamps: boolean; onChange: (p: Partial<FaceProfile>) => void }) {
   const { steps, register } = profile;
   const ramps = profile.ramps ?? [];
-  const blank = (kind: ProfileStep['step']) => blankStep(kind, steps, surfaces, register, usualTolerance);
+  const blank = (kind: ProfileStep['step']) => blankStep(kind, steps, surfaces, register, profile.direction, usualTolerance);
   /** A new step. In a step design a new wall carries on the roads up the wall below it, and any ramp placed since. */
   const add = (kind: ProfileStep['step']) => {
     const row = blank(kind);

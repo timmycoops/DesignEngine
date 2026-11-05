@@ -33,6 +33,9 @@ validity has to be checked again after every move, so it isn't built.
 6. **In a step design a new wall carries on the roads of the wall below,** and any ramp placed since, so a road climbs
    every wall from where it was placed until it's clicked off a wall. Turning it back is a second click on its cell,
    as before. In a design with Run each step off, a new wall has no ramps, as before.
+7. **A new wall to an RL starts a bench (10 m) past the last RL,** or past the toe's own RL, up or down the way the
+   profile goes. It used to start at RL 0, which on a toe flat on RL 100 is below the toe: the first wall of a step
+   design built nothing ("step 1 has no height"), which is what Tim met on his first try.
 
 ## Results
 
@@ -63,6 +66,13 @@ So to RLs every step shows in a tenth of a second. To grids the walls themselves
 440 ms), and a ramp doubles it, as the face is built once with no roads to place the road. By the 7th row a step on grids
 takes 0.7 to 1.5 s, over the plan's 0.5 s. A wall on grids being slow is the same on any design, so it's taken on as its
 own job. The panel stays usable while a step runs.
+
+`testdata/synthetic/step_template.py` writes `Step template.zdproj`: a bent 1.5 km toe flat on RL 100 with the
+design Steps from Toe built the way the panel builds it, one `face.step` a row (a 70 degree wall to RL 115, a 10 m berm,
+ramp A placed on the berm's line 150 m along as Place ramp places it, a wall to RL 130 climbing it, a berm and a 65
+degree wall to RL 145 carrying it on), and a second toe with no design to start one on. Each step takes 1 ms; the
+face is clean, road A starts where it was placed and climbs from RL 115 to 145, and the design run whole gives the same
+face, vertex for vertex.
 
 ## What this leaves
 
