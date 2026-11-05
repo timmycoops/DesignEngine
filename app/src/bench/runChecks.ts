@@ -27,7 +27,7 @@ import { loadStaged } from '../viewport/load';
 import { PolylineTool } from '../viewport/PolylineTool';
 import type { SectionView } from '../viewport/section';
 import type { StringLayer } from '../viewport/strings';
-import type { Viewport } from '../viewport/Viewport';
+import { FIELD_OF_VIEW_DEFAULT, type Viewport } from '../viewport/Viewport';
 
 interface FrameSummary {
   frames: number;
@@ -56,7 +56,10 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
     canvas: { width: canvas.width, height: canvas.height, device_pixel_ratio: window.devicePixelRatio },
     user_agent: navigator.userAgent,
     default_transport: defaultTransport,
+    // Every run at the default, whatever is saved on this machine, so runs compare.
+    field_of_view_deg: FIELD_OF_VIEW_DEFAULT,
   };
+  viewport.setFieldOfView(FIELD_OF_VIEW_DEFAULT, false);
 
   try {
     if (config.solids) {
@@ -427,6 +430,52 @@ async function checkCamera(viewport: Viewport) {
     quick_turn: quickTurn,
     zoom: { drift_px: Math.hypot(wx - zx, wy - zy), from_m: turnedDistance, to_m: viewport.camera.position.distanceTo(point) },
     pan: await checkPan(viewport, point),
+    field_of_view: await checkFieldOfView(viewport),
+  };
+}
+
+/**
+ * Changing the field of view keeps the view centre one size on screen (scale_off below 1e-9), and zoom to
+ * extents frames the whole scene at a narrow and a wide field of view (every corner of the scene's box on
+ * screen, the box at least half the screen across). Puts the camera back after.
+ */
+async function checkFieldOfView(viewport: Viewport) {
+  const [position, target] = [viewport.camera.position.clone(), viewport.controls.target.clone()];
+  const before = viewport.pixelSize(target);
+  viewport.setFieldOfView(45, false);
+  const at45 = viewport.pixelSize(target);
+  viewport.setFieldOfView(FIELD_OF_VIEW_DEFAULT, false);
+  const back = viewport.pixelSize(target);
+  const canvas = viewport.renderer.domElement.getBoundingClientRect();
+  const fits: Record<string, { all_corners_on_screen: boolean; box_across_screen: number }> = {};
+  for (const degrees of [FIELD_OF_VIEW_DEFAULT, 45]) {
+    viewport.setFieldOfView(degrees, false);
+    viewport.fitView();
+    await viewport.nextFrame();
+    const box = viewport.bounds;
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (const cx of [box.min.x, box.max.x]) for (const cy of [box.min.y, box.max.y]) for (const cz of [box.min.z, box.max.z]) {
+      const [sx, sy] = viewport.projectToClient(new THREE.Vector3(cx, cy, cz));
+      xs.push(sx);
+      ys.push(sy);
+    }
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    fits[`fit_at_${degrees}`] = {
+      all_corners_on_screen: x0 >= canvas.left && x1 <= canvas.right && y0 >= canvas.top && y1 <= canvas.bottom,
+      box_across_screen: Math.max((x1 - x0) / canvas.width, (y1 - y0) / canvas.height),
+    };
+  }
+  viewport.setFieldOfView(FIELD_OF_VIEW_DEFAULT, false);
+  viewport.camera.position.copy(position);
+  viewport.controls.target.copy(target);
+  viewport.controls.update();
+  await viewport.nextFrame();
+  return {
+    default_deg: FIELD_OF_VIEW_DEFAULT,
+    scale_off_at_45: Math.abs(at45 / before - 1),
+    scale_off_back: Math.abs(back / before - 1),
+    ...fits,
   };
 }
 

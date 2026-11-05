@@ -2,6 +2,7 @@ import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState,
 import { confirm, open, save } from '@tauri-apps/plugin-dialog';
 import type { DockviewApi } from 'dockview-react';
 import {
+  Aperture,
   Box,
   FileInput,
   FileOutput,
@@ -66,7 +67,7 @@ import { type SeamShown, SceneSync } from './viewport/sceneSync';
 import { planPoint, SectionView } from './viewport/section';
 import { RoadLayer } from './viewport/roads';
 import { type Mode, StringLayer } from './viewport/strings';
-import { type FrameStats, Viewport } from './viewport/Viewport';
+import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Viewport';
 import { Input } from '@/design-system/ui/input';
 import { type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
 import { PANELS, resetLayout, showPanel, Workspace } from './workspace/Workspace';
@@ -92,6 +93,9 @@ function fileName(name: string, extension: string): string {
 }
 
 /** What goes out to DXF: strings, surfaces and solids. */
+/** Fields of view offered in the toolbar, in degrees. */
+const FIELD_OF_VIEW_CHOICES = [2, 4, 6, 10, 15, 20, 30, 45];
+
 const DXF_KINDS = new Set(['string', 'surface', 'solid']);
 
 /** Splits a file path into its folder and name, for either separator. */
@@ -151,6 +155,7 @@ export default function App() {
   const [status, setStatus] = useState<Status>({ text: 'Open a project or import a surface to start.' });
   const [mode, setModeState] = useState<Mode>('select');
   const [plan, setPlan] = useState(false);
+  const [fieldOfView, setFieldOfView] = useState(FIELD_OF_VIEW_DEFAULT);
   const [snapping, setSnapping] = useState(true);
   const [sectionOpen, setSectionOpen] = useState(false);
   const [sectionStep, setSectionStep] = useState('25');
@@ -305,6 +310,7 @@ export default function App() {
       if (cancelled) return created.dispose();
       viewport = created;
       viewportRef.current = created;
+      setFieldOfView(created.fieldOfView);
       created.onStats = setStats;
       setBackend(`${created.backend} · ${created.adapter}`);
       markersRef.current = new IssueMarkers(created);
@@ -783,6 +789,33 @@ export default function App() {
           >
             {plan ? <MapIcon /> : <Box />} {plan ? 'Plan' : '3D'}
           </ToolButton>
+          <DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="tabular-nums">
+                    <Aperture /> {fieldOfView}°
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>3D field of view: narrower draws the far side of the pit nearer its true size. Saved on this machine</TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="start">
+              {FIELD_OF_VIEW_CHOICES.map((degrees) => (
+                <DropdownMenuItem
+                  key={degrees}
+                  onSelect={() => {
+                    viewportRef.current?.setFieldOfView(degrees);
+                    setFieldOfView(viewportRef.current?.fieldOfView ?? degrees);
+                  }}
+                >
+                  <span className="w-8 tabular-nums">{degrees}°</span>
+                  {degrees === FIELD_OF_VIEW_DEFAULT ? 'default' : degrees === 45 ? 'old view' : ''}
+                  {degrees === fieldOfView ? ' ✓' : ''}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <ToolButton
             tip={sectionOpen ? 'Close the section' : 'Section: pick two points for a true vertical slice'}
             active={sectionOpen || mode === 'section'}

@@ -36,6 +36,25 @@ const SURFACE_COLOURS = [0xa8916b, 0x5b6b7d, 0x8c9aa6, 0xc9a227, 0x6f8f5f];
 
 const PIVOT_MARK_PX = 9;
 
+/**
+ * The 3D view's field of view, top to bottom of the screen, in degrees. Narrow by default (0044): a narrow lens
+ * from further back draws the far side of a pit near the size of the near side, so walls read at their height
+ * as they do in Spry. 45 was the old value.
+ */
+export const FIELD_OF_VIEW_DEFAULT = 6;
+export const FIELD_OF_VIEW_MIN = 2;
+export const FIELD_OF_VIEW_MAX = 60;
+const FIELD_OF_VIEW_KEY = 'zd.view.fieldOfView';
+/** How far off the 3D view frames the scene, in scene radii, at 45 degrees; other fields of view scale it. */
+const FIT_RADII_AT_45 = 1.9;
+const TAN_22_5 = Math.tan(THREE.MathUtils.degToRad(22.5));
+
+/** The field of view saved on this machine, else the default. */
+function savedFieldOfView(): number {
+  const saved = Number(globalThis.localStorage?.getItem(FIELD_OF_VIEW_KEY));
+  return Number.isFinite(saved) && saved >= FIELD_OF_VIEW_MIN && saved <= FIELD_OF_VIEW_MAX ? saved : FIELD_OF_VIEW_DEFAULT;
+}
+
 /** How strongly something selected glows: enough to find it, with its shading and colours still readable. */
 const LIT = 0.15;
 /** A copy drawn over everything comes after the opaque surfaces. */
@@ -126,7 +145,7 @@ export class Viewport {
     host.appendChild(renderer.domElement);
     await renderer.init();
 
-    const camera = new THREE.PerspectiveCamera(45, host.clientWidth / host.clientHeight, 1, 100_000);
+    const camera = new THREE.PerspectiveCamera(savedFieldOfView(), host.clientWidth / host.clientHeight, 1, 100_000);
     camera.up.set(0, 0, 1); // mine grid: z is up
     camera.position.set(0, -2000, 1500);
 
@@ -224,6 +243,39 @@ export class Viewport {
     this.controls.update();
   }
 
+  /** The 3D view's field of view in degrees. */
+  get fieldOfView(): number {
+    return this.perspective.fov;
+  }
+
+  /**
+   * Sets the 3D view's field of view, clamped to its range, and saves it on this machine unless `save` is
+   * false (the bench). The camera moves along its line of sight so the view centre stays the same size on
+   * screen: only the perspective changes.
+   */
+  setFieldOfView(degrees: number, save = true): void {
+    const next = THREE.MathUtils.clamp(degrees, FIELD_OF_VIEW_MIN, FIELD_OF_VIEW_MAX);
+    const camera = this.perspective;
+    const target = this.controls.target;
+    const half = camera.position.distanceTo(target) * this.halfTan;
+    const direction = camera.position.clone().sub(target).normalize();
+    camera.fov = next;
+    camera.position.copy(target).addScaledVector(direction, half / this.halfTan);
+    camera.updateProjectionMatrix();
+    if (save) globalThis.localStorage?.setItem(FIELD_OF_VIEW_KEY, String(next));
+    this.controls.update();
+  }
+
+  /** tan of half the 3D field of view: half the screen height over the distance. */
+  private get halfTan(): number {
+    return Math.tan(THREE.MathUtils.degToRad(this.perspective.fov / 2));
+  }
+
+  /** How far the 3D camera sits so a distance it would have at 45 degrees shows the same on screen. */
+  private atFieldOfView(distanceAt45: number): number {
+    return (distanceAt45 * TAN_22_5) / this.halfTan;
+  }
+
   /**
    * Switches between 3D and plan view over the same spot at about the same scale. Plan view pans
    * with the left button and zooms; it does not rotate (`CameraController`).
@@ -231,7 +283,7 @@ export class Viewport {
   setPlanView(on: boolean): void {
     if (on === this.plan) return;
     const target = this.controls.target.clone();
-    const tan = Math.tan(THREE.MathUtils.degToRad(this.perspective.fov / 2));
+    const tan = this.halfTan;
     if (on) {
       const offset = this.perspective.position.clone().sub(target);
       this.savedDirection.copy(offset).normalize();
@@ -253,7 +305,7 @@ export class Viewport {
       const flat = this.camera as THREE.OrthographicCamera;
       return (flat.top - flat.bottom) / flat.zoom / h;
     }
-    return (this.perspective.position.distanceTo(p) * 2 * Math.tan(THREE.MathUtils.degToRad(this.perspective.fov / 2))) / h;
+    return (this.perspective.position.distanceTo(p) * 2 * this.halfTan) / h;
   }
 
   private setPlanHalfHeight(half: number): void {
@@ -420,12 +472,15 @@ export class Viewport {
       this.placePlanCamera(centre);
     } else {
       const direction = new THREE.Vector3(0.45, -0.75, 0.6).normalize();
-      this.perspective.position.copy(centre).addScaledVector(direction, this.sceneRadius * 1.9);
+      this.perspective.position.copy(centre).addScaledVector(direction, this.atFieldOfView(this.sceneRadius * FIT_RADII_AT_45));
     }
     this.controls.update();
   }
 
-  /** Moves the view to look at `point` from the current direction, no farther than `distance`. */
+  /**
+   * Moves the view to look at `point` from the current direction, no farther than `distance` would be at 45
+   * degrees (so it shows the same width whatever the field of view).
+   */
   focusOn(point: Vec3, distance = 600): void {
     const target = new THREE.Vector3(...point);
     const offset = this.perspective.position.clone().sub(this.controls.target);
@@ -433,7 +488,7 @@ export class Viewport {
     if (this.plan) {
       this.placePlanCamera(target);
     } else {
-      offset.setLength(Math.min(offset.length(), distance));
+      offset.setLength(Math.min(offset.length(), this.atFieldOfView(distance)));
       this.perspective.position.copy(target).add(offset);
     }
     this.controls.update();
