@@ -2197,7 +2197,12 @@ fn a_wall_steps_between_real_grids() {
 /// Tim's step template with ramps A and B turning back on row 9, so their boxes sit on row 8's berm at RL 155 (decision
 /// 0038): a bent toe on RL 100, 30 m roads at 10 %, walls to RL 115 to 175. `join` sets Join on row 8; `turns` the ramps
 /// that turn on row 9; `rows` how many rows. Gives the session, design and the design's content.
-fn tims_switchbacks(join: bool, turns: &[&str], rows: usize) -> (Session, ObjectId, serde_json::Value) {
+fn tims_switchbacks(join: Option<bool>, turns: &[&str], rows: usize) -> (Session, ObjectId, serde_json::Value) {
+    tims_switchbacks_at(join, turns, rows, 0.0)
+}
+
+/// As `tims_switchbacks`, with ramp B's string moved `west` metres west, so its box comes towards A's.
+fn tims_switchbacks_at(join: Option<bool>, turns: &[&str], rows: usize, west: f64) -> (Session, ObjectId, serde_json::Value) {
     let mut s = Session::with_builtins();
     let bent: Vec<[f64; 3]> = [[0.0, 0.0], [600.0, 30.0], [1100.0, 10.0], [1500.0, 70.0]].iter().map(|p| [E + p[0], N + p[1], 0.0]).collect();
     let toe = created(&s.run("string.create", json!({ "name": "Toe", "layer": "toes", "points": bent })).unwrap())[0];
@@ -2206,10 +2211,13 @@ fn tims_switchbacks(join: bool, turns: &[&str], rows: usize) -> (Session, Object
         created(&s.run("string.create", json!({ "name": name, "layer": "ramps", "points": points })).unwrap())[0]
     };
     let a = placed(&mut s, "Ramp A", [[150.249688, 17.985104], [148.002495, 62.928959]]);
-    let b = placed(&mut s, "Ramp B", [[1099.896493, 20.561043], [1093.221172, 65.063179]]);
+    let b = placed(&mut s, "Ramp B", [[1099.896493 - west, 20.561043], [1093.221172 - west, 65.063179]]);
     let wall = |rl: f64, batter: f64, ramps: &[&str], turns: &[&str]| json!({ "step": "project", "to": { "kind": "rl", "rl": rl }, "batter": batter, "condition": 0.1, "ramps": ramps, "turns": turns });
     let berm = json!({ "step": "berm", "width": 10.0, "condition": 0.1, "min_bench": 1.0 });
-    let joined = json!({ "step": "berm", "width": 10.0, "condition": 0.1, "min_bench": 1.0, "join": join });
+    let mut joined = berm.clone();
+    if let Some(join) = join {
+        joined["join"] = json!(join);
+    }
     let ab = ["A", "B"];
     let all = [wall(115.0, 70.0, &[], &[]), berm.clone(), wall(130.0, 70.0, &ab, &[]), berm.clone(), wall(145.0, 65.0, &ab, &[]), berm.clone(), wall(155.0, 65.0, &ab, &[]), joined, wall(165.0, 65.0, &ab, turns), berm, wall(175.0, 65.0, &ab, &[])];
     let road = |name: &str, string: ObjectId, heading: &str| json!({ "name": name, "string": string, "fixed": "start", "heading": heading, "width": 30.0, "grade": 10.0 });
@@ -2230,7 +2238,7 @@ fn tims_switchbacks(join: bool, turns: &[&str], rows: usize) -> (Session, Object
 /// 10 to 69.3 m wide, both roads climb from their boxes to RL 175, and nothing crosses.
 #[test]
 fn join_on_a_berm_gives_the_line_drawn_by_hand_from_box_to_box() {
-    let (mut s, design, content) = tims_switchbacks(false, &["A", "B"], 11);
+    let (mut s, design, content) = tims_switchbacks(None, &["A", "B"], 11);
     s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
     let toe_5 = named_line(&s, design, "Toe Steps toe 5");
     let behind = |p: &[f64; 3]| p[1] > N + 135.0;
@@ -2238,7 +2246,7 @@ fn join_on_a_berm_gives_the_line_drawn_by_hand_from_box_to_box() {
     let before_b = (after_a + 1..toe_5.vertices.len()).find(|&j| behind(&toe_5.vertices[j])).expect("the back of B's box");
     let by_hand = Polyline { vertices: toe_5.vertices[..=after_a].iter().chain(&toe_5.vertices[before_b..]).copied().collect(), closed: false };
 
-    let (mut s, design, content) = tims_switchbacks(true, &["A", "B"], 11);
+    let (mut s, design, content) = tims_switchbacks(Some(true), &["A", "B"], 11);
     let started = Instant::now();
     let run = s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
     println!("two switchbacks joined by Join on row 8: 11 rows in {} ms", started.elapsed().as_millis());
@@ -2257,15 +2265,15 @@ fn join_on_a_berm_gives_the_line_drawn_by_hand_from_box_to_box() {
 /// no wall above it yet, where ramps turn.
 #[test]
 fn join_with_nothing_to_join_says_why_and_changes_nothing() {
-    let (mut s, design, content) = tims_switchbacks(false, &["A"], 11);
+    let (mut s, design, content) = tims_switchbacks(None, &["A"], 11);
     s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
     let plain = named_line(&s, design, "Toe Steps toe 5");
-    let (mut s, design, content) = tims_switchbacks(true, &["A"], 11);
+    let (mut s, design, content) = tims_switchbacks(Some(true), &["A"], 11);
     let run = s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
     assert!(run.messages.iter().any(|m| m == "Toe Steps: Join on row 8: only ramp A turns on it, so there's nothing to join it to"), "{:?}", run.messages);
     same_line(&named_line(&s, design, "Toe Steps toe 5"), &plain, "one switchback: the toe as the steps make it");
 
-    let (mut s, design, content) = tims_switchbacks(true, &[], 8);
+    let (mut s, design, content) = tims_switchbacks(Some(true), &[], 8);
     let run = s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
     assert!(run.messages.iter().any(|m| m == "Toe Steps: Join on row 8: the ramps turn on the wall above a berm, so add that wall to join them"), "{:?}", run.messages);
 }
@@ -2274,11 +2282,11 @@ fn join_with_nothing_to_join_says_why_and_changes_nothing() {
 /// ramps turned on the wall above has no boxes in it: the run says so, naming the row they turn on (Tim, 2026-11-06).
 #[test]
 fn your_line_comes_before_join_and_says_when_it_predates_the_turns() {
-    let (mut s, design, content) = tims_switchbacks(false, &[], 9);
+    let (mut s, design, content) = tims_switchbacks(None, &[], 9);
     s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
     let plain = named_line(&s, design, "Toe Steps toe 5");
     let mine = created(&s.run("string.create", json!({ "name": "Toe Steps your line 8", "layer": "edited lines", "points": plain.vertices })).unwrap())[0];
-    let (_, _, turned) = tims_switchbacks(true, &["A", "B"], 9);
+    let (_, _, turned) = tims_switchbacks(Some(true), &["A", "B"], 9);
     // The same strings in this session: only the rows and the edit change.
     let mut content = content;
     content["profiles"][0]["steps"] = turned["profiles"][0]["steps"].clone();
@@ -2289,4 +2297,72 @@ fn your_line_comes_before_join_and_says_when_it_predates_the_turns() {
         let says = format!("ramp {ramp} turns on row 9 but its box isn't in your line, copied before it turned there: take your line off and ✎ again, or switch Join on");
         assert!(run.messages.iter().any(|m| m.contains(&says)), "{ramp}: {:?}", run.messages);
     }
+}
+
+/// Switchbacks facing each other whose boxes would come within a road's width of each other, or overlap, are one pad by
+/// themselves (decision 0047, Tim 2026-11-06: "one road width is a good trigger by default"). Tim's template with ramp B
+/// moved west so its box comes towards A's: each box is shortened to stand just over a road's width from the other and the
+/// two are joined, as Join does. Both roads climb from their boxes to RL 175 and nothing crosses, 10 m apart and
+/// overlapping by 3 m. The gap reported shrinks one for one as B moves: 5 m further west, 5.0 m closer.
+#[test]
+fn close_boxes_are_one_pad_by_themselves() {
+    let gap_of = |messages: &[String]| -> f64 {
+        let m = messages.iter().find(|m| m.contains("so they're one pad")).unwrap_or_else(|| panic!("no join by itself: {messages:?}"));
+        let (sign, rest) = if let Some(i) = m.find("would have been ") { (1.0, &m[i + 16..]) } else { (-1.0, &m[m.find("overlapped by ").expect("apart or overlapped") + 14..]) };
+        sign * rest.split(' ').next().unwrap().parse::<f64>().unwrap()
+    };
+    let mut gaps = Vec::new();
+    for west in [80.0, 85.0, 98.0] {
+        let (mut s, design, content) = tims_switchbacks_at(None, &["A", "B"], 11, west);
+        let started = Instant::now();
+        let run = s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
+        println!("B {west} m west: 11 rows in {} ms", started.elapsed().as_millis());
+        assert!(run.messages.iter().any(|m| m.starts_with("Toe Steps: row 8 joins the switchbacks of A and B into one pad: the berm below it is 10.0 to ")), "{west}: {:?}", run.messages);
+        for ramp in ["A", "B"] {
+            assert!(run.messages.iter().any(|m| m.starts_with(&format!("Ramp {ramp}: Toe: steps 3 to 11,")) && m.contains("to 175.0") && !m.contains("stopped")), "{west} {ramp}: {:?}", run.messages);
+        }
+        assert!(!run.messages.iter().any(|m| m.contains("cross")), "{west}: {:?}", run.messages);
+        let face = s.project().objects().find(|o| o.name == "Toe Steps face" && o.attributes.get("face_design") == Some(&AttrValue::Text(design.to_string()))).unwrap();
+        let Body::Surface(sheet) = &face.body else { panic!("a face") };
+        assert_eq!(find_crossings(sheet.mesh(), COINCIDENT).pairs, 0, "{west}");
+        gaps.push(gap_of(&run.messages));
+    }
+    assert!((gaps[0] - gaps[1] - 5.0).abs() < 0.1, "5 m west, 5 m closer: {gaps:?}");
+    assert!(gaps[2] < 0.0, "overlapping at 98 m west: {gaps:?}");
+}
+
+/// Left to itself a berm leaves boxes a road's width or more apart as they are, nose and all; set off, it leaves close ones
+/// apart too, as before Join, and the run gives up a road as it did.
+#[test]
+fn far_boxes_stay_apart_and_join_off_keeps_close_ones_apart() {
+    let (mut s, design, content) = tims_switchbacks_at(None, &["A", "B"], 11, 0.0);
+    let run = s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
+    assert!(!run.messages.iter().any(|m| m.contains("one pad")), "{:?}", run.messages);
+    let usual = named_line(&s, design, "Toe Steps toe 5");
+    let (mut s, design, content) = tims_switchbacks_at(Some(false), &["A", "B"], 11, 0.0);
+    s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
+    same_line(&named_line(&s, design, "Toe Steps toe 5"), &usual, "boxes 102 m apart: as they are, left to itself or off");
+
+    let (mut s, design, content) = tims_switchbacks_at(Some(false), &["A", "B"], 11, 85.0);
+    let run = s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
+    assert!(!run.messages.iter().any(|m| m.contains("one pad")), "{:?}", run.messages);
+    assert!(run.messages.iter().any(|m| m.contains("stopped")), "close boxes kept apart give up a road as before: {:?}", run.messages);
+}
+
+/// Tops too close for both to turn back on one berm, where boxes short enough to stand a road's width apart would be under
+/// a third of a road's width long: the later ramp stops at its top and says how much further apart the tops need to be,
+/// two thirds of a road's width for the boxes, the road's width and a metre: 51 m for 30 m roads.
+#[test]
+fn tops_too_close_to_share_a_berm_stop_the_later_ramp_saying_how_far() {
+    let (mut s, design, content) = tims_switchbacks_at(None, &["A", "B"], 11, 112.0);
+    let run = s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
+    assert!(run.messages.iter().any(|m| m.starts_with("Ramp A: Toe: steps 3 to 11,") && m.contains("to 175.0") && !m.contains("stopped")), "{:?}", run.messages);
+    let b = run.messages.iter().find(|m| m.starts_with("Ramp B: ")).expect("ramp B");
+    assert!(b.contains("steps 3 to 7,") && b.contains("stopped on step 8 at "), "{b}");
+    let i = b.find("its top is only ").expect("too close") + 16;
+    let apart: f64 = b[i..].split(' ').next().unwrap().parse().unwrap();
+    let j = b.find("move one of them ").expect("how far") + 17;
+    let short: f64 = b[j..].split(' ').next().unwrap().parse().unwrap();
+    assert!(b.contains("m along the crest from ramp A's, too close for both to turn back on one berm"), "{b}");
+    assert!((apart + short - 51.0).abs() < 0.11, "{apart} + {short} = 51 m: {b}");
 }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceDirection, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
-use zd_geom::{COINCIDENT, EdgeRule, EditReport, Face, FaceBench, FaceEdit, FaceRamp, FaceRoad, FaceStep, FaceTarget, GeomError, JoinNote, OffsetSide, RoadTop, SolidRegion, at_line_heights, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_edited_face, project_wall, register_toe, run_on, triangulate_grid};
+use zd_geom::{COINCIDENT, EdgeRule, EditReport, Face, FaceBench, FaceEdit, FaceRamp, FaceRoad, FaceStep, FaceTarget, GeomError, JoinBoxes, JoinNote, MetBoxes, OffsetSide, RoadTop, SolidRegion, at_line_heights, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_edited_face, project_wall, register_toe, run_on, triangulate_grid};
 
 use super::{SideParam, in_parallel};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
@@ -479,8 +479,9 @@ impl<'a> FaceRun<'a, '_> {
         messages.extend(placed.notes);
         let names: Vec<&str> = ramps.iter().map(|ramp| ramp.name.as_str()).collect();
         messages.extend(face.edits.iter().map(|edit| edit_report(&base, &names, &profile.steps, edit)));
+        messages.extend(face.met.iter().map(|met| met_report(&base, &names, met)));
         messages.extend(face.join_notes.iter().map(|note| join_note(&base, &names, note)));
-        if let Some(ProfileStep::Berm { join: true, .. }) = profile.steps.last() {
+        if let Some(ProfileStep::Berm { join: Some(true), .. }) = profile.steps.last() {
             messages.push(format!("{base}: Join on row {}: the ramps turn on the wall above a berm, so add that wall to join them", profile.steps.len()));
         }
         messages.extend((0..ramps.len()).map(|r| ramp_report(&names, &string.name, r, &face)));
@@ -771,7 +772,12 @@ fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'
                 }
                 ProfileStep::Berm { on, width, register, condition, min_bench, join } => {
                     let horizon = on.as_ref().map_or(reached, surface_of);
-                    FaceStep::Berm { on: on.as_ref().map(target).transpose()?, width: rules.edge_rule(width, horizon)?, register: *register, condition: *condition, min_bench: *min_bench, join: *join }
+                    let join = match join {
+                        None => JoinBoxes::Auto,
+                        Some(true) => JoinBoxes::On,
+                        Some(false) => JoinBoxes::Off,
+                    };
+                    FaceStep::Berm { on: on.as_ref().map(target).transpose()?, width: rules.edge_rule(width, horizon)?, register: *register, condition: *condition, min_bench: *min_bench, join }
                 }
             })
         })
@@ -845,6 +851,14 @@ fn edit_report(base: &str, names: &[&str], steps: &[ProfileStep], edit: &EditRep
     format!("{base}: row {} joins the switchbacks of {} into one pad: {}", edit.after + 1, pairs.join(", "), parts.join("; "))
 }
 
+/// Two switchbacks' boxes made one pad by themselves, being within a road's width of each other or overlapping (decision
+/// 0047).
+fn met_report(base: &str, names: &[&str], met: &MetBoxes) -> String {
+    let [a, b] = met.ramps.map(|r| names.get(r).copied().unwrap_or("?"));
+    let how = if met.gap < 0.0 { format!("would have overlapped by {:.1} m", -met.gap) } else { format!("would have been {:.1} m apart, under a road's width", met.gap) };
+    format!("{base}: row {}: the boxes of {a} and {b} {how}, so they're one pad", met.after + 1)
+}
+
 /// A berm set to join switchbacks with none to join, and why: the run goes on as if it weren't set.
 fn join_note(base: &str, names: &[&str], note: &JoinNote) -> String {
     let name = |r: usize| names.get(r).copied().unwrap_or("?");
@@ -873,9 +887,10 @@ fn ramp_report(names: &[&str], strip: &str, ramp: usize, face: &Face) -> String 
         }
     }
     for stopped in face.no_roads.iter().filter(|stopped| stopped.ramp == ramp) {
-        let why = match stopped.crosses.and_then(|other| names.get(other)) {
-            Some(other) => format!("it would cross ramp {other} running the other way on this wall, or come within a road's width of it: move one of them along the strip"),
-            None => stopped.why.clone(),
+        let why = match (stopped.crosses.and_then(|other| names.get(other)), stopped.too_close.and_then(|(other, apart, short)| names.get(other).map(|other| (other, apart, short)))) {
+            (Some(other), _) => format!("it would cross ramp {other} running the other way on this wall, or come within a road's width of it: move one of them along the strip"),
+            (None, Some((other, apart, short))) => format!("its top is only {apart:.1} m along the crest from ramp {other}'s, too close for both to turn back on one berm: move one of them {short:.1} m further along the strip"),
+            (None, None) => stopped.why.clone(),
         };
         parts.push(format!("stopped on step {} at {:.1}, {:.1}: {why}", stopped.step + 1, stopped.at[0], stopped.at[1]));
     }

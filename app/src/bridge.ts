@@ -501,7 +501,7 @@ export type ProfileStep =
   /** `ramps` names the ramps that climb this wall, lowest first. `turns` names those of them that turn back before it, on
    * a flat pad across the berm below: each is on the wall before too. */
   | { step: 'project'; to: StepTarget; batter: StepValue; condition: number | null; ramps?: string[]; turns?: string[] }
-  | { step: 'berm'; on: StepTarget | null; width: StepValue; register: boolean; condition: number | null; min_bench?: number | null; join?: boolean };
+  | { step: 'berm'; on: StepTarget | null; width: StepValue; register: boolean; condition: number | null; min_bench?: number | null; /** On, off, or left out for the berm to join only boxes within a road's width (0047). */ join?: boolean };
 
 /** The way a road runs along its string. */
 export type RampHeading = 'along' | 'back';
