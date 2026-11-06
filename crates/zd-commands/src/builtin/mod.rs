@@ -3,6 +3,7 @@
 //! from DXF and CSV, objects out to DXF and CSV. Deswik drawings in (decision 0036), Spry projects in (decision 0039),
 //! and closed surfaces an import couldn't make solids fixed by repair (decision 0040).
 
+mod build;
 mod deswik;
 mod exchange;
 mod face;
@@ -15,6 +16,7 @@ mod spry;
 mod string;
 mod surface;
 
+pub use build::{BuildOp, BuildStep, BuildStepParams};
 pub use deswik::{ImportDeswik, ImportDeswikParams, MeshesAs};
 pub use exchange::{ExportCsv, ExportDxf, ExportParams, ImportStrings, ImportStringsParams};
 pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParams, SaveDesign, SaveDesignParams, Step, StepParams};
@@ -74,6 +76,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(SaveDesign);
     registry.register(ProjectDesign);
     registry.register(Step);
+    registry.register(BuildStep);
     registry.register(ImportVulcanSeam);
     registry.register(SuggestSeamDefinition);
     registry.register(BuildSeamModel);
