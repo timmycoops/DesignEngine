@@ -341,7 +341,7 @@ export default function App() {
           return snapRay(ray.origin, ray.direction);
         },
         snapDown: (x, y) => snapRay([x, y, 1e6], [0, 0, -1]),
-        status: (text) => setStatus({ text }),
+        status: (text, error) => setStatus({ text, error }),
         layer: () => layerRef.current,
         pick: (x, y) => void objectAt(created, sync, section, x, y).then(select),
         mark: (id) => (id ? toggleMark(id) : setMarked([])),

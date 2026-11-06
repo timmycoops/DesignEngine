@@ -732,6 +732,8 @@ export interface BenchConfig {
   webgl: boolean;
   /** With `--pictures` and `--palettes`, a few views are drawn on every RL ramp, and on one sheet. */
   palettes: boolean;
+  /** With `--design-lines`, a step design's own line and a copy of it on top: what a click picks, and Delete on each. */
+  design_lines: boolean;
 }
 
 /** Saves a PNG data URL of the viewport as `<name>.png` in the `--pictures` folder. Bench only. */

@@ -140,9 +140,37 @@ where the road leaves the box, and road C's wall-side edge starts 0.8 m off: car
 wall-side edge starts from your line's corner rather than its own offset. Its pit-side edge is the same: a turned road
 carried on from your line keeps the corner its edges take across a pad that isn't level, which it lost at first.
 
+## Your line on top of the design's (2026-11-06)
+
+Tim's first try in the app: ✎ on row 8 of his ten-row step template made his line, and he took 11 vertices out between
+the two boxes to join them. The run log shows the Deletes went to "Toe Steps toe 5", the design's own toe after row 8,
+and later to its next toe, not to his line. Edit from here puts your line exactly on the design's, and the step runs
+again once your line is on the row, which makes the design's lines afresh, after yours; a click on two strings the
+same distance off took the last one, the design's. Every run then made that line again, so the Deletes came to nothing.
+The same 11 Deletes replayed on his line from the log join the two boxes into one pad, 10 to 69.3 m wide, both roads on
+to RL 165. Then the turns moved from row 9 to row 7, under a line copied with the boxes on the RL 155 berm, and seven
+runs were refused: "your line crosses the line below it". Set the rows and turns, then ✎.
+
+- **A click on strings lying on each other** (to 2 px) keeps the one selected, else takes one of your own over a line a
+  face design made (`face_design` attribute), else the nearest (`designLines.ts`, `lineToPick`).
+- **A face design's own line can't be edited in the viewport:** Delete, a drag and Alt+click on one are refused, saying
+  why and which row's ✎ gives a line of your own: "Toe Steps toe 5 is made by the design Steps from Toe and made again
+  each time it runs, so an edit to it would be lost. In Face design, ✎ on row 8 gives you a line of your own to change."
+  A crest ends its own row, a toe the row before it, the next toe the last row; road edges and the first toe say to
+  change the design. Selecting one by a click says the same, not as a refusal. Commands from Python can still edit one.
+- **Checked in the app** (`--bench --design-lines`): a bent toe on RL 100, a wall to RL 115 and a 10 m berm, the next
+  toe copied as your line on row 2 and the step run again, through the real canvas and keys. On main as it was: a click
+  picked the design's line, and Delete and a drag changed it. Now: a click picks your line; the design's line selected
+  from the tree stays selected when clicked and says it's the design's; Delete leaves its 5 vertices and the message
+  names ✎ on row 2; a drag doesn't move it; Delete on your line takes it from 5 vertices to 4.
+- `tests/designLines.test.mjs`: the pick among lines on each other (selected, yours, nearer, out of reach) and the row
+  each design line names.
+
 ## What this leaves
 
 - **A crest with a road on its wall:** re-forming the wall and its road cut together.
 - **Two switchbacks on one berm on a straight toe,** with both roads starting on the first wall: the second road's box
   folds the berm, with or without an edit (found while building the tests here; Tim's bent template builds).
 - **A "minimum nose" rule on berms** for designs on many strips, Tim's other option on 2026-11-06.
+- **A design started from a line another design made** names that line, which the other design's next run makes
+  again with a new id, so the second design loses its string (Tim's "Steps from Toe Steps crest 4", 2026-11-06).

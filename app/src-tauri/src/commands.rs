@@ -820,6 +820,8 @@ pub struct BenchConfig {
     webgl: bool,
     /// With `--pictures` and `--palettes`, a few views are drawn on every RL ramp, and put on one sheet.
     palettes: bool,
+    /// With `--design-lines`, a step design's own line and a copy of it on top: what a click picks, and Delete on each.
+    design_lines: bool,
 }
 
 /// Present when the app was started with `--bench`: the viewport then runs Checks 1, 3 and 4
@@ -861,6 +863,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         pictures: args.iter().position(|a| a == "--pictures").and_then(|i| args.get(i + 1)).cloned(),
         webgl: args.iter().any(|a| a == "--webgl"),
         palettes: args.iter().any(|a| a == "--palettes"),
+        design_lines: args.iter().any(|a| a == "--design-lines"),
     })
 }
 
