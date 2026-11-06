@@ -1,6 +1,6 @@
-import { ArrowDown, ArrowUp, Crosshair, Play, Plus, Save, Trash2, Undo2 } from 'lucide-react';
-import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
-import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampBerm, type RampFixed, type RampHeading, type RuleValue, type StepTarget, type StepValue, type WallRule, type WallSide } from '@/bridge';
+import { ArrowDown, ArrowLeftRight, ArrowUp, Crosshair, Footprints, Move, PenLine, Pencil, Play, Plus, Save, Trash2, Undo2 } from 'lucide-react';
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, type LineEdit, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampBerm, type RampFixed, type RampHeading, type RuleValue, type StepTarget, type StepValue, type Vec3, type WallRule, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
@@ -11,14 +11,30 @@ const selectClass = 'h-7 min-w-0 rounded border bg-background px-1 text-xs';
 const headClass = 'px-1 font-normal';
 const cellClass = 'px-1 py-0.5';
 
+/** How long a step design waits after a change before it runs, so typing a number runs once (ms). */
+const STEP_WAIT = 400;
+/** Where the strings that stand for lines redrawn by hand go. */
+const HAND_LAYER = 'edited lines';
+
+/** A row's ✎: whether its line can be redrawn by hand, and if not why; whether it is; and what a click does. */
+interface HandRow {
+  why: string | null;
+  edited: boolean;
+  onEdit: () => void;
+}
+
 /** What a new row starts with. */
 const usualTolerance = 0.1;
 const usualBatter = 70;
 const usualBerm = 10;
 const usualMinBench = 1;
+/** How far a new wall to an RL rises past the one before it, or past the toe (m). */
+const usualBenchHeight = 10;
 const usualRoadWidth = 30;
 const usualGrade = 10;
 const usualTurnJoin = 50;
+/** A switchback box's far end square across the strip, unless a ramp says otherwise (degrees). */
+const squareEnd = 90;
 
 /** A number that can be typed through half-finished values: it only reports what parses, and goes back to what's held on leaving it. */
 function NumberBox({ value, onChange, title, width = 'w-16', disabled }: { value: number | null; onChange: (v: number) => void; title: string; width?: string; disabled?: boolean }) {
@@ -130,6 +146,70 @@ const blankDesign = (register: StepTarget): FaceDesign => ({
   profiles: [{ name: 'Highwall', direction: 'up', register, condition: usualTolerance, steps: [] }],
   rules: [],
 });
+
+/** The RL a string lies flat on, to the millimetre, if it does and isn't at 0: a toe drawn on a bench. */
+function levelOf(string: ObjectSummary, origin: Vec3 | null | undefined): StepTarget | null {
+  const zs = (string.vertices_local ?? []).map((v) => v[2]);
+  if (zs.length === 0 || !origin) return null;
+  const rl = Math.round((Math.min(...zs) + origin[2]) * 1000) / 1000;
+  return Math.max(...zs) - Math.min(...zs) < 0.001 && rl !== 0 ? { kind: 'rl', rl } : null;
+}
+
+/** How far a ramp placed by clicking reaches square across the line, behind it on the pit side and out the way the walls
+ * build (m). Behind, enough to cross the line wherever conditioning moves it; out, past a berm put in before the wall
+ * that climbs it. Only where it crosses the toe of the first wall it climbs counts. */
+const RAMP_BEHIND = 5;
+const RAMP_OUT = 40;
+/** How near one of the design's lines a ramp has to be placed to start on it (m). Clicks snap to strings. */
+const ON_A_LINE = 2;
+
+/** How far a point is from a string, in 3D. */
+function gapTo(points: Vec3[], at: Vec3): number {
+  let best = Infinity;
+  for (let k = 1; k < points.length; k++) {
+    const [a, b] = [points[k - 1], points[k]];
+    const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const length = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+    const t = length > 0 ? Math.max(0, Math.min(1, ((at[0] - a[0]) * d[0] + (at[1] - a[1]) * d[1] + (at[2] - a[2]) * d[2]) / length)) : 0;
+    best = Math.min(best, Math.hypot(a[0] + t * d[0] - at[0], a[1] + t * d[1] - at[1], a[2] + t * d[2] - at[2]));
+  }
+  return best;
+}
+
+/** The way a string runs in plan at the place on it nearest `at`, as a unit vector. */
+const wayAt = (points: [number, number][], at: Vec3) => chainageAt(points, at)?.way ?? null;
+
+/** How far along a string, from its first vertex in plan, the place on it nearest `at` is (m), and its way there. */
+function chainageAt(points: [number, number][], at: Vec3): { metres: number; way: [number, number] } | null {
+  let best: { gap: number; metres: number; way: [number, number] } | null = null;
+  let walked = 0;
+  for (let k = 1; k < points.length; k++) {
+    const [a, b] = [points[k - 1], points[k]];
+    const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+    const length = Math.hypot(dx, dy);
+    if (length === 0) continue;
+    const t = Math.max(0, Math.min(1, ((at[0] - a[0]) * dx + (at[1] - a[1]) * dy) / (length * length)));
+    const gap = Math.hypot(a[0] + t * dx - at[0], a[1] + t * dy - at[1]);
+    if (!best || gap < best.gap) best = { gap, metres: walked + t * length, way: [dx / length, dy / length] };
+    walked += length;
+  }
+  return best && { metres: best.metres, way: best.way };
+}
+
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+
+/** A way in plan as one of eight compass points. */
+function compassOf([x, y]: [number, number]): string {
+  const bearing = ((Math.atan2(x, y) * 180) / Math.PI + 360) % 360;
+  return COMPASS[Math.round(bearing / 45) % 8];
+}
+
+/** Where a ramp placed by clicking starts, in words: how far along the design's string, the step it climbs from, and
+ * the way it climbs, and the way it would climb flipped. */
+type Placed = { line: string; metres: number; from: number | null; climbs: string; flipped: string };
+
+/** A design on one string, as a step design is. */
+const onOneString = (design: FaceDesign) => design.lines.length === 1 && design.lines[0].string !== undefined;
 
 /** A name not already taken, from a starting word. */
 function freeName(word: string, taken: string[]) {
@@ -321,19 +401,23 @@ function targetOf(step: ProfileStep) {
 /** What a new profile's toe starts on: the first surface, or an RL if there's none. */
 const firstRegister = (surfaces: ObjectSummary[]): StepTarget => (surfaces[0] ? { kind: 'surface', id: surfaces[0].id } : { kind: 'rl', rl: 0 });
 
-/** Where a new step should start: the surface after the last one the table went to, or after the toe's own. */
-function nextTarget(steps: ProfileStep[], surfaces: ObjectSummary[], register: StepTarget): StepTarget {
-  const last = [...steps].reverse().find((s) => s.step === 'project' && s.to.kind === 'surface');
-  const from = last?.step === 'project' ? last.to : register;
+/** Where a new step should start: the surface after the last one the table went to, or after the toe's own. On RLs,
+ * a bench height past the last RL, up or down the way the profile goes. */
+function nextTarget(steps: ProfileStep[], surfaces: ObjectSummary[], register: StepTarget, direction: FaceDirection): StepTarget {
+  const lastWall = [...steps].reverse().find((s) => s.step === 'project');
+  const from = lastWall?.step === 'project' ? lastWall.to : register;
   // A toe on an RL stays on RLs until a row names a surface, and past the last surface a face goes on to an RL.
   const next = from.kind === 'surface' ? surfaces[surfaces.findIndex((s) => s.id === from.id) + 1] : undefined;
-  return next ? { kind: 'surface', id: next.id } : { kind: 'rl', rl: 0 };
+  if (next) return { kind: 'surface', id: next.id };
+  const lastRl = [...steps].reverse().find((s) => s.step === 'project' && s.to.kind === 'rl');
+  const rl = lastRl?.step === 'project' && lastRl.to.kind === 'rl' ? lastRl.to.rl : register.kind === 'rl' ? register.rl : null;
+  return { kind: 'rl', rl: rl === null ? 0 : rl + (direction === 'down' ? -usualBenchHeight : usualBenchHeight) };
 }
 
 /** A new step of a kind, starting from the table's last one of that kind. */
-function blankStep(kind: ProfileStep['step'], steps: ProfileStep[], surfaces: ObjectSummary[], register: StepTarget, condition: number | null): ProfileStep {
+function blankStep(kind: ProfileStep['step'], steps: ProfileStep[], surfaces: ObjectSummary[], register: StepTarget, direction: FaceDirection, condition: number | null): ProfileStep {
   const last = [...steps].reverse().find((s) => s.step === kind);
-  if (kind === 'project') return { step: 'project', to: nextTarget(steps, surfaces, register), batter: last ? stepValueOf(last) : usualBatter, condition };
+  if (kind === 'project') return { step: 'project', to: nextTarget(steps, surfaces, register, direction), batter: last ? stepValueOf(last) : usualBatter, condition };
   const minBench = last?.step === 'berm' ? last.min_bench : usualMinBench;
   return { step: 'berm', on: null, width: last ? stepValueOf(last) : usualBerm, register: true, condition, min_bench: minBench };
 }
@@ -375,7 +459,7 @@ function SurfaceOptions({ surfaces }: { surfaces: ObjectSummary[] }) {
 }
 
 /** One step of a profile. A row says where it finishes: a wall's target, or the surface a berm's line registers on. */
-function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged, canTurn, blank, onChange, onMove, onRemove }: { number: number; step: ProfileStep; surfaces: ObjectSummary[]; rules: WallRule[]; above: string; carries: boolean; ramps: Ramp[]; bridged: (ramp: string) => Bridge; canTurn: (ramp: string) => boolean; blank: (kind: ProfileStep['step']) => ProfileStep; onChange: (s: ProfileStep) => void; onMove: (by: number) => void; onRemove: () => void }) {
+function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged, canTurn, blank, hand, onChange, onMove, onRemove }: { number: number; step: ProfileStep; surfaces: ObjectSummary[]; rules: WallRule[]; above: string; carries: boolean; ramps: Ramp[]; bridged: (ramp: string) => Bridge; canTurn: (ramp: string) => boolean; blank: (kind: ProfileStep['step']) => ProfileStep; hand?: HandRow; onChange: (s: ProfileStep) => void; onMove: (by: number) => void; onRemove: () => void }) {
   const target = targetOf(step);
   const surfaceValue = target?.kind === 'surface' ? target.id : target?.kind === 'rl' ? 'rl' : '';
   const setSurface = (value: string) => {
@@ -419,7 +503,7 @@ function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged
           {step.step === 'project' ? (
             <RampCell name={name} on={onWall(step, name)} canTurn={canTurn(name)} onChange={(on) => onChange(withRamp(step, name, on))} />
           ) : (
-            bridged(name) !== 'none' && <span className="mx-auto block h-6 w-1" style={{ background: rampColour(name) }} title={bridged(name) === 'turns' ? `Ramp ${name} turns back on this berm: a flat pad of the road both ways and the berm between` : `Ramp ${name} crosses this berm: the road is the bench here`} />
+            bridged(name) !== 'none' && <span className="mx-auto block h-6 w-1" style={{ background: rampColour(name) }} title={bridged(name) === 'turns' ? `Ramp ${name} turns back on this berm: a flat box past the road's top, the road, the berm and the next road wide` : `Ramp ${name} crosses this berm: the road is the bench here`} />
           )}
         </td>
       ))}
@@ -428,6 +512,15 @@ function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged
         <ConditionCell value={step.condition} carries={carries} onChange={(condition) => onChange({ ...step, condition })} />
       </td>
       <td className="whitespace-nowrap py-0.5 text-right">
+        {hand && (
+          <IconButton
+            title={hand.edited ? `Your line after row ${number}: select it to drag, insert or delete its vertices, or redraw a stretch of it under the table` : (hand.why ?? `Edit from here: copy the line row ${number} ends on as a string of your own and redraw it by hand. The row re-forms to meet it and the rows above carry on from it`)}
+            disabled={!hand.edited && !!hand.why}
+            onClick={hand.onEdit}
+          >
+            <Pencil className={`size-3 ${hand.edited ? 'text-primary' : ''}`} />
+          </IconButton>
+        )}
         <IconButton title="Move up" onClick={() => onMove(-1)}>
           <ArrowUp className="size-3" />
         </IconButton>
@@ -464,7 +557,7 @@ function withRamp(step: Extract<ProfileStep, { step: 'project' }>, ramp: string,
 function RampCell({ name, on, canTurn, onChange }: { name: string; on: OnWall; canTurn: boolean; onChange: (on: OnWall) => void }) {
   const colour = rampColour(name);
   const next: OnWall = on === 'off' ? 'on' : on === 'on' && canTurn ? 'turn' : 'off';
-  const what = on === 'turn' ? `Ramp ${name} turns back before this wall, on a flat pad across the berm below, and climbs it the other way. Click to take it off` : `Click if ramp ${name} climbs this wall${canTurn ? ', and again if it turns back before it on a flat pad, a switchback' : ''}. Walls it climbs must come together, and berms between them are crossed. A wall can hold several ramps, one above the other, all running the same way`;
+  const what = on === 'turn' ? `Ramp ${name} turns back before this wall, on a flat box past its top on the berm below, and climbs it the other way. Click to take it off` : `Click if ramp ${name} climbs this wall${canTurn ? ', and again if it turns back before it on a flat pad, a switchback' : ''}. Walls it climbs must come together, and berms between them are crossed. A wall can hold several ramps: running one way they stack one above the other, and running opposite ways, as a straight ramp beside a switchback, they sit side by side along it`;
   return (
     <button
       type="button"
@@ -480,25 +573,80 @@ function RampCell({ name, on, canTurn, onChange }: { name: string; on: OnWall; c
   );
 }
 
+/** The roads the design below left on these strings, by ramp name, each with the width and grade it was built at. */
+function roadTops(on: ObjectSummary[]): Map<string, { width: number; grade: number }> {
+  const tops = new Map<string, { width: number; grade: number }>();
+  for (const s of on) {
+    for (const key of Object.keys(s.attributes)) {
+      const name = /^road_top (.+) pit$/.exec(key)?.[1];
+      if (!name || tops.has(name)) continue;
+      const number = (what: string, otherwise: number) => {
+        const value = s.attributes[`road_top ${name} ${what}`];
+        return typeof value === 'number' ? value : otherwise;
+      };
+      tops.set(name, { width: number('width', usualRoadWidth), grade: number('grade', usualGrade) });
+    }
+  }
+  return tops;
+}
+
 /** One ramp: its string, what's held, the road, and how far the last run got it on each strip. */
-function RampRow({ ramp, stringName, onWalls, turns, results, swap, onShow, onChange, onRemove }: { ramp: Ramp; stringName: string | null; onWalls: boolean; turns: boolean; results: string[]; swap: (() => void) | null; onShow: () => void; onChange: (r: Partial<Ramp>) => void; onRemove: () => void }) {
+function RampRow({ ramp, stringName, placed, onWalls, waits, turns, results, swap, onShow, onMove, onChange, onRemove }: { ramp: Ramp; stringName: string | null; placed: Placed | null; onWalls: boolean; waits: boolean; turns: boolean; results: string[]; swap: (() => void) | null; onShow: () => void; onMove: (() => void) | null; onChange: (r: Partial<Ramp>) => void; onRemove: () => void }) {
+  const fromLine = ramp.fixed === 'line';
+  const flip = () => onChange({ heading: ramp.heading === 'along' ? 'back' : 'along' });
   return (
     <div className="border-t py-1">
       <div className="flex flex-wrap items-center gap-2">
         <span className="w-7 rounded px-1 py-0.5 text-center font-medium text-white" style={{ background: rampColour(ramp.name) }}>
           {ramp.name}
         </span>
-        <button type="button" className={`max-w-36 truncate hover:text-primary ${stringName ? '' : 'text-primary'}`} title={stringName ? `The string across the strips. Click to light it up, then drag its vertices and run again` : 'Its string has gone'} onClick={onShow}>
-          {stringName ?? 'String gone'}
-        </button>
-        <IconButton title="Use the string selected in the viewport instead. It has to run across the strips, so a strip itself can't be one" disabled={!swap} onClick={() => swap?.()}>
-          <Crosshair className="size-3" />
-        </IconButton>
-        <select className={selectClass} value={ramp.fixed} aria-label="Which end is on the string" title="Ends at: the road comes out on the top crest level with where the string crosses each strip, and the run moves its start along the toe to get it there. Starts at: it starts where the string crosses each strip" onChange={(e) => onChange({ fixed: e.target.value as RampFixed })}>
-          <option value="end">Ends at</option>
-          <option value="start">Starts at</option>
-        </select>
-        <Choice value={ramp.heading} options={HEADINGS} onChange={(heading) => onChange({ heading })} />
+        {placed ? (
+          <>
+            <button type="button" className="truncate hover:text-primary" title="Where the road starts, measured along the string the design runs on. Click to light up its marker" onClick={onShow}>
+              Starts {Math.round(placed.metres).toLocaleString()} m along {placed.line}
+              {placed.from !== null && `, up from step ${placed.from}`}
+            </button>
+            <SmallButton disabled={!onMove} title="Click a new start on the line, then the way the road runs" onClick={() => onMove?.()}>
+              <Move className="size-3" /> Move
+            </SmallButton>
+            <SmallButton title={`Climbs ${placed.climbs}. Click to climb ${placed.flipped} instead, from the same start`} onClick={flip}>
+              <ArrowLeftRight className="size-3" /> Climbs {placed.climbs}
+            </SmallButton>
+          </>
+        ) : (
+          <>
+            <select
+              className={selectClass}
+              value={ramp.fixed}
+              aria-label="Where the road is set"
+              title={`Starts: the road starts where the string crosses each strip. Ends: it comes out on the top crest level with where the string crosses each strip, and the run moves its start along the toe to get it there. From line: no string, and each line carries on road ${ramp.name} from where it came out on that line, as the design below left it`}
+              onChange={(e) => onChange({ fixed: e.target.value as RampFixed })}
+            >
+              <option value="start">Starts</option>
+              <option value="end">Ends</option>
+              <option value="line">From line</option>
+            </select>
+            {fromLine ? (
+              <span className="text-muted-foreground" title={`No string: each line carries on road ${ramp.name} from where the design below left it, heading the way it was`}>
+                carries on from the design below
+              </span>
+            ) : (
+              <>
+                <span className="text-muted-foreground">where</span>
+                <button type="button" className={`max-w-36 truncate hover:text-primary ${stringName ? '' : 'text-primary'}`} title={stringName ? `The string across the strips. Click to light it up, then drag its vertices and run again` : 'Its string has gone'} onClick={onShow}>
+                  {stringName ?? 'String gone'}
+                </button>
+                <IconButton title="Use the string selected in the viewport instead. It has to run across the strips, so a strip itself can't be one" disabled={!swap} onClick={() => swap?.()}>
+                  <Crosshair className="size-3" />
+                </IconButton>
+                <span className="text-muted-foreground">crosses, climbing</span>
+                <span title="Along: the way each strip's string runs, from its first vertex to its last. Back: the other way">
+                  <Choice value={ramp.heading} options={HEADINGS} onChange={(heading) => onChange({ heading })} />
+                </span>
+              </>
+            )}
+          </>
+        )}
         <select
           className={selectClass}
           value={ramp.berm ?? 'after'}
@@ -520,7 +668,7 @@ function RampRow({ ramp, stringName, onWalls, turns, results, swap, onShow, onCh
             <NumberBox
               width="w-12"
               value={ramp.turn_join ?? usualTurnJoin}
-              title="Where the road turns back, how far on from the turn, along the road, the toe of the wall above runs straight back to the berm's line from the next road's corner, in metres. Longer than the line goes on, it runs to the end of the string"
+              title="Where the road turns back with no box (a flat of 0), how far on from the turn, along the road, the toe of the wall above runs straight back to the berm's line from the next road's corner, in metres. Longer than the line goes on, it runs to the end of the string"
               onChange={(turn_join) => onChange({ turn_join })}
             />
           </Labelled>
@@ -530,8 +678,18 @@ function RampRow({ ramp, stringName, onWalls, turns, results, swap, onShow, onCh
             <NumberBox
               width="w-12"
               value={ramp.turn_flat ?? ramp.width}
-              title="Where the road turns back, how far it runs flat along the berm's line before it climbs, in metres, so trucks don't turn straight onto the grade. The road's width unless you set it; 0 climbs straight away"
+              title="Where the road turns back, how long the flat box past its top is, in line with it and on the floor on a grid, in metres, for trucks to turn on: the road, the berm and the next road wide. The next road climbs the other way from its near end, straight across the berm from the top, and the wall above goes round the box. The road's width unless you set it; 0 turns at the top with no box"
               onChange={(turn_flat) => onChange({ turn_flat })}
+            />
+          </Labelled>
+        )}
+        {turns && (
+          <Labelled label="End, °">
+            <NumberBox
+              width="w-12"
+              value={ramp.turn_end ?? squareEnd}
+              title="Where the road turns back on a box, the angle in plan between the box's far end and the strip, in degrees, 30 to 90. 90 is square across, the wall above coming straight down the far end. Less flares it out past the box: the wall runs from the box's back corner at that angle out to the berm's line past it, and the ground it leaves is flat like the box. With a 100 m deep box, 45 runs 100 m on past the box"
+              onChange={(turn_end) => onChange({ turn_end })}
             />
           </Labelled>
         )}
@@ -541,7 +699,7 @@ function RampRow({ ramp, stringName, onWalls, turns, results, swap, onShow, onCh
           </IconButton>
         </span>
       </div>
-      {!onWalls && <p className="pt-0.5 text-primary">Not on a wall yet: click the walls it climbs in its column above.</p>}
+      {!onWalls && <p className="pt-0.5 text-primary">{waits ? 'Not on a wall yet: the next wall you add climbs it.' : 'Not on a wall yet: click the walls it climbs in its column above.'}</p>}
       {results.map((line, k) => (
         <p key={k} className={`pt-0.5 ${/stopped|isn't|doesn't|comes out|gone/.test(line) ? 'text-primary' : 'text-muted-foreground'}`}>
           {line.replace(/^Ramp [^:]*: /, '')}
@@ -552,11 +710,27 @@ function RampRow({ ramp, stringName, onWalls, turns, results, swap, onShow, onCh
 }
 
 /** A profile as one table, read top to bottom: the toe's Register row, then each step going one way from it. */
-function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfile; surfaces: ObjectSummary[]; rules: WallRule[]; onChange: (p: Partial<FaceProfile>) => void }) {
+/** Lines redrawn by hand in a step design: each row's ✎, and keeping them with their rows as rows move or go. */
+interface HandLines {
+  row: (row: number) => HandRow;
+  renumber: (to: (row: number) => number | null) => void;
+}
+
+function StepTable({ profile, surfaces, rules, carryRamps, hand, onChange }: { profile: FaceProfile; surfaces: ObjectSummary[]; rules: WallRule[]; carryRamps: boolean; hand?: HandLines; onChange: (p: Partial<FaceProfile>) => void }) {
   const { steps, register } = profile;
   const ramps = profile.ramps ?? [];
-  const blank = (kind: ProfileStep['step']) => blankStep(kind, steps, surfaces, register, usualTolerance);
-  const add = (kind: ProfileStep['step']) => onChange({ steps: [...steps, blank(kind)] });
+  const blank = (kind: ProfileStep['step']) => blankStep(kind, steps, surfaces, register, profile.direction, usualTolerance);
+  /** A new step. In a step design a new wall carries on the roads up the wall below it, and any ramp placed since. */
+  const add = (kind: ProfileStep['step']) => {
+    const row = blank(kind);
+    if (carryRamps && row.step === 'project') {
+      const below = [...steps].reverse().find((s) => s.step === 'project');
+      const climbing = below?.step === 'project' ? (below.ramps ?? []) : [];
+      const placed = ramps.map((r) => r.name).filter((name) => !steps.some((s) => s.step === 'project' && (s.ramps ?? []).includes(name)));
+      row.ramps = [...climbing, ...placed];
+    }
+    onChange({ steps: [...steps, row] });
+  };
   /** Whether a ramp crosses the berm at a row: it's on the walls either side of it. */
   /** The first wall in `from`, if it holds the ramp. */
   const climbedBy = (from: ProfileStep[], ramp: string) => {
@@ -644,9 +818,17 @@ function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfil
                 bridged={(ramp) => bridged(k, ramp)}
                 canTurn={(ramp) => climbsBefore(k, ramp)}
                 blank={blank}
+                hand={hand?.row(k + 1)}
                 onChange={(s) => setSteps(replaceAt(steps, k, s))}
-                onMove={(by) => setSteps(moved(steps, k, by))}
-                onRemove={() => setSteps(steps.filter((_, j) => j !== k))}
+                onMove={(by) => {
+                  if (k + by < 0 || k + by >= steps.length) return;
+                  setSteps(moved(steps, k, by));
+                  hand?.renumber((row) => (row === k + 1 ? k + 1 + by : row === k + 1 + by ? k + 1 : row));
+                }}
+                onRemove={() => {
+                  setSteps(steps.filter((_, j) => j !== k));
+                  hand?.renumber((row) => (row === k + 1 ? null : row > k + 1 ? row - 1 : row));
+                }}
               />
             ))}
           </tbody>
@@ -670,7 +852,7 @@ function StepTable({ profile, surfaces, rules, onChange }: { profile: FaceProfil
  * and steps every line in one run, one undo.
  */
 export function FaceDesignPanel() {
-  const { summary, selected, select, marked, setMarked, runRecord, clearRefusal, pickString } = useWorkspace();
+  const { summary, selected, select, marked, setMarked, runRecord, clearRefusal, pickString, pickLine } = useWorkspace();
   const objects = useMemo(() => summary?.objects ?? [], [summary]);
   const designs = useMemo(() => objects.filter((o) => o.kind === 'face_design'), [objects]);
   const [id, setId] = useState<string | null>(null);
@@ -681,12 +863,19 @@ export function FaceDesignPanel() {
   const [addingLayer, setAddingLayer] = useState('');
   const [report, setReport] = useState<{ lines: string[]; error?: string }>({ lines: [] });
   const [picking, setPicking] = useState(false);
+  /** Each change saves the design and runs it, one undo a step: a step design. */
+  const [stepping, setStepping] = useState(false);
+  /** Edits made, so a run only marks the design saved if nothing changed while it ran. */
+  const edits = useRef(0);
+  /** The design whose steps were last loaded, so opening another sets whether it runs each step. */
+  const loaded = useRef<string | null>(null);
 
   const open = designs.find((d) => d.id === id);
   const revision = open?.revision;
-  // What a design's own runs made are results, not things to design with.
+  // What a design's own runs made are results, not things to design with. Another design's crest can be a line, as a
+  // planner designs bottom up from the crest of the last (decision 0041).
   const made = (o: ObjectSummary) => o.attributes.face_design !== undefined;
-  const strings = useMemo(() => objects.filter((o) => o.kind === 'string' && !made(o)), [objects]);
+  const strings = useMemo(() => objects.filter((o) => o.kind === 'string' && o.attributes.face_design !== id), [objects, id]);
   const surfaces = useMemo(() => objects.filter((o) => o.drawn && (o.kind === 'surface' || o.kind === 'grid') && !made(o)), [objects]);
 
   useEffect(() => {
@@ -696,6 +885,8 @@ export function FaceDesignPanel() {
       if (stale || details.measures.kind !== 'face_design') return;
       setDraft(details.measures.design);
       setName(details.name);
+      if (loaded.current !== id) setStepping(onOneString(details.measures.design));
+      loaded.current = id;
     });
     return () => {
       stale = true;
@@ -714,6 +905,7 @@ export function FaceDesignPanel() {
   const edit = useCallback((change: (d: FaceDesign) => FaceDesign) => {
     setDraft((d) => (d ? change(d) : d));
     setDirty(true);
+    edits.current += 1;
     // What a refused run said was about the design as it was. How far ramps got stays until the next run.
     setReport((was) => (was.error ? { lines: was.lines } : was));
     clearRefusal();
@@ -721,6 +913,8 @@ export function FaceDesignPanel() {
 
   const start = () => {
     setId(null);
+    setStepping(false);
+    loaded.current = null;
     setDraft(blankDesign(firstRegister(surfaces)));
     setName(freeName('Face design', designs.map((d) => d.name)));
     setProfileName(null);
@@ -748,6 +942,60 @@ export function FaceDesignPanel() {
     setReport(outcome.record ? { lines: outcome.record.messages } : { lines: [], error: outcome.error });
   };
 
+  // A step design runs a moment after each change, saved and run in one undo. One that can't run says why and stays
+  // unsaved, with what the last step built still standing.
+  const ready = !!draft && draft.profiles.every((p) => p.steps.length > 0);
+  useEffect(() => {
+    if (!stepping || !dirty || !id || !draft || !ready) return;
+    const at = edits.current;
+    const timer = setTimeout(() => {
+      void runRecord('face.step', { design: id, name, content: draft }).then((outcome) => {
+        if (!outcome.record) return setReport({ lines: [], error: outcome.error });
+        if (edits.current === at) setDirty(false);
+        setReport({ lines: outcome.record.messages });
+      });
+    }, STEP_WAIT);
+    return () => clearTimeout(timer);
+  }, [stepping, dirty, id, draft, name, ready, runRecord]);
+
+  // A line redrawn by hand changing, as a vertex is dragged, runs the step again as the design changing does. Adding or
+  // taking one off changes the design itself.
+  const handKey = (draft?.lines[0]?.edits ?? []).map((e) => e.string).join(',');
+  const handRevisions = (draft?.lines[0]?.edits ?? []).map((e) => objects.find((o) => o.id === e.string)?.revision ?? 'gone').join(',');
+  const lastHand = useRef<{ id: string | null; key: string; revisions: string }>({ id: null, key: '', revisions: '' });
+  useEffect(() => {
+    const was = lastHand.current;
+    lastHand.current = { id, key: handKey, revisions: handRevisions };
+    if (stepping && was.id === id && was.key === handKey && handKey !== '' && was.revisions !== handRevisions) {
+      edits.current += 1;
+      setDirty(true);
+    }
+  }, [id, handKey, handRevisions, stepping]);
+
+  /** The string selected in the viewport, open, to start a step design from. */
+  const from = objects.find((o) => o.id === selected && o.kind === 'string' && !o.closed);
+  /** A step design from the selected string: saved empty, then each step added runs as it goes in. */
+  const startSteps = async () => {
+    if (!from) return;
+    const register = levelOf(from, summary?.origin) ?? firstRegister(surfaces);
+    const content: FaceDesign = { layer: 'faces', lines: [{ string: from.id, profile: 'Steps', side: 'right', run_on: [0, 0] }], profiles: [{ name: 'Steps', direction: 'up', register, condition: usualTolerance, steps: [] }], rules: [] };
+    const named = freeName(`Steps from ${from.name}`, designs.map((d) => d.name));
+    const outcome = await runRecord('face.save_design', { name: named, content });
+    const saved = outcome.record?.outputs[0]?.id;
+    if (!saved) return setReport({ lines: [], error: outcome.error });
+    loaded.current = saved;
+    setId(saved);
+    setDraft(content);
+    setName(named);
+    setProfileName(null);
+    setDirty(false);
+    setStepping(true);
+    setReport({ lines: [] });
+  };
+  const stepTitle = from
+    ? `A face built by hand from ${from.name}, a step at a time: each step you add or change runs straight away, and Ctrl+Z takes it off`
+    : 'Select a string in the viewport to start from: a toe, or a crest going down';
+
   if (!draft) {
     return (
       <div className="flex h-full flex-col gap-2 overflow-auto p-3 text-xs">
@@ -755,6 +1003,9 @@ export function FaceDesignPanel() {
         <div className="flex items-center gap-2">
           <SmallButton onClick={start}>
             <Plus className="size-3" /> New design
+          </SmallButton>
+          <SmallButton disabled={!from} title={stepTitle} onClick={() => void startSteps()}>
+            <Footprints className="size-3" /> Step design
           </SmallButton>
           {designs.length > 0 && (
             <select className={selectClass} value="" aria-label="Open a design" onChange={(e) => setId(e.target.value)}>
@@ -855,6 +1106,184 @@ export function FaceDesignPanel() {
     const ramp: Ramp = { name, string, fixed: 'end', heading: 'along', width: usualRoadWidth, grade: usualGrade, berm: 'after', turn_join: usualTurnJoin };
     setProfile({ ramps: [...(profile.ramps ?? []), ramp], steps: profile.steps.map((s) => (s.step === 'project' ? { ...s, ramps: [...(s.ramps ?? []), name] } : s)) });
   };
+  /** The string a step design runs on. */
+  const stepLine = draft && onOneString(draft) ? objects.find((o) => o.id === draft.lines[0].string) : undefined;
+  /** A ramp placed by clicking, in a step design: it starts where it's clicked on one of the design's lines, running the
+   * way clicked along it. Its string is a short one square across the line there. */
+  const pickRampStart = async (): Promise<{ at: Vec3; heading: RampHeading; points: Vec3[] } | null> => {
+    const origin = summary?.origin;
+    if (!stepLine?.vertices_local || !origin || !draft) return null;
+    setPicking(true);
+    const picked = await pickLine('Click where the ramp starts: on a toe or a berm line it climbs every wall above, on the top line it waits for the next wall. Esc cancels', 'Click along the line the way the road runs. Esc cancels');
+    setPicking(false);
+    if (!picked) return null;
+    const [at, towards] = picked;
+    const way = wayAt(stepLine.vertices_local.map((v) => [v[0] + origin[0], v[1] + origin[1]]), at);
+    if (!way) return null;
+    const heading: RampHeading = (towards[0] - at[0]) * way[0] + (towards[1] - at[1]) * way[1] >= 0 ? 'along' : 'back';
+    const out: [number, number] = draft.lines[0].side === 'left' ? [-way[1], way[0]] : [way[1], -way[0]];
+    return { at, heading, points: [-RAMP_BEHIND, RAMP_OUT].map((d): Vec3 => [at[0] + out[0] * d, at[1] + out[1] * d, at[2]]) };
+  };
+  /** The row of the wall a ramp placed at `at` climbs first, from the design's own line it's on: the wall that line is the
+   * start of, or for a crest the next wall up, past any berm. Null where no wall starts from it yet, on the berm's line
+   * or the top crest: the next wall added climbs it. Undefined where it isn't on one of the design's lines. */
+  const firstWallAt = (at: Vec3): number | null | undefined => {
+    const origin = summary?.origin;
+    if (!origin || !profile || !stepLine?.vertices_local || !id) return undefined;
+    const [start, end] = profile.direction === 'up' ? ['toe', 'crest'] : ['crest', 'toe'];
+    const base = `${stepLine.name} ${profile.name}`;
+    const wallAfter = (row: number) => {
+      const next = profile.steps.findIndex((s, k) => k > row && s.step === 'project');
+      return next < 0 ? null : next;
+    };
+    const world = (v: Vec3): Vec3 => [v[0] + origin[0], v[1] + origin[1], v[2] + origin[2]];
+    // The design's own string starts the first wall, wherever its register puts the toe: measured in plan.
+    const flat = (v: Vec3): Vec3 => [v[0] + origin[0], v[1] + origin[1], at[2]];
+    let best = { gap: gapTo(stepLine.vertices_local.map(flat), at), row: wallAfter(-1) };
+    for (const o of objects) {
+      if (o.kind !== 'string' || o.attributes.face_design !== id || !o.vertices_local) continue;
+      const step = o.attributes.step;
+      const row = o.name === `${base} next ${start}` ? null : typeof step !== 'number' ? undefined : o.name.startsWith(`${base} ${start} `) ? step - 1 : o.name.startsWith(`${base} ${end} `) ? wallAfter(step - 1) : undefined;
+      if (row === undefined) continue;
+      const gap = gapTo(o.vertices_local.map(world), at);
+      if (gap < best.gap) best = { gap, row };
+    }
+    return best.gap <= ON_A_LINE ? best.row : undefined;
+  };
+  /** A ramp on every wall from `row` up, and off those below; none at all while it waits for the next wall. A wall it
+   * turns back before keeps the turn. */
+  const onWallsFrom = (steps: ProfileStep[], name: string, row: number | null) =>
+    steps.map((s, k) => (s.step !== 'project' ? s : withRamp(s, name, row === null || k < row ? 'off' : onWall(s, name) === 'off' ? 'on' : onWall(s, name))));
+  const notOnALine = "Click on one of this design's lines: the toe, a crest, or a berm's line";
+  const placeRamp = async () => {
+    if (!profile) return;
+    const start = await pickRampStart();
+    if (!start) return;
+    const { at, heading, points } = start;
+    const row = firstWallAt(at);
+    if (row === undefined) return setReport((was) => ({ lines: was.lines, error: notOnALine }));
+    const taken = (profile.ramps ?? []).map((r) => r.name);
+    const name = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').find((letter) => !taken.includes(letter)) ?? freeName('R', taken);
+    const made = await runRecord('string.create', { name: `Ramp ${name}`, layer: 'ramps', points });
+    const string = made.record?.outputs[0]?.id;
+    if (!string) return;
+    const ramp: Ramp = { name, string, fixed: 'start', heading, width: usualRoadWidth, grade: usualGrade, berm: 'after', turn_join: usualTurnJoin };
+    // On a wall's line it climbs that wall and every one above at once; on the berm's line or the top crest it waits.
+    setProfile({ ramps: [...(profile.ramps ?? []), ramp], steps: onWallsFrom(profile.steps, name, row) });
+  };
+  /** A placed ramp moved: its short string goes where the new start is clicked, and the step runs again. */
+  const moveRamp = async (at: number) => {
+    const ramp = profile?.ramps?.[at];
+    if (!profile || !ramp?.string) return;
+    const start = await pickRampStart();
+    if (!start) return;
+    const row = firstWallAt(start.at);
+    if (row === undefined) return setReport((was) => ({ lines: was.lines, error: notOnALine }));
+    const string = ramp.string;
+    for (const [index, to] of start.points.entries()) if (!(await runRecord('string.move_vertex', { string, index, to })).record) return;
+    // The walls it climbs go with it, and the design changing runs the step.
+    setProfile({ ramps: replaceAt(profile.ramps ?? [], at, { ...ramp, heading: start.heading }), steps: onWallsFrom(profile.steps, ramp.name, row) });
+  };
+  /** Where a placed ramp starts and the way it climbs, in words, from its short string: a step design's ramps held at
+   * their start. A ramp on a longer string reads as one across the strips. */
+  const placedAt = (ramp: Ramp): Placed | null => {
+    const origin = summary?.origin;
+    const stub = objects.find((o) => o.id === ramp.string)?.vertices_local;
+    if (!stepping || ramp.fixed !== 'start' || !stepLine?.vertices_local || !origin || !profile || stub?.length !== 2) return null;
+    // Where it was clicked: its string's length behind the line from the end on the pit side.
+    const reach = Math.hypot(stub[1][0] - stub[0][0], stub[1][1] - stub[0][1]);
+    const t = reach > 0 ? Math.min(1, RAMP_BEHIND / reach) : 0;
+    const clicked = [0, 1, 2].map((j) => stub[0][j] + t * (stub[1][j] - stub[0][j]) + origin[j]) as Vec3;
+    const on = chainageAt(stepLine.vertices_local.map((v) => [v[0] + origin[0], v[1] + origin[1]]), clicked);
+    if (!on) return null;
+    const way: [number, number] = ramp.heading === 'along' ? on.way : [-on.way[0], -on.way[1]];
+    const first = profile.steps.findIndex((s) => s.step === 'project' && (s.ramps ?? []).includes(ramp.name));
+    return { line: stepLine.name, metres: on.metres, from: first < 0 ? null : first + 1, climbs: compassOf(way), flipped: compassOf([-way[0], -way[1]]) };
+  };
+  /** Lines of this step design redrawn by hand, each standing for the line its row ends on. */
+  const lineEdits: LineEdit[] = (stepping && draft.lines[0]?.edits) || [];
+  const setEdits = (next: LineEdit[]) => edit((d) => ({ ...d, lines: replaceAt(d.lines, 0, { ...d.lines[0], edits: next.length > 0 ? next : undefined }) }));
+  /** The line a row ends on as the last step made it: a wall's crest, or for a berm the toe of the wall above, or the next
+   * toe where the design ends on it. Or why there's none to redraw. */
+  const lineAfter = (row: number): ObjectSummary | string => {
+    if (!profile || !stepLine || !id) return 'Run the design first';
+    const [start, end] = profile.direction === 'up' ? ['toe', 'crest'] : ['crest', 'toe'];
+    const base = `${stepLine.name} ${profile.name}`;
+    const step = profile.steps[row - 1];
+    if (!step) return `There's no row ${row}`;
+    const lines = objects.filter((o) => o.kind === 'string' && o.attributes.face_design === id);
+    if (step.step === 'project') {
+      if ((step.ramps ?? []).length > 0) return `A road climbs row ${row}, so its ${end} can't be redrawn yet: redraw the line after the berm above it`;
+      return lines.find((o) => o.attributes.step === row && o.name.startsWith(`${base} ${end} `)) ?? `Row ${row} has no ${end} yet`;
+    }
+    const next = profile.steps[row];
+    if (!next) return lines.find((o) => o.name === `${base} next ${start}`) ?? `Row ${row} has no line yet`;
+    if (next.step !== 'project') return `Row ${row + 1} is a berm too: redraw the line after it`;
+    return lines.find((o) => o.attributes.step === row + 1 && o.name.startsWith(`${base} ${start} `)) ?? `The wall after row ${row} has no ${start} yet`;
+  };
+  /** Edit from here: the line a row ends on copied as a string of your own, standing for it. Nothing changes until it's
+   * redrawn, and it's selected to drag, insert or delete its vertices. */
+  const editFromHere = async (row: number) => {
+    const line = lineAfter(row);
+    if (typeof line === 'string' || !profile || !stepLine) return setReport((was) => ({ lines: was.lines, error: typeof line === 'string' ? line : undefined }));
+    const details = await objectDetails(line.id);
+    if (details.measures.kind !== 'string') return;
+    const made = await runRecord('string.create', { name: `${stepLine.name} ${profile.name} your line ${row}`, layer: HAND_LAYER, points: details.measures.points });
+    const string = made.record?.outputs[0]?.id;
+    if (!string) return setReport((was) => ({ lines: was.lines, error: made.error }));
+    setEdits([...lineEdits.filter((e) => e.row !== row), { row, string }]);
+    select(string);
+  };
+  /** A stretch of your line redrawn: click where it leaves it, the new path, and where it comes back. One undo. */
+  const redrawStretch = async (row: number) => {
+    const string = lineEdits.find((e) => e.row === row)?.string;
+    if (!string) return;
+    select(string);
+    setPicking(true);
+    const points = await pickString('Click on your line where the new stretch leaves it, then the new path, then where it comes back onto your line. Enter finishes, Esc cancels');
+    setPicking(false);
+    if (!points) return;
+    const outcome = await runRecord('string.redraw_stretch', { string, through: points });
+    if (!outcome.record) setReport((was) => ({ lines: was.lines, error: outcome.error }));
+  };
+  /** Your line taken off its row, which goes back to the line the steps make. Its string goes too; undo brings it back. */
+  const removeEdit = (row: number) => {
+    const gone = lineEdits.find((e) => e.row === row);
+    setEdits(lineEdits.filter((e) => e.row !== row));
+    if (gone && objects.find((o) => o.id === gone.string)?.layer === summary?.layers.find((l) => l.name === HAND_LAYER)?.id) void runRecord('object.delete', { object: gone.string });
+  };
+  const hand: HandLines | undefined =
+    stepping && stepLine
+      ? {
+          row: (row) => {
+            const yours = lineEdits.find((e) => e.row === row);
+            const line = yours ? null : lineAfter(row);
+            return { why: typeof line === 'string' ? line : null, edited: !!yours, onEdit: () => (yours ? select(yours.string) : void editFromHere(row)) };
+          },
+          renumber: (to) => {
+            const next = lineEdits.flatMap((e) => {
+              const row = to(e.row);
+              return row === null ? [] : [{ ...e, row }];
+            });
+            if (next.length !== lineEdits.length || next.some((e, k) => e.row !== lineEdits[k].row)) setEdits(next);
+          },
+        }
+      : undefined;
+  /** The roads the design below left on this profile's lines that it has no ramp for yet. */
+  const newTops = (() => {
+    if (!profile || !draft) return new Map<string, { width: number; grade: number }>();
+    const on = draft.lines.filter((l) => l.profile === profile.name).flatMap((l) => strings.filter((s) => (l.string ? s.id === l.string : s.layer === l.layer)));
+    const tops = roadTops(on);
+    for (const ramp of profile.ramps ?? []) tops.delete(ramp.name);
+    return tops;
+  })();
+  /** A ramp for each road the design below left on the lines, carrying it on from there, up every wall. */
+  const addFromLine = () => {
+    if (!profile || newTops.size === 0) return;
+    const added: Ramp[] = [...newTops].map(([name, { width, grade }]) => ({ name, fixed: 'line', heading: 'along', width, grade, berm: 'after', turn_join: usualTurnJoin }));
+    const names = added.map((r) => r.name);
+    setProfile({ ramps: [...(profile.ramps ?? []), ...added], steps: profile.steps.map((s) => (s.step === 'project' ? { ...s, ramps: [...(s.ramps ?? []), ...names] } : s)) });
+  };
   const setRamp = (at: number, change: Partial<Ramp>) => profile && setProfile({ ramps: replaceAt(profile.ramps ?? [], at, { ...(profile.ramps ?? [])[at], ...change }) });
   const removeRamp = (at: number) => {
     if (!profile) return;
@@ -862,7 +1291,7 @@ export function FaceDesignPanel() {
     setProfile({ ramps: (profile.ramps ?? []).filter((_, k) => k !== at), steps: profile.steps.map((s) => (s.step === 'project' ? withRamp(s, name, 'off') : s)) });
     // A string drawn for the ramp goes with it. Undo brings it back.
     const used = draft?.profiles.some((p) => (p.ramps ?? []).some((r) => r.string === string && (p !== profile || r.name !== name)));
-    if (!used && objects.find((o) => o.id === string)?.name === `Ramp ${name}`) void runRecord('object.delete', { object: string });
+    if (string && !used && objects.find((o) => o.id === string)?.name === `Ramp ${name}`) void runRecord('object.delete', { object: string });
   };
   const rampLine = (line: string) => /^Ramp [^:]*: /.test(line);
   /** A click on a line lights up what it runs on, in the viewport and the tree. */
@@ -903,10 +1332,19 @@ export function FaceDesignPanel() {
         <SmallButton onClick={start}>
           <Plus className="size-3" /> New
         </SmallButton>
+        <SmallButton disabled={!from} title={stepTitle} onClick={() => void startSteps()}>
+          <Footprints className="size-3" /> Steps
+        </SmallButton>
         <SmallButton onClick={() => void save()} title="Save this design with the project">
           <Save className="size-3" /> Save{dirty ? ' *' : ''}
         </SmallButton>
       </div>
+
+      {stepping && (
+        <p className="px-3 pt-2 text-xs text-muted-foreground">
+          Each step runs as you add or change it, and Ctrl+Z takes the last one off. Add a Project or Berm under the profile. The next step starts from the last crest, or after a berm from its next toe. ✎ on a row redraws its line by hand.
+        </p>
+      )}
 
       <Heading>1. Lines</Heading>
       {draft.lines.length > 0 && (
@@ -1012,25 +1450,65 @@ export function FaceDesignPanel() {
             <span className="ml-auto text-muted-foreground">Direction</span>
             <Choice value={profile.direction} options={DIRECTIONS} onChange={(direction) => setProfile({ direction })} />
           </div>
-          <StepTable profile={profile} surfaces={surfaces} rules={draft.rules} onChange={setProfile} />
+          <StepTable profile={profile} surfaces={surfaces} rules={draft.rules} carryRamps={stepping} hand={hand} onChange={setProfile} />
+          {lineEdits.length > 0 && (
+            <div className="px-3 pt-1 text-xs">
+              <p className="pb-0.5 text-muted-foreground">Your lines: drag, insert or delete a vertex in the viewport, or redraw a stretch. The design runs again as each one changes.</p>
+              {[...lineEdits]
+                .sort((a, b) => a.row - b.row)
+                .map((e) => (
+                  <div key={e.row} className="flex items-center gap-1 py-0.5">
+                    <span className="w-12 shrink-0 tabular-nums text-muted-foreground">Row {e.row}</span>
+                    <button type="button" className="min-w-0 truncate text-left text-primary hover:underline" title="Select it in the viewport" onClick={() => select(e.string)}>
+                      {nameOf(e.string)}
+                    </button>
+                    <SmallButton disabled={picking} title="Click on your line where the new stretch leaves it, then the new path, then where it comes back onto your line" onClick={() => void redrawStretch(e.row)}>
+                      <PenLine className="size-3" /> Redraw a stretch
+                    </SmallButton>
+                    <IconButton title={`Take your line off row ${e.row}: it goes back to the line the steps make`} onClick={() => removeEdit(e.row)}>
+                      <Trash2 className="size-3" />
+                    </IconButton>
+                  </div>
+                ))}
+            </div>
+          )}
           <div className="px-3 pt-1 text-xs">
             <div className="flex items-center gap-2 pb-1">
               <span className="text-muted-foreground">Ramps</span>
+              {stepping && (
+                <SmallButton disabled={picking || !stepLine} title="Click where the road starts on one of the design's lines, then along the line the way it runs. On a toe or a berm's line it climbs every wall above at once; on the top line it waits, and the next wall you add climbs it. Click it off a wall in its column to stop it there" onClick={() => void placeRamp()}>
+                  <Plus className="size-3" /> Place ramp
+                </SmallButton>
+              )}
               <SmallButton disabled={picking || profile.steps.length === 0} title="Then draw a string across the strips. Each line it crosses gets a road" onClick={() => void addRamp()}>
                 <Plus className="size-3" /> Ramp
               </SmallButton>
-              {picking && <span className="text-primary">Click across the strips, a point on each. Enter finishes, Esc cancels.</span>}
+              <SmallButton
+                disabled={picking || profile.steps.length === 0 || newTops.size === 0}
+                title={
+                  newTops.size > 0
+                    ? `Carry on ${[...newTops.keys()].map((n) => `road ${n}`).join(', ')} from where the design below left ${newTops.size === 1 ? 'it' : 'them'} on these lines, with no string`
+                    : "None of this profile's lines has a road that came out on it. Run the design below, then add its top crests here as lines"
+                }
+                onClick={addFromLine}
+              >
+                <Plus className="size-3" /> From the line{newTops.size > 0 ? ` (${newTops.size})` : ''}
+              </SmallButton>
+              {picking && <span className="text-primary">{stepping ? 'Click where the road starts, then the way it runs. Esc cancels.' : 'Click across the strips, a point on each. Enter finishes, Esc cancels.'}</span>}
             </div>
             {(profile.ramps ?? []).map((ramp, k) => (
               <RampRow
                 key={ramp.name}
                 ramp={ramp}
                 stringName={objects.find((o) => o.id === ramp.string)?.name ?? null}
+                placed={placedAt(ramp)}
                 onWalls={profile.steps.some((s) => s.step === 'project' && (s.ramps ?? []).includes(ramp.name))}
+                waits={stepping}
                 turns={profile.steps.some((s) => s.step === 'project' && (s.turns ?? []).includes(ramp.name))}
                 results={report.lines.filter((line) => line.startsWith(`Ramp ${ramp.name}: `))}
-                swap={objects.some((o) => o.id === selected && o.kind === 'string') && selected !== ramp.string && !strings.some((s) => s.id === selected && (s.attributes.strip !== undefined || draft.lines.some((line) => line.string === s.id))) ? () => selected && setRamp(k, { string: selected }) : null}
-                onShow={() => select(ramp.string)}
+                swap={ramp.fixed !== 'line' && objects.some((o) => o.id === selected && o.kind === 'string') && selected !== ramp.string && !strings.some((s) => s.id === selected && (s.attributes.strip !== undefined || draft.lines.some((line) => line.string === s.id))) ? () => selected && setRamp(k, { string: selected }) : null}
+                onShow={() => ramp.string && select(ramp.string)}
+                onMove={picking ? null : () => void moveRamp(k)}
                 onChange={(change) => setRamp(k, change)}
                 onRemove={() => removeRamp(k)}
               />
@@ -1113,6 +1591,10 @@ export function FaceDesignPanel() {
           <Play className="size-3" /> Run all lines
         </Button>
       </div>
+      <label className="flex items-center gap-2 px-3 pt-2 text-xs" title="Save and run the design a moment after each change, one undo a step: a design built by hand a step at a time. Best on a design with one line, as every line runs each time">
+        <Checkbox checked={stepping} disabled={!id} aria-label="Run each step" onCheckedChange={(ticked) => setStepping(ticked === true)} />
+        Run each step{!id && ' (save the design first)'}
+      </label>
       {report.error && <p className="whitespace-pre-line px-3 pt-2 text-xs text-destructive">{report.error}</p>}
       {report.lines
         .filter((line) => !rampLine(line))

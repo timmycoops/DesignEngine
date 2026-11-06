@@ -41,10 +41,10 @@ pub use section_fill::{SectionFill, fill_between_lines, fill_section_loops};
 pub use section_snap::{CutSegment, SectionSnap, SectionSnapKind, snap_to_section};
 pub use slice::{SectionPlane, SliceIndex, SliceLine, slice_indexed, slice_mesh, string_near_plane};
 pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_nodes, suggest_no_seam_rl, suggest_seam_tree};
-pub use face::{Face, FaceBench, FaceStep, FaceTarget, RegisterLog, StepReport, conditioned_toe, level_floor, project_face, register_toe, run_on};
-pub use road::{FaceRamp, FaceRoad, NoRoad};
+pub use face::{EditReport, Face, FaceBench, FaceEdit, FaceStep, FaceTarget, RegisterLog, StepReport, at_line_heights, conditioned_toe, level_floor, project_edited_face, project_face, register_toe, run_on};
+pub use road::{FaceRamp, FaceRoad, NoRoad, RoadTop};
 pub use wall::{ConditionLog, Stretch, WallLog, WallStep, next_toe, project_wall, project_wall_by_edge};
-pub use string::{Corner, DrapeLog, OffsetSide, PlanCrossing, drape_string, filter_string, grade_string, join_strings, offset_string, plan_crossings, smooth_string, split_string};
+pub use string::{Corner, DrapeLog, OffsetSide, ON_THE_STRING, PlanCrossing, drape_string, filter_string, grade_string, join_strings, offset_string, plan_crossings, redraw_stretch, smooth_string, split_string};
 
 /// Below this many triangles a search stays on one thread.
 const ONE_THREAD_BELOW: usize = 2_000;

@@ -506,8 +506,9 @@ export type ProfileStep =
 /** The way a road runs along its string. */
 export type RampHeading = 'along' | 'back';
 
-/** Which end of a road is where its string crosses. With its end there, the run moves its start along the toe until it comes out there. */
-export type RampFixed = 'start' | 'end';
+/** Which end of a road is where its string crosses. With its end there, the run moves its start along the toe until it comes out there.
+ * `line`: it has no string, and carries on the road of its name from where the design below left it on each line. */
+export type RampFixed = 'start' | 'end' | 'line';
 
 /** How a road gets past a berm between two walls it climbs: after it, crossing the full berm level and straight across
  * to start up the next wall from its toe, or through it at its grade, with the berm narrowing to nothing at the road. */
@@ -517,8 +518,8 @@ export type RampBerm = 'after' | 'through';
 export interface Ramp {
   /** What a wall row calls it: a letter, usually. */
   name: string;
-  /** A string drawn across the strips. Each line it crosses gets a road. */
-  string: string;
+  /** A string drawn across the strips. Each line it crosses gets a road. A ramp from the line has none. */
+  string?: string | null;
   fixed: RampFixed;
   heading: RampHeading;
   /** Square to the road, in metres. */
@@ -527,12 +528,18 @@ export interface Ramp {
   grade: number;
   /** After the berm if it's left out, as designs saved before it could be set. */
   berm?: RampBerm;
-  /** Where it turns back, how far on from the turn, along the road, the toe of the wall above joins back to the berm's
-   * line, in metres. 50 m if it's left out, as designs saved before it could be set. */
+  /** Where it turns back with no box past its top (a flat of 0), how far on from the turn, along the road, the toe of the
+   * wall above joins back to the berm's line, in metres. 50 m if it's left out, as designs saved before it could be set. */
   turn_join?: number;
-  /** Where it turns back, how far it runs flat along the berm's line before it climbs, in metres. Its width if it's
-   * left out, as designs saved before it could be set. */
+  /** Where it turns back, how far the flat box it turns on runs past its top, in line with it and on the floor on a grid,
+   * in metres: the road, the berm and the next road wide. The next road climbs the other way from its near end, straight
+   * across the berm from the top, and the wall above goes round the box. Its width if it's left out, as designs saved
+   * before it could be set; 0 turns at the top with no box. */
   turn_flat?: number | null;
+  /** Where it turns back on a box, the angle in plan between the box's far end and the strip, in degrees, 30 to 90: 90,
+   * square across, if it's left out, as designs saved before it could be set. Less flares the far end out past the box,
+   * from its back corner to the berm's line past it. */
+  turn_end?: number | null;
 }
 
 export type FaceDirection = 'up' | 'down';
@@ -556,6 +563,15 @@ export interface FaceLine {
   side: WallSide;
   /** Past the string's start and end, in metres. */
   run_on: [number, number];
+  /** Lines of a step design redrawn by hand (decision 0046), one to a row. */
+  edits?: LineEdit[];
+}
+
+/** A line redrawn by hand: the line row `row` (from 1) ends on, a wall's crest or a berm's line, is this string. The row
+ * re-forms to meet it and the rows above carry on from it. */
+export interface LineEdit {
+  row: number;
+  string: string;
 }
 
 /** Azimuths clockwise from `from` to `to`, in degrees from grid north, and their value. */

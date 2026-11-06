@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, ObjectId, ObjectKind, Polyline};
 use zd_geom::{
-    Corner, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, plan_crossings, smooth_string, split_string, triangulate_grid,
+    Corner, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, plan_crossings, redraw_stretch, smooth_string, split_string, triangulate_grid,
 };
 
 use super::finite;
@@ -186,6 +186,42 @@ impl Command for DeleteVertex {
         edited.vertices.remove(p.index);
         check_line(&edited)?;
         Ok(Outcome::new(vec![Change::revise_body(object, Body::String(edited))]))
+    }
+}
+
+/// `string.redraw_stretch`: a stretch of an open string redrawn by hand, as a planner redraws part of a line (decision
+/// 0046). The first and last points come onto the string where they're nearest it, within a metre, and the points
+/// between take the place of every vertex between those two places. One revision, one undo.
+pub struct RedrawStretch;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RedrawStretchParams {
+    pub string: ObjectId,
+    /// Where the new stretch leaves the string, the new path, and where it comes back onto it.
+    pub through: Vec<[f64; 3]>,
+}
+
+impl Command for RedrawStretch {
+    type Params = RedrawStretchParams;
+    const NAME: &'static str = "string.redraw_stretch";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Redraw a stretch of a string",
+            inputs: vec![string_input()],
+            params: vec![Field::new("through", FieldType::Points, "Where it leaves the string, the new path, and where it comes back onto the string")],
+            outputs: vec![],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let (object, line) = inputs.string(p.string)?;
+        p.through.iter().try_for_each(finite)?;
+        let redrawn = redraw_stretch(line, &p.through).map_err(|e| CommandError::Invalid(e.to_string().replace("invalid input: ", "")))?;
+        check_line(&redrawn)?;
+        Ok(Outcome::new(vec![Change::revise_body(object, Body::String(redrawn))]))
     }
 }
 

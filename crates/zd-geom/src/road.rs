@@ -60,8 +60,6 @@ const EDGE_RESUME: f64 = 1.0;
 
 /// Why a road can't go on a wall that has no height where it gets there. It tries the next wall that names it.
 pub(crate) const NO_WALL: &str = "there's no wall at its start";
-/// Why a road doesn't go on a wall holding one that runs the other way.
-pub(crate) const OTHER_WAY: &str = "another road on this wall runs the other way, and roads on one wall run the same way for now";
 
 /// A road to cut into the walls of a face.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -79,12 +77,21 @@ pub struct FaceRamp {
     pub ends_at: Option<[f64; 2]>,
     /// It goes past a berm after it, crossing the full berm level, rather than up through it.
     pub after_berm: bool,
-    /// Where it turns back, how far on from the turn, along the line, the toe past it joins back to the line from the
-    /// corner of the next road's flat stretch (m). A set length, so the pad doesn't depend on where the string has
-    /// vertices.
+    /// Where it turns back with no pad past its top, how far on from the turn, along the line, the toe past it joins back
+    /// to the line from the next road's wall-side start (m). A set length, so the pad doesn't depend on where the string
+    /// has vertices.
     pub turn_join: f64,
-    /// Where it turns back, how far it runs flat along the line before it climbs (m).
+    /// Where it turns back, how far the switchback's flat box runs on past its top, in line with it, on what the berm lies
+    /// on (m): the road, the berm and the next road wide. The next road climbs from straight across the berm from the top,
+    /// at the box's near end, and the wall above goes round the box.
     pub turn_flat: f64,
+    /// The top of a road that came out on this toe in a design run before, if it carries on from there: it climbs on
+    /// with no entrance, as it would have in one design, and `start` is the top's wall-side corner. It carries on if
+    /// the first wall is one of its own, and starts afresh at `start` on its first wall if not. On a face going up.
+    pub carries_on: Option<RoadTop>,
+    /// Where it turns back on a box, the angle in plan between the box's far end and the strip (degrees): 90 is square
+    /// across, and less flares it out past the box, from its back corner to the berm's line past it.
+    pub turn_end: f64,
 }
 
 /// A road a face has cut.
@@ -100,6 +107,11 @@ pub struct FaceRoad {
     pub wall_edge: Polyline,
     /// How far along the toe it came out from its held end, if that's further than the tolerance (m).
     pub off_end: Option<f64>,
+    /// It was running back against the way the string runs at its top, after any turns.
+    pub back: bool,
+    /// Each flat it ran before a turn on a floor that rises or falls along it more than the road's grade: where the flat
+    /// ends, and the steepest it goes, as a fraction.
+    pub steep_flats: Vec<(P3, f64)>,
 }
 
 /// A ramp that stopped short of its stop row, where it stopped and why. Any walls it had climbed keep it.
@@ -109,13 +121,15 @@ pub struct NoRoad {
     pub step: usize,
     pub at: P3,
     pub why: String,
+    /// The ramp it would cross, running the other way on the same wall, if that's why it stopped.
+    pub crosses: Option<usize>,
 }
 
-/// The top edge of a road so far, where it carries on from.
+/// The top edge of a road so far, where it carries on from: its pit-side and wall-side corners.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct RoadTop {
-    pub pit: P3,
-    pub wall: P3,
+pub struct RoadTop {
+    pub pit: [f64; 3],
+    pub wall: [f64; 3],
 }
 
 /// A road going into a wall: where it got to on the wall below if it's carrying on, and if not, what's under
@@ -128,6 +142,9 @@ pub(crate) struct RoadOnWall<'a> {
     /// Where it came onto the line across a pad, if it turned back to start here: it runs flat along the line from
     /// there to its start, where it climbs.
     pub turned: Option<[f64; 2]>,
+    /// The far end of the box pad it turned on, if it's a box: its corners on the crest and a road width in from it. The
+    /// toe of the wall above goes round the box, its far end on in line with that end.
+    pub pad: Option<[P3; 2]>,
 }
 
 /// How a stretch of road starts.
@@ -136,7 +153,7 @@ enum RoadBottom<'a> {
     /// lies on a surface. A road that `turned` back on a pad came onto the line at that vertex and runs flat from
     /// there to the bottom of its climb; the toe beside that stretch moves back by the road, and past the turn it
     /// joins back.
-    Entrance { floor: Option<&'a TriMesh>, from: usize, turned: Option<usize> },
+    Entrance { floor: Option<&'a TriMesh>, from: Option<usize>, turned: Option<usize>, pad: Option<[P3; 2]> },
     /// Carrying on from the wall below, whose road's wall-side edge came in at this vertex of the toe.
     CarriedOn { wall_side: usize },
 }
@@ -146,6 +163,8 @@ enum RoadBottom<'a> {
 pub(crate) struct Stopped {
     pub at: P3,
     pub why: String,
+    /// The road it would cross, by its place in the list a wall was given, if that's why it stopped.
+    pub crosses: Option<usize>,
 }
 
 /// One road cut into a wall.
@@ -163,8 +182,10 @@ struct RoadCut {
     pit_edge: Polyline,
     wall_edge: Polyline,
     /// The flat stretch a road that turned back runs before it climbs, its pit side and its wall side, each up to
-    /// where the edges above start.
-    flat: [Vec<P3>; 2],
+    /// where the edges above start. None for a road that didn't turn.
+    flat: Option<[Vec<P3>; 2]>,
+    /// Points the sheet is to be split at, where the toe behind comes onto a line part way along it.
+    meets: Vec<P3>,
 }
 
 /// The wall above a road, which is where the next road up goes.
@@ -182,7 +203,13 @@ pub(crate) struct WallCut {
     pub crest: Polyline,
     /// Each road cut, as a place in the list it was given and its two edges from bottom to top.
     pub roads: Vec<(usize, Polyline, Polyline)>,
+    /// Each road that turned back, as a place in the list, and its flat stretch: along the line from where it came onto
+    /// it to where it climbs, and the wall side from its corner past the turn to where the climb's wall-side edge starts,
+    /// both as the toe has them.
+    pub flats: Vec<(usize, Vec<P3>, Vec<P3>)>,
     pub logs: Vec<WallLog>,
+    /// Points the sheet is to be split at, where a toe comes onto a line part way along it.
+    pub meets: Vec<P3>,
 }
 
 /// A line with a vertex at the nearest point to `start` in plan, its batters to match, and where that
@@ -228,25 +255,239 @@ pub(crate) fn start_on(toe: &Polyline, batters: &[f64], road: &RoadOnWall<'_>) -
     (line, widened, at, wall_side)
 }
 
-/// A wall with its roads cut back into it, up to the target. They all run one way. `wall` is the plain wall from
-/// that toe. A road that can't go in goes to `stop` by its place in the list, and the others carry on without it.
+/// A wall with its roads cut back into it, up to the target. `wall` is the plain wall from that toe. Roads running
+/// opposite ways sit side by side along it, each cut in its own way. A road that can't go in goes to `stop` by its
+/// place in the list, and the others carry on without it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn cut_roads(toe: &Polyline, batters: &[f64], side: OffsetSide, roads: &[RoadOnWall<'_>], wall: &WallStep, target: &TriMesh, stop: &mut dyn FnMut(usize, Stopped)) -> Option<WallCut> {
-    if !roads.first()?.spec.back {
-        return cut_roads_along(toe, batters, side, roads, wall.clone(), target, stop);
+    let back = roads.first()?.spec.back;
+    if roads.iter().all(|road| road.spec.back == back) {
+        return cut_roads_one_way(toe, batters, side, roads, wall.clone(), target, false, stop);
     }
-    let turned = WallStep { crest: backwards(&wall.crest), wall: wall.wall.clone(), log: wall.log.clone() };
+    cut_roads_both_ways(toe, batters, side, roads, wall, target, stop)
+}
+
+/// Roads that all run one way. `held` keeps the toe where it is at the start of the string, the way the roads run,
+/// where the wall has been split for a road running the other way.
+#[allow(clippy::too_many_arguments)]
+fn cut_roads_one_way(toe: &Polyline, batters: &[f64], side: OffsetSide, roads: &[RoadOnWall<'_>], wall: WallStep, target: &TriMesh, held: bool, stop: &mut dyn FnMut(usize, Stopped)) -> Option<WallCut> {
+    if !roads.first()?.spec.back {
+        return cut_roads_along(toe, batters, side, roads, wall, target, held, stop);
+    }
+    let turned = WallStep { crest: backwards(&wall.crest), wall: wall.wall, log: wall.log };
     let batters: Vec<f64> = batters.iter().rev().copied().collect();
     let other = if side == OffsetSide::Left { OffsetSide::Right } else { OffsetSide::Left };
-    let mut cut = cut_roads_along(&backwards(toe), &batters, other, roads, turned, target, stop)?;
+    let mut cut = cut_roads_along(&backwards(toe), &batters, other, roads, turned, target, held, stop)?;
     cut.crest.vertices.reverse();
     cut.toe.vertices.reverse();
     Some(cut)
 }
 
+/// Why a road stops where it would share a stretch of wall with one running the other way, or come within a road's width
+/// of it: climbing opposite ways, the two would cross, and tops that face each other closer than that leave a sliver of
+/// wall between them.
+pub(crate) const CROSSES: &str = "it would cross a road running the other way on this wall, or come within a road's width of it: move one of them along the strip";
+/// The least straight stretch of toe between two roads running opposite ways for the wall to be split on (m).
+const SPLIT_ROOM: f64 = 1.0;
+
+/// Roads running both ways on one wall (Tim, 2026-11-05: a straight ramp and a switchback on one face). Two running
+/// opposite ways can't share a stretch of it, as climbing opposite ways they'd cross, so each is first cut alone to
+/// find the stretch it takes, and where two running opposite ways would share one, or come within the wider one's
+/// width of each other, the later in the list stops. The
+/// rest sit in runs along the wall, each run one way, and the wall is cut in parts split between the runs, in the
+/// middle of a straight stretch of toe so the parts' walls meet on one plane. Each part takes its run's roads, which
+/// stack as on any wall. Where two runs' entrances face each other, each moves the toe back as far as the split, so
+/// they share the floor between them where they meet there; where they don't, each comes across to the toe at the
+/// split at 45 degrees.
+#[allow(clippy::too_many_arguments)]
+fn cut_roads_both_ways(toe: &Polyline, batters: &[f64], side: OffsetSide, roads: &[RoadOnWall<'_>], wall: &WallStep, target: &TriMesh, stop: &mut dyn FnMut(usize, Stopped)) -> Option<WallCut> {
+    let mut taken: Vec<(usize, f64, f64)> = Vec::new();
+    for (r, road) in roads.iter().enumerate() {
+        match stretch_taken(toe, batters, side, road, wall, target) {
+            Ok((from, to)) => match taken.iter().find(|(other, from_other, to_other)| {
+                let room = road.spec.width.max(roads[*other].spec.width);
+                roads[*other].spec.back != road.spec.back && from < *to_other + room && *from_other < to + room
+            }) {
+                Some(&(other, ..)) => stop(r, Stopped { at: point_along(toe, if road.spec.back { to } else { from }), why: CROSSES.into(), crosses: Some(other) }),
+                None => taken.push((r, from, to)),
+            },
+            Err(stopped) => stop(r, stopped),
+        }
+    }
+    taken.sort_by(|a, b| a.1.total_cmp(&b.1));
+    // Runs of roads one way, in order along the toe, each with the stretch it takes, and where the wall splits between
+    // each run and the next. Two runs with no straight stretch of toe between them to split on are too close, and the
+    // later road stops.
+    let (runs, splits) = loop {
+        let mut runs: Vec<(Vec<usize>, f64, f64)> = Vec::new();
+        for &(r, from, to) in &taken {
+            match runs.last_mut() {
+                Some((run, _, end)) if roads[run[0]].spec.back == roads[r].spec.back => {
+                    run.push(r);
+                    *end = end.max(to);
+                }
+                _ => runs.push((vec![r], from, to)),
+            }
+        }
+        let splits: Vec<Option<f64>> = runs.windows(2).map(|pair| split_between(toe, pair[0].2, pair[1].1)).collect();
+        let Some(k) = splits.iter().position(Option::is_none) else { break (runs, splits.into_iter().flatten().collect::<Vec<f64>>()) };
+        let later = runs[k].0.iter().chain(&runs[k + 1].0).copied().max().expect("runs have roads");
+        let other = if runs[k].0.contains(&later) { runs[k + 1].0[0] } else { runs[k].0[0] };
+        let at = taken.iter().find(|(r, ..)| *r == later).map_or(toe.vertices[0], |(_, from, to)| point_along(toe, if roads[later].spec.back { *to } else { *from }));
+        stop(later, Stopped { at, why: CROSSES.into(), crosses: Some(other) });
+        taken.retain(|(r, ..)| *r != later);
+    };
+    if runs.len() < 2 {
+        let run: Vec<usize> = runs.into_iter().flat_map(|(run, ..)| run).collect();
+        let its: Vec<RoadOnWall<'_>> = run.iter().map(|r| roads[*r]).collect();
+        let mut cut = cut_roads_one_way(toe, batters, side, &its, wall.clone(), target, false, &mut |k, stopped| stop(run[k], stopped))?;
+        renumber(&mut cut, &run);
+        return Some(cut);
+    }
+    // The parts of the string, each sharing the vertex at a split with the next.
+    let mut parts: Vec<(Polyline, Vec<f64>)> = Vec::with_capacity(runs.len());
+    let (mut rest, mut rest_slopes) = (toe.clone(), batters.to_vec());
+    for &metres in &splits {
+        let p = point_along(toe, metres);
+        let (line, slopes, at) = with_road_start(&rest, &rest_slopes, [p[0], p[1]]);
+        parts.push((Polyline { vertices: line.vertices[..=at].to_vec(), closed: false }, slopes[..at].to_vec()));
+        (rest, rest_slopes) = (Polyline { vertices: line.vertices[at..].to_vec(), closed: false }, slopes[at..].to_vec());
+    }
+    parts.push((rest, rest_slopes));
+    let runs: Vec<Vec<usize>> = runs.into_iter().map(|(run, ..)| run).collect();
+    let back = |k: usize| roads[runs[k][0]].spec.back;
+    let mut cuts = Vec::with_capacity(parts.len());
+    for (k, (part, slopes)) in parts.iter().enumerate() {
+        cuts.push(cut_part(part, slopes, side, roads, &runs[k], target, false));
+    }
+    // Where two entrances face each other and don't meet at the split, both come across to the toe there.
+    for k in 1..parts.len() {
+        let meet = |a: &Option<(WallCut, Vec<(usize, Stopped)>)>, b: &Option<(WallCut, Vec<(usize, Stopped)>)>| match (a, b) {
+            (Some((a, _)), Some((b, _))) => a.toe.vertices.last().zip(b.toe.vertices.first()).is_some_and(|(p, q)| plan_gap(*p, *q) < SAME_POINT && (p[2] - q[2]).abs() < SAME_POINT),
+            _ => true,
+        };
+        if back(k - 1) && !back(k) && !meet(&cuts[k - 1], &cuts[k]) {
+            for j in [k - 1, k] {
+                cuts[j] = cut_part(&parts[j].0, &parts[j].1, side, roads, &runs[j], target, true);
+            }
+        }
+    }
+    if let Some(k) = cuts.iter().position(Option::is_none) {
+        // A part's own wall can't be built: nothing on this wall is cut, and its roads stop.
+        for &r in runs.iter().flatten() {
+            stop(r, Stopped { at: parts[k].0.vertices[0], why: "the wall can't be built where it's split for roads running both ways".into(), crosses: None });
+        }
+        return None;
+    }
+    let mut whole = Vec::with_capacity(cuts.len());
+    for (cut, stops) in cuts.into_iter().flatten() {
+        for (r, stopped) in stops {
+            stop(r, stopped);
+        }
+        whole.push(cut);
+    }
+    Some(joined(whole))
+}
+
+/// Road numbers in a cut made from some of a wall's roads, `run`, put back to their places in the whole list.
+fn renumber(cut: &mut WallCut, run: &[usize]) {
+    for road in &mut cut.roads {
+        road.0 = run[road.0];
+    }
+    for flat in &mut cut.flats {
+        flat.0 = run[flat.0];
+    }
+}
+
+/// The roads in `run` cut into one part of a wall split for roads running both ways, numbered as in `roads`, with any
+/// that stopped and why. None if the part's own wall can't be built. A part with no roads left is its plain wall.
+#[allow(clippy::too_many_arguments)]
+fn cut_part(part: &Polyline, slopes: &[f64], side: OffsetSide, roads: &[RoadOnWall<'_>], run: &[usize], target: &TriMesh, held: bool) -> Option<(WallCut, Vec<(usize, Stopped)>)> {
+    // Held, the toe stays on the line for half the split's room in from the split, the way the roads run, before an
+    // entrance comes across.
+    let (part, slopes) = if held {
+        let into = if roads[run[0]].spec.back { part.plan_length() - SPLIT_ROOM / 2.0 } else { SPLIT_ROOM / 2.0 };
+        let p = point_along(part, into);
+        let (line, slopes, _) = with_road_start(part, slopes, [p[0], p[1]]);
+        (line, slopes)
+    } else {
+        (part.clone(), slopes.to_vec())
+    };
+    let (part, slopes) = (&part, &slopes[..]);
+    let plain = project_wall_by_edge(part, side, slopes, target).ok()?;
+    let its: Vec<RoadOnWall<'_>> = run.iter().map(|r| roads[*r]).collect();
+    let mut stops = Vec::new();
+    let cut = cut_roads_one_way(part, slopes, side, &its, plain.clone(), target, held, &mut |k, stopped| stops.push((run[k], stopped)));
+    let cut = match cut {
+        Some(mut cut) => {
+            renumber(&mut cut, run);
+            cut
+        }
+        None => WallCut { meshes: vec![plain.wall], toe: part.clone(), crest: plain.crest, roads: Vec::new(), flats: Vec::new(), logs: vec![plain.log], meets: Vec::new() },
+    };
+    Some((cut, stops))
+}
+
+/// The stretch of a wall a road takes, cut alone into it, in metres along the toe: from the bottom of its climb, or a
+/// switchback's pad where the toe goes round it, to its top. An entrance isn't part of it, as it moves back only as far
+/// as there's room.
+fn stretch_taken(toe: &Polyline, batters: &[f64], side: OffsetSide, road: &RoadOnWall<'_>, wall: &WallStep, target: &TriMesh) -> Result<(f64, f64), Stopped> {
+    let mut stopped = None;
+    let cut = cut_roads_one_way(toe, batters, side, std::slice::from_ref(road), wall.clone(), target, false, &mut |_, why| stopped = Some(why));
+    let cut = match (cut, stopped) {
+        (_, Some(stopped)) => return Err(stopped),
+        (Some(cut), None) => cut,
+        (None, None) => return Err(Stopped { at: [road.spec.start[0], road.spec.start[1], 0.0], why: "it can't be cut into this wall".into(), crosses: None }),
+    };
+    let mut places: Vec<f64> = cut.roads.iter().flat_map(|(_, pit, wall_side)| pit.vertices.iter().chain(&wall_side.vertices)).map(|p| metres_along(toe, *p)).collect();
+    places.extend(cut.flats.iter().flat_map(|(_, pit, wall_side)| pit.iter().chain(wall_side)).map(|p| metres_along(toe, *p)));
+    if road.turned.is_some() {
+        // Where the toe goes round its pad, it's off the line it came from.
+        places.extend(cut.toe.vertices.iter().filter(|p| plan_gap(**p, point_at(toe, nearest_place(toe, **p))) > WALL_EDGE_TOLERANCE).map(|p| metres_along(toe, *p)));
+    }
+    let from = places.iter().copied().fold(f64::INFINITY, f64::min);
+    let to = places.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    Ok((from, to))
+}
+
+/// Where to split a string between two stretches of it, in metres along it from `after` to `before`: the middle of the
+/// longest straight run of it there, so the walls either side meet on one plane. None if there's less than the room.
+fn split_between(line: &Polyline, after: f64, before: f64) -> Option<f64> {
+    let mut start = 0.0_f64;
+    let mut best: Option<(f64, f64)> = None;
+    for w in line.vertices.windows(2) {
+        let length = plan_gap(w[0], w[1]);
+        let (from, to) = (start.max(after), (start + length).min(before));
+        if to - from >= SPLIT_ROOM && best.is_none_or(|(a, b)| to - from > b - a) {
+            best = Some((from, to));
+        }
+        start += length;
+    }
+    best.map(|(from, to)| (from + to) / 2.0)
+}
+
+/// The parts of a split wall cut one by one, as one, each in the string's order. They meet on the toe at each split.
+fn joined(parts: Vec<WallCut>) -> WallCut {
+    let mut whole = WallCut { meshes: Vec::new(), toe: Polyline { vertices: Vec::new(), closed: false }, crest: Polyline { vertices: Vec::new(), closed: false }, roads: Vec::new(), flats: Vec::new(), logs: Vec::new(), meets: Vec::new() };
+    for part in parts {
+        for (line, more) in [(&mut whole.toe, part.toe), (&mut whole.crest, part.crest)] {
+            let skip = usize::from(line.vertices.last().zip(more.vertices.first()).is_some_and(|(a, b)| plan_gap(*a, *b) < SAME_POINT && (a[2] - b[2]).abs() < SAME_POINT));
+            line.vertices.extend_from_slice(&more.vertices[skip..]);
+        }
+        whole.meshes.extend(part.meshes);
+        whole.roads.extend(part.roads);
+        whole.flats.extend(part.flats);
+        whole.logs.extend(part.logs);
+        whole.meets.extend(part.meets);
+    }
+    whole
+}
+
 /// Roads running the way the toe does, lowest first: the one that starts furthest along. Each goes into the wall
-/// above the one before, and takes a fresh wall if it needs a vertex that wall hasn't got.
-fn cut_roads_along(toe: &Polyline, batters: &[f64], side: OffsetSide, roads: &[RoadOnWall<'_>], plain: WallStep, target: &TriMesh, stop: &mut dyn FnMut(usize, Stopped)) -> Option<WallCut> {
+/// above the one before, and takes a fresh wall if it needs a vertex that wall hasn't got. `held` keeps the toe where
+/// it is at the start of the string.
+#[allow(clippy::too_many_arguments)]
+fn cut_roads_along(toe: &Polyline, batters: &[f64], side: OffsetSide, roads: &[RoadOnWall<'_>], plain: WallStep, target: &TriMesh, held: bool, stop: &mut dyn FnMut(usize, Stopped)) -> Option<WallCut> {
     let along = |road: &RoadOnWall<'_>| {
         let at = road.top.map_or([road.spec.start[0], road.spec.start[1], 0.0], |top| top.pit);
         metres_along(toe, at)
@@ -270,7 +511,7 @@ fn cut_roads_along(toe: &Polyline, batters: &[f64], side: OffsetSide, roads: &[R
         };
         let start = line.vertices[at];
         if wall_side.is_none() && cuts.last().is_some_and(|(_, below)| line.vertices.len() - at <= below.up_the_road) {
-            stop(r, Stopped { at: start, why: "it starts on the road below it: move it along the toe".into() });
+            stop(r, Stopped { at: start, why: "it starts on the road below it: move it along the toe".into(), crosses: None });
             continue;
         }
         let fresh = if line.vertices.len() == string.vertices.len() {
@@ -279,14 +520,16 @@ fn cut_roads_along(toe: &Polyline, batters: &[f64], side: OffsetSide, roads: &[R
             match project_wall_by_edge(&line, side, &widened, target) {
                 Ok(fresh) => Some(fresh),
                 Err(e) => {
-                    stop(r, Stopped { at: start, why: format!("the wall it starts on can't be built: {e}") });
+                    stop(r, Stopped { at: start, why: format!("the wall it starts on can't be built: {e}"), crosses: None });
                     continue;
                 }
             }
         };
         // An entrance moves the toe behind it back only as far as a road coming up through that toe.
-        let from = roads.iter().filter_map(|other| other.top).filter_map(|top| line.vertices[..at].iter().rposition(|p| plan_gap(*p, top.pit) < SAME_POINT)).max().unwrap_or(0);
-        let bottom = wall_side.map_or(RoadBottom::Entrance { floor: road.floor, from, turned: across }, |wall_side| RoadBottom::CarriedOn { wall_side });
+        // Held, it stays where it is up to the string's second vertex, half the split's room in from where the wall's been
+        // split for a road running the other way, so the wall either side of the split rises square to one line.
+        let from = roads.iter().filter_map(|other| other.top).filter_map(|top| line.vertices[..at].iter().rposition(|p| plan_gap(*p, top.pit) < SAME_POINT)).max().filter(|from| *from > 0).or(held.then_some(1));
+        let bottom = wall_side.map_or(RoadBottom::Entrance { floor: road.floor, from, turned: across, pad: road.pad }, |wall_side| RoadBottom::CarriedOn { wall_side });
         match cut_road(&line, &widened, side, &road.spec, at, bottom, fresh.as_ref().unwrap_or(&wall), target) {
             Ok((cut, above)) => {
                 logs.push(above.wall.log.clone());
@@ -299,15 +542,23 @@ fn cut_roads_along(toe: &Polyline, batters: &[f64], side: OffsetSide, roads: &[R
     let (toe, crest) = (foot_of(&cuts)?, crest_of(wall.crest, &cuts));
     let mut meshes = Vec::with_capacity(2 * cuts.len() + 1);
     let mut cut_roads = Vec::with_capacity(cuts.len());
+    let mut flats = Vec::new();
+    let meets: Vec<P3> = cuts.iter().flat_map(|(_, cut)| cut.meets.iter().copied()).collect();
     for (r, cut) in cuts {
         meshes.extend([cut.lower, cut.road]);
-        let [mut pit, mut wall_side] = cut.flat;
+        let turned = cut.flat.is_some();
+        let [mut pit, mut wall_side] = cut.flat.unwrap_or_default();
+        if turned {
+            // The foot has the climb's wall-side start and then its pit-side start just after what's behind the road.
+            let (wall_start, start) = (cut.toe.vertices[cut.behind], cut.toe.vertices[cut.behind + 1]);
+            flats.push((r, pit.iter().copied().chain(once(start)).collect(), wall_side.iter().copied().chain(once(wall_start)).collect()));
+        }
         pit.extend(cut.pit_edge.vertices);
         wall_side.extend(cut.wall_edge.vertices);
         cut_roads.push((r, Polyline { vertices: pit, closed: false }, Polyline { vertices: wall_side, closed: false }));
     }
     meshes.push(wall.wall);
-    Some(WallCut { meshes, toe, crest, roads: cut_roads, logs })
+    Some(WallCut { meshes, toe, crest, roads: cut_roads, flats, logs, meets })
 }
 
 /// The foot of a wall with roads in it. Each road up changes the toe behind the start of the one below it, and
@@ -339,17 +590,17 @@ fn backwards(line: &Polyline) -> Polyline {
 #[allow(clippy::too_many_arguments)]
 fn cut_road(toe: &Polyline, batters: &[f64], side: OffsetSide, ramp: &FaceRamp, at: usize, bottom: RoadBottom<'_>, wall: &WallStep, target: &TriMesh) -> Result<(RoadCut, Above), Stopped> {
     let start = toe.vertices[at];
-    let stopped = |why: String| Stopped { at: start, why };
+    let stopped = |why: String| Stopped { at: start, why, crosses: None };
     let facets = Facets::of(&wall.wall, start);
     let climb = facets.climb(start, side, ramp.grade, toe, &wall.crest)?;
     let pit_edge = Polyline { vertices: climb.edge.clone(), closed: false };
     let offset = wall_edge_of(&pit_edge, ramp.width, side).map_err(|e| stopped(format!("the road's width can't be held: {e}")))?;
-    let mut flat = [Vec::new(), Vec::new()];
+    let mut flat = None;
     let (behind, foot, mut wall_edge) = match bottom {
-        RoadBottom::Entrance { floor, from, turned } => {
+        RoadBottom::Entrance { floor, from, turned, pad } => {
             let behind = match turned {
-                Some(across) => toe_past_turn(toe, batters, at, across, from, offset.vertices[0], side, &pit_edge, ramp.turn_join, floor).map(|(behind, wall_side)| {
-                    flat = [toe.vertices[across..at].to_vec(), wall_side];
+                Some(across) => toe_past_turn(toe, batters, at, across, from.unwrap_or(0), offset.vertices[0], side, &pit_edge, (ramp.turn_join, ramp.turn_end), pad, floor).map(|(behind, wall_side)| {
+                    flat = Some([toe.vertices[across..at].to_vec(), wall_side]);
                     behind
                 }),
                 None => entrance_toe(toe, batters, at, from, offset.vertices[0], side, floor),
@@ -359,18 +610,18 @@ fn cut_road(toe: &Polyline, batters: &[f64], side: OffsetSide, ramp: &FaceRamp, 
             (behind, Polyline { vertices: round, closed: false }, offset)
         }
         RoadBottom::CarriedOn { wall_side } => {
-            let behind = Behind { vertices: toe.vertices[..wall_side].to_vec(), batters: batters[..wall_side].to_vec() };
+            let behind = Behind { vertices: toe.vertices[..wall_side].to_vec(), batters: batters[..wall_side].to_vec(), meets: Vec::new() };
             (behind, toe.clone(), carried_on(toe.vertices[wall_side], &offset, &pit_edge, ramp.grade))
         }
     };
-    run_out_onto(&mut wall_edge, ramp.grade, target).map_err(|why| Stopped { at: *pit_edge.vertices.last().expect("a climb has an end"), why })?;
+    run_out_onto(&mut wall_edge, ramp.grade, target).map_err(|why| Stopped { at: *pit_edge.vertices.last().expect("a climb has an end"), why, crosses: None })?;
     let (string, slopes) = string_up_the_road(&behind, toe, batters, &wall_edge, ramp.grade);
     let upper = project_wall_by_edge(&string, side, &slopes, target).map_err(|e| stopped(format!("the wall above it can't be built: {e}")))?;
     let road = band(&pit_edge, &road_inner_line(start, &wall_edge, &upper.crest)).map_err(|e| stopped(format!("the road can't be built: {e}")))?;
     let top = *pit_edge.vertices.last().expect("a climb has an end");
     let place = place_on(&wall.crest, top).ok_or_else(|| stopped("the road's top isn't on the crest".into()))?;
     let lower = facets.wall_below(&climb.cuts, &removed_by_road(toe, at, &pit_edge, &wall.crest, place));
-    let cut = RoadCut { lower, road, toe: foot, behind: behind.vertices.len(), up_the_road: wall_edge.vertices.len(), crest: wall.crest.clone(), place, pit_edge, wall_edge, flat };
+    let cut = RoadCut { lower, road, toe: foot, behind: behind.vertices.len(), up_the_road: wall_edge.vertices.len(), crest: wall.crest.clone(), place, pit_edge, wall_edge, flat, meets: behind.meets };
     Ok((cut, Above { wall: upper, string, slopes }))
 }
 
@@ -378,6 +629,9 @@ fn cut_road(toe: &Polyline, batters: &[f64], side: OffsetSide, ramp: &FaceRamp, 
 struct Behind {
     vertices: Vec<P3>,
     batters: Vec<f64>,
+    /// Where it comes onto a line part way along a stretch of it that's also a crest below, for the sheet to be split at:
+    /// the foot of a box's far end flared out onto the berm's line past it.
+    meets: Vec<P3>,
 }
 
 /// The toe behind a road's start, moved back by the road so trucks can drive along the floor straight onto
@@ -385,19 +639,20 @@ struct Behind {
 /// the road are one plane. It stops a road width short of that edge, and the last stretch leads up to it, so
 /// a floor that isn't level at the start of the road has room to meet it. Behind the vertex `from` it stays where
 /// it is, for a road coming up through it, and comes across to the moved toe at 45 degrees.
-fn entrance_toe(toe: &Polyline, batters: &[f64], at: usize, from: usize, wall_start: P3, side: OffsetSide, floor: Option<&TriMesh>) -> Result<Behind, GeomError> {
-    let stays = |to: usize| Behind { vertices: toe.vertices[..to].to_vec(), batters: batters[..to].to_vec() };
-    if at == from {
-        return Ok(stays(from));
+fn entrance_toe(toe: &Polyline, batters: &[f64], at: usize, from: Option<usize>, wall_start: P3, side: OffsetSide, floor: Option<&TriMesh>) -> Result<Behind, GeomError> {
+    let stays = |to: usize| Behind { vertices: toe.vertices[..to].to_vec(), batters: batters[..to].to_vec(), meets: Vec::new() };
+    let first = from.unwrap_or(0);
+    if at == first {
+        return Ok(stays(at));
     }
-    let road = Polyline { vertices: toe.vertices[from..=at].to_vec(), closed: false };
-    let back = (0..at - from).map(|i| nearest_along(road.vertices[i], road.vertices[i + 1], wall_start).1).fold(f64::INFINITY, f64::min);
+    let road = Polyline { vertices: toe.vertices[first..=at].to_vec(), closed: false };
+    let back = (0..at - first).map(|i| nearest_along(road.vertices[i], road.vertices[i + 1], wall_start).1).fold(f64::INFINITY, f64::min);
     let reach = plan_gap(toe.vertices[at], wall_start);
     let moved = longest(offset_string(&road, back, side, Corner::Mitre { limit: EDGE_MITRE_LIMIT }, None)?);
     let short = place_at_gap(&moved, nearest_place(&moved, wall_start), false, wall_start, reach);
-    let across = if from == 0 { 0.0 } else { place_at_gap(&moved, 0.0, true, moved.vertices[0], back) };
+    let across = if from.is_none() { 0.0 } else { place_at_gap(&moved, 0.0, true, moved.vertices[0], back) };
     if short <= across {
-        return Ok(stays(if from == 0 { 0 } else { from + 1 }));
+        return Ok(stays(from.map_or(0, |from| from + 1)));
     }
     let line = stretch_of(&moved, across, short);
     let laid = match floor {
@@ -408,10 +663,10 @@ fn entrance_toe(toe: &Polyline, batters: &[f64], at: usize, from: usize, wall_st
         let (a, b) = (laid[k], *laid.get(k + 1).unwrap_or(&wall_start));
         batter_nearest(toe, batters, [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, 0.0])
     });
-    if from == 0 {
+    let Some(from) = from else {
         let batters = moved_batters.collect();
-        return Ok(Behind { vertices: laid, batters });
-    }
+        return Ok(Behind { vertices: laid, batters, meets: Vec::new() });
+    };
     let mut kept = stays(from + 1);
     kept.batters.extend(moved_batters);
     kept.vertices.extend(laid);
@@ -422,13 +677,15 @@ fn entrance_toe(toe: &Polyline, batters: &[f64], at: usize, from: usize, wall_st
 /// along it to `at`, where it starts to climb, a road width on, so trucks come off the turn onto a straight, flat road:
 /// beside that stretch the toe moves back as far as the road's wall-side edge starts from it. Past the turn it comes
 /// out to that stretch's wall-side corner and runs straight back to the toe `turn_join` on from the turn, along the
-/// line, whatever vertices the string has. On its way it can pass over a bend of the toe out into the pad, as where
-/// the berm's line goes round the last road's top, if the stretch beyond the toe is shorter than the road is wide; a
-/// longer one stops the join where it first meets the toe. It goes no further than the end of the string, or than a
-/// road coming up through the toe at the vertex `from`. Gives the toe behind, and the flat stretch's wall side up to
-/// where the road's wall-side edge starts.
+/// line, whatever vertices the string has, lying on the floor but for its last road width, which leads up to the corner.
+/// On its way it can pass over a bend of the toe out into the pad, as where the berm's line goes round the last road's
+/// top, if the stretch beyond the toe is shorter than the road is wide; a longer one stops the join where it first meets
+/// the toe. It goes no further than the end of the string, or than a road coming up through the toe at the vertex
+/// `from`. Round a box `pad` it goes along the box's back to its far end, and from there square down it to the line, or
+/// at `end` degrees to the strip out past it to the line there (Tim, 2026-11-04). Gives the toe behind, and the flat
+/// stretch's wall side up to where the road's wall-side edge starts.
 #[allow(clippy::too_many_arguments)]
-fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from: usize, wall_start: P3, side: OffsetSide, pit_edge: &Polyline, turn_join: f64, floor: Option<&TriMesh>) -> Result<(Behind, Vec<P3>), GeomError> {
+fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from: usize, wall_start: P3, side: OffsetSide, pit_edge: &Polyline, (turn_join, end): (f64, f64), pad: Option<[P3; 2]>, floor: Option<&TriMesh>) -> Result<(Behind, Vec<P3>), GeomError> {
     let laid_on = |line: Polyline| -> Result<Vec<P3>, GeomError> {
         Ok(match floor {
             Some(floor) => drape_string(&line, floor, true)?.0.vertices,
@@ -456,7 +713,7 @@ fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from
         behind.vertices.extend(&flat);
         (behind, flat.clone())
     };
-    let stays = |to: usize| Behind { vertices: toe.vertices[..to].to_vec(), batters: batters[..to].to_vec() };
+    let stays = |to: usize| Behind { vertices: toe.vertices[..to].to_vec(), batters: batters[..to].to_vec(), meets: Vec::new() };
     if across == from {
         return Ok(with_flat(stays(from)));
     }
@@ -465,12 +722,22 @@ fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from
         let (p, q) = (toe.vertices[m], toe.vertices[m + 1]);
         [p[0] + s * (q[0] - p[0]), p[1] + s * (q[1] - p[1]), p[2] + s * (q[2] - p[2])]
     };
-    // Back along the line from where the road came onto it, or back down the climb at the end of the string.
-    let (a, b) = if across + 1 < toe.vertices.len() { (toe.vertices[across], toe.vertices[across + 1]) } else { (pit_edge.vertices[0], pit_edge.vertices[1]) };
+    // Back along the line from where the road came onto it, or back down the climb at the end of the string. Round a box,
+    // the way the line runs beside it, past the turn.
+    let (a, b) = match across.checked_sub(1).filter(|_| pad.is_some()) {
+        Some(before) => (toe.vertices[before], toe.vertices[across]),
+        None if across + 1 < toe.vertices.len() => (toe.vertices[across], toe.vertices[across + 1]),
+        None => (pit_edge.vertices[0], pit_edge.vertices[1]),
+    };
     let length = plan_gap(a, b);
     let back = [(a[0] - b[0]) / length, (a[1] - b[1]) / length];
     let turn = toe.vertices[across];
-    let on = |p: P3| (p[0] - turn[0]) * back[0] + (p[1] - turn[1]) * back[1] - turn_join;
+    // Round a box pad, to its far end: on in line with the end of it on the crest, across the berm to the line. With none,
+    // out to the join.
+    let to_end = pad.map(|[_, wall]| (wall[0] - turn[0]) * back[0] + (wall[1] - turn[1]) * back[1]).filter(|reach| *reach > SAME_POINT);
+    let boxed = to_end.is_some();
+    let reach = to_end.unwrap_or(turn_join);
+    let on = |p: P3| (p[0] - turn[0]) * back[0] + (p[1] - turn[1]) * back[1] - reach;
     let (mut kept, mut join) = (from + 1, toe.vertices[from]);
     for m in (from..across).rev() {
         let (far, near) = (on(toe.vertices[m]), on(toe.vertices[m + 1]));
@@ -479,8 +746,46 @@ fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from
             break;
         }
     }
+    // A box's far end is where the end of it on the crest, carried on square across, meets the line. The berm's line
+    // comes square down the far end from there (`Flat::squared_end`), so that's the first vertex of the toe on it from
+    // the box's wall side out, the wall side's end itself where there's no berm beside the box; a line that doesn't, it
+    // crosses. Its back corner is a road width on out from there.
+    let road = plan_gap(corner, turn);
+    let mut back_corner = None;
+    let mut flared_onto = None;
+    if let (true, Some([pit, wall])) = (boxed, pad) {
+        let across_end = plan_gap(pit, wall);
+        let reach = 3.0 * (across_end + plan_gap(wall, turn));
+        let way = [(wall[0] - pit[0]) / across_end, (wall[1] - pit[1]) / across_end];
+        let off = |q: P3| ((q[0] - pit[0]) * way[1] - (q[1] - pit[1]) * way[0]).abs();
+        let out = |q: P3| (q[0] - pit[0]) * way[0] + (q[1] - pit[1]) * way[1];
+        let ray = (plan(pit), [pit[0] + way[0] * reach, pit[1] + way[1] * reach]);
+        if let Some(m) = (from..across).rev().find(|&m| off(toe.vertices[m]) < 1e-6 && out(toe.vertices[m]) > across_end - SAME_POINT) {
+            (kept, join) = (m + 1, toe.vertices[m]);
+        } else if let Some((m, u)) = (from..across).rev().find_map(|m| segment_crossing(ray.0, ray.1, plan(toe.vertices[m]), plan(toe.vertices[m + 1])).map(|(_, u)| (m, u))) {
+            (kept, join) = (m + 1, point(m, u));
+        }
+        let corner_out = [join[0] + way[0] * road, join[1] + way[1] * road, join[2]];
+        back_corner = Some(corner_out);
+        // Flared out past the box: from its back corner at the end's angle to the strip, on the way the line runs past the
+        // turn and back towards the pit, out to the line past the box, or the end of the string if it doesn't get there.
+        let (sin, cos) = end.to_radians().sin_cos();
+        if cos > 1e-9 {
+            let square = [way[1], -way[0]];
+            let along = if square[0] * back[0] + square[1] * back[1] >= 0.0 { square } else { [-square[0], -square[1]] };
+            let slant = [along[0] * cos - way[0] * sin, along[1] * cos - way[1] * sin];
+            let reach = 4.0 * (out(corner_out).abs() + road) / sin.max(0.1);
+            let ray = (plan(corner_out), [corner_out[0] + slant[0] * reach, corner_out[1] + slant[1] * reach]);
+            let met = (from..kept - 1).rev().find_map(|m| segment_crossing(ray.0, ray.1, plan(toe.vertices[m]), plan(toe.vertices[m + 1])).map(|(_, u)| (m, u)));
+            (kept, join) = match met {
+                Some((m, u)) => (m + 1, point(m, u)),
+                None => (from + 1, toe.vertices[from]),
+            };
+            flared_onto = Some(join);
+        }
+    }
     // Where the join crosses the toe on its way, nearest the corner first: out over it, back in, and so on.
-    let (span, road) = (plan_gap(corner, join), plan_gap(corner, turn));
+    let span = plan_gap(corner, join);
     let mut crossings: Vec<(f64, usize, f64)> = (kept..across).filter_map(|m| segment_crossing(plan(corner), plan(join), plan(toe.vertices[m]), plan(toe.vertices[m + 1])).map(|(t, u)| (t * span, m, u))).collect();
     crossings.sort_by(|x, y| x.0.total_cmp(&y.0));
     // Through a vertex of the toe the join crosses it once. One that only touches it there goes out and straight back in.
@@ -489,7 +794,7 @@ fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from
         let first = x.1.min(y.1);
         (x.0 - y.0).abs() < SAME_POINT && (x.1.abs_diff(y.1) != 1 || which_side(toe.vertices[first]) * which_side(toe.vertices[first + 2]) < 0.0)
     });
-    for pair in crossings.chunks(2) {
+    for pair in crossings.chunks(2).filter(|_| !boxed) {
         let back_in = pair.get(1).map_or(span, |c| c.0);
         if back_in - pair[0].0 >= road {
             (kept, join) = (pair[0].1 + 1, point(pair[0].1, pair[0].2));
@@ -497,12 +802,35 @@ fn toe_past_turn(toe: &Polyline, batters: &[f64], at: usize, across: usize, from
         }
     }
     let mut behind = stays(kept);
+    behind.meets.extend(flared_onto);
     if behind.vertices.last().is_some_and(|last| plan_gap(*last, join) < SAME_POINT) {
         behind.vertices.pop();
         behind.batters.pop();
     }
-    let mut laid = laid_on(Polyline { vertices: vec![join, corner], closed: false })?;
-    laid.pop();
+    // A box pad's far end runs off the line, square or flared, to its back corner, a road width in from the line as the
+    // next road's wall-side start is, and its back runs from there to that start: the wall above stands round it.
+    let mut laid: Vec<P3> = Vec::new();
+    let mut from_join = join;
+    if boxed {
+        let back_corner = back_corner.unwrap_or([join[0] + corner[0] - turn[0], join[1] + corner[1] - turn[1], join[2]]);
+        laid = laid_on(Polyline { vertices: vec![join, back_corner], closed: false })?;
+        from_join = laid.pop().unwrap_or(back_corner);
+    }
+    // On to the corner on the floor. The corner is level with the road's start across the road, so a floor dipping into
+    // the wall leaves it standing above the floor: then the toe lies on the floor to a road width short of it and leads
+    // straight up to it, as an entrance's toe does, with no step at the corner.
+    let mut tail = laid_on(Polyline { vertices: vec![from_join, corner], closed: false })?;
+    let on_the_floor = tail.pop().is_none_or(|under| (under[2] - corner[2]).abs() <= SAME_POINT);
+    let (out, lead) = (plan_gap(from_join, corner), plan_gap(from_join, corner) - road);
+    if !on_the_floor {
+        tail = if lead > SAME_POINT {
+            let short = [from_join[0] + lead / out * (corner[0] - from_join[0]), from_join[1] + lead / out * (corner[1] - from_join[1]), from_join[2]];
+            laid_on(Polyline { vertices: vec![from_join, short], closed: false })?
+        } else {
+            vec![from_join]
+        };
+    }
+    laid.extend(tail);
     for k in 0..laid.len() {
         let (p, q) = (laid[k], *laid.get(k + 1).unwrap_or(&corner));
         behind.batters.push(batter_nearest(toe, batters, [(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0, 0.0]));
@@ -528,13 +856,125 @@ fn carried_on(from: P3, offset: &Polyline, pit_edge: &Polyline, grade: f64) -> P
 
 /// The line a berm runs out to, where roads come up through it. A road is the bench there, so the line comes in
 /// to the top of each: at 45 degrees behind it, and over a long taper ahead so the road can ease across the
-/// berm's width. `lay` puts each stretch on what the berm lies on.
-pub(crate) fn berm_round_roads(line: &Polyline, crest: &Polyline, tops: &[RoadTop], back: bool, lay: &mut dyn FnMut(&Polyline) -> Result<Polyline, GeomError>) -> Result<Polyline, GeomError> {
-    if back {
-        let turned = berm_round_roads_along(&backwards(line), &backwards(crest), tops, lay)?;
+/// berm's width. Each top says whether its road runs back against the line. `lay` puts each stretch on what the berm
+/// lies on.
+pub(crate) fn berm_round_roads(line: &Polyline, crest: &Polyline, tops: &[(RoadTop, bool)], lay: &mut dyn FnMut(&Polyline) -> Result<Polyline, GeomError>) -> Result<Polyline, GeomError> {
+    let only: Vec<RoadTop> = tops.iter().map(|(top, _)| *top).collect();
+    if tops.iter().all(|(_, back)| *back) {
+        let turned = berm_round_roads_along(&backwards(line), &backwards(crest), &only, lay)?;
         return Ok(backwards(&turned));
     }
-    berm_round_roads_along(line, crest, tops, lay)
+    if tops.iter().all(|(_, back)| !*back) {
+        return berm_round_roads_along(line, crest, &only, lay);
+    }
+    berm_round_roads_both_ways(line, crest, tops, lay)
+}
+
+/// A berm's line round the tops of roads running both ways, as the line runs: behind a road along it the line comes in
+/// to its wall-side top and opens out ahead from its pit-side top, and round one running back it's the other way about.
+/// Between two roads whose tops face each other the berm opens out from each along the crest until the two tapers meet,
+/// where they're equally deep.
+fn berm_round_roads_both_ways(line: &Polyline, crest: &Polyline, tops: &[(RoadTop, bool)], lay: &mut dyn FnMut(&Polyline) -> Result<Polyline, GeomError>) -> Result<Polyline, GeomError> {
+    struct Round {
+        top: RoadTop,
+        back: bool,
+        /// Where it leaves the line for the road and where it's back, as the line runs.
+        behind: f64,
+        ahead: f64,
+        /// The points from the line in to the road's top, and out from it.
+        enter: Vec<P3>,
+        leave: Vec<P3>,
+        /// How far along the crest the berm takes to open out from its top.
+        taper: f64,
+    }
+    let last = (line.vertices.len() - 1) as f64;
+    let (turned_line, turned_crest) = (backwards(line), backwards(crest));
+    let mut rounds: Vec<Round> = tops
+        .iter()
+        .filter_map(|&(top, back)| {
+            let taper = BERM_TAPER * plan_gap(point_at(line, nearest_place(line, top.pit)), top.pit);
+            if back {
+                let t = taper_at(&turned_line, &turned_crest, top);
+                (t.behind < t.ahead).then(|| Round { top, back, behind: last - t.ahead, ahead: last - t.behind, enter: t.opening.iter().rev().copied().chain(once(top.pit)).collect(), leave: vec![top.wall], taper })
+            } else {
+                let t = taper_at(line, crest, top);
+                (t.behind < t.ahead).then(|| Round { top, back, behind: t.behind, ahead: t.ahead, enter: vec![top.wall], leave: once(top.pit).chain(t.opening.iter().copied()).collect(), taper })
+            }
+        })
+        .collect();
+    rounds.sort_by(|a, b| a.behind.total_cmp(&b.behind));
+    let Some(first) = rounds.first() else { return lay(line) };
+    // A stretch laid on what the berm lies on, with the road tops at its ends kept where they are.
+    let mut laid_between = |vertices: Vec<P3>, first_kept: bool, last_kept: bool| -> Result<Vec<P3>, GeomError> {
+        if vertices.len() < 2 {
+            return Ok(vertices);
+        }
+        let (start, end) = (vertices[0], vertices[vertices.len() - 1]);
+        let mut laid = lay(&Polyline { vertices, closed: false })?.vertices;
+        if first_kept {
+            laid[0] = start;
+        }
+        if last_kept {
+            *laid.last_mut().expect("a line has an end") = end;
+        }
+        Ok(laid)
+    };
+    let before: Vec<P3> = if first.behind > 0.0 { stretch_of(line, 0.0, first.behind).vertices } else { Vec::new() };
+    let mut vertices = laid_between(before.into_iter().chain(first.enter.iter().copied()).collect(), false, true)?;
+    let crest_length = crest.plan_length();
+    for pair in rounds.windows(2) {
+        let (from, to) = (&pair[0], &pair[1]);
+        let stretch: Vec<P3> = if !from.back && to.back && from.ahead > to.behind {
+            // Tops facing, too close for both to open out all the way: each opens along the crest to where they meet.
+            let (at_from, at_to) = (metres_along(crest, from.top.pit), metres_along(crest, to.top.pit));
+            let apart = at_to - at_from;
+            let (reach_from, reach_to) = (from.taper.min(crest_length - at_from), to.taper.min(at_to));
+            let mut stretch = vec![from.top.pit];
+            if apart > 0.0 && reach_from + reach_to > 0.0 {
+                let meet = apart * reach_from / (reach_from + reach_to);
+                stretch.extend(berm_opening_part(crest, line, from.top.pit, from.taper, meet));
+                let theirs = berm_opening_part(&turned_crest, line, to.top.pit, to.taper, apart - meet);
+                stretch.extend(theirs.into_iter().rev().skip(1));
+            }
+            stretch.push(to.top.pit);
+            stretch
+        } else {
+            // Two roads close together leave no room for the berm to open out all the way between them.
+            let leaving = from.leave.iter().enumerate().filter(|(k, p)| *k == 0 || nearest_place(line, **p) < to.behind).map(|(_, p)| *p);
+            let on: Vec<P3> = if from.ahead < to.behind { stretch_of(line, from.ahead, to.behind).vertices } else { Vec::new() };
+            let coming = to.enter.iter().enumerate().filter(|(k, p)| *k + 1 == to.enter.len() || nearest_place(line, **p) > from.ahead).map(|(_, p)| *p);
+            leaving.chain(on).chain(coming).collect()
+        };
+        vertices.extend(laid_between(stretch, true, true)?);
+    }
+    let end = rounds.last().expect("there's a first");
+    let on_past = if end.ahead < last { stretch_of(line, end.ahead, last).vertices } else { vec![line.vertices[line.vertices.len() - 1]] };
+    vertices.extend(laid_between(end.leave.iter().copied().chain(on_past).collect(), true, false)?);
+    Ok(Polyline { vertices, closed: false })
+}
+
+/// A berm's line opening out from a road's pit-side top along the crest ahead of it over `taper`, as `berm_opening` has
+/// it, as far as `most` along the crest from the top, where it ends on the taper part way out.
+fn berm_opening_part(crest: &Polyline, line: &Polyline, top: P3, taper: f64, most: f64) -> Vec<P3> {
+    let ahead = stretch_of(crest, nearest_place(crest, top), (crest.vertices.len() - 1) as f64);
+    let reach = taper.min(ahead.plan_length());
+    let stop = most.min(reach);
+    let on_taper = |p: P3, gone: f64| {
+        let (share, out) = (if reach > 0.0 { gone / reach } else { 0.0 }, point_at(line, nearest_place(line, p)));
+        [p[0] + share * (out[0] - p[0]), p[1] + share * (out[1] - p[1]), p[2]]
+    };
+    let mut gone = 0.0;
+    let mut vertices = Vec::new();
+    for w in ahead.vertices.windows(2) {
+        let length = plan_gap(w[0], w[1]);
+        if gone + length >= stop {
+            vertices.push(on_taper(point_along(&ahead, stop), stop));
+            return vertices;
+        }
+        gone += length;
+        vertices.push(on_taper(w[1], gone));
+    }
+    vertices
 }
 
 /// Straight across a berm from a road's top, square to the crest behind the road, by the berm's width there: the way
@@ -547,13 +987,19 @@ fn across_crest(crest: &Polyline, top: RoadTop, width: EdgeRule<'_>, side: Offse
         let (a, b) = ends(i);
         nearest_along(a, b, top.wall).1
     };
-    // Of the crest's segments at the wall-side top, the one behind the road, not the one across the road's top.
+    // Of the crest's segments at the wall-side top, the one behind the road, not the one across the road's top. A top
+    // that crosses the road at a skew, as on a grid, brings the crest just behind it as near the pit-side corner as the
+    // wall-side corner is, so nearness alone can't tell them apart: a segment lying along the crossing is the crossing.
     let segments: Vec<usize> = (0..segment_count(crest)).collect();
     let far_from_road = |i: usize| {
         let (a, b) = ends(i);
         plan_gap(a, top.pit).max(plan_gap(b, top.pit))
     };
-    let behind = match segments.iter().copied().filter(|&i| gap(i) < ON).max_by(|&i, &j| far_from_road(i).total_cmp(&far_from_road(j))) {
+    let across_the_top = |i: usize| {
+        let (a, b) = ends(i);
+        nearest_along(top.wall, top.pit, a).1 < ON && nearest_along(top.wall, top.pit, b).1 < ON
+    };
+    let behind = match segments.iter().copied().filter(|&i| gap(i) < ON && !across_the_top(i)).max_by(|&i, &j| far_from_road(i).total_cmp(&far_from_road(j))) {
         Some(i) => i,
         None => segments.iter().copied().min_by(|&i, &j| gap(i).total_cmp(&gap(j))).expect("a crest has a segment"),
     };
@@ -583,6 +1029,260 @@ fn across_to_line(line: &Polyline, crest: &Polyline, top: RoadTop, width: EdgeRu
     let hit = line.vertices.windows(2).filter_map(|w| segment_crossing(from, to, [w[0][0], w[0][1]], [w[1][0], w[1][1]]).map(|(t, _)| t)).fold(f64::INFINITY, f64::min);
     if hit.is_finite() { ([(to[0] - from[0]) * hit, (to[1] - from[1]) * hit], true) } else { (square, false) }
 }
+
+/// The flat a road that turns back runs past its top before it turns (decision 0038, Tim 2026-11-04): on along the crest
+/// the way it came up, `length` metres, a road wide on the wall side of the crest, in line with the road and in front of
+/// where the next road starts, so nothing sits back over the road below. Its pit side is the crest's own stretch on from
+/// the road's pit-side top and its wall side is that moved back by the road's width at its top, laid by `lay` on what the
+/// berm lies on: on a seam floor the flat lies on the floor, so no coal is left under it. None where the crest has no
+/// room past the top, or the top isn't on it. Gives the two sides from the road's top, in the road's direction, and the
+/// places on the crest the flat starts and ends at.
+pub(crate) fn flat_past_top(crest: &Polyline, top: RoadTop, length: f64, berm: EdgeRule<'_>, side: OffsetSide, lay: &mut dyn FnMut(&Polyline) -> Result<Polyline, GeomError>) -> Result<Option<Flat>, GeomError> {
+    let Some(at) = crest.vertices.iter().position(|p| plan_gap(*p, top.pit) < SAME_POINT) else { return Ok(None) };
+    // On along the crest away from the road's own top crossing, which is one of the crest's two ways from its pit-side
+    // top. Where neither is, the way the road was going along the crest.
+    let crossing = |k: usize| crest.vertices.get(k).is_some_and(|p| nearest_along(top.pit, top.wall, *p).1 < 1e-3);
+    let forward = match (at.checked_sub(1).is_some_and(crossing), crossing(at + 1)) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => {
+            let (_, heading) = across_crest(crest, top, berm, side);
+            let ahead = |k: usize| (crest.vertices[k][0] - top.pit[0]) * heading[0] + (crest.vertices[k][1] - top.pit[1]) * heading[1];
+            match (crest.vertices.get(at + 1), at.checked_sub(1)) {
+                (Some(_), Some(before)) => ahead(at + 1) >= ahead(before),
+                (Some(_), None) => true,
+                (None, _) => false,
+            }
+        }
+    };
+    // The crest from the road's pit-side top on the way the road came up, `length` metres of it.
+    let mut pit = vec![top.pit];
+    let mut left = length;
+    let mut k = at;
+    let mut end = None;
+    while left > SAME_POINT {
+        let next = if forward { k + 1 } else { match k.checked_sub(1) { Some(j) => j, None => break } };
+        let Some(&q) = crest.vertices.get(next) else { break };
+        let p = crest.vertices[k];
+        let gap = plan_gap(p, q);
+        if gap >= left {
+            let t = left / gap;
+            let stop = [p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1]), p[2] + t * (q[2] - p[2])];
+            if (1.0 - t) * gap < SAME_POINT {
+                pit.push(q);
+                end = Some((next, true));
+            } else {
+                pit.push(stop);
+                end = Some((next, false));
+            }
+            left = 0.0;
+        } else {
+            pit.push(q);
+            left -= gap;
+            k = next;
+            end = Some((next, true));
+        }
+    }
+    let Some((last, on_vertex)) = end else { return Ok(None) };
+    if pit.len() < 2 {
+        return Ok(None);
+    }
+    // A road wide square to the crest: as far in as the road's own wall-side top stands from it.
+    let road = pit.windows(2).map(|w| nearest_along(w[0], w[1], top.wall).1).fold(f64::INFINITY, f64::min);
+    let way = if forward { side } else if side == OffsetSide::Left { OffsetSide::Right } else { OffsetSide::Left };
+    let plan = Polyline { vertices: pit.clone(), closed: false };
+    let moved = longest(offset_string(&plan, road, way, Corner::Mitre { limit: EDGE_MITRE_LIMIT }, None)?);
+    // It starts at the road's own wall-side top, so the two share the road's top edge, and runs on along the crest moved
+    // back from there. A top that crosses the road at a skew leaves that corner off the moved crest, ahead of where it
+    // starts or behind: it comes straight onto it, on ahead of the corner, never back.
+    let corner = nearest_place(&moved, top.wall);
+    if corner >= (moved.vertices.len() - 1) as f64 - 1e-9 {
+        return Ok(None);
+    }
+    let ahead: Vec<P3> = moved.vertices[corner.floor() as usize + 1..].to_vec();
+    let mut wall = lay(&Polyline { vertices: once(point_at(&moved, corner)).chain(ahead).collect(), closed: false })?.vertices;
+    let square = usize::from(plan_gap(wall[0], top.wall) >= SAME_POINT);
+    if square == 0 {
+        wall[0] = top.wall;
+    } else {
+        wall.insert(0, top.wall);
+    }
+    // Its far end, square across from the end of it on the crest, laid as its sides are.
+    let (end, wall_end) = (*pit.last().expect("a flat has an end"), *wall.last().expect("a flat has a wall side"));
+    let far_end = lay(&Polyline { vertices: vec![wall_end, end], closed: false })?.vertices;
+    let far = far_end.get(1..far_end.len().saturating_sub(1)).unwrap_or(&[]).to_vec();
+    let flat = Flat { pit: Polyline { vertices: pit, closed: false }, wall: Polyline { vertices: wall, closed: false }, far, square, from: at, to: last, to_on_vertex: on_vertex, forward };
+    Ok(Some(flat))
+}
+
+/// A flat a road runs past its top before it turns: its two sides from the road's top, in the road's direction, and where it
+/// is on the crest: the vertex at the road's pit-side top, the vertex it ends at or past, whether it ends on that vertex,
+/// and whether it runs the way the crest does.
+#[derive(Debug, Clone)]
+pub(crate) struct Flat {
+    pub pit: Polyline,
+    pub wall: Polyline,
+    /// The far end between the two sides' ends, from the wall side's: the points it's laid on between them.
+    pub far: Vec<P3>,
+    /// Where the wall side comes square across from the pit side: after the road's own corner, if its top is skewed.
+    pub square: usize,
+    pub from: usize,
+    pub to: usize,
+    pub to_on_vertex: bool,
+    pub forward: bool,
+}
+
+impl Flat {
+    /// The crest a berm runs out from with the flat in it: round the flat's wall side, as round the top of a road, so the
+    /// berm stands out beyond the flat and the next road comes onto its line in front of the flat's end.
+    pub(crate) fn round(&self, crest: &Polyline) -> Polyline {
+        let c = &crest.vertices;
+        let wall = &self.wall.vertices;
+        let end = *self.pit.vertices.last().expect("a flat has an end");
+        let mut vertices = Vec::with_capacity(c.len() + wall.len());
+        // The crest steps from the road's wall-side top to its pit-side top; that step moves on to the flat's end.
+        if self.forward {
+            vertices.extend_from_slice(&c[..self.from]);
+            vertices.extend_from_slice(wall);
+            vertices.extend_from_slice(&self.far);
+            vertices.push(end);
+            let after = if self.to_on_vertex { self.to + 1 } else { self.to };
+            vertices.extend_from_slice(&c[after.min(c.len())..]);
+        } else {
+            let before = if self.to_on_vertex { self.to } else { self.to + 1 };
+            vertices.extend_from_slice(&c[..before]);
+            vertices.push(end);
+            vertices.extend(self.far.iter().rev());
+            vertices.extend(wall.iter().rev());
+            vertices.extend_from_slice(&c[self.from + 1..]);
+        }
+        vertices.dedup_by(|a, b| plan_gap(*a, *b) < SAME_POINT);
+        Polyline { vertices, closed: crest.closed }
+    }
+
+    /// The road's strip of the box, as a band: its pit side along the crest and round its far end, and its wall side.
+    pub(crate) fn road_strip(&self) -> (Polyline, Polyline) {
+        let pit = self.pit.vertices.iter().copied().chain(self.far.iter().rev().copied()).collect();
+        (Polyline { vertices: pit, closed: false }, self.wall.clone())
+    }
+
+    /// The berm's line round the box squared off at its far end (Tim, 2026-11-04). The berm stands out into the wall from
+    /// the crest, not on past the box along it, so the line runs beside the box, out from its wall side, only as far as
+    /// the box's far end carried on square across, and comes straight back down that to `plain`, the berm's line with no
+    /// box, along the crest's own far end where the two run together. It goes on along `plain` till it's back on `line`.
+    /// `line` is the berm's line from the crest with the box in it, which stands round the far end too. Gives the squared
+    /// line and where it comes onto the crest's far end part way along it, for the sheet to be split at; None, and the
+    /// line as it is, where the far end doesn't meet the two lines that way.
+    pub(crate) fn squared_end(&self, line: &Polyline, plain: &Polyline) -> Option<(Polyline, Option<P3>)> {
+        if !self.forward {
+            let (squared, meets) = self.squared_ahead(&backwards(line), &backwards(plain))?;
+            return Some((backwards(&squared), meets));
+        }
+        self.squared_ahead(line, plain)
+    }
+
+    /// The same for a box running the way the lines do.
+    fn squared_ahead(&self, line: &Polyline, plain: &Polyline) -> Option<(Polyline, Option<P3>)> {
+        let (end, wall_end) = (*self.pit.vertices.last()?, *self.wall.vertices.last()?);
+        let across = plan_gap(end, wall_end);
+        if across < SAME_POINT {
+            return None;
+        }
+        let out = [(wall_end[0] - end[0]) / across, (wall_end[1] - end[1]) / across];
+        // The far end, from the end on the crest out to the wall side, by how far out each of its points is.
+        let mut far: Vec<(f64, P3)> = once(end).chain(self.far.iter().rev().copied()).chain(once(wall_end)).map(|p| ((p[0] - end[0]) * out[0] + (p[1] - end[1]) * out[1], p)).collect();
+        far.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let height_out = |t: f64| {
+            let k = far.windows(2).position(|w| t <= w[1].0).unwrap_or(far.len() - 2);
+            let ((ta, a), (tb, b)) = (far[k], far[k + 1]);
+            let s = if tb > ta { ((t - ta) / (tb - ta)).clamp(0.0, 1.0) } else { 0.0 };
+            a[2] + s * (b[2] - a[2])
+        };
+        // Where a line crosses the far end carried on both ways: how far out, on which segment and how far along it.
+        let crossings = |l: &Polyline| -> Vec<(f64, usize, f64)> {
+            l.vertices
+                .windows(2)
+                .enumerate()
+                .filter_map(|(i, w)| {
+                    let d = [w[1][0] - w[0][0], w[1][1] - w[0][1]];
+                    let denom = d[0] * out[1] - d[1] * out[0];
+                    if denom.abs() < 1e-9 * (d[0].hypot(d[1]) + 1.0) {
+                        return None;
+                    }
+                    let e = [end[0] - w[0][0], end[1] - w[0][1]];
+                    let s = (e[0] * out[1] - e[1] * out[0]) / denom;
+                    let t = (w[0][0] + s * d[0] - end[0]) * out[0] + (w[0][1] + s * d[1] - end[1]) * out[1];
+                    (-1e-9..=1.0 + 1e-9).contains(&s).then_some((t, i, s.clamp(0.0, 1.0)))
+                })
+                .collect()
+        };
+        let at = |l: &Polyline, i: usize, s: f64| {
+            let (a, b) = (l.vertices[i], l.vertices[i + 1]);
+            [a[0] + s * (b[0] - a[0]), a[1] + s * (b[1] - a[1]), a[2] + s * (b[2] - a[2])]
+        };
+        // Beside the box: the line out from its wall side, where it crosses the far end beyond the wall side's end. Where
+        // the berm has no width along the far end, as where the minimum bench drops it past the box, the line comes down
+        // onto the far end there and runs down it through the wall side's end: from where it comes onto it, which is the
+        // wall side's end itself where the berm has none beside the box either.
+        let off = |q: P3| ((q[0] - end[0]) * out[1] - (q[1] - end[1]) * out[0]).abs();
+        let out_to = |q: P3| (q[0] - end[0]) * out[0] + (q[1] - end[1]) * out[1];
+        let onto_end = (0..line.vertices.len().saturating_sub(1)).find(|&m| nearest_along(line.vertices[m], line.vertices[m + 1], wall_end).1 < ON_THE_END && off(line.vertices[m]) < ON_THE_END).map(|mut j| {
+            while j > 0 && off(line.vertices[j - 1]) < ON_THE_END && out_to(line.vertices[j - 1]) >= out_to(line.vertices[j]) - SAME_POINT {
+                j -= 1;
+            }
+            j
+        });
+        let (t_beside, i, beside) = match onto_end {
+            Some(j) if j > 0 => {
+                let q = line.vertices[j];
+                let t = out_to(q);
+                (t, j - 1, [end[0] + out[0] * t, end[1] + out[1] * t, q[2]])
+            }
+            _ => {
+                let (t, i, s) = crossings(line).into_iter().filter(|c| c.0 > across + SAME_POINT).min_by(|a, b| a.0.total_cmp(&b.0))?;
+                (t, i, at(line, i, s))
+            }
+        };
+        // Past it: the berm's line with no box, nearest the crest.
+        let (t_past, k, _) = crossings(plain).into_iter().filter(|c| c.0 > -SAME_POINT).min_by(|a, b| a.0.total_cmp(&b.0))?;
+        if t_beside < across - SAME_POINT || t_past >= t_beside - SAME_POINT {
+            return None;
+        }
+        let past = [end[0] + out[0] * t_past.max(0.0), end[1] + out[1] * t_past.max(0.0), height_out(t_past.max(0.0))];
+        let mut vertices: Vec<P3> = line.vertices[..=i].to_vec();
+        vertices.push(beside);
+        // Down the far end, on the crest's own far end where the two run together.
+        vertices.extend(far.iter().rev().filter(|(t, _)| *t > t_past + SAME_POINT && *t < t_beside - SAME_POINT).map(|(_, p)| *p));
+        vertices.push(past);
+        // On along the line with no box, until it's back on the line round the box.
+        let back_on = plain.vertices[k + 1..].iter().enumerate().find_map(|(q, v)| line.vertices[i + 1..].iter().position(|w| plan_gap(*v, *w) < SAME_POINT).map(|r| (k + 1 + q, i + 1 + r)));
+        match back_on {
+            Some((q, r)) => {
+                vertices.extend_from_slice(&plain.vertices[k + 1..q]);
+                vertices.extend_from_slice(&line.vertices[r..]);
+            }
+            None => vertices.extend_from_slice(&plain.vertices[k + 1..]),
+        }
+        vertices.dedup_by(|a, b| plan_gap(*a, *b) < SAME_POINT);
+        let part_way = (t_past > SAME_POINT && t_past < across - SAME_POINT).then_some(past);
+        Some((Polyline { vertices, closed: line.closed }, part_way))
+    }
+
+    /// The steepest the flat's two sides rise or fall along it, as a fraction: not across the road from a skewed top.
+    pub(crate) fn steepest(&self) -> f64 {
+        let along = self.pit.vertices.windows(2).chain(self.wall.vertices[self.square..].windows(2));
+        along.filter(|w| plan_gap(w[0], w[1]) > SAME_POINT).map(|w| ((w[1][2] - w[0][2]) / plan_gap(w[0], w[1])).abs()).fold(0.0, f64::max)
+    }
+}
+
+/// The nearest point on a line to a point, in plan, at the line's height there.
+pub(crate) fn nearest_on(line: &Polyline, p: P3) -> P3 {
+    point_at(line, nearest_place(line, p))
+}
+
+/// A berm's line nearer the far end of a switchback box than this runs along it (m): a line with no width there comes
+/// out of the offset that close to it.
+const ON_THE_END: f64 = 0.1;
 
 /// Where a road turning back starts the next wall: straight across the berm from its wall-side top. That's a road width
 /// plus the berm out from where the road came up, so the pad it turns on is the two roads and the berm between them.
@@ -773,6 +1473,43 @@ pub(crate) fn metres_along(line: &Polyline, p: P3) -> f64 {
     let whole = place.floor() as usize;
     let before: f64 = line.vertices.windows(2).take(whole).map(|w| plan_gap(w[0], w[1])).sum();
     before + plan_gap(line.vertices[whole], point_at(line, place))
+}
+
+/// A toe a road carries on from, with the road's top in it as the road came out: each corner where the toe passes
+/// nearest it in plan, at its own height, and the toe level across the road between them, as the crest it came out on
+/// was, whatever the grid under it does. Registering the toe again would lay that stretch on the grid, which dips
+/// across the road. Also the top, now on the toe.
+pub(crate) fn with_road_top(line: &Polyline, top: RoadTop) -> (Polyline, RoadTop) {
+    if line.closed || line.vertices.len() < 2 {
+        return (line.clone(), top);
+    }
+    let places = [nearest_place(line, top.pit), nearest_place(line, top.wall)];
+    let corner = |k: usize, height: f64| {
+        let p = point_at(line, places[k]);
+        [p[0], p[1], height]
+    };
+    let corners = [corner(0, top.pit[2]), corner(1, top.wall[2])];
+    let (lo, hi) = (places[0].min(places[1]), places[0].max(places[1]));
+    let (low, high) = if places[0] <= places[1] { (corners[0][2], corners[1][2]) } else { (corners[1][2], corners[0][2]) };
+    let mut entries: Vec<(f64, P3, bool)> = line.vertices.iter().enumerate().map(|(i, p)| (i as f64, *p, false)).collect();
+    entries.extend([(places[0], corners[0], true), (places[1], corners[1], true)]);
+    entries.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut vertices: Vec<P3> = Vec::with_capacity(entries.len());
+    for (place, mut p, is_corner) in entries {
+        if !is_corner && place > lo && place < hi {
+            p[2] = low + (high - low) * (place - lo) / (hi - lo);
+        }
+        // A corner on a vertex takes its place.
+        match vertices.last_mut() {
+            Some(q) if plan_gap(*q, p) <= SAME_POINT => {
+                if is_corner {
+                    *q = p;
+                }
+            }
+            _ => vertices.push(p),
+        }
+    }
+    (Polyline { vertices, closed: false }, RoadTop { pit: corners[0], wall: corners[1] })
 }
 
 /// The point a distance in metres along a line, kept to the line's ends.
@@ -1069,7 +1806,7 @@ impl Facets {
 
     /// The pit-side edge, from a vertex on the toe up to the crest.
     fn climb(&self, start: P3, side: OffsetSide, grade: f64, toe: &Polyline, crest: &Polyline) -> Result<Climb, Stopped> {
-        let no_wall = || Stopped { at: start, why: NO_WALL.into() };
+        let no_wall = || Stopped { at: start, why: NO_WALL.into(), crosses: None };
         let first = self.vertex_at(start).ok_or_else(no_wall)?;
         let mut p = self.local[first as usize];
         let mut at = At::Vertex(first);
@@ -1095,7 +1832,7 @@ impl Facets {
                 None => return self.ended(p, cuts, grade, toe, crest),
             }
         }
-        Err(Stopped { at: self.world(p), why: "it can't find a way up the wall here".into() })
+        Err(Stopped { at: self.world(p), why: "it can't find a way up the wall here".into(), crosses: None })
     }
 
     /// Where a climb has stopped: the crest it was going for, or somewhere it can't go on from.
@@ -1113,7 +1850,7 @@ impl Facets {
         } else {
             format!("it reaches the end of the wall at RL {:.1}, short of the top", at[2])
         };
-        Err(Stopped { at, why })
+        Err(Stopped { at, why, crosses: None })
     }
 
     /// The part of the wall left below a road: every facet outside what the road removes, split along the
@@ -1187,7 +1924,7 @@ fn plan_unit(a: P3) -> [f64; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::face::{END_TOLERANCE, Face, FaceStep, FaceTarget, project_face};
+    use crate::face::{END_TOLERANCE, Face, FaceBench, FaceStep, FaceTarget, project_face};
     use crate::{EdgeRule, find_crossings, triangulate_grid};
     use zd_core::{FaceDirection, Grid};
 
@@ -1196,7 +1933,7 @@ mod tests {
     const FLOOR: f64 = 100.0;
     /// cos of the angle a 10 % road climbs a 45 degree wall at, where sin(angle) = grade / slope.
     const COS: f64 = 0.994_987_437_106_62;
-    const RAMP: FaceRamp = FaceRamp { start: [E + 100.0, N], back: false, width: 10.0, grade: 0.1, ends_at: None, after_berm: false, turn_join: 50.0, turn_flat: 10.0 };
+    const RAMP: FaceRamp = FaceRamp { start: [E + 100.0, N], back: false, width: 10.0, grade: 0.1, ends_at: None, after_berm: false, turn_join: 50.0, turn_flat: 10.0, carries_on: None, turn_end: 90.0 };
 
     fn level(rl: f64) -> TriMesh {
         triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 30, 20, |_, _| rl))
@@ -1231,7 +1968,7 @@ mod tests {
 
     /// The height of a sheet at a point in plan, if it covers it.
     fn height_at(sheet: &TriMesh, x: f64, y: f64) -> Option<f64> {
-        TriangleBins::new(sheet, [E - 100.0, N - 100.0], [E + 800.0, N + 300.0]).height(sheet, [E + x, N + y])
+        TriangleBins::new(sheet, [E - 100.0, N - 100.0], [E + 1100.0, N + 300.0]).height(sheet, [E + x, N + y])
     }
 
     fn height(sheet: &TriMesh, x: f64, y: f64) -> f64 {
@@ -1623,106 +2360,227 @@ mod tests {
         FaceStep::Project { to, batter: EdgeRule::Fixed(45.0), condition: None, ramps: &[0], turns: &[0] }
     }
 
-    /// On a face with a road turning back on a level pad at RL 120: where the second road comes onto the berm's line
-    /// across the pad, where it starts to climb, the wall-side corner of the flat stretch between, and the join past the
-    /// turn, the toe's next vertex on from that corner.
-    fn second_road_start(face: &Face) -> [P3; 4] {
+    /// On a face with a road turning back on a pad: where the next road comes onto the berm's line and climbs from, its
+    /// wall-side start, and the toe's vertex on past that corner: the back corner of a box pad, or the join past the turn
+    /// with none.
+    fn second_road_start(face: &Face) -> [P3; 3] {
         let road = road_of(face, 0);
-        let pit = &road.pit_edge.vertices;
-        let top = pit.iter().position(|p| (p[2] - 120.0).abs() < 1e-6).expect("the first road's top");
-        let wall = &road.wall_edge.vertices;
-        let corner = wall[wall.iter().position(|p| (p[2] - 120.0).abs() < 1e-6).expect("the first road's wall-side top") + 1];
-        let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe;
-        let at = toe.vertices.iter().position(|p| plan_gap(*p, corner) < 1e-6).expect("the toe runs round the flat stretch");
-        [pit[top + 1], pit[top + 2], corner, toe.vertices[at + 1]]
+        let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe.vertices;
+        let onto = *road.pit_edge.vertices.iter().rev().find(|p| toe.iter().any(|q| plan_gap(**p, *q) < 1e-6)).expect("the next road starts on the toe");
+        let at = toe.iter().position(|q| plan_gap(*q, onto) < 1e-6).expect("it's on the toe");
+        [onto, toe[at + 1], toe[at + 2]]
     }
 
-    /// A switchback on a flat pad. The road climbs the first wall east, 200 m from RL 100 to 120, crosses the berm
-    /// straight across from its wall-side top, in line with that top, runs a road width flat west along the berm's line,
-    /// so trucks don't turn straight onto the grade, and climbs the second wall back west, 200 m more to RL 140. The pad is
-    /// the two roads and the berm between them: from the first road's top on the crest to the second road's wall-side
-    /// edge is a road width, the berm and a road width, square to the crest. Beside the flat stretch the toe of the wall
-    /// above moves back by the road. Past the turn it comes out to the flat stretch's wall-side corner and joins back to
-    /// the berm's line 50 m on from the turn, along the line, and from there it's the berm's line to the end.
+    /// How far on from where the next road came onto the line a point past the turn is, the way the line runs there.
+    fn on_from_the_turn(face: &Face, step: usize, onto: P3, p: P3) -> f64 {
+        let toe = &face.benches.iter().find(|b| b.step == step).expect("the wall above the pad").toe.vertices;
+        let at = toe.iter().position(|q| plan_gap(*q, onto) < 1e-6).expect("the next road starts on the toe");
+        let before = toe[at - 1];
+        let length = plan_gap(before, onto);
+        ((p[0] - onto[0]) * (onto[0] - before[0]) + (p[1] - onto[1]) * (onto[1] - before[1])) / length
+    }
+
+    /// A switchback on a flat pad, the standard box (Tim, 2026-11-04): the road climbs the first wall east at 10 %, 200 m
+    /// from RL 100 to 120, to its top on the crest. The next road starts straight across the berm from that top, in line
+    /// with the top crossing, and climbs the second wall back west at once, 200 m more to RL 140. The box is flat at RL
+    /// 120 and runs on past the top in line with the road, its 10 m width unless the ramp says: the road's width of it
+    /// along the crest, the 10 m berm beyond, and the next road's width beyond that, where the wall above goes round it.
+    /// Its far end is square across from the end of it on the crest: the toe of the wall above runs from the next road's
+    /// wall-side start along the box's back to that end, then square to the berm's line, which carries on from there.
     #[test]
     fn a_road_turns_back_on_a_flat_pad() {
         let low = FaceTarget::Rl(120.0);
         let face = long_face(&[climbed_by(low, &[0]), berm(low, 10.0), turned_on(FaceTarget::Rl(140.0))], &[ramp_at(500.0)]);
         assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        one_clean_sheet(&face);
         let road = road_of(&face, 0);
         assert_eq!(road.steps, [0, 2]);
-        let (climbed, landings) = climbs_and_landings(road);
-        close(climbed, 400.0, 1e-3);
-        assert_eq!(landings, 2, "one pad, across it then flat along the line: {:?}", road.pit_edge.vertices);
+        close(climbs_and_landings(road).0, 400.0, 1e-3);
         let pit = &road.pit_edge.vertices;
         let top = pit[1];
-        let [onto, climbs, corner, join] = second_road_start(&face);
-        let across = 10.0 * COS;
         close(top[0] - E, 500.0 + 200.0 * COS, 1e-6);
         close(top[1] - N, 20.0, 1e-6);
-        // Across the road's top, a road width back as the road climbs at sin(angle) = 0.1, then on in line with it across
-        // the berm, 10 m square to the crest.
-        let back = 10.0 * 0.1 + 10.0 * 0.1 / COS;
-        close(onto[0] - top[0], -back, 1e-6);
-        close(onto[1] - top[1], across + 10.0, 1e-6);
+        // Straight above the road's wall-side top, a road width back as the road climbs at sin(angle) = 0.1: on the line
+        // where it's nearest that top, 10 m across the berm. The line has a 1 m bend there where it meets the line beside
+        // the box, so nearest is its corner, 0.25 m along. From there the next road climbs at once.
+        let [onto, corner, back_corner] = second_road_start(&face);
+        let wall_top = road.wall_edge.vertices[1];
+        close(wall_top[0] - top[0], -1.0, 1e-6);
+        close(onto[0] - wall_top[0], 0.0, 0.3);
+        close(plan_gap(onto, wall_top), 10.0, 0.01);
         close(onto[2], 120.0, 1e-6);
-        // A road width flat along the line before it climbs.
-        close(climbs[0] - onto[0], -10.0, 1e-6);
-        close(climbs[1] - onto[1], 0.0, 1e-6);
-        close(climbs[2], 120.0, 1e-6);
-        let end = pit[pit.len() - 1];
-        assert!(end[0] < onto[0], "the second road runs back west");
-        close(end[0] - E, 500.0 - back - 10.0, 1e-6);
-        close(end[1] - N, 20.0 + across + 10.0 + 20.0, 1e-6);
-        close(end[2], 140.0, 1e-6);
-        close(corner[0], onto[0], 1e-6);
-        close(corner[1] - N, 20.0 + 2.0 * across + 10.0, 1e-6);
-        one_clean_sheet(&face);
-        for (x, y) in [(705.0, 25.0), (705.0, 40.0), (690.0, 35.0), (692.0, 45.0)] {
-            close(height(&face.surface, x, y), 120.0, 1e-6);
+        assert_eq!(pit.iter().position(|p| plan_gap(*p, onto) < 1e-6), Some(2), "straight across the pad from the top: {pit:?}");
+        assert!(pit[3][2] > 120.0 + 1e-6, "it climbs from there: {pit:?}");
+        close(pit[pit.len() - 1][2], 140.0, 1e-6);
+        close(plan_gap(corner, onto), 10.0, 1e-6);
+        // Round the box: along its back, to its far end in line with the end of it on the crest, 10 m on past the top.
+        let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe.vertices;
+        let c = toe.iter().position(|p| plan_gap(*p, corner) < 1e-6).expect("the toe runs round the next road's start");
+        let far = toe[c + 2];
+        close(far[0], top[0] + 10.0, 1e-6);
+        close(far[1] - N, 40.0, 1e-6);
+        // Its far end square across, out to its back corner the next road's width from the line.
+        close(back_corner[0], far[0], 1e-6);
+        close(back_corner[1] - far[1], 10.0, 1e-6);
+        // Squared off: from the line beside the box the toe comes straight back down the far end to the berm's line past
+        // it, 10 m out from the crest, where the box's wall-side corner is too, and goes on along that.
+        let down = toe[c + 3];
+        close(down[0], far[0], 1e-6);
+        close(down[1] - N, 30.0, 1e-6);
+        // Flat in the box, its three strips; the wall above past its far end, with no berm round it; and the berm's line
+        // from there to the end.
+        for (along, out) in [(5.0, 5.0), (5.0, 15.0), (5.0, 25.0), (9.0, 28.0)] {
+            close(height(&face.surface, top[0] - E + along, top[1] - N + out), 120.0, 1e-6);
         }
-        close(join[1] - N, 30.0, 1e-6);
-        close(join[0] - onto[0], 50.0, 1e-6);
-        let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe;
-        let at = |x: f64| toe.vertices.windows(2).find(|w| w[0][0] - E <= x && w[1][0] - E >= x).map(|w| w[0][1] - N).expect("the toe runs there");
+        assert!(height(&face.surface, top[0] - E + 15.0, top[1] - N + 25.0) > 121.0, "the wall above stands past the box");
+        close(height(&face.surface, top[0] - E + 15.0, top[1] - N + 15.0), 125.0, 1e-6);
+        let at = |x: f64| toe.windows(2).find(|w| w[0][0] - E <= x && w[1][0] - E >= x).map(|w| w[0][1] - N).expect("the toe runs there");
         close(at(1500.0), 30.0, 1e-6);
     }
 
-    /// The flat stretch after a turn is as long as the ramp says: none, so the road climbs straight from where it comes
-    /// onto the line, as Deswik's does; its 10 m width; or 25 m. Each way it climbs its 200 m to RL 140, finishing that
-    /// much further on, and the toe past the turn joins back 50 m on along the line from where the road came onto it.
+    /// A box for a 20 m road and a 10 m berm, 25 m long, squared off at its far end, on a road climbing east and on one
+    /// climbing west (Tim, 2026-11-04): the berm stands out into the wall from the crest, not on past the box along it.
+    /// Along the far end, 25 m on past the road's top, the toe of the wall above has the box's back corner, 50 m out from
+    /// the crest; the berm's line beside the box, 30 m out; the box's wall-side corner, 20 m out; and the berm's line past
+    /// the box, 10 m out, where it goes on. Flat at RL 120 in the box and on the berm past it. The wall above rises from
+    /// the far end at 45 degrees: 2 m past it and 15 m out it's at RL 122, the nose where the two walls meet.
     #[test]
-    fn the_flat_stretch_after_a_turn_is_as_long_as_the_ramp_says() {
+    fn a_box_for_a_road_wider_than_its_berm_is_squared_off_at_its_far_end() {
         let low = FaceTarget::Rl(120.0);
         let rows = [climbed_by(low, &[0]), berm(low, 10.0), turned_on(FaceTarget::Rl(140.0))];
+        for (ramp, way) in [(ramp_at(500.0), 1.0), (FaceRamp { back: true, ..ramp_at(1000.0) }, -1.0)] {
+            let face = long_face(&rows, &[FaceRamp { width: 20.0, turn_flat: 25.0, ..ramp }]);
+            assert!(face.no_roads.is_empty(), "{way}: {:?}", face.no_roads);
+            one_clean_sheet(&face);
+            let top = *road_of(&face, 0).pit_edge.vertices.iter().find(|p| (p[2] - 120.0).abs() < 1e-6).expect("the road's top");
+            close(top[1] - N, 20.0, 1e-6);
+            let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe.vertices;
+            let end = top[0] + way * 25.0;
+            let far: Vec<f64> = toe.iter().filter(|p| (p[0] - end).abs() < 1e-6).map(|p| p[1] - top[1]).collect();
+            for want in [10.0, 20.0, 30.0, 50.0] {
+                assert!(far.iter().any(|got| (got - want).abs() < 1e-6), "{way}: the toe along the far end has {want} m out: {far:?}");
+            }
+            assert!(far.iter().all(|got| (10.0 - 1e-6..=50.0 + 1e-6).contains(got)), "{way}: nothing past the far end: {far:?}");
+            assert!(toe.iter().all(|p| (p[0] - end) * way <= 1e-6 || p[1] - top[1] < 10.0 + 1e-6), "{way}: no berm round the far end: {toe:?}");
+            let past = toe.iter().position(|p| (p[0] - end).abs() < 1e-6 && (p[1] - top[1] - 10.0).abs() < 1e-6).expect("down to the berm's line");
+            let on = [toe.get(past + 1), past.checked_sub(1).and_then(|q| toe.get(q))].into_iter().flatten().find(|p| (p[0] - end).abs() > 1e-6).expect("then along it");
+            close(on[1] - top[1], 10.0, 1e-6);
+            assert!((on[0] - end) * way > 0.0, "{way}: on past the box, not back over it: {on:?}");
+            let at = |along: f64, out: f64| height(&face.surface, top[0] - E + way * along, top[1] - N + out);
+            for (along, out) in [(5.0, 5.0), (24.0, 5.0), (24.0, 15.0), (24.0, 25.0), (24.0, 45.0), (27.0, 5.0), (40.0, 8.0)] {
+                close(at(along, out), 120.0, 1e-6);
+            }
+            close(at(27.0, 15.0), 122.0, 1e-6);
+            close(at(27.0, 40.0), 122.0, 1e-6);
+        }
+    }
+
+    /// A box's far end flared out past the box at 45 and 60 degrees to the strip, for a 20 m road, a 10 m berm and a 25 m
+    /// box, on a road climbing east and one climbing west (Tim, 2026-11-04). The toe of the wall above runs along the box's
+    /// back, 50 m out from the crest, to its back corner 25 m on past the road's top, and from there straight out at the
+    /// angle to the berm's line past the box, 10 m out: 40 m down, so 40 / tan(angle) on, 40 m at 45 and 23.094 m at 60.
+    /// The flare is flat at RL 120 like the box; 2 m out past its middle the wall above is at RL 122. One sheet, nothing
+    /// crossing.
+    #[test]
+    fn a_box_end_flared_out_past_the_box_runs_from_its_back_corner_at_the_angle() {
+        let low = FaceTarget::Rl(120.0);
+        let rows = [climbed_by(low, &[0]), berm(low, 10.0), turned_on(FaceTarget::Rl(140.0))];
+        for end in [45.0f64, 60.0] {
+            for (ramp, way) in [(ramp_at(500.0), 1.0), (FaceRamp { back: true, ..ramp_at(1000.0) }, -1.0)] {
+                let face = long_face(&rows, &[FaceRamp { width: 20.0, turn_flat: 25.0, turn_end: end, ..ramp }]);
+                assert!(face.no_roads.is_empty(), "{end} {way}: {:?}", face.no_roads);
+                one_clean_sheet(&face);
+                let top = *road_of(&face, 0).pit_edge.vertices.iter().find(|p| (p[2] - 120.0).abs() < 1e-6).expect("the road's top");
+                close(top[1] - N, 20.0, 1e-6);
+                let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe.vertices;
+                let on = 40.0 / end.to_radians().tan();
+                let corner = [top[0] + way * 25.0, top[1] + 50.0];
+                let foot = [top[0] + way * (25.0 + on), top[1] + 10.0];
+                let at = |q: [f64; 2]| toe.iter().position(|p| (p[0] - q[0]).abs() < 1e-6 && (p[1] - q[1]).abs() < 1e-6);
+                let (b, d) = (at(corner).unwrap_or_else(|| panic!("{end} {way}: the back corner: {toe:?}")), at(foot).unwrap_or_else(|| panic!("{end} {way}: the foot of the flare: {toe:?}")));
+                let slant = |p: &P3| ((p[0] - corner[0]) * (foot[1] - corner[1]) - (p[1] - corner[1]) * (foot[0] - corner[0])).abs() / plan_gap([corner[0], corner[1], 0.0], [foot[0], foot[1], 0.0]);
+                assert!(toe[b.min(d)..=b.max(d)].iter().all(|p| slant(p) < 1e-6), "{end} {way}: straight from the back corner to the line: {:?}", &toe[b.min(d)..=b.max(d)]);
+                let height = |x: f64, y: f64| height(&face.surface, x - E, y - N);
+                close(height(top[0] + way * (25.0 + on / 3.0), top[1] + 70.0 / 3.0), 120.0, 1e-6);
+                close(height(foot[0] + way * 5.0, top[1] + 5.0), 120.0, 1e-6);
+                let (sin, cos) = end.to_radians().sin_cos();
+                let middle = [(corner[0] + foot[0]) / 2.0 + way * sin * 2.0, (corner[1] + foot[1]) / 2.0 + cos * 2.0];
+                close(height(middle[0], middle[1]), 122.0, 1e-6);
+            }
+        }
+    }
+
+    /// A box where the minimum bench drops the berm, all along and past it, as on Tim's seven-row design (2026-11-04): a
+    /// 30 m least bench over a 20 m wall. The box is then the two roads, 10 m each, with no berm between, 25 m long and
+    /// squared off at its far end: along it the toe of the wall above has the box's back corner 20 m out from the crest,
+    /// its wall-side corner 10 m out, and the crest itself, which it runs along on past the box with no berm. Flat at RL
+    /// 120 in the box; the wall above rises from its far end and from the crest past it at 45 degrees, so 2 m past the end
+    /// and 5 m out it's at RL 122, the nose where the two meet. Nothing crosses. (A berm the minimum bench drops all along
+    /// on an RL leaves the sheet split along the crest with no turn at all, as before: the crest and the toe on it have
+    /// their vertices in different places.)
+    #[test]
+    fn a_box_with_no_berm_is_the_two_roads_squared_off() {
+        let low = FaceTarget::Rl(120.0);
+        let bench = FaceStep::Berm { on: Some(low), width: EdgeRule::Fixed(10.0), register: true, condition: None, min_bench: Some(30.0) };
+        let face = long_face(&[climbed_by(low, &[0]), bench, turned_on(FaceTarget::Rl(140.0))], &[FaceRamp { turn_flat: 25.0, ..ramp_at(500.0) }]);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        assert_eq!(find_crossings(&face.surface, crate::COINCIDENT).pairs, 0, "nothing crossing");
+        let top = *road_of(&face, 0).pit_edge.vertices.iter().find(|p| (p[2] - 120.0).abs() < 1e-6).expect("the road's top");
+        close(top[1] - N, 20.0, 1e-6);
+        let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe.vertices;
+        let end = top[0] + 25.0;
+        let far: Vec<f64> = toe.iter().filter(|p| (p[0] - end).abs() < 1e-6).map(|p| p[1] - top[1]).collect();
+        for want in [0.0, 10.0, 20.0] {
+            assert!(far.iter().any(|got| (got - want).abs() < 1e-6), "the toe along the far end has {want} m out: {far:?}");
+        }
+        assert!(toe.iter().all(|p| p[0] - end <= 1e-6 || (p[1] - top[1]).abs() < 1e-6), "on past the box it's the crest: {toe:?}");
+        let at = |along: f64, out: f64| height(&face.surface, top[0] - E + along, top[1] - N + out);
+        for (along, out) in [(5.0, 5.0), (24.0, 5.0), (24.0, 15.0)] {
+            close(at(along, out), 120.0, 1e-6);
+        }
+        close(at(27.0, 5.0), 122.0, 1e-6);
+    }
+
+    /// The box past a turn is as long as the ramp says: 10 m, the road's width, or 25 m, its far end that far on past the
+    /// top. With none the road turns at its top, the next road starts in line with the top crossing, and the toe past the
+    /// turn joins back the ramp's join on, 50 m, as before. With a box the next road starts straight above the top, the
+    /// same place whatever its length, and climbs its 200 m to RL 140.
+    #[test]
+    fn the_box_past_a_turn_is_as_long_as_the_ramp_says() {
+        let low = FaceTarget::Rl(120.0);
+        let rows = [climbed_by(low, &[0]), berm(low, 10.0), turned_on(FaceTarget::Rl(140.0))];
+        let mut starts = Vec::new();
         for turn_flat in [0.0, 10.0, 25.0] {
             let face = long_face(&rows, &[FaceRamp { turn_flat, ..ramp_at(500.0) }]);
             assert!(face.no_roads.is_empty(), "{turn_flat}: {:?}", face.no_roads);
             one_clean_sheet(&face);
             let road = road_of(&face, 0);
             close(climbs_and_landings(road).0, 400.0, 1e-3);
-            let pit = &road.pit_edge.vertices;
-            let top = pit.iter().position(|p| (p[2] - 120.0).abs() < 1e-6).expect("the first road's top");
-            let onto = pit[top + 1];
-            let climbs = pit[top + 1 + pit[top + 1..].windows(2).take_while(|w| (w[1][2] - w[0][2]).abs() < 1e-9).count()];
-            close(onto[0] - climbs[0], turn_flat, 1e-6);
-            close(climbs[1], onto[1], 1e-6);
-            let end = pit[pit.len() - 1];
-            close(end[0] - onto[0], -(turn_flat + 200.0 * COS), 1e-6);
-            close(end[2], 140.0, 1e-6);
-            let [_, _, _, join] = second_road_start(&face);
-            close(join[1] - N, 30.0, 1e-6);
-            close(join[0] - onto[0], 50.0, 1e-6);
+            let top = road.pit_edge.vertices[1];
+            let [onto, corner, after] = second_road_start(&face);
+            if turn_flat > 0.0 {
+                let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe.vertices;
+                let c = toe.iter().position(|p| plan_gap(*p, corner) < 1e-6).expect("the toe runs round the next road's start");
+                close(toe[c + 2][0], top[0] + turn_flat, 1e-6);
+                close(toe[c + 2][1] - N, 40.0, 1e-6);
+            } else {
+                close(after[1] - N, 30.0, 1e-6);
+                close(on_from_the_turn(&face, 2, onto, after), 50.0, 1e-6);
+            }
+            if turn_flat > 0.0 {
+                starts.push(onto);
+            }
         }
+        close(plan_gap(starts[0], starts[1]), 0.0, 1e-6);
     }
 
-    /// A switchback on a seam floor: the berm lies on a floor dipping 5 % into the wall, as a seam's does, and the pad lies
-    /// on it, so no coal is left under it (Tim, 2026-11-03). The first road climbs to the floor at RL 120 on the crest, as
-    /// on a level berm, crosses its own top level to its wall-side corner, a road width across, then goes down the floor
-    /// across the berm to where the second road comes onto the berm's line, on the floor about 19.9 m out from the crest,
-    /// so about a metre below the first road's top. It runs a road width flat along the line, which runs along the
-    /// floor's strike, and climbs from there at 10 % to RL 140. Every vertex of the line the second wall stands on lies
-    /// on the floor but the second road's own wall-side corner, which is level with its start across the road.
+    /// A switchback on a seam floor: the berm lies on a floor dipping 5 % into the wall, as a seam's does, and the box is
+    /// matched to the floor, so no coal is left under it and none ends up in the wrong strip (Tim, 2026-11-04). The road
+    /// climbs to the floor at RL 120 on the crest. The box runs 10 m on past its top on the floor: the crest at RL 120, the
+    /// road's width in 0.5 m lower, the berm beyond lower again. The next road starts on the floor straight across the
+    /// berm from the top, at RL 119, and climbs from there at 10 % to RL 140: 210 m. Every vertex of the line the second
+    /// wall stands on lies on the floor but the next road's own wall-side start, which is level with its start across the
+    /// road, and the box's back leads up to that from the floor over the last road width.
     #[test]
     fn a_road_turns_back_on_a_pad_on_a_dipping_floor() {
         const DIP: f64 = 0.05;
@@ -1734,48 +2592,143 @@ mod tests {
         one_clean_sheet(&face);
         let road = road_of(&face, 0);
         let pit = &road.pit_edge.vertices;
-        let top = pit.iter().position(|p| (p[2] - 120.0).abs() < 1e-6).expect("the first road's top");
-        let (crest_top, corner, start) = (pit[top], pit[top + 1], pit[top + 2]);
-        close(crest_top[1] - N, 20.0, 1e-6);
-        close(corner[2], 120.0, 1e-6);
-        close(corner[1] - crest_top[1], 10.0 * COS, 1e-6);
-        close(plan_gap(corner, start), 10.0, 0.1);
-        close(start[2], plane(start[1]), 1e-6);
-        assert!(start[2] < 119.1, "the pad goes down the floor: {start:?}");
-        // A road width along the line on the floor, near enough level as the line runs near enough along strike, then the
-        // climb at 10 %.
-        let flat_end = top + 2 + pit[top + 2..].windows(2).take_while(|w| ((w[1][2] - w[0][2]) / plan_gap(w[0], w[1]) - 0.1).abs() > 1e-6).count();
-        let climbs = pit[flat_end];
-        close(pit[top + 2..=flat_end].windows(2).map(|w| plan_gap(w[0], w[1])).sum::<f64>(), 10.0, 1e-6);
-        for w in pit[top + 2..=flat_end].windows(2) {
-            close(w[1][2], plane(w[1][1]), 1e-6);
-            assert!((w[1][2] - w[0][2]).abs() < 0.01 * plan_gap(w[0], w[1]), "flat to within 1 %: {w:?}");
+        let top = pit[1];
+        close(top[1] - N, 20.0, 1e-6);
+        close(top[2], 120.0, 1e-6);
+        // The box's flat and the berm beyond lie on the floor.
+        for (along, out) in [(2.0, 2.5), (5.0, 5.0), (8.0, 7.5), (5.0, 15.0)] {
+            let (x, y) = (top[0] + along, top[1] + out);
+            close(height(&face.surface, x - E, y - N), plane(y), 1e-6);
         }
-        let climb: f64 = pit[flat_end..].windows(2).map(|w| plan_gap(w[0], w[1])).sum();
-        close(climb, (140.0 - climbs[2]) / 0.1, 1e-3);
+        // The next road starts on the floor straight across the berm from the top and climbs at once.
+        let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe.vertices;
+        let onto = *pit.iter().rev().find(|p| toe.iter().any(|q| plan_gap(**p, *q) < 1e-6)).expect("it starts on the toe");
+        close(onto[2], plane(onto[1]), 1e-6);
+        assert!((onto[0] - top[0]).abs() < 3.0, "in line with the top: {onto:?} against {top:?}");
+        let at = pit.iter().position(|p| plan_gap(*p, onto) < 1e-6).expect("on its pit-side edge");
+        let climb: f64 = pit[at..].windows(2).map(|w| plan_gap(w[0], w[1])).sum();
+        close(climb, (140.0 - onto[2]) / 0.1, 1e-3);
         close(pit.last().unwrap()[2], 140.0, 1e-6);
-        // The flat stretch's wall side, from its corner to where the climb's wall-side edge starts, stands level across
-        // the road with its pit side, on the floor along the line.
-        let flat_pit = Polyline { vertices: pit[top + 2..=flat_end].to_vec(), closed: false };
-        let wall = &road.wall_edge.vertices;
-        let leg = wall.iter().position(|p| (p[2] - 120.0).abs() < 1e-6).expect("the first road's wall-side top") + 1;
-        let flat_wall = &wall[leg..=leg + wall[leg..].windows(2).take_while(|w| ((w[1][2] - w[0][2]) / plan_gap(w[0], w[1]) - 0.1).abs() > 1e-6).count()];
-        for p in flat_wall {
-            close(p[2], crate::wall::height_on(&flat_pit, *p), 1e-6);
-        }
-        let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe;
-        assert!(toe.vertices.iter().any(|p| plan_gap(*p, climbs) < 1e-6), "the second road climbs from the berm's line");
-        for p in toe.vertices.iter().filter(|p| flat_wall.iter().all(|q| plan_gap(**p, *q) > 1e-6)) {
+        let c = toe.iter().position(|q| plan_gap(*q, onto) < 1e-6).unwrap() + 1;
+        let corner = toe[c];
+        close(corner[2], onto[2], 1e-6);
+        close(plan_gap(corner, onto), 10.0, 1e-6);
+        for p in toe.iter().filter(|p| plan_gap(**p, corner) > 1e-6) {
             close(p[2], plane(p[1]), 1e-6);
+        }
+        close(plan_gap(toe[c + 1], corner), 10.0, 1e-6);
+    }
+
+    /// A flat before a turn on a floor that falls along the strip faster than the road climbs, 12 % to the east: the
+    /// crest follows the floor, so the flat does too, and the road says so, with where the flat ends, on the floor, and
+    /// how steep it goes along the crest: 12 % on a crest that runs off square by 12 in 100, 11.91 % along it.
+    #[test]
+    fn a_flat_on_a_floor_steeper_than_the_road_says_so() {
+        let plane = |x: f64| 120.0 - 0.12 * (x - E - 700.0);
+        let floor = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 30, 20, |x, _| plane(x)));
+        let on = FaceTarget::Surface(&floor);
+        let face = long_face(&[climbed_by(on, &[0]), berm(on, 10.0), turned_on(FaceTarget::Rl(160.0))], &[ramp_at(500.0)]);
+        let road = road_of(&face, 0);
+        assert_eq!(road.steep_flats.len(), 1, "{:?}", road.steep_flats);
+        let (at, steepest) = road.steep_flats[0];
+        close(steepest, 0.12 / (1.0_f64 + 0.12 * 0.12).sqrt(), 1e-6);
+        close(at[2], plane(at[0]), 1e-6);
+    }
+
+    /// A road topping out on a seam rising 5 % into the wall: its wall-side edge runs on past its inside edge's end to
+    /// reach the seam, so its top crosses at a skew, the wall-side corner ahead, and the crest steps back from that corner
+    /// to the pit-side one before it goes on. The box still runs on past the top the way the road came, east: on the seam
+    /// 5 m on past the top, and square across from the end of it on the crest 10 m on, not back over the road below.
+    #[test]
+    fn the_box_past_a_skewed_top_runs_on_the_way_the_road_came() {
+        let plane = |y: f64| 120.0 + 0.05 * (y - N - 20.0);
+        let seam = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 30, 20, |_, y| plane(y)));
+        let on = FaceTarget::Surface(&seam);
+        let face = long_face(&[climbed_by(on, &[0]), berm(on, 20.0), turned_on(FaceTarget::Rl(160.0))], &[ramp_at(500.0)]);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        one_clean_sheet(&face);
+        let road = road_of(&face, 0);
+        let (pit, wall) = (&road.pit_edge.vertices, &road.wall_edge.vertices);
+        // The wall-side edge runs on from where it reaches RL 120 along the seam to its top.
+        let (top, wall_top) = (pit[1], wall[2]);
+        assert!(wall_top[0] > top[0] + 0.5, "the top crosses ahead: {wall_top:?} against {top:?}");
+        let (x, y) = (top[0] + 5.0, top[1] + 2.0);
+        close(height(&face.surface, x - E, y - N), plane(y), 1e-6);
+        let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe.vertices;
+        assert!(toe.iter().any(|p| (p[0] - top[0] - 10.0).abs() < 1e-6), "the box's far end 10 m on: {toe:?}");
+    }
+
+    /// Two switchbacks, each on a seam floor dipping 5 % into the wall: the first road climbs east to the lower floor's
+    /// crest and turns back on a box on that floor, the second climbs west to the upper floor's and turns again on a box on
+    /// that one, and the third climbs east to RL 160. Each box is matched to its floor and runs on past the top the way its
+    /// road came: both road edges lie on the face everywhere, to 1 µm; the box's flat and the berm beyond lie on the floor,
+    /// to 1 µm, so no coal is left under them; each next road starts on the floor straight across the berm from the top.
+    /// Past each turn the toe of the wall above lies on the floor round the box until a road width short of the next road's
+    /// wall-side start, which is level with its start across the road, and leads straight up to it. The wall-side edge
+    /// crosses the pad as the pad does: from the road's wall-side top down the floor to where the next road came onto the
+    /// line, then level across that road.
+    #[test]
+    fn the_face_on_a_pad_on_a_dipping_floor_is_the_road_and_the_berm_beside_it() {
+        const DIP: f64 = 0.05;
+        let lower = |y: f64| 120.0 - DIP * (y - N - 20.0);
+        let upper = |y: f64| 140.0 - DIP * (y - N - 70.0);
+        let floors = [lower, upper];
+        let grid = |plane: &dyn Fn(f64) -> f64| triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 30, 20, |_, y| plane(y)));
+        let (low, high) = (grid(&lower), grid(&upper));
+        let (on_low, on_high) = (FaceTarget::Surface(&low), FaceTarget::Surface(&high));
+        let face = long_face(&[climbed_by(on_low, &[0]), berm(on_low, 10.0), turned_on(on_high), berm(on_high, 10.0), turned_on(FaceTarget::Rl(160.0))], &[ramp_at(500.0)]);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        one_clean_sheet(&face);
+        let road = road_of(&face, 0);
+        close(road.pit_edge.vertices.last().unwrap()[2], 160.0, 1e-6);
+        assert!(road.steep_flats.is_empty(), "{:?}", road.steep_flats);
+        // Both edges on the face all along, every half metre.
+        for edge in [&road.pit_edge, &road.wall_edge] {
+            for w in edge.vertices.windows(2) {
+                let steps = (plan_gap(w[0], w[1]) / 0.5).ceil().max(1.0) as usize;
+                for k in 0..=steps {
+                    let t = k as f64 / steps as f64;
+                    let p = [w[0][0] + t * (w[1][0] - w[0][0]), w[0][1] + t * (w[1][1] - w[0][1]), w[0][2] + t * (w[1][2] - w[0][2])];
+                    close(height(&face.surface, p[0] - E, p[1] - N) - p[2], 0.0, 1e-6);
+                }
+            }
+        }
+        let (pit, wall) = (&road.pit_edge.vertices, &road.wall_edge.vertices);
+        for (turn, floor) in floors.iter().enumerate() {
+            let toe = &face.benches.iter().find(|b| b.step == 2 * turn + 2).expect("the wall above the pad").toe.vertices;
+            let onto = *pit.iter().rev().find(|p| toe.iter().any(|q| plan_gap(**p, *q) < 1e-6)).expect("the next road starts on the toe");
+            close(onto[2], floor(onto[1]), 1e-6);
+            // Across the pad from the road's top: its pit-side corner on the crest, then its wall-side top.
+            let at = pit.iter().position(|p| plan_gap(*p, onto) < 1e-6).expect("on the pit-side edge");
+            let (top, wall_top) = (pit[at - 2], pit[at - 1]);
+            assert!((onto[0] - top[0]).abs() < 3.0, "in line with the top: {onto:?} against {top:?}");
+            // The box runs on past the top the way the road came, east then west, on the floor, with the berm beyond.
+            let way = if turn == 0 { 1.0 } else { -1.0 };
+            for out in [5.0, 15.0] {
+                let (x, y) = (top[0] + way * 5.0, top[1] + out);
+                close(height(&face.surface, x - E, y - N), floor(y), 1e-6);
+            }
+            // The wall-side edge comes down the floor from the road's wall-side top to where the next road came onto the
+            // line, then crosses that road level to its wall-side start.
+            let w = wall.iter().position(|p| plan_gap(*p, onto) < 1e-6).expect("the wall-side edge passes where the road came onto the line");
+            close(plan_gap(wall[w - 1], wall_top), 0.0, 1e-6);
+            let corner = wall[w + 1];
+            close(corner[2], onto[2], 1e-6);
+            close(plan_gap(corner, onto), 10.0, 1e-6);
+            // Round the box the toe leads up to that corner from the floor a road width short of it.
+            let c = toe.iter().position(|p| plan_gap(*p, corner) < 1e-6).expect("the toe runs round the road's start");
+            let climbs = pit[at + 1];
+            let past = [c.checked_sub(1).map(|k| toe[k]), toe.get(c + 1).copied()].into_iter().flatten().max_by(|p, q| plan_gap(*p, climbs).total_cmp(&plan_gap(*q, climbs))).expect("the toe goes on past the corner");
+            close(plan_gap(past, corner), 10.0, 1e-6);
+            close(past[2], floor(past[1]), 1e-6);
         }
     }
 
-    /// Past a turn the toe of the wall above runs from the wall-side corner of the second road's flat stretch straight back
-    /// to the berm's line the ramp's join on from the turn, along the line, then carries on as the berm's line, whatever
-    /// vertices the string has: one only at its ends, one 9 m past the turn, or one every 25 m as on a line from a grid. A
-    /// road wider than the berm does the same from further back. Joins of 20, 50 and 90 m each land where they say. The
-    /// flat stretch is a road width along the line, the pad inside the join is level, and the wall rises from the line
-    /// just past it.
+    /// Past a turn with no box the toe of the wall above runs from the next road's wall-side start straight back to the
+    /// berm's line the ramp's join on from the turn, along the line, then carries on as the berm's line, whatever vertices the string has:
+    /// one only at its ends, one 9 m past the turn, or one every 25 m as on a line from a grid. A road wider than the berm
+    /// does the same from further on. Joins of 20, 50 and 90 m each land where they say, the pad inside the join is level,
+    /// and the wall rises from the line just past it.
     #[test]
     fn the_toe_past_a_turn_joins_back_a_set_length_on_whatever_vertices_the_string_has() {
         let low = FaceTarget::Rl(120.0);
@@ -1787,16 +2740,14 @@ mod tests {
             for turn_join in [20.0, 50.0, 90.0] {
                 let mut joins = Vec::new();
                 for points in [&ends, &near, &cells] {
-                    let ramp = FaceRamp { width, turn_join, turn_flat: width, ..ramp_at(500.0) };
+                    let ramp = FaceRamp { width, turn_join, turn_flat: 0.0, ..ramp_at(500.0) };
                     let face = project_face(&string(points, FLOOR), &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows, &[ramp]).unwrap();
                     assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
                     one_clean_sheet(&face);
-                    let [onto, climbs, corner, join] = second_road_start(&face);
-                    close(climbs[0] - onto[0], -width, 1e-6);
-                    close(corner[0] - onto[0], 0.0, 1e-6);
-                    close(corner[1] - onto[1], width * COS, 1e-6);
+                    let [onto, corner, join] = second_road_start(&face);
+                    close(plan_gap(corner, onto), width, 1e-6);
                     close(join[1] - N, 30.0, 1e-6);
-                    close(join[0] - onto[0], turn_join, 1e-6);
+                    close(on_from_the_turn(&face, 2, onto, join), turn_join, 1e-6);
                     close(join[2], 120.0, 1e-6);
                     let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe;
                     let at = toe.vertices.iter().position(|p| plan_gap(*p, join) < 1e-6).expect("the toe joins the line");
@@ -1822,10 +2773,10 @@ mod tests {
     fn a_join_longer_than_the_line_runs_to_the_end_of_the_string() {
         let low = FaceTarget::Rl(120.0);
         let rows = [climbed_by(low, &[0]), berm(low, 10.0), turned_on(FaceTarget::Rl(140.0))];
-        let face = long_face(&rows, &[FaceRamp { turn_join: 5000.0, ..ramp_at(500.0) }]);
+        let face = long_face(&rows, &[FaceRamp { turn_join: 5000.0, turn_flat: 0.0, ..ramp_at(500.0) }]);
         assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
         one_clean_sheet(&face);
-        let [_, _, corner, _] = second_road_start(&face);
+        let [_, corner, _] = second_road_start(&face);
         let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe;
         let at = toe.vertices.iter().position(|p| plan_gap(*p, corner) < 1e-6).expect("the toe runs round the corner");
         let end = *toe.vertices.last().unwrap();
@@ -1837,29 +2788,32 @@ mod tests {
         close(height(&face.surface, 780.0, 35.0), 120.0, 1e-6);
     }
 
-    /// A toe that jogs 15 m just past the turn. Where it jogs back into the wall, the toe past the turn joins the jogged
-    /// line 50 m on, as it would a straight one. Where it jogs out towards the pit, a join straight to 50 m on would
-    /// cross the berm's line and cut the berm, so it stops where it first meets that line, and the toe follows the line
-    /// from there. Either way the face is one sheet with nothing crossing.
+    /// A toe that jogs 15 m into the wall just past the turn, 16 m on from the flat's end: the toe past the turn joins the
+    /// jogged line 50 m on, as it would a straight one. One that bumps 25 m into the wall for 50 m just past the turn,
+    /// with a 150 m join: a join straight to 150 m on would cross the berm's line round the bump and cut the berm, so it
+    /// stops where it first meets that line, and the toe follows the line from there. Either way the face is one sheet
+    /// with nothing crossing.
     #[test]
     fn the_toe_past_a_turn_joins_a_jogging_line_without_cutting_the_berm() {
         let low = FaceTarget::Rl(120.0);
         let rows = [climbed_by(low, &[0]), berm(low, 10.0), turned_on(FaceTarget::Rl(140.0))];
-        for jog in [15.0, -15.0] {
-            let points = [[0.0, 0.0], [715.0, 0.0], [725.0, jog], [2000.0, jog]];
-            let face = project_face(&string(&points, FLOOR), &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows, &[ramp_at(500.0)]).unwrap();
+        let jog = vec![[0.0, 0.0], [725.0, 0.0], [735.0, 15.0], [2000.0, 15.0]];
+        let bump = vec![[0.0, 0.0], [730.0, 0.0], [740.0, 25.0], [790.0, 25.0], [800.0, 0.0], [2000.0, 0.0]];
+        for (points, jogged) in [(&jog, true), (&bump, false)] {
+            let ramp = FaceRamp { turn_join: if jogged { 50.0 } else { 150.0 }, turn_flat: 0.0, ..ramp_at(500.0) };
+            let face = project_face(&string(points, FLOOR), &level(FLOOR), OffsetSide::Left, FaceDirection::Up, &rows, &[ramp]).unwrap();
             assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
             one_clean_sheet(&face);
-            let [onto, _, corner, join] = second_road_start(&face);
+            let [onto, corner, join] = second_road_start(&face);
             let toe = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe;
             let at = toe.vertices.iter().position(|p| plan_gap(*p, corner) < 1e-6).expect("the toe runs round the corner");
-            if jog > 0.0 {
-                close(join[1] - N, 30.0 + jog, 1e-6);
-                close(join[0] - onto[0], 50.0, 1e-6);
+            if jogged {
+                close(join[1] - N, 45.0, 1e-6);
+                close(on_from_the_turn(&face, 2, onto, join), 50.0, 1e-6);
             } else {
-                close(join[1] - N, 30.0, 1e-6);
-                assert!(join[0] - E < 730.0, "it stops before the line jogs out: {join:?}");
-                assert!(toe.vertices[at + 2][1] - N > 30.0 - 1e-6, "and follows the line from there: {:?}", toe.vertices);
+                assert!(on_from_the_turn(&face, 2, onto, join) < 150.0 - 1.0, "it stops at the bump: {join:?}");
+                let line = &face.benches.iter().find(|b| b.step == 2).expect("the second wall").toe;
+                assert!(line.vertices[at + 1..].iter().all(|p| p[1] - N <= 55.0 + 1e-6), "and follows the line from there: {:?}", line.vertices);
             }
         }
     }
@@ -2128,13 +3082,219 @@ mod tests {
     }
 
     /// Roads on one wall run the same way for now. The other one says so and the face builds with the first.
+    /// The height of a sheet anywhere along the 2 km toe of `long_face`.
+    fn height_on_long(sheet: &TriMesh, x: f64, y: f64) -> Option<f64> {
+        TriangleBins::new(sheet, [E - 100.0, N - 100.0], [E + 2100.0, N + 300.0]).height(sheet, [E + x, N + y])
+    }
+
+    /// Where the foot of the first wall is, out from the toe, at a place along it.
+    fn foot_out_at(face: &Face, x: f64) -> f64 {
+        let foot = &face.benches.iter().find(|b| b.step == 0).expect("the first wall").toe;
+        let crossing = foot.vertices.windows(2).find(|w| (w[0][0] - E - x) * (w[1][0] - E - x) <= 0.0 && w[0][0] != w[1][0]).unwrap_or_else(|| panic!("the foot doesn't reach {x}"));
+        let t = (E + x - crossing[0][0]) / (crossing[1][0] - crossing[0][0]);
+        crossing[0][1] + t * (crossing[1][1] - crossing[0][1]) - N
+    }
+
+    /// A road on its own on a face, to set one beside others against.
+    fn alone(steps: &[FaceStep<'_>], ramp: FaceRamp) -> FaceRoad {
+        let face = long_face(steps, &[ramp]);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        face.roads[0].clone()
+    }
+
+    /// How far a point is from a line in three dimensions.
+    fn off_line_3d(line: &Polyline, p: P3) -> f64 {
+        line.vertices
+            .windows(2)
+            .map(|w| {
+                let d = [w[1][0] - w[0][0], w[1][1] - w[0][1], w[1][2] - w[0][2]];
+                let length = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+                let t = if length > 0.0 { (((p[0] - w[0][0]) * d[0] + (p[1] - w[0][1]) * d[1] + (p[2] - w[0][2]) * d[2]) / length).clamp(0.0, 1.0) } else { 0.0 };
+                ((p[0] - w[0][0] - t * d[0]).powi(2) + (p[1] - w[0][1] - t * d[1]).powi(2) + (p[2] - w[0][2] - t * d[2]).powi(2)).sqrt()
+            })
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    /// Two roads' edges are one line, wherever the walls they were cut from split them: the same ends, and every vertex
+    /// of each on the other, to 1 µm.
+    fn same_edges(road: &FaceRoad, on_its_own: &FaceRoad) {
+        for (edge, own) in [(&road.pit_edge, &on_its_own.pit_edge), (&road.wall_edge, &on_its_own.wall_edge)] {
+            for (p, q) in [(edge.vertices[0], own.vertices[0]), (*edge.vertices.last().unwrap(), *own.vertices.last().unwrap())] {
+                assert!(plan_gap(p, q) < 1e-6 && (p[2] - q[2]).abs() < 1e-6, "{p:?} against {q:?}");
+            }
+            for (one, other) in [(edge, own), (own, edge)] {
+                for p in &one.vertices {
+                    assert!(off_line_3d(other, *p) < 1e-6, "{p:?} is {} off {:?}", off_line_3d(other, *p), other.vertices);
+                }
+            }
+        }
+    }
+
+    /// Two roads climbing towards each other on one wall 40 m high at 45 degrees (Tim, 2026-11-05: a straight ramp and a
+    /// switchback on one face): one east from 200 m along, one west from 1200 m. Each is 400 m to RL 140 at 10 % and just
+    /// as it is on its own, a section through each 200 m from its start is the other's mirrored, and between their tops
+    /// the wall is the plain one. Behind each start the toe moves back by the road, 10 m square to it.
     #[test]
-    fn a_road_running_the_other_way_on_a_wall_says_so() {
-        let face = long_face(&[climbed_by(FaceTarget::Rl(140.0), &[0, 1])], &[ramp_at(200.0), FaceRamp { back: true, ..ramp_at(1200.0) }]);
-        assert_eq!(face.no_roads.len(), 1, "{:?}", face.no_roads);
-        assert_eq!(face.no_roads[0].ramp, 1);
-        assert_eq!(face.no_roads[0].why, OTHER_WAY);
+    fn roads_climbing_towards_each_other_on_one_wall_both_climb_it() {
+        let row = [climbed_by(FaceTarget::Rl(140.0), &[0, 1])];
+        let (east, west) = (ramp_at(200.0), FaceRamp { back: true, ..ramp_at(1200.0) });
+        let face = long_face(&row, &[east, west]);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
         holds_its_grade_to(road_of(&face, 0), 140.0, 400.0);
+        holds_its_grade_to(road_of(&face, 1), 140.0, 400.0);
+        let one = [climbed_by(FaceTarget::Rl(140.0), &[0])];
+        same_edges(road_of(&face, 0), &alone(&one, east));
+        same_edges(road_of(&face, 1), &alone(&one, west));
+        let top = road_of(&face, 1).pit_edge.vertices.last().copied().unwrap();
+        close(top[0] - E, 1200.0 - 400.0 * COS, 1e-6);
+        one_clean_sheet(&face);
+        for k in 1..60 {
+            let y = k as f64;
+            let (one, other) = (height_on_long(&face.surface, 400.0, y), height_on_long(&face.surface, 1000.0, y));
+            assert!(one.zip(other).is_none_or(|(a, b)| (a - b).abs() < 1e-6) && one.is_some() == other.is_some(), "{y} m out: {one:?} against {other:?}");
+            let plain = height_on_long(&face.surface, 700.0, y);
+            if y <= 40.0 {
+                close(plain.unwrap_or_else(|| panic!("nothing at 700, {y}")), FLOOR + y, 1e-6);
+            } else {
+                assert!(plain.is_none(), "past the crest at 700, {y}: {plain:?}");
+            }
+        }
+        close(foot_out_at(&face, 100.0), 10.0 * COS, 1e-6);
+        close(foot_out_at(&face, 700.0), 0.0, 1e-9);
+        close(foot_out_at(&face, 1300.0), 10.0 * COS, 1e-6);
+    }
+
+    /// Two roads climbing away from each other: one west from 700 m along, one east from 1100 m. Their entrances face
+    /// each other and share the floor between them, the toe 10 m square to the roads back from the line all the way, and
+    /// a section between them is one wall from there to its crest. Each road is 400 m to RL 140, and past their tops the
+    /// toe is the line.
+    #[test]
+    fn roads_climbing_away_from_each_other_share_the_floor_between_their_entrances() {
+        let row = [climbed_by(FaceTarget::Rl(140.0), &[0, 1])];
+        let (west, east) = (FaceRamp { back: true, ..ramp_at(700.0) }, ramp_at(1100.0));
+        let face = long_face(&row, &[west, east]);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        holds_its_grade_to(road_of(&face, 0), 140.0, 400.0);
+        holds_its_grade_to(road_of(&face, 1), 140.0, 400.0);
+        one_clean_sheet(&face);
+        let back = 10.0 * COS;
+        for x in [750.0, 800.0, 900.0, 1000.0, 1050.0] {
+            close(foot_out_at(&face, x), back, 1e-6);
+        }
+        assert!(height_on_long(&face.surface, 900.0, back - 1.0).is_none(), "the floor in front of the toe isn't the face's");
+        for (y, rl) in [(back + 1.0, FLOOR + 1.0), (back + 39.0, FLOOR + 39.0)] {
+            close(height_on_long(&face.surface, 900.0, y).unwrap_or_else(|| panic!("nothing at 900, {y}")), rl, 1e-6);
+        }
+        assert!(height_on_long(&face.surface, 900.0, back + 40.5).is_none(), "the crest is a road width back");
+        close(foot_out_at(&face, 200.0), 0.0, 1e-9);
+        close(foot_out_at(&face, 1700.0), 0.0, 1e-9);
+    }
+
+    /// The same with roads of different widths, 10 m west and 20 m east: their moved toes can't meet. The wall splits
+    /// halfway between the stretches they take, from the west road's wall-side start, a metre on from its start as it climbs
+    /// at sin(angle) = 0.1, at 701 m, to the east road's, 2 m back at 1098 m: at 899.5 m. The toe stays on the line for 0.5 m
+    /// either side, so the walls either side rise square to it, and each entrance comes across from there at 45 degrees
+    /// and is back by its own road beyond that.
+    #[test]
+    fn entrances_of_different_widths_facing_each_other_come_across_at_the_split() {
+        let row = [climbed_by(FaceTarget::Rl(140.0), &[0, 1])];
+        let face = long_face(&row, &[FaceRamp { back: true, ..ramp_at(700.0) }, FaceRamp { width: 20.0, ..ramp_at(1100.0) }]);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        holds_its_grade_to(road_of(&face, 0), 140.0, 400.0);
+        holds_its_grade_to(road_of(&face, 1), 140.0, 400.0);
+        one_clean_sheet(&face);
+        for x in [899.1, 899.5, 899.9] {
+            close(foot_out_at(&face, x), 0.0, 1e-6);
+        }
+        close(foot_out_at(&face, 895.0), 4.0, 1e-6);
+        close(foot_out_at(&face, 905.0), 5.0, 1e-6);
+        close(foot_out_at(&face, 850.0), 10.0 * COS, 1e-6);
+        close(foot_out_at(&face, 950.0), 20.0 * COS, 1e-6);
+    }
+
+    /// Roads running opposite ways over one stretch of wall would cross: the one later in the list stops, and says which
+    /// it would cross. The other builds as on its own. Tops facing closer than a road's width stop it too. The stretch each
+    /// takes runs to its wall-side top, a metre back from its pit-side top as it climbs at sin(angle) = 0.1.
+    #[test]
+    fn roads_running_opposite_ways_over_one_stretch_stop_the_later() {
+        let face = long_face(&[climbed_by(FaceTarget::Rl(140.0), &[0, 1])], &[ramp_at(200.0), FaceRamp { back: true, ..ramp_at(700.0) }]);
+        assert_eq!(face.no_roads.len(), 1, "{:?}", face.no_roads);
+        assert_eq!((face.no_roads[0].ramp, face.no_roads[0].crosses), (1, Some(0)));
+        assert_eq!(face.no_roads[0].why, CROSSES);
+        holds_its_grade_to(road_of(&face, 0), 140.0, 400.0);
+        one_clean_sheet(&face);
+        // Tops facing 7 m apart, closer than a road's 10 m: the same. 17 m apart, both build.
+        for (gap, both) in [(5.0, false), (15.0, true)] {
+            let face = long_face(&[climbed_by(FaceTarget::Rl(140.0), &[0, 1])], &[ramp_at(200.0), FaceRamp { back: true, ..ramp_at(200.0 + 2.0 * 400.0 * COS + 2.0 + gap) }]);
+            assert_eq!(face.no_roads.is_empty(), both, "{gap}: {:?}", face.no_roads);
+            one_clean_sheet(&face);
+        }
+    }
+
+    /// Roads both ways up two walls and through the berm between: one east from 200 m, one west from 1500 m, each 200 m up
+    /// a wall 20 m high, the berm's line coming in to each road's top the way that road runs, and 200 m more. Each is just
+    /// as it is on its own.
+    #[test]
+    fn roads_both_ways_through_one_berm_are_as_they_are_alone() {
+        let (low, high) = (FaceTarget::Rl(120.0), FaceTarget::Rl(140.0));
+        let rows = [climbed_by(low, &[0, 1]), berm(low, 10.0), climbed_by(high, &[0, 1])];
+        let alone_rows = [climbed_by(low, &[0]), berm(low, 10.0), climbed_by(high, &[0])];
+        let (east, west) = (ramp_at(200.0), FaceRamp { back: true, ..ramp_at(1500.0) });
+        let face = long_face(&rows, &[east, west]);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        for (r, ramp) in [(0, east), (1, west)] {
+            assert_eq!(road_of(&face, r).steps, [0, 2]);
+            holds_its_grade_to(road_of(&face, r), 140.0, 400.0);
+            same_edges(road_of(&face, r), &alone(&alone_rows, ramp));
+        }
+        one_clean_sheet(&face);
+    }
+
+    /// A straight ramp and a switchback on one face (Tim, 2026-11-05): ramp 0 climbs east from 100 m up two walls and
+    /// after the berm between, and ramp 1 climbs east from 1200 m and turns back on a box on that berm to climb the second
+    /// wall west. On the first wall both run east and the straight ramp sits on the toe moved back by the switchback's
+    /// entrance, as roads one way do. On the second they run opposite ways, side by side, and the switchback is just as it
+    /// is on its own: it still turns, where it used to be cut running on east. Each climbs 400 m to RL 140.
+    #[test]
+    fn a_straight_ramp_and_a_switchback_on_one_face_are_as_they_are_alone() {
+        let (low, high) = (FaceTarget::Rl(120.0), FaceTarget::Rl(140.0));
+        let upper = |ramps: &'static [usize], turns: &'static [usize]| FaceStep::Project { to: high, batter: EdgeRule::Fixed(45.0), condition: None, ramps, turns };
+        let rows = [climbed_by(low, &[0, 1]), berm(low, 10.0), upper(&[0, 1], &[1])];
+        let (straight, switchback) = (FaceRamp { after_berm: true, ..ramp_at(100.0) }, ramp_at(1200.0));
+        let face = long_face(&rows, &[straight, switchback]);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        assert_eq!(road_of(&face, 0).steps, [0, 2]);
+        close(climbs_and_landings(road_of(&face, 0)).0, 400.0, 1e-3);
+        close(road_of(&face, 0).pit_edge.vertices.last().unwrap()[2], 140.0, 1e-6);
+        same_edges(road_of(&face, 1), &alone(&[climbed_by(low, &[0]), berm(low, 10.0), upper(&[0], &[0])], switchback));
+        let turned = road_of(&face, 1);
+        let (bottom, top) = (turned.pit_edge.vertices[0], *turned.pit_edge.vertices.last().unwrap());
+        let furthest = turned.pit_edge.vertices.iter().map(|p| p[0]).fold(f64::NEG_INFINITY, f64::max);
+        assert!(top[0] < furthest - 150.0, "it turns back: {:?}", turned.pit_edge.vertices);
+        close(bottom[0] - E, 1200.0, 1e-6);
+        close(top[2], 140.0, 1e-6);
+        close(climbs_and_landings(turned).0, 400.0, 1e-3);
+        one_clean_sheet(&face);
+    }
+
+    /// The other way about: the switchback climbs west from 1200 m and turns back on its box to climb the second wall east.
+    /// Now the two run opposite ways on the first wall and one way on the second, where the switchback's toe past its turn
+    /// joins back long before the straight ramp. Each is just as it is on its own.
+    #[test]
+    fn a_switchback_running_back_first_beside_a_straight_ramp_is_as_it_is_alone() {
+        let (low, high) = (FaceTarget::Rl(120.0), FaceTarget::Rl(140.0));
+        let upper = |ramps: &'static [usize], turns: &'static [usize]| FaceStep::Project { to: high, batter: EdgeRule::Fixed(45.0), condition: None, ramps, turns };
+        let rows = [climbed_by(low, &[0, 1]), berm(low, 10.0), upper(&[0, 1], &[1])];
+        let (straight, switchback) = (FaceRamp { after_berm: true, ..ramp_at(100.0) }, FaceRamp { back: true, ..ramp_at(1200.0) });
+        let face = long_face(&rows, &[straight, switchback]);
+        assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
+        same_edges(road_of(&face, 0), &alone(&[climbed_by(low, &[0]), berm(low, 10.0), upper(&[0], &[])], straight));
+        same_edges(road_of(&face, 1), &alone(&[climbed_by(low, &[0]), berm(low, 10.0), upper(&[0], &[0])], switchback));
+        let turned = road_of(&face, 1);
+        let top = *turned.pit_edge.vertices.last().unwrap();
+        let furthest = turned.pit_edge.vertices.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min);
+        assert!(top[0] > furthest + 150.0, "it turns back: {:?}", turned.pit_edge.vertices);
+        close(top[2], 140.0, 1e-6);
         one_clean_sheet(&face);
     }
 
@@ -2414,5 +3574,191 @@ mod tests {
         assert_eq!(face.no_roads[0].step, 6, "{:?}", face.no_roads);
         assert!(face.no_roads[0].why.contains("short of the top"), "{:?}", face.no_roads);
         assert_eq!(face.benches.iter().map(|b| b.step).collect::<Vec<_>>(), [0, 2, 4, 6], "all four walls are there");
+    }
+
+    /// A design run from the last crest of another, on a level toe at `rl`, as a planner starts the next one up.
+    fn from_crest(below: &Face, rl: f64, steps: &[FaceStep<'_>], ramps: &[FaceRamp]) -> Face {
+        let toe = &below.benches.last().expect("a wall").crest;
+        project_face(toe, &level(rl), OffsetSide::Left, FaceDirection::Up, steps, ramps).unwrap()
+    }
+
+    /// A ramp carrying on from the top of its road on the face below.
+    fn carried_on(below: &Face, ramp: FaceRamp) -> FaceRamp {
+        let road = road_of(below, 0);
+        let top = RoadTop { pit: *road.pit_edge.vertices.last().unwrap(), wall: *road.wall_edge.vertices.last().unwrap() };
+        FaceRamp { start: [top.wall[0], top.wall[1]], back: road.back, carries_on: Some(top), ..ramp }
+    }
+
+    /// The same points in order, each within a micrometre, with any two in a row that close taken as one: a road's top
+    /// can be a rounding step off the crest it carries on from, in one design as in two.
+    fn same_points(a: &[[f64; 3]], b: &[[f64; 3]], what: &str) {
+        let near = |p: &[f64; 3], q: &[f64; 3]| p.iter().zip(q).all(|(u, v)| (u - v).abs() <= 1e-6);
+        let once = |points: &[[f64; 3]]| {
+            let mut kept: Vec<[f64; 3]> = Vec::new();
+            for p in points {
+                if !kept.last().is_some_and(|q| near(p, q)) {
+                    kept.push(*p);
+                }
+            }
+            kept
+        };
+        let (a, b) = (&once(a)[..], &once(b)[..]);
+        assert_eq!(a.len(), b.len(), "{what}: {a:?} against {b:?}");
+        for (p, q) in a.iter().zip(b) {
+            assert!(p.iter().zip(q).all(|(u, v)| (u - v).abs() <= 1e-6), "{what}: {p:?} against {q:?}");
+        }
+    }
+
+    /// One edge of a road split over two designs, joined where the second starts: on the toe, which the top below can be
+    /// a rounding step off.
+    fn joined(lower: &Polyline, upper: &Polyline) -> Vec<[f64; 3]> {
+        let mut edge = lower.vertices.clone();
+        let same = |p: &[f64; 3], q: &[f64; 3]| p.iter().zip(q).all(|(u, v)| (u - v).abs() <= 1e-6);
+        let skip = usize::from(edge.last().zip(upper.vertices.first()).is_some_and(|(p, q)| same(p, q)));
+        edge.extend_from_slice(&upper.vertices[skip..]);
+        edge
+    }
+
+    /// A design split in two at a crest is the same as the design run whole, to 1 µm: the road, both its edges, every
+    /// toe and crest, and the sheet's height wherever either covers. `split` is the row the second design starts at.
+    fn split_is_whole(steps: &[FaceStep<'_>], split: usize, ramp: FaceRamp) {
+        let whole = long_face(steps, &[ramp]);
+        assert!(whole.no_roads.is_empty(), "{:?}", whole.no_roads);
+        let lower = long_face(&steps[..split], &[ramp]);
+        let rl = lower.benches.last().unwrap().crest.vertices[0][2];
+        let upper = from_crest(&lower, rl, &steps[split..], &[carried_on(&lower, ramp)]);
+        assert!(lower.no_roads.is_empty() && upper.no_roads.is_empty(), "{:?} {:?}", lower.no_roads, upper.no_roads);
+        one_clean_sheet(&lower);
+        one_clean_sheet(&upper);
+        let (all, below, above) = (road_of(&whole, 0), road_of(&lower, 0), road_of(&upper, 0));
+        let first_wall = steps[split..].iter().position(|s| matches!(s, FaceStep::Project { .. })).unwrap();
+        assert_eq!(above.steps[0], first_wall, "it climbs the first wall above");
+        same_points(&all.pit_edge.vertices, &joined(&below.pit_edge, &above.pit_edge), "pit edge");
+        same_points(&all.wall_edge.vertices, &joined(&below.wall_edge, &above.wall_edge), "wall edge");
+        assert_eq!(all.back, above.back);
+        let benches: Vec<&FaceBench> = lower.benches.iter().chain(&upper.benches).collect();
+        assert_eq!(whole.benches.len(), benches.len());
+        for (one, two) in whole.benches.iter().zip(benches) {
+            same_points(&one.toe.vertices, &two.toe.vertices, "toe");
+            same_points(&one.crest.vertices, &two.crest.vertices, "crest");
+        }
+        let bins = |sheet: &TriMesh| TriangleBins::new(sheet, [E - 100.0, N - 100.0], [E + 2100.0, N + 300.0]);
+        let (w, l, u) = (bins(&whole.surface), bins(&lower.surface), bins(&upper.surface));
+        let mut sampled = 0;
+        for i in 0..400 {
+            for j in 0..60 {
+                let p = [E + 3.7 + 5.0 * i as f64, N - 2.3 + 1.31 * j as f64];
+                let Some(h) = w.height(&whole.surface, p) else { continue };
+                let split = l.height(&lower.surface, p).or_else(|| u.height(&upper.surface, p)).unwrap_or_else(|| panic!("nothing at {p:?} in the two designs"));
+                close(split, h, 1e-6);
+                sampled += 1;
+            }
+        }
+        assert!(sampled > 10_000, "{sampled}");
+    }
+
+    /// A road up a 45 degree wall to RL 120 stops on its crest, where a planner starts the next design, and that design
+    /// carries it on past a 10 m berm and up to RL 140: going up through the berm, and going after it, crossing it level.
+    /// Two designs give the same road and the same face as one.
+    #[test]
+    fn a_road_carries_on_from_the_crest_of_the_design_below() {
+        let (low, high) = (FaceTarget::Rl(120.0), FaceTarget::Rl(140.0));
+        let steps = [climbed_by(low, &[0]), berm(low, 10.0), climbed_by(high, &[0])];
+        for after_berm in [false, true] {
+            split_is_whole(&steps, 1, FaceRamp { after_berm, ..ramp_at(500.0) });
+            split_is_whole(&steps, 1, FaceRamp { after_berm, back: true, ..ramp_at(1500.0) });
+        }
+    }
+
+    /// The design above turns the road back on a flat pad on the berm before its first wall, as one design does.
+    #[test]
+    fn a_road_carries_on_round_a_switchback_in_the_design_above() {
+        let low = FaceTarget::Rl(120.0);
+        split_is_whole(&[climbed_by(low, &[0]), berm(low, 10.0), turned_on(FaceTarget::Rl(140.0))], 1, ramp_at(500.0));
+    }
+
+    /// With no berm between, the road carries straight on up the next wall, here at 50 degrees.
+    #[test]
+    fn a_road_carries_straight_on_up_a_wall_with_no_berm() {
+        let steeper = FaceStep::Project { to: FaceTarget::Rl(140.0), batter: EdgeRule::Fixed(50.0), condition: None, ramps: &[0], turns: &[] };
+        split_is_whole(&[climbed_by(FaceTarget::Rl(120.0), &[0]), steeper], 1, ramp_at(500.0));
+    }
+
+    /// A road carried on that isn't on the first wall above starts afresh on its first wall, from the nearest point on
+    /// that wall's toe to its top below, with an entrance, as a ramp from there would.
+    #[test]
+    fn a_road_not_on_the_first_wall_above_starts_afresh_from_its_top() {
+        let low = FaceTarget::Rl(120.0);
+        let lower = long_face(&[climbed_by(low, &[0])], &[ramp_at(500.0)]);
+        let steps = [plain_wall(FaceTarget::Rl(130.0), 45.0), berm(FaceTarget::Rl(130.0), 10.0), climbed_by(FaceTarget::Rl(150.0), &[0])];
+        let ramp = carried_on(&lower, ramp_at(500.0));
+        let upper = from_crest(&lower, 120.0, &steps, &[ramp]);
+        let afresh = from_crest(&lower, 120.0, &steps, &[FaceRamp { carries_on: None, ..ramp }]);
+        assert!(upper.no_roads.is_empty(), "{:?}", upper.no_roads);
+        let (road, fresh) = (road_of(&upper, 0), road_of(&afresh, 0));
+        assert_eq!(road.steps, [2, 2]);
+        same_points(&road.pit_edge.vertices, &fresh.pit_edge.vertices, "pit edge");
+        close(road.pit_edge.vertices[0][2], 130.0, 1e-6);
+    }
+
+    /// A toe laid on a floor dipping 5 % across it takes a road's top back in level, as the road came out: through both
+    /// corners at RL 120, level between them, and on the floor everywhere else.
+    #[test]
+    fn a_toe_takes_a_roads_top_back_in_level_across_the_road() {
+        let toe = Polyline { vertices: [0.0, 300.0, 600.0].iter().map(|&x| [E + x, N, 120.0 - 0.05 * (x - 300.0)]).collect(), closed: false };
+        let top = RoadTop { pit: [E + 290.0, N + 0.3, 120.0], wall: [E + 300.0, N - 0.2, 120.0] };
+        let (line, on) = with_road_top(&toe, top);
+        assert_eq!([on.pit, on.wall], [[E + 290.0, N, 120.0], [E + 300.0, N, 120.0]]);
+        let heights: Vec<[f64; 2]> = line.vertices.iter().map(|p| [p[0] - E, p[2]]).collect();
+        assert_eq!(heights, [[0.0, 135.0], [290.0, 120.0], [300.0, 120.0], [600.0, 105.0]], "the vertex at 300 m is the wall-side corner");
+    }
+
+    /// A design starting with a berm from the crest below has no wall under that berm, so a minimum bench of 25 m can't
+    /// drop it: it keeps its full 10 m, and the wall above stands 10 m out from the crest. In one design the 20 m wall
+    /// is under the minimum, so the berm goes, as before.
+    #[test]
+    fn a_berm_with_no_wall_below_it_in_its_design_stays() {
+        let low = FaceTarget::Rl(120.0);
+        let lower = long_face(&[plain_wall(low, 45.0)], &[]);
+        let least = FaceStep::Berm { on: Some(low), width: EdgeRule::Fixed(10.0), register: true, condition: None, min_bench: Some(25.0) };
+        let upper = from_crest(&lower, 120.0, &[least, plain_wall(FaceTarget::Rl(140.0), 45.0)], &[]);
+        assert!(upper.steps[0].no_berm.is_empty(), "{:?}", upper.steps[0].no_berm);
+        let toe = &upper.benches[0].toe;
+        assert!(toe.vertices.iter().all(|p| (p[1] - N - 30.0).abs() < 1e-6), "{:?}", toe.vertices);
+        let whole = long_face(&[plain_wall(low, 45.0), least, plain_wall(FaceTarget::Rl(140.0), 45.0)], &[]);
+        assert!(!whole.steps[1].no_berm.is_empty(), "{:?}", whole.steps[1]);
+    }
+
+    /// A road topping out on a seam that rises 5 % into the wall: its wall-side edge runs on past the inside edge's end to
+    /// reach the seam, so its top crosses the road at a skew, the wall-side corner ahead. The crest just behind that corner
+    /// is then as near the inside corner as the corner itself, and the crossing was taken for the crest behind the road:
+    /// the road's heading came out across the berm, the line's step was taken from its top, not its foot, and the next
+    /// toe zigzagged back over the step, folding the next stretch's wall-side edge out several road widths. Now the road
+    /// crosses the berm and climbs on along the wall: its inside edge never turns back toward the pit, its wall-side edge
+    /// is never more than a road width off it, and the face is one sheet with nothing crossing.
+    #[test]
+    fn a_road_after_the_berm_from_a_skewed_top_climbs_on_along_the_wall() {
+        let plane = |y: f64| 120.0 + 0.05 * (y - N - 20.0);
+        let seam = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 30, 20, |_, y| plane(y)));
+        let on = FaceTarget::Surface(&seam);
+        for width in [10.0, 20.0] {
+            let face = long_face(&[climbed_by(on, &[0]), berm(on, 20.0), climbed_by(FaceTarget::Rl(160.0), &[0])], &[FaceRamp { width, after_berm: true, ..ramp_at(500.0) }]);
+            assert!(face.no_roads.is_empty(), "{width}: {:?}", face.no_roads);
+            one_clean_sheet(&face);
+            let road = road_of(&face, 0);
+            assert_eq!(road.steps, [0, 2]);
+            // Each edge's top on the first wall is its last vertex before it crosses the berm.
+            let before_the_berm = |edge: &Polyline| edge.vertices.windows(2).position(|w| w[1][1] - w[0][1] > 15.0 && w[1][1] - w[0][1] > (w[1][0] - w[0][0]).abs()).expect("across the berm");
+            let top = before_the_berm(&road.pit_edge);
+            let (pit, wall) = (road.pit_edge.vertices[top], road.wall_edge.vertices[before_the_berm(&road.wall_edge)]);
+            assert!(wall[0] > pit[0] + 0.5, "{width}: the top crosses ahead, wall-side corner {wall:?}, inside corner {pit:?}");
+            for w in road.pit_edge.vertices[top..].windows(2) {
+                assert!(w[1][1] - w[0][1] > -1e-6, "{width}: the inside edge turns back toward the pit: {w:?}");
+            }
+            for p in &road.wall_edge.vertices {
+                assert!(off_line(&road.pit_edge, *p) < width + 0.5, "{width}: the wall-side edge is {:.1} m off at {p:?}", off_line(&road.pit_edge, *p));
+            }
+            close(road.pit_edge.vertices.last().unwrap()[2], 160.0, 1e-6);
+        }
     }
 }

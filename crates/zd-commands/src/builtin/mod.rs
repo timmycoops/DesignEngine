@@ -17,7 +17,7 @@ mod surface;
 
 pub use deswik::{ImportDeswik, ImportDeswikParams, MeshesAs};
 pub use exchange::{ExportCsv, ExportDxf, ExportParams, ImportStrings, ImportStringsParams};
-pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParams, SaveDesign, SaveDesignParams};
+pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParams, SaveDesign, SaveDesignParams, Step, StepParams};
 pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
 pub use layer::{CreateLayer, CreateLayerParams, DeleteLayer, DeleteLayerParams, RecolourLayer, RecolourLayerParams, RenameLayer, RenameLayerParams};
 pub use object::{DeleteObject, DeleteObjects, MoveObjects, MoveObjectsParams, ObjectParams, ObjectsParams, RenameObject, RenameParams};
@@ -28,7 +28,7 @@ pub use solid::{CutBySurface, CutBySurfaceParams, ImportSolid, ImportSolidParams
 pub use string::{
     CornerParam, CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, DrapeString, DrapeStringParams, FilterString,
     FilterStringParams, InsertVertex, InsertVertexParams, JoinStrings, JoinStringsParams, MoveVertex, MoveVertexParams, NumberStrings,
-    NumberStringsParams, OffsetString, OffsetStringParams, ReverseString, SetClosed, SetClosedParams, SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam,
+    NumberStringsParams, OffsetString, OffsetStringParams, RedrawStretch, RedrawStretchParams, ReverseString, SetClosed, SetClosedParams, SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam,
     SmoothString, SmoothStringParams, SplitString, SplitStringParams, StringParams,
 };
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
@@ -48,6 +48,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(InsertVertex);
     registry.register(MoveVertex);
     registry.register(DeleteVertex);
+    registry.register(RedrawStretch);
     registry.register(SetGrade);
     registry.register(OffsetString);
     registry.register(NumberStrings);
@@ -72,6 +73,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(ProjectStep);
     registry.register(SaveDesign);
     registry.register(ProjectDesign);
+    registry.register(Step);
     registry.register(ImportVulcanSeam);
     registry.register(SuggestSeamDefinition);
     registry.register(BuildSeamModel);

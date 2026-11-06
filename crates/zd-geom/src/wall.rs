@@ -361,6 +361,7 @@ fn without_low_benches(line: &Polyline, widths: Vec<f64>, crest: &Polyline, leas
     for short in [true, false] {
         even_out(&mut lows, &lengths, widest, short);
     }
+    widen_to_corners(&mut lows, &result, &lengths, widest);
     if at_corners {
         move_changes_to_corners(&mut lows, &result, &lengths, widest);
     }
@@ -380,15 +381,37 @@ fn without_low_benches(line: &Polyline, widths: Vec<f64>, crest: &Polyline, leas
     (result, widths, no_berm)
 }
 
+/// Whether a line turns at its vertex `i` by more than a corner does.
+fn is_corner(line: &Polyline, i: usize) -> bool {
+    let n = line.vertices.len();
+    let (a, b, c) = (line.vertices[i - 1], line.vertices[i], line.vertices[(i + 1) % n]);
+    let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+    cross2(u, v).abs().atan2(u[0] * v[0] + u[1] * v[1]).to_degrees() > CORNER_TURN
+}
+
+/// A berm tapers in at 45 degrees beside a stretch with none, over as far as it's wide, into that stretch (0027
+/// item 12), and it can't taper round a corner. Where the stretch with none runs round a corner and stops short of
+/// that reach past it, the berm runs full width to the corner instead, and tapers in from there: berms only widen.
+fn widen_to_corners(lows: &mut [bool], line: &Polyline, lengths: &[f64], reach: f64) {
+    for i in 1..lows.len() {
+        if lows[i - 1] == lows[i] || is_corner(line, i) {
+            continue;
+        }
+        let corner = if lows[i - 1] {
+            (1..i).rev().take_while(|&j| lengths[j..i].iter().sum::<f64>() < reach).find(|&j| is_corner(line, j)).map(|j| j..i)
+        } else {
+            (i + 1..lows.len()).take_while(|&j| lengths[i..j].iter().sum::<f64>() < reach).find(|&j| is_corner(line, j)).map(|j| i..j)
+        };
+        if let Some(stretch) = corner {
+            lows[stretch].fill(false);
+        }
+    }
+}
+
 /// A change of width bevels over as far as the berm is wide, and it can't do that round a corner. One nearer
 /// a corner than that moves to the corner, where the walls can meet in a hip with no bevel.
 fn move_changes_to_corners(lows: &mut [bool], line: &Polyline, lengths: &[f64], reach: f64) {
-    let n = line.vertices.len();
-    let corner = |i: usize| {
-        let (a, b, c) = (line.vertices[i - 1], line.vertices[i], line.vertices[(i + 1) % n]);
-        let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
-        cross2(u, v).abs().atan2(u[0] * v[0] + u[1] * v[1]).to_degrees() > CORNER_TURN
-    };
+    let corner = |i: usize| is_corner(line, i);
     for i in 1..lows.len() {
         if lows[i - 1] == lows[i] || corner(i) {
             continue;
@@ -1477,14 +1500,21 @@ fn wall_mesh(sweep: &Sweep, edges: &[Vec<Edge>], walked: &Walked, origin: P3) ->
     let mut mesh = MeshBuilder { origin, mesh: TriMesh::default(), numbered: HashMap::new() };
     for (wall, around) in edges.iter().enumerate() {
         let pieces = &walked.pieces[wall];
-        if pieces.is_empty() {
-            if walked.footless[wall] {
+        // A wall that closes just as it reaches the target has its crest only touching it at the point where it closes:
+        // the wall is all below the crest, as one that closes lower is.
+        let closed = sweep.walls[wall].closed_at;
+        let touches_where_it_closes = !pieces.is_empty() && closed.is_some_and(|top| pieces.iter().all(|piece| piece.points.iter().all(|p| norm(sub(*p, top)) <= NEAR)));
+        if pieces.is_empty() || touches_where_it_closes {
+            // A transition with no width is stepped straight over by the crest walk, and has nothing on it to build.
+            if walked.footless[wall] || (sweep.is_transition(wall) && no_width(around)) {
                 continue;
             }
             if sweep.walls[wall].closed_at.is_none() {
                 return Err(GeomError::InvalidInput("a wall reaches past the target with no crest on it".into()));
             }
-            let outline: Vec<P3> = around.iter().map(|e| e.from).collect();
+            // Where its crest touches it, the neighbours have the crest's own point: it takes that one.
+            let touch = pieces.iter().flat_map(|piece| piece.points.first()).next().copied();
+            let outline: Vec<P3> = around.iter().map(|e| touch.filter(|t| norm(sub(e.from, *t)) <= NEAR).unwrap_or(e.from)).collect();
             mesh.add_polygon(&outline)?;
             continue;
         }
@@ -1691,6 +1721,38 @@ mod tests {
         assert_eq!(v.boundary_edges, toe_segments + step.crest.vertices.len() - 1 + 2, "{v:?}");
     }
 
+    /// A berm dropped by a 3 m minimum bench, 30 m wide, along a crest that runs east and then turns 53.13 degrees into the
+    /// wall at x 300. The wall below is 2 m high to 9 m past the corner and 10 m beyond, so the stretch with no berm runs
+    /// round the corner and stops short there, as above a switchback's pad on the made-up grid pit (Strip 1, 2026-11-04).
+    /// The berm can't taper round the corner, so it runs full width to it, and tapers in from there at 45 degrees in plan
+    /// back along the stretch with none: the line leaves the crest 42 m short of the corner and meets the wide leg's line
+    /// square across from the corner, 24 m back and 18 m out. Before, it stood up square from the crest at the stretch's
+    /// end, leaning back 4 m over 25 m, with no taper.
+    #[test]
+    fn a_berm_dropped_round_a_corner_tapers_in_from_the_corner() {
+        let corner = 300.0;
+        let crest = string(&[[0.0, 0.0, 110.0], [corner, 0.0, 110.0], [corner + 5.4, 7.2, 110.0], [corner + 120.0, 160.0, 110.0]], false);
+        let toe = string(&[[0.0, 0.0, 108.0], [corner, 0.0, 108.0], [corner + 5.4, 7.2, 108.0], [corner + 8.4, 11.2, 100.0], [corner + 120.0, 160.0, 100.0]], false);
+        let least = LeastBench { toe: &toe, height: 3.0 };
+        let (lines, log) = next_line(&crest, EdgeRule::Fixed(30.0), Some(least), OffsetSide::Left, 0.0, 0.0).unwrap();
+        assert_eq!(log.no_berm.len(), 1);
+        close(log.no_berm[0].to[0] - E, corner, 1e-9);
+        close(log.no_berm[0].to[1] - N, 0.0, 1e-9);
+        assert_eq!(lines.len(), 1);
+        let line: Vec<[f64; 3]> = lines[0].vertices.iter().map(|p| [p[0] - E, p[1] - N, p[2]]).collect();
+        let leaves = line.iter().position(|p| p[1] > 1e-6).expect("the berm comes in") - 1;
+        let (from, to) = (line[leaves], line[leaves + 1]);
+        // Where it leaves the crest is a bevel off a berm of no width, which a plane can only be at 1 mm (LEAST_WIDTH).
+        close(from[0], corner - 42.0, LEAST_WIDTH + 1e-6);
+        close(from[1], 0.0, 1e-6);
+        close(to[0], corner - 24.0, 1e-6);
+        close(to[1], 18.0, 1e-6);
+        // From there it's the wide leg's line, 30 m out from it.
+        for p in &line[leaves + 1..] {
+            close((p[0] - corner) * -0.8 + p[1] * 0.6, 30.0, 1e-6);
+        }
+    }
+
     /// Crest vertices about the test origin.
     fn crest(step: &WallStep) -> Vec<[f64; 3]> {
         step.crest.vertices.iter().map(|p| [p[0] - E, p[1] - N, p[2]]).collect()
@@ -1863,6 +1925,60 @@ mod tests {
             close(p[2], 120.0, 1e-3);
         }
         close(step.wall.area(), 160.0 * 20.0 * 2f64.sqrt(), 1e-3);
+    }
+
+    /// The top of a road's wall edge from the grid pit's Strip 2, climbing at 10 %, its stretches all but in line and
+    /// their batters a millionth apart as the road leaves them (2026-11-04). The bevel between the last two has no width,
+    /// so the crest walk steps straight over it, and the wall builds without it, one sheet. The target rises 2.25 % east
+    /// and meets the string at its end: every crest point is on it, to 1 mm, and the crest ends on the string's end.
+    #[test]
+    fn a_bevel_with_no_width_between_stretches_all_but_in_line_is_stepped_over() {
+        let toe = Polyline {
+            vertices: vec![
+                [650825.09802825, 7450315.372709796, 110.31636437853734],
+                [650845.3970060945, 7450316.356536292, 112.48254874304114],
+                [650903.7449611351, 7450321.801501609, 118.3411171942294],
+                [650951.1874379665, 7450326.2081006095, 123.1054708109529],
+                [650955.9636356949, 7450326.651728125, 123.58514643170335],
+            ],
+            closed: false,
+        };
+        let end = toe.vertices[4];
+        let height = |x: f64| end[2] + 0.0225 * (x - end[0]);
+        let target = triangulate_grid(&Grid::from_fn([E + 800.0, N + 300.0], [10.0, 10.0], 41, 41, |x, _| height(x)));
+        let batters = [64.97615246601654, 64.97620972720827, 64.97619721818528, 64.97619686103701];
+        let step = project_wall_by_edge(&toe, OffsetSide::Left, &batters, &target).unwrap();
+        for p in &step.crest.vertices {
+            close(p[2], height(p[0]), 1e-3);
+        }
+        let last = *step.crest.vertices.last().unwrap();
+        assert!(plan_gap(last, end) < 1e-3 && (last[2] - end[2]).abs() < 1e-3, "the crest ends on the string's end: {last:?}");
+        let v = step.wall.validity();
+        assert_eq!(v.non_manifold_edges + v.inconsistent_edges + v.degenerate_triangles, 0, "{v:?}");
+        assert_eq!(crate::boundary_loops(&step.wall).unwrap().len(), 1, "one sheet, with one edge round it");
+    }
+
+    /// A toe east along y 30, north up x 100 to y 70 and on east to (200, 72), at RL 120, with a 45 degree wall to RL
+    /// 140: the berm's line past a switchback box squared off at its far end, with the box's wall-side corner and the line
+    /// beside the box on the far end (2026-11-04). The nose where the toe turns north has its hip reach RL 140 at (80,
+    /// 50), just where the line beside the box at (100, 50) reaches it straight up the wall, so the stretch of wall from
+    /// (100, 40) to (100, 50) closes just on the target, its crest only touching it there. It's all below the crest, and
+    /// built so. In plan the wall runs out 20 m square from the toe to a crest at RL 140, along y 50 to x 80 and up x 80
+    /// to the last stretch's crest: its area is that plan's √2 times over, to 1 µm², and it's one sheet.
+    #[test]
+    fn a_wall_closing_just_on_the_target_is_all_below_its_crest() {
+        let toe = string(&[[0.0, 30.0, 120.0], [100.0, 30.0, 120.0], [100.0, 40.0, 120.0], [100.0, 50.0, 120.0], [100.0, 70.0, 120.0], [200.0, 72.0, 120.0]], false);
+        let step = project_wall(&toe, OffsetSide::Left, 45.0, &target(|_, _| 140.0)).unwrap();
+        for p in crest(&step) {
+            close(p[2], 140.0, 1e-6);
+        }
+        let length = 100f64.hypot(2.0);
+        let (nx, ny) = (-2.0 / length * 20.0, 100.0 / length * 20.0);
+        let corner = [80.0, 70.0 + ny + (80.0 - 100.0 - nx) / 100.0 * 2.0];
+        let plan = [[0.0, 30.0], [100.0, 30.0], [100.0, 70.0], [200.0, 72.0], [200.0 + nx, 72.0 + ny], corner, [80.0, 50.0], [0.0, 50.0]];
+        let area = (0..plan.len()).map(|i| plan[i][0] * plan[(i + 1) % plan.len()][1] - plan[(i + 1) % plan.len()][0] * plan[i][1]).sum::<f64>().abs() / 2.0;
+        close(step.wall.area(), area * 2f64.sqrt(), 1e-6);
+        assert_eq!(crate::boundary_loops(&step.wall).unwrap().len(), 1, "one sheet, with one edge round it");
     }
 
     fn triangle_area(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {
