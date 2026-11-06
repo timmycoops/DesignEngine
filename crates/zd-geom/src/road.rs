@@ -547,13 +547,19 @@ fn across_crest(crest: &Polyline, top: RoadTop, width: EdgeRule<'_>, side: Offse
         let (a, b) = ends(i);
         nearest_along(a, b, top.wall).1
     };
-    // Of the crest's segments at the wall-side top, the one behind the road, not the one across the road's top.
+    // Of the crest's segments at the wall-side top, the one behind the road, not the one across the road's top. A top
+    // that crosses the road at a skew, as on a grid, brings the crest just behind it as near the pit-side corner as the
+    // wall-side corner is, so nearness alone can't tell them apart: a segment lying along the crossing is the crossing.
     let segments: Vec<usize> = (0..segment_count(crest)).collect();
     let far_from_road = |i: usize| {
         let (a, b) = ends(i);
         plan_gap(a, top.pit).max(plan_gap(b, top.pit))
     };
-    let behind = match segments.iter().copied().filter(|&i| gap(i) < ON).max_by(|&i, &j| far_from_road(i).total_cmp(&far_from_road(j))) {
+    let across_the_top = |i: usize| {
+        let (a, b) = ends(i);
+        nearest_along(top.wall, top.pit, a).1 < ON && nearest_along(top.wall, top.pit, b).1 < ON
+    };
+    let behind = match segments.iter().copied().filter(|&i| gap(i) < ON && !across_the_top(i)).max_by(|&i, &j| far_from_road(i).total_cmp(&far_from_road(j))) {
         Some(i) => i,
         None => segments.iter().copied().min_by(|&i, &j| gap(i).total_cmp(&gap(j))).expect("a crest has a segment"),
     };
@@ -2414,5 +2420,38 @@ mod tests {
         assert_eq!(face.no_roads[0].step, 6, "{:?}", face.no_roads);
         assert!(face.no_roads[0].why.contains("short of the top"), "{:?}", face.no_roads);
         assert_eq!(face.benches.iter().map(|b| b.step).collect::<Vec<_>>(), [0, 2, 4, 6], "all four walls are there");
+    }
+
+    /// A road topping out on a seam that rises 5 % into the wall: its wall-side edge runs on past the inside edge's end to
+    /// reach the seam, so its top crosses the road at a skew, the wall-side corner ahead. The crest just behind that corner
+    /// is then as near the inside corner as the corner itself, and the crossing was taken for the crest behind the road:
+    /// the road's heading came out across the berm, the line's step was taken from its top, not its foot, and the next
+    /// toe zigzagged back over the step, folding the next stretch's wall-side edge out several road widths. Now the road
+    /// crosses the berm and climbs on along the wall: its inside edge never turns back toward the pit, its wall-side edge
+    /// is never more than a road width off it, and the face is one sheet with nothing crossing.
+    #[test]
+    fn a_road_after_the_berm_from_a_skewed_top_climbs_on_along_the_wall() {
+        let plane = |y: f64| 120.0 + 0.05 * (y - N - 20.0);
+        let seam = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 30, 20, |_, y| plane(y)));
+        let on = FaceTarget::Surface(&seam);
+        for width in [10.0, 20.0] {
+            let face = long_face(&[climbed_by(on, &[0]), berm(on, 20.0), climbed_by(FaceTarget::Rl(160.0), &[0])], &[FaceRamp { width, after_berm: true, ..ramp_at(500.0) }]);
+            assert!(face.no_roads.is_empty(), "{width}: {:?}", face.no_roads);
+            one_clean_sheet(&face);
+            let road = road_of(&face, 0);
+            assert_eq!(road.steps, [0, 2]);
+            // Each edge's top on the first wall is its last vertex before it crosses the berm.
+            let before_the_berm = |edge: &Polyline| edge.vertices.windows(2).position(|w| w[1][1] - w[0][1] > 15.0 && w[1][1] - w[0][1] > (w[1][0] - w[0][0]).abs()).expect("across the berm");
+            let top = before_the_berm(&road.pit_edge);
+            let (pit, wall) = (road.pit_edge.vertices[top], road.wall_edge.vertices[before_the_berm(&road.wall_edge)]);
+            assert!(wall[0] > pit[0] + 0.5, "{width}: the top crosses ahead, wall-side corner {wall:?}, inside corner {pit:?}");
+            for w in road.pit_edge.vertices[top..].windows(2) {
+                assert!(w[1][1] - w[0][1] > -1e-6, "{width}: the inside edge turns back toward the pit: {w:?}");
+            }
+            for p in &road.wall_edge.vertices {
+                assert!(off_line(&road.pit_edge, *p) < width + 0.5, "{width}: the wall-side edge is {:.1} m off at {p:?}", off_line(&road.pit_edge, *p));
+            }
+            close(road.pit_edge.vertices.last().unwrap()[2], 160.0, 1e-6);
+        }
     }
 }

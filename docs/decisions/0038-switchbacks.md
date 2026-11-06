@@ -203,3 +203,20 @@ width, one saved before it could say does too, and less than zero is refused. Th
 - **A face angle set on a leg,** as Deswik's first leg has at 37°.
 - **A turn with the end held,** and graded switchbacks with a radius.
 - **The grade on the pit-side edge on bends,** going down.
+
+## Fixed since: a top crossing at a skew (2026-11-04)
+
+Tim found a flap past the top crest of the made-up grid pit's Grid ramps, Strip 1, where road A comes out. On a seam
+rising into the wall, a road's wall-side edge runs on past the end of its inside edge to reach the seam, so its top
+crosses the road at a skew, the wall-side corner ahead. The crest just behind that corner was then as near the inside
+corner as the corner itself, and of the two crest segments at the corner the crossing was taken for the one behind the
+road (item 4). The road's heading came out across the berm, so the step in the berm's line was taken at its top, not its
+foot, and the next toe zigzagged back over the step. The next stretch followed it, going 37 m in toward the wall and
+29 m back, and its wall-side edge folded out about 90 m, carrying the wall above and the crest with it. A segment lying
+along the crossing is now never taken for the crest behind.
+
+Known answer: on a seam rising 5 % into the wall, roads of 10 m and 20 m after a 20 m berm climb on along the next
+wall, their inside edges never turning back toward the pit and their wall-side edges never more than a road width off,
+one sheet with nothing crossing; before, the inside edge turned back. On the grid pit, folds go from 2 to 0 in Grid
+ramps and from 1 to 0 in Flat toe to grids, with roads of 20, 25 and 30 m, after the berm or through it; the pit's own
+check stays at 33 faults, and the other five designs and Tim's back strip are unchanged.
