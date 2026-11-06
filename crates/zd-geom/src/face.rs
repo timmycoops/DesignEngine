@@ -69,6 +69,29 @@ pub struct StepReport {
     pub no_berm: Vec<Stretch>,
 }
 
+/// A line of a face redrawn by hand (decision 0046): the line a step ends on, a wall's crest or a berm's line, as you
+/// drew it. The steps above start from it, and the step it ends re-forms to meet it.
+#[derive(Debug, Clone, Copy)]
+pub struct FaceEdit<'a> {
+    /// The step whose line it is, from 0.
+    pub after: usize,
+    pub line: &'a Polyline,
+}
+
+/// What a line redrawn by hand did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EditReport {
+    /// The step whose line it is, from 0.
+    pub after: usize,
+    /// The berm it ends, its narrowest and widest across from the crest below (m).
+    pub berm: Option<[f64; 2]>,
+    /// The wall it ends, its flattest and steepest from the toe to your crest (degrees).
+    pub batter: Option<[f64; 2]>,
+    /// Roads on their way whose start wasn't on your line, which go in from the nearest place on it as they would on the
+    /// line the steps made: the ramp, and how far your line is from that start (m).
+    pub roads_off: Vec<(usize, f64)>,
+}
+
 /// A whole face.
 #[derive(Debug, Clone)]
 pub struct Face {
@@ -82,6 +105,8 @@ pub struct Face {
     /// Where the face ends on a berm, the berm's line: where a wall after it would start. A step design shows it, and
     /// its next step starts there.
     pub berm_line: Option<Polyline>,
+    /// What each line redrawn by hand did, in step order.
+    pub edits: Vec<EditReport>,
 }
 
 /// What registering a toe did.
@@ -220,10 +245,24 @@ pub fn level_floor(line: &Polyline, rl: f64) -> TriMesh {
 ///
 /// A road with its end held has its start worked out here: see `face_with_held_ends`.
 pub fn project_face(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: FaceDirection, steps: &[FaceStep<'_>], ramps: &[FaceRamp]) -> Result<Face, GeomError> {
-    if ramps.iter().any(|ramp| ramp.ends_at.is_some()) {
-        return face_with_held_ends(toe, register, side, direction, steps, ramps);
+    project_edited_face(toe, register, side, direction, steps, ramps, &[])
+}
+
+/// The whole face, with lines redrawn by hand standing in for those the steps make (decision 0046). A berm's line stands for
+/// the toe of the wall above as the steps would make it, roads and all; a wall's crest for its crest, the wall below
+/// re-formed to meet it. Your line is refused where it crosses the line below or comes out on its pit side.
+pub fn project_edited_face(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: FaceDirection, steps: &[FaceStep<'_>], ramps: &[FaceRamp], edits: &[FaceEdit<'_>]) -> Result<Face, GeomError> {
+    if let Some(edit) = edits.iter().find(|edit| edit.after >= steps.len()) {
+        return Err(GeomError::Refused(format!("a line redrawn by hand is after step {}, and there are {} steps", edit.after + 1, steps.len())));
     }
-    face_with_roads(toe, register, side, direction, steps, ramps, &HashMap::new())
+    // Refused before anything runs, as a road that can't go in otherwise stops a wall lower and the face builds without it.
+    if let Some(edit) = edits.iter().find(|edit| ramps_of(&steps[edit.after]).is_some_and(|ramps| !ramps.is_empty())) {
+        return Err(GeomError::Refused(format!("step {}: {ROAD_ON_CREST}", edit.after + 1)));
+    }
+    if ramps.iter().any(|ramp| ramp.ends_at.is_some()) {
+        return face_with_held_ends(toe, register, side, direction, steps, ramps, edits);
+    }
+    face_with_roads(toe, register, side, direction, steps, ramps, &HashMap::new(), edits)
 }
 
 /// A wall step's ramps, if it's a wall.
@@ -285,9 +324,9 @@ impl HeldEnd {
 /// at the end, and each run moves the start as a planner would by hand. It's usually there in three or four
 /// runs. If it can't get there, as when it would have to start past the end of the string, the closest it came
 /// is what's kept, and the road says how far off it is.
-fn face_with_held_ends(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: FaceDirection, steps: &[FaceStep<'_>], ramps: &[FaceRamp]) -> Result<Face, GeomError> {
+fn face_with_held_ends(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: FaceDirection, steps: &[FaceStep<'_>], ramps: &[FaceRamp], edits: &[FaceEdit<'_>]) -> Result<Face, GeomError> {
     let no_roads: HashMap<usize, usize> = (0..ramps.len()).map(|r| (r, 0)).collect();
-    let plain = face_with_roads(toe, register, side, direction, steps, ramps, &no_roads)?;
+    let plain = face_with_roads(toe, register, side, direction, steps, ramps, &no_roads, edits)?;
     let length = toe.plan_length();
     let mut held: Vec<HeldEnd> = Vec::new();
     for (r, ramp) in ramps.iter().enumerate() {
@@ -309,7 +348,7 @@ fn face_with_held_ends(toe: &Polyline, register: &TriMesh, side: OffsetSide, dir
             let p = point_along(toe, road.start);
             spec[road.ramp].start = [p[0], p[1]];
         }
-        let mut face = face_with_roads(toe, register, side, direction, steps, &spec, &HashMap::new())?;
+        let mut face = face_with_roads(toe, register, side, direction, steps, &spec, &HashMap::new(), edits)?;
         let (mut short, mut left) = (0, 0.0);
         let tried: Vec<f64> = held.iter().map(|road| road.start).collect();
         for road in &mut held {
@@ -340,17 +379,19 @@ fn face_with_held_ends(toe: &Polyline, register: &TriMesh, side: OffsetSide, dir
 }
 
 /// The face with its roads as far as they go. A road that what's built on it can't stand on stops a wall lower.
-fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: FaceDirection, steps: &[FaceStep<'_>], ramps: &[FaceRamp], limits: &HashMap<usize, usize>) -> Result<Face, GeomError> {
+#[allow(clippy::too_many_arguments)]
+fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: FaceDirection, steps: &[FaceStep<'_>], ramps: &[FaceRamp], limits: &HashMap<usize, usize>, edits: &[FaceEdit<'_>]) -> Result<Face, GeomError> {
     let mut limits = limits.clone();
     let mut held_back: HashMap<usize, NoRoad> = HashMap::new();
     loop {
         let mut face = FaceParts::default();
-        match run_face(toe, register, side, direction, steps, ramps, &limits, &mut face) {
+        match run_face(toe, register, side, direction, steps, ramps, &limits, edits, &mut face) {
             Ok(()) => {
                 face.no_roads.extend(held_back.into_values());
                 face.no_roads.sort_by_key(|n| n.ramp);
-                return Ok(Face { surface: split_at(weld(&face.meshes), &face.meets), benches: face.benches, steps: face.steps, roads: face.roads, no_roads: face.no_roads, berm_line: face.berm_line });
+                return Ok(Face { surface: split_at(weld(&face.meshes), &face.meets), benches: face.benches, steps: face.steps, roads: face.roads, no_roads: face.no_roads, berm_line: face.berm_line, edits: face.edits });
             }
+            Err(e @ GeomError::Refused(_)) => return Err(e),
             Err(e) => {
                 let highest = face.last_wall.iter().max_by_key(|(_, step)| **step).map(|(r, step)| (*r, *step));
                 let Some((r, step)) = highest else { return Err(e) };
@@ -365,9 +406,9 @@ fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, directi
 
 /// The steps run, with each ramp in `limits` stopping after that many walls.
 #[allow(clippy::too_many_arguments)]
-fn run_face(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: FaceDirection, steps: &[FaceStep<'_>], ramps: &[FaceRamp], limits: &HashMap<usize, usize>, face: &mut FaceParts) -> Result<(), GeomError> {
+fn run_face(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: FaceDirection, steps: &[FaceStep<'_>], ramps: &[FaceRamp], limits: &HashMap<usize, usize>, edits: &[FaceEdit<'_>], face: &mut FaceParts) -> Result<(), GeomError> {
     match direction {
-        FaceDirection::Up => run_steps(toe, register, side, steps, ramps, limits, face)?,
+        FaceDirection::Up => run_steps(toe, register, side, steps, ramps, limits, edits, face)?,
         FaceDirection::Down => {
             let (toe, surface) = (mirrored_line(toe), mirrored_mesh(register));
             let swapped = if side == OffsetSide::Left { OffsetSide::Right } else { OffsetSide::Left };
@@ -386,7 +427,9 @@ fn run_face(toe: &Polyline, register: &TriMesh, side: OffsetSide, direction: Fac
                     FaceStep::Berm { on, width, register, condition, min_bench } => FaceStep::Berm { on: on.map(|on| mirrored_target(on, mesh.as_ref())), width: width.upside_down(), register, condition, min_bench },
                 })
                 .collect();
-            run_steps(&toe, &surface, swapped, &mirrored, ramps, limits, face)?;
+            let lines: Vec<Polyline> = edits.iter().map(|edit| mirrored_line(edit.line)).collect();
+            let upside_down: Vec<FaceEdit<'_>> = edits.iter().zip(&lines).map(|(edit, line)| FaceEdit { after: edit.after, line }).collect();
+            run_steps(&toe, &surface, swapped, &mirrored, ramps, limits, &upside_down, face)?;
             face.mirror();
         }
     }
@@ -421,6 +464,7 @@ struct FaceParts {
     roads: Vec<FaceRoad>,
     no_roads: Vec<NoRoad>,
     berm_line: Option<Polyline>,
+    edits: Vec<EditReport>,
     /// By ramp: how many walls it's climbed so far, and the last of them.
     walls_climbed: HashMap<usize, usize>,
     last_wall: HashMap<usize, usize>,
@@ -646,6 +690,13 @@ impl Climbing {
         self.turned = Some([at[0], at[1]]);
     }
 
+    /// Carries on from its start on a line redrawn by hand, as a road carries on from its top: with no entrance, turn or
+    /// pad to make again, as the line has them, or left them out on purpose (decision 0046).
+    fn carry_on_from(&mut self, top: RoadTop) {
+        self.spec.start = [top.wall[0], top.wall[1]];
+        (self.top, self.turned, self.pad, self.pad_corner) = (Some(top), None, None, None);
+    }
+
     /// The road as far as it got.
     fn road(self) -> Option<FaceRoad> {
         let steps = self.steps?;
@@ -654,12 +705,16 @@ impl Climbing {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps: &[FaceStep<'a>], ramps: &[FaceRamp], limits: &HashMap<usize, usize>, face: &mut FaceParts) -> Result<(), GeomError> {
+fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps: &[FaceStep<'a>], ramps: &[FaceRamp], limits: &HashMap<usize, usize>, edits: &[FaceEdit<'_>], face: &mut FaceParts) -> Result<(), GeomError> {
+    let edit_after = |step: usize| edits.iter().find(|edit| edit.after == step).map(|edit| edit.line);
     let mut from = toe.clone();
     let mut waiting: Option<Waiting> = None;
     // The crest a berm starts from. The berm waits for the wall above it, as that wall's crest can come
     // down onto `from` part way along a segment.
     let mut berm_from: Option<Polyline> = None;
+    // The crest under the last berm as the wall below left it, before any box rounds it: what a line redrawn by hand for
+    // that berm stands clear of and is measured from, as a crest going round a box loops back on itself.
+    let mut berm_crest: Option<Polyline> = None;
     let mut on = Resting::Surface(register);
     // Whether `from` lies on `on`. A berm that isn't registered keeps its crest's heights.
     let mut lying = true;
@@ -677,7 +732,10 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
     }
     // Roads that have stopped, which walls further up can't start again.
     let mut stopped: Vec<usize> = Vec::new();
-    let fail = |k: usize, e: GeomError| GeomError::InvalidInput(format!("step {}: {e}", k + 1));
+    let fail = |k: usize, e: GeomError| match e {
+        GeomError::Refused(why) => GeomError::Refused(format!("step {}: {why}", k + 1)),
+        e => GeomError::InvalidInput(format!("step {}: {e}", k + 1)),
+    };
     let mut k = 0;
     while k < steps.len() {
         match steps[k] {
@@ -709,13 +767,17 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 }
                 let (line, mut batters) = batter.applied_to(&from).map_err(|e| fail(k, e))?;
                 from = line;
-                let flattest = batters.iter().copied().fold(f64::INFINITY, f64::min);
+                let mut flattest = batters.iter().copied().fold(f64::INFINITY, f64::min);
                 // Steps at one batter with no berm between them are one wall carrying straight on: the
                 // targets on the way only mark where its crest lines fall.
-                // A road turning back starts a new wall.
+                // A road turning back starts a new wall, and a crest redrawn by hand ends one.
+                let mut ended = false;
                 let wall: Vec<(usize, FaceTarget<'a>, Option<f64>)> = (k..steps.len())
                     .map_while(|j| match steps[j] {
-                        FaceStep::Project { to, batter: b, condition, ramps: r, turns: t } if b.same_as(&batter) && r == here && (j == k || t.is_empty()) => Some((j, to, condition)),
+                        FaceStep::Project { to, batter: b, condition, ramps: r, turns: t } if !ended && b.same_as(&batter) && r == here && (j == k || t.is_empty()) => {
+                            ended = edit_after(j).is_some();
+                            Some((j, to, condition))
+                        }
                         _ => None,
                     })
                     .collect();
@@ -726,6 +788,38 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                         stopped.push(open.ramp);
                         face.roads.extend(open.road());
                     }
+                }
+                // A berm's line redrawn by hand stands for this wall's toe as the steps would make it, roads and all
+                // (decision 0046). A road on its way whose start on that toe is on your line carries on from there as it
+                // is: your line has its entrance or the pad it turned on, or left them out on purpose. One whose start
+                // isn't goes in from the nearest place on your line, as it would on the steps' line, and is reported.
+                let mut toe_edited = false;
+                if let Some(drawn) = k.checked_sub(1).filter(|before| matches!(steps[*before], FaceStep::Berm { .. })).and_then(edit_after) {
+                    let (starts, made) = road_starts(&from, &batters, side, &climbing, lying.then(|| on.mesh()), to, flattest);
+                    let line = match (&berm_from, lying) {
+                        (_, true) => laid_on(drawn, &made, Floor::Surface(on.mesh())),
+                        (Some(crest), false) => laid_on(drawn, &made, Floor::Crest(crest)),
+                        (None, false) => laid_on(drawn, &made, Floor::None),
+                    };
+                    toe_edited = true;
+                    let mut report = EditReport { after: k - 1, berm: None, batter: None, roads_off: Vec::new() };
+                    if let Some(crest) = berm_crest.as_ref().or(berm_from.as_ref()) {
+                        stands_clear(&line, crest, side).map_err(|e| fail(k - 1, e))?;
+                        report.berm = across(&line, crest).map(|[narrowest, widest, ..]| [narrowest, widest]);
+                    }
+                    for (open, start) in climbing.iter_mut().zip(starts) {
+                        let Some(start) = start else { continue };
+                        let off = gap_to(&line, start.pit).max(gap_to(&line, start.wall));
+                        if off > ON_YOUR_LINE {
+                            report.roads_off.push((open.ramp, off));
+                            continue;
+                        }
+                        // Its corners go into your line where it reaches them, at your line's heights, as they would into the steps'.
+                        open.carry_on_from(start);
+                    }
+                    (from, batters) = batter.applied_to(&line).map_err(|e| fail(k, e))?;
+                    flattest = batters.iter().copied().fold(f64::INFINITY, f64::min);
+                    face.edits.push(report);
                 }
                 let on_wall: Vec<RoadOnWall<'_>> = climbing.iter().map(|open| RoadOnWall { spec: open.spec, top: open.top, floor: lying.then(|| on.mesh()), turned: open.turned, pad: open.pad }).collect();
                 for road in &on_wall {
@@ -765,12 +859,18 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                         let gaps: Vec<Stretch> = cut.as_ref().map_or_else(Vec::new, |cut| cut.logs.iter().flat_map(|log| &log.no_height).filter(|stretch| !across_a_road_end(stretch, &cut.roads)).copied().collect());
                         let no_height = !wall.log.no_height.is_empty() || !gaps.is_empty();
                         let toe = if no_height { with_touches(&foot, &crest) } else { foot };
+                        // A crest redrawn by hand: the wall below re-forms to meet it, straight from its toe (decision 0046).
+                        let redrawn = match edit_after(last) {
+                            Some(drawn) => Some(redrawn_crest(drawn, &toe, &crest, side, target.mesh(), last, !on_wall.is_empty()).map_err(|e| fail(last, e))?),
+                            None => None,
+                        };
                         // The targets on the way are all on this one wall, which stands on this toe.
                         for bench in face.benches.iter_mut().filter(|bench| marks.iter().any(|(j, ..)| *j == bench.step)) {
                             bench.toe = toe.clone();
                         }
                         let pads: Vec<Pad> = cut.iter().flat_map(|cut| &cut.flats).filter_map(|(r, pit, wall)| climbing[*r].pad_corner.map(|top| Pad { top, pit: pit.clone(), wall: wall.clone() })).collect();
-                        finish_berm_round_pads(&mut berm_from, &toe, &pads, face).map_err(|e| fail(last, e))?;
+                        // A berm that can't reach your line where it is says so, not the road on it.
+                        finish_berm_round_pads(&mut berm_from, &toe, &pads, face).map_err(|e| if toe_edited { refused_beside(k - 1, &e) } else { fail(last, e) })?;
                         match cut {
                             Some(cut) => {
                                 merge_stretches(&mut report.no_height, &gaps);
@@ -786,7 +886,10 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                                 face.meshes.extend(cut.meshes);
                                 face.meets.extend(cut.meets);
                             }
-                            None => face.meshes.push(wall.wall),
+                            None => face.meshes.push(match &redrawn {
+                                Some((crest, _)) => band(&toe, crest).map_err(|e| refused_beside(last, &e))?,
+                                None => wall.wall,
+                            }),
                         }
                         // The road one would cross, by its ramp, before any are taken out of the list.
                         let gave_up: Vec<(usize, Stopped)> = gave_up.into_iter().map(|(r, stop)| (r, Stopped { crosses: stop.crosses.map(|other| climbing[other].ramp), ..stop })).collect();
@@ -808,6 +911,13 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                             face.roads.extend(open.road());
                         }
                         face.steps.push(report);
+                        let crest = match redrawn {
+                            Some((line, edited)) => {
+                                face.edits.push(edited);
+                                line
+                            }
+                            None => crest,
+                        };
                         face.benches.push(FaceBench { step: last, toe, crest: crest.clone() });
                         waiting = Some(Waiting { crest, condition });
                         on = target;
@@ -917,8 +1027,17 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                         open.turn_at(at);
                     }
                 }
+                // A berm's line redrawn by hand with no wall after it: the design ends there, or another berm starts from it.
+                // One with a wall after it stands for that wall's toe, which the wall takes in.
+                if let Some(drawn) = edit_after(k).filter(|_| !matches!(steps.get(k + 1), Some(FaceStep::Project { .. }))) {
+                    let line = laid_on(drawn, &from, if register { Floor::Surface(on.mesh()) } else { Floor::Crest(&crest) });
+                    stands_clear(&line, &plain_crest, side).map_err(|e| fail(k, e))?;
+                    face.edits.push(EditReport { after: k, berm: across(&line, &plain_crest).map(|[narrowest, widest, ..]| [narrowest, widest]), batter: None, roads_off: Vec::new() });
+                    from = line;
+                }
                 lying = register;
                 berm_from = Some(crest);
+                berm_crest = Some(plain_crest);
                 (report.no_wall, report.pieces_dropped, report.no_berm) = (false, dropped, log.no_berm);
                 face.steps.push(report);
                 k += 1;
@@ -931,14 +1050,181 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
     finish_berm(&mut berm_from, &from, face).map_err(|e| fail(steps.len().saturating_sub(1), e))?;
     face.roads.extend(climbing.drain(..).filter_map(Climbing::road));
     // The last crest goes nowhere, so conditioning it only cleans the string: the sheet keeps its own edge.
+    // A crest redrawn by hand stays as it was drawn.
     if let Some(Waiting { crest, condition: Some(tolerance) }) = waiting
         && tolerance > 0.0
+        && edit_after(steps.len() - 1).is_none()
         && let Some(bench) = face.benches.last_mut().filter(|b| b.step + 1 == steps.len())
     {
         let (lines, _) = next_toe(&crest, 0.0, side, tolerance, on.mesh()).map_err(|e| fail(bench.step, e))?;
         bench.crest = longest(lines);
     }
     Ok(())
+}
+
+/// Why a crest can't be redrawn where a road climbs its wall: the road's cut is built with the wall.
+const ROAD_ON_CREST: &str = "a road climbs this wall, so its crest can't be redrawn yet: redraw the line after the berm above it instead";
+
+/// How far a road's start may be from a line redrawn by hand for it to carry on from there (m): further than conditioning
+/// can move a line, as for a road carrying on from a crest (decision 0041).
+const ON_YOUR_LINE: f64 = 2.0;
+
+/// How far a line redrawn by hand may stand past the line below, on its pit side, before it's refused (m): the usual
+/// conditioning, as far as the lines the steps make stand past each other where a wall has no height.
+const PIT_SIDE: f64 = 0.1;
+
+/// The toe the steps make for a wall, and where each road on its way up it starts on that toe, as its two edges' first
+/// corners, by its place in `climbing`: what a line redrawn by hand in place of that toe carries it on from. None for a
+/// road that wouldn't go in.
+fn road_starts(from: &Polyline, batters: &[f64], side: OffsetSide, climbing: &[Climbing], floor: Option<&TriMesh>, to: FaceTarget<'_>, flattest: f64) -> (Vec<Option<RoadTop>>, Polyline) {
+    let on_wall: Vec<RoadOnWall<'_>> = climbing.iter().map(|open| RoadOnWall { spec: open.spec, top: open.top, floor, turned: open.turned, pad: open.pad }).collect();
+    let (mut toe, mut slopes) = (from.clone(), batters.to_vec());
+    for road in &on_wall {
+        (toe, slopes, ..) = start_on(&toe, &slopes, road);
+    }
+    let target = Resting::of(to, &toe, flattest);
+    let Ok(wall) = project_wall_by_edge(&toe, side, &slopes, target.mesh()) else { return (vec![None; climbing.len()], toe) };
+    let cut = cut_roads(&toe, &slopes, side, &on_wall, &wall, target.mesh(), &mut |_, _| ());
+    let starts = (0..climbing.len()).map(|r| cut.as_ref()?.roads.iter().find(|(i, ..)| *i == r).map(|(_, pit, wall)| RoadTop { pit: pit.vertices[0], wall: wall.vertices[0] })).collect();
+    // As the wall's toe is kept: with a vertex wherever its crest touches it, at the crest's height.
+    let made = match &cut {
+        Some(cut) => with_touches(&cut.toe, &cut.crest),
+        None => with_touches(&toe, &wall.crest),
+    };
+    (starts, made)
+}
+
+/// Why a berm or wall between the line below and a line redrawn by hand can't be built: your line's doing, so it's refused,
+/// not taken as a road that can't go in.
+fn refused_beside(step: usize, e: &GeomError) -> GeomError {
+    GeomError::Refused(format!("step {}: between the line below and your line, {}", step + 1, e.to_string().replace("invalid input: ", "")))
+}
+
+/// A crest redrawn by hand, on the wall's target, for the wall below to re-form to: straight from its toe to your line.
+/// Not yet where a road climbs the wall, whose cut is built with the wall.
+fn redrawn_crest(drawn: &Polyline, toe: &Polyline, made: &Polyline, side: OffsetSide, target: &TriMesh, after: usize, roads: bool) -> Result<(Polyline, EditReport), GeomError> {
+    if roads {
+        return Err(GeomError::Refused(ROAD_ON_CREST.into()));
+    }
+    let crest = laid_on(drawn, made, Floor::Surface(target));
+    stands_clear(&crest, toe, side)?;
+    let batter = across(&crest, toe).map(|[.., flattest, steepest]| [flattest, steepest]);
+    Ok((crest, EditReport { after, berm: None, batter, roads_off: Vec::new() }))
+}
+
+/// What a line redrawn by hand lies on where it leaves the line the steps made: a surface or grid, or for a berm that
+/// keeps its crest's heights, that crest.
+enum Floor<'a> {
+    Surface(&'a TriMesh),
+    Crest(&'a Polyline),
+    None,
+}
+
+/// A line redrawn by hand, vertex by vertex and straight between them, as the lines the steps make are: at the heights of
+/// the line the steps made where it runs on it, so a line copied as the steps made it comes back as it was, held off a
+/// grid where the steps held it, and on what it lies on where it leaves it. A vertex with nothing under it keeps its height.
+fn laid_on(drawn: &Polyline, made: &Polyline, floor: Floor<'_>) -> Polyline {
+    let on_made = |p: [f64; 3]| {
+        let n = made.vertices.len();
+        (0..segment_count(made))
+            .map(|i| {
+                let (a, b) = (made.vertices[i], made.vertices[(i + 1) % n]);
+                let (t, gap) = nearest_along(a, b, p);
+                (gap, a[2] + t * (b[2] - a[2]))
+            })
+            .min_by(|x, y| x.0.total_cmp(&y.0))
+            .filter(|(gap, _)| *gap <= WELD)
+            .map(|(_, z)| z)
+    };
+    let floored: Vec<f64> = match floor {
+        Floor::Surface(surface) => {
+            let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+            for p in &drawn.vertices {
+                lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+                hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+            }
+            let bins = TriangleBins::new(surface, lo, hi);
+            drawn.vertices.iter().map(|p| bins.height(surface, [p[0], p[1]]).unwrap_or(p[2])).collect()
+        }
+        Floor::Crest(crest) => at_crest_heights(drawn, crest).vertices.iter().map(|p| p[2]).collect(),
+        Floor::None => drawn.vertices.iter().map(|p| p[2]).collect(),
+    };
+    Polyline { vertices: drawn.vertices.iter().zip(floored).map(|(p, z)| [p[0], p[1], on_made(*p).unwrap_or(z)]).collect(), closed: drawn.closed }
+}
+
+/// Refuses a line redrawn by hand that crosses the line below it, or stands past it on the pit side by more than
+/// `PIT_SIDE`: measured square to the line below from your line's vertices and the middles of its stretches, as a line
+/// drawn end to end over the line below has its vertices only at its ends. Touching it, as a berm's line does at a road's
+/// top, is fine.
+fn stands_clear(line: &Polyline, below: &Polyline, side: OffsetSide) -> Result<(), GeomError> {
+    let (n, m) = (line.vertices.len(), below.vertices.len());
+    for i in 0..segment_count(line) {
+        let (a, b) = (line.vertices[i], line.vertices[(i + 1) % n]);
+        for j in 0..segment_count(below) {
+            let (p, q) = (below.vertices[j], below.vertices[(j + 1) % m]);
+            if let Some(at) = crossing_point(a, b, p, q) {
+                return Err(GeomError::Refused(format!("your line crosses the line below it at {:.1}, {:.1}", at[0], at[1])));
+            }
+        }
+    }
+    let rising = if side == OffsetSide::Left { 1.0 } else { -1.0 };
+    let with_halves = |l: &Polyline| -> Vec<[f64; 3]> {
+        let n = l.vertices.len();
+        let halves: Vec<[f64; 3]> = (0..segment_count(l))
+            .map(|i| {
+                let (a, b) = (l.vertices[i], l.vertices[(i + 1) % n]);
+                [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, (a[2] + b[2]) / 2.0]
+            })
+            .collect();
+        l.vertices.iter().copied().chain(halves).collect()
+    };
+    let past = with_halves(line).into_iter().filter_map(|p| square_to(below, p).filter(|(_, _, way)| way * rising < 0.0).map(|(gap, ..)| (gap, p)));
+    match past.max_by(|a, b| a.0.total_cmp(&b.0)) {
+        Some((past, at)) if past > PIT_SIDE => Err(GeomError::Refused(format!("your line comes out {past:.2} m past the line below it, on the pit side, at {:.1}, {:.1}", at[0], at[1]))),
+        _ => Ok(()),
+    }
+}
+
+/// Where a point stands from a line, square to it in plan: how far, the line's height there, and which side, 1 on its left
+/// and -1 on its right. None where the nearest place on it is an open end, past which nothing is square to it.
+fn square_to(line: &Polyline, p: [f64; 3]) -> Option<(f64, f64, f64)> {
+    let n = line.vertices.len();
+    let segments = segment_count(line);
+    let (i, t, gap) = (0..segments)
+        .map(|i| {
+            let (t, gap) = nearest_along(line.vertices[i], line.vertices[(i + 1) % n], p);
+            (i, t, gap)
+        })
+        .min_by(|x, y| x.2.total_cmp(&y.2))?;
+    if !line.closed && ((i == 0 && t <= 0.0) || (i + 1 == segments && t >= 1.0)) {
+        return None;
+    }
+    let (a, b) = (line.vertices[i], line.vertices[(i + 1) % n]);
+    let way = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+    Some((gap, a[2] + t * (b[2] - a[2]), way.signum()))
+}
+
+/// Across from the line below to a line redrawn by hand, square to one or the other at each vertex of either that stands
+/// off the other: the narrowest and widest in plan (m), then the flattest and steepest rise over that (degrees). None
+/// where none do.
+fn across(line: &Polyline, below: &Polyline) -> Option<[f64; 4]> {
+    let up = line.vertices.iter().filter_map(|p| square_to(below, *p).map(|(gap, height, _)| (gap, p[2] - height)));
+    let down = below.vertices.iter().filter_map(|p| square_to(line, *p).map(|(gap, height, _)| (gap, height - p[2])));
+    let mut found: Option<[f64; 4]> = None;
+    for (gap, rise) in up.chain(down).filter(|(gap, _)| *gap > WELD) {
+        let angle = rise.atan2(gap).to_degrees();
+        found = Some(match found {
+            None => [gap, gap, angle, angle],
+            Some([narrowest, widest, flattest, steepest]) => [narrowest.min(gap), widest.max(gap), flattest.min(angle), steepest.max(angle)],
+        });
+    }
+    found
+}
+
+/// How far a point is from a line in plan (m).
+fn gap_to(line: &Polyline, p: [f64; 3]) -> f64 {
+    let n = line.vertices.len();
+    (0..segment_count(line)).map(|i| nearest_along(line.vertices[i], line.vertices[(i + 1) % n], p).1).fold(f64::INFINITY, f64::min)
 }
 
 /// The stretches of a wall above a road added to the plain wall's, which share any before the road.
@@ -1253,8 +1539,39 @@ fn whole_band(a: &Polyline, b: &Polyline) -> Result<TriMesh, GeomError> {
     let about = outline[0];
     let local: Vec<[f64; 3]> = outline.iter().map(|p| [p[0] - about[0], p[1] - about[1], p[2] - about[2]]).collect();
     let triangles = std::panic::catch_unwind(|| triangles_of(&local)).ok().flatten();
-    let triangles = triangles.ok_or_else(|| GeomError::InvalidInput(format!("the berm near {:.3}, {:.3} folds over itself", about[0], about[1])))?;
+    let triangles = triangles.ok_or_else(|| {
+        let at = first_fold(&outline).unwrap_or([about[0], about[1]]);
+        GeomError::InvalidInput(format!("the berm near {:.3}, {:.3} folds over itself", at[0], at[1]))
+    })?;
     Ok(TriMesh::new(outline, triangles.into_iter().map(|t| t.map(|v| v as u32)).collect()))
+}
+
+/// Where a closed outline first crosses itself in plan, strictly inside two of its stretches: where a berm folds.
+fn first_fold(outline: &[[f64; 3]]) -> Option<[f64; 2]> {
+    let n = outline.len();
+    let stretch = |i: usize| (outline[i], outline[(i + 1) % n]);
+    (0..n).find_map(|i| {
+        let (a, b) = stretch(i);
+        (i + 2..n).filter(|&j| !(i == 0 && j == n - 1)).find_map(|j| {
+            let (p, q) = stretch(j);
+            crossing_point(a, b, p, q)
+        })
+    })
+}
+
+/// Where stretch `a`-`b` crosses `p`-`q` in plan, strictly inside both: not where they only touch.
+fn crossing_point(a: [f64; 3], b: [f64; 3], p: [f64; 3], q: [f64; 3]) -> Option<[f64; 2]> {
+    if a[0].max(b[0]) < p[0].min(q[0]) || p[0].max(q[0]) < a[0].min(b[0]) || a[1].max(b[1]) < p[1].min(q[1]) || p[1].max(q[1]) < a[1].min(b[1]) {
+        return None;
+    }
+    let (r, s) = ([b[0] - a[0], b[1] - a[1]], [q[0] - p[0], q[1] - p[1]]);
+    let across = r[0] * s[1] - r[1] * s[0];
+    if across.abs() < 1e-12 {
+        return None;
+    }
+    let ap = [p[0] - a[0], p[1] - a[1]];
+    let (t, u) = ((ap[0] * s[1] - ap[1] * s[0]) / across, (ap[0] * r[1] - ap[1] * r[0]) / across);
+    (t > 1e-9 && t < 1.0 - 1e-9 && u > 1e-9 && u < 1.0 - 1e-9).then(|| [a[0] + t * r[0], a[1] + t * r[1]])
 }
 
 fn mirrored_line(line: &Polyline) -> Polyline {

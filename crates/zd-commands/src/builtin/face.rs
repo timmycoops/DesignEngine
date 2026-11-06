@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceDirection, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
-use zd_geom::{COINCIDENT, EdgeRule, Face, FaceBench, FaceRamp, FaceRoad, FaceStep, FaceTarget, GeomError, OffsetSide, RoadTop, SolidRegion, at_line_heights, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_face, project_wall, register_toe, run_on, triangulate_grid};
+use zd_geom::{COINCIDENT, EdgeRule, EditReport, Face, FaceBench, FaceEdit, FaceRamp, FaceRoad, FaceStep, FaceTarget, GeomError, OffsetSide, RoadTop, SolidRegion, at_line_heights, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_edited_face, project_wall, register_toe, run_on, triangulate_grid};
 
 use super::{SideParam, in_parallel};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
@@ -451,11 +451,21 @@ impl<'a> FaceRun<'a, '_> {
             WallSide::Right => (OffsetSide::Right, OffsetSide::Left),
         };
         let rules = LineRules { design, string: path, string_name: &string.name, faces, regions: self.regions, inputs };
+        // Lines redrawn by hand, on a line on one string (decision 0046).
+        let drawn: Vec<(usize, &Polyline)> = match line.on {
+            LineOn::String(_) => line
+                .edits
+                .iter()
+                .map(|edit| inputs.string(edit.string).map(|(_, drawn)| (edit.row - 1, drawn)).map_err(|_| CommandError::Invalid(format!("{base}: the line redrawn by hand after row {} has gone: take it off the row", edit.row))))
+                .collect::<Result<_, _>>()?,
+            LineOn::Layer(_) => Vec::new(),
+        };
+        let edits: Vec<FaceEdit<'_>> = drawn.iter().map(|&(after, line)| FaceEdit { after, line }).collect();
         // Where a ramp lands on this strip comes from the strip's face with no roads on it.
         let mut placed = PlacedRamps::default();
         if profile.ramps.iter().any(|ramp| ramp.fixed != RampFixed::Line && profile.walls_of(&ramp.name).is_some()) {
             let none = walls_ramps(&profile.steps, &[]);
-            let plain = project_face(&toe, registered, side, profile.direction, &steps_of(&rules, &profile.steps, targets, &none)?, &[]).map_err(refuse)?;
+            let plain = project_edited_face(&toe, registered, side, profile.direction, &steps_of(&rules, &profile.steps, targets, &none)?, &[], &edits).map_err(refuse)?;
             placed = place_ramps(profile, &plain, self.ramp_strings, &string.name);
         }
         carry_on_ramps(profile, &toe, &string.attributes, &string.name, &mut placed);
@@ -463,11 +473,12 @@ impl<'a> FaceRun<'a, '_> {
         let specs: Vec<FaceRamp> = placed.on_strip.iter().map(|(_, spec)| *spec).collect();
         let on_walls = walls_ramps(&profile.steps, &ramps);
         let steps = steps_of(&rules, &profile.steps, targets, &on_walls)?;
-        let face = project_face(&toe, registered, side, profile.direction, &steps, &specs).map_err(refuse)?;
+        let face = project_edited_face(&toe, registered, side, profile.direction, &steps, &specs, &edits).map_err(refuse)?;
         let mut changes = Vec::new();
         let mut messages = vec![line_report(&base, &face, [extended.vertices.len(), shaped.vertices.len()], register.off_grid)];
         messages.extend(placed.notes);
         let names: Vec<&str> = ramps.iter().map(|ramp| ramp.name.as_str()).collect();
+        messages.extend(face.edits.iter().map(|edit| edit_report(&base, &names, edit)));
         messages.extend((0..ramps.len()).map(|r| ramp_report(&names, &string.name, r, &face)));
         // What a run makes keeps its string's attributes, so a strip's number carries on to its face. Not the roads that
         // came out on the string, which this run has carried on or left, nor the row it was in its own design.
@@ -507,9 +518,13 @@ impl<'a> FaceRun<'a, '_> {
             changes.push(toe);
             changes.push(crest);
         }
-        // A design ending on a berm hands on the berm's line, where the next wall would start.
+        // A design ending on a berm hands on the berm's line, where the next wall would start, with the berm's row.
         if let Some(line) = &face.berm_line {
-            changes.push(create(format!("{base} next {start}"), Body::String(line.clone())));
+            let mut next = create(format!("{base} next {start}"), Body::String(line.clone()));
+            if let Change::Create { attributes, .. } = &mut next {
+                attributes.insert(STEP_ROW.to_string(), AttrValue::Number(profile.steps.len() as f64));
+            }
+            changes.push(next);
         }
         for road in &face.roads {
             let name = &ramps[road.ramp].name;
@@ -791,6 +806,25 @@ fn line_report(name: &str, face: &zd_geom::Face, [toe_in, toe_out]: [usize; 2], 
         }
     }
     report
+}
+
+/// What a line redrawn by hand did, as a line of its own. `names` are the strip's ramps.
+fn edit_report(base: &str, names: &[&str], edit: &EditReport) -> String {
+    let mut parts = Vec::new();
+    if let Some([narrowest, widest]) = edit.berm {
+        parts.push(if (widest - narrowest).abs() < 0.05 { format!("the berm below it is {narrowest:.1} m wide") } else { format!("the berm below it is {narrowest:.1} to {widest:.1} m wide") });
+    }
+    if let Some([flattest, steepest]) = edit.batter {
+        parts.push(if (steepest - flattest).abs() < 0.05 { format!("the wall below it stands at {flattest:.1}°") } else { format!("the wall below it stands at {flattest:.1}° to {steepest:.1}°") });
+    }
+    for &(ramp, off) in &edit.roads_off {
+        let name = names.get(ramp).copied().unwrap_or("?");
+        parts.push(format!("ramp {name} started {off:.1} m from it, so it goes in from the nearest place on it as it would on the line the steps made"));
+    }
+    if parts.is_empty() {
+        parts.push("in place".into());
+    }
+    format!("{base}: your line after row {}: {}", edit.after + 1, parts.join("; "))
 }
 
 /// How far one ramp got, as a line of its own that the panel shows against it. `names` are the profile's ramps.
