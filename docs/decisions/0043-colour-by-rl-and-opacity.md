@@ -20,7 +20,9 @@ grey sheet, and a surface under another couldn't be seen at all.
    no new buffers, no shader rebuild (a change between solid and see-through rebuilds the pipeline once).
 3. **Band edges land on round RLs.** The GPU has f32 positions less the scene origin, whose RL is a whole metre
    (`state.rs` `origin`), so the first edge is passed in local z, exactly, and each fragment's band is
-   `floor((z - base) / interval)`.
+   `floor((z - base + 1 mm) / interval)`: **what lies on an edge is in the band above it**, as a bench is named by its
+   floor, so a berm at RL 115 is one colour, the 115 to 120 band (below, 2026-11-06). A surface whose top is on an
+   edge gets a band above it, so its top berm is coloured as the rest are.
 4. **Each object takes the whole ramp over its own RLs** (Tim's choice), at an interval picked from its range: 1, 2 or
    5 times a power of ten, the smallest giving at most 20 bands. The interval can be set (1 to 100 m) for every object
    at once. **Same colours on every surface** puts everything coloured by RL on show over one range, so an RL is one
@@ -116,3 +118,28 @@ Turbo was the brightest and Terrain read as a map but left the topography mostly
   it reads softer than the flats.
 - **The pictures are of the 3D view.** The legend, the Look section and the menus were built and typechecked but not
   seen running by the session that made them: Tim declined screen control, as his own copy was open.
+
+## Berms on band edges (2026-11-06)
+
+Tim, in the release with everything merged, on his step template: "What's going on with the colours? On the flat
+berms." Every flat berm of that face is on a 5 m band edge (RL 115, 130, 145 and 155: a design's berms are on round RLs
+almost always). The engine has them at 115.000, but the GPU interpolates z in f32 across each triangle and lands a hair
+either side of the edge pixel by pixel, so `floor` put the berm in two bands at once: diagonal streaks of two colours,
+following how the triangles are filled. With contour lines on, the whole berm was within a line's width of the edge
+and drew dark. The PIT B pictures never showed it: nothing natural lies flat on a round RL.
+
+- **On an edge is in the band above,** to a millimetre (`ON_EDGE` in `bands.ts`): the shader adds it before dividing,
+  and `bandsFor` counts a lowest or highest RL within it as on the edge, so a top berm on an edge has a band of its own.
+  A millimetre is well past the GPU's rounding at a local z of a kilometre (about 0.06 mm a step) and too small to see.
+- **A flat draws no contour line across it.** The line's width comes from how fast the band number changes across a
+  pixel, which on a flat is nothing or the GPU's rounding, and a smoothstep with both ends at zero is undefined on the
+  GPU. That change is now taken as at least a millionth of a band (`MIN_PER_PIXEL`), which a berm a millimetre into its
+  band is well clear of at every interval offered: the line runs along the crest of the wall below and the toe of the
+  wall above, where walls cross the edge.
+- **Tests** (`tests/bands.test.mjs`, the shader's sums in f32): the template's four berms with the scene origin at five
+  whole metres from -845 to 1,100, each up to 4 f32 steps either side of its RL, all land in the band above; the rule
+  before put 19 of those 20 in two bands. No line across a berm on an edge at every interval offered, at local z out to
+  about a kilometre either way; a full line on a wall 1 cm either side of it.
+- **Pictures** (`--bench --pictures`, the template's face as DXF): before, the berms streak and the ones in contour view
+  draw dark; after, each berm is one colour with the line along its edges. The legend for that face now reads 100 to
+  160 RL, not 155: the berm at 155 has its own band.
