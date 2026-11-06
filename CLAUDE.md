@@ -85,7 +85,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   roof and berm on floor per horizon, minimum and maximum bench height, wall type (face, side, end). Side (left or
   right for open highwall strings) is on the line. A face is built oversized, past the pit shell, and the cut does
   the fitting (`docs/decisions/0023-wall-step.md`). `FaceDesign` is the saved object the Face design panel edits:
-  lines, profiles and any shared rules together (`docs/decisions/0024-face-design.md`).
+  lines, profiles and any shared rules together (`docs/decisions/0024-face-design.md`). A face built by hand is a step
+  design: a face design on one string that saves and runs whole as each step is added (`face.step`, one undo a step),
+  with ramps placed by clicking. Faces are built from strings, never by moving a surface's points
+  (`docs/decisions/0045-step-design.md`).
 - `Ramp`: centreline or start point, direction, start and end bench, width, grade (%, ratio or degrees,
   measured on the inside edge by default, which is the pit side), inside and outside taper, entry type, flat or
   graded switchbacks with radius. It's a named ramp in a `FaceProfile`, set by a string drawn across the strips: each line
@@ -109,7 +112,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   from its back corner to the berm's line past it. With no box the toe past the turn joins back a length on set on the ramp
   (50 m by default), whatever vertices the string has; one longer than the line runs to the string's end
   (`docs/decisions/0038-switchbacks.md`). On a profile going down a road comes down from the top line, notching it
-  for its entrance, and the walls below it move out towards the pit (`docs/decisions/0037-roads-going-down.md`). It reports
+  for its entrance, and the walls below it move out towards the pit (`docs/decisions/0037-roads-going-down.md`). A crest
+  records each road that came out on it as `road_top` attributes, and a ramp set to carry on from the line takes it on
+  from there in a design run from that crest, with no entrance; a crest a run made keeps its heights as a line, so two
+  designs give one design's face (`docs/decisions/0041-roads-carry-on.md`). It reports
   the bench where the grade can't be met instead of drifting (`docs/decisions/0028-ramps.md`, `0030-ramp-strings.md`).
 - Every object has a stable id (128-bit, generated in-house), a name, a layer, and provenance (the command
   run that made it). Edits write a new revision of the same object; earlier revisions stay for undo

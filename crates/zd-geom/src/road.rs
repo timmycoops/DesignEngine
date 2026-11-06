@@ -85,6 +85,10 @@ pub struct FaceRamp {
     /// on (m): the road, the berm and the next road wide. The next road climbs from straight across the berm from the top,
     /// at the box's near end, and the wall above goes round the box.
     pub turn_flat: f64,
+    /// The top of a road that came out on this toe in a design run before, if it carries on from there: it climbs on
+    /// with no entrance, as it would have in one design, and `start` is the top's wall-side corner. It carries on if
+    /// the first wall is one of its own, and starts afresh at `start` on its first wall if not. On a face going up.
+    pub carries_on: Option<RoadTop>,
     /// Where it turns back on a box, the angle in plan between the box's far end and the strip (degrees): 90 is square
     /// across, and less flares it out past the box, from its back corner to the berm's line past it.
     pub turn_end: f64,
@@ -103,6 +107,8 @@ pub struct FaceRoad {
     pub wall_edge: Polyline,
     /// How far along the toe it came out from its held end, if that's further than the tolerance (m).
     pub off_end: Option<f64>,
+    /// It was running back against the way the string runs at its top, after any turns.
+    pub back: bool,
     /// Each flat it ran before a turn on a floor that rises or falls along it more than the road's grade: where the flat
     /// ends, and the steepest it goes, as a fraction.
     pub steep_flats: Vec<(P3, f64)>,
@@ -119,11 +125,11 @@ pub struct NoRoad {
     pub crosses: Option<usize>,
 }
 
-/// The top edge of a road so far, where it carries on from.
+/// The top edge of a road so far, where it carries on from: its pit-side and wall-side corners.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct RoadTop {
-    pub pit: P3,
-    pub wall: P3,
+pub struct RoadTop {
+    pub pit: [f64; 3],
+    pub wall: [f64; 3],
 }
 
 /// A road going into a wall: where it got to on the wall below if it's carrying on, and if not, what's under
@@ -1469,6 +1475,43 @@ pub(crate) fn metres_along(line: &Polyline, p: P3) -> f64 {
     before + plan_gap(line.vertices[whole], point_at(line, place))
 }
 
+/// A toe a road carries on from, with the road's top in it as the road came out: each corner where the toe passes
+/// nearest it in plan, at its own height, and the toe level across the road between them, as the crest it came out on
+/// was, whatever the grid under it does. Registering the toe again would lay that stretch on the grid, which dips
+/// across the road. Also the top, now on the toe.
+pub(crate) fn with_road_top(line: &Polyline, top: RoadTop) -> (Polyline, RoadTop) {
+    if line.closed || line.vertices.len() < 2 {
+        return (line.clone(), top);
+    }
+    let places = [nearest_place(line, top.pit), nearest_place(line, top.wall)];
+    let corner = |k: usize, height: f64| {
+        let p = point_at(line, places[k]);
+        [p[0], p[1], height]
+    };
+    let corners = [corner(0, top.pit[2]), corner(1, top.wall[2])];
+    let (lo, hi) = (places[0].min(places[1]), places[0].max(places[1]));
+    let (low, high) = if places[0] <= places[1] { (corners[0][2], corners[1][2]) } else { (corners[1][2], corners[0][2]) };
+    let mut entries: Vec<(f64, P3, bool)> = line.vertices.iter().enumerate().map(|(i, p)| (i as f64, *p, false)).collect();
+    entries.extend([(places[0], corners[0], true), (places[1], corners[1], true)]);
+    entries.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut vertices: Vec<P3> = Vec::with_capacity(entries.len());
+    for (place, mut p, is_corner) in entries {
+        if !is_corner && place > lo && place < hi {
+            p[2] = low + (high - low) * (place - lo) / (hi - lo);
+        }
+        // A corner on a vertex takes its place.
+        match vertices.last_mut() {
+            Some(q) if plan_gap(*q, p) <= SAME_POINT => {
+                if is_corner {
+                    *q = p;
+                }
+            }
+            _ => vertices.push(p),
+        }
+    }
+    (Polyline { vertices, closed: false }, RoadTop { pit: corners[0], wall: corners[1] })
+}
+
 /// The point a distance in metres along a line, kept to the line's ends.
 pub(crate) fn point_along(line: &Polyline, metres: f64) -> P3 {
     let mut left = metres.max(0.0);
@@ -1881,7 +1924,7 @@ fn plan_unit(a: P3) -> [f64; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::face::{END_TOLERANCE, Face, FaceStep, FaceTarget, project_face};
+    use crate::face::{END_TOLERANCE, Face, FaceBench, FaceStep, FaceTarget, project_face};
     use crate::{EdgeRule, find_crossings, triangulate_grid};
     use zd_core::{FaceDirection, Grid};
 
@@ -1890,7 +1933,7 @@ mod tests {
     const FLOOR: f64 = 100.0;
     /// cos of the angle a 10 % road climbs a 45 degree wall at, where sin(angle) = grade / slope.
     const COS: f64 = 0.994_987_437_106_62;
-    const RAMP: FaceRamp = FaceRamp { start: [E + 100.0, N], back: false, width: 10.0, grade: 0.1, ends_at: None, after_berm: false, turn_join: 50.0, turn_flat: 10.0, turn_end: 90.0 };
+    const RAMP: FaceRamp = FaceRamp { start: [E + 100.0, N], back: false, width: 10.0, grade: 0.1, ends_at: None, after_berm: false, turn_join: 50.0, turn_flat: 10.0, carries_on: None, turn_end: 90.0 };
 
     fn level(rl: f64) -> TriMesh {
         triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 30, 20, |_, _| rl))
@@ -3531,6 +3574,159 @@ mod tests {
         assert_eq!(face.no_roads[0].step, 6, "{:?}", face.no_roads);
         assert!(face.no_roads[0].why.contains("short of the top"), "{:?}", face.no_roads);
         assert_eq!(face.benches.iter().map(|b| b.step).collect::<Vec<_>>(), [0, 2, 4, 6], "all four walls are there");
+    }
+
+    /// A design run from the last crest of another, on a level toe at `rl`, as a planner starts the next one up.
+    fn from_crest(below: &Face, rl: f64, steps: &[FaceStep<'_>], ramps: &[FaceRamp]) -> Face {
+        let toe = &below.benches.last().expect("a wall").crest;
+        project_face(toe, &level(rl), OffsetSide::Left, FaceDirection::Up, steps, ramps).unwrap()
+    }
+
+    /// A ramp carrying on from the top of its road on the face below.
+    fn carried_on(below: &Face, ramp: FaceRamp) -> FaceRamp {
+        let road = road_of(below, 0);
+        let top = RoadTop { pit: *road.pit_edge.vertices.last().unwrap(), wall: *road.wall_edge.vertices.last().unwrap() };
+        FaceRamp { start: [top.wall[0], top.wall[1]], back: road.back, carries_on: Some(top), ..ramp }
+    }
+
+    /// The same points in order, each within a micrometre, with any two in a row that close taken as one: a road's top
+    /// can be a rounding step off the crest it carries on from, in one design as in two.
+    fn same_points(a: &[[f64; 3]], b: &[[f64; 3]], what: &str) {
+        let near = |p: &[f64; 3], q: &[f64; 3]| p.iter().zip(q).all(|(u, v)| (u - v).abs() <= 1e-6);
+        let once = |points: &[[f64; 3]]| {
+            let mut kept: Vec<[f64; 3]> = Vec::new();
+            for p in points {
+                if !kept.last().is_some_and(|q| near(p, q)) {
+                    kept.push(*p);
+                }
+            }
+            kept
+        };
+        let (a, b) = (&once(a)[..], &once(b)[..]);
+        assert_eq!(a.len(), b.len(), "{what}: {a:?} against {b:?}");
+        for (p, q) in a.iter().zip(b) {
+            assert!(p.iter().zip(q).all(|(u, v)| (u - v).abs() <= 1e-6), "{what}: {p:?} against {q:?}");
+        }
+    }
+
+    /// One edge of a road split over two designs, joined where the second starts: on the toe, which the top below can be
+    /// a rounding step off.
+    fn joined(lower: &Polyline, upper: &Polyline) -> Vec<[f64; 3]> {
+        let mut edge = lower.vertices.clone();
+        let same = |p: &[f64; 3], q: &[f64; 3]| p.iter().zip(q).all(|(u, v)| (u - v).abs() <= 1e-6);
+        let skip = usize::from(edge.last().zip(upper.vertices.first()).is_some_and(|(p, q)| same(p, q)));
+        edge.extend_from_slice(&upper.vertices[skip..]);
+        edge
+    }
+
+    /// A design split in two at a crest is the same as the design run whole, to 1 µm: the road, both its edges, every
+    /// toe and crest, and the sheet's height wherever either covers. `split` is the row the second design starts at.
+    fn split_is_whole(steps: &[FaceStep<'_>], split: usize, ramp: FaceRamp) {
+        let whole = long_face(steps, &[ramp]);
+        assert!(whole.no_roads.is_empty(), "{:?}", whole.no_roads);
+        let lower = long_face(&steps[..split], &[ramp]);
+        let rl = lower.benches.last().unwrap().crest.vertices[0][2];
+        let upper = from_crest(&lower, rl, &steps[split..], &[carried_on(&lower, ramp)]);
+        assert!(lower.no_roads.is_empty() && upper.no_roads.is_empty(), "{:?} {:?}", lower.no_roads, upper.no_roads);
+        one_clean_sheet(&lower);
+        one_clean_sheet(&upper);
+        let (all, below, above) = (road_of(&whole, 0), road_of(&lower, 0), road_of(&upper, 0));
+        let first_wall = steps[split..].iter().position(|s| matches!(s, FaceStep::Project { .. })).unwrap();
+        assert_eq!(above.steps[0], first_wall, "it climbs the first wall above");
+        same_points(&all.pit_edge.vertices, &joined(&below.pit_edge, &above.pit_edge), "pit edge");
+        same_points(&all.wall_edge.vertices, &joined(&below.wall_edge, &above.wall_edge), "wall edge");
+        assert_eq!(all.back, above.back);
+        let benches: Vec<&FaceBench> = lower.benches.iter().chain(&upper.benches).collect();
+        assert_eq!(whole.benches.len(), benches.len());
+        for (one, two) in whole.benches.iter().zip(benches) {
+            same_points(&one.toe.vertices, &two.toe.vertices, "toe");
+            same_points(&one.crest.vertices, &two.crest.vertices, "crest");
+        }
+        let bins = |sheet: &TriMesh| TriangleBins::new(sheet, [E - 100.0, N - 100.0], [E + 2100.0, N + 300.0]);
+        let (w, l, u) = (bins(&whole.surface), bins(&lower.surface), bins(&upper.surface));
+        let mut sampled = 0;
+        for i in 0..400 {
+            for j in 0..60 {
+                let p = [E + 3.7 + 5.0 * i as f64, N - 2.3 + 1.31 * j as f64];
+                let Some(h) = w.height(&whole.surface, p) else { continue };
+                let split = l.height(&lower.surface, p).or_else(|| u.height(&upper.surface, p)).unwrap_or_else(|| panic!("nothing at {p:?} in the two designs"));
+                close(split, h, 1e-6);
+                sampled += 1;
+            }
+        }
+        assert!(sampled > 10_000, "{sampled}");
+    }
+
+    /// A road up a 45 degree wall to RL 120 stops on its crest, where a planner starts the next design, and that design
+    /// carries it on past a 10 m berm and up to RL 140: going up through the berm, and going after it, crossing it level.
+    /// Two designs give the same road and the same face as one.
+    #[test]
+    fn a_road_carries_on_from_the_crest_of_the_design_below() {
+        let (low, high) = (FaceTarget::Rl(120.0), FaceTarget::Rl(140.0));
+        let steps = [climbed_by(low, &[0]), berm(low, 10.0), climbed_by(high, &[0])];
+        for after_berm in [false, true] {
+            split_is_whole(&steps, 1, FaceRamp { after_berm, ..ramp_at(500.0) });
+            split_is_whole(&steps, 1, FaceRamp { after_berm, back: true, ..ramp_at(1500.0) });
+        }
+    }
+
+    /// The design above turns the road back on a flat pad on the berm before its first wall, as one design does.
+    #[test]
+    fn a_road_carries_on_round_a_switchback_in_the_design_above() {
+        let low = FaceTarget::Rl(120.0);
+        split_is_whole(&[climbed_by(low, &[0]), berm(low, 10.0), turned_on(FaceTarget::Rl(140.0))], 1, ramp_at(500.0));
+    }
+
+    /// With no berm between, the road carries straight on up the next wall, here at 50 degrees.
+    #[test]
+    fn a_road_carries_straight_on_up_a_wall_with_no_berm() {
+        let steeper = FaceStep::Project { to: FaceTarget::Rl(140.0), batter: EdgeRule::Fixed(50.0), condition: None, ramps: &[0], turns: &[] };
+        split_is_whole(&[climbed_by(FaceTarget::Rl(120.0), &[0]), steeper], 1, ramp_at(500.0));
+    }
+
+    /// A road carried on that isn't on the first wall above starts afresh on its first wall, from the nearest point on
+    /// that wall's toe to its top below, with an entrance, as a ramp from there would.
+    #[test]
+    fn a_road_not_on_the_first_wall_above_starts_afresh_from_its_top() {
+        let low = FaceTarget::Rl(120.0);
+        let lower = long_face(&[climbed_by(low, &[0])], &[ramp_at(500.0)]);
+        let steps = [plain_wall(FaceTarget::Rl(130.0), 45.0), berm(FaceTarget::Rl(130.0), 10.0), climbed_by(FaceTarget::Rl(150.0), &[0])];
+        let ramp = carried_on(&lower, ramp_at(500.0));
+        let upper = from_crest(&lower, 120.0, &steps, &[ramp]);
+        let afresh = from_crest(&lower, 120.0, &steps, &[FaceRamp { carries_on: None, ..ramp }]);
+        assert!(upper.no_roads.is_empty(), "{:?}", upper.no_roads);
+        let (road, fresh) = (road_of(&upper, 0), road_of(&afresh, 0));
+        assert_eq!(road.steps, [2, 2]);
+        same_points(&road.pit_edge.vertices, &fresh.pit_edge.vertices, "pit edge");
+        close(road.pit_edge.vertices[0][2], 130.0, 1e-6);
+    }
+
+    /// A toe laid on a floor dipping 5 % across it takes a road's top back in level, as the road came out: through both
+    /// corners at RL 120, level between them, and on the floor everywhere else.
+    #[test]
+    fn a_toe_takes_a_roads_top_back_in_level_across_the_road() {
+        let toe = Polyline { vertices: [0.0, 300.0, 600.0].iter().map(|&x| [E + x, N, 120.0 - 0.05 * (x - 300.0)]).collect(), closed: false };
+        let top = RoadTop { pit: [E + 290.0, N + 0.3, 120.0], wall: [E + 300.0, N - 0.2, 120.0] };
+        let (line, on) = with_road_top(&toe, top);
+        assert_eq!([on.pit, on.wall], [[E + 290.0, N, 120.0], [E + 300.0, N, 120.0]]);
+        let heights: Vec<[f64; 2]> = line.vertices.iter().map(|p| [p[0] - E, p[2]]).collect();
+        assert_eq!(heights, [[0.0, 135.0], [290.0, 120.0], [300.0, 120.0], [600.0, 105.0]], "the vertex at 300 m is the wall-side corner");
+    }
+
+    /// A design starting with a berm from the crest below has no wall under that berm, so a minimum bench of 25 m can't
+    /// drop it: it keeps its full 10 m, and the wall above stands 10 m out from the crest. In one design the 20 m wall
+    /// is under the minimum, so the berm goes, as before.
+    #[test]
+    fn a_berm_with_no_wall_below_it_in_its_design_stays() {
+        let low = FaceTarget::Rl(120.0);
+        let lower = long_face(&[plain_wall(low, 45.0)], &[]);
+        let least = FaceStep::Berm { on: Some(low), width: EdgeRule::Fixed(10.0), register: true, condition: None, min_bench: Some(25.0) };
+        let upper = from_crest(&lower, 120.0, &[least, plain_wall(FaceTarget::Rl(140.0), 45.0)], &[]);
+        assert!(upper.steps[0].no_berm.is_empty(), "{:?}", upper.steps[0].no_berm);
+        let toe = &upper.benches[0].toe;
+        assert!(toe.vertices.iter().all(|p| (p[1] - N - 30.0).abs() < 1e-6), "{:?}", toe.vertices);
+        let whole = long_face(&[plain_wall(low, 45.0), least, plain_wall(FaceTarget::Rl(140.0), 45.0)], &[]);
+        assert!(!whole.steps[1].no_berm.is_empty(), "{:?}", whole.steps[1]);
     }
 
     /// A road topping out on a seam that rises 5 % into the wall: its wall-side edge runs on past the inside edge's end to
