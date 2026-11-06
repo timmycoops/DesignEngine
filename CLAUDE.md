@@ -90,7 +90,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   with ramps placed by clicking. Faces are built from strings, never by moving a surface's points
   (`docs/decisions/0045-step-design.md`). A line a row ends on can be redrawn by hand, kept on the design's line and not
   in the profile: the row re-forms to meet it and the rows above carry on from it, roads and all
-  (`docs/decisions/0046-edit-the-line.md`).
+  (`docs/decisions/0046-edit-the-line.md`). Join on a berm makes the switchbacks turning on it, on box pads facing each other,
+  one pad, the line running straight from the back of one box to the back of the next (`docs/decisions/0047-join-switchbacks.md`).
 - `Ramp`: centreline or start point, direction, start and end bench, width, grade (%, ratio or degrees,
   measured on the inside edge by default, which is the pit side), inside and outside taper, entry type, flat or
   graded switchbacks with radius. It's a named ramp in a `FaceProfile`, set by a string drawn across the strips: each line

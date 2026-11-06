@@ -2193,3 +2193,100 @@ fn a_wall_steps_between_real_grids() {
         }
     }
 }
+
+/// Tim's step template with ramps A and B turning back on row 9, so their boxes sit on row 8's berm at RL 155 (decision
+/// 0038): a bent toe on RL 100, 30 m roads at 10 %, walls to RL 115 to 175. `join` sets Join on row 8; `turns` the ramps
+/// that turn on row 9; `rows` how many rows. Gives the session, design and the design's content.
+fn tims_switchbacks(join: bool, turns: &[&str], rows: usize) -> (Session, ObjectId, serde_json::Value) {
+    let mut s = Session::with_builtins();
+    let bent: Vec<[f64; 3]> = [[0.0, 0.0], [600.0, 30.0], [1100.0, 10.0], [1500.0, 70.0]].iter().map(|p| [E + p[0], N + p[1], 0.0]).collect();
+    let toe = created(&s.run("string.create", json!({ "name": "Toe", "layer": "toes", "points": bent })).unwrap())[0];
+    let placed = |s: &mut Session, name: &str, points: [[f64; 2]; 2]| {
+        let points: Vec<[f64; 3]> = points.iter().map(|p| [E + p[0], N + p[1], 115.0]).collect();
+        created(&s.run("string.create", json!({ "name": name, "layer": "ramps", "points": points })).unwrap())[0]
+    };
+    let a = placed(&mut s, "Ramp A", [[150.249688, 17.985104], [148.002495, 62.928959]]);
+    let b = placed(&mut s, "Ramp B", [[1099.896493, 20.561043], [1093.221172, 65.063179]]);
+    let wall = |rl: f64, batter: f64, ramps: &[&str], turns: &[&str]| json!({ "step": "project", "to": { "kind": "rl", "rl": rl }, "batter": batter, "condition": 0.1, "ramps": ramps, "turns": turns });
+    let berm = json!({ "step": "berm", "width": 10.0, "condition": 0.1, "min_bench": 1.0 });
+    let joined = json!({ "step": "berm", "width": 10.0, "condition": 0.1, "min_bench": 1.0, "join": join });
+    let ab = ["A", "B"];
+    let all = [wall(115.0, 70.0, &[], &[]), berm.clone(), wall(130.0, 70.0, &ab, &[]), berm.clone(), wall(145.0, 65.0, &ab, &[]), berm.clone(), wall(155.0, 65.0, &ab, &[]), joined, wall(165.0, 65.0, &ab, turns), berm, wall(175.0, 65.0, &ab, &[])];
+    let road = |name: &str, string: ObjectId, heading: &str| json!({ "name": name, "string": string, "fixed": "start", "heading": heading, "width": 30.0, "grade": 10.0 });
+    let content = json!({
+        "layer": "faces",
+        "lines": [{ "string": toe, "profile": "Steps", "side": "left", "run_on": [0.0, 0.0] }],
+        "profiles": [{ "name": "Steps", "direction": "up", "register": { "kind": "rl", "rl": 100.0 }, "condition": 0.1, "steps": &all[..rows], "ramps": [road("A", a, "along"), road("B", b, "back")] }],
+        "rules": [],
+    });
+    let design = created(&s.run("face.save_design", json!({ "name": "Steps from Toe", "content": step_content(toe, a, &[]) })).unwrap())[0];
+    (s, design, content)
+}
+
+/// Join on a berm (decision 0047) gives the line Tim drew by hand on 2026-11-06: Tim's step template with A and B turning
+/// back on boxes on row 8's berm at RL 155. Run plain, the wall above goes round each box with a nose of wall standing out
+/// between them; that toe with everything between the back of A's box and the back of B's taken out is the line drawn by
+/// hand. With Join on row 8 and no line drawn, the wall to RL 165 stands on that same line, to 1 µm, the berm is one pad
+/// 10 to 69.3 m wide, both roads climb from their boxes to RL 175, and nothing crosses.
+#[test]
+fn join_on_a_berm_gives_the_line_drawn_by_hand_from_box_to_box() {
+    let (mut s, design, content) = tims_switchbacks(false, &["A", "B"], 11);
+    s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
+    let toe_5 = named_line(&s, design, "Toe Steps toe 5");
+    let behind = |p: &[f64; 3]| p[1] > N + 135.0;
+    let after_a = (0..toe_5.vertices.len() - 1).find(|&i| behind(&toe_5.vertices[i]) && !behind(&toe_5.vertices[i + 1])).expect("the back of A's box");
+    let before_b = (after_a + 1..toe_5.vertices.len()).find(|&j| behind(&toe_5.vertices[j])).expect("the back of B's box");
+    let by_hand = Polyline { vertices: toe_5.vertices[..=after_a].iter().chain(&toe_5.vertices[before_b..]).copied().collect(), closed: false };
+
+    let (mut s, design, content) = tims_switchbacks(true, &["A", "B"], 11);
+    let started = Instant::now();
+    let run = s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
+    println!("two switchbacks joined by Join on row 8: 11 rows in {} ms", started.elapsed().as_millis());
+    assert!(run.messages.iter().any(|m| m == "Toe Steps: row 8 joins the switchbacks of A and B into one pad: the berm below it is 10.0 to 69.3 m wide"), "{:?}", run.messages);
+    assert!(!run.messages.iter().any(|m| m.contains("stopped") || m.contains("cross") || m.contains("Join on")), "{:?}", run.messages);
+    for ramp in ["A", "B"] {
+        assert!(run.messages.iter().any(|m| m.starts_with(&format!("Ramp {ramp}: Toe: steps 3 to 11,")) && m.contains("to 175.0")), "{ramp}: {:?}", run.messages);
+    }
+    same_line(&named_line(&s, design, "Toe Steps toe 5"), &by_hand, "Join stands the wall to RL 165 on the line drawn by hand");
+    let face = s.project().objects().find(|o| o.name == "Toe Steps face" && o.attributes.get("face_design") == Some(&AttrValue::Text(design.to_string()))).unwrap();
+    let Body::Surface(sheet) = &face.body else { panic!("a face") };
+    assert_eq!(find_crossings(sheet.mesh(), COINCIDENT).pairs, 0);
+}
+
+/// Join with nothing to join leaves the design as it is and says why: one ramp turning on the berm, or Join on a berm with
+/// no wall above it yet, where ramps turn.
+#[test]
+fn join_with_nothing_to_join_says_why_and_changes_nothing() {
+    let (mut s, design, content) = tims_switchbacks(false, &["A"], 11);
+    s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
+    let plain = named_line(&s, design, "Toe Steps toe 5");
+    let (mut s, design, content) = tims_switchbacks(true, &["A"], 11);
+    let run = s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
+    assert!(run.messages.iter().any(|m| m == "Toe Steps: Join on row 8: only ramp A turns on it, so there's nothing to join it to"), "{:?}", run.messages);
+    same_line(&named_line(&s, design, "Toe Steps toe 5"), &plain, "one switchback: the toe as the steps make it");
+
+    let (mut s, design, content) = tims_switchbacks(true, &[], 8);
+    let run = s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
+    assert!(run.messages.iter().any(|m| m == "Toe Steps: Join on row 8: the ramps turn on the wall above a berm, so add that wall to join them"), "{:?}", run.messages);
+}
+
+/// A line redrawn by hand after a berm comes before Join on it: the run takes your line. And your line copied before the
+/// ramps turned on the wall above has no boxes in it: the run says so, naming the row they turn on (Tim, 2026-11-06).
+#[test]
+fn your_line_comes_before_join_and_says_when_it_predates_the_turns() {
+    let (mut s, design, content) = tims_switchbacks(false, &[], 9);
+    s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": content })).unwrap();
+    let plain = named_line(&s, design, "Toe Steps toe 5");
+    let mine = created(&s.run("string.create", json!({ "name": "Toe Steps your line 8", "layer": "edited lines", "points": plain.vertices })).unwrap())[0];
+    let (_, _, turned) = tims_switchbacks(true, &["A", "B"], 9);
+    // The same strings in this session: only the rows and the edit change.
+    let mut content = content;
+    content["profiles"][0]["steps"] = turned["profiles"][0]["steps"].clone();
+    let run = s.run("face.step", json!({ "design": design, "name": "Steps from Toe", "content": with_edits(content, &[(8, mine)]) })).unwrap();
+    assert!(run.messages.iter().any(|m| m.starts_with("Toe Steps: your line after row 8: ")), "your line, not the join: {:?}", run.messages);
+    assert!(!run.messages.iter().any(|m| m.contains("joins the switchbacks")), "{:?}", run.messages);
+    for ramp in ["A", "B"] {
+        let says = format!("ramp {ramp} turns on row 9 but its box isn't in your line, copied before it turned there: take your line off and ✎ again, or switch Join on");
+        assert!(run.messages.iter().any(|m| m.contains(&says)), "{ramp}: {:?}", run.messages);
+    }
+}

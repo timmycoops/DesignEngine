@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceDirection, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
-use zd_geom::{COINCIDENT, EdgeRule, EditReport, Face, FaceBench, FaceEdit, FaceRamp, FaceRoad, FaceStep, FaceTarget, GeomError, OffsetSide, RoadTop, SolidRegion, at_line_heights, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_edited_face, project_wall, register_toe, run_on, triangulate_grid};
+use zd_geom::{COINCIDENT, EdgeRule, EditReport, Face, FaceBench, FaceEdit, FaceRamp, FaceRoad, FaceStep, FaceTarget, GeomError, JoinNote, OffsetSide, RoadTop, SolidRegion, at_line_heights, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_edited_face, project_wall, register_toe, run_on, triangulate_grid};
 
 use super::{SideParam, in_parallel};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
@@ -478,7 +478,11 @@ impl<'a> FaceRun<'a, '_> {
         let mut messages = vec![line_report(&base, &face, [extended.vertices.len(), shaped.vertices.len()], register.off_grid)];
         messages.extend(placed.notes);
         let names: Vec<&str> = ramps.iter().map(|ramp| ramp.name.as_str()).collect();
-        messages.extend(face.edits.iter().map(|edit| edit_report(&base, &names, edit)));
+        messages.extend(face.edits.iter().map(|edit| edit_report(&base, &names, &profile.steps, edit)));
+        messages.extend(face.join_notes.iter().map(|note| join_note(&base, &names, note)));
+        if let Some(ProfileStep::Berm { join: true, .. }) = profile.steps.last() {
+            messages.push(format!("{base}: Join on row {}: the ramps turn on the wall above a berm, so add that wall to join them", profile.steps.len()));
+        }
         messages.extend((0..ramps.len()).map(|r| ramp_report(&names, &string.name, r, &face)));
         // What a run makes keeps its string's attributes, so a strip's number carries on to its face. Not the roads that
         // came out on the string, which this run has carried on or left, nor the row it was in its own design.
@@ -765,9 +769,9 @@ fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'
                     reached = surface_of(to);
                     FaceStep::Project { to: target(to)?, batter: rules.edge_rule(batter, reached)?, condition: *condition, ramps, turns }
                 }
-                ProfileStep::Berm { on, width, register, condition, min_bench } => {
+                ProfileStep::Berm { on, width, register, condition, min_bench, join } => {
                     let horizon = on.as_ref().map_or(reached, surface_of);
-                    FaceStep::Berm { on: on.as_ref().map(target).transpose()?, width: rules.edge_rule(width, horizon)?, register: *register, condition: *condition, min_bench: *min_bench }
+                    FaceStep::Berm { on: on.as_ref().map(target).transpose()?, width: rules.edge_rule(width, horizon)?, register: *register, condition: *condition, min_bench: *min_bench, join: *join }
                 }
             })
         })
@@ -809,7 +813,7 @@ fn line_report(name: &str, face: &zd_geom::Face, [toe_in, toe_out]: [usize; 2], 
 }
 
 /// What a line redrawn by hand did, as a line of its own. `names` are the strip's ramps.
-fn edit_report(base: &str, names: &[&str], edit: &EditReport) -> String {
+fn edit_report(base: &str, names: &[&str], steps: &[ProfileStep], edit: &EditReport) -> String {
     let mut parts = Vec::new();
     if let Some([narrowest, widest]) = edit.berm {
         parts.push(if (widest - narrowest).abs() < 0.05 { format!("the berm below it is {narrowest:.1} m wide") } else { format!("the berm below it is {narrowest:.1} to {widest:.1} m wide") });
@@ -817,14 +821,40 @@ fn edit_report(base: &str, names: &[&str], edit: &EditReport) -> String {
     if let Some([flattest, steepest]) = edit.batter {
         parts.push(if (steepest - flattest).abs() < 0.05 { format!("the wall below it stands at {flattest:.1}°") } else { format!("the wall below it stands at {flattest:.1}° to {steepest:.1}°") });
     }
+    // The wall after this row, where a ramp turning on the berm says so.
+    let turns_above: &[String] = match steps.get(edit.after + 1) {
+        Some(ProfileStep::Project { turns, .. }) => turns,
+        _ => &[],
+    };
     for &(ramp, off) in &edit.roads_off {
         let name = names.get(ramp).copied().unwrap_or("?");
-        parts.push(format!("ramp {name} started {off:.1} m from it, so it goes in from the nearest place on it as it would on the line the steps made"));
+        if turns_above.iter().any(|t| t == name) {
+            // Tim, 2026-11-06: his line was copied before A and B turned on the wall above, so it had no boxes.
+            parts.push(format!("ramp {name} turns on row {} but its box isn't in your line, copied before it turned there: take your line off and ✎ again, or switch Join on", edit.after + 2));
+        } else {
+            parts.push(format!("ramp {name} started {off:.1} m from it, so it goes in from the nearest place on it as it would on the line the steps made"));
+        }
     }
     if parts.is_empty() {
         parts.push("in place".into());
     }
-    format!("{base}: your line after row {}: {}", edit.after + 1, parts.join("; "))
+    if edit.joined.is_empty() {
+        return format!("{base}: your line after row {}: {}", edit.after + 1, parts.join("; "));
+    }
+    let pairs: Vec<String> = edit.joined.iter().map(|[a, b]| format!("{} and {}", names.get(*a).copied().unwrap_or("?"), names.get(*b).copied().unwrap_or("?"))).collect();
+    format!("{base}: row {} joins the switchbacks of {} into one pad: {}", edit.after + 1, pairs.join(", "), parts.join("; "))
+}
+
+/// A berm set to join switchbacks with none to join, and why: the run goes on as if it weren't set.
+fn join_note(base: &str, names: &[&str], note: &JoinNote) -> String {
+    let name = |r: usize| names.get(r).copied().unwrap_or("?");
+    let row = note.after + 1;
+    match (note.turning.as_slice(), note.facing_away.first()) {
+        ([], _) => format!("{base}: Join on row {row}: no ramp turns back on a box on it, so there's nothing to join"),
+        ([one], _) => format!("{base}: Join on row {row}: only ramp {} turns on it, so there's nothing to join it to", name(*one)),
+        (_, Some([a, b])) => format!("{base}: Join on row {row}: the switchbacks of {} and {} face away from each other, so nothing lies between them to join", name(*a), name(*b)),
+        (_, None) => format!("{base}: Join on row {row}: its boxes couldn't be found on the line, so they're left as they are"),
+    }
 }
 
 /// How far one ramp got, as a line of its own that the panel shows against it. `names` are the profile's ramps.

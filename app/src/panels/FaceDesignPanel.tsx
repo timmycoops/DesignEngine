@@ -514,6 +514,22 @@ function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged
         <ConditionCell value={step.condition} carries={carries} onChange={(condition) => onChange({ ...step, condition })} />
       </td>
       <td className="whitespace-nowrap py-0.5 text-right">
+        {step.step === 'berm' && (step.join || ramps.filter(({ name }) => bridged(name) === 'turns').length >= 2) && (
+          <button
+            className={`mr-0.5 rounded border px-1 py-0.5 text-[10px] leading-none ${step.join ? 'border-primary bg-selection text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+            title={(() => {
+              const turning = ramps.filter(({ name }) => bridged(name) === 'turns').map(({ name }) => name);
+              const which = turning.length >= 2 ? `the switchbacks of ${turning.join(' and ')}` : 'switchbacks';
+              return step.join
+                ? `Join is on: ${which} on this berm are one pad, the line running straight from the back of one box to the back of the next. Click to take it off`
+                : `Join ${which} on this berm into one pad: the line runs straight from the back of one box to the back of the next, with no wall standing out between them`;
+            })()}
+            aria-pressed={!!step.join}
+            onClick={() => onChange({ ...step, join: !step.join })}
+          >
+            Join
+          </button>
+        )}
         {hand && (
           <IconButton
             title={hand.tip}

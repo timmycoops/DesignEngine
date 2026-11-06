@@ -1953,7 +1953,7 @@ mod tests {
     }
 
     fn berm<'a>(on: FaceTarget<'a>, width: f64) -> FaceStep<'a> {
-        FaceStep::Berm { on: Some(on), width: EdgeRule::Fixed(width), register: true, condition: None, min_bench: None }
+        FaceStep::Berm { on: Some(on), width: EdgeRule::Fixed(width), register: true, condition: None, min_bench: None , join: false }
     }
 
     /// A face from a level toe along +x, rising to the north.
@@ -2521,7 +2521,7 @@ mod tests {
     #[test]
     fn a_box_with_no_berm_is_the_two_roads_squared_off() {
         let low = FaceTarget::Rl(120.0);
-        let bench = FaceStep::Berm { on: Some(low), width: EdgeRule::Fixed(10.0), register: true, condition: None, min_bench: Some(30.0) };
+        let bench = FaceStep::Berm { on: Some(low), width: EdgeRule::Fixed(10.0), register: true, condition: None, min_bench: Some(30.0) , join: false };
         let face = long_face(&[climbed_by(low, &[0]), bench, turned_on(FaceTarget::Rl(140.0))], &[FaceRamp { turn_flat: 25.0, ..ramp_at(500.0) }]);
         assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
         assert_eq!(find_crossings(&face.surface, crate::COINCIDENT).pairs, 0, "nothing crossing");
@@ -3423,7 +3423,7 @@ mod tests {
         let surface = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [20.0, 20.0], 90, 50, |x, _| 118.0 + 2.0 * ((x - E) / 60.0).sin()));
         let rows = [
             FaceStep::Project { to: FaceTarget::Surface(&surface), batter: EdgeRule::Fixed(60.0), condition: Some(0.1), ramps: &[0], turns: &[] },
-            FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: Some(0.1), min_bench: None },
+            FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: Some(0.1), min_bench: None , join: false },
             wall(FaceTarget::Rl(140.0), 60.0),
         ];
         let ramp = FaceRamp { back: true, ends_at: Some([E + 150.0, N + 40.0]), ..RAMP };
@@ -3469,7 +3469,7 @@ mod tests {
         let toe = Polyline { vertices: toe.vertices.iter().map(|p| [p[0], p[1], FLOOR + 0.05 * (p[0] - E)]).collect(), closed: false };
         let floor = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [100.0, 100.0], 30, 20, |x, _| FLOOR + 0.05 * (x - E)));
         let (low, high) = (FaceTarget::Rl(110.0), FaceTarget::Rl(160.0));
-        let bench = FaceStep::Berm { on: Some(low), width: EdgeRule::Fixed(10.0), register: true, condition: None, min_bench: Some(1.0) };
+        let bench = FaceStep::Berm { on: Some(low), width: EdgeRule::Fixed(10.0), register: true, condition: None, min_bench: Some(1.0) , join: false };
         let rows = [climbed_by(low, &[0]), bench, climbed_by(high, &[0])];
         let face = project_face(&toe, &floor, OffsetSide::Left, FaceDirection::Up, &rows, &[ramp_at(400.0)]).unwrap();
         assert!(face.no_roads.is_empty(), "{:?}", face.no_roads);
@@ -3519,7 +3519,7 @@ mod tests {
         let target = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [10.0, 10.0], 180, 100, |px, _| FLOOR + height + rise * (px - E - x) + 2.0 * ((px - E) / 30.0).sin()));
         let road = FaceRamp { start: [E + x, N], width, ..RAMP };
         let first = FaceStep::Project { to: FaceTarget::Surface(&target), batter: EdgeRule::Fixed(70.0), condition: Some(0.1), ramps: &[0], turns: &[] };
-        let bench = FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: Some(0.1), min_bench: Some(5.0) };
+        let bench = FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: Some(0.1), min_bench: Some(5.0) , join: false };
         let second = FaceStep::Project { to: FaceTarget::Rl(140.0), batter: EdgeRule::Fixed(70.0), condition: Some(0.1), ramps: if through { &[0] } else { &[] }, turns: &[] };
         let rows = [first, bench, second];
         let toe = match side {
@@ -3720,7 +3720,7 @@ mod tests {
     fn a_berm_with_no_wall_below_it_in_its_design_stays() {
         let low = FaceTarget::Rl(120.0);
         let lower = long_face(&[plain_wall(low, 45.0)], &[]);
-        let least = FaceStep::Berm { on: Some(low), width: EdgeRule::Fixed(10.0), register: true, condition: None, min_bench: Some(25.0) };
+        let least = FaceStep::Berm { on: Some(low), width: EdgeRule::Fixed(10.0), register: true, condition: None, min_bench: Some(25.0) , join: false };
         let upper = from_crest(&lower, 120.0, &[least, plain_wall(FaceTarget::Rl(140.0), 45.0)], &[]);
         assert!(upper.steps[0].no_berm.is_empty(), "{:?}", upper.steps[0].no_berm);
         let toe = &upper.benches[0].toe;
