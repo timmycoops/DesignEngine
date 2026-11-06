@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use zd_core::{FaceDirection, Polyline, TriMesh};
 
-use crate::road::{FaceRamp, FaceRoad, Flat, NO_WALL, NoRoad, OTHER_WAY, RoadOnWall, RoadTop, Stopped, WallCut, across_the_berm, berm_round_roads, cut_roads, flat_past_top, metres_along, nearest_on, point_along, start_on, straight_across};
+use crate::road::{FaceRamp, FaceRoad, Flat, NO_WALL, NoRoad, RoadOnWall, RoadTop, Stopped, WallCut, across_the_berm, berm_round_roads, cut_roads, flat_past_top, metres_along, nearest_on, point_along, start_on, straight_across};
 use crate::string::TriangleBins;
 use crate::wall::{LeastBench, Stretch, at_crest_heights, height_on, nearest_along, next_line, segment_count, triangles_of, with_crest_vertices};
 use crate::{EdgeRule, GeomError, OffsetSide, drape_string, filter_string, next_toe, project_wall_by_edge};
@@ -334,7 +334,7 @@ fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, directi
                 limits.insert(r, face.walls_climbed[&r] - 1);
                 let why = format!("what's built on it can't be: {}", e.to_string().replace("invalid input: ", ""));
                 let why = if direction == FaceDirection::Down { going_down(&why) } else { why };
-                held_back.insert(r, NoRoad { ramp: r, step, at: [ramps[r].start[0], ramps[r].start[1], 0.0], why });
+                held_back.insert(r, NoRoad { ramp: r, step, at: [ramps[r].start[0], ramps[r].start[1], 0.0], why, crosses: None });
             }
         }
     }
@@ -665,13 +665,9 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                     }
                 }
                 let joining: Vec<usize> = here.iter().copied().filter(|r| !stopped.contains(r) && limits.get(r) != Some(&0) && !climbing.iter().any(|open| open.ramp == *r)).collect();
+                // Roads running opposite ways sit side by side on a wall: where they'd share a stretch of it, the wall says so.
                 for r in joining {
-                    if climbing.first().is_some_and(|open| open.spec.back != ramps[r].back) {
-                        face.no_roads.push(NoRoad { ramp: r, step: k, at: [ramps[r].start[0], ramps[r].start[1], 0.0], why: OTHER_WAY.into() });
-                        stopped.push(r);
-                    } else {
-                        climbing.push(Climbing::new(r, ramps[r]));
-                    }
+                    climbing.push(Climbing::new(r, ramps[r]));
                 }
                 let (line, mut batters) = batter.applied_to(&from).map_err(|e| fail(k, e))?;
                 from = line;
@@ -688,7 +684,7 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 let (&(last, to, condition), marks) = wall.split_last().expect("this step at least");
                 if from.closed {
                     for open in climbing.drain(..) {
-                        face.no_roads.push(NoRoad { ramp: open.ramp, step: k, at: from.vertices[0], why: "a ramp needs an open string for now".into() });
+                        face.no_roads.push(NoRoad { ramp: open.ramp, step: k, at: from.vertices[0], why: "a ramp needs an open string for now".into(), crosses: None });
                         stopped.push(open.ramp);
                         face.roads.extend(open.road());
                     }
@@ -754,6 +750,9 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                             }
                             None => face.meshes.push(wall.wall),
                         }
+                        // The road one would cross, by its ramp, before any are taken out of the list.
+                        let gave_up: Vec<(usize, Stopped)> = gave_up.into_iter().map(|(r, stop)| (r, Stopped { crosses: stop.crosses.map(|other| climbing[other].ramp), ..stop })).collect();
+                        let mut gave_up = gave_up;
                         gave_up.sort_by_key(|(r, _)| std::cmp::Reverse(*r));
                         for (r, stop) in gave_up {
                             // A wall with no height where a road gets there has nothing to cut, so the road goes
@@ -765,7 +764,7 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                             let open = climbing.remove(r);
                             // With none left and a road already on its way, it has come out of the pit.
                             if open.top.is_none() || stop.why != NO_WALL {
-                                face.no_roads.push(NoRoad { ramp: open.ramp, step: last, at: stop.at, why: stop.why });
+                                face.no_roads.push(NoRoad { ramp: open.ramp, step: last, at: stop.at, why: stop.why, crosses: stop.crosses });
                             }
                             stopped.push(open.ramp);
                             face.roads.extend(open.road());
@@ -859,9 +858,8 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 // A road going up through the berm takes it in to its top. One going after it leaves it whole, and
                 // carries on from where the berm's line steps round its top. One turning back at the next wall
                 // leaves it whole too, and starts that wall straight across the berm from its wall-side top.
-                let through: Vec<RoadTop> = climbing.iter().filter(|open| !open.spec.after_berm && !turning.contains(&open.ramp)).filter_map(|open| open.top).collect();
-                let back = climbing.iter().find(|open| !turning.contains(&open.ramp)).is_some_and(|open| open.spec.back);
-                from = if through.is_empty() { lay(&line) } else { berm_round_roads(&line, &crest, &through, back, &mut lay) }.map_err(|e| fail(k, e))?;
+                let through: Vec<(RoadTop, bool)> = climbing.iter().filter(|open| !open.spec.after_berm && !turning.contains(&open.ramp)).filter_map(|open| open.top.map(|top| (top, open.spec.back))).collect();
+                from = if through.is_empty() { lay(&line) } else { berm_round_roads(&line, &crest, &through, &mut lay) }.map_err(|e| fail(k, e))?;
                 for open in climbing.iter_mut().filter(|open| open.spec.after_berm && !turning.contains(&open.ramp)) {
                     if let Some(top) = open.top {
                         let (line, landing, meets) = across_the_berm(&from, &crest, top, width, side);

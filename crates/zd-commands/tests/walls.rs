@@ -1128,6 +1128,53 @@ fn a_ramp_that_turns_back_joins_the_toe_past_the_turn_as_far_on_as_it_says() {
     assert!((joins[1] - joins[2] - 20.0).abs() < 1e-6, "{joins:?}");
 }
 
+/// A straight ramp and a switchback on one face (Tim, 2026-11-05), through the commands as the panel saves them: a toe 1.5 km
+/// long, a wall 10 m up to RL 110, a 10 m berm and another to RL 120. Ramp A runs straight up both from 100 m along, and
+/// ramp C climbs the first from 900 m and turns back to climb the second the other way, beside A. Both reach the top, and
+/// C's second stretch runs back. Moved to 250 m, C's second stretch would share A's, and C stops naming A.
+#[test]
+fn a_straight_ramp_and_a_switchback_share_a_face() {
+    let mut s = Session::with_builtins();
+    let floor = level_surface(&mut s, "floor", 100.0);
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "strings", "points": [[E + 10.0, N + 30.0, 0.0], [E + 1500.0, N + 30.0, 0.0]] })).unwrap())[0];
+    let straight = ramp_string(&mut s, &[[100.0, 20.0], [100.0, 40.0]]);
+    let content = |name: &str, at: f64, s: &mut Session| {
+        let switchback = ramp_string(s, &[[at, 20.0], [at, 40.0]]);
+        let ramp = |name: &str, string: ObjectId| json!({ "name": name, "string": string, "fixed": "start", "heading": "along", "width": 10.0, "grade": 10.0 });
+        json!({
+            "layer": format!("faces {name}"),
+            "lines": [{ "string": toe, "profile": "Wall", "side": "left", "run_on": [0.0, 0.0] }],
+            "profiles": [{
+                "name": "Wall", "direction": "up", "register": floor,
+                "steps": [
+                    { "step": "project", "to": { "kind": "rl", "rl": 110.0 }, "batter": 45.0, "ramps": ["A", "C"] },
+                    { "step": "berm", "width": 10.0, "register": false },
+                    { "step": "project", "to": { "kind": "rl", "rl": 120.0 }, "batter": 45.0, "ramps": ["A", "C"], "turns": ["C"] },
+                ],
+                "ramps": [ramp("A", straight), ramp("C", switchback)],
+            }],
+            "rules": [],
+        })
+    };
+    let apart = content("apart", 900.0, &mut s);
+    let design = created(&s.run("face.save_design", json!({ "name": "apart", "content": apart })).unwrap())[0];
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    for name in ["A", "C"] {
+        assert!(record.messages.iter().any(|m| m.starts_with(&format!("Ramp {name}: toe: steps 1 to 3")) && !m.contains("stopped")), "{name}: {:?}", record.messages);
+    }
+    let on = |o: &zd_core::Object, layer: &str| s.project().layer(o.layer).is_some_and(|l| l.name == layer);
+    let pit = line(&s, s.project().objects().find(|o| o.name == "toe Wall road C pit edge" && on(o, "faces apart")).expect("C's road").id);
+    let furthest = pit.vertices.iter().map(|p| p[0]).fold(f64::NEG_INFINITY, f64::max);
+    let top = *pit.vertices.last().unwrap();
+    assert!((top[2] - 120.0).abs() < 1e-6 && top[0] < furthest - 50.0, "C turns back and climbs to RL 120: {:?}", pit.vertices);
+    let close = content("close", 250.0, &mut s);
+    let design = created(&s.run("face.save_design", json!({ "name": "close", "content": close })).unwrap())[0];
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    let c = record.messages.iter().find(|m| m.starts_with("Ramp C:")).unwrap();
+    assert!(c.contains("stopped on step 3") && c.contains("it would cross ramp A running the other way on this wall"), "{c}");
+    assert!(record.messages.iter().any(|m| m.starts_with("Ramp A: toe: steps 1 to 3") && !m.contains("stopped")), "{:?}", record.messages);
+}
+
 /// Too steep a climb for the string's length leaves the face standing and says why, by step and place.
 #[test]
 fn a_ramp_that_cant_reach_names_the_step_and_the_face_still_builds() {
