@@ -5,7 +5,8 @@ import type { Vec3 } from '../bridge';
 import type { Viewport } from './Viewport';
 
 const MAX_VERTICES = 4096;
-const HANDLE_SCREEN_SCALE = 0.006;
+/** Handle size on screen, in pixels (any field of view, and flat views). */
+const HANDLE_PX = 7;
 
 export class PolylineTool {
   readonly points: THREE.Vector3[] = [];
@@ -76,10 +77,9 @@ export class PolylineTool {
   }
 
   private scaleHandles(): void {
-    const eye = this.viewport.camera.position;
     this.points.forEach((p, i) => {
       this.dummy.position.copy(p);
-      this.dummy.scale.setScalar(eye.distanceTo(p) * HANDLE_SCREEN_SCALE);
+      this.dummy.scale.setScalar(this.viewport.pixelSize(p) * HANDLE_PX);
       this.dummy.updateMatrix();
       this.handles.setMatrixAt(i, this.dummy.matrix);
     });

@@ -40,8 +40,9 @@ How the others do it:
 2. **Pan sticks.** The point you grab stays under the cursor the whole drag, near or far.
 3. **Zoom stays as it is.** Each tick goes a share of the way to what is under the cursor and slows near it.
    It never goes through a surface: Tim checked Spry, and you can't zoom through one there either.
-4. **Perspective, with a switch** to orthographic in 3D. Plan and section stay flat. The field of view stays
-   45°.
+4. **Perspective, with a switch** to orthographic in 3D. Plan and section stay flat. The field of view is
+   **narrow, 6° by default, and a setting** (Tim, 2026-11-05, after PR 1: heights looked flatter than in Spry
+   at 45°; Spry's Z scale is 1, so it isn't a stretch).
 5. **Stop dead.** No glide.
 6. **Mouse layout picked in settings**: Spry's, or ours.
 7. **Keys you can change**: hold to turn about the cursor (Spry's Z), zoom to extents (F), plan view (T).
@@ -87,6 +88,25 @@ other way. With no hit it uses the last depth. In plan and section the wheel sca
 cursor, and in orthographic 3D it will too. The share is a constant, left alone unless the side by side
 says otherwise.
 
+### 5a. A narrow field of view, as a setting
+At 45° the camera sits close, so the near side of a pit draws much bigger than the far side and the floor
+seems to stretch away: walls read short. A narrow lens from further back draws both sides near the same size,
+which is how Spry's view reads. Tim tried 45, 30, 20, 12 and 6° beside Spry and preferred the narrow end, 6°.
+- The 3D view opens at **6°**. A toolbar menu offers 2, 4, 6, 10, 15, 20, 30 and 45° (45 is the old view),
+  saved in `localStorage` on this machine.
+- Changing it moves the camera along its line of sight so the view centre stays the same size on screen.
+- Anything that sized itself by distance now scales by the field of view: zoom to extents (1.9 scene radii at
+  45°), fly to a point (600 m at 45°) and the bench's polyline handles (now in pixels). Pan, zoom, the plan
+  switch and marker sizes already used the field of view.
+- The bench always runs at the default, whatever is saved, and checks the scale holds through a change
+  (below 1e-9) and that zoom to extents frames the scene the same at 6° as at 45°.
+- On PIT B (2026-11-05) at 6°: scale off by 2e-16 through a change; extents 1.11 screens across at 6° and
+  1.13 at 45°; turn drift 1.4e-12 px; orbit 60 fps; pick p50 1.2 ms. The grabbed point is 0.0001 px off the
+  cursor after a 200 px pan, against 23.9 px at 45°: at a narrow lens every depth pans at nearly the same
+  rate, so pan sticks already. PR 2 still makes it exact, for the wider settings.
+- Lighting like Spry's (ambient 0.4, diffuse 0.6, straight down) was tried on its own first and didn't fix
+  the flat look; it isn't in this change.
+
 ### 6. Orthographic in 3D
 A toolbar switch and a key (P by default). Switching keeps the scale at the pivot depth (half height =
 distance × tan 22.5°), so the view doesn't jump. Code that now asks `flatView` to mean "no perspective" and
@@ -107,7 +127,7 @@ section's [ and ], or another camera key. Keys work only while the cursor is ove
 box has the focus. The settings live in `localStorage`, like the panel layout, not in the project.
 
 ### 8. Not now
-Damping. A navigation cube. Saved views and R (reset). A field-of-view setting. A fixed rotation centre
+Damping. A navigation cube. Saved views and R (reset). A fixed rotation centre
 (Deswik's). Left-drag selection box in the Spry layout (left drag does nothing there until there is one).
 
 ## How it is judged
@@ -129,6 +149,7 @@ Damping. A navigation cube. Saved views and R (reset). A field-of-view setting. 
 1. **Own controller, same feel.** `camera.ts` replaces `OrbitControls` with today's behaviour, plus the
    turn waiting for its pick. 0021's bench checks still pass. No visible change except no start about the
    wrong point.
+1a. **Narrow field of view** (6° default) and its setting, stacked on 1.
 2. **Pan that sticks** in 3D, plan and section, with its bench check.
 3. **The surer pivot:** `snap_rays` in `app/src-tauri` with its Rust test, the fallback to the nearest
    thing then the last pivot, and the bench check.
@@ -144,3 +165,4 @@ one after another.
 - Between a string near the cursor and the surface under it, **the one nearer the camera** is the pivot.
 - In the Spry layout, **middle drag on its own pans**, as middle + right does.
 - **Zoom stays as PR 1 has it** (2026-11-05): no push-through. Spry doesn't zoom through a surface either.
+- **The 3D field of view is 6° by default and a setting** (2026-11-05). Spry's heights read taller at 45°.
