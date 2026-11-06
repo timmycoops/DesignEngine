@@ -66,6 +66,8 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
     if (config.pictures) {
       const take = config.palettes ? takePalettePictures : takePictures;
       results.pictures = await take(viewport, config.surfaces, config.strings, log, show);
+    } else if (config.design_lines) {
+      results.design_lines = await checkDesignLines(viewport, log, show, strings);
     } else if (config.solids) {
       results.solids = await checkSolids(viewport, config, config.solids, log, show, section, strings);
     } else {
@@ -84,6 +86,124 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
   const path = await writeResults(JSON.stringify(results, null, 2));
   log(`results written to ${path}`);
   await exitApp();
+}
+
+/**
+ * `--design-lines`: Edit from here's copy lying on a step design's own line (Tim, 2026-11-06: his Deletes went to the
+ * design's line under his copy, and the next run made it again). Through the real canvas and keys: a click on the two
+ * picks the copy, Delete or a drag on the design's line is refused with what to do, and Delete on the copy takes the
+ * vertex out.
+ */
+async function checkDesignLines(viewport: Viewport, log: (line: string) => void, show: Show, stringLayer: () => StringLayer | null) {
+  const layer = stringLayer();
+  if (!layer) return { error: 'no string layer' };
+  const canvas = viewport.renderer.domElement;
+  const settle = async () => {
+    for (let i = 0; i < 8; i++) await viewport.nextFrame();
+  };
+  const send = (type: string, x: number, y: number, buttons: number) =>
+    canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+  const click = async (x: number, y: number) => {
+    send('pointermove', x, y, 0);
+    await viewport.nextFrame();
+    send('pointerdown', x, y, 1);
+    send('pointerup', x, y, 0);
+    await settle();
+  };
+  const press = async (key: string) => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key, cancelable: true }));
+    await settle();
+    await settle();
+  };
+  const pointsOf = async (id: string) => {
+    const d = await objectDetails(id);
+    return d.measures.kind === 'string' ? d.measures.points : [];
+  };
+  // A bent toe on RL 100, a wall to RL 115 and a 10 m berm: the design's next toe, and a copy of it on top.
+  log('design lines: a step design and a copy of its next toe');
+  const toe = await runCommand('string.create', { name: 'Toe', layer: 'toes', closed: false, points: [[650000, 7450000, 100], [650300, 7450040, 100], [650600, 7450000, 100], [650900, 7450030, 100]] });
+  const content = {
+    layer: 'faces',
+    lines: [{ string: toe.record.outputs[0].id, profile: 'Steps', side: 'left', run_on: [0, 0] }],
+    profiles: [{
+      name: 'Steps', direction: 'up', condition: 0.1, register: { kind: 'rl', rl: 100 }, ramps: [],
+      steps: [
+        { step: 'project', to: { kind: 'rl', rl: 115 }, batter: 70, condition: 0.1 },
+        { step: 'berm', width: 10, condition: 0.1, min_bench: 1, on: null, register: true },
+      ],
+    }],
+    rules: [],
+  };
+  const saved = await runCommand('face.save_design', { name: 'Steps from Toe', content });
+  const ran = await runCommand('face.step', { design: saved.record.outputs[0].id, name: 'Steps from Toe', content });
+  const made = ran.summary.objects.find((o) => o.kind === 'string' && o.name.endsWith(' next toe') && typeof o.attributes.face_design === 'string');
+  if (!made) return { error: 'the design made no next toe' };
+  const points = await pointsOf(made.id);
+  const copy = await runCommand('string.create', { name: 'Toe Steps your line 2', layer: 'edited lines', closed: false, points });
+  const yours = copy.record.outputs[0].id;
+  // As the panel does: your line on row 2, and the step run again, which makes the design's lines afresh, after yours.
+  const edited = { ...content, lines: [{ ...content.lines[0], edits: [{ row: 2, string: yours }] }] };
+  const again = await runCommand('face.step', { design: saved.record.outputs[0].id, name: 'Steps from Toe', content: edited });
+  const next = again.summary.objects.find((o) => o.kind === 'string' && o.name.endsWith(' next toe') && typeof o.attributes.face_design === 'string');
+  if (!next) return { error: 'the design made no next toe with your line on' };
+  const nextPoints = await pointsOf(next.id);
+  const onTop = nextPoints.length === points.length && nextPoints.every((p, i) => p.every((c, k) => Math.abs(c - points[i][k]) < 1e-6));
+  if (!onTop) return { error: "the design's next toe isn't where your line is" };
+  await show(again.summary);
+  layer.select(null);
+  viewport.fitView();
+  await settle();
+  const origin = copy.summary.origin ?? [0, 0, 0];
+  const onScreen = (p: number[]) => viewport.projectToClient(new THREE.Vector3(p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]));
+  const middle = (i: number) => onScreen(points[i].map((c, k) => (c + points[i + 1][k]) / 2));
+  const status = () => document.body.innerText;
+  const refusal = 'made again each time it runs';
+  const corner = onScreen(points[1]);
+
+  // Nothing selected: a click on the two picks your copy.
+  await click(...middle(0));
+  const pickedWithNothingSelected = layer.selected === yours ? 'your line' : layer.selected === next.id ? "the design's line" : String(layer.selected);
+  // The design's line selected (from the tree, say), then clicked on: it stays selected, and says it's the design's.
+  layer.select(next.id);
+  await click(...middle(1));
+  const designStaysSelected = layer.selected === next.id;
+  const saysWhatItIs = status().includes(refusal);
+  // Delete on one of its vertices: refused, nothing changes, and it says which row's ✎ to use.
+  const designBefore = points.length;
+  send('pointermove', corner[0], corner[1], 0);
+  await settle();
+  await press('Delete');
+  const designAfter = (await pointsOf(next.id)).length;
+  const deleteRefusedSaysRow = status().includes(refusal) && status().includes('✎ on row 2');
+  // A drag on its handle doesn't start.
+  send('pointerdown', corner[0], corner[1], 1);
+  send('pointermove', corner[0] + 40, corner[1] + 30, 1);
+  await settle();
+  send('pointerup', corner[0] + 40, corner[1] + 30, 0);
+  await settle();
+  await settle();
+  const afterDrag = await pointsOf(next.id);
+  const notMoved = afterDrag.length === points.length && afterDrag[1].every((c, k) => c === points[1][k]);
+  // Your copy selected by a click on it, then Delete on the same corner: the vertex goes.
+  layer.select(null);
+  await click(...middle(1));
+  const yoursSelected = layer.selected === yours;
+  send('pointermove', corner[0], corner[1], 0);
+  await settle();
+  await press('Delete');
+  const yoursAfter = (await pointsOf(yours)).length;
+  const result = {
+    picked_with_nothing_selected: pickedWithNothingSelected,
+    design_line_stays_selected_when_clicked: designStaysSelected,
+    selecting_the_design_line_says_so: saysWhatItIs,
+    design_line_vertices_before_after_delete: [designBefore, designAfter],
+    delete_on_design_line_refused_naming_row: deleteRefusedSaysRow,
+    design_line_vertex_not_moved_by_drag: notMoved,
+    your_line_selected_by_click: yoursSelected,
+    your_line_vertices_before_after_delete: [points.length, yoursAfter],
+  };
+  log(`design lines: ${JSON.stringify(result)}`);
+  return result;
 }
 
 /** A zip or folder of solids by the app's own path: import, draw, snap index, orbit, snap, undo. */

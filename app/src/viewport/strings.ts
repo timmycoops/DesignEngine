@@ -6,7 +6,10 @@
 // string to select it; drag one of its handles to move that vertex (`string.move_vertex`, one
 // command per drag, with a snapped preview while dragging); Alt+click on the selected string inserts
 // a vertex on it (`string.insert_vertex`); Delete removes the vertex under the cursor
-// (`string.delete_vertex`). Every edit is a command, so undo covers it.
+// (`string.delete_vertex`). Every edit is a command, so undo covers it. A line a face design made is made again
+// each time it runs, so an edit to one is refused, saying which row's ✎ gives a line of your own; where strings lie
+// on each other, as Edit from here's copy lies on the design's line, a click keeps the selected one, then takes one
+// of your own over the design's (`designLines.ts`).
 //
 // Snapping, in order: a string vertex near the cursor (its exact coordinates), the crossing of two
 // strings, the nearest point on a string segment, the surface under the cursor, and failing all of
@@ -20,6 +23,7 @@
 // vertex lands on the plane.
 import * as THREE from 'three/webgpu';
 import type { Layer, ProjectSummary, SnapHit, Vec3 } from '../bridge';
+import { type DesignLine, designLineMessage, lineToPick, type NearLine } from './designLines';
 import { colourOf, SELECTED } from './load';
 import { PointMark } from './markers';
 import type { Viewport } from './Viewport';
@@ -32,7 +36,8 @@ export interface StringActions {
   snap(clientX: number, clientY: number): Promise<SnapHit | null>;
   /** The surface straight below a scene-local plan position, if any. */
   snapDown(x: number, y: number): Promise<SnapHit | null>;
-  status(text: string): void;
+  /** A line in the status bar; `error` shows it as a refusal. */
+  status(text: string, error?: boolean): void;
   /** Layer that new strings go on. */
   layer(): string;
   /** The second point of a section was picked. */
@@ -50,6 +55,8 @@ interface Shown {
   closed: boolean;
   revision: number;
   name: string;
+  /** Made by a face design (its `face_design` attribute): made again each time it runs. */
+  design: DesignLine | null;
 }
 
 /** What the string tools work on while a section is open. */
@@ -155,6 +162,8 @@ export class StringLayer {
   private hoverInFlight = false;
   /** Surfaces and grids by id, to name what a point snaps to. */
   private surfaceNames = new Map<string, string>();
+  /** Face designs by id, for naming the design that made a line. */
+  private designNames = new Map<string, string>();
   /** Snapping was switched on or off. */
   onSnapping?: (on: boolean) => void;
   /** The scene origin: world = origin + local, exactly, for points the shell sent. */
@@ -291,6 +300,7 @@ export class StringLayer {
     this.layers = new Map(summary.layers.map((l) => [l.id, l]));
     this.origin = summary.origin ?? [0, 0, 0];
     this.surfaceNames = new Map(summary.objects.filter((o) => o.drawn).map((o) => [o.id, o.name]));
+    this.designNames = new Map(summary.objects.filter((o) => o.kind === 'face_design').map((o) => [o.id, o.name]));
     const everyString = summary.objects.filter((o) => o.kind === 'string' && o.vertices_local);
     this.names = Math.max(this.names, everyString.length);
     const strings = everyString.filter((o) => !o.hidden);
@@ -313,7 +323,10 @@ export class StringLayer {
       if (existing) changed.add(existing.layer);
       changed.add(s.layer);
       const points = (s.vertices_local ?? []).map((p) => new THREE.Vector3(...p));
-      this.shown.set(s.id, { layer: s.layer, visible, points, closed: !!s.closed, revision: s.revision, name: s.name });
+      const made = s.attributes.face_design;
+      const step = s.attributes.step;
+      const design = typeof made === 'string' ? { name: s.name, design: made, step: typeof step === 'number' ? step : null } : null;
+      this.shown.set(s.id, { layer: s.layer, visible, points, closed: !!s.closed, revision: s.revision, name: s.name, design });
     }
     for (const layer of changed) this.drawLayer(layer);
     if (changed.size > 0) this.runs = [...this.shown].flatMap(([id, shown]) => runsOf(id, shown));
@@ -400,6 +413,10 @@ export class StringLayer {
     if (e.button !== 0) return;
     if (this.mode === 'select' && this.selected && !this.wanted) {
       const index = this.handleAt(this.selected, e.clientX, e.clientY);
+      if (index >= 0 && this.refusedDesignEdit(this.selected)) {
+        e.stopImmediatePropagation();
+        return;
+      }
       if (index >= 0) {
         this.drag = { id: this.selected, index, hit: null };
         this.viewport.controls.enabled = false;
@@ -534,6 +551,7 @@ export class StringLayer {
       return;
     }
     if (e.altKey && this.selected) {
+      if (this.refusedDesignEdit(this.selected)) return;
       // On the segment itself, so the string keeps its shape.
       const segment = this.segmentAt(this.selected, e.clientX, e.clientY);
       const hit = segment < 0 ? null : this.pointOnSegment(this.selected, segment, e.clientX, e.clientY);
@@ -546,8 +564,11 @@ export class StringLayer {
       return;
     }
     this.actions.mark(null);
-    if (string) this.select(string);
-    else this.actions.pick(e.clientX, e.clientY);
+    if (string) {
+      this.select(string);
+      const design = this.shown.get(string)?.design;
+      if (design) this.actions.status(designLineMessage(design, this.designNames.get(design.design)));
+    } else this.actions.pick(e.clientX, e.clientY);
   }
 
   private keyDown(e: KeyboardEvent): void {
@@ -581,6 +602,7 @@ export class StringLayer {
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && this.hovered) {
       const { id, index } = this.hovered;
+      if (this.refusedDesignEdit(id)) return;
       this.hovered = null;
       void this.actions.run('string.delete_vertex', { string: id, index });
     }
@@ -932,22 +954,31 @@ export class StringLayer {
     return best;
   }
 
+  /**
+   * The string a click picks: the nearest, but where strings lie on each other (your line from Edit from here on the
+   * design's), the selected one, then one of your own over a design's (`designLines.ts`).
+   */
   private stringAt(x: number, y: number): string | null {
     const screen = this.screen();
-    let best: string | null = null;
-    let bestDist = PICK_PX;
+    const near = new Map<string, NearLine>();
     for (const { id, shown, first, count } of this.runsNear(x, y, PICK_PX)) {
       for (let i = first; i < first + count; i++) {
         const part = this.shownPart(shown.points[i], shown.points[(i + 1) % shown.points.length]);
         if (!part) continue;
-        const d = distanceToSegment([x, y], screen(part[0]), screen(part[1]));
-        if (d <= bestDist) {
-          best = id;
-          bestDist = d;
-        }
+        const distance = distanceToSegment([x, y], screen(part[0]), screen(part[1]));
+        const was = near.get(id);
+        if (!was || distance < was.distance) near.set(id, { id, distance, madeByDesign: shown.design !== null });
       }
     }
-    return best;
+    return lineToPick([...near.values()], this.selected, PICK_PX);
+  }
+
+  /** Refuses an edit to a line a face design made, saying why and what to do: true if it was one. */
+  private refusedDesignEdit(id: string): boolean {
+    const design = this.shown.get(id)?.design;
+    if (!design) return false;
+    this.actions.status(designLineMessage(design, this.designNames.get(design.design)), true);
+    return true;
   }
 }
 
