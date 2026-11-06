@@ -39,7 +39,20 @@ pub enum FaceStep<'a> {
     /// conditioned after it's moved out. With `min_bench` there's no berm where the wall below it is lower. With `join`,
     /// switchbacks turning on it, on box pads facing each other, are one pad: the line it ends on runs straight from the
     /// back of one box to the back of the next (decision 0047).
-    Berm { on: Option<FaceTarget<'a>>, width: EdgeRule<'a>, register: bool, condition: Option<f64>, min_bench: Option<f64>, join: bool },
+    Berm { on: Option<FaceTarget<'a>>, width: EdgeRule<'a>, register: bool, condition: Option<f64>, min_bench: Option<f64>, join: JoinBoxes },
+}
+
+/// What a berm does with switchbacks turning on it, on box pads facing each other (decision 0047).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JoinBoxes {
+    /// Boxes that come within a road's width of each other, or overlap, meet half way between the roads' tops as one pad:
+    /// a berm between them that close is pinched to nothing (Tim, 2026-11-06). Others stand apart.
+    #[default]
+    Auto,
+    /// One pad wherever they are: the line it ends on runs straight from the back of one box to the back of the next.
+    On,
+    /// Apart wherever they are, as before Join.
+    Off,
 }
 
 /// One wall of a face.
@@ -101,7 +114,7 @@ pub struct EditReport {
 pub struct JoinNote {
     /// The berm's step, from 0.
     pub after: usize,
-    /// The ramps turning back on a box pad on it.
+    /// The ramps turning back on a box pad on it, apart from those whose boxes met.
     pub turning: Vec<usize>,
     /// Neighbouring boxes on it that face away from each other, so nothing lies between them to join.
     pub facing_away: Vec<[usize; 2]>,
@@ -124,6 +137,37 @@ pub struct Face {
     pub edits: Vec<EditReport>,
     /// Berms set to join switchbacks that had none to join.
     pub join_notes: Vec<JoinNote>,
+    /// Boxes made one pad by themselves, being within a road's width of each other or overlapping.
+    pub met: Vec<MetBoxes>,
+    /// Switchbacks whose tops are too close for both to turn back on one berm.
+    pub too_close: Vec<TooClose>,
+}
+
+/// Two switchbacks facing each other on a berm whose roads' tops are too close for both to turn on it (decision 0047):
+/// boxes short enough to stand a road's width apart would be too short to turn on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TooClose {
+    /// The berm's step, from 0.
+    pub after: usize,
+    /// The ramps, in the crest's order.
+    pub ramps: [usize; 2],
+    /// How far apart the tops are along the crest (m).
+    pub apart: f64,
+    /// How much further apart they'd need to be (m).
+    pub short: f64,
+}
+
+/// Two switchbacks' boxes on a berm that would have come within a road's width of each other, or overlapped, and so are one
+/// pad: each shortened to stand just over that width from the other, and joined from the back of one to the back of the
+/// other (decision 0047).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetBoxes {
+    /// The berm's step, from 0.
+    pub after: usize,
+    /// The ramps, in the crest's order.
+    pub ramps: [usize; 2],
+    /// How far apart the boxes would have been along the crest (m), less than nothing where they'd have overlapped.
+    pub gap: f64,
 }
 
 /// What registering a toe did.
@@ -406,7 +450,7 @@ fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, directi
             Ok(()) => {
                 face.no_roads.extend(held_back.into_values());
                 face.no_roads.sort_by_key(|n| n.ramp);
-                return Ok(Face { surface: split_at(weld(&face.meshes), &face.meets), benches: face.benches, steps: face.steps, roads: face.roads, no_roads: face.no_roads, berm_line: face.berm_line, edits: face.edits, join_notes: face.join_notes });
+                return Ok(Face { surface: split_at(weld(&face.meshes), &face.meets), benches: face.benches, steps: face.steps, roads: face.roads, no_roads: face.no_roads, berm_line: face.berm_line, edits: face.edits, join_notes: face.join_notes, met: face.met, too_close: face.too_close });
             }
             Err(e @ GeomError::Refused(_)) => return Err(e),
             Err(e) => {
@@ -415,7 +459,7 @@ fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, directi
                 limits.insert(r, face.walls_climbed[&r] - 1);
                 let why = format!("what's built on it can't be: {}", e.to_string().replace("invalid input: ", ""));
                 let why = if direction == FaceDirection::Down { going_down(&why) } else { why };
-                held_back.insert(r, NoRoad { ramp: r, step, at: [ramps[r].start[0], ramps[r].start[1], 0.0], why, crosses: None });
+                held_back.insert(r, NoRoad { ramp: r, step, at: [ramps[r].start[0], ramps[r].start[1], 0.0], why, crosses: None, too_close: None });
             }
         }
     }
@@ -483,6 +527,8 @@ struct FaceParts {
     berm_line: Option<Polyline>,
     edits: Vec<EditReport>,
     join_notes: Vec<JoinNote>,
+    met: Vec<MetBoxes>,
+    too_close: Vec<TooClose>,
     /// By ramp: how many walls it's climbed so far, and the last of them.
     walls_climbed: HashMap<usize, usize>,
     last_wall: HashMap<usize, usize>,
@@ -656,11 +702,14 @@ struct Climbing {
     steep_flats: Vec<([f64; 3], f64)>,
     /// The far end of the box pad it's turning on, its corners on the crest and a road width in: none with no box.
     pad: Option<[[f64; 3]; 2]>,
+    /// Its box came within a road's width of another's on the berm it's turning on, or overlapped it, so the two are one
+    /// pad (decision 0047).
+    met: bool,
 }
 
 impl Climbing {
     fn new(ramp: usize, spec: FaceRamp) -> Self {
-        Climbing { ramp, spec, steps: None, top: None, turned: None, pad_corner: None, pit_edge: Vec::new(), wall_edge: Vec::new(), steep_flats: Vec::new(), pad: None }
+        Climbing { ramp, spec, steps: None, top: None, turned: None, pad_corner: None, pit_edge: Vec::new(), wall_edge: Vec::new(), steep_flats: Vec::new(), pad: None, met: false }
     }
 
     /// Turns on a box pad past its top: the road ends at its top, and the box runs on in line with it this far.
@@ -803,7 +852,7 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 let (&(last, to, condition), marks) = wall.split_last().expect("this step at least");
                 if from.closed {
                     for open in climbing.drain(..) {
-                        face.no_roads.push(NoRoad { ramp: open.ramp, step: k, at: from.vertices[0], why: "a ramp needs an open string for now".into(), crosses: None });
+                        face.no_roads.push(NoRoad { ramp: open.ramp, step: k, at: from.vertices[0], why: "a ramp needs an open string for now".into(), crosses: None, too_close: None });
                         stopped.push(open.ramp);
                         face.roads.extend(open.road());
                     }
@@ -818,8 +867,18 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 let berm_before = k.checked_sub(1).filter(|before| matches!(steps[*before], FaceStep::Berm { .. }));
                 let yours = berm_before.and_then(edit_after);
                 let mut redrawn: Option<Redrawn> = None;
-                if let Some(before) = berm_before.filter(|before| yours.is_none() && matches!(steps[*before], FaceStep::Berm { join: true, .. })) {
-                    let (starts, made, boxes) = road_starts(&from, &batters, side, &climbing, lying.then(|| on.mesh()), to, flattest);
+                let joining = |before: &usize| match steps[*before] {
+                    FaceStep::Berm { join: JoinBoxes::On, .. } => true,
+                    FaceStep::Berm { join: JoinBoxes::Auto, .. } => climbing.iter().any(|open| open.met),
+                    _ => false,
+                };
+                if let Some(before) = berm_before.filter(|before| yours.is_none() && joining(before)) {
+                    // Left to itself the berm joins only the boxes it brought a road's width apart.
+                    let only_met = matches!(steps[before], FaceStep::Berm { join: JoinBoxes::Auto, .. });
+                    let (starts, made, mut boxes) = road_starts(&from, &batters, side, &climbing, lying.then(|| on.mesh()), to, flattest);
+                    if only_met {
+                        boxes.retain(|(r, ..)| climbing[*r].met);
+                    }
                     let ramp = |r: usize| climbing[r].ramp;
                     match joined_boxes(&made, &boxes) {
                         Ok((line, pairs)) => redrawn = Some(Redrawn { line, starts, made, joined: pairs.iter().map(|[a, b]| [ramp(*a), ramp(*b)]).collect() }),
@@ -941,7 +1000,7 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                             let open = climbing.remove(r);
                             // With none left and a road already on its way, it has come out of the pit.
                             if open.top.is_none() || stop.why != NO_WALL {
-                                face.no_roads.push(NoRoad { ramp: open.ramp, step: last, at: stop.at, why: stop.why, crosses: stop.crosses });
+                                face.no_roads.push(NoRoad { ramp: open.ramp, step: last, at: stop.at, why: stop.why, crosses: stop.crosses, too_close: None });
                             }
                             stopped.push(open.ramp);
                             face.roads.extend(open.road());
@@ -978,7 +1037,7 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                     face.roads.extend(open.road());
                 }
             }
-            FaceStep::Berm { on: named, width, register, condition, min_bench, .. } => {
+            FaceStep::Berm { on: named, width, register, condition, min_bench, join } => {
                 let waited = waiting.take();
                 // With no wall below it in this design, as where it starts from the crest of the one below, there's no
                 // height to hold a minimum bench to, so the berm stays.
@@ -999,10 +1058,42 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 // The crest each turning road's pad holds up, from its wall-side top before any flat to its pit-side
                 // corner at the end: the berm's line beside it lies on the target.
                 let mut pads: Vec<RoadTop> = Vec::new();
-                for open in climbing.iter_mut().filter(|open| turning.contains(&open.ramp)) {
+                for open in climbing.iter_mut() {
+                    open.met = false;
+                }
+                // Switchbacks facing each other whose boxes would come within a road's width of each other, or overlap, are
+                // one pad unless the berm keeps them apart (decision 0047): a berm between boxes that close is pinched to
+                // nothing, and folds. Each box is shortened, or lengthened, to stand just over a road's width from the
+                // other, where the berm between them builds, and the wall above joins them from the back of one to the
+                // back of the other, as Join does.
+                let (mut meeting, too_close) = if join == JoinBoxes::Off { (Vec::new(), Vec::new()) } else { boxes_meeting(&crest, &climbing, turning, width, side) };
+                // Two whose tops are too close for both to turn on this berm: the later ramp stops at its top, and says why.
+                if !too_close.is_empty() {
+                    let mut gone: Vec<(usize, usize, f64, f64)> = too_close.iter().map(|&(a, b, apart, short)| if climbing[a].ramp > climbing[b].ramp { (a, climbing[b].ramp, apart, short) } else { (b, climbing[a].ramp, apart, short) }).collect();
+                    gone.sort_by_key(|x| std::cmp::Reverse(x.0));
+                    for (r, other, apart, short) in gone {
+                        let open = climbing.remove(r);
+                        let at = open.top.map_or(from.vertices[0], |top| top.pit);
+                        face.no_roads.push(NoRoad { ramp: open.ramp, step: k, at, why: String::new(), crosses: None, too_close: Some((other, apart, short)) });
+                        face.too_close.push(TooClose { after: k, ramps: [other, open.ramp], apart, short });
+                        stopped.push(open.ramp);
+                        face.roads.extend(open.road());
+                    }
+                    meeting = boxes_meeting(&crest, &climbing, turning, width, side).0;
+                }
+                let mut lengths: HashMap<usize, f64> = HashMap::new();
+                for &(a, b, [long_a, long_b], gap) in &meeting {
+                    lengths.insert(a, long_a);
+                    lengths.insert(b, long_b);
+                    climbing[a].met = true;
+                    climbing[b].met = true;
+                    face.met.push(MetBoxes { after: k, ramps: [climbing[a].ramp, climbing[b].ramp], gap });
+                }
+                for (r, open) in climbing.iter_mut().enumerate().filter(|(_, open)| turning.contains(&open.ramp)) {
                     let Some(top) = open.top else { continue };
+                    let turn_flat = lengths.get(&r).copied().unwrap_or(open.spec.turn_flat);
                     let mut lay_flat = |part: &Polyline| -> Result<Polyline, GeomError> { if register { Ok(drape_string(part, on.mesh(), true)?.0) } else { Ok(at_crest_heights(part, &crest)) } };
-                    let flat = if open.spec.turn_flat > 0.0 { flat_past_top(&crest, top, open.spec.turn_flat, width, side, &mut lay_flat).map_err(|e| fail(k, e))? } else { None };
+                    let flat = if turn_flat > 0.0 { flat_past_top(&crest, top, turn_flat, width, side, &mut lay_flat).map_err(|e| fail(k, e))? } else { None };
                     let Some(flat) = flat else {
                         open.pad = None;
                         pads.push(top);
@@ -1178,6 +1269,92 @@ fn place_along(line: &Polyline, p: [f64; 3]) -> f64 {
 
 /// How near a box's back corner is taken to be the line's vertex there (m): it's the same point, put in by the box.
 const ON_THE_LINE: f64 = 0.01;
+
+/// Pairs of boxes to be one pad, as places in the roads climbing in the crest's order, how far each runs past its road's
+/// top, and the gap they'd have had (`boxes_meeting`).
+type Meetings = Vec<(usize, usize, [f64; 2], f64)>;
+
+/// Pairs of roads whose tops are too close to share a berm, as places in the roads climbing, how far apart the tops are and
+/// how much further apart they'd need to be (`boxes_meeting`).
+type TopsTooClose = Vec<(usize, usize, f64, f64)>;
+
+/// The least a box is let run past its road's top when it's shortened to stand clear of another, as a share of the road's
+/// width: shorter, the road can't turn on it.
+const LEAST_BOX: f64 = 1.0 / 3.0;
+/// How far from a bend in the crest a box shortened to stand clear of another is kept from ending (m).
+const CLEAR_OF_A_BEND: f64 = 5.0;
+
+/// How far to move the gap between two boxes along the crest, as metres onto the first box and off the second, so both
+/// their ends, `ends` metres along it, stand `CLEAR_OF_A_BEND` from its inner vertices: the least move that does, no more
+/// than each box can give (`spare`, first and second), or none.
+fn clear_of_bends(crest: &Polyline, ends: [f64; 2], spare: [f64; 2]) -> f64 {
+    let mut along = 0.0;
+    let mut bends = Vec::new();
+    for w in crest.vertices.windows(2) {
+        along += plan_gap(w[0], w[1]);
+        bends.push(along);
+    }
+    bends.pop();
+    let clear = |shift: f64| bends.iter().all(|bend| (ends[0] + shift - bend).abs() >= CLEAR_OF_A_BEND && (ends[1] + shift - bend).abs() >= CLEAR_OF_A_BEND);
+    let mut step = 0.0;
+    while step <= 2.0 * CLEAR_OF_A_BEND {
+        for shift in [step, -step] {
+            if shift <= spare[1] && -shift <= spare[0] && clear(shift) {
+                return shift;
+            }
+        }
+        step += 0.5;
+    }
+    0.0
+}
+/// How much further than a road's width apart two close boxes are set, so the roads leaving them are clear of each other
+/// and the berm between them builds (m).
+const CLEAR_OF_A_ROAD: f64 = 1.0;
+
+/// Switchbacks turning back on a berm whose boxes face each other and would come within the wider road's width of each
+/// other along the crest, or overlap (decision 0047, Tim 2026-11-06: "one road width is a good trigger"): each pair, as
+/// places in `climbing` in the crest's order, how far each box runs past its road's top to stand just over that width from
+/// the other, the difference shared between the two, and the gap they'd have had (less than nothing for an overlap).
+fn boxes_meeting(crest: &Polyline, climbing: &[Climbing], turning: &[usize], berm: EdgeRule<'_>, side: OffsetSide) -> (Meetings, TopsTooClose) {
+    // Each turning road with a box: where its top is along the crest, which way its box runs, and how long it is.
+    let mut keep = |part: &Polyline| -> Result<Polyline, GeomError> { Ok(part.clone()) };
+    let mut boxes: Vec<(usize, f64, bool, f64, f64)> = climbing
+        .iter()
+        .enumerate()
+        .filter(|(_, open)| turning.contains(&open.ramp) && open.spec.turn_flat > 0.0)
+        .filter_map(|(r, open)| {
+            let top = open.top?;
+            let flat = flat_past_top(crest, top, open.spec.turn_flat, berm, side, &mut keep).ok()??;
+            Some((r, metres_along(crest, top.pit), flat.forward, open.spec.turn_flat, open.spec.width))
+        })
+        .collect();
+    boxes.sort_by(|x, y| x.1.total_cmp(&y.1));
+    let (mut meeting, mut too_close) = (Vec::new(), Vec::new());
+    for pair in boxes.windows(2) {
+        let [(a, at_a, ahead_a, long_a, wide_a), (b, at_b, ahead_b, long_b, wide_b)] = [pair[0], pair[1]];
+        if !ahead_a || ahead_b || meeting.iter().any(|m: &(usize, usize, [f64; 2], f64)| m.1 == a) {
+            continue;
+        }
+        let (gap, apart) = (at_b - at_a - long_a - long_b, wide_a.max(wide_b));
+        if gap >= apart {
+            continue;
+        }
+        let (long_a, long_b) = (long_a + (gap - apart - CLEAR_OF_A_ROAD) / 2.0, long_b + (gap - apart - CLEAR_OF_A_ROAD) / 2.0);
+        let least = apart * LEAST_BOX;
+        if long_a >= least && long_b >= least {
+            // A box ending just short of or past a bend in the crest folds the berm there, so the gap between them moves
+            // along a little, the nearest way, until both ends stand clear of the crest's bends, where it can.
+            let shift = clear_of_bends(crest, [at_a + long_a, at_b - long_b], [long_a - least, long_b - least]);
+            meeting.push((a, b, [long_a + shift, long_b - shift], gap));
+        } else {
+            // The tops are so close that boxes short enough to stand a road's width apart are too short to turn on: how far
+            // apart the tops are, and how much further they'd need to be.
+            let need = 2.0 * least + apart + CLEAR_OF_A_ROAD;
+            too_close.push((a, b, at_b - at_a, need - (at_b - at_a)));
+        }
+    }
+    (meeting, too_close)
+}
 
 /// The steps' line after a berm with the switchbacks on it joined (decision 0047): neighbouring boxes along it that face
 /// each other, each with its far end towards the other, become one pad, the line running straight from the back of one's
@@ -1784,7 +1961,7 @@ mod tests {
     }
 
     fn berm<'a>(width: f64) -> FaceStep<'a> {
-        FaceStep::Berm { on: None, width: width.into(), register: true, condition: Some(0.1), min_bench: None , join: false }
+        FaceStep::Berm { on: None, width: width.into(), register: true, condition: Some(0.1), min_bench: None, join: JoinBoxes::Auto }
     }
 
     /// Tim's sequence on level surfaces, where every line has a known place: the toe on Grid A at RL 100,
@@ -1909,7 +2086,7 @@ mod tests {
         let a = surface(|_, _| 100.0);
         let rolling = surface(|x, y| 120.0 + 0.2 * (y - 120.0) + 4.0 * (x / 41.0).sin());
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
-        let steps = |register| [wall(FaceTarget::Surface(&rolling), 60.0), FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register, condition: Some(0.1), min_bench: None , join: false }, wall(FaceTarget::Rl(160.0), 60.0)];
+        let steps = |register| [wall(FaceTarget::Surface(&rolling), 60.0), FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register, condition: Some(0.1), min_bench: None, join: JoinBoxes::Auto }, wall(FaceTarget::Rl(160.0), 60.0)];
         let held = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps(false), &[]).unwrap();
         let crest = &held.benches[0].crest;
         let next = &held.benches[1].toe;
@@ -1933,7 +2110,7 @@ mod tests {
         let (a, b, c) = (surface(|_, _| 100.0), surface(|_, _| 120.0), surface(|_, _| 125.0));
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
         for (on, want) in [(FaceTarget::Surface(&c), 125.0), (FaceTarget::Rl(123.0), 123.0)] {
-            let steps = [wall(FaceTarget::Surface(&b), 45.0), FaceStep::Berm { on: Some(on), width: EdgeRule::Fixed(5.0), register: true, condition: None, min_bench: None , join: false }, wall(FaceTarget::Rl(160.0), 45.0)];
+            let steps = [wall(FaceTarget::Surface(&b), 45.0), FaceStep::Berm { on: Some(on), width: EdgeRule::Fixed(5.0), register: true, condition: None, min_bench: None, join: JoinBoxes::Auto }, wall(FaceTarget::Rl(160.0), 45.0)];
             let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps, &[]).unwrap();
             for p in &face.benches[1].toe.vertices {
                 close(p[2], want, 1e-6);
@@ -1949,7 +2126,7 @@ mod tests {
         let rolling = surface(|x, y| 120.0 + 3.0 * (x / 29.0).sin() + 2.0 * (y / 17.0).cos());
         let toe = line(&[[50.0, 100.0, 100.0], [350.0, 100.0, 100.0]]);
         let corners_of_next_toe = |crest: Option<f64>, after: Option<f64>| {
-            let steps = [FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: EdgeRule::Fixed(60.0), condition: crest, ramps: &[], turns: &[] }, FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: after, min_bench: None , join: false }, wall(FaceTarget::Rl(170.0), 60.0)];
+            let steps = [FaceStep::Project { to: FaceTarget::Surface(&rolling), batter: EdgeRule::Fixed(60.0), condition: crest, ramps: &[], turns: &[] }, FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: after, min_bench: None, join: JoinBoxes::Auto }, wall(FaceTarget::Rl(170.0), 60.0)];
             let face = project_face(&toe, &a, OffsetSide::Left, FaceDirection::Up, &steps, &[]).unwrap();
             plan_corners(&face.benches[1].toe)
         };
@@ -2051,7 +2228,7 @@ mod tests {
         let target = triangulate_grid(&Grid::from_fn([E - 500.0, N - 500.0], [10.0, 10.0], 180, 100, |x, _| 104.0 + 0.03 * (x - E - 80.0) + 2.0 * ((x - E) / 30.0).sin()));
         let steps = [
             FaceStep::Project { to: FaceTarget::Surface(&target), batter: EdgeRule::Fixed(70.0), condition: Some(0.1), ramps: &[], turns: &[] },
-            FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: Some(0.1), min_bench: Some(5.0) , join: false },
+            FaceStep::Berm { on: None, width: EdgeRule::Fixed(10.0), register: true, condition: Some(0.1), min_bench: Some(5.0), join: JoinBoxes::Auto },
             FaceStep::Project { to: FaceTarget::Rl(140.0), batter: EdgeRule::Fixed(70.0), condition: Some(0.1), ramps: &[], turns: &[] },
         ];
         let face = project_face(&toe, &floor, OffsetSide::Left, FaceDirection::Up, &steps, &[]).unwrap();

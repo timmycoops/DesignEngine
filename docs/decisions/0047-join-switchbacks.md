@@ -1,6 +1,6 @@
 # 0047 — Join switchbacks on a berm
 
-Date: 2026-11-06 · Status: accepted (Tim, 2026-11-06: "Yes, build Join"). After 0046 (edit the line), 0038 (switchbacks).
+Date: 2026-11-06 · Status: accepted (Tim, 2026-11-06: "Yes, build Join"; joining by themselves within a road's width: "go for it"). After 0046 (edit the line), 0038 (switchbacks).
 
 ## Why
 
@@ -78,8 +78,71 @@ shows one Join switch, on row 8, titled "Join the switchbacks of A and B on this
 once: "row 8 joins the switchbacks of A and B into one pad: the berm below it is 10.0 to 69.3 m wide", both roads to RL
 165, and the switch shows on.
 
+## Joining by themselves (2026-11-06)
+
+Tim, on how it should feel: "They would only join by default if they overlap or are close to overlapping so the nose is
+removed from the face. I feel it's a manual decision to make it work the way you need most of the time", and "one road
+width is a good trigger by default".
+
+Moving B's ramp towards A's on his template showed that close boxes didn't build at all before this. Join off, a box
+gap of about 17 m or less folded the berm, or left "nothing" of it between them, and one road gave up. That's the case to
+join by themselves.
+
+1. **Join is one of three on a berm:** left out, the usual, the berm joins only facing boxes that would come within the
+   wider road's width of each other along the crest, or overlap; on, every facing pair wherever they are (above); off,
+   none, as before Join. A design saved with Join on reads as on; one saved before Join reads as the usual.
+2. **Close boxes are shortened, then joined:** each box is shortened (or lengthened), sharing the difference, so the two
+   stand a road's width and a metre apart along the crest, where the berm between them builds. Then the wall above joins
+   them from the back of one to the back of the other, exactly as Join on does. Both boxes keep a turn: none is shortened
+   below a third of a road's width. The gap moves along the crest, the nearest way, to keep both box ends 5 m clear of
+   the crest's bends where it can.
+3. **Tops too close to share a berm:** where boxes that short still couldn't stand a road's width apart, the later ramp
+   in the list stops at its top on that berm and says how much further apart the tops need to be: two thirds of a road's
+   width for the two boxes, the road's width between them and a metre. The other ramp turns there as it would alone.
+4. **The run says so:** "row 8: the boxes of A and B would have been 10.3 m apart, under a road's width, so they're one
+   pad" or "would have overlapped by 2.8 m", beside the join's own line with the berm's width; and for tops too close,
+   "its top is only 43.1 m along the crest from ramp A's, too close for both to turn back on one berm: move one of them
+   7.9 m further along the strip".
+5. **The panel:** the Join switch shows the usual as it did off, with a tip saying the boxes join by themselves within a
+   road's width (30 m on the template); a click turns Join on, another leaves it to the berm again. A berm saved off shows
+   "Apart".
+
+Meeting half way between the tops as one continuous pad was tried first and dropped. The road leaving each box shapes the
+toe of the wall above round the box's far end, and two of them leaving one pad left a notch in it where the boxes met,
+which folded the berm two rows up. Shortening and joining reuses the join that builds.
+
+### Results
+
+Tim's template, ramp B's string moved west by the distance shown, Join left to the berm, 11 rows (debug build, about
+25 ms each):
+
+| B moved west | Before (Join off) | Left to the berm |
+|---|---|---|
+| 0, 60 m | builds, nose between | the same: far enough apart |
+| 75 m (20 m gap) | a road gives up: the berm folds | one pad, both roads to RL 175 |
+| 80, 85, 88, 90, 92 m (15 to 3 m) | a road gives up | one pad, both to RL 175 |
+| 96, 98 m (overlap 0.8, 2.8 m) | a road gives up | one pad, both to RL 175 |
+| 94, 100, 102, 104 m | a road gives up | still: the berm folds by the bend in the crest near x 590 |
+| 106, 112 m | a road gives up | B stops at its top: "move one of them 1.9 m / 7.9 m" |
+| 130 m | B crosses A | the same (B's road would cross A's) |
+
+Tests:
+- 80, 85 and 98 m: both roads to RL 175, joined, no crossings; the gap reported shrinks one for one as B moves (5 m
+  further west, 5.0 m closer, to 0.1 m).
+- Boxes 102 m apart stand as they are, left to the berm or off.
+- 85 m with Join off gives a road up as before.
+- At 112 m B stops at its top, and the tops' distance plus how much further is 51.0 m, to 0.1 m.
+
+In the app (`--bench --design-lines`) the switch's tip says the boxes join by themselves within a road's width (30 m),
+and a click joins A and B 102 m apart.
+
 ## What this leaves
 
 - **Join on a straight toe** meets the fold where two boxes on one berm on a straight toe fold the berm (0046), with or
   without Join. Tim's bent template and the grid pit build.
+- **A box ending by a bend in the crest** can fold the berm, as at 94 to 104 m on the template, with or without Join (at
+  70 m it did with no Join at all). Close boxes are kept 5 m clear of bends where they can be; the fold itself is in how
+  a box's berm meets a bend, not in Join.
+- **Boxes overlapping by more than a few metres** don't build: the tops are then too close and the later road stops,
+  saying how far to move one.
 - **A minimum nose rule** for designs on many strips: Join is set by hand, row by row.
