@@ -8,6 +8,7 @@ import {
   FileOutput,
   FilePlus,
   FolderOpen,
+  Hammer,
   Layers,
   Layers3,
   Magnet,
@@ -898,6 +899,9 @@ export default function App() {
           </ToolButton>
           <ToolButton tip="Face design: lines, profiles and rules, run as one" onClick={() => dockRef.current && showPanel(dockRef.current, 'face')}>
             <MountainSnow /> Face
+          </ToolButton>
+          <ToolButton tip="Builder: pick a line, build one wall or berm from it, edit between steps" onClick={() => dockRef.current && showPanel(dockRef.current, 'builder')}>
+            <Hammer /> Builder
           </ToolButton>
           {sectionOpen && (
             <>

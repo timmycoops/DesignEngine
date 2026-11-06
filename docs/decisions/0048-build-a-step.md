@@ -45,8 +45,8 @@ side of one step.
    crest.
 6. **What a step leaves,** for the next step and for Rebuild: on every piece, `build` (the build's name), `build_step` (its
    number in the build, from 1) and `build_id` (the step's own id). On its line, `build_on` (what the line lies on) and
-   `build_record`: the line it was built from, what that lies on, the side, the step, and the fingerprints. So the step after
-   it needs no side or what the line lies on.
+   `build_record`: the line it was built from, what that lies on and its revision then, the side, the step, and the
+   fingerprints. So the step after it needs no side or what the line lies on.
 7. **The first step.** A line drawn by hand needs `lies_on` and `side`, and is registered to what it lies on. `run_on` runs
    it on past its ends, so the face is built oversized and the cut does the fitting, and `condition` cleans it, as a profile
    does. A line a step or a design made keeps its heights, with only its run-on registered (0041). What's made goes on the
@@ -90,9 +90,38 @@ The slow steps are the berm's 30 m offset of a crest of about 2,000 vertices, do
 0.4 s each. A design pays the same on each strip; it runs strips side by side. The offset is the place to make grid steps
 faster.
 
+## The Builder panel
+
+Workstream 3, ahead of Rebuild (Tim, 2026-11-07: "yes build the panel"), so a face can be built and edited between steps in
+the app. The Builder button beside Face opens it.
+
+- **Click a line** in the viewport, and the panel sets up the next step from it: a berm after a wall, a wall after a berm or
+  from a toe. A wall goes to the grid after the last wall's, or 10 m above its RL, at its batter; a berm is as wide as the
+  last. Picking a step's wall or road picks its line.
+- **The roads on the line:** going up a wall, each climbs unless you untick it, which ends it there. At a berm each crosses
+  (or climbs through), turns back, or ends here. With two turning, Join: when close, one pad, or apart. **+ Road** places a
+  new road on the wall: a click where it starts on the line and one the way it climbs, as in the step design.
+- **From a line drawn by hand** the panel asks for the build's name, what the line lies on (its RL if it's flat), the side
+  the walls go up on, and how far to run it on past its ends.
+- **Build wall** or **Build berm** runs the step, one undo, and picks the new line, ready for the next.
+- **The steps of the build** are listed in order with what each did. A click on one picks its line and frames it, and
+  picking a line, wall or road lights up its step. A step whose line you've edited says so. A step built from a line
+  edited since, as by the revision kept in its record, says it was built before the edit and shows dimmed, waiting for
+  Rebuild. The bin takes a step out with every step built on it, in one undo.
+- **Your edits are ordinary string edits.** Builder lines aren't a design's, so the viewport lets you drag, insert and
+  delete their vertices.
+
+The app's own check (`zd-app --bench --builder`), through the panel's buttons:
+
+- **Building:** from a toe at RL 100, Build wall to RL 115, Build berm and Build wall each built and picked the new line.
+- **Picking from the list:** a click on step 1 picked crest 1, lit its row and framed it to the millimetre.
+- **Editing:** with the berm's line edited 3 m out at one end, step 2 said edited and step 3 built before an edit. Step 3
+  taken out with its bin left two steps.
+- **Building again:** the wall built from the edited line stood on it, saying so and how wide the berm below it now is.
+
 ## What this leaves
 
-- **Rebuild from here** (workstream 2) and the Builder panel (workstream 3).
+- **Rebuild from here** (workstream 2).
 - **Rules** for a step's batter and width: it takes numbers for now.
 - **Going down,** turning on a crest with no berm, a minimum bench on a berm built on its own (it has no wall below it in its
   own run, as in 0041), and carrying on a road held at its end (0041).

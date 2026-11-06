@@ -542,6 +542,26 @@ export interface Ramp {
   turn_end?: number | null;
 }
 
+/** One step of the manual builder, as `face.build_step` takes it (decision 0048): a wall from the line, with the roads on
+ * it climbing it but for those in `stop`, and new ones in `ramps`; or a berm, with the roads on the line crossing it,
+ * turning on it (`turns`) or ending (`stop`), and `join` to make their boxes one pad: on, off, or left out for the berm to
+ * join only boxes within a road's width of each other. */
+export type BuildOp =
+  | { op: 'project'; to: StepTarget; batter: number; condition?: number | null; ramps?: Ramp[]; stop?: string[] }
+  | { op: 'berm'; width: number; on?: StepTarget | null; condition?: number | null; turns?: string[]; join?: boolean | null; stop?: string[] };
+
+/** How a step built a line, as the line keeps it in its `build_record` attribute. */
+export interface BuildRecord {
+  /** The line it was built from, what that lies on, and that line's revision then. */
+  from: string;
+  from_on: StepTarget;
+  from_revision?: number;
+  side: WallSide;
+  step: BuildOp;
+  run_on?: [number, number];
+  condition?: number | null;
+}
+
 export type FaceDirection = 'up' | 'down';
 
 export interface FaceProfile {
@@ -734,6 +754,8 @@ export interface BenchConfig {
   palettes: boolean;
   /** With `--design-lines`, a step design's own line and a copy of it on top: what a click picks, and Delete on each. */
   design_lines: boolean;
+  /** With `--builder`, the Builder panel driven as Tim would, from a toe up, with an edit between steps (decision 0048). */
+  builder: boolean;
 }
 
 /** Saves a PNG data URL of the viewport as `<name>.png` in the `--pictures` folder. Bench only. */

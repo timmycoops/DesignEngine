@@ -102,6 +102,10 @@ struct StepRecord {
     /// them whether either has been edited since, without building it again.
     from_print: String,
     made_print: String,
+    /// The revision of the line it was built from, then: a later one means that line's been edited since, and what this
+    /// step made was built from it as it was.
+    #[serde(default)]
+    from_revision: u32,
 }
 
 /// A line's fingerprint: FNV-1a over the exact bits of its vertices, as 16 hex digits. An edit changes it, and undoing the
@@ -218,6 +222,7 @@ impl Command for BuildStep {
             run_on: p.run_on,
             condition: p.condition.filter(|t| *t > 0.0),
             from_print: fingerprint(line),
+            from_revision: object.revision,
         };
         // A wall from a berm's line a step made goes up with that berm, from the crest it was built from.
         let below = match (&p.step, &made) {
@@ -389,8 +394,9 @@ struct Build<'a, 'b> {
     kept: Attributes,
     run_on: [f64; 2],
     condition: Option<f64>,
-    /// The line it's built from as it is, as a fingerprint.
+    /// The line it's built from as it is, as a fingerprint, and its revision.
     from_print: String,
+    from_revision: u32,
 }
 
 impl Build<'_, '_> {
@@ -489,7 +495,7 @@ impl Build<'_, '_> {
     /// The step's new line, saying what it lies on and how it was built.
     fn line(&self, name: String, line: Polyline, on: StepTarget, step: BuildOp, more: Attributes) -> Result<Change, CommandError> {
         let made_print = fingerprint(&line);
-        let record = StepRecord { from: self.from, from_on: self.from_on, side: self.side, step, run_on: self.run_on, condition: self.condition, from_print: self.from_print.clone(), made_print };
+        let record = StepRecord { from: self.from, from_on: self.from_on, side: self.side, step, run_on: self.run_on, condition: self.condition, from_print: self.from_print.clone(), made_print, from_revision: self.from_revision };
         let mut attributes = self.marked();
         attributes.insert(BUILD_ON.into(), AttrValue::Text(json(&on)?));
         attributes.insert(BUILD_RECORD.into(), AttrValue::Text(json(&record)?));

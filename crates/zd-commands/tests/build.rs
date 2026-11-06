@@ -89,6 +89,7 @@ fn walls_and_a_berm_from_a_toe_stand_where_their_batters_put_them() {
     assert_eq!(crest.attributes.get("build_step"), Some(&AttrValue::Number(1.0)));
     assert_eq!(text(&crest, "build_on"), r#"{"kind":"rl","rl":120.0}"#);
     assert!(text(&crest, "build_record").starts_with(&format!(r#"{{"from":"{toe}","from_on":{{"kind":"rl","rl":100.0}},"side":"left","step":{{"op":"project""#)), "{}", text(&crest, "build_record"));
+    assert!(text(&crest, "build_record").ends_with(r#""from_revision":1}"#), "the revision of the line it was built from: {}", text(&crest, "build_record"));
     let first = sheet_of(&s, "Toe wall 1");
     assert!((first.area() - 200.0 * 20.0 * 2f64.sqrt()).abs() < 1e-6, "{}", first.area());
     assert_eq!(named(&s, "Toe wall 1").attributes.get("build_id"), crest.attributes.get("build_id"), "one step's pieces share its id");
