@@ -176,6 +176,31 @@ async function checkBuilder(viewport: Viewport, log: (line: string) => void, sho
   button('Build wall')?.click();
   await wait(1500);
   const standsOnYourLine = panelText().includes("isn't where the berm from Toe B crest 1 puts it now");
+  // A surface at RL 140 over the strip, picked in the panel's To list: a berm and a wall up to it.
+  const surface = await runCommand('surface.from_mesh', {
+    name: 'Bench surface',
+    layer: 'surfaces',
+    vertices: [[649800, 7450800, 140], [650800, 7450800, 140], [650800, 7451400, 140], [649800, 7451400, 140]],
+    triangles: [[0, 1, 2], [0, 2, 3]],
+  });
+  await show(surface.summary);
+  const crest3 = await named('Toe B crest 3');
+  if (crest3) layer.select(crest3.id);
+  await wait(500);
+  button('Build berm')?.click();
+  await wait(1500);
+  const list = document.querySelector<HTMLSelectElement>('select[aria-label="What the wall goes up to"]');
+  const listed = list ? [...list.querySelectorAll('optgroup')].map((g) => `${g.label}: ${[...g.querySelectorAll('option')].map((o) => o.textContent).join(', ')}`) : [];
+  if (list) {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(list, surface.record.outputs[0].id);
+    list.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  await wait(300);
+  button('Build wall')?.click();
+  await wait(1500);
+  const crest5 = await named('Toe B crest 5');
+  const origin = (await projectSummary()).origin ?? [0, 0, 0];
+  const crest5Rls = [...new Set((crest5?.vertices_local ?? []).map((p) => Math.round((p[2] + origin[2]) * 1000) / 1000))];
   const result = {
     panel_opened_from_toolbar: !!open,
     starts_from_toe: startsFromToe,
@@ -189,8 +214,10 @@ async function checkBuilder(viewport: Viewport, log: (line: string) => void, sho
     built_before_an_edit_shown_on_step_3: builtBeforeShown,
     rows_after_taking_out_step_3: rowsAfterTakingOut,
     wall_again_stands_on_your_line: standsOnYourLine,
-    crest_3_again: !!(await named('Toe B crest 3')),
-    report: after(panelText(), 'Toe B step 3', 300),
+    crest_3_again: !!crest3,
+    to_list_groups: listed,
+    wall_to_the_surface_said: after(panelText(), 'Toe B step 5', 110),
+    crest_5_rls: crest5Rls,
   };
   log(`builder: ${JSON.stringify(result)}`);
   return result;

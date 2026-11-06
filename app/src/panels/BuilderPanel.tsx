@@ -178,17 +178,38 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/** A surface, a grid or an RL. */
+/** The grids and surfaces in the project, each kind under its own heading, or a word that there are none yet. */
+function TargetOptions({ surfaces }: { surfaces: ObjectSummary[] }) {
+  const grids = surfaces.filter((s) => s.kind === 'grid');
+  const meshes = surfaces.filter((s) => s.kind === 'surface');
+  const options = (of: ObjectSummary[]) =>
+    of.map((s) => (
+      <option key={s.id} value={s.id}>
+        {s.name}
+      </option>
+    ));
+  if (surfaces.length === 0) {
+    return (
+      <option value="none" disabled>
+        No grids or surfaces in this project yet
+      </option>
+    );
+  }
+  return (
+    <>
+      {grids.length > 0 && <optgroup label="Grids">{options(grids)}</optgroup>}
+      {meshes.length > 0 && <optgroup label="Surfaces">{options(meshes)}</optgroup>}
+    </>
+  );
+}
+
+/** A grid, a surface or an RL. */
 function TargetBox({ value, surfaces, onChange, title }: { value: StepTarget; surfaces: ObjectSummary[]; onChange: (t: StepTarget) => void; title: string }) {
   return (
     <span className="flex items-center gap-1">
       <select className={selectClass} value={value.kind === 'rl' ? 'rl' : value.id} title={title} aria-label={title} onChange={(e) => onChange(e.target.value === 'rl' ? { kind: 'rl', rl: value.kind === 'rl' ? value.rl : 0 } : { kind: 'surface', id: e.target.value })}>
         <option value="rl">RL</option>
-        {surfaces.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name}
-          </option>
-        ))}
+        <TargetOptions surfaces={surfaces} />
       </select>
       {value.kind === 'rl' && <NumberBox value={value.rl} title={`${title}: RL`} onChange={(rl) => onChange({ kind: 'rl', rl })} />}
     </span>
@@ -464,6 +485,7 @@ export function BuilderPanel() {
               <Field label="To">
                 <TargetBox value={to} surfaces={surfaces} title="What the wall goes up to" onChange={setTo} />
               </Field>
+              {surfaces.length === 0 && <div className="pl-[5.5rem] text-muted-foreground">To go up to a grid or a surface, import it first: they're listed here once they're in the project.</div>}
               <Field label="Batter">
                 <NumberBox value={batter} title="Batter (degrees from horizontal)" onChange={setBatter} />°
               </Field>
@@ -517,11 +539,7 @@ export function BuilderPanel() {
                 >
                   <option value="">{lineLiesOn ? `as the line: ${targetWords(lineLiesOn, objects)}` : 'as the line'}</option>
                   <option value="rl">RL</option>
-                  {surfaces.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
+                  <TargetOptions surfaces={surfaces} />
                 </select>
                 {bermOn?.kind === 'rl' && <NumberBox value={bermOn.rl} title="The berm's RL" onChange={(rl) => setBermOn({ kind: 'rl', rl })} />}
               </Field>

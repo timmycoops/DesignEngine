@@ -73,6 +73,11 @@ turning on boxes on the berm at RL 155 with Join on, built in 11 steps: every cr
 tops at RL 175 agree with the design run whole to 1 µm, and no wall's triangles cross. Each step takes 0 to 1 ms; the design
 run whole, 7 ms.
 
+To grids and surfaces: a seam's floor and roof as Vulcan grids at RL 100 and 120, and a surface at RL 140. A toe drawn at RL 0
+lying on the floor grid is registered to RL 100. A wall at 45° to the roof grid stands 20 m out at RL 120, a 10 m berm lies
+on the roof grid 30 m out, and a wall at 45° to the surface stands 50 m out at RL 140, every vertex to 1 µm. The sheets are
+150 × 20√2 m² and 150 × (10 + 20√2) m², to 1e-6 m².
+
 A berm's line edited by hand, its far end dragged 3 m further out: the wall above stands on it, says the berm below is 5.0 to
 8.0 m wide, its crest follows 10 m out square to the slanting end, and the road carries on.
 
@@ -96,7 +101,9 @@ Workstream 3, ahead of Rebuild (Tim, 2026-11-07: "yes build the panel"), so a fa
 the app. The Builder button beside Face opens it.
 
 - **Click a line** in the viewport, and the panel sets up the next step from it: a berm after a wall, a wall after a berm or
-  from a toe. A wall goes to the grid after the last wall's, or 10 m above its RL, at its batter; a berm is as wide as the
+  from a toe. A wall goes up to an RL, a grid or a surface, and a berm lies on one: the lists give the project's grids and
+  surfaces under their own headings, and say so where there are none yet (Tim, 2026-11-07: "We need to ensure that the
+  manual face builder allows project to grids and surfaces"; his step template has neither). A wall goes to the grid after the last wall's, or 10 m above its RL, at its batter; a berm is as wide as the
   last. Picking a step's wall or road picks its line.
 - **The roads on the line:** going up a wall, each climbs unless you untick it, which ends it there. At a berm each crosses
   (or climbs through), turns back, or ends here. With two turning, Join: when close, one pad, or apart. **+ Road** places a
@@ -118,6 +125,8 @@ The app's own check (`zd-app --bench --builder`), through the panel's buttons:
 - **Editing:** with the berm's line edited 3 m out at one end, step 2 said edited and step 3 built before an edit. Step 3
   taken out with its bin left two steps.
 - **Building again:** the wall built from the edited line stood on it, saying so and how wide the berm below it now is.
+- **To a surface:** with a surface at RL 140 imported, the To list showed it under Surfaces; picked there, a berm and a wall
+  up to it built, the crest all at RL 140.
 
 ## What this leaves
 

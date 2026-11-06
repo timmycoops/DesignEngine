@@ -396,3 +396,71 @@ fn a_grid_strip_built_a_step_at_a_time() {
     drop(s);
     let _ = std::fs::remove_dir_all(&copy);
 }
+
+/// A small grid in Vulcan's plain layout: big-endian, nodes from the south-west at 25 m, x fastest, all live, at one height.
+fn level_vulcan_grid(z: f32, cols: usize, rows: usize) -> Vec<u8> {
+    let mut out = b"SYNTHETIC TEST GRID             ".to_vec();
+    let (x0, y0) = (500_025.0f64, 7_000_625.0f64);
+    for v in [x0, x0 + (cols - 1) as f64 * 25.0, y0, y0 + (rows - 1) as f64 * 25.0] {
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    for v in [(cols * rows) as i32, 0] {
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    out.extend_from_slice(&25.0f32.to_be_bytes());
+    out.extend_from_slice(&25.0f32.to_be_bytes());
+    out.extend_from_slice(&(cols as i32).to_be_bytes());
+    out.extend_from_slice(&(rows as i32).to_be_bytes());
+    for _ in 0..cols * rows {
+        out.extend_from_slice(&z.to_be_bytes());
+        out.extend_from_slice(&1i32.to_be_bytes());
+    }
+    out
+}
+
+/// Walls and berms to grids and surfaces, as Tim needs (2026-11-07: "the manual face builder allows project to grids and
+/// surfaces"). A seam's floor and roof as Vulcan grids at RL 100 and 120, and a surface at RL 140 imported from XYZ. A toe
+/// drawn at RL 0 lies on the floor grid, so it's registered to RL 100. A wall at 45° to the roof grid stands 20 m out at RL
+/// 120, a 10 m berm lies on the roof grid 30 m out, and a wall at 45° from it to the surface stands 50 m out at RL 140. The
+/// sheets are 150 × 20√2 m² and 150 × (10 + 20√2) m², to 1e-6 m², and each line says what it lies on.
+#[test]
+fn walls_and_berms_go_to_grids_and_surfaces() {
+    let dir = std::env::temp_dir().join(format!("zd-build-grids-{}-{}", std::process::id(), zd_core::RunId::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("pitlower.sfg"), level_vulcan_grid(100.0, 13, 13)).unwrap();
+    std::fs::write(dir.join("pitlower.srg"), level_vulcan_grid(120.0, 13, 13)).unwrap();
+    let mut xyz = String::new();
+    for row in 0..13 {
+        for col in 0..13 {
+            xyz += &format!("{} {} 140\n", 500_025.0 + col as f64 * 25.0, 7_000_625.0 + row as f64 * 25.0);
+        }
+    }
+    std::fs::write(dir.join("upper.xyz"), xyz).unwrap();
+    let mut s = Session::with_builtins();
+    s.run("grid.import_vulcan_seam", json!({ "dir": dir.to_string_lossy(), "prefix": "pit", "seam": "lower", "layer": "geology" })).unwrap();
+    let upper = created(&s.run("surface.import", json!({ "path": dir.join("upper.xyz").to_string_lossy(), "layer": "surfaces" })).unwrap())[0];
+    std::fs::remove_dir_all(&dir).unwrap();
+    let (floor, roof) = (named(&s, "LOWER sf"), named(&s, "LOWER sr"));
+    assert!(matches!(floor.body, Body::Grid(_)) && matches!(roof.body, Body::Grid(_)), "the seam's floor and roof are grids");
+    let on = |id: ObjectId| json!({ "kind": "surface", "id": id });
+    let points = [[500_100.0, 7_000_700.0, 0.0], [500_250.0, 7_000_700.0, 0.0]];
+    let toe = created(&s.run("string.create", json!({ "name": "Toe", "layer": "toes", "points": points })).unwrap())[0];
+
+    let one = s.run("face.build_step", json!({ "from": toe, "step": { "op": "project", "to": on(roof.id), "batter": 45.0 }, "lies_on": on(floor.id), "side": "left" })).unwrap();
+    assert!(one.messages[0].starts_with("Toe step 1: a wall to LOWER sr at 45° from Toe, "), "{:?}", one.messages);
+    let at = |line: &Polyline, y: f64, z: f64| line.vertices.iter().all(|p| (p[1] - y).abs() < 1e-6 && (p[2] - z).abs() < 1e-6);
+    assert!(at(&line_of(&s, "Toe crest 1"), 7_000_720.0, 120.0), "{:?}", line_of(&s, "Toe crest 1").vertices);
+    assert_eq!(text(&named(&s, "Toe crest 1"), "build_on"), format!(r#"{{"kind":"surface","id":"{}"}}"#, roof.id));
+    let first = sheet_of(&s, "Toe wall 1").area();
+    assert!((first - 150.0 * 20.0 * 2f64.sqrt()).abs() < 1e-6, "{first}");
+
+    let two = s.run("face.build_step", json!({ "from": named(&s, "Toe crest 1").id, "step": { "op": "berm", "width": 10.0 } })).unwrap();
+    assert_eq!(two.messages[0], "Toe step 2: a berm 10 m wide on LOWER sr, from Toe crest 1");
+    assert!(at(&line_of(&s, "Toe toe 2"), 7_000_730.0, 120.0), "{:?}", line_of(&s, "Toe toe 2").vertices);
+
+    let three = s.run("face.build_step", json!({ "from": named(&s, "Toe toe 2").id, "step": { "op": "project", "to": on(upper), "batter": 45.0 } })).unwrap();
+    assert!(three.messages[0].starts_with("Toe step 3: a wall to upper at 45° from Toe toe 2, with the berm from Toe crest 1, "), "{:?}", three.messages);
+    assert!(at(&line_of(&s, "Toe crest 3"), 7_000_750.0, 140.0), "{:?}", line_of(&s, "Toe crest 3").vertices);
+    let second = sheet_of(&s, "Toe wall 3").area();
+    assert!((second - 150.0 * (10.0 + 20.0 * 2f64.sqrt())).abs() < 1e-6, "{second}");
+}
