@@ -1,8 +1,9 @@
 // Which string a click picks, and the lines a face design makes. A design's own toes, crests and road edges are
 // made again each time it runs, so an edit to one is lost at the next run; Edit from here (✎) copies a row's line
 // to a string of the planner's own, on top of the design's. Where they lie on each other, a click keeps the line
-// already selected, then takes one of the planner's own over the design's, so the copy is the one edited. Plain
-// numbers and strings, no three.js, so tests/designLines.test.mjs runs it under Node.
+// already selected, then takes a line on a row of the step design open in the panel, then one of the planner's own over
+// the design's, so the copy on the row is the one edited, not a stray one left from an earlier try. Plain numbers and
+// strings, no three.js, so tests/designLines.test.mjs runs it under Node.
 
 /** A string near the cursor: how far off on screen, and whether a face design made it. */
 export interface NearLine {
@@ -10,6 +11,8 @@ export interface NearLine {
   /** Pixels from the cursor to the nearest of its segments. */
   distance: number;
   madeByDesign: boolean;
+  /** On a row of the step design open in the panel (a line redrawn by hand). */
+  preferred?: boolean;
 }
 
 /** Strings this much further off than the nearest still count as under the cursor with it, in pixels. */
@@ -18,14 +21,14 @@ export const TIE_PX = 2;
 /**
  * The string a click picks from those near it: the nearest within `pickPx`, unless others lie as near, to
  * `TIE_PX`. Then the selected one if it's among them, so a click on the line you're editing keeps it; else the
- * nearest of your own over a design's.
+ * nearest on a row of the open step design; else the nearest of your own over a design's.
  */
 export function lineToPick(near: NearLine[], selected: string | null, pickPx: number): string | null {
   const within = near.filter((n) => n.distance <= pickPx).sort((a, b) => a.distance - b.distance);
   if (within.length === 0) return null;
   const tied = within.filter((n) => n.distance <= within[0].distance + TIE_PX);
   if (selected && tied.some((n) => n.id === selected)) return selected;
-  return (tied.find((n) => !n.madeByDesign) ?? tied[0]).id;
+  return (tied.find((n) => n.preferred) ?? tied.find((n) => !n.madeByDesign) ?? tied[0]).id;
 }
 
 /** What a design-made string carries (zd-commands `face.rs`): the design's id, and for wall lines their row. */

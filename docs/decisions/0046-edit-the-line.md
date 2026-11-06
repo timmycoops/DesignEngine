@@ -166,6 +166,35 @@ runs were refused: "your line crosses the line below it". Set the rows and turns
 - `tests/designLines.test.mjs`: the pick among lines on each other (selected, yours, nearer, out of reach) and the row
   each design line names.
 
+## ✎ goes to your line, and a step takes the steps after it (2026-11-06)
+
+Tim's second try, from the saved log: his design rebuilt as before (A and B turning on row 9, boxes on row 8's berm at RL
+155), ✎ on row 10, the berm above, and 11 Deletes on "Toe Steps your line 8", the line left from the first try when row 8
+was taken out. No row stood for it, so nothing ran; it lay just where row 8's line goes. Tim: "When I click edit I feel it
+should straight away make that line be the one that's selected so you go to that line also", "when I edit a string it
+doesn't update also", and "if you delete a line you should delete everything above that line as default".
+
+- **✎ selects your line and goes to it.** It did call select, but the app looked the new string up in its project summary
+  before the next render had put it there, found nothing and selected nothing. The summary is now kept at once when a
+  command's result is shown. The view frames the line from where it looks (`Viewport.frameBox`): far enough back for its
+  height, as zoom to extents, and for its width, so a long line fits a narrow view. ✎ on a row with your line does the
+  same.
+- **The ✎ says which line:** "Edit from here: copy Toe Steps toe 5, the toe of the wall on row 9, where A and B turn on
+  this berm, as a line of your own, select it and go to it."
+- **A click on lines lying on each other** takes, after the selected one, a line on a row of the step design open in the
+  panel, then one of your own, then the design's (`lineToPick`).
+- **A row taken out takes its line with it** (on the edited lines layer; undo brings it back), so none is left lying
+  where a later one goes.
+- **The design's own string changing runs the step again,** as your line changing does: move the toe and the step design
+  follows it, with Run each step on.
+- **In a step design, removing a step takes the steps after it too,** as they're built on it, as Ctrl+Z takes them off one
+  by one; Shift+click takes just that step. A profile run on many lines removes one row, as before.
+- **Checked in the app** (`--bench --design-lines`, the panel part): a two-row step design opened in the Face design panel.
+  The ✎ on row 2 names the next toe; your line is made, on row 2, selected from 100 ms after the click and still after a
+  second, centred to 0 m and 83 % of the view's width. The toe moved 2 m runs the step once. Removing row 1 leaves no rows,
+  and your line on row 2 goes. The first build of this blanked the panel when a design opened (a hook placed after the
+  panel's early return), which only this check found.
+
 ## What this leaves
 
 - **A crest with a road on its wall:** re-forming the wall and its road cut together.

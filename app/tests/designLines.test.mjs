@@ -62,3 +62,18 @@ test('editing a design\'s own line says why not and what to do', () => {
   const edge = { name: 'Toe Steps road A pit edge', design: 'id', step: null };
   assert.match(designLineMessage(edge, undefined), /made by a face design .* Change the design and run it again instead\.$/);
 });
+
+test('a line on a row of the open design is picked over a stray line of yours on top of it', () => {
+  // Tim, 2026-11-06 18:08: "Toe Steps your line 8" left from an earlier try lay where row 8's line goes, and took his
+  // Deletes. The line ✎ put on the row comes first; the design's own line last.
+  const stray = { id: 'your line 8 (old)', distance: 2, madeByDesign: false, preferred: false };
+  const onRow = { id: 'your line 8', distance: 2, madeByDesign: false, preferred: true };
+  const design = { id: 'toe 5', distance: 2, madeByDesign: true, preferred: false };
+  for (const near of [[stray, onRow, design], [design, stray, onRow], [onRow, design, stray]]) {
+    assert.equal(lineToPick(near, null, PICK_PX), 'your line 8');
+  }
+  // The selected one still stays, whichever it is.
+  assert.equal(lineToPick([stray, onRow, design], 'your line 8 (old)', PICK_PX), 'your line 8 (old)');
+  // Clearly nearer still wins.
+  assert.equal(lineToPick([{ ...stray, distance: 0.5 }, { ...onRow, distance: 5 }], null, PICK_PX), 'your line 8 (old)');
+});

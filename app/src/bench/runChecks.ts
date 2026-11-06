@@ -13,6 +13,7 @@ import {
   projectSummary,
   type ProjectSummary,
   runCommand,
+  runLog,
   setLayerVisible,
   setObjectsVisible,
   type SnapHit,
@@ -201,9 +202,117 @@ async function checkDesignLines(viewport: Viewport, log: (line: string) => void,
     design_line_vertex_not_moved_by_drag: notMoved,
     your_line_selected_by_click: yoursSelected,
     your_line_vertices_before_after_delete: [points.length, yoursAfter],
+    panel: await checkEditFromHere(viewport, log, show, layer),
   };
   log(`design lines: ${JSON.stringify(result)}`);
   return result;
+}
+
+/**
+ * The Face design panel's ✎, as Tim uses it (2026-11-06: "when I click edit it should straight away make that line the
+ * one that's selected so you go to that line"). A step design opened in the panel; ✎ on its berm row selects the line
+ * it makes and frames it; the toe moved runs the step again; the row taken out takes its line with it.
+ */
+async function checkEditFromHere(viewport: Viewport, log: (line: string) => void, show: Show, layer: StringLayer) {
+  // By the clock, not by frames: with the panel in front of the 3D view no frames are drawn.
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const buttons = () => [...document.querySelectorAll('button')];
+  log('design lines: the Face design panel');
+  const toe = await runCommand('string.create', { name: 'Toe 2', layer: 'toes', closed: false, points: [[650000, 7449000, 100], [650300, 7449040, 100], [650600, 7449000, 100]] });
+  const toeId = toe.record.outputs[0].id;
+  const content = {
+    layer: 'faces',
+    lines: [{ string: toeId, profile: 'Steps', side: 'left', run_on: [0, 0] }],
+    profiles: [{
+      name: 'Steps', direction: 'up', condition: 0.1, register: { kind: 'rl', rl: 100 }, ramps: [],
+      steps: [
+        { step: 'project', to: { kind: 'rl', rl: 115 }, batter: 70, condition: 0.1 },
+        { step: 'berm', width: 10, condition: 0.1, min_bench: 1, on: null, register: true },
+      ],
+    }],
+    rules: [],
+  };
+  const saved = await runCommand('face.save_design', { name: 'Steps from Toe 2', content });
+  const design = saved.record.outputs[0].id;
+  void show((await runCommand('face.step', { design, name: 'Steps from Toe 2', content })).summary);
+  const face = buttons().find((b) => b.textContent?.trim() === 'Face');
+  log(`design lines: Face button ${face ? 'found' : 'missing'}`);
+  face?.click();
+  await wait(500);
+  const open = document.querySelector<HTMLSelectElement>('select[aria-label="Open a design"]');
+  if (!open) return { error: 'no Open a design list in the Face design panel' };
+  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(open, design);
+  open.dispatchEvent(new Event('change', { bubbles: true }));
+  await wait(2500);
+
+  // ✎ on row 2: your line made, selected and framed.
+  viewport.fitView();
+  await wait(200);
+  const pencil = buttons().find((b) => b.title.startsWith('Edit from here: copy') && b.title.includes('the next toe'));
+  if (!pencil) {
+    const titles = buttons().map((b) => b.title).filter((t) => /Edit|row|line/.test(t)).slice(0, 12);
+    const options = [...open.options].map((o) => `${o.value}:${o.textContent}`);
+    let host: HTMLElement | null = open;
+    for (let i = 0; i < 6 && host?.parentElement; i++) host = host.parentElement;
+    const panelText = host?.innerText.slice(0, 600);
+    const selects = [...document.querySelectorAll('select')].map((s) => `${s.getAttribute('aria-label')}=${s.value}`);
+    return { error: 'no ✎ on row 2', design, titles, options, panel_text: panelText ?? null, selects, still_there: document.contains(open) };
+  }
+  const tip = pencil.title;
+  pencil.click();
+  const selectedOverTime: string[] = [];
+  let selectedAfterASecond: string | null = null;
+  for (const ms of [100, 400, 1000]) {
+    await wait(ms === 100 ? 100 : ms - (ms === 400 ? 100 : 400));
+    const id = layer.selected;
+    selectedOverTime.push(`${ms} ms: ${id ? ((await projectSummary()).objects.find((o) => o.id === id)?.name ?? id) : 'nothing'}`);
+    selectedAfterASecond = id;
+  }
+  await wait(500);
+  const after = await projectSummary();
+  const mine = after.objects.find((o) => o.name === 'Toe 2 Steps your line 2');
+  if (!mine?.vertices_local) return { error: '✎ made no line', tip };
+  const xs = mine.vertices_local.map((p) => p[0]);
+  const ys = mine.vertices_local.map((p) => p[1]);
+  const zs = mine.vertices_local.map((p) => p[2]);
+  const centre = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2];
+  const target = viewport.controls.target;
+  const framedOff = Math.hypot(target.x - centre[0], target.y - centre[1], target.z - centre[2]);
+  // How much of the view's width the line takes, at the distance the camera sits from it.
+  const span = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+  const distance = viewport.camera.position.distanceTo(target);
+  const camera = viewport.camera as THREE.PerspectiveCamera;
+  const width = 2 * distance * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect;
+  const details = await objectDetails(design);
+  const onRow = details.measures.kind === 'face_design' && (details.measures.design.lines[0].edits ?? []).some((e) => e.row === 2 && e.string === mine.id);
+
+  // The toe moved 2 m back from the pit at its bend: the step runs again, as a change to the design does.
+  const stepsBefore = (await runLog()).filter((e) => 'command' in e && e.command === 'face.step').length;
+  void show((await runCommand('string.move_vertex', { string: toeId, index: 1, to: [650300, 7449038, 100] })).summary);
+  await wait(1500);
+  const stepRuns = (await runLog()).filter((e) => 'command' in e && e.command === 'face.step');
+  const lastStep = stepRuns[stepRuns.length - 1];
+
+  // Row 1 taken out: row 2 goes with it, and your line on row 2 too.
+  const removes = buttons().filter((b) => b.title.startsWith('Remove this step'));
+  const removeTip = removes[0]?.title ?? null;
+  removes[0]?.click();
+  await wait(1500);
+  const rowsLeft = buttons().filter((b) => b.title.startsWith('Remove this step')).length;
+  const gone = !(await projectSummary()).objects.some((o) => o.id === mine.id);
+  return {
+    tip,
+    selected_over_time: selectedOverTime,
+    your_line_selected_a_second_after: selectedAfterASecond === mine.id,
+    your_line_framed_off_m: Math.round(framedOff * 1000) / 1000,
+    line_takes_of_view_width: Math.round((span / width) * 100) / 100,
+    your_line_on_row_2: onRow,
+    toe_moved_step_runs: stepRuns.length - stepsBefore,
+    toe_moved_last_step: lastStep ? JSON.stringify(lastStep).slice(0, 300) : null,
+    remove_tip: removeTip,
+    rows_before_and_after_removing_row_1: [removes.length, rowsLeft],
+    row_taken_out_took_your_line: gone,
+  };
 }
 
 /** A zip or folder of solids by the app's own path: import, draw, snap index, orbit, snap, undo. */
