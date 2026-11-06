@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use zd_core::{FaceDirection, Polyline, TriMesh};
 
-use crate::road::{FaceRamp, FaceRoad, NO_WALL, NoRoad, OTHER_WAY, RoadOnWall, RoadTop, Stopped, WallCut, across_the_berm, berm_round_roads, cut_roads, metres_along, point_along, start_on, straight_across};
+use crate::road::{FaceRamp, FaceRoad, Flat, NO_WALL, NoRoad, OTHER_WAY, RoadOnWall, RoadTop, Stopped, WallCut, across_the_berm, berm_round_roads, cut_roads, flat_past_top, metres_along, nearest_on, point_along, start_on, straight_across};
 use crate::string::TriangleBins;
 use crate::wall::{LeastBench, Stretch, at_crest_heights, height_on, nearest_along, next_line, segment_count, triangles_of, with_crest_vertices};
 use crate::{EdgeRule, GeomError, OffsetSide, drape_string, filter_string, next_toe, project_wall_by_edge};
@@ -422,6 +422,9 @@ impl FaceParts {
         // up, so the two edges swap: the pit side is still the side the face goes down to.
         for road in &mut self.roads {
             (road.pit_edge, road.wall_edge) = (mirrored_line(&road.wall_edge), mirrored_line(&road.pit_edge));
+            for (at, _) in &mut road.steep_flats {
+                at[2] = -at[2];
+            }
         }
         for stopped in &mut self.no_roads {
             stopped.at[2] = -stopped.at[2];
@@ -560,11 +563,25 @@ struct Climbing {
     pad_corner: Option<[f64; 3]>,
     pit_edge: Vec<[f64; 3]>,
     wall_edge: Vec<[f64; 3]>,
+    /// Flats before a turn steeper along than the road's grade: where each ends, and how steep it goes.
+    steep_flats: Vec<([f64; 3], f64)>,
+    /// The far end of the box pad it's turning on, its corners on the crest and a road width in: none with no box.
+    pad: Option<[[f64; 3]; 2]>,
 }
 
 impl Climbing {
     fn new(ramp: usize, spec: FaceRamp) -> Self {
-        Climbing { ramp, spec, steps: None, top: None, turned: None, pad_corner: None, pit_edge: Vec::new(), wall_edge: Vec::new() }
+        Climbing { ramp, spec, steps: None, top: None, turned: None, pad_corner: None, pit_edge: Vec::new(), wall_edge: Vec::new(), steep_flats: Vec::new(), pad: None }
+    }
+
+    /// Turns on a box pad past its top: the road ends at its top, and the box runs on in line with it this far.
+    fn boxed(&mut self, flat: &Flat) {
+        let end = *flat.pit.vertices.last().expect("a flat has an end");
+        self.pad = Some([end, *flat.wall.vertices.last().expect("a flat has an end")]);
+        let steepest = flat.steepest();
+        if steepest > self.spec.grade + 1e-9 {
+            self.steep_flats.push((end, steepest));
+        }
     }
 
     /// Takes in a wall's stretch of road, and where the road has got to.
@@ -591,15 +608,12 @@ impl Climbing {
         self.top = Some(RoadTop { pit: *self.pit_edge.last().expect("it's climbed"), wall: *self.wall_edge.last().expect("it's climbed") });
     }
 
-    /// Turns back: a switchback on a pad, level on an RL and on the floor on a grid. The next wall's stretch comes onto
-    /// `line` at `at` and runs the other way along it, flat as far as the ramp says, its width unless it says otherwise,
-    /// so trucks don't turn straight onto the grade, then climbs. The line behind it, the side past the turn, comes out
-    /// to its wall-side edge and joins back.
-    fn turn_at(&mut self, at: [f64; 3], line: &Polyline) {
+    /// Turns back: a switchback on a pad, level on an RL and on the floor on a grid. The next wall's stretch comes onto the
+    /// line at `at`, straight across the berm from the top, and climbs from there the other way. Past the turn the toe of
+    /// that wall goes round the box pad, or with none comes out to the next road's wall-side edge and joins back.
+    fn turn_at(&mut self, at: [f64; 3]) {
         self.spec.back = !self.spec.back;
-        let along = metres_along(line, at);
-        let start = point_along(line, if self.spec.back { along - self.spec.turn_flat } else { along + self.spec.turn_flat });
-        self.spec.start = [start[0], start[1]];
+        self.spec.start = [at[0], at[1]];
         self.pad_corner = self.top.map(|top| top.wall);
         self.top = None;
         self.turned = Some([at[0], at[1]]);
@@ -608,7 +622,7 @@ impl Climbing {
     /// The road as far as it got.
     fn road(self) -> Option<FaceRoad> {
         let steps = self.steps?;
-        Some(FaceRoad { ramp: self.ramp, steps, pit_edge: Polyline { vertices: self.pit_edge, closed: false }, wall_edge: Polyline { vertices: self.wall_edge, closed: false }, off_end: None })
+        Some(FaceRoad { ramp: self.ramp, steps, pit_edge: Polyline { vertices: self.pit_edge, closed: false }, wall_edge: Polyline { vertices: self.wall_edge, closed: false }, off_end: None, steep_flats: self.steep_flats })
     }
 }
 
@@ -643,10 +657,11 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                         None => crest,
                     };
                 }
-                // A road turning back with no berm since its last wall turns on the crest, from its wall-side top.
+                // A road turning back with no berm since its last wall turns on the crest, from its wall-side top, with no
+                // flat: there's no berm for one to lie on.
                 for open in climbing.iter_mut().filter(|open| turns.contains(&open.ramp)) {
                     if let Some(top) = open.top {
-                        open.turn_at(top.wall, &from);
+                        open.turn_at(top.wall);
                     }
                 }
                 let joining: Vec<usize> = here.iter().copied().filter(|r| !stopped.contains(r) && limits.get(r) != Some(&0) && !climbing.iter().any(|open| open.ramp == *r)).collect();
@@ -678,7 +693,7 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                         face.roads.extend(open.road());
                     }
                 }
-                let on_wall: Vec<RoadOnWall<'_>> = climbing.iter().map(|open| RoadOnWall { spec: open.spec, top: open.top, floor: lying.then(|| on.mesh()), turned: open.turned }).collect();
+                let on_wall: Vec<RoadOnWall<'_>> = climbing.iter().map(|open| RoadOnWall { spec: open.spec, top: open.top, floor: lying.then(|| on.mesh()), turned: open.turned, pad: open.pad }).collect();
                 for road in &on_wall {
                     (from, batters, ..) = start_on(&from, &batters, road);
                 }
@@ -735,6 +750,7 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                                     face.last_wall.insert(open.ramp, last);
                                 }
                                 face.meshes.extend(cut.meshes);
+                                face.meets.extend(cut.meets);
                             }
                             None => face.meshes.push(wall.wall),
                         }
@@ -785,13 +801,52 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 if let Some(target) = named {
                     on = Resting::of(target, &crest, BERM_BATTER);
                 }
+                let turning: &[usize] = steps[k + 1..].iter().find_map(|step| if let FaceStep::Project { turns, .. } = step { Some(*turns) } else { None }).unwrap_or(&[]);
+                // A road turning back at the next wall turns on a flat box past its top, in line with itself, on what the
+                // berm lies on, so on a seam floor no coal is left under it (Tim, 2026-11-04): the road's width of it
+                // along the crest, the berm beyond, and the next road's width beyond that, where the wall above goes round
+                // it. The next road starts at its near end, straight across the berm from the top.
+                let mut crest = crest;
+                let plain_crest = crest.clone();
+                let mut boxes: Vec<Flat> = Vec::new();
+                // The crest each turning road's pad holds up, from its wall-side top before any flat to its pit-side
+                // corner at the end: the berm's line beside it lies on the target.
+                let mut pads: Vec<RoadTop> = Vec::new();
+                for open in climbing.iter_mut().filter(|open| turning.contains(&open.ramp)) {
+                    let Some(top) = open.top else { continue };
+                    let mut lay_flat = |part: &Polyline| -> Result<Polyline, GeomError> { if register { Ok(drape_string(part, on.mesh(), true)?.0) } else { Ok(at_crest_heights(part, &crest)) } };
+                    let flat = if open.spec.turn_flat > 0.0 { flat_past_top(&crest, top, open.spec.turn_flat, width, side, &mut lay_flat).map_err(|e| fail(k, e))? } else { None };
+                    let Some(flat) = flat else {
+                        open.pad = None;
+                        pads.push(top);
+                        continue;
+                    };
+                    let (strip_pit, strip_wall) = flat.road_strip();
+                    face.meshes.push(band(&strip_pit, &strip_wall).map_err(|e| fail(k, e))?);
+                    if !flat.to_on_vertex {
+                        face.meets.extend(flat.pit.vertices.last().copied());
+                    }
+                    open.boxed(&flat);
+                    crest = flat.round(&crest);
+                    pads.push(RoadTop { pit: *flat.pit.vertices.last().expect("a flat has an end"), wall: top.wall });
+                    boxes.push(flat);
+                }
                 let least = min_bench.filter(|h| *h > 0.0).map(|height| LeastBench { toe: &from, height });
                 let (lines, log) = next_line(&crest, width, least, side, before.unwrap_or(0.0), condition.unwrap_or(0.0)).map_err(|e| fail(k, e))?;
                 let dropped = lines.len().saturating_sub(1);
-                let line = longest(lines);
+                let mut line = longest(lines);
+                // Each box's far end square across, with the berm standing out into the wall beside it and past it, not on
+                // round its end (Tim, 2026-11-04): past the box it's the berm's line with no box.
+                if !boxes.is_empty() {
+                    let plain = longest(next_line(&plain_crest, width, least, side, before.unwrap_or(0.0), condition.unwrap_or(0.0)).map_err(|e| fail(k, e))?.0);
+                    for flat in &boxes {
+                        if let Some((squared, part_way)) = flat.squared_end(&line, &plain) {
+                            line = squared;
+                            face.meets.extend(part_way);
+                        }
+                    }
+                }
                 let mut report = no_wall_report(k);
-                let turning: &[usize] = steps[k + 1..].iter().find_map(|step| if let FaceStep::Project { turns, .. } = step { Some(*turns) } else { None }).unwrap_or(&[]);
-                let pads: Vec<RoadTop> = climbing.iter().filter(|open| turning.contains(&open.ramp)).filter_map(|open| open.top).collect();
                 let mut lay = |part: &Polyline| -> Result<Polyline, GeomError> {
                     if !register {
                         return Ok(at_crest_heights(&with_crest_vertices(part, &crest, |_, on, _| Some(on)), &crest));
@@ -816,7 +871,10 @@ fn run_steps<'a>(toe: &Polyline, register: &'a TriMesh, side: OffsetSide, steps:
                 }
                 for open in climbing.iter_mut().filter(|open| turning.contains(&open.ramp)) {
                     if let Some(top) = open.top {
-                        open.turn_at(straight_across(&from, &crest, top, width, side), &from);
+                        // On a box the next road starts straight above the top, on the line nearest the road's wall-side
+                        // top; with none, in line with the top crossing carried on across the berm.
+                        let at = if open.pad.is_some() { nearest_on(&from, top.wall) } else { straight_across(&from, &crest, top, width, side) };
+                        open.turn_at(at);
                     }
                 }
                 lying = register;

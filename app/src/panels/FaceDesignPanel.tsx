@@ -19,6 +19,8 @@ const usualMinBench = 1;
 const usualRoadWidth = 30;
 const usualGrade = 10;
 const usualTurnJoin = 50;
+/** A switchback box's far end square across the strip, unless a ramp says otherwise (degrees). */
+const squareEnd = 90;
 
 /** A number that can be typed through half-finished values: it only reports what parses, and goes back to what's held on leaving it. */
 function NumberBox({ value, onChange, title, width = 'w-16', disabled }: { value: number | null; onChange: (v: number) => void; title: string; width?: string; disabled?: boolean }) {
@@ -419,7 +421,7 @@ function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged
           {step.step === 'project' ? (
             <RampCell name={name} on={onWall(step, name)} canTurn={canTurn(name)} onChange={(on) => onChange(withRamp(step, name, on))} />
           ) : (
-            bridged(name) !== 'none' && <span className="mx-auto block h-6 w-1" style={{ background: rampColour(name) }} title={bridged(name) === 'turns' ? `Ramp ${name} turns back on this berm: a flat pad of the road both ways and the berm between` : `Ramp ${name} crosses this berm: the road is the bench here`} />
+            bridged(name) !== 'none' && <span className="mx-auto block h-6 w-1" style={{ background: rampColour(name) }} title={bridged(name) === 'turns' ? `Ramp ${name} turns back on this berm: a flat box past the road's top, the road, the berm and the next road wide` : `Ramp ${name} crosses this berm: the road is the bench here`} />
           )}
         </td>
       ))}
@@ -464,7 +466,7 @@ function withRamp(step: Extract<ProfileStep, { step: 'project' }>, ramp: string,
 function RampCell({ name, on, canTurn, onChange }: { name: string; on: OnWall; canTurn: boolean; onChange: (on: OnWall) => void }) {
   const colour = rampColour(name);
   const next: OnWall = on === 'off' ? 'on' : on === 'on' && canTurn ? 'turn' : 'off';
-  const what = on === 'turn' ? `Ramp ${name} turns back before this wall, on a flat pad across the berm below, and climbs it the other way. Click to take it off` : `Click if ramp ${name} climbs this wall${canTurn ? ', and again if it turns back before it on a flat pad, a switchback' : ''}. Walls it climbs must come together, and berms between them are crossed. A wall can hold several ramps, one above the other, all running the same way`;
+  const what = on === 'turn' ? `Ramp ${name} turns back before this wall, on a flat box past its top on the berm below, and climbs it the other way. Click to take it off` : `Click if ramp ${name} climbs this wall${canTurn ? ', and again if it turns back before it on a flat pad, a switchback' : ''}. Walls it climbs must come together, and berms between them are crossed. A wall can hold several ramps, one above the other, all running the same way`;
   return (
     <button
       type="button"
@@ -520,7 +522,7 @@ function RampRow({ ramp, stringName, onWalls, turns, results, swap, onShow, onCh
             <NumberBox
               width="w-12"
               value={ramp.turn_join ?? usualTurnJoin}
-              title="Where the road turns back, how far on from the turn, along the road, the toe of the wall above runs straight back to the berm's line from the next road's corner, in metres. Longer than the line goes on, it runs to the end of the string"
+              title="Where the road turns back with no box (a flat of 0), how far on from the turn, along the road, the toe of the wall above runs straight back to the berm's line from the next road's corner, in metres. Longer than the line goes on, it runs to the end of the string"
               onChange={(turn_join) => onChange({ turn_join })}
             />
           </Labelled>
@@ -530,8 +532,18 @@ function RampRow({ ramp, stringName, onWalls, turns, results, swap, onShow, onCh
             <NumberBox
               width="w-12"
               value={ramp.turn_flat ?? ramp.width}
-              title="Where the road turns back, how far it runs flat along the berm's line before it climbs, in metres, so trucks don't turn straight onto the grade. The road's width unless you set it; 0 climbs straight away"
+              title="Where the road turns back, how long the flat box past its top is, in line with it and on the floor on a grid, in metres, for trucks to turn on: the road, the berm and the next road wide. The next road climbs the other way from its near end, straight across the berm from the top, and the wall above goes round the box. The road's width unless you set it; 0 turns at the top with no box"
               onChange={(turn_flat) => onChange({ turn_flat })}
+            />
+          </Labelled>
+        )}
+        {turns && (
+          <Labelled label="End, °">
+            <NumberBox
+              width="w-12"
+              value={ramp.turn_end ?? squareEnd}
+              title="Where the road turns back on a box, the angle in plan between the box's far end and the strip, in degrees, 30 to 90. 90 is square across, the wall above coming straight down the far end. Less flares it out past the box: the wall runs from the box's back corner at that angle out to the berm's line past it, and the ground it leaves is flat like the box. With a 100 m deep box, 45 runs 100 m on past the box"
+              onChange={(turn_end) => onChange({ turn_end })}
             />
           </Labelled>
         )}

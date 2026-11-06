@@ -470,12 +470,18 @@ export interface Ramp {
   grade: number;
   /** After the berm if it's left out, as designs saved before it could be set. */
   berm?: RampBerm;
-  /** Where it turns back, how far on from the turn, along the road, the toe of the wall above joins back to the berm's
-   * line, in metres. 50 m if it's left out, as designs saved before it could be set. */
+  /** Where it turns back with no box past its top (a flat of 0), how far on from the turn, along the road, the toe of the
+   * wall above joins back to the berm's line, in metres. 50 m if it's left out, as designs saved before it could be set. */
   turn_join?: number;
-  /** Where it turns back, how far it runs flat along the berm's line before it climbs, in metres. Its width if it's
-   * left out, as designs saved before it could be set. */
+  /** Where it turns back, how far the flat box it turns on runs past its top, in line with it and on the floor on a grid,
+   * in metres: the road, the berm and the next road wide. The next road climbs the other way from its near end, straight
+   * across the berm from the top, and the wall above goes round the box. Its width if it's left out, as designs saved
+   * before it could be set; 0 turns at the top with no box. */
   turn_flat?: number | null;
+  /** Where it turns back on a box, the angle in plan between the box's far end and the strip, in degrees, 30 to 90: 90,
+   * square across, if it's left out, as designs saved before it could be set. Less flares the far end out past the box,
+   * from its back corner to the berm's line past it. */
+  turn_end?: number | null;
 }
 
 export type FaceDirection = 'up' | 'down';
