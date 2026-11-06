@@ -15,6 +15,10 @@ fn yes() -> bool {
     true
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 fn usual_turn_join() -> f64 {
     USUAL_TURN_JOIN
 }
@@ -302,6 +306,11 @@ pub enum ProfileStep {
         register: bool,
         #[serde(default)]
         condition: Option<f64>,
+        /// Switchbacks turning on this berm, on box pads facing each other, are one pad: the line it ends on runs straight
+        /// from the back of one box to the back of the next, as Tim drew it by hand (decision 0047). A line redrawn by hand
+        /// after this row comes first.
+        #[serde(default, skip_serializing_if = "is_false")]
+        join: bool,
     },
 }
 
@@ -598,7 +607,7 @@ mod tests {
                 ramps: Vec::new(),
                 steps: vec![
                     ProfileStep::Project { to: StepTarget::Surface { id }, batter: StepValue::Rule("HW batter".into()), condition: Some(0.1), ramps: Vec::new(), turns: Vec::new() },
-                    ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: true, condition: Some(0.1), min_bench: None },
+                    ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: true, condition: Some(0.1), min_bench: None , join: false },
                     ProfileStep::Project { to: StepTarget::Rl { rl: 500.0 }, batter: StepValue::Rule("HW batter".into()), condition: None, ramps: Vec::new(), turns: Vec::new() },
                 ],
             }],
@@ -636,6 +645,18 @@ mod tests {
         assert!(d.problems().is_empty(), "{:?}", d.problems());
         d.lines.push(d.lines[1].clone());
         assert!(d.problems().iter().any(|p| p.contains("A layer is in twice with the profile Highwall")), "{:?}", d.problems());
+    }
+
+    /// A berm set to join the switchbacks on it (decision 0047) saves with `join`, and one that isn't, or one saved before
+    /// Join could be set, saves and reads as it did, with none.
+    #[test]
+    fn a_berm_keeps_join_and_one_without_it_reads_as_before() {
+        let joined: ProfileStep = serde_json::from_str(r#"{ "step": "berm", "width": 10.0, "join": true }"#).unwrap();
+        assert!(matches!(joined, ProfileStep::Berm { join: true, .. }));
+        assert!(serde_json::to_string(&joined).unwrap().contains(r#""join":true"#));
+        let plain: ProfileStep = serde_json::from_str(r#"{ "step": "berm", "width": 10.0 }"#).unwrap();
+        assert!(matches!(plain, ProfileStep::Berm { join: false, .. }));
+        assert!(!serde_json::to_string(&plain).unwrap().contains("join"));
     }
 
     /// A line redrawn by hand is kept on the design's line, after a row that's there, one to a row, and only on a line on
@@ -691,7 +712,7 @@ mod tests {
         let design: FaceDesign = serde_json::from_str(saved).unwrap();
         assert!(design.problems().is_empty(), "{:?}", design.problems());
         assert_eq!(design.profiles[1].direction, FaceDirection::Down);
-        assert_eq!(design.profiles[0].steps[1], ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: false, condition: Some(0.1), min_bench: None });
+        assert_eq!(design.profiles[0].steps[1], ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: false, condition: Some(0.1), min_bench: None , join: false });
         assert_eq!(design.value_of(&StepValue::Rule("Highwall batter".into())), Some(72.0));
     }
 
@@ -702,7 +723,7 @@ mod tests {
         assert_eq!(d.value_of(&StepValue::Rule("HW batter".into())), Some(70.0));
         assert_eq!(d.value_of(&StepValue::Rule("Endwall batter".into())), None);
         let row: ProfileStep = serde_json::from_str(r#"{ "step": "berm", "width": 30 }"#).unwrap();
-        assert_eq!(row, ProfileStep::Berm { on: None, width: StepValue::Number(30.0), register: true, condition: None, min_bench: None });
+        assert_eq!(row, ProfileStep::Berm { on: None, width: StepValue::Number(30.0), register: true, condition: None, min_bench: None , join: false });
     }
 
     #[test]
@@ -717,10 +738,10 @@ mod tests {
         d.rules.remove(0);
         assert!(d.problems().iter().any(|p| p.contains("Highwall step 1 uses a rule that isn't there: HW batter")));
         let mut d = design();
-        d.profiles[0].steps[1] = ProfileStep::Berm { on: None, width: StepValue::Rule(String::new()), register: true, condition: None, min_bench: None };
+        d.profiles[0].steps[1] = ProfileStep::Berm { on: None, width: StepValue::Rule(String::new()), register: true, condition: None, min_bench: None , join: false };
         assert!(d.problems().iter().any(|p| p.contains("Highwall step 2 needs a width")));
         let mut d = design();
-        d.profiles[0].steps[1] = ProfileStep::Berm { on: None, width: StepValue::Rule("HW batter".into()), register: true, condition: None, min_bench: None };
+        d.profiles[0].steps[1] = ProfileStep::Berm { on: None, width: StepValue::Rule("HW batter".into()), register: true, condition: None, min_bench: None , join: false };
         assert!(d.problems().iter().any(|p| p.contains("HW batter is used as both")));
         let mut d = design();
         d.profiles.push(d.profiles[0].clone());
@@ -946,7 +967,7 @@ mod tests {
         d.profiles[0].steps.insert(2, ProfileStep::Project { to: StepTarget::Rl { rl: 200.0 }, batter: StepValue::Number(70.0), condition: None, ramps: Vec::new(), turns: Vec::new() });
         assert!(d.problems().iter().any(|p| p.contains("another wall in among its walls")), "{:?}", d.problems());
         let mut d = with_a_ramp();
-        d.profiles[0].steps.insert(1, ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: true, condition: None, min_bench: None });
+        d.profiles[0].steps.insert(1, ProfileStep::Berm { on: None, width: StepValue::Number(10.0), register: true, condition: None, min_bench: None , join: false });
         assert!(d.problems().is_empty(), "a berm between its walls is fine: {:?}", d.problems());
     }
 

@@ -203,6 +203,7 @@ async function checkDesignLines(viewport: Viewport, log: (line: string) => void,
     your_line_selected_by_click: yoursSelected,
     your_line_vertices_before_after_delete: [points.length, yoursAfter],
     panel: await checkEditFromHere(viewport, log, show, layer),
+    join: await checkJoinSwitch(log, show),
   };
   log(`design lines: ${JSON.stringify(result)}`);
   return result;
@@ -312,6 +313,63 @@ async function checkEditFromHere(viewport: Viewport, log: (line: string) => void
     remove_tip: removeTip,
     rows_before_and_after_removing_row_1: [removes.length, rowsLeft],
     row_taken_out_took_your_line: gone,
+  };
+}
+
+/**
+ * Join on a berm, clicked in the Face design panel (decision 0047): Tim's step template with ramps A and B turning on
+ * row 9, so their boxes are on row 8's berm. The Join switch shows on row 8 only, and a click runs the step with the two
+ * switchbacks joined into one pad.
+ */
+async function checkJoinSwitch(log: (line: string) => void, show: Show) {
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const buttons = () => [...document.querySelectorAll('button')];
+  log('design lines: Join in the Face design panel');
+  const at = (p: number[]) => [650000 + p[0], 7448000 + p[1], p[2] ?? 0];
+  const toe = await runCommand('string.create', { name: 'Toe 3', layer: 'toes', closed: false, points: [[0, 0], [600, 30], [1100, 10], [1500, 70]].map(at) });
+  const ramp = async (name: string, points: number[][]) => (await runCommand('string.create', { name, layer: 'ramps', closed: false, points: points.map((p) => at([...p, 115])) })).record.outputs[0].id;
+  const a = await ramp('Ramp A 3', [[150.249688, 17.985104], [148.002495, 62.928959]]);
+  const b = await ramp('Ramp B 3', [[1099.896493, 20.561043], [1093.221172, 65.063179]]);
+  const wall = (rl: number, batter: number, ramps: string[], turns: string[]) => ({ step: 'project', to: { kind: 'rl', rl }, batter, condition: 0.1, ramps, turns });
+  const berm = { step: 'berm', on: null, width: 10, register: true, condition: 0.1, min_bench: 1 };
+  const ab = ['A', 'B'];
+  const road = (name: string, string: string, heading: string) => ({ name, string, fixed: 'start', heading, width: 30, grade: 10 });
+  const content = {
+    layer: 'faces 3',
+    lines: [{ string: toe.record.outputs[0].id, profile: 'Steps', side: 'left', run_on: [0, 0] }],
+    profiles: [{
+      name: 'Steps', direction: 'up', condition: 0.1, register: { kind: 'rl', rl: 100 },
+      ramps: [road('A', a, 'along'), road('B', b, 'back')],
+      steps: [wall(115, 70, [], []), berm, wall(130, 70, ab, []), berm, wall(145, 65, ab, []), berm, wall(155, 65, ab, []), berm, wall(165, 65, ab, ab)],
+    }],
+    rules: [],
+  };
+  const saved = await runCommand('face.save_design', { name: 'Steps from Toe 3', content });
+  const design = saved.record.outputs[0].id;
+  void show((await runCommand('face.step', { design, name: 'Steps from Toe 3', content })).summary);
+  await wait(500);
+  // With a design open the panel has its Design list; with none, Open a design.
+  const open = document.querySelector<HTMLSelectElement>('select[aria-label="Open a design"], select[aria-label="Design"]');
+  if (!open) return { error: 'no list of designs in the Face design panel' };
+  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(open, design);
+  open.dispatchEvent(new Event('change', { bubbles: true }));
+  await wait(2500);
+  const joins = buttons().filter((x) => x.textContent?.trim() === 'Join');
+  const tip = joins[0]?.title ?? null;
+  const before = (await runLog()).filter((e) => 'command' in e && e.command === 'face.step').length;
+  joins[0]?.click();
+  await wait(2500);
+  const runs = (await runLog()).filter((e) => 'command' in e && e.command === 'face.step');
+  const last = runs[runs.length - 1];
+  const messages = last && 'messages' in last ? (last.messages as string[]) : [];
+  const pressed = buttons().find((x) => x.textContent?.trim() === 'Join')?.getAttribute('aria-pressed') ?? null;
+  return {
+    join_switches: joins.length,
+    tip,
+    step_runs_after_click: runs.length - before,
+    joined_message: messages.find((m) => m.includes('joins the switchbacks')) ?? null,
+    roads: messages.filter((m) => m.startsWith('Ramp ')).map((m) => m.slice(0, 90)),
+    switch_pressed: pressed,
   };
 }
 
