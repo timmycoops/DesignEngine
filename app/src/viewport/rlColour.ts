@@ -6,8 +6,8 @@
 // true RL, so the first edge is passed in local z: the origin's z is a whole metre (state.rs `origin`),
 // so `base` below is exact and every edge lands on a round RL.
 import * as THREE from 'three/webgpu';
-import { clamp, float, floor, fract, fwidth, min, mix, positionLocal, smoothstep, texture, uniform, vec2 } from 'three/tsl';
-import type { Bands } from './bands';
+import { clamp, float, floor, fract, fwidth, max, min, mix, positionLocal, smoothstep, texture, uniform, vec2 } from 'three/tsl';
+import { type Bands, MIN_PER_PIXEL, ON_EDGE } from './bands';
 import { DEFAULT_RL_PALETTE, paletteColour, RL_PALETTES, type RlPaletteName } from './rlPalettes';
 
 export { autoInterval, type Bands, bandsFor, INTERVALS } from './bands';
@@ -91,13 +91,14 @@ export function colourByRl(material: THREE.MeshStandardNodeMaterial, colour: num
     count: uniform(1),
     lines: uniform(1),
   };
-  // Bands from the lowest edge: whole numbers at the edges.
-  const b = positionLocal.z.sub(u.base).div(u.interval);
+  // Bands from the lowest edge: whole numbers at the edges. What lies on an edge, to ON_EDGE, is in the band above
+  // it, so a berm on a round RL is one colour (bands.ts; tests/bands.test.mjs does the same sums in f32).
+  const b = positionLocal.z.sub(u.base).add(ON_EDGE).div(u.interval);
   const band = clamp(floor(b), float(0), u.count.sub(1));
   const map = ramp();
   const stepped = texture(map, vec2(band.add(0.5).div(u.count), 0.5)).rgb;
   // Zoomed out until a band is under a few pixels, the bands blur into the smooth ramp, not a moire.
-  const perPixel = fwidth(b);
+  const perPixel = max(fwidth(b), float(MIN_PER_PIXEL));
   const smooth = texture(map, vec2(clamp(b.div(u.count), float(0), float(1)), 0.5)).rgb;
   const banded = mix(stepped, smooth, smoothstep(0.25, 0.6, perPixel));
   // A line about a pixel wide either side of each edge, faded out where edges crowd closer than a few pixels.
