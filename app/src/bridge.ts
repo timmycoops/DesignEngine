@@ -506,6 +506,15 @@ export interface FaceLine {
   side: WallSide;
   /** Past the string's start and end, in metres. */
   run_on: [number, number];
+  /** Lines of a step design redrawn by hand (decision 0046), one to a row. */
+  edits?: LineEdit[];
+}
+
+/** A line redrawn by hand: the line row `row` (from 1) ends on, a wall's crest or a berm's line, is this string. The row
+ * re-forms to meet it and the rows above carry on from it. */
+export interface LineEdit {
+  row: number;
+  string: string;
 }
 
 /** Azimuths clockwise from `from` to `to`, in degrees from grid north, and their value. */

@@ -691,10 +691,11 @@ impl Climbing {
     }
 
     /// Carries on from its start on a line redrawn by hand, as a road carries on from its top: with no entrance, turn or
-    /// pad to make again, as the line has them, or left them out on purpose (decision 0046).
+    /// pad to make again, as the line has them, or left them out on purpose (decision 0046). A road that turned keeps the
+    /// corner its edges cross a pad by, on a floor that isn't level.
     fn carry_on_from(&mut self, top: RoadTop) {
         self.spec.start = [top.wall[0], top.wall[1]];
-        (self.top, self.turned, self.pad, self.pad_corner) = (Some(top), None, None, None);
+        (self.top, self.turned, self.pad) = (Some(top), None, None);
     }
 
     /// The road as far as it got.
@@ -1120,9 +1121,11 @@ enum Floor<'a> {
     None,
 }
 
-/// A line redrawn by hand, vertex by vertex and straight between them, as the lines the steps make are: at the heights of
-/// the line the steps made where it runs on it, so a line copied as the steps made it comes back as it was, held off a
-/// grid where the steps held it, and on what it lies on where it leaves it. A vertex with nothing under it keeps its height.
+/// A line redrawn by hand on what it lies on. Where it runs on the line the steps made, it takes that line's heights, vertex
+/// for vertex, so a line copied as the steps made it comes back as it was, held off a grid where the steps held it. Where
+/// it leaves it, each vertex lies on what the line lies on, and on a surface or grid a stretch between them follows it,
+/// with a vertex wherever it bends, as the lines the steps lay on a floor do. A vertex with nothing under it keeps its
+/// height.
 fn laid_on(drawn: &Polyline, made: &Polyline, floor: Floor<'_>) -> Polyline {
     let on_made = |p: [f64; 3]| {
         let n = made.vertices.len();
@@ -1136,20 +1139,54 @@ fn laid_on(drawn: &Polyline, made: &Polyline, floor: Floor<'_>) -> Polyline {
             .filter(|(gap, _)| *gap <= WELD)
             .map(|(_, z)| z)
     };
-    let floored: Vec<f64> = match floor {
-        Floor::Surface(surface) => {
-            let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
-            for p in &drawn.vertices {
-                lo = [lo[0].min(p[0]), lo[1].min(p[1])];
-                hi = [hi[0].max(p[0]), hi[1].max(p[1])];
-            }
-            let bins = TriangleBins::new(surface, lo, hi);
-            drawn.vertices.iter().map(|p| bins.height(surface, [p[0], p[1]]).unwrap_or(p[2])).collect()
+    let held: Vec<Option<f64>> = drawn.vertices.iter().map(|p| on_made(*p)).collect();
+    let surface = match floor {
+        Floor::Surface(surface) => surface,
+        Floor::Crest(crest) => {
+            let floored = at_crest_heights(drawn, crest);
+            return Polyline { vertices: drawn.vertices.iter().zip(&floored.vertices).zip(&held).map(|((p, q), z)| [p[0], p[1], z.unwrap_or(q[2])]).collect(), closed: drawn.closed };
         }
-        Floor::Crest(crest) => at_crest_heights(drawn, crest).vertices.iter().map(|p| p[2]).collect(),
-        Floor::None => drawn.vertices.iter().map(|p| p[2]).collect(),
+        Floor::None => return Polyline { vertices: drawn.vertices.iter().zip(&held).map(|(p, z)| [p[0], p[1], z.unwrap_or(p[2])]).collect(), closed: drawn.closed },
     };
-    Polyline { vertices: drawn.vertices.iter().zip(floored).map(|(p, z)| [p[0], p[1], on_made(*p).unwrap_or(z)]).collect(), closed: drawn.closed }
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for p in &drawn.vertices {
+        lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+        hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+    }
+    let bins = TriangleBins::new(surface, lo, hi);
+    let at = |p: [f64; 3], z: Option<f64>| [p[0], p[1], z.or_else(|| bins.height(surface, [p[0], p[1]])).unwrap_or(p[2])];
+    let n = drawn.vertices.len();
+    let mut vertices = Vec::with_capacity(n);
+    for k in 0..n {
+        let p = at(drawn.vertices[k], held[k]);
+        vertices.push(p);
+        let Some(j) = (k + 1 < n).then_some(k + 1).or(drawn.closed.then_some(0)) else { continue };
+        // A stretch of yours off the steps' line follows the floor between its ends, bending where the floor does.
+        if held[k].is_some() && held[j].is_some() {
+            continue;
+        }
+        let q = at(drawn.vertices[j], held[j]);
+        let Ok((draped, _)) = drape_string(&Polyline { vertices: vec![p, q], closed: false }, surface, true) else { continue };
+        // Only where it bends: a vertex in line with the last kept and the next, in 3D, adds nothing.
+        let inner = draped.vertices.len().saturating_sub(1);
+        let mut last = p;
+        for (i, r) in draped.vertices.iter().enumerate().take(inner).skip(1) {
+            let next = if i + 1 == inner { q } else { draped.vertices[i + 1] };
+            if !in_line(last, *r, next) {
+                vertices.push(*r);
+                last = *r;
+            }
+        }
+    }
+    Polyline { vertices, closed: drawn.closed }
+}
+
+/// Whether `r` lies on the straight line from `a` to `b`, in 3D, to within the weld.
+fn in_line(a: [f64; 3], r: [f64; 3], b: [f64; 3]) -> bool {
+    let (ab, ar) = ([b[0] - a[0], b[1] - a[1], b[2] - a[2]], [r[0] - a[0], r[1] - a[1], r[2] - a[2]]);
+    let across = [ar[1] * ab[2] - ar[2] * ab[1], ar[2] * ab[0] - ar[0] * ab[2], ar[0] * ab[1] - ar[1] * ab[0]];
+    let length = (ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2]).sqrt();
+    length > 0.0 && (across[0] * across[0] + across[1] * across[1] + across[2] * across[2]).sqrt() / length <= WELD
 }
 
 /// Refuses a line redrawn by hand that crosses the line below it, or stands past it on the pit side by more than
@@ -1597,6 +1634,24 @@ mod tests {
 
     fn line(points: &[[f64; 3]]) -> Polyline {
         Polyline { vertices: points.iter().map(|p| [p[0] + E, p[1] + N, p[2]]).collect(), closed: false }
+    }
+
+    /// A line redrawn by hand lies on its floor (decision 0046). On a floor rising 1 in 10 to a ridge at x = 200 and falling
+    /// beyond, the steps' line along y = 100 at the floor's heights, and yours moved out to y = 155 from x = 100 to 300:
+    /// where yours runs on the steps' line it keeps that line's vertices and heights, held 2 m off the floor at x = 50, and
+    /// its stretch across the ridge gets a vertex on the ridge at the floor's height, 30 m, to 1 µm, and none elsewhere.
+    #[test]
+    fn a_line_redrawn_by_hand_follows_its_floor_where_it_leaves_the_steps_line() {
+        let floor = surface(|x, _| 20.0 - (x - 200.0).abs() / 10.0 + 10.0);
+        let made = line(&[[0.0, 100.0, 12.0], [50.0, 100.0, 17.0], [100.0, 100.0, 20.0], [300.0, 100.0, 20.0], [400.0, 100.0, 10.0]]);
+        let drawn = line(&[[0.0, 100.0, 0.0], [50.0, 100.0, 0.0], [100.0, 100.0, 0.0], [100.0, 155.0, 0.0], [300.0, 155.0, 0.0], [300.0, 100.0, 0.0], [400.0, 100.0, 0.0]]);
+        let laid = laid_on(&drawn, &made, Floor::Surface(&floor));
+        let heights: Vec<[f64; 3]> = laid.vertices.iter().map(|p| [p[0] - E, p[1] - N, p[2]]).collect();
+        let expected = [[0.0, 100.0, 12.0], [50.0, 100.0, 17.0], [100.0, 100.0, 20.0], [100.0, 155.0, 20.0], [200.0, 155.0, 30.0], [300.0, 155.0, 20.0], [300.0, 100.0, 20.0], [400.0, 100.0, 10.0]];
+        assert_eq!(heights.len(), expected.len(), "{heights:?}");
+        for (p, q) in heights.iter().zip(&expected) {
+            assert!((0..3).all(|k| (p[k] - q[k]).abs() < 1e-6), "{p:?} against {q:?}");
+        }
     }
 
     fn close(a: f64, b: f64, tolerance: f64) {

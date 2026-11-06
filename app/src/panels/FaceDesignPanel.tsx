@@ -1,6 +1,6 @@
-import { ArrowDown, ArrowLeftRight, ArrowUp, Crosshair, Footprints, Move, Play, Plus, Save, Trash2, Undo2 } from 'lucide-react';
+import { ArrowDown, ArrowLeftRight, ArrowUp, Crosshair, Footprints, Move, PenLine, Pencil, Play, Plus, Save, Trash2, Undo2 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampBerm, type RampFixed, type RampHeading, type RuleValue, type StepTarget, type StepValue, type Vec3, type WallRule, type WallSide } from '@/bridge';
+import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, type LineEdit, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampBerm, type RampFixed, type RampHeading, type RuleValue, type StepTarget, type StepValue, type Vec3, type WallRule, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
@@ -13,6 +13,15 @@ const cellClass = 'px-1 py-0.5';
 
 /** How long a step design waits after a change before it runs, so typing a number runs once (ms). */
 const STEP_WAIT = 400;
+/** Where the strings that stand for lines redrawn by hand go. */
+const HAND_LAYER = 'edited lines';
+
+/** A row's ✎: whether its line can be redrawn by hand, and if not why; whether it is; and what a click does. */
+interface HandRow {
+  why: string | null;
+  edited: boolean;
+  onEdit: () => void;
+}
 
 /** What a new row starts with. */
 const usualTolerance = 0.1;
@@ -450,7 +459,7 @@ function SurfaceOptions({ surfaces }: { surfaces: ObjectSummary[] }) {
 }
 
 /** One step of a profile. A row says where it finishes: a wall's target, or the surface a berm's line registers on. */
-function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged, canTurn, blank, onChange, onMove, onRemove }: { number: number; step: ProfileStep; surfaces: ObjectSummary[]; rules: WallRule[]; above: string; carries: boolean; ramps: Ramp[]; bridged: (ramp: string) => Bridge; canTurn: (ramp: string) => boolean; blank: (kind: ProfileStep['step']) => ProfileStep; onChange: (s: ProfileStep) => void; onMove: (by: number) => void; onRemove: () => void }) {
+function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged, canTurn, blank, hand, onChange, onMove, onRemove }: { number: number; step: ProfileStep; surfaces: ObjectSummary[]; rules: WallRule[]; above: string; carries: boolean; ramps: Ramp[]; bridged: (ramp: string) => Bridge; canTurn: (ramp: string) => boolean; blank: (kind: ProfileStep['step']) => ProfileStep; hand?: HandRow; onChange: (s: ProfileStep) => void; onMove: (by: number) => void; onRemove: () => void }) {
   const target = targetOf(step);
   const surfaceValue = target?.kind === 'surface' ? target.id : target?.kind === 'rl' ? 'rl' : '';
   const setSurface = (value: string) => {
@@ -503,6 +512,15 @@ function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged
         <ConditionCell value={step.condition} carries={carries} onChange={(condition) => onChange({ ...step, condition })} />
       </td>
       <td className="whitespace-nowrap py-0.5 text-right">
+        {hand && (
+          <IconButton
+            title={hand.edited ? `Your line after row ${number}: select it to drag, insert or delete its vertices, or redraw a stretch of it under the table` : (hand.why ?? `Edit from here: copy the line row ${number} ends on as a string of your own and redraw it by hand. The row re-forms to meet it and the rows above carry on from it`)}
+            disabled={!hand.edited && !!hand.why}
+            onClick={hand.onEdit}
+          >
+            <Pencil className={`size-3 ${hand.edited ? 'text-primary' : ''}`} />
+          </IconButton>
+        )}
         <IconButton title="Move up" onClick={() => onMove(-1)}>
           <ArrowUp className="size-3" />
         </IconButton>
@@ -692,7 +710,13 @@ function RampRow({ ramp, stringName, placed, onWalls, waits, turns, results, swa
 }
 
 /** A profile as one table, read top to bottom: the toe's Register row, then each step going one way from it. */
-function StepTable({ profile, surfaces, rules, carryRamps, onChange }: { profile: FaceProfile; surfaces: ObjectSummary[]; rules: WallRule[]; carryRamps: boolean; onChange: (p: Partial<FaceProfile>) => void }) {
+/** Lines redrawn by hand in a step design: each row's ✎, and keeping them with their rows as rows move or go. */
+interface HandLines {
+  row: (row: number) => HandRow;
+  renumber: (to: (row: number) => number | null) => void;
+}
+
+function StepTable({ profile, surfaces, rules, carryRamps, hand, onChange }: { profile: FaceProfile; surfaces: ObjectSummary[]; rules: WallRule[]; carryRamps: boolean; hand?: HandLines; onChange: (p: Partial<FaceProfile>) => void }) {
   const { steps, register } = profile;
   const ramps = profile.ramps ?? [];
   const blank = (kind: ProfileStep['step']) => blankStep(kind, steps, surfaces, register, profile.direction, usualTolerance);
@@ -794,9 +818,17 @@ function StepTable({ profile, surfaces, rules, carryRamps, onChange }: { profile
                 bridged={(ramp) => bridged(k, ramp)}
                 canTurn={(ramp) => climbsBefore(k, ramp)}
                 blank={blank}
+                hand={hand?.row(k + 1)}
                 onChange={(s) => setSteps(replaceAt(steps, k, s))}
-                onMove={(by) => setSteps(moved(steps, k, by))}
-                onRemove={() => setSteps(steps.filter((_, j) => j !== k))}
+                onMove={(by) => {
+                  if (k + by < 0 || k + by >= steps.length) return;
+                  setSteps(moved(steps, k, by));
+                  hand?.renumber((row) => (row === k + 1 ? k + 1 + by : row === k + 1 + by ? k + 1 : row));
+                }}
+                onRemove={() => {
+                  setSteps(steps.filter((_, j) => j !== k));
+                  hand?.renumber((row) => (row === k + 1 ? null : row > k + 1 ? row - 1 : row));
+                }}
               />
             ))}
           </tbody>
@@ -925,6 +957,20 @@ export function FaceDesignPanel() {
     }, STEP_WAIT);
     return () => clearTimeout(timer);
   }, [stepping, dirty, id, draft, name, ready, runRecord]);
+
+  // A line redrawn by hand changing, as a vertex is dragged, runs the step again as the design changing does. Adding or
+  // taking one off changes the design itself.
+  const handKey = (draft?.lines[0]?.edits ?? []).map((e) => e.string).join(',');
+  const handRevisions = (draft?.lines[0]?.edits ?? []).map((e) => objects.find((o) => o.id === e.string)?.revision ?? 'gone').join(',');
+  const lastHand = useRef<{ id: string | null; key: string; revisions: string }>({ id: null, key: '', revisions: '' });
+  useEffect(() => {
+    const was = lastHand.current;
+    lastHand.current = { id, key: handKey, revisions: handRevisions };
+    if (stepping && was.id === id && was.key === handKey && handKey !== '' && was.revisions !== handRevisions) {
+      edits.current += 1;
+      setDirty(true);
+    }
+  }, [id, handKey, handRevisions, stepping]);
 
   /** The string selected in the viewport, open, to start a step design from. */
   const from = objects.find((o) => o.id === selected && o.kind === 'string' && !o.closed);
@@ -1154,6 +1200,75 @@ export function FaceDesignPanel() {
     const first = profile.steps.findIndex((s) => s.step === 'project' && (s.ramps ?? []).includes(ramp.name));
     return { line: stepLine.name, metres: on.metres, from: first < 0 ? null : first + 1, climbs: compassOf(way), flipped: compassOf([-way[0], -way[1]]) };
   };
+  /** Lines of this step design redrawn by hand, each standing for the line its row ends on. */
+  const lineEdits: LineEdit[] = (stepping && draft.lines[0]?.edits) || [];
+  const setEdits = (next: LineEdit[]) => edit((d) => ({ ...d, lines: replaceAt(d.lines, 0, { ...d.lines[0], edits: next.length > 0 ? next : undefined }) }));
+  /** The line a row ends on as the last step made it: a wall's crest, or for a berm the toe of the wall above, or the next
+   * toe where the design ends on it. Or why there's none to redraw. */
+  const lineAfter = (row: number): ObjectSummary | string => {
+    if (!profile || !stepLine || !id) return 'Run the design first';
+    const [start, end] = profile.direction === 'up' ? ['toe', 'crest'] : ['crest', 'toe'];
+    const base = `${stepLine.name} ${profile.name}`;
+    const step = profile.steps[row - 1];
+    if (!step) return `There's no row ${row}`;
+    const lines = objects.filter((o) => o.kind === 'string' && o.attributes.face_design === id);
+    if (step.step === 'project') {
+      if ((step.ramps ?? []).length > 0) return `A road climbs row ${row}, so its ${end} can't be redrawn yet: redraw the line after the berm above it`;
+      return lines.find((o) => o.attributes.step === row && o.name.startsWith(`${base} ${end} `)) ?? `Row ${row} has no ${end} yet`;
+    }
+    const next = profile.steps[row];
+    if (!next) return lines.find((o) => o.name === `${base} next ${start}`) ?? `Row ${row} has no line yet`;
+    if (next.step !== 'project') return `Row ${row + 1} is a berm too: redraw the line after it`;
+    return lines.find((o) => o.attributes.step === row + 1 && o.name.startsWith(`${base} ${start} `)) ?? `The wall after row ${row} has no ${start} yet`;
+  };
+  /** Edit from here: the line a row ends on copied as a string of your own, standing for it. Nothing changes until it's
+   * redrawn, and it's selected to drag, insert or delete its vertices. */
+  const editFromHere = async (row: number) => {
+    const line = lineAfter(row);
+    if (typeof line === 'string' || !profile || !stepLine) return setReport((was) => ({ lines: was.lines, error: typeof line === 'string' ? line : undefined }));
+    const details = await objectDetails(line.id);
+    if (details.measures.kind !== 'string') return;
+    const made = await runRecord('string.create', { name: `${stepLine.name} ${profile.name} your line ${row}`, layer: HAND_LAYER, points: details.measures.points });
+    const string = made.record?.outputs[0]?.id;
+    if (!string) return setReport((was) => ({ lines: was.lines, error: made.error }));
+    setEdits([...lineEdits.filter((e) => e.row !== row), { row, string }]);
+    select(string);
+  };
+  /** A stretch of your line redrawn: click where it leaves it, the new path, and where it comes back. One undo. */
+  const redrawStretch = async (row: number) => {
+    const string = lineEdits.find((e) => e.row === row)?.string;
+    if (!string) return;
+    select(string);
+    setPicking(true);
+    const points = await pickString('Click on your line where the new stretch leaves it, then the new path, then where it comes back onto your line. Enter finishes, Esc cancels');
+    setPicking(false);
+    if (!points) return;
+    const outcome = await runRecord('string.redraw_stretch', { string, through: points });
+    if (!outcome.record) setReport((was) => ({ lines: was.lines, error: outcome.error }));
+  };
+  /** Your line taken off its row, which goes back to the line the steps make. Its string goes too; undo brings it back. */
+  const removeEdit = (row: number) => {
+    const gone = lineEdits.find((e) => e.row === row);
+    setEdits(lineEdits.filter((e) => e.row !== row));
+    if (gone && objects.find((o) => o.id === gone.string)?.layer === summary?.layers.find((l) => l.name === HAND_LAYER)?.id) void runRecord('object.delete', { object: gone.string });
+  };
+  const hand: HandLines | undefined =
+    stepping && stepLine
+      ? {
+          row: (row) => {
+            const yours = lineEdits.find((e) => e.row === row);
+            const line = yours ? null : lineAfter(row);
+            return { why: typeof line === 'string' ? line : null, edited: !!yours, onEdit: () => (yours ? select(yours.string) : void editFromHere(row)) };
+          },
+          renumber: (to) => {
+            const next = lineEdits.flatMap((e) => {
+              const row = to(e.row);
+              return row === null ? [] : [{ ...e, row }];
+            });
+            if (next.length !== lineEdits.length || next.some((e, k) => e.row !== lineEdits[k].row)) setEdits(next);
+          },
+        }
+      : undefined;
   /** The roads the design below left on this profile's lines that it has no ramp for yet. */
   const newTops = (() => {
     if (!profile || !draft) return new Map<string, { width: number; grade: number }>();
@@ -1227,7 +1342,7 @@ export function FaceDesignPanel() {
 
       {stepping && (
         <p className="px-3 pt-2 text-xs text-muted-foreground">
-          Each step runs as you add or change it, and Ctrl+Z takes the last one off. Add a Project or Berm under the profile. The next step starts from the last crest, or after a berm from its next toe.
+          Each step runs as you add or change it, and Ctrl+Z takes the last one off. Add a Project or Berm under the profile. The next step starts from the last crest, or after a berm from its next toe. ✎ on a row redraws its line by hand.
         </p>
       )}
 
@@ -1335,7 +1450,28 @@ export function FaceDesignPanel() {
             <span className="ml-auto text-muted-foreground">Direction</span>
             <Choice value={profile.direction} options={DIRECTIONS} onChange={(direction) => setProfile({ direction })} />
           </div>
-          <StepTable profile={profile} surfaces={surfaces} rules={draft.rules} carryRamps={stepping} onChange={setProfile} />
+          <StepTable profile={profile} surfaces={surfaces} rules={draft.rules} carryRamps={stepping} hand={hand} onChange={setProfile} />
+          {lineEdits.length > 0 && (
+            <div className="px-3 pt-1 text-xs">
+              <p className="pb-0.5 text-muted-foreground">Your lines: drag, insert or delete a vertex in the viewport, or redraw a stretch. The design runs again as each one changes.</p>
+              {[...lineEdits]
+                .sort((a, b) => a.row - b.row)
+                .map((e) => (
+                  <div key={e.row} className="flex items-center gap-1 py-0.5">
+                    <span className="w-12 shrink-0 tabular-nums text-muted-foreground">Row {e.row}</span>
+                    <button type="button" className="min-w-0 truncate text-left text-primary hover:underline" title="Select it in the viewport" onClick={() => select(e.string)}>
+                      {nameOf(e.string)}
+                    </button>
+                    <SmallButton disabled={picking} title="Click on your line where the new stretch leaves it, then the new path, then where it comes back onto your line" onClick={() => void redrawStretch(e.row)}>
+                      <PenLine className="size-3" /> Redraw a stretch
+                    </SmallButton>
+                    <IconButton title={`Take your line off row ${e.row}: it goes back to the line the steps make`} onClick={() => removeEdit(e.row)}>
+                      <Trash2 className="size-3" />
+                    </IconButton>
+                  </div>
+                ))}
+            </div>
+          )}
           <div className="px-3 pt-1 text-xs">
             <div className="flex items-center gap-2 pb-1">
               <span className="text-muted-foreground">Ramps</span>
