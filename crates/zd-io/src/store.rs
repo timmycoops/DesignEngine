@@ -4,7 +4,8 @@
 //! <name>.zdproj/
 //!   manifest.json                          format, version, layers, and every live object with
 //!                                          its revision, layer, provenance, attributes and files,
-//!                                          and the objects hidden one by one
+//!                                          the objects hidden one by one, and how objects and
+//!                                          layers look (colour, opacity, contour bands)
 //!   run-log-<save>.json                    the session's run log, as the caller passes it
 //!   strings-<save>.parquet                 all string vertices: object (u32, index into the
 //!                                          manifest's objects), x, y, z (f64), in vertex order
@@ -39,7 +40,7 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use serde::{Deserialize, Serialize};
 use zd_core::{
-    Attributes, Body, Crossings, FaceDesign, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, ProjectError, RunId, SeamModel, Solid,
+    Attributes, Body, Crossings, Display, FaceDesign, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, ProjectError, RunId, SeamModel, Solid,
     Surface, TriMesh,
 };
 
@@ -106,6 +107,13 @@ struct Manifest {
     objects: Vec<StoredObject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     hidden: Vec<ObjectId>,
+    /// Display state, as `hidden` is. A project saved before looks existed opens with the defaults.
+    #[serde(default, skip_serializing_if = "is_default_display")]
+    display: Display,
+}
+
+fn is_default_display(display: &Display) -> bool {
+    *display == Display::default()
 }
 
 #[derive(Serialize, Deserialize)]
@@ -260,7 +268,7 @@ impl ProjectStore {
                 body,
             });
         }
-        let project = Project::from_saved(manifest.layers, objects).map_err(StoreError::Project)?.with_hidden(manifest.hidden);
+        let project = Project::from_saved(manifest.layers, objects).map_err(StoreError::Project)?.with_hidden(manifest.hidden).with_display(manifest.display);
         let run_log = match &manifest.run_log {
             Some(file) => Some(std::fs::read_to_string(dir.join(file))?),
             None => None,
@@ -333,6 +341,7 @@ impl ProjectStore {
             layers: project.layers().to_vec(),
             objects: stored,
             hidden: project.objects().map(|o| o.id).filter(|&id| project.is_hidden(id)).collect(),
+            display: saved_display(project),
         };
         let text = serde_json::to_vec_pretty(&manifest).map_err(|e| StoreError::Format(e.to_string()))?;
         let staging = self.dir.join(format!("{MANIFEST}.tmp"));
@@ -451,6 +460,18 @@ impl ProjectStore {
 
 /// Every surface's and solid's mesh, in object order, read across the machine's cores: a pit is
 /// tens of thousands of solids, two files each.
+/// The looks of what's still in the project: an object deleted keeps its look in the session for an
+/// undo, but undo doesn't survive closing, so it isn't saved.
+fn saved_display(project: &Project) -> Display {
+    let display = project.display();
+    let live: HashSet<ObjectId> = project.objects().map(|o| o.id).collect();
+    Display {
+        objects: display.objects.iter().filter(|(id, _)| live.contains(id)).map(|(&id, &look)| (id, look)).collect(),
+        layers: display.layers.iter().filter(|(id, _)| project.layer(**id).is_some()).map(|(&id, &o)| (id, o)).collect(),
+        contours: display.contours,
+    }
+}
+
 fn read_meshes(dir: &Path, objects: &[StoredObject]) -> Result<Vec<Option<TriMesh>>, StoreError> {
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let chunk = objects.len().div_ceil(threads).max(1);

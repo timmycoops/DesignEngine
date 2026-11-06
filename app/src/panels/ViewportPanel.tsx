@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
+import { Checkbox } from '@/design-system/ui/checkbox';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
 import { css, ISSUE, NO_COAL, rampCss } from '@/viewport/ramp';
-import type { SeamShown } from '@/viewport/sceneSync';
+import { type Bands, INTERVALS, rlColour, rlRampCss } from '@/viewport/rlColour';
+import { DEFAULT_CONTOURS, type SeamShown } from '@/viewport/sceneSync';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
 
@@ -17,15 +19,105 @@ function Swatch({ colour, label }: { colour: string; label: string }) {
   );
 }
 
-/** Every seam model on show, nearest the top the first in the project. */
-function SeamLegends() {
-  const { seamViews, sectionOpen } = useWorkspace();
-  if (seamViews.length === 0) return null;
+/** Colour by RL on show, then every seam model on show, nearest the top the first in the project. */
+function Legends() {
+  const { seamViews, rlShown, sectionOpen } = useWorkspace();
+  if (seamViews.length === 0 && rlShown.objects.length === 0) return null;
   return (
     <div className={`absolute left-3 z-10 flex max-h-[calc(100%-1.5rem)] w-64 flex-col gap-2 overflow-auto ${sectionOpen ? 'bottom-[264px]' : 'bottom-3'}`}>
+      {rlShown.objects.length > 0 && <RlLegend />}
       {seamViews.map((view) => (
         <SeamLegend key={view.id} seamView={view} />
       ))}
+    </div>
+  );
+}
+
+/** One band of colour per band of RL, while there are few enough to see; past that the smooth ramp. */
+function bandsCss(bands: Bands): string {
+  if (bands.count > 40) return rlRampCss();
+  const stops = Array.from({ length: bands.count }, (_, k) => {
+    const colour = css(rlColour((k + 0.5) / bands.count).map(Math.round) as [number, number, number]);
+    return `${colour} ${((100 * k) / bands.count).toFixed(2)}% ${((100 * (k + 1)) / bands.count).toFixed(2)}%`;
+  });
+  return `linear-gradient(to right, ${stops.join(', ')})`;
+}
+
+const MOST_LISTED = 6;
+
+/**
+ * What's coloured by RL: the interval (picked from the range, or set), the ramp, the RLs it spans, and
+ * switches for the contour lines and for one colour range across every surface.
+ */
+function RlLegend() {
+  const { rlShown, summary, setContours } = useWorkspace();
+  const contours = summary?.display.contours ?? DEFAULT_CONTOURS;
+  const { objects } = rlShown;
+  const intervals = new Set(objects.map((o) => o.bands.interval));
+  const one = rlShown.shared || objects.length === 1 ? objects[0].bands : null;
+  const label = contours.interval === null ? `Auto${intervals.size === 1 ? ` · ${fmt(objects[0].bands.interval)} m` : ''}` : `${fmt(contours.interval)} m`;
+  const span = (b: Bands) => `${fmt(b.low)} to ${fmt(b.high)}`;
+  return (
+    <div className="shrink-0 rounded-md border bg-card/90 p-2 text-xs shadow-md backdrop-blur-sm">
+      <div className="flex items-center gap-1">
+        <span className="font-medium">Coloured by RL</span>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="ml-auto h-6 gap-1 px-2 text-xs" title="Metres between contours">
+              {label} <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuRadioGroup
+              value={contours.interval === null ? 'auto' : String(contours.interval)}
+              onValueChange={(v) => setContours({ ...contours, interval: v === 'auto' ? null : Number(v) })}
+            >
+              <DropdownMenuRadioItem value="auto">Auto, from the RL range</DropdownMenuRadioItem>
+              {INTERVALS.map((m) => (
+                <DropdownMenuRadioItem key={m} value={String(m)}>
+                  {m} m
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      {one ? (
+        <>
+          <div className="mt-1 h-2.5 rounded-sm" style={{ background: bandsCss(one) }} />
+          <div className="flex justify-between text-muted-foreground tabular-nums">
+            <span>{fmt(one.low)}</span>
+            <span>{fmt(one.high)} RL</span>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="mt-1 h-2.5 rounded-sm" style={{ background: rlRampCss() }} />
+          <p className="text-muted-foreground">Each over its own RLs:</p>
+          <ul className="text-muted-foreground tabular-nums">
+            {objects.slice(0, MOST_LISTED).map((o) => (
+              <li key={o.id} className="flex gap-2">
+                <span className="min-w-0 flex-1 truncate" title={o.name}>
+                  {o.name}
+                </span>
+                <span>{span(o.bands)}</span>
+                {intervals.size > 1 && <span>· {fmt(o.bands.interval)} m</span>}
+              </li>
+            ))}
+            {objects.length > MOST_LISTED && <li>and {objects.length - MOST_LISTED} more</li>}
+          </ul>
+        </>
+      )}
+      <div className="mt-1.5 flex flex-col gap-1">
+        <label className="flex items-center gap-1.5">
+          <Checkbox checked={contours.lines} onCheckedChange={(c) => setContours({ ...contours, lines: c === true })} />
+          Contour lines
+        </label>
+        <label className="flex items-center gap-1.5" title="One colour range across everything coloured by RL, so an RL is the same colour on every surface">
+          <Checkbox checked={contours.shared} onCheckedChange={(c) => setContours({ ...contours, shared: c === true })} />
+          Same colours on every surface
+        </label>
+      </div>
     </div>
   );
 }
@@ -119,7 +211,7 @@ export function ViewportPanel() {
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#161e29]">
       <div ref={ref} className="absolute inset-0" />
-      <SeamLegends />
+      <Legends />
       <TypedEntry />
     </div>
   );

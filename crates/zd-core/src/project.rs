@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+use crate::display::{self, Colouring, Contours, Display, Look};
 use crate::{Attributes, Body, Layer, LayerId, Object, ObjectId, RunId};
 
 /// One change a command asks for. A run's changes apply together or not at all.
@@ -148,6 +149,8 @@ pub struct Project {
     /// Objects hidden one by one. Display state, saved with the project; shared so a snap can read it
     /// without holding the project.
     hidden: Arc<HashSet<ObjectId>>,
+    /// How objects and layers look: display state, saved with the project.
+    display: Display,
     /// See [`Project::generation`]. Not saved.
     generation: u64,
 }
@@ -165,6 +168,7 @@ impl Project {
 
     /// A number that changes with every change to the project, a layer shown or hidden included,
     /// and that no other project has held: what is worked out from a project can be kept against it.
+    /// A look (colour, opacity) leaves it alone, as nothing worked out from a project depends on one.
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -198,6 +202,55 @@ impl Project {
     pub fn with_hidden(mut self, ids: impl IntoIterator<Item = ObjectId>) -> Project {
         self.hidden = Arc::new(ids.into_iter().collect());
         self
+    }
+
+    /// The same project with these looks, as saved.
+    pub fn with_display(mut self, display: Display) -> Project {
+        self.display = display;
+        self
+    }
+
+    /// How objects and layers look. An object deleted keeps its look here, so undoing the delete brings
+    /// it back as it was.
+    pub fn display(&self) -> &Display {
+        &self.display
+    }
+
+    /// Sets how live objects are coloured, how see-through they are, or both. Display state only: not a
+    /// change, not undone. An opacity is held to 0 to 1. Returns how many changed.
+    pub fn set_looks(&mut self, ids: &[ObjectId], colouring: Option<Colouring>, opacity: Option<f64>) -> usize {
+        let opacity = match opacity.map(display::opacity) {
+            Some(None) => return 0,
+            Some(Some(o)) => Some(o),
+            None => None,
+        };
+        let live: Vec<ObjectId> = ids.iter().copied().filter(|&id| self.object(id).is_some()).collect();
+        let mut changed = 0;
+        for id in live {
+            let was = self.display.look(id);
+            let look = Look { colouring: colouring.unwrap_or(was.colouring), opacity: opacity.unwrap_or(was.opacity) };
+            changed += usize::from(self.display.set_look(id, look));
+        }
+        changed
+    }
+
+    /// Sets how see-through a layer is, held to 0 to 1; it multiplies its objects' opacity. Display state
+    /// only. Returns whether it changed.
+    pub fn set_layer_opacity(&mut self, id: LayerId, opacity: f64) -> bool {
+        match display::opacity(opacity) {
+            Some(opacity) if self.layer(id).is_some() => self.display.set_layer_opacity(id, opacity),
+            _ => false,
+        }
+    }
+
+    /// Sets the bands of colour by RL. Display state only. Returns whether it changed; an interval that
+    /// isn't a positive number of metres changes nothing.
+    pub fn set_contours(&mut self, contours: Contours) -> bool {
+        if !contours.is_valid() || self.display.contours == contours {
+            return false;
+        }
+        self.display.contours = contours;
+        true
     }
 
     pub fn layers(&self) -> &[Layer] {
@@ -659,5 +712,44 @@ mod tests {
         assert_eq!(p.generation(), before, "a run that changes nothing");
         p.objects().count();
         assert_eq!(p.generation(), before, "reading");
+    }
+
+    #[test]
+    fn a_look_is_display_state_kept_through_undo_and_a_delete() {
+        let mut p = Project::new();
+        let a = p.apply(RunId::new(), vec![create("topo", "surfaces", line(&[[0.0; 3], [1.0; 3]])), create("roof", "surfaces", line(&[[0.0; 3], [2.0; 3]]))]).unwrap();
+        let (topo, roof) = (a.changes[0].id, a.changes[1].id);
+        let layer = p.object(topo).unwrap().layer;
+        let generation = p.generation();
+        assert_eq!(p.display().look(topo), Look { colouring: Colouring::ByRl, opacity: 1.0 }, "by RL and solid unless set");
+
+        assert_eq!(p.set_looks(&[topo, roof], None, Some(0.5)), 2);
+        assert_eq!(p.set_looks(&[topo], Some(Colouring::Layer), None), 1, "colouring alone leaves opacity");
+        assert_eq!(p.display().look(topo), Look { colouring: Colouring::Layer, opacity: 0.5 });
+        assert_eq!(p.set_looks(&[roof], None, Some(0.5)), 0, "the same look again changes nothing");
+        assert_eq!(p.set_looks(&[roof], None, Some(f64::NAN)), 0, "an opacity that isn't a number changes nothing");
+        assert_eq!(p.set_looks(&[roof], None, Some(3.0)), 1);
+        assert_eq!(p.display().look(roof).opacity, 1.0, "held to 1");
+        assert!(!p.display().objects.contains_key(&roof), "a default look isn't kept");
+        assert_eq!(p.set_looks(&[ObjectId::new()], None, Some(0.2)), 0, "only live objects");
+
+        assert!(p.set_layer_opacity(layer, 0.25));
+        assert!(!p.set_layer_opacity(LayerId::new(), 0.25), "only layers that exist");
+        assert_eq!(p.display().layer_opacity(layer), 0.25);
+
+        let contours = Contours { interval: Some(5.0), lines: false, shared: true };
+        assert!(p.set_contours(contours));
+        assert!(!p.set_contours(Contours { interval: Some(0.0), ..contours }), "an interval must be positive");
+        assert!(!p.set_contours(Contours { interval: Some(-5.0), ..contours }));
+        assert_eq!(p.display().contours, contours);
+        assert_eq!(p.generation(), generation, "a look leaves the generation, so nothing is worked out again");
+
+        let base = p.object(topo).unwrap().revision;
+        p.apply(RunId::new(), vec![Change::Delete { id: topo, base }]).unwrap();
+        p.undo();
+        assert_eq!(p.display().look(topo), Look { colouring: Colouring::Layer, opacity: 0.5 }, "a delete undone comes back as it looked");
+        p.undo();
+        assert!(p.object(topo).is_none());
+        assert_eq!(p.display().layer_opacity(layer), 0.25, "undo leaves a look alone");
     }
 }

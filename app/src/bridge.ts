@@ -289,6 +289,58 @@ export interface ProjectSummary {
   objects: ObjectSummary[];
   /** The layers holding solids, each drawn as one mesh. */
   solid_layers: SolidLayer[];
+  /** How objects and layers look. */
+  display: Display;
+}
+
+/** In bands by RL, or one colour, the layer's. */
+export type Colouring = 'by_rl' | 'layer';
+
+/** How one object looks: colour and how see-through it is (1 is solid). */
+export interface Look {
+  colouring: Colouring;
+  opacity: number;
+}
+
+/** The bands of colour by RL. */
+export interface Contours {
+  /** Metres between band edges; null picks one from the RL range. */
+  interval: number | null;
+  lines: boolean;
+  /** One colour range across everything on show, rather than each object's own. */
+  shared: boolean;
+}
+
+/** Display state saved with the project: only looks that differ from the default are listed. */
+export interface Display {
+  objects?: Record<string, Look>;
+  /** A layer's opacity, which multiplies its objects'. */
+  layers?: Record<string, number>;
+  contours: Contours;
+}
+
+export const DEFAULT_LOOK: Look = { colouring: 'by_rl', opacity: 1 };
+export const lookOf = (display: Display | undefined, id: string): Look => display?.objects?.[id] ?? DEFAULT_LOOK;
+export const layerOpacityOf = (display: Display | undefined, id: string): number => display?.layers?.[id] ?? 1;
+
+/** `display` with these objects' looks changed as the engine changes them (null leaves that part), for showing at once. */
+export function withLooks(display: Display, ids: string[], colouring: Colouring | null, opacity: number | null): Display {
+  const objects = { ...display.objects };
+  for (const id of ids) {
+    const was = objects[id] ?? DEFAULT_LOOK;
+    const look = { colouring: colouring ?? was.colouring, opacity: opacity === null ? was.opacity : Math.min(Math.max(opacity, 0), 1) };
+    if (look.colouring === DEFAULT_LOOK.colouring && look.opacity === DEFAULT_LOOK.opacity) delete objects[id];
+    else objects[id] = look;
+  }
+  return { ...display, objects };
+}
+
+/** `display` with a layer's opacity changed, for showing at once. */
+export function withLayerOpacity(display: Display, layer: string, opacity: number): Display {
+  const layers = { ...display.layers };
+  if (opacity >= 1) delete layers[layer];
+  else layers[layer] = Math.max(opacity, 0);
+  return { ...display, layers };
 }
 
 /** A layer's solids as the viewport draws them. */
@@ -340,6 +392,11 @@ export const setLayerVisible = (layer: string, visible: boolean) =>
   invoke<ProjectSummary>('set_layer_visible', { layer, visible });
 export const setObjectsVisible = (objects: string[], visible: boolean) =>
   invoke<ProjectSummary>('set_objects_visible', { objects, visible });
+/** Colours objects by RL or their layer, sets their opacity, or both (null leaves it). Display state, not a run. */
+export const setLooks = (objects: string[], colouring: Colouring | null, opacity: number | null) =>
+  invoke<Display>('set_looks', { objects, colouring, opacity });
+export const setLayerOpacity = (layer: string, opacity: number) => invoke<Display>('set_layer_opacity', { layer, opacity });
+export const setContours = (contours: Contours) => invoke<Display>('set_contours', { contours });
 
 /** A layer of a Deswik drawing, named as Deswik shows it (levels joined by `\`), and its size unzipped. */
 export interface DeswikLayer {
@@ -667,7 +724,16 @@ export interface BenchConfig {
   transfer_cells: number[];
   orbit_seconds: number;
   drag_updates: number;
+  /** With `--opacity`, every surface is drawn this see-through, to time stacked see-through surfaces. */
+  opacity: number | null;
+  /** With `--pictures <folder>`, the surfaces are drawn in their looks and saved there as pictures. */
+  pictures: string | null;
+  /** With `--webgl`, the viewport runs on three's WebGL2 backend, as it does without WebGPU. */
+  webgl: boolean;
 }
+
+/** Saves a PNG data URL of the viewport as `<name>.png` in the `--pictures` folder. Bench only. */
+export const writePicture = (name: string, dataUrl: string) => invoke<string>('write_picture', { name, dataUrl });
 
 export const benchConfig = () => invoke<BenchConfig | null>('bench_config');
 

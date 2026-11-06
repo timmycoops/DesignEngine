@@ -23,6 +23,9 @@ fn main() {
             commands::save_project,
             commands::set_layer_visible,
             commands::set_objects_visible,
+            commands::set_looks,
+            commands::set_layer_opacity,
+            commands::set_contours,
             commands::run_log,
             commands::deswik_layers,
             commands::spry_contents,
@@ -39,6 +42,7 @@ fn main() {
             commands::section_pick,
             commands::bench_config,
             commands::write_results,
+            commands::write_picture,
             commands::exit_app,
         ])
         .run(tauri::generate_context!())

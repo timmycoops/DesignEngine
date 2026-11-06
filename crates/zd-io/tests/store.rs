@@ -7,7 +7,7 @@ use std::time::Instant;
 use std::collections::BTreeMap;
 
 use zd_core::{
-    AttrValue, Attributes, Body, Change, Fingerprint, Grid, GridLink, Horizon, IssueKind, Lattice, Object, Polyline, Project,
+    AttrValue, Attributes, Body, Change, Colouring, Contours, Display, Fingerprint, Grid, GridLink, Horizon, IssueKind, Lattice, Look, Object, Polyline, Project,
     RunId, SeamModel, Solid, StackIssue, Surface, TriMesh,
 };
 use zd_geom::triangulate_grid;
@@ -171,6 +171,36 @@ fn save_then_open_gives_back_exactly_the_same_project() {
     assert!(opened.project.objects().all(|o| o.name != "scratch"), "deleted objects are not saved");
     assert_eq!(named(&opened.project, "toe 1").revision, 3);
     assert!(!opened.project.can_undo(), "undo history does not survive closing");
+}
+
+#[test]
+fn looks_save_with_the_project_and_one_saved_without_them_opens_with_the_defaults() {
+    let dir = TempDir::new("looks");
+    let mut project = sample_project();
+    let mut store = ProjectStore::create(dir.0.join("pit.zdproj")).unwrap();
+    store.save(&project, "[]").unwrap();
+    let manifest = std::fs::read_to_string(dir.0.join("pit.zdproj").join("manifest.json")).unwrap();
+    assert!(!manifest.contains("\"display\""), "nothing set, nothing written: older builds read it as before");
+    assert_eq!(*ProjectStore::open(dir.0.join("pit.zdproj")).unwrap().project.display(), Display::default());
+
+    let (topo, roof, toe) = (named(&project, "topography").id, named(&project, "seam A roof").id, named(&project, "toe 1"));
+    let geology = project.layer_named("geology").unwrap().id;
+    project.set_looks(&[topo], Some(Colouring::Layer), Some(0.4));
+    project.set_looks(&[roof], None, Some(0.75));
+    project.set_looks(&[toe.id], None, Some(0.5));
+    project.set_layer_opacity(geology, 0.6);
+    project.set_contours(Contours { interval: Some(2.0), lines: false, shared: true });
+    // A look on an object deleted since stays in the session for an undo, not in the file.
+    project.apply(RunId::new(), vec![Change::Delete { id: toe.id, base: toe.revision }]).unwrap();
+    store.save(&project, "[]").unwrap();
+
+    let opened = ProjectStore::open(dir.0.join("pit.zdproj")).unwrap().project;
+    let display = opened.display();
+    assert_eq!(display.look(topo), Look { colouring: Colouring::Layer, opacity: 0.4 });
+    assert_eq!(display.look(roof), Look { colouring: Colouring::ByRl, opacity: 0.75 });
+    assert_eq!(display.objects.len(), 2, "the deleted string's look isn't saved");
+    assert_eq!(display.layer_opacity(geology), 0.6);
+    assert_eq!(display.contours, Contours { interval: Some(2.0), lines: false, shared: true });
 }
 
 #[test]

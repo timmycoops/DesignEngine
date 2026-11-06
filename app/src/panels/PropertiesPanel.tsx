@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Check, Minus, Trash2, X } from 'lucide-react';
-import { type Crossings, type MeshValidity, type ObjectDetails, objectDetails, type SeamModel, type StackIssue, type Vec3 } from '@/bridge';
+import {
+  type Crossings,
+  layerOpacityOf,
+  lookOf,
+  type MeshValidity,
+  type ObjectDetails,
+  objectDetails,
+  type ObjectSummary,
+  type SeamModel,
+  type StackIssue,
+  type Vec3,
+} from '@/bridge';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
 import { Badge } from '@/design-system/ui/badge';
 import { Button } from '@/design-system/ui/button';
@@ -202,6 +213,76 @@ function Choice<T extends string>({ value, options, onChange }: { value: T; opti
         </button>
       ))}
     </span>
+  );
+}
+
+/**
+ * An opacity from 5 to 100 %. It shows as it moves and is kept when it's let go, so a drag is one change
+ * to the project, not one per step.
+ */
+function OpacitySlider({ value, label, onChange }: { value: number; label: string; onChange: (opacity: number, commit: boolean) => void }) {
+  const [moving, setMoving] = useState<number | null>(null);
+  const shown = moving ?? value;
+  const commit = () => {
+    if (moving !== null) onChange(moving, true);
+    setMoving(null);
+  };
+  return (
+    <div className="grid grid-cols-[7.5rem_1fr_2.5rem] items-center gap-2 px-3 py-0.5 text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <input
+        type="range"
+        min={5}
+        max={100}
+        step={5}
+        value={Math.round(shown * 100)}
+        aria-label={label}
+        className="h-4 min-w-0 accent-primary"
+        onChange={(e) => {
+          const next = Number(e.target.value) / 100;
+          setMoving(next);
+          onChange(next, false);
+        }}
+        onPointerUp={commit}
+        onKeyUp={commit}
+        onBlur={commit}
+      />
+      <span className="text-right tabular-nums">{Math.round(shown * 100)}%</span>
+    </div>
+  );
+}
+
+/**
+ * How the selected object draws: by RL or in its layer's colour, and how see-through, its own and its
+ * layer's (they multiply). Display only: saved with the project, not undone. A layer's solids draw as one
+ * mesh, so a solid is seen through by its layer alone; a seam horizon keeps its thickness colours.
+ */
+function Look({ object }: { object: ObjectSummary }) {
+  const { summary, setLooks, setLayerOpacity } = useWorkspace();
+  const look = lookOf(summary?.display, object.id);
+  const solid = object.kind === 'solid';
+  const seam = object.kind === 'seam_model';
+  return (
+    <Section title="Look">
+      {!solid && !seam && (
+        <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2 px-3 py-0.5 text-xs">
+          <span className="text-muted-foreground">Colour</span>
+          <span>
+            <Choice
+              value={look.colouring}
+              options={[
+                ['by_rl', 'By RL'],
+                ['layer', 'Layer colour'],
+              ]}
+              onChange={(colouring) => setLooks([object.id], colouring, null)}
+            />
+          </span>
+        </div>
+      )}
+      {!solid && <OpacitySlider label="Opacity" value={look.opacity} onChange={(o, commit) => setLooks([object.id], null, o, commit)} />}
+      <OpacitySlider label="Layer opacity" value={layerOpacityOf(summary?.display, object.layer)} onChange={(o, commit) => setLayerOpacity(object.layer, o, commit)} />
+      {solid && <p className="px-3 pt-0.5 text-xs text-muted-foreground">A layer's solids draw together, so they're seen through by the layer.</p>}
+    </Section>
   );
 }
 
@@ -731,6 +812,7 @@ export function PropertiesPanel() {
           </>
         )}
       </Section>
+      {(object.drawn || object.kind === 'seam_model') && <Look object={object} />}
       {error && <p className="px-3 py-2 text-xs text-destructive">{error}</p>}
       {current && <Measurements d={current} />}
       {attributes.length > 0 && (

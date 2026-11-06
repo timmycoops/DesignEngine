@@ -18,6 +18,7 @@ zd-core.workspace = true
 zd-geom.workspace = true
 zd-io.workspace = true
 zd-commands.workspace = true
+base64.workspace = true
 
 # Zero-copy mesh hand-over through WebView2 shared buffers. Same versions Tauri's wry uses, so the
 # interface types match those `PlatformWebview` hands out; windows-core supplies `Interface::cast`.

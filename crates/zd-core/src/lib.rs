@@ -5,6 +5,7 @@
 //! undo history. Commands live in `zd-commands`.
 
 mod bounds;
+mod display;
 mod face;
 mod grid;
 mod id;
@@ -15,6 +16,7 @@ mod seam;
 mod validity;
 
 pub use bounds::Aabb;
+pub use display::{Colouring, Contours, Display, Look};
 pub use face::{AzimuthSector, FaceDesign, FaceDirection, FaceLine, FaceProfile, HorizonValue, LineEdit, LineOn, MOST_TOLERANCE, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, WallRule, WallSide};
 pub use grid::Grid;
 pub use id::{LayerId, ObjectId, RunId};
