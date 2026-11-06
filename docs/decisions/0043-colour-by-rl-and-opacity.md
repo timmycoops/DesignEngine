@@ -1,8 +1,9 @@
 # 0043 — Colour by RL and see-through surfaces
 
 Date: 2026-11-05 · Status: proposed (Tim agreed the plan on 2026-11-05: "each object" for the colour range, and saving
-in the manifest beside hidden objects. On the PIT B pictures he judged the look good and good enough for now, but isn't
-convinced by the palette)
+in the manifest beside hidden objects. On the PIT B pictures he judged the look good and good enough for now, but wasn't
+convinced by the palette; on 2026-11-05 he picked Spectral from five ramps drawn side by side on PIT B, as the one
+default, with no picker)
 
 ## Why
 
@@ -24,8 +25,12 @@ grey sheet, and a surface under another couldn't be seen at all.
    5 times a power of ten, the smallest giving at most 20 bands. The interval can be set (1 to 100 m) for every object
    at once. **Same colours on every surface** puts everything coloured by RL on show over one range, so an RL is one
    colour on topography, roof and floor; showing or hiding a surface can then shift the colours.
-5. **The ramp is batlow** (Crameri, blue to green to ochre to pink), perceptually even and not viridis, so an RL is
-   never read as a seam thickness.
+5. **The ramp is Spectral** (ColorBrewer's eleven classes, reversed: purple-blue low, through teal, green and pale
+   yellow, to orange and red high), Tim's pick from five drawn on PIT B. It's a softer rainbow, in the blue-low,
+   red-high order of the rainbow legends Vulcan and Deswik users know, and it isn't viridis, so an RL is never read as a
+   seam thickness. It's one default for every surface: there's no picker and nothing more is saved. The other four
+   stay as tables in `app/src/viewport/rlPalettes.ts` so the bench can draw them all again (below), but the app
+   offers none of them.
 6. **Contour lines are about a pixel wide at any zoom**, from the screen-space derivative of the band number, and fade
    out where edges crowd closer than a few pixels. Zoomed out until a band is under a few pixels, the bands blend into
    the smooth ramp rather than shimmer.
@@ -79,10 +84,30 @@ view): the mined-out topography, 4UU roof, 4LL floor and the 4U resource strings
 (`--webgl`), which draw the same. Bands and lines land on the benches; the topography at 50 % shows the roof and floor
 under it with the strings on top at full strength; all three at 50 % show no tile patchwork once surfaces sort whole.
 
+**The palette**, `--pictures <folder> --palettes` (`app/src/bench/pictures.ts`): the same PIT B surfaces and strings,
+in four views (topography alone, everything, a close-up of the contours, plan), each drawn on every ramp from one
+camera, saved one by one and as a sheet, a row per ramp. The five: batlow (as it was), a turbo rainbow (Google's
+polynomial, trimmed to 0.06 to 0.94 so its ends are blue and red, not near black), hypsometric terrain tints (greens,
+tans and browns, then pale), Spectral, and a rainbow at one OKLCH lightness and chroma in even hue steps. How far each
+band is from the next with 20 bands (OKLab distance, about 0.01 just seen side by side, 0.02 plain at a glance;
+`app/tests/rlPalettes.test.mjs`):
+
+| Ramp | Nearest bands | Farthest bands | Mean distance from viridis |
+|---|---:|---:|---:|
+| Batlow | 0.031 | 0.039 | 0.180 |
+| Rainbow (turbo) | 0.025 | 0.095 | 0.322 |
+| Terrain | 0.023 | 0.100 | 0.272 |
+| **Spectral** | **0.014** | **0.097** | **0.349** |
+| Even rainbow | 0.024 | 0.025 | 0.250 |
+
+Batlow and the even rainbow step evenly; the even rainbow, with no change of lightness, came out drab on the pit.
+Turbo was the brightest and Terrain read as a map but left the topography mostly brown.
+
 ## Known limits
 
-- **The palette isn't settled.** Tim isn't convinced by batlow. The ramp is one table of stops in
-  `app/src/viewport/rlColour.ts`, so trying others, or letting the user pick one, touches nothing else.
+- **Spectral's pale middle has its closest bands**, either side of the pale yellow stop half way up the ramp: 0.014
+  apart with 20 bands, against 0.03 to 0.1 elsewhere. A contour line still marks each edge; with the lines off, two
+  bands there can look like one.
 - **See-through surfaces sort whole.** Where two see-through surfaces cross (a roof left in the air over a mined-out
   pit floor, both see-through), the one drawn later shows on top everywhere. Order-independent transparency would fix
   it, at the cost of more render targets and a composite pass; not done until it's needed.

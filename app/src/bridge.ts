@@ -730,6 +730,8 @@ export interface BenchConfig {
   pictures: string | null;
   /** With `--webgl`, the viewport runs on three's WebGL2 backend, as it does without WebGPU. */
   webgl: boolean;
+  /** With `--pictures` and `--palettes`, a few views are drawn on every RL ramp, and on one sheet. */
+  palettes: boolean;
 }
 
 /** Saves a PNG data URL of the viewport as `<name>.png` in the `--pictures` folder. Bench only. */
