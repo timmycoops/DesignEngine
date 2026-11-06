@@ -164,6 +164,8 @@ export class StringLayer {
   private surfaceNames = new Map<string, string>();
   /** Face designs by id, for naming the design that made a line. */
   private designNames = new Map<string, string>();
+  /** Lines on the rows of the step design open in the panel: a click takes them over other strings on top of them. */
+  private preferred = new Set<string>();
   /** Snapping was switched on or off. */
   onSnapping?: (on: boolean) => void;
   /** The scene origin: world = origin + local, exactly, for points the shell sent. */
@@ -338,6 +340,11 @@ export class StringLayer {
     if (this.selected && !this.shown.has(this.selected)) this.select(null);
     this.recolour();
     this.placeHandles();
+  }
+
+  /** The lines a click takes first where strings lie on each other, after the selected one (`designLines.ts`). */
+  setPreferred(ids: string[]): void {
+    this.preferred = new Set(ids);
   }
 
   /** Draws the marked strings over everything, as a selected one is. */
@@ -956,7 +963,8 @@ export class StringLayer {
 
   /**
    * The string a click picks: the nearest, but where strings lie on each other (your line from Edit from here on the
-   * design's), the selected one, then one of your own over a design's (`designLines.ts`).
+   * design's), the selected one, then a line on a row of the open step design, then one of your own over a design's
+   * (`designLines.ts`).
    */
   private stringAt(x: number, y: number): string | null {
     const screen = this.screen();
@@ -967,7 +975,7 @@ export class StringLayer {
         if (!part) continue;
         const distance = distanceToSegment([x, y], screen(part[0]), screen(part[1]));
         const was = near.get(id);
-        if (!was || distance < was.distance) near.set(id, { id, distance, madeByDesign: shown.design !== null });
+        if (!was || distance < was.distance) near.set(id, { id, distance, madeByDesign: shown.design !== null, preferred: this.preferred.has(id) });
       }
     }
     return lineToPick([...near.values()], this.selected, PICK_PX);

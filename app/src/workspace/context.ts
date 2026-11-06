@@ -56,6 +56,10 @@ export interface Workspace {
   markCrossings: (sites: Vec3[]) => void;
   /** Flies the view to a point in world coordinates. */
   flyTo: (point: Vec3) => void;
+  /** Frames a line (world coordinates) from the current direction. */
+  frameLine: (points: Vec3[]) => void;
+  /** Strings a click takes first where strings lie on each other (after the selected one): the lines on a step design's rows. */
+  preferLines: (ids: string[]) => void;
   /** The next click in the viewport, snapped, in world coordinates. Null if it's cancelled with Esc. */
   pickPoint: (prompt: string) => Promise<Vec3 | null>;
   /** Two clicks in the viewport, with a line following the cursor from the first. Null if it's cancelled. */

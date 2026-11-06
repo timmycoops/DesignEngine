@@ -48,6 +48,10 @@ export const FIELD_OF_VIEW_MAX = 60;
 const FIELD_OF_VIEW_KEY = 'zd.view.fieldOfView';
 /** How far off the 3D view frames the scene, in scene radii, at 45 degrees; other fields of view scale it. */
 const FIT_RADII_AT_45 = 1.9;
+/** The least a framed box is taken to span either side of its middle, so a short line isn't filled to the edges (m). */
+const MIN_FRAME_RADIUS = 25;
+/** A framed box's width on screen is this much less than the view's. */
+const FRAME_MARGIN = 1.2;
 const TAN_22_5 = Math.tan(THREE.MathUtils.degToRad(22.5));
 
 /** The field of view saved on this machine, else the default. */
@@ -550,6 +554,30 @@ export class Viewport {
     } else {
       const direction = new THREE.Vector3(0.45, -0.75, 0.6).normalize();
       this.perspective.position.copy(centre).addScaledVector(direction, this.atFieldOfView(this.sceneRadius * FIT_RADII_AT_45));
+    }
+    this.controls.update();
+  }
+
+  /**
+   * Frames a box (local coordinates) from the current direction, as `fitView` frames everything: in plan, straight
+   * above it. What ✎ in the Face design panel does with the line it gives you.
+   */
+  frameBox(min: Vec3, max: Vec3): void {
+    const box = new THREE.Box3(new THREE.Vector3(...min), new THREE.Vector3(...max));
+    const centre = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const radius = Math.max(size.length() / 2, MIN_FRAME_RADIUS);
+    const direction = this.perspective.position.clone().sub(this.controls.target).normalize();
+    this.controls.target.copy(centre);
+    if (this.plan) {
+      const { clientWidth: w, clientHeight: h } = this.host;
+      this.setPlanHalfHeight(Math.max(size.y / 2, size.x / 2 / (w > 0 && h > 0 ? w / h : 1), MIN_FRAME_RADIUS) * 1.2);
+      this.orthographic.zoom = 1;
+      this.placePlanCamera(centre);
+    } else {
+      // Far enough back for its height, as fitView, and for its width too: a long line across a narrow view.
+      const across = (2 * radius * FRAME_MARGIN) / (2 * this.halfTan * Math.max(this.perspective.aspect, 0.1));
+      this.perspective.position.copy(centre).addScaledVector(direction, Math.max(this.atFieldOfView(radius * FIT_RADII_AT_45), across));
     }
     this.controls.update();
   }

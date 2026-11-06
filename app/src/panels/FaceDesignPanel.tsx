@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowLeftRight, ArrowUp, Crosshair, Footprints, Move, PenLine, Pencil, Play, Plus, Save, Trash2, Undo2 } from 'lucide-react';
-import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type MouseEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, type LineEdit, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampBerm, type RampFixed, type RampHeading, type RuleValue, type StepTarget, type StepValue, type Vec3, type WallRule, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
@@ -16,11 +16,13 @@ const STEP_WAIT = 400;
 /** Where the strings that stand for lines redrawn by hand go. */
 const HAND_LAYER = 'edited lines';
 
-/** A row's ✎: whether its line can be redrawn by hand, and if not why; whether it is; and what a click does. */
+/** A row's ✎: whether its line can be redrawn by hand, and if not why; whether it is; what a click does; its tip. */
 interface HandRow {
   why: string | null;
   edited: boolean;
   onEdit: () => void;
+  /** What the ✎ does on this row, naming the line it redraws. */
+  tip: string;
 }
 
 /** What a new row starts with. */
@@ -114,7 +116,7 @@ function SmallButton({ onClick, title, children, disabled }: { onClick: () => vo
   );
 }
 
-function IconButton({ onClick, title, children, disabled }: { onClick: () => void; title: string; children: ReactNode; disabled?: boolean }) {
+function IconButton({ onClick, title, children, disabled }: { onClick: (e: MouseEvent<HTMLButtonElement>) => void; title: string; children: ReactNode; disabled?: boolean }) {
   return (
     <button className="rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-30" title={title} aria-label={title} disabled={disabled} onClick={onClick}>
       {children}
@@ -459,7 +461,7 @@ function SurfaceOptions({ surfaces }: { surfaces: ObjectSummary[] }) {
 }
 
 /** One step of a profile. A row says where it finishes: a wall's target, or the surface a berm's line registers on. */
-function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged, canTurn, blank, hand, onChange, onMove, onRemove }: { number: number; step: ProfileStep; surfaces: ObjectSummary[]; rules: WallRule[]; above: string; carries: boolean; ramps: Ramp[]; bridged: (ramp: string) => Bridge; canTurn: (ramp: string) => boolean; blank: (kind: ProfileStep['step']) => ProfileStep; hand?: HandRow; onChange: (s: ProfileStep) => void; onMove: (by: number) => void; onRemove: () => void }) {
+function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged, canTurn, blank, hand, onChange, onMove, onRemove }: { number: number; step: ProfileStep; surfaces: ObjectSummary[]; rules: WallRule[]; above: string; carries: boolean; ramps: Ramp[]; bridged: (ramp: string) => Bridge; canTurn: (ramp: string) => boolean; blank: (kind: ProfileStep['step']) => ProfileStep; hand?: HandRow; onChange: (s: ProfileStep) => void; onMove: (by: number) => void; onRemove: (justThis: boolean) => void }) {
   const target = targetOf(step);
   const surfaceValue = target?.kind === 'surface' ? target.id : target?.kind === 'rl' ? 'rl' : '';
   const setSurface = (value: string) => {
@@ -514,7 +516,7 @@ function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged
       <td className="whitespace-nowrap py-0.5 text-right">
         {hand && (
           <IconButton
-            title={hand.edited ? `Your line after row ${number}: select it to drag, insert or delete its vertices, or redraw a stretch of it under the table` : (hand.why ?? `Edit from here: copy the line row ${number} ends on as a string of your own and redraw it by hand. The row re-forms to meet it and the rows above carry on from it`)}
+            title={hand.tip}
             disabled={!hand.edited && !!hand.why}
             onClick={hand.onEdit}
           >
@@ -527,7 +529,10 @@ function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged
         <IconButton title="Move down" onClick={() => onMove(1)}>
           <ArrowDown className="size-3" />
         </IconButton>
-        <IconButton title="Remove this step" onClick={onRemove}>
+        <IconButton
+          title={hand ? 'Remove this step and every step after it, which build on it (Shift+click: just this one)' : 'Remove this step'}
+          onClick={(e) => onRemove(e.shiftKey)}
+        >
           <Trash2 className="size-3" />
         </IconButton>
       </td>
@@ -825,7 +830,14 @@ function StepTable({ profile, surfaces, rules, carryRamps, hand, onChange }: { p
                   setSteps(moved(steps, k, by));
                   hand?.renumber((row) => (row === k + 1 ? k + 1 + by : row === k + 1 + by ? k + 1 : row));
                 }}
-                onRemove={() => {
+                onRemove={(justThis) => {
+                  // In a step design every step builds on the one before, so a step goes with the steps after it, as
+                  // Ctrl+Z takes them off one by one (Tim, 2026-11-06); Shift+click takes just the one.
+                  if (hand && !justThis) {
+                    setSteps(steps.slice(0, k));
+                    hand.renumber((row) => (row >= k + 1 ? null : row));
+                    return;
+                  }
                   setSteps(steps.filter((_, j) => j !== k));
                   hand?.renumber((row) => (row === k + 1 ? null : row > k + 1 ? row - 1 : row));
                 }}
@@ -852,7 +864,7 @@ function StepTable({ profile, surfaces, rules, carryRamps, hand, onChange }: { p
  * and steps every line in one run, one undo.
  */
 export function FaceDesignPanel() {
-  const { summary, selected, select, marked, setMarked, runRecord, clearRefusal, pickString, pickLine } = useWorkspace();
+  const { summary, selected, select, marked, setMarked, runRecord, clearRefusal, pickString, pickLine, frameLine, preferLines } = useWorkspace();
   const objects = useMemo(() => summary?.objects ?? [], [summary]);
   const designs = useMemo(() => objects.filter((o) => o.kind === 'face_design'), [objects]);
   const [id, setId] = useState<string | null>(null);
@@ -958,11 +970,19 @@ export function FaceDesignPanel() {
     return () => clearTimeout(timer);
   }, [stepping, dirty, id, draft, name, ready, runRecord]);
 
-  // A line redrawn by hand changing, as a vertex is dragged, runs the step again as the design changing does. Adding or
-  // taking one off changes the design itself.
-  const handKey = (draft?.lines[0]?.edits ?? []).map((e) => e.string).join(',');
-  const handRevisions = (draft?.lines[0]?.edits ?? []).map((e) => objects.find((o) => o.id === e.string)?.revision ?? 'gone').join(',');
+  // A line redrawn by hand changing, as a vertex is dragged, runs the step again as the design changing does, and so does
+  // the design's own string (the toe it's built from). Adding or taking off a line redrawn by hand changes the design.
+  const watched = [draft?.lines[0]?.string ?? '', ...(draft?.lines[0]?.edits ?? []).map((e) => e.string)].filter((s) => s !== '');
+  const handKey = watched.join(',');
+  const handRevisions = watched.map((s) => objects.find((o) => o.id === s)?.revision ?? 'gone').join(',');
   const lastHand = useRef<{ id: string | null; key: string; revisions: string }>({ id: null, key: '', revisions: '' });
+  // The step design's lines redrawn by hand are what a click takes where strings lie on each other. Up here with the
+  // other hooks, before the panel returns early with no design open.
+  const editKey = stepping ? (draft?.lines[0]?.edits ?? []).map((e) => e.string).join(',') : '';
+  useEffect(() => {
+    preferLines(editKey === '' ? [] : editKey.split(','));
+    return () => preferLines([]);
+  }, [editKey, preferLines]);
   useEffect(() => {
     const was = lastHand.current;
     lastHand.current = { id, key: handKey, revisions: handRevisions };
@@ -1233,7 +1253,15 @@ export function FaceDesignPanel() {
     if (!string) return setReport((was) => ({ lines: was.lines, error: made.error }));
     setEdits([...lineEdits.filter((e) => e.row !== row), { row, string }]);
     select(string);
+    frameLine(details.measures.points);
   };
+  /** Your line on a row selected, and the view gone to it. */
+  const goToLine = async (string: string) => {
+    select(string);
+    const details = await objectDetails(string);
+    if (details.measures.kind === 'string') frameLine(details.measures.points);
+  };
+
   /** A stretch of your line redrawn: click where it leaves it, the new path, and where it comes back. One undo. */
   const redrawStretch = async (row: number) => {
     const string = lineEdits.find((e) => e.row === row)?.string;
@@ -1246,11 +1274,25 @@ export function FaceDesignPanel() {
     const outcome = await runRecord('string.redraw_stretch', { string, through: points });
     if (!outcome.record) setReport((was) => ({ lines: was.lines, error: outcome.error }));
   };
+  /** A line of yours no row stands for any more goes, if it's on the edited lines layer; undo brings it back. */
+  const dropLine = (string: string) => {
+    if (objects.find((o) => o.id === string)?.layer === summary?.layers.find((l) => l.name === HAND_LAYER)?.id) void runRecord('object.delete', { object: string });
+  };
   /** Your line taken off its row, which goes back to the line the steps make. Its string goes too; undo brings it back. */
   const removeEdit = (row: number) => {
     const gone = lineEdits.find((e) => e.row === row);
     setEdits(lineEdits.filter((e) => e.row !== row));
-    if (gone && objects.find((o) => o.id === gone.string)?.layer === summary?.layers.find((l) => l.name === HAND_LAYER)?.id) void runRecord('object.delete', { object: gone.string });
+    if (gone) dropLine(gone.string);
+  };
+  /** What a row's ✎ redraws: the line it ends on, by name and what it is, and where ramps turn on the wall above it. */
+  const lineTip = (row: number, line: ObjectSummary): string => {
+    const step = profile?.steps[row - 1];
+    const next = profile?.steps[row];
+    if (step?.step === 'project') return `${line.name}, the ${profile?.direction === 'down' ? 'toe' : 'crest'} of this wall`;
+    if (!next) return `${line.name}, the next ${profile?.direction === 'down' ? 'crest' : 'toe'} the design ends on`;
+    const turns = next.step === 'project' ? next.turns ?? [] : [];
+    const turning = turns.length > 0 ? `, where ${turns.join(' and ')} turn${turns.length > 1 ? '' : 's'} on this berm` : '';
+    return `${line.name}, the ${profile?.direction === 'down' ? 'crest' : 'toe'} of the wall on row ${row + 1}${turning}`;
   };
   const hand: HandLines | undefined =
     stepping && stepLine
@@ -1258,7 +1300,12 @@ export function FaceDesignPanel() {
           row: (row) => {
             const yours = lineEdits.find((e) => e.row === row);
             const line = yours ? null : lineAfter(row);
-            return { why: typeof line === 'string' ? line : null, edited: !!yours, onEdit: () => (yours ? select(yours.string) : void editFromHere(row)) };
+            const tip = yours
+              ? `Your line after row ${row}: select it and go to it, to drag, insert or delete its vertices, or redraw a stretch of it under the table`
+              : typeof line === 'string' || line === null
+                ? (line ?? '')
+                : `Edit from here: copy ${lineTip(row, line)}, as a line of your own, select it and go to it. Redraw it by hand: the row re-forms to meet it and the rows above carry on from it`;
+            return { why: typeof line === 'string' ? line : null, edited: !!yours, tip, onEdit: () => void (yours ? goToLine(yours.string) : editFromHere(row)) };
           },
           renumber: (to) => {
             const next = lineEdits.flatMap((e) => {
@@ -1266,6 +1313,8 @@ export function FaceDesignPanel() {
               return row === null ? [] : [{ ...e, row }];
             });
             if (next.length !== lineEdits.length || next.some((e, k) => e.row !== lineEdits[k].row)) setEdits(next);
+            // A row taken out takes its line with it, so none is left lying where a later one goes.
+            for (const e of lineEdits) if (to(e.row) === null) dropLine(e.string);
           },
         }
       : undefined;

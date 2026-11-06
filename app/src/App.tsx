@@ -232,9 +232,22 @@ export default function App() {
   }, []);
   const markCrossings = useCallback((sites: Vec3[]) => crossingMarkersRef.current?.set(sites.map(toLocal)), [toLocal]);
   const flyTo = useCallback((point: Vec3) => viewportRef.current?.focusOn(toLocal(point)), [toLocal]);
+  const frameLine = useCallback(
+    (points: Vec3[]) => {
+      if (points.length === 0) return;
+      const local = points.map(toLocal);
+      const min = [0, 1, 2].map((k) => Math.min(...local.map((p) => p[k]))) as Vec3;
+      const max = [0, 1, 2].map((k) => Math.max(...local.map((p) => p[k]))) as Vec3;
+      viewportRef.current?.frameBox(min, max);
+    },
+    [toLocal],
+  );
+  const preferLines = useCallback((ids: string[]) => stringsRef.current?.setPreferred(ids), []);
 
   /** Shows a new project summary: panels, strings, and any surfaces whose geometry changed. */
   const show = useCallback((next: ProjectSummary) => {
+    // At once, not at the next render: a panel selecting what a command just made looks it up here straight after.
+    summaryRef.current = next;
     setSummary(next);
     void runLog().then(setLog);
     stringsRef.current?.sync(next);
@@ -718,13 +731,15 @@ export default function App() {
       clearRefusal,
       markCrossings,
       flyTo,
+      frameLine,
+      preferLines,
       pickPoint,
       pickLine,
       pickString,
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, marked, toggleMark, setActiveLayer, setVisible, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, pickPoint, pickLine, pickString, mode, typeVertex],
+    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, marked, toggleMark, setActiveLayer, setVisible, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';
