@@ -195,34 +195,50 @@ pub struct ProjectDesignParams {
 }
 
 /// The attribute that ties what a run made to its design.
-const MADE_BY: &str = "face_design";
+pub(super) const MADE_BY: &str = "face_design";
 /// The attributes on a road's edges: its ramp, and the face it's cut into, so it can be shown with it.
-const ROAD: &str = "road";
-const ROAD_FACE: &str = "road_face";
+pub(super) const ROAD: &str = "road";
+pub(super) const ROAD_FACE: &str = "road_face";
 /// Where a road came out on a crest, so a design run from that crest carries it on: `road_top A pit` and
 /// `road_top A wall` are its top corners as "x y z", then its heading along the string, width and grade
 /// (decision 0041).
-const ROAD_TOP: &str = "road_top";
+pub(super) const ROAD_TOP: &str = "road_top";
 /// On each wall's toe and crest, the row of its profile it is, from 1 as the panel numbers them, so a ramp placed on a
 /// wall's line can be put on that wall.
-const STEP_ROW: &str = "step";
+pub(super) const STEP_ROW: &str = "step";
 
-fn road_top_key(ramp: &str, what: &str) -> String {
+pub(super) fn road_top_key(ramp: &str, what: &str) -> String {
     format!("{ROAD_TOP} {ramp} {what}")
 }
 
-/// What a road leaves on the crest it came out on.
-fn road_top_attributes(ramp: &Ramp, road: &FaceRoad) -> Attributes {
+/// What a road leaves on the crest it came out on: where its top is and which way it's heading, and how it was built, for
+/// the builder to carry it on as it was (decision 0048).
+pub(super) fn road_top_attributes(ramp: &Ramp, road: &FaceRoad) -> Attributes {
     let point = |p: Option<&[f64; 3]>| p.map(|p| AttrValue::Text(format!("{} {} {}", p[0], p[1], p[2])));
     let heading = AttrValue::Text(if road.back { "back" } else { "along" }.into());
-    [("pit", point(road.pit_edge.vertices.last())), ("wall", point(road.wall_edge.vertices.last())), ("heading", Some(heading)), ("width", Some(AttrValue::Number(ramp.width))), ("grade", Some(AttrValue::Number(ramp.grade)))]
-        .into_iter()
+    let berm = AttrValue::Text(match ramp.berm {
+        RampBerm::After => "after",
+        RampBerm::Through => "through",
+    }
+    .into());
+    [
+        ("pit", point(road.pit_edge.vertices.last())),
+        ("wall", point(road.wall_edge.vertices.last())),
+        ("heading", Some(heading)),
+        ("width", Some(AttrValue::Number(ramp.width))),
+        ("grade", Some(AttrValue::Number(ramp.grade))),
+        ("berm", Some(berm)),
+        ("turn_join", Some(AttrValue::Number(ramp.turn_join))),
+        ("turn_flat", ramp.turn_flat.map(AttrValue::Number)),
+        ("turn_end", ramp.turn_end.map(AttrValue::Number)),
+    ]
+    .into_iter()
         .filter_map(|(what, value)| Some((road_top_key(&ramp.name, what), value?)))
         .collect()
 }
 
 /// Where the design below left a ramp's road on a line, and whether it was running back against the string.
-fn road_top_on(attributes: &Attributes, ramp: &str) -> Option<(RoadTop, bool)> {
+pub(super) fn road_top_on(attributes: &Attributes, ramp: &str) -> Option<(RoadTop, bool)> {
     let point = |what: &str| -> Option<[f64; 3]> {
         let AttrValue::Text(text) = attributes.get(&road_top_key(ramp, what))? else { return None };
         let numbers: Vec<f64> = text.split_whitespace().map(str::parse).collect::<Result<_, _>>().ok()?;
@@ -236,7 +252,7 @@ fn road_top_on(attributes: &Attributes, ramp: &str) -> Option<(RoadTop, bool)> {
 }
 
 /// How far a line passes from a point, in plan (m).
-fn plan_gap_to(line: &Polyline, p: [f64; 3]) -> f64 {
+pub(super) fn plan_gap_to(line: &Polyline, p: [f64; 3]) -> f64 {
     line.vertices
         .windows(2)
         .map(|w| {
@@ -250,7 +266,7 @@ fn plan_gap_to(line: &Polyline, p: [f64; 3]) -> f64 {
 
 /// How far a road's top may be off the line it carries on from before the run says so (m): further than conditioning
 /// can move a line.
-const TOP_OFF_LINE: f64 = MOST_TOLERANCE;
+pub(super) const TOP_OFF_LINE: f64 = MOST_TOLERANCE;
 /// How close a registered toe has to be to the line it came from, past what conditioning moved it, to be on it (m).
 const ON_THE_LINE: f64 = 1e-6;
 
@@ -553,18 +569,18 @@ impl<'a> FaceRun<'a, '_> {
 
 /// How a profile's ramps land on one strip.
 #[derive(Default)]
-struct PlacedRamps<'r> {
+pub(super) struct PlacedRamps<'r> {
     /// Those with a road here, and where.
-    on_strip: Vec<(&'r Ramp, FaceRamp)>,
+    pub(super) on_strip: Vec<(&'r Ramp, FaceRamp)>,
     /// Each one whose string crosses this strip, road or not, and each one whose doesn't.
-    crossing: Vec<&'r str>,
-    missing: Vec<&'r str>,
-    notes: Vec<String>,
+    pub(super) crossing: Vec<&'r str>,
+    pub(super) missing: Vec<&'r str>,
+    pub(super) notes: Vec<String>,
 }
 
 /// Where each ramp lands on a strip: where its string crosses the toe of its first wall. With its end held
 /// that says how far along the strip it comes out, so either way a strip's own stretch of string sets its road.
-fn place_ramps<'r>(profile: &'r FaceProfile, plain: &Face, ramp_strings: &HashMap<ObjectId, &Polyline>, strip: &str) -> PlacedRamps<'r> {
+pub(super) fn place_ramps<'r>(profile: &'r FaceProfile, plain: &Face, ramp_strings: &HashMap<ObjectId, &Polyline>, strip: &str) -> PlacedRamps<'r> {
     let mut placed = PlacedRamps::default();
     for ramp in profile.ramps.iter().filter(|ramp| ramp.fixed != RampFixed::Line) {
         let (Some([first, last]), Some(string)) = (profile.walls_of(&ramp.name), ramp.string.and_then(|id| ramp_strings.get(&id))) else { continue };
@@ -630,7 +646,7 @@ fn strings_of(inputs: &Inputs<'_>, line: &FaceLine, design: ObjectId, ramp_strin
     Ok(strings)
 }
 
-fn face_ramp(ramp: &Ramp, at: [f64; 2]) -> FaceRamp {
+pub(super) fn face_ramp(ramp: &Ramp, at: [f64; 2]) -> FaceRamp {
     let ends_at = (ramp.fixed == RampFixed::End).then_some(at);
     FaceRamp { start: at, back: ramp.heading == RampHeading::Back, width: ramp.width, grade: ramp.grade / 100.0, ends_at, after_berm: ramp.berm == RampBerm::After, turn_join: ramp.turn_join, turn_flat: ramp.flat_before_turn(), carries_on: None, turn_end: ramp.box_end() }
 }
@@ -650,13 +666,17 @@ fn surfaces_of(profile: &FaceProfile) -> Vec<ObjectId> {
 }
 
 /// Surfaces and grids a run steps to. A grid is triangulated once, however many steps use it.
-struct Targets<'a, 'b> {
+pub(super) struct Targets<'a, 'b> {
     inputs: &'a Inputs<'b>,
     grids: HashMap<ObjectId, TriMesh>,
 }
 
-impl Targets<'_, '_> {
-    fn prepare(&mut self, id: ObjectId) -> Result<(), CommandError> {
+impl<'a, 'b> Targets<'a, 'b> {
+    pub(super) fn new(inputs: &'a Inputs<'b>) -> Self {
+        Targets { inputs, grids: HashMap::new() }
+    }
+
+    pub(super) fn prepare(&mut self, id: ObjectId) -> Result<(), CommandError> {
         let object = self.inputs.object(id)?;
         match &object.body {
             Body::Surface(_) => Ok(()),
@@ -668,7 +688,7 @@ impl Targets<'_, '_> {
         }
     }
 
-    fn mesh(&self, id: ObjectId) -> Result<&TriMesh, CommandError> {
+    pub(super) fn mesh(&self, id: ObjectId) -> Result<&TriMesh, CommandError> {
         if let Some(mesh) = self.grids.get(&id) {
             return Ok(mesh);
         }
@@ -745,7 +765,7 @@ impl<'a> LineRules<'a, '_> {
 }
 
 /// Which of a strip's ramps climb each row, and which of those turn back before it, as places in `ramps`.
-fn walls_ramps(steps: &[ProfileStep], ramps: &[&Ramp]) -> Vec<[Vec<usize>; 2]> {
+pub(super) fn walls_ramps(steps: &[ProfileStep], ramps: &[&Ramp]) -> Vec<[Vec<usize>; 2]> {
     let places = |named: &[String]| named.iter().filter_map(|name| ramps.iter().position(|r| r.name == *name)).collect();
     steps.iter().map(|step| if let ProfileStep::Project { ramps: named, turns, .. } = step { [places(named), places(turns)] } else { [Vec::new(), Vec::new()] }).collect()
 }
@@ -777,7 +797,7 @@ fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'
                         Some(true) => JoinBoxes::On,
                         Some(false) => JoinBoxes::Off,
                     };
-                    FaceStep::Berm { on: on.as_ref().map(target).transpose()?, width: rules.edge_rule(width, horizon)?, register: *register, condition: *condition, min_bench: *min_bench, join }
+                    FaceStep::Berm { on: on.as_ref().map(target).transpose()?, width: rules.edge_rule(width, horizon)?, register: *register, condition: *condition, min_bench: *min_bench, join, to_come: None }
                 }
             })
         })

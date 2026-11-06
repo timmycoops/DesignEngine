@@ -92,7 +92,11 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   in the profile: the row re-forms to meet it and the rows above carry on from it, roads and all
   (`docs/decisions/0046-edit-the-line.md`). Join on a berm makes the switchbacks turning on it, on box pads facing each other,
   one pad, the line running straight from the back of one box to the back of the next; left to itself a berm joins only
-  boxes within a road's width of each other or overlapping (`docs/decisions/0047-join-switchbacks.md`).
+  boxes within a road's width of each other or overlapping (`docs/decisions/0047-join-switchbacks.md`). The manual
+  builder, replacing the step design's hand edits, builds one wall or berm from the line you pick, run once
+  (`face.build_step`): its outputs are ordinary strings, roads carry on from the line, turns and Join go on the berm, and a
+  wall from a berm's line a step made builds that berm with it from its crest, standing on your line if you've edited it.
+  Each line keeps how it was built, for Rebuild from here (`docs/decisions/0048-build-a-step.md`).
 - `Ramp`: centreline or start point, direction, start and end bench, width, grade (%, ratio or degrees,
   measured on the inside edge by default, which is the pit side), inside and outside taper, entry type, flat or
   graded switchbacks with radius. It's a named ramp in a `FaceProfile`, set by a string drawn across the strips: each line
