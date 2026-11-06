@@ -69,6 +69,8 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
       results.pictures = await take(viewport, config.surfaces, config.strings, log, show);
     } else if (config.design_lines) {
       results.design_lines = await checkDesignLines(viewport, log, show, strings);
+    } else if (config.builder) {
+      results.builder = await checkBuilder(viewport, log, show, strings);
     } else if (config.solids) {
       results.solids = await checkSolids(viewport, config, config.solids, log, show, section, strings);
     } else {
@@ -87,6 +89,138 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
   const path = await writeResults(JSON.stringify(results, null, 2));
   log(`results written to ${path}`);
   await exitApp();
+}
+
+/**
+ * `--builder`: the Builder panel (decision 0048) as Tim would use it, through its own buttons. A toe drawn by hand at RL 100
+ * picked; a wall to RL 115, a berm and a wall to RL 125 built from the panel, each new line picked as it's made. Step 1
+ * clicked in the list picks its crest, lights up its row and frames it. The berm's line edited (a vertex moved 3 m out, as a
+ * drag does): its step says edited, and the step above it says it was built before the edit. That step taken out with its
+ * bin, the berm's line picked, and the wall built again: it stands on the edited line and says so.
+ */
+async function checkBuilder(viewport: Viewport, log: (line: string) => void, show: Show, stringLayer: () => StringLayer | null) {
+  const layer = stringLayer();
+  if (!layer) return { error: 'no string layer' };
+  // By the clock, not by frames: with the panel in front of the 3D view no frames may be drawn.
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const buttons = () => [...document.querySelectorAll('button')];
+  const button = (text: string) => buttons().find((b) => b.textContent?.trim() === text);
+  const named = async (name: string) => (await projectSummary()).objects.find((o) => o.name === name);
+  const selectedName = async () => (layer.selected ? ((await projectSummary()).objects.find((o) => o.id === layer.selected)?.name ?? layer.selected) : 'nothing');
+  const typeInto = (label: string, value: string) => {
+    const input = document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
+    if (!input) return false;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  };
+  const panelText = () => document.querySelector('[data-builder-panel]')?.textContent ?? '';
+  const after = (text: string, from: string, length: number) => {
+    const at = text.indexOf(from);
+    return at < 0 ? '' : text.slice(at, at + length);
+  };
+  log('builder: a toe at RL 100');
+  const toe = await runCommand('string.create', { name: 'Toe B', layer: 'toes', closed: false, points: [[650000, 7451000, 100], [650300, 7451040, 100], [650600, 7451000, 100]] });
+  await show(toe.summary);
+  const open = button('Builder');
+  open?.click();
+  await wait(500);
+  layer.select(toe.record.outputs[0].id);
+  await wait(500);
+  const startsFromToe = panelText().includes('Next step from Toe B') && panelText().includes('Starting a build from this line');
+  const typedRl = typeInto('What the wall goes up to: RL', '115');
+  await wait(200);
+  const steps: { button: string; ms: number; picked: string; said: string }[] = [];
+  for (const label of ['Build wall', 'Build berm', 'Build wall']) {
+    const started = performance.now();
+    const go = button(label);
+    if (!go) return { error: `no ${label} button`, steps, panel: panelText().slice(0, 400) };
+    go.click();
+    await wait(100);
+    for (let k = 0; k < 40 && button('Building…'); k++) await wait(100);
+    await wait(500);
+    steps.push({ button: label, ms: Math.round(performance.now() - started), picked: await selectedName(), said: after(panelText(), 'Toe B step', 110) });
+  }
+  const rows = () => buttons().filter((b) => b.getAttribute('aria-label')?.startsWith('Step '));
+  const rowCount = rows().length;
+  // Step 1 clicked in the list: its crest picked, its row lit, the view on it.
+  viewport.fitView();
+  await wait(200);
+  rows()[0]?.click();
+  await wait(1200);
+  const pickedFromList = await selectedName();
+  const litRow = rows()[0]?.parentElement?.className.includes('bg-selection') ?? false;
+  const crest1 = await named('Toe B crest 1');
+  const xs = (crest1?.vertices_local ?? []).map((p) => p[0]);
+  const ys = (crest1?.vertices_local ?? []).map((p) => p[1]);
+  const centre = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
+  const target = viewport.controls.target;
+  const framedOff = Math.hypot(target.x - centre[0], target.y - centre[1]);
+  // The berm's line edited, its last vertex 3 m further out, as a drag does.
+  const toe2 = await named('Toe B toe 2');
+  if (!toe2) return { error: 'no Toe B toe 2', steps };
+  const details = await objectDetails(toe2.id);
+  const points = details.measures.kind === 'string' ? details.measures.points : [];
+  const last = points[points.length - 1];
+  await show((await runCommand('string.move_vertex', { string: toe2.id, index: points.length - 1, to: [last[0], last[1] + 3, last[2]] })).summary);
+  await wait(500);
+  const rowText = (n: number) => rows()[n]?.textContent ?? '';
+  const editedShown = rowText(1).includes('edited');
+  const builtBeforeShown = rowText(2).includes('built before an edit');
+  // Step 3 taken out with its bin, the berm's line picked, the wall built again on it.
+  buttons().find((b) => b.getAttribute('aria-label') === 'Take out step 3')?.click();
+  await wait(800);
+  const rowsAfterTakingOut = rows().length;
+  layer.select(toe2.id);
+  await wait(500);
+  button('Build wall')?.click();
+  await wait(1500);
+  const standsOnYourLine = panelText().includes("isn't where the berm from Toe B crest 1 puts it now");
+  // A surface at RL 140 over the strip, picked in the panel's To list: a berm and a wall up to it.
+  const surface = await runCommand('surface.from_mesh', {
+    name: 'Bench surface',
+    layer: 'surfaces',
+    vertices: [[649800, 7450800, 140], [650800, 7450800, 140], [650800, 7451400, 140], [649800, 7451400, 140]],
+    triangles: [[0, 1, 2], [0, 2, 3]],
+  });
+  await show(surface.summary);
+  const crest3 = await named('Toe B crest 3');
+  if (crest3) layer.select(crest3.id);
+  await wait(500);
+  button('Build berm')?.click();
+  await wait(1500);
+  const list = document.querySelector<HTMLSelectElement>('select[aria-label="What the wall goes up to"]');
+  const listed = list ? [...list.querySelectorAll('optgroup')].map((g) => `${g.label}: ${[...g.querySelectorAll('option')].map((o) => o.textContent).join(', ')}`) : [];
+  if (list) {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(list, surface.record.outputs[0].id);
+    list.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  await wait(300);
+  button('Build wall')?.click();
+  await wait(1500);
+  const crest5 = await named('Toe B crest 5');
+  const origin = (await projectSummary()).origin ?? [0, 0, 0];
+  const crest5Rls = [...new Set((crest5?.vertices_local ?? []).map((p) => Math.round((p[2] + origin[2]) * 1000) / 1000))];
+  const result = {
+    panel_opened_from_toolbar: !!open,
+    starts_from_toe: startsFromToe,
+    typed_rl: typedRl,
+    steps,
+    rows_listed: rowCount,
+    picked_from_list: pickedFromList,
+    row_lit: litRow,
+    crest_1_framed_off_m: Math.round(framedOff * 1000) / 1000,
+    edited_shown_on_step_2: editedShown,
+    built_before_an_edit_shown_on_step_3: builtBeforeShown,
+    rows_after_taking_out_step_3: rowsAfterTakingOut,
+    wall_again_stands_on_your_line: standsOnYourLine,
+    crest_3_again: !!crest3,
+    to_list_groups: listed,
+    wall_to_the_surface_said: after(panelText(), 'Toe B step 5', 110),
+    crest_5_rls: crest5Rls,
+  };
+  log(`builder: ${JSON.stringify(result)}`);
+  return result;
 }
 
 /**

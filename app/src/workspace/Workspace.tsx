@@ -7,6 +7,7 @@ import {
   type IDockviewPanelHeaderProps,
   themeDark,
 } from 'dockview-react';
+import { BuilderPanel } from '@/panels/BuilderPanel';
 import { FaceDesignPanel } from '@/panels/FaceDesignPanel';
 import { LayersPanel } from '@/panels/LayersPanel';
 import { PropertiesPanel } from '@/panels/PropertiesPanel';
@@ -19,6 +20,7 @@ const components = {
   properties: PropertiesPanel,
   runlog: RunLogPanel,
   face: FaceDesignPanel,
+  builder: BuilderPanel,
 };
 
 // The viewport tab has no close button: there is one viewport and the app always shows it.
@@ -34,6 +36,7 @@ export const PANELS: { id: PanelId; title: string; place: AddPanelOptions['posit
   { id: 'properties', title: 'Properties', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 320 } },
   { id: 'runlog', title: 'Run log', place: { referencePanel: 'viewport', direction: 'below' }, size: { height: 200 } },
   { id: 'face', title: 'Face design', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 680 } },
+  { id: 'builder', title: 'Builder', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 440 } },
 ];
 
 const LAYOUT_KEY = 'zd.workspace.layout.v3';
