@@ -26,9 +26,33 @@ fn number(n: f64) -> String {
     if n.fract() == 0.0 { format!("{n:.0}") } else { format!("{n}") }
 }
 
+/// What tells a strip's faces from the rest: its number, or a name where the attribute holds one, as a build's does.
+/// Numbers come first, lowest first, then names.
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+enum Key {
+    Number(f64),
+    Name(String),
+}
+
+impl Key {
+    fn label(&self) -> String {
+        match self {
+            Key::Number(n) => number(*n),
+            Key::Name(name) => name.clone(),
+        }
+    }
+
+    fn value(&self) -> AttrValue {
+        match self {
+            Key::Number(n) => AttrValue::Number(*n),
+            Key::Name(name) => AttrValue::Text(name.clone()),
+        }
+    }
+}
+
 /// The faces of one strip.
 struct StripFaces<'a> {
-    number: f64,
+    key: Key,
     faces: Vec<(&'a Arc<Object>, &'a TriMesh)>,
 }
 
@@ -36,15 +60,23 @@ impl StripFaces<'_> {
     fn names(&self) -> String {
         self.faces.iter().map(|(object, _)| format!("'{}'", object.name)).collect::<Vec<_>>().join(", ")
     }
+
+    /// The strip as a run names it: "strip 5", or a build's name.
+    fn called(&self, attribute: &str) -> String {
+        match &self.key {
+            Key::Number(n) => format!("{attribute} {}", number(*n)),
+            Key::Name(name) => name.clone(),
+        }
+    }
 }
 
-/// The faces given, grouped by their strip number, lowest first. A face with no number, or one that isn't a number, is
-/// refused, saying which.
+/// The faces given, grouped by their strip number, lowest first, or by name where the attribute holds text that isn't a
+/// number. A face with nothing in the attribute is refused, saying which.
 fn by_strip<'a>(inputs: &Inputs<'a>, ids: &[ObjectId], attribute: &str) -> Result<Vec<StripFaces<'a>>, CommandError> {
     if ids.is_empty() {
         return Err(CommandError::Invalid("give the faces".into()));
     }
-    let mut groups: BTreeMap<i64, StripFaces<'a>> = BTreeMap::new();
+    let mut groups: BTreeMap<(u8, i64, String), StripFaces<'a>> = BTreeMap::new();
     let mut seen = Vec::new();
     for &id in ids {
         if seen.contains(&id) {
@@ -52,19 +84,26 @@ fn by_strip<'a>(inputs: &Inputs<'a>, ids: &[ObjectId], attribute: &str) -> Resul
         }
         seen.push(id);
         let (object, surface) = inputs.surface(id)?;
-        let value = match object.attributes.get(attribute) {
-            Some(AttrValue::Number(n)) => Some(*n),
-            Some(AttrValue::Text(text)) => text.trim().parse::<f64>().ok(),
+        let key = match object.attributes.get(attribute) {
+            Some(AttrValue::Number(n)) if n.is_finite() => Some(Key::Number(*n)),
+            Some(AttrValue::Text(text)) if !text.trim().is_empty() => Some(match text.trim().parse::<f64>() {
+                Ok(n) if n.is_finite() => Key::Number(n),
+                _ => Key::Name(text.trim().to_string()),
+            }),
             _ => None,
         };
-        let Some(n) = value.filter(|n| n.is_finite()) else {
+        let Some(key) = key else {
             return Err(CommandError::Invalid(format!(
                 "the face '{}' has no {attribute} number: number its line with a line drawn across the strips, and build it again",
                 object.name
             )));
         };
-        // Grouped to a millionth, so a number read as text and one set as a number go together.
-        groups.entry((n * 1e6).round() as i64).or_insert_with(|| StripFaces { number: n, faces: Vec::new() }).faces.push((object, surface.mesh()));
+        // Numbers grouped to a millionth, so a number read as text and one set as a number go together.
+        let order = match &key {
+            Key::Number(n) => (0, (n * 1e6).round() as i64, String::new()),
+            Key::Name(name) => (1, 0, name.clone()),
+        };
+        groups.entry(order).or_insert_with(|| StripFaces { key, faces: Vec::new() }).faces.push((object, surface.mesh()));
     }
     Ok(groups.into_values().collect())
 }
@@ -75,7 +114,7 @@ fn one_face(strip: &StripFaces<'_>, tolerance: f64, attribute: &str) -> Result<(
     let meshes: Vec<&TriMesh> = strip.faces.iter().map(|(_, mesh)| *mesh).collect();
     // A face on its own welds only corners exactly on each other: there's nothing for it to meet.
     let tolerance = if meshes.len() == 1 { 0.0 } else { tolerance };
-    join_faces(&meshes, tolerance).map_err(|e| CommandError::Invalid(format!("{attribute} {} ({}): {e}", number(strip.number), strip.names())))
+    join_faces(&meshes, tolerance).map_err(|e| CommandError::Invalid(format!("{} ({}): {e}", strip.called(attribute), strip.names())))
 }
 
 /// Whether a join changed anything but the faces' order.
@@ -87,8 +126,8 @@ fn changed(log: &JoinLog) -> bool {
 /// What joining one strip's faces did, in a line.
 fn join_words(attribute: &str, strip: &StripFaces<'_>, log: &JoinLog, triangles: usize) -> String {
     let mut words = match log.faces {
-        1 => format!("{attribute} {}: one face ({}) of {triangles} triangles", number(strip.number), strip.names()),
-        n => format!("{attribute} {}: {n} faces joined ({}) into one of {triangles} triangles", number(strip.number), strip.names()),
+        1 => format!("{}: one face ({}) of {triangles} triangles", strip.called(attribute), strip.names()),
+        n => format!("{}: {n} faces joined ({}) into one of {triangles} triangles", strip.called(attribute), strip.names()),
     };
     let weld = &log.weld;
     if weld.vertices_welded > 0 && weld.largest_move > 0.0 {
@@ -163,18 +202,19 @@ impl Command for JoinFaces {
             }
             outcome = outcome.message(join_words(&p.attribute, strip, &log, mesh.triangle_count()));
             if let Some(first) = crossings.at.first() {
-                outcome = outcome.message(format!("warning: {} {}: {} pairs of its triangles cross, the first at {}; it can't slice a solid until they're put right", p.attribute, number(strip.number), crossings.pairs, site(first)));
+                outcome = outcome.message(format!("warning: {}: {} pairs of its triangles cross, the first at {}; it can't slice a solid until they're put right", strip.called(&p.attribute), crossings.pairs, site(first)));
             }
             let mut attributes = Attributes::new();
-            attributes.insert(p.attribute.clone(), AttrValue::Number(strip.number));
+            attributes.insert(p.attribute.clone(), strip.key.value());
             outcome.changes.push(Change::Create {
-                name: format!("{} {} face", p.attribute, number(strip.number)),
+                name: format!("{} face", strip.called(&p.attribute)),
                 layer: p.layer.clone(),
                 attributes,
                 body: Body::Surface(Surface::new(mesh).with_crossings(crossings)),
             });
         }
-        Ok(outcome.message(format!("{} faces into {} faces, one a {}, {joined} of them joined, in {:.0} ms", p.faces.len(), strips.len(), p.attribute, start.elapsed().as_secs_f64() * 1e3)))
+        let made = if strips.len() == 1 { "1 face".to_string() } else { format!("{} faces, one a {}", strips.len(), p.attribute) };
+        Ok(outcome.message(format!("{} faces into {made}, {joined} of them joined, in {:.0} ms", p.faces.len(), start.elapsed().as_secs_f64() * 1e3)))
     }
 }
 
@@ -260,7 +300,7 @@ impl Command for SliceByFaces {
             faces.push(mesh);
         }
         let face_refs: Vec<&TriMesh> = faces.iter().collect();
-        let face_name = |k: usize| format!("{} {} face", p.attribute, number(strips[k].number));
+        let face_name = |k: usize| format!("{} face", strips[k].called(&p.attribute));
 
         for (object, solid) in &solids {
             let start = Instant::now();
@@ -285,7 +325,7 @@ impl SliceByFaces {
         let attribute = &p.attribute;
         let name = &object.name;
         let tolerance = (1e-6 * slice.input_volume.abs()).max(1e-3);
-        let numbers: Vec<String> = slice.order.iter().map(|&k| number(strips[k].number)).collect();
+        let numbers: Vec<String> = slice.order.iter().map(|&k| strips[k].key.label()).collect();
         let t = slice.timings;
         let triangles_in: usize = faces.iter().map(|f| f.triangle_count()).sum();
         let triangles_out: usize = slice.strips.iter().map(|s| s.mesh.triangle_count()).sum();
@@ -297,8 +337,8 @@ impl SliceByFaces {
             t.from_manifold_ms,
             mesh.triangle_count()
         )];
-        let ascending = slice.order.windows(2).all(|w| strips[w[0]].number < strips[w[1]].number);
-        let descending = slice.order.windows(2).all(|w| strips[w[0]].number > strips[w[1]].number);
+        let ascending = slice.order.windows(2).all(|w| strips[w[0]].key < strips[w[1]].key);
+        let descending = slice.order.windows(2).all(|w| strips[w[0]].key > strips[w[1]].key);
         lines.push(format!(
             "faces from the pit out, by how much of '{name}' lies in front of each: {attribute} {}{}",
             numbers.join(", "),
@@ -329,9 +369,9 @@ impl SliceByFaces {
                 let sides: Vec<usize> = [k.checked_sub(1), (!last).then_some(k)].into_iter().flatten().map(|j| slice.order[j]).collect();
                 let meet = match sides.as_slice() {
                     [a, b] if heights(faces[*a], *first).iter().any(|za| heights(faces[*b], *first).iter().any(|zb| (za - zb).abs() < 0.01)) => format!(
-                        ": the {attribute} {} and {attribute} {} faces meet there, so {which} has no thickness; move the designs apart there",
-                        number(strips[*a].number),
-                        number(strips[*b].number)
+                        ": the {} and {} faces meet there, so {which} has no thickness; move the designs apart there",
+                        strips[*a].called(attribute),
+                        strips[*b].called(attribute)
                     ),
                     _ => String::new(),
                 };
@@ -345,11 +385,11 @@ impl SliceByFaces {
             let mut attributes = object.attributes.clone();
             match last {
                 false => {
-                    attributes.insert(attribute.clone(), AttrValue::Number(strips[slice.order[k]].number));
+                    attributes.insert(attribute.clone(), strips[slice.order[k]].key.value());
                 }
                 true => {
                     attributes.remove(attribute);
-                    attributes.insert(format!("past_{attribute}"), AttrValue::Number(strips[slice.order[k - 1]].number));
+                    attributes.insert(format!("past_{attribute}"), strips[slice.order[k - 1]].key.value());
                 }
             }
             kept += 1;
@@ -364,7 +404,7 @@ impl SliceByFaces {
             if parted > 0 { format!("; {parted} in more than one part, each kept as one solid") } else { String::new() }
         ));
         for (k, cut) in slice.faces.iter().enumerate() {
-            let face = format!("{attribute} {} face", number(strips[k].number));
+            let face = format!("{} face", strips[k].called(attribute));
             if let Some((by, at)) = cut.toe_above_floor {
                 lines.push(format!("{face}: its toe stands up to {by:.2} m above the floor of '{name}', near {}, and below it the cut goes straight down", place(at)));
             }
@@ -374,8 +414,8 @@ impl SliceByFaces {
         }
         for crossing in &slice.crossings {
             lines.push(format!(
-                "warning: the {attribute} {} face crosses faces before it inside '{name}': {:.3} m3 in front of them lies behind it, near {}, and stays with the strips before",
-                number(strips[crossing.face].number),
+                "warning: the {} face crosses faces before it inside '{name}': {:.3} m3 in front of them lies behind it, near {}, and stays with the strips before",
+                strips[crossing.face].called(attribute),
                 crossing.volume,
                 place(crossing.at)
             ));

@@ -22,7 +22,8 @@ topography. A face covers a strip of ground, so it has to be closed to one side.
 1. **One face a strip.** A face is told apart by its strip number, the attribute the line drawn across sets (0029), which a
    face keeps from its toe. `face.join` takes faces, a layer's or a pick, and makes one surface for each strip number, as
    Deswik's create surface by attribute does: up and down, several runs, or a build's steps. A face with no strip number
-   is refused, saying which.
+   is refused, saying which. The attribute can be another, and text that isn't a number groups by name: the Builder's
+   Join into one face joins a build's sheets by its `build` name, as a toe drawn by hand has no strip number.
 2. **Joining.** A strip's faces are welded where their corners meet within 1 mm, stitched where a corner of one lies on an
    edge of another (the two share a line but not its vertices), and any gap they close all round is filled by triangulating
    it in plan. Every change is said: corners welded and the most any moved, triangles the weld collapsed, corners stitched,
@@ -70,6 +71,9 @@ topography. A face covers a strip of ground, so it has to be closed to one side.
   A face to RL 60: 40 m below the top said. A face starting 100 m into the box: refused, 103 m more run-on (the outline's
   3 m margin past the side). A 45° and an 80° face crossing: the 273,000 m³ between them reported with the later face.
 - An up and a down face with different toe vertices join into one, six corners stitched, area kept to 1 cm².
+- A build from a toe drawn by hand on RL -10 (a 45° wall to RL 60, a 10 m berm, a 45° wall to RL 150): its two sheets join by
+  its name into one face, refused by strip number, and the pit in front of it is 16,400,000 m³ to 1 m³. In the app the
+  Builder's bench joins its three sheets the same way.
 - Solid between: a flat top at RL 100 and a floor dipping 1 in 10, inside a 100 m square: 950,000 m³ to 1 mm³; with the
   top over half the square, 500,000 m³ and 5,000 m² said.
 - Through the commands, as the app runs them: a toe offset 14 times, numbered across, up to RL 150 and down to RL -50, the

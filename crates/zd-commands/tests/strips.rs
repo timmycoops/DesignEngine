@@ -222,3 +222,42 @@ fn the_made_up_grid_pit_sliced_by_its_strips() {
         }
     }
 }
+
+/// The Builder's steps from a toe drawn by hand, with no strip number: their sheets join into one face by the build's name,
+/// and that face slices a pit as one strip.
+#[test]
+fn a_builds_steps_join_into_one_face_by_its_name() {
+    let mut s = Session::with_builtins();
+    let toe = created(&s.run("string.create", json!({ "name": "Toe", "layer": "toes", "points": [[E - 50.0, N + 100.0, 0.0], [E + 1050.0, N + 100.0, 0.0]] })).unwrap())[0];
+    let wall = |rl: f64| json!({ "op": "project", "to": { "kind": "rl", "rl": rl }, "batter": 45.0 });
+    s.run("face.build_step", json!({ "from": toe, "step": wall(60.0), "lies_on": { "kind": "rl", "rl": -10.0 }, "side": "left" })).unwrap();
+    let crest = s.project().objects().find(|o| o.name == "Toe crest 1").unwrap().id;
+    s.run("face.build_step", json!({ "from": crest, "step": { "op": "berm", "width": 10.0 } })).unwrap();
+    let line = s.project().objects().find(|o| o.name == "Toe toe 2").unwrap().id;
+    s.run("face.build_step", json!({ "from": line, "step": wall(150.0) })).unwrap();
+    let sheets: Vec<ObjectId> = s.project().objects().filter(|o| matches!(o.body, Body::Surface(_)) && o.attributes.get("build") == Some(&AttrValue::Text("Toe".into()))).map(|o| o.id).collect();
+    assert_eq!(sheets.len(), 2, "a sheet a wall, the berm's with the wall above");
+    let refused = s.run("face.join", json!({ "faces": sheets, "layer": "faces" })).unwrap_err().to_string();
+    assert!(refused.contains("has no strip number"), "{refused}");
+    let record = s.run("face.join", json!({ "faces": sheets, "layer": "faces", "attribute": "build" })).unwrap();
+    record.messages.iter().for_each(|m| println!("  {m}"));
+    let face = created(&record)[0];
+    let object = s.project().object(face).unwrap();
+    assert_eq!(object.name, "Toe face");
+    let Body::Surface(surface) = &object.body else { panic!("a face is a surface") };
+    assert_eq!(zd_geom::boundary_loops(surface.mesh()).unwrap().len(), 1, "one piece");
+    let areas: f64 = sheets.iter().map(|&id| match &s.project().object(id).unwrap().body {
+        Body::Surface(sheet) => sheet.mesh().area(),
+        _ => 0.0,
+    }).sum();
+    assert!((surface.mesh().area() - areas).abs() < 1e-4, "area kept to 1 cm²");
+
+    // The pit sliced by it as one strip: the toe on RL -10 100 m north, so the 45° wall stands 110 + z m north up to RL 60,
+    // and 120 + z past the 10 m berm.
+    let pit = pit(&mut s);
+    let strips = created(&s.run("solid.slice_by_faces", json!({ "solid": pit, "faces": [face], "layer": "strips", "attribute": "build" })).unwrap());
+    assert_eq!(strips.len(), 2);
+    assert_eq!(s.project().object(strips[0]).unwrap().name, "PIT build Toe");
+    // In front: 1000 x (the integral of 110 + z over RL 0 to 60, and of 120 + z over RL 60 to 100).
+    assert_volume(volume(&s, strips[0]), 1000.0 * (110.0 * 60.0 + 1800.0 + 120.0 * 40.0 + 3200.0), "in front of the build");
+}

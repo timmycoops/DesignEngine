@@ -225,6 +225,10 @@ async function checkBuilder(viewport: Viewport, log: (line: string) => void, sho
   const crest5 = await named('Toe B crest 5');
   const origin = (await projectSummary()).origin ?? [0, 0, 0];
   const crest5Rls = [...new Set((crest5?.vertices_local ?? []).map((p) => Math.round((p[2] + origin[2]) * 1000) / 1000))];
+  // Join into one face: the build's sheets as one face, by its name (decision 0049).
+  button('Join into one face')?.click();
+  await wait(1500);
+  const joinedFace = await named('Toe B face');
   const result = {
     panel_opened_from_toolbar: !!open,
     starts_from_toe: startsFromToe,
@@ -243,6 +247,8 @@ async function checkBuilder(viewport: Viewport, log: (line: string) => void, sho
     to_list_groups: listed,
     wall_to_the_surface_said: after(panelText(), 'Toe B step 5', 110),
     crest_5_rls: crest5Rls,
+    joined_into_one_face: !!joinedFace,
+    join_said: after(panelText(), 'Toe B: ', 90),
   };
   log(`builder: ${JSON.stringify(result)}`);
   return result;
