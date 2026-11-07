@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { Colouring, Contours, LogEntry, ProjectSummary, RunRecord, Vec3 } from '@/bridge';
 import type { RlShown, SeamShown } from '@/viewport/sceneSync';
+import type { PanelId } from './Workspace';
 
 /** What every panel reads, and the actions they share. App owns the state. */
 export interface Workspace {
@@ -35,6 +36,8 @@ export interface Workspace {
   setContours: (contours: Contours) => void;
   /** What's coloured by RL on show, with its bands, for the legend. */
   rlShown: RlShown;
+  /** Brings a tool panel to the front, opening it where it belongs if it's closed. */
+  openPanel: (id: PanelId) => void;
   /** Runs an engine command; reports the outcome on the status line. False if it failed. */
   run: (name: string, params: Record<string, unknown>) => Promise<boolean>;
   /** The same, handing back the run's record, or why it failed, for a panel to show. */

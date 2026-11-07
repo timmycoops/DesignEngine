@@ -59,7 +59,9 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 - `Polyline` (string): ordered `[f64; 3]` vertices, closed flag, attributes. A strip's number is its `strip` attribute, set
   by a line drawn across the strings, and what a run makes keeps it (`docs/decisions/0029-strip-numbers.md`).
 - `Surface`: triangulated mesh (vertices f64, triangles u32), name, layer.
-- `Solid`: closed manifold mesh; must always be watertight.
+- `Solid`: closed manifold mesh; must always be watertight. The large one strips are cut from is made inside a closed
+  string between two surfaces or grids (`solid.between_surfaces`), and every cut is one Cut solids panel: into strips by
+  faces, by a surface, grid or RL, or between surfaces (`docs/decisions/0049-strip-solids.md`).
 - `Grid`: regular raster (origin, cell size, rows, cols, z values with NaN for nulls). A Vulcan roof, floor or
   topography reads whole: a node flagged off keeps the height it holds, with a warning if it steps far from the
   live nodes (`docs/decisions/0025-a-grid-stays-in-space.md`).
@@ -99,7 +101,11 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   Each line keeps how it was built, and Rebuild from here (`face.rebuild`) builds the steps above an edited line again
   from it, each with its settings, as next revisions of what they made, in one undo. The Builder panel builds the next
   step from the picked line, or rebuilds when steps are built on it, and lists the build's steps, a click on one going
-  to its line (`docs/decisions/0048-build-a-step.md`).
+  to its line (`docs/decisions/0048-build-a-step.md`). A face is told apart by its strip number: `face.join` makes one
+  face a strip from up and down faces, several runs or a build's steps, welded, stitched and gaps filled, every change
+  said; `solid.slice_by_faces` closes each face behind it past the solid, its triangles facing the pit, and slices the
+  solid from the pit out, each strip cut from what the strips before it left so they add up to the solid; a face short of
+  the solid at an end is refused with the run-on it needs (`docs/decisions/0049-strip-solids.md`).
 - `Ramp`: centreline or start point, direction, start and end bench, width, grade (%, ratio or degrees,
   measured on the inside edge by default, which is the pit side), inside and outside taper, entry type, flat or
   graded switchbacks with radius. It's a named ramp in a `FaceProfile`, set by a string drawn across the strips: each line

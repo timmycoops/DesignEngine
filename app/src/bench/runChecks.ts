@@ -71,6 +71,8 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
       results.design_lines = await checkDesignLines(viewport, log, show, strings);
     } else if (config.builder) {
       results.builder = await checkBuilder(viewport, log, show, strings);
+    } else if (config.cut) {
+      results.cut = await checkCut(viewport, log, show, strings);
     } else if (config.solids) {
       results.solids = await checkSolids(viewport, config, config.solids, log, show, section, strings);
     } else {
@@ -243,6 +245,142 @@ async function checkBuilder(viewport: Viewport, log: (line: string) => void, sho
     crest_5_rls: crest5Rls,
   };
   log(`builder: ${JSON.stringify(result)}`);
+  return result;
+}
+
+/**
+ * `--cut`: the Cut solids panel (decision 0049) as Tim would use it, through its own buttons. Fifteen toes 50 m apart, numbered
+ * by a line across and built up to RL 150 and down to RL -50 at 45°; the panel opened from the toolbar; the pit made between
+ * a topography at RL 100 and a floor at RL 0 inside its limit; picked and sliced into strips by the faces' layer; the faces
+ * joined a face a strip; and the pit cut at RL 50, keeping both sides. Every volume is known: strip 1 and what's past strip
+ * 15 7,500,000 m³ each, every strip between 2,500,000 m³, the pit 50,000,000 m³.
+ */
+async function checkCut(viewport: Viewport, log: (line: string) => void, show: Show, stringLayer: () => StringLayer | null) {
+  const layer = stringLayer();
+  if (!layer) return { error: 'no string layer' };
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const buttons = () => [...document.querySelectorAll('button')];
+  const button = (text: string) => buttons().find((b) => b.textContent?.trim() === text);
+  const panelText = () => document.querySelector('[data-tool-panel="cut"]')?.textContent ?? '';
+  const choose = (label: string, value: string) => {
+    const list = document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`);
+    if (!list) return false;
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(list, value);
+    list.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  };
+  const typeInto = (label: string, value: string) => {
+    const input = document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
+    if (!input) return false;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  };
+  /** Presses the panel's button and waits while it works: how long it took, or null if there was no such button. */
+  const press = async (label: string) => {
+    const go = button(label);
+    if (!go || go.disabled) return null;
+    const started = performance.now();
+    go.click();
+    await wait(100);
+    for (let k = 0; k < 300 && buttons().some((b) => b.disabled && (b.textContent?.trim().endsWith('…') ?? false)); k++) await wait(100);
+    await wait(400);
+    return Math.round(performance.now() - started);
+  };
+  const volumesOn = async (name: string) => {
+    const summary = await projectSummary();
+    const id = summary.layers.find((l) => l.name === name)?.id;
+    const volumes: Record<string, number> = {};
+    for (const o of summary.objects.filter((o) => o.layer === id && o.kind === 'solid')) {
+      const d = await objectDetails(o.id);
+      if (d.measures.kind === 'solid') volumes[o.name] = Math.round(d.measures.volume * 1000) / 1000;
+    }
+    return volumes;
+  };
+  const resultLines = () => [...document.querySelectorAll('[data-tool-panel="cut"] [role="status"] div')].map((d) => d.textContent ?? '');
+  const E = 650000;
+  const N = 7450000;
+
+  log('cut: a topography, a floor, a pit limit and fifteen numbered faces');
+  const flat = (name: string, rl: number) =>
+    runCommand('surface.from_mesh', { name, layer: 'surfaces', vertices: [[E - 100, N - 100, rl], [E + 1100, N - 100, rl], [E + 1100, N + 600, rl], [E - 100, N + 600, rl]], triangles: [[0, 1, 2], [0, 2, 3]] });
+  const topography = (await flat('Topography', 100)).record.outputs[0].id;
+  const floor = (await flat('Floor', 0)).record.outputs[0].id;
+  await runCommand('string.create', { name: 'Pit limit', layer: 'limits', closed: true, points: [[E, N, 0], [E + 1000, N, 0], [E + 1000, N + 500, 0], [E, N + 500, 0]] });
+  const toe = (await runCommand('string.create', { name: 'Toe', layer: 'toes', closed: false, points: [[E + 100, N - 50, 0], [E + 100, N + 550, 0]] })).record.outputs[0].id;
+  const offsets = (await runCommand('string.offset', { string: toe, distance: 50, side: 'right', times: 14, layer: 'toes' })).record.outputs.map((o) => o.id);
+  await runCommand('string.number_across', { strings: [toe, ...offsets], from: [E, N + 250, 0], to: [E + 1000, N + 250, 0], start: 1 });
+  const content = {
+    layer: 'faces',
+    lines: [toe, ...offsets].flatMap((string) => ['Up', 'Down'].map((profile) => ({ string, profile, side: 'right', run_on: [60, 60] }))),
+    profiles: [
+      { name: 'Up', direction: 'up', register: { kind: 'rl', rl: 0 }, ramps: [], steps: [{ step: 'project', to: { kind: 'rl', rl: 150 }, batter: 45 }] },
+      { name: 'Down', direction: 'down', register: { kind: 'rl', rl: 0 }, ramps: [], steps: [{ step: 'project', to: { kind: 'rl', rl: -50 }, batter: 45 }] },
+    ],
+    rules: [],
+  };
+  const design = (await runCommand('face.save_design', { name: 'Strips', content })).record.outputs[0].id;
+  await show((await runCommand('face.project', { design })).summary);
+  viewport.fitView();
+
+  const open = button('Cut');
+  open?.click();
+  await wait(600);
+  // The pit, between the two surfaces inside its limit: the only closed string, so the panel offers it first.
+  button('Between surfaces')?.click();
+  await wait(300);
+  const chose = choose('The surface or grid on top', topography) && choose('The surface or grid underneath', floor);
+  await wait(300);
+  const insideOffered = panelText().includes('Pit limit');
+  const madeMs = await press('Make the solid');
+  const between = { chose, inside_offered: insideOffered, ms: madeMs, said: resultLines().slice(0, 2), volumes: await volumesOn('pit') };
+  const pit = (await projectSummary()).objects.find((o) => o.name === 'PIT');
+  if (!pit) return { error: 'no PIT made', between, panel: panelText().slice(0, 400) };
+
+  // Into strips: the pit the panel just made is picked, the faces' layer offered first, sliced in one run.
+  button('Into strips')?.click();
+  await wait(500);
+  const pickedAfterMaking = panelText();
+  const facesSaid = panelText().match(/\d+ faces on \d+ strips: [0-9–]+/)?.[0] ?? '';
+  const sliceLabel = buttons().find((b) => b.textContent?.trim().startsWith('Slice '))?.textContent?.trim() ?? '';
+  const slicedMs = await press(sliceLabel);
+  const strips = await volumesOn('strips');
+  const stripVolumes = Object.values(strips);
+  const sliced = {
+    faces_said: facesSaid,
+    button: sliceLabel,
+    ms: slicedMs,
+    said: resultLines().filter((l) => l.includes('sliced by') || l.includes('adding up') || l.includes('from the pit out')),
+    strips: Object.keys(strips).length,
+    strip_1: strips['PIT strip 1'],
+    strip_8: strips['PIT strip 8'],
+    past_strip_15: strips['PIT past strip 15'],
+    total: Math.round(stripVolumes.reduce((a, b) => a + b, 0) * 1000) / 1000,
+  };
+
+  // Joined: one face a strip on a layer of its own.
+  const joinedMs = await press('Join a face a strip');
+  const joinedSummary = await projectSummary();
+  const joinedLayer = joinedSummary.layers.find((l) => l.name === 'faces joined')?.id;
+  const joined = { ms: joinedMs, faces: joinedSummary.objects.filter((o) => o.layer === joinedLayer).length, said: resultLines().slice(-1) };
+
+  // By a surface: the pit, still picked, cut at RL 50, both sides kept.
+  button('By a surface')?.click();
+  await wait(300);
+  choose('Surface, grid or RL to cut by', 'rl');
+  await wait(200);
+  const typedRl = typeInto('Surface, grid or RL to cut by: RL', '50');
+  await wait(300);
+  const cutMs = await press('Cut 1 solid');
+  const parts = await volumesOn('cut');
+
+  // Properties no longer cuts: it points to the panel.
+  [...document.querySelectorAll('.dv-tab')].find((t) => t.textContent?.trim() === 'Properties')?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+  [...document.querySelectorAll('.dv-tab')].find((t) => t.textContent?.trim() === 'Properties')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await wait(500);
+  const properties = document.body.textContent?.includes('Cut it, or slice it into strips, in') ?? false;
+  const result = { panel_opened_from_toolbar: !!open, pit_picked_after_making: pickedAfterMaking.includes('Picked (1)'), between, sliced, joined, cut: { typed_rl: typedRl, ms: cutMs, parts }, properties_points_to_the_panel: properties };
+  log(`cut: ${JSON.stringify(result)}`);
   return result;
 }
 
