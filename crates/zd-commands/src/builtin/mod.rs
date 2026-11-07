@@ -14,6 +14,7 @@ mod seam;
 mod solid;
 mod spry;
 mod string;
+mod strips;
 mod surface;
 
 pub use build::{BuildOp, BuildStep, BuildStepParams, Rebuild, RebuildParams};
@@ -33,6 +34,7 @@ pub use string::{
     NumberStringsParams, OffsetString, OffsetStringParams, RedrawStretch, RedrawStretchParams, ReverseString, SetClosed, SetClosedParams, SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam,
     SmoothString, SmoothStringParams, SplitString, SplitStringParams, StringParams,
 };
+pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams};
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
 
 use crate::{CommandError, Registry};
@@ -72,12 +74,14 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(ImportSpry);
     registry.register(RepairSolids);
     registry.register(CutBySurface);
+    registry.register(SliceByFaces);
     registry.register(ProjectStep);
     registry.register(SaveDesign);
     registry.register(ProjectDesign);
     registry.register(Step);
     registry.register(BuildStep);
     registry.register(Rebuild);
+    registry.register(JoinFaces);
     registry.register(ImportVulcanSeam);
     registry.register(SuggestSeamDefinition);
     registry.register(BuildSeamModel);

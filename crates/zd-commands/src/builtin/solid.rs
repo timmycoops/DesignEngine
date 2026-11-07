@@ -762,7 +762,7 @@ fn refuse_crossings(what: &str, name: &str, crossings: &Crossings) -> Result<(),
 
 /// A cut's input: its saved crossing check, or a search now if it has none. A solid's must be by
 /// the solid rules: one saved before decision 0014 is searched again.
-fn checked_input(what: &str, name: &str, saved: Option<&Crossings>, mesh: &TriMesh, solid: bool, messages: &mut Vec<String>) -> Result<(), CommandError> {
+pub(super) fn checked_input(what: &str, name: &str, saved: Option<&Crossings>, mesh: &TriMesh, solid: bool, messages: &mut Vec<String>) -> Result<(), CommandError> {
     let current = saved.filter(|c| !solid || matches!(c.check, CrossingCheck::SolidSearch { .. }));
     let found = match current {
         Some(crossings) => crossings.clone(),
