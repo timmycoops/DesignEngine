@@ -179,3 +179,46 @@ fn the_pit_made_between_two_surfaces_inside_its_limit_slices_the_same() {
     assert_eq!(strips.len(), 16);
     assert_volume(volume(&s, strips[7]), 2_500_000.0, "strip 8");
 }
+
+/// The made-up grid pit (`testdata/synthetic/Grid template.zdproj`, opened and never saved): each of its designs run,
+/// its faces joined by strip, a pit made between the topography and the L floor inside a limit across the strips, and
+/// sliced by them. Prints what each run said, with timings.
+#[test]
+#[ignore = "runs every design of the grid template; opt in with --ignored"]
+fn the_made_up_grid_pit_sliced_by_its_strips() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/synthetic/Grid template.zdproj");
+    let mut s = Session::open(&path).unwrap();
+    let named = |s: &Session, name: &str| s.project().objects().find(|o| o.name == name).unwrap_or_else(|| panic!("no '{name}'")).id;
+    let (topo, floor) = (named(&s, "Topo"), named(&s, "L floor"));
+    let limit = created(
+        &s.run(
+            "string.create",
+            json!({ "name": "pit limit", "layer": "limits", "closed": true, "points": [[E + 100.0, N - 100.0, 0.0], [E + 3400.0, N - 100.0, 0.0], [E + 3400.0, N + 1070.0, 0.0], [E + 100.0, N + 1070.0, 0.0]] }),
+        )
+        .unwrap(),
+    )[0];
+    let start = Instant::now();
+    let record = s.run("solid.between_surfaces", json!({ "top": topo, "bottom": floor, "string": limit, "layer": "pit", "name": "PIT" })).unwrap();
+    println!("solid.between_surfaces: {:.0} ms", start.elapsed().as_secs_f64() * 1e3);
+    record.messages.iter().for_each(|m| println!("  {m}"));
+    let pit = created(&record)[0];
+    let designs: Vec<(String, ObjectId)> = s.project().objects().filter(|o| matches!(o.body, Body::FaceDesign(_))).map(|o| (o.name.clone(), o.id)).collect();
+    for (name, design) in designs {
+        if let Err(e) = s.run("face.project", json!({ "design": design })) {
+            println!("\n{name}: refused: {e}");
+            continue;
+        }
+        let faces = surfaces_on(&s, &format!("faces {name}"));
+        let start = Instant::now();
+        match s.run("solid.slice_by_faces", json!({ "solid": pit, "faces": faces, "layer": format!("strips {name}") })) {
+            Ok(record) => {
+                println!("\n{name}: sliced in {:.0} ms", start.elapsed().as_secs_f64() * 1e3);
+                record.messages.iter().filter(|m| !m.contains("checked for crossings")).for_each(|m| println!("  {m}"));
+                let strips = created(&record);
+                let total: f64 = strips.iter().map(|&id| volume(&s, id)).sum();
+                assert!((total - volume(&s, pit)).abs() < 1e-6 * volume(&s, pit), "{name}: strips {total} against the pit {}", volume(&s, pit));
+            }
+            Err(e) => println!("\n{name}: slice refused in {:.0} ms: {e}", start.elapsed().as_secs_f64() * 1e3),
+        }
+    }
+}

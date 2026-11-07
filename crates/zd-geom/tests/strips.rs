@@ -87,7 +87,7 @@ fn fifteen_45_degree_faces_slice_the_pit_into_sixteen_strips() {
     for (i, cut) in slice.faces.iter().enumerate() {
         let toe = toes[given[i]];
         assert_volume(cut.front, 500.0 * (100.0 * toe + 5000.0), &format!("in front of the face at {toe}"));
-        assert!(cut.below_lowest.is_none() && cut.top_below.is_none());
+        assert!(cut.toe_above_floor.is_none() && cut.top_below_top.is_none(), "{cut:?}");
     }
 }
 
@@ -112,9 +112,13 @@ fn below_the_lowest_line_the_cut_goes_straight_down_and_says_how_much() {
     // 500 x (300 x 20 below the toe, and the integral of 300 + (z - 20) over 20 to 100).
     let front = 500.0 * (300.0 * 20.0 + 300.0 * 80.0 + 3_200.0);
     assert_volume(slice.strips[0].volume, front, "in front");
-    let (rl, below) = slice.faces[0].below_lowest.expect("the pit runs below the face");
-    assert_eq!(rl, 20.0);
-    assert_volume(below, 1000.0 * 500.0 * 20.0, "the pit below RL 20");
+    let (above, at) = slice.faces[0].toe_above_floor.expect("the toe stands above the pit's floor");
+    assert!((above - 20.0).abs() < 1e-9 && (at[0] - (E + 300.0)).abs() < 1e-9, "{above} m at {at:?}");
+    assert!(slice.faces[0].top_below_top.is_none());
+    // A face up to RL 60 only: its top is 40 m below the pit's.
+    let low = face(&[[250.0, -50.0], [300.0, 0.0], [360.0, 60.0]], -100.0, 600.0, 2);
+    let (below, _) = slice_solid_by_faces(&pit(), &[&low]).unwrap().faces[0].top_below_top.expect("its top is below the pit's");
+    assert!((below - 40.0).abs() < 1e-9, "{below} m");
 }
 
 #[test]

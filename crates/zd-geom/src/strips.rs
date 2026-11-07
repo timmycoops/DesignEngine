@@ -315,10 +315,12 @@ pub fn short_words(end: &ShortEnd) -> String {
 pub struct FaceCut {
     /// The solid in front of this face, on the pit side (m³).
     pub front: f64,
-    /// Below the face's lowest line, where the cut goes straight down: that RL, and the solid below it (m³).
-    pub below_lowest: Option<(f64, f64)>,
-    /// Where the face's top is below the solid's top, so above it the cut goes straight up: the two RLs.
-    pub top_below: Option<(f64, f64)>,
+    /// Where the face's toe line stands above the solid's floor, so below it the cut goes straight down: the most it
+    /// stands above (m), and where on the line.
+    pub toe_above_floor: Option<(f64, [f64; 3])>,
+    /// Where the face's top line is below the solid's top, so above it the cut goes straight up: the most it's below
+    /// (m), and where on the line.
+    pub top_below_top: Option<(f64, [f64; 3])>,
     /// Triangles in the face.
     pub triangles: usize,
 }
@@ -392,7 +394,7 @@ pub fn slice_solid_by_faces(solid: &TriMesh, faces: &[&TriMesh]) -> Result<Strip
         return Err(SliceRefusal::Solid(GeomError::InvalidInput("there are no faces to slice by".into())));
     }
     let solid_bounds = solid.bounds().ok_or_else(|| SliceRefusal::Solid(GeomError::InvalidInput("the solid is empty".into())))?;
-    let mut face_bounds = Vec::with_capacity(faces.len());
+    let mut face_bounds: Vec<zd_core::Aabb> = Vec::with_capacity(faces.len());
     for (face, mesh) in faces.iter().enumerate() {
         face_bounds.push(mesh.bounds().ok_or_else(|| SliceRefusal::Face { face, error: GeomError::InvalidInput("it has no triangles".into()) })?);
     }
@@ -416,7 +418,7 @@ pub fn slice_solid_by_faces(solid: &TriMesh, faces: &[&TriMesh]) -> Result<Strip
             .iter()
             .enumerate()
             .map(|(face, mesh)| {
-                let (solid_m, outline, face_bounds) = (&solid_m, &outline, &face_bounds);
+                let (solid_m, outline) = (&solid_m, &outline);
                 scope.spawn(move || {
                     let local = mesh.translated(to_local);
                     let behind = behind_face(&local, outline, z_low, z_high).map_err(|refusal| match refusal {
@@ -426,14 +428,25 @@ pub fn slice_solid_by_faces(solid: &TriMesh, faces: &[&TriMesh]) -> Result<Strip
                             SliceRefusal::Short { face, end }
                         }
                     })?;
+                    let (behind, edge) = behind;
                     let front = solid_m.difference(&behind);
                     front.status().map_err(|e| SliceRefusal::Face { face, error: GeomError::Manifold(e.to_string()) })?;
-                    let bounds = &face_bounds[face];
-                    let below_lowest = (solid_bounds.min[2] < bounds.min[2])
-                        .then(|| (bounds.min[2], solid_m.trim_by_plane([0.0, 0.0, -1.0], -bounds.min[2]).volume()))
-                        .filter(|(_, volume)| *volume > tolerance);
-                    let top_below = (bounds.max[2] < solid_bounds.max[2]).then_some((bounds.max[2], solid_bounds.max[2]));
-                    Ok((behind, FaceCut { front: front.volume(), below_lowest, top_below, triangles: mesh.triangle_count() }))
+                    let gap = |facing: Facing| {
+                        let mut most: Option<(f64, [f64; 3])> = None;
+                        for &(p, _) in edge.iter().filter(|(_, f)| *f == facing) {
+                            let hits = solid_m.ray_cast([p[0], p[1], z_high], [p[0], p[1], z_low]);
+                            let Some((floor, top)) = hits.iter().map(|h| h.position[2]).fold(None, |m: Option<(f64, f64)>, z| Some(m.map_or((z, z), |(lo, hi)| (lo.min(z), hi.max(z))))) else {
+                                continue;
+                            };
+                            let by = if facing == Facing::Front { p[2] - floor } else { top - p[2] };
+                            if by > 0.01 && most.is_none_or(|(m, _)| by > m) {
+                                most = Some((by, [p[0] + origin[0], p[1] + origin[1], p[2]]));
+                            }
+                        }
+                        most
+                    };
+                    let (toe_above_floor, top_below_top) = (gap(Facing::Front), gap(Facing::Behind));
+                    Ok((behind, FaceCut { front: front.volume(), toe_above_floor, top_below_top, triangles: mesh.triangle_count() }))
                 })
             })
             .collect();
@@ -521,7 +534,7 @@ enum Facing {
 /// The half-space behind a face (in local coordinates), past the solid's outline: below the face down to `z_low`, and
 /// over the parts of the outline behind its top line from `z_low` to `z_high`, 1 mm into the face's own plan so the
 /// two overlap.
-fn behind_face(face: &TriMesh, outline: &CrossSection, z_low: f64, z_high: f64) -> Result<Manifold, Behind> {
+fn behind_face(face: &TriMesh, outline: &CrossSection, z_low: f64, z_high: f64) -> Result<(Manifold, Vec<([f64; 3], Facing)>), Behind> {
     let (up, _) = orient_upward(face)?;
     let loops = boundary_loops(&up)?;
     if loops.len() != 1 {
@@ -536,6 +549,8 @@ fn behind_face(face: &TriMesh, outline: &CrossSection, z_low: f64, z_high: f64) 
     let below_m = to_manifold(&below.mesh, [0.0; 3], "the half-space below the face")?;
 
     let edges = facing_edges(&up, ring, &plan);
+    // Each corner of the ring with the way the edge from it looks.
+    let corners: Vec<([f64; 3], Facing)> = ring.iter().zip(&edges).map(|(&v, e)| (up.vertices[v as usize], e.0)).collect();
     let index = EdgeIndex::new(&plan);
     let footprint = CrossSection::from_polygons(std::slice::from_ref(&plan));
     let mut behind = Vec::new();
@@ -569,13 +584,13 @@ fn behind_face(face: &TriMesh, outline: &CrossSection, z_low: f64, z_high: f64) 
         }
     }
     if behind.is_empty() {
-        return Ok(below_m);
+        return Ok((below_m, corners));
     }
     let behind = CrossSection::batch_union(&behind).offset(1e-3, JoinType::Miter, 2.0, 0);
     let prism = Manifold::extrude(&behind, z_high - z_low).translate(0.0, 0.0, z_low);
     let half = below_m.union(&prism);
     half.status().map_err(|e| GeomError::Manifold(e.to_string()))?;
-    Ok(half)
+    Ok((half, corners))
 }
 
 /// Which way each edge of the face's outer ring looks, with the slope beside it in plan: the horizontal part of the

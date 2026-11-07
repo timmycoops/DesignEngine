@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, Object, ObjectId, ObjectKind, Solid, Surface, TriMesh};
-use zd_geom::{COINCIDENT, JoinLog, SliceRefusal, StripSlice, find_crossings, find_solid_crossings, join_faces, orient_upward, place, short_words, slice_solid_by_faces, solid_between, triangulate_grid};
+use zd_geom::{COINCIDENT, JoinLog, SliceRefusal, StripSlice, find_crossings, find_solid_crossings, join_faces, place, short_words, slice_solid_by_faces, solid_between, triangulate_grid};
 
 use super::solid::checked_input;
 use super::surface::{default_tolerance, site};
@@ -69,22 +69,27 @@ fn by_strip<'a>(inputs: &Inputs<'a>, ids: &[ObjectId], attribute: &str) -> Resul
     Ok(groups.into_values().collect())
 }
 
-/// One strip's faces as one face, wound upward, with what joining them did.
-fn one_face(strip: &StripFaces<'_>, tolerance: f64, attribute: &str) -> Result<(TriMesh, Option<JoinLog>), CommandError> {
-    let refuse = |e: zd_geom::GeomError| CommandError::Invalid(format!("{attribute} {}: {e}", number(strip.number)));
-    match strip.faces.as_slice() {
-        [(_, mesh)] => Ok((orient_upward(mesh).map_err(refuse)?.0, None)),
-        faces => {
-            let meshes: Vec<&TriMesh> = faces.iter().map(|(_, mesh)| *mesh).collect();
-            let (mesh, log) = join_faces(&meshes, tolerance).map_err(refuse)?;
-            Ok((mesh, Some(log)))
-        }
-    }
+/// One strip's faces as one face, wound upward, with what joining them did. A strip of one face goes through the
+/// join too, so a gap in it, as where a wall had no height, is filled and said.
+fn one_face(strip: &StripFaces<'_>, tolerance: f64, attribute: &str) -> Result<(TriMesh, JoinLog), CommandError> {
+    let meshes: Vec<&TriMesh> = strip.faces.iter().map(|(_, mesh)| *mesh).collect();
+    // A face on its own welds only corners exactly on each other: there's nothing for it to meet.
+    let tolerance = if meshes.len() == 1 { 0.0 } else { tolerance };
+    join_faces(&meshes, tolerance).map_err(|e| CommandError::Invalid(format!("{attribute} {} ({}): {e}", number(strip.number), strip.names())))
+}
+
+/// Whether a join changed anything but the faces' order.
+fn changed(log: &JoinLog) -> bool {
+    let weld = &log.weld;
+    log.faces > 1 || weld.vertices_welded + weld.collapsed_dropped + weld.degenerate_dropped + weld.duplicates_dropped + log.stitched > 0 || !log.filled.is_empty()
 }
 
 /// What joining one strip's faces did, in a line.
 fn join_words(attribute: &str, strip: &StripFaces<'_>, log: &JoinLog, triangles: usize) -> String {
-    let mut words = format!("{attribute} {}: {} faces joined ({}) into one of {triangles} triangles", number(strip.number), log.faces, strip.names());
+    let mut words = match log.faces {
+        1 => format!("{attribute} {}: one face ({}) of {triangles} triangles", number(strip.number), strip.names()),
+        n => format!("{attribute} {}: {n} faces joined ({}) into one of {triangles} triangles", number(strip.number), strip.names()),
+    };
     let weld = &log.weld;
     if weld.vertices_welded > 0 && weld.largest_move > 0.0 {
         words.push_str(&format!("; {} shared corners welded within {:.0} mm, the most moved {:.2} mm", weld.vertices_welded, weld.tolerance * 1e3, weld.largest_move * 1e3));
@@ -95,18 +100,21 @@ fn join_words(attribute: &str, strip: &StripFaces<'_>, log: &JoinLog, triangles:
     if dropped > 0 {
         words.push_str(&format!("; {dropped} triangles dropped ({} collapsed by the weld, {} with no area, {} twice over)", weld.collapsed_dropped, weld.degenerate_dropped, weld.duplicates_dropped));
     }
-    if log.stitched > 0 {
-        words.push_str(&format!("; {} corners of one face on another's edge, stitched", log.stitched));
+    match log.stitched {
+        0 => {}
+        1 => words.push_str("; 1 corner lying on an edge, stitched to it"),
+        n => words.push_str(&format!("; {n} corners lying on an edge, stitched to it")),
     }
     for gap in &log.filled {
-        words.push_str(&format!("; a gap of {:.1} m² between them filled near {}", gap.area, place(gap.at)));
+        let area = if gap.area < 0.01 { "under 0.01 m²".to_string() } else { format!("{:.2} m²", gap.area) };
+        words.push_str(&format!("; a gap of {area} filled near {}", place(gap.at)));
     }
     words
 }
 
 /// `face.join`: one face for each strip number, from the faces given (decision 0049). A strip's faces, up and down or
 /// from several runs, are welded where they meet, stitched where they share a line but not its corners, and any gap
-/// they close all round is filled, every change said. A strip with one face is copied as it is. The faces given stay.
+/// they close all round is filled, every change said. A strip of one face goes through the same, so a gap in it is filled. The faces given stay.
 pub struct JoinFaces;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -150,14 +158,10 @@ impl Command for JoinFaces {
         for strip in &strips {
             let (mesh, log) = one_face(strip, p.tolerance, &p.attribute)?;
             let crossings = find_crossings(&mesh, COINCIDENT);
-            let line = match &log {
-                Some(log) => {
-                    joined += 1;
-                    join_words(&p.attribute, strip, log, mesh.triangle_count())
-                }
-                None => format!("{} {}: one face ({}), copied", p.attribute, number(strip.number), strip.names()),
-            };
-            outcome = outcome.message(line);
+            if log.faces > 1 {
+                joined += 1;
+            }
+            outcome = outcome.message(join_words(&p.attribute, strip, &log, mesh.triangle_count()));
             if let Some(first) = crossings.at.first() {
                 outcome = outcome.message(format!("warning: {} {}: {} pairs of its triangles cross, the first at {}; it can't slice a solid until they're put right", p.attribute, number(strip.number), crossings.pairs, site(first)));
             }
@@ -250,7 +254,7 @@ impl Command for SliceByFaces {
         let mut faces = Vec::with_capacity(strips.len());
         for strip in &strips {
             let (mesh, log) = one_face(strip, p.tolerance, &p.attribute)?;
-            if let Some(log) = log {
+            if changed(&log) {
                 outcome = outcome.message(join_words(&p.attribute, strip, &log, mesh.triangle_count()));
             }
             faces.push(mesh);
@@ -321,7 +325,17 @@ impl SliceByFaces {
             }
             let crossings = find_solid_crossings(&piece.mesh, default_tolerance());
             if let Some(first) = crossings.at.first() {
-                return Err(CommandError::Invalid(format!("'{name}': {which} would cross itself, {} pairs, the first at {}; nothing saved", crossings.pairs, site(first))));
+                // Where the faces either side of a strip meet, it has no thickness, and its solid touches itself there.
+                let sides: Vec<usize> = [k.checked_sub(1), (!last).then_some(k)].into_iter().flatten().map(|j| slice.order[j]).collect();
+                let meet = match sides.as_slice() {
+                    [a, b] if heights(faces[*a], *first).iter().any(|za| heights(faces[*b], *first).iter().any(|zb| (za - zb).abs() < 0.01)) => format!(
+                        ": the {attribute} {} and {attribute} {} faces meet there, so {which} has no thickness; move the designs apart there",
+                        number(strips[*a].number),
+                        number(strips[*b].number)
+                    ),
+                    _ => String::new(),
+                };
+                return Err(CommandError::Invalid(format!("'{name}': {which} would cross itself, {} pairs, the first at {}{meet}; nothing saved", crossings.pairs, site(first))));
             }
             let solid = Solid::new(piece.mesh.clone()).map_err(CommandError::NotWatertight)?.with_crossings(crossings);
             if few {
@@ -351,11 +365,11 @@ impl SliceByFaces {
         ));
         for (k, cut) in slice.faces.iter().enumerate() {
             let face = format!("{attribute} {} face", number(strips[k].number));
-            if let Some((rl, volume)) = cut.below_lowest {
-                lines.push(format!("{face}: {volume:.3} m3 of '{name}' lies below its lowest line at RL {rl:.1}, and the cut goes straight down there"));
+            if let Some((by, at)) = cut.toe_above_floor {
+                lines.push(format!("{face}: its toe stands up to {by:.2} m above the floor of '{name}', near {}, and below it the cut goes straight down", place(at)));
             }
-            if let Some((top, solid_top)) = cut.top_below {
-                lines.push(format!("{face}: its top at RL {top:.1} is below the top of '{name}' at RL {solid_top:.1}, and above it the cut goes straight up"));
+            if let Some((by, at)) = cut.top_below_top {
+                lines.push(format!("{face}: its top is up to {by:.2} m below the top of '{name}', near {}, and above it the cut goes straight up", place(at)));
             }
         }
         for crossing in &slice.crossings {
@@ -460,4 +474,24 @@ impl Command for SolidBetween {
         outcome.changes.push(Change::Create { name, layer: p.layer.clone(), attributes: Attributes::new(), body: Body::Solid(solid) });
         Ok(outcome)
     }
+}
+
+/// The heights of a face at a place in plan, one for each triangle over it.
+fn heights(face: &TriMesh, at: [f64; 3]) -> Vec<f64> {
+    let (x, y) = (at[0], at[1]);
+    let mut found = Vec::new();
+    for t in &face.triangles {
+        let [a, b, c] = t.map(|i| face.vertices[i as usize]);
+        let d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+        if d.abs() < 1e-12 {
+            continue;
+        }
+        let l1 = ((b[1] - c[1]) * (x - c[0]) + (c[0] - b[0]) * (y - c[1])) / d;
+        let l2 = ((c[1] - a[1]) * (x - c[0]) + (a[0] - c[0]) * (y - c[1])) / d;
+        let l3 = 1.0 - l1 - l2;
+        if l1 >= -1e-9 && l2 >= -1e-9 && l3 >= -1e-9 {
+            found.push(l1 * a[2] + l2 * b[2] + l3 * c[2]);
+        }
+    }
+    found
 }
