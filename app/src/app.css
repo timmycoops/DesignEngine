@@ -29,6 +29,8 @@
     --color-background: var(--background);
     --color-selection: var(--selection);
     --color-ok: var(--ok);
+    --color-warning: var(--warning);
+    --color-edited: var(--edited);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -61,6 +63,9 @@
     --ring: oklch(0.76 0.14 85 / 60%);
     --selection: oklch(0.86 0.16 90 / 16%);
     --ok: oklch(0.75 0.13 150);
+    /* One meaning each (UI plan): orange for a warning, apart from the gold of what's picked; blue for a line edited by hand. */
+    --warning: oklch(0.74 0.16 55);
+    --edited: oklch(0.74 0.12 245);
     --radius: 0.5rem;
 }
 

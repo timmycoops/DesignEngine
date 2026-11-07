@@ -16,7 +16,7 @@ mod spry;
 mod string;
 mod surface;
 
-pub use build::{BuildOp, BuildStep, BuildStepParams};
+pub use build::{BuildOp, BuildStep, BuildStepParams, Rebuild, RebuildParams};
 pub use deswik::{ImportDeswik, ImportDeswikParams, MeshesAs};
 pub use exchange::{ExportCsv, ExportDxf, ExportParams, ImportStrings, ImportStringsParams};
 pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParams, SaveDesign, SaveDesignParams, Step, StepParams};
@@ -77,6 +77,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(ProjectDesign);
     registry.register(Step);
     registry.register(BuildStep);
+    registry.register(Rebuild);
     registry.register(ImportVulcanSeam);
     registry.register(SuggestSeamDefinition);
     registry.register(BuildSeamModel);

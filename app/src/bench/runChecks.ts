@@ -114,7 +114,7 @@ async function checkBuilder(viewport: Viewport, log: (line: string) => void, sho
     input.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   };
-  const panelText = () => document.querySelector('[data-builder-panel]')?.textContent ?? '';
+  const panelText = () => document.querySelector('[data-tool-panel="builder"]')?.textContent ?? '';
   const after = (text: string, from: string, length: number) => {
     const at = text.indexOf(from);
     return at < 0 ? '' : text.slice(at, at + length);
@@ -127,7 +127,7 @@ async function checkBuilder(viewport: Viewport, log: (line: string) => void, sho
   await wait(500);
   layer.select(toe.record.outputs[0].id);
   await wait(500);
-  const startsFromToe = panelText().includes('Next step from Toe B') && panelText().includes('Starting a build from this line');
+  const startsFromToe = panelText().includes('FromToe B') && panelText().includes('Starting a build from this line');
   const typedRl = typeInto('What the wall goes up to: RL', '115');
   await wait(200);
   const steps: { button: string; ms: number; picked: string; said: string }[] = [];
@@ -167,6 +167,27 @@ async function checkBuilder(viewport: Viewport, log: (line: string) => void, sho
   const rowText = (n: number) => rows()[n]?.textContent ?? '';
   const editedShown = rowText(1).includes('edited');
   const builtBeforeShown = rowText(2).includes('built before an edit');
+  // Rebuild from here: the berm's line picked, its one button now Rebuild, step 3 built again on the edited line.
+  const crest3Before = (await named('Toe B crest 3'))?.vertices_local ?? [];
+  layer.select(toe2.id);
+  await wait(500);
+  const rebuildButton = button('Rebuild 1 step from here');
+  const rebuildSays = after(panelText(), 'Step 3 was built before', 60);
+  rebuildButton?.click();
+  await wait(100);
+  for (let k = 0; k < 40 && button('Rebuilding…'); k++) await wait(100);
+  await wait(500);
+  const rebuilt = {
+    button: !!rebuildButton,
+    said_before: rebuildSays,
+    report: after(panelText(), '1 step built again', 80),
+    stands_on_your_line: panelText().includes("isn't where the berm from Toe B crest 1 puts it now"),
+    step_3_still_stale: rowText(2).includes('built before an edit'),
+    crest_3_end_moved_m: 0,
+  };
+  const crest3After = (await named('Toe B crest 3'))?.vertices_local ?? [];
+  const lastOf = (points: Vec3[]) => points[points.length - 1] ?? [0, 0, 0];
+  rebuilt.crest_3_end_moved_m = Math.round(Math.hypot(lastOf(crest3After)[0] - lastOf(crest3Before)[0], lastOf(crest3After)[1] - lastOf(crest3Before)[1]) * 1000) / 1000;
   // Step 3 taken out with its bin, the berm's line picked, the wall built again on it.
   buttons().find((b) => b.getAttribute('aria-label') === 'Take out step 3')?.click();
   await wait(800);
@@ -196,7 +217,8 @@ async function checkBuilder(viewport: Viewport, log: (line: string) => void, sho
     list.dispatchEvent(new Event('change', { bubbles: true }));
   }
   await wait(300);
-  button('Build wall')?.click();
+  // Ctrl+Enter in the panel presses its button.
+  list?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
   await wait(1500);
   const crest5 = await named('Toe B crest 5');
   const origin = (await projectSummary()).origin ?? [0, 0, 0];
@@ -212,6 +234,7 @@ async function checkBuilder(viewport: Viewport, log: (line: string) => void, sho
     crest_1_framed_off_m: Math.round(framedOff * 1000) / 1000,
     edited_shown_on_step_2: editedShown,
     built_before_an_edit_shown_on_step_3: builtBeforeShown,
+    rebuilt,
     rows_after_taking_out_step_3: rowsAfterTakingOut,
     wall_again_stands_on_your_line: standsOnYourLine,
     crest_3_again: !!crest3,
