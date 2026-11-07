@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, Object, ObjectId, ObjectKind, Solid, Surface, TriMesh};
-use zd_geom::{COINCIDENT, JoinLog, SliceRefusal, StripSlice, find_crossings, find_solid_crossings, join_faces, orient_upward, place, short_words, slice_solid_by_faces};
+use zd_geom::{COINCIDENT, JoinLog, SliceRefusal, StripSlice, find_crossings, find_solid_crossings, join_faces, orient_upward, place, short_words, slice_solid_by_faces, solid_between, triangulate_grid};
 
 use super::solid::checked_input;
 use super::surface::{default_tolerance, site};
@@ -368,5 +368,96 @@ impl SliceByFaces {
         }
         outcome.messages.extend(lines);
         Ok(())
+    }
+}
+
+/// `solid.between_surfaces`: the solid inside a closed string, below one surface or grid and above another, with
+/// vertical sides on the string (decision 0049): the large solid a strip's faces slice, such as the topography down to
+/// the lowest floor inside the pit's limit. Where the bottom is above the top there's nothing; where either doesn't
+/// cover the string in plan there's nothing either, and the area is said.
+pub struct SolidBetween;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SolidBetweenParams {
+    /// The surface or grid on top.
+    pub top: ObjectId,
+    /// The surface or grid underneath.
+    pub bottom: ObjectId,
+    /// The closed string around it.
+    pub string: ObjectId,
+    /// Layer for the solid.
+    pub layer: String,
+    /// Default "<string> <top> to <bottom>".
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+impl Command for SolidBetween {
+    type Params = SolidBetweenParams;
+    const NAME: &'static str = "solid.between_surfaces";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "A solid inside a closed string, between a surface or grid on top and one underneath",
+            inputs: vec![
+                Field::new("top", FieldType::Objects, "The surface or grid on top"),
+                Field::new("bottom", FieldType::Objects, "The surface or grid underneath"),
+                Field::object("string", ObjectKind::String, "The closed string around it"),
+            ],
+            params: vec![Field::new("layer", FieldType::Layer, "Layer for the solid"), Field::new("name", FieldType::Text, "Optional name for the solid")],
+            outputs: vec![Field::object("solid", ObjectKind::Solid, "The solid")],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let mut outcome = Outcome::default();
+        let mut mesh_of = |id: ObjectId, what: &str| -> Result<(String, std::borrow::Cow<'_, TriMesh>), CommandError> {
+            let object = inputs.object(id)?;
+            match &object.body {
+                Body::Surface(surface) => {
+                    checked_input(what, &object.name, surface.crossings(), surface.mesh(), false, &mut outcome.messages)?;
+                    Ok((object.name.clone(), std::borrow::Cow::Borrowed(surface.mesh())))
+                }
+                Body::Grid(grid) => Ok((object.name.clone(), std::borrow::Cow::Owned(triangulate_grid(grid)))),
+                other => Err(CommandError::WrongKind { id, expected: ObjectKind::Surface, found: other.kind() }),
+            }
+        };
+        let (top_name, top) = mesh_of(p.top, "top")?;
+        let (bottom_name, bottom) = mesh_of(p.bottom, "bottom")?;
+        let (string, line) = inputs.string(p.string)?;
+        let outline: Vec<[f64; 2]> = line.vertices.iter().map(|v| [v[0], v[1]]).collect();
+        let between = solid_between(&top, &bottom, &outline).map_err(|e| CommandError::Invalid(format!("'{}' between '{top_name}' and '{bottom_name}': {e}", string.name)))?;
+        if !line.closed {
+            outcome = outcome.message(format!("'{}' isn't closed: it's taken as closed from its last point back to its first", string.name));
+        }
+        if between.mesh.triangles.is_empty() {
+            return Err(CommandError::Invalid(format!("nothing lies between '{top_name}' and '{bottom_name}' inside '{}'", string.name)));
+        }
+        let crossings = find_solid_crossings(&between.mesh, default_tolerance());
+        if let Some(first) = crossings.at.first() {
+            return Err(CommandError::Invalid(format!("the solid would cross itself, {} pairs, the first at {}; nothing saved", crossings.pairs, site(first))));
+        }
+        outcome = outcome.message(format!(
+            "'{}': {:.3} m3 between '{top_name}' and '{bottom_name}' over {:.1} m2, in {:.0} ms: {} + {} triangles in, {} out{}",
+            string.name,
+            between.volume,
+            between.area,
+            between.ms,
+            top.triangle_count(),
+            bottom.triangle_count(),
+            between.mesh.triangle_count(),
+            if between.parts > 1 { format!(", in {} parts", between.parts) } else { String::new() }
+        ));
+        for (name, uncovered) in [(&top_name, between.top_uncovered), (&bottom_name, between.bottom_uncovered)] {
+            if uncovered > 0.01 {
+                outcome = outcome.message(format!("warning: '{name}' doesn't cover {uncovered:.1} m2 of '{}' in plan, and there's no solid there", string.name));
+            }
+        }
+        let solid = Solid::new(between.mesh).map_err(CommandError::NotWatertight)?.with_crossings(crossings);
+        let name = p.name.clone().unwrap_or_else(|| format!("{} {top_name} to {bottom_name}", string.name));
+        outcome.changes.push(Change::Create { name, layer: p.layer.clone(), attributes: Attributes::new(), body: Body::Solid(solid) });
+        Ok(outcome)
     }
 }

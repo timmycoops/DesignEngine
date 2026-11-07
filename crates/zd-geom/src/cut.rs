@@ -141,7 +141,7 @@ pub(crate) fn from_manifold(m: &Manifold, offset: [f64; 3]) -> TriMesh {
 }
 
 /// The design's triangles that reach within `reach` of the solid's plan extent, with their vertices.
-fn design_near(design: &TriMesh, solid: &Aabb, reach: f64) -> TriMesh {
+pub(crate) fn design_near(design: &TriMesh, solid: &Aabb, reach: f64) -> TriMesh {
     let lo = [solid.min[0] - reach, solid.min[1] - reach];
     let hi = [solid.max[0] + reach, solid.max[1] + reach];
     let mut renumber: HashMap<u32, u32> = HashMap::new();

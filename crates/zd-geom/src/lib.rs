@@ -4,6 +4,7 @@
 //! surface into a half-space, the Manifold cut, BVH ray casting for snapping, the seam stack check,
 //! string geometry, section lines, and the import repair step with its crossing check.
 
+mod between;
 mod close;
 mod crossings;
 mod cut;
@@ -26,6 +27,7 @@ mod string;
 mod strips;
 mod wall;
 
+pub use between::{Between, solid_between};
 pub use cut::{CutResult, CutTimings, cut_solid_by_surface, cut_solid_by_whole_surface};
 pub use error::GeomError;
 pub use grid::{SampledGrid, sample_surface_on_grid, triangulate_grid};

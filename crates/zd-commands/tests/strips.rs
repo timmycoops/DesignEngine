@@ -156,3 +156,26 @@ fn a_strip_whose_face_stops_short_is_refused_with_the_run_on_it_needs() {
     assert!(error.starts_with("strip 7 face"), "{error}");
     assert!(error.contains("stops short of the solid at its end") && error.contains("m more run-on"), "{error}");
 }
+
+#[test]
+fn the_pit_made_between_two_surfaces_inside_its_limit_slices_the_same() {
+    let mut s = Session::with_builtins();
+    let flat = |s: &mut Session, name: &str, rl: f64| {
+        let corners = [[E - 100.0, N - 100.0, rl], [E + 1100.0, N - 100.0, rl], [E + 1100.0, N + 600.0, rl], [E - 100.0, N + 600.0, rl]];
+        created(&s.run("surface.from_mesh", json!({ "name": name, "layer": "surfaces", "vertices": corners, "triangles": [[0, 1, 2], [0, 2, 3]] })).unwrap())[0]
+    };
+    let (topography, floor) = (flat(&mut s, "topography", 100.0), flat(&mut s, "floor", 0.0));
+    let limit = created(
+        &s.run("string.create", json!({ "name": "pit limit", "layer": "limits", "closed": true, "points": [[E, N, 0.0], [E + 1000.0, N, 0.0], [E + 1000.0, N + 500.0, 0.0], [E, N + 500.0, 0.0]] }))
+            .unwrap(),
+    )[0];
+    let record = s.run("solid.between_surfaces", json!({ "top": topography, "bottom": floor, "string": limit, "layer": "pit", "name": "PIT" })).unwrap();
+    record.messages.iter().for_each(|m| println!("  {m}"));
+    let pit = created(&record)[0];
+    assert_volume(volume(&s, pit), 50_000_000.0, "the pit between the two");
+
+    fifteen_strips(&mut s);
+    let strips = created(&s.run("solid.slice_by_faces", json!({ "solid": pit, "faces": surfaces_on(&s, "faces"), "layer": "strips" })).unwrap());
+    assert_eq!(strips.len(), 16);
+    assert_volume(volume(&s, strips[7]), 2_500_000.0, "strip 8");
+}

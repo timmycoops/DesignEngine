@@ -194,3 +194,54 @@ fn faces_that_dont_meet_are_refused_with_how_far_apart() {
     let error = join_faces(&[&down, &up], 0.001).unwrap_err().to_string();
     assert!(error.contains("2 pieces") && error.contains("2.00 m apart"), "{error}");
 }
+
+/// A surface over the square from `(x0, y0)` to `(x1, y1)` m off the mine-grid origin, `rows` by `rows`, at `z(x, y)`.
+fn surface(x0: f64, y0: f64, x1: f64, y1: f64, rows: usize, z: impl Fn(f64, f64) -> f64) -> TriMesh {
+    let mut vertices = Vec::new();
+    for j in 0..=rows {
+        for i in 0..=rows {
+            let (x, y) = (x0 + (x1 - x0) * i as f64 / rows as f64, y0 + (y1 - y0) * j as f64 / rows as f64);
+            vertices.push([E + x, N + y, z(x, y)]);
+        }
+    }
+    let n = rows as u32 + 1;
+    let mut triangles = Vec::new();
+    for j in 0..rows as u32 {
+        for i in 0..rows as u32 {
+            let (a, b, c, d) = (j * n + i, j * n + i + 1, (j + 1) * n + i + 1, (j + 1) * n + i);
+            triangles.extend([[a, b, c], [a, c, d]]);
+        }
+    }
+    TriMesh::new(vertices, triangles)
+}
+
+#[test]
+fn a_solid_between_a_flat_top_and_a_dipping_floor_inside_a_string() {
+    // Top RL 100; floor dipping east at 1 in 10 from RL 0; the string a 100 m square from 0, 0. Volume: 100 x 100 x 100
+    // less 100 x 0.1 x 100² / 2.
+    let top = surface(-20.0, -20.0, 120.0, 120.0, 7, |_, _| 100.0);
+    let floor = surface(-20.0, -20.0, 120.0, 120.0, 14, |x, _| 0.1 * x);
+    let square = [[E, N], [E + 100.0, N], [E + 100.0, N + 100.0], [E, N + 100.0]];
+    let between = zd_geom::solid_between(&top, &floor, &square).unwrap();
+    println!("{} + {} triangles in, {} out, {:.1} ms", top.triangle_count(), floor.triangle_count(), between.mesh.triangle_count(), between.ms);
+    assert!((between.volume - 950_000.0).abs() < 1e-3, "{} m³", between.volume);
+    assert!(between.validity.is_watertight());
+    assert_eq!(between.parts, 1);
+    assert!((between.area - 10_000.0).abs() < 1e-6);
+    assert!(between.top_uncovered < 1e-6 && between.bottom_uncovered < 1e-6);
+    // Clockwise, it's the same.
+    let clockwise: Vec<[f64; 2]> = square.iter().rev().copied().collect();
+    assert!((zd_geom::solid_between(&top, &floor, &clockwise).unwrap().volume - 950_000.0).abs() < 1e-3);
+}
+
+#[test]
+fn where_the_top_doesnt_cover_the_string_there_is_no_solid_and_its_area_is_said() {
+    // The top covers only the west half of the square.
+    let top = surface(-20.0, -20.0, 50.0, 120.0, 7, |_, _| 100.0);
+    let floor = surface(-20.0, -20.0, 120.0, 120.0, 7, |_, _| 0.0);
+    let square = [[E, N], [E + 100.0, N], [E + 100.0, N + 100.0], [E, N + 100.0]];
+    let between = zd_geom::solid_between(&top, &floor, &square).unwrap();
+    assert!((between.volume - 500_000.0).abs() < 1e-3, "{} m³", between.volume);
+    assert!((between.top_uncovered - 5_000.0).abs() < 1e-3, "{} m²", between.top_uncovered);
+    assert!(between.bottom_uncovered < 1e-6);
+}

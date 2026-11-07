@@ -34,7 +34,7 @@ pub use string::{
     NumberStringsParams, OffsetString, OffsetStringParams, RedrawStretch, RedrawStretchParams, ReverseString, SetClosed, SetClosedParams, SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam,
     SmoothString, SmoothStringParams, SplitString, SplitStringParams, StringParams,
 };
-pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams};
+pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, SolidBetween, SolidBetweenParams};
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
 
 use crate::{CommandError, Registry};
@@ -75,6 +75,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(RepairSolids);
     registry.register(CutBySurface);
     registry.register(SliceByFaces);
+    registry.register(SolidBetween);
     registry.register(ProjectStep);
     registry.register(SaveDesign);
     registry.register(ProjectDesign);
