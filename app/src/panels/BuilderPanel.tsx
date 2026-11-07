@@ -1,18 +1,17 @@
-import { Hammer, Plus, Trash2 } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { Hammer, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { type BuildOp, type BuildRecord, objectDetails, type ObjectSummary, type Ramp, type RampBerm, type RampHeading, type StepTarget, type Vec3, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
-import { rampColour } from '@/viewport/rampColours';
+import { Choice, Field, IconButton, NumberInput, RoadBadge, type RunReport, StatusBadge, TargetInput, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
 
 /**
  * The manual builder (decision 0048): pick a line, build one wall or berm from it, and edit any line between steps with the
- * ordinary string tools. Nothing is built again unless you ask. The steps of a build are listed in order: a click on one
- * picks its line and frames it, and picking a line in the viewport lights up its step.
+ * ordinary string tools. Nothing is built again until you ask: pick a line you've edited and Rebuild from here builds the
+ * steps above it again from it, in one undo. The steps of a build are listed in order: a click on one picks its line and
+ * frames it, and picking a line in the viewport lights up its step. Made from the kit (UI plan), as every tool panel is.
  */
-
-const selectClass = 'h-7 min-w-0 rounded border bg-background px-1 text-xs';
 
 /** What a step starts with, where nothing before it says. */
 const usualBatter = 70;
@@ -120,6 +119,16 @@ function stepWords(step: BuildOp, objects: ObjectSummary[]): string {
   return parts.join(' · ');
 }
 
+/** Step numbers as a reader says them: "step 3", "steps 6 to 11", "steps 2, 4 and 5". */
+function stepNumbers(numbers: number[]): string {
+  const sorted = [...numbers].sort((a, b) => a - b);
+  if (sorted.length === 1) return `step ${sorted[0]}`;
+  const running = sorted.every((n, k) => k === 0 || n === sorted[k - 1] + 1);
+  return running ? `steps ${sorted[0]} to ${sorted[sorted.length - 1]}` : `steps ${and(sorted.map(String))}`;
+}
+
+const capital = (words: string) => words.charAt(0).toUpperCase() + words.slice(1);
+
 /** One step of a build: the line it made, and how. Its wall and roads share its id. */
 interface BuiltStep {
   line: ObjectSummary;
@@ -135,93 +144,21 @@ function stepOf(o: ObjectSummary): BuiltStep | null {
   return record && typeof number === 'number' && typeof id === 'string' && o.kind === 'string' ? { line: o, record, number, id } : null;
 }
 
-/** A number that can be typed through half-finished values: it only reports what parses. */
-function NumberBox({ value, onChange, title, width = 'w-16' }: { value: number; onChange: (v: number) => void; title: string; width?: string }) {
-  const [text, setText] = useState(String(value));
-  useEffect(() => {
-    setText((t) => (t.trim() !== '' && Number(t) === value ? t : String(value)));
-  }, [value]);
-  return (
-    <Input
-      className={`h-7 ${width} px-1 text-xs tabular-nums`}
-      value={text}
-      title={title}
-      aria-label={title}
-      onBlur={() => setText(String(value))}
-      onChange={(e) => {
-        setText(e.target.value);
-        const n = Number(e.target.value);
-        if (e.target.value.trim() !== '' && Number.isFinite(n)) onChange(n);
-      }}
-    />
-  );
-}
-
-function Choice<T extends string>({ value, options, labels, onChange, title }: { value: T; options: readonly T[]; labels?: Record<T, string>; onChange: (v: T) => void; title?: string }) {
-  return (
-    <span className="inline-flex rounded border" title={title}>
-      {options.map((option) => (
-        <button key={option} aria-pressed={option === value} className={`px-1.5 py-1 ${option === value ? 'bg-selection text-primary' : 'text-muted-foreground'}`} onClick={() => onChange(option)}>
-          {labels?.[option] ?? option}
-        </button>
-      ))}
-    </span>
-  );
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="flex items-center gap-2">
-      <span className="w-20 shrink-0 text-muted-foreground">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-/** The grids and surfaces in the project, each kind under its own heading, or a word that there are none yet. */
-function TargetOptions({ surfaces }: { surfaces: ObjectSummary[] }) {
-  const grids = surfaces.filter((s) => s.kind === 'grid');
-  const meshes = surfaces.filter((s) => s.kind === 'surface');
-  const options = (of: ObjectSummary[]) =>
-    of.map((s) => (
-      <option key={s.id} value={s.id}>
-        {s.name}
-      </option>
-    ));
-  if (surfaces.length === 0) {
-    return (
-      <option value="none" disabled>
-        No grids or surfaces in this project yet
-      </option>
-    );
+/** The steps built on a line, and on theirs, in step order. */
+function stepsOn(line: string, steps: BuiltStep[]): BuiltStep[] {
+  const on = new Set([line]);
+  const out: BuiltStep[] = [];
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const s of steps) {
+      if (!on.has(s.line.id) && on.has(s.record.from)) {
+        on.add(s.line.id);
+        out.push(s);
+        grew = true;
+      }
+    }
   }
-  return (
-    <>
-      {grids.length > 0 && <optgroup label="Grids">{options(grids)}</optgroup>}
-      {meshes.length > 0 && <optgroup label="Surfaces">{options(meshes)}</optgroup>}
-    </>
-  );
-}
-
-/** A grid, a surface or an RL. */
-function TargetBox({ value, surfaces, onChange, title }: { value: StepTarget; surfaces: ObjectSummary[]; onChange: (t: StepTarget) => void; title: string }) {
-  return (
-    <span className="flex items-center gap-1">
-      <select className={selectClass} value={value.kind === 'rl' ? 'rl' : value.id} title={title} aria-label={title} onChange={(e) => onChange(e.target.value === 'rl' ? { kind: 'rl', rl: value.kind === 'rl' ? value.rl : 0 } : { kind: 'surface', id: e.target.value })}>
-        <option value="rl">RL</option>
-        <TargetOptions surfaces={surfaces} />
-      </select>
-      {value.kind === 'rl' && <NumberBox value={value.rl} title={`${title}: RL`} onChange={(rl) => onChange({ kind: 'rl', rl })} />}
-    </span>
-  );
-}
-
-function RoadBadge({ name }: { name: string }) {
-  return (
-    <span className="inline-block rounded px-1 text-[10px] font-semibold text-white" style={{ background: rampColour(name) }}>
-      {name}
-    </span>
-  );
+  return out.sort((a, b) => a.number - b.number);
 }
 
 /** What a road on the line does at a berm. */
@@ -246,6 +183,7 @@ export function BuilderPanel() {
   const [buildName, setBuildName] = useState<string | null>(null);
   const showing = (picked?.attributes.build as string | undefined) ?? buildName;
   const built = useMemo(() => steps.filter((s) => s.line.attributes.build === showing).sort((a, b) => a.number - b.number || a.line.name.localeCompare(b.line.name)), [steps, showing]);
+  const above = useMemo(() => (picked ? stepsOn(picked.id, steps) : []), [picked, steps]);
 
   // The next step's settings, from the steps before it where there are any.
   const [op, setOp] = useState<BuildOp['op']>('project');
@@ -262,7 +200,7 @@ export function BuilderPanel() {
   const [side, setSide] = useState<WallSide>('left');
   const [runOn, setRunOn] = useState(0);
   const [name, setName] = useState('');
-  const [report, setReport] = useState<{ lines: string[]; error?: string }>({ lines: [] });
+  const [report, setReport] = useState<RunReport>({ lines: [] });
   const [busy, setBusy] = useState(false);
 
   // The chain of steps up to the picked line, most recent first: what the next step takes after.
@@ -314,6 +252,15 @@ export function BuilderPanel() {
 
   if (!summary) return <div className="p-3 text-xs text-muted-foreground">No project open.</div>;
 
+  /** A line edited by hand since its step (or Rebuild) made it. */
+  const edited = (s: BuiltStep) => s.line.revision > (s.record.made_revision ?? 1);
+  /** A step built from the line below as it was before that line was edited. */
+  const stale = (s: BuiltStep) => {
+    const from = objects.find((o) => o.id === s.record.from);
+    return !!from && s.record.from_revision !== undefined && from.revision > s.record.from_revision;
+  };
+  const staleAbove = above.filter(stale);
+
   const frame = async (id: string) => {
     const details = await objectDetails(id);
     if (details.measures.kind === 'string') frameLine(details.measures.points);
@@ -324,21 +271,12 @@ export function BuilderPanel() {
   };
   /** A step and every step built on it, one undo. */
   const remove = async (step: BuiltStep) => {
-    const gone = new Set([step.line.id]);
-    for (let grew = true; grew; ) {
-      grew = false;
-      for (const s of steps) {
-        if (!gone.has(s.line.id) && gone.has(s.record.from)) {
-          gone.add(s.line.id);
-          grew = true;
-        }
-      }
-    }
-    const ids = new Set(steps.filter((s) => gone.has(s.line.id)).map((s) => s.id));
+    const gone = [step, ...stepsOn(step.line.id, steps)];
+    const ids = new Set(gone.map((s) => s.id));
     const pieces = objects.filter((o) => typeof o.attributes.build_id === 'string' && ids.has(o.attributes.build_id)).map((o) => o.id);
     const outcome = await runRecord('object.delete_many', { objects: pieces });
     if (!outcome.record) return setReport({ lines: [], error: outcome.error });
-    setReport({ lines: [`Took out step ${step.number}${gone.size > 1 ? ` and the ${gone.size - 1} built on it` : ''}`] });
+    setReport({ lines: [`Took out step ${step.number}${gone.length > 1 ? ` and the ${gone.length - 1} built on it` : ''}`] });
     const from = steps.find((s) => s.line.id === step.record.from);
     select(from ? from.line.id : objects.some((o) => o.id === step.record.from) ? step.record.from : null);
   };
@@ -368,6 +306,18 @@ export function BuilderPanel() {
     select(picked.id);
   };
 
+  /** Runs a command for the panel: busy while it runs, its messages or refusal shown, what it gives picked. */
+  const runStep = async (command: string, params: Record<string, unknown>, then: (made: string | undefined) => string | null) => {
+    setBusy(true);
+    clearRefusal();
+    const outcome = await runRecord(command, params);
+    setBusy(false);
+    if (!outcome.record) return setReport({ lines: [], error: outcome.error });
+    setReport({ lines: outcome.record.messages });
+    const next = then(outcome.record.outputs.find((o) => o.change === 'created')?.id);
+    if (next) select(next);
+  };
+
   const build = async () => {
     if (!picked) return;
     const stop = roads.filter((r) => (op === 'berm' ? atBerm[r.name] === 'ends' : climbs[r.name] === false)).map((r) => r.name);
@@ -377,15 +327,16 @@ export function BuilderPanel() {
         : { op: 'berm', width, ...(bermOn ? { on: bermOn } : {}), ...(turning.length ? { turns: turning } : {}), ...(join !== 'auto' ? { join: join === 'on' } : {}), ...(stop.length ? { stop } : {}) };
     const params: Record<string, unknown> = { from: picked.id, step };
     if (byHand) Object.assign(params, { lies_on: liesOn, side, name: name.trim() || picked.name, ...(runOn > 0 ? { run_on: [runOn, runOn] } : {}) });
-    setBusy(true);
-    clearRefusal();
-    const outcome = await runRecord('face.build_step', params);
-    setBusy(false);
-    if (!outcome.record) return setReport({ lines: [], error: outcome.error });
-    setReport({ lines: outcome.record.messages });
-    if (byHand) setBuildName(name.trim() || picked.name);
-    const line = outcome.record.outputs.find((o) => o.change === 'created');
-    if (line) select(line.id);
+    await runStep('face.build_step', params, (line) => {
+      if (byHand) setBuildName(name.trim() || picked.name);
+      return line ?? null;
+    });
+  };
+
+  /** Rebuild from here: the steps built on the picked line, built again from it as it is now (decision 0048). */
+  const rebuild = async () => {
+    if (!picked) return;
+    await runStep('face.rebuild', { from: picked.id }, () => picked.id);
   };
 
   const pickedWords = (() => {
@@ -394,25 +345,42 @@ export function BuilderPanel() {
     if (picked.attributes.face_design !== undefined) return 'made by a face design';
     return 'drawn by hand';
   })();
-  const stale = (s: BuiltStep) => {
-    const from = objects.find((o) => o.id === s.record.from);
-    return !!from && s.record.from_revision !== undefined && from.revision > s.record.from_revision;
-  };
+
+  // The panel's one button: Rebuild where steps are built on the picked line, the next step where none are.
+  const n = above.length;
+  const action: ToolAction | undefined = !picked
+    ? undefined
+    : n > 0
+      ? {
+          label: `Rebuild ${n} step${n === 1 ? '' : 's'} from here`,
+          run: rebuild,
+          icon: <RotateCcw className="size-3.5" />,
+          busy,
+          busyLabel: 'Rebuilding…',
+          title: `Build ${stepNumbers(above.map((s) => s.number))} again from ${picked.name} as it is now, replacing what they made`,
+        }
+      : {
+          label: op === 'project' ? 'Build wall' : 'Build berm',
+          run: build,
+          icon: <Hammer className="size-3.5" />,
+          busy,
+          busyLabel: 'Building…',
+          title: op === 'project' ? 'Build the wall from this line' : 'Build the berm from this line',
+        };
 
   return (
-    <div className="flex h-full flex-col overflow-auto text-xs" data-builder-panel>
-      <div className="border-b px-3 py-2">
-        <div className="text-sm font-medium">Builder</div>
-        <div className="text-muted-foreground">Pick a line, build one wall or berm from it. Edit any line between steps; nothing is built again unless you ask.</div>
-      </div>
-
+    <ToolPanel
+      title="Builder"
+      panel="builder"
+      summary="Pick a line and build one wall or berm from it. Edit any line between steps; Rebuild from here builds the steps above it again."
+      result={report}
+      action={action}
+    >
       {built.length > 0 && (
-        <div className="px-3 pt-2">
-          <div className="pb-1 font-medium uppercase tracking-wide text-muted-foreground">Steps of {showing}</div>
-          <div className="rounded border">
+        <ToolSection title={`Steps of ${showing}`}>
+          <div className="rounded-md border">
             {built.map((s) => {
               const on = s.id === pickedStep?.id || s.id === selectedObject?.attributes.build_id;
-              const edited = s.line.revision > 1;
               const old = stale(s);
               const roadsHere = s.record.step.op === 'project' ? roadsOn(s.line).map((r) => r.name) : [];
               return (
@@ -425,162 +393,151 @@ export function BuilderPanel() {
                     {roadsHere.map((r) => (
                       <RoadBadge key={r} name={r} />
                     ))}
-                    {edited && (
-                      <span className="rounded bg-blue-900/60 px-1 text-[10px] text-blue-200" title="This line has been edited since the step made it">
+                    {edited(s) && (
+                      <StatusBadge tone="edited" title="This line has been edited by hand since its step made it">
                         edited
-                      </span>
+                      </StatusBadge>
                     )}
                     {old && (
-                      <span className="rounded bg-amber-900/60 px-1 text-[10px] text-amber-200" title="Built from the line below as it was before it was edited">
+                      <StatusBadge tone="warning" title="Built from the line below as it was before it was edited: pick that line and Rebuild from here">
                         built before an edit
-                      </span>
+                      </StatusBadge>
                     )}
                   </button>
-                  <button className="rounded p-1 text-muted-foreground hover:text-foreground" title={`Take out step ${s.number} and every step built on it, in one undo`} aria-label={`Take out step ${s.number}`} onClick={() => void remove(s)}>
-                    <Trash2 className="size-3.5" />
-                  </button>
+                  <IconButton label={`Take out step ${s.number}`} title={`Take out step ${s.number} and every step built on it, in one undo`} onClick={() => void remove(s)}>
+                    <Trash2 />
+                  </IconButton>
                 </div>
               );
             })}
           </div>
-        </div>
+        </ToolSection>
       )}
 
       {!picked ? (
-        <div className="px-3 py-3 text-muted-foreground">Click a line in the viewport to build from it: a toe drawn by hand to start a build, or a line a step made to carry on.</div>
+        <ToolSection>
+          <div className="text-muted-foreground">Click a line in the viewport to build from it: a toe drawn by hand to start a build, or a line a step made to carry on.</div>
+        </ToolSection>
       ) : (
-        <div className="m-3 flex flex-col gap-2 rounded border p-2">
-          <div>
-            <span className="font-medium text-primary">Next step from {picked.name}</span>
-            <div className="text-muted-foreground">
-              {pickedWords}
-              {lineLiesOn && !byHand ? ` · lies on ${targetWords(lineLiesOn, objects)}` : ''}
-            </div>
-          </div>
-
-          {byHand && (
-            <div className="flex flex-col gap-1.5 rounded bg-muted/40 p-2">
-              <div className="text-muted-foreground">Starting a build from this line:</div>
-              <Field label="Build">
-                <Input className="h-7 w-40 px-1 text-xs" value={name} aria-label="Build name" onChange={(e) => setName(e.target.value)} />
-              </Field>
-              <Field label="Lies on">
-                <TargetBox value={liesOn} surfaces={surfaces} title="What the line lies on" onChange={setLiesOn} />
-              </Field>
-              <Field label="Walls go up">
-                <Choice value={side} options={['left', 'right'] as const} labels={{ left: 'on its left', right: 'on its right' }} title="Looking along the line" onChange={setSide} />
-              </Field>
-              <Field label="Run on">
-                <NumberBox value={runOn} title="How far to run the line on past each end first (m), so the face is built oversized" onChange={setRunOn} /> m each end
-              </Field>
-            </div>
-          )}
-
-          <div className="flex items-center gap-1">
-            <Choice value={op} options={['project', 'berm'] as const} labels={{ project: 'Wall', berm: 'Berm' }} title="What to build from the line" onChange={setOp} />
-          </div>
-
-          {op === 'project' ? (
-            <div className="flex flex-col gap-1.5">
-              <Field label="To">
-                <TargetBox value={to} surfaces={surfaces} title="What the wall goes up to" onChange={setTo} />
-              </Field>
-              {surfaces.length === 0 && <div className="pl-[5.5rem] text-muted-foreground">To go up to a grid or a surface, import it first: they're listed here once they're in the project.</div>}
-              <Field label="Batter">
-                <NumberBox value={batter} title="Batter (degrees from horizontal)" onChange={setBatter} />°
-              </Field>
-              {roads.length > 0 && (
-                <Field label="Roads">
-                  <span className="flex flex-wrap items-center gap-2">
-                    {roads.map((r) =>
-                      overBerm ? (
-                        <span key={r.name} className="flex items-center gap-1" title={`Road ${r.name} crossed the berm, so it climbs this wall`}>
-                          <RoadBadge name={r.name} /> climbs on
-                        </span>
-                      ) : (
-                        <label key={r.name} className="flex items-center gap-1" title={`Road ${r.name} came out on this line: untick to end it here`}>
-                          <input type="checkbox" checked={climbs[r.name] !== false} aria-label={`Road ${r.name} climbs this wall`} onChange={(e) => setClimbs((was) => ({ ...was, [r.name]: e.target.checked }))} />
-                          <RoadBadge name={r.name} /> climbs
-                        </label>
-                      ),
-                    )}
-                  </span>
-                </Field>
-              )}
-              {newRoads.map((r, k) => (
-                <div key={r.string ?? r.name} className="flex flex-wrap items-center gap-2 pl-[5.5rem]">
-                  <RoadBadge name={r.name} />
-                  <span className="text-muted-foreground">new road, {r.heading === 'along' ? 'along the line' : 'back along it'}</span>
-                  <NumberBox width="w-12" value={r.width} title={`Road ${r.name}: width (m)`} onChange={(w) => setNewRoads((was) => was.map((x, j) => (j === k ? { ...x, width: w } : x)))} />m
-                  <NumberBox width="w-12" value={r.grade} title={`Road ${r.name}: grade (%)`} onChange={(g) => setNewRoads((was) => was.map((x, j) => (j === k ? { ...x, grade: g } : x)))} />%
-                  <Choice value={r.berm ?? 'after'} options={['after', 'through'] as const} labels={{ after: 'after berms', through: 'through berms' }} title="How it gets past a berm" onChange={(b) => setNewRoads((was) => was.map((x, j) => (j === k ? { ...x, berm: b } : x)))} />
-                  <button className="rounded p-1 text-muted-foreground hover:text-foreground" title={`Leave road ${r.name} out`} aria-label={`Leave road ${r.name} out`} onClick={() => setNewRoads((was) => was.filter((_, j) => j !== k))}>
-                    <Trash2 className="size-3.5" />
-                  </button>
-                </div>
-              ))}
-              <div className="pl-[5.5rem]">
-                <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs" title="Place a new road on this wall: click where it starts on the line, then the way it climbs" onClick={() => void placeRoad()}>
-                  <Plus className="size-3.5" /> Road
-                </Button>
+        <>
+          <ToolSection title="From">
+            <div>
+              <span className="font-medium text-primary">{picked.name}</span>
+              <div className="text-muted-foreground">
+                {pickedWords}
+                {lineLiesOn && !byHand ? ` · lies on ${targetWords(lineLiesOn, objects)}` : ''}
               </div>
             </div>
+            {byHand && n === 0 && (
+              <div className="flex flex-col gap-1 rounded-md bg-muted/40 p-2">
+                <div className="text-muted-foreground">Starting a build from this line:</div>
+                <Field label="Build">
+                  <Input className="h-7 w-40 px-1.5 text-xs" value={name} aria-label="Build name" onChange={(e) => setName(e.target.value)} />
+                </Field>
+                <Field label="Lies on">
+                  <TargetInput value={liesOn} surfaces={surfaces} label="What the line lies on" onChange={(t) => t && setLiesOn(t)} />
+                </Field>
+                <Field label="Walls go up">
+                  <Choice value={side} options={['left', 'right'] as const} labels={{ left: 'on its left', right: 'on its right' }} label="The side the walls go up on, looking along the line" onChange={setSide} />
+                </Field>
+                <Field label="Run on">
+                  <NumberInput value={runOn} unit="m" range={{ min: 0 }} label="How far to run the line on past each end first, so the face is built oversized" onChange={setRunOn} />
+                  each end
+                </Field>
+              </div>
+            )}
+          </ToolSection>
+
+          {n > 0 ? (
+            <ToolSection title="Built on this line">
+              <div className={staleAbove.length > 0 ? 'text-warning' : 'text-muted-foreground'}>
+                {staleAbove.length > 0
+                  ? `${capital(stepNumbers(staleAbove.map((s) => s.number)))} ${staleAbove.length === 1 ? 'was' : 'were'} built before ${staleAbove.some((s) => s.record.from === picked.id) ? 'this line was' : 'a line below was'} edited.`
+                  : `${capital(stepNumbers(above.map((s) => s.number)))} ${n === 1 ? 'was' : 'were'} built on this line, and ${n === 1 ? 'it is' : 'they are'} up to date with it.`}
+              </div>
+              <div className="text-muted-foreground">
+                Rebuild from here builds {n === 1 ? 'it' : 'them'} again from {picked.name} as it is now, each with the settings it had, and one undo takes it back. To build a different step from this line, take out the steps above it with their bin first.
+              </div>
+            </ToolSection>
           ) : (
-            <div className="flex flex-col gap-1.5">
-              <Field label="Width">
-                <NumberBox value={width} title="Berm width (m)" onChange={setWidth} /> m
-              </Field>
-              <Field label="On">
-                <select
-                  className={selectClass}
-                  value={bermOn ? (bermOn.kind === 'rl' ? 'rl' : bermOn.id) : ''}
-                  aria-label="What the berm lies on"
-                  onChange={(e) => setBermOn(e.target.value === '' ? null : e.target.value === 'rl' ? { kind: 'rl', rl: 0 } : { kind: 'surface', id: e.target.value })}
-                >
-                  <option value="">{lineLiesOn ? `as the line: ${targetWords(lineLiesOn, objects)}` : 'as the line'}</option>
-                  <option value="rl">RL</option>
-                  <TargetOptions surfaces={surfaces} />
-                </select>
-                {bermOn?.kind === 'rl' && <NumberBox value={bermOn.rl} title="The berm's RL" onChange={(rl) => setBermOn({ kind: 'rl', rl })} />}
-              </Field>
-              {roads.map((r) => (
-                <Field key={r.name} label={`Road ${r.name}`}>
-                  <RoadBadge name={r.name} />
-                  <Choice
-                    value={atBerm[r.name] ?? 'crosses'}
-                    options={AT_BERM}
-                    labels={{ crosses: r.berm === 'through' ? 'climbs through' : 'crosses', turns: 'turns back', ends: 'ends here' }}
-                    title={`What road ${r.name} does at this berm: carries on up the next wall, turns back on a box (a switchback), or ends on the line`}
-                    onChange={(v) => setAtBerm((was) => ({ ...was, [r.name]: v }))}
-                  />
-                </Field>
-              ))}
-              {turning.length >= 2 && (
-                <Field label="Join">
-                  <Choice value={join} options={JOINS} labels={{ auto: 'when close', on: 'one pad', off: 'apart' }} title="The switchbacks' boxes as one pad: always, never, or when they come within a road's width of each other" onChange={setJoin} />
-                </Field>
+            <ToolSection title="Next step" aside={<Choice value={op} options={['project', 'berm'] as const} labels={{ project: 'Wall', berm: 'Berm' }} label="What to build from the line" onChange={setOp} />}>
+              {op === 'project' ? (
+                <>
+                  <Field label="To" hint={surfaces.length === 0 ? "To go up to a grid or a surface, import it first: they're listed here once they're in the project." : undefined}>
+                    <TargetInput value={to} surfaces={surfaces} label="What the wall goes up to" onChange={(t) => t && setTo(t)} />
+                  </Field>
+                  <Field label="Batter">
+                    <NumberInput value={batter} unit="°" range={{ min: 0, max: 90, minIncluded: false }} label="Batter, degrees from horizontal" onChange={setBatter} />
+                  </Field>
+                  {roads.length > 0 && (
+                    <Field label="Roads">
+                      {roads.map((r) =>
+                        overBerm ? (
+                          <span key={r.name} className="flex items-center gap-1" title={`Road ${r.name} crossed the berm, so it climbs this wall`}>
+                            <RoadBadge name={r.name} /> climbs on
+                          </span>
+                        ) : (
+                          <Choice
+                            key={r.name}
+                            value={climbs[r.name] === false ? 'ends' : 'climbs'}
+                            options={['climbs', 'ends'] as const}
+                            labels={{ climbs: `${r.name} climbs`, ends: `${r.name} ends here` }}
+                            label={`Road ${r.name} came out on this line: it climbs this wall, or ends here`}
+                            onChange={(v) => setClimbs((was) => ({ ...was, [r.name]: v === 'climbs' }))}
+                          />
+                        ),
+                      )}
+                    </Field>
+                  )}
+                  {newRoads.map((r, k) => (
+                    <Field key={r.string ?? r.name} label={`New road ${r.name}`}>
+                      <RoadBadge name={r.name} />
+                      <span className="text-muted-foreground">{r.heading === 'along' ? 'along the line' : 'back along it'}</span>
+                      <NumberInput width="w-16" value={r.width} unit="m" range={{ min: 0, minIncluded: false }} label={`Road ${r.name}: width`} onChange={(w) => setNewRoads((was) => was.map((x, j) => (j === k ? { ...x, width: w } : x)))} />
+                      <NumberInput width="w-16" value={r.grade} unit="%" range={{ min: 0, minIncluded: false }} label={`Road ${r.name}: grade`} onChange={(g) => setNewRoads((was) => was.map((x, j) => (j === k ? { ...x, grade: g } : x)))} />
+                      <Choice value={r.berm ?? 'after'} options={['after', 'through'] as const} labels={{ after: 'after berms', through: 'through berms' }} label="How it gets past a berm" onChange={(b) => setNewRoads((was) => was.map((x, j) => (j === k ? { ...x, berm: b } : x)))} />
+                      <IconButton label={`Leave road ${r.name} out`} onClick={() => setNewRoads((was) => was.filter((_, j) => j !== k))}>
+                        <Trash2 />
+                      </IconButton>
+                    </Field>
+                  ))}
+                  <Field label="">
+                    <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs" title="Place a new road on this wall: click where it starts on the line, then the way it climbs" onClick={() => void placeRoad()}>
+                      <Plus className="size-3.5" /> Road
+                    </Button>
+                  </Field>
+                </>
+              ) : (
+                <>
+                  <Field label="Width">
+                    <NumberInput value={width} unit="m" range={{ min: 0, minIncluded: false }} label="Berm width" onChange={setWidth} />
+                  </Field>
+                  <Field label="On">
+                    <TargetInput value={bermOn} surfaces={surfaces} label="What the berm lies on" none={lineLiesOn ? `as the line: ${targetWords(lineLiesOn, objects)}` : 'as the line'} onChange={setBermOn} />
+                  </Field>
+                  {roads.map((r) => (
+                    <Field key={r.name} label={`Road ${r.name}`}>
+                      <RoadBadge name={r.name} />
+                      <Choice
+                        value={atBerm[r.name] ?? 'crosses'}
+                        options={AT_BERM}
+                        labels={{ crosses: r.berm === 'through' ? 'climbs through' : 'crosses', turns: 'turns back', ends: 'ends here' }}
+                        label={`What road ${r.name} does at this berm: carries on up the next wall, turns back on a box (a switchback), or ends on the line`}
+                        onChange={(v) => setAtBerm((was) => ({ ...was, [r.name]: v }))}
+                      />
+                    </Field>
+                  ))}
+                  {turning.length >= 2 && (
+                    <Field label="Join">
+                      <Choice value={join} options={JOINS} labels={{ auto: 'when close', on: 'one pad', off: 'apart' }} label="The switchbacks' boxes as one pad: always, never, or when they come within a road's width of each other" onChange={setJoin} />
+                    </Field>
+                  )}
+                </>
               )}
-            </div>
+            </ToolSection>
           )}
-
-          <div className="flex items-center justify-end gap-2 pt-1">
-            <Button size="sm" className="h-7 gap-1 px-3 text-xs" disabled={busy} title={op === 'project' ? 'Build the wall from this line' : 'Build the berm from this line'} onClick={() => void build()}>
-              <Hammer className="size-3.5" /> {busy ? 'Building…' : op === 'project' ? 'Build wall' : 'Build berm'}
-            </Button>
-          </div>
-        </div>
+        </>
       )}
-
-      {(report.error || report.lines.length > 0) && (
-        <div className="mx-3 mb-3 flex flex-col gap-0.5 rounded border p-2">
-          {report.error && <div className="text-destructive">{report.error}</div>}
-          {report.lines.map((line, k) => (
-            <div key={k} className={k === 0 ? '' : 'text-muted-foreground'}>
-              {line}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    </ToolPanel>
   );
 }

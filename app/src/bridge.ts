@@ -556,6 +556,8 @@ export interface BuildRecord {
   from: string;
   from_on: StepTarget;
   from_revision?: number;
+  /** The revision the line it made had then (1 if it doesn't say): a later one means it's been edited by hand since. */
+  made_revision?: number;
   side: WallSide;
   step: BuildOp;
   run_on?: [number, number];

@@ -128,9 +128,50 @@ The app's own check (`zd-app --bench --builder`), through the panel's buttons:
 - **To a surface:** with a surface at RL 140 imported, the To list showed it under Surfaces; picked there, a berm and a wall
   up to it built, the crest all at RL 140.
 
+## Rebuild from here
+
+Workstream 2 (Tim, 2026-11-07: "I want to finish the manual ramp tool"), as decision 2 of the plan has it: everything above
+the edited line, in one undo.
+
+- **`face.rebuild`** takes the line you edited: a toe, a crest or a berm's line. The steps built on it, and the steps built on
+  theirs, are built again in order, nearest first, each from the line below it as it now is and with the settings its record
+  kept (the step, the side, what the line lies on, how far it was run on and cleaned). A step whose line has none built on it
+  is refused: build one from it first.
+- **What a step made keeps its objects.** Its line, wall and roads each take their next revision, matched by name, so the
+  step list, the picked line and what's hidden stay as they were. A road a step no longer makes goes; a new one is made. One
+  undo takes the whole rebuild back.
+- **A line above edited by hand is built again too,** as the plan agreed, and the rebuild says so: undo brings the edit back.
+  To tell, each record now keeps `made_revision`, the revision its line had when it was made (1 from a step, one more each
+  rebuild), beside `from_revision`. A line is edited when its revision is past `made_revision`; a step was built before an
+  edit when the line below it is past its `from_revision`. A rebuild leaves neither, except on the line you edited.
+- **A berm's line edited, then Rebuild from it:** the wall above stands on your line, as a wall built from it by hand does.
+
+Known answers: from a toe at RL 100, a wall to RL 120 at 45°, a 10 m berm and a wall to RL 140 at 45°, every vertex of the
+first crest dragged 5 m further out, then Rebuild from it: the berm's line moves to 85 m out and the top crest to 105 m, to
+1e-9 m, and the top wall's sheet keeps its 200 × (10 + 20√2) m², to 1e-6 m². Both keep their ids at revision 2, and one undo
+puts them back. A rebuild is the steps built again by hand: with a road up both walls and the first crest's far end dragged 3 m
+out, the berm's line, the top crest and the road's edges agree to 1 µm, and the top wall's sheet to 1 cm².
+
+The builder's gate on Tim's step template: the crest at RL 145 with a vertex dragged 2 m out, then Rebuild from here. Six steps
+are built again in 4 ms; A and B still turn and join into one pad on the berm at RL 155 and reach RL 175, nothing crosses, and
+every line and both roads' tops agree with taking the steps out and building them again by hand, to 1 µm. One undo takes it
+back. On the made-up grid pit, the ten steps above Strip 5's first crest are rebuilt in 3.3 s (release build).
+
+In the Builder panel, picking a line with steps built on it turns the panel's one button into **Rebuild n steps from here**,
+and says which were built before an edit. The app's check (`zd-app --bench --builder`): with the berm's line edited, picking it
+showed "Step 3 was built before this line was edited", Rebuild built step 3 again on the edited line, its crest's end moved
+3.0 m with it, and step 3 no longer showed as built before an edit.
+
+## The kit
+
+The Builder panel is the first made from the kit in `app/src/design-system/kit/` (UI plan, the Build Plan's UI plan tab): the
+tool panel frame, with what it does at the top and its one button at the foot (Ctrl+Enter presses it); number boxes with
+their units, taking what parses and is in range as it's typed and saying why they won't take the rest; the RL, grid or
+surface picker; choices; field rows; road and state badges; and the run result, with warnings in their own orange, apart from
+the gold of what's picked. Lines edited by hand show in blue.
+
 ## What this leaves
 
-- **Rebuild from here** (workstream 2).
 - **Rules** for a step's batter and width: it takes numbers for now.
 - **Going down,** turning on a crest with no berm, a minimum bench on a berm built on its own (it has no wall below it in its
   own run, as in 0041), and carrying on a road held at its end (0041).

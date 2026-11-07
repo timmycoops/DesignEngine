@@ -106,6 +106,14 @@ struct StepRecord {
     /// step made was built from it as it was.
     #[serde(default)]
     from_revision: u32,
+    /// The revision the line it made had then: a later one means you've edited it since. 1 as made by a step; one more each
+    /// time Rebuild builds it again.
+    #[serde(default = "first_revision")]
+    made_revision: u32,
+}
+
+fn first_revision() -> u32 {
+    1
 }
 
 /// A line's fingerprint: FNV-1a over the exact bits of its vertices, as 16 hex digits. An edit changes it, and undoing the
@@ -199,60 +207,230 @@ impl Command for BuildStep {
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let (object, line) = inputs.string(p.from)?;
-        let made = made_by_a_step(object);
-        let side = match (p.side, &made) {
-            (Some(SideParam::Left), _) => WallSide::Left,
-            (Some(SideParam::Right), _) => WallSide::Right,
-            (None, Some(made)) => made.record.side,
-            (None, None) => return Err(CommandError::Invalid(format!("say which side of {} the walls go up on, looking along it", object.name))),
-        };
-        let Some(lies_on) = p.lies_on.or(made.as_ref().and_then(|made| made.on)) else {
-            return Err(CommandError::Invalid(format!("say what {} lies on: a surface, a grid or an RL", object.name)));
-        };
-        let build = Build {
-            inputs,
-            name: p.name.clone().or_else(|| made.as_ref().map(|made| made.name.clone())).unwrap_or_else(|| object.name.clone()),
-            layer: p.layer.clone().unwrap_or_else(|| if made.is_some() { inputs.layer_name(object) } else { BUILD_LAYER.into() }),
-            number: made.as_ref().map_or(1, |made| made.step + 1),
-            id: ObjectId::new(),
-            side,
-            from: p.from,
-            from_on: lies_on,
-            kept: kept_attributes(&object.attributes),
-            run_on: p.run_on,
-            condition: p.condition.filter(|t| *t > 0.0),
-            from_print: fingerprint(line),
-            from_revision: object.revision,
-        };
-        // A wall from a berm's line a step made goes up with that berm, from the crest it was built from.
-        let below = match (&p.step, &made) {
-            (BuildOp::Project { .. }, Some(Made { record: record @ StepRecord { step: BuildOp::Berm { .. }, .. }, .. })) => Some((record, inputs.string(record.from).ok())),
-            _ => None,
-        };
+        let side = p.side.map(|side| match side {
+            SideParam::Left => WallSide::Left,
+            SideParam::Right => WallSide::Right,
+        });
+        let current = |id: ObjectId| inputs.string(id).ok().map(|(object, line)| (object.clone(), line.clone()));
         let mut targets = Targets::new(inputs);
-        let mut uses = vec![lies_on];
-        uses.extend(targets_of(&p.step));
-        if let Some((record, _)) = below {
-            uses.push(record.from_on);
-            uses.extend(targets_of(&record.step));
-        }
-        for target in uses {
-            if let StepTarget::Surface { id } = target {
-                targets.prepare(id)?;
-            }
-        }
-        let by_hand = drawn_by_hand(object);
-        match (&p.step, below) {
-            (BuildOp::Berm { .. }, _) => build.berm(&targets, object, line, by_hand, &p.step),
-            (BuildOp::Project { .. }, Some((record, Some(crest)))) => build.over_berm(&targets, object, line, record, crest, &p.step),
-            (BuildOp::Project { .. }, Some((_, None))) => {
-                let mut outcome = build.project(&targets, object, line, by_hand, &p.step)?;
-                outcome.messages.insert(1, format!("the crest {} was built from has gone, so the wall stands on it as it is, and no road carries on over the berm", object.name));
-                Ok(outcome)
-            }
-            (BuildOp::Project { .. }, None) => build.project(&targets, object, line, by_hand, &p.step),
+        let request = Request { object, line, step: &p.step, lies_on: p.lies_on, side, run_on: p.run_on, condition: p.condition, layer: p.layer.clone(), name: p.name.clone(), again: None };
+        build_one(inputs, &mut targets, request, &current)
+    }
+}
+
+/// A step to build: from the command's parameters, or from a step's record when Rebuild builds it again.
+struct Request<'r> {
+    object: &'r Object,
+    line: &'r Polyline,
+    step: &'r BuildOp,
+    lies_on: Option<StepTarget>,
+    side: Option<WallSide>,
+    run_on: [f64; 2],
+    condition: Option<f64>,
+    layer: Option<String>,
+    name: Option<String>,
+    again: Option<Again>,
+}
+
+/// A step built again keeps its id and number, and its line takes its next revision.
+#[derive(Clone, Copy)]
+struct Again {
+    id: ObjectId,
+    number: usize,
+    made_revision: u32,
+}
+
+/// A line by its id as it is now: as Rebuild has just built it again, or as the project has it.
+type Current<'c> = dyn Fn(ObjectId) -> Option<(Arc<Object>, Polyline)> + 'c;
+
+/// One step from a line: a berm, a wall, or a wall from a berm's line a step made, which goes up with that berm from the
+/// crest the berm was built from.
+fn build_one(inputs: &Inputs<'_>, targets: &mut Targets<'_, '_>, r: Request<'_>, current: &Current<'_>) -> Result<Outcome, CommandError> {
+    let (object, line) = (r.object, r.line);
+    let made = made_by_a_step(object);
+    let side = match (r.side, &made) {
+        (Some(side), _) => side,
+        (None, Some(made)) => made.record.side,
+        (None, None) => return Err(CommandError::Invalid(format!("say which side of {} the walls go up on, looking along it", object.name))),
+    };
+    let Some(lies_on) = r.lies_on.or(made.as_ref().and_then(|made| made.on)) else {
+        return Err(CommandError::Invalid(format!("say what {} lies on: a surface, a grid or an RL", object.name)));
+    };
+    let build = Build {
+        inputs,
+        name: r.name.or_else(|| made.as_ref().map(|made| made.name.clone())).unwrap_or_else(|| object.name.clone()),
+        layer: r.layer.unwrap_or_else(|| if made.is_some() { inputs.layer_name(object) } else { BUILD_LAYER.into() }),
+        number: r.again.map_or_else(|| made.as_ref().map_or(1, |made| made.step + 1), |again| again.number),
+        id: r.again.map_or_else(ObjectId::new, |again| again.id),
+        side,
+        from: object.id,
+        from_on: lies_on,
+        kept: kept_attributes(&object.attributes),
+        run_on: r.run_on,
+        condition: r.condition.filter(|t| *t > 0.0),
+        from_print: fingerprint(line),
+        from_revision: object.revision,
+        made_revision: r.again.map_or(1, |again| again.made_revision),
+    };
+    let below = match (r.step, &made) {
+        (BuildOp::Project { .. }, Some(Made { record: record @ StepRecord { step: BuildOp::Berm { .. }, .. }, .. })) => Some((record, current(record.from))),
+        _ => None,
+    };
+    let mut uses = vec![lies_on];
+    uses.extend(targets_of(r.step));
+    if let Some((record, _)) = &below {
+        uses.push(record.from_on);
+        uses.extend(targets_of(&record.step));
+    }
+    for target in uses {
+        if let StepTarget::Surface { id } = target {
+            targets.prepare(id)?;
         }
     }
+    let by_hand = drawn_by_hand(object);
+    match (r.step, below) {
+        (BuildOp::Berm { .. }, _) => build.berm(targets, object, line, by_hand, r.step),
+        (BuildOp::Project { .. }, Some((record, Some((crest, crest_line))))) => build.over_berm(targets, object, line, record, (&crest, &crest_line), r.step),
+        (BuildOp::Project { .. }, Some((_, None))) => {
+            let mut outcome = build.project(targets, object, line, by_hand, r.step)?;
+            outcome.messages.insert(1, format!("the crest {} was built from has gone, so the wall stands on it as it is, and no road carries on over the berm", object.name));
+            Ok(outcome)
+        }
+        (BuildOp::Project { .. }, None) => build.project(targets, object, line, by_hand, r.step),
+    }
+}
+
+/// `face.rebuild`: Rebuild from here (decision 0048). The steps built on a line you've edited, and the steps built on theirs,
+/// built again from it as it is now, in order, each with the settings it had. What each made is replaced by its next
+/// revision, keeping its id, so one undo takes the whole rebuild back.
+pub struct Rebuild;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RebuildParams {
+    /// The line to build again from: a toe, a crest or a berm's line, edited or not.
+    pub from: ObjectId,
+}
+
+impl Command for Rebuild {
+    type Params = RebuildParams;
+    const NAME: &'static str = "face.rebuild";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Build the steps above a line again, from the line as it is now",
+            inputs: vec![Field::object("from", ObjectKind::String, "The line to build again from: a toe, a crest or a berm's line")],
+            params: vec![],
+            outputs: vec![Field::object("steps", ObjectKind::String, "Each step's line, wall and roads again, as their next revisions")],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let (root, _) = inputs.string(p.from)?;
+        let above = steps_above(inputs, p.from);
+        if above.is_empty() {
+            return Err(CommandError::Invalid(format!("no step has been built from {}: build one from it first", root.name)));
+        }
+        let mut pieces: HashMap<String, Vec<Arc<Object>>> = HashMap::new();
+        for object in inputs.objects() {
+            if let Some(AttrValue::Text(id)) = object.attributes.get(BUILD_ID) {
+                pieces.entry(id.clone()).or_default().push(object.clone());
+            }
+        }
+        let mut rebuilt: HashMap<ObjectId, (Arc<Object>, Polyline)> = HashMap::new();
+        let mut targets = Targets::new(inputs);
+        let mut changes = Vec::new();
+        let mut messages = vec![format!("{} step{} built again from {} as it is now", above.len(), if above.len() == 1 { "" } else { "s" }, root.name)];
+        for line in &above {
+            let made = made_by_a_step(line).expect("listed by its record");
+            let Some(AttrValue::Text(step_id)) = line.attributes.get(BUILD_ID) else { unreachable!("a step's line carries its id") };
+            let id = ObjectId::parse(step_id).ok_or_else(|| CommandError::Invalid(format!("{} carries a step id that isn't one: {step_id}", line.name)))?;
+            // What the step made, read as inputs: their revisions are what the rebuild replaces.
+            let old: Vec<Arc<Object>> = pieces.get(step_id).into_iter().flatten().map(|piece| inputs.object(piece.id).cloned()).collect::<Result<_, _>>()?;
+            if line.revision > made.record.made_revision {
+                messages.push(format!("{} had been edited by hand: it's built again, and undo brings your edit back", line.name));
+            }
+            let outcome = {
+                let current = |id: ObjectId| rebuilt.get(&id).cloned().or_else(|| inputs.string(id).ok().map(|(object, line)| (object.clone(), line.clone())));
+                let Some((from, from_line)) = current(made.record.from) else { unreachable!("each step comes after the line it was built from") };
+                let record = &made.record;
+                let request = Request {
+                    object: &from,
+                    line: &from_line,
+                    step: &record.step,
+                    lies_on: Some(record.from_on),
+                    side: Some(record.side),
+                    run_on: record.run_on,
+                    condition: record.condition,
+                    layer: Some(inputs.layer_name(line)),
+                    name: Some(made.name.clone()),
+                    again: Some(Again { id, number: made.step, made_revision: line.revision + 1 }),
+                };
+                build_one(inputs, &mut targets, request, &current)?
+            };
+            let (revised, new_line) = as_revisions(line, &old, outcome.changes);
+            rebuilt.insert(line.id, new_line);
+            changes.extend(revised);
+            messages.extend(outcome.messages);
+        }
+        let mut outcome = Outcome::new(changes);
+        outcome.messages = messages;
+        Ok(outcome)
+    }
+}
+
+/// The lines of the steps built on a line, and on theirs, each after the line it was built from: nearest first, then by step.
+fn steps_above(inputs: &Inputs<'_>, from: ObjectId) -> Vec<Arc<Object>> {
+    let mut built_on: HashMap<ObjectId, Vec<(usize, Arc<Object>)>> = HashMap::new();
+    for object in inputs.objects() {
+        if let Some(made) = made_by_a_step(object) {
+            built_on.entry(made.record.from).or_default().push((made.step, object.clone()));
+        }
+    }
+    let mut seen = std::collections::HashSet::from([from]);
+    let (mut queue, mut order) = (vec![from], Vec::new());
+    let mut next = 0;
+    while let Some(&id) = queue.get(next) {
+        next += 1;
+        let mut lines = built_on.remove(&id).unwrap_or_default();
+        lines.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.name.cmp(&b.1.name)));
+        for (_, line) in lines {
+            if seen.insert(line.id) {
+                queue.push(line.id);
+                order.push(line);
+            }
+        }
+    }
+    order
+}
+
+/// A step built again, as revisions of what it made before: its line always, and its wall and roads by name. A road it no
+/// longer makes goes; a new one is made. Gives the line as it will be, for the steps built on it.
+fn as_revisions(line: &Arc<Object>, old: &[Arc<Object>], made: Vec<Change>) -> (Vec<Change>, (Arc<Object>, Polyline)) {
+    let mut unused: Vec<&Arc<Object>> = old.iter().filter(|piece| piece.id != line.id).collect();
+    let mut changes = Vec::new();
+    let mut new_line = None;
+    for change in made {
+        let Change::Create { name, layer, attributes, body } = change else {
+            changes.push(change);
+            continue;
+        };
+        let is_line = attributes.contains_key(BUILD_RECORD);
+        let was = if is_line { Some(line) } else { unused.iter().position(|piece| piece.name == name && piece.kind() == body.kind()).map(|k| unused.remove(k)) };
+        let Some(was) = was else {
+            changes.push(Change::Create { name, layer, attributes, body });
+            continue;
+        };
+        if let (true, Body::String(polyline)) = (is_line, &body) {
+            let object = Object { id: was.id, revision: was.revision + 1, name: name.clone(), layer: was.layer, provenance: was.provenance, attributes: attributes.clone(), body: body.clone() };
+            new_line = Some((Arc::new(object), polyline.clone()));
+        }
+        let rename = (name != was.name).then_some(name);
+        changes.push(Change::Revise { id: was.id, base: was.revision, name: rename, layer: None, attributes: Some(attributes), body: Some(body) });
+    }
+    changes.extend(unused.into_iter().map(|piece| Change::Delete { id: piece.id, base: piece.revision }));
+    (changes, new_line.expect("a step makes its line"))
 }
 
 /// A line no step or design made, as one drawn by hand: it's registered to what it lies on.
@@ -397,6 +575,8 @@ struct Build<'a, 'b> {
     /// The line it's built from as it is, as a fingerprint, and its revision.
     from_print: String,
     from_revision: u32,
+    /// The revision the step's new line takes.
+    made_revision: u32,
 }
 
 impl Build<'_, '_> {
@@ -495,7 +675,7 @@ impl Build<'_, '_> {
     /// The step's new line, saying what it lies on and how it was built.
     fn line(&self, name: String, line: Polyline, on: StepTarget, step: BuildOp, more: Attributes) -> Result<Change, CommandError> {
         let made_print = fingerprint(&line);
-        let record = StepRecord { from: self.from, from_on: self.from_on, side: self.side, step, run_on: self.run_on, condition: self.condition, from_print: self.from_print.clone(), made_print, from_revision: self.from_revision };
+        let record = StepRecord { from: self.from, from_on: self.from_on, side: self.side, step, run_on: self.run_on, condition: self.condition, from_print: self.from_print.clone(), made_print, from_revision: self.from_revision, made_revision: self.made_revision };
         let mut attributes = self.marked();
         attributes.insert(BUILD_ON.into(), AttrValue::Text(json(&on)?));
         attributes.insert(BUILD_RECORD.into(), AttrValue::Text(json(&record)?));
@@ -567,7 +747,7 @@ impl Build<'_, '_> {
 
     /// A wall from the line of a berm a step made, built with the berm from the crest it was built from. The berm as it
     /// would be built now, unless you've edited its line, in which case the wall stands on your line.
-    fn over_berm(&self, targets: &Targets<'_, '_>, object: &Object, line: &Polyline, record: &StepRecord, (crest, crest_line): (&Arc<Object>, &Polyline), step: &BuildOp) -> Result<Outcome, CommandError> {
+    fn over_berm(&self, targets: &Targets<'_, '_>, object: &Object, line: &Polyline, record: &StepRecord, (crest, crest_line): (&Object, &Polyline), step: &BuildOp) -> Result<Outcome, CommandError> {
         let BuildOp::Project { ramps: new, stop, .. } = step else { unreachable!("a wall") };
         let BuildOp::Berm { turns, stop: ended, .. } = &record.step else { unreachable!("a berm") };
         let carried: Vec<Ramp> = roads_on(&crest.attributes).into_iter().filter(|road| !ended.contains(&road.name)).collect();

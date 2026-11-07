@@ -89,7 +89,7 @@ fn walls_and_a_berm_from_a_toe_stand_where_their_batters_put_them() {
     assert_eq!(crest.attributes.get("build_step"), Some(&AttrValue::Number(1.0)));
     assert_eq!(text(&crest, "build_on"), r#"{"kind":"rl","rl":120.0}"#);
     assert!(text(&crest, "build_record").starts_with(&format!(r#"{{"from":"{toe}","from_on":{{"kind":"rl","rl":100.0}},"side":"left","step":{{"op":"project""#)), "{}", text(&crest, "build_record"));
-    assert!(text(&crest, "build_record").ends_with(r#""from_revision":1}"#), "the revision of the line it was built from: {}", text(&crest, "build_record"));
+    assert!(text(&crest, "build_record").ends_with(r#""from_revision":1,"made_revision":1}"#), "the revisions of the line it was built from and of its own: {}", text(&crest, "build_record"));
     let first = sheet_of(&s, "Toe wall 1");
     assert!((first.area() - 200.0 * 20.0 * 2f64.sqrt()).abs() < 1e-6, "{}", first.area());
     assert_eq!(named(&s, "Toe wall 1").attributes.get("build_id"), crest.attributes.get("build_id"), "one step's pieces share its id");
@@ -257,6 +257,29 @@ fn a_road_ends_on_the_crest_it_came_out_on() {
 /// printed.
 #[test]
 fn tims_template_a_step_at_a_time_is_the_design_run_whole() {
+    let (s, _, runs) = tims_template();
+    assert!(runs[7].messages.iter().any(|m| m == "road A: turns back on the berm, for the wall above"), "{:?}", runs[7].messages);
+    assert!(runs[7].messages.iter().any(|m| m == "the switchbacks of A and B are one pad"), "the berm's line shows the pad: {:?}", runs[7].messages);
+    assert!(runs[8].messages.iter().any(|m| m.starts_with("the switchbacks of A and B are one pad")), "{:?}", runs[8].messages);
+    for (k, crest) in (1..=11).step_by(2).enumerate() {
+        same_line(&line_of(&s, &format!("Toe Steps crest {}", k + 1)), &line_of(&s, &format!("Built crest {crest}")), &format!("crest {crest}"));
+    }
+    // The berm at RL 155 as the builder shows it, one pad, is the line the wall above stands on.
+    same_line(&line_of(&s, "Toe Steps toe 5"), &line_of(&s, "Built toe 8"), "the joined pad");
+    for ramp in ["A", "B"] {
+        assert!(runs[10].messages.iter().any(|m| m.starts_with(&format!("road {ramp}: ")) && m.contains(" to 175.0")), "{ramp}: {:?}", runs[10].messages);
+        let top = |name: &str| -> Vec<f64> { text(&named(&s, name), &format!("road_top {ramp} pit")).split(' ').map(|c| c.parse().unwrap()).collect() };
+        let (built, whole) = (top("Built crest 11"), top("Toe Steps crest 6"));
+        assert!(built.iter().zip(&whole).all(|(a, b)| (a - b).abs() < 1e-6), "{ramp}: {built:?} against {whole:?}");
+    }
+    for k in (1..=11).step_by(2) {
+        assert_eq!(find_crossings(&sheet_of(&s, &format!("Built wall {k}")), COINCIDENT).pairs, 0, "wall {k}");
+    }
+}
+
+/// Tim's step template, run whole as the design "Steps" and built a step at a time as "Built". Gives the session, the steps
+/// and each step's run.
+fn tims_template() -> (Session, Vec<Value>, Vec<RunRecord>) {
     let mut s = Session::with_builtins();
     let toe = string(&mut s, "Toe", "toes", &[[0.0, 0.0], [600.0, 30.0], [1100.0, 10.0], [1500.0, 70.0]], 0.0);
     let a = string(&mut s, "Ramp A", "ramps", &[[150.249688, 17.985104], [148.002495, 62.928959]], 115.0);
@@ -310,22 +333,142 @@ fn tims_template_a_step_at_a_time_is_the_design_run_whole() {
         from = named(&s, &format!("Built {} {}", if k % 2 == 0 { "crest" } else { "toe" }, k + 1)).id;
         runs.push(run);
     }
-    assert!(runs[7].messages.iter().any(|m| m == "road A: turns back on the berm, for the wall above"), "{:?}", runs[7].messages);
-    assert!(runs[7].messages.iter().any(|m| m == "the switchbacks of A and B are one pad"), "the berm's line shows the pad: {:?}", runs[7].messages);
-    assert!(runs[8].messages.iter().any(|m| m.starts_with("the switchbacks of A and B are one pad")), "{:?}", runs[8].messages);
-    for (k, crest) in (1..=11).step_by(2).enumerate() {
-        same_line(&line_of(&s, &format!("Toe Steps crest {}", k + 1)), &line_of(&s, &format!("Built crest {crest}")), &format!("crest {crest}"));
+    (s, steps.to_vec(), runs)
+}
+
+/// The line of step `k` (from 1) of a build: a crest after a wall, a berm's line after a berm.
+fn step_line(build: &str, k: usize) -> String {
+    format!("{build} {} {k}", if k % 2 == 1 { "crest" } else { "toe" })
+}
+
+/// Takes out steps `from..=to` of "Built", every piece of each, in one run.
+fn take_out(s: &mut Session, from: usize, to: usize) {
+    let ids: Vec<Option<AttrValue>> = (from..=to).map(|k| named(s, &step_line("Built", k)).attributes.get("build_id").cloned()).collect();
+    let pieces: Vec<ObjectId> = s.project().objects().filter(|o| ids.contains(&o.attributes.get("build_id").cloned())).map(|o| o.id).collect();
+    s.run("object.delete_many", json!({ "objects": pieces })).unwrap();
+}
+
+/// Moves one vertex of a line in plan, as a drag does.
+fn drag(s: &mut Session, name: &str, index: usize, by: [f64; 2]) {
+    let object = named(s, name);
+    let Body::String(line) = &object.body else { panic!("{name} is a line") };
+    let [x, y, z] = line.vertices[index];
+    s.run("string.move_vertex", json!({ "string": object.id, "index": index, "to": [x + by[0], y + by[1], z] })).unwrap();
+}
+
+/// The record a step keeps on its line, as JSON.
+fn record_of(s: &Session, name: &str) -> Value {
+    serde_json::from_str(&text(&named(s, name), "build_record")).unwrap()
+}
+
+/// Rebuild from an edited crest (decision 0048): from a toe at RL 100, a wall to RL 120 at 45°, a 10 m berm and a wall to
+/// RL 140 at 45°. With every vertex of the first crest dragged 5 m further out, the berm's line stands 15 m out from it and the
+/// top crest 35 m, so they move 5 m out too, the top wall's sheet keeping its size. The steps keep their objects, each one
+/// revision on, and their records name the revisions they were built from and made, so nothing shows as edited or stale.
+/// One undo takes it back. From the toe, the edited crest is built again too, and the rebuild says so.
+#[test]
+fn rebuild_from_an_edited_crest_moves_everything_above() {
+    let mut s = Session::with_builtins();
+    let toe = string(&mut s, "Toe", "toes", &[[50.0, 50.0], [250.0, 50.0]], 100.0);
+    s.run("face.build_step", json!({ "from": toe, "step": wall(120.0, 45.0), "lies_on": rl(100.0), "side": "left" })).unwrap();
+    s.run("face.build_step", json!({ "from": named(&s, "Toe crest 1").id, "step": { "op": "berm", "width": 10.0 } })).unwrap();
+    s.run("face.build_step", json!({ "from": named(&s, "Toe toe 2").id, "step": wall(140.0, 45.0) })).unwrap();
+    let ids: Vec<ObjectId> = ["Toe toe 2", "Toe crest 3", "Toe wall 3"].iter().map(|name| named(&s, name).id).collect();
+    let refused = s.run("face.rebuild", json!({ "from": named(&s, "Toe crest 3").id })).unwrap_err().to_string();
+    assert!(refused.contains("no step has been built from Toe crest 3: build one from it first"), "{refused}");
+
+    let dragged = line_of(&s, "Toe crest 1").vertices.len();
+    for k in 0..dragged {
+        drag(&mut s, "Toe crest 1", k, [0.0, 5.0]);
     }
-    // The berm at RL 155 as the builder shows it, one pad, is the line the wall above stands on.
-    same_line(&line_of(&s, "Toe Steps toe 5"), &line_of(&s, "Built toe 8"), "the joined pad");
+    let started = Instant::now();
+    let run = s.run("face.rebuild", json!({ "from": named(&s, "Toe crest 1").id })).unwrap();
+    println!("rebuild of 2 steps: {} ms", started.elapsed().as_millis());
+    assert_eq!(run.messages[0], "2 steps built again from Toe crest 1 as it is now");
+    assert!(run.outputs.iter().all(|o| o.change == ChangeKind::Revised && o.revision == 2), "{:?}", run.outputs);
+    let at = |s: &Session, name: &str, y: f64, z: f64| line_of(s, name).vertices.iter().all(|p| (p[1] - N - y).abs() < 1e-9 && p[2] == z);
+    assert!(at(&s, "Toe toe 2", 85.0, 120.0), "{:?}", line_of(&s, "Toe toe 2").vertices);
+    assert!(at(&s, "Toe crest 3", 105.0, 140.0), "{:?}", line_of(&s, "Toe crest 3").vertices);
+    let area = sheet_of(&s, "Toe wall 3").area();
+    assert!((area - 200.0 * (10.0 + 20.0 * 2f64.sqrt())).abs() < 1e-6, "{area}");
+    assert_eq!(ids, ["Toe toe 2", "Toe crest 3", "Toe wall 3"].iter().map(|name| named(&s, name).id).collect::<Vec<_>>(), "the same objects");
+    let (berm, top) = (record_of(&s, "Toe toe 2"), record_of(&s, "Toe crest 3"));
+    assert_eq!((berm["from_revision"].as_u64(), berm["made_revision"].as_u64()), (Some(1 + dragged as u64), Some(2)), "built from the crest as edited: {berm}");
+    assert_eq!((top["from_revision"].as_u64(), top["made_revision"].as_u64()), (Some(2), Some(2)), "built from the berm's line as rebuilt: {top}");
+
+    s.undo().unwrap();
+    assert!(at(&s, "Toe toe 2", 80.0, 120.0) && at(&s, "Toe crest 3", 100.0, 140.0), "one undo takes the rebuild back");
+    assert!(at(&s, "Toe crest 1", 75.0, 120.0), "and leaves your edit");
+
+    let run = s.run("face.rebuild", json!({ "from": toe })).unwrap();
+    assert_eq!(run.messages[0], "3 steps built again from Toe as it is now");
+    assert!(run.messages.contains(&"Toe crest 1 had been edited by hand: it's built again, and undo brings your edit back".to_string()), "{:?}", run.messages);
+    assert!(at(&s, "Toe crest 1", 70.0, 120.0) && at(&s, "Toe toe 2", 80.0, 120.0) && at(&s, "Toe crest 3", 100.0, 140.0), "from the toe as it is");
+}
+
+/// A rebuild is the steps built again by hand. With road A carried up a wall, over a 5 m berm and up the next, the first
+/// crest's far end dragged 3 m out, then Rebuild: the berm's line, the top crest, the road's edges to 1 µm and the top
+/// wall's sheet to 1 cm² are what taking out the two steps and building them again from the edited crest makes.
+#[test]
+fn a_rebuild_is_the_steps_built_again_by_hand() {
+    let mut s = whole_and_by_steps("after", false);
+    let end = line_of(&s, "Built crest 1").vertices.len() - 1;
+    drag(&mut s, "Built crest 1", end, [0.0, 3.0]);
+    let run = s.run("face.rebuild", json!({ "from": named(&s, "Built crest 1").id })).unwrap();
+    assert!(run.messages.iter().any(|m| m.starts_with("road A: ") && m.contains(" to 120.0")), "{:?}", run.messages);
+    let lines = ["Built toe 2", "Built crest 3", "Built road A pit edge 3", "Built road A wall edge 3"];
+    let rebuilt: Vec<Polyline> = lines.iter().map(|name| line_of(&s, name)).collect();
+    let sheet = sheet_of(&s, "Built wall 3").area();
+    s.undo().unwrap();
+
+    take_out(&mut s, 2, 3);
+    s.run("face.build_step", json!({ "from": named(&s, "Built crest 1").id, "step": { "op": "berm", "width": 5.0 } })).unwrap();
+    s.run("face.build_step", json!({ "from": named(&s, "Built toe 2").id, "step": wall(120.0, 45.0) })).unwrap();
+    for (name, line) in lines.iter().zip(&rebuilt) {
+        same_line(&line_of(&s, name), line, name);
+    }
+    let by_hand = sheet_of(&s, "Built wall 3").area();
+    assert!((by_hand - sheet).abs() < 1e-4, "{sheet} m² rebuilt against {by_hand} m² by hand");
+}
+
+/// The builder's gate (Build Plan, Manual builder plan): on Tim's step template, the crest at RL 145 edited by dragging a
+/// vertex 2 m out, then Rebuild from here: everything above follows, roads and all. Six steps are built again; A and B still
+/// turn and join into one pad on the berm at RL 155 and both reach RL 175 with nothing crossing. It's what taking out those
+/// steps and building them again from the edited crest makes, every line to 1 µm, and one undo takes it back. Timed.
+#[test]
+fn tims_template_rebuilt_from_an_edited_crest() {
+    let (mut s, steps, _) = tims_template();
+    let before: Vec<Polyline> = (6..=11).map(|k| line_of(&s, &step_line("Built", k))).collect();
+    let crest = line_of(&s, "Built crest 5");
+    let middle = crest.vertices.iter().enumerate().min_by(|a, b| (a.1[0] - E - 600.0).abs().total_cmp(&(b.1[0] - E - 600.0).abs())).unwrap().0;
+    drag(&mut s, "Built crest 5", middle, [0.0, 2.0]);
+    let started = Instant::now();
+    let run = s.run("face.rebuild", json!({ "from": named(&s, "Built crest 5").id })).unwrap();
+    println!("Tim's template, 6 steps rebuilt from crest 5: {} ms", started.elapsed().as_millis());
+    assert_eq!(run.messages[0], "6 steps built again from Built crest 5 as it is now");
+    assert!(!run.messages.iter().any(|m| m.contains("stopped") || m.contains("triangles cross") || m.contains("edited")), "{:?}", run.messages);
+    assert!(run.messages.iter().any(|m| m == "the switchbacks of A and B are one pad"), "{:?}", run.messages);
     for ramp in ["A", "B"] {
-        assert!(runs[10].messages.iter().any(|m| m.starts_with(&format!("road {ramp}: ")) && m.contains(" to 175.0")), "{ramp}: {:?}", runs[10].messages);
-        let top = |name: &str| -> Vec<f64> { text(&named(&s, name), &format!("road_top {ramp} pit")).split(' ').map(|c| c.parse().unwrap()).collect() };
-        let (built, whole) = (top("Built crest 11"), top("Toe Steps crest 6"));
-        assert!(built.iter().zip(&whole).all(|(a, b)| (a - b).abs() < 1e-6), "{ramp}: {built:?} against {whole:?}");
+        assert!(run.messages.iter().any(|m| m.starts_with(&format!("road {ramp}: ")) && m.contains(" to 175.0")), "{ramp}: {:?}", run.messages);
     }
-    for k in (1..=11).step_by(2) {
-        assert_eq!(find_crossings(&sheet_of(&s, &format!("Built wall {k}")), COINCIDENT).pairs, 0, "wall {k}");
+    let rebuilt: Vec<Polyline> = (6..=11).map(|k| line_of(&s, &step_line("Built", k))).collect();
+    let tops: Vec<String> = ["A", "B"].iter().map(|ramp| text(&named(&s, "Built crest 11"), &format!("road_top {ramp} pit"))).collect();
+    s.undo().unwrap();
+    for (k, line) in (6..=11).zip(&before) {
+        same_line(&line_of(&s, &step_line("Built", k)), line, &format!("step {k} after the undo"));
+    }
+
+    take_out(&mut s, 6, 11);
+    let mut from = named(&s, "Built crest 5").id;
+    for (k, step) in steps.iter().enumerate().skip(5) {
+        let run = s.run("face.build_step", json!({ "from": from, "step": step })).unwrap();
+        from = created(&run)[0];
+        same_line(&line_of(&s, &step_line("Built", k + 1)), &rebuilt[k - 5], &format!("step {}", k + 1));
+    }
+    for (ramp, top) in ["A", "B"].iter().zip(&tops) {
+        let by_hand: Vec<f64> = text(&named(&s, "Built crest 11"), &format!("road_top {ramp} pit")).split(' ').map(|c| c.parse().unwrap()).collect();
+        let rebuilt: Vec<f64> = top.split(' ').map(|c| c.parse().unwrap()).collect();
+        assert!(by_hand.iter().zip(&rebuilt).all(|(a, b)| (a - b).abs() < 1e-6), "{ramp}: {by_hand:?} against {rebuilt:?}");
     }
 }
 
@@ -348,7 +491,8 @@ fn copy_folder(from: &std::path::Path, to: &std::path::Path) {
 /// the L floor, run on 100 m each way, walls at 65° to the L roof and M floor, M roof and U floor, U roof and BOW, and at 45° to
 /// the topography, with 30 m berms, ramp C 30 m wide at 10 % placed on the first wall and turning back on every berm, its pads
 /// on the M floor, the U floor and BOW. Every step builds with nothing crossing and C goes to the top. Each step's time is
-/// printed against the design run whole over all ten strips; the builder's gate is a second a step.
+/// printed against the design run whole over all ten strips; the builder's gate is a second a step. Then the first crest is
+/// edited and the ten steps above it rebuilt, timed.
 #[test]
 fn a_grid_strip_built_a_step_at_a_time() {
     let original = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/synthetic/Grid template.zdproj");
@@ -393,6 +537,17 @@ fn a_grid_strip_built_a_step_at_a_time() {
     let top = &s.run("face.build_step", json!({ "from": from, "step": { "op": "berm", "width": 30.0 } })).unwrap();
     assert!(top.messages.iter().any(|m| m.starts_with("road C: crosses the berm")), "C came out on the top crest: {:?}", top.messages);
     println!("slowest step: {slowest} ms");
+    // Rebuild from the first crest with a vertex near its middle dragged 2 m out: the ten steps above it built again, the berm on the top crest too.
+    let first = named(&s, "Built crest 1");
+    let Body::String(crest) = &first.body else { panic!("a line") };
+    let middle = crest.vertices.len() / 2;
+    drag(&mut s, "Built crest 1", middle, [0.0, 2.0]);
+    let started = Instant::now();
+    let run = s.run("face.rebuild", json!({ "from": first.id })).unwrap();
+    println!("ten steps rebuilt from crest 1: {} ms", started.elapsed().as_millis());
+    assert_eq!(run.messages[0], "10 steps built again from Built crest 1 as it is now");
+    assert!(!run.messages.iter().any(|m| m.contains("stopped") || m.contains("triangles cross")), "{:?}", run.messages);
+    assert!(run.messages.iter().any(|m| m.starts_with("road C: ") && m.contains(" to ")), "{:?}", run.messages);
     drop(s);
     let _ = std::fs::remove_dir_all(&copy);
 }

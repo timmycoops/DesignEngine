@@ -1,0 +1,101 @@
+import type { ReactNode } from 'react';
+import { cn } from 'cn';
+import { warns } from './words';
+
+/**
+ * The frame of every tool panel (UI plan, one way of working, item 2): what it does in a line at the top, its sections, and
+ * at the foot what the last run did above the one button named for what it does. Ctrl+Enter anywhere in the panel presses
+ * that button.
+ */
+export function ToolPanel({ title, summary, children, result, action, panel }: { title: string; summary: ReactNode; children: ReactNode; result?: RunReport; action?: ToolAction; panel?: string }) {
+  return (
+    <div
+      className="flex h-full flex-col text-xs"
+      data-tool-panel={panel ?? title}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && action && !action.disabled && !action.busy) {
+          e.preventDefault();
+          void action.run();
+        }
+      }}
+    >
+      <div className="shrink-0 border-b px-3 py-2">
+        <div className="text-sm font-medium">{title}</div>
+        <div className="text-muted-foreground">{summary}</div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">{children}</div>
+      {(result || action) && (
+        <div className="flex shrink-0 flex-col gap-2 border-t px-3 py-2">
+          {result && <RunResult report={result} />}
+          {action && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-3 font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                disabled={action.disabled || action.busy}
+                title={action.title}
+                onClick={() => void action.run()}
+              >
+                {action.icon}
+                {action.busy ? action.busyLabel ?? 'Working…' : action.label}
+              </button>
+              <span className="text-muted-foreground">{action.hint ?? 'One undo · Ctrl+Enter'}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The one button at a tool panel's foot. */
+export interface ToolAction {
+  /** A verb and what it acts on: "Build wall", "Cut 212 solids". */
+  label: string;
+  run: () => unknown;
+  icon?: ReactNode;
+  title?: string;
+  disabled?: boolean;
+  busy?: boolean;
+  busyLabel?: string;
+  hint?: string;
+}
+
+/** A titled part of a tool panel: Inputs, Settings, Output, or one of its own. */
+export function ToolSection({ title, children, aside, className }: { title?: ReactNode; children: ReactNode; aside?: ReactNode; className?: string }) {
+  return (
+    <section className={cn('flex flex-col gap-1.5 px-3 py-2', className)}>
+      {(title || aside) && (
+        <div className="flex items-center gap-2">
+          {title && <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>}
+          {aside && <span className="ml-auto flex items-center gap-1">{aside}</span>}
+        </div>
+      )}
+      {children}
+    </section>
+  );
+}
+
+/** What a run did, as the panel shows it: its messages, or why it was refused. */
+export interface RunReport {
+  lines: string[];
+  error?: string;
+}
+
+/**
+ * The lines a run reported. The first says what it made; the rest are muted, but for those that warn (a road stopped, a
+ * wall with no height, triangles crossing, a hand edit replaced), which show in the warning colour. A refusal shows in red.
+ */
+export function RunResult({ report }: { report: RunReport }) {
+  if (!report.error && report.lines.length === 0) return null;
+  return (
+    <div className={cn('flex max-h-48 flex-col gap-0.5 overflow-auto rounded-md border px-2 py-1.5', report.error ? 'border-destructive/40' : 'border-ok/30')} role="status">
+      {report.error && <div className="text-destructive">{report.error}</div>}
+      {report.lines.map((line, k) => (
+        <div key={k} className={k === 0 ? 'text-foreground' : warns(line) ? 'text-warning' : 'text-muted-foreground'}>
+          {line}
+        </div>
+      ))}
+    </div>
+  );
+}
