@@ -223,6 +223,231 @@ fn the_made_up_grid_pit_sliced_by_its_strips() {
     }
 }
 
+/// A real pit as Tim works one: his toe on a seam floor offset downdip into `ZD_STRIPS` strips (15 by default),
+/// `ZD_STRIP_WIDTH` apart (60 m by default), and numbered by a line across; each toe projected up through the seam
+/// roofs at 70° with 10 m berms, to the topography and on to RL 500 at 45°, and down to RL -500 at 80°, run on 100 m
+/// each end; the faces joined a face a strip; the pit made between the topography and the floor inside a limit across
+/// the strips, checked against a column sum on the floor's nodes; and the pit sliced into a solid a strip. Takes
+/// `ZD_FACE_GRIDS` (the floor first, then the roofs, `;` between), `ZD_FACE_TOPO` and `ZD_WALL_STRING` as the wall
+/// tests do; with `ZD_SAVE` the project is saved there, to open in the app, and with `ZD_SECTIONS` the toes in plan
+/// and three sections are written there to draw. Prints what each run said, with timings.
+#[test]
+#[ignore = "needs ZD_FACE_GRIDS, ZD_FACE_TOPO and ZD_WALL_STRING"]
+fn fifteen_strips_on_real_grids() {
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is needed"));
+    let ms = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
+    let width: f64 = std::env::var("ZD_STRIP_WIDTH").map_or(60.0, |w| w.trim().parse().unwrap());
+    let count: u32 = std::env::var("ZD_STRIPS").map_or(15, |n| n.trim().parse().unwrap());
+    let mut s = Session::with_builtins();
+    let start = Instant::now();
+    let mut import = |path: &str| created(&s.run("surface.import", json!({ "path": path, "layer": "surfaces" })).unwrap())[0];
+    let grids: Vec<ObjectId> = var("ZD_FACE_GRIDS").split(';').map(&mut import).collect();
+    let topo = import(&var("ZD_FACE_TOPO"));
+    println!("{} grids and the topography imported in {:.0} ms", grids.len(), ms(start));
+
+    let numbers = |p: &str| p.split(',').map(|n| n.trim().parse::<f64>().unwrap()).collect::<Vec<_>>();
+    let points: Vec<Vec<f64>> = var("ZD_WALL_STRING").split(';').map(numbers).collect();
+    let (a, b) = (&points[0], &points[points.len() - 1]);
+    let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+    let along = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+    let right = [along[1], -along[0]];
+    // The floor as its file holds it, nodes flagged off at the heights they hold (decision 0025), as the import has it.
+    let read = zd_io::read_vulcan_grid(std::path::Path::new(var("ZD_FACE_GRIDS").split(';').next().unwrap())).unwrap();
+    let mut floor = read.grid;
+    for (node, z) in read.held {
+        floor.z[node] = z;
+    }
+    let floor_rl = |p: [f64; 2]| {
+        let (col, row) = (((p[0] - floor.origin[0]) / floor.cell_size[0]).round(), ((p[1] - floor.origin[1]) / floor.cell_size[1]).round());
+        let inside = col >= 0.0 && row >= 0.0 && (col as usize) < floor.cols && (row as usize) < floor.rows;
+        inside.then(|| floor.z_at(col as usize, row as usize)).filter(|z| z.is_finite())
+    };
+    // Downdip is the side the floor falls to, 100 m to 300 m out from the middle of the toe.
+    let mid = [a[0] + 0.5 * (b[0] - a[0]), a[1] + 0.5 * (b[1] - a[1])];
+    let fall = (1..=3)
+        .find_map(|k| {
+            let d = 100.0 * f64::from(k);
+            Some(floor_rl([mid[0] - d * right[0], mid[1] - d * right[1]])? - floor_rl([mid[0] + d * right[0], mid[1] + d * right[1]])?)
+        })
+        .expect("the floor under the middle of the toe, each side");
+    let (side, out) = if fall > 0.0 { ("right", 1.0) } else { ("left", -1.0) };
+    println!("the floor falls {:.1} m to the {side} over the toe's middle", fall.abs());
+    let at = |metres_along: f64, metres_out: f64| [a[0] + metres_along * along[0] + out * metres_out * right[0], a[1] + metres_along * along[1] + out * metres_out * right[1], 0.0];
+
+    // Strips: the toe and its offsets downdip, numbered from 1 by a line across from the first.
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "toes", "points": points })).unwrap())[0];
+    let mut toes = vec![toe];
+    toes.extend(created(&s.run("string.offset", json!({ "string": toe, "distance": width, "side": side, "times": count - 1, "layer": "toes" })).unwrap()));
+    let numbered = s.run("string.number_across", json!({ "strings": toes, "from": at(0.5 * length, -30.0), "to": at(0.5 * length, f64::from(count) * width), "start": 1.0 })).unwrap();
+    println!("{}", numbered.messages.join("; "));
+
+    let mut up = Vec::new();
+    for grid in &grids[1..] {
+        up.push(json!({ "step": "project", "to": { "kind": "surface", "id": grid }, "batter": 70.0, "condition": 0.1 }));
+        up.push(json!({ "step": "berm", "width": 10.0, "condition": 0.1 }));
+    }
+    up.push(json!({ "step": "project", "to": { "kind": "surface", "id": topo }, "batter": 45.0, "condition": 0.1 }));
+    up.push(json!({ "step": "project", "to": { "kind": "rl", "rl": 500.0 }, "batter": 45.0, "condition": 0.1 }));
+    let lines: Vec<_> = toes.iter().flat_map(|t| ["Up", "Down"].map(|profile| json!({ "string": t, "profile": profile, "side": side, "run_on": [100.0, 100.0] }))).collect();
+    let content = json!({
+        "layer": "faces",
+        "lines": lines,
+        "profiles": [
+            { "name": "Up", "direction": "up", "register": grids[0], "steps": up },
+            { "name": "Down", "direction": "down", "register": grids[0], "steps": [{ "step": "project", "to": { "kind": "rl", "rl": -500.0 }, "batter": 80.0, "condition": 0.1 }] },
+        ],
+    });
+    let design = created(&s.run("face.save_design", json!({ "name": "strips", "content": content })).unwrap())[0];
+    let start = Instant::now();
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    println!("\nface.project: {:.0} ms, {} messages", ms(start), record.messages.len());
+    record.messages.iter().take(12).for_each(|m| println!("  {m}"));
+    let faces = surfaces_on(&s, "faces");
+    let crossing = faces
+        .iter()
+        .filter(|&&id| match &s.project().object(id).unwrap().body {
+            Body::Surface(sheet) => sheet.validity().non_self_intersecting != Some(true),
+            _ => false,
+        })
+        .count();
+    println!("  {} faces, {crossing} with crossing triangles", faces.len());
+
+    let start = Instant::now();
+    match s.run("face.join", json!({ "faces": faces, "layer": "strip faces" })) {
+        Ok(record) => {
+            println!("\nface.join: {:.0} ms", ms(start));
+            record.messages.iter().for_each(|m| println!("  {m}"));
+        }
+        Err(e) => println!("\nface.join refused in {:.0} ms: {e}", ms(start)),
+    }
+
+    // The pit: inside a limit 100 m behind the first toe to 150 m past the last, and 20 m in from where the toes end.
+    let reach = |id: &ObjectId| {
+        let line = match &s.project().object(*id).unwrap().body {
+            Body::String(line) => line.vertices.clone(),
+            _ => panic!("a toe is a string"),
+        };
+        let along_of = |v: [f64; 3]| (v[0] - a[0]) * along[0] + (v[1] - a[1]) * along[1];
+        (along_of(line[0]), along_of(line[line.len() - 1]))
+    };
+    let from = toes.iter().map(|t| reach(t).0).fold(f64::NEG_INFINITY, f64::max) + 20.0;
+    let to = toes.iter().map(|t| reach(t).1).fold(f64::INFINITY, f64::min) - 20.0;
+    let (behind, past) = (-100.0, f64::from(count - 1) * width + 150.0);
+    let corners = [at(from, behind), at(to, behind), at(to, past), at(from, past)];
+    println!("\nthe limit: {:.0} m along the strike by {:.0} m across", to - from, past - behind);
+    let limit = created(&s.run("string.create", json!({ "name": "pit limit", "layer": "limits", "closed": true, "points": corners })).unwrap())[0];
+    let start = Instant::now();
+    let record = s.run("solid.between_surfaces", json!({ "top": topo, "bottom": grids[0], "string": limit, "layer": "pit", "name": "PIT" })).unwrap();
+    println!("solid.between_surfaces: {:.0} ms", ms(start));
+    record.messages.iter().for_each(|m| println!("  {m}"));
+    let pit = created(&record)[0];
+    let pit_volume = volume(&s, pit);
+
+    // A column sum on the floor's nodes inside the limit: each node's cell times the topography over the floor there.
+    let inside = |p: [f64; 2]| {
+        let mut odd = false;
+        for i in 0..corners.len() {
+            let (u, v) = (corners[i], corners[(i + 1) % corners.len()]);
+            if (u[1] > p[1]) != (v[1] > p[1]) && p[0] < u[0] + (p[1] - u[1]) / (v[1] - u[1]) * (v[0] - u[0]) {
+                odd = !odd;
+            }
+        }
+        odd
+    };
+    let nodes: Vec<[f64; 3]> = (0..floor.rows)
+        .flat_map(|row| (0..floor.cols).map(move |col| (col, row)))
+        .filter_map(|(col, row)| {
+            let p = floor.node_xy(col, row);
+            let z = floor.z_at(col, row);
+            (z.is_finite() && inside(p)).then_some([p[0], p[1], f64::NAN])
+        })
+        .collect();
+    let Body::Surface(top) = &s.project().object(topo).unwrap().body else { panic!("the topography is a surface") };
+    let start = Instant::now();
+    let (draped, _) = zd_geom::drape_string(&zd_core::Polyline { vertices: nodes.clone(), closed: false }, top.mesh(), false).unwrap();
+    let cell = floor.cell_size[0] * floor.cell_size[1];
+    let columns: f64 = draped.vertices.iter().filter(|v| v[2].is_finite()).map(|v| cell * (v[2] - floor_rl([v[0], v[1]]).unwrap()).max(0.0)).sum();
+    println!(
+        "  a column sum on {} floor nodes: {columns:.0} m³ against the solid's {pit_volume:.0} m³, {:+.2}% ({:.0} ms)",
+        nodes.len(),
+        100.0 * (pit_volume - columns) / columns,
+        ms(start)
+    );
+
+    let start = Instant::now();
+    match s.run("solid.slice_by_faces", json!({ "solid": pit, "faces": faces, "layer": "strips" })) {
+        Ok(record) => {
+            println!("\nsolid.slice_by_faces: {:.0} ms", ms(start));
+            record.messages.iter().for_each(|m| println!("  {m}"));
+            let strips = created(&record);
+            let mut total = 0.0;
+            for &id in &strips {
+                let object = s.project().object(id).unwrap();
+                let Body::Solid(solid) = &object.body else { panic!("a strip is a solid") };
+                let v = solid.validity();
+                total += solid.volume();
+                println!(
+                    "  {:<20} {:>14.0} m³ {:>8.1} m deep on average, {:>6} triangles, closed {} manifold {}",
+                    object.name,
+                    solid.volume(),
+                    solid.volume() / (width * (to - from)),
+                    solid.mesh().triangles.len(),
+                    v.closed,
+                    v.manifold
+                );
+                assert!(v.closed && v.manifold, "{} is a solid", object.name);
+            }
+            println!("  {} strips add up to {total:.3} m³ against the pit's {pit_volume:.3} m³", strips.len());
+            assert!((total - pit_volume).abs() < 1e-6 * pit_volume, "the strips add up to the pit");
+
+            // With `ZD_SECTIONS`, three sections down the dip, a quarter, half and three quarters along the limit, written
+            // there as JSON to draw: each strip's fill, and the lines of the topography, the floor and the faces.
+            if let Ok(path) = std::env::var("ZD_SECTIONS") {
+                let mut sections = Vec::new();
+                for share in [0.25, 0.5, 0.75] {
+                    let m = from + share * (to - from);
+                    let (p, q) = (at(m, behind), at(m, past));
+                    let plane = zd_geom::SectionPlane::through([p[0], p[1]], [q[0], q[1]]).unwrap();
+                    let flat = |v: [f64; 3]| [plane.along(v), v[2]];
+                    let fills: Vec<_> = strips
+                        .iter()
+                        .map(|&id| {
+                            let object = s.project().object(id).unwrap();
+                            let Body::Solid(solid) = &object.body else { panic!("a strip is a solid") };
+                            let fill = zd_geom::fill_section_loops(&zd_geom::slice_mesh(solid.mesh(), &plane), &plane);
+                            json!({ "name": object.name, "triangles": fill.triangles.iter().map(|t| t.map(flat)).collect::<Vec<_>>() })
+                        })
+                        .collect();
+                    let lines = |id: ObjectId| -> Vec<Vec<[f64; 2]>> {
+                        match &s.project().object(id).unwrap().body {
+                            Body::Surface(sheet) => zd_geom::slice_mesh(sheet.mesh(), &plane).iter().map(|l| l.points.iter().map(|&v| flat(v)).collect()).collect(),
+                            _ => Vec::new(),
+                        }
+                    };
+                    let face_lines: Vec<_> = faces.iter().flat_map(|&id| lines(id)).collect();
+                    sections.push(json!({ "share": share, "strips": fills, "topography": lines(topo), "floor": lines(grids[0]), "faces": face_lines }));
+                }
+                // The toes in plan, as metres along the strike and out downdip from the first toe's start.
+                let plan: Vec<Vec<[f64; 2]>> = toes
+                    .iter()
+                    .map(|&id| match &s.project().object(id).unwrap().body {
+                        Body::String(line) => line.vertices.iter().map(|v| [(v[0] - a[0]) * along[0] + (v[1] - a[1]) * along[1], out * ((v[0] - a[0]) * right[0] + (v[1] - a[1]) * right[1])]).collect(),
+                        _ => panic!("a toe is a string"),
+                    })
+                    .collect();
+                let limit_plan: Vec<[f64; 2]> = [(from, behind), (to, behind), (to, past), (from, past)].into_iter().map(|(m, o)| [m, o]).collect();
+                std::fs::write(&path, serde_json::to_string(&json!({ "sections": sections, "toes": plan, "limit": limit_plan })).unwrap()).unwrap();
+                println!("  sections written to {path}");
+            }
+        }
+        Err(e) => panic!("solid.slice_by_faces refused in {:.0} ms: {e}", ms(start)),
+    }
+    if let Ok(dir) = std::env::var("ZD_SAVE") {
+        s.save(&dir).unwrap();
+        println!("\nsaved to {dir}");
+    }
+}
+
 /// The Builder's steps from a toe drawn by hand, with no strip number: their sheets join into one face by the build's name,
 /// and that face slices a pit as one strip.
 #[test]

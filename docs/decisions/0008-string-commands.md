@@ -25,6 +25,13 @@ distance by default) is bevelled. The union of the bands and pieces is taken wit
 part of its boundary lying at the offset distance from the string is the new string. Vertices left in
 the middle of straight runs are dropped.
 
+That part can end part way along an edge of the union (2026-11-08). A short tail bent to the offset
+side, as at the end of a real toe, is swallowed once the distance passes it, and the edge beside it
+comes within the distance of the tail's end before its far vertex. The edge is kept as far as it stays
+at the distance, cut where it comes within it, so the offset is cut back past the tail, not refused.
+Edges between two vertices at the distance are kept whole, as the chords round an arc or across a
+bevel dip inside it.
+
 This differs from the method first described (closing an open string into a region on the offset side
 beyond its bounding box). That breaks on strings that curl back on themselves, where the closing edges
 cross the string. The band union does not, and it serves open and closed strings alike. Tight inside
@@ -58,6 +65,10 @@ the vertex table shows the grade to the next vertex.
 - A 170-degree corner is bevelled at the default limit and reaches 1 / sin(5 degrees) times the
   distance when allowed.
 - A U 15 m wide has no inside offset at 10 m; 50 m wide, the inside offset is exact.
+- East 100 m then a 10 m tail south, offset 30 m south: one string ending sqrt(500) m short of the
+  corner, to 10 µm; with a tail at each end, cut back at both. A 600 m bent toe with a 42 m tail turned
+  downdip, offset 60 m to 900 m: one string each time, every vertex at least the distance from the toe.
+  On PIT B, Tim's toe (19° tail of 42 m) now offsets 14 times at 60 m; it was refused from 300 m.
 - A 10 % grade along a toe, then a 10 m offset: the new string's vertices take RL 100, 109 and 120 from
   the points beside them.
 - A string draped on a plane lies on it at every vertex and crossing to 1e-9 m.
