@@ -166,7 +166,8 @@ pub fn offset_string(line: &Polyline, distance: f64, side: OffsetSide, corner: C
     }
     let union = CrossSection::from_polygons_with_fill_rule(&pieces, FillRule::Positive);
 
-    // Keep the stretches of the union's boundary that lie at the offset distance.
+    // Keep the stretches of the union's boundary that lie at the offset distance. A stretch can end part
+    // way along an edge, as where a short tail bent to the offset side comes within the distance of it.
     let near = |p: [f64; 2]| nearest_on(&plan, line.closed, p);
     let tolerance = 1e-6 + distance * 1e-9;
     let at_distance = |p: [f64; 2]| near(p).0 >= distance - tolerance;
@@ -174,21 +175,7 @@ pub fn offset_string(line: &Polyline, distance: f64, side: OffsetSide, corner: C
     let mut out = Vec::new();
     for ring in union.to_polygons() {
         let kept: Vec<bool> = ring.iter().map(|&p| at_distance(p)).collect();
-        let mut runs: Vec<(Vec<[f64; 2]>, bool)> = Vec::new();
-        match kept.iter().position(|k| !k) {
-            None => runs.push((ring.clone(), true)),
-            Some(start) => {
-                let mut run = Vec::new();
-                for k in 1..=ring.len() {
-                    let i = (start + k) % ring.len();
-                    if kept[i] {
-                        run.push(ring[i]);
-                    } else if !run.is_empty() {
-                        runs.push((std::mem::take(&mut run), false));
-                    }
-                }
-            }
-        }
+        let runs = runs_at_distance(&ring, &kept, |a, b| pieces_at_distance(&plan, line.closed, a, b, distance - tolerance));
         for (points, closed) in runs {
             // Where a band meets a corner piece the union keeps a vertex in the middle of a straight
             // run; those carry nothing.
@@ -650,6 +637,128 @@ fn nearest_on(plan: &[[f64; 2]], closed: bool, p: [f64; 2]) -> (f64, f64) {
         .expect("a string has a segment")
 }
 
+/// A piece of an offset's edge shorter than this, where it's cut at the distance, is the noise of the cut, as at
+/// the square end of a band (m).
+const LEAST_PIECE: f64 = 1e-3;
+
+/// A cut this close to an end of an edge is at that end (m).
+const AT_THE_END: f64 = 1e-6;
+
+/// The runs round a ring of the offset's boundary that lie at the distance, open, or the whole ring closed if it all
+/// does. An edge between two vertices at the distance is kept whole, as a chord round a corner's arc dips inside it;
+/// any other edge keeps the `pieces` of it at the distance, as fractions along it, in order.
+fn runs_at_distance(ring: &[[f64; 2]], kept: &[bool], pieces: impl Fn([f64; 2], [f64; 2]) -> Vec<(f64, f64)>) -> Vec<(Vec<[f64; 2]>, bool)> {
+    let m = ring.len();
+    let mut runs: Vec<Vec<[f64; 2]>> = Vec::new();
+    // A run that reached the end of the last edge, to carry on along the next.
+    let mut open: Option<Vec<[f64; 2]>> = None;
+    let mut first_from_start = false;
+    for k in 0..m {
+        let (a, b) = (ring[k], ring[(k + 1) % m]);
+        let on_edge = if kept[k] && kept[(k + 1) % m] { vec![(0.0, 1.0)] } else { pieces(a, b) };
+        if on_edge.first().is_none_or(|&(t0, _)| t0 > 0.0)
+            && let Some(run) = open.take()
+        {
+            runs.push(run);
+        }
+        for (t0, t1) in on_edge {
+            let at = |t: f64| if t <= 0.0 { a } else if t >= 1.0 { b } else { add(a, scale(sub(b, a), t)) };
+            let mut run = open.take().unwrap_or_else(|| {
+                first_from_start |= k == 0 && t0 <= 0.0;
+                vec![at(t0)]
+            });
+            run.push(at(t1));
+            if t1 >= 1.0 {
+                open = Some(run);
+            } else {
+                runs.push(run);
+            }
+        }
+    }
+    match open {
+        // All the way round, back to where it started.
+        Some(mut run) if first_from_start && runs.is_empty() => {
+            run.pop();
+            return vec![(run, true)];
+        }
+        // Over the ring's first vertex: the run that started there carries on from this one.
+        Some(mut run) if first_from_start => {
+            run.extend(runs[0].iter().skip(1));
+            runs[0] = run;
+        }
+        Some(run) => runs.push(run),
+        None => {}
+    }
+    runs.into_iter().map(|run| (run, false)).collect()
+}
+
+/// The pieces of the edge from `a` to `b` at least `reach` in plan from every stretch of the string, as fractions
+/// along the edge, in order. Pieces shorter than `LEAST_PIECE` are dropped.
+fn pieces_at_distance(plan: &[[f64; 2]], closed: bool, a: [f64; 2], b: [f64; 2], reach: f64) -> Vec<(f64, f64)> {
+    let length = dot(sub(b, a), sub(b, a)).sqrt();
+    if length == 0.0 {
+        return Vec::new();
+    }
+    let n = plan.len();
+    let segments = if closed { n } else { n - 1 };
+    let mut near: Vec<(f64, f64)> = (0..segments).filter_map(|i| within_reach(plan[i], plan[(i + 1) % n], a, b, reach)).filter(|&(lo, hi)| hi > 0.0 && lo < 1.0).collect();
+    near.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let mut pieces = Vec::new();
+    let mut from = 0.0_f64;
+    for (lo, hi) in near {
+        if lo > from {
+            pieces.push((from, lo));
+        }
+        from = from.max(hi);
+    }
+    if from < 1.0 {
+        pieces.push((from, 1.0));
+    }
+    pieces
+        .into_iter()
+        .map(|(t0, t1)| (if t0 * length <= AT_THE_END { 0.0 } else { t0 }, if (1.0 - t1) * length <= AT_THE_END { 1.0 } else { t1 }))
+        .filter(|&(t0, t1)| (t1 - t0) * length >= LEAST_PIECE)
+        .collect()
+}
+
+/// Where along the line through `a` and `b` (as a fraction of `a` to `b`) a point is less than `reach` in plan from
+/// the stretch `p` to `q`. The ground within reach of a stretch is convex, so that's one interval, or none if the
+/// line misses it: the union of where the line is within reach of either end and where it's beside the stretch.
+fn within_reach(p: [f64; 2], q: [f64; 2], a: [f64; 2], b: [f64; 2], reach: f64) -> Option<(f64, f64)> {
+    let v = sub(b, a);
+    let vv = dot(v, v);
+    let round_end = |c: [f64; 2]| {
+        let w = sub(a, c);
+        let (half, rest) = (dot(v, w), dot(w, w) - reach * reach);
+        let root = half * half - vv * rest;
+        (root > 0.0).then(|| ((-half - root.sqrt()) / vv, (-half + root.sqrt()) / vv))
+    };
+    let beside = || {
+        let pq = sub(q, p);
+        let span = dot(pq, pq).sqrt();
+        if span == 0.0 {
+            return None;
+        }
+        let u = scale(pq, 1.0 / span);
+        let w = sub(a, p);
+        // Along the stretch from p, between 0 and its length; across it, less than reach either side.
+        let (mut lo, mut hi) = (f64::NEG_INFINITY, f64::INFINITY);
+        for (at, per, min, max) in [(dot(w, u), dot(v, u), 0.0, span), (cross(u, w), cross(u, v), -reach, reach)] {
+            if per == 0.0 {
+                if !(min < at && at < max) {
+                    return None;
+                }
+            } else {
+                let (t0, t1) = ((min - at) / per, (max - at) / per);
+                lo = lo.max(t0.min(t1));
+                hi = hi.min(t0.max(t1));
+            }
+        }
+        (lo < hi).then_some((lo, hi))
+    };
+    [round_end(p), round_end(q), beside()].into_iter().flatten().reduce(|x, y| (x.0.min(y.0), x.1.max(y.1)))
+}
+
 /// Drops vertices that sit on the straight line between their neighbours (within a micrometre),
 /// heading on in the same direction. Ends of an open run stay.
 fn drop_collinear(points: Vec<[f64; 2]>, closed: bool) -> Vec<[f64; 2]> {
@@ -892,6 +1001,49 @@ mod tests {
         let wide = line(&[[0.0, 100.0, 0.0], [0.0, 0.0, 0.0], [50.0, 0.0, 0.0], [50.0, 100.0, 0.0]], false);
         let inside = offset_string(&wide, 10.0, OffsetSide::Left, MITRE, None).unwrap();
         assert_eq!(local(&inside[0]), [[10.0, 100.0], [10.0, 10.0], [40.0, 10.0], [40.0, 100.0]]);
+    }
+
+    /// A short tail bent to the offset side, as at the end of a real toe: east 100 m, then 10 m south, offset 30 m
+    /// right (south). The tail is lost, not the whole string: the line 30 m south runs from the start until it comes
+    /// within 30 m of the tail's end, sqrt(30^2 - 20^2) = sqrt(500) m short of the corner. With a tail at each end
+    /// it's cut back at both, though neither end of that edge is at the distance.
+    #[test]
+    fn a_tail_bent_to_the_offset_side_cuts_the_offset_back() {
+        let cut = 500f64.sqrt();
+        let close = |got: &[[f64; 2]], want: &[[f64; 2]]| got.len() == want.len() && got.iter().zip(want).all(|(p, q)| (p[0] - q[0]).abs() < 1e-5 && (p[1] - q[1]).abs() < 1e-5);
+        let tail = line(&[[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [100.0, -10.0, 0.0]], false);
+        let out = offset_string(&tail, 30.0, OffsetSide::Right, MITRE, None).unwrap();
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert!(close(&local(&out[0]), &[[0.0, -30.0], [100.0 - cut, -30.0]]), "{:?}", local(&out[0]));
+        let both = line(&[[0.0, -10.0, 0.0], [0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [100.0, -10.0, 0.0]], false);
+        let out = offset_string(&both, 30.0, OffsetSide::Right, MITRE, None).unwrap();
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert!(close(&local(&out[0]), &[[cut, -30.0], [100.0 - cut, -30.0]]), "{:?}", local(&out[0]));
+        // Within the tail's length the tail keeps its offset; to the other side it goes round the corner.
+        let short = offset_string(&tail, 5.0, OffsetSide::Right, MITRE, None).unwrap();
+        assert_eq!(local(&short[0]), [[0.0, -5.0], [95.0, -5.0], [95.0, -10.0]]);
+        let left = offset_string(&tail, 30.0, OffsetSide::Left, MITRE, None).unwrap();
+        assert_eq!(local(&left[0]), [[0.0, 30.0], [130.0, 30.0], [130.0, -10.0]]);
+    }
+
+    /// A pit's strips from one toe, as Tim's on PIT B: a 600 m toe bent along its length with a 42 m tail turned
+    /// downdip at its end, offset downdip 60 m at a time out to 900 m. Each comes back in one piece, every vertex at
+    /// least the distance from the toe and each end at it, to 10 µm.
+    #[test]
+    fn a_bent_toe_with_a_tail_offsets_downdip_fifteen_times() {
+        let toe = line(&[[0.0, 0.0, 0.0], [200.0, 15.0, 0.0], [420.0, 10.0, 0.0], [580.0, 30.0, 0.0], [600.0, -7.0, 0.0]], false);
+        let plan: Vec<[f64; 2]> = toe.vertices.iter().map(|v| [v[0] - E, v[1] - N]).collect();
+        for k in 1..=15 {
+            let d = 60.0 * f64::from(k);
+            let out = offset_string(&toe, d, OffsetSide::Right, MITRE, None).unwrap_or_else(|e| panic!("at {d} m: {e}"));
+            assert_eq!(out.len(), 1, "at {d} m: {out:?}");
+            let pts = local(&out[0]);
+            let off = |p: [f64; 2]| nearest_on(&plan, false, p).0;
+            assert!(pts.iter().all(|&p| off(p) >= d - 1e-5), "at {d} m: {pts:?}");
+            for end in [pts[0], *pts.last().unwrap()] {
+                assert!((off(end) - d).abs() < 1e-5, "at {d} m an end is {} m off: {pts:?}", off(end));
+            }
+        }
     }
 
     #[test]
