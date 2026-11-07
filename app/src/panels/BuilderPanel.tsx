@@ -1,4 +1,4 @@
-import { Hammer, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { Combine, Hammer, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { type BuildOp, type BuildRecord, objectDetails, type ObjectSummary, type Ramp, type RampBerm, type RampHeading, type StepTarget, type Vec3, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
@@ -182,6 +182,8 @@ export function BuilderPanel() {
 
   const [buildName, setBuildName] = useState<string | null>(null);
   const showing = (picked?.attributes.build as string | undefined) ?? buildName;
+  /** A build's sheets: the surfaces its walls made, each with its berm below. */
+  const sheetsOf = (build: string | null) => objects.filter((o) => o.kind === 'surface' && o.attributes.build === build);
   const built = useMemo(() => steps.filter((s) => s.line.attributes.build === showing).sort((a, b) => a.number - b.number || a.line.name.localeCompare(b.line.name)), [steps, showing]);
   const above = useMemo(() => (picked ? stepsOn(picked.id, steps) : []), [picked, steps]);
 
@@ -377,7 +379,21 @@ export function BuilderPanel() {
       action={action}
     >
       {built.length > 0 && (
-        <ToolSection title={`Steps of ${showing}`}>
+        <ToolSection
+          title={`Steps of ${showing}`}
+          aside={
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              disabled={busy || sheetsOf(showing).length === 0}
+              title="Join this build's sheets into one face, on the faces layer, to slice a solid by or export (decision 0049)"
+              onClick={() => void runStep('face.join', { faces: sheetsOf(showing).map((o) => o.id), layer: 'faces', attribute: 'build' }, (made) => made ?? null)}
+            >
+              <Combine className="size-3.5" /> Join into one face
+            </Button>
+          }
+        >
           <div className="rounded-md border">
             {built.map((s) => {
               const on = s.id === pickedStep?.id || s.id === selectedObject?.attributes.build_id;

@@ -4,6 +4,7 @@
 //! surface into a half-space, the Manifold cut, BVH ray casting for snapping, the seam stack check,
 //! string geometry, section lines, and the import repair step with its crossing check.
 
+mod between;
 mod close;
 mod crossings;
 mod cut;
@@ -23,8 +24,10 @@ mod section_snap;
 mod slice;
 mod stack;
 mod string;
+mod strips;
 mod wall;
 
+pub use between::{Between, solid_between};
 pub use cut::{CutResult, CutTimings, cut_solid_by_surface, cut_solid_by_whole_surface};
 pub use error::GeomError;
 pub use grid::{SampledGrid, sample_surface_on_grid, triangulate_grid};
@@ -44,6 +47,7 @@ pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_no
 pub use face::{EditReport, Face, FaceBench, FaceEdit, FaceStep, FaceTarget, JoinBoxes, JoinNote, MetBoxes, RegisterLog, TooClose, StepReport, WallToCome, at_line_heights, conditioned_toe, level_floor, project_edited_face, project_face, register_toe, run_on};
 pub use road::{FaceRamp, FaceRoad, NoRoad, RoadTop};
 pub use wall::{ConditionLog, Stretch, WallLog, WallStep, next_toe, project_wall, project_wall_by_edge};
+pub use strips::{Crossing, FaceCut, FilledGap, JoinLog, ShortEnd, SliceRefusal, SliceTimings, StripPiece, StripSlice, join_faces, place, short_words, slice_solid_by_faces};
 pub use string::{Corner, DrapeLog, OffsetSide, ON_THE_STRING, PlanCrossing, drape_string, filter_string, grade_string, join_strings, offset_string, plan_crossings, redraw_stretch, smooth_string, split_string};
 
 /// Below this many triangles a search stays on one thread.

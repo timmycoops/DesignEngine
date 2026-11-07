@@ -119,7 +119,7 @@ fn cut(solid: &TriMesh, design: &TriMesh, crop: bool) -> Result<CutResult, GeomE
 }
 
 /// Hands a mesh to Manifold, moved by `offset` on the way.
-fn to_manifold(mesh: &TriMesh, offset: [f64; 3], what: &str) -> Result<Manifold, GeomError> {
+pub(crate) fn to_manifold(mesh: &TriMesh, offset: [f64; 3], what: &str) -> Result<Manifold, GeomError> {
     let verts: Vec<f64> = mesh
         .vertices
         .iter()
@@ -130,7 +130,7 @@ fn to_manifold(mesh: &TriMesh, offset: [f64; 3], what: &str) -> Result<Manifold,
 }
 
 /// Reads a mesh back from Manifold, moved by `offset` on the way.
-fn from_manifold(m: &Manifold, offset: [f64; 3]) -> TriMesh {
+pub(crate) fn from_manifold(m: &Manifold, offset: [f64; 3]) -> TriMesh {
     let (props, n_props, tris) = m.to_mesh_f64();
     let vertices = props
         .chunks_exact(n_props)
@@ -141,7 +141,7 @@ fn from_manifold(m: &Manifold, offset: [f64; 3]) -> TriMesh {
 }
 
 /// The design's triangles that reach within `reach` of the solid's plan extent, with their vertices.
-fn design_near(design: &TriMesh, solid: &Aabb, reach: f64) -> TriMesh {
+pub(crate) fn design_near(design: &TriMesh, solid: &Aabb, reach: f64) -> TriMesh {
     let lo = [solid.min[0] - reach, solid.min[1] - reach];
     let hi = [solid.max[0] + reach, solid.max[1] + reach];
     let mut renumber: HashMap<u32, u32> = HashMap::new();

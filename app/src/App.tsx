@@ -22,6 +22,7 @@ import {
   Save,
   SaveAll,
   Scissors,
+  Slice,
   StepBack,
   StepForward,
   Undo2,
@@ -721,6 +722,7 @@ export default function App() {
       setLayerOpacity: changeLayerOpacity,
       setContours: changeContours,
       rlShown,
+      openPanel: (id) => dockRef.current && showPanel(dockRef.current, id),
       run,
       runRecord,
       seamViews,
@@ -902,6 +904,9 @@ export default function App() {
           </ToolButton>
           <ToolButton tip="Builder: pick a line, build one wall or berm from it, edit between steps" onClick={() => dockRef.current && showPanel(dockRef.current, 'builder')}>
             <Hammer /> Builder
+          </ToolButton>
+          <ToolButton tip="Cut solids: into strips by faces, by a surface, grid or RL, or one between two surfaces" onClick={() => dockRef.current && showPanel(dockRef.current, 'cut')}>
+            <Slice /> Cut
           </ToolButton>
           {sectionOpen && (
             <>

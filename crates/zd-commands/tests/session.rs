@@ -54,6 +54,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "export.csv",
             "export.dxf",
             "face.build_step",
+            "face.join",
             "face.project",
             "face.project_step",
             "face.rebuild",
@@ -70,11 +71,13 @@ fn registry_lists_every_builtin_with_a_spec() {
             "object.rename",
             "seam.build_model",
             "seam.suggest_definition",
+            "solid.between_surfaces",
             "solid.cut_by_surface",
             "solid.from_mesh",
             "solid.import",
             "solid.import_many",
             "solid.repair",
+            "solid.slice_by_faces",
             "spry.import",
             "string.create",
             "string.delete_vertex",
@@ -98,7 +101,7 @@ fn registry_lists_every_builtin_with_a_spec() {
         ]
     );
     let specs = serde_json::to_value(session.registry().specs()).unwrap();
-    assert_eq!(specs[20]["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
+    assert_eq!(specs[22]["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
     assert_eq!(specs[2]["inputs"][0]["type"], json!({ "kind": "objects" }));
     assert_eq!(specs[0]["params"][1]["type"], json!({ "kind": "texts" }));
 }

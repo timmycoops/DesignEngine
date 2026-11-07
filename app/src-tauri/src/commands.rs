@@ -825,6 +825,9 @@ pub struct BenchConfig {
     /// With `--builder`, the Builder panel driven as Tim would: steps built from a toe, a step picked from the list, a berm's
     /// line edited and the wall above built on it (decision 0048).
     builder: bool,
+    /// With `--cut`, the Cut solids panel driven as Tim would: a pit made between two surfaces inside its limit, sliced
+    /// into strips by fifteen numbered faces, the faces joined a face a strip, and the pit cut at an RL (decision 0049).
+    cut: bool,
 }
 
 /// Present when the app was started with `--bench`: the viewport then runs Checks 1, 3 and 4
@@ -868,6 +871,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         palettes: args.iter().any(|a| a == "--palettes"),
         design_lines: args.iter().any(|a| a == "--design-lines"),
         builder: args.iter().any(|a| a == "--builder"),
+        cut: args.iter().any(|a| a == "--cut"),
     })
 }
 
