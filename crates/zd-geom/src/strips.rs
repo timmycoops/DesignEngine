@@ -508,6 +508,9 @@ pub fn slice_solid_by_faces(solid: &TriMesh, faces: &[&TriMesh]) -> Result<Strip
     Ok(StripSlice { order, strips, faces: cuts, crossings, input_volume, timings: SliceTimings { close_ms, strips_ms, from_manifold_ms } })
 }
 
+/// A corner of a face's outer ring, and the way the edge from it looks.
+type Corner = ([f64; 3], Facing);
+
 /// Why a face couldn't be closed behind.
 enum Behind {
     Error(GeomError),
@@ -534,7 +537,7 @@ enum Facing {
 /// The half-space behind a face (in local coordinates), past the solid's outline: below the face down to `z_low`, and
 /// over the parts of the outline behind its top line from `z_low` to `z_high`, 1 mm into the face's own plan so the
 /// two overlap.
-fn behind_face(face: &TriMesh, outline: &CrossSection, z_low: f64, z_high: f64) -> Result<(Manifold, Vec<([f64; 3], Facing)>), Behind> {
+fn behind_face(face: &TriMesh, outline: &CrossSection, z_low: f64, z_high: f64) -> Result<(Manifold, Vec<Corner>), Behind> {
     let (up, _) = orient_upward(face)?;
     let loops = boundary_loops(&up)?;
     if loops.len() != 1 {
@@ -550,7 +553,7 @@ fn behind_face(face: &TriMesh, outline: &CrossSection, z_low: f64, z_high: f64) 
 
     let edges = facing_edges(&up, ring, &plan);
     // Each corner of the ring with the way the edge from it looks.
-    let corners: Vec<([f64; 3], Facing)> = ring.iter().zip(&edges).map(|(&v, e)| (up.vertices[v as usize], e.0)).collect();
+    let corners: Vec<Corner> = ring.iter().zip(&edges).map(|(&v, e)| (up.vertices[v as usize], e.0)).collect();
     let index = EdgeIndex::new(&plan);
     let footprint = CrossSection::from_polygons(std::slice::from_ref(&plan));
     let mut behind = Vec::new();
