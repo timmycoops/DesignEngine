@@ -166,3 +166,22 @@ one after another.
 - In the Spry layout, **middle drag on its own pans**, as middle + right does.
 - **Zoom stays as PR 1 has it** (2026-11-05): no push-through. Spry doesn't zoom through a surface either.
 - **The 3D field of view is 6° by default and a setting** (2026-11-05). Spry's heights read taller at 45°.
+
+## T and Z, ahead of PR 5 (2026-11-09)
+
+Tim, after zoom to selection (0050): "I want a shortcut for plan and 3d mode as well". He picked, from four ideas,
+**T toggles, Z tilts**. These are the first of section 7's keys, built before the View controls dialog, so they can't be
+changed yet.
+
+- **T** flips between plan and 3D over the same spot at the same scale, as the toolbar's button does. On a section it
+  closes the section first. It works anywhere but a text box or a list, as F does (0050), so it can be pressed with the
+  tree in focus. The toolbar's button now follows the view however it changed.
+- **Z held, and a left drag,** turns about the point under the cursor, as Spry's does. In 3D that's what a left drag
+  does already. In plan it tilts the view out of plan into 3D: the view first goes to 3D looking straight down on the same
+  spot at the same scale, north up, 0.6° short of vertical where a turn stops, then turns from there. In a section it pans
+  as before. While Z is held the cursor is a hand, and a press is the camera's: no click selects, no box, no vertex drag.
+  Ctrl+Z is still undo.
+- **Bench** (`zd-app --bench --select`, release app, WebGPU, 2026-11-09), through key and pointer events: T into plan and
+  the toolbar says Plan; T back to 3D; Z and a 170 px drag in plan end at 60° from straight down, in 3D, with the point
+  under the cursor at the press 0.26 px from where it was; the selection unchanged; and without Z a left drag in plan pans
+  58 m and stays in plan.

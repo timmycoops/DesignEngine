@@ -432,6 +432,8 @@ export class StringLayer {
 
   private pointerDown(e: PointerEvent): void {
     if (e.button !== 0) return;
+    // The turn key held: the press is the camera's, to turn, and not a click, a box or a vertex drag.
+    if (this.viewport.controls.turnHeld) return;
     if (e.shiftKey && this.mode === 'select' && !this.wanted && !this.section) return this.startBox(e);
     if (this.mode === 'select' && this.selected && !this.wanted) {
       const index = this.handleAt(this.selected, e.clientX, e.clientY);

@@ -81,6 +81,7 @@ import { type RlShown, type SeamShown, SceneSync } from './viewport/sceneSync';
 import { planPoint, SectionView } from './viewport/section';
 import { RoadLayer } from './viewport/roads';
 import { type Mode, StringLayer } from './viewport/strings';
+import { typing } from './viewport/camera';
 import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Viewport';
 import { Input } from '@/design-system/ui/input';
 import { type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
@@ -116,11 +117,6 @@ const DXF_KINDS = new Set(['string', 'surface', 'solid']);
 function splitPath(path: string): [string, string] {
   const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
   return [path.slice(0, cut), path.slice(cut + 1)];
-}
-
-/** A key typed into a text box or a list, where a letter isn't a shortcut. */
-function typing(target: EventTarget | null): boolean {
-  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable);
 }
 
 function ToolButton({ tip, active, children, ...props }: { tip: string; active?: boolean; children: ReactNode } & ComponentProps<typeof Button>) {
@@ -399,6 +395,7 @@ export default function App() {
       viewport = created;
       viewportRef.current = created;
       setFieldOfView(created.fieldOfView);
+      created.onPlanChange = setPlan;
       created.onStats = setStats;
       setBackend(`${created.backend} · ${created.adapter}`);
       markersRef.current = new IssueMarkers(created);
@@ -712,6 +709,14 @@ export default function App() {
     });
   };
 
+  /** Plan or 3D over the same spot (T, or the toolbar). A section open is closed first. */
+  const togglePlan = () => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    if (sectionOpen) closeSection();
+    viewport.setPlanView(!viewport.planView);
+  };
+
   const stepSection = (direction: number) => {
     const distance = Number(sectionStep);
     if (Number.isFinite(distance) && distance > 0) void sectionRef.current?.step(direction * distance);
@@ -722,9 +727,14 @@ export default function App() {
     const key = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
       if (sectionOpen && (e.key === '[' || e.key === ']')) return stepSection(e.key === ']' ? 1 : -1);
-      if (e.key.toLowerCase() === 'f' && !(e.ctrlKey || e.metaKey || e.altKey) && !typing(e.target)) {
+      const plain = !(e.ctrlKey || e.metaKey || e.altKey) && !typing(e.target);
+      if (e.key.toLowerCase() === 'f' && plain) {
         e.preventDefault();
         return e.shiftKey ? zoomToExtents() : zoomToSelection();
+      }
+      if (e.key.toLowerCase() === 't' && plain && !e.shiftKey) {
+        e.preventDefault();
+        return togglePlan();
       }
       if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
@@ -939,13 +949,9 @@ export default function App() {
             <Magnet /> Snap
           </ToolButton>
           <ToolButton
-            tip={plan ? 'Back to the 3D view' : 'Plan view: straight down, north up; left-drag pans; the wheel zooms where the cursor is'}
+            tip={plan ? 'Back to the 3D view (T). Or hold Z and drag to tilt up out of plan' : 'Plan view (T): straight down, north up; left-drag pans; the wheel zooms where the cursor is'}
             active={plan}
-            onClick={() => {
-              if (sectionOpen) closeSection();
-              viewportRef.current?.setPlanView(!plan);
-              setPlan(!plan);
-            }}
+            onClick={togglePlan}
           >
             {plan ? <MapIcon /> : <Box />} {plan ? 'Plan' : '3D'}
           </ToolButton>
