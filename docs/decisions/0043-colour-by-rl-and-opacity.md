@@ -143,3 +143,19 @@ and drew dark. The PIT B pictures never showed it: nothing natural lies flat on 
 - **Pictures** (`--bench --pictures`, the template's face as DXF): before, the berms streak and the ones in contour view
   draw dark; after, each berm is one colour with the line along its edges. The legend for that face now reads 100 to
   160 RL, not 155: the berm at 155 has its own band.
+
+## Contour lines off by default (2026-11-09)
+
+Tim, 2026-11-09: "we need to have the contour lines not on by default for the surface coloring". A surface or grid coloured
+by RL now shows its bands alone; the **Contour lines** tick in the RL legend turns the lines on, for every surface at once,
+as before. Item 1 stands but for that: the lines are an option, off unless turned on.
+
+- **Saved as `edge_lines`**, not `lines`, in `display.contours` in `manifest.json`. A project saved while the lines were on
+  by default wrote `"lines": true` whether anyone chose them or not, and the two can't be told apart, so the old key is
+  passed over: every project saved before opens with the lines off, and its interval, shared range and looks as saved. A
+  project saved since keeps the lines on if they were turned on. An older build reading a newer project finds no `lines`
+  and draws them, as was its default.
+- **Tests** (`crates/zd-io/tests/store.rs`): a manifest with `"lines": true` opens with them off and everything else as
+  saved; a new project's are off. Spectral's pale middle (Known limits) has its closest bands with no line between them.
+- **Pictures** (`--bench --pictures`): `04-close-up-bands` is now the bands alone, as a project opens, and
+  `04b-close-up-contour-lines` the same view with the lines turned on.
