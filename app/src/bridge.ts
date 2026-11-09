@@ -768,6 +768,8 @@ export interface BenchConfig {
   design_lines: boolean;
   /** With `--select`, selecting several and zooming to them. */
   select: boolean;
+  /** With `--shell`, panels minimised and brought back, and the toolbar's groups. */
+  shell: boolean;
   /** With `--builder`, the Builder panel driven as Tim would, from a toe up, with an edit between steps (decision 0048). */
   builder: boolean;
   /** With `--cut`, the Cut solids panel driven as Tim would: a pit between two surfaces, sliced into strips, cut at an RL (decision 0049). */

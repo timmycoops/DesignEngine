@@ -4,6 +4,7 @@ import type { DockviewApi } from 'dockview-react';
 import {
   Aperture,
   Box,
+  ChevronDown,
   Expand,
   FileInput,
   FileOutput,
@@ -11,8 +12,6 @@ import {
   Focus,
   FolderOpen,
   Hammer,
-  Layers,
-  Layers3,
   Magnet,
   Map as MapIcon,
   MousePointer2,
@@ -69,7 +68,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from './design-system/ui/dropdown-menu';
 import { Separator } from './design-system/ui/separator';
@@ -85,7 +89,7 @@ import { typing } from './viewport/camera';
 import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Viewport';
 import { Input } from '@/design-system/ui/input';
 import { type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
-import { PANELS, resetLayout, showPanel, Workspace } from './workspace/Workspace';
+import { ALL_PANELS_KEY, PANELS, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
 
 interface Status {
   text: string;
@@ -437,10 +441,10 @@ export default function App() {
       const config = await benchConfig();
       if (config) {
         // Phase 0 timings were taken with the viewport filling the window; solids go through the panels.
-        if (!config.solids) dockRef.current?.getPanel('viewport')?.api.maximize();
+        if (!config.solids && !config.shell) dockRef.current?.getPanel('viewport')?.api.maximize();
         await created.nextFrame();
         await created.nextFrame();
-        await runChecks(created, config, (text) => setStatus({ text }), show, () => sectionRef.current, () => stringsRef.current, () => selectionRef.current);
+        await runChecks(created, config, (text) => setStatus({ text }), show, () => sectionRef.current, () => stringsRef.current, () => selectionRef.current, () => dockRef.current);
       }
     });
     return () => {
@@ -742,6 +746,10 @@ export default function App() {
         e.preventDefault();
         return togglePlan();
       }
+      if (e.key === ALL_PANELS_KEY && plain) {
+        e.preventDefault();
+        return dockRef.current && toggleAllPanels(dockRef.current);
+      }
       if (e.key === '2' && plain) {
         e.preventDefault();
         return toggleSection();
@@ -867,62 +875,81 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={400}>
       <div className="flex h-full flex-col">
+        {/* In groups, left to right: the project, getting data in and out, the string tools, the view, the design panels. */}
         <header className="flex shrink-0 items-center gap-0.5 border-b bg-card px-2 py-1">
-          <span className="mr-2 max-w-56 truncate text-sm font-semibold" title={summary?.path ?? undefined}>
-            {projectName}
-          </span>
-          <ToolButton tip="New project" onClick={onNew}>
-            <FilePlus />
-          </ToolButton>
-          <ToolButton tip="Open a .zdproj project" onClick={onOpen}>
-            <FolderOpen />
-          </ToolButton>
-          <ToolButton tip="Save (Ctrl+S)" onClick={() => onSave(false)}>
-            <Save />
-          </ToolButton>
-          <ToolButton tip="Save as…" onClick={() => onSave(true)}>
-            <SaveAll />
-          </ToolButton>
-          <Separator orientation="vertical" className="mx-1 h-5" />
-          <ToolButton tip="Import surfaces (Vulcan .00t, DXF, XYZ or CSV grids)" onClick={onImportSurface}>
-            <FileInput /> Surface
-          </ToolButton>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" title="Import solids: closed triangulations in Vulcan .00t or DXF files, or a zip or folder of them">
-                <FileInput /> Solids
+              <Button variant="ghost" size="sm" className="max-w-60 font-semibold" title={summary?.path ?? 'Not saved yet'}>
+                <span className="truncate">{projectName}</span>
+                <ChevronDown className="text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              <DropdownMenuItem onSelect={() => onImportSolids('files', false)}>Import a zip or files…</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onImportSolids('folder', false)}>Import a folder…</DropdownMenuItem>
-              <DropdownMenuItem title="Sheets and fins off, cracks joined, holes up to 10 % filled" onSelect={() => onImportSolids('files', true)}>
-                Import and repair a zip or files…
+              <DropdownMenuItem onSelect={onNew}>
+                <FilePlus /> New project
               </DropdownMenuItem>
-              <DropdownMenuItem title="Sheets and fins off, cracks joined, holes up to 10 % filled" onSelect={() => onImportSolids('folder', true)}>
-                Import and repair a folder…
+              <DropdownMenuItem onSelect={onOpen}>
+                <FolderOpen /> Open a project (.zdproj)…
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => onSave(false)}>
+                <Save /> Save <DropdownMenuShortcut>Ctrl+S</DropdownMenuShortcut>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onSave(true)}>
+                <SaveAll /> Save as…
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <ToolButton tip="Import strings (DXF polylines and lines, or CSV with x, y and z columns)" onClick={onImportStrings}>
-            <FileInput /> Strings
+          <ToolButton tip="Save (Ctrl+S)" onClick={() => onSave(false)}>
+            <Save />
           </ToolButton>
-          <ToolButton tip="Import layers of a Deswik drawing (.dcf): strings with their projection details, surfaces and solids" onClick={onImportDeswik}>
-            <FileInput /> Deswik
+          <ToolButton tip="Undo (Ctrl+Z)" disabled={!summary?.can_undo} onClick={onUndo}>
+            <Undo2 />
           </ToolButton>
-          <ToolButton tip="Import from a Spry project (.spry): block solids named by their node paths with Spry's values, and design-layer strings and solids" onClick={onImportSpry}>
-            <FileInput /> Spry
+          <ToolButton tip="Redo (Ctrl+Y)" disabled={!summary?.can_redo} onClick={onRedo}>
+            <Redo2 />
           </ToolButton>
-          <ToolButton tip="Import a Vulcan grid: pick a roof, floor or topography, and the grids of that name come with it" onClick={onImportVulcan}>
-            <Layers3 /> Vulcan grid
-          </ToolButton>
+          <Separator orientation="vertical" className="mx-1 h-5" />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm">
-                <Layers /> Seam model
+              <Button variant="ghost" size="sm" title="Bring in surfaces, grids, strings, solids, Deswik and Spry, and build a seam model">
+                <FileInput /> Import <ChevronDown className="text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
+              <DropdownMenuItem title="Vulcan .00t, DXF 3DFACE or polyface, or an XYZ or CSV grid" onSelect={onImportSurface}>
+                Surfaces…
+              </DropdownMenuItem>
+              <DropdownMenuItem title="Pick a roof, floor or topography, and the grids of that name come with it" onSelect={onImportVulcan}>
+                Vulcan grid…
+              </DropdownMenuItem>
+              <DropdownMenuItem title="DXF polylines and lines, or CSV with x, y and z columns" onSelect={onImportStrings}>
+                Strings…
+              </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger title="Closed triangulations in Vulcan .00t or DXF files, or a zip or folder of them">Solids</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuItem onSelect={() => onImportSolids('files', false)}>A zip or files…</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => onImportSolids('folder', false)}>A folder…</DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Repaired as they come in</DropdownMenuLabel>
+                  <DropdownMenuItem title="Sheets and fins off, cracks joined, holes up to 10 % filled" onSelect={() => onImportSolids('files', true)}>
+                    A zip or files…
+                  </DropdownMenuItem>
+                  <DropdownMenuItem title="Sheets and fins off, cracks joined, holes up to 10 % filled" onSelect={() => onImportSolids('folder', true)}>
+                    A folder…
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem title="Layers of a Deswik drawing: strings with their projection details, surfaces and solids" onSelect={onImportDeswik}>
+                Deswik drawing (.dcf)…
+              </DropdownMenuItem>
+              <DropdownMenuItem title="Block solids named by their node paths with Spry's values, and design-layer strings and solids" onSelect={onImportSpry}>
+                Spry project (.spry)…
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Seam model</DropdownMenuLabel>
               <DropdownMenuItem onSelect={onSuggestSeamDefinition}>Suggest a stack definition (CSV)…</DropdownMenuItem>
               <DropdownMenuItem onSelect={onBuildSeamModel}>Build and check from a definition…</DropdownMenuItem>
             </DropdownMenuContent>
@@ -930,7 +957,7 @@ export default function App() {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm">
-                <FileOutput /> Export
+                <FileOutput /> Export <ChevronDown className="text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
@@ -962,6 +989,7 @@ export default function App() {
           >
             <Magnet /> Snap
           </ToolButton>
+          <Separator orientation="vertical" className="mx-1 h-5" />
           <ToolButton
             tip={plan ? 'Back to the 3D view (T). Or hold Z and drag to tilt up out of plan' : 'Plan view (T): straight down, north up; left-drag pans; the wheel zooms where the cursor is'}
             active={plan}
@@ -1009,15 +1037,6 @@ export default function App() {
           >
             <Scissors /> Section
           </ToolButton>
-          <ToolButton tip="Face design: lines, profiles and rules, run as one" onClick={() => dockRef.current && showPanel(dockRef.current, 'face')}>
-            <MountainSnow /> Face
-          </ToolButton>
-          <ToolButton tip="Builder: pick a line, build one wall or berm from it, edit between steps" onClick={() => dockRef.current && showPanel(dockRef.current, 'builder')}>
-            <Hammer /> Builder
-          </ToolButton>
-          <ToolButton tip="Cut solids: into strips by faces, by a surface, grid or RL, or one between two surfaces" onClick={() => dockRef.current && showPanel(dockRef.current, 'cut')}>
-            <Slice /> Cut
-          </ToolButton>
           {sectionOpen && (
             <>
               <ToolButton tip="Step back ([)" onClick={() => stepSection(-1)}>
@@ -1050,17 +1069,20 @@ export default function App() {
             </>
           )}
           <Separator orientation="vertical" className="mx-1 h-5" />
-          <ToolButton tip="Undo (Ctrl+Z)" disabled={!summary?.can_undo} onClick={onUndo}>
-            <Undo2 />
+          <ToolButton tip="Face design: lines, profiles and rules, run as one" onClick={() => dockRef.current && showPanel(dockRef.current, 'face')}>
+            <MountainSnow /> Face
           </ToolButton>
-          <ToolButton tip="Redo (Ctrl+Y)" disabled={!summary?.can_redo} onClick={onRedo}>
-            <Redo2 />
+          <ToolButton tip="Builder: pick a line, build one wall or berm from it, edit between steps" onClick={() => dockRef.current && showPanel(dockRef.current, 'builder')}>
+            <Hammer /> Builder
+          </ToolButton>
+          <ToolButton tip="Cut solids: into strips by faces, by a surface, grid or RL, or one between two surfaces" onClick={() => dockRef.current && showPanel(dockRef.current, 'cut')}>
+            <Slice /> Cut
           </ToolButton>
           <div className="ml-auto">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm">
-                  <PanelsTopLeft /> Panels
+                  <PanelsTopLeft /> Panels <ChevronDown className="text-muted-foreground" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -1070,6 +1092,9 @@ export default function App() {
                   </DropdownMenuItem>
                 ))}
                 <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => dockRef.current && toggleAllPanels(dockRef.current)}>
+                  Hide every panel, or bring them back <DropdownMenuShortcut>{ALL_PANELS_KEY}</DropdownMenuShortcut>
+                </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => dockRef.current && resetLayout(dockRef.current)}>Reset layout</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

@@ -872,6 +872,9 @@ pub struct BenchConfig {
     /// With `--select`, several objects selected by a box, Ctrl-click and Esc in 3D and plan, and zoomed to with F and
     /// Shift+F (decision 0050).
     select: bool,
+    /// With `--shell`, panels minimised to strips and brought back, every panel hidden with the ` key, and the toolbar's
+    /// groups. The layout saved on the machine is put back after.
+    shell: bool,
 }
 
 /// Present when the app was started with `--bench`: the viewport then runs Checks 1, 3 and 4
@@ -917,6 +920,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         builder: args.iter().any(|a| a == "--builder"),
         cut: args.iter().any(|a| a == "--cut"),
         select: args.iter().any(|a| a == "--select"),
+        shell: args.iter().any(|a| a == "--shell"),
     })
 }
 

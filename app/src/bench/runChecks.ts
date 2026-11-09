@@ -27,6 +27,8 @@ import {
 import { loadStaged } from '../viewport/load';
 import { takePalettePictures, takePictures } from './pictures';
 import { checkSelect } from './selectCheck';
+import { checkShell } from './shellCheck';
+import type { DockviewApi } from 'dockview-react';
 import { PolylineTool } from '../viewport/PolylineTool';
 import type { SectionView } from '../viewport/section';
 import type { StringLayer } from '../viewport/strings';
@@ -57,6 +59,7 @@ export async function runChecks(
   section: () => SectionView | null,
   strings: () => StringLayer | null,
   selection: () => string[],
+  dock: () => DockviewApi | null,
 ): Promise<void> {
   const tool = new PolylineTool(viewport);
   const canvas = viewport.renderer.domElement;
@@ -84,6 +87,8 @@ export async function runChecks(
       results.cut = await checkCut(viewport, log, show, strings);
     } else if (config.select) {
       results.select = await checkSelect(viewport, log, show, selection);
+    } else if (config.shell) {
+      results.shell = await checkShell(viewport, log, dock);
     } else if (config.solids) {
       results.solids = await checkSolids(viewport, config, config.solids, log, show, section, strings);
     } else {
