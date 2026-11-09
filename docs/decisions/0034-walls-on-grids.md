@@ -145,3 +145,41 @@ and now it can: the road is the one it was, 200 m from RL 100 to 120, and stops 
 - **A road's top end across an oblique crest** leaving a lone triangle: one face on PIT C.
 - **Every horizon's Strip 2:** a crest doesn't close on a wall where the U roof lies on the U floor.
 - **Speed:** roads held at the end on grids take up to 13.6 s a strip on PIT C.
+
+## Cracks where a wall has no height (2026-11-09)
+
+Tim picked the grid wall faults as next (2026-11-09). On main (`9ee4de0`) the test pit (`testdata/synthetic/grid_template.py`)
+had **22 faults**. Fault 3 had all but gone: every road reached the top but one, on Grid toe to RLs, stopped by a berm that
+folds over itself. The rest:
+
+| Design | Faults | What |
+|---|---:|---|
+| Grid walls | 3 | Strips 1 to 3 not one sheet |
+| Grid ramps | 3 | Strips 1 to 3 not one sheet |
+| Flat toe to grids | 2 | Strips 1 and 2 not one sheet |
+| Grid toe to RLs | 3 | Strips 8 and 9 with triangles crossing; Ramp A on Strip 7 stopped by a berm that folds over itself |
+| Every horizon | 8 | Strip 2 refused (a crest doesn't close on a wall); 7 faces not one sheet |
+| Grid switchbacks | 3 | Strips 1 to 3 not one sheet |
+
+**Fault 5 was a crack, not a missing triangle.** Each extra loop (`testdata/synthetic/sheet_loops.py` lists them) was three
+open edges on one straight line, to the micrometre, 1.3 to 12 m long. Where a wall has no height its crest runs along the
+berm's line with its own vertices, so a corner of one piece lay part way along an edge of the other, and the face's sheet was
+welded only where corners coincide. **The sheet is now stitched as `face.join` stitches faces** (`face_sheet` in
+`zd-geom/src/face.rs`, `stitch` from `strips.rs`, at the 1 µm weld): an edge with another piece's corner on it is split
+there. Nothing moves and no point is added. Test: `a_berm_corner_part_way_along_a_wall_edge_joins_it`, a wall and a berm
+sharing a 10 m line with a berm corner 3.7 m along it: one loop, 150 m² in plan, the same vertices.
+
+**After: 5 faults**, with times as they were (Grid walls 906 ms, Grid ramps 11.4 s for 10 strips):
+
+| Design | Faults | What's left |
+|---|---:|---|
+| Grid ramps | 1 | Strip 1: a real hole, a sliver 30 m long whose third corner is 56 mm off the line, where Ramp B climbs through walls of no height near (2902, 190) |
+| Grid toe to RLs | 3 | Strips 8 and 9 with triangles crossing, at the RL 50 crest where Ramp A comes out; Ramp A on Strip 7, as before |
+| Every horizon | 1 | Strip 2 refused, as before |
+
+**What's behind the crossings and the hole: points a hair apart in a wall's own mesh.** Pairs of vertices 0.05 to 10 mm
+apart, too far for the 1 µm weld, give sliver triangles, and at the two crossings they fold. Most pairs are inside one wall's
+mesh, at its crest and hip corners, not between pieces: 651 pairs over Grid walls, which has no roads, 404 over RL
+switchbacks, and 1,949 over Grid toe to RLs, where the road cuts add more. A road's top on the RL 50 crest lands at RL
+49.9982, 0.6 mm off the crest's own corner. The fix belongs where the wall mesh and the road cuts make those corners, so the
+pieces share them, not in a looser weld that moves points. That's next.
