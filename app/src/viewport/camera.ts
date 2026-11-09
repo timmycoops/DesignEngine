@@ -6,7 +6,8 @@
 //
 // 3D: left drag turns about the point under the cursor, right drag pans, middle drag dollies, and the
 // wheel zooms towards the cursor. Plan and section: left or right drag pans, the wheel zooms about the
-// cursor; neither turns.
+// cursor; neither turns. Holding Z (Spry's hold to turn) makes a left drag turn in plan too: the view tilts
+// out of plan into 3D about the point under the cursor.
 import * as THREE from 'three/webgpu';
 import type { Vec3 } from '../bridge';
 
@@ -16,6 +17,14 @@ const TURN_LIMIT = 0.01;
 /** A wheel tick of 100 (one notch in most browsers) moves 5 % of the way to what is under the cursor. */
 const ZOOM_PER_HUNDRED = 0.95;
 
+/** The key held to turn about the cursor with a left drag, in plan too (Spry's). */
+export const TURN_KEY = 'z';
+
+/** A key typed into a text box or a list, where a letter isn't a shortcut. */
+export function typing(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable);
+}
+
 /** What the controller needs from the viewport. */
 export interface CameraHost {
   readonly renderer: { readonly domElement: HTMLCanvasElement };
@@ -23,6 +32,11 @@ export interface CameraHost {
   readonly camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   /** Plan or section: a view that pans with the left button and does not turn. */
   readonly flatView: boolean;
+  /** Plan, and not a section, which is never turned. */
+  readonly planView: boolean;
+  readonly sectionView: boolean;
+  /** Leaves plan for 3D looking straight down on the same spot at the same scale, north up, to be turned from there. */
+  tiltFromPlan(): void;
   /** What is drawn under a screen point, scene-local. */
   readonly pickPoint?: (clientX: number, clientY: number) => Promise<Vec3 | null>;
   readonly pivotMark: { show(point: THREE.Vector3, colour: number): void; hide(): void };
@@ -37,6 +51,11 @@ export class CameraController {
   readonly target = new THREE.Vector3();
   /** Off while something else owns the pointer, such as a vertex being dragged. */
   enabled = true;
+  /** The turn key is held: a left drag turns, in plan too. Others that take a left press leave it to the camera. */
+  get turnHeld(): boolean {
+    return this.turnKey;
+  }
+  private turnKey = false;
 
   private drag: Drag | null = null;
   /** Wheel ticks waiting on a pick: their zoom scales multiply, and the latest cursor is used. */
@@ -52,6 +71,9 @@ export class CameraController {
     this.canvas.addEventListener('pointercancel', this.pointerUp);
     this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
     this.canvas.addEventListener('contextmenu', this.noMenu);
+    window.addEventListener('keydown', this.keyDown);
+    window.addEventListener('keyup', this.keyUp);
+    window.addEventListener('blur', this.letGo);
   }
 
   /** Points the camera at the target; run every frame, and after moving either by hand. */
@@ -66,12 +88,35 @@ export class CameraController {
     this.canvas.removeEventListener('pointercancel', this.pointerUp);
     this.canvas.removeEventListener('wheel', this.onWheel);
     this.canvas.removeEventListener('contextmenu', this.noMenu);
+    window.removeEventListener('keydown', this.keyDown);
+    window.removeEventListener('keyup', this.keyUp);
+    window.removeEventListener('blur', this.letGo);
   }
 
   private noMenu = (e: Event): void => e.preventDefault();
 
+  private keyDown = (e: KeyboardEvent): void => {
+    if (e.key.toLowerCase() !== TURN_KEY || e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return;
+    this.holdTurn(true);
+  };
+
+  private keyUp = (e: KeyboardEvent): void => {
+    if (e.key.toLowerCase() === TURN_KEY) this.holdTurn(false);
+  };
+
+  /** The window lost the focus with the key down: its key-up never comes. */
+  private letGo = (): void => this.holdTurn(false);
+
+  private holdTurn(held: boolean): void {
+    if (held === this.turnKey) return;
+    this.turnKey = held;
+    this.canvas.style.cursor = held ? 'grab' : '';
+  }
+
   private pointerDown = (e: PointerEvent): void => {
     if (!this.enabled || this.drag) return;
+    // Turning from plan: into 3D first, looking straight down, so the pick and the turn are in the view turned.
+    if (e.button === 0 && this.turnKey && this.host.planView && !this.host.sectionView) this.host.tiltFromPlan();
     const flat = this.host.flatView;
     const kind = e.button === 1 ? 'dolly' : e.button === 2 || (e.button === 0 && flat) ? 'pan' : e.button === 0 ? 'turn' : null;
     if (!kind) return;

@@ -1,7 +1,9 @@
 // `--select`: selecting several objects and zooming to them (decision 0050), driven as Tim would, through pointer and
 // key events on the canvas and the window: a Shift-drag box in 3D and in plan, Ctrl+Shift to add a box, Ctrl-click on
 // solids and a string, F and Shift+F, Esc. It reads back what the app selected, where the camera went, and the colour
-// the selected solids are drawn in. New projects colour by RL with no contour lines, which it checks first.
+// the selected solids are drawn in. New projects colour by RL with no contour lines, which it checks first. Then the
+// view keys: T into plan and out, Z held with a left drag tilting out of plan into 3D about the point under the cursor,
+// 2 for a section, and E to zoom to everything.
 import * as THREE from 'three/webgpu';
 import { objectsBounds, projectSummary, type ProjectSummary, runCommand, type Vec3 } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
@@ -86,6 +88,8 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
     window.dispatchEvent(new KeyboardEvent('keydown', { key: name, shiftKey: shift, bubbles: true }));
     await settle();
   };
+  /** The toolbar's plan button says Plan or 3D. */
+  const toolbarSays = (word: string) => [...document.querySelectorAll('header button')].some((b) => b.textContent?.trim() === word);
   /** The screen box round some cubes, a few pixels out. */
   const around = (ks: number[]): [[number, number], [number, number]] => {
     const points = ks.flatMap((k) => cornersOf(k).map(screen));
@@ -169,6 +173,71 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
   expect('a box round every block in plan takes all six and not the topography under them', same(selection(), cubes), { selected: names(selection()), ms: everythingBox });
   viewport.setPlanView(false);
   await key('Escape');
+
+  // T flips plan and 3D, and the toolbar follows.
+  viewport.fitView();
+  await settle();
+  await key('t');
+  expect('T goes into plan, and the toolbar says so', viewport.planView && toolbarSays('Plan'), { plan: viewport.planView });
+  await key('t');
+  expect('T again comes back to 3D', !viewport.planView && toolbarSays('3D'), { plan: viewport.planView });
+
+  // Z held, a left drag in plan: out of plan into 3D, turning about what's under the cursor, which stays put on screen.
+  await key('t');
+  viewport.fitView();
+  await settle();
+  const press = screen(topOf(2));
+  const under = await viewport.pickPoint?.(press[0], press[1]);
+  const before = selection();
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', bubbles: true }));
+  pointer('pointerdown', press[0], press[1], {});
+  await wait(100);
+  for (let k = 1; k <= 10; k++) pointer('pointermove', press[0] + 8 * k, press[1] - 15 * k, {});
+  await wait(100);
+  pointer('pointerup', press[0] + 80, press[1] - 150, {});
+  window.dispatchEvent(new KeyboardEvent('keyup', { key: 'z', bubbles: true }));
+  await settle();
+  const forward = viewport.camera.getWorldDirection(new THREE.Vector3());
+  const tilt = THREE.MathUtils.radToDeg(forward.angleTo(new THREE.Vector3(0, 0, -1)));
+  expect('Z and a drag in plan tilt out of it into 3D, and the toolbar says 3D', !viewport.planView && toolbarSays('3D') && tilt > 10, { tilt_from_straight_down_deg: Number(tilt.toFixed(1)) });
+  const pivot = under ? viewport.projectToClient(new THREE.Vector3(...under)) : null;
+  const moved = pivot ? Math.hypot(pivot[0] - press[0], pivot[1] - press[1]) : null;
+  expect('the point under the cursor stays put through the tilt (px)', moved !== null && moved < 2, moved === null ? null : Number(moved.toFixed(3)));
+  expect('Z and a drag select nothing', same(selection(), before), names(selection()));
+  // Let go of Z: in plan a left drag pans again.
+  await key('t');
+  const panFrom = viewport.controls.target.clone();
+  pointer('pointerdown', press[0], press[1], {});
+  for (let k = 1; k <= 4; k++) pointer('pointermove', press[0] + 20 * k, press[1], {});
+  pointer('pointerup', press[0] + 80, press[1], {});
+  await settle();
+  expect('without Z, a left drag in plan pans and stays in plan', viewport.planView && viewport.controls.target.distanceTo(panFrom) > 1, Number(viewport.controls.target.distanceTo(panFrom).toFixed(2)));
+  viewport.setPlanView(false);
+
+  // 2 starts a section's picking and stops it; with two points picked a section opens, and 2 closes it.
+  const footer = () => document.querySelector('footer')?.textContent ?? '';
+  viewport.fitView();
+  await settle();
+  await key('2');
+  expect('2 starts picking a section', footer().includes('Section: pick the first point'), footer().slice(0, 60));
+  await key('2');
+  expect('2 again stops picking', footer().startsWith('Select:'), footer().slice(0, 60));
+  await key('2');
+  await click(screen(topOf(0)));
+  await click(screen(topOf(5)));
+  for (let k = 0; k < 40 && !toolbarSays('Fill'); k++) await wait(100);
+  expect('two points picked open a section', toolbarSays('Fill'));
+  await key('2');
+  expect('2 closes the section', !toolbarSays('Fill'));
+
+  // E zooms to everything, from wherever the view is.
+  await settle();
+  const all = viewport.bounds.getCenter(new THREE.Vector3());
+  viewport.focusOn([all.x + 300, all.y - 200, all.z], 100);
+  await settle();
+  const away = viewport.controls.target.distanceTo(all);
+  await key('e');
+  expect('E zooms to everything', away > 100 && viewport.controls.target.distanceTo(all) < 1e-6, { before_m: Number(away.toFixed(1)), after_m: viewport.controls.target.distanceTo(all) });
 
   results.failures = failures;
   return results;

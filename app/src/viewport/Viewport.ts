@@ -46,6 +46,8 @@ export const FIELD_OF_VIEW_DEFAULT = 6;
 export const FIELD_OF_VIEW_MIN = 2;
 export const FIELD_OF_VIEW_MAX = 60;
 const FIELD_OF_VIEW_KEY = 'zd.view.fieldOfView';
+/** How far from straight down the view starts when it tilts out of plan (radians): just past where a turn stops. */
+const TILT_FROM_PLAN = 0.011;
 /** How far off the 3D view frames the scene, in scene radii, at 45 degrees; other fields of view scale it. */
 const FIT_RADII_AT_45 = 1.9;
 /** The least a framed box is taken to span either side of its middle, so a short line isn't filled to the edges (m). */
@@ -123,6 +125,8 @@ export class Viewport {
   private beforeSection = new THREE.Vector3();
   /** The 3D view's direction from its target, kept while in plan view. */
   private savedDirection = new THREE.Vector3(0.45, -0.75, 0.6).normalize();
+  /** The view went into plan or out of it, by a button, a key or a turn. */
+  onPlanChange?: (plan: boolean) => void;
 
   private constructor(
     readonly renderer: THREE.WebGPURenderer,
@@ -302,6 +306,22 @@ export class Viewport {
    */
   setPlanView(on: boolean): void {
     if (on === this.plan) return;
+    this.switchPlan(on);
+    this.onPlanChange?.(on);
+  }
+
+  /**
+   * Leaves plan for 3D looking straight down on the same spot at the same scale, north up, as holding the turn key
+   * and dragging does: the turn then tilts it from there. Just short of straight down, where a turn stops.
+   */
+  tiltFromPlan(): void {
+    if (!this.plan || this.sectioned) return;
+    this.savedDirection.set(0, -Math.sin(TILT_FROM_PLAN), Math.cos(TILT_FROM_PLAN));
+    this.setPlanView(false);
+    this.perspective.updateMatrixWorld();
+  }
+
+  private switchPlan(on: boolean): void {
     const target = this.controls.target.clone();
     const tan = this.halfTan;
     if (on) {
