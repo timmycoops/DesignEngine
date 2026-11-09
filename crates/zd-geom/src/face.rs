@@ -151,6 +151,8 @@ pub struct Face {
     pub met: Vec<MetBoxes>,
     /// Switchbacks whose tops are too close for both to turn back on one berm.
     pub too_close: Vec<TooClose>,
+    /// Corners of the face's pieces made one with another within a millimetre, and the furthest any was apart (m).
+    pub welded: (usize, f64),
 }
 
 /// Two switchbacks facing each other on a berm whose roads' tops are too close for both to turn on it (decision 0047):
@@ -460,7 +462,8 @@ fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, directi
             Ok(()) => {
                 face.no_roads.extend(held_back.into_values());
                 face.no_roads.sort_by_key(|n| n.ramp);
-                return Ok(Face { surface: split_at(weld(&face.meshes), &face.meets), benches: face.benches, steps: face.steps, roads: face.roads, no_roads: face.no_roads, berm_line: face.berm_line, edits: face.edits, join_notes: face.join_notes, met: face.met, too_close: face.too_close });
+                let (surface, welded) = face_sheet(&face.meshes, &face.meets);
+                return Ok(Face { surface, welded, benches: face.benches, steps: face.steps, roads: face.roads, no_roads: face.no_roads, berm_line: face.berm_line, edits: face.edits, join_notes: face.join_notes, met: face.met, too_close: face.too_close });
             }
             Err(e @ GeomError::Refused(_)) => return Err(e),
             Err(e) => {
@@ -613,9 +616,15 @@ pub(crate) fn going_down(why: &str) -> String {
     out
 }
 
-/// One mesh, sharing vertices within a micrometre. A wall and a berm work out the same point apart, so the
+/// One mesh, sharing vertices within a micrometre of each other. A wall and a berm work out the same point apart, so the
 /// two can land either side of a rounding step: each point looks in the cells round its own.
 pub(crate) fn weld<'a>(meshes: impl IntoIterator<Item = &'a TriMesh>) -> TriMesh {
+    weld_within(meshes, WELD).0
+}
+
+/// The same within `tolerance`, with how many corners were made one with another and the furthest any was (m).
+fn weld_within<'a>(meshes: impl IntoIterator<Item = &'a TriMesh>, tolerance: f64) -> (TriMesh, usize, f64) {
+    let (mut merged, mut furthest) = (0, 0.0_f64);
     let mut out = TriMesh::default();
     let mut numbered: HashMap<[i64; 3], u32> = HashMap::new();
     for mesh in meshes {
@@ -623,13 +632,24 @@ pub(crate) fn weld<'a>(meshes: impl IntoIterator<Item = &'a TriMesh>) -> TriMesh
             .vertices
             .iter()
             .map(|p| {
-                let cell = p.map(|c| (c / WELD).round() as i64);
-                let same = |v: &u32| out.vertices[*v as usize].iter().zip(p).all(|(a, b)| (a - b).abs() <= WELD);
-                cells_round(cell).find_map(|c| numbered.get(&c).filter(|v| same(v)).copied()).unwrap_or_else(|| {
-                    out.vertices.push(*p);
-                    numbered.insert(cell, out.vertices.len() as u32 - 1);
-                    out.vertices.len() as u32 - 1
-                })
+                let cell = p.map(|c| (c / tolerance).round() as i64);
+                let apart = |q: [f64; 3]| ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)).sqrt();
+                let same = |v: &u32| apart(out.vertices[*v as usize]) <= tolerance;
+                match cells_round(cell).find_map(|c| numbered.get(&c).filter(|v| same(v)).copied()) {
+                    Some(v) => {
+                        let gap = apart(out.vertices[v as usize]);
+                        if gap > WELD {
+                            merged += 1;
+                            furthest = furthest.max(gap);
+                        }
+                        v
+                    }
+                    None => {
+                        out.vertices.push(*p);
+                        numbered.insert(cell, out.vertices.len() as u32 - 1);
+                        out.vertices.len() as u32 - 1
+                    }
+                }
             })
             .collect();
         for t in &mesh.triangles {
@@ -639,14 +659,28 @@ pub(crate) fn weld<'a>(meshes: impl IntoIterator<Item = &'a TriMesh>) -> TriMesh
             }
         }
     }
-    out
+    (out, merged, furthest)
 }
+
+/// A face's walls and berms as one sheet. They're welded where their corners meet, split where a road's top `meets`
+/// them, and stitched where a corner of one lies part way along an edge of another, as it does where a wall has no
+/// height and its crest runs along the berm's line with its own vertices (fault 5 of decision 0034: a sliver of a
+/// crack, with no area, that left the face in more than one loop). Nothing moves.
+fn face_sheet(meshes: &[TriMesh], meets: &[[f64; 3]]) -> (TriMesh, (usize, f64)) {
+    let (welded, merged, furthest) = weld_within(meshes, SHEET_WELD);
+    (crate::strips::stitch(split_at(welded, meets, SHEET_WELD), SHEET_WELD).0, (merged, furthest))
+}
+
+/// How close two corners of a face's pieces are to be made one (m), as `face.join` welds a strip's faces (0049). A
+/// corner worked out two ways, by a road climbing the wall and by the wall above it, or a wall that only just survives
+/// to the crest, lands a hair from itself, and the sliver between the two can fold.
+const SHEET_WELD: f64 = 1e-3;
 
 /// A welded sheet with every triangle that has one of `points` part way along an edge split there, so the pieces that
 /// meet at the point share it. Nothing moves.
-fn split_at(mut mesh: TriMesh, points: &[[f64; 3]]) -> TriMesh {
+fn split_at(mut mesh: TriMesh, points: &[[f64; 3]], tolerance: f64) -> TriMesh {
     for p in points {
-        let v = mesh.vertices.iter().position(|q| q.iter().zip(p).all(|(a, b)| (a - b).abs() <= WELD)).unwrap_or_else(|| {
+        let v = mesh.vertices.iter().position(|q| q.iter().zip(p).all(|(a, b)| (a - b).abs() <= tolerance)).unwrap_or_else(|| {
             mesh.vertices.push(*p);
             mesh.vertices.len() - 1
         }) as u32;
@@ -657,7 +691,7 @@ fn split_at(mut mesh: TriMesh, points: &[[f64; 3]]) -> TriMesh {
                 a != v && b != v && {
                     let (pa, pb) = (mesh.vertices[a as usize], mesh.vertices[b as usize]);
                     let (along, gap) = nearest_along(pa, pb, *p);
-                    along > 0.0 && along < 1.0 && gap <= WELD && (pa[2] + along * (pb[2] - pa[2]) - p[2]).abs() <= WELD
+                    along > 0.0 && along < 1.0 && gap <= tolerance && (pa[2] + along * (pb[2] - pa[2]) - p[2]).abs() <= tolerance
                 }
             }) else {
                 continue;
@@ -2300,6 +2334,55 @@ mod tests {
         let joined = weld(&[left, right]);
         assert_eq!(joined.vertices.len(), 4);
         assert_eq!(crate::boundary_loops(&joined).unwrap().len(), 1);
+    }
+
+    /// A wall of no height along a stretch leaves its crest on the berm's line with its own vertices: the berm has a
+    /// corner part way along the wall's top edge. Welded alone that's a crack, a loop of three edges on one line with no
+    /// area, so the face isn't one sheet (fault 5 of decision 0034). The face's sheet splits the wall's edge at the
+    /// corner: one loop, the same 10 m by 10 m and 10 m by 5 m (150 m² in plan), and no point moved or added.
+    #[test]
+    fn a_berm_corner_part_way_along_a_wall_edge_joins_it() {
+        let wall = TriMesh::new(vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 10.0, 10.0], [0.0, 10.0, 10.0]], vec![[0, 1, 2], [0, 2, 3]]);
+        // The berm's lower edge runs along the wall's top edge, with a corner 3.7 m along it.
+        let berm = TriMesh::new(
+            vec![[0.0, 10.0, 10.0], [3.7, 10.0, 10.0], [10.0, 10.0, 10.0], [10.0, 15.0, 10.0], [0.0, 15.0, 10.0]],
+            vec![[0, 1, 4], [1, 3, 4], [1, 2, 3]],
+        );
+        let welded = weld(&[wall.clone(), berm.clone()]);
+        // The crack touches the outer edge at the wall's corner, so it isn't even a set of separate loops.
+        assert!(crate::boundary_loops(&welded).map_or(true, |loops| loops.len() > 1), "welded alone, the corner leaves a crack");
+        let (sheet, (merged, _)) = face_sheet(&[wall, berm], &[]);
+        assert_eq!(merged, 0, "nothing a hair apart to weld");
+        assert_eq!(crate::boundary_loops(&sheet).unwrap().len(), 1, "one sheet");
+        assert_eq!(sheet.vertices, welded.vertices, "nothing moved or added");
+        let plan_area: f64 = sheet
+            .triangles
+            .iter()
+            .map(|t| {
+                let [a, b, c] = t.map(|v| sheet.vertices[v as usize]);
+                ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() / 2.0
+            })
+            .sum();
+        assert!((plan_area - 150.0).abs() < 1e-9, "{plan_area}");
+    }
+
+    /// A corner worked out two ways lands a hair from itself: here the berm's corner is 0.4 mm along from the wall's.
+    /// Within a millimetre it's made one, so the sheet is one loop, and the face says so: one corner, 0.4 mm. At 2 mm the
+    /// corners are left where they are.
+    #[test]
+    fn a_corner_a_hair_from_itself_is_made_one_within_a_millimetre() {
+        let wall = TriMesh::new(vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 10.0, 10.0], [0.0, 10.0, 10.0]], vec![[0, 1, 2], [0, 2, 3]]);
+        let berm = |off: f64| TriMesh::new(vec![[0.0, 10.0, 10.0], [10.0 + off, 10.0, 10.0], [10.0, 15.0, 10.0], [0.0, 15.0, 10.0]], vec![[0, 1, 2], [0, 2, 3]]);
+        let (sheet, (merged, furthest)) = face_sheet(&[wall.clone(), berm(4e-4)], &[]);
+        assert_eq!(crate::boundary_loops(&sheet).unwrap().len(), 1);
+        assert_eq!((sheet.vertices.len(), merged), (6, 1));
+        assert!((furthest - 4e-4).abs() < 1e-12, "{furthest}");
+        assert!(sheet.vertices.iter().all(|p| p[0] <= 10.0), "the first worked out stays: nothing goes past the wall's corner");
+
+        // The wall's corner lies on the berm's longer edge, so the two still meet there, with a 2 mm jog past it.
+        let (apart, (merged, _)) = face_sheet(&[wall, berm(2e-3)], &[]);
+        assert_eq!((apart.vertices.len(), merged), (7, 0), "2 mm apart is two corners");
+        assert_eq!(crate::boundary_loops(&apart).unwrap().len(), 1);
     }
 
     #[test]

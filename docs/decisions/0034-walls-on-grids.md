@@ -145,3 +145,78 @@ and now it can: the road is the one it was, 200 m from RL 100 to 120, and stops 
 - **A road's top end across an oblique crest** leaving a lone triangle: one face on PIT C.
 - **Every horizon's Strip 2:** a crest doesn't close on a wall where the U roof lies on the U floor.
 - **Speed:** roads held at the end on grids take up to 13.6 s a strip on PIT C.
+
+## Cracks where a wall has no height (2026-11-09)
+
+Tim picked the grid wall faults as next (2026-11-09). On main (`9ee4de0`) the test pit (`testdata/synthetic/grid_template.py`)
+had **22 faults**. Fault 3 had all but gone: every road reached the top but one, on Grid toe to RLs, stopped by a berm that
+folds over itself. The rest:
+
+| Design | Faults | What |
+|---|---:|---|
+| Grid walls | 3 | Strips 1 to 3 not one sheet |
+| Grid ramps | 3 | Strips 1 to 3 not one sheet |
+| Flat toe to grids | 2 | Strips 1 and 2 not one sheet |
+| Grid toe to RLs | 3 | Strips 8 and 9 with triangles crossing; Ramp A on Strip 7 stopped by a berm that folds over itself |
+| Every horizon | 8 | Strip 2 refused (a crest doesn't close on a wall); 7 faces not one sheet |
+| Grid switchbacks | 3 | Strips 1 to 3 not one sheet |
+
+**Fault 5 was a crack, not a missing triangle.** Each extra loop (`testdata/synthetic/sheet_loops.py` lists them) was three
+open edges on one straight line, to the micrometre, 1.3 to 12 m long. Where a wall has no height its crest runs along the
+berm's line with its own vertices, so a corner of one piece lay part way along an edge of the other, and the face's sheet was
+welded only where corners coincide. **The sheet is now stitched as `face.join` stitches faces** (`face_sheet` in
+`zd-geom/src/face.rs`, `stitch` from `strips.rs`, at the 1 µm weld): an edge with another piece's corner on it is split
+there. Nothing moves and no point is added. Test: `a_berm_corner_part_way_along_a_wall_edge_joins_it`, a wall and a berm
+sharing a 10 m line with a berm corner 3.7 m along it: one loop, 150 m² in plan, the same vertices.
+
+**After: 5 faults**, with times as they were (Grid walls 906 ms, Grid ramps 11.4 s for 10 strips):
+
+| Design | Faults | What's left |
+|---|---:|---|
+| Grid ramps | 1 | Strip 1: a real hole, a sliver 30 m long whose third corner is 56 mm off the line, where Ramp B climbs through walls of no height near (2902, 190) |
+| Grid toe to RLs | 3 | Strips 8 and 9 with triangles crossing, at the RL 50 crest where Ramp A comes out; Ramp A on Strip 7, as before |
+| Every horizon | 1 | Strip 2 refused, as before |
+
+**What's behind the crossings and the hole: points a hair apart in a wall's own mesh.** Pairs of vertices 0.05 to 10 mm
+apart, too far for the 1 µm weld, give sliver triangles, and at the two crossings they fold. Most pairs are inside one wall's
+mesh, at its crest and hip corners, not between pieces: 651 pairs over Grid walls, which has no roads, 404 over RL
+switchbacks, and 1,949 over Grid toe to RLs, where the road cuts add more. A road's top on the RL 50 crest lands at RL
+49.9982, 0.6 mm off the crest's own corner. The fix belongs where the wall mesh and the road cuts make those corners, so the
+pieces share them, not in a looser weld that moves points. That's next.
+
+## Corners a hair apart, made one within a millimetre (2026-11-09)
+
+Tim: "Go after the near duplicates". The smallest case is a toe registered to a rolling floor, walls up to RLs, with no
+grids above and no roads: 102 pairs of corners closer than a centimetre, 91 of them joined by an edge. Where the toe bends a
+little, a wall only just survives to the crest and its top edge is a fraction of a millimetre long. A toe on a level RL or a
+dipping plane gives none. With roads there are more: a road climbs the wall's triangles at grade to the crest, and the wall
+above it is projected again from the road's top, so the same corner is worked out two ways (RL 49.9982 against 50 at the
+crossing on Strip 9 of Grid toe to RLs). Making every path give the same point would be a rework of the road climb.
+
+**So a face's pieces are now welded within 1 mm**, as `face.join` welds a strip's faces (0049) with the repair step's weld,
+by true distance. The wall code already takes anything narrower than 1 mm as having no width (`LEAST_WIDTH`). The sheet is
+then split and stitched at the same tolerance (`SHEET_WELD` in `zd-geom/src/face.rs`). Every merge is said: each face's run
+says how many corners it made one and the furthest apart, as "2 corners within 1 mm of another made one, the furthest
+0.41 mm".
+
+- **Tests:** `a_corner_a_hair_from_itself_is_made_one_within_a_millimetre` (a berm corner 0.4 mm off the wall's is made
+  one and reported, 0.4 mm; 2 mm off is left as two), and `a_toe_on_a_rolling_floor_leaves_no_corners_a_hair_apart` in
+  `zd-commands/tests/walls.rs` (the smallest case above: one sheet, nothing crossing, no two corners closer than 1 mm, and
+  the run's report).
+- **Test pit: 5 faults to 4.** Both faces with crossing triangles on Grid toe to RLs are clean. Near pairs left (1 to 10 mm
+  apart): Grid walls 651 to 198, Grid toe to RLs 1,949 to 53. Times as before.
+- **PIT B** (`fifteen_strips_on_real_grids`, Tim's bent toe, 15 strips): 16 solids, every one closed and manifold, adding up
+  to 4,260,703.445 m³, the same as on 2026-11-08. Two of the 30 faces needed the weld (2 and 4 corners, the furthest
+  0.44 mm). Projecting all 30 faces took 146 ms.
+
+**Left, 4 faults:**
+- **Grid ramps, Strip 1:** a real hole, 30 m long, 56 mm wide, where Ramp B climbs through walls of no height near (2902, 190).
+- **Grid toe to RLs, Strip 7:** Ramp A stopped by a berm that folds over itself near (-128, 558), in the run-on west of the strip.
+- **Every horizon, Strip 2:** refused, a crest that doesn't close on a wall where the U roof lies on the U floor.
+- **Every horizon, Strip 3:** a sliver hole 0.3 m long, its corners 1.0 to 1.1 mm apart, just past the weld near (1600, 291).
+  A weld that compared each of east, north and RL to 1 mm on its own closed it; by true distance it's left. `face.join`
+  fills a gap like it when the strip's faces are joined, and says so.
+
+**Noticed, not fixed:** the same design run twice can give a slightly different number of triangles (Grid toe to RLs: 40,557
+and 40,582; 40,621 and 40,600 before this change, when stitching could only add triangles). Something in building faces
+with roads depends on the order a hash map gives. The faults are the same each run.
