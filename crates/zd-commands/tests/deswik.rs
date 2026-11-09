@@ -151,7 +151,7 @@ fn a_drawing_comes_in_with_its_layers_strings_solids_and_surfaces() {
     let Body::Solid(c) = &cavity.body else { panic!("a solid") };
     assert!((c.volume() - (50_000.0 - 4.5)).abs() < 1e-6, "{} m3", c.volume());
     let lines = record.messages.join("\n");
-    assert!(lines.contains("CAVITY 1: repair at 1 mm; 0 triangles flipped to agree with their neighbours and face up, or out where closed (2 patches, 2 closed); 1 closed patches inside others wound to face in, as cavities"), "{lines}");
+    assert!(lines.contains("CAVITY 1: corners as written; 0 triangles flipped to agree with their neighbours and face up, or out where closed (2 patches, 2 closed); 1 closed patches inside others wound to face in, as cavities"), "{lines}");
     assert!(lines.contains("1 closed patches inside others wound to face in, as cavities"), "{lines}");
     assert!(!lines.contains("differs from Deswik's own"), "{lines}");
     assert!(lines.contains("Deswik: 4 layers read (VectorDraw 10.1004.0.3), 1 strings and 3 meshes of 18 faces; 12 four-cornered faces split in two"), "{lines}");

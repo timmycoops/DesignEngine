@@ -80,7 +80,7 @@ impl Command for ImportSpry {
                 Field::new("layer", FieldType::Layer, "Optional; by default each object goes on a layer named after its Solid field or design layer"),
                 Field::new("meshes", FieldType::Text, "auto (closed meshes solids, open ones surfaces), solids, surfaces or none (strings only); auto by default"),
                 Field::new("volume_field", FieldType::Text, "The field beside each Solid field holding Spry's volume; Volume by default"),
-                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "Weld vertices closer than this; 1 mm by default"),
+                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "The most a corner may move to close a solid; each is welded only as far as it needs. 1 mm by default"),
                 Field::new("repair", FieldType::Bool, "Solids: close the mesh first, fins off, cracks joined, holes filled; off by default"),
                 Field::new("fill_limit", FieldType::Number { unit: "share" }, "With repair: the most hole area to fill, as a share of the surface; 0.1 by default"),
             ],

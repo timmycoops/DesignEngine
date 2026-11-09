@@ -172,7 +172,7 @@ pub(crate) fn site(p: &[f64; 3]) -> String {
 
 /// The repair step's log in one line, naming only what it changed or found.
 pub(crate) fn describe_repair(log: &RepairLog, mesh: &TriMesh) -> String {
-    let mut parts = vec![format!("repair at {}", mm(log.tolerance))];
+    let mut parts = vec![if log.tolerance > 0.0 { format!("repair at {}", mm(log.tolerance)) } else { "corners as written".to_string() }];
     if log.vertices_welded > 0 {
         parts.push(format!("{} vertices welded (largest move {})", log.vertices_welded, mm(log.largest_move)));
     }
@@ -181,6 +181,9 @@ pub(crate) fn describe_repair(log: &RepairLog, mesh: &TriMesh) -> String {
         .filter(|(n, _)| *n > 0)
         .map(|(n, why)| format!("{n} {why}"))
         .collect();
+    if log.degenerate_kept > 0 {
+        parts.push(format!("{} triangles of zero area kept, as the mesh is closed with them and open without", log.degenerate_kept));
+    }
     if !dropped.is_empty() {
         parts.push(format!("triangles dropped: {}", dropped.join(", ")));
     }

@@ -11,7 +11,7 @@ use zd_geom::repair_mesh;
 use zd_io::{DESWIK_LEVELS, DeswikLog, DeswikMesh, read_deswik_layers};
 
 use super::in_parallel;
-use super::solid::{Cleaning, ImportTally, ImportedSolid, NOT_A_SOLID, VOLUME_AGREES, default_fill_limit, first_open_edge, solid_from_welded};
+use super::solid::{Cleaning, Welded, ImportTally, ImportedSolid, NOT_A_SOLID, VOLUME_AGREES, default_fill_limit, first_open_edge, solid_from_welded, weld_as_needed};
 use super::surface::{check_crossings, default_tolerance, describe_repair, site};
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
@@ -76,7 +76,7 @@ impl Command for ImportDeswik {
                 Field::new("layers", FieldType::Texts, "The Deswik layers to read, named as Deswik shows them (levels joined by \\); every layer if none"),
                 Field::new("layer", FieldType::Layer, "Optional; by default each object goes on a layer named after its Deswik layer"),
                 Field::new("meshes", FieldType::Text, "auto (closed meshes solids, open ones surfaces), solids, surfaces or none (strings only); auto by default"),
-                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "Weld vertices closer than this; 1 mm by default"),
+                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "The most a corner may move to close a solid; each is welded only as far as it needs. 1 mm by default"),
                 Field::new("repair", FieldType::Bool, "Solids: close the mesh first, fins off, cracks joined, holes filled; off by default"),
                 Field::new("fill_limit", FieldType::Number { unit: "share" }, "With repair: the most hole area to fill, as a share of the surface; 0.1 by default"),
             ],
@@ -209,7 +209,15 @@ pub(super) enum Made {
 pub(super) fn import_mesh(mesh: &TriMesh, layer: &str, source: &str, meshes: MeshesAs, cleaning: Cleaning, meant_solid: bool) -> Made {
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let read = format!("{source} mesh: {} vertices, {} triangles", mesh.vertices.len(), mesh.triangle_count());
-        let (welded, log) = repair_mesh(mesh, cleaning.weld_tolerance);
+        // A mesh that may be a solid is welded only as far as it needs to be one (decision 0052).
+        let (welded, log) = if meshes == MeshesAs::Solids || meshes == MeshesAs::Auto {
+            match weld_as_needed(mesh, &read, layer, layer, cleaning) {
+                Welded::Solid(solid) => return Made::Solid(*solid),
+                Welded::AtCeiling(welded, log) => (welded, log),
+            }
+        } else {
+            repair_mesh(mesh, cleaning.weld_tolerance)
+        };
         if welded.triangles.is_empty() {
             return Made::Nothing(format!("no triangles left after the weld ({read})"));
         }
