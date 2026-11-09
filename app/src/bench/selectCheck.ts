@@ -2,7 +2,8 @@
 // key events on the canvas and the window: a Shift-drag box in 3D and in plan, Ctrl+Shift to add a box, Ctrl-click on
 // solids and a string, F and Shift+F, Esc. It reads back what the app selected, where the camera went, and the colour
 // the selected solids are drawn in. New projects colour by RL with no contour lines, which it checks first. Then the
-// view keys: T into plan and out, and Z held with a left drag tilting out of plan into 3D about the point under the cursor.
+// view keys: T into plan and out, Z held with a left drag tilting out of plan into 3D about the point under the cursor,
+// 2 for a section, and E to zoom to everything.
 import * as THREE from 'three/webgpu';
 import { objectsBounds, projectSummary, type ProjectSummary, runCommand, type Vec3 } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
@@ -212,6 +213,31 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
   await settle();
   expect('without Z, a left drag in plan pans and stays in plan', viewport.planView && viewport.controls.target.distanceTo(panFrom) > 1, Number(viewport.controls.target.distanceTo(panFrom).toFixed(2)));
   viewport.setPlanView(false);
+
+  // 2 starts a section's picking and stops it; with two points picked a section opens, and 2 closes it.
+  const footer = () => document.querySelector('footer')?.textContent ?? '';
+  viewport.fitView();
+  await settle();
+  await key('2');
+  expect('2 starts picking a section', footer().includes('Section: pick the first point'), footer().slice(0, 60));
+  await key('2');
+  expect('2 again stops picking', footer().startsWith('Select:'), footer().slice(0, 60));
+  await key('2');
+  await click(screen(topOf(0)));
+  await click(screen(topOf(5)));
+  for (let k = 0; k < 40 && !toolbarSays('Fill'); k++) await wait(100);
+  expect('two points picked open a section', toolbarSays('Fill'));
+  await key('2');
+  expect('2 closes the section', !toolbarSays('Fill'));
+
+  // E zooms to everything, from wherever the view is.
+  await settle();
+  const all = viewport.bounds.getCenter(new THREE.Vector3());
+  viewport.focusOn([all.x + 300, all.y - 200, all.z], 100);
+  await settle();
+  const away = viewport.controls.target.distanceTo(all);
+  await key('e');
+  expect('E zooms to everything', away > 100 && viewport.controls.target.distanceTo(all) < 1e-6, { before_m: Number(away.toFixed(1)), after_m: viewport.controls.target.distanceTo(all) });
 
   results.failures = failures;
   return results;

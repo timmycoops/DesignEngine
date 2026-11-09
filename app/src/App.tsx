@@ -717,6 +717,12 @@ export default function App() {
     viewport.setPlanView(!viewport.planView);
   };
 
+  /** Section (2, or the toolbar): picking its two points starts, or stops if it had started; an open one closes. */
+  const toggleSection = () => {
+    if (sectionOpen) return closeSection();
+    setMode(mode === 'section' ? 'select' : 'section');
+  };
+
   const stepSection = (direction: number) => {
     const distance = Number(sectionStep);
     if (Number.isFinite(distance) && distance > 0) void sectionRef.current?.step(direction * distance);
@@ -735,6 +741,14 @@ export default function App() {
       if (e.key.toLowerCase() === 't' && plain && !e.shiftKey) {
         e.preventDefault();
         return togglePlan();
+      }
+      if (e.key === '2' && plain) {
+        e.preventDefault();
+        return toggleSection();
+      }
+      if (e.key.toLowerCase() === 'e' && plain && !e.shiftKey) {
+        e.preventDefault();
+        return zoomToExtents();
       }
       if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
@@ -958,7 +972,7 @@ export default function App() {
           <ToolButton tip="Zoom to what's selected (F), from the way you're looking" disabled={selection.length === 0 || sectionOpen} onClick={() => zoomTo(selection)}>
             <Focus />
           </ToolButton>
-          <ToolButton tip="Zoom to everything (Shift+F)" disabled={sectionOpen} onClick={zoomToExtents}>
+          <ToolButton tip="Zoom to everything (E, or Shift+F)" disabled={sectionOpen} onClick={zoomToExtents}>
             <Expand />
           </ToolButton>
           <DropdownMenu>
@@ -989,12 +1003,9 @@ export default function App() {
             </DropdownMenuContent>
           </DropdownMenu>
           <ToolButton
-            tip={sectionOpen ? 'Close the section' : 'Section: pick two points for a true vertical slice'}
+            tip={sectionOpen ? 'Close the section (2)' : 'Section (2): pick two points for a true vertical slice'}
             active={sectionOpen || mode === 'section'}
-            onClick={() => {
-              if (sectionOpen) return closeSection();
-              setMode(mode === 'section' ? 'select' : 'section');
-            }}
+            onClick={toggleSection}
           >
             <Scissors /> Section
           </ToolButton>
