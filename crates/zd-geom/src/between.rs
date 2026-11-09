@@ -6,7 +6,7 @@ use std::time::Instant;
 use manifold_csg::{CrossSection, Manifold};
 use zd_core::{Aabb, MeshValidity, TriMesh};
 
-use crate::cut::{design_near, from_manifold, to_manifold};
+use crate::cut::{TinyEdges, design_near, from_manifold, join_tiny_edges, to_manifold};
 use crate::{GeomError, Side, close_surface_to_halfspace};
 
 /// A solid between two surfaces.
@@ -22,6 +22,8 @@ pub struct Between {
     /// Of the string's area, how much the top doesn't cover in plan, and the bottom (m²): no solid is made there.
     pub top_uncovered: f64,
     pub bottom_uncovered: f64,
+    /// What became of edges under a micrometre the booleans left.
+    pub tiny_edges: TinyEdges,
     pub ms: f64,
 }
 
@@ -63,7 +65,7 @@ pub fn solid_between(top: &TriMesh, bottom: &TriMesh, outline: &[[f64; 2]]) -> R
     solid.status().map_err(|e| GeomError::Manifold(e.to_string()))?;
 
     let uncovered = |half: &Manifold| area.difference(&CrossSection::from_polygons(&half.project())).area();
-    let mesh = from_manifold(&solid, origin);
+    let (mesh, tiny_edges) = join_tiny_edges(from_manifold(&solid, origin));
     Ok(Between {
         volume: mesh.signed_volume(),
         validity: mesh.validity(),
@@ -71,6 +73,7 @@ pub fn solid_between(top: &TriMesh, bottom: &TriMesh, outline: &[[f64; 2]]) -> R
         area: area.area(),
         top_uncovered: uncovered(&below_top),
         bottom_uncovered: uncovered(&above_bottom),
+        tiny_edges,
         mesh,
         ms: start.elapsed().as_secs_f64() * 1e3,
     })

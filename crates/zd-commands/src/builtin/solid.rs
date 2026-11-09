@@ -978,6 +978,7 @@ impl Command for CutBySurface {
         // The largest difference between a solid and its parts, with the solid and its volume.
         let mut worst: (f64, &str, f64) = (0.0, "", 0.0);
         let (mut uncovered, mut uncut, mut recut) = (Vec::new(), Vec::new(), 0usize);
+        let (mut tiny, mut tiny_solids) = (zd_geom::TinyEdges::default(), 0usize);
         for ((object, solid), cut) in solids.iter().zip(cuts) {
             // One solid that can't be cut doesn't lose the rest of a batch.
             let mut cut = match cut {
@@ -1045,6 +1046,8 @@ impl Command for CutBySurface {
             };
             for (k, ((mesh, side), crossings)) in [(cut.below, "below"), (cut.above, "above")].into_iter().zip(found).enumerate() {
                 let Some(crossings) = crossings else { continue };
+                tiny.add(cut.tiny_edges[k]);
+                tiny_solids += usize::from(cut.tiny_edges[k].joined > 0);
                 thin += crossings.thin;
                 let part = Solid::new(mesh).map_err(CommandError::NotWatertight)?.with_crossings(crossings);
                 let given = if side == "below" { &p.below_name } else { &p.above_name };
@@ -1081,6 +1084,9 @@ impl Command for CutBySurface {
                 difference / volume.abs().max(f64::MIN_POSITIVE)
             ),
         });
+        if let Some(line) = tiny_edge_words(tiny, tiny_solids) {
+            outcome = outcome.message(line);
+        }
         if kept[0] + kept[1] > 0 {
             let thin = if thin > 0 { format!(" ({thin} thin pairs, kept)") } else { String::new() };
             outcome = outcome.message(format!("{} parts checked by the solid rules before saving: none crosses itself{thin}", kept[0] + kept[1]));
@@ -1100,6 +1106,26 @@ impl Command for CutBySurface {
         }
         Ok(outcome)
     }
+}
+
+/// What became of edges under a micrometre in the solids a run made, in a line; nothing to say if there were none.
+pub(crate) fn tiny_edge_words(tiny: zd_geom::TinyEdges, solids: usize) -> Option<String> {
+    if tiny.joined + tiny.left == 0 {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if tiny.joined > 0 {
+        parts.push(format!(
+            "{} corners under {} apart joined into the one beside them in {solids} of the solids made, and {} triangles of no width dropped: leftovers of the cut, no coordinate kept moved",
+            tiny.joined,
+            mm(zd_geom::TINY_EDGE),
+            tiny.triangles_dropped
+        ));
+    }
+    if tiny.left > 0 {
+        parts.push(format!("{} edges under {} left as they were, as joining their ends would leave the solid open or nothing of it", tiny.left, mm(zd_geom::TINY_EDGE)));
+    }
+    Some(parts.join("; "))
 }
 
 /// The crossing check of each part a cut keeps (`None` for a side not kept or empty), or why a part
