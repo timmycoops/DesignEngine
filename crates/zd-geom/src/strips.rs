@@ -77,8 +77,9 @@ pub fn join_faces(faces: &[&TriMesh], tolerance: f64) -> Result<(TriMesh, JoinLo
 type Split = (u32, u32, Vec<(f64, u32)>);
 
 /// Splits each boundary edge where a boundary corner of another face lies on it within `tolerance`, so faces that
-/// share a line but not its vertices meet corner to corner. A triangle is split along one edge a pass.
-fn stitch(mut mesh: TriMesh, tolerance: f64) -> (TriMesh, usize) {
+/// share a line but not its vertices meet corner to corner. A triangle is split along one edge a pass. Nothing moves.
+/// A face's own pieces meet the same way where a wall has no height (`face::face_sheet`).
+pub(crate) fn stitch(mut mesh: TriMesh, tolerance: f64) -> (TriMesh, usize) {
     const CELL: f64 = 5.0;
     let mut stitched = 0;
     for _ in 0..8 {

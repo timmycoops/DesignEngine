@@ -460,7 +460,7 @@ fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, directi
             Ok(()) => {
                 face.no_roads.extend(held_back.into_values());
                 face.no_roads.sort_by_key(|n| n.ramp);
-                return Ok(Face { surface: split_at(weld(&face.meshes), &face.meets), benches: face.benches, steps: face.steps, roads: face.roads, no_roads: face.no_roads, berm_line: face.berm_line, edits: face.edits, join_notes: face.join_notes, met: face.met, too_close: face.too_close });
+                return Ok(Face { surface: face_sheet(&face.meshes, &face.meets), benches: face.benches, steps: face.steps, roads: face.roads, no_roads: face.no_roads, berm_line: face.berm_line, edits: face.edits, join_notes: face.join_notes, met: face.met, too_close: face.too_close });
             }
             Err(e @ GeomError::Refused(_)) => return Err(e),
             Err(e) => {
@@ -640,6 +640,14 @@ pub(crate) fn weld<'a>(meshes: impl IntoIterator<Item = &'a TriMesh>) -> TriMesh
         }
     }
     out
+}
+
+/// A face's walls and berms as one sheet. They're welded where their corners meet, split where a road's top `meets`
+/// them, and stitched where a corner of one lies part way along an edge of another, as it does where a wall has no
+/// height and its crest runs along the berm's line with its own vertices (fault 5 of decision 0034: a sliver of a
+/// crack, with no area, that left the face in more than one loop). Nothing moves.
+fn face_sheet(meshes: &[TriMesh], meets: &[[f64; 3]]) -> TriMesh {
+    crate::strips::stitch(split_at(weld(meshes), meets), WELD).0
 }
 
 /// A welded sheet with every triangle that has one of `points` part way along an edge split there, so the pieces that
@@ -2300,6 +2308,35 @@ mod tests {
         let joined = weld(&[left, right]);
         assert_eq!(joined.vertices.len(), 4);
         assert_eq!(crate::boundary_loops(&joined).unwrap().len(), 1);
+    }
+
+    /// A wall of no height along a stretch leaves its crest on the berm's line with its own vertices: the berm has a
+    /// corner part way along the wall's top edge. Welded alone that's a crack, a loop of three edges on one line with no
+    /// area, so the face isn't one sheet (fault 5 of decision 0034). The face's sheet splits the wall's edge at the
+    /// corner: one loop, the same 10 m by 10 m and 10 m by 5 m (150 m² in plan), and no point moved or added.
+    #[test]
+    fn a_berm_corner_part_way_along_a_wall_edge_joins_it() {
+        let wall = TriMesh::new(vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 10.0, 10.0], [0.0, 10.0, 10.0]], vec![[0, 1, 2], [0, 2, 3]]);
+        // The berm's lower edge runs along the wall's top edge, with a corner 3.7 m along it.
+        let berm = TriMesh::new(
+            vec![[0.0, 10.0, 10.0], [3.7, 10.0, 10.0], [10.0, 10.0, 10.0], [10.0, 15.0, 10.0], [0.0, 15.0, 10.0]],
+            vec![[0, 1, 4], [1, 3, 4], [1, 2, 3]],
+        );
+        let welded = weld(&[wall.clone(), berm.clone()]);
+        // The crack touches the outer edge at the wall's corner, so it isn't even a set of separate loops.
+        assert!(crate::boundary_loops(&welded).map_or(true, |loops| loops.len() > 1), "welded alone, the corner leaves a crack");
+        let sheet = face_sheet(&[wall, berm], &[]);
+        assert_eq!(crate::boundary_loops(&sheet).unwrap().len(), 1, "one sheet");
+        assert_eq!(sheet.vertices, welded.vertices, "nothing moved or added");
+        let plan_area: f64 = sheet
+            .triangles
+            .iter()
+            .map(|t| {
+                let [a, b, c] = t.map(|v| sheet.vertices[v as usize]);
+                ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() / 2.0
+            })
+            .sum();
+        assert!((plan_area - 150.0).abs() < 1e-9, "{plan_area}");
     }
 
     #[test]
