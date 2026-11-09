@@ -39,8 +39,9 @@ fn solid() -> f64 {
     1.0
 }
 
-/// The bands of colour by RL, for every object coloured that way.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// The bands of colour by RL, for every object coloured that way. By default, an interval picked from the RLs,
+/// no contour lines, and each object over its own RLs.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Contours {
     /// Metres between band edges; `None` picks a round interval from the RL range.
     #[serde(default)]
@@ -54,12 +55,6 @@ pub struct Contours {
     /// object takes the whole ramp over its own RLs.
     #[serde(default)]
     pub shared: bool,
-}
-
-impl Default for Contours {
-    fn default() -> Self {
-        Contours { interval: None, edge_lines: false, shared: false }
-    }
 }
 
 impl Contours {
