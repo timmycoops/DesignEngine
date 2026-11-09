@@ -882,7 +882,7 @@ function StepTable({ profile, surfaces, rules, carryRamps, hand, onChange }: { p
  * and steps every line in one run, one undo.
  */
 export function FaceDesignPanel() {
-  const { summary, selected, select, marked, setMarked, runRecord, clearRefusal, pickString, pickLine, frameLine, preferLines } = useWorkspace();
+  const { summary, selected, selection, select, setSelection, runRecord, clearRefusal, pickString, pickLine, frameLine, preferLines } = useWorkspace();
   const objects = useMemo(() => summary?.objects ?? [], [summary]);
   const designs = useMemo(() => objects.filter((o) => o.kind === 'face_design'), [objects]);
   const [id, setId] = useState<string | null>(null);
@@ -1106,7 +1106,8 @@ export function FaceDesignPanel() {
       return { ...d, lines: [...d.lines, line] };
     });
   };
-  const chosen = strings.filter((s) => s.id === selected || marked.includes(s.id));
+  const selectedIds = useMemo(() => new Set(selection), [selection]);
+  const chosen = strings.filter((s) => selectedIds.has(s.id));
   const layers = (summary?.layers ?? []).filter((l) => strings.some((s) => s.layer === l.id));
   const nameOf = (objectId: string) => objects.find((o) => o.id === objectId)?.name ?? 'missing';
   const polygons = strings.filter((s) => s.closed);
@@ -1363,12 +1364,8 @@ export function FaceDesignPanel() {
   const rampLine = (line: string) => /^Ramp [^:]*: /.test(line);
   /** A click on a line lights up what it runs on, in the viewport and the tree. */
   const showLine = (line: FaceLine) => {
-    if (line.string) {
-      setMarked([]);
-      select(line.string);
-    } else {
-      setMarked(strings.filter((s) => s.layer === line.layer && s.attributes.face_design !== id).map((s) => s.id));
-    }
+    if (line.string) select(line.string);
+    else setSelection(strings.filter((s) => s.layer === line.layer && s.attributes.face_design !== id).map((s) => s.id));
   };
   const lineName = (line: FaceLine) => {
     if (!line.layer) return nameOf(line.string ?? '');
@@ -1471,11 +1468,8 @@ export function FaceDesignPanel() {
       <div className="flex flex-wrap items-center gap-1 px-3 pt-1">
         <SmallButton
           disabled={chosen.length === 0}
-          title="A line for each string selected. Ctrl-click strings in the viewport, or Ctrl or Shift in the tree, to select several"
-          onClick={() => {
-            chosen.forEach((s) => addLine({ string: s.id }));
-            setMarked([]);
-          }}
+          title="A line for each string selected. Ctrl-click strings in the viewport, Shift-drag a box round them, or Ctrl or Shift in the tree, to select several"
+          onClick={() => chosen.forEach((s) => addLine({ string: s.id }))}
         >
           <Plus className="size-3" /> Apply to selected{chosen.length > 0 ? ` (${chosen.length})` : ''}
         </SmallButton>

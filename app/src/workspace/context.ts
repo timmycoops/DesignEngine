@@ -7,19 +7,23 @@ import type { PanelId } from './Workspace';
 export interface Workspace {
   summary: ProjectSummary | null;
   log: LogEntry[];
-  /** The selected object (any kind), highlighted wherever it is drawn. */
+  /** The selected object a panel showing one takes: the last one picked. */
   selected: string | null;
+  /** Everything selected, any kind, the last picked last; highlighted wherever it is drawn. */
+  selection: string[];
   /** The layer new strings are drawn on; created by the first string drawn on it. */
   activeLayer: string;
   /** Holds the viewport canvas. The viewport panel mounts it, so the canvas outlives panel moves. */
   viewportHost: HTMLDivElement;
   viewportMounted: () => void;
+  /** Selects one object alone, or with null nothing. */
   select: (id: string | null) => void;
-  /** Objects picked out together, from the tree or by Ctrl-clicking in the viewport. */
-  marked: string[];
-  setMarked: (ids: string[]) => void;
-  /** Adds an object to the marks or takes it off, starting from what's selected. */
-  toggleMark: (id: string) => void;
+  /** Selects these, the last as the one a panel showing one takes. */
+  setSelection: (ids: string[]) => void;
+  /** Adds an object to the selection, or takes it off if it's there (Ctrl-click). */
+  toggleSelected: (id: string) => void;
+  /** Frames these objects from the current direction (in plan, straight above them). */
+  zoomTo: (ids: string[]) => void;
   setActiveLayer: (name: string) => void;
   setLayerVisible: (layer: string, visible: boolean) => void;
   /** Shows or hides objects one by one, under their layer's tick. Display only: not undone. */

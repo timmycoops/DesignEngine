@@ -4,6 +4,7 @@
 mod commands;
 mod render;
 mod section;
+mod selection;
 mod shared;
 mod state;
 mod synthetic;
@@ -31,6 +32,9 @@ fn main() {
             commands::spry_contents,
             commands::stage_object,
             commands::stage_layer_solids,
+            commands::stage_solids,
+            commands::objects_bounds,
+            commands::objects_in_box,
             commands::section_lines,
             commands::stage_seam_horizon,
             commands::prepare_synthetic,

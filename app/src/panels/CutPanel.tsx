@@ -22,7 +22,7 @@ const MODE_LABELS: Record<Mode, string> = { strips: 'Into strips', cut: 'By a su
 const SCOPES: readonly Scope[] = ['picked', 'layer', 'visible'];
 
 export function CutPanel() {
-  const { summary, selected, marked, runRecord, clearRefusal, select } = useWorkspace();
+  const { summary, selected, selection, runRecord, clearRefusal, select } = useWorkspace();
   const [mode, setMode] = useState<Mode>('strips');
   const [scope, setScope] = useState<Scope>('picked');
   const [by, setBy] = useState<StepTarget | null>(null);
@@ -40,9 +40,9 @@ export function CutPanel() {
   const layers = summary?.layers ?? [];
   const layerName = (id: string) => layers.find((l) => l.id === id)?.name ?? '';
 
-  // The solids: those picked (the selected one and any marked), all on the picked one's layer, or all on show.
+  // The solids: those selected, all on the layer of the first of them, or all on show.
   const solids = objects.filter((o) => o.kind === 'solid');
-  const pickedIds = new Set([selected, ...marked].filter((id): id is string => id !== null));
+  const pickedIds = new Set(selection);
   const picked = solids.filter((o) => pickedIds.has(o.id));
   const onLayer = picked.length > 0 ? solids.filter((o) => o.layer === picked[0].layer) : [];
   const shown = new Set(layers.filter((l) => l.visible).map((l) => l.id));

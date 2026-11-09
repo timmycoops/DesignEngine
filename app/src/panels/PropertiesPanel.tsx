@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Check, Minus, Trash2, X } from 'lucide-react';
+import { Check, Focus, Minus, Trash2, X } from 'lucide-react';
 import {
+  type Colouring,
   type Crossings,
   layerOpacityOf,
   lookOf,
   type MeshValidity,
   type ObjectDetails,
   objectDetails,
+  objectsBounds,
   type ObjectSummary,
   type SeamModel,
   type StackIssue,
@@ -17,8 +19,9 @@ import { Badge } from '@/design-system/ui/badge';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { ScrollArea } from '@/design-system/ui/scroll-area';
+import { Choice as KitChoice } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
-import { clock, coord, fmt, kindLabel } from './format';
+import { canColour, canSeeThrough, clock, coord, fmt, kindLabel } from './format';
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -291,16 +294,13 @@ function Look({ object }: { object: ObjectSummary }) {
  * reverse and close write a new revision; offset and wall make new objects. All undo.
  */
 function StringTools({ id, closed }: { id: string; closed: boolean }) {
-  const { run, summary, marked, pickLine } = useWorkspace();
+  const { run, summary } = useWorkspace();
   const [from, setFrom] = useState('1');
   const [to, setTo] = useState('');
   const [grade, setGrade] = useState('');
   const [startRl, setStartRl] = useState('');
   const [distance, setDistance] = useState('');
   const [times, setTimes] = useState('');
-  const [numberName, setNumberName] = useState('Strip #');
-  const [numberStart, setNumberStart] = useState('');
-  const [numberStep, setNumberStep] = useState('1');
   const [side, setSide] = useState<'left' | 'right'>('right');
   const [corners, setCorners] = useState<'mitre' | 'round'>('mitre');
   const [level, setLevel] = useState('');
@@ -325,14 +325,9 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
   const riseTo = surfaces.find((s) => s.id === wallTarget) ?? surfaces[0];
 
   const strings = (summary?.objects ?? []).filter((o) => o.kind === 'string' && !o.hidden);
-  const chosen = strings.filter((o) => marked.includes(o.id));
   const layer = summary?.objects.find((o) => o.id === id)?.layer;
-  /** What's marked, or else what's on this string's layer and wasn't made by a face run. */
-  const toNumber = chosen.length > 0 ? chosen : strings.filter((o) => o.layer === layer && o.attributes.face_design === undefined);
-  const numberAcross = async () => {
-    const line = await pickLine('Click where the numbering starts. Esc cancels', 'Click across the strings to where it ends. Esc cancels');
-    if (line) void run('string.number_across', { strings: toNumber.map((o) => o.id), from: line[0], to: line[1], start: num(numberStart), step: num(numberStep), name: numberName });
-  };
+  /** What's on this string's layer and wasn't made by a face run. Select several to number those. */
+  const toNumber = strings.filter((o) => o.layer === layer && o.attributes.face_design === undefined);
 
   const gradeParams = () => {
     const params: Record<string, unknown> = { string: id, from: Math.round(num(from) ?? 1) - 1, grade: num(grade) };
@@ -362,11 +357,7 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
         <Choice value={side} onChange={setSide} options={[['left', 'Left'], ['right', 'Right']]} />
         <Choice value={corners} onChange={setCorners} options={[['mitre', 'Mitre'], ['round', 'Round']]} />
       </ToolRow>
-      <ToolRow label="Number" apply={`Draw across (${toNumber.length})`} disabled={!ok(num(numberStart)) || !ok(num(numberStep)) || num(numberStep) === 0 || !numberName.trim() || toNumber.length === 0} onApply={() => void numberAcross()}>
-        <SmallInput value={numberName} onChange={setNumberName} placeholder="name" title="Each string's name, with its number in place of #. Numbers what's marked, or else what's on this layer that a face run didn't make" />
-        <SmallInput value={numberStart} onChange={setNumberStart} placeholder="from" title="The first number" />
-        <SmallInput value={numberStep} onChange={setNumberStep} placeholder="step" title="Added each time, negative to count down" />
-      </ToolRow>
+      <NumberAcross strings={toNumber} which="what's on this layer that a face run didn't make; select several strings to number those alone" />
       <ToolRow label="Set RL" disabled={!ok(num(level))} onApply={() => void run('string.set_elevation', { string: id, rl: num(level) })}>
         <SmallInput value={level} onChange={setLevel} placeholder="RL" title="Every vertex to this RL" />
       </ToolRow>
@@ -657,9 +648,167 @@ function Measurements({ d }: { d: ObjectDetails }) {
   }
 }
 
-/** The selected object: name (editable), layer, measurements, validity, attributes and history. */
+/**
+ * Numbers strings by a line drawn across them (`string.number_across`), each named with its number in place of #.
+ * `which` says what it numbers, for the tip.
+ */
+function NumberAcross({ strings, which }: { strings: ObjectSummary[]; which: string }) {
+  const { run, pickLine } = useWorkspace();
+  const [name, setName] = useState('Strip #');
+  const [start, setStart] = useState('');
+  const [step, setStep] = useState('1');
+  const num = (s: string) => (s.trim() === '' ? null : Number(s));
+  const ok = (v: number | null) => v !== null && Number.isFinite(v);
+  const numberAcross = async () => {
+    const line = await pickLine('Click where the numbering starts. Esc cancels', 'Click across the strings to where it ends. Esc cancels');
+    if (line) void run('string.number_across', { strings: strings.map((o) => o.id), from: line[0], to: line[1], start: num(start), step: num(step), name });
+  };
+  return (
+    <ToolRow label="Number" apply={`Draw across (${strings.length})`} disabled={!ok(num(start)) || !ok(num(step)) || num(step) === 0 || !name.trim() || strings.length === 0} onApply={() => void numberAcross()}>
+      <SmallInput value={name} onChange={setName} placeholder="name" title={`Each string's name, with its number in place of #. Numbers ${which}`} />
+      <SmallInput value={start} onChange={setStart} placeholder="from" title="The first number" />
+      <SmallInput value={step} onChange={setStep} placeholder="step" title="Added each time, negative to count down" />
+    </ToolRow>
+  );
+}
+
+/** How many of each kind, most first: "12 solids · 3 strings". */
+function kindCounts(objects: ObjectSummary[]): string {
+  const counts = new Map<string, number>();
+  for (const o of objects) counts.set(kindLabel[o.kind], (counts.get(kindLabel[o.kind]) ?? 0) + 1);
+  return [...counts]
+    .sort((a, b) => b[1] - a[1])
+    .map(([kind, n]) => `${fmt(n)} ${kind.toLowerCase()}${n === 1 ? '' : 's'}`)
+    .join(' · ');
+}
+
+/** The most rows the list of several selected shows; the rest are counted. */
+const MOST_LISTED = 200;
+
+/**
+ * Several selected: how many of each kind and on which layers, where they are together, how they look, numbering
+ * for the strings among them, and a list where a click selects one alone. Zoom to and delete take all of them.
+ */
+function SelectionProperties({ objects }: { objects: ObjectSummary[] }) {
+  const { summary, select, run, setLooks, zoomTo } = useWorkspace();
+  const [box, setBox] = useState<[Vec3, Vec3] | null>(null);
+  const ids = objects.map((o) => o.id);
+  // Changes when what's selected does, or any of it is revised, without a key as long as the selection.
+  const key = `${objects.length}:${objects.reduce((sum, o) => sum + o.revision, 0)}:${ids[0]}:${ids.at(-1)}`;
+  useEffect(() => {
+    let live = true;
+    setBox(null);
+    objectsBounds(ids)
+      .then((b) => live && setBox(b))
+      .catch(() => live && setBox(null));
+    return () => {
+      live = false;
+    };
+  }, [key]);
+
+  const layerNames = new Map(summary?.layers.map((l) => [l.id, l.name]));
+  const perLayer = new Map<string, number>();
+  for (const o of objects) perLayer.set(o.layer, (perLayer.get(o.layer) ?? 0) + 1);
+  const coloured = objects.filter(canColour);
+  const seeThrough = objects.filter(canSeeThrough);
+  const colourings = new Set(coloured.map((o) => lookOf(summary?.display, o.id).colouring));
+  const strings = objects.filter((o) => o.kind === 'string');
+
+  return (
+    <ScrollArea className="h-full">
+      <div className="flex items-center gap-2 border-b px-3 py-2">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium" title={kindCounts(objects)}>
+          {fmt(objects.length)} selected
+        </span>
+        <Button variant="ghost" size="icon-sm" title="Zoom to them (F)" onClick={() => zoomTo(ids)}>
+          <Focus />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title={`Delete all ${fmt(objects.length)} (one undo brings them back)`}
+          onClick={async () => (await run('object.delete_many', { objects: ids })) && select(null)}
+        >
+          <Trash2 />
+        </Button>
+      </div>
+      <Section title="Selection">
+        <Field label="What">{kindCounts(objects)}</Field>
+        <Field label={perLayer.size === 1 ? 'Layer' : 'Layers'}>
+          <span title={[...perLayer].map(([id, n]) => `${layerNames.get(id) ?? id} (${fmt(n)})`).join('\n')}>
+            {[...perLayer].map(([id, n]) => (perLayer.size === 1 ? layerNames.get(id) : `${layerNames.get(id)} (${fmt(n)})`)).join(', ')}
+          </span>
+        </Field>
+        {box && (
+          <>
+            <Field label="Easting">
+              {coord(box[0][0])} to {coord(box[1][0])}
+            </Field>
+            <Field label="Northing">
+              {coord(box[0][1])} to {coord(box[1][1])}
+            </Field>
+            <Field label="RL">
+              {coord(box[0][2])} to {coord(box[1][2])}
+            </Field>
+          </>
+        )}
+      </Section>
+      {seeThrough.length > 0 && (
+        <Section title="Look">
+          {coloured.length > 0 && (
+            <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2 px-3 py-0.5 text-xs">
+              <span className="text-muted-foreground">Colour</span>
+              <span>
+                <KitChoice<Colouring | 'mixed'>
+                  label={`How the ${fmt(coloured.length)} surfaces and grids among them are coloured`}
+                  value={colourings.size === 1 ? [...colourings][0] : 'mixed'}
+                  options={['by_rl', 'layer']}
+                  labels={{ by_rl: 'By RL', layer: 'Layer colour' }}
+                  onChange={(colouring) => colouring !== 'mixed' && setLooks(coloured.map((o) => o.id), colouring, null)}
+                />
+              </span>
+            </div>
+          )}
+          <OpacitySlider
+            label="Opacity"
+            value={lookOf(summary?.display, seeThrough[0].id).opacity}
+            onChange={(o, commit) => setLooks(seeThrough.map((x) => x.id), null, o, commit)}
+          />
+          {seeThrough.length < objects.length && <p className="px-3 pt-0.5 text-xs text-muted-foreground">Solids and strings are seen through by their layers: right-click a layer in the tree.</p>}
+        </Section>
+      )}
+      {strings.length > 0 && (
+        <Section title="Strings">
+          <NumberAcross strings={strings} which="the strings selected" />
+        </Section>
+      )}
+      <Section title="Each">
+        {objects.slice(0, MOST_LISTED).map((o) => (
+          <button
+            key={o.id}
+            type="button"
+            className="grid w-full grid-cols-[7.5rem_1fr] gap-2 px-3 py-0.5 text-left text-xs hover:bg-accent"
+            title="Select this one alone"
+            onClick={() => select(o.id)}
+          >
+            <span className="text-muted-foreground">{kindLabel[o.kind]}</span>
+            <span className="min-w-0 truncate">{o.name}</span>
+          </button>
+        ))}
+        {objects.length > MOST_LISTED && <p className="px-3 py-0.5 text-xs text-muted-foreground">and {fmt(objects.length - MOST_LISTED)} more</p>}
+      </Section>
+    </ScrollArea>
+  );
+}
+
+/** The selected object: name (editable), layer, measurements, validity, attributes and history. Several selected show together. */
 export function PropertiesPanel() {
-  const { summary, selected, run, select } = useWorkspace();
+  const { summary, selected, selection, run, select } = useWorkspace();
+  const several = useMemo(() => {
+    if (selection.length < 2) return null;
+    const ids = new Set(selection);
+    return summary?.objects.filter((o) => ids.has(o.id)) ?? null;
+  }, [summary, selection]);
   const object = summary?.objects.find((o) => o.id === selected);
   const [details, setDetails] = useState<ObjectDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -683,7 +832,8 @@ export function PropertiesPanel() {
 
   useEffect(() => setName(object?.name ?? ''), [object?.id, object?.name]);
 
-  if (!object) return <p className="p-3 text-xs text-muted-foreground">Select an object in the viewport or the layer tree.</p>;
+  if (several && several.length > 1) return <SelectionProperties objects={several} />;
+  if (!object) return <p className="p-3 text-xs text-muted-foreground">Select an object in the viewport or the layer tree. Ctrl-click or Shift-drag a box to select several.</p>;
 
   const rename = () => {
     const next = name.trim();

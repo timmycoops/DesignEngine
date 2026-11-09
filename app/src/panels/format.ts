@@ -1,4 +1,4 @@
-import type { ObjectKind } from '@/bridge';
+import type { ObjectKind, ObjectSummary } from '@/bridge';
 
 const formats = new Map<number, Intl.NumberFormat>();
 
@@ -25,3 +25,8 @@ export const kindLabel: Record<ObjectKind, string> = {
   seam_model: 'Seam model',
   face_design: 'Face design',
 };
+
+/** Coloured by RL or its layer's colour on its own: surfaces and elevation grids. A solid goes by its layer. */
+export const canColour = (o: ObjectSummary) => o.drawn && o.kind !== 'solid';
+/** Seen through on its own: what canColour takes, and seam horizons. A layer's solids go by the layer. */
+export const canSeeThrough = (o: ObjectSummary) => canColour(o) || o.kind === 'seam_model';

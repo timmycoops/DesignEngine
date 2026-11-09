@@ -7,7 +7,7 @@
 // own is only switched off. How each one looks (by RL or its layer's colour, and how see-through) is
 // uniforms on its material, so a change of look never refetches anything.
 import * as THREE from 'three/webgpu';
-import { type Contours, layerOpacityOf, lookOf, type ObjectSummary, type ProjectSummary, type StagedHorizon, stageLayerSolids, stageObject, stageSeamHorizon } from '../bridge';
+import { type Contours, layerOpacityOf, lookOf, type ObjectSummary, type ProjectSummary, type StagedHorizon, stageLayerSolids, stageObject, stageSeamHorizon, stageSolids } from '../bridge';
 import { colourOf, loadStaged, SELECTED } from './load';
 import { type Bands, bandsFor } from './rlColour';
 import type { Viewport } from './Viewport';
@@ -46,9 +46,11 @@ export class SceneSync {
   /** The horizon shown for each seam model: the first working one until another is chosen. */
   private horizons = new Map<string, string>();
   private seams: SeamShown[] = [];
-  private selected: string | null = null;
-  /** The object lit up: its own surface, or for a solid a copy over its layer's mesh. */
-  private lit: { id: string; key: string; group: THREE.Group; copy: boolean } | null = null;
+  private selected: string[] = [];
+  /** Surfaces, grids and seam horizons lit up in place, by id. */
+  private lit = new Map<string, THREE.Group>();
+  /** The selected solids on show, as one copy over their layers' meshes, and what each was when it was made. */
+  private litSolids: { keys: string[]; group: THREE.Group } | null = null;
   /** The seam models on show changed: one loaded or hidden, or a new name or horizon. */
   onSeams?: (showing: SeamShown[]) => void;
   /** What's coloured by RL on show changed, or its bands did. */
@@ -74,9 +76,9 @@ export class SceneSync {
     return this.latest ? this.apply(this.latest) : Promise.resolve(0);
   }
 
-  /** Lights up the selected object, or with null nothing. */
-  select(id: string | null): Promise<number> {
-    this.selected = id;
+  /** Lights up the selected objects, or with [] nothing. */
+  select(ids: string[]): Promise<number> {
+    this.selected = ids;
     return this.latest ? this.apply(this.latest) : Promise.resolve(0);
   }
 
@@ -224,33 +226,32 @@ export class SceneSync {
     }
   }
 
-  /** Brings the highlight in line with what is selected and how it is drawn now. */
+  /**
+   * Brings the highlight in line with what is selected and how it is drawn now. A surface, grid or seam horizon
+   * glows in place. The solids draw as a copy over their layers' meshes, all of them as one, so a box over a pit's
+   * blocks is one fetch and one draw.
+   */
   private async light(summary: ProjectSummary, on: (o: ObjectSummary) => boolean): Promise<void> {
-    const object = this.selected ? summary.objects.find((o) => o.id === this.selected) : undefined;
-    const lit = this.lit;
-    if (lit && lit.copy && object?.id === lit.id && object.geometry_key === lit.key) {
-      lit.group.visible = on(object);
-      return;
-    }
-    if (lit && !lit.copy && object?.id === lit.id && this.shown.get(lit.id)?.group === lit.group) return;
-    if (lit) {
-      if (lit.copy) this.viewport.removeMesh(lit.group);
-      else this.viewport.setLit(lit.group, null);
-      this.lit = null;
-    }
-    if (!object) return;
-    if (object.kind === 'solid') {
-      if (!on(object)) return;
-      const staged = await stageObject(object.id);
-      const { group } = await loadStaged(this.viewport, staged, { colour: SELECTED, over: true });
-      this.lit = { id: object.id, key: object.geometry_key, group, copy: true };
-      return;
-    }
-    const group = this.shown.get(object.id)?.group;
-    if (group) {
-      this.viewport.setLit(group, SELECTED);
-      this.lit = { id: object.id, key: object.geometry_key, group, copy: false };
-    }
+    const ids = new Set(this.selected);
+    const objects = summary.objects.filter((o) => ids.has(o.id));
+    const glowing = new Map(objects.flatMap((o) => {
+      const group = o.kind === 'solid' ? undefined : this.shown.get(o.id)?.group;
+      return group ? [[o.id, group] as const] : [];
+    }));
+    for (const [id, group] of this.lit) if (glowing.get(id) !== group) this.viewport.setLit(group, null);
+    for (const [id, group] of glowing) if (this.lit.get(id) !== group) this.viewport.setLit(group, SELECTED);
+    this.lit = glowing;
+
+    const solids = objects.filter((o) => o.kind === 'solid' && on(o));
+    const keys = solids.map((o) => `${o.id}:${o.geometry_key}`);
+    const was = this.litSolids;
+    if (was && was.keys.length === keys.length && was.keys.every((k, i) => k === keys[i])) return;
+    if (was) this.viewport.removeMesh(was.group);
+    this.litSolids = null;
+    if (solids.length === 0) return;
+    const staged = await stageSolids(solids.map((o) => o.id));
+    const { group } = await loadStaged(this.viewport, staged, { colour: SELECTED, over: true });
+    this.litSolids = { keys, group };
   }
 
   /** Tells the app which seam models are on show, under their current names, if that has changed. */

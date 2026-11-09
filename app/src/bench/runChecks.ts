@@ -26,6 +26,7 @@ import {
 } from '../bridge';
 import { loadStaged } from '../viewport/load';
 import { takePalettePictures, takePictures } from './pictures';
+import { checkSelect } from './selectCheck';
 import { PolylineTool } from '../viewport/PolylineTool';
 import type { SectionView } from '../viewport/section';
 import type { StringLayer } from '../viewport/strings';
@@ -48,7 +49,15 @@ const TREE_SCROLL_STEPS = 120;
 /** Shows a summary as the app does: panels, strings, geometry and the snap index. */
 type Show = (summary: ProjectSummary) => Promise<void> | undefined;
 
-export async function runChecks(viewport: Viewport, config: BenchConfig, log: (line: string) => void, show: Show, section: () => SectionView | null, strings: () => StringLayer | null): Promise<void> {
+export async function runChecks(
+  viewport: Viewport,
+  config: BenchConfig,
+  log: (line: string) => void,
+  show: Show,
+  section: () => SectionView | null,
+  strings: () => StringLayer | null,
+  selection: () => string[],
+): Promise<void> {
   const tool = new PolylineTool(viewport);
   const canvas = viewport.renderer.domElement;
   const results: Record<string, unknown> = {
@@ -73,6 +82,8 @@ export async function runChecks(viewport: Viewport, config: BenchConfig, log: (l
       results.builder = await checkBuilder(viewport, log, show, strings);
     } else if (config.cut) {
       results.cut = await checkCut(viewport, log, show, strings);
+    } else if (config.select) {
+      results.select = await checkSelect(viewport, log, show, selection);
     } else if (config.solids) {
       results.solids = await checkSolids(viewport, config, config.solids, log, show, section, strings);
     } else {

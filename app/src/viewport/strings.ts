@@ -42,10 +42,15 @@ export interface StringActions {
   layer(): string;
   /** The second point of a section was picked. */
   section(a: Vec3, b: Vec3): void;
-  /** A click that met no string: selects what's under it, or nothing. */
-  pick(clientX: number, clientY: number): void;
-  /** A Ctrl-click: adds a string to the marks or takes it off. With null, clears them. */
-  mark(id: string | null): void;
+  /**
+   * A click that met no string: selects what's under it alone, or nothing. With `add` (Ctrl), adds what's under
+   * it to the selection or takes it off, and a click on nothing leaves the selection as it is.
+   */
+  pick(clientX: number, clientY: number, add: boolean): void;
+  /** A click on a string, or with null Esc: selects it alone, or with `add` adds it or takes it off. */
+  choose(id: string | null, add: boolean): void;
+  /** A box dragged with Shift held, corners in normalised device coordinates: selects what lies wholly inside it. */
+  box(min: [number, number], max: [number, number], add: boolean): void;
 }
 
 interface Shown {
@@ -132,7 +137,6 @@ export class StringLayer {
   private trail: THREE.Vector3[] = [];
   private trailDone = false;
   selected: string | null = null;
-  onSelect?: (id: string | null) => void;
 
   private shown = new Map<string, Shown>();
   private runs: Run[] = [];
@@ -149,6 +153,8 @@ export class StringLayer {
   private drag: { id: string; index: number; hit: SnapHit | null } | null = null;
   private hovered: { id: string; index: number } | null = null;
   private down: { x: number; y: number } | null = null;
+  /** A box being dragged out with Shift held, from where the button went down. */
+  private boxing: { pointer: number; x: number; y: number; outline: HTMLElement } | null = null;
   private latest: { x: number; y: number } | null = null;
   private inFlight = false;
   private layers = new Map<string, Layer>();
@@ -290,11 +296,19 @@ export class StringLayer {
     this.actions.status(this.snapping ? 'Snap on: strings, then surfaces, then the working plane' : 'Snap off: points go on the working plane');
   }
 
+  /** Selects a string alone, or with null nothing, as a click on it does: the app's selection, not just the handles. */
   select(id: string | null): void {
-    this.selected = id && this.shown.has(id) ? id : null;
+    this.actions.choose(id, false);
+  }
+
+  /** Gives a string handles to drag, or with null none: the selected object, when it's a string on show. */
+  showSelected(id: string | null): void {
+    const next = id && this.shown.has(id) ? id : null;
+    if (next === this.selected) return;
+    this.selected = next;
+    this.hovered = null;
     this.recolour();
     this.placeHandles();
-    this.onSelect?.(this.selected);
   }
 
   /** Brings the drawn strings in line with the project summary. */
@@ -337,7 +351,7 @@ export class StringLayer {
       lines.visible = layer?.visible ?? true;
       (lines.material as THREE.LineBasicMaterial).color.setHex(layer ? colourOf(layer.colour) : 0xffffff);
     }
-    if (this.selected && !this.shown.has(this.selected)) this.select(null);
+    if (this.selected && !this.shown.has(this.selected)) this.showSelected(null);
     this.recolour();
     this.placeHandles();
   }
@@ -418,6 +432,7 @@ export class StringLayer {
 
   private pointerDown(e: PointerEvent): void {
     if (e.button !== 0) return;
+    if (e.shiftKey && this.mode === 'select' && !this.wanted && !this.section) return this.startBox(e);
     if (this.mode === 'select' && this.selected && !this.wanted) {
       const index = this.handleAt(this.selected, e.clientX, e.clientY);
       if (index >= 0 && this.refusedDesignEdit(this.selected)) {
@@ -436,6 +451,7 @@ export class StringLayer {
   }
 
   private pointerMove(e: PointerEvent): void {
+    if (this.boxing) return this.growBox(e);
     if (this.drag) {
       this.latest = { x: e.clientX, y: e.clientY };
       void this.pumpDrag();
@@ -451,6 +467,55 @@ export class StringLayer {
       const index = this.handleAt(this.selected, e.clientX, e.clientY);
       this.hovered = index >= 0 ? { id: this.selected, index } : null;
     }
+  }
+
+  /**
+   * Shift and a left drag draw a box that selects what lies wholly inside it, in 3D or plan; the view doesn't turn
+   * or pan meanwhile. Not on a section, where what's drawn is the cut.
+   */
+  private startBox(e: PointerEvent): void {
+    const canvas = this.viewport.renderer.domElement;
+    this.boxing?.outline.remove();
+    const outline = Object.assign(document.createElement('div'), { className: 'select-box', hidden: true });
+    canvas.parentElement?.append(outline);
+    this.boxing = { pointer: e.pointerId, x: e.clientX, y: e.clientY, outline };
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // A pointer the browser no longer knows: the box still draws while the cursor stays on the canvas.
+    }
+    this.clearSnapMark();
+    // Before the camera's own listener, which would turn or pan.
+    e.stopImmediatePropagation();
+  }
+
+  private growBox(e: PointerEvent): void {
+    const box = this.boxing;
+    if (!box || e.pointerId !== box.pointer) return;
+    const bounds = this.viewport.renderer.domElement.getBoundingClientRect();
+    const [left, top] = [Math.min(box.x, e.clientX) - bounds.left, Math.min(box.y, e.clientY) - bounds.top];
+    Object.assign(box.outline.style, { transform: `translate(${left}px, ${top}px)`, width: `${Math.abs(e.clientX - box.x)}px`, height: `${Math.abs(e.clientY - box.y)}px` });
+    box.outline.hidden = false;
+  }
+
+  /** The box let go: what's inside it is selected, or with Ctrl added. Shift-clicked without a drag, it adds what's under the cursor, as Ctrl-click does. */
+  private endBox(e: PointerEvent): void {
+    const box = this.boxing;
+    if (!box || e.pointerId !== box.pointer) return;
+    this.boxing = null;
+    box.outline.remove();
+    try {
+      this.viewport.renderer.domElement.releasePointerCapture(e.pointerId);
+    } catch {
+      // Already released.
+    }
+    if (Math.hypot(e.clientX - box.x, e.clientY - box.y) <= CLICK_SLOP_PX) {
+      const string = this.stringAt(e.clientX, e.clientY);
+      return string ? this.actions.choose(string, true) : this.actions.pick(e.clientX, e.clientY, true);
+    }
+    const [ax, ay] = this.viewport.clientToNdc(box.x, box.y);
+    const [bx, by] = this.viewport.clientToNdc(e.clientX, e.clientY);
+    this.actions.box([Math.min(ax, bx), Math.min(ay, by)], [Math.max(ax, bx), Math.max(ay, by)], e.ctrlKey || e.metaKey);
   }
 
   /** What the next click would land on, shown as the cursor moves. As in `pumpDrag`, one at a time. */
@@ -515,6 +580,7 @@ export class StringLayer {
   }
 
   private async pointerUp(e: PointerEvent): Promise<void> {
+    if (this.boxing) return this.endBox(e);
     if (this.drag) {
       const { id, index, hit } = this.drag;
       this.drag = null;
@@ -566,16 +632,11 @@ export class StringLayer {
       return;
     }
     const string = this.stringAt(e.clientX, e.clientY);
-    if (e.ctrlKey || e.metaKey) {
-      if (string) this.actions.mark(string);
-      return;
-    }
-    this.actions.mark(null);
-    if (string) {
-      this.select(string);
-      const design = this.shown.get(string)?.design;
-      if (design) this.actions.status(designLineMessage(design, this.designNames.get(design.design)));
-    } else this.actions.pick(e.clientX, e.clientY);
+    const add = e.ctrlKey || e.metaKey;
+    if (!string) return this.actions.pick(e.clientX, e.clientY, add);
+    this.actions.choose(string, add);
+    const design = this.shown.get(string)?.design;
+    if (design && !add) this.actions.status(designLineMessage(design, this.designNames.get(design.design)));
   }
 
   private keyDown(e: KeyboardEvent): void {
@@ -603,10 +664,7 @@ export class StringLayer {
       }
       return;
     }
-    if (e.key === 'Escape') {
-      this.actions.mark(null);
-      this.select(null);
-    }
+    if (e.key === 'Escape') this.actions.choose(null, false);
     if ((e.key === 'Delete' || e.key === 'Backspace') && this.hovered) {
       const { id, index } = this.hovered;
       if (this.refusedDesignEdit(id)) return;
