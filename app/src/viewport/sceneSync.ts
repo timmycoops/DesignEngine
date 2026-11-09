@@ -36,7 +36,7 @@ export interface RlShown {
   objects: { id: string; name: string; bands: Bands }[];
 }
 
-export const DEFAULT_CONTOURS: Contours = { interval: null, lines: true, shared: false };
+export const DEFAULT_CONTOURS: Contours = { interval: null, edge_lines: false, shared: false };
 
 export class SceneSync {
   private shown = new Map<string, Shown>();
@@ -203,7 +203,7 @@ export class SceneSync {
         colour: layer ? colourOf(layer.colour) : 0xffffff,
         byRl: look.colouring === 'by_rl',
         bands: range ? bandsOf(shared ?? range) : undefined,
-        lines: contours.lines,
+        lines: contours.edge_lines,
         opacity: look.opacity * layerOpacityOf(display, object.layer),
       });
     }

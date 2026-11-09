@@ -189,7 +189,7 @@ fn looks_save_with_the_project_and_one_saved_without_them_opens_with_the_default
     project.set_looks(&[roof], None, Some(0.75));
     project.set_looks(&[toe.id], None, Some(0.5));
     project.set_layer_opacity(geology, 0.6);
-    project.set_contours(Contours { interval: Some(2.0), lines: false, shared: true });
+    project.set_contours(Contours { interval: Some(2.0), edge_lines: true, shared: true });
     // A look on an object deleted since stays in the session for an undo, not in the file.
     project.apply(RunId::new(), vec![Change::Delete { id: toe.id, base: toe.revision }]).unwrap();
     store.save(&project, "[]").unwrap();
@@ -200,7 +200,30 @@ fn looks_save_with_the_project_and_one_saved_without_them_opens_with_the_default
     assert_eq!(display.look(roof), Look { colouring: Colouring::ByRl, opacity: 0.75 });
     assert_eq!(display.objects.len(), 2, "the deleted string's look isn't saved");
     assert_eq!(display.layer_opacity(geology), 0.6);
-    assert_eq!(display.contours, Contours { interval: Some(2.0), lines: false, shared: true });
+    assert_eq!(display.contours, Contours { interval: Some(2.0), edge_lines: true, shared: true });
+}
+
+/// Contour lines were on by default until 2026-11-09, and a project with any look set wrote `lines: true`
+/// whether anyone chose them or not. That key is passed over, so such a project opens with them off, and its
+/// interval and shared range as they were.
+#[test]
+fn a_project_saved_while_contour_lines_were_on_by_default_opens_with_them_off() {
+    let dir = TempDir::new("old-contours");
+    let path = dir.0.join("pit.zdproj");
+    let mut project = sample_project();
+    let topo = named(&project, "topography").id;
+    project.set_looks(&[topo], None, Some(0.5));
+    project.set_contours(Contours { interval: Some(5.0), edge_lines: false, shared: true });
+    ProjectStore::create(&path).unwrap().save(&project, "[]").unwrap();
+    let manifest = std::fs::read_to_string(path.join("manifest.json")).unwrap();
+    let new_key = "\"edge_lines\": false";
+    assert!(manifest.contains(new_key), "saved under its new key: {manifest}");
+    std::fs::write(path.join("manifest.json"), manifest.replace(new_key, "\"lines\": true")).unwrap();
+
+    let opened = ProjectStore::open(&path).unwrap().project;
+    assert_eq!(opened.display().contours, Contours { interval: Some(5.0), edge_lines: false, shared: true });
+    assert_eq!(opened.display().look(topo).opacity, 0.5, "the rest of its looks as saved");
+    assert!(!Contours::default().edge_lines, "off for a new project too");
 }
 
 #[test]

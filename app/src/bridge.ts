@@ -306,7 +306,8 @@ export interface Look {
 export interface Contours {
   /** Metres between band edges; null picks one from the RL range. */
   interval: number | null;
-  lines: boolean;
+  /** Thin lines at the band edges: off unless turned on. */
+  edge_lines: boolean;
   /** One colour range across everything on show, rather than each object's own. */
   shared: boolean;
 }

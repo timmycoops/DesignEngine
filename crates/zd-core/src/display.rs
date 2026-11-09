@@ -39,19 +39,17 @@ fn solid() -> f64 {
     1.0
 }
 
-fn yes() -> bool {
-    true
-}
-
 /// The bands of colour by RL, for every object coloured that way.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Contours {
     /// Metres between band edges; `None` picks a round interval from the RL range.
     #[serde(default)]
     pub interval: Option<f64>,
-    /// Thin lines at the band edges.
-    #[serde(default = "yes")]
-    pub lines: bool,
+    /// Thin lines at the band edges, off unless turned on (Tim, 2026-11-09: bands alone read cleaner). Saved
+    /// as `edge_lines`: a project saved while lines were on by default wrote `lines: true` whether anyone chose
+    /// them or not, so that key is passed over and such a project opens with them off.
+    #[serde(default)]
+    pub edge_lines: bool,
     /// One colour range across everything on show, so an RL is one colour on every surface. Off, each
     /// object takes the whole ramp over its own RLs.
     #[serde(default)]
@@ -60,7 +58,7 @@ pub struct Contours {
 
 impl Default for Contours {
     fn default() -> Self {
-        Contours { interval: None, lines: true, shared: false }
+        Contours { interval: None, edge_lines: false, shared: false }
     }
 }
 
