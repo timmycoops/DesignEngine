@@ -245,9 +245,15 @@ red refused, green valid. Don't hand-roll an input, select, badge or colour a ki
 
 ## Current phase
 
-**Phase 3 — walls and ramps.** The gate, workstreams and decisions are on the "Phase 3 plan" tab of the Build
-Plan doc. Grid to grid is the hard part, so it comes first (`docs/decisions/0023-wall-step.md`). PIT A's seam
-grids are a load test only: judge seam work on PIT B, which holds the only real coal seam models.
+**Between phases: Phase 3 is closed, and what comes next is not yet agreed.** The proposed order is on the
+"Review 10 Nov" tab of the Build Plan doc; ask Tim before starting any of it. PIT A's seam grids are a load test
+only: judge seam work on PIT B, which holds the only real coal seam models.
+
+The Phase 3 gate (walls and ramps) was closed as it stands on 2026-11-10
+(`docs/decisions/0053-phase3-closed-as-it-stands.md`): three checks passed, four in part and one not measured.
+Carried forward by name: roads on grids (a known limit, 0034), the measured match with Deswik (waits on a surface
+compare and a clean real wall), the merge with the topography, and the surface tools and surfaces in section that
+weren't built.
 
 The Phase 2 gate passed on 2026-10-31: a two-point section with an overview, RL grid, fills and string editing
 (`docs/decisions/0022-section-view.md`, `bench/RESULTS.md`), passed by Tim on look and feel without a side-by-side
