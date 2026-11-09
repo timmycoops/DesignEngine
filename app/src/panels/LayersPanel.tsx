@@ -16,7 +16,7 @@ import {
 import { Input } from '@/design-system/ui/input';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
-import { fmt, kindLabel } from './format';
+import { canColour, canSeeThrough, fmt, kindLabel } from './format';
 
 /**
  * What comes in numbers shares a row on its layer, shut until it's wanted: a face run makes four strings a
@@ -280,22 +280,24 @@ interface ObjectRowProps {
   inGroup: boolean;
   /** Its layer's on, so its own tick is what decides. */
   layerOn: boolean;
-  /** Ticked along with others by Ctrl or Shift: what a tick or the menu acts on. */
-  marked: boolean;
+  /** Selected, alone or with others: what a tick or the menu on it acts on. */
+  picked: boolean;
+  /** The last one picked of several: the one the Builder and Use selected take. */
+  last: boolean;
   onClick: (e: MouseEvent) => void;
   onTick: (shown: boolean) => void;
 }
 
-function ObjectRow({ object, inGroup, layerOn, marked, onClick, onTick }: ObjectRowProps) {
-  const { selected, summary } = useWorkspace();
+function ObjectRow({ object, inGroup, layerOn, picked, last, onClick, onTick }: ObjectRowProps) {
+  const { summary } = useWorkspace();
   const Icon = kindIcon[object.kind];
   const note = noteOf(object);
   const showing = layerOn && !object.hidden;
   return (
     <div
       data-slot="tree-row"
-      data-state={object.id === selected ? 'selected' : undefined}
-      className={cn('flex cursor-pointer items-center gap-1.5 pr-2 text-xs hover:bg-accent data-[state=selected]:bg-selection', inGroup ? 'pl-14' : 'pl-9', marked && 'bg-accent')}
+      data-state={picked ? 'selected' : undefined}
+      className={cn('flex cursor-pointer items-center gap-1.5 pr-2 text-xs hover:bg-accent data-[state=selected]:bg-selection', inGroup ? 'pl-14' : 'pl-9', last && 'font-semibold')}
       style={{ height: ROW_HEIGHT }}
       onClick={onClick}
     >
@@ -328,9 +330,6 @@ const OPACITIES = [1, 0.75, 0.5, 0.25];
 const percent = (opacity: number) => `${Math.round(opacity * 100)}%`;
 
 /** Coloured by RL or its layer: surfaces and elevation grids. A seam horizon keeps its thickness colours. */
-const canColour = (o: ObjectSummary) => o.drawn && o.kind !== 'solid';
-/** Seen through on its own: what canColour takes, and seam horizons. A layer's solids go by the layer. */
-const canSeeThrough = (o: ObjectSummary) => canColour(o) || o.kind === 'seam_model';
 
 /** An opacity under 100 %, beside a row's name. */
 function OpacityNote({ opacity, title }: { opacity: number; title: string }) {
@@ -344,13 +343,13 @@ function OpacityNote({ opacity, title }: { opacity: number; title: string }) {
 
 /**
  * Every layer and what is on it, in one tree that draws only the rows on screen. Click a layer to draw
- * new strings on it, or an object to select it; Ctrl and Shift mark several for a tick or the right-click
- * menu to act on together.
+ * new strings on it, or an object to select it; Ctrl-click adds one or takes it off and Shift-click selects
+ * a run of rows, for a tick or the right-click menu to act on together.
  */
 export function LayersPanel() {
-  const { summary, selected, select, marked: markedIds, setMarked, toggleMark, activeLayer, setActiveLayer, setObjectsVisible, setLooks, setLayerOpacity, run } = useWorkspace();
+  const { summary, selected, selection, select, setSelection, toggleSelected, zoomTo, activeLayer, setActiveLayer, setObjectsVisible, setLooks, setLayerOpacity, run } = useWorkspace();
   const [toggled, setToggled] = useState(new Map<string, boolean>());
-  const marked = useMemo(() => new Set(markedIds), [markedIds]);
+  const picked = useMemo(() => new Set(selection), [selection]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [target, setTarget] = useState<TreeRow | null>(null);
   /** The last row clicked, where a Shift-click's run starts. */
@@ -384,26 +383,31 @@ export function LayersPanel() {
     if (y < element.scrollTop + ROW_HEIGHT || y + ROW_HEIGHT > element.scrollTop + element.clientHeight) element.scrollTo(0, y - element.clientHeight / 2);
   }, [rows, selected]);
 
+  /**
+   * A click selects the row alone. Ctrl adds it or takes it off; Shift selects the rows from the last one clicked
+   * to this one, or with Ctrl too adds them. The row clicked is the last picked.
+   */
   const clickObject = (e: MouseEvent, at: number, id: string) => {
+    const add = e.ctrlKey || e.metaKey;
     if (e.shiftKey && anchor.current !== null) {
       const [from, to] = [Math.min(anchor.current, at), Math.max(anchor.current, at)];
-      setMarked(rows.slice(from, to + 1).flatMap((r) => (r.kind === 'object' ? [r.object.id] : [])));
+      const run = rows.slice(from, to + 1).flatMap((r) => (r.kind === 'object' && r.object.id !== id ? [r.object.id] : []));
+      setSelection([...(add ? selection : []), ...run, id]);
       return;
     }
     anchor.current = at;
-    if (e.ctrlKey || e.metaKey) {
-      toggleMark(id);
-      return;
-    }
-    setMarked([]);
-    select(id);
+    if (add) toggleSelected(id);
+    else select(id);
   };
 
-  /** What an action on this object takes: everything marked, if it is. */
-  const takenWith = (id: string) => {
-    if (!marked.has(id)) return [id];
-    const live = new Set(summary?.objects.map((o) => o.id));
-    return [...marked].filter((other) => live.has(other));
+  /** What an action on this object takes: everything selected, if it's one of them. */
+  const takenWith = (id: string) => (picked.has(id) ? selection : [id]);
+
+  /** What's on a layer and on show, or everything on it if nothing is. */
+  const layerShowing = (layer: string) => {
+    const on = summary?.objects.filter((o) => o.layer === layer) ?? [];
+    const showing = on.filter((o) => !o.hidden);
+    return (showing.length > 0 ? showing : on).map((o) => o.id);
   };
 
   const rowAt = (e: MouseEvent) => {
@@ -466,15 +470,14 @@ export function LayersPanel() {
   /** The menu for some objects, from one on a layer to everything in a group. */
   const objectsMenu = (taken: string[], layer: string) => {
     const label = taken.length > 1 ? ` ${plural(taken.length)}` : '';
-    const act = (name: string, params: Record<string, unknown>) => {
-      setMarked([]);
-      void run(name, params);
-    };
+    const act = (name: string, params: Record<string, unknown>) => void run(name, params);
     const ids = new Set(taken);
     const looking = summary?.objects.filter((o) => ids.has(o.id) && canSeeThrough(o)) ?? [];
     const opacities = new Set(looking.map((o) => lookOf(summary?.display, o.id).opacity));
     return (
       <>
+        <ContextMenuItem onSelect={() => zoomTo(taken)}>Zoom to{label}</ContextMenuItem>
+        {taken.length > 1 && taken !== selection && <ContextMenuItem onSelect={() => setSelection(taken)}>Select{label}</ContextMenuItem>}
         <ContextMenuItem onSelect={() => setObjectsVisible(taken, true)}>Show{label}</ContextMenuItem>
         <ContextMenuItem onSelect={() => setObjectsVisible(taken, false)}>Hide{label}</ContextMenuItem>
         {looking.length > 0 &&
@@ -535,7 +538,8 @@ export function LayersPanel() {
                   object={row.object}
                   inGroup={row.inGroup}
                   layerOn={summary?.layers.find((l) => l.id === row.object.layer)?.visible ?? true}
-                  marked={marked.has(row.object.id)}
+                  picked={picked.has(row.object.id)}
+                  last={selection.length > 1 && row.object.id === selected}
                   onClick={(e) => clickObject(e, first + k, row.object.id)}
                   onTick={(shown) => setObjectsVisible(takenWith(row.object.id), shown)}
                 />
@@ -547,6 +551,12 @@ export function LayersPanel() {
         <ContextMenuContent onCloseAutoFocus={(e) => e.preventDefault()}>
           {target?.kind === 'layer' && (
             <>
+              <ContextMenuItem disabled={target.count === 0} onSelect={() => zoomTo(layerShowing(target.layer.id))}>
+                Zoom to
+              </ContextMenuItem>
+              <ContextMenuItem disabled={target.count === 0} onSelect={() => setSelection(layerShowing(target.layer.id))}>
+                Select all on it
+              </ContextMenuItem>
               {lookMenu(
                 summary?.objects.filter((o) => o.layer === target.layer.id) ?? [],
                 (o) => setLayerOpacity(target.layer.id, o),

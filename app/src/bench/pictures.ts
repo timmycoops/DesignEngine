@@ -77,10 +77,13 @@ export async function takePictures(viewport: Viewport, paths: string[], strings:
   const centre = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
   viewport.focusOn([centre.x, centre.y, centre.z], size.length() * 0.18);
-  await picture('04-close-up-contours');
+  // Bands alone, as a project opens, then with the contour lines turned on.
+  await picture('04-close-up-bands');
+  await restyle(await contours({ edge_lines: true }));
+  await picture('04b-close-up-contour-lines');
   await restyle(await contours({ interval: 5 }));
   await picture('05-close-up-5m');
-  await restyle(await contours({ interval: null }));
+  await restyle(await contours({ interval: null, edge_lines: false }));
 
   // See-through: the topography at 50 % over the rest, then everything at 50 %, from the usual angle and low down.
   viewport.fitView();

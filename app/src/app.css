@@ -145,6 +145,17 @@
   pointer-events: none;
 }
 
+/* A box being dragged out to select what's inside it, in the gold of what's picked. */
+.select-box {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  border: 1px solid var(--primary);
+  background: var(--selection);
+  pointer-events: none;
+}
+
 .snap-label {
   position: absolute;
   top: 0;

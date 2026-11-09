@@ -737,7 +737,7 @@ mod tests {
         assert!(!p.set_layer_opacity(LayerId::new(), 0.25), "only layers that exist");
         assert_eq!(p.display().layer_opacity(layer), 0.25);
 
-        let contours = Contours { interval: Some(5.0), lines: false, shared: true };
+        let contours = Contours { interval: Some(5.0), edge_lines: true, shared: true };
         assert!(p.set_contours(contours));
         assert!(!p.set_contours(Contours { interval: Some(0.0), ..contours }), "an interval must be positive");
         assert!(!p.set_contours(Contours { interval: Some(-5.0), ..contours }));

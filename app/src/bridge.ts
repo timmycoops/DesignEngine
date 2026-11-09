@@ -208,6 +208,15 @@ export interface StagedMesh {
 /** Encodes a drawn object's geometry for fetching. */
 export const stageObject = (id: string) => invoke<StagedMesh>('stage_object', { id });
 export const stageLayerSolids = (layer: string) => invoke<StagedMesh>('stage_layer_solids', { layer });
+/** The selected solids on show as one mesh, to light up over their layers'. */
+export const stageSolids = (objects: string[]) => invoke<StagedMesh>('stage_solids', { objects });
+/** The box round these objects together, world coordinates, for zoom to selection; null if none has a place. */
+export const objectsBounds = (objects: string[]) => invoke<[Vec3, Vec3] | null>('objects_bounds', { objects });
+/**
+ * Everything on show lying wholly inside a box on the viewport: the camera's view-projection matrix in the scene's
+ * local frame (column-major) and the box's corners in normalised device coordinates.
+ */
+export const objectsInBox = (matrix: number[], min: [number, number], max: [number, number]) => invoke<string[]>('objects_in_box', { matrix, min, max });
 
 export type SectionKind = 'surface' | 'solid' | 'seam' | 'string' | 'selected';
 
@@ -306,7 +315,8 @@ export interface Look {
 export interface Contours {
   /** Metres between band edges; null picks one from the RL range. */
   interval: number | null;
-  lines: boolean;
+  /** Thin lines at the band edges: off unless turned on. */
+  edge_lines: boolean;
   /** One colour range across everything on show, rather than each object's own. */
   shared: boolean;
 }
@@ -756,6 +766,8 @@ export interface BenchConfig {
   palettes: boolean;
   /** With `--design-lines`, a step design's own line and a copy of it on top: what a click picks, and Delete on each. */
   design_lines: boolean;
+  /** With `--select`, selecting several and zooming to them. */
+  select: boolean;
   /** With `--builder`, the Builder panel driven as Tim would, from a toe up, with an edit between steps (decision 0048). */
   builder: boolean;
   /** With `--cut`, the Cut solids panel driven as Tim would: a pit between two surfaces, sliced into strips, cut at an RL (decision 0049). */

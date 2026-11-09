@@ -4,9 +4,11 @@ import type { DockviewApi } from 'dockview-react';
 import {
   Aperture,
   Box,
+  Expand,
   FileInput,
   FileOutput,
   FilePlus,
+  Focus,
   FolderOpen,
   Hammer,
   Layers,
@@ -39,6 +41,8 @@ import {
   spryContents,
   type LogEntry,
   newProject,
+  objectsBounds,
+  objectsInBox,
   type ObjectSummary,
   openProject,
   type ProjectSummary,
@@ -114,6 +118,11 @@ function splitPath(path: string): [string, string] {
   return [path.slice(0, cut), path.slice(cut + 1)];
 }
 
+/** A key typed into a text box or a list, where a letter isn't a shortcut. */
+function typing(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable);
+}
+
 function ToolButton({ tip, active, children, ...props }: { tip: string; active?: boolean; children: ReactNode } & ComponentProps<typeof Button>) {
   return (
     <Tooltip>
@@ -172,14 +181,15 @@ export default function App() {
   const [sectionFill, setSectionFill] = useState(true);
   const sectionRef = useRef<SectionView | null>(null);
   const [activeLayer, setActiveLayerState] = useState('design');
-  const [selected, setSelected] = useState<string | null>(null);
+  /** Everything selected, the last picked last. */
+  const [selection, setSelectionState] = useState<string[]>([]);
+  const selected = selection.at(-1) ?? null;
   const [seamViews, setSeamViews] = useState<SeamShown[]>([]);
   const [rlShown, setRlShown] = useState<RlShown>({ shared: false, objects: [] });
   const summaryRef = useRef(summary);
   summaryRef.current = summary;
   const seamsRef = useRef<SeamShown[]>([]);
-  const selectedRef = useRef<string | null>(null);
-  const [marked, setMarked] = useState<string[]>([]);
+  const selectionRef = useRef<string[]>([]);
   const [deswikFile, setDeswikFile] = useState<{ path: string; layers: DeswikLayer[] } | null>(null);
   const [spryFile, setSpryFile] = useState<{ path: string; layers: PickableLayer[]; solidFields: Set<string> } | null>(null);
   const [notSolids, setNotSolids] = useState<NotASolid[] | null>(null);
@@ -232,6 +242,15 @@ export default function App() {
     const o = summaryRef.current?.origin ?? [0, 0, 0];
     return [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
   }, []);
+  /** Runs a zoom; what it says back, if anything, goes on the status line. */
+  const attemptZoom = async (zoom: () => Promise<string | null>) => {
+    try {
+      const why = await zoom();
+      if (why) setStatus({ text: why });
+    } catch (e) {
+      setStatus({ text: String(e), error: true });
+    }
+  };
   const markCrossings = useCallback((sites: Vec3[]) => crossingMarkersRef.current?.set(sites.map(toLocal)), [toLocal]);
   const flyTo = useCallback((point: Vec3) => viewportRef.current?.focusOn(toLocal(point)), [toLocal]);
   const frameLine = useCallback(
@@ -309,20 +328,64 @@ export default function App() {
 
   const viewportMounted = useCallback(() => setHostMounted(true), []);
 
-  const toggleMark = useCallback((id: string) => {
-    setMarked((was) => {
-      const from = was.length === 0 && selectedRef.current ? [selectedRef.current] : was;
-      return from.includes(id) ? from.filter((other) => other !== id) : [...from, id];
-    });
+  const setSelection = useCallback((ids: string[]) => {
+    // Once each, where it was last: the last is the one a panel showing one takes.
+    const once = ids.filter((id, k) => ids.lastIndexOf(id) === k);
+    selectionRef.current = once;
+    setSelectionState(once);
   }, []);
 
-  const select = useCallback((id: string | null) => {
-    const strings = stringsRef.current;
-    const isString = summaryRef.current?.objects.some((o) => o.id === id && o.kind === 'string' && !o.hidden);
-    // The string layer reports its own selection (null for anything that isn't a string).
-    strings?.select(isString ? id : null);
-    if (!isString) setSelected(id);
+  const select = useCallback((id: string | null) => setSelection(id ? [id] : []), [setSelection]);
+
+  const toggleSelected = useCallback(
+    (id: string) => {
+      const was = selectionRef.current;
+      setSelection(was.includes(id) ? was.filter((other) => other !== id) : [...was, id]);
+    },
+    [setSelection],
+  );
+
+  /** Frames objects from the current direction, as a line from a panel is; in plan, straight above them. */
+  const zoomTo = useCallback(
+    (ids: string[]) =>
+      void attemptZoom(async () => {
+        if (sectionRef.current?.open) return 'Close the section to zoom to what is selected';
+        if (ids.length === 0) return 'Nothing is selected to zoom to';
+        const box = await objectsBounds(ids);
+        if (!box) return 'Nothing selected has a place to zoom to';
+        viewportRef.current?.frameBox(toLocal(box[0]), toLocal(box[1]));
+        return null;
+      }),
+    [toLocal],
+  );
+
+  /** Frames everything loaded (Shift+F). */
+  const zoomToExtents = useCallback(() => {
+    if (sectionRef.current?.open) return setStatus({ text: 'Close the section to zoom to everything' });
+    viewportRef.current?.fitView();
   }, []);
+  /** F: the selection if there is one, else everything, as Spry's F. */
+  const zoomToSelection = useCallback(() => (selectionRef.current.length > 0 ? zoomTo(selectionRef.current) : zoomToExtents()), [zoomTo, zoomToExtents]);
+
+  /** Selects what lies wholly inside a box on the viewport, or adds it to what's selected. */
+  const boxSelect = useCallback(
+    async (min: [number, number], max: [number, number], add: boolean) => {
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      const camera = viewport.camera;
+      camera.updateMatrixWorld();
+      const matrix = camera.projectionMatrix.clone().multiply(camera.matrixWorldInverse).elements;
+      try {
+        const inside = await objectsInBox([...matrix], min, max);
+        setSelection(add ? [...selectionRef.current, ...inside] : inside);
+        const count = inside.length === 1 ? 'One object' : `${inside.length} objects`;
+        setStatus({ text: inside.length === 0 ? 'Nothing on show lies wholly inside that box' : `${count} inside the box${add ? ' added' : ''}` });
+      } catch (e) {
+        setStatus({ text: String(e), error: true });
+      }
+    },
+    [setSelection],
+  );
 
   // The viewport is made once its canvas host is in the page (the viewport panel mounts it).
   useEffect(() => {
@@ -358,10 +421,14 @@ export default function App() {
         snapDown: (x, y) => snapRay([x, y, 1e6], [0, 0, -1]),
         status: (text, error) => setStatus({ text, error }),
         layer: () => layerRef.current,
-        pick: (x, y) => void objectAt(created, sync, section, x, y).then(select),
-        mark: (id) => (id ? toggleMark(id) : setMarked([])),
+        pick: (x, y, add) =>
+          void objectAt(created, sync, section, x, y).then((id) => {
+            if (!add) select(id);
+            else if (id) toggleSelected(id);
+          }),
+        choose: (id, add) => (add && id ? toggleSelected(id) : select(id)),
+        box: (min, max, add) => void boxSelect(min, max, add),
       });
-      strings.onSelect = setSelected;
       strings.onSnapping = setSnapping;
       section.mapShows = [strings.lines];
       section.onUnfilled = (count) => setStatus({ text: `${count === 1 ? 'A closed loop' : `${count} closed loops`} in this section could not be filled: the lines show as cut` });
@@ -376,7 +443,7 @@ export default function App() {
         if (!config.solids) dockRef.current?.getPanel('viewport')?.api.maximize();
         await created.nextFrame();
         await created.nextFrame();
-        await runChecks(created, config, (text) => setStatus({ text }), show, () => sectionRef.current, () => stringsRef.current);
+        await runChecks(created, config, (text) => setStatus({ text }), show, () => sectionRef.current, () => stringsRef.current, () => selectionRef.current);
       }
     });
     return () => {
@@ -384,15 +451,28 @@ export default function App() {
       detach();
       viewport?.dispose();
     };
-  }, [hostMounted, viewportHost, run, show, onSeams, openSection, select, toggleMark]);
+  }, [hostMounted, viewportHost, run, show, onSeams, openSection, select, toggleSelected, boxSelect]);
 
+  // What's selected lights up. A section shows the last one's cut lines over the rest.
   useEffect(() => {
-    selectedRef.current = selected;
-    void syncRef.current?.select(selected);
-    sectionRef.current?.setSelected(selected);
-  }, [selected]);
+    void syncRef.current?.select(selection);
+    sectionRef.current?.setSelected(selection.at(-1) ?? null);
+  }, [selection]);
 
-  useEffect(() => stringsRef.current?.setMarked(marked), [marked, summary]);
+  // The last one picked, if it's a string, gets handles to drag; the other strings light up over their layers.
+  useEffect(() => {
+    const strings = stringsRef.current;
+    const last = selection.at(-1) ?? null;
+    strings?.showSelected(last);
+    strings?.setMarked(selection.filter((id) => id !== last));
+  }, [selection, summary]);
+
+  // What a run deleted, or an undo took back, isn't selected any longer.
+  useEffect(() => {
+    if (!summary) return;
+    const live = new Set(summary.objects.map((o) => o.id));
+    if (selectionRef.current.some((id) => !live.has(id))) setSelection(selectionRef.current.filter((id) => live.has(id)));
+  }, [summary, setSelection]);
 
   const attempt = useCallback(async (work: () => Promise<void>) => {
     try {
@@ -564,7 +644,13 @@ export default function App() {
       await run(`export.${format}`, { objects: objects.map((o) => o.id), path, overwrite: true });
     });
 
-  const selectedObject = summary?.objects.find((o) => o.id === selected) ?? null;
+  // A set: a box over a pit's blocks selects tens of thousands.
+  const selectedObjects = useMemo(() => {
+    const ids = new Set(selection);
+    return summary?.objects.filter((o) => ids.has(o.id)) ?? [];
+  }, [summary, selection]);
+  const selectedDxf = selectedObjects.filter((o) => DXF_KINDS.has(o.kind));
+  const selectedStrings = selectedObjects.filter((o) => o.kind === 'string');
   const visibleObjects = (kinds: Set<string>) => {
     // Objects carry their layer's id.
     const shown = new Set(summary?.layers.filter((l) => l.visible).map((l) => l.id));
@@ -631,11 +717,15 @@ export default function App() {
     if (Number.isFinite(distance) && distance > 0) void sectionRef.current?.step(direction * distance);
   };
 
-  // Shortcuts: undo, redo, save, and stepping a section.
+  // Shortcuts: undo, redo, save, zoom, and stepping a section.
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
       if (sectionOpen && (e.key === '[' || e.key === ']')) return stepSection(e.key === ']' ? 1 : -1);
+      if (e.key.toLowerCase() === 'f' && !(e.ctrlKey || e.metaKey || e.altKey) && !typing(e.target)) {
+        e.preventDefault();
+        return e.shiftKey ? zoomToExtents() : zoomToSelection();
+      }
       if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
       if (k === 'z' && !e.shiftKey) {
@@ -708,13 +798,14 @@ export default function App() {
       summary,
       log,
       selected,
+      selection,
       activeLayer,
       viewportHost,
       viewportMounted,
       select,
-      marked,
-      setMarked,
-      toggleMark,
+      setSelection,
+      toggleSelected,
+      zoomTo,
       setActiveLayer,
       setLayerVisible: setVisible,
       setObjectsVisible: setObjectsShown,
@@ -742,10 +833,12 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, activeLayer, viewportHost, viewportMounted, select, marked, toggleMark, setActiveLayer, setVisible, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
+    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';
+  /** A file name for what's selected: its name if it's one, else the project's. */
+  const selectionName = (objects: ObjectSummary[]) => (objects.length === 1 ? objects[0].name : `${projectName} selection`);
 
   return (
     <TooltipProvider delayDuration={400}>
@@ -817,17 +910,11 @@ export default function App() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              <DropdownMenuItem
-                disabled={!selectedObject || !DXF_KINDS.has(selectedObject.kind)}
-                onSelect={() => selectedObject && exportObjects([selectedObject], 'dxf', selectedObject.name)}
-              >
-                Selected object to DXF…
+              <DropdownMenuItem disabled={selectedDxf.length === 0} onSelect={() => exportObjects(selectedDxf, 'dxf', selectionName(selectedDxf))}>
+                Selected to DXF{selectedDxf.length > 1 ? ` (${selectedDxf.length})` : ''}…
               </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={selectedObject?.kind !== 'string'}
-                onSelect={() => selectedObject && exportObjects([selectedObject], 'csv', selectedObject.name)}
-              >
-                Selected string to CSV…
+              <DropdownMenuItem disabled={selectedStrings.length === 0} onSelect={() => exportObjects(selectedStrings, 'csv', selectionName(selectedStrings))}>
+                Selected strings to CSV{selectedStrings.length > 1 ? ` (${selectedStrings.length})` : ''}…
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => exportObjects(visibleObjects(DXF_KINDS), 'dxf', projectName)}>
                 Everything visible to DXF…
@@ -861,6 +948,12 @@ export default function App() {
             }}
           >
             {plan ? <MapIcon /> : <Box />} {plan ? 'Plan' : '3D'}
+          </ToolButton>
+          <ToolButton tip="Zoom to what's selected (F), from the way you're looking" disabled={selection.length === 0 || sectionOpen} onClick={() => zoomTo(selection)}>
+            <Focus />
+          </ToolButton>
+          <ToolButton tip="Zoom to everything (Shift+F)" disabled={sectionOpen} onClick={zoomToExtents}>
+            <Expand />
           </ToolButton>
           <DropdownMenu>
             <Tooltip>

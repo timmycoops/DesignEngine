@@ -132,6 +132,7 @@ The tree with all 42,218 solids on one layer, in the real app:
 - **The Objects table's sorting and columns are gone.** Objects list in the order they were made, which keeps a face's
   toes and crests together. A revision shows beside the name once it's past 1. Filtering comes in workstream 6.
 - **One selected object at a time.** Rows can be marked to act together, but Properties and the highlight show one.
+  Lifted by 0050 (2026-11-09): one selection of any number of objects, which Properties and the highlight show together.
 - **A moved solid costs a snap index on each layer**, as above. It's not worth a smarter index until moving solids in bulk
   is common.
 - **A face design keeps the layer name it was given.** Rename its layer and the next run makes one of the old name.

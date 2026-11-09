@@ -110,7 +110,7 @@ function RlLegend() {
       )}
       <div className="mt-1.5 flex flex-col gap-1">
         <label className="flex items-center gap-1.5">
-          <Checkbox checked={contours.lines} onCheckedChange={(c) => setContours({ ...contours, lines: c === true })} />
+          <Checkbox checked={contours.edge_lines} onCheckedChange={(c) => setContours({ ...contours, edge_lines: c === true })} />
           Contour lines
         </label>
         <label className="flex items-center gap-1.5" title="One colour range across everything coloured by RL, so an RL is the same colour on every surface">

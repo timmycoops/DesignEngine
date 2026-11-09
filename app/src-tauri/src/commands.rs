@@ -18,6 +18,7 @@ use zd_geom::{SectionPlane, StackHorizon, SurfaceRayCaster, stack_issue_nodes, t
 use zd_io::{list_deswik_layers, list_spry, read_stack_grids};
 
 use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_section, encode_triangulation};
+use crate::selection;
 use crate::section::{SectionCut, add_selected, pick_on_section, section_groups, snap_on_section};
 use crate::shared::post_shared_buffer;
 use crate::state::{AppInner, AppState, SolidCaster, bounds, every_layer_solid, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_layer_keys, solid_snap_keys};
@@ -479,6 +480,46 @@ pub async fn stage_layer_solids(layer: LayerId, state: State<'_, AppState>) -> R
     Ok(stage(&state, buffer, name, "triangulation", triangles, String::new(), serde_json::json!({ "encode": encode_ms })))
 }
 
+/// The box round these objects together, world coordinates, for zoom to selection. `None` if none has a place.
+#[tauri::command]
+pub fn objects_bounds(objects: Vec<ObjectId>, state: State<'_, AppState>) -> Option<[[f64; 3]; 2]> {
+    let app = state.app.lock().unwrap();
+    selection::bounds_of(app.session.project(), &objects).map(|b| [b.min, b.max])
+}
+
+/// Everything on show lying wholly inside a box drawn on the viewport: the camera's view-projection matrix in the
+/// scene's local frame (column-major, as three.js keeps it) and the box's corners in normalised device coordinates.
+#[tauri::command]
+pub async fn objects_in_box(matrix: [f64; 16], min: [f64; 2], max: [f64; 2], state: State<'_, AppState>) -> Result<Vec<ObjectId>, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let mut app = app.lock().unwrap();
+        let origin = app.origin().unwrap_or([0.0; 3]);
+        selection::objects_in_box(app.session.project(), &selection::ScreenBox { matrix, origin, min, max })
+    })
+    .await
+}
+
+/// The selected solids on show as one mesh, to light up over their layers': one draw however many are picked.
+#[tauri::command]
+pub async fn stage_solids(objects: Vec<ObjectId>, state: State<'_, AppState>) -> Result<StagedMesh, String> {
+    let app = state.app.clone();
+    let (meshes, origin) = {
+        let mut app = app.lock().unwrap();
+        let origin = app.origin().unwrap_or([0.0; 3]);
+        (selection::solids_on_show(app.session.project(), &objects), origin)
+    };
+    let name = format!("{} selected solids", meshes.len());
+    let header = serde_json::json!({ "id": 0, "name": name, "timings": {} });
+    let (buffer, triangles, encode_ms) = blocking(move || {
+        let t = Instant::now();
+        let mesh = joined_meshes(&meshes);
+        (encode_triangulation(&mesh, origin, header), mesh.triangle_count(), ms(t))
+    })
+    .await?;
+    Ok(stage(&state, buffer, name, "triangulation", triangles, String::new(), serde_json::json!({ "encode": encode_ms })))
+}
+
 /// The section through two plan points (mine grid) as binary: where the plane cuts every visible
 /// layer, with strings within `width` drawn flat on it and the `selected` object's lines over the rest.
 /// View state, not a command.
@@ -828,6 +869,9 @@ pub struct BenchConfig {
     /// With `--cut`, the Cut solids panel driven as Tim would: a pit made between two surfaces inside its limit, sliced
     /// into strips by fifteen numbered faces, the faces joined a face a strip, and the pit cut at an RL (decision 0049).
     cut: bool,
+    /// With `--select`, several objects selected by a box, Ctrl-click and Esc in 3D and plan, and zoomed to with F and
+    /// Shift+F (decision 0050).
+    select: bool,
 }
 
 /// Present when the app was started with `--bench`: the viewport then runs Checks 1, 3 and 4
@@ -872,6 +916,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         design_lines: args.iter().any(|a| a == "--design-lines"),
         builder: args.iter().any(|a| a == "--builder"),
         cut: args.iter().any(|a| a == "--cut"),
+        select: args.iter().any(|a| a == "--select"),
     })
 }
 
