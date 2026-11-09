@@ -259,9 +259,74 @@ fn repair_closes_fins_cracks_and_small_holes_and_notes_them_on_the_solid() {
     // A clean solid has nothing to repair and carries no note.
     write(&dir.join("clean.00t"), &block([E, N, 250.0], [10.0, 10.0, 10.0]));
     let record = s.run("solid.import", json!({ "path": dir.join("clean.00t").to_string_lossy(), "layer": "coal", "repair": true })).unwrap();
-    assert_eq!(record.messages[2], "closing: nothing to do");
+    // Taken with its corners as written, it never reaches the closing step (decision 0052).
+    assert_eq!(record.messages[1], "corners as written; 0 triangles flipped to agree with their neighbours and face up, or out where closed (1 patches, 1 closed); 12 triangles out, 0 ms");
+    assert!(record.messages.iter().all(|m| !m.starts_with("closing:")), "{:?}", record.messages);
     assert!(s.project().object(created(&record)[0]).unwrap().attributes.is_empty());
     assert!(s.run("solid.import", json!({ "path": dir.join("clean.00t").to_string_lossy(), "layer": "coal", "repair": true, "fill_limit": 2.0 })).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A 10 m cube written as loose triangles, each with its own corners, the top's written `apart` m off in x.
+fn loose_cube(apart: f64) -> TriMesh {
+    let whole = block([E, N, 250.0], [10.0, 10.0, 10.0]);
+    let mut loose = TriMesh::default();
+    for (k, t) in whole.triangles.iter().enumerate() {
+        let base = loose.vertices.len() as u32;
+        loose.vertices.extend(t.map(|i| whole.vertices[i as usize]).map(|p| if k == 2 || k == 3 { [p[0] + apart, p[1], p[2]] } else { p }));
+        loose.triangles.push([base, base + 1, base + 2]);
+    }
+    loose
+}
+
+#[test]
+fn a_solid_is_welded_only_as_far_as_it_needs() {
+    let dir = scratch("weld");
+    let mut s = Session::with_builtins();
+    let mut import = |name: &str, mesh: &TriMesh| {
+        write(&dir.join(format!("{name}.00t")), mesh);
+        let record = s.run("solid.import", json!({ "path": dir.join(format!("{name}.00t")).to_string_lossy(), "layer": "coal" })).unwrap();
+        let object = s.project().object(created(&record)[0]).unwrap().clone();
+        let Body::Solid(solid) = &object.body else { panic!("not a solid") };
+        (record.messages.clone(), object.attributes.clone(), solid.volume(), solid.mesh().vertices.clone())
+    };
+
+    // A 10 m cube and, beside it, a closed wedge 0.3 mm high: a right triangle with 6 m legs and its apex 0.3 mm
+    // over one corner, 18 x 0.0003 / 3 = 0.0018 m3. Closed as written. A 1 mm weld folds the wedge flat, its top
+    // and bottom become one triangle written twice, one is dropped and the other is left open.
+    let mut fine = block([E, N, 250.0], [10.0, 10.0, 10.0]);
+    fine.vertices.extend([[E + 12.0, N, 250.0], [E + 18.0, N, 250.0], [E + 12.0, N + 6.0, 250.0], [E + 12.0, N, 250.0003]]);
+    fine.triangles.extend([[8, 10, 9], [8, 9, 11], [9, 10, 11], [10, 8, 11]]);
+    assert!(fine.validity().is_watertight());
+    assert!(!zd_geom::repair_mesh(&fine, 0.001).0.validity().is_watertight(), "a 1 mm weld opens it");
+    let (messages, attributes, volume, vertices) = import("fine", &fine);
+    assert!(messages[1].starts_with("corners as written; "), "{}", messages[1]);
+    assert!(attributes.is_empty(), "no weld to note: {attributes:?}");
+    // Volume tolerance: 1e-9 m3 on 1,000.0018 m3.
+    assert!((volume - 1000.0018).abs() < 1e-9, "{volume}");
+    assert_eq!(vertices, fine.vertices, "every coordinate exactly as written");
+
+    // The cube as loose triangles, its top written 0.004 mm off: closed by the 0.01 mm weld, and no further.
+    let (messages, attributes, volume, _) = import("near", &loose_cube(0.000_004));
+    assert!(messages[1].starts_with("repair at 0.01 mm; 28 vertices welded (largest move 0.004 mm)"), "{}", messages[1]);
+    assert_eq!(attributes["weld_mm"], zd_core::AttrValue::Number(0.01));
+    // Volume tolerance: 1e-6 m3; the top moved 0.004 mm sideways, which shears the cube and keeps its volume.
+    assert!((volume - 1000.0).abs() < 1e-6, "{volume}");
+
+    // Written 0.4 mm off, it takes the ceiling, 1 mm.
+    let (messages, attributes, volume, _) = import("far", &loose_cube(0.0004));
+    assert!(messages[1].starts_with("repair at 1 mm; 28 vertices welded (largest move 0.4 mm)"), "{}", messages[1]);
+    assert_eq!(attributes["weld_mm"], zd_core::AttrValue::Number(1.0));
+    assert!((volume - 1000.0).abs() < 1e-6, "{volume}");
+
+    // With the ceiling under what it needs, it is refused as before.
+    let refused = s.run("solid.import", json!({ "path": dir.join("far.00t").to_string_lossy(), "layer": "coal", "weld_tolerance": 0.0001 })).unwrap_err();
+    assert!(refused.to_string().contains("is not a closed solid"), "{refused}");
+
+    // In one run of many, the tally counts each by the weld it took.
+    let record = s.run("solid.import_many", json!({ "paths": [dir.to_string_lossy()], "layer": "many" })).unwrap();
+    let tally = record.messages.iter().find(|m| m.contains("solids imported")).unwrap();
+    assert!(tally.contains("each welded only as far as it needs, up to 1 mm: 1 with no corner moved, 1 at 0.01 mm, 1 at 1 mm"), "{tally}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

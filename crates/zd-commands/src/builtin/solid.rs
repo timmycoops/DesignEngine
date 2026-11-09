@@ -73,7 +73,8 @@ pub struct ImportSolidParams {
     /// Defaults to the file name without its extension.
     #[serde(default)]
     pub name: Option<String>,
-    /// Vertices closer than this (m) are welded, and crossings by less than it are not counted.
+    /// The most a weld may move a corner (m): each mesh is welded only as far as it needs to be a solid
+    /// (decision 0052). Crossings by less than it are not counted.
     #[serde(default = "default_tolerance")]
     pub weld_tolerance: f64,
     /// Close the mesh first: fins off, cracks joined, holes filled (decision 0013). Off by default.
@@ -101,7 +102,7 @@ impl Command for ImportSolid {
                 Field::new("path", FieldType::Path, ".00t or .dxf holding one closed triangulation"),
                 Field::new("layer", FieldType::Layer, "Layer for the solid"),
                 Field::new("name", FieldType::Text, "Optional; the file name by default"),
-                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "Weld vertices closer than this; 1 mm by default"),
+                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "The most a corner may move to close a solid; each is welded only as far as it needs. 1 mm by default"),
                 Field::new("repair", FieldType::Bool, "Close the mesh first: fins off, cracks joined, holes filled; off by default"),
                 Field::new("fill_limit", FieldType::Number { unit: "share" }, "With repair: the most hole area to fill, as a share of the surface; 0.1 by default"),
             ],
@@ -134,7 +135,8 @@ pub struct ImportSolidsParams {
     /// Files, folders (with their subfolders) and zips.
     pub paths: Vec<String>,
     pub layer: String,
-    /// Vertices closer than this (m) are welded, and crossings by less than it are not counted.
+    /// The most a weld may move a corner (m): each mesh is welded only as far as it needs to be a solid
+    /// (decision 0052). Crossings by less than it are not counted.
     #[serde(default = "default_tolerance")]
     pub weld_tolerance: f64,
     /// Close each mesh first: fins off, cracks joined, holes filled (decision 0013). Off by default.
@@ -157,7 +159,7 @@ impl Command for ImportSolids {
             params: vec![
                 Field::new("paths", FieldType::Paths, "Files, folders and zips holding .00t or .dxf files, one closed triangulation to a file"),
                 Field::new("layer", FieldType::Layer, "Layer for the solids"),
-                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "Weld vertices closer than this; 1 mm by default"),
+                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "The most a corner may move to close a solid; each is welded only as far as it needs. 1 mm by default"),
                 Field::new("repair", FieldType::Bool, "Close each mesh first: fins off, cracks joined, holes filled; off by default"),
                 Field::new("fill_limit", FieldType::Number { unit: "share" }, "With repair: the most hole area to fill, as a share of a solid's surface; 0.1 by default"),
             ],
@@ -215,6 +217,9 @@ impl Command for ImportSolids {
 /// (decision 0040); `solid.repair` takes it off what it fixes.
 pub(crate) const NOT_A_SOLID: &str = "not_a_solid";
 
+/// The attribute on a solid whose corners a weld moved: the weld it took, mm (decision 0052).
+pub(crate) const WELD_MM: &str = "weld_mm";
+
 /// A solid agrees with another package's own volume of it to within this share.
 pub(crate) const VOLUME_AGREES: f64 = 1e-6;
 
@@ -232,7 +237,8 @@ pub struct RepairSolids;
 #[serde(deny_unknown_fields)]
 pub struct RepairSolidsParams {
     pub surfaces: Vec<ObjectId>,
-    /// Vertices closer than this (m) are welded, and crossings by less than it are not counted.
+    /// The most a weld may move a corner (m): each mesh is welded only as far as it needs to be a solid
+    /// (decision 0052). Crossings by less than it are not counted.
     #[serde(default = "default_tolerance")]
     pub weld_tolerance: f64,
     /// The most hole area to fill, as a share of a solid's surface (0.1 = 10 %).
@@ -250,7 +256,7 @@ impl Command for RepairSolids {
             summary: "Make closed surfaces solids by repair, each fixed one replacing its surface",
             inputs: vec![Field::new("surfaces", FieldType::Objects, "Closed surfaces, such as those an import kept as not a solid")],
             params: vec![
-                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "Weld vertices closer than this; 1 mm by default"),
+                Field::new("weld_tolerance", FieldType::Number { unit: "m" }, "The most a corner may move to close a solid; each is welded only as far as it needs. 1 mm by default"),
                 Field::new("fill_limit", FieldType::Number { unit: "share" }, "The most hole area to fill, as a share of the surface; 0.1 by default"),
             ],
             outputs: vec![Field::new("solids", FieldType::Objects, "One solid for each surface fixed")],
@@ -334,10 +340,59 @@ impl Command for RepairSolids {
 fn repair_surface(mesh: &TriMesh, name: &str, cleaning: Cleaning) -> Result<ImportedSolid, String> {
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let read = format!("surface: {} vertices, {} triangles", mesh.vertices.len(), mesh.triangle_count());
-        let (welded, log) = repair_mesh(mesh, cleaning.weld_tolerance);
-        solid_from_welded(welded, log, read, name, name, cleaning).map_err(|e| e.to_string())
+        match weld_as_needed(mesh, &read, name, name, cleaning) {
+            Welded::Solid(solid) => Ok(*solid),
+            Welded::AtCeiling(welded, log) => solid_from_welded(welded, log, read, name, name, cleaning).map_err(|e| e.to_string()),
+        }
     }));
     attempt.unwrap_or_else(|_| Err("the repair stopped on an error in the geometry".into()))
+}
+
+/// The welds tried in turn below the ceiling, m: corners as written, then a micrometre and up by tens (decision 0052).
+const WELD_STEPS: [f64; 4] = [0.0, 1e-6, 1e-5, 1e-4];
+
+/// A mesh on its way to a solid, welded only as far as it needs (decision 0052).
+pub(crate) enum Welded {
+    /// A solid as read, at the least weld that makes it one.
+    Solid(Box<ImportedSolid>),
+    /// No weld under the ceiling makes it a solid as read: the mesh welded at the ceiling, to go on as before.
+    AtCeiling(TriMesh, RepairLog),
+}
+
+/// A solid's detail can be finer than the weld: a weld of 1 mm collapses it and opens a mesh that was closed as
+/// written. So the mesh is taken with its corners as written if that makes a solid, then at each finer weld in turn,
+/// and only then at the ceiling, `cleaning.weld_tolerance`, where it goes on to repair if asked. Crossings are still
+/// judged at the ceiling. A weld that joins no more corners than the one before it is passed over.
+pub(crate) fn weld_as_needed(mesh: &TriMesh, read_log: &str, place: &str, name: &str, cleaning: Cleaning) -> Welded {
+    let ceiling = cleaning.weld_tolerance;
+    let as_read = Cleaning { repair: false, ..cleaning };
+    let mut at_ceiling: Option<(TriMesh, RepairLog)> = None;
+    let mut joined = None;
+    for step in WELD_STEPS.into_iter().filter(|step| *step < ceiling) {
+        let (welded, log) = repair_mesh(mesh, step);
+        let same = joined == Some(log.vertices_welded);
+        joined = Some(log.vertices_welded);
+        if same {
+            continue;
+        }
+        if !welded.triangles.is_empty()
+            && welded.validity().boundary_edges == 0
+            && let Ok(solid) = solid_from_welded(welded, log, read_log.to_string(), place, name, as_read)
+        {
+            return Welded::Solid(Box::new(solid));
+        }
+        // Nothing between the corners as written and the ceiling to try, if the ceiling joins no more of them.
+        if step == 0.0 {
+            let (welded, log) = repair_mesh(mesh, ceiling);
+            let no_more = Some(log.vertices_welded) == joined;
+            at_ceiling = Some((welded, log));
+            if no_more {
+                break;
+            }
+        }
+    }
+    let (welded, log) = at_ceiling.unwrap_or_else(|| repair_mesh(mesh, ceiling));
+    Welded::AtCeiling(welded, log)
 }
 
 /// How a file's mesh is cleaned on its way to a solid.
@@ -399,6 +454,9 @@ fn describe_selection(selection: &MeshSelection) -> String {
 #[derive(Default)]
 pub(crate) struct ImportTally {
     pub(crate) solids: usize,
+    /// Solids whose corners no weld moved, and the rest by the weld each took (micrometres).
+    as_written: usize,
+    by_weld: std::collections::BTreeMap<u64, usize>,
     triangles: usize,
     volume: f64,
     thin: usize,
@@ -416,6 +474,11 @@ impl ImportTally {
     pub(crate) fn add(&mut self, imported: &ImportedSolid) {
         let log = &imported.log;
         self.solids += 1;
+        if log.largest_move > 0.0 {
+            *self.by_weld.entry((log.tolerance * 1e6).round() as u64).or_default() += 1;
+        } else {
+            self.as_written += 1;
+        }
         self.triangles += imported.solid.mesh().triangle_count();
         self.volume += imported.solid.volume();
         self.thin += imported.solid.crossings().map_or(0, |c| c.thin);
@@ -431,9 +494,16 @@ impl ImportTally {
 
     pub(crate) fn describe(&self, tolerance: f64, ms: f64) -> String {
         let mut parts = vec![format!("{} solids imported, {} triangles, {:.3} m3 in all, {ms:.0} ms", self.solids, self.triangles, self.volume)];
+        let welds: Vec<String> = self.by_weld.iter().map(|(um, n)| format!("{n} at {}", mm(*um as f64 * 1e-6))).collect();
         parts.push(format!(
-            "repair at {}: {} vertices welded (largest move {}), {} triangles and {} unused vertices dropped, {} triangles flipped",
+            "each welded only as far as it needs, up to {}: {} with no corner moved{}{}",
             mm(tolerance),
+            self.as_written,
+            if welds.is_empty() { "" } else { ", " },
+            welds.join(", ")
+        ));
+        parts.push(format!(
+            "{} vertices welded (largest move {}), {} triangles and {} unused vertices dropped, {} triangles flipped",
             self.vertices_welded,
             mm(self.largest_move),
             self.triangles_dropped,
@@ -470,8 +540,10 @@ fn solid_from_file(read: SurfaceImport, place: &str, name: &str, cleaning: Clean
             return Err(CommandError::Invalid(format!("{place} is a grid: import it as a surface")));
         }
     };
-    let (welded, log) = repair_mesh(&read, cleaning.weld_tolerance);
-    solid_from_welded(welded, log, read_log, place, name, cleaning)
+    match weld_as_needed(&read, &read_log, place, name, cleaning) {
+        Welded::Solid(solid) => Ok(*solid),
+        Welded::AtCeiling(welded, log) => solid_from_welded(welded, log, read_log, place, name, cleaning),
+    }
 }
 
 /// A mesh through the repair step's weld (`log` says what it did) as a solid: closed if asked,
@@ -479,6 +551,10 @@ fn solid_from_file(read: SurfaceImport, place: &str, name: &str, cleaning: Clean
 pub(crate) fn solid_from_welded(welded: TriMesh, log: RepairLog, read_log: String, place: &str, name: &str, cleaning: Cleaning) -> Result<ImportedSolid, CommandError> {
     let Cleaning { weld_tolerance, repair, fill_limit } = cleaning;
     let mut attributes = Attributes::new();
+    // What the weld moved is said on the solid: none of this on one taken as written.
+    if log.largest_move > 0.0 {
+        attributes.insert(WELD_MM.into(), AttrValue::Number(log.tolerance * 1e3));
+    }
     if welded.triangles.is_empty() {
         return Err(CommandError::Invalid(format!("{place} holds no triangles ({read_log})")));
     }

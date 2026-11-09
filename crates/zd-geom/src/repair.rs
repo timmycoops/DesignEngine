@@ -24,6 +24,8 @@ pub struct RepairLog {
     pub collapsed_dropped: usize,
     /// Triangles of zero area: all three corners in a line.
     pub degenerate_dropped: usize,
+    /// Triangles of zero area kept, because the mesh is closed with them and open without (decision 0052).
+    pub degenerate_kept: usize,
     /// Triangles on the same three vertices as an earlier one, either way round.
     pub duplicates_dropped: usize,
     /// Vertices no remaining triangle uses.
@@ -41,16 +43,18 @@ pub fn repair_mesh(mesh: &TriMesh, tolerance: f64) -> (TriMesh, RepairLog) {
     let (kept, map) = weld(&mesh.vertices, tolerance, &mut log);
 
     let mut triangles = Vec::with_capacity(mesh.triangles.len());
+    let mut flat = Vec::new();
     for tri in &mesh.triangles {
         let t = tri.map(|i| map[i as usize]);
         if t[0] == t[1] || t[1] == t[2] || t[0] == t[2] {
             log.collapsed_dropped += 1;
         } else if is_zero_area(t.map(|i| kept[i as usize])) {
-            log.degenerate_dropped += 1;
+            flat.push(t);
         } else {
             triangles.push(t);
         }
     }
+    log.degenerate_dropped = flat.len();
     // Duplicates by sorting on each triangle's vertex set; the first in the mesh's order stays.
     let mut keys: Vec<([u32; 3], u32)> = triangles
         .iter()
@@ -75,6 +79,17 @@ pub fn repair_mesh(mesh: &TriMesh, tolerance: f64) -> (TriMesh, RepairLog) {
         !duplicate[index - 1]
     });
 
+    // A triangle of zero area still joins its neighbours: where the mesh is closed with them and open
+    // without, they stay, so a closed solid isn't opened by its own repair.
+    if !flat.is_empty() && open_edges(&triangles) > 0 {
+        let with: Vec<[u32; 3]> = triangles.iter().chain(&flat).copied().collect();
+        if open_edges(&with) == 0 {
+            log.degenerate_kept = flat.len();
+            log.degenerate_dropped = 0;
+            triangles = with;
+        }
+    }
+
     // Keep the vertices the triangles still use, in their own order.
     let mut used = vec![false; kept.len()];
     triangles.iter().flatten().for_each(|&i| used[i as usize] = true);
@@ -91,6 +106,13 @@ pub fn repair_mesh(mesh: &TriMesh, tolerance: f64) -> (TriMesh, RepairLog) {
     log.orient = orient;
     log.ms = start.elapsed().as_secs_f64() * 1e3;
     (oriented, log)
+}
+
+/// Edges only one triangle uses.
+fn open_edges(triangles: &[[u32; 3]]) -> usize {
+    let mut edges: Vec<(u32, u32)> = triangles.iter().flat_map(|&[a, b, c]| [(a.min(b), a.max(b)), (b.min(c), b.max(c)), (c.min(a), c.max(a))]).collect();
+    edges.sort_unstable();
+    edges.chunk_by(|x, y| x == y).filter(|run| run.len() == 1).count()
 }
 
 /// A fast hash for keys made from coordinates (multiply and rotate, as FxHash does). The keys never
@@ -265,6 +287,25 @@ mod tests {
         assert_eq!(mesh.triangles.len(), 1);
         assert_eq!((log.collapsed_dropped, log.degenerate_dropped, log.duplicates_dropped), (1, 1, 2));
         assert_eq!((log.vertices_welded, log.unused_dropped), (1, 2));
+    }
+
+    #[test]
+    fn a_zero_area_triangle_stays_where_the_mesh_is_closed_with_it() {
+        // A 10 m cube whose top is two triangles on one side of the diagonal's midpoint and one on the other, joined by
+        // a triangle of no area along the diagonal: closed as written, open without it. 1,000 m3 to 1e-9 m3.
+        let mut v: Vec<[f64; 3]> = (0..8).map(|i| [E + (i & 1) as f64 * 10.0, N + (i >> 1 & 1) as f64 * 10.0, 100.0 + (i >> 2) as f64 * 10.0]).collect();
+        v.push([E + 5.0, N + 5.0, 110.0]);
+        let mut t = vec![[0, 2, 3], [0, 3, 1], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+        t.extend([[4, 5, 8], [5, 7, 8], [4, 7, 6], [4, 8, 7]]);
+        let (solid, log) = repair_mesh(&TriMesh::new(v.clone(), t.clone()), 0.0);
+        assert_eq!((log.degenerate_kept, log.degenerate_dropped), (1, 0));
+        assert!(solid.validity().is_watertight());
+        assert!((solid.signed_volume() - 1000.0).abs() < 1e-9, "{}", solid.signed_volume());
+
+        // On an open sheet it is dropped as before.
+        let (sheet, log) = repair_mesh(&TriMesh::new(v, t[10..].to_vec()), 0.0);
+        assert_eq!((log.degenerate_kept, log.degenerate_dropped), (0, 1));
+        assert_eq!(sheet.triangles.len(), 3);
     }
 
     #[test]

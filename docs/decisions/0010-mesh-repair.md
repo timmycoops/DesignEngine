@@ -1,6 +1,6 @@
 # 0010 — The import repair step and crossings
 
-Date: 2026-10-29 · Status: accepted (Tim, 2026-10-29); for closed solids, amended by decision 0014 (thin features, 2026-10-30); cavities face in (2026-11-03, below)
+Date: 2026-10-29 · Status: accepted (Tim, 2026-10-29); for closed solids, amended by decision 0014 (thin features, 2026-10-30); cavities face in (2026-11-03, below); for solids the weld is only as far as each needs, by decision 0052 (2026-11-10)
 
 ## Decision
 

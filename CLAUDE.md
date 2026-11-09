@@ -49,6 +49,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 8. **Validity is explicit.** Every mesh carries computed flags: `Closed`, `Manifold`, `ConsistentWinding`,
    `NonDegenerate`, `NonSelfIntersecting` (Seequent Evo vocabulary). Imports pass through a repair step first
    (weld by tolerance, drop empty and duplicate faces, orient by flood-fill, find crossings) and log every fix.
+   A solid is welded only as far as it needs to close, corners as written first, up to the tolerance
+   (`docs/decisions/0052-weld-a-solid-only-as-far-as-it-needs.md`).
    Nothing invalid reaches Manifold or a volume report.
 9. **Solids are the volume of record.** Qualities and thicknesses are sampled from seam grids inside each solid.
    A 2.5D column calculation (vertical-walled polygons, exact partial cells) runs alongside as a reconciliation
