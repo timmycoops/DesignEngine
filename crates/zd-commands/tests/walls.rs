@@ -2366,3 +2366,56 @@ fn tops_too_close_to_share_a_berm_stop_the_later_ramp_saying_how_far() {
     assert!(b.contains("m along the crest from ramp A's, too close for both to turn back on one berm"), "{b}");
     assert!((apart + short - 51.0).abs() < 0.11, "{apart} + {short} = 51 m: {b}");
 }
+
+/// A toe on a floor that rolls, as seam floors do, under walls to RLs: decision 0034, 2026-11-09. Each wall runs from a
+/// stretch of toe at its own height, so where the toe bends a little a wall only just survives to the crest, and the
+/// same corner comes out of two pieces a hair apart. On a floor like this one the run made 102 pairs of corners closer
+/// than a centimetre, most of them under a millimetre. The face now has no two corners closer than a millimetre (and
+/// further apart than the micrometre weld), and its run says how many it made one and the furthest apart.
+#[test]
+fn a_toe_on_a_rolling_floor_leaves_no_corners_a_hair_apart() {
+    let mut s = Session::with_builtins();
+    let (cols, rows) = (45, 25);
+    let height = |x: f64, y: f64| 60.0 + 0.01 * x + 0.03 * y + 3.0 * (x / 137.0).sin() * (y / 91.0).cos();
+    let vertices: Vec<[f64; 3]> = (0..rows).flat_map(|j| (0..cols).map(move |i| (-500.0 + 50.0 * i as f64, -500.0 + 50.0 * j as f64))).map(|(x, y)| [E + x, N + y, height(x, y)]).collect();
+    let triangles: Vec<[u32; 3]> = (0..rows - 1)
+        .flat_map(|j| (0..cols - 1).flat_map(move |i| {
+            let a = (j * cols + i) as u32;
+            [[a, a + 1, a + cols as u32 + 1], [a, a + cols as u32 + 1, a + cols as u32]]
+        }))
+        .collect();
+    let floor = created(&s.run("surface.from_mesh", json!({ "name": "floor", "layer": "surfaces", "vertices": vertices, "triangles": triangles })).unwrap())[0];
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "toes", "points": [[E, N, 0.0], [E + 400.0, N + 50.0, 0.0], [E + 800.0, N + 20.0, 0.0], [E + 1200.0, N + 120.0, 0.0]] })).unwrap())[0];
+    let mut steps = Vec::new();
+    for (k, (rl, batter)) in [(115.0, 65.0), (130.0, 65.0), (145.0, 65.0), (160.0, 45.0)].into_iter().enumerate() {
+        if k > 0 {
+            steps.push(json!({ "step": "berm", "width": 10.0, "register": false }));
+        }
+        steps.push(json!({ "step": "project", "to": { "kind": "rl", "rl": rl }, "batter": batter }));
+    }
+    let content = json!({
+        "layer": "faces",
+        "lines": [{ "string": toe, "profile": "Up", "side": "left", "run_on": [0.0, 0.0] }],
+        "profiles": [{ "name": "Up", "direction": "up", "register": { "kind": "surface", "id": floor }, "condition": 0.1, "steps": steps, "ramps": [] }],
+        "rules": [],
+    });
+    let design = created(&s.run("face.save_design", json!({ "name": "rolling", "content": content })).unwrap())[0];
+    let record = s.run("face.project", json!({ "design": design })).unwrap();
+    let face = s.project().objects().find(|o| o.name == "toe Up face").unwrap();
+    let Body::Surface(sheet) = &face.body else { panic!("a face is a surface") };
+    assert_eq!(sheet.validity().non_self_intersecting, Some(true));
+    assert_eq!(zd_geom::boundary_loops(sheet.mesh()).unwrap().len(), 1, "one sheet");
+    let points = &sheet.mesh().vertices;
+    let near = (0..points.len())
+        .flat_map(|i| (i + 1..points.len()).map(move |j| (i, j)))
+        .filter(|&(i, j)| {
+            let (p, q) = (points[i], points[j]);
+            let d = ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)).sqrt();
+            d > 1e-6 && d < 1e-3
+        })
+        .count();
+    assert_eq!(near, 0, "no corners closer than a millimetre");
+    let said = record.messages[0].split("; ").find(|part| part.contains("within 1 mm of another made one")).unwrap_or_else(|| panic!("{:?}", record.messages));
+    let furthest: f64 = said.split("the furthest ").nth(1).unwrap().trim_end_matches(" mm").parse().unwrap();
+    assert!(furthest > 0.0 && furthest <= 1.0, "{said}");
+}

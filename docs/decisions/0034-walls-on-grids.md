@@ -183,3 +183,40 @@ mesh, at its crest and hip corners, not between pieces: 651 pairs over Grid wall
 switchbacks, and 1,949 over Grid toe to RLs, where the road cuts add more. A road's top on the RL 50 crest lands at RL
 49.9982, 0.6 mm off the crest's own corner. The fix belongs where the wall mesh and the road cuts make those corners, so the
 pieces share them, not in a looser weld that moves points. That's next.
+
+## Corners a hair apart, made one within a millimetre (2026-11-09)
+
+Tim: "Go after the near duplicates". The smallest case is a toe registered to a rolling floor, walls up to RLs, with no
+grids above and no roads: 102 pairs of corners closer than a centimetre, 91 of them joined by an edge. Where the toe bends a
+little, a wall only just survives to the crest and its top edge is a fraction of a millimetre long. A toe on a level RL or a
+dipping plane gives none. With roads there are more: a road climbs the wall's triangles at grade to the crest, and the wall
+above it is projected again from the road's top, so the same corner is worked out two ways (RL 49.9982 against 50 at the
+crossing on Strip 9 of Grid toe to RLs). Making every path give the same point would be a rework of the road climb.
+
+**So a face's pieces are now welded within 1 mm**, as `face.join` welds a strip's faces (0049) with the repair step's weld,
+by true distance. The wall code already takes anything narrower than 1 mm as having no width (`LEAST_WIDTH`). The sheet is
+then split and stitched at the same tolerance (`SHEET_WELD` in `zd-geom/src/face.rs`). Every merge is said: each face's run
+says how many corners it made one and the furthest apart, as "2 corners within 1 mm of another made one, the furthest
+0.41 mm".
+
+- **Tests:** `a_corner_a_hair_from_itself_is_made_one_within_a_millimetre` (a berm corner 0.4 mm off the wall's is made
+  one and reported, 0.4 mm; 2 mm off is left as two), and `a_toe_on_a_rolling_floor_leaves_no_corners_a_hair_apart` in
+  `zd-commands/tests/walls.rs` (the smallest case above: one sheet, nothing crossing, no two corners closer than 1 mm, and
+  the run's report).
+- **Test pit: 5 faults to 4.** Both faces with crossing triangles on Grid toe to RLs are clean. Near pairs left (1 to 10 mm
+  apart): Grid walls 651 to 198, Grid toe to RLs 1,949 to 53. Times as before.
+- **PIT B** (`fifteen_strips_on_real_grids`, Tim's bent toe, 15 strips): 16 solids, every one closed and manifold, adding up
+  to 4,260,703.445 m³, the same as on 2026-11-08. Two of the 30 faces needed the weld (2 and 4 corners, the furthest
+  0.44 mm). Projecting all 30 faces took 146 ms.
+
+**Left, 4 faults:**
+- **Grid ramps, Strip 1:** a real hole, 30 m long, 56 mm wide, where Ramp B climbs through walls of no height near (2902, 190).
+- **Grid toe to RLs, Strip 7:** Ramp A stopped by a berm that folds over itself near (-128, 558), in the run-on west of the strip.
+- **Every horizon, Strip 2:** refused, a crest that doesn't close on a wall where the U roof lies on the U floor.
+- **Every horizon, Strip 3:** a sliver hole 0.3 m long, its corners 1.0 to 1.1 mm apart, just past the weld near (1600, 291).
+  A weld that compared each of east, north and RL to 1 mm on its own closed it; by true distance it's left. `face.join`
+  fills a gap like it when the strip's faces are joined, and says so.
+
+**Noticed, not fixed:** the same design run twice can give a slightly different number of triangles (Grid toe to RLs: 40,557
+and 40,582; 40,621 and 40,600 before this change, when stitching could only add triangles). Something in building faces
+with roads depends on the order a hash map gives. The faults are the same each run.

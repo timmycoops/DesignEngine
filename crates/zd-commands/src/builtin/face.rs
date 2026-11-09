@@ -814,6 +814,10 @@ fn line_report(name: &str, face: &zd_geom::Face, [toe_in, toe_out]: [usize; 2], 
     if off_grid > 0 {
         report += &format!("; {off_grid} toe vertices off their grid carried on at their grade");
     }
+    let (welded, furthest) = face.welded;
+    if welded > 0 {
+        report += &format!("; {welded} corners within 1 mm of another made one, the furthest {:.2} mm", furthest * 1e3);
+    }
     for step in &face.steps {
         let number = step.step + 1;
         if step.no_wall {
