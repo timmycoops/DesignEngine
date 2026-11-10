@@ -210,13 +210,14 @@ pub(super) fn import_mesh(mesh: &TriMesh, layer: &str, source: &str, meshes: Mes
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let read = format!("{source} mesh: {} vertices, {} triangles", mesh.vertices.len(), mesh.triangle_count());
         // A mesh that may be a solid is welded only as far as it needs to be one (decision 0052).
-        let (welded, log) = if meshes == MeshesAs::Solids || meshes == MeshesAs::Auto {
-            match weld_as_needed(mesh, &read, layer, layer, cleaning) {
+        let (welded, log, refused_as_read) = if meshes == MeshesAs::Solids || meshes == MeshesAs::Auto {
+            match weld_as_needed(mesh, &read, layer, layer, cleaning, meshes == MeshesAs::Solids || meant_solid) {
                 Welded::Solid(solid) => return Made::Solid(*solid),
-                Welded::AtCeiling(welded, log) => (welded, log),
+                Welded::AtCeiling(welded, log, refused) => (welded, log, refused.filter(|_| !cleaning.repair)),
             }
         } else {
-            repair_mesh(mesh, cleaning.weld_tolerance)
+            let (welded, log) = repair_mesh(mesh, cleaning.weld_tolerance);
+            (welded, log, None)
         };
         if welded.triangles.is_empty() {
             return Made::Nothing(format!("no triangles left after the weld ({read})"));
@@ -234,7 +235,12 @@ pub(super) fn import_mesh(mesh: &TriMesh, layer: &str, source: &str, meshes: Mes
             refused_as_solid = Some(format!("open: {open_edges} edges on holes{at}"));
         }
         if as_solid {
-            match solid_from_welded(welded.clone(), log.clone(), read.clone(), layer, layer, cleaning) {
+            // Already refused as read on this very mesh: not tried again.
+            let tried = match refused_as_read {
+                Some(why) => Err(why),
+                None => solid_from_welded(welded.clone(), log.clone(), read.clone(), layer, layer, cleaning),
+            };
+            match tried {
                 Ok(imported) => return Made::Solid(imported),
                 Err(why) if meshes == MeshesAs::Auto => refused_as_solid = Some(why.to_string()),
                 Err(why) => return Made::Nothing(why.to_string()),

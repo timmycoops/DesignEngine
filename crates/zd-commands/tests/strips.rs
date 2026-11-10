@@ -1,6 +1,8 @@
 //! One face a strip, and strip solids, through the registry as the app runs them (decision 0049): a toe offset 14
 //! times, numbered by a line across, projected up and down to RLs, joined by strip number, and a pit sliced by them.
 
+mod common;
+
 use std::time::Instant;
 
 use serde_json::json;
@@ -116,6 +118,9 @@ fn a_toe_offset_and_numbered_slices_the_pit_into_a_solid_a_strip() {
     s.undo().unwrap();
     assert!(again.iter().all(|&id| s.project().object(id).is_none()));
     assert!(strips.iter().all(|&id| s.project().object(id).is_some()));
+
+    // The pit and its sixteen strips each go out as DXF and come back the same solid.
+    assert_eq!(common::assert_solids_round_trip(&s), 17);
 }
 
 #[test]
@@ -178,6 +183,8 @@ fn the_pit_made_between_two_surfaces_inside_its_limit_slices_the_same() {
     let strips = created(&s.run("solid.slice_by_faces", json!({ "solid": pit, "faces": surfaces_on(&s, "faces"), "layer": "strips" })).unwrap());
     assert_eq!(strips.len(), 16);
     assert_volume(volume(&s, strips[7]), 2_500_000.0, "strip 8");
+    // The pit made between two surfaces and its strips go out as DXF and come back the same.
+    assert_eq!(common::assert_solids_round_trip(&s), 17);
 }
 
 /// The made-up grid pit (`testdata/synthetic/Grid template.zdproj`, opened and never saved): each of its designs run,

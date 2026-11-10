@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, CrossingCheck, Crossings, ObjectId, ObjectKind, Solid, TriMesh};
 use zd_geom::{
-    COINCIDENT, CloseLog, CutResult, RepairLog, Separation, UnionLog, close_solid, cut_solid_by_surface, cut_solid_by_whole_surface, find_solid_crossings, repair_mesh, self_union,
+    COINCIDENT, CloseLog, CutResult, RepairLog, Separation, UnionLog, close_solid, closed_as_written, cut_solid_by_surface, cut_solid_by_whole_surface, find_solid_crossings, repair_mesh, self_union,
     separate_touching_edges, split_patches, triangulate_grid,
 };
 
@@ -340,9 +340,10 @@ impl Command for RepairSolids {
 fn repair_surface(mesh: &TriMesh, name: &str, cleaning: Cleaning) -> Result<ImportedSolid, String> {
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let read = format!("surface: {} vertices, {} triangles", mesh.vertices.len(), mesh.triangle_count());
-        match weld_as_needed(mesh, &read, name, name, cleaning) {
+        match weld_as_needed(mesh, &read, name, name, cleaning, true) {
             Welded::Solid(solid) => Ok(*solid),
-            Welded::AtCeiling(welded, log) => solid_from_welded(welded, log, read, name, name, cleaning).map_err(|e| e.to_string()),
+            Welded::AtCeiling(_, _, Some(refused)) if !cleaning.repair => Err(refused.to_string()),
+            Welded::AtCeiling(welded, log, _) => solid_from_welded(welded, log, read, name, name, cleaning).map_err(|e| e.to_string()),
         }
     }));
     attempt.unwrap_or_else(|_| Err("the repair stopped on an error in the geometry".into()))
@@ -355,44 +356,56 @@ const WELD_STEPS: [f64; 4] = [0.0, 1e-6, 1e-5, 1e-4];
 pub(crate) enum Welded {
     /// A solid as read, at the least weld that makes it one.
     Solid(Box<ImportedSolid>),
-    /// No weld under the ceiling makes it a solid as read: the mesh welded at the ceiling, to go on as before.
-    AtCeiling(TriMesh, RepairLog),
+    /// No weld under the ceiling makes it a solid as read: the mesh welded at the ceiling, to go on as before. With
+    /// it, why it was refused as read, where the ceiling joins no more corners than were joined as written: the mesh
+    /// is the one already tried, so it needn't be tried as read again.
+    AtCeiling(TriMesh, RepairLog, Option<CommandError>),
 }
 
 /// A solid's detail can be finer than the weld: a weld of 1 mm collapses it and opens a mesh that was closed as
 /// written. So the mesh is taken with its corners as written if that makes a solid, then at each finer weld in turn,
 /// and only then at the ceiling, `cleaning.weld_tolerance`, where it goes on to repair if asked. Crossings are still
 /// judged at the ceiling. A weld that joins no more corners than the one before it is passed over.
-pub(crate) fn weld_as_needed(mesh: &TriMesh, read_log: &str, place: &str, name: &str, cleaning: Cleaning) -> Welded {
+///
+/// `between`: try the welds between corners as written and the ceiling. Left out for a mesh that isn't held as a
+/// solid where it came from (a Deswik drawing's open topography of millions of triangles), which is tried as written
+/// and then at the ceiling only, so it costs one quick weld more than it did.
+pub(crate) fn weld_as_needed(mesh: &TriMesh, read_log: &str, place: &str, name: &str, cleaning: Cleaning, between: bool) -> Welded {
     let ceiling = cleaning.weld_tolerance;
     let as_read = Cleaning { repair: false, ..cleaning };
-    let mut at_ceiling: Option<(TriMesh, RepairLog)> = None;
-    let mut joined = None;
-    for step in WELD_STEPS.into_iter().filter(|step| *step < ceiling) {
-        let (welded, log) = repair_mesh(mesh, step);
-        let same = joined == Some(log.vertices_welded);
+    let solid_at = |welded: TriMesh, log: RepairLog| -> Option<Result<ImportedSolid, CommandError>> {
+        (!welded.triangles.is_empty() && welded.validity().boundary_edges == 0).then(|| solid_from_welded(welded, log, read_log.to_string(), place, name, as_read))
+    };
+    // Corners joined by the last weld tried, and why the mesh as written was refused as a solid, if it was.
+    let (mut joined, mut refused) = (None, None);
+    // Corners as written, where a quick look says that could be closed at all.
+    if ceiling > 0.0 && closed_as_written(mesh) {
+        let (welded, log) = repair_mesh(mesh, 0.0);
         joined = Some(log.vertices_welded);
-        if same {
-            continue;
+        match solid_at(welded, log) {
+            Some(Ok(solid)) => return Welded::Solid(Box::new(solid)),
+            Some(Err(why)) => refused = Some(why),
+            None => {}
         }
-        if !welded.triangles.is_empty()
-            && welded.validity().boundary_edges == 0
-            && let Ok(solid) = solid_from_welded(welded, log, read_log.to_string(), place, name, as_read)
-        {
-            return Welded::Solid(Box::new(solid));
-        }
-        // Nothing between the corners as written and the ceiling to try, if the ceiling joins no more of them.
-        if step == 0.0 {
-            let (welded, log) = repair_mesh(mesh, ceiling);
-            let no_more = Some(log.vertices_welded) == joined;
-            at_ceiling = Some((welded, log));
-            if no_more {
-                break;
+    }
+    // Nothing between the corners as written and the ceiling to try, if the ceiling joins no more of them.
+    let (at_ceiling, ceiling_log) = repair_mesh(mesh, ceiling);
+    if joined == Some(ceiling_log.vertices_welded) {
+        return Welded::AtCeiling(at_ceiling, ceiling_log, refused);
+    }
+    if between {
+        for step in WELD_STEPS.into_iter().filter(|step| *step > 0.0 && *step < ceiling) {
+            let (welded, log) = repair_mesh(mesh, step);
+            if joined == Some(log.vertices_welded) {
+                continue;
+            }
+            joined = Some(log.vertices_welded);
+            if let Some(Ok(solid)) = solid_at(welded, log) {
+                return Welded::Solid(Box::new(solid));
             }
         }
     }
-    let (welded, log) = at_ceiling.unwrap_or_else(|| repair_mesh(mesh, ceiling));
-    Welded::AtCeiling(welded, log)
+    Welded::AtCeiling(at_ceiling, ceiling_log, None)
 }
 
 /// How a file's mesh is cleaned on its way to a solid.
@@ -540,9 +553,10 @@ fn solid_from_file(read: SurfaceImport, place: &str, name: &str, cleaning: Clean
             return Err(CommandError::Invalid(format!("{place} is a grid: import it as a surface")));
         }
     };
-    match weld_as_needed(&read, &read_log, place, name, cleaning) {
+    match weld_as_needed(&read, &read_log, place, name, cleaning, true) {
         Welded::Solid(solid) => Ok(*solid),
-        Welded::AtCeiling(welded, log) => solid_from_welded(welded, log, read_log, place, name, cleaning),
+        Welded::AtCeiling(_, _, Some(refused)) if !cleaning.repair => Err(refused),
+        Welded::AtCeiling(welded, log, _) => solid_from_welded(welded, log, read_log, place, name, cleaning),
     }
 }
 
