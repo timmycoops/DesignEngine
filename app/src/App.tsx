@@ -645,6 +645,19 @@ export default function App() {
       await run(`export.${format}`, { objects: objects.map((o) => o.id), path, overwrite: true });
     });
 
+  /** Writes solids to a zip picked in the save dialog: a DXF a solid, named for it, with a list of them (decision 0057). */
+  const exportSolids = (objects: ObjectSummary[], suggested: string) =>
+    attempt(async () => {
+      if (objects.length === 0) {
+        setStatus({ text: 'Nothing to export: no solids are visible.' });
+        return;
+      }
+      const path = await save({ title: 'Export solids to a zip', defaultPath: fileName(suggested, 'zip'), filters: [{ name: 'Zip of DXF R12, a file a solid', extensions: ['zip'] }] });
+      if (!path) return;
+      setStatus({ text: `Writing ${objects.length} solids to ${path}…` });
+      await run('solid.export_many', { objects: objects.map((o) => o.id), path, overwrite: true });
+    });
+
   // A set: a box over a pit's blocks selects tens of thousands.
   const selectedObjects = useMemo(() => {
     const ids = new Set(selection);
@@ -652,6 +665,7 @@ export default function App() {
   }, [summary, selection]);
   const selectedDxf = selectedObjects.filter((o) => DXF_KINDS.has(o.kind));
   const selectedStrings = selectedObjects.filter((o) => o.kind === 'string');
+  const selectedSolids = selectedObjects.filter((o) => o.kind === 'solid');
   const visibleObjects = (kinds: Set<string>) => {
     // Objects carry their layer's id.
     const shown = new Set(summary?.layers.filter((l) => l.visible).map((l) => l.id));
@@ -967,11 +981,17 @@ export default function App() {
               <DropdownMenuItem disabled={selectedStrings.length === 0} onSelect={() => exportObjects(selectedStrings, 'csv', selectionName(selectedStrings))}>
                 Selected strings to CSV{selectedStrings.length > 1 ? ` (${selectedStrings.length})` : ''}…
               </DropdownMenuItem>
+              <DropdownMenuItem disabled={selectedSolids.length === 0} onSelect={() => exportSolids(selectedSolids, selectionName(selectedSolids))}>
+                Selected solids to a zip{selectedSolids.length > 1 ? ` (${selectedSolids.length})` : ''}…
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => exportObjects(visibleObjects(DXF_KINDS), 'dxf', projectName)}>
                 Everything visible to DXF…
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => exportObjects(visibleObjects(new Set(['string'])), 'csv', projectName)}>
                 Visible strings to CSV…
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => exportSolids(visibleObjects(new Set(['solid'])), projectName)}>
+                Visible solids to a zip…
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

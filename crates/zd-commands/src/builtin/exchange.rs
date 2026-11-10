@@ -1,13 +1,16 @@
 //! Strings in from DXF and CSV, and objects out to DXF R12 and CSV (decision 0009). Exports write a
 //! file and change nothing: their run record lists the object revisions written.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{Attributes, Body, Change, Object, ObjectId, Polyline};
-use zd_io::{ARC_SAGITTA, CsvLog, DxfDrawing, DxfEntity, read_csv_strings, read_dxf, write_csv_strings, write_dxf};
+use zd_core::{AttrValue, Attributes, Body, Change, Object, ObjectId, Polyline, Solid};
+use zd_io::{ARC_SAGITTA, CsvLog, DxfDrawing, DxfEntity, format_dxf, is_zip, parse_dxf, read_csv_strings, read_dxf, write_bundle, write_csv_strings, write_dxf};
+
+use super::solid::{Cleaning, Welded, weld_as_needed};
+use super::surface::default_tolerance;
 
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
@@ -288,4 +291,149 @@ impl Command for ExportCsv {
         let vertices: usize = rows.iter().map(|r| r.2.vertices.len()).sum();
         Ok(Outcome::new(vec![]).message(format!("wrote {} ({} vertices) to {} as CSV", plural(rows.len(), "string", "strings"), vertices, p.path)))
     }
+}
+
+/// `solid.export_many`: solids to a zip or a folder, one DXF R12 file a solid, named for it, with `solids.csv`
+/// listing each with its file, layer, volume and attributes (decision 0057). As solids come in by the thousand
+/// (0019), so they go out: Deswik imports the zip, each solid on a layer of its file's name. Each solid's file is
+/// read back as written before it goes in, and one that doesn't come back the same solid is left out and named.
+pub struct ExportSolids;
+
+/// The list that goes with the solids' files.
+const SOLIDS_CSV: &str = "solids.csv";
+
+impl Command for ExportSolids {
+    type Params = ExportParams;
+    const NAME: &'static str = "solid.export_many";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Export solids to a zip or a folder, one DXF a solid, with a list of them and their attributes",
+            inputs: vec![Field::new("objects", FieldType::Objects, "Solids")],
+            params: vec![Field::new("path", FieldType::Path, "A .zip to write, or a folder"), Field::new("overwrite", FieldType::Bool, "Replace an existing zip, or write into an existing folder")],
+            outputs: vec![],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let objects = export_objects(inputs, p)?;
+        let not_solids: Vec<&str> = objects.iter().filter(|o| !matches!(o.body, Body::Solid(_))).map(|o| o.name.as_str()).collect();
+        if !not_solids.is_empty() {
+            return Err(CommandError::Invalid(format!("only solids are exported this way, not {}", not_solids.iter().take(5).copied().collect::<Vec<_>>().join(", "))));
+        }
+        let start = std::time::Instant::now();
+        // A file a solid, named for it: what a file name can't hold becomes an underscore, and a name already taken
+        // (whatever its case, as Windows takes names) gets a number.
+        let mut taken: HashMap<String, usize> = HashMap::new();
+        let mut shared = 0;
+        let items: Vec<(&Arc<Object>, String, String)> = objects
+            .iter()
+            .map(|object| {
+                let stem = file_stem(&object.name);
+                let n = taken.entry(stem.to_lowercase()).or_default();
+                *n += 1;
+                shared += usize::from(*n == 2);
+                let file = if *n == 1 { format!("{stem}.dxf") } else { format!("{stem} ({n}).dxf") };
+                (*object, file, inputs.layer_name(object))
+            })
+            .collect();
+        let written = super::in_parallel(&items, |(object, _, layer)| {
+            let Body::Solid(solid) = &object.body else { unreachable!("solids only") };
+            let text = format_dxf(&[(layer.as_str(), DxfEntity::Mesh(solid.mesh()))]).map_err(|e| e.to_string())?;
+            reads_back(solid, text.as_bytes(), &object.name)?;
+            Ok::<Vec<u8>, String>(text.into_bytes())
+        });
+
+        let keys: BTreeSet<&str> = objects.iter().flat_map(|o| o.attributes.keys().map(String::as_str)).collect();
+        let mut csv = String::from("file,name,layer,volume_m3,triangles,pieces");
+        keys.iter().for_each(|key| {
+            csv.push(',');
+            csv.push_str(&csv_cell(key));
+        });
+        csv.push('\n');
+        let mut files: Vec<(String, Vec<u8>)> = Vec::with_capacity(items.len() + 1);
+        let (mut triangles, mut volume, mut left_out) = (0usize, 0.0f64, Vec::new());
+        for ((object, file, layer), bytes) in items.iter().zip(written) {
+            let Body::Solid(solid) = &object.body else { unreachable!("solids only") };
+            let bytes = match bytes {
+                Ok(bytes) => bytes,
+                Err(why) => {
+                    left_out.push(format!("'{}': {why}", object.name));
+                    continue;
+                }
+            };
+            triangles += solid.mesh().triangle_count();
+            volume += solid.volume();
+            csv.push_str(&format!("{},{},{},{},{},{}", csv_cell(file), csv_cell(&object.name), csv_cell(layer), solid.volume(), solid.mesh().triangle_count(), solid.pieces().pieces));
+            for key in &keys {
+                csv.push(',');
+                match object.attributes.get(*key) {
+                    Some(AttrValue::Number(v)) => csv.push_str(&v.to_string()),
+                    Some(AttrValue::Bool(v)) => csv.push_str(&v.to_string()),
+                    Some(AttrValue::Text(v)) => csv.push_str(&csv_cell(v)),
+                    None => {}
+                }
+            }
+            csv.push('\n');
+            files.push((file.clone(), bytes));
+        }
+        if files.is_empty() {
+            return Err(CommandError::Invalid(format!("none of the {} solids reads back from its own file as it is: {}", objects.len(), left_out.iter().take(5).cloned().collect::<Vec<_>>().join("; "))));
+        }
+        let solids = files.len();
+        files.push((SOLIDS_CSV.to_string(), csv.into_bytes()));
+        let path = Path::new(&p.path);
+        let bytes = write_bundle(path, &files).map_err(|e| CommandError::Io(format!("{}: {e}", p.path)))?;
+
+        let mut outcome = Outcome::new(vec![]).message(format!(
+            "wrote {} ({triangles} triangles, {volume:.3} m3) to {} as {} of DXF R12 files, one a solid, with {SOLIDS_CSV} listing them: {:.1} MB in {:.0} ms",
+            plural(solids, "solid", "solids"),
+            p.path,
+            if is_zip(path) { "a zip" } else { "a folder" },
+            bytes as f64 / 1e6,
+            start.elapsed().as_secs_f64() * 1e3
+        ));
+        outcome = outcome.message(format!("each file read back as written before it went in: {solids} the same solid, to a billionth of its volume"));
+        if shared > 0 {
+            outcome = outcome.message(format!("{shared} names are shared by more than one solid: the files after the first are numbered, and {SOLIDS_CSV} says which is which"));
+        }
+        if !left_out.is_empty() {
+            outcome = outcome.message(format!("{} solids left out, as their files don't read back the same:", left_out.len()));
+            outcome.messages.extend(left_out.into_iter().take(10));
+        }
+        Ok(outcome)
+    }
+}
+
+/// A solid's file read back as another package would read it, with its corners as written and no repair: it must be
+/// the same solid, its triangles and its volume to a billionth.
+fn reads_back(solid: &Solid, dxf: &[u8], name: &str) -> Result<(), String> {
+    let read = parse_dxf(dxf).map_err(|e| format!("its file doesn't read: {e}"))?;
+    let cleaning = Cleaning { weld_tolerance: default_tolerance(), repair: false, fill_limit: 0.0 };
+    let back = match weld_as_needed(&read.mesh, "", name, name, cleaning, true) {
+        Welded::Solid(back) => back,
+        Welded::AtCeiling(..) => return Err("it doesn't read back as a solid with its corners as written".into()),
+    };
+    if !back.attributes.is_empty() {
+        return Err("it needs a weld to read back as a solid".into());
+    }
+    let (was, is) = (solid.volume(), back.solid.volume());
+    if back.solid.mesh().triangle_count() != solid.mesh().triangle_count() || (was - is).abs() > 1e-9 * was.abs().max(1.0) {
+        return Err(format!("it reads back as {} triangles and {is} m3, from {} and {was} m3", back.solid.mesh().triangle_count(), solid.mesh().triangle_count()));
+    }
+    Ok(())
+}
+
+/// A file name's stem from a solid's name: what Windows refuses in a name becomes an underscore, and the dots and
+/// spaces it drops from the end go.
+fn file_stem(name: &str) -> String {
+    let stem: String = name.chars().map(|c| if c.is_control() || "<>:\"/\\|?*".contains(c) { '_' } else { c }).collect();
+    let stem = stem.trim().trim_end_matches(['.', ' ']);
+    if stem.is_empty() { "solid".to_string() } else { stem.to_string() }
+}
+
+/// A CSV cell: in quotes, with its own doubled, where it holds a comma, a quote or a line break.
+fn csv_cell(text: &str) -> String {
+    if text.contains([',', '"', '\n', '\r']) { format!("\"{}\"", text.replace('"', "\"\"")) } else { text.to_string() }
 }

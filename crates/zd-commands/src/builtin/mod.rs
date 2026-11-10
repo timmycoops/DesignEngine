@@ -19,7 +19,7 @@ mod surface;
 
 pub use build::{BuildOp, BuildStep, BuildStepParams, Rebuild, RebuildParams};
 pub use deswik::{ImportDeswik, ImportDeswikParams, MeshesAs};
-pub use exchange::{ExportCsv, ExportDxf, ExportParams, ImportStrings, ImportStringsParams};
+pub use exchange::{ExportCsv, ExportDxf, ExportParams, ExportSolids, ImportStrings, ImportStringsParams};
 pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParams, SaveDesign, SaveDesignParams, Step, StepParams};
 pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
 pub use layer::{CreateLayer, CreateLayerParams, DeleteLayer, DeleteLayerParams, RecolourLayer, RecolourLayerParams, RenameLayer, RenameLayerParams};
@@ -88,6 +88,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(BuildSeamModel);
     registry.register(ExportDxf);
     registry.register(ExportCsv);
+    registry.register(ExportSolids);
 }
 
 fn finite(point: &[f64; 3]) -> Result<(), CommandError> {

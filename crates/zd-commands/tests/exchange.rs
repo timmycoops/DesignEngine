@@ -267,3 +267,78 @@ s
     assert!(s.run("solid.import", json!({ "path": dir.join("pitu.srg").to_string_lossy(), "layer": "x" })).unwrap_err().to_string().contains("is a grid"));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// A box wound outward, as `solid.from_mesh` takes it.
+fn block(min: [f64; 3], size: f64) -> (Vec<[f64; 3]>, Vec<[u32; 3]>) {
+    let v = (0..8).map(|i| [min[0] + (i & 1) as f64 * size, min[1] + (i >> 1 & 1) as f64 * size, min[2] + (i >> 2) as f64 * size]).collect();
+    (v, vec![[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]])
+}
+
+#[test]
+fn solids_go_out_a_file_each_with_a_list_and_come_back_the_same() {
+    let dir = scratch("solids");
+    let mut s = Session::with_builtins();
+    let mut solid = |s: &mut Session, name: &str, min: [f64; 3], size: f64| {
+        let (vertices, triangles) = block(min, size);
+        created(&s.run("solid.from_mesh", json!({ "name": name, "layer": "blocks", "vertices": vertices, "triangles": triangles })).unwrap())[0]
+    };
+    // A 10 m cube whose name holds what a file name can't, cut at RL 105 into two parts that carry attributes; and two
+    // solids of one name, a 10 m cube (1,000 m3) and a 2 m cube (8 m3).
+    let pit = solid(&mut s, "Pit/N: 1", [E, N, 100.0], 10.0);
+    let parts = created(&s.run("solid.cut_by_surface", json!({ "solid": pit, "rl": 105.0, "layer": "cut" })).unwrap());
+    let twins = [solid(&mut s, "twin", [E + 20.0, N, 100.0], 10.0), solid(&mut s, "Twin", [E + 40.0, N, 100.0], 2.0)];
+    let objects: Vec<ObjectId> = parts.iter().chain(&twins).copied().collect();
+
+    let folder = dir.join("out");
+    let record = s.run("solid.export_many", json!({ "objects": objects, "path": folder.to_string_lossy() })).unwrap();
+    assert!(record.outputs.is_empty(), "an export changes nothing");
+    assert!(record.messages[0].starts_with("wrote 4 solids (48 triangles, 2008.000 m3) to "), "{}", record.messages[0]);
+    assert!(record.messages[0].contains(" as a folder of DXF R12 files, one a solid, with solids.csv listing them"), "{}", record.messages[0]);
+    assert_eq!(record.messages[1], "each file read back as written before it went in: 4 the same solid, to a billionth of its volume");
+    assert_eq!(record.messages[2], "1 names are shared by more than one solid: the files after the first are numbered, and solids.csv says which is which");
+    let mut names: Vec<String> = std::fs::read_dir(&folder).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    names.sort();
+    // A name taken already, whatever its case, is numbered: Windows takes "twin" and "Twin" for one file.
+    assert_eq!(names, ["Pit_N_ 1 above RL 105.000.dxf", "Pit_N_ 1 below RL 105.000.dxf", "Twin (2).dxf", "solids.csv", "twin.dxf"]);
+    let csv = std::fs::read_to_string(folder.join("solids.csv")).unwrap();
+    let rows: Vec<&str> = csv.lines().collect();
+    assert_eq!(rows[0], "file,name,layer,volume_m3,triangles,pieces,cut_by,cut_side");
+    assert_eq!(rows[1], "Pit_N_ 1 below RL 105.000.dxf,Pit/N: 1 below RL 105.000,cut,500,12,1,RL 105.000,below");
+    assert_eq!(rows[2], "Pit_N_ 1 above RL 105.000.dxf,Pit/N: 1 above RL 105.000,cut,500,12,1,RL 105.000,above");
+    assert_eq!(rows[3], "twin.dxf,twin,blocks,1000,12,1,,");
+    assert_eq!(rows[4], "Twin (2).dxf,Twin,blocks,8,12,1,,");
+    assert_eq!(rows.len(), 5);
+
+    // A zip holds the same files, byte for byte, and reads back with the import as the same solids: each volume to
+    // 1e-9 m3 (500, 500, 1,000 and 8 m3).
+    let zipped = dir.join("out.zip");
+    let record = s.run("solid.export_many", json!({ "objects": objects, "path": zipped.to_string_lossy() })).unwrap();
+    assert!(record.messages[0].contains(" as a zip of DXF R12 files"), "{}", record.messages[0]);
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(&zipped).unwrap()).unwrap();
+    assert_eq!(zip.len(), 5);
+    for name in &names {
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut zip.by_name(name).unwrap(), &mut bytes).unwrap();
+        assert_eq!(bytes, std::fs::read(folder.join(name)).unwrap(), "{name}");
+    }
+    let mut back = Session::with_builtins();
+    let record = back.run("solid.import_many", json!({ "paths": [zipped.to_string_lossy()], "layer": "back" })).unwrap();
+    assert!(record.messages.iter().any(|m| m.contains("4 solids imported") && m.contains("4 with no corner moved")), "{:?}", record.messages);
+    for (name, expected) in [("Pit_N_ 1 below RL 105.000", 500.0), ("Pit_N_ 1 above RL 105.000", 500.0), ("twin", 1000.0), ("Twin (2)", 8.0)] {
+        let object = back.project().objects().find(|o| o.name == name).unwrap_or_else(|| panic!("{name} came back"));
+        let Body::Solid(solid) = &object.body else { panic!("a solid") };
+        assert!((solid.volume() - expected).abs() < 1e-9, "{name}: {}", solid.volume());
+    }
+
+    // Refused: nothing given; something that isn't a solid; a zip or a folder already there, unless it's to be replaced.
+    assert!(s.run("solid.export_many", json!({ "objects": [], "path": dir.join("none.zip").to_string_lossy() })).is_err());
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "design", "points": [[E, N, 0.0], [E + 5.0, N, 0.0]] })).unwrap())[0];
+    let refused = s.run("solid.export_many", json!({ "objects": [twins[0], toe], "path": dir.join("mixed.zip").to_string_lossy() })).unwrap_err().to_string();
+    assert!(refused.contains("only solids are exported this way, not toe"), "{refused}");
+    for path in [&zipped, &folder] {
+        let refused = s.run("solid.export_many", json!({ "objects": objects, "path": path.to_string_lossy() })).unwrap_err().to_string();
+        assert!(refused.contains("exists; set overwrite to replace it"), "{refused}");
+        s.run("solid.export_many", json!({ "objects": objects, "path": path.to_string_lossy(), "overwrite": true })).unwrap();
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
