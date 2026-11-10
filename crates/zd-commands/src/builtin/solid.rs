@@ -341,7 +341,7 @@ fn repair_surface(mesh: &TriMesh, name: &str, cleaning: Cleaning) -> Result<Impo
     let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let read = format!("surface: {} vertices, {} triangles", mesh.vertices.len(), mesh.triangle_count());
         match weld_as_needed(mesh, &read, name, name, cleaning, true) {
-            Welded::Solid(solid) => Ok(*solid),
+            Welded::Solid(solid) => Ok(solid),
             Welded::AtCeiling(_, _, Some(refused)) if !cleaning.repair => Err(refused.to_string()),
             Welded::AtCeiling(welded, log, _) => solid_from_welded(welded, log, read, name, name, cleaning).map_err(|e| e.to_string()),
         }
@@ -355,7 +355,7 @@ const WELD_STEPS: [f64; 4] = [0.0, 1e-6, 1e-5, 1e-4];
 /// A mesh on its way to a solid, welded only as far as it needs (decision 0052).
 pub(crate) enum Welded {
     /// A solid as read, at the least weld that makes it one.
-    Solid(Box<ImportedSolid>),
+    Solid(ImportedSolid),
     /// No weld under the ceiling makes it a solid as read: the mesh welded at the ceiling, to go on as before. With
     /// it, why it was refused as read, where the ceiling joins no more corners than were joined as written: the mesh
     /// is the one already tried, so it needn't be tried as read again.
@@ -383,7 +383,7 @@ pub(crate) fn weld_as_needed(mesh: &TriMesh, read_log: &str, place: &str, name: 
         let (welded, log) = repair_mesh(mesh, 0.0);
         joined = Some(log.vertices_welded);
         match solid_at(welded, log) {
-            Some(Ok(solid)) => return Welded::Solid(Box::new(solid)),
+            Some(Ok(solid)) => return Welded::Solid(solid),
             Some(Err(why)) => refused = Some(why),
             None => {}
         }
@@ -401,7 +401,7 @@ pub(crate) fn weld_as_needed(mesh: &TriMesh, read_log: &str, place: &str, name: 
             }
             joined = Some(log.vertices_welded);
             if let Some(Ok(solid)) = solid_at(welded, log) {
-                return Welded::Solid(Box::new(solid));
+                return Welded::Solid(solid);
             }
         }
     }
@@ -554,7 +554,7 @@ fn solid_from_file(read: SurfaceImport, place: &str, name: &str, cleaning: Clean
         }
     };
     match weld_as_needed(&read, &read_log, place, name, cleaning, true) {
-        Welded::Solid(solid) => Ok(*solid),
+        Welded::Solid(solid) => Ok(solid),
         Welded::AtCeiling(_, _, Some(refused)) if !cleaning.repair => Err(refused),
         Welded::AtCeiling(welded, log, _) => solid_from_welded(welded, log, read_log, place, name, cleaning),
     }

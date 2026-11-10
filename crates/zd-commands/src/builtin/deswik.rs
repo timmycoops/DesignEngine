@@ -212,7 +212,7 @@ pub(super) fn import_mesh(mesh: &TriMesh, layer: &str, source: &str, meshes: Mes
         // A mesh that may be a solid is welded only as far as it needs to be one (decision 0052).
         let (welded, log, refused_as_read) = if meshes == MeshesAs::Solids || meshes == MeshesAs::Auto {
             match weld_as_needed(mesh, &read, layer, layer, cleaning, meshes == MeshesAs::Solids || meant_solid) {
-                Welded::Solid(solid) => return Made::Solid(*solid),
+                Welded::Solid(solid) => return Made::Solid(solid),
                 Welded::AtCeiling(welded, log, refused) => (welded, log, refused.filter(|_| !cleaning.repair)),
             }
         } else {
