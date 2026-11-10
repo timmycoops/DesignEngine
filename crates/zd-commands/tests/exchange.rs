@@ -309,6 +309,12 @@ fn solids_go_out_a_file_each_with_a_list_and_come_back_the_same() {
     assert_eq!(rows[3], "3,twin.dxf,TWIN_DXF,twin,blocks,1000,12,1,,");
     assert_eq!(rows[4], "4,Twin (2).dxf,TWIN (2)_DXF,Twin,blocks,8,12,1,,");
     assert_eq!(rows.len(), 5);
+    // Each solid's number is the layer its 3DFACEs are on in its file, which is how it reaches Deswik on the solid.
+    for (file, id) in [("Pit_N_ 1 below RL 105.000.dxf", "1"), ("twin.dxf", "3"), ("Twin (2).dxf", "4")] {
+        let dxf = std::fs::read_to_string(folder.join(file)).unwrap();
+        let faces = dxf.matches("0\n3DFACE\n").count();
+        assert_eq!((faces, dxf.matches(&format!("0\n3DFACE\n8\n{id}\n")).count()), (12, 12), "{file}");
+    }
 
     // A zip holds the same files, byte for byte, and reads back with the import as the same solids: each volume to
     // 1e-9 m3 (500, 500, 1,000 and 8 m3).

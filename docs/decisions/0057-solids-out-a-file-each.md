@@ -17,12 +17,14 @@ larger pit solids exceed, and attributes have nowhere to go.
 
 1. **`solid.export_many`** takes solids and a path, and writes a zip where the path ends in `.zip`, a folder
    otherwise. It changes nothing in the project.
-2. **A DXF R12 file a solid**, as 3DFACEs on a layer named for the solid's project layer: the form Tim validated in
-   Deswik on 10 November (0053).
+2. **A DXF R12 file a solid**, as 3DFACEs: the form Tim validated in Deswik on 10 November (0053). The 3DFACEs are on
+   a layer named for the solid's number in the list (`1`, `2`, ...). A layer's name is the one thing a 3DFACE carries
+   into Deswik, which puts the solid on a layer of that name under the file's, so the number is on the solid there
+   (Tim, 2026-11-10: "Id on the solid"). First built with the project layer's name there, which told Deswik nothing.
 3. **Each file is named for its solid.** What a file name can't hold (`\ / : * ? " < > |`, control characters) becomes
    an underscore, in the file's name only. A name already taken, whatever its case, as Windows takes names, gets a
    number: `Twin (2).dxf`. Nothing is dropped, and the run says how many names were shared.
-4. **`solids.csv` goes with them**, a row a solid: a number from 1 in the order given (`id`), its file, the layer
+4. **`solids.csv` goes with them**, a row a solid: its number, from 1 in the order given (`id`), its file, the layer
    Deswik will put it on (`deswik_layer`: the file's name in capitals with the dot before `dxf` an underscore, as
    Deswik's own files showed), its name as it is, its layer, volume, triangles and pieces (0054), then a column for
    every attribute any of the solids carries, in the attributes' order. The number and the Deswik layer are there to
@@ -68,6 +70,6 @@ layer under it named for the DXF's own layer (`STRIPS`, the project layer), and 
 - **The zip is written on one core.** Making and checking the files uses every core; packing 2 GB of DXF text into the
   zip doesn't, and is most of the 29 s.
 - **Deswik reads the list only as a file beside the solids.** Putting the attributes on the solids in Deswik is done
-  there, by joining on `deswik_layer` or `id`. That join has not been tried, and `deswik_layer` follows two files seen,
-  not Deswik's rule for every character.
+  there, by joining on `id` (the layer the solid is on) or `deswik_layer` (the layer above it). That join has not been
+  tried, and `deswik_layer` follows two files seen, not Deswik's rule for every character.
 - **Names Windows keeps for itself** (`CON`, `NUL`) are not changed.

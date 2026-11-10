@@ -294,8 +294,9 @@ impl Command for ExportCsv {
 }
 
 /// `solid.export_many`: solids to a zip or a folder, one DXF R12 file a solid, named for it, with `solids.csv`
-/// listing each with a number, its file, the layer Deswik will put it on, its layer here, volume and attributes
-/// (decision 0057). As solids come in by the thousand
+/// listing each with its number, its file, the layer Deswik makes for the file, its layer here, volume and
+/// attributes (decision 0057). A solid's number is the layer its 3DFACEs are on in its file, so it reaches Deswik on
+/// the solid. As solids come in by the thousand
 /// (0019), so they go out: Deswik imports the zip, each solid on a layer of its file's name. Each solid's file is
 /// read back as written before it goes in, and one that doesn't come back the same solid is left out and named.
 pub struct ExportSolids;
@@ -328,20 +329,24 @@ impl Command for ExportSolids {
         // (whatever its case, as Windows takes names) gets a number.
         let mut taken: HashMap<String, usize> = HashMap::new();
         let mut shared = 0;
-        let items: Vec<(&Arc<Object>, String, String)> = objects
+        let items: Vec<(&Arc<Object>, String, String, usize)> = objects
             .iter()
-            .map(|object| {
+            .enumerate()
+            .map(|(k, object)| {
                 let stem = file_stem(&object.name);
                 let n = taken.entry(stem.to_lowercase()).or_default();
                 *n += 1;
                 shared += usize::from(*n == 2);
                 let file = if *n == 1 { format!("{stem}.dxf") } else { format!("{stem} ({n}).dxf") };
-                (*object, file, inputs.layer_name(object))
+                // Its number: from 1 in the order given, whether or not every solid before it is written.
+                (*object, file, inputs.layer_name(object), k + 1)
             })
             .collect();
-        let written = super::in_parallel(&items, |(object, _, layer)| {
+        let written = super::in_parallel(&items, |(object, _, _, id)| {
             let Body::Solid(solid) = &object.body else { unreachable!("solids only") };
-            let text = format_dxf(&[(layer.as_str(), DxfEntity::Mesh(solid.mesh()))]).map_err(|e| e.to_string())?;
+            // The solid's number is its layer in its file: the one thing a DXF's 3DFACEs carry into Deswik, which
+            // puts the solid on a layer of that name under the file's.
+            let text = format_dxf(&[(id.to_string().as_str(), DxfEntity::Mesh(solid.mesh()))]).map_err(|e| e.to_string())?;
             reads_back(solid, text.as_bytes(), &object.name)?;
             Ok::<Vec<u8>, String>(text.into_bytes())
         });
@@ -355,7 +360,7 @@ impl Command for ExportSolids {
         csv.push('\n');
         let mut files: Vec<(String, Vec<u8>)> = Vec::with_capacity(items.len() + 1);
         let (mut triangles, mut volume, mut left_out) = (0usize, 0.0f64, Vec::new());
-        for ((object, file, layer), bytes) in items.iter().zip(written) {
+        for ((object, file, layer, id), bytes) in items.iter().zip(written) {
             let Body::Solid(solid) = &object.body else { unreachable!("solids only") };
             let bytes = match bytes {
                 Ok(bytes) => bytes,
@@ -366,10 +371,10 @@ impl Command for ExportSolids {
             };
             triangles += solid.mesh().triangle_count();
             volume += solid.volume();
-            // A number to join on, from 1 in the order given, and the layer Deswik puts the file's solid on.
+            // The number its file carries as its layer, and the layer Deswik makes for the file.
             csv.push_str(&format!(
                 "{},{},{},{},{},{},{},{}",
-                files.len() + 1,
+                id,
                 csv_cell(file),
                 csv_cell(&deswik_layer(file)),
                 csv_cell(&object.name),
