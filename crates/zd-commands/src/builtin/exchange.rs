@@ -294,7 +294,8 @@ impl Command for ExportCsv {
 }
 
 /// `solid.export_many`: solids to a zip or a folder, one DXF R12 file a solid, named for it, with `solids.csv`
-/// listing each with its file, layer, volume and attributes (decision 0057). As solids come in by the thousand
+/// listing each with a number, its file, the layer Deswik will put it on, its layer here, volume and attributes
+/// (decision 0057). As solids come in by the thousand
 /// (0019), so they go out: Deswik imports the zip, each solid on a layer of its file's name. Each solid's file is
 /// read back as written before it goes in, and one that doesn't come back the same solid is left out and named.
 pub struct ExportSolids;
@@ -346,7 +347,7 @@ impl Command for ExportSolids {
         });
 
         let keys: BTreeSet<&str> = objects.iter().flat_map(|o| o.attributes.keys().map(String::as_str)).collect();
-        let mut csv = String::from("file,name,layer,volume_m3,triangles,pieces");
+        let mut csv = String::from("id,file,deswik_layer,name,layer,volume_m3,triangles,pieces");
         keys.iter().for_each(|key| {
             csv.push(',');
             csv.push_str(&csv_cell(key));
@@ -365,7 +366,18 @@ impl Command for ExportSolids {
             };
             triangles += solid.mesh().triangle_count();
             volume += solid.volume();
-            csv.push_str(&format!("{},{},{},{},{},{}", csv_cell(file), csv_cell(&object.name), csv_cell(layer), solid.volume(), solid.mesh().triangle_count(), solid.pieces().pieces));
+            // A number to join on, from 1 in the order given, and the layer Deswik puts the file's solid on.
+            csv.push_str(&format!(
+                "{},{},{},{},{},{},{},{}",
+                files.len() + 1,
+                csv_cell(file),
+                csv_cell(&deswik_layer(file)),
+                csv_cell(&object.name),
+                csv_cell(layer),
+                solid.volume(),
+                solid.mesh().triangle_count(),
+                solid.pieces().pieces
+            ));
             for key in &keys {
                 csv.push(',');
                 match object.attributes.get(*key) {
@@ -431,6 +443,16 @@ fn file_stem(name: &str) -> String {
     let stem: String = name.chars().map(|c| if c.is_control() || "<>:\"/\\|?*".contains(c) { '_' } else { c }).collect();
     let stem = stem.trim().trim_end_matches(['.', ' ']);
     if stem.is_empty() { "solid".to_string() } else { stem.to_string() }
+}
+
+/// The layer Deswik makes for a DXF file it imports, as seen in its own files on 2026-11-10: the file's name in
+/// capitals with the dot before its extension an underscore (`PIT strip 1.dxf` on `PIT STRIP 1_DXF`).
+fn deswik_layer(file: &str) -> String {
+    let upper = file.to_uppercase();
+    match upper.rfind('.') {
+        Some(dot) => format!("{}_{}", &upper[..dot], &upper[dot + 1..]),
+        None => upper,
+    }
 }
 
 /// A CSV cell: in quotes, with its own doubled, where it holds a comma, a quote or a line break.

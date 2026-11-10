@@ -302,11 +302,12 @@ fn solids_go_out_a_file_each_with_a_list_and_come_back_the_same() {
     assert_eq!(names, ["Pit_N_ 1 above RL 105.000.dxf", "Pit_N_ 1 below RL 105.000.dxf", "Twin (2).dxf", "solids.csv", "twin.dxf"]);
     let csv = std::fs::read_to_string(folder.join("solids.csv")).unwrap();
     let rows: Vec<&str> = csv.lines().collect();
-    assert_eq!(rows[0], "file,name,layer,volume_m3,triangles,pieces,cut_by,cut_side");
-    assert_eq!(rows[1], "Pit_N_ 1 below RL 105.000.dxf,Pit/N: 1 below RL 105.000,cut,500,12,1,RL 105.000,below");
-    assert_eq!(rows[2], "Pit_N_ 1 above RL 105.000.dxf,Pit/N: 1 above RL 105.000,cut,500,12,1,RL 105.000,above");
-    assert_eq!(rows[3], "twin.dxf,twin,blocks,1000,12,1,,");
-    assert_eq!(rows[4], "Twin (2).dxf,Twin,blocks,8,12,1,,");
+    // Each row starts with a number to join on and has the layer Deswik puts that file's solid on.
+    assert_eq!(rows[0], "id,file,deswik_layer,name,layer,volume_m3,triangles,pieces,cut_by,cut_side");
+    assert_eq!(rows[1], "1,Pit_N_ 1 below RL 105.000.dxf,PIT_N_ 1 BELOW RL 105.000_DXF,Pit/N: 1 below RL 105.000,cut,500,12,1,RL 105.000,below");
+    assert_eq!(rows[2], "2,Pit_N_ 1 above RL 105.000.dxf,PIT_N_ 1 ABOVE RL 105.000_DXF,Pit/N: 1 above RL 105.000,cut,500,12,1,RL 105.000,above");
+    assert_eq!(rows[3], "3,twin.dxf,TWIN_DXF,twin,blocks,1000,12,1,,");
+    assert_eq!(rows[4], "4,Twin (2).dxf,TWIN (2)_DXF,Twin,blocks,8,12,1,,");
     assert_eq!(rows.len(), 5);
 
     // A zip holds the same files, byte for byte, and reads back with the import as the same solids: each volume to

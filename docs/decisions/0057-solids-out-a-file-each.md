@@ -22,8 +22,12 @@ larger pit solids exceed, and attributes have nowhere to go.
 3. **Each file is named for its solid.** What a file name can't hold (`\ / : * ? " < > |`, control characters) becomes
    an underscore, in the file's name only. A name already taken, whatever its case, as Windows takes names, gets a
    number: `Twin (2).dxf`. Nothing is dropped, and the run says how many names were shared.
-4. **`solids.csv` goes with them**, a row a solid: its file, its name as it is, its layer, volume, triangles and
-   pieces (0054), then a column for every attribute any of the solids carries, in the attributes' order.
+4. **`solids.csv` goes with them**, a row a solid: a number from 1 in the order given (`id`), its file, the layer
+   Deswik will put it on (`deswik_layer`: the file's name in capitals with the dot before `dxf` an underscore, as
+   Deswik's own files showed), its name as it is, its layer, volume, triangles and pieces (0054), then a column for
+   every attribute any of the solids carries, in the attributes' order. The number and the Deswik layer are there to
+   join the attributes onto the solids in Deswik (Tim, 2026-11-10: "I could import the attributes to each solid using
+   the id").
 5. **Each file is read back as written before it goes in**: with its corners as written and no repair it must come
    back the same solid, its triangles and its volume to a billionth (the check of 0055). One that doesn't is left out
    and named; if none does, the run is refused.
@@ -64,5 +68,6 @@ layer under it named for the DXF's own layer (`STRIPS`, the project layer), and 
 - **The zip is written on one core.** Making and checking the files uses every core; packing 2 GB of DXF text into the
   zip doesn't, and is most of the 29 s.
 - **Deswik reads the list only as a file beside the solids.** Putting the attributes on the solids in Deswik is done
-  there, by joining on the file's name.
+  there, by joining on `deswik_layer` or `id`. That join has not been tried, and `deswik_layer` follows two files seen,
+  not Deswik's rule for every character.
 - **Names Windows keeps for itself** (`CON`, `NUL`) are not changed.
