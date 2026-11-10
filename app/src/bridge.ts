@@ -651,10 +651,19 @@ export interface SeamModel {
   issues: StackIssue[];
 }
 
+/** What a solid is made of: closed shells wound outward (pieces) and inward (cavities), volumes in m³. */
+export interface Pieces {
+  pieces: number;
+  cavities: number;
+  smallest_piece: number;
+  largest_piece: number;
+  cavity_volume: number;
+}
+
 export type Measures =
   | { kind: 'string'; points: Vec3[]; closed: boolean; length: number; plan_length: number; plan_area: number | null }
   | { kind: 'surface'; vertices: number; triangles: number; area: number; validity: MeshValidity; crossings: Crossings | null }
-  | { kind: 'solid'; vertices: number; triangles: number; area: number; volume: number; validity: MeshValidity; crossings: Crossings | null }
+  | { kind: 'solid'; vertices: number; triangles: number; area: number; volume: number; pieces: Pieces; validity: MeshValidity; crossings: Crossings | null }
   | {
       kind: 'grid';
       origin: [number, number];

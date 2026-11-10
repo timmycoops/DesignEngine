@@ -239,6 +239,7 @@ fn measures(body: &Body) -> Value {
             "triangles": s.mesh().triangle_count(),
             "area": s.mesh().area(),
             "volume": s.volume(),
+            "pieces": s.pieces(),
             "validity": s.validity(),
             "crossings": s.crossings(),
         }),

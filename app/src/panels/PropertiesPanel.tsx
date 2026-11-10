@@ -587,6 +587,16 @@ function Measurements({ d }: { d: ObjectDetails }) {
             <Field label="Vertices">{fmt(m.vertices)}</Field>
             <Field label="Area">{fmt(m.area, 1)} m²</Field>
             {m.kind === 'solid' && <Field label="Volume">{fmt(m.volume, 1)} m³</Field>}
+            {m.kind === 'solid' && m.pieces.pieces > 1 && (
+              <Field label="Pieces">
+                {fmt(m.pieces.pieces)}, the smallest {fmt(m.pieces.smallest_piece, m.pieces.smallest_piece < 10 ? 3 : 1)} m³
+              </Field>
+            )}
+            {m.kind === 'solid' && m.pieces.cavities > 0 && (
+              <Field label="Cavities">
+                {fmt(m.pieces.cavities)}, {fmt(m.pieces.cavity_volume, m.pieces.cavity_volume < 10 ? 3 : 1)} m³ in all
+              </Field>
+            )}
             <Validity v={m.validity} crossings={m.crossings} />
             {m.crossings && m.crossings.pairs > 0 && <CrossingSites crossings={m.crossings} />}
             {m.crossings && m.crossings.thin > 0 && <ThinSites crossings={m.crossings} />}

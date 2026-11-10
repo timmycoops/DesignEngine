@@ -144,6 +144,40 @@ impl Solid {
     pub fn volume(&self) -> f64 {
         self.mesh.signed_volume()
     }
+
+    /// What the solid is made of: its shells counted as pieces (wound outward) and cavities (wound inward).
+    pub fn pieces(&self) -> Pieces {
+        Pieces::of(&self.mesh)
+    }
+}
+
+/// What a solid is made of. A piece is a closed shell wound outward, a cavity one wound inward, inside a piece. A
+/// piece's volume here is what its own shell encloses, before any cavity in it is taken away. Shells that touch at a
+/// corner count as one.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct Pieces {
+    pub pieces: usize,
+    pub cavities: usize,
+    /// The smallest piece's volume (m³); the solid's own if it is one piece.
+    pub smallest_piece: f64,
+    /// The largest piece's volume (m³).
+    pub largest_piece: f64,
+    /// The cavities' volume in all (m³), as a positive number.
+    pub cavity_volume: f64,
+}
+
+impl Pieces {
+    pub fn of(mesh: &TriMesh) -> Self {
+        let shells = mesh.shell_volumes();
+        let outward = || shells.iter().copied().filter(|v| *v >= 0.0);
+        Pieces {
+            pieces: outward().count(),
+            cavities: shells.len() - outward().count(),
+            smallest_piece: outward().fold(f64::INFINITY, f64::min).min(outward().fold(0.0, f64::max)),
+            largest_piece: outward().fold(0.0, f64::max),
+            cavity_volume: -shells.iter().filter(|v| **v < 0.0).sum::<f64>(),
+        }
+    }
 }
 
 /// An object's geometry. Meshes and grids are shared, so a revision that only renames an object
