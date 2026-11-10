@@ -144,7 +144,7 @@ pub enum Measures {
     String { points: Vec<[f64; 3]>, closed: bool, length: f64, plan_length: f64, plan_area: Option<f64> },
     /// `crossings`: the crossing check, in world coordinates; `None` if none has run.
     Surface { vertices: usize, triangles: usize, area: f64, validity: MeshValidity, crossings: Option<Crossings> },
-    Solid { vertices: usize, triangles: usize, area: f64, volume: f64, validity: MeshValidity, crossings: Option<Crossings> },
+    Solid { vertices: usize, triangles: usize, area: f64, volume: f64, pieces: zd_core::Pieces, validity: MeshValidity, crossings: Option<Crossings> },
     Grid { origin: [f64; 2], cell_size: [f64; 2], cols: usize, rows: usize, nulls: usize, z_range: Option<[f64; 2]> },
     SeamModel { model: SeamModel },
     FaceDesign { design: FaceDesign },
@@ -171,6 +171,7 @@ fn measure(body: &Body) -> Measures {
             triangles: s.mesh().triangle_count(),
             area: s.mesh().area(),
             volume: s.volume(),
+            pieces: s.pieces(),
             validity: s.validity(),
             crossings: s.crossings().cloned(),
         },

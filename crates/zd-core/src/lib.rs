@@ -21,7 +21,7 @@ pub use face::{AzimuthSector, FaceDesign, FaceDirection, FaceLine, FaceProfile, 
 pub use grid::Grid;
 pub use id::{LayerId, ObjectId, RunId};
 pub use mesh::TriMesh;
-pub use object::{AttrValue, Attributes, Body, Layer, Object, ObjectKind, ObjectRef, Polyline, Solid, Surface};
+pub use object::{AttrValue, Attributes, Body, Layer, Object, ObjectKind, ObjectRef, Pieces, Polyline, Solid, Surface};
 pub use project::{Applied, AppliedChange, Change, ChangeKind, Project, ProjectError};
 pub use seam::{Fingerprint, GridLink, Horizon, IssueKind, Lattice, SeamModel, StackIssue, blank_no_seam, blank_no_thickness};
 pub use validity::{CrossingCheck, Crossings, MeshValidity, is_zero_area};

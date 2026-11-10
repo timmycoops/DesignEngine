@@ -110,7 +110,9 @@ fn closed_pieces_meeting_along_an_edge_import_as_one_solid() {
         record.messages
     );
     // One file, one solid, under the file's name, with the volume of both.
-    assert_eq!(record.messages.last().unwrap(), "volume 2000.000 m3");
+    assert_eq!(record.messages[record.messages.len() - 2], "volume 2000.000 m3");
+    // Every solid a run makes says what it is made of, where that is more than one piece.
+    assert_eq!(record.messages.last().unwrap(), "'pair' is in 2 pieces; the smallest is 1000.000 m3");
     let names: Vec<String> = created(&record).iter().map(|&id| s.project().object(id).unwrap().name.clone()).collect();
     assert_eq!(names, ["pair"]);
 
