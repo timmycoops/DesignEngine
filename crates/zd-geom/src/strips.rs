@@ -10,7 +10,7 @@ use std::time::Instant;
 use manifold_csg::{CrossSection, JoinType, Manifold, triangulate_polygons};
 use zd_core::{MeshValidity, TriMesh};
 
-use crate::cut::{from_manifold, to_manifold};
+use crate::cut::{TinyEdges, from_manifold, join_tiny_edges, to_manifold};
 use crate::{GeomError, RepairLog, Side, boundary_loops, close_surface_to_halfspace, orient_upward, repair_mesh};
 
 /// A gap closed all round by the faces being joined, filled.
@@ -345,6 +345,8 @@ pub struct StripPiece {
     pub validity: MeshValidity,
     /// Separate parts it's in.
     pub parts: usize,
+    /// What became of edges under a micrometre the booleans left.
+    pub tiny_edges: TinyEdges,
 }
 
 /// Milliseconds per stage of a slice.
@@ -498,8 +500,8 @@ pub fn slice_solid_by_faces(solid: &TriMesh, faces: &[&TriMesh]) -> Result<Strip
             .iter()
             .map(|piece| {
                 scope.spawn(move || {
-                    let mesh = from_manifold(piece, origin);
-                    StripPiece { volume: mesh.signed_volume(), validity: mesh.validity(), parts: piece.decompose().len(), mesh }
+                    let (mesh, tiny_edges) = join_tiny_edges(from_manifold(piece, origin));
+                    StripPiece { volume: mesh.signed_volume(), validity: mesh.validity(), parts: piece.decompose().len(), tiny_edges, mesh }
                 })
             })
             .collect();

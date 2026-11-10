@@ -396,6 +396,11 @@ impl SliceByFaces {
             outcome.changes.push(Change::Create { name: piece_name, layer: p.layer.clone(), attributes, body: Body::Solid(solid) });
         }
         let total: f64 = slice.strips.iter().map(|s| s.volume).sum();
+        let mut tiny = zd_geom::TinyEdges::default();
+        slice.strips.iter().for_each(|s| tiny.add(s.tiny_edges));
+        if let Some(line) = super::solid::tiny_edge_words(tiny, slice.strips.iter().filter(|s| s.tiny_edges.joined > 0).count()) {
+            lines.push(line);
+        }
         let parted = slice.strips.iter().filter(|s| s.parts > 1).count();
         lines.push(format!(
             "'{name}' {:.3} m3 into {kept} solids adding up to {total:.3} m3, within {:.6} m3{}",
@@ -504,6 +509,9 @@ impl Command for SolidBetween {
             between.mesh.triangle_count(),
             if between.parts > 1 { format!(", in {} parts", between.parts) } else { String::new() }
         ));
+        if let Some(line) = super::solid::tiny_edge_words(between.tiny_edges, 1) {
+            outcome = outcome.message(line);
+        }
         for (name, uncovered) in [(&top_name, between.top_uncovered), (&bottom_name, between.bottom_uncovered)] {
             if uncovered > 0.01 {
                 outcome = outcome.message(format!("warning: '{name}' doesn't cover {uncovered:.1} m2 of '{}' in plan, and there's no solid there", string.name));

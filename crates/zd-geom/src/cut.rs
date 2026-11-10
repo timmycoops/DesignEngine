@@ -22,7 +22,155 @@ pub struct CutResult {
     pub design_covers_solid: bool,
     pub cap_method: CapMethod,
     pub halfspace_triangles: usize,
+    /// What became of edges under [`TINY_EDGE`] the boolean left, below and above.
+    pub tiny_edges: [TinyEdges; 2],
     pub timings: CutTimings,
+}
+
+/// Edges shorter than this (m) are a boolean's leftovers, not detail: two of its corners a nanometre apart where two
+/// faces meet a third. The finest detail seen in real solids is hundredths of a millimetre (decision 0053).
+pub const TINY_EDGE: f64 = 1e-6;
+
+/// What became of a mesh's edges under [`TINY_EDGE`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TinyEdges {
+    /// Corners joined into the corner at the other end of such an edge.
+    pub joined: usize,
+    /// Triangles that went with them: those left with no width, and pairs left folded flat on each other.
+    pub triangles_dropped: usize,
+    /// Edges under [`TINY_EDGE`] left as they were: joining their ends would have opened the solid, made faces meet
+    /// three to an edge, or left nothing of it.
+    pub left: usize,
+}
+
+impl TinyEdges {
+    pub fn add(&mut self, other: TinyEdges) {
+        self.joined += other.joined;
+        self.triangles_dropped += other.triangles_dropped;
+        self.left += other.left;
+    }
+}
+
+/// A closed mesh with the two ends of each edge under [`TINY_EDGE`] joined into one corner, the first of them in the
+/// mesh's order kept exactly as it is. The triangles on the edge go, having no width left, and so does a pair left
+/// folded flat on each other, which encloses nothing. A mesh with no such edge comes back untouched.
+///
+/// The edges are joined all at once if that leaves the mesh closed, with two faces on every edge, and its volume
+/// within what moving corners a micrometre can change. If not, they are tried one after another, each kept only if
+/// the mesh is still sound with it, and the rest are counted as left.
+pub fn join_tiny_edges(mesh: TriMesh) -> (TriMesh, TinyEdges) {
+    let edges = tiny_edges(&mesh);
+    if edges.is_empty() {
+        return (mesh, TinyEdges::default());
+    }
+    let done = |joined: TriMesh, corners: usize, left: usize| {
+        let triangles_dropped = mesh.triangles.len() - joined.triangles.len();
+        (joined, TinyEdges { joined: corners, triangles_dropped, left })
+    };
+    if let Some((joined, corners)) = joined_at(&mesh, &edges) {
+        return done(joined, corners, 0);
+    }
+    let mut kept: Vec<(u32, u32)> = Vec::new();
+    let mut best = None;
+    let mut left = 0;
+    for &edge in &edges {
+        kept.push(edge);
+        match joined_at(&mesh, &kept) {
+            Some(joined) => best = Some(joined),
+            None => {
+                kept.pop();
+                left += 1;
+            }
+        }
+    }
+    match best {
+        Some((joined, corners)) => done(joined, corners, left),
+        None => (mesh, TinyEdges { left, ..TinyEdges::default() }),
+    }
+}
+
+/// The mesh with the ends of each of `edges` joined, and how many corners went, or `None` if that leaves it unsound.
+fn joined_at(mesh: &TriMesh, edges: &[(u32, u32)]) -> Option<(TriMesh, usize)> {
+    // Each corner goes to the lowest-numbered corner it's joined to, through any run of edges.
+    let mut to: Vec<u32> = (0..mesh.vertices.len() as u32).collect();
+    fn root(to: &mut [u32], mut v: u32) -> u32 {
+        while to[v as usize] != v {
+            to[v as usize] = to[to[v as usize] as usize];
+            v = to[v as usize];
+        }
+        v
+    }
+    let mut corners = 0;
+    for &(a, b) in edges {
+        let (ra, rb) = (root(&mut to, a), root(&mut to, b));
+        if ra != rb {
+            to[ra.max(rb) as usize] = ra.min(rb);
+            corners += 1;
+        }
+    }
+    let mut triangles: Vec<[u32; 3]> = mesh.triangles.iter().map(|t| t.map(|v| root(&mut to, v))).filter(|t| t[0] != t[1] && t[1] != t[2] && t[0] != t[2]).collect();
+
+    // Two triangles on the same three corners, wound opposite ways, are a fold with nothing in it: both go.
+    let mut keys: Vec<([u32; 3], usize)> = triangles
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let mut key = *t;
+            key.sort_unstable();
+            (key, i)
+        })
+        .collect();
+    keys.sort_unstable();
+    let even = |t: [u32; 3]| {
+        let low = (0..3).min_by_key(|&k| t[k]).expect("three corners");
+        t[(low + 1) % 3] < t[(low + 2) % 3]
+    };
+    let mut fold = vec![false; triangles.len()];
+    for run in keys.chunk_by(|x, y| x.0 == y.0) {
+        if run.len() == 2 && even(triangles[run[0].1]) != even(triangles[run[1].1]) {
+            fold[run[0].1] = true;
+            fold[run[1].1] = true;
+        }
+    }
+    let mut index = 0;
+    triangles.retain(|_| {
+        index += 1;
+        !fold[index - 1]
+    });
+    if triangles.is_empty() {
+        return None;
+    }
+
+    // The corners still used, in their own order.
+    let mut renumber = vec![u32::MAX; mesh.vertices.len()];
+    let mut used = vec![false; mesh.vertices.len()];
+    triangles.iter().flatten().for_each(|&v| used[v as usize] = true);
+    let mut vertices = Vec::new();
+    for (v, p) in mesh.vertices.iter().enumerate().filter(|(v, _)| used[*v]) {
+        renumber[v] = vertices.len() as u32;
+        vertices.push(*p);
+    }
+    triangles.iter_mut().flatten().for_each(|v| *v = renumber[*v as usize]);
+    let joined = TriMesh::new(vertices, triangles);
+    let sound = joined.validity().is_watertight() && (joined.signed_volume() - mesh.signed_volume()).abs() <= TINY_EDGE * mesh.area();
+    sound.then_some((joined, corners))
+}
+
+/// Edges shorter than [`TINY_EDGE`], each once, lower corner first, in order.
+fn tiny_edges(mesh: &TriMesh) -> Vec<(u32, u32)> {
+    let limit = TINY_EDGE * TINY_EDGE;
+    let mut edges = Vec::new();
+    for &[a, b, c] in &mesh.triangles {
+        for (u, v) in [(a, b), (b, c), (c, a)] {
+            let (p, q) = (mesh.vertices[u as usize], mesh.vertices[v as usize]);
+            if (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2) < limit {
+                edges.push((u.min(v), u.max(v)));
+            }
+        }
+    }
+    edges.sort_unstable();
+    edges.dedup();
+    edges
 }
 
 /// Milliseconds per stage of a cut.
@@ -99,8 +247,8 @@ fn cut(solid: &TriMesh, design: &TriMesh, crop: bool) -> Result<CutResult, GeomE
     timings.boolean_ms = ms(t);
 
     let t = Instant::now();
-    let below = from_manifold(&below_m, origin);
-    let above = from_manifold(&above_m, origin);
+    let (below, tiny_below) = join_tiny_edges(from_manifold(&below_m, origin));
+    let (above, tiny_above) = join_tiny_edges(from_manifold(&above_m, origin));
     timings.from_manifold_ms = ms(t);
 
     Ok(CutResult {
@@ -114,6 +262,7 @@ fn cut(solid: &TriMesh, design: &TriMesh, crop: bool) -> Result<CutResult, GeomE
         design_covers_solid: design_bounds.contains_plan(&solid_bounds),
         cap_method: halfspace.cap_method,
         halfspace_triangles: halfspace.mesh.triangle_count(),
+        tiny_edges: [tiny_below, tiny_above],
         timings,
     })
 }
@@ -237,6 +386,52 @@ mod tests {
         let cut = cut_solid_by_surface(&box_seam(), &aside).unwrap();
         assert!(!cut.design_covers_solid && cut.below.triangles.is_empty());
         assert_close(cut.above_volume, 1000.0, "above");
+    }
+
+    #[test]
+    fn corners_a_nanometre_apart_are_joined_and_nothing_else_moves() {
+        // A 10 m cube whose top has a corner written twice, 0.5 nm apart, with two triangles of no width between the
+        // copies: closed, 1,000 m3. Joined, it's the cube's top with one corner there and two triangles fewer.
+        let mut v: Vec<[f64; 3]> = (0..8).map(|i| [E + (i & 1) as f64 * 10.0, N + (i >> 1 & 1) as f64 * 10.0, 100.0 + (i >> 2) as f64 * 10.0]).collect();
+        v.extend([[E + 5.0, N + 5.0, 110.0], [E + 5.0 + 5e-10, N + 5.0, 110.0]]);
+        let mut t = vec![[0, 2, 3], [0, 3, 1], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+        t.extend([[4, 5, 8], [5, 9, 8], [5, 7, 9], [7, 6, 9], [6, 8, 9], [6, 4, 8]]);
+        let cube = TriMesh::new(v.clone(), t);
+        assert!(cube.validity().is_watertight());
+        let (joined, tiny) = join_tiny_edges(cube.clone());
+        assert_eq!(tiny, TinyEdges { joined: 1, triangles_dropped: 2, left: 0 });
+        assert!(joined.validity().is_watertight());
+        assert_eq!(joined.vertices, v[..9], "every corner kept is exactly as it was");
+        // Volume tolerance: 1e-9 m3 on 1,000 m3.
+        assert!((joined.signed_volume() - 1000.0).abs() < 1e-9, "{}", joined.signed_volume());
+
+        // A mesh with no such edge comes back as it was, to the bit and in its order.
+        let plain = box_seam();
+        let (same, tiny) = join_tiny_edges(plain.clone());
+        assert_eq!(tiny, TinyEdges::default());
+        assert_eq!((same.vertices, same.triangles), (plain.vertices, plain.triangles));
+    }
+
+    #[test]
+    fn a_wedge_of_no_height_goes_whole_and_a_mesh_that_is_only_one_is_left() {
+        // A cube beside a closed wedge 0.5 nm high (3e-9 m3): joining its apex to the corner under it leaves its top
+        // and bottom folded flat on each other, enclosing nothing, so both go and the cube is left as it was.
+        let mut v: Vec<[f64; 3]> = (0..8).map(|i| [E + (i & 1) as f64 * 10.0, N + (i >> 1 & 1) as f64 * 10.0, 100.0 + (i >> 2) as f64 * 10.0]).collect();
+        let mut t = vec![[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+        let cube = TriMesh::new(v.clone(), t.clone());
+        v.extend([[E + 12.0, N, 100.0], [E + 18.0, N, 100.0], [E + 12.0, N + 6.0, 100.0], [E + 12.0, N, 100.0 + 5e-10]]);
+        t.extend([[8, 10, 9], [8, 9, 11], [9, 10, 11], [10, 8, 11]]);
+        let mesh = TriMesh::new(v.clone(), t);
+        assert!(mesh.validity().is_watertight());
+        let (joined, tiny) = join_tiny_edges(mesh);
+        assert_eq!(tiny, TinyEdges { joined: 1, triangles_dropped: 4, left: 0 });
+        assert_eq!((joined.vertices, joined.triangles), (cube.vertices, cube.triangles));
+
+        // The wedge alone would leave nothing: it comes back as it was, its edge counted as left.
+        let wedge = TriMesh::new(v[8..].to_vec(), vec![[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]]);
+        let (same, tiny) = join_tiny_edges(wedge.clone());
+        assert_eq!(tiny, TinyEdges { joined: 0, triangles_dropped: 0, left: 1 });
+        assert_eq!((same.vertices, same.triangles), (wedge.vertices, wedge.triangles));
     }
 
     #[test]

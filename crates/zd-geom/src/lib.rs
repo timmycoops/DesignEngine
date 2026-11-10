@@ -28,7 +28,7 @@ mod strips;
 mod wall;
 
 pub use between::{Between, solid_between};
-pub use cut::{CutResult, CutTimings, cut_solid_by_surface, cut_solid_by_whole_surface};
+pub use cut::{CutResult, CutTimings, TINY_EDGE, TinyEdges, cut_solid_by_surface, cut_solid_by_whole_surface, join_tiny_edges};
 pub use error::GeomError;
 pub use grid::{SampledGrid, sample_surface_on_grid, triangulate_grid};
 pub use halfspace::{CapMethod, ClosedHalfSpace, Side, close_surface_to_halfspace};
