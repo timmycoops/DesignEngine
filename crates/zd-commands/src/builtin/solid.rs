@@ -784,6 +784,7 @@ pub(crate) fn first_open_edge(mesh: &TriMesh) -> Option<[f64; 3]> {
 pub(crate) fn check_solids_made(changes: &mut [Change], messages: &mut Vec<String>) -> Result<(), CommandError> {
     let start = std::time::Instant::now();
     let (mut searched, mut thin, mut triangles) = (0, 0, 0);
+    let mut made = PiecesMade::default();
     for change in changes.iter_mut() {
         let (name, body) = match change {
             Change::Create { name, body, .. } => (Some(name.as_str()), Some(body)),
@@ -791,6 +792,7 @@ pub(crate) fn check_solids_made(changes: &mut [Change], messages: &mut Vec<Strin
             _ => continue,
         };
         let Some(Body::Solid(solid)) = body else { continue };
+        made.add(name, solid);
         if solid.crossings().is_some_and(|c| matches!(c.check, CrossingCheck::SolidSearch { .. })) {
             continue;
         }
@@ -808,6 +810,7 @@ pub(crate) fn check_solids_made(changes: &mut [Change], messages: &mut Vec<Strin
         triangles += solid.mesh().triangle_count();
         *solid = solid.clone().with_crossings(crossings);
     }
+    messages.extend(made.words());
     if searched > 0 {
         let thin = if thin > 0 { format!(" ({thin} thin pairs, kept)") } else { String::new() };
         messages.push(format!(
@@ -816,6 +819,68 @@ pub(crate) fn check_solids_made(changes: &mut [Change], messages: &mut Vec<Strin
         ));
     }
     Ok(())
+}
+
+/// A volume that may be next to nothing, in words.
+fn small_volume(m3: f64) -> String {
+    if m3 < 0.001 { "under 0.001 m3".to_string() } else { format!("{m3:.3} m3") }
+}
+
+/// What the solids a run made are made of, summed: said only where some are in several pieces or hold cavities.
+#[derive(Default)]
+struct PiecesMade {
+    solids: usize,
+    in_pieces: usize,
+    pieces: usize,
+    /// The smallest piece of a solid in several pieces (m³), and that solid.
+    smallest: Option<(f64, String)>,
+    with_cavities: usize,
+    cavities: usize,
+    cavity_volume: f64,
+}
+
+impl PiecesMade {
+    fn add(&mut self, name: Option<&str>, solid: &Solid) {
+        let p = solid.pieces();
+        self.solids += 1;
+        if p.pieces > 1 {
+            self.in_pieces += 1;
+            self.pieces += p.pieces;
+            if self.smallest.as_ref().is_none_or(|(least, _)| p.smallest_piece < *least) {
+                self.smallest = Some((p.smallest_piece, name.unwrap_or("a revised solid").to_string()));
+            }
+        }
+        if p.cavities > 0 {
+            self.with_cavities += 1;
+            self.cavities += p.cavities;
+            self.cavity_volume += p.cavity_volume;
+        }
+    }
+
+    fn words(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some((least, name)) = &self.smallest {
+            lines.push(if self.solids == 1 {
+                format!("'{name}' is in {} pieces; the smallest is {}", self.pieces, small_volume(*least))
+            } else {
+                format!(
+                    "{} of the {} solids made are in several pieces, {} pieces in all; the smallest piece is {}, in '{name}'",
+                    self.in_pieces,
+                    self.solids,
+                    self.pieces,
+                    small_volume(*least)
+                )
+            });
+        }
+        if self.with_cavities > 0 {
+            lines.push(if self.solids == 1 {
+                format!("it holds {} cavities, {:.3} m3 taken out of its volume", self.cavities, self.cavity_volume)
+            } else {
+                format!("{} of the {} solids made hold cavities, {} in all, {:.3} m3 taken out of their volume", self.with_cavities, self.solids, self.cavities, self.cavity_volume)
+            });
+        }
+        lines
+    }
 }
 
 /// The self-union of a closed mesh that crosses itself, cut along every crossing however shallow
@@ -1189,6 +1254,49 @@ mod tests {
 
     fn made(name: &str, mesh: TriMesh) -> Change {
         Change::Create { name: name.into(), layer: "made".into(), attributes: Attributes::new(), body: Body::Solid(Solid::new(mesh).unwrap()) }
+    }
+
+    #[test]
+    fn solids_made_say_their_pieces_and_cavities() {
+        // Three solids: a cube; a cube with a 2 m cube 20 m off (two pieces, 1,000 and 8 m3); a cube with a 1 m cube
+        // inside it wound inward (a cavity of 1 m3).
+        let join = |parts: &[TriMesh]| {
+            let mut all = TriMesh::default();
+            for part in parts {
+                let base = all.vertices.len() as u32;
+                all.vertices.extend_from_slice(&part.vertices);
+                all.triangles.extend(part.triangles.iter().map(|t| t.map(|v| v + base)));
+            }
+            all
+        };
+        let scaled = |x: f64, z: f64, size: f64| {
+            let mut m = cube(0.0);
+            m.vertices.iter_mut().for_each(|p| *p = [E + x + (p[0] - E) * size / 10.0, N + 4.0 + (p[1] - N) * size / 10.0, z + (p[2] - 100.0) * size / 10.0]);
+            m
+        };
+        let two = join(&[cube(100.0), scaled(120.0, 100.0, 2.0)]);
+        let holed = join(&[cube(200.0), scaled(204.0, 104.0, 1.0).flipped()]);
+        let pieces = Solid::new(two.clone()).unwrap().pieces();
+        assert_eq!((pieces.pieces, pieces.cavities), (2, 0));
+        // Volume tolerance: 1e-9 m3.
+        assert!((pieces.smallest_piece - 8.0).abs() < 1e-9 && (pieces.largest_piece - 1000.0).abs() < 1e-9, "{pieces:?}");
+        let pieces = Solid::new(holed.clone()).unwrap().pieces();
+        assert_eq!((pieces.pieces, pieces.cavities), (1, 1));
+        assert!((pieces.cavity_volume - 1.0).abs() < 1e-9 && (Solid::new(holed.clone()).unwrap().volume() - 999.0).abs() < 1e-9, "{pieces:?}");
+
+        let mut changes = vec![made("whole", cube(0.0)), made("two", two), made("holed", holed)];
+        let mut messages = Vec::new();
+        check_solids_made(&mut changes, &mut messages).unwrap();
+        assert_eq!(messages[0], "1 of the 3 solids made are in several pieces, 2 pieces in all; the smallest piece is 8.000 m3, in 'two'");
+        assert_eq!(messages[1], "1 of the 3 solids made hold cavities, 1 in all, 1.000 m3 taken out of their volume");
+
+        // One solid on its own is named; a solid in one piece with no cavity says nothing.
+        let mut messages = Vec::new();
+        check_solids_made(&mut [made("two", join(&[cube(100.0), scaled(120.0, 100.0, 2.0)]))], &mut messages).unwrap();
+        assert_eq!(messages[0], "'two' is in 2 pieces; the smallest is 8.000 m3");
+        let mut messages = Vec::new();
+        check_solids_made(&mut [made("whole", cube(0.0))], &mut messages).unwrap();
+        assert_eq!(messages.len(), 1, "only the crossing check's line: {messages:?}");
     }
 
     #[test]

@@ -41,6 +41,44 @@ impl TriMesh {
         six_v / 6.0
     }
 
+    /// The signed volume of each shell: the triangles joined through shared corners, in the order of their first
+    /// triangles. Positive for a shell wound outward, negative for one wound inward (a cavity). Summed about the
+    /// bounding-box centre, as [`signed_volume`](Self::signed_volume) is, so the shells add up to it.
+    pub fn shell_volumes(&self) -> Vec<f64> {
+        let Some(bounds) = self.bounds() else { return Vec::new() };
+        let c = bounds.centre();
+        let mut to: Vec<u32> = (0..self.vertices.len() as u32).collect();
+        fn root(to: &mut [u32], mut v: u32) -> u32 {
+            while to[v as usize] != v {
+                to[v as usize] = to[to[v as usize] as usize];
+                v = to[v as usize];
+            }
+            v
+        }
+        for &[a, b, d] in &self.triangles {
+            let ra = root(&mut to, a);
+            for other in [b, d] {
+                let ro = root(&mut to, other);
+                to[ro as usize] = ra;
+            }
+        }
+        let mut shell_of = vec![usize::MAX; self.vertices.len()];
+        let mut six_v: Vec<f64> = Vec::new();
+        let local = |i: u32| {
+            let p = self.vertices[i as usize];
+            [p[0] - c[0], p[1] - c[1], p[2] - c[2]]
+        };
+        for &[a, b, d] in &self.triangles {
+            let r = root(&mut to, a) as usize;
+            if shell_of[r] == usize::MAX {
+                shell_of[r] = six_v.len();
+                six_v.push(0.0);
+            }
+            six_v[shell_of[r]] += dot(local(a), cross(local(b), local(d)));
+        }
+        six_v.into_iter().map(|v| v / 6.0).collect()
+    }
+
     /// Total triangle area.
     pub fn area(&self) -> f64 {
         self.triangles
@@ -130,6 +168,28 @@ pub(crate) mod tests {
             [3, 4, 7],
         ];
         TriMesh::new(vertices, triangles)
+    }
+
+    #[test]
+    fn shells_are_told_apart_with_their_volumes() {
+        // A 10 x 20 x 5 m box (1,000 m3), a 2 m cube beside it (8 m3) and a 1 m cube inside the box wound inward (a
+        // cavity, -1 m3), at mine grid coordinates: three shells, in order, adding up to 1,007 m3. Tolerance 1e-9 m3.
+        let big = box_mesh([650_000.0, 7_450_000.0, 100.0], [650_010.0, 7_450_020.0, 105.0]);
+        let small = box_mesh([650_030.0, 7_450_000.0, 100.0], [650_032.0, 7_450_002.0, 102.0]);
+        let cavity = box_mesh([650_004.0, 7_450_004.0, 102.0], [650_005.0, 7_450_005.0, 103.0]).flipped();
+        let mut all = TriMesh::default();
+        for part in [&big, &small, &cavity] {
+            let base = all.vertices.len() as u32;
+            all.vertices.extend_from_slice(&part.vertices);
+            all.triangles.extend(part.triangles.iter().map(|t| t.map(|v| v + base)));
+        }
+        let shells = all.shell_volumes();
+        assert_eq!(shells.len(), 3);
+        for (found, expected) in shells.iter().zip([1000.0, 8.0, -1.0]) {
+            assert!((found - expected).abs() < 1e-9, "{found} vs {expected}");
+        }
+        assert!((shells.iter().sum::<f64>() - all.signed_volume()).abs() < 1e-9);
+        assert!(TriMesh::default().shell_volumes().is_empty());
     }
 
     #[test]
