@@ -65,10 +65,15 @@ On the whole pit 2,305 corners are joined and 4,696 triangles dropped. 25 edges 
 those parts was cut from a source solid that has such edges itself: none the cut made is left. The same one solid is
 left uncut as before.
 
+## In Deswik
+
+The two source solids behind the three parts with a nanometre edge, cut again with this in, four parts
+(`bench/out/deswik-check/cut-parts-2`): Tim ran Validate Solids on them on 2026-11-10 and all four are valid, the one
+Deswik called bad among them (20.602 m³ as before, 380 triangles, shortest edge 0.08 mm). One solid is thin evidence,
+but it failed with the edges and passes without them.
+
 ## What this leaves
 
-- **Whether it clears Deswik's self-intersection is not known yet.** The bad solid and the two that passed, cut again,
-  are in `bench/out/deswik-check/cut-parts-2` for Tim's Validate Solids.
 - **A triangle a nanometre high with no short edge** (a corner all but on the edge opposite) isn't joined by this.
 - **No test drives a real cut into making such an edge**: the known answers are on meshes written by hand, and the pit
   is the evidence that the cut's own are caught.
