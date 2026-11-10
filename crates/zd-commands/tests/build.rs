@@ -494,12 +494,10 @@ fn copy_folder(from: &std::path::Path, to: &std::path::Path) {
 /// printed against the design run whole over all ten strips; the builder's gate is a second a step. Then the first crest is
 /// edited and the ten steps above it rebuilt, timed.
 #[test]
+#[ignore = "needs the made-up grid pit, which isn't in git; opt in with --ignored"]
 fn a_grid_strip_built_a_step_at_a_time() {
     let original = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/synthetic/Grid template.zdproj");
-    if !original.join("manifest.json").exists() {
-        println!("no made-up grid pit at {}: run testdata/synthetic/grid_template.py to make it", original.display());
-        return;
-    }
+    assert!(original.join("manifest.json").exists(), "no made-up grid pit at {}: run testdata/synthetic/grid_template.py to make it", original.display());
     let copy = std::env::temp_dir().join(format!("zd-build-grid-{}", std::process::id()));
     copy_folder(&original, &copy);
     let mut s = Session::open(&copy).unwrap();

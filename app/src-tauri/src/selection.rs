@@ -172,10 +172,7 @@ mod tests {
     fn pit_b_blocks_timed() {
         use std::time::Instant;
         let zip = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/golden/Data/PIT B/relimits.zip");
-        if !zip.exists() {
-            eprintln!("no golden data at {}", zip.display());
-            return;
-        }
+        assert!(zip.exists(), "no golden data at {}", zip.display());
         let mut s = Session::with_builtins();
         s.run("solid.import_many", json!({ "paths": [zip], "layer": "solids", "repair": true })).unwrap();
         let project = s.project();

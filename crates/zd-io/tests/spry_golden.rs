@@ -15,12 +15,8 @@ use zd_core::TriMesh;
 use zd_geom::repair_mesh;
 use zd_io::{SpryRead, list_spry, read_spry};
 
-fn env(name: &str) -> Option<String> {
-    let value = std::env::var(name).ok();
-    if value.is_none() {
-        eprintln!("{name} is not set; skipped");
-    }
-    value
+fn env(name: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| panic!("{name} is needed: this test reads real data, and passing without it would say nothing"))
 }
 
 fn list(name: &str) -> Vec<String> {
@@ -65,7 +61,7 @@ struct Compared {
 #[test]
 #[ignore]
 fn a_real_project_reads_whole() {
-    let Some(path) = env("ZD_SPRY_FILE") else { return };
+    let path = env("ZD_SPRY_FILE");
     let start = Instant::now();
     let contents = list_spry(Path::new(&path)).unwrap();
     println!("database version {}, listed in {:.0} ms", contents.database_version, start.elapsed().as_secs_f64() * 1e3);

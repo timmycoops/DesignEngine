@@ -418,8 +418,7 @@ C,,coal,yes,pitc.srg,pitc.sfg
 #[ignore]
 fn a_real_folder_suggests_and_builds() {
     let (Ok(dir), Ok(prefix)) = (std::env::var("ZD_SEAM_GRIDS"), std::env::var("ZD_SEAM_PREFIX")) else {
-        eprintln!("ZD_SEAM_GRIDS and ZD_SEAM_PREFIX are not set; skipped");
-        return;
+        panic!("ZD_SEAM_GRIDS and ZD_SEAM_PREFIX are needed: this test reads real grids");
     };
     let t = TempDir::new("golden");
     let csv = t.0.join("stack.csv");

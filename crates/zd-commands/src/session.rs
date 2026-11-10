@@ -10,6 +10,12 @@ use crate::builtin::check_solids_made;
 use crate::command::Inputs;
 use crate::{CommandError, Registry};
 
+/// A run that panicked, refused with what the panic said.
+fn stopped_on_a_panic(command: &str, panic: &(dyn std::any::Any + Send)) -> CommandError {
+    let said = panic.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| panic.downcast_ref::<String>().cloned()).unwrap_or_else(|| "no reason given".into());
+    CommandError::Geometry(format!("{command} stopped on an error in the engine and changed nothing ({said}); please send the run log"))
+}
+
 /// The serialisable record of one run, successful or not.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunRecord {
@@ -166,11 +172,17 @@ impl Session {
     fn execute(&mut self, run: RunId, command: &str, params: &Value, record: &mut RunRecord) -> Result<(), CommandError> {
         let command = self.registry.get(command).ok_or_else(|| CommandError::UnknownCommand(command.to_string()))?;
         let inputs = Inputs::new(&self.project);
-        let outcome = command.run_json(&inputs, params);
+        // A panic anywhere in a run, the geometry included, refuses that run and leaves the project as it was: commands
+        // only read the project, and nothing is applied until they're done. Without this a panic would end the app's
+        // session with the lock held (the review of 10 November).
+        let guarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (mut outcome, canonical) = command.run_json(&inputs, params)?;
+            let checked = check_solids_made(&mut outcome.changes, &mut outcome.messages);
+            Ok((outcome, canonical, checked))
+        }));
         record.inputs = inputs.into_read();
-        let (mut outcome, canonical) = outcome?;
+        let (outcome, canonical, checked) = guarded.unwrap_or_else(|panic| Err(stopped_on_a_panic(record.command.as_str(), panic.as_ref())))?;
         record.params = canonical;
-        let checked = check_solids_made(&mut outcome.changes, &mut outcome.messages);
         record.messages = outcome.messages;
         checked?;
         let applied = self.project.apply(run, outcome.changes)?;

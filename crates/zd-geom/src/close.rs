@@ -228,19 +228,21 @@ fn without_hanging_sheets(mesh: &TriMesh) -> (Vec<[u32; 3]>, Vec<Placed>) {
         if !off.contains(&true) || !off.contains(&false) {
             return (triangles, sheets);
         }
-        let mut each: HashMap<usize, ([f64; 3], f64)> = HashMap::new();
+        // Keyed by the patch's root, which depends on the order the hash map gave the edges; listed by the patch's
+        // first face, which doesn't, so the sheets are said in the same order every run.
+        let mut each: HashMap<usize, (usize, [f64; 3], f64)> = HashMap::new();
         for (f, t) in triangles.iter().enumerate().filter(|(f, _)| off[*f]) {
             let corners = t.map(|i| mesh.vertices[i as usize]);
             let area = triangle_area(corners);
-            let entry = each.entry(patch[f]).or_insert(([0.0; 3], 0.0));
-            for (k, sum) in entry.0.iter_mut().enumerate() {
+            let entry = each.entry(patch[f]).or_insert((f, [0.0; 3], 0.0));
+            for (k, sum) in entry.1.iter_mut().enumerate() {
                 *sum += area * (corners[0][k] + corners[1][k] + corners[2][k]) / 3.0;
             }
-            entry.1 += area;
+            entry.2 += area;
         }
-        let mut found: Vec<(usize, ([f64; 3], f64))> = each.into_iter().collect();
-        found.sort_by_key(|(p, _)| *p);
-        sheets.extend(found.into_iter().map(|(_, (sum, area))| (if area > 0.0 { sum.map(|c| c / area) } else { sum }, area)));
+        let mut found: Vec<(usize, [f64; 3], f64)> = each.into_values().collect();
+        found.sort_by_key(|(first, ..)| *first);
+        sheets.extend(found.into_iter().map(|(_, sum, area)| (if area > 0.0 { sum.map(|c| c / area) } else { sum }, area)));
         triangles = triangles.into_iter().zip(off).filter(|(_, off)| !off).map(|(t, _)| t).collect();
     }
 }

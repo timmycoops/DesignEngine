@@ -233,7 +233,7 @@ pub fn register_toe(line: &Polyline, surface: &TriMesh) -> Result<(Polyline, Reg
     let on: Vec<bool> = toe.vertices.iter().map(|p| bins.height(surface, [p[0], p[1]]).is_some()).collect();
     let off_grid = on.iter().filter(|o| !**o).count();
     if off_grid == toe.vertices.len() {
-        return Err(GeomError::InvalidInput("the toe doesn't cross the grid it registers to".into()));
+        return Err(GeomError::InvalidInput(format!("the toe doesn't cross the grid it registers to: it runs from {:.3}, {:.3} to {:.3}, {:.3}", lo[0], lo[1], hi[0], hi[1])));
     }
     let along = plan_distances(&toe.vertices);
     let known: Vec<usize> = (0..on.len()).filter(|&k| on[k]).collect();
@@ -467,8 +467,7 @@ fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, directi
             }
             Err(e @ GeomError::Refused(_)) => return Err(e),
             Err(e) => {
-                let highest = face.last_wall.iter().max_by_key(|(_, step)| **step).map(|(r, step)| (*r, *step));
-                let Some((r, step)) = highest else { return Err(e) };
+                let Some((r, step)) = road_to_stop(&face.last_wall) else { return Err(e) };
                 limits.insert(r, face.walls_climbed[&r] - 1);
                 let why = format!("what's built on it can't be: {}", e.to_string().replace("invalid input: ", ""));
                 let why = if direction == FaceDirection::Down { going_down(&why) } else { why };
@@ -476,6 +475,13 @@ fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, directi
             }
         }
     }
+}
+
+/// The road stopped a wall lower when what's built on the roads can't be: the one whose last wall is highest, and of
+/// two ending on the same wall the later ramp, the same every run. Taken from the map's order, the face came out
+/// different run to run (0034; the review of 10 November).
+fn road_to_stop(last_wall: &HashMap<usize, usize>) -> Option<(usize, usize)> {
+    last_wall.iter().max_by_key(|(r, step)| (**step, **r)).map(|(r, step)| (*r, *step))
 }
 
 /// The steps run, with each ramp in `limits` stopping after that many walls.
@@ -2005,6 +2011,17 @@ fn mirrored_mesh(mesh: &TriMesh) -> TriMesh {
 mod tests {
     use super::*;
     use crate::triangulate_grid;
+
+    /// Ramps 0, 3 and 5 last on wall 6 and ramp 2 on wall 4: ramp 5 stops, whatever order the map was filled in, and
+    /// with every map's own hash seed (each `HashMap::new` takes a fresh one).
+    #[test]
+    fn of_two_roads_ending_on_one_wall_the_later_ramp_stops_every_time() {
+        for _ in 0..200 {
+            let last_wall: HashMap<usize, usize> = [(0, 6), (2, 4), (3, 6), (5, 6)].into_iter().collect();
+            assert_eq!(road_to_stop(&last_wall), Some((5, 6)));
+        }
+        assert_eq!(road_to_stop(&HashMap::new()), None);
+    }
     use zd_core::Grid;
 
     const E: f64 = 650_000.0;
@@ -2412,7 +2429,9 @@ mod tests {
         for p in &toe.vertices {
             close(p[2], 100.0 + 0.1 * (p[0] - E), 1e-6);
         }
-        assert!(register_toe(&line(&[[900.0, 100.0, 0.0], [980.0, 100.0, 0.0]]), &grid).is_err());
+        // Off the grid altogether, it's refused saying where the toe is.
+        let refused = register_toe(&line(&[[900.0, 100.0, 0.0], [980.0, 100.0, 0.0]]), &grid).unwrap_err().to_string();
+        assert!(refused.contains(&format!("it runs from {:.3}, {:.3} to {:.3}, {:.3}", E + 900.0, N + 100.0, E + 980.0, N + 100.0)), "{refused}");
     }
 
     /// A toe on a level floor lies flat at its RL, whatever heights its string had, and stays where it was in plan.

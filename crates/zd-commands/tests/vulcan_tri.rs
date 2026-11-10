@@ -474,8 +474,7 @@ fn every_solid_in_a_folder() {
 #[ignore]
 fn a_real_pit_slices_exactly_and_fast() {
     let (Ok(surface), Ok(solids)) = (std::env::var("ZD_SLICE_SURFACE"), std::env::var("ZD_SLICE_SOLIDS")) else {
-        eprintln!("ZD_SLICE_SURFACE and ZD_SLICE_SOLIDS are not set; skipped");
-        return;
+        panic!("ZD_SLICE_SURFACE and ZD_SLICE_SOLIDS are needed: this test reads a real pit");
     };
     let mut s = Session::with_builtins();
     let topo = created(&s.run("surface.import", json!({ "path": surface, "layer": "topo" })).unwrap())[0];

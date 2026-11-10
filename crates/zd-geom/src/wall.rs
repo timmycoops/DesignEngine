@@ -1010,7 +1010,7 @@ fn target_near(target: &TriMesh, origin: P3, edges: &[Vec<Edge>]) -> Result<TriM
         }));
     }
     if near.triangles.is_empty() {
-        return Err(GeomError::InvalidInput("the target doesn't reach the string".into()));
+        return Err(GeomError::InvalidInput(format!("the target doesn't reach the string: nothing of it lies between {:.3}, {:.3} and {:.3}, {:.3}", lo[0], lo[1], hi[0], hi[1])));
     }
     Ok(near)
 }
@@ -1325,7 +1325,7 @@ impl<'a> Walk<'a> {
             position.entered = NONE;
             position.triangle = self.across(position.triangle, u, v).ok_or_else(|| self.off_target(next))?;
         }
-        Err(GeomError::InvalidInput("the crest walk didn't finish".into()))
+        Err(GeomError::InvalidInput(format!("the crest walk didn't finish: it was last at {:.3}, {:.3}", position.at[0] + self.origin[0], position.at[1] + self.origin[1])))
     }
 
     /// Where the crest starts on an open string: up the end if the target is above the string there,
@@ -1368,7 +1368,9 @@ impl<'a> Walk<'a> {
                 }
             }
         }
-        Err(GeomError::InvalidInput("the walls close before they reach the target".into()))
+        // Where they close: the highest point a wall closes at, or the string's start if none says.
+        let closed = self.sweep.walls.iter().filter_map(|w| w.closed_at).max_by(|a, b| a[2].total_cmp(&b[2])).unwrap_or(self.sweep.walls[0].foot[0]);
+        Err(GeomError::InvalidInput(format!("the walls close before they reach the target, near {:.3}, {:.3}", closed[0] + self.origin[0], closed[1] + self.origin[1])))
     }
 
     /// The crest where it's come down onto the string: on along the string until the target rises
@@ -1498,6 +1500,11 @@ fn crossing_of(points: &[P3], closed: bool) -> Option<P3> {
 /// The walls below the crest as one mesh.
 fn wall_mesh(sweep: &Sweep, edges: &[Vec<Edge>], walked: &Walked, origin: P3) -> Result<TriMesh, GeomError> {
     let mut mesh = MeshBuilder { origin, mesh: TriMesh::default(), numbered: HashMap::new() };
+    // A wall's fault said with where the wall stands on the string.
+    let at_foot = |wall: usize, why: &str| {
+        let [from, to] = sweep.walls[wall].foot.map(|p| world(p, origin));
+        GeomError::InvalidInput(format!("{why}, on the wall from {:.3}, {:.3} to {:.3}, {:.3}", from[0], from[1], to[0], to[1]))
+    };
     for (wall, around) in edges.iter().enumerate() {
         let pieces = &walked.pieces[wall];
         // A wall that closes just as it reaches the target has its crest only touching it at the point where it closes:
@@ -1510,7 +1517,7 @@ fn wall_mesh(sweep: &Sweep, edges: &[Vec<Edge>], walked: &Walked, origin: P3) ->
                 continue;
             }
             if sweep.walls[wall].closed_at.is_none() {
-                return Err(GeomError::InvalidInput("a wall reaches past the target with no crest on it".into()));
+                return Err(at_foot(wall, "a wall reaches past the target with no crest on it"));
             }
             // Where its crest touches it, the neighbours have the crest's own point: it takes that one.
             let touch = pieces.iter().flat_map(|piece| piece.points.first()).next().copied();
@@ -1518,7 +1525,7 @@ fn wall_mesh(sweep: &Sweep, edges: &[Vec<Edge>], walked: &Walked, origin: P3) ->
             mesh.add_polygon(&outline)?;
             continue;
         }
-        for outline in outlines_below(around, pieces)? {
+        for outline in outlines_below(around, pieces).map_err(|e| at_foot(wall, &e.to_string().replace("invalid input: ", "")))? {
             mesh.add_polygon(&outline)?;
         }
     }

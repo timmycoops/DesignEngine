@@ -220,3 +220,26 @@ says how many corners it made one and the furthest apart, as "2 corners within 1
 **Noticed, not fixed:** the same design run twice can give a slightly different number of triangles (Grid toe to RLs: 40,557
 and 40,582; 40,621 and 40,600 before this change, when stitching could only add triangles). Something in building faces
 with roads depends on the order a hash map gives. The faults are the same each run.
+
+## Runs that repeat, and faults that say where (2026-11-10)
+
+Item 2 of the review of 10 November ("harden what's built").
+
+- **Fixed: the run-to-run difference.** Where what's built on the roads can't be, the run stops the road whose last wall is
+  highest, a wall lower, and runs again. Two roads ending on the same wall were a tie broken by the order a hash map gave,
+  so either could be stopped (Grid toe to RLs, Strip 7: 4,085 triangles one run, 4,082 the next). The later ramp now
+  stops (`road_to_stop` in `zd-geom/src/face.rs`). The sheets `close` reports are listed by their first face, not by a
+  root the map's order set. Tests: `of_two_roads_ending_on_one_wall_the_later_ramp_stops_every_time`;
+  `the_same_design_runs_the_same_twice` (in CI: two toes on a rolling floor, two ramps, one stopped, run in two sessions,
+  every string and face the same to the bit and the run's words the same); `the_made_up_grid_pit_runs_the_same_twice`
+  (opt in: every design of the test pit run twice; failed on its first run before, passed four in four after).
+- **Every wall fault says where it is.** A face that isn't one sheet is said, with each edge besides its own as a hole,
+  a piece apart or a crack, at the middle of its corners, with its length round. Triangles that cross give the first place.
+  A wall refused with no place now has one: the crest walk that didn't finish, walls that close before the target, a wall
+  past the target with no crest, a crest that doesn't close on a wall (the wall's foot on the string), a target that
+  doesn't reach the string, and a toe off its grid (where the toe runs).
+- **Found by it:** every strip of Grid switchbacks has two cracks 50 m long (100 m round), one at the bottom pad and one
+  near the top; 50 m is `turn_join`'s default, so they're likely where the toe past a turn joins back. The count of
+  2026-11-09 had that design clean. Not looked into yet. `face.join` stitches cracks like these when it joins a strip's
+  faces, and the strip solids of Grid switchbacks slice and add up. Every horizon's Strip 3 sliver is reported as a crack
+  0.6 m round, and Strip 2's refusal names its wall.

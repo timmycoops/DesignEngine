@@ -14,12 +14,8 @@ use zd_core::TriMesh;
 use zd_geom::repair_mesh;
 use zd_io::{DeswikDrawing, list_deswik_layers, read_deswik_layers, read_dxf};
 
-fn env(name: &str) -> Option<String> {
-    let value = std::env::var(name).ok();
-    if value.is_none() {
-        eprintln!("{name} is not set; skipped");
-    }
-    value
+fn env(name: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| panic!("{name} is needed: this test reads real data, and passing without it would say nothing"))
 }
 
 fn chosen_layers() -> Vec<String> {
@@ -50,7 +46,7 @@ fn read(path: &str) -> DeswikDrawing {
 #[test]
 #[ignore]
 fn a_real_drawing_reads_whole() {
-    let Some(path) = env("ZD_DESWIK_DCF") else { return };
+    let path = env("ZD_DESWIK_DCF");
     let drawing = read(&path);
     for s in &drawing.strings {
         assert!(s.line.vertices.iter().flatten().all(|c| c.is_finite()), "a string on {} with a coordinate that is not a number", s.layer);
@@ -149,7 +145,7 @@ impl Comparison {
 #[test]
 #[ignore]
 fn a_real_drawing_matches_its_dxf_export() {
-    let (Some(path), Some(dxf)) = (env("ZD_DESWIK_DCF"), env("ZD_DESWIK_DXF")) else { return };
+    let (path, dxf) = (env("ZD_DESWIK_DCF"), env("ZD_DESWIK_DXF"));
     let ours = read(&path);
     let theirs = read_dxf(Path::new(&dxf)).unwrap();
     let key = |p: &[f64; 3]| p.map(|c| (c * 1e6).round() as i64);
