@@ -169,7 +169,9 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   `docs/decisions/0006-vulcan-grids.md` and `0011-vulcan-triangulations.md`), DXF (3DFACE, polyface and
   strings), CSV strings and XYZ grids; then Surpac `.str`/`.dtm`, Datamine pt/tr ASCII, OBJ.
 - Solids come by the thousand as a zip or a folder (Spry exports a zip; Deswik imports one): `solid.import_many`
-  takes either in one run. See `docs/decisions/0019-solids-by-the-thousand.md`.
+  takes either in one run. See `docs/decisions/0019-solids-by-the-thousand.md`. They go out the same way: `solid.export_many` writes a
+  zip or a folder of one DXF a solid, named for it, with a list of them and their attributes
+  (`docs/decisions/0057-solids-out-a-file-each.md`).
 - Then: OMF v1 and v2, and an export to Seequent Evo schemas (triangle mesh, design geometry).
 - Spry `.spry` projects are read, not written: block solids by node path with Spry's values and volume, design-layer
   strings and solids with their attributes (`docs/decisions/0039-spry-projects.md`).

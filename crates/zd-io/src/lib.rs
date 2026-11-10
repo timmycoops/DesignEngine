@@ -7,6 +7,7 @@
 //! out. Every clean-up or conversion done on the way in (welding, dropped faces, arcs to chords,
 //! nulls) is counted in the import log; nothing is fixed silently.
 
+mod bundle;
 mod deswik;
 mod dxf;
 mod error;
@@ -22,6 +23,7 @@ mod xyz;
 
 use std::path::Path;
 
+pub use bundle::{is_zip, write_bundle};
 pub use deswik::{DESWIK_LEVELS, DeswikDrawing, DeswikLayer, DeswikLog, DeswikMesh, DeswikString, list_deswik_layers, parse_deswik_layer, read_deswik_layers};
 pub use dxf::{ARC_SAGITTA, DxfDrawing, DxfEntity, DxfLog, DxfString, format_dxf, parse_dxf, read_dxf, write_dxf, write_dxf_3dfaces};
 pub use error::IoError;
