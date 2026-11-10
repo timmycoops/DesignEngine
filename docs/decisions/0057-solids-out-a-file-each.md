@@ -24,6 +24,15 @@ larger pit solids exceed, and attributes have nowhere to go.
 3. **Each file is named for its solid.** What a file name can't hold (`\ / : * ? " < > |`, control characters) becomes
    an underscore, in the file's name only. A name already taken, whatever its case, as Windows takes names, gets a
    number: `Twin (2).dxf`. Nothing is dropped, and the run says how many names were shared.
+3a. **Or each file is named from attributes** (`name_from`, Tim, 2026-11-10: "I would normally import all of them
+   into one layer in Deswik and then use the name to extract attributes - same way with 00t files out of Spry"): the
+   attributes named, in order, with a dot between (`separator`), as Spry names its solids, so the attributes come back
+   out of the name in another package. `name` and `layer` stand for the solid's own. Every part goes in as it is: a
+   name from Spry is in parts already and is meant to come apart, so nothing is swapped; the run says how many parts
+   hold the separator themselves. A solid without one of the attributes has that part empty, and is named in the run. An
+   attribute no solid has, or a separator a file's name can't hold, is refused.
+3b. **The layer in each file** (`layer_in_file`) is the solid's number by default, or its file's name, so the name is on
+   the solid however the files are brought in.
 4. **`solids.csv` goes with them**, a row a solid: its number, from 1 in the order given (`id`), its file, the layer
    Deswik will put it on (`deswik_layer`: the file's name in capitals with the dot before `dxf` an underscore, as
    Deswik's own files showed), its name as it is, its layer, volume, triangles and pieces (0054), then a column for
@@ -35,7 +44,9 @@ larger pit solids exceed, and attributes have nowhere to go.
    and named; if none does, the run is refused.
 6. **Refused:** no solids given; an object that isn't a solid; a zip or folder already there, unless `overwrite`. In a
    folder, each file replaces one of its name and others are left.
-7. **In the app,** the Export menu gains Selected solids to a zip and Visible solids to a zip.
+7. **In the app,** the Export menu gains Selected solids to a zip and Visible solids to a zip. Each opens a dialog to
+   pick the attributes a file's name is made from, in order, what goes between them and the layer in each file, with
+   the first few names shown as they will be.
 
 Vulcan `.00t` is not written (CLAUDE.md: Vulcan formats are read, not written). Surfaces and strings don't go out this
 way.
@@ -48,6 +59,9 @@ way.
 - A zip holds the same files as a folder, byte for byte, and reads back through `solid.import_many` as four solids
   with no corner moved, each volume to 1e-9 m³.
 - Refused: nothing given, a string among the solids, and a zip or a folder already there without `overwrite`.
+- Named from `layer`, `cut_side` and `cut_by`: `cut.below.RL 105.000.dxf`, the dot in `RL 105.000` said; the uncut
+  cube, with neither attribute, is `blocks.dxf` and named as lacking them. With `layer_in_file` as `name` every 3DFACE
+  is on `cut.below.RL 105.000`. Named from `name` and `cut_side`: `PIT below RL 105.000.below.dxf`.
 
 ## On the pit
 
@@ -73,3 +87,7 @@ layer under it named for the DXF's own layer (`STRIPS`, the project layer), and 
   there, by joining on `id` (the layer the solid is on) or `deswik_layer` (the layer above it). That join has not been
   tried, and `deswik_layer` follows two files seen, not Deswik's rule for every character.
 - **Names Windows keeps for itself** (`CON`, `NUL`) are not changed.
+- **A cut's part doesn't carry the name of the solid it was cut from** as an attribute: its own name is
+  `<solid> below <surface>`. So a Spry-style name for a part, the solid's name and then its side, can't be made yet;
+  a `cut_from` attribute on the parts would give it.
+- **The dialog was typechecked and built, not opened.**

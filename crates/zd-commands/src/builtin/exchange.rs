@@ -304,8 +304,44 @@ pub struct ExportSolids;
 /// The list that goes with the solids' files.
 const SOLIDS_CSV: &str = "solids.csv";
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportSolidsParams {
+    pub objects: Vec<ObjectId>,
+    pub path: String,
+    /// Replace the zip if it exists, or write into the folder if it does.
+    #[serde(default)]
+    pub overwrite: bool,
+    /// Name each file from these, in order, joined by `separator`, as Spry names its solids
+    /// (`PIT.7.below`), so another package can take the attributes back out of the name. Each is an attribute's
+    /// name, or `name` or `layer` for the solid's own. Empty: the file has the solid's name.
+    #[serde(default)]
+    pub name_from: Vec<String>,
+    /// What goes between the parts of a name made from `name_from`: a dot by default.
+    #[serde(default = "default_separator")]
+    pub separator: String,
+    /// The layer each solid's 3DFACEs are on in its file, which reaches Deswik on the solid.
+    #[serde(default)]
+    pub layer_in_file: LayerInFile,
+}
+
+fn default_separator() -> String {
+    ".".into()
+}
+
+/// What a solid's file calls the layer its 3DFACEs are on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LayerInFile {
+    /// Its number in the list.
+    #[default]
+    Id,
+    /// Its file's name, without `.dxf`.
+    Name,
+}
+
 impl Command for ExportSolids {
-    type Params = ExportParams;
+    type Params = ExportSolidsParams;
     const NAME: &'static str = "solid.export_many";
 
     fn spec(&self) -> CommandSpec {
@@ -313,18 +349,64 @@ impl Command for ExportSolids {
             name: Self::NAME,
             summary: "Export solids to a zip or a folder, one DXF a solid, with a list of them and their attributes",
             inputs: vec![Field::new("objects", FieldType::Objects, "Solids")],
-            params: vec![Field::new("path", FieldType::Path, "A .zip to write, or a folder"), Field::new("overwrite", FieldType::Bool, "Replace an existing zip, or write into an existing folder")],
+            params: vec![
+                Field::new("path", FieldType::Path, "A .zip to write, or a folder"),
+                Field::new("overwrite", FieldType::Bool, "Replace an existing zip, or write into an existing folder"),
+                Field::new("name_from", FieldType::Text, "Name each file from these attributes in order (or name, layer), joined by the separator; empty for the solid's name"),
+                Field::new("separator", FieldType::Text, "What goes between the parts of a name made from attributes; a dot by default"),
+                Field::new("layer_in_file", FieldType::Text, "The layer in each file: id (the default), the solid's number in the list, or name, its file's name"),
+            ],
             outputs: vec![],
         }
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let objects = export_objects(inputs, p)?;
+        let objects = export_objects(inputs, &ExportParams { objects: p.objects.clone(), path: p.path.clone(), overwrite: p.overwrite })?;
         let not_solids: Vec<&str> = objects.iter().filter(|o| !matches!(o.body, Body::Solid(_))).map(|o| o.name.as_str()).collect();
         if !not_solids.is_empty() {
             return Err(CommandError::Invalid(format!("only solids are exported this way, not {}", not_solids.iter().take(5).copied().collect::<Vec<_>>().join(", "))));
         }
+        if !p.name_from.is_empty() {
+            if p.separator.is_empty() || p.separator.chars().any(|c| c.is_control() || "<>:\"/\\|?*".contains(c)) {
+                return Err(CommandError::Invalid(format!("the separator {:?} can't go in a file's name", p.separator)));
+            }
+            let unknown: Vec<&str> = p.name_from.iter().map(String::as_str).filter(|key| !matches!(*key, "name" | "layer") && !objects.iter().any(|o| o.attributes.contains_key(*key))).collect();
+            if !unknown.is_empty() {
+                return Err(CommandError::Invalid(format!("none of the solids has the attribute {}: name files from attributes they carry, or from name or layer", unknown.join(", "))));
+            }
+        }
         let start = std::time::Instant::now();
+        // A name made from attributes, Spry's way: each part in order, as it is, with the separator between. A solid
+        // without one of the attributes has that part empty.
+        let (mut holding, mut missing): (usize, Vec<String>) = (0, Vec::new());
+        let mut built_name = |object: &Object, layer: &str| -> String {
+            let mut lacks = false;
+            let parts: Vec<String> = p
+                .name_from
+                .iter()
+                .map(|key| {
+                    let part = match (key.as_str(), object.attributes.get(key)) {
+                        (_, Some(AttrValue::Number(v))) => v.to_string(),
+                        (_, Some(AttrValue::Bool(v))) => v.to_string(),
+                        (_, Some(AttrValue::Text(v))) => v.clone(),
+                        ("name", None) => object.name.clone(),
+                        ("layer", None) => layer.to_string(),
+                        (_, None) => {
+                            lacks = true;
+                            String::new()
+                        }
+                    };
+                    // Every part goes in as it is: a name that came from Spry is in parts already, and is meant to
+                    // come apart. One that holds the separator is counted and said.
+                    holding += usize::from(part.contains(p.separator.as_str()));
+                    part
+                })
+                .collect();
+            if lacks {
+                missing.push(object.name.clone());
+            }
+            parts.join(&p.separator)
+        };
         // A file a solid, named for it: what a file name can't hold becomes an underscore, and a name already taken
         // (whatever its case, as Windows takes names) gets a number.
         let mut taken: HashMap<String, usize> = HashMap::new();
@@ -333,20 +415,25 @@ impl Command for ExportSolids {
             .iter()
             .enumerate()
             .map(|(k, object)| {
-                let stem = file_stem(&object.name);
+                let layer = inputs.layer_name(object);
+                let stem = if p.name_from.is_empty() { file_stem(&object.name) } else { file_stem(&built_name(object, &layer)) };
                 let n = taken.entry(stem.to_lowercase()).or_default();
                 *n += 1;
                 shared += usize::from(*n == 2);
                 let file = if *n == 1 { format!("{stem}.dxf") } else { format!("{stem} ({n}).dxf") };
                 // Its number: from 1 in the order given, whether or not every solid before it is written.
-                (*object, file, inputs.layer_name(object), k + 1)
+                (*object, file, layer, k + 1)
             })
             .collect();
-        let written = super::in_parallel(&items, |(object, _, _, id)| {
+        let written = super::in_parallel(&items, |(object, file, _, id)| {
             let Body::Solid(solid) = &object.body else { unreachable!("solids only") };
-            // The solid's number is its layer in its file: the one thing a DXF's 3DFACEs carry into Deswik, which
-            // puts the solid on a layer of that name under the file's.
-            let text = format_dxf(&[(id.to_string().as_str(), DxfEntity::Mesh(solid.mesh()))]).map_err(|e| e.to_string())?;
+            // The layer in its file is the one thing a DXF's 3DFACEs carry into Deswik, which puts the solid on a layer
+            // of that name under the file's: the solid's number, or its file's name.
+            let layer_in_file = match p.layer_in_file {
+                LayerInFile::Id => id.to_string(),
+                LayerInFile::Name => file.trim_end_matches(".dxf").to_string(),
+            };
+            let text = format_dxf(&[(layer_in_file.as_str(), DxfEntity::Mesh(solid.mesh()))]).map_err(|e| e.to_string())?;
             reads_back(solid, text.as_bytes(), &object.name)?;
             Ok::<Vec<u8>, String>(text.into_bytes())
         });
@@ -412,6 +499,23 @@ impl Command for ExportSolids {
             start.elapsed().as_secs_f64() * 1e3
         ));
         outcome = outcome.message(format!("each file read back as written before it went in: {solids} the same solid, to a billionth of its volume"));
+        if !p.name_from.is_empty() {
+            outcome = outcome.message(format!("each file named from {}, with {:?} between", p.name_from.join(", "), p.separator));
+            if holding > 0 {
+                outcome = outcome.message(format!(
+                    "{holding} of the parts hold {:?} themselves, so those names come apart into more than {} parts: pick another separator if that isn't meant",
+                    p.separator,
+                    p.name_from.len()
+                ));
+            }
+            if !missing.is_empty() {
+                outcome = outcome.message(format!(
+                    "{} solids lack one of those attributes, and that part of their file's name is empty: {}",
+                    missing.len(),
+                    missing.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
+                ));
+            }
+        }
         if shared > 0 {
             outcome = outcome.message(format!("{shared} names are shared by more than one solid: the files after the first are numbered, and {SOLIDS_CSV} says which is which"));
         }

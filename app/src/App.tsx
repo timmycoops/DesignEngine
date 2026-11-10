@@ -79,6 +79,7 @@ import {
 import { Separator } from './design-system/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './design-system/ui/tooltip';
 import { type DeswikChoice, DeswikImportDialog, type ImportSource, type PickableLayer } from './panels/DeswikImportDialog';
+import { ExportSolidsDialog, type SolidExportOptions } from './panels/ExportSolidsDialog';
 import { type NotASolid, RepairDialog } from './panels/RepairDialog';
 import { IssueMarkers } from './viewport/markers';
 import { type RlShown, type SeamShown, SceneSync } from './viewport/sceneSync';
@@ -193,6 +194,8 @@ export default function App() {
   const [deswikFile, setDeswikFile] = useState<{ path: string; layers: DeswikLayer[] } | null>(null);
   const [spryFile, setSpryFile] = useState<{ path: string; layers: PickableLayer[]; solidFields: Set<string> } | null>(null);
   const [notSolids, setNotSolids] = useState<NotASolid[] | null>(null);
+  /** The solids the Export solids dialog is open on, with a name to offer for the zip. */
+  const [solidsOut, setSolidsOut] = useState<{ solids: ObjectSummary[]; suggested: string } | null>(null);
   const markersRef = useRef<IssueMarkers | null>(null);
   const crossingMarkersRef = useRef<IssueMarkers | null>(null);
   /** An issue to fly to once its horizon has loaded. */
@@ -645,17 +648,22 @@ export default function App() {
       await run(`export.${format}`, { objects: objects.map((o) => o.id), path, overwrite: true });
     });
 
-  /** Writes solids to a zip picked in the save dialog: a DXF a solid, named for it, with a list of them (decision 0057). */
-  const exportSolids = (objects: ObjectSummary[], suggested: string) =>
+  /** Opens the Export solids dialog on these solids, to pick how their files are named (decision 0057). */
+  const askSolidsOut = (solids: ObjectSummary[], suggested: string) => {
+    if (solids.length === 0) setStatus({ text: 'Nothing to export: no solids are visible.' });
+    else setSolidsOut({ solids, suggested });
+  };
+
+  /** Writes the dialog's solids to a zip picked in the save dialog: a DXF a solid, with a list of them. */
+  const exportSolids = (options: SolidExportOptions) =>
     attempt(async () => {
-      if (objects.length === 0) {
-        setStatus({ text: 'Nothing to export: no solids are visible.' });
-        return;
-      }
+      if (!solidsOut) return;
+      const { solids, suggested } = solidsOut;
       const path = await save({ title: 'Export solids to a zip', defaultPath: fileName(suggested, 'zip'), filters: [{ name: 'Zip of DXF R12, a file a solid', extensions: ['zip'] }] });
       if (!path) return;
-      setStatus({ text: `Writing ${objects.length} solids to ${path}…` });
-      await run('solid.export_many', { objects: objects.map((o) => o.id), path, overwrite: true });
+      setSolidsOut(null);
+      setStatus({ text: `Writing ${solids.length} solids to ${path}…` });
+      await run('solid.export_many', { objects: solids.map((o) => o.id), path, overwrite: true, ...options });
     });
 
   // A set: a box over a pit's blocks selects tens of thousands.
@@ -981,7 +989,7 @@ export default function App() {
               <DropdownMenuItem disabled={selectedStrings.length === 0} onSelect={() => exportObjects(selectedStrings, 'csv', selectionName(selectedStrings))}>
                 Selected strings to CSV{selectedStrings.length > 1 ? ` (${selectedStrings.length})` : ''}…
               </DropdownMenuItem>
-              <DropdownMenuItem disabled={selectedSolids.length === 0} onSelect={() => exportSolids(selectedSolids, selectionName(selectedSolids))}>
+              <DropdownMenuItem disabled={selectedSolids.length === 0} onSelect={() => askSolidsOut(selectedSolids, selectionName(selectedSolids))}>
                 Selected solids to a zip{selectedSolids.length > 1 ? ` (${selectedSolids.length})` : ''}…
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => exportObjects(visibleObjects(DXF_KINDS), 'dxf', projectName)}>
@@ -990,7 +998,7 @@ export default function App() {
               <DropdownMenuItem onSelect={() => exportObjects(visibleObjects(new Set(['string'])), 'csv', projectName)}>
                 Visible strings to CSV…
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => exportSolids(visibleObjects(new Set(['solid'])), projectName)}>
+              <DropdownMenuItem onSelect={() => askSolidsOut(visibleObjects(new Set(['solid'])), projectName)}>
                 Visible solids to a zip…
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -1139,6 +1147,12 @@ export default function App() {
       <DeswikImportDialog file={deswikFile} onCancel={() => setDeswikFile(null)} onImport={importDeswik} />
       <DeswikImportDialog file={spryFile} source={SPRY} onCancel={() => setSpryFile(null)} onImport={importSpry} />
       <RepairDialog meshes={notSolids} onLeave={() => setNotSolids(null)} onFix={fixNotSolids} />
+      <ExportSolidsDialog
+        solids={solidsOut?.solids ?? null}
+        layerName={(solid) => summary?.layers.find((l) => l.id === solid.layer)?.name ?? ''}
+        onCancel={() => setSolidsOut(null)}
+        onExport={exportSolids}
+      />
     </TooltipProvider>
   );
 }

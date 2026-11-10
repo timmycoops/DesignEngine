@@ -349,3 +349,48 @@ fn solids_go_out_a_file_each_with_a_list_and_come_back_the_same() {
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn files_are_named_from_attributes_so_the_name_comes_apart_again() {
+    let dir = scratch("named");
+    let mut s = Session::with_builtins();
+    let (vertices, triangles) = block([E, N, 100.0], 10.0);
+    let pit = created(&s.run("solid.from_mesh", json!({ "name": "PIT", "layer": "blocks", "vertices": vertices, "triangles": triangles })).unwrap())[0];
+    let parts = created(&s.run("solid.cut_by_surface", json!({ "solid": pit, "rl": 105.0, "layer": "cut" })).unwrap());
+    let objects = [parts[0], parts[1], pit];
+
+    // Named from the layer, the side and what cut it, with dots between as Spry names its solids. Each part goes in as
+    // it is: "RL 105.000" holds a dot, which is said; the uncut cube has neither attribute, so those parts of its name
+    // are empty (and Windows drops the dots left at the end).
+    let folder = dir.join("out");
+    let record = s
+        .run("solid.export_many", json!({ "objects": objects, "path": folder.to_string_lossy(), "name_from": ["layer", "cut_side", "cut_by"], "layer_in_file": "name" }))
+        .unwrap();
+    assert_eq!(record.messages[2], "each file named from layer, cut_side, cut_by, with \".\" between");
+    assert_eq!(record.messages[3], "2 of the parts hold \".\" themselves, so those names come apart into more than 3 parts: pick another separator if that isn't meant");
+    assert_eq!(record.messages[4], "1 solids lack one of those attributes, and that part of their file's name is empty: PIT");
+    let csv = std::fs::read_to_string(folder.join("solids.csv")).unwrap();
+    let rows: Vec<&str> = csv.lines().collect();
+    assert_eq!(rows[1], "1,cut.below.RL 105.000.dxf,CUT.BELOW.RL 105.000_DXF,PIT below RL 105.000,cut,500,12,1,RL 105.000,below");
+    assert_eq!(rows[2], "2,cut.above.RL 105.000.dxf,CUT.ABOVE.RL 105.000_DXF,PIT above RL 105.000,cut,500,12,1,RL 105.000,above");
+    assert_eq!(rows[3], "3,blocks.dxf,BLOCKS_DXF,PIT,blocks,1000,12,1,,");
+    // The layer in each file is its file's name, so the name is on the solid however the files are brought in.
+    let dxf = std::fs::read_to_string(folder.join("cut.below.RL 105.000.dxf")).unwrap();
+    assert_eq!(dxf.matches("0\n3DFACE\n8\ncut.below.RL 105.000\n").count(), 12);
+
+    // The solid's own name as a part, dots and all: a name from Spry is in parts already, so `BAC.CENTRAL.10.1.3H.240`
+    // with its side after it comes apart as Spry's fields and then the side.
+    let record = s.run("solid.export_many", json!({ "objects": [parts[0]], "path": dir.join("spry").to_string_lossy(), "name_from": ["name", "cut_side"] })).unwrap();
+    assert_eq!(record.messages[2], "each file named from name, cut_side, with \".\" between");
+    assert!(dir.join("spry").join("PIT below RL 105.000.below.dxf").exists());
+    // Another separator.
+    s.run("solid.export_many", json!({ "objects": [parts[0]], "path": dir.join("dashed").to_string_lossy(), "name_from": ["cut_side", "layer"], "separator": "-" })).unwrap();
+    assert!(dir.join("dashed").join("below-cut.dxf").exists());
+
+    // Refused: an attribute none of the solids has, and a separator a file's name can't hold.
+    let refused = s.run("solid.export_many", json!({ "objects": objects, "path": dir.join("x").to_string_lossy(), "name_from": ["seam"] })).unwrap_err().to_string();
+    assert!(refused.contains("none of the solids has the attribute seam"), "{refused}");
+    let refused = s.run("solid.export_many", json!({ "objects": objects, "path": dir.join("x").to_string_lossy(), "name_from": ["cut_side"], "separator": "/" })).unwrap_err().to_string();
+    assert!(refused.contains("can't go in a file's name"), "{refused}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
