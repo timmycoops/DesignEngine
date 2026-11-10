@@ -55,7 +55,9 @@ Release build, 48 threads. The 49,776 parts of the golden pit's relimiting solid
 ## In Deswik
 
 `bench/out/deswik-check/strips.zip` holds the sixteen strips of the made-up pit (7,500,000 m³, fourteen of 2,500,000 m³,
-7,500,000 m³) with their list, for Tim to import and confirm they arrive as sixteen named solids. Not yet checked.
+7,500,000 m³) with their list. Tim imported it on 2026-11-10: "All arrived and all valid". Sixteen layers come in, each
+named for its file (`PIT STRIP 1_DXF` to `PIT STRIP 15_DXF` and `PIT PAST STRIP 15_DXF`), each holding its solid on a
+layer under it named for the DXF's own layer (`STRIPS`, the project layer), and all sixteen pass Validate Solids.
 
 ## What this leaves
 
