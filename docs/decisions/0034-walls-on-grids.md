@@ -238,8 +238,21 @@ Item 2 of the review of 10 November ("harden what's built").
   A wall refused with no place now has one: the crest walk that didn't finish, walls that close before the target, a wall
   past the target with no crest, a crest that doesn't close on a wall (the wall's foot on the string), a target that
   doesn't reach the string, and a toe off its grid (where the toe runs).
-- **Found by it:** every strip of Grid switchbacks has two cracks 50 m long (100 m round), one at the bottom pad and one
-  near the top; 50 m is `turn_join`'s default, so they're likely where the toe past a turn joins back. The count of
-  2026-11-09 had that design clean. Not looked into yet. `face.join` stitches cracks like these when it joins a strip's
-  faces, and the strip solids of Grid switchbacks slice and add up. Every horizon's Strip 3 sliver is reported as a crack
-  0.6 m round, and Strip 2's refusal names its wall.
+- **Found by it, and fixed: a slit across the start of the road after each turn.** Every strip of Grid switchbacks had
+  two, 50 m long and up to 0.32 m high, at the bottom pad and near the top. Ramp C there is a 50 m road on narrower
+  berms, so the road after the turn starts on the top of the last: its bottom edge runs from its pit-side start on the
+  box, across the last road's wall-side top on the crest (level with the box), and on down to its wall-side start on the
+  seam floor, 0.4 m lower. That line is straight in plan but bends in height at the top's corner. The box kept the
+  corner and the road went straight across it, so the two left a slit between them (it wasn't `turn_join`). The road's
+  bottom edge now goes through every corner of the line it stands on that lies across it in plan (`corners_across` in
+  `zd-geom/src/road.rs`, within the 1 mm the face is welded at), at that corner's own height; nothing moves. Test:
+  `a_road_starting_across_a_bent_line_shares_it` (a road starting at RL 100 and 99.6 50 m across beside a box level to a
+  corner 40 m across: one sheet, 6,000 m² in plan, and the slit's three open edges going straight across). On the test
+  pit Grid switchbacks is now one sheet on every strip, and the strip solids slice and add up as before. The count of
+  2026-11-09 had that design clean because the design saved in the project has since been given Tim's ramp (50 m wide,
+  100 m flat, 45° end); `face.join` had been stitching these slits when it joined a strip's faces.
+- **Left, as reported:** Every horizon's Strip 3 sliver, a crack 0.6 m round, and Strip 2's refusal, which names its
+  wall.
+- **Found on the way, not fixed:** a switchback with a 100 m flat on a floor that rolls 1 to 2 m every few tens of metres
+  (a synthetic sweep: roads 10 to 50 m wide, berms 4 to 30 m) gives a face whose open edges don't close into loops: its
+  edge touches itself. Planes and the test pit's floors don't. Not looked into.
