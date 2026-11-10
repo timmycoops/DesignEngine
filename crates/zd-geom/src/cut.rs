@@ -196,7 +196,7 @@ impl CutTimings {
 /// so Manifold's tolerances are not spent on mine-grid offsets. Only the design near the solid is
 /// used; [`cut_solid_by_whole_surface`] uses all of it.
 pub fn cut_solid_by_surface(solid: &TriMesh, design: &TriMesh) -> Result<CutResult, GeomError> {
-    cut(solid, design, true)
+    cut(solid, design, None, true)
 }
 
 /// As [`cut_solid_by_surface`], with the whole design in the half-space. Manifold's tolerance
@@ -204,16 +204,131 @@ pub fn cut_solid_by_surface(solid: &TriMesh, design: &TriMesh) -> Result<CutResu
 /// solid's faces lie on the design (a relimited solid cut by its own topography); a caller can try
 /// this one when a part of the other fails its check.
 pub fn cut_solid_by_whole_surface(solid: &TriMesh, design: &TriMesh) -> Result<CutResult, GeomError> {
-    cut(solid, design, false)
+    cut(solid, design, None, false)
 }
 
-fn cut(solid: &TriMesh, design: &TriMesh, crop: bool) -> Result<CutResult, GeomError> {
+/// As [`cut_solid_by_surface`], by a design whose triangles are already found by place ([`DesignIndex`]): the same
+/// parts, to the bit, without looking through the whole design for each solid. For a run of many cuts by one surface.
+pub fn cut_solid_by_indexed_surface(solid: &TriMesh, design: &DesignIndex<'_>) -> Result<CutResult, GeomError> {
+    cut(solid, design.design, Some(design), true)
+}
+
+/// A cutting surface with its triangles found by place in plan, built once for a run of many cuts (decision 0056).
+/// A topography of millions of triangles is looked through once to build it; after that each solid sees only the
+/// triangles in the cells its plan extent reaches.
+pub struct DesignIndex<'a> {
+    design: &'a TriMesh,
+    bounds: Aabb,
+    cell: f64,
+    cols: usize,
+    rows: usize,
+    /// Where each cell's triangles start in `triangles`, row by row, with one more at the end.
+    starts: Vec<usize>,
+    /// Triangles by cell: each is in every cell its plan extent reaches.
+    triangles: Vec<u32>,
+}
+
+impl<'a> DesignIndex<'a> {
+    /// About this many triangles to a cell.
+    const TO_A_CELL: usize = 2;
+    /// The most cells, so a design of any size keeps its index small beside itself.
+    const MOST_CELLS: usize = 4_000_000;
+
+    pub fn new(design: &'a TriMesh) -> Result<Self, GeomError> {
+        let bounds = design.bounds().ok_or_else(|| GeomError::InvalidInput("empty design surface".into()))?;
+        let size = bounds.size();
+        let cells = (design.triangles.len() / Self::TO_A_CELL).clamp(1, Self::MOST_CELLS) as f64;
+        let cell = (size[0] * size[1] / cells).sqrt().max(1e-6).max(size[0].max(size[1]) / 4096.0);
+        let cols = ((size[0] / cell).floor() as usize + 1).max(1);
+        let rows = ((size[1] / cell).floor() as usize + 1).max(1);
+        let mut index = DesignIndex { design, bounds, cell, cols, rows, starts: vec![0; cols * rows + 1], triangles: Vec::new() };
+        // Count, then fill: each triangle goes in every cell its plan extent reaches.
+        let ranges: Vec<[usize; 4]> = design
+            .triangles
+            .iter()
+            .map(|t| {
+                let c = t.map(|i| design.vertices[i as usize]);
+                let lo = [c[0][0].min(c[1][0]).min(c[2][0]), c[0][1].min(c[1][1]).min(c[2][1])];
+                let hi = [c[0][0].max(c[1][0]).max(c[2][0]), c[0][1].max(c[1][1]).max(c[2][1])];
+                index.cells(lo, hi)
+            })
+            .collect();
+        for &[x0, x1, y0, y1] in &ranges {
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    index.starts[y * cols + x + 1] += 1;
+                }
+            }
+        }
+        for k in 0..cols * rows {
+            index.starts[k + 1] += index.starts[k];
+        }
+        let mut next = index.starts.clone();
+        index.triangles = vec![0; index.starts[cols * rows]];
+        for (t, &[x0, x1, y0, y1]) in ranges.iter().enumerate() {
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    index.triangles[next[y * cols + x]] = t as u32;
+                    next[y * cols + x] += 1;
+                }
+            }
+        }
+        Ok(index)
+    }
+
+    /// The cells a plan extent reaches, clamped to the design's: columns from and to, rows from and to.
+    fn cells(&self, lo: [f64; 2], hi: [f64; 2]) -> [usize; 4] {
+        let at = |v: f64, axis: usize, most: usize| (((v - self.bounds.min[axis]) / self.cell).floor().max(0.0) as usize).min(most - 1);
+        [at(lo[0], 0, self.cols), at(hi[0], 0, self.cols), at(lo[1], 1, self.rows), at(hi[1], 1, self.rows)]
+    }
+
+    /// The design's triangles that reach within `reach` of the solid's plan extent, with their vertices: what
+    /// [`design_near`] gives, triangle for triangle and in the same order.
+    fn near(&self, solid: &Aabb, reach: f64) -> TriMesh {
+        let lo = [solid.min[0] - reach, solid.min[1] - reach];
+        let hi = [solid.max[0] + reach, solid.max[1] + reach];
+        if lo[0] > self.bounds.max[0] || lo[1] > self.bounds.max[1] || hi[0] < self.bounds.min[0] || hi[1] < self.bounds.min[1] {
+            return TriMesh::default();
+        }
+        let [x0, x1, y0, y1] = self.cells(lo, hi);
+        let mut found: Vec<u32> = Vec::new();
+        for y in y0..=y1 {
+            let row = y * self.cols;
+            found.extend_from_slice(&self.triangles[self.starts[row + x0]..self.starts[row + x1 + 1]]);
+        }
+        found.sort_unstable();
+        found.dedup();
+        let design = self.design;
+        let mut renumber: HashMap<u32, u32> = HashMap::new();
+        let mut vertices = Vec::new();
+        let mut triangles = Vec::new();
+        for t in found {
+            let tri = design.triangles[t as usize];
+            let corners = tri.map(|i| design.vertices[i as usize]);
+            if (0..2).any(|k| corners.iter().all(|p| p[k] < lo[k]) || corners.iter().all(|p| p[k] > hi[k])) {
+                continue;
+            }
+            triangles.push(tri.map(|i| {
+                *renumber.entry(i).or_insert_with(|| {
+                    vertices.push(design.vertices[i as usize]);
+                    vertices.len() as u32 - 1
+                })
+            }));
+        }
+        TriMesh::new(vertices, triangles)
+    }
+}
+
+fn cut(solid: &TriMesh, design: &TriMesh, index: Option<&DesignIndex<'_>>, crop: bool) -> Result<CutResult, GeomError> {
     let validity = solid.validity();
     if !validity.is_watertight() {
         return Err(GeomError::NotWatertight { what: "solid", validity });
     }
     let solid_bounds = solid.bounds().ok_or_else(|| GeomError::InvalidInput("empty solid".into()))?;
-    let design_bounds = design.bounds().ok_or_else(|| GeomError::InvalidInput("empty design surface".into()))?;
+    let design_bounds = match index {
+        Some(index) => index.bounds,
+        None => design.bounds().ok_or_else(|| GeomError::InvalidInput("empty design surface".into()))?,
+    };
 
     let centre = solid_bounds.centre();
     let origin = [centre[0].round(), centre[1].round(), 0.0];
@@ -227,7 +342,11 @@ fn cut(solid: &TriMesh, design: &TriMesh, crop: bool) -> Result<CutResult, GeomE
     // the same over the solid, and a topography of millions of triangles costs what its few hundred
     // over the solid cost. A design with nothing near the solid is used whole (all of it is above).
     let reach = margin + 0.01 * solid_bounds.size()[0].hypot(solid_bounds.size()[1]);
-    let near = if crop { design_near(design, &solid_bounds, reach) } else { TriMesh::default() };
+    let near = match (crop, index) {
+        (true, Some(index)) => index.near(&solid_bounds, reach),
+        (true, None) => design_near(design, &solid_bounds, reach),
+        (false, _) => TriMesh::default(),
+    };
     let design = if near.triangles.is_empty() { design } else { &near };
 
     let mut timings = CutTimings::default();
@@ -432,6 +551,34 @@ mod tests {
         let (same, tiny) = join_tiny_edges(wedge.clone());
         assert_eq!(tiny, TinyEdges { joined: 0, triangles_dropped: 0, left: 1 });
         assert_eq!((same.vertices, same.triangles), (wedge.vertices, wedge.triangles));
+    }
+
+    #[test]
+    fn an_indexed_design_gives_the_same_triangles_and_the_same_cut() {
+        // A 400 m square design at 1 m spacing (320,000 triangles), dipping, and boxes on it, across its edge and
+        // off it: the index gives the very triangles a look through the whole design gives, in the same order, and
+        // the cut is the same to the bit.
+        let large = triangulate_grid(&Grid::from_fn([E - 195.0, N - 195.0], [1.0, 1.0], 401, 401, |x, y| 102.0 + 0.6 * (x - E) + 0.01 * (y - N)));
+        let index = DesignIndex::new(&large).unwrap();
+        let moved = |dx: f64, dy: f64| box_seam().translated([dx, dy, 0.0]);
+        for solid in [moved(0.0, 0.0), moved(150.3, -120.7), moved(-199.5, 0.0), moved(200.0, 195.0), moved(400.0, 0.0)] {
+            let bounds = solid.bounds().unwrap();
+            for reach in [0.0, 1.07, 25.0] {
+                let (by_index, by_look) = (index.near(&bounds, reach), design_near(&large, &bounds, reach));
+                assert_eq!((by_index.vertices, by_index.triangles), (by_look.vertices, by_look.triangles));
+            }
+            let (a, b) = (cut_solid_by_indexed_surface(&solid, &index).unwrap(), cut_solid_by_surface(&solid, &large).unwrap());
+            assert_eq!((&a.below.vertices, &a.below.triangles, &a.above.vertices, &a.above.triangles), (&b.below.vertices, &b.below.triangles, &b.above.vertices, &b.above.triangles));
+            assert_eq!((a.halfspace_triangles, a.design_covers_solid), (b.halfspace_triangles, b.design_covers_solid));
+        }
+        // On the box under the middle of it: 500 m3 each side, to 1e-6 m3, from a few hundred triangles.
+        let cut = cut_solid_by_indexed_surface(&box_seam(), &DesignIndex::new(&design(|x, _| 102.0 + 0.6 * x)).unwrap()).unwrap();
+        assert_close(cut.below_volume, 500.0, "below");
+        assert_close(cut.above_volume, 500.0, "above");
+        // A design of one triangle, and one with no extent across, index without trouble.
+        let one = TriMesh::new(vec![[E, N, 104.0], [E + 30.0, N, 104.0], [E, N + 30.0, 104.0]], vec![[0, 1, 2]]);
+        assert_eq!(DesignIndex::new(&one).unwrap().near(&box_seam().bounds().unwrap(), 1.0).triangles.len(), 1);
+        assert!(DesignIndex::new(&TriMesh::default()).is_err());
     }
 
     #[test]

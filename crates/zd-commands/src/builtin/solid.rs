@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, CrossingCheck, Crossings, ObjectId, ObjectKind, Solid, TriMesh};
 use zd_geom::{
-    COINCIDENT, CloseLog, CutResult, RepairLog, Separation, UnionLog, close_solid, closed_as_written, cut_solid_by_surface, cut_solid_by_whole_surface, find_solid_crossings, repair_mesh, self_union,
+    COINCIDENT, CloseLog, CutResult, DesignIndex, RepairLog, Separation, UnionLog, close_solid, closed_as_written, cut_solid_by_indexed_surface, cut_solid_by_surface, cut_solid_by_whole_surface, find_solid_crossings, repair_mesh, self_union,
     separate_touching_edges, split_patches, triangulate_grid,
 };
 
@@ -1044,10 +1044,27 @@ impl Command for CutBySurface {
         };
 
         let start = std::time::Instant::now();
-        let cuts = in_parallel(&solids, |(_, solid)| match (&design, p.rl) {
-            (Some(design), _) => cut_solid_by_surface(solid.mesh(), design),
-            (None, Some(rl)) => cut_solid_by_surface(solid.mesh(), &level_over(solid.mesh(), rl)),
-            (None, None) => unreachable!("a cut has a surface or a level"),
+        // The design's triangles found by place once for the run, not looked through for every solid (decision 0056).
+        let index = design.as_deref().map(DesignIndex::new).transpose().map_err(|e| CommandError::Geometry(e.to_string()))?;
+        // Each solid cut, and its parts checked and made solids, on the core that cut it.
+        let cuts = in_parallel(&solids, |(_, solid)| {
+            let cut = match (&index, p.rl) {
+                (Some(index), _) => cut_solid_by_indexed_surface(solid.mesh(), index),
+                (None, Some(rl)) => cut_solid_by_surface(solid.mesh(), &level_over(solid.mesh(), rl)),
+                (None, None) => unreachable!("a cut has a surface or a level"),
+            }?;
+            let checked = checked_parts(&cut, p.keep);
+            // Manifold's tolerance scales with what it is given: where a part of the cut made with
+            // the surface near the solid fails its check, the cut is made again with all of it.
+            if let (Err(_), Some(design)) = (&checked, &design)
+                && let Ok(whole) = cut_solid_by_whole_surface(solid.mesh(), design)
+            {
+                let again = checked_parts(&whole, p.keep);
+                if again.is_ok() {
+                    return Ok(CutParts::new(whole, again, true));
+                }
+            }
+            Ok(CutParts::new(cut, checked, false))
         });
         let cut_ms = start.elapsed().as_secs_f64() * 1e3;
 
@@ -1060,26 +1077,16 @@ impl Command for CutBySurface {
         let (mut tiny, mut tiny_solids) = (zd_geom::TinyEdges::default(), 0usize);
         for ((object, solid), cut) in solids.iter().zip(cuts) {
             // One solid that can't be cut doesn't lose the rest of a batch.
-            let mut cut = match cut {
-                Ok(cut) => cut,
+            let cut: Result<CutParts, zd_geom::GeomError> = cut;
+            let CutParts { cut, checked, again, solids: made, triangles: out } = match cut {
+                Ok(parts) => parts,
                 Err(e) if solids.len() > 1 => {
                     uncut.push(format!("'{}' ({e})", object.name));
                     continue;
                 }
                 Err(e) => return Err(CommandError::Geometry(format!("'{}': {e}", object.name))),
             };
-            let mut checked = checked_parts(&cut, p.keep);
-            // Manifold's tolerance scales with what it is given: where a part of the cut made with
-            // the surface near the solid fails its check, the cut is made again with all of it.
-            if let (Err(_), Some(design)) = (&checked, &design)
-                && let Ok(whole) = cut_solid_by_whole_surface(solid.mesh(), design)
-            {
-                let again = checked_parts(&whole, p.keep);
-                if again.is_ok() {
-                    recut += 1;
-                    (cut, checked) = (whole, again);
-                }
-            }
+            recut += usize::from(again);
             let whose = if solids.len() > 1 { format!("'{}': ", object.name) } else { String::new() };
             if few {
                 let t = cut.timings;
@@ -1088,8 +1095,8 @@ impl Command for CutBySurface {
                         "{whose}{} + {} triangles in, {} below + {} above out, {:.0} ms (close {:.0}, to Manifold {:.0}, boolean {:.0}, from Manifold {:.0}); cap {:?}",
                         solid.mesh().triangle_count(),
                         design.as_ref().map_or(2, |d| d.triangle_count()),
-                        cut.below.triangle_count(),
-                        cut.above.triangle_count(),
+                        out[0],
+                        out[1],
                         t.total_ms(),
                         t.close_ms,
                         t.to_manifold_ms,
@@ -1107,7 +1114,7 @@ impl Command for CutBySurface {
                 uncovered.push(object.name.clone());
             }
             for (k, side) in [(0, "below"), (1, "above")] {
-                if [&cut.below, &cut.above][k].triangles.is_empty() {
+                if out[k] == 0 {
                     wholly[1 - k] += 1;
                     if few && p.keep.keeps(side) {
                         outcome = outcome.message(format!("{whose}nothing of the solid lies {side} {by}"));
@@ -1116,19 +1123,16 @@ impl Command for CutBySurface {
             }
             // Parts kept, each checked by the solid rules; one that would cross itself leaves the
             // solid uncut.
-            let found = match checked {
-                Ok(found) => found,
-                Err(why) => {
-                    uncut.push(format!("'{}' ({why})", object.name));
-                    continue;
-                }
-            };
-            for (k, ((mesh, side), crossings)) in [(cut.below, "below"), (cut.above, "above")].into_iter().zip(found).enumerate() {
-                let Some(crossings) = crossings else { continue };
+            if let Err(why) = checked {
+                uncut.push(format!("'{}' ({why})", object.name));
+                continue;
+            }
+            for (k, (part, side)) in made.into_iter().zip(["below", "above"]).enumerate() {
+                let Some(part) = part else { continue };
+                let part = part.map_err(CommandError::NotWatertight)?;
                 tiny.add(cut.tiny_edges[k]);
                 tiny_solids += usize::from(cut.tiny_edges[k].joined > 0);
-                thin += crossings.thin;
-                let part = Solid::new(mesh).map_err(CommandError::NotWatertight)?.with_crossings(crossings);
+                thin += part.crossings().map_or(0, |c| c.thin);
                 let given = if side == "below" { &p.below_name } else { &p.above_name };
                 let name = given.clone().unwrap_or_else(|| format!("{} {side} {by}", object.name));
                 let mut attributes = object.attributes.clone();
@@ -1205,6 +1209,36 @@ pub(crate) fn tiny_edge_words(tiny: zd_geom::TinyEdges, solids: usize) -> Option
         parts.push(format!("{} edges under {} left as they were, as joining their ends would leave the solid open or nothing of it", tiny.left, mm(zd_geom::TINY_EDGE)));
     }
     Some(parts.join("; "))
+}
+
+/// One solid's cut with its parts checked and made solids, all on the core that cut it.
+struct CutParts {
+    /// The cut, its part meshes moved out into `solids` where they were kept.
+    cut: CutResult,
+    /// Whether every part kept passed its check, or why one can't be saved.
+    checked: Result<(), String>,
+    /// Made again with the whole surface, after a part of the first cut failed its check.
+    again: bool,
+    /// The parts kept, below and above, each with its crossing check; `None` for a side not kept or empty.
+    solids: [Option<Result<Solid, zd_core::MeshValidity>>; 2],
+    /// Triangles in the part below and the part above, kept or not.
+    triangles: [usize; 2],
+}
+
+impl CutParts {
+    fn new(mut cut: CutResult, checked: Result<[Option<Crossings>; 2], String>, again: bool) -> Self {
+        let triangles = [cut.below.triangle_count(), cut.above.triangle_count()];
+        let (checked, solids) = match checked {
+            Ok([below, above]) => {
+                let solid = |mesh: &mut TriMesh, crossings: Option<Crossings>| crossings.map(|c| Solid::new(std::mem::take(mesh)).map(|s| s.with_crossings(c)));
+                let below = solid(&mut cut.below, below);
+                let above = solid(&mut cut.above, above);
+                (Ok(()), [below, above])
+            }
+            Err(why) => (Err(why), [None, None]),
+        };
+        CutParts { cut, checked, again, solids, triangles }
+    }
 }
 
 /// The crossing check of each part a cut keeps (`None` for a side not kept or empty), or why a part
