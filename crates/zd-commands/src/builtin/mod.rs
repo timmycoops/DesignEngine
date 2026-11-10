@@ -101,10 +101,26 @@ fn finite(point: &[f64; 3]) -> Result<(), CommandError> {
 /// Runs `work` on every item across the machine's cores; results come back in item order.
 pub(crate) fn in_parallel<I: Sync, T: Send>(items: &[I], work: impl Fn(&I) -> T + Sync) -> Vec<T> {
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, items.len().max(1));
-    let chunk = items.len().div_ceil(threads).max(1);
-    std::thread::scope(|scope| {
-        let work = &work;
-        let handles: Vec<_> = items.chunks(chunk).map(|part| scope.spawn(move || part.iter().map(work).collect::<Vec<T>>())).collect();
+    // Each core takes the next item not yet taken, so a run of heavy items isn't left to one core while the others
+    // stand idle; the results go back in the items' order.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut done: Vec<(usize, T)> = std::thread::scope(|scope| {
+        let (work, next) = (&work, &next);
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(move || {
+                    let mut mine = Vec::new();
+                    loop {
+                        let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(item) = items.get(k) else { break };
+                        mine.push((k, work(item)));
+                    }
+                    mine
+                })
+            })
+            .collect();
         handles.into_iter().flat_map(|h| h.join().expect("worker thread")).collect()
-    })
+    });
+    done.sort_unstable_by_key(|(k, _)| *k);
+    done.into_iter().map(|(_, result)| result).collect()
 }
