@@ -1,6 +1,8 @@
 //! The general cut (decision 0016): solids cut by a surface, a grid or a level, keeping the parts
 //! below, above or both, one solid or many in a run; each part keeps its solid's attributes.
 
+mod common;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -87,6 +89,15 @@ fn a_cube_cut_at_a_level_keeps_its_attributes_and_the_side_each_part_lies_on() {
     assert!(created(&above).is_empty());
     assert!(above.messages.iter().any(|m| m == "nothing of the solid lies above RL 120.000"), "{:?}", above.messages);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_solids_a_cut_makes_read_back_from_dxf_as_they_were() {
+    // Twelve cubes cut by a grid: the cubes and every part.
+    let (mut s, cubes, bow, dir) = pit(12);
+    s.run("solid.cut_by_surface", json!({ "solids": cubes, "surface": bow, "layer": "cut" })).unwrap();
+    assert!(common::assert_solids_round_trip(&s) >= 24);
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -199,4 +210,55 @@ fn a_cut_needs_one_cutter_and_names_only_one_solids_parts() {
     assert!(refuse(&mut s, json!({ "solid": cubes[0], "rl": 105.0, "keep": "middle", "layer": "cut" })).contains("unknown variant"));
     assert_eq!(s.project().objects().count(), 3, "nothing made by a refused cut");
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A 10 m cube under a design of eight triangles on a 3 x 3 lattice, flat at RL 105 but for its middle corner, 0.5 m
+/// higher and `off` m east of the cube's east wall.
+fn cube_and_a_design_by_its_wall(off: f64) -> (Session, ObjectId, ObjectId) {
+    let mut s = Session::with_builtins();
+    let cube = box_mesh([E, N, 100.0], [E + 10.0, N + 10.0, 110.0]);
+    let cube = created(&s.run("solid.from_mesh", json!({ "name": "cube", "layer": "solids", "vertices": cube.vertices, "triangles": cube.triangles })).unwrap())[0];
+    let (xs, ys) = ([E - 2.0, E + 10.0 + off, E + 14.0], [N - 2.0, N + 5.0, N + 12.0]);
+    let vertices: Vec<[f64; 3]> = (0..9).map(|k| [xs[k % 3], ys[k / 3], if k == 4 { 105.5 } else { 105.0 }]).collect();
+    let triangles: Vec<[u32; 3]> = [0u32, 1, 3, 4].iter().flat_map(|&a| [[a, a + 1, a + 4], [a, a + 4, a + 3]]).collect();
+    let design = created(&s.run("surface.from_mesh", json!({ "name": "design", "layer": "design", "vertices": vertices, "triangles": triangles })).unwrap())[0];
+    (s, cube, design)
+}
+
+#[test]
+fn a_cut_that_makes_corners_a_nanometre_apart_joins_them_and_says_so() {
+    // The design's middle corner sits half a nanometre inside the cube's east wall, so the wall cuts each of the
+    // design's edges into that corner within a nanometre of it: the boolean leaves corners a nanometre apart. With
+    // the corner on the wall exactly it leaves none, and the two cuts agree.
+    let (mut on, cube, design) = cube_and_a_design_by_its_wall(0.0);
+    let record = on.run("solid.cut_by_surface", json!({ "solid": cube, "surface": design, "layer": "cut" })).unwrap();
+    assert!(record.messages.iter().all(|m| !m.contains("corners under")), "{:?}", record.messages);
+    let exact: Vec<f64> = created(&record).iter().map(|&id| solid_volume(&on, id)).collect();
+
+    let (mut s, cube, design) = cube_and_a_design_by_its_wall(-5e-10);
+    let record = s.run("solid.cut_by_surface", json!({ "solid": cube, "surface": design, "layer": "cut" })).unwrap();
+    let said = record.messages.iter().find(|m| m.contains("corners under 0.001 mm apart joined")).unwrap_or_else(|| panic!("no corners joined: {:?}", record.messages));
+    assert!(said.ends_with("leftovers of the cut, no coordinate kept moved"), "{said}");
+    let parts = created(&record);
+    assert_eq!(parts.len(), 2);
+    for &id in &parts {
+        let Body::Solid(part) = &s.project().object(id).unwrap().body else { panic!("a solid") };
+        let mesh = part.mesh();
+        let shortest = mesh.triangles.iter().flat_map(|&[a, b, c]| [(a, b), (b, c), (c, a)]).map(|(u, v)| {
+            let (p, q) = (mesh.vertices[u as usize], mesh.vertices[v as usize]);
+            ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)).sqrt()
+        });
+        let shortest = shortest.fold(f64::INFINITY, f64::min);
+        assert!(shortest >= 1e-6, "an edge of {shortest} m is left");
+    }
+    // Volume tolerance: 1e-6 m3 on 1,000 m3, for below + above against the cube and for each part against the cut with
+    // the corner on the wall. Joining corners half a nanometre apart over a few tens of square metres of face moves
+    // about 1e-8 m3, as does moving the design's corner that far.
+    let volumes: Vec<f64> = parts.iter().map(|&id| solid_volume(&s, id)).collect();
+    assert!((volumes[0] + volumes[1] - 1000.0).abs() < 1e-6, "{volumes:?}");
+    for (found, exact) in volumes.iter().zip(&exact) {
+        assert!((found - exact).abs() < 1e-6, "{found} against {exact}");
+    }
+    // The cube and its two parts go out as DXF and come back the same solids.
+    assert_eq!(common::assert_solids_round_trip(&s), 3);
 }

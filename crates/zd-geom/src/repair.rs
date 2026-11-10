@@ -108,6 +108,34 @@ pub fn repair_mesh(mesh: &TriMesh, tolerance: f64) -> (TriMesh, RepairLog) {
     (oriented, log)
 }
 
+/// Whether a mesh could be closed with its corners as written: with corners at the very same coordinates taken as
+/// one, every edge is used by an even number of triangles. One pass with no sorting, so a topography of millions of
+/// triangles is told from a solid in a fraction of what its repair costs. Each edge's key is mixed to 64 bits and
+/// the lot combined by exclusive or, which comes to nothing when every edge is there an even number of times; a
+/// mesh that isn't closed coming to nothing by chance is one in 2^64.
+pub fn closed_as_written(mesh: &TriMesh) -> bool {
+    if mesh.triangles.is_empty() {
+        return false;
+    }
+    let mut log = RepairLog::default();
+    let (_, map) = weld(&mesh.vertices, 0.0, &mut log);
+    let mix = |a: u32, b: u32| {
+        let mut x = (u64::from(a.min(b)) << 32 | u64::from(a.max(b))).wrapping_add(0x9e37_79b9_7f4a_7c15);
+        x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        x ^ (x >> 31)
+    };
+    let mut all = 0u64;
+    for tri in &mesh.triangles {
+        let [a, b, c] = tri.map(|i| map[i as usize]);
+        if a == b || b == c || a == c {
+            continue;
+        }
+        all ^= mix(a, b) ^ mix(b, c) ^ mix(c, a);
+    }
+    all == 0
+}
+
 /// Edges only one triangle uses.
 fn open_edges(triangles: &[[u32; 3]]) -> usize {
     let mut edges: Vec<(u32, u32)> = triangles.iter().flat_map(|&[a, b, c]| [(a.min(b), a.max(b)), (b.min(c), b.max(c)), (c.min(a), c.max(a))]).collect();
@@ -287,6 +315,29 @@ mod tests {
         assert_eq!(mesh.triangles.len(), 1);
         assert_eq!((log.collapsed_dropped, log.degenerate_dropped, log.duplicates_dropped), (1, 1, 2));
         assert_eq!((log.vertices_welded, log.unused_dropped), (1, 2));
+    }
+
+    #[test]
+    fn a_closed_mesh_is_told_from_an_open_one_as_written() {
+        // A cube written as loose triangles is closed as written; with a triangle off, or a corner a micrometre out,
+        // it isn't. A sheet isn't.
+        let v: Vec<[f64; 3]> = (0..8).map(|i| [E + (i & 1) as f64 * 10.0, N + (i >> 1 & 1) as f64 * 10.0, 100.0 + (i >> 2) as f64 * 10.0]).collect();
+        let t = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+        let mut loose = TriMesh::default();
+        for tri in t {
+            let base = loose.vertices.len() as u32;
+            loose.vertices.extend(tri.map(|i: usize| v[i]));
+            loose.triangles.push([base, base + 1, base + 2]);
+        }
+        assert!(closed_as_written(&loose));
+        let mut open = loose.clone();
+        open.triangles.pop();
+        assert!(!closed_as_written(&open));
+        let mut off = loose.clone();
+        off.vertices[0][0] += 1e-6;
+        assert!(!closed_as_written(&off));
+        assert!(!closed_as_written(&loose_squares()));
+        assert!(!closed_as_written(&TriMesh::default()));
     }
 
     #[test]

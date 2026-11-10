@@ -35,7 +35,7 @@ pub use halfspace::{CapMethod, ClosedHalfSpace, Side, close_surface_to_halfspace
 pub use close::{CloseLog, close_solid};
 pub use crossings::{COINCIDENT, find_crossings, find_solid_crossings};
 pub use orient::{OrientLog, SITES, Separation, boundary_loops, orient_patches, orient_upward, separate_touching_edges, split_patches};
-pub use repair::{RepairLog, repair_mesh};
+pub use repair::{RepairLog, closed_as_written, repair_mesh};
 pub use rule::{EdgeRule, SolidRegion};
 pub use self_union::{UnionLog, self_union};
 pub use ray::SurfaceRayCaster;
