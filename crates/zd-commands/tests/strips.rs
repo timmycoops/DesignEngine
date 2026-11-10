@@ -211,9 +211,13 @@ fn the_made_up_grid_pit_sliced_by_its_strips() {
     let pit = created(&record)[0];
     let designs: Vec<(String, ObjectId)> = s.project().objects().filter(|o| matches!(o.body, Body::FaceDesign(_))).map(|o| (o.name.clone(), o.id)).collect();
     for (name, design) in designs {
-        if let Err(e) = s.run("face.project", json!({ "design": design })) {
-            println!("\n{name}: refused: {e}");
-            continue;
+        match s.run("face.project", json!({ "design": design })) {
+            Err(e) => {
+                println!("\n{name}: refused: {e}");
+                continue;
+            }
+            // Each fault the run names, with where it is.
+            Ok(record) => record.messages.iter().filter(|m| ["cross", "isn't one sheet", "stopped on step", "Nothing is built"].iter().any(|w| m.contains(w))).for_each(|m| println!("\n{name}: {m}")),
         }
         let faces = surfaces_on(&s, &format!("faces {name}"));
         let start = Instant::now();
@@ -228,6 +232,40 @@ fn the_made_up_grid_pit_sliced_by_its_strips() {
             Err(e) => println!("\n{name}: slice refused in {:.0} ms: {e}", start.elapsed().as_secs_f64() * 1e3),
         }
     }
+}
+
+/// Each design of the made-up grid pit run in two sessions opened fresh from the same project gives the same faces,
+/// vertex for vertex and triangle for triangle (the review of 10 November: run to run the counts differed, 0034).
+#[test]
+#[ignore = "runs every design of the grid template twice; opt in with --ignored"]
+fn the_made_up_grid_pit_runs_the_same_twice() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/synthetic/Grid template.zdproj");
+    let designs: Vec<(String, ObjectId)> = Session::open(&path).unwrap().project().objects().filter(|o| matches!(o.body, Body::FaceDesign(_))).map(|o| (o.name.clone(), o.id)).collect();
+    let faces = |design: ObjectId, name: &str| -> Option<Vec<(String, zd_core::TriMesh)>> {
+        let mut s = Session::open(&path).unwrap();
+        s.run("face.project", json!({ "design": design })).ok()?;
+        let mut faces: Vec<(String, zd_core::TriMesh)> = surfaces_on(&s, &format!("faces {name}"))
+            .into_iter()
+            .map(|id| {
+                let o = s.project().object(id).unwrap();
+                let Body::Surface(surface) = &o.body else { unreachable!() };
+                (o.name.clone(), surface.mesh().clone())
+            })
+            .collect();
+        faces.sort_by(|a, b| a.0.cmp(&b.0));
+        Some(faces)
+    };
+    let mut differ = Vec::new();
+    for (name, design) in designs {
+        let (Some(one), Some(two)) = (faces(design, &name), faces(design, &name)) else { continue };
+        assert_eq!(one.len(), two.len(), "{name}: the number of faces");
+        for ((face, a), (_, b)) in one.iter().zip(&two) {
+            if a != b {
+                differ.push(format!("{name} / {face}: {} against {} triangles", a.triangles.len(), b.triangles.len()));
+            }
+        }
+    }
+    assert!(differ.is_empty(), "faces that differ run to run:\n{}", differ.join("\n"));
 }
 
 /// A real pit as Tim works one: his toe on a seam floor offset downdip into `ZD_STRIPS` strips (15 by default),

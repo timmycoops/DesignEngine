@@ -114,7 +114,7 @@ impl Command for ProjectStep {
             message += &format!("; {} next toe vertices have no target under them and keep their elevations", conditioned.off_surface);
         }
         if crossings.pairs > 0 {
-            message += &format!("; {} pairs of wall triangles cross", crossings.pairs);
+            message += &format!("; {} pairs of wall triangles cross, the first at {}", crossings.pairs, first_site(&crossings.at));
         }
         let base = p.name.clone().unwrap_or_else(|| object.name.clone());
         let layer = p.layer.clone().unwrap_or_else(|| inputs.layer_name(object));
@@ -560,7 +560,10 @@ impl<'a> FaceRun<'a, '_> {
         }
         let crossings = find_crossings(&face.surface, COINCIDENT);
         if crossings.pairs > 0 {
-            messages.push(format!("{base}: {} pairs of face triangles cross", crossings.pairs));
+            messages.push(format!("{base}: {} pairs of face triangles cross, the first at {}", crossings.pairs, first_site(&crossings.at)));
+        }
+        if let Some(said) = not_one_sheet(&face.surface) {
+            messages.push(format!("{base}: {said}"));
         }
         changes.push(create(format!("{base} face"), Body::Surface(Surface::new(face.surface).with_crossings(crossings))));
         Ok(StripRun { name: &string.name, profile: &profile.name, changes, messages, crossing: placed.crossing, missing: placed.missing })
@@ -804,6 +807,96 @@ fn steps_of<'t>(rules: &LineRules<'t, '_>, steps: &'t [ProfileStep], targets: &'
         .collect()
 }
 
+/// Where the first of a crossing check's pairs cross, or that it didn't keep one.
+fn first_site(at: &[[f64; 3]]) -> String {
+    at.first().map_or_else(|| "a place not kept".to_string(), super::surface::site)
+}
+
+/// An edge whose plan area is under this share of its length squared is a crack: a square's is 1/16, a 50 m crack 56 mm
+/// wide 1/1800.
+const CRACK_SHARE: f64 = 1e-3;
+
+/// A face that isn't one sheet, said with where: its longest edge in plan is its own, and each other edge round it is a
+/// hole or a loose piece (fault 5 of decision 0034). Each is placed at the middle of its corners.
+fn not_one_sheet(sheet: &TriMesh) -> Option<String> {
+    let loops = zd_geom::boundary_loops(sheet).ok()?;
+    if loops.len() < 2 {
+        return None;
+    }
+    let p = |v: u32| sheet.vertices[v as usize];
+    let plan_length = |l: &Vec<u32>| (0..l.len()).map(|k| (p(l[(k + 1) % l.len()])[0] - p(l[k])[0]).hypot(p(l[(k + 1) % l.len()])[1] - p(l[k])[1])).sum::<f64>();
+    // Loops that share a corner are one edge: a face whose edge touches itself at a point, as round a switchback's
+    // pad, is still one sheet (0034 counts it so).
+    let mut root: Vec<usize> = (0..loops.len()).collect();
+    fn find(root: &mut [usize], mut i: usize) -> usize {
+        while root[i] != i {
+            root[i] = root[root[i]];
+            i = root[i];
+        }
+        i
+    }
+    let mut first_on: HashMap<u32, usize> = HashMap::new();
+    for (k, l) in loops.iter().enumerate() {
+        for &v in l {
+            if let Some(&other) = first_on.get(&v) {
+                let (a, b) = (find(&mut root, k), find(&mut root, other));
+                root[a.max(b)] = a.min(b);
+            } else {
+                first_on.insert(v, k);
+            }
+        }
+    }
+    let mut edges: Vec<Vec<&Vec<u32>>> = Vec::new();
+    let mut edge_of: HashMap<usize, usize> = HashMap::new();
+    for (k, l) in loops.iter().enumerate() {
+        let r = find(&mut root, k);
+        let e = *edge_of.entry(r).or_insert_with(|| {
+            edges.push(Vec::new());
+            edges.len() - 1
+        });
+        edges[e].push(l);
+    }
+    if edges.len() < 2 {
+        return None;
+    }
+    let edge_length = |e: &Vec<&Vec<u32>>| e.iter().map(|l| plan_length(l)).sum::<f64>();
+    let own = (0..edges.len()).max_by(|&a, &b| edge_length(&edges[a]).total_cmp(&edge_length(&edges[b])).then(b.cmp(&a)))?;
+    edges.remove(own);
+    let rounds: Vec<f64> = edges.iter().map(edge_length).collect();
+    // A face is wound upward, so its edges run anticlockwise round a piece of it in plan and clockwise round a hole.
+    let plan_area = |l: &Vec<u32>| {
+        let o = p(l[0]);
+        0.5 * (0..l.len()).map(|k| {
+            let (a, b) = (p(l[k]), p(l[(k + 1) % l.len()]));
+            (a[0] - o[0]) * (b[1] - o[1]) - (b[0] - o[0]) * (a[1] - o[1])
+        }).sum::<f64>()
+    };
+    // An edge round next to no area for its length is a crack, open along a line (fault 5 of 0034): which way it runs
+    // says nothing then.
+    let kinds: Vec<&str> = edges
+        .iter()
+        .zip(&rounds)
+        .map(|(e, round)| {
+            let area: f64 = e.iter().map(|l| plan_area(l)).sum();
+            if area.abs() < CRACK_SHARE * round * round {
+                "a crack"
+            } else if area < 0.0 {
+                "a hole"
+            } else {
+                "a piece apart"
+            }
+        })
+        .collect();
+    let loops: Vec<Vec<u32>> = edges.into_iter().map(|e| e.into_iter().flatten().copied().collect()).collect();
+    let middle = |l: &Vec<u32>| {
+        let sum = l.iter().fold([0.0; 3], |s, &v| [s[0] + p(v)[0], s[1] + p(v)[1], s[2] + p(v)[2]]);
+        sum.map(|c| c / l.len() as f64)
+    };
+    let places: Vec<String> = loops.iter().zip(&rounds).zip(&kinds).take(3).map(|((l, round), kind)| format!("{kind} at {} ({round:.1} m round)", super::surface::site(&middle(l)))).collect();
+    let more = if loops.len() > 3 { format!(" and {} more", loops.len() - 3) } else { String::new() };
+    Some(format!("the face isn't one sheet: {} edge{} besides its own: {}{more}", loops.len(), if loops.len() == 1 { "" } else { "s" }, places.join(", ")))
+}
+
 /// One line's result, naming each place the design needs looking at.
 fn line_report(name: &str, face: &zd_geom::Face, [toe_in, toe_out]: [usize; 2], off_grid: usize) -> String {
     let (walls, triangles) = (face.benches.len(), face.surface.triangles.len());
@@ -919,4 +1012,38 @@ fn ramp_report(names: &[&str], strip: &str, ramp: usize, face: &Face) -> String 
         parts.push(format!("stopped on step {} at {:.1}, {:.1}: {why}", stopped.step + 1, stopped.at[0], stopped.at[1]));
     }
     format!("Ramp {name}: {strip}: {}", parts.join("; "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Nine squares a metre each with the middle one out: the face has one edge besides its own, 4 m round, said at the
+    /// middle of the hole. Without the hole it says nothing.
+    #[test]
+    fn a_face_with_a_hole_says_where_it_is() {
+        let (e, n) = (650_000.0, 7_450_000.0);
+        let vertices: Vec<[f64; 3]> = (0..4).flat_map(|j| (0..4).map(move |i| [e + i as f64, n + j as f64, 100.0])).collect();
+        let squares = |skip: Option<(u32, u32)>| -> Vec<[u32; 3]> {
+            (0..3u32)
+                .flat_map(|j| (0..3u32).map(move |i| (i, j)))
+                .filter(|&square| Some(square) != skip)
+                .flat_map(|(i, j)| {
+                    let a = j * 4 + i;
+                    [[a, a + 1, a + 5], [a, a + 5, a + 4]]
+                })
+                .collect()
+        };
+        assert_eq!(not_one_sheet(&TriMesh::new(vertices.clone(), squares(None))), None);
+        // Two squares meeting at a corner: the edge touches itself there, and it's still one sheet.
+        assert_eq!(not_one_sheet(&TriMesh::new(vertices.clone(), squares(None).into_iter().take(2).chain([[5, 6, 10], [5, 10, 9]]).collect())), None);
+        let said = not_one_sheet(&TriMesh::new(vertices.clone(), squares(Some((1, 1))))).expect("a hole");
+        assert_eq!(said, format!("the face isn't one sheet: 1 edge besides its own: a hole at {:.3} {:.3} RL 100.000 (4.0 m round)", e + 1.5, n + 1.5));
+        // The middle square on its own beside the ring is a piece apart.
+        let apart: Vec<[u32; 3]> = squares(Some((1, 1))).into_iter().chain([[5, 6, 10], [5, 10, 9]].map(|t| t.map(|v| v + 16))).collect();
+        let mut beside = TriMesh::new(vertices.clone(), apart);
+        beside.vertices.extend(vertices.iter().map(|q| [q[0] + 10.0, q[1], q[2]]));
+        let said = not_one_sheet(&beside).expect("two pieces");
+        assert!(said.contains("a hole at") && said.contains(&format!("a piece apart at {:.3} {:.3}", e + 11.5, n + 1.5)), "{said}");
+    }
 }

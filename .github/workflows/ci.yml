@@ -100,3 +100,12 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run test
       - run: pnpm run build
+      # The Tauri shell (zd-app), on Windows where it ships. It embeds the built front end, so it comes after the build.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Lint the shell
+        run: cargo clippy -p zd-app --all-targets -- -D warnings
+      - name: Test the shell
+        run: cargo test -p zd-app

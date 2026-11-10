@@ -2367,14 +2367,8 @@ fn tops_too_close_to_share_a_berm_stop_the_later_ramp_saying_how_far() {
     assert!((apart + short - 51.0).abs() < 0.11, "{apart} + {short} = 51 m: {b}");
 }
 
-/// A toe on a floor that rolls, as seam floors do, under walls to RLs: decision 0034, 2026-11-09. Each wall runs from a
-/// stretch of toe at its own height, so where the toe bends a little a wall only just survives to the crest, and the
-/// same corner comes out of two pieces a hair apart. On a floor like this one the run made 102 pairs of corners closer
-/// than a centimetre, most of them under a millimetre. The face now has no two corners closer than a millimetre (and
-/// further apart than the micrometre weld), and its run says how many it made one and the furthest apart.
-#[test]
-fn a_toe_on_a_rolling_floor_leaves_no_corners_a_hair_apart() {
-    let mut s = Session::with_builtins();
+/// A floor that rolls, as seam floors do, as a surface `floor` on `surfaces`.
+fn rolling_floor(s: &mut Session) -> ObjectId {
     let (cols, rows) = (45, 25);
     let height = |x: f64, y: f64| 60.0 + 0.01 * x + 0.03 * y + 3.0 * (x / 137.0).sin() * (y / 91.0).cos();
     let vertices: Vec<[f64; 3]> = (0..rows).flat_map(|j| (0..cols).map(move |i| (-500.0 + 50.0 * i as f64, -500.0 + 50.0 * j as f64))).map(|(x, y)| [E + x, N + y, height(x, y)]).collect();
@@ -2384,7 +2378,70 @@ fn a_toe_on_a_rolling_floor_leaves_no_corners_a_hair_apart() {
             [[a, a + 1, a + cols as u32 + 1], [a, a + cols as u32 + 1, a + cols as u32]]
         }))
         .collect();
-    let floor = created(&s.run("surface.from_mesh", json!({ "name": "floor", "layer": "surfaces", "vertices": vertices, "triangles": triangles })).unwrap())[0];
+    created(&s.run("surface.from_mesh", json!({ "name": "floor", "layer": "surfaces", "vertices": vertices, "triangles": triangles })).unwrap())[0]
+}
+
+/// The same design run in two sessions built the same way gives the same strings and faces, to the bit, and says the
+/// same things (the review of 10 November: the same design gave a different number of triangles run to run, 0034).
+/// Two toes on a rolling floor, walls to RLs with berms, ramp A climbing one way on each and ramp B the other, so
+/// roads on a grid, stops and turns all run.
+#[test]
+fn the_same_design_runs_the_same_twice() {
+    let run = || {
+        let mut s = Session::with_builtins();
+        let floor = rolling_floor(&mut s);
+        let toes: Vec<ObjectId> = [0.0, 150.0]
+            .iter()
+            .map(|y| created(&s.run("string.create", json!({ "name": format!("toe {y}"), "layer": "toes", "points": [[E, N + y, 0.0], [E + 400.0, N + y + 50.0, 0.0], [E + 800.0, N + y + 20.0, 0.0]] })).unwrap())[0])
+            .collect();
+        let a = ramp_string(&mut s, &[[150.0, -10.0], [160.0, 200.0]]);
+        let b = ramp_string(&mut s, &[[650.0, -10.0], [640.0, 260.0]]);
+        let mut steps = Vec::new();
+        for (k, rl) in [100.0, 115.0, 130.0, 145.0].into_iter().enumerate() {
+            if k > 0 {
+                steps.push(json!({ "step": "berm", "width": 12.0, "condition": 0.1 }));
+            }
+            steps.push(json!({ "step": "project", "to": { "kind": "rl", "rl": rl }, "batter": 65.0, "condition": 0.1, "ramps": if k > 0 { json!(["A", "B"]) } else { json!([]) } }));
+        }
+        let content = json!({
+            "layer": "faces",
+            "lines": toes.iter().map(|t| json!({ "string": t, "profile": "Up", "side": "left", "run_on": [0.0, 0.0] })).collect::<Vec<_>>(),
+            "profiles": [{ "name": "Up", "direction": "up", "register": { "kind": "surface", "id": floor }, "condition": 0.1, "steps": steps, "ramps": [
+                { "name": "A", "string": a, "fixed": "start", "heading": "along", "width": 20.0, "grade": 10.0 },
+                { "name": "B", "string": b, "fixed": "start", "heading": "back", "width": 20.0, "grade": 10.0 },
+            ] }],
+            "rules": [],
+        });
+        let design = created(&s.run("face.save_design", json!({ "name": "twice", "content": content })).unwrap())[0];
+        let record = s.run("face.project", json!({ "design": design })).unwrap();
+        (made_by(&s, design), record.messages)
+    };
+    let (made, said) = run();
+    assert!(made.values().any(|body| matches!(body, Body::Surface(_))), "faces were made: {said:?}");
+    assert!(made.keys().any(|name| name.contains("road A")) && made.keys().any(|name| name.contains("road B")), "both roads were made: {:?}", made.keys());
+    assert!(said.iter().any(|m| m.contains("stopped on step")), "a road stops, so the stop runs too: {said:?}");
+    let (again, said_again) = run();
+    assert_eq!(made.keys().collect::<Vec<_>>(), again.keys().collect::<Vec<_>>(), "the same objects");
+    for (name, body) in &made {
+        let same = match (body, &again[name]) {
+            (Body::String(a), Body::String(b)) => a == b,
+            (Body::Surface(a), Body::Surface(b)) => a.mesh() == b.mesh(),
+            _ => false,
+        };
+        assert!(same, "{name} differs run to run");
+    }
+    assert_eq!(said, said_again);
+}
+
+/// A toe on a floor that rolls, as seam floors do, under walls to RLs: decision 0034, 2026-11-09. Each wall runs from a
+/// stretch of toe at its own height, so where the toe bends a little a wall only just survives to the crest, and the
+/// same corner comes out of two pieces a hair apart. On a floor like this one the run made 102 pairs of corners closer
+/// than a centimetre, most of them under a millimetre. The face now has no two corners closer than a millimetre (and
+/// further apart than the micrometre weld), and its run says how many it made one and the furthest apart.
+#[test]
+fn a_toe_on_a_rolling_floor_leaves_no_corners_a_hair_apart() {
+    let mut s = Session::with_builtins();
+    let floor = rolling_floor(&mut s);
     let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "toes", "points": [[E, N, 0.0], [E + 400.0, N + 50.0, 0.0], [E + 800.0, N + 20.0, 0.0], [E + 1200.0, N + 120.0, 0.0]] })).unwrap())[0];
     let mut steps = Vec::new();
     for (k, (rl, batter)) in [(115.0, 65.0), (130.0, 65.0), (145.0, 65.0), (160.0, 45.0)].into_iter().enumerate() {

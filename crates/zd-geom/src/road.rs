@@ -620,7 +620,8 @@ fn cut_road(toe: &Polyline, batters: &[f64], side: OffsetSide, ramp: &FaceRamp, 
     run_out_onto(&mut wall_edge, ramp.grade, target).map_err(|why| Stopped { at: *pit_edge.vertices.last().expect("a climb has an end"), why, crosses: None })?;
     let (string, slopes) = string_up_the_road(&behind, toe, batters, &wall_edge, ramp.grade);
     let upper = project_wall_by_edge(&string, side, &slopes, target).map_err(|e| stopped(format!("the wall above it can't be built: {e}")))?;
-    let road = band(&pit_edge, &road_inner_line(start, &wall_edge, &upper.crest)).map_err(|e| stopped(format!("the road can't be built: {e}")))?;
+    let across = corners_across(start, wall_edge.vertices[0], toe.vertices.iter().chain(&behind.vertices).chain(flat.iter().flatten().flatten()));
+    let road = band(&pit_edge, &road_inner_line(start, &across, &wall_edge, &upper.crest)).map_err(|e| stopped(format!("the road can't be built: {e}")))?;
     let top = *pit_edge.vertices.last().expect("a climb has an end");
     let place = place_on(&wall.crest, top).ok_or_else(|| stopped("the road's top isn't on the crest".into()))?;
     let lower = facets.wall_below(&climb.cuts, &removed_by_road(toe, at, &pit_edge, &wall.crest, place));
@@ -1575,12 +1576,35 @@ fn longest(pieces: Vec<Polyline>) -> Polyline {
     pieces.into_iter().max_by(|a, b| a.plan_length().total_cmp(&b.plan_length())).expect("an offset gives at least one string")
 }
 
-/// The line round the wall side of the road: across its bottom edge and up its wall-side edge, with a vertex
-/// wherever the crest above comes down to it, so the road meets the wall above with no slit between them.
-fn road_inner_line(start: P3, wall_edge: &Polyline, crest: &Polyline) -> Polyline {
-    let round = Polyline { vertices: once(start).chain(wall_edge.vertices.iter().copied()).collect(), closed: false };
+/// The line round the wall side of the road: across its bottom edge, through `across`, and up its wall-side edge,
+/// with a vertex wherever the crest above comes down to it, so the road meets the wall above with no slit between them.
+fn road_inner_line(start: P3, across: &[P3], wall_edge: &Polyline, crest: &Polyline) -> Polyline {
+    let round = Polyline { vertices: once(start).chain(across.iter().copied()).chain(wall_edge.vertices.iter().copied()).collect(), closed: false };
     Polyline { vertices: with_touches(&round, crest).vertices[1..].to_vec(), closed: false }
 }
+
+/// The corners of the line a road stands on that lie across its bottom edge in plan, between its pit-side start and
+/// its wall-side start, nearest the pit side first, each at its own height. The road's bottom edge goes through them,
+/// so the road and what's beside it share that edge: across a switchback's box the box keeps its level to the corner
+/// and drops to the seam floor past it, and a road going straight across left a slit up to 0.3 m high and 50 m long
+/// between the two (the review of 10 November).
+fn corners_across<'a>(start: P3, wall_start: P3, line: impl Iterator<Item = &'a P3>) -> Vec<P3> {
+    let length = plan_gap(start, wall_start);
+    let mut found: Vec<(f64, P3)> = line
+        .filter(|p| plan_gap(start, **p) > ACROSS_GAP && plan_gap(wall_start, **p) > ACROSS_GAP)
+        .filter_map(|p| {
+            let (t, gap) = nearest_along(start, wall_start, *p);
+            (gap <= ACROSS_GAP && t > 0.0 && t < 1.0).then_some((t * length, *p))
+        })
+        .collect();
+    found.sort_by(|a, b| a.0.total_cmp(&b.0));
+    found.dedup_by(|a, b| plan_gap(a.1, b.1) <= ACROSS_GAP);
+    found.into_iter().map(|(_, p)| p).collect()
+}
+
+/// How close in plan a corner is to a road's bottom edge, or to an end of it, to be on it: the millimetre a face's
+/// pieces are welded at.
+const ACROSS_GAP: f64 = 1e-3;
 
 /// The pit-side edge reaches the target before the wall-side edge does where the target rises behind it:
 /// the edge is carried straight on at its grade until it comes out on the target too.
@@ -2620,6 +2644,45 @@ mod tests {
             close(p[2], plane(p[1]), 1e-6);
         }
         close(plan_gap(toe[c + 1], corner), 10.0, 1e-6);
+    }
+
+    /// A road's bottom edge going across a line that bends in height where it's straight in plan, as across a
+    /// switchback's box that keeps its level to a corner and drops to the seam floor past it (on the made-up grid pit's
+    /// Grid switchbacks, the review of 10 November). The road starts at RL 100 on the pit side and at RL 99.6 on the wall
+    /// side 50 m across; the box beside it keeps RL 100 to the corner 40 m across. The road's bottom edge goes through the
+    /// corner, so the road and the box weld into one sheet, its area the road's 100 by 50 m and the box's 20 by 50 m in
+    /// plan. Going straight across, the two left a slit 50 m long and 0.32 m high at the corner between them.
+    #[test]
+    fn a_road_starting_across_a_bent_line_shares_it() {
+        let p = |x: f64, y: f64, z: f64| [E + x, N + y, z];
+        let (start, corner, wall_start) = (p(0.0, 0.0, 100.0), p(0.0, 40.0, 100.0), p(0.0, 50.0, 99.6));
+        let pit_edge = Polyline { vertices: vec![start, p(100.0, 0.0, 110.0)], closed: false };
+        let wall_edge = Polyline { vertices: vec![wall_start, p(100.0, 50.0, 109.6)], closed: false };
+        let far = Polyline { vertices: vec![p(0.0, 500.0, 0.0), p(100.0, 500.0, 0.0)], closed: false };
+        let line = [p(-20.0, 0.0, 100.0), start, corner, wall_start, p(-20.0, 50.0, 99.6)];
+        let across = corners_across(start, wall_start, line.iter());
+        assert_eq!(across, vec![corner], "the corner, at its own height, and nothing at the ends");
+        let road = band(&pit_edge, &road_inner_line(start, &across, &wall_edge, &far)).unwrap();
+        let box_beside = band(&Polyline { vertices: vec![start, corner, wall_start], closed: false }, &Polyline { vertices: vec![p(-20.0, 0.0, 100.0), p(-20.0, 40.0, 100.0), p(-20.0, 50.0, 99.6)], closed: false }).unwrap();
+        let sheet = weld([&road, &box_beside]);
+        assert_eq!(crate::boundary_loops(&sheet).unwrap().len(), 1, "one edge round the road and the box");
+        let plan: f64 = sheet.triangles.iter().map(|t| {
+            let [a, b, c] = t.map(|v| sheet.vertices[v as usize]);
+            ((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])).abs() / 2.0
+        }).sum();
+        close(plan, 120.0 * 50.0, 1e-6);
+        // Going straight across, as before: the slit's three edges open between the two, one the road's and two the box's.
+        let open = |mesh: &TriMesh| {
+            let mut uses: HashMap<(u32, u32), usize> = HashMap::new();
+            for t in &mesh.triangles {
+                for k in 0..3 {
+                    *uses.entry((t[k].min(t[(k + 1) % 3]), t[k].max(t[(k + 1) % 3]))).or_default() += 1;
+                }
+            }
+            uses.values().filter(|n| **n == 1).count()
+        };
+        let straight = band(&pit_edge, &road_inner_line(start, &[], &wall_edge, &far)).unwrap();
+        assert_eq!(open(&weld([&straight, &box_beside])), open(&sheet) + 3, "the slit");
     }
 
     /// A flat before a turn on a floor that falls along the strip faster than the road climbs, 12 % to the east: the

@@ -14,12 +14,8 @@ use std::time::Instant;
 
 use zd_io::{VulcanGrid, XyzOptions, read_vulcan_grid, read_vulcan_seam, read_xyz_grid, vulcan_grid_name};
 
-fn env(name: &str) -> Option<String> {
-    let value = std::env::var(name).ok();
-    if value.is_none() {
-        eprintln!("{name} is not set; skipped");
-    }
-    value
+fn env(name: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| panic!("{name} is needed: this test reads real data, and passing without it would say nothing"))
 }
 
 /// Live values of a grid's nodes.
@@ -35,7 +31,7 @@ fn live(z: &[f64]) -> impl Iterator<Item = f64> + '_ {
 #[test]
 #[ignore]
 fn held_heights_in_a_folder() {
-    let Some(dir) = env("ZD_VULCAN_GRIDS") else { return };
+    let dir = env("ZD_VULCAN_GRIDS");
     let (mut grids, mut held, mut kept, mut rough) = (0, 0, 0, 0);
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
@@ -63,7 +59,7 @@ fn held_heights_in_a_folder() {
 #[test]
 #[ignore]
 fn grid_matches_vulcan_export_node_for_node() {
-    let (Some(export), Some(file)) = (env("ZD_VULCAN_EXPORT"), env("ZD_VULCAN_EXPORT_GRID")) else { return };
+    let (export, file) = (env("ZD_VULCAN_EXPORT"), env("ZD_VULCAN_EXPORT_GRID"));
     let exported = read_xyz_grid(&PathBuf::from(export), &XyzOptions::default()).unwrap();
     let read = read_vulcan_grid(&PathBuf::from(file)).unwrap();
     let (e, g) = (&exported.grid, &read.grid);
@@ -107,9 +103,7 @@ fn grid_matches_vulcan_export_node_for_node() {
 #[test]
 #[ignore]
 fn one_seam_reads_and_agrees_with_itself() {
-    let (Some(dir), Some(prefix), Some(seam_code)) = (env("ZD_VULCAN_GRIDS"), env("ZD_VULCAN_PREFIX"), env("ZD_VULCAN_SEAM")) else {
-        return;
-    };
+    let (dir, prefix, seam_code) = (env("ZD_VULCAN_GRIDS"), env("ZD_VULCAN_PREFIX"), env("ZD_VULCAN_SEAM"));
     let start = Instant::now();
     let seam = read_vulcan_seam(&PathBuf::from(dir), &prefix, &seam_code).unwrap();
     println!("{} grids read in {:.0} ms; skipped {:?}", seam.grids.len(), start.elapsed().as_secs_f64() * 1e3, seam.skipped);
@@ -140,7 +134,7 @@ fn one_seam_reads_and_agrees_with_itself() {
 #[test]
 #[ignore]
 fn every_seam_with_roof_and_floor_reads() {
-    let (Some(dir), Some(prefix)) = (env("ZD_VULCAN_GRIDS"), env("ZD_VULCAN_PREFIX")) else { return };
+    let (dir, prefix) = (env("ZD_VULCAN_GRIDS"), env("ZD_VULCAN_PREFIX"));
     let dir = PathBuf::from(dir);
     let prefix = prefix.to_ascii_lowercase();
     let mut variables: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -175,7 +169,7 @@ fn every_seam_with_roof_and_floor_reads() {
 #[test]
 #[ignore]
 fn every_grid_reads_including_compressed() {
-    let Some(dir) = env("ZD_VULCAN_GRIDS") else { return };
+    let dir = env("ZD_VULCAN_GRIDS");
     // Grids are a few MB each and a folder can hold thousands, so the first pass keeps only file names.
     let mut by_stem: BTreeMap<String, BTreeMap<String, (PathBuf, bool)>> = BTreeMap::new();
     let (mut plain, mut compressed, mut compressed_ms, mut failed) = (0, 0, 0.0, Vec::new());
