@@ -131,6 +131,21 @@ impl PySession {
         to_py(py, &json!(self.inner.log()))
     }
 
+    /// Every seam model's grid files checked where they are now (decision 0058, stage 4): for each model its id,
+    /// name, the folders it reads from with how many files each holds and how many are missing, and the files whose
+    /// content has changed since it was built. `seam.relink` points a folder at where it is now.
+    fn links(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let links = py.detach(|| self.inner.links());
+        to_py(py, &json!(links))
+    }
+
+    /// What opening did beyond reading: seam models relinked to grid folders found beside the project, and folders
+    /// found neither where they were nor beside it.
+    #[getter]
+    fn open_notes(&self) -> Vec<String> {
+        self.inner.open_notes().to_vec()
+    }
+
     /// Every command: its name, summary, inputs, parameters and outputs.
     fn commands(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_py(py, &json!(self.inner.registry().specs()))

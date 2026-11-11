@@ -40,6 +40,7 @@ def the_gate_open_list_run_read(tmp, original):
     # Open the saved project.
     s = zd.open(os.path.join(tmp, "pit.zdp"))
     assert repr(s) == "<zd.Session: 3 objects on 3 layers>"
+    assert s.open_notes == [] and s.links() == [], "no seam models, so nothing to find"
 
     # List its objects.
     names = sorted(o["name"] for o in s.objects())

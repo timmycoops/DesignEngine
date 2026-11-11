@@ -4,10 +4,10 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use zd_core::{AppliedChange, Colouring, Contours, LayerId, ObjectId, ObjectRef, Project, RunId};
-use zd_io::{ProjectStore, SavedFile, Snapshot, ZdpStore};
+use zd_core::{AppliedChange, Body, Colouring, Contours, LayerId, ObjectId, ObjectRef, Project, RunId, same_path};
+use zd_io::{FolderLink, ProjectStore, SavedFile, Snapshot, ZdpStore};
 
-use crate::builtin::check_solids_made;
+use crate::builtin::{ModelLinks, check_solids_made, seam_links};
 use crate::command::Inputs;
 use crate::{CommandError, Registry};
 
@@ -63,6 +63,8 @@ pub struct Session {
     store: Option<Arc<Mutex<ZdpStore>>>,
     /// How long the log was at the last save or open: a save with no new entry and nothing else changed writes nothing.
     saved_log_len: usize,
+    /// What opening did beyond reading: grid folders found beside the project and relinked, or not found.
+    open_notes: Vec<String>,
 }
 
 /// A save taken from a session in an instant, to write while the session carries on (decision 0058): the project as
@@ -83,6 +85,21 @@ impl SaveJob {
     }
 }
 
+/// The path with `.` and `..` worked out by name, as `D:\pits\b\..\geology` is `D:\pits\geology`.
+fn lexically_normal(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir if matches!(out.components().next_back(), Some(std::path::Component::Normal(_))) => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// Where a save goes: a `.zdproj` folder saves as a `.zdp` file beside it, of the same name.
 fn zdp_path(path: &Path) -> PathBuf {
     if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("zdproj")) { path.with_extension("zdp") } else { path.to_path_buf() }
@@ -90,7 +107,7 @@ fn zdp_path(path: &Path) -> PathBuf {
 
 impl Session {
     pub fn new(registry: Registry) -> Self {
-        Session { project: Project::new(), registry, log: Vec::new(), store: None, saved_log_len: 0 }
+        Session { project: Project::new(), registry, log: Vec::new(), store: None, saved_log_len: 0, open_notes: Vec::new() }
     }
 
     /// A new project with the engine's own commands.
@@ -107,12 +124,12 @@ impl Session {
     pub fn open_with(registry: Registry, path: impl AsRef<Path>) -> Result<Session, CommandError> {
         let path = path.as_ref();
         let store_error = |e: zd_io::StoreError| CommandError::Store(e.to_string());
-        let (project, run_log, store) = if path.is_dir() {
+        let (project, run_log, links, store) = if path.is_dir() {
             let opened = ProjectStore::open(path).map_err(store_error)?;
-            (opened.project, opened.run_log, None)
+            (opened.project, opened.run_log, Vec::new(), None)
         } else {
             let (store, read) = ZdpStore::open(path).map_err(store_error)?;
-            (read.project, read.run_log, Some(Arc::new(Mutex::new(store))))
+            (read.project, read.run_log, read.links, Some(Arc::new(Mutex::new(store))))
         };
         let mut log: Vec<LogEntry> = match run_log.as_deref().filter(|t| !t.is_empty()) {
             Some(text) => serde_json::from_str(text).map_err(|e| CommandError::Store(format!("run log: {e}")))?,
@@ -121,7 +138,47 @@ impl Session {
         log.push(LogEntry::Opened { path: path.display().to_string(), at_unix_ms: now_ms() });
         // An old folder hasn't been saved as a file yet; a file just read has nothing new to save.
         let saved_log_len = if store.is_some() { log.len() } else { 0 };
-        Ok(Session { project, registry, log, store, saved_log_len })
+        let mut session = Session { project, registry, log, store, saved_log_len, open_notes: Vec::new() };
+        session.relink_beside(&links, path);
+        Ok(session)
+    }
+
+    /// Tries both of each grid folder's locations (decision 0058, stage 4): where a seam model reads from a folder
+    /// that isn't there, but is found where it was relative to the project file, the model is relinked to it by a
+    /// `seam.relink` run, logged and undone like any other. A folder found neither way is left for the user to relink.
+    fn relink_beside(&mut self, links: &[FolderLink], file: &Path) {
+        let Some(base) = std::path::absolute(file).ok().and_then(|f| f.parent().map(Path::to_path_buf)) else { return };
+        for link in links {
+            let was = Path::new(&link.folder);
+            let reads_it = |project: &Project| match project.object(link.object).map(|o| &o.body) {
+                Some(Body::SeamModel(model)) => model.folders().iter().any(|f| same_path(Path::new(f), was)),
+                _ => false,
+            };
+            if was.is_dir() || !reads_it(&self.project) {
+                continue;
+            }
+            let name = self.project.object(link.object).map(|o| o.name.clone()).unwrap_or_default();
+            let Some(found) = link.from_project.as_ref().map(|rel| lexically_normal(&base.join(rel))).filter(|f| f.is_dir() && !same_path(f, was)) else {
+                self.open_notes.push(format!("{name}: its grids aren't in {}, nor where they were beside the project", link.folder));
+                continue;
+            };
+            let params = serde_json::json!({ "from": link.folder, "to": found.to_string_lossy(), "models": [link.object] });
+            match self.run("seam.relink", params) {
+                Ok(_) => self.open_notes.push(format!("{name}: its grids aren't in {}; found beside the project in {} and relinked", link.folder, found.display())),
+                Err(e) => self.open_notes.push(format!("{name}: its grids aren't in {}; {} beside the project was tried: {e}", link.folder, found.display())),
+            }
+        }
+    }
+
+    /// What opening did beyond reading: seam models relinked to grid folders found beside the project, and folders
+    /// found neither where they were nor beside it.
+    pub fn open_notes(&self) -> &[String] {
+        &self.open_notes
+    }
+
+    /// Every seam model's grid files checked where they are now: missing, or changed since the model was built.
+    pub fn links(&self) -> Vec<ModelLinks> {
+        seam_links(&self.project)
     }
 
     /// Saves the project and its run log as a `.zdp` file (a `.zdproj` path saves as a `.zdp` beside it). Saving

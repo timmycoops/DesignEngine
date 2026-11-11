@@ -95,6 +95,9 @@ struct Manifest {
     hidden: Vec<ObjectId>,
     #[serde(default)]
     display: Display,
+    /// Where each seam model's grid folders were when this was saved, as given and from the file (stage 4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    links: Vec<FolderLink>,
     /// Every entry but the manifest, in the order written.
     entries: Vec<EntryInfo>,
 }
@@ -122,7 +125,46 @@ pub struct WriteReport {
 pub struct ReadProject {
     pub project: Project,
     pub run_log: Option<String>,
+    /// Where its seam models' grid folders were when it was saved.
+    pub links: Vec<FolderLink>,
     pub ms: f64,
+}
+
+/// A folder a seam model reads its grids from, where it was when the project was saved: as the model gives it, and
+/// relative to the project file, so a project moved with its geology finds it again (decision 0058, stage 4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FolderLink {
+    pub object: ObjectId,
+    pub folder: String,
+    /// `..` steps and names joined by `/`; none when the folder is on another drive or server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_project: Option<String>,
+}
+
+/// The folders the snapshot's seam models read from, each with its way from `file`'s folder.
+fn folder_links(snapshot: &Snapshot, file: &Path) -> Vec<FolderLink> {
+    let base = std::path::absolute(file).ok().and_then(|f| f.parent().map(Path::to_path_buf));
+    let mut out = Vec::new();
+    for object in &snapshot.objects {
+        if let Body::SeamModel(model) = &object.body {
+            for folder in model.folders() {
+                let full = std::path::absolute(&folder).ok();
+                let from_project = base.as_deref().zip(full.as_deref()).and_then(|(b, f)| zd_core::relative_path(b, f));
+                out.push(FolderLink { object: object.id, folder, from_project });
+            }
+        }
+    }
+    out
+}
+
+/// A content key that also changes when the links do, as when the file moves: the next save records the new ways.
+fn with_links(content: u64, links: &[FolderLink]) -> u64 {
+    if links.is_empty() {
+        return content;
+    }
+    let mut bytes = content.to_le_bytes().to_vec();
+    bytes.extend(serde_json::to_vec(links).unwrap_or_default());
+    fnv1a(&bytes)
 }
 
 /// A project as a save sees it: its live objects, layers, hidden objects and looks, taken in an instant. Revisions
@@ -200,7 +242,7 @@ pub fn write_project(project: &Project, run_log: &str, out: &mut impl Container)
     let start = Instant::now();
     let tables = encode_tables(&Snapshot::of(project), &mut EncodeCache::default())?;
     let encoded = tables.encoded;
-    let entries = finish_entries(tables, run_log)?;
+    let entries = finish_entries(tables, run_log, Vec::new())?;
     let encode_ms = start.elapsed().as_secs_f64() * 1e3;
     let start = Instant::now();
     for e in &entries {
@@ -218,7 +260,7 @@ pub fn write_project(project: &Project, run_log: &str, out: &mut impl Container)
 /// Every entry of the project in a fixed order, the manifest last.
 pub fn encode_project(project: &Project, run_log: &str) -> Result<Vec<(String, Vec<u8>)>, StoreError> {
     let tables = encode_tables(&Snapshot::of(project), &mut EncodeCache::default())?;
-    Ok(finish_entries(tables, run_log)?.into_iter().map(|e| (e.name, Arc::unwrap_or_clone(e.bytes))).collect())
+    Ok(finish_entries(tables, run_log, Vec::new())?.into_iter().map(|e| (e.name, Arc::unwrap_or_clone(e.bytes))).collect())
 }
 
 /// Each object's body placed, then the mesh and grid jobs to encode.
@@ -393,7 +435,7 @@ fn prime_cache(snapshot: &Snapshot, file: &MemoryContainer, checksums: &HashMap<
 }
 
 /// The tables with the run log and the manifest after them.
-pub(crate) fn finish_entries(tables: Tables, run_log: &str) -> Result<Vec<Encoded>, StoreError> {
+pub(crate) fn finish_entries(tables: Tables, run_log: &str, links: Vec<FolderLink>) -> Result<Vec<Encoded>, StoreError> {
     let mut entries = tables.entries;
     entries.push(Encoded::new(RUN_LOG.to_string(), run_log.as_bytes().to_vec()));
     let manifest = Manifest {
@@ -404,6 +446,7 @@ pub(crate) fn finish_entries(tables: Tables, run_log: &str) -> Result<Vec<Encode
         layers: tables.layers,
         hidden: tables.hidden,
         display: tables.display,
+        links,
         entries: entries.iter().map(|e| EntryInfo { name: e.name.clone(), bytes: e.bytes.len() as u64, fnv1a: format!("{:016x}", e.fnv) }).collect(),
     };
     entries.push(Encoded::new(MANIFEST.to_string(), serde_json::to_vec_pretty(&manifest).map_err(|e| StoreError::Format(e.to_string()))?));
@@ -612,7 +655,7 @@ fn encode(columns: Vec<(Field, ArrayRef)>) -> Result<Vec<u8>, StoreError> {
 }
 
 /// Runs `f` on each item across the machine's cores, results in the items' order.
-fn in_parallel<T: Send, R: Send>(items: Vec<T>, f: impl Fn(T) -> R + Sync) -> Vec<R> {
+pub(crate) fn in_parallel<T: Send, R: Send>(items: Vec<T>, f: impl Fn(T) -> R + Sync) -> Vec<R> {
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut slots: Vec<Option<T>> = items.into_iter().map(Some).collect();
     let chunk = slots.len().div_ceil(threads).max(1);
@@ -867,7 +910,7 @@ pub fn read_project(input: &(impl Container + Sync)) -> Result<ReadProject, Stor
         });
     }
     let project = Project::from_saved(manifest.layers, built).map_err(StoreError::Project)?.with_hidden(manifest.hidden).with_display(manifest.display);
-    Ok(ReadProject { project, run_log, ms: start.elapsed().as_secs_f64() * 1e3 })
+    Ok(ReadProject { project, run_log, links: manifest.links, ms: start.elapsed().as_secs_f64() * 1e3 })
 }
 
 /// One attribute group's objects and their attributes, read straight from the table's arrays: each name is looked
@@ -1152,7 +1195,8 @@ impl ZdpStore {
         } else {
             encode_tables(&snapshot, &mut store.cache)?.content
         };
-        store.saved = Some(content);
+        // Keyed by the links the file holds: a file that has moved since saves its new ways to the grids.
+        store.saved = Some(with_links(content, &manifest.links));
         store.take_lock()?;
         Ok((store, read))
     }
@@ -1193,13 +1237,14 @@ impl ZdpStore {
             )));
         }
         let tables = encode_tables(snapshot, &mut self.cache)?;
-        let (content, encoded) = (tables.content, tables.encoded);
+        let links = folder_links(snapshot, &self.path);
+        let (content, encoded) = (with_links(tables.content, &links), tables.encoded);
         if !log_changed && self.saved == Some(content) && self.path.is_file() {
             let bytes = std::fs::metadata(&self.path)?.len();
             let ms = start.elapsed().as_secs_f64() * 1e3;
             return Ok(SavedFile { path: self.path.clone(), unchanged: true, entries: tables.entries.len() + 2, encoded, bytes, ms });
         }
-        let entries = finish_entries(tables, run_log)?;
+        let entries = finish_entries(tables, run_log, links)?;
         let bytes = write_zip(&self.path, &entries)?;
         self.saved = Some(content);
         self.take_lock()?;

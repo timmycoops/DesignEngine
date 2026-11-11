@@ -451,3 +451,125 @@ fn a_real_folder_suggests_and_builds() {
         grids.changed.len()
     );
 }
+
+/// A project and its grids side by side, as a site keeps them: `<root>/site/pit/pit.zdp` and `<root>/site/geology/`.
+fn site_with_a_model(root: &Path) -> (PathBuf, PathBuf) {
+    let (pit, geology) = (root.join("site").join("pit"), root.join("site").join("geology"));
+    std::fs::create_dir_all(&pit).unwrap();
+    std::fs::create_dir_all(&geology).unwrap();
+    write_pit(&geology);
+    let csv = geology.join("stack.csv");
+    let mut s = Session::with_builtins();
+    suggest(&mut s, &geology, &csv);
+    build(&mut s, &csv).unwrap();
+    let file = pit.join("pit.zdp");
+    s.save(&file).unwrap();
+    (file, geology)
+}
+
+fn same(a: &str, b: &Path) -> bool {
+    zd_core::same_path(Path::new(a), b)
+}
+
+/// Stage 4 of decision 0058: a project moved with its geology finds the grids where they were relative to it, and
+/// relinks them in a logged run that undoes.
+#[test]
+fn a_project_moved_with_its_geology_finds_it_beside_it() {
+    let t = TempDir::new("moved");
+    let (_, geology) = site_with_a_model(&t.0);
+    let was = model_in(&t.0.join("site").join("pit").join("pit.zdp"));
+    assert!(same(&was.folder, &geology), "{}", was.folder);
+
+    // Copied to another machine: the old place no longer exists.
+    std::fs::rename(t.0.join("site"), t.0.join("moved")).unwrap();
+    let file = t.0.join("moved").join("pit").join("pit.zdp");
+    let mut s = Session::open(&file).unwrap();
+    let new = t.0.join("moved").join("geology");
+    assert_eq!(s.open_notes().len(), 1, "{:?}", s.open_notes());
+    assert!(s.open_notes()[0].contains("found beside the project") && s.open_notes()[0].contains("relinked"), "{:?}", s.open_notes());
+    let m = model(&s);
+    assert!(same(&m.folder, &new), "{} is not {}", m.folder, new.display());
+    assert_eq!(read_stack_grids(&m).unwrap().roofs.len(), 5, "the grids read from their new place");
+    let links = s.links();
+    assert!(links.len() == 1 && links[0].check.is_whole(), "{links:?}");
+    assert_eq!(links[0].check.folders[0].files, 15, "every grid of the pit");
+    match s.log().last() {
+        Some(zd_commands::LogEntry::Run(r)) => assert_eq!((r.command.as_str(), r.outputs.len()), ("seam.relink", 1)),
+        other => panic!("the relink is in the log: {other:?}"),
+    }
+
+    // Saved where it is now, it opens with nothing to do; undone, it reads from the old place again.
+    s.save(&file).unwrap();
+    s.undo().unwrap();
+    assert!(same(&model(&s).folder, &geology));
+    drop(s);
+    let s = Session::open(&file).unwrap();
+    assert!(s.open_notes().is_empty(), "{:?}", s.open_notes());
+    assert!(same(&model(&s).folder, &new));
+}
+
+/// Moved without its geology: nothing is found either way, and the project says so rather than failing to open.
+#[test]
+fn a_project_moved_alone_lists_what_it_cant_find() {
+    let t = TempDir::new("alone");
+    let (file, geology) = site_with_a_model(&t.0);
+    let away = t.0.join("away");
+    std::fs::create_dir_all(&away).unwrap();
+    std::fs::rename(&file, away.join("pit.zdp")).unwrap();
+    std::fs::rename(&geology, t.0.join("archive")).unwrap();
+    let s = Session::open(away.join("pit.zdp")).unwrap();
+    assert_eq!(s.open_notes().len(), 1);
+    assert!(s.open_notes()[0].contains("aren't in") && s.open_notes()[0].contains("nor where they were"), "{:?}", s.open_notes());
+    let links = s.links();
+    assert_eq!((links[0].check.folders[0].files, links[0].check.folders[0].missing), (15, 15));
+    assert!(!links[0].check.is_whole());
+    assert!(same(&model(&s).folder, &geology), "the model is left as it was");
+}
+
+/// Relink points a whole folder at its new place in one step, and checks every file there first.
+#[test]
+fn relink_by_folder_checks_every_file() {
+    let t = TempDir::new("relink");
+    let (file, geology) = site_with_a_model(&t.0);
+    let mut s = Session::open(&file).unwrap();
+    let copy = t.0.join("server").join("geology");
+    std::fs::create_dir_all(&copy).unwrap();
+    for entry in std::fs::read_dir(&geology).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), copy.join(entry.file_name())).unwrap();
+    }
+    let relink = |s: &mut Session| s.run("seam.relink", json!({ "from": geology.to_string_lossy(), "to": copy.to_string_lossy() }));
+
+    // One file missing: refused, naming it, and nothing changes.
+    std::fs::remove_file(copy.join("pitcl.sfg")).unwrap();
+    let refused = relink(&mut s).unwrap_err().to_string();
+    assert!(refused.contains("1 of 15 grid files aren't in") && refused.contains("pitcl.sfg"), "{refused}");
+    assert!(same(&model(&s).folder, &geology));
+
+    // Remodelled since the build: relinked, and said.
+    std::fs::write(copy.join("pitcl.sfg"), flat(89.5)).unwrap();
+    let record = relink(&mut s).unwrap();
+    assert!(record.messages[0].ends_with(&format!("15 grid files now read from {}", copy.display())), "{:?}", record.messages);
+    assert!(record.messages[1].starts_with("WARNING: ") && record.messages[1].contains("1 files differ") && record.messages[1].contains("pitcl.sfg"), "{:?}", record.messages);
+    let m = model(&s);
+    assert!(same(&m.folder, &copy));
+    assert_eq!(s.links()[0].check.changed.len(), 1);
+    assert_eq!(read_stack_grids(&m).unwrap().changed, ["pitcl.sfg"]);
+
+    // The same bytes written again (a copy with a new time) is not a change.
+    s.undo().unwrap();
+    std::fs::write(copy.join("pitcl.sfg"), flat(90.0)).unwrap();
+    std::fs::write(copy.join("pitcu.srg"), std::fs::read(geology.join("pitcu.srg")).unwrap()).unwrap();
+    let record = relink(&mut s).unwrap();
+    assert_eq!(record.messages.len(), 1, "{:?}", record.messages);
+    assert!(s.links()[0].check.is_whole());
+
+    // Nothing reads from a folder that isn't one of the model's.
+    let none = s.run("seam.relink", json!({ "from": t.0.join("elsewhere").to_string_lossy(), "to": copy.to_string_lossy() })).unwrap_err().to_string();
+    assert!(none.contains("no seam model reads its grids from"), "{none}");
+}
+
+/// The model in a saved project, read straight from the file.
+fn model_in(file: &Path) -> std::sync::Arc<SeamModel> {
+    model(&Session::open(file).unwrap())
+}

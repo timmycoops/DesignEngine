@@ -12,10 +12,11 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::ipc::Response;
 use tauri::{AppHandle, State, Webview};
+use zd_commands::builtin::ModelLinks;
 use zd_commands::{LogEntry, RunRecord, Session};
 use zd_core::{Attributes, Body, Colouring, Contours, Crossings, Display, FaceDesign, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, SeamModel, TriMesh};
 use zd_geom::{SectionPlane, StackHorizon, SurfaceRayCaster, stack_issue_nodes, triangulate_grid};
-use zd_io::{list_deswik_layers, list_spry, read_stack_grids};
+use zd_io::{check_links as check_grid_links, list_deswik_layers, list_spry, read_stack_grids};
 
 use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_section, encode_triangulation};
 use crate::selection;
@@ -283,6 +284,39 @@ pub async fn open_project(path: String, state: State<'_, AppState>) -> Result<Pr
         let mut app = app.lock().unwrap();
         *app = AppInner::new(session, Some(PathBuf::from(path)));
         Ok(summary(&mut app))
+    })
+    .await?
+}
+
+/// Where every seam model's grids are now, and what opening did about any that had moved (decision 0058, stage 4).
+#[derive(Serialize)]
+pub struct LinksReply {
+    /// Seam models relinked to grid folders found beside the project when it opened, and folders found neither way.
+    notes: Vec<String>,
+    models: Vec<ModelLinks>,
+}
+
+/// Checks each seam model's grid files where they are now: missing, or changed since the model was built. The files
+/// are looked at off the app's lock, as a network share can be slow to answer.
+#[tauri::command]
+pub async fn check_links(state: State<'_, AppState>) -> Result<LinksReply, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let (notes, models) = {
+            let app = app.lock().unwrap();
+            let models: Vec<(ObjectId, String, Arc<SeamModel>)> = app
+                .session
+                .project()
+                .objects()
+                .filter_map(|o| match &o.body {
+                    Body::SeamModel(m) => Some((o.id, o.name.clone(), m.clone())),
+                    _ => None,
+                })
+                .collect();
+            (app.session.open_notes().to_vec(), models)
+        };
+        let models = models.into_iter().map(|(object, name, model)| ModelLinks { object, name, check: check_grid_links(&model) }).collect();
+        Ok(LinksReply { notes, models })
     })
     .await?
 }

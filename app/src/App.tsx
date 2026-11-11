@@ -48,7 +48,9 @@ import {
   projectSummary,
   redo,
   type RunRecord,
+  type ModelLinks,
   runCommand,
+  checkLinks,
   runLog,
   saveProject,
   setContours,
@@ -512,6 +514,44 @@ export default function App() {
       show(await projectSummary());
     });
 
+  /**
+   * Seam models' grids checked where they are now (decision 0058, stage 4). What opening relinked is said; a folder
+   * with grids missing is pointed at where it is now, the whole folder in one step, every file checked there first.
+   * `asked` is the menu's Relink geology, which says so when everything is where it was.
+   */
+  const relinkGeology = async (asked: boolean) => {
+    const { notes, models } = await checkLinks();
+    const lost = new Map<string, { missing: number; files: number; models: ModelLinks[] }>();
+    for (const m of models)
+      for (const f of m.folders.filter((f) => f.missing > 0)) {
+        const was = lost.get(f.folder) ?? { missing: 0, files: 0, models: [] };
+        lost.set(f.folder, { missing: was.missing + f.missing, files: was.files + f.files, models: [...was.models, m] });
+      }
+    const changed = models.filter((m) => m.changed.length > 0);
+    if (notes.length > 0) void runLog().then(setLog);
+    const lines = [...notes];
+    for (const [folder, { missing, files, models: by }] of lost)
+      lines.push(`${by.map((m) => m.name).join(', ')}: ${missing} of ${files} grid files aren't in ${folder}`);
+    for (const m of changed)
+      lines.push(`${m.name}: ${m.changed.length} grid files have changed since it was built, so it is out of date until it is rebuilt`);
+    if (lines.length === 0) {
+      if (asked) await message(models.length ? "Every seam model's grids are where they were, as they were." : 'This project has no seam models.', { title: 'Geology links' });
+      return;
+    }
+    if (lost.size === 0) {
+      await message(lines.join('\n\n'), { title: 'Geology links', kind: changed.length > 0 ? 'warning' : 'info' });
+      return;
+    }
+    const go = await confirm(`${lines.join('\n\n')}\n\nPick where each folder is now?`, { title: 'Geology links', kind: 'warning', okLabel: 'Relink…', cancelLabel: 'Not now' });
+    if (!go) return;
+    for (const [folder, { models: by }] of lost) {
+      const to = await open({ directory: true, title: `Where are the grids that were in ${folder}?` });
+      if (!to || Array.isArray(to)) continue;
+      setStatus({ text: `Checking the grids in ${to}…` });
+      await runRecord('seam.relink', { from: folder, to, models: by.map((m) => m.object) });
+    }
+  };
+
   /** Opens a `.zdp` project file, or an older `.zdproj` folder, which saves as a `.zdp` beside it (decision 0058). */
   const onOpen = (folder: boolean) =>
     attempt(async () => {
@@ -529,6 +569,7 @@ export default function App() {
           title: 'Project in use',
           kind: 'warning',
         });
+      await relinkGeology(false);
     });
 
   const onNew = () =>
@@ -989,6 +1030,7 @@ export default function App() {
               <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Seam model</DropdownMenuLabel>
               <DropdownMenuItem onSelect={onSuggestSeamDefinition}>Suggest a stack definition (CSV)…</DropdownMenuItem>
               <DropdownMenuItem onSelect={onBuildSeamModel}>Build and check from a definition…</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => attempt(() => relinkGeology(true))}>Relink geology…</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           <DropdownMenu>

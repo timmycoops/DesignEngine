@@ -4,9 +4,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{Attributes, Body, Change, Grid, GridLink, Horizon, IssueKind, Lattice, ObjectKind, SeamModel, StackIssue, blank_no_seam};
+use zd_core::{Attributes, Body, Change, Grid, GridLink, Horizon, IssueKind, Lattice, ObjectId, ObjectKind, Project, SeamModel, StackIssue, blank_no_seam};
 use zd_geom::{StackHorizon, check_seam_stack, suggest_no_seam_rl, suggest_seam_tree};
-use zd_io::{DefinedHorizon, SeamDefinition, read_linked_grid, read_linked_surface, read_seam_definition, read_vulcan_grid, vulcan_grid_name, write_seam_definition};
+use zd_io::{DefinedHorizon, LinkCheck, SeamDefinition, check_links, fingerprint_file, read_linked_grid, read_linked_surface, read_seam_definition, read_vulcan_grid, vulcan_grid_name, write_seam_definition};
 
 use super::in_parallel;
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
@@ -428,6 +428,155 @@ fn shared_prefix<'a>(mut names: impl Iterator<Item = &'a str>) -> String {
         return String::new();
     }
     prefix.chars().take(shortest.saturating_sub(1)).collect()
+}
+
+/// `seam.relink`: seam models read their grids from a folder's new location (decision 0058, stage 4). Every grid the
+/// models read from `from`, or a folder inside it, is read from the same place in `to`. Each file is checked there
+/// first: if any is missing nothing is relinked, and a file whose content differs from when the model was built is
+/// relinked and listed, as the model is out of date until it is rebuilt. A copy with a new time is not a change.
+pub struct RelinkSeamModels;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelinkParams {
+    /// The folder the grids were in.
+    pub from: String,
+    /// The folder they're in now.
+    pub to: String,
+    /// The seam models to relink; when empty, every one that reads from `from`.
+    #[serde(default)]
+    pub models: Vec<ObjectId>,
+}
+
+/// Files listed in a message before the rest are counted.
+const LISTED: usize = 5;
+
+fn listed(files: &[String]) -> String {
+    let mut out = files.iter().take(LISTED).cloned().collect::<Vec<_>>().join(", ");
+    if files.len() > LISTED {
+        out.push_str(&format!(" and {} more", files.len() - LISTED));
+    }
+    out
+}
+
+impl Command for RelinkSeamModels {
+    type Params = RelinkParams;
+    const NAME: &'static str = "seam.relink";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Read seam models' grids from a folder's new location",
+            inputs: vec![Field::new("models", FieldType::Objects, "Seam models; every one that reads from the folder when empty")],
+            params: vec![
+                Field::new("from", FieldType::Path, "The folder the grids were in"),
+                Field::new("to", FieldType::Path, "The folder they're in now"),
+            ],
+            outputs: vec![],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let (from, to) = (Path::new(&p.from), Path::new(&p.to));
+        if !to.is_dir() {
+            return Err(CommandError::Invalid(format!("{} is not a folder", p.to)));
+        }
+        let ids: Vec<ObjectId> = if p.models.is_empty() {
+            inputs.objects().filter(|o| matches!(o.body, Body::SeamModel(_))).map(|o| o.id).collect()
+        } else {
+            p.models.clone()
+        };
+        let mut moved = Vec::new();
+        for id in ids {
+            let object = inputs.object(id)?;
+            let Body::SeamModel(model) = &object.body else {
+                return Err(CommandError::WrongKind { id, expected: ObjectKind::SeamModel, found: object.body.kind() });
+            };
+            if let Some(relinked) = model.relinked(from, to) {
+                moved.push((object, model, relinked));
+            }
+        }
+        if moved.is_empty() {
+            return Err(CommandError::Invalid(format!("no seam model reads its grids from {}", p.from)));
+        }
+
+        // Every file that moves, checked where it is now.
+        let mut jobs: Vec<(usize, usize, PathBuf)> = Vec::new();
+        for (m, (_, model, relinked)) in moved.iter().enumerate() {
+            for (l, ((_, _, was), (_, _, now))) in model.links().zip(relinked.links()).enumerate() {
+                let path = relinked.path(now);
+                if path != model.path(was) {
+                    jobs.push((m, l, path));
+                }
+            }
+        }
+        let found = in_parallel(&jobs, |(_, _, path)| fingerprint_file(path).ok());
+        let missing: Vec<String> = jobs.iter().zip(&found).filter(|(_, f)| f.is_none()).map(|((_, _, path), _)| path.to_string_lossy().into_owned()).collect();
+        if !missing.is_empty() {
+            return Err(CommandError::Invalid(format!("{} of {} grid files aren't in {}, so nothing was relinked: {}", missing.len(), jobs.len(), p.to, listed(&missing))));
+        }
+
+        let mut changes = Vec::new();
+        let mut messages = Vec::new();
+        for (m, (object, _, mut relinked)) in moved.into_iter().enumerate() {
+            let mut changed = Vec::new();
+            let mut files = 0;
+            for ((_, l, path), now) in jobs.iter().zip(&found).filter(|((j, ..), _)| *j == m) {
+                files += 1;
+                let now = now.expect("missing files refused above");
+                let link = link_at(&mut relinked, *l);
+                if now.same_content(&link.fingerprint) {
+                    // A copy: the same content with a new time, kept so the next check needn't read it again.
+                    link.fingerprint = now;
+                } else {
+                    changed.push(path.to_string_lossy().into_owned());
+                }
+            }
+            messages.push(format!("{}: {files} grid files now read from {}", object.name, p.to));
+            if !changed.is_empty() {
+                messages.push(format!(
+                    "WARNING: {}: {} files differ from when the model was built, so it is out of date until it is rebuilt: {}",
+                    object.name,
+                    changed.len(),
+                    listed(&changed)
+                ));
+            }
+            changes.push(Change::revise_body(object, Body::SeamModel(Arc::new(relinked))));
+        }
+        let mut outcome = Outcome::new(changes);
+        outcome.messages = messages;
+        Ok(outcome)
+    }
+}
+
+/// The model's `index`th link, in the order of [`SeamModel::links`].
+fn link_at(model: &mut SeamModel, index: usize) -> &mut GridLink {
+    model
+        .horizons
+        .iter_mut()
+        .flat_map(|h| [&mut h.roof, &mut h.floor].into_iter().chain(h.grids.values_mut()))
+        .nth(index)
+        .expect("an index from the same model's links")
+}
+
+/// One seam model's links checked where its grids are now.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ModelLinks {
+    pub object: ObjectId,
+    pub name: String,
+    #[serde(flatten)]
+    pub check: LinkCheck,
+}
+
+/// Every seam model's links in the project, checked where the grids are now.
+pub fn seam_links(project: &Project) -> Vec<ModelLinks> {
+    project
+        .objects()
+        .filter_map(|o| match &o.body {
+            Body::SeamModel(model) => Some(ModelLinks { object: o.id, name: o.name.clone(), check: check_links(model) }),
+            _ => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]
