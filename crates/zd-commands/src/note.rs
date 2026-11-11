@@ -61,6 +61,44 @@ codes! {
     RefusedIo = "refused.io", "A file couldn't be read or written";
     RefusedProject = "refused.project", "The project refused the changes, as for a stale input or a layer that exists";
     RefusedStore = "refused.store", "The project file couldn't be opened or saved";
+
+    WallNoHeight = "wall.no_height", "A wall or berm whose target is on or past its line, so it has no height there";
+    WallNoTarget = "wall.no_target", "A wall with no target under it, so the gap was bridged";
+    BermNoSurface = "berm.no_surface", "Berm vertices with nothing under them, holding their crest's height";
+    BermPinched = "berm.pinched", "A berm pinched into pieces, and the small ones left out";
+    BermUnderMinBench = "berm.under_min_bench", "No berm where the bench below is under the minimum, as the rule says";
+    ToeNoTarget = "toe.no_target", "Next-toe vertices with no target under them, keeping their elevations";
+    ToeOffGrid = "toe.off_grid", "Toe vertices off their grid, carried on at their grade";
+    FaceCrossing = "face.crossing", "A face or wall whose triangles cross each other";
+    FaceNotOneSheet = "face.not_one_sheet", "A face with edges besides its own: a hole, a crack or a piece apart";
+    FaceNotBuilt = "face.not_built", "A strip the design couldn't build, so nothing is built on it";
+    FaceGapFilled = "face.gap_filled", "A gap the faces of a strip closed all round, filled";
+    RampRoad = "ramp.road", "How far a road got: its steps, length and where it starts";
+    RampStopped = "ramp.stopped", "A road that stopped before its last wall, and why";
+    RampOffHold = "ramp.off_hold", "A road held at its end that comes out away from where it's held";
+    RampSteepFlat = "ramp.steep_flat", "A flat before a turn that follows a floor steeper than the road";
+    RampNoRoad = "ramp.no_road", "A ramp that made no road";
+    RampNoWall = "ramp.no_wall", "A ramp no wall row climbs yet, so it made no road";
+    RampNothingToCarryOn = "ramp.nothing_to_carry_on", "A ramp set to carry on from the line, with no road on the line";
+    RampStringGone = "ramp.string_gone", "A ramp whose string has been deleted";
+    RampNoCrossing = "ramp.no_crossing", "A ramp whose string doesn't cross a line, so it has no road there";
+    RampCrossesAgain = "ramp.crosses_again", "A ramp string crossing a line more than once: the road goes where it first does";
+    RampTopOffLine = "ramp.top_off_line", "A road's top away from the line it carries on from";
+    RampStartsAfresh = "ramp.starts_afresh", "A road carried on that isn't on the first wall, starting afresh";
+    RampEnds = "ramp.ends", "A road ended on a line, as asked";
+    JoinOnePad = "join.one_pad", "Switchbacks whose boxes are made one pad";
+    JoinNothing = "join.nothing", "Join set on a berm with nothing to join";
+    LineEdited = "line.edited", "A line redrawn by hand, and what stands on it";
+    LineBoxMissing = "line.box_missing", "A line redrawn before a ramp turned on it, so it has no box for the turn";
+    BuildCrestGone = "build.crest_gone", "The crest a step was built from has been deleted";
+    BuildEditedRebuilt = "build.edited_rebuilt", "A line edited by hand, built again: undo brings the edit back";
+    BuildLineMoved = "build.line_moved", "A berm's line not where the berm puts it now, so the wall stands on it as it is";
+    SliceEmpty = "slice.empty", "A strip with nothing of the solid in it";
+    SliceToeAboveFloor = "slice.toe_above_floor", "A face whose toe stands above the solid's floor, the cut going straight down below it";
+    SliceTopBelowTop = "slice.top_below_top", "A face whose top is below the solid's top, the cut going straight up above it";
+    SliceFacesCross = "slice.faces_cross", "A face crossing faces before it inside the solid";
+    SolidOutlineOpen = "solid.outline_open", "An open outline taken as closed";
+    SolidNotCovered = "solid.not_covered", "A surface that doesn't cover the outline in plan, with no solid there";
 }
 
 impl Serialize for Code {
@@ -185,7 +223,7 @@ mod tests {
     fn a_note_saves_only_what_it_has_and_reads_back() {
         let plain = Note::info("12 strips joined");
         assert_eq!(serde_json::to_string(&plain).unwrap(), r#"{"severity":"info","text":"12 strips joined"}"#);
-        let placed = Note::warning(Code::RefusedGeometry, "a hole")
+        let placed = Note::warning(Code::WallNoHeight, "no height")
             .at(Place::Stretch { from: [650_000.0, 7_450_000.25, 96.5], to: [650_010.0, 7_450_000.25, 97.0] })
             .measured(10.0, "m")
             .on_made(2);
