@@ -15,5 +15,5 @@ mod spec;
 pub use command::{Command, Inputs, Outcome};
 pub use error::CommandError;
 pub use registry::Registry;
-pub use session::{LogEntry, RunRecord, RunStatus, Session};
+pub use session::{LogEntry, RunRecord, RunStatus, SaveJob, Session};
 pub use spec::{CommandSpec, Field, FieldType};

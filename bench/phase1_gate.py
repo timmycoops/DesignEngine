@@ -128,7 +128,7 @@ def undo_redo(s, report):
 
 def save_reopen(s, out, report):
     """Item 4: saved, opened again, every coordinate the same to the bit."""
-    path = out / "gate.zdproj"
+    path = out / "gate.zdp"
     saved, save_ms = timed(lambda: s.save(path))
     reopened, open_ms = timed(lambda: zd.open(path))
     checked, differ = 0, []
@@ -143,7 +143,7 @@ def save_reopen(s, out, report):
         checked += 1
         if not same:
             differ.append(o["name"])
-    report.note(f"saved {saved['bytes_written'] / 1e6:.1f} MB in {save_ms:.0f} ms ({saved['object_files_written']} files); opened in {open_ms:.0f} ms")
+    report.note(f"saved {saved['bytes'] / 1e6:.1f} MB in {save_ms:.0f} ms ({saved['entries']} entries in one file); opened in {open_ms:.0f} ms")
     report.item(4, "Save, close and reopen: every coordinate back bit for bit", "pass" if not differ else "FAIL",
                 f"{checked} objects compared (strings, surfaces and solids coordinate by coordinate; grids by lattice and range)" + (f"; differ: {differ}" if differ else ""))
 

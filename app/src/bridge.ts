@@ -300,6 +300,8 @@ export interface ProjectSummary {
   solid_layers: SolidLayer[];
   /** How objects and layers look. */
   display: Display;
+  /** Who else had the project file open when it was opened: a save to it is refused. */
+  locked_by: string | null;
 }
 
 /** In bands by RL, or one colour, the layer's. */
@@ -379,11 +381,15 @@ export interface RunReply {
 }
 
 export interface SaveReply {
+  /** The `.zdp` file written: a project opened from an older `.zdproj` folder saves beside it. */
   path: string;
-  object_files_written: number;
-  object_files_reused: number;
-  files_deleted: number;
-  bytes_written: number;
+  /** Nothing had changed since the last save, so nothing was written. */
+  unchanged: boolean;
+  entries: number;
+  /** Entries encoded this time; the rest were kept from the last save. */
+  encoded: number;
+  /** The file's size. */
+  bytes: number;
   ms: number;
 }
 
@@ -396,7 +402,7 @@ export const undo = () => invoke<ProjectSummary>('undo');
 export const redo = () => invoke<ProjectSummary>('redo');
 export const newProject = () => invoke<ProjectSummary>('new_project');
 export const openProject = (path: string) => invoke<ProjectSummary>('open_project', { path });
-/** Saves to `path`, or to the folder last opened or saved. */
+/** Saves to `path` (a `.zdp` file), or to the file last opened or saved. */
 export const saveProject = (path?: string) => invoke<SaveReply>('save_project', { path: path ?? null });
 export const setLayerVisible = (layer: string, visible: boolean) =>
   invoke<ProjectSummary>('set_layer_visible', { layer, visible });

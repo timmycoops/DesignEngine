@@ -1,6 +1,6 @@
 # 0058 — One file a project: `.zdp`, a zip of Parquet tables
 
-Date: 2026-11-11 · Status: accepted (Tim, 2026-11-11: "a single file is going to be required", "happy with the zip
+Date: 2026-11-11 · Status: accepted; stages 1 and 2 built (Tim, 2026-11-11: "a single file is going to be required", "happy with the zip
 logic like a Deswik file", "lock in the .zdp file format name", "Yep agree" to the targets). Item 3 of the Review
 10 Nov order; the plan and its measurements are on the Build Plan's Store plan tab. Replaces the folder layout of 0004
 once stage 2 lands.
@@ -66,9 +66,51 @@ one by one, which stage 3 (attribute names held once) is for.
 `bytes` joins zd-io's dependencies: it is Parquet's own buffer type, already in the build through `parquet`, and the
 only way Parquet reads from memory.
 
+## Stage 2: one file
+
+`ZdpStore` saves and opens a `.zdp` file, and the session, the app and Python use it. A `.zdproj` folder still opens
+(today's reader is kept), and saving it writes a `.zdp` of the same name beside it; nothing writes folders any more.
+
+- **One zip, saved beside then swapped in.** Entries go to `<name>.zdp.saving`, flushed to disk, then renamed over
+  the file, so a crash or a dropped connection leaves the last save whole; a leftover is written over by the next save.
+  Parquet entries are stored as they are, JSON deflated, every entry with the same fixed time: the same project saves
+  to the same bytes. Opening reads the whole file, and every entry is checked against the manifest as before.
+- **Only what changed is encoded.** An `EncodeCache` keeps each group's entries with what they held: attribute groups
+  by the revisions in them and their first row, meshes and grids by the geometry itself (held so its address can't be
+  reused). A rename or an attribute edit keeps the mesh; a large mesh renamed keeps its bytes under the new revision's
+  name. Opening fills the cache from the file's own entries when its tables are this build's, so the first save after
+  an open encodes only what changed.
+- **Nothing is written when nothing changed:** no new run in the log, and the tables' content key as it was. A look or
+  a hidden object, which aren't logged, still change the key.
+- **Saving doesn't hold up the app.** `Session::begin_save` takes a `Snapshot` (the live revisions, layers, hidden
+  objects and looks) in an instant; `SaveJob::run` encodes and writes it off the session's lock; `end_save` notes it in
+  the run log. The app's Save does exactly that, so the viewport and commands carry on during a large save.
+- **A lock note**, `<name>.zdp.lock` beside the file, says who has it open (user, machine, process, since when). Ours
+  is written on open or the first save and removed when the session closes; one left by a crash on the same user and
+  machine is taken over. Someone else's is reported when the file is opened (the app shows "Project in use") and
+  refuses a save to it, naming who and since when, with Save as or deleting their note as the ways on.
+- **The app** opens a `.zdp` (Open a project), or an older folder (Open an older project folder), and saves with a
+  `.zdp` file dialog. **Python**: `zd.open("pit.zdp")`, and `save` returns the path, whether it was unchanged, the
+  entries and how many were encoded, the size and the time.
+
+Not done as planned: free space isn't checked before a save. A save that runs out of room fails, removes its
+part-written file and leaves the last save whole, which is what the check was for. The run log is still one entry,
+written whole each save (4.6 MB on the 43k project, deflated); it was to be each save's new runs.
+
+Measured on 11 November (release build, local disk; `targets_on_every_saved_project` and `store_scale`):
+
+| Project | File | First save | Open | Save after one change | Save, nothing changed |
+|---|---|---|---|---|---|
+| Deswik drawing, 43,181 objects (folder: 714 MB, opened in 5.8 s) | 92.0 MB | 0.63 s | 3.3 s | 152 ms | 74 ms, nothing written |
+| Terrace drawing, 101,432 objects (folder: 683 MB) | 234.8 MB | 0.70 s | 1.9 s | 343 ms | 185 ms, nothing written |
+| PIT B, 15 strips | 82.7 MB | 0.52 s | 0.61 s | 68 ms | 14 ms, nothing written |
+| Made-up: 200,000 solids, 50 M attribute values | 95.0 MB | 1.7 s | 14.3 s | 481 ms | 412 ms, nothing written |
+
+Against the targets: saves meet them (one change under 0.5 s, the 101k project under 1 s, the 200k one under 2 s,
+nothing written when nothing changed, one file of about 100 MB). **Open doesn't yet**: 3.3 s against 2 s at 43k, and
+14.3 s against 5 s at 200k. Both are mostly building every attribute one by one, which is stage 3's job.
+
 ## Still to come
 
-- **Stage 2, one file:** the zip container; save beside then swap, in the background; a lock note; the app and Python
-  open and save `.zdp`; CLAUDE.md's "Data at rest" line.
-- **Stage 3:** attribute names held once in memory.
+- **Stage 3:** attribute names held once in memory, which open's time and the memory target wait on.
 - **Stage 4:** links that survive a move (both locations tried, Relink by folder, fingerprints checked).

@@ -24,7 +24,7 @@ and seven designs, each on its own layer of faces:
     .venv\\Scripts\\python testdata/synthetic/grid_template.py [folder]
 
 Writes the grids as XYZ files in grids/ beside this script, which import by hand with the Surface button, and
-"Grid template.zdproj" with them imported, beside this script or in the folder given. Then it runs every design
+"Grid template.zdp" with them imported, beside this script or in the folder given. Then it runs every design
 without saving the runs and prints what each strip didn't build, any face with triangles crossing or that isn't one
 sheet, and every road that stopped: the list of faults to work through.
 """
@@ -256,7 +256,7 @@ def main():
     ramp_c = ramp_string(s, "Ramp C", 1000.0, north)
     toes_layer = next(layer["id"] for layer in s.layers() if layer["name"] == "toes")
     saved = designs(s, g, toes_layer, ramp_a, ramp_b, ramp_c)
-    path = folder / "Grid template.zdproj"
+    path = folder / "Grid template.zdp"
     s.save(path)
     print(f"Saved {path}: {len(GRIDS)} grids, {len(toes)} strips, 3 ramp strings, designs {', '.join(saved)}")
     faults = check(s, saved)

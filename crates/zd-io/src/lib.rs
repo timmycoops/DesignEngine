@@ -3,7 +3,7 @@
 //! Reads triangulations and strings from DXF, Vulcan triangulations (one by one, or by the thousand
 //! from folders and zips), strings and meshes from Deswik drawings, solids, strings and attributes from Spry projects, strings from CSV, regular grids from XYZ/CSV text and Vulcan grids, and
 //! writes DXF R12 and CSV strings. Saves and opens projects
-//! as `<name>.zdproj/` folders of Parquet files. Coordinates stay f64 from file to engine and back
+//! as one `.zdp` file of Parquet tables (decision 0058), and opens older `<name>.zdproj/` folders. Coordinates stay f64 from file to engine and back
 //! out. Every clean-up or conversion done on the way in (welding, dropped faces, arcs to chords,
 //! nulls) is counted in the import log; nothing is fixed silently.
 
@@ -41,7 +41,10 @@ pub use string_csv::{CsvLog, CsvString, CsvStrings, format_csv_strings, parse_cs
 pub use vulcan::{ELEVATION_VARIABLES, VulcanGrid, VulcanLog, VulcanSeam, VulcanSurface, parse_vulcan_grid, read_vulcan_grid, read_vulcan_seam, vulcan_grid_name};
 pub use vulcan_tri::{VulcanTriLog, VulcanTriangulation, parse_vulcan_triangulation, plain_triangulation_bytes, read_vulcan_triangulation};
 pub use xyz::{GridImport, XyzLog, XyzOptions, parse_xyz_grid, read_xyz_grid, write_xyz_grid};
-pub use zdp::{Container, FolderContainer, ReadProject, WriteReport, ZDP_FORMAT, ZDP_VERSION, encode_project, project_differences, read_project, write_project};
+pub use zdp::{
+    Container, EncodeCache, FolderContainer, LockInfo, MemoryContainer, ReadProject, SavedFile, Snapshot, WriteReport, ZDP_FORMAT, ZDP_VERSION, ZdpStore, encode_project,
+    project_differences, read_project, write_project,
+};
 
 /// What a surface file turned out to hold.
 #[derive(Debug, Clone)]

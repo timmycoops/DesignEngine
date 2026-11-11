@@ -1,10 +1,11 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use zd_core::{AppliedChange, Colouring, Contours, LayerId, ObjectId, ObjectRef, Project, RunId};
-use zd_io::{ProjectStore, SaveReport};
+use zd_io::{ProjectStore, SavedFile, Snapshot, ZdpStore};
 
 use crate::builtin::check_solids_made;
 use crate::command::Inputs;
@@ -58,13 +59,38 @@ pub struct Session {
     project: Project,
     registry: Registry,
     log: Vec<LogEntry>,
-    /// The folder this session last saved to or opened from, for incremental saves.
-    store: Option<ProjectStore>,
+    /// The `.zdp` file this session last saved to or opened, shared with a save running off the session.
+    store: Option<Arc<Mutex<ZdpStore>>>,
+    /// How long the log was at the last save or open: a save with no new entry and nothing else changed writes nothing.
+    saved_log_len: usize,
+}
+
+/// A save taken from a session in an instant, to write while the session carries on (decision 0058): the project as
+/// it stood, the run log with this save in it, and the file to write.
+pub struct SaveJob {
+    store: Arc<Mutex<ZdpStore>>,
+    snapshot: Snapshot,
+    log: String,
+    log_changed: bool,
+    saved: LogEntry,
+}
+
+impl SaveJob {
+    /// Encodes and writes the project file. Two saves of one file take turns.
+    pub fn run(&self) -> Result<SavedFile, CommandError> {
+        let mut store = self.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        store.save(&self.snapshot, &self.log, self.log_changed).map_err(|e| CommandError::Store(e.to_string()))
+    }
+}
+
+/// Where a save goes: a `.zdproj` folder saves as a `.zdp` file beside it, of the same name.
+fn zdp_path(path: &Path) -> PathBuf {
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("zdproj")) { path.with_extension("zdp") } else { path.to_path_buf() }
 }
 
 impl Session {
     pub fn new(registry: Registry) -> Self {
-        Session { project: Project::new(), registry, log: Vec::new(), store: None }
+        Session { project: Project::new(), registry, log: Vec::new(), store: None, saved_log_len: 0 }
     }
 
     /// A new project with the engine's own commands.
@@ -72,37 +98,78 @@ impl Session {
         Session::new(Registry::with_builtins())
     }
 
-    /// Opens a `<name>.zdproj/` folder with the engine's own commands. The run log carries on from
-    /// where it was saved; the undo history starts empty.
-    pub fn open(dir: impl AsRef<Path>) -> Result<Session, CommandError> {
-        Session::open_with(Registry::with_builtins(), dir)
+    /// Opens a `.zdp` project file, or a `<name>.zdproj/` folder saved before it, with the engine's own commands. The
+    /// run log carries on from where it was saved; the undo history starts empty.
+    pub fn open(path: impl AsRef<Path>) -> Result<Session, CommandError> {
+        Session::open_with(Registry::with_builtins(), path)
     }
 
-    pub fn open_with(registry: Registry, dir: impl AsRef<Path>) -> Result<Session, CommandError> {
-        let dir = dir.as_ref();
-        let opened = ProjectStore::open(dir).map_err(|e| CommandError::Store(e.to_string()))?;
-        let mut log: Vec<LogEntry> = match &opened.run_log {
+    pub fn open_with(registry: Registry, path: impl AsRef<Path>) -> Result<Session, CommandError> {
+        let path = path.as_ref();
+        let store_error = |e: zd_io::StoreError| CommandError::Store(e.to_string());
+        let (project, run_log, store) = if path.is_dir() {
+            let opened = ProjectStore::open(path).map_err(store_error)?;
+            (opened.project, opened.run_log, None)
+        } else {
+            let (store, read) = ZdpStore::open(path).map_err(store_error)?;
+            (read.project, read.run_log, Some(Arc::new(Mutex::new(store))))
+        };
+        let mut log: Vec<LogEntry> = match run_log.as_deref().filter(|t| !t.is_empty()) {
             Some(text) => serde_json::from_str(text).map_err(|e| CommandError::Store(format!("run log: {e}")))?,
             None => Vec::new(),
         };
-        log.push(LogEntry::Opened { path: dir.display().to_string(), at_unix_ms: now_ms() });
-        Ok(Session { project: opened.project, registry, log, store: Some(opened.store) })
+        log.push(LogEntry::Opened { path: path.display().to_string(), at_unix_ms: now_ms() });
+        // An old folder hasn't been saved as a file yet; a file just read has nothing new to save.
+        let saved_log_len = if store.is_some() { log.len() } else { 0 };
+        Ok(Session { project, registry, log, store, saved_log_len })
     }
 
-    /// Saves the project and its run log to a `<name>.zdproj/` folder. Saving again to the same
-    /// folder rewrites only what changed.
-    pub fn save(&mut self, dir: impl AsRef<Path>) -> Result<SaveReport, CommandError> {
-        let dir = dir.as_ref();
-        if self.store.as_ref().is_none_or(|s| s.dir() != dir) {
-            self.store = Some(ProjectStore::create(dir).map_err(|e| CommandError::Store(e.to_string()))?);
+    /// Saves the project and its run log as a `.zdp` file (a `.zdproj` path saves as a `.zdp` beside it). Saving
+    /// again re-encodes only what changed, and writes nothing when nothing has.
+    pub fn save(&mut self, path: impl AsRef<Path>) -> Result<SavedFile, CommandError> {
+        let job = self.begin_save(path)?;
+        let result = job.run();
+        self.end_save(job, result)
+    }
+
+    /// Takes a save in an instant: run it with [`SaveJob::run`] while the session carries on, then hand its result
+    /// to [`Session::end_save`].
+    pub fn begin_save(&mut self, path: impl AsRef<Path>) -> Result<SaveJob, CommandError> {
+        let path = zdp_path(path.as_ref());
+        let same = self.store.as_ref().is_some_and(|s| s.lock().unwrap_or_else(|p| p.into_inner()).path() == path);
+        if !same {
+            self.store = Some(Arc::new(Mutex::new(ZdpStore::create(&path))));
         }
-        self.log.push(LogEntry::Saved { path: dir.display().to_string(), at_unix_ms: now_ms() });
-        let log = serde_json::to_string(&self.log).map_err(|e| CommandError::Store(e.to_string()))?;
-        let store = self.store.as_mut().expect("store set above");
-        store.save(&self.project, &log).map_err(|e| {
-            self.log.pop();
-            CommandError::Store(e.to_string())
+        let saved = LogEntry::Saved { path: path.display().to_string(), at_unix_ms: now_ms() };
+        let mut log = self.log.clone();
+        log.push(saved.clone());
+        Ok(SaveJob {
+            store: self.store.clone().expect("store set above"),
+            snapshot: Snapshot::of(&self.project),
+            log: serde_json::to_string(&log).map_err(|e| CommandError::Store(e.to_string()))?,
+            log_changed: self.log.len() != self.saved_log_len,
+            saved,
         })
+    }
+
+    /// Records a save once it has run: the log notes it, unless nothing was written.
+    pub fn end_save(&mut self, job: SaveJob, result: Result<SavedFile, CommandError>) -> Result<SavedFile, CommandError> {
+        let saved = result?;
+        if !saved.unchanged {
+            self.log.push(job.saved);
+            self.saved_log_len = self.log.len();
+        }
+        Ok(saved)
+    }
+
+    /// The file this session last saved to or opened, if any.
+    pub fn file(&self) -> Option<PathBuf> {
+        self.store.as_ref().map(|s| s.lock().unwrap_or_else(|p| p.into_inner()).path().to_path_buf())
+    }
+
+    /// Who else has this session's file open, when someone does: a save to it is refused.
+    pub fn locked_by(&self) -> Option<String> {
+        self.store.as_ref()?.lock().unwrap_or_else(|p| p.into_inner()).locked_by().map(|l| l.describe())
     }
 
     pub fn project(&self) -> &Project {

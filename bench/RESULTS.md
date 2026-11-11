@@ -355,6 +355,10 @@ with only the 272 k-triangle design surface drawn, to separate render cost from 
 
 Reads are mostly building attributes one by one; stage 3 (attribute names held once) is for that.
 
+As one `.zdp` file (stage 2, same day): the made-up project is a 95.0 MB file, saved first in 1.7 s, opened in 14.3 s,
+saved after one block renamed in 481 ms (3 of 604 entries encoded), and saved with nothing changed in 412 ms with
+nothing written. The real projects' figures are in decision 0058.
+
 ## Follow-ups
 
 1. **Re-run on real data.** Put a pit in `testdata/golden/<pit>/` (topo, `<seam>_roof`,

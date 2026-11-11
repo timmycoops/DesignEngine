@@ -90,8 +90,8 @@ fn every_repair_is_in_the_import_log_and_the_check_survives_a_save() {
     assert_eq!(topo.mesh().vertices[0], [E, N, 100.0], "kept coordinates are exactly as read");
 
     // The check is saved with the surface.
-    s.save(dir.join("pit.zdproj")).unwrap();
-    let reopened = Session::open(dir.join("pit.zdproj")).unwrap();
+    s.save(dir.join("pit.zdp")).unwrap();
+    let reopened = Session::open(dir.join("pit.zdp")).unwrap();
     let back = surface(&reopened, id);
     assert_eq!(back.crossings(), topo.crossings());
     assert_eq!(back.validity().non_self_intersecting, Some(true));

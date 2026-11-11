@@ -30,14 +30,15 @@ def a_project_is_made_saved_and_opened(tmp):
     box = [[E + i % 2 * 10.0, N + i // 2 % 2 * 20.0, 30.0 + i // 4 * 5.0] for i in range(8)]
     faces = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]]
     s.run("solid.from_mesh", name="block", layer="solids", vertices=box, triangles=faces)
-    report = s.save(pathlib.Path(tmp) / "pit.zdproj")
-    assert report["object_files_written"] >= 1
+    report = s.save(pathlib.Path(tmp) / "pit.zdp")
+    assert report["bytes"] > 0 and not report["unchanged"], report
+    assert s.save(pathlib.Path(tmp) / "pit.zdp")["unchanged"], "nothing changed, nothing written"
     return s
 
 
 def the_gate_open_list_run_read(tmp, original):
     # Open the saved project.
-    s = zd.open(os.path.join(tmp, "pit.zdproj"))
+    s = zd.open(os.path.join(tmp, "pit.zdp"))
     assert repr(s) == "<zd.Session: 3 objects on 3 layers>"
 
     # List its objects.
@@ -91,7 +92,7 @@ def the_gate_open_list_run_read(tmp, original):
     assert "solid.import" in [c["name"] for c in s.commands()]
 
     # Bad input is a Python error, not a crash.
-    for bad in (lambda: s.object("not-an-id"), lambda: zd.open(os.path.join(tmp, "missing.zdproj")), lambda: s.run("string.create", name="x", layer="d", points=[[float("nan"), 0, 0], [1, 1, 1]])):
+    for bad in (lambda: s.object("not-an-id"), lambda: zd.open(os.path.join(tmp, "missing.zdp")), lambda: s.run("string.create", name="x", layer="d", points=[[float("nan"), 0, 0], [1, 1, 1]])):
         try:
             bad()
             raise AssertionError("expected an error")

@@ -48,7 +48,7 @@ def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "made-up"
     if which == "grid":
         folder = pathlib.Path(os.environ.get("ZD_GRID_PIT", pathlib.Path(__file__).resolve().parent))
-        s = zd.open(str(folder / "Grid template.zdproj"))
+        s = zd.open(str(folder / "Grid template.zdp"))
         name = sys.argv[2] if len(sys.argv) > 2 else "Grid walls"
         design = next(o["id"] for o in s.objects() if o["kind"] == "face_design" and o["name"] == name)
         s.run("face.project", design=design)

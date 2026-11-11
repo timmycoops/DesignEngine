@@ -265,14 +265,15 @@ fn surface_import_triangulates_a_grid_and_logs_the_read() {
 #[test]
 fn save_and_open_carry_the_project_and_its_run_log() {
     let dir = std::env::temp_dir().join(format!("zd-commands-save-{}-{}", std::process::id(), zd_core::RunId::new()));
-    let path = dir.join("pit.zdproj");
+    let path = dir.join("pit.zdp");
     let mut s = Session::with_builtins();
     let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "design", "points": [[E, N, 1.25], [E + 9.5, N, 2.5]] })).unwrap())[0];
     let solid = created(&s.run("solid.from_mesh", box_mesh("seam A", [E, N, 100.0], [E + 10.0, N + 10.0, 110.0])).unwrap())[0];
     let surface = created(&s.run("surface.from_mesh", plane(104.0)).unwrap())[0];
     s.run("solid.cut_by_surface", json!({ "solid": solid, "surface": surface, "layer": "cuts" })).unwrap();
     let first = s.save(&path).unwrap();
-    assert_eq!(first.object_files_written, 8, "solid, surface and two cut parts: vertices + triangles each");
+    assert!(!first.unchanged && path.is_file(), "one file");
+    assert!(s.save(&path).unwrap().unchanged, "nothing changed since, so nothing written");
 
     let mut t = Session::open(&path).unwrap();
     let ids = |s: &Session| s.project().objects().map(|o| (o.id, o.revision, o.name.clone())).collect::<Vec<_>>();
@@ -283,7 +284,8 @@ fn save_and_open_carry_the_project_and_its_run_log() {
 
     t.run("string.move_vertex", json!({ "string": toe, "index": 1, "to": [E + 10.0, N + 1.0, 2.75] })).unwrap();
     let second = t.save(&path).unwrap();
-    assert_eq!((second.object_files_written, second.object_files_reused), (0, 8), "only the string changed");
+    assert!(!second.unchanged);
+    assert_eq!(second.encoded, 3, "the objects and strings tables and the string's attribute group: every mesh group kept from the open");
     assert_eq!(vertices(&Session::open(&path).unwrap(), toe)[1], [E + 10.0, N + 1.0, 2.75]);
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -408,7 +410,7 @@ fn a_hidden_object_stays_hidden_through_undo_and_a_save_and_a_command_still_take
     assert!(s.project().is_hidden(a), "a delete undone brings it back hidden");
 
     let dir = std::env::temp_dir().join(format!("zd-commands-hidden-{}-{}", std::process::id(), zd_core::RunId::new()));
-    let path = dir.join("pit.zdproj");
+    let path = dir.join("pit.zdp");
     s.save(&path).unwrap();
     let mut reopened = Session::open(&path).unwrap();
     assert!(reopened.project().is_hidden(a) && !reopened.project().is_hidden(b), "a save keeps it");
@@ -565,7 +567,7 @@ fn a_vulcan_seam_imports_as_grids_and_survives_a_save() {
         other => panic!("expected a grid, found {:?}", other.kind()),
     }
 
-    let path = dir.join("pit.zdproj");
+    let path = dir.join("pit.zdp");
     s.save(&path).unwrap();
     let reopened = Session::open(&path).unwrap();
     match &reopened.project().objects().find(|o| o.name == "UPPER ra").unwrap().body {

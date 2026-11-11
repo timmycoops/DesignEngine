@@ -187,13 +187,13 @@ fn the_pit_made_between_two_surfaces_inside_its_limit_slices_the_same() {
     assert_eq!(common::assert_solids_round_trip(&s), 17);
 }
 
-/// The made-up grid pit (`testdata/synthetic/Grid template.zdproj`, opened and never saved): each of its designs run,
+/// The made-up grid pit (`testdata/synthetic/Grid template.zdp`, or the older folder; opened and never saved): each of its designs run,
 /// its faces joined by strip, a pit made between the topography and the L floor inside a limit across the strips, and
 /// sliced by them. Prints what each run said, with timings.
 #[test]
 #[ignore = "runs every design of the grid template; opt in with --ignored"]
 fn the_made_up_grid_pit_sliced_by_its_strips() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/synthetic/Grid template.zdproj");
+    let path = grid_template();
     let mut s = Session::open(&path).unwrap();
     let named = |s: &Session, name: &str| s.project().objects().find(|o| o.name == name).unwrap_or_else(|| panic!("no '{name}'")).id;
     let (topo, floor) = (named(&s, "Topo"), named(&s, "L floor"));
@@ -239,7 +239,7 @@ fn the_made_up_grid_pit_sliced_by_its_strips() {
 #[test]
 #[ignore = "runs every design of the grid template twice; opt in with --ignored"]
 fn the_made_up_grid_pit_runs_the_same_twice() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/synthetic/Grid template.zdproj");
+    let path = grid_template();
     let designs: Vec<(String, ObjectId)> = Session::open(&path).unwrap().project().objects().filter(|o| matches!(o.body, Body::FaceDesign(_))).map(|o| (o.name.clone(), o.id)).collect();
     let faces = |design: ObjectId, name: &str| -> Option<Vec<(String, zd_core::TriMesh)>> {
         let mut s = Session::open(&path).unwrap();
@@ -530,4 +530,11 @@ fn a_builds_steps_join_into_one_face_by_its_name() {
     assert_eq!(s.project().object(strips[0]).unwrap().name, "PIT build Toe");
     // In front: 1000 x (the integral of 110 + z over RL 0 to 60, and of 120 + z over RL 60 to 100).
     assert_volume(volume(&s, strips[0]), 1000.0 * (110.0 * 60.0 + 1800.0 + 120.0 * 40.0 + 3200.0), "in front of the build");
+}
+
+/// The made-up grid pit: `Grid template.zdp` as `testdata/synthetic/grid_template.py` writes it now, else the
+/// `.zdproj` folder it wrote before (decision 0058).
+fn grid_template() -> std::path::PathBuf {
+    let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/synthetic");
+    [folder.join("Grid template.zdp"), folder.join("Grid template.zdproj")].into_iter().find(|p| p.exists()).expect("run testdata/synthetic/grid_template.py first")
 }

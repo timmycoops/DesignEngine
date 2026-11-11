@@ -236,10 +236,10 @@ fn a_consistent_stack_builds_with_no_issues_and_survives_a_save() {
     assert_eq!(roof.fingerprint.bytes, 88 + 8 * 231);
     assert_eq!(m.path(roof), t.0.join("pitcu.srg"), "linked in place, not copied");
 
-    let path = t.0.join("pit.zdproj");
+    let path = t.0.join("pit.zdp");
     s.save(&path).unwrap();
     assert_eq!(*model(&Session::open(&path).unwrap()), *m);
-    assert!(!path.join("objects").read_dir().unwrap().any(|_| true), "no grid data written into the project");
+    assert!(!String::from_utf8_lossy(&std::fs::read(&path).unwrap()).contains("grids/"), "no grid data written into the project");
 }
 
 #[test]

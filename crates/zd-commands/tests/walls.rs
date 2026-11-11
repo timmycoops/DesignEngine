@@ -508,9 +508,9 @@ fn a_design_saves_and_opens_with_the_project() {
     let points = [[E + 50.0, N + 60.0, 0.0], [E + 250.0, N + 60.0, 0.0]];
     let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "design", "points": points })).unwrap())[0];
     let design = created(&s.run("face.save_design", json!({ "name": "Pit design", "content": level_design(&[toe], floor, roof) })).unwrap())[0];
-    let dir = std::env::temp_dir().join(format!("zd-face-{}-{}.zdproj", std::process::id(), zd_core::RunId::new()));
-    s.save(&dir).unwrap();
-    let mut opened = Session::open(&dir).unwrap();
+    let dir = std::env::temp_dir().join(format!("zd-face-{}-{}", std::process::id(), zd_core::RunId::new()));
+    s.save(dir.join("pit.zdp")).unwrap();
+    let mut opened = Session::open(dir.join("pit.zdp")).unwrap();
     let body = |s: &Session| match &s.project().object(design).unwrap().body {
         Body::FaceDesign(d) => (**d).clone(),
         _ => panic!("a design comes back a design"),

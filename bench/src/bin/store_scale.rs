@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use bench::{count, out_dir, timed};
 use zd_core::{AttrValue, Attributes, Body, Change, Project, RunId, Solid, TriMesh};
-use zd_io::{FolderContainer, project_differences, read_project, write_project};
+use zd_io::{FolderContainer, Snapshot, ZdpStore, project_differences, read_project, write_project};
 
 /// A block `size` metres a side from `min`, each face cut into `k` by `k` squares: 12 k² triangles.
 fn block(min: [f64; 3], size: [f64; 3], k: usize) -> TriMesh {
@@ -88,4 +88,22 @@ fn main() {
     assert!(differences.is_empty(), "{:?}", &differences[..differences.len().min(5)]);
     let volume: f64 = read.project.objects().map(|o| if let Body::Solid(s) = &o.body { s.volume() } else { 0.0 }).sum();
     assert!((volume - solids as f64 * 20_000.0).abs() < 1e-6 * volume, "every block 50 x 40 x 10 m: {volume}");
+
+    // As one .zdp file: saved, opened, one block renamed and saved, then saved with nothing changed (decision 0058).
+    let path = out_dir().join("store-scale.zdp");
+    let first = ZdpStore::create(&path).save(&Snapshot::of(&project), "[]", true).expect("saved");
+    println!("file: {:.1} MB, first save {:.0} ms", first.bytes as f64 / 1e6, first.ms);
+    drop(project);
+    let ((mut store, read), ms) = timed(|| ZdpStore::open(&path).expect("opened"));
+    println!("opened in {ms:.0} ms");
+    let mut project = read.project;
+    let block = project.objects().next().expect("a block").clone();
+    project
+        .apply(RunId::new(), vec![Change::Revise { id: block.id, base: block.revision, name: Some("block 0 moved".into()), layer: None, attributes: None, body: None }])
+        .expect("renamed");
+    let changed = store.save(&Snapshot::of(&project), "[1]", true).expect("saved");
+    println!("save after one change: {:.0} ms, {} of {} entries encoded", changed.ms, changed.encoded, changed.entries);
+    let unchanged = store.save(&Snapshot::of(&project), "[1]", false).expect("saved");
+    assert!(unchanged.unchanged);
+    println!("save with nothing changed: {:.0} ms, nothing written", unchanged.ms);
 }
