@@ -30,7 +30,7 @@ pub use dxf::{ARC_SAGITTA, DxfDrawing, DxfEntity, DxfLog, DxfString, format_dxf,
 pub use error::IoError;
 pub use mesh_files::{MeshFile, MeshSelection, find_mesh_files};
 pub use seam::{
-    DefinedHorizon, LinkedGrid, SeamDefinition, StackGrids, fingerprint_file, format_seam_definition, parse_seam_definition,
+    DefinedHorizon, FolderCheck, LinkCheck, LinkedGrid, SeamDefinition, StackGrids, check_links, fingerprint_file, format_seam_definition, parse_seam_definition,
     read_linked_grid, read_linked_surface, read_seam_definition, read_stack_grids, write_seam_definition,
 };
 #[cfg(feature = "spry-fixtures")]
@@ -42,7 +42,7 @@ pub use vulcan::{ELEVATION_VARIABLES, VulcanGrid, VulcanLog, VulcanSeam, VulcanS
 pub use vulcan_tri::{VulcanTriLog, VulcanTriangulation, parse_vulcan_triangulation, plain_triangulation_bytes, read_vulcan_triangulation};
 pub use xyz::{GridImport, XyzLog, XyzOptions, parse_xyz_grid, read_xyz_grid, write_xyz_grid};
 pub use zdp::{
-    Container, EncodeCache, FolderContainer, LockInfo, MemoryContainer, ReadProject, SavedFile, Snapshot, WriteReport, ZDP_FORMAT, ZDP_VERSION, ZdpStore, encode_project,
+    Container, EncodeCache, FolderContainer, FolderLink, LockInfo, MemoryContainer, ReadProject, SavedFile, Snapshot, WriteReport, ZDP_FORMAT, ZDP_VERSION, ZdpStore, encode_project,
     project_differences, read_project, write_project,
 };
 

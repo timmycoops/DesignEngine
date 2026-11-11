@@ -136,7 +136,45 @@ All 17 projects saved under `testdata` still come back through the tables with n
 decision is now met. The `.zdp` file takes more memory than the folder because a save's cache holds the file's
 entries, so the first save after an open encodes only what changed.
 
+## Stage 4: links that survive a move
+
+Geology stays outside the project (decision 3 of the Store plan), so a seam model links to its grid folders. Each
+folder is now kept two ways in the file's manifest (`links`). One is as the model gives it: a mapped drive or a server
+path. The other is relative to the `.zdp` file (`../geology`, joined by `/`), with none when the folder is on another
+drive or server. A save records them from where the file is. A file that has moved writes them again at its next save,
+even if nothing else changed.
+
+Opening tries both. Where a seam model reads from a folder that isn't there, but the folder is found where it was
+relative to the project, the model is relinked to it by a `seam.relink` run. That run is logged, makes a new revision,
+and undoes like any other. A folder found neither way is left as it was and reported, and the project still opens.
+
+`seam.relink` points a whole folder at its new place in one step. Every grid the models read from `from`, or from a
+folder inside it, is read from the same place in `to`. Every file is checked there first:
+
+- If any file is missing, nothing is relinked and the missing files are named.
+- A file whose content differs from when the model was built is relinked and listed as a warning, as the model is out
+  of date until it is rebuilt.
+- A copy with a new time is not a change. Files compare by size and checksum; the time only saves reading a file that
+  hasn't been touched. The viewport now uses the same rule when it reads the stack.
+
+The app checks the links after it opens a project. It says what it relinked, offers to relink a folder with grids
+missing (a folder picked for each), and lists changed files. Seam model > Relink geology… does the same at any time.
+Python has `Session.links()` and `Session.open_notes`.
+
+Checked on made-up grids:
+
+- a project moved with its geology relinks itself on open;
+- a project moved alone lists what it can't find;
+- a relink with a file missing is refused;
+- a changed file is relinked and listed;
+- a copy rewritten with the same bytes is not a change.
+
+All 17 projects saved under `testdata` open, and the two seam models among them have every link whole.
+
+Not done: block model links (none exist yet), and links held as web addresses (the format allows them later).
+
 ## Still to come
 
-- **Stage 4:** links that survive a move: both locations tried, Relink by folder, fingerprints checked.
-- **Stage 4:** links that survive a move (both locations tried, Relink by folder, fingerprints checked).
+All four of this decision's stages are done. Left open on purpose, each with its own decision when needed: a recovery
+journal (autosave), meshes loaded on demand, a reserves run keeping its revisions (Phase 5), undo across closing, and
+the SQLite container.

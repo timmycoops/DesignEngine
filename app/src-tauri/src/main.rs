@@ -22,6 +22,7 @@ fn main() {
             commands::new_project,
             commands::open_project,
             commands::save_project,
+            commands::check_links,
             commands::set_layer_visible,
             commands::set_objects_visible,
             commands::set_looks,

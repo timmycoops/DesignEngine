@@ -71,7 +71,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   the user edits; `seam.suggest_definition` writes a starting one from the grids' geometry, never from names.
   Each horizon has a code, material, parent horizon (for splits), working flag, roof and floor grids, quality
   grids and a density grid. The model links to its grid files in place (fingerprinted, never copied into the
-  project); grids used for design are imported as objects. A seam exists where its roof is above its floor,
+  project); a project keeps each grid folder as given and relative to itself, opening tries both, and `seam.relink` points a
+  folder at its new place in one step (`docs/decisions/0058-one-file-a-project.md`); grids used for design are imported as objects. A seam exists where its roof is above its floor,
   whatever a file flags, and its surfaces carry on where it has no thickness. The stack is checked, never fixed: a floor above
   its roof, a crossing in the working section or a daughter outside its parent is flagged with its location,
   and blocks solids and reserves until the source grids are corrected. A definition may name an RL that means no

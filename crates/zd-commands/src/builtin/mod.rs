@@ -24,7 +24,7 @@ pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParam
 pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
 pub use layer::{CreateLayer, CreateLayerParams, DeleteLayer, DeleteLayerParams, RecolourLayer, RecolourLayerParams, RenameLayer, RenameLayerParams};
 pub use object::{DeleteObject, DeleteObjects, MoveObjects, MoveObjectsParams, ObjectParams, ObjectsParams, RenameObject, RenameParams};
-pub use seam::{BuildSeamModel, BuildSeamModelParams, SuggestSeamDefinition, SuggestSeamDefinitionParams};
+pub use seam::{BuildSeamModel, BuildSeamModelParams, ModelLinks, RelinkParams, RelinkSeamModels, SuggestSeamDefinition, SuggestSeamDefinitionParams, seam_links};
 pub(crate) use solid::check_solids_made;
 pub use spry::{ImportSpry, ImportSpryParams};
 pub use solid::{CutBySurface, CutBySurfaceParams, ImportSolid, ImportSolidParams, ImportSolids, ImportSolidsParams, RepairSolids, RepairSolidsParams, SolidFromMesh};
@@ -86,6 +86,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(ImportVulcanSeam);
     registry.register(SuggestSeamDefinition);
     registry.register(BuildSeamModel);
+    registry.register(RelinkSeamModels);
     registry.register(ExportDxf);
     registry.register(ExportCsv);
     registry.register(ExportSolids);

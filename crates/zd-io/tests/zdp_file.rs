@@ -207,3 +207,35 @@ fn a_large_surface_renamed_keeps_its_bytes_under_new_names() {
     let (_store, back) = ZdpStore::open(&path).unwrap();
     assert_eq!(project_differences(&project, &back.project), Vec::<String>::new());
 }
+
+/// Stage 4: each seam model's grid folder is kept as given and relative to the file, and a file that has moved
+/// records its new way to the folder at the next save, though nothing else changed.
+#[test]
+fn a_seam_model_folder_is_kept_both_ways() {
+    let dir = TempDir::new("zdpfile-links");
+    let geology = dir.0.join("geology");
+    let mut model = seam_model();
+    model.folder = geology.to_string_lossy().into_owned();
+    let mut project = zd_core::Project::new();
+    let made = project
+        .apply(RunId::new(), vec![Change::Create { name: "PIT seams".into(), layer: "geology".into(), attributes: Default::default(), body: zd_core::Body::SeamModel(std::sync::Arc::new(model)) }])
+        .unwrap();
+    let id = made.changes[0].id;
+
+    let path = dir.0.join("pit").join("pit.zdp");
+    ZdpStore::create(&path).save(&Snapshot::of(&project), "[]", true).unwrap();
+    let (_store, read) = ZdpStore::open(&path).unwrap();
+    assert_eq!(read.links, [zd_io::FolderLink { object: id, folder: geology.to_string_lossy().into_owned(), from_project: Some("../geology".into()) }]);
+    drop(_store);
+
+    let moved = dir.0.join("pits").join("2026").join("pit.zdp");
+    std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+    std::fs::rename(&path, &moved).unwrap();
+    let (mut store, read) = ZdpStore::open(&moved).unwrap();
+    assert_eq!(read.links[0].from_project.as_deref(), Some("../geology"), "as saved, before it moved");
+    let saved = store.save(&Snapshot::of(&read.project), "[]", false).unwrap();
+    assert!(!saved.unchanged, "the way to the grids changed with the move");
+    assert!(store.save(&Snapshot::of(&read.project), "[]", false).unwrap().unchanged);
+    drop(store);
+    assert_eq!(ZdpStore::open(&moved).unwrap().1.links[0].from_project.as_deref(), Some("../../geology"));
+}

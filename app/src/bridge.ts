@@ -402,6 +402,31 @@ export const undo = () => invoke<ProjectSummary>('undo');
 export const redo = () => invoke<ProjectSummary>('redo');
 export const newProject = () => invoke<ProjectSummary>('new_project');
 export const openProject = (path: string) => invoke<ProjectSummary>('open_project', { path });
+
+/** One folder a seam model reads its grids from, with how many of them are there (decision 0058, stage 4). */
+export interface FolderCheck {
+  folder: string;
+  files: number;
+  missing: number;
+}
+
+/** A seam model's grid files checked where they are now. */
+export interface ModelLinks {
+  object: string;
+  name: string;
+  folders: FolderCheck[];
+  /** Files whose content differs from when the model was built. */
+  changed: string[];
+}
+
+export interface LinksReply {
+  /** What opening did: models relinked to grid folders found beside the project, and folders found neither way. */
+  notes: string[];
+  models: ModelLinks[];
+}
+
+/** Every seam model's grids checked where they are now. */
+export const checkLinks = () => invoke<LinksReply>('check_links');
 /** Saves to `path` (a `.zdp` file), or to the file last opened or saved. */
 export const saveProject = (path?: string) => invoke<SaveReply>('save_project', { path: path ?? null });
 export const setLayerVisible = (layer: string, visible: boolean) =>

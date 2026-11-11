@@ -22,7 +22,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use zd_core::{Fingerprint, Grid, GridLink, SeamModel, blank_no_seam, blank_no_thickness};
+use serde::Serialize;
+use zd_core::{Fingerprint, Grid, GridLink, SeamModel, blank_no_seam, blank_no_thickness, same_path};
 
 use crate::text::{csv_cell, csv_fields, decode_text};
 use crate::{IoError, XyzOptions, parse_vulcan_grid, parse_xyz_grid, vulcan_grid_name};
@@ -316,7 +317,7 @@ pub fn read_stack_grids(model: &SeamModel) -> Result<StackGrids, IoError> {
     let (mut grids, mut changed) = (Vec::with_capacity(links.len()), Vec::new());
     for (link, result) in links.iter().zip(read) {
         let linked = result.map_err(|e| IoError::Unsupported(format!("{}: {e}", link.file)))?;
-        if linked.fingerprint != link.fingerprint {
+        if !linked.fingerprint.same_content(&link.fingerprint) {
             changed.push(link.file.clone());
         }
         grids.push(linked.grid);
@@ -333,6 +334,70 @@ pub fn read_stack_grids(model: &SeamModel) -> Result<StackGrids, IoError> {
         }
     }
     Ok(StackGrids { roofs, floors, changed })
+}
+
+/// Where a seam model's grid files are now, against what it recorded (decision 0058, stage 4).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LinkCheck {
+    /// Each folder the model reads from, with how many of its grids are there.
+    pub folders: Vec<FolderCheck>,
+    /// Files whose content differs from when the model was built: it is out of date until rebuilt.
+    pub changed: Vec<String>,
+}
+
+/// One folder a model reads from.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FolderCheck {
+    pub folder: String,
+    /// Grid files the model reads from it.
+    pub files: usize,
+    /// Of those, the ones that aren't there.
+    pub missing: usize,
+}
+
+impl LinkCheck {
+    /// Every grid is where the model says, as it was.
+    pub fn is_whole(&self) -> bool {
+        self.changed.is_empty() && self.folders.iter().all(|f| f.missing == 0)
+    }
+}
+
+/// Checks that every grid a model links to is where it says, with the content it recorded. A file the same size
+/// and time as recorded is taken as unchanged; one with a new time is read whole and compared by checksum, so a
+/// copy is not mistaken for a change. Files are checked across the machine's cores.
+pub fn check_links(model: &SeamModel) -> LinkCheck {
+    let folders = model.folders();
+    let links: Vec<(usize, PathBuf, Fingerprint)> = model
+        .links()
+        .map(|(_, _, link)| {
+            let path = model.path(link);
+            let folder = if Path::new(&link.file).is_absolute() { path.parent().and_then(|p| folders.iter().position(|f| same_path(Path::new(f), p))).unwrap_or(0) } else { 0 };
+            (folder, path, link.fingerprint)
+        })
+        .collect();
+    let found: Vec<Option<bool>> = crate::zdp::in_parallel(links.iter().collect(), |(_, path, recorded)| unchanged(path, recorded));
+    let mut out = LinkCheck { folders: folders.into_iter().map(|folder| FolderCheck { folder, files: 0, missing: 0 }).collect(), changed: Vec::new() };
+    for ((folder, path, _), found) in links.iter().zip(found) {
+        out.folders[*folder].files += 1;
+        match found {
+            None => out.folders[*folder].missing += 1,
+            Some(false) => out.changed.push(path.to_string_lossy().into_owned()),
+            Some(true) => {}
+        }
+    }
+    out
+}
+
+/// Whether the file at `path` holds what was recorded; `None` when it can't be found or read.
+fn unchanged(path: &Path, recorded: &Fingerprint) -> Option<bool> {
+    let meta = std::fs::metadata(path).ok().filter(|m| m.is_file())?;
+    if meta.len() != recorded.bytes {
+        return Some(false);
+    }
+    if modified_ms(path).ok() == Some(recorded.modified_unix_ms) {
+        return Some(true);
+    }
+    fingerprint_file(path).ok().map(|now| now.same_content(recorded))
 }
 
 /// The fingerprint of a file as it is now, to compare with the one a model recorded.

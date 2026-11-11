@@ -23,6 +23,13 @@ pub struct Fingerprint {
     pub checksum: u64,
 }
 
+impl Fingerprint {
+    /// The same bytes, whatever the file's time: a copied file keeps its content but not always its time.
+    pub fn same_content(&self, other: &Fingerprint) -> bool {
+        self.bytes == other.bytes && self.checksum == other.checksum
+    }
+}
+
 /// A grid file the model reads in place.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GridLink {
@@ -159,12 +166,90 @@ impl SeamModel {
         if file.is_absolute() { file.to_path_buf() } else { Path::new(&self.folder).join(file) }
     }
 
+    /// The folders the model reads from: its own, then the folder of any grid linked by a full path, each once.
+    pub fn folders(&self) -> Vec<String> {
+        let mut out = vec![self.folder.clone()];
+        for (_, _, link) in self.links() {
+            let file = Path::new(&link.file);
+            if file.is_absolute()
+                && let Some(parent) = file.parent()
+                && !out.iter().any(|f| same_path(Path::new(f), parent))
+            {
+                out.push(parent.to_string_lossy().into_owned());
+            }
+        }
+        out
+    }
+
+    /// The model reading every grid that was in `from`, or a folder inside it, from the same place in `to`
+    /// (decision 0058, stage 4). `None` when it read nothing from `from`. Fingerprints are left as they are, for the
+    /// caller to check against the files where they are now.
+    pub fn relinked(&self, from: &Path, to: &Path) -> Option<SeamModel> {
+        let mut out = self.clone();
+        let mut moved = false;
+        if let Some(folder) = moved_path(Path::new(&self.folder), from, to) {
+            out.folder = folder.to_string_lossy().into_owned();
+            moved = true;
+        }
+        for horizon in &mut out.horizons {
+            for link in [&mut horizon.roof, &mut horizon.floor].into_iter().chain(horizon.grids.values_mut()) {
+                let file = Path::new(&link.file);
+                if file.is_absolute()
+                    && let Some(file) = moved_path(file, from, to)
+                {
+                    link.file = file.to_string_lossy().into_owned();
+                    moved = true;
+                }
+            }
+        }
+        moved.then_some(out)
+    }
+
     /// Every grid file the model links to, roof and floor first for each horizon.
     pub fn links(&self) -> impl Iterator<Item = (&Horizon, &str, &GridLink)> {
         self.horizons.iter().flat_map(|h| {
             [("roof", &h.roof), ("floor", &h.floor)].into_iter().chain(h.grids.iter().map(|(v, l)| (v.as_str(), l))).map(move |(v, l)| (h, v, l))
         })
     }
+}
+
+/// `path` moved from `from` to `to`, when it is `from` or inside it. Folders are compared by name, ignoring case on
+/// Windows, where `D:\Grids` and `d:\grids` are one folder.
+pub fn moved_path(path: &Path, from: &Path, to: &Path) -> Option<PathBuf> {
+    let mut rest = path.components();
+    for want in from.components() {
+        if !same_component(want, rest.next()?) {
+            return None;
+        }
+    }
+    let rest = rest.as_path();
+    Some(if rest.as_os_str().is_empty() { to.to_path_buf() } else { to.join(rest) })
+}
+
+/// Whether two paths name one place, compared as [`moved_path`] does.
+pub fn same_path(a: &Path, b: &Path) -> bool {
+    a.components().count() == b.components().count() && moved_path(a, b, b).is_some()
+}
+
+/// How to get from the folder `from` to `to`, as `..` steps and folder names joined by `/`, which every system reads.
+/// Both must be full paths; `None` when they're on different drives or servers, where no relative path reaches.
+pub fn relative_path(from: &Path, to: &Path) -> Option<String> {
+    if !(from.is_absolute() && to.is_absolute()) {
+        return None;
+    }
+    let (from, to): (Vec<_>, Vec<_>) = (from.components().collect(), to.components().collect());
+    let common = from.iter().zip(&to).take_while(|(a, b)| same_component(**a, **b)).count();
+    // A drive, or a server and share, is the first component on Windows, so a path on another shares nothing.
+    if common == 0 {
+        return None;
+    }
+    let mut steps: Vec<String> = from[common..].iter().map(|_| "..".to_string()).collect();
+    steps.extend(to[common..].iter().map(|c| c.as_os_str().to_string_lossy().into_owned()));
+    Some(if steps.is_empty() { ".".into() } else { steps.join("/") })
+}
+
+fn same_component(a: std::path::Component<'_>, b: std::path::Component<'_>) -> bool {
+    if cfg!(windows) { a.as_os_str().to_string_lossy().eq_ignore_ascii_case(&b.as_os_str().to_string_lossy()) } else { a == b }
 }
 
 /// Blanks a horizon where it has no thickness: a seam exists only where its roof is above its floor,
@@ -245,6 +330,57 @@ mod tests {
         assert_eq!(links[..3], [("a", "roof"), ("a", "floor"), ("a", "rd")]);
         assert_eq!(m.path(&m.horizons[0].roof), Path::new("grids").join("a.srg"));
         assert_eq!(m.horizon("al").unwrap().parent.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn a_model_relinks_by_folder() {
+        let mut m = model();
+        m.folder = Path::new("old").join("grids").to_string_lossy().into_owned();
+        let elsewhere = std::env::temp_dir().join("survey").join("au.rag");
+        m.horizons[1].grids.insert("ra".into(), link(&elsewhere.to_string_lossy()));
+        assert_eq!(m.folders(), [m.folder.clone(), elsewhere.parent().unwrap().to_string_lossy().into_owned()]);
+
+        let new = Path::new("new").join("geology");
+        let moved = m.relinked(Path::new("old"), &new).expect("the model's folder is in old");
+        assert_eq!(Path::new(&moved.folder), new.join("grids"));
+        assert_eq!(moved.path(&moved.horizons[0].roof), new.join("grids").join("a.srg"), "relative links move with the folder");
+        assert_eq!(moved.horizons[1].grids["ra"], m.horizons[1].grids["ra"], "a grid outside the folder stays");
+        assert_eq!(moved.horizons[0].roof.fingerprint, m.horizons[0].roof.fingerprint);
+
+        let moved = m.relinked(elsewhere.parent().unwrap(), &new).unwrap();
+        assert_eq!(Path::new(&moved.horizons[1].grids["ra"].file), new.join("au.rag"));
+        assert_eq!(moved.folder, m.folder);
+        assert!(m.relinked(Path::new("older"), &new).is_none(), "old is not older: compared by folder, not by text");
+    }
+
+    #[test]
+    fn a_folder_is_found_relative_to_another() {
+        let base = std::env::temp_dir().join("pits").join("pit b");
+        let grids = std::env::temp_dir().join("pits").join("geology").join("2026");
+        assert_eq!(relative_path(&base, &grids).as_deref(), Some("../geology/2026"));
+        assert_eq!(base.join(relative_path(&base, &grids).unwrap()).join("x.srg").components().count(), base.components().count() + 4);
+        assert_eq!(relative_path(&base, &base.join("grids")).as_deref(), Some("grids"));
+        assert_eq!(relative_path(&base, &base).as_deref(), Some("."));
+        assert_eq!(relative_path(Path::new("pits"), &grids), None, "not a full path");
+        if cfg!(windows) {
+            assert_eq!(relative_path(Path::new(r"C:\pits"), Path::new(r"D:\grids")), None, "another drive");
+            assert_eq!(relative_path(Path::new(r"C:\Pits\B"), Path::new(r"c:\pits\grids")).as_deref(), Some("../grids"));
+            assert_eq!(relative_path(Path::new(r"\\server\share\pits"), Path::new(r"\\server\other\grids")), None, "another share");
+        }
+    }
+
+    #[test]
+    fn folders_compare_by_name() {
+        assert!(same_path(Path::new("a/b/."), Path::new("a/b")));
+        assert!(!same_path(Path::new("a/b"), Path::new("a")));
+        assert_eq!(moved_path(Path::new("a/b/c.srg"), Path::new("a"), Path::new("x")), Some(Path::new("x").join("b").join("c.srg")));
+        assert_eq!(moved_path(Path::new("a"), Path::new("a/b"), Path::new("x")), None);
+        if cfg!(windows) {
+            assert!(same_path(Path::new(r"D:\Grids\PIT"), Path::new(r"d:\grids\pit")));
+        }
+        let content = Fingerprint { bytes: 4, modified_unix_ms: 1, checksum: 9 };
+        assert!(content.same_content(&Fingerprint { modified_unix_ms: 2, ..content }), "copied, a new time");
+        assert!(!content.same_content(&Fingerprint { checksum: 8, ..content }));
     }
 
     #[test]
