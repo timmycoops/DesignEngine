@@ -4,12 +4,12 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use zd_core::{AppliedChange, Body, Colouring, Contours, LayerId, ObjectId, ObjectRef, Project, RunId, same_path};
+use zd_core::{AppliedChange, Body, Change, Colouring, Contours, LayerId, ObjectId, ObjectRef, Project, RunId, same_path};
 use zd_io::{FolderLink, ProjectStore, SavedFile, Snapshot, ZdpStore};
 
 use crate::builtin::{ModelLinks, check_solids_made, seam_links};
 use crate::command::Inputs;
-use crate::{CommandError, Registry};
+use crate::{Code, CommandError, Note, Registry};
 
 /// A run that panicked, refused with what the panic said.
 fn stopped_on_a_panic(command: &str, panic: &(dyn std::any::Any + Send)) -> CommandError {
@@ -19,6 +19,7 @@ fn stopped_on_a_panic(command: &str, panic: &(dyn std::any::Any + Send)) -> Comm
 
 /// The serialisable record of one run, successful or not.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "SavedRun")]
 pub struct RunRecord {
     pub run: RunId,
     pub command: String,
@@ -31,9 +32,55 @@ pub struct RunRecord {
     pub layers_created: Vec<String>,
     pub started_unix_ms: u64,
     pub duration_ms: f64,
-    /// Repair logs, warnings and timings the command reported.
+    /// What the run reported, each line a note (decision 0059).
+    pub notes: Vec<Note>,
+    /// The notes' sentences, in order, as runs reported them before notes.
     pub messages: Vec<String>,
     pub status: RunStatus,
+    /// The kind of refusal, when the run was refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<Code>,
+}
+
+/// A run as saved, by this build or one before notes, whose runs hold only `messages`: those read as info notes.
+#[derive(Deserialize)]
+struct SavedRun {
+    run: RunId,
+    command: String,
+    params: Value,
+    inputs: Vec<ObjectRef>,
+    outputs: Vec<AppliedChange>,
+    layers_created: Vec<String>,
+    started_unix_ms: u64,
+    duration_ms: f64,
+    #[serde(default)]
+    notes: Option<Vec<Note>>,
+    #[serde(default)]
+    messages: Vec<String>,
+    status: RunStatus,
+    #[serde(default)]
+    refused: Option<Code>,
+}
+
+impl From<SavedRun> for RunRecord {
+    fn from(r: SavedRun) -> Self {
+        let notes = r.notes.unwrap_or_else(|| r.messages.iter().map(Note::info).collect());
+        let messages = notes.iter().map(|n| n.text.clone()).collect();
+        RunRecord {
+            run: r.run,
+            command: r.command,
+            params: r.params,
+            inputs: r.inputs,
+            outputs: r.outputs,
+            layers_created: r.layers_created,
+            started_unix_ms: r.started_unix_ms,
+            duration_ms: r.duration_ms,
+            notes,
+            messages,
+            status: r.status,
+            refused: r.refused,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -46,6 +93,7 @@ pub enum RunStatus {
 /// The run log: every run, undo, redo, save and open, in order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant, reason = "a log holds runs mostly, and few entries; boxing them buys nothing")]
 pub enum LogEntry {
     Run(RunRecord),
     Undo { run: RunId, at_unix_ms: u64 },
@@ -98,6 +146,33 @@ fn lexically_normal(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// Which object each of a run's changes is about, so a note on what the run made can name it once it has an id.
+struct ChangedObjects {
+    /// For each change: whether it's an object's, and the id it already names (none for one it creates).
+    changes: Vec<(bool, Option<ObjectId>)>,
+}
+
+fn changed_objects(changes: &[Change]) -> ChangedObjects {
+    ChangedObjects {
+        changes: changes
+            .iter()
+            .map(|c| match c {
+                Change::Create { .. } => (true, None),
+                Change::Revise { id, .. } | Change::Delete { id, .. } => (true, Some(*id)),
+                _ => (false, None),
+            })
+            .collect(),
+    }
+}
+
+impl ChangedObjects {
+    /// Each change's object, taking the ids the project gave, in order, one an object's change.
+    fn resolve(&self, applied: &[AppliedChange]) -> Vec<Option<ObjectId>> {
+        let mut given = applied.iter();
+        self.changes.iter().map(|&(object, id)| if object { given.next().map(|a| a.id).or(id) } else { None }).collect()
+    }
 }
 
 /// Where a save goes: a `.zdproj` folder saves as a `.zdp` file beside it, of the same name.
@@ -281,13 +356,16 @@ impl Session {
             layers_created: Vec::new(),
             started_unix_ms,
             duration_ms: 0.0,
+            notes: Vec::new(),
             messages: Vec::new(),
             status: RunStatus::Ok,
+            refused: None,
         };
         let result = self.execute(run, command, &params, &mut record);
         record.duration_ms = clock.elapsed().as_secs_f64() * 1e3;
         if let Err(e) = &result {
             record.status = RunStatus::Failed(e.to_string());
+            record.refused = Some(e.code());
         }
         self.log.push(LogEntry::Run(record.clone()));
         result.map(|()| record)
@@ -307,9 +385,17 @@ impl Session {
         record.inputs = inputs.into_read();
         let (outcome, canonical, checked) = guarded.unwrap_or_else(|panic| Err(stopped_on_a_panic(record.command.as_str(), panic.as_ref())))?;
         record.params = canonical;
-        record.messages = outcome.messages;
+        record.notes = outcome.messages.into_iter().map(Note::info).chain(outcome.notes).collect();
+        record.messages = record.notes.iter().map(|n| n.text.clone()).collect();
         checked?;
+        let ids = changed_objects(&outcome.changes);
         let applied = self.project.apply(run, outcome.changes)?;
+        let made = ids.resolve(&applied.changes);
+        for note in &mut record.notes {
+            if let Some(index) = note.made.take() {
+                note.object = made.get(index).copied().flatten();
+            }
+        }
         record.outputs = applied.changes;
         record.layers_created = applied.layers_created.into_iter().map(|l| l.name).collect();
         Ok(())

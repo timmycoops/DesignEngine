@@ -371,8 +371,34 @@ export interface RunRecord {
   layers_created: string[];
   started_unix_ms: number;
   duration_ms: number;
+  /** What the run reported, each line a note (decision 0059). */
+  notes: Note[];
+  /** The notes' sentences, in order. */
   messages: string[];
   status: 'ok' | { failed: string };
+  /** The kind of refusal, such as `refused.invalid`, when the run was refused. */
+  refused?: string;
+}
+
+/** How much a note matters. */
+export type Severity = 'info' | 'warning' | 'blocking';
+
+/** Where a note is, in mine grid coordinates. */
+export type Place =
+  | { kind: 'point'; at: [number, number, number] }
+  | { kind: 'plan'; at: [number, number] }
+  | { kind: 'stretch'; from: [number, number, number]; to: [number, number, number] };
+
+/** One line of what a run reports: its severity, a fixed code for what happened, the sentence, and where. */
+export interface Note {
+  severity: Severity;
+  /** A fixed name, such as `wall.no_height`; none for a line not yet given one. */
+  code?: string;
+  text: string;
+  /** The object it's about. */
+  object?: string;
+  place?: Place;
+  value?: { value: number; unit: string };
 }
 
 export interface RunReply {
