@@ -12,7 +12,7 @@ use zd_io::{ARC_SAGITTA, CsvLog, DxfDrawing, DxfEntity, format_dxf, is_zip, pars
 use super::solid::{Cleaning, Welded, weld_as_needed};
 use super::surface::default_tolerance;
 
-use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
+use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
 /// `string.import`: strings from a DXF file (POLYLINE, LWPOLYLINE and LINE) or a CSV file.
 pub struct ImportStrings;
@@ -520,8 +520,8 @@ impl Command for ExportSolids {
             outcome = outcome.message(format!("{shared} names are shared by more than one solid: the files after the first are numbered, and {SOLIDS_CSV} says which is which"));
         }
         if !left_out.is_empty() {
-            outcome = outcome.message(format!("{} solids left out, as their files don't read back the same:", left_out.len()));
-            outcome.messages.extend(left_out.into_iter().take(10));
+            outcome.warned(Code::ExportLeftOut, [format!("{} solids left out, as their files don't read back the same:", left_out.len())]);
+            outcome.warned(Code::ExportLeftOut, left_out.into_iter().take(10));
         }
         Ok(outcome)
     }

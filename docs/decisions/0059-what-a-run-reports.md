@@ -74,7 +74,37 @@ Checked:
 - On the made-up grid pit, every fault the geometry can place has its place: 233 of its 235 warnings. The two without
   are a step with no height anywhere and a strip that couldn't be built, which name the strip's string instead.
 
+## Workstream 3: every other command
+
+`Outcome` holds only notes now: `message` adds an info note and `said` several, in the order written. A command that
+mixes plain lines with coded warnings keeps them in order, as the record has no separate list of messages any more.
+The solid check that runs after every command (solids in pieces, cavities, the crossing search) adds its notes last,
+as it always said its lines.
+
+Twenty-two more codes cover:
+
+- **Seam models:** a seam left out of a suggested definition, and each stack issue. A crossing, a floor above its roof,
+  a daughter outside its parent or unpaired nulls is blocking or a warning as the model decides it, placed at its worst
+  node in plan and measured by its overlap in metres (or in nodes where there's no overlap). A working horizon with no
+  density grid is a warning.
+- **Links:** a relink that finds files changed since the model was built.
+- **Meshes:** a surface that crosses itself (kept, flagged, refused by cuts), placed at the first crossing. Solids made
+  in pieces, and solids holding cavities.
+- **Imports:** files or meshes refused, solids whose volume differs from Deswik's, Spry's or the source's own, meshes
+  kept as surfaces as they couldn't be solids, and grids of a seam skipped.
+- **Cuts:** a solid wholly on one side, solids the surface doesn't cover, and solids left uncut.
+- **Exports:** solids left out because their files don't read back the same.
+- **Strings:** vertices with no surface under them when draped, and strings a numbering line doesn't cross or crosses
+  more than once.
+
+What's only information stays an info note with no code: counts, timings, what a repair did, and what a check found
+clean. Every phrase the app's word list looks for now comes from a coded warning. The list also caught some
+information as warnings, such as "none crosses itself", and those are info notes now.
+
+Checked: a surface crossing itself is placed at the crossing; a seam crossing is blocking at its worst node with its
+1.5 m overlap; a changed link is flagged; refused files and strings not crossed carry their codes. All 611 engine tests
+and the Python test pass.
+
 ## Still to come
 
-- **Workstream 3:** seam models, imports and repair, exports, links and the rest.
 - **Workstream 4:** the app colours by severity, a note with a place gets Show, and the 17-word list goes.

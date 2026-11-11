@@ -5,7 +5,7 @@ use zd_geom::{
 };
 
 use super::finite;
-use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
+use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Severity};
 
 fn string_input() -> Field {
     Field::object("string", ObjectKind::String, "The string to edit")
@@ -505,7 +505,8 @@ impl Command for NumberStrings {
                 None => missed.push(object.name.as_str()),
             }
             if crossings.len() > 1 {
-                messages.push(format!("{} crosses the line {} times: numbered where it first does", object.name, crossings.len()));
+                let text = format!("{} crosses the line {} times: numbered where it first does", object.name, crossings.len());
+                messages.push(Note::new(Severity::Info, Some(Code::StringCrossesAgain), text).on(object.id));
             }
         }
         if crossed.is_empty() {
@@ -520,11 +521,10 @@ impl Command for NumberStrings {
         });
         let mut outcome = Outcome::new(changes.collect()).message(format!("Numbered {} strings from {} to {}", crossed.len(), number(0), number(crossed.len() - 1)));
         if !missed.is_empty() {
-            outcome = outcome.message(format!("The line didn't cross {}: left as they were", missed.join(", ")));
+            let text = format!("The line didn't cross {}: left as they were", missed.join(", "));
+            outcome.notes.push(Note::warning(Code::StringNotCrossed, text).measured(missed.len() as f64, "strings"));
         }
-        for message in messages {
-            outcome = outcome.message(message);
-        }
+        outcome.notes.extend(messages);
         Ok(outcome)
     }
 }
@@ -576,10 +576,14 @@ impl Command for DrapeString {
         };
         let (draped, log) = drape_string(line, mesh, p.crossings).map_err(|e| CommandError::Invalid(e.to_string()))?;
         let mut message = format!("draped on {}: {} crossings added", target.name, log.crossings_added);
+        let mut note = Note::info("");
         if log.off_surface > 0 {
             message += &format!("; {} vertices have no surface under them and keep their elevations", log.off_surface);
+            note = Note::warning(Code::StringOffSurface, "").measured(log.off_surface as f64, "vertices");
         }
-        Ok(Outcome::new(vec![Change::revise_body(object, Body::String(draped))]).message(message))
+        let mut outcome = Outcome::new(vec![Change::revise_body(object, Body::String(draped))]);
+        outcome.notes.push(Note { text: message, ..note }.on(object.id));
+        Ok(outcome)
     }
 }
 

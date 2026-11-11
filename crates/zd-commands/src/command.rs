@@ -5,7 +5,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use zd_core::{Body, Change, Layer, LayerId, Object, ObjectId, ObjectKind, ObjectRef, Polyline, Project, Solid, Surface};
 
-use crate::{CommandError, CommandSpec, Note};
+use crate::{Code, CommandError, CommandSpec, Note};
 
 /// One operation. Implementations are stateless: everything a run needs comes in `params` and
 /// through `inputs`, and everything it makes goes out as the changeset in its [`Outcome`].
@@ -20,25 +20,33 @@ pub trait Command: Send + Sync + 'static {
     fn run(&self, inputs: &Inputs<'_>, params: &Self::Params) -> Result<Outcome, CommandError>;
 }
 
-/// What a run asks for: the changes to apply together, and what it reports (decision 0059). A command reports
-/// either plain messages, each read as an info note, or notes with their codes and places; the run record lists the
-/// messages first.
+/// What a run asks for: the changes to apply together, and what it reports, a note a line in the order said (decision
+/// 0059).
 #[derive(Debug, Default)]
 pub struct Outcome {
     pub changes: Vec<Change>,
-    /// Plain sentences: repair logs, warnings and timings not yet given a code.
-    pub messages: Vec<String>,
     pub notes: Vec<Note>,
 }
 
 impl Outcome {
     pub fn new(changes: Vec<Change>) -> Self {
-        Outcome { changes, messages: Vec::new(), notes: Vec::new() }
+        Outcome { changes, notes: Vec::new() }
     }
 
+    /// A plain sentence: what the run did, as an info note.
     pub fn message(mut self, message: impl Into<String>) -> Self {
-        self.messages.push(message.into());
+        self.notes.push(Note::info(message));
         self
+    }
+
+    /// Plain sentences, each an info note, in order.
+    pub fn said(&mut self, lines: impl IntoIterator<Item = impl Into<String>>) {
+        self.notes.extend(lines.into_iter().map(Note::info));
+    }
+
+    /// Sentences that each warn of `code`, in order.
+    pub fn warned(&mut self, code: Code, lines: impl IntoIterator<Item = impl Into<String>>) {
+        self.notes.extend(lines.into_iter().map(|line| Note::warning(code, line)));
     }
 }
 

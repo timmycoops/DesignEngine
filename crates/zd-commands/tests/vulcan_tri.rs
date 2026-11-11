@@ -181,6 +181,7 @@ fn a_zip_and_a_folder_import_in_one_run_and_a_refused_file_is_named() {
     assert!(record.messages[0].starts_with("5 .00t and DXF files from 1 zip and 1 folder; 1 other files left out"), "{:?}", record.messages);
     let refused = record.messages.iter().position(|m| m == "1 files refused, nothing saved for them:").expect("the refusal is reported");
     assert!(record.messages[refused + 1].contains("relimits.zip!gap.00t"), "{:?}", record.messages);
+    assert!(record.notes[refused..=refused + 1].iter().all(|n| n.code == Some(zd_commands::Code::ImportRefused) && n.severity == zd_commands::Severity::Warning));
 
     // One run, so one undo takes them all off.
     assert!(s.undo().is_some());

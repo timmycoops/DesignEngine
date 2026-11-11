@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
-use zd_commands::{RunRecord, Session};
+use zd_commands::{Code, Place, RunRecord, Session, Severity};
 use zd_core::{Attributes, Body, Change, ChangeKind, CrossingCheck, ObjectId, Project, RunId, Solid, Surface, TriMesh};
 use zd_geom::triangulate_grid;
 use zd_io::ProjectStore;
@@ -117,6 +117,12 @@ fn a_crossing_is_flagged_on_import_and_refused_by_cuts() {
         "{}",
         record.messages[2]
     );
+    // A surface that crosses itself is kept and flagged: the line warns, placed at the crossing (0059).
+    let note = &record.notes[2];
+    assert_eq!((note.severity, note.code), (Severity::Warning, Some(Code::MeshCrossing)));
+    let Some(Place::Point { at }) = note.place else { panic!("a point: {:?}", note.place) };
+    assert!((at[0] - 650_002.5).abs() < 1e-3 && (at[1] - 7_450_002.0).abs() < 1e-3 && at[2].abs() < 1e-3, "{at:?}");
+    assert_eq!(note.value.as_ref().map(|v| (v.value, v.unit.as_str())), Some((1.0, "pairs")));
     let design = created(&record)[0];
     let flagged = surface(&s, design);
     assert_eq!(flagged.validity().non_self_intersecting, Some(false));

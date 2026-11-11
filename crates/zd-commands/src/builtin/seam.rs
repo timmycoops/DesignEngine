@@ -9,7 +9,7 @@ use zd_geom::{StackHorizon, check_seam_stack, suggest_no_seam_rl, suggest_seam_t
 use zd_io::{DefinedHorizon, LinkCheck, SeamDefinition, check_links, fingerprint_file, read_linked_grid, read_linked_surface, read_seam_definition, read_vulcan_grid, vulcan_grid_name, write_seam_definition};
 
 use super::in_parallel;
-use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
+use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Place};
 
 fn default_tolerance() -> f64 {
     0.001
@@ -107,7 +107,7 @@ impl Command for SuggestSeamDefinition {
         for (i, code) in codes.iter().enumerate() {
             match (pairs.next().expect("roof read"), pairs.next().expect("floor read")) {
                 (Ok(roof), Ok(floor)) => usable.push((i, roof, floor)),
-                (Err(e), _) | (_, Err(e)) => messages.push(format!("left out {code}: {e}")),
+                (Err(e), _) | (_, Err(e)) => messages.push(Note::warning(Code::SeamLeftOut, format!("left out {code}: {e}"))),
             }
         }
         // The main lattice is the one most roofs are on; seams on any other are left out.
@@ -120,12 +120,13 @@ impl Command for SuggestSeamDefinition {
             }
         }
         let Some(&(main, _)) = counts.iter().max_by_key(|(_, n)| *n) else {
-            return Err(CommandError::Invalid(format!("no seam's roof and floor could be read: {}", messages.join("; "))));
+            let said: Vec<&str> = messages.iter().map(|n| n.text.as_str()).collect();
+            return Err(CommandError::Invalid(format!("no seam's roof and floor could be read: {}", said.join("; "))));
         };
         usable.retain(|(i, roof, floor)| {
             let same = Lattice::from(roof) == main && Lattice::from(floor) == main;
             if !same {
-                messages.push(format!("left out {}: not on the main {} x {} lattice", codes[*i], main.cols, main.rows));
+                messages.push(Note::warning(Code::SeamLeftOut, format!("left out {}: not on the main {} x {} lattice", codes[*i], main.cols, main.rows)));
             }
             same
         });
@@ -134,11 +135,11 @@ impl Command for SuggestSeamDefinition {
         let roofs: Vec<&Grid> = usable.iter().map(|(_, r, _)| r).collect();
         let no_seam = suggest_no_seam_rl(&roofs);
         if let Some((rl, least, most)) = no_seam {
-            messages.push(format!(
+            messages.push(Note::info(format!(
                 "every roof tops out at RL {rl}, flat at {:.0} to {:.0} % of its nodes: written as no_seam, so those nodes read as no seam; delete the line if that RL is real",
                 100.0 * least,
                 100.0 * most
-            ));
+            )));
             for (_, roof, floor) in &mut usable {
                 blank_no_seam(roof, floor, rl);
             }
@@ -177,9 +178,7 @@ impl Command for SuggestSeamDefinition {
             let role = if h.working { "working" } else { "parent" };
             outcome = outcome.message(format!("{}{} ({role}, {} other grids)", "  ".repeat(depth), h.code, h.grids.len()));
         }
-        for m in messages {
-            outcome = outcome.message(m);
-        }
+        outcome.notes.extend(messages);
         Ok(outcome)
     }
 }
@@ -338,9 +337,7 @@ impl Command for BuildSeamModel {
         for note in notes {
             outcome = outcome.message(note);
         }
-        for issue in &issues {
-            outcome = outcome.message(describe_issue(issue));
-        }
+        outcome.notes.extend(issues.iter().map(issue_note));
         let blocking = issues.iter().filter(|i| i.blocking).count();
         outcome = outcome.message(if blocking == 0 {
             "No blocking issues: the stack can be used for solids and reserves".to_string()
@@ -370,7 +367,7 @@ impl Command for BuildSeamModel {
             SeamModel { folder: definition.folder.to_string_lossy().into_owned(), density, tolerance: p.tolerance, lattice, no_seam: definition.no_seam, z_range, horizons, issues };
         let name = p.name.clone().unwrap_or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "seam model".into()));
         let mut done = Outcome::new(vec![Change::Create { name, layer: p.layer.clone(), attributes: Attributes::new(), body: Body::SeamModel(Arc::new(model)) }]);
-        done.messages = outcome.messages;
+        done.notes = outcome.notes;
         Ok(done)
     }
 }
@@ -390,6 +387,23 @@ fn describe_horizon(h: &DefinedHorizon, roof: &Grid, floor: &Grid, tolerance: f6
     let max = thickness.iter().copied().fold(0.0, f64::max);
     let mean = thickness.iter().sum::<f64>() / thickness.len() as f64;
     format!("{}: {place}; {} at {} of {} nodes, up to {max:.2} m thick (mean {mean:.2} m)", h.code, h.material, thickness.len(), roof.z.len())
+}
+
+/// A stack issue as a note: blocking or a warning, with its code, the worst node in plan and how far it overlaps.
+fn issue_note(issue: &StackIssue) -> Note {
+    let code = match issue.kind {
+        IssueKind::FloorAboveRoof => Code::SeamFloorAboveRoof,
+        IssueKind::Crossing => Code::SeamCrossing,
+        IssueKind::OutsideParent => Code::SeamOutsideParent,
+        IssueKind::Unpaired => Code::SeamUnpaired,
+        IssueKind::NoDensity => Code::SeamNoDensity,
+    };
+    let note = if issue.blocking { Note::blocking(code, describe_issue(issue)) } else { Note::warning(code, describe_issue(issue)) };
+    let note = if issue.worst > 0.0 { note.measured(issue.worst, "m") } else if issue.nodes > 0 { note.measured(issue.nodes as f64, "nodes") } else { note };
+    match issue.at {
+        Some(at) => note.at(Place::Plan { at }),
+        None => note,
+    }
 }
 
 fn describe_issue(issue: &StackIssue) -> String {
@@ -532,19 +546,19 @@ impl Command for RelinkSeamModels {
                     changed.push(path.to_string_lossy().into_owned());
                 }
             }
-            messages.push(format!("{}: {files} grid files now read from {}", object.name, p.to));
+            messages.push(Note::info(format!("{}: {files} grid files now read from {}", object.name, p.to)).on(object.id));
             if !changed.is_empty() {
-                messages.push(format!(
+                messages.push(Note::warning(Code::LinkChanged, format!(
                     "WARNING: {}: {} files differ from when the model was built, so it is out of date until it is rebuilt: {}",
                     object.name,
                     changed.len(),
                     listed(&changed)
-                ));
+                )).measured(changed.len() as f64, "files").on(object.id));
             }
             changes.push(Change::revise_body(object, Body::SeamModel(Arc::new(relinked))));
         }
         let mut outcome = Outcome::new(changes);
-        outcome.messages = messages;
+        outcome.notes = messages;
         Ok(outcome)
     }
 }

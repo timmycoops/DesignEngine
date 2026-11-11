@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, ObjectKind};
 use zd_io::{ELEVATION_VARIABLES, read_vulcan_seam};
 
-use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
+use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome};
 
 /// `grid.import_vulcan_seam`: every grid of one name from a folder of Vulcan grids
 /// (`<prefix><seam>.<variable>g`), each as a grid object named "<SEAM> <variable>" (e.g. "UPPER sr")
@@ -89,7 +89,7 @@ impl Command for ImportVulcanSeam {
             });
         }
         for (variable, reason) in seam.skipped {
-            outcome = outcome.message(format!("skipped {variable}: {reason}"));
+            outcome.notes.push(Note::warning(Code::ImportSkipped, format!("skipped {variable}: {reason}")));
         }
         Ok(outcome)
     }

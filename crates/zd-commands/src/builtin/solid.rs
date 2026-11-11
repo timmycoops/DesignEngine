@@ -15,7 +15,7 @@ use zd_io::{MeshFile, MeshSelection, SurfaceImport, find_mesh_files, read_surfac
 use super::exchange::describe_dxf_faces;
 use super::in_parallel;
 use super::surface::{MeshParams, check_crossings, check_solid_crossings, default_tolerance, describe, describe_repair, describe_vulcan, mesh_params, mm, site};
-use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
+use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Severity};
 
 /// `solid.from_mesh`: a solid from vertices and triangles given inline; refused unless watertight
 /// and free of crossings by the solid rules (decisions 0010, 0014).
@@ -118,7 +118,7 @@ impl Command for ImportSolid {
         let ImportedSolid { solid, attributes, messages, .. } = solid_from_file(read, &p.path, &name, cleaning)?;
         let volume = format!("volume {:.3} m3", solid.volume());
         let mut outcome = Outcome::new(vec![Change::Create { name, layer: p.layer.clone(), attributes, body: Body::Solid(solid) }]);
-        outcome.messages = messages;
+        outcome.said(messages);
         Ok(outcome.message(volume))
     }
 }
@@ -200,14 +200,14 @@ impl Command for ImportSolids {
         let repeated = selection.files.iter().filter(|f| !names.insert(f.name.as_str())).count();
 
         let mut outcome = Outcome::new(changes).message(found);
-        outcome.messages.extend(lines);
+        outcome.said(lines);
         outcome = outcome.message(tally.describe(cleaning.weld_tolerance, start.elapsed().as_secs_f64() * 1e3));
         if repeated > 0 {
             outcome = outcome.message(format!("{repeated} files share a name with another file: their solids share it too"));
         }
         if !refused.is_empty() {
-            outcome = outcome.message(format!("{} files refused, nothing saved for them:", refused.len()));
-            outcome.messages.extend(refused);
+            outcome.warned(Code::ImportRefused, [format!("{} files refused, nothing saved for them:", refused.len())]);
+            outcome.warned(Code::ImportRefused, refused);
         }
         Ok(outcome)
     }
@@ -323,14 +323,14 @@ impl Command for RepairSolids {
         outcome = outcome.message(tally.describe(cleaning.weld_tolerance, ms));
         if !differ.is_empty() {
             differ.sort_by(|a, b| (b.2 - b.3).abs().total_cmp(&(a.2 - a.3).abs()));
-            outcome = outcome.message(format!("{} repaired solids differ from the source's own volume by more than a millionth, the largest first:", differ.len()));
-            outcome.messages.extend(differ.iter().take(LINES_PER_SOLID_UP_TO).map(|(name, source, ours, theirs)| {
+            outcome.warned(Code::ImportVolumeDiffers, [format!("{} repaired solids differ from the source's own volume by more than a millionth, the largest first:", differ.len())]);
+            outcome.warned(Code::ImportVolumeDiffers, differ.iter().take(LINES_PER_SOLID_UP_TO).map(|(name, source, ours, theirs)| {
                 format!("{name}: {ours:.3} m3 here, {theirs:.3} m3 in {source} ({:+.4} %)", 100.0 * (ours - theirs) / theirs)
             }));
         }
         if !still.is_empty() {
-            outcome = outcome.message(format!("{} still not solids, kept as surfaces with why on each:", still.len()));
-            outcome.messages.extend(still.into_iter().take(LINES_PER_SOLID_UP_TO));
+            outcome.warned(Code::SolidNotASolid, [format!("{} still not solids, kept as surfaces with why on each:", still.len())]);
+            outcome.warned(Code::SolidNotASolid, still.into_iter().take(LINES_PER_SOLID_UP_TO));
         }
         Ok(outcome)
     }
@@ -781,7 +781,7 @@ pub(crate) fn first_open_edge(mesh: &TriMesh) -> Option<[f64; 3]> {
 /// One already searched by them (an import, a mesh given inline) is taken as it is; any other (a
 /// cut's parts) is searched now and keeps the result. A solid that would cross itself stops the run,
 /// so none is ever saved. Watertightness needs no check here: a `Solid` cannot be made otherwise.
-pub(crate) fn check_solids_made(changes: &mut [Change], messages: &mut Vec<String>) -> Result<(), CommandError> {
+pub(crate) fn check_solids_made(changes: &mut [Change], notes: &mut Vec<Note>) -> Result<(), CommandError> {
     let start = std::time::Instant::now();
     let (mut searched, mut thin, mut triangles) = (0, 0, 0);
     let mut made = PiecesMade::default();
@@ -810,13 +810,13 @@ pub(crate) fn check_solids_made(changes: &mut [Change], messages: &mut Vec<Strin
         triangles += solid.mesh().triangle_count();
         *solid = solid.clone().with_crossings(crossings);
     }
-    messages.extend(made.words());
+    notes.extend(made.notes());
     if searched > 0 {
         let thin = if thin > 0 { format!(" ({thin} thin pairs, kept)") } else { String::new() };
-        messages.push(format!(
+        notes.push(Note::info(format!(
             "{searched} solids made, checked by the solid rules: none crosses itself{thin} ({triangles} triangles, {:.0} ms)",
             start.elapsed().as_secs_f64() * 1e3
-        ));
+        )));
     }
     Ok(())
 }
@@ -857,10 +857,10 @@ impl PiecesMade {
         }
     }
 
-    fn words(&self) -> Vec<String> {
+    fn notes(&self) -> Vec<Note> {
         let mut lines = Vec::new();
         if let Some((least, name)) = &self.smallest {
-            lines.push(if self.solids == 1 {
+            let text = if self.solids == 1 {
                 format!("'{name}' is in {} pieces; the smallest is {}", self.pieces, small_volume(*least))
             } else {
                 format!(
@@ -870,14 +870,16 @@ impl PiecesMade {
                     self.pieces,
                     small_volume(*least)
                 )
-            });
+            };
+            lines.push(Note::warning(Code::SolidInPieces, text).measured(*least, "m3"));
         }
         if self.with_cavities > 0 {
-            lines.push(if self.solids == 1 {
+            let text = if self.solids == 1 {
                 format!("it holds {} cavities, {:.3} m3 taken out of its volume", self.cavities, self.cavity_volume)
             } else {
                 format!("{} of the {} solids made hold cavities, {} in all, {:.3} m3 taken out of their volume", self.with_cavities, self.solids, self.cavities, self.cavity_volume)
-            });
+            };
+            lines.push(Note::new(Severity::Info, Some(Code::SolidCavities), text).measured(self.cavity_volume, "m3"));
         }
         lines
     }
@@ -917,14 +919,14 @@ fn refuse_crossings(what: &str, name: &str, crossings: &Crossings) -> Result<(),
 
 /// A cut's input: its saved crossing check, or a search now if it has none. A solid's must be by
 /// the solid rules: one saved before decision 0014 is searched again.
-pub(super) fn checked_input(what: &str, name: &str, saved: Option<&Crossings>, mesh: &TriMesh, solid: bool, messages: &mut Vec<String>) -> Result<(), CommandError> {
+pub(super) fn checked_input(what: &str, name: &str, saved: Option<&Crossings>, mesh: &TriMesh, solid: bool, notes: &mut Vec<Note>) -> Result<(), CommandError> {
     let current = saved.filter(|c| !solid || matches!(c.check, CrossingCheck::SolidSearch { .. }));
     let found = match current {
         Some(crossings) => crossings.clone(),
         None => {
             let check = if solid { check_solid_crossings } else { check_crossings };
             let (crossings, line) = check(mesh, default_tolerance());
-            messages.push(format!("{what} '{name}' {line}"));
+            notes.push(Note::info(format!("{what} '{name}' {line}")));
             crossings
         }
     };
@@ -1069,7 +1071,7 @@ impl Command for CutBySurface {
         let cut_ms = start.elapsed().as_secs_f64() * 1e3;
 
         let few = solids.len() <= LINES_PER_SOLID_UP_TO;
-        let mut outcome = Outcome { messages: checks, ..Outcome::default() };
+        let mut outcome = Outcome { notes: checks, ..Outcome::default() };
         let (mut kept, mut volume_kept, mut wholly, mut thin) = ([0usize; 2], [0.0f64; 2], [0usize; 2], 0usize);
         // The largest difference between a solid and its parts, with the solid and its volume.
         let mut worst: (f64, &str, f64) = (0.0, "", 0.0);
@@ -1117,7 +1119,7 @@ impl Command for CutBySurface {
                 if out[k] == 0 {
                     wholly[1 - k] += 1;
                     if few && p.keep.keeps(side) {
-                        outcome = outcome.message(format!("{whose}nothing of the solid lies {side} {by}"));
+                        outcome.notes.push(Note::warning(Code::CutNothingOnSide, format!("{whose}nothing of the solid lies {side} {by}")).on(object.id));
                     }
                 }
             }
@@ -1175,17 +1177,15 @@ impl Command for CutBySurface {
             outcome = outcome.message(format!("{} parts checked by the solid rules before saving: none crosses itself{thin}", kept[0] + kept[1]));
         }
         if !uncovered.is_empty() {
-            outcome = outcome.message(format!(
-                "warning: {by} does not cover {} solids in plan, the first '{}'; the uncovered part is counted as above",
-                uncovered.len(),
-                uncovered[0]
-            ));
+            let text = format!("warning: {by} does not cover {} solids in plan, the first '{}'; the uncovered part is counted as above", uncovered.len(), uncovered[0]);
+            outcome.notes.push(Note::warning(Code::CutNotCovered, text).measured(uncovered.len() as f64, "solids"));
         }
         if recut > 0 {
             outcome = outcome.message(format!("{recut} solids cut again with the whole of {by}: a part of the cut made with the surface near them failed its check"));
         }
         if !uncut.is_empty() {
-            outcome = outcome.message(format!("{} solids left uncut, nothing saved for them: {}", uncut.len(), uncut.iter().take(5).cloned().collect::<Vec<_>>().join("; ")));
+            let text = format!("{} solids left uncut, nothing saved for them: {}", uncut.len(), uncut.iter().take(5).cloned().collect::<Vec<_>>().join("; "));
+            outcome.notes.push(Note::warning(Code::CutUncut, text).measured(uncut.len() as f64, "solids"));
         }
         Ok(outcome)
     }
@@ -1319,18 +1319,20 @@ mod tests {
         assert!((pieces.cavity_volume - 1.0).abs() < 1e-9 && (Solid::new(holed.clone()).unwrap().volume() - 999.0).abs() < 1e-9, "{pieces:?}");
 
         let mut changes = vec![made("whole", cube(0.0)), made("two", two), made("holed", holed)];
-        let mut messages = Vec::new();
-        check_solids_made(&mut changes, &mut messages).unwrap();
-        assert_eq!(messages[0], "1 of the 3 solids made are in several pieces, 2 pieces in all; the smallest piece is 8.000 m3, in 'two'");
-        assert_eq!(messages[1], "1 of the 3 solids made hold cavities, 1 in all, 1.000 m3 taken out of their volume");
+        let mut notes = Vec::new();
+        check_solids_made(&mut changes, &mut notes).unwrap();
+        assert_eq!(notes[0].text, "1 of the 3 solids made are in several pieces, 2 pieces in all; the smallest piece is 8.000 m3, in 'two'");
+        assert_eq!((notes[0].severity, notes[0].code), (Severity::Warning, Some(Code::SolidInPieces)));
+        assert_eq!(notes[1].text, "1 of the 3 solids made hold cavities, 1 in all, 1.000 m3 taken out of their volume");
+        assert_eq!((notes[1].code, notes[1].value.as_ref().map(|v| v.value)), (Some(Code::SolidCavities), Some(1.0)));
 
         // One solid on its own is named; a solid in one piece with no cavity says nothing.
-        let mut messages = Vec::new();
-        check_solids_made(&mut [made("two", join(&[cube(100.0), scaled(120.0, 100.0, 2.0)]))], &mut messages).unwrap();
-        assert_eq!(messages[0], "'two' is in 2 pieces; the smallest is 8.000 m3");
-        let mut messages = Vec::new();
-        check_solids_made(&mut [made("whole", cube(0.0))], &mut messages).unwrap();
-        assert_eq!(messages.len(), 1, "only the crossing check's line: {messages:?}");
+        let mut notes = Vec::new();
+        check_solids_made(&mut [made("two", join(&[cube(100.0), scaled(120.0, 100.0, 2.0)]))], &mut notes).unwrap();
+        assert_eq!(notes[0].text, "'two' is in 2 pieces; the smallest is 8.000 m3");
+        let mut notes = Vec::new();
+        check_solids_made(&mut [made("whole", cube(0.0))], &mut notes).unwrap();
+        assert_eq!(notes.len(), 1, "only the crossing check's line: {notes:?}");
     }
 
     #[test]
@@ -1342,8 +1344,8 @@ mod tests {
         vertices.extend(&b.vertices);
         let triangles = a.triangles.iter().copied().chain(b.triangles.iter().map(|t| t.map(|i| i + 8))).collect();
         let mut changes = vec![made("clean", cube(30.0)), made("overlap", TriMesh::new(vertices, triangles))];
-        let mut messages = Vec::new();
-        let refused = check_solids_made(&mut changes, &mut messages).unwrap_err().to_string();
+        let mut notes = Vec::new();
+        let refused = check_solids_made(&mut changes, &mut notes).unwrap_err().to_string();
         assert!(refused.contains("'overlap' would cross itself") && refused.contains("no solid that crosses itself is saved"), "{refused}");
 
         // A clean solid is searched and keeps the check; one searched by the solid rules already is
@@ -1354,10 +1356,10 @@ mod tests {
             Change::Create { name: "imported".into(), layer: "made".into(), attributes: Attributes::new(), body: Body::Solid(searched) },
             Change::CreateLayer { name: "other".into(), colour: None },
         ];
-        let mut messages = Vec::new();
-        check_solids_made(&mut changes, &mut messages).unwrap();
-        assert_eq!(messages.len(), 1);
-        assert!(messages[0].starts_with("1 solids made, checked by the solid rules: none crosses itself (12 triangles"), "{messages:?}");
+        let mut notes = Vec::new();
+        check_solids_made(&mut changes, &mut notes).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].text.starts_with("1 solids made, checked by the solid rules: none crosses itself (12 triangles"), "{notes:?}");
         let Change::Create { body: Body::Solid(clean), .. } = &changes[0] else { panic!() };
         assert!(matches!(clean.crossings().map(|c| c.check), Some(CrossingCheck::SolidSearch { .. })));
         assert_eq!(clean.validity().non_self_intersecting, Some(true));

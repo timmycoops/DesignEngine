@@ -2,7 +2,7 @@
 //! (draw, grade, offset, drape) with exact answers, undone back to an empty project and saved.
 
 use serde_json::json;
-use zd_commands::{RunRecord, Session};
+use zd_commands::{Code, RunRecord, Session, Severity};
 use zd_core::{AttrValue, Body, ChangeKind, ObjectId};
 
 const E: f64 = 650_000.0;
@@ -66,6 +66,8 @@ fn a_line_across_numbers_strings_in_the_order_it_crosses_them() {
     assert_eq!(number(&s, aside, "strip"), None);
     assert!(record.messages.iter().any(|m| m == "Numbered 3 strings from 20 to 22"), "{:?}", record.messages);
     assert!(record.messages.iter().any(|m| m == "The line didn't cross aside: left as they were"), "{:?}", record.messages);
+    let missed = record.notes.iter().find(|n| n.code == Some(Code::StringNotCrossed)).unwrap();
+    assert_eq!((missed.severity, missed.text.as_str()), (Severity::Warning, "The line didn't cross aside: left as they were"));
 
     // Drawn the other way, counting down, in a name of Tim's own. Geometry doesn't change.
     let before = vertices(&s, far);
