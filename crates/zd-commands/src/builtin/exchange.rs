@@ -370,7 +370,7 @@ impl Command for ExportSolids {
             if p.separator.is_empty() || p.separator.chars().any(|c| c.is_control() || "<>:\"/\\|?*".contains(c)) {
                 return Err(CommandError::Invalid(format!("the separator {:?} can't go in a file's name", p.separator)));
             }
-            let unknown: Vec<&str> = p.name_from.iter().map(String::as_str).filter(|key| !matches!(*key, "name" | "layer") && !objects.iter().any(|o| o.attributes.contains_key(*key))).collect();
+            let unknown: Vec<&str> = p.name_from.iter().map(String::as_str).filter(|key| !matches!(*key, "name" | "layer") && !objects.iter().any(|o| o.attributes.contains_key(key))).collect();
             if !unknown.is_empty() {
                 return Err(CommandError::Invalid(format!("none of the solids has the attribute {}: name files from attributes they carry, or from name or layer", unknown.join(", "))));
             }
@@ -438,7 +438,7 @@ impl Command for ExportSolids {
             Ok::<Vec<u8>, String>(text.into_bytes())
         });
 
-        let keys: BTreeSet<&str> = objects.iter().flat_map(|o| o.attributes.keys().map(String::as_str)).collect();
+        let keys: BTreeSet<&str> = objects.iter().flat_map(|o| o.attributes.keys()).collect();
         let mut csv = String::from("id,file,deswik_layer,name,layer,volume_m3,triangles,pieces");
         keys.iter().for_each(|key| {
             csv.push(',');
@@ -472,7 +472,7 @@ impl Command for ExportSolids {
             ));
             for key in &keys {
                 csv.push(',');
-                match object.attributes.get(*key) {
+                match object.attributes.get(key) {
                     Some(AttrValue::Number(v)) => csv.push_str(&v.to_string()),
                     Some(AttrValue::Bool(v)) => csv.push_str(&v.to_string()),
                     Some(AttrValue::Text(v)) => csv.push_str(&csv_cell(v)),

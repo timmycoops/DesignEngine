@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -216,7 +215,7 @@ pub enum AttrValue {
     Text(String),
 }
 
-pub type Attributes = BTreeMap<String, AttrValue>;
+pub use crate::attributes::Attributes;
 
 /// One revision of an object. Revisions never change once made; an edit makes the next one.
 #[derive(Debug, Clone)]

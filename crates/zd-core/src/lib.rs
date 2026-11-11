@@ -4,6 +4,7 @@
 //! (ids, layers, objects and their revisions), and the project that holds every revision with an
 //! undo history. Commands live in `zd-commands`.
 
+mod attributes;
 mod bounds;
 mod display;
 mod face;
@@ -15,6 +16,7 @@ mod project;
 mod seam;
 mod validity;
 
+pub use attributes::intern;
 pub use bounds::Aabb;
 pub use display::{Colouring, Contours, Display, Look};
 pub use face::{AzimuthSector, FaceDesign, FaceDirection, FaceLine, FaceProfile, HorizonValue, LineEdit, LineOn, MOST_TOLERANCE, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, USUAL_TURN_JOIN, WallRule, WallSide};
