@@ -550,7 +550,7 @@ fn attributes_table(objects: &[Arc<Object>], first: usize) -> Result<Vec<u8>, St
     for (i, o) in objects.iter().enumerate() {
         for (key, value) in &o.attributes {
             object.push((first + i) as u32);
-            name.push(Some(key.clone()));
+            name.push(Some(key));
             let (n, t, f) = match value {
                 AttrValue::Number(n) => (Some(*n), None, None),
                 AttrValue::Text(t) => (None, Some(t.clone()), None),
@@ -563,7 +563,7 @@ fn attributes_table(objects: &[Arc<Object>], first: usize) -> Result<Vec<u8>, St
     }
     encode(vec![
         column("object", Arc::new(UInt32Array::from(object)), false),
-        column("name", strs(name), false),
+        column("name", Arc::new(StringArray::from(name)) as ArrayRef, false),
         column("number", f64s_opt(number), true),
         column("text", strs(text), true),
         column("flag", Arc::new(BooleanArray::from(flag)), true),
@@ -735,20 +735,10 @@ pub fn read_project(input: &(impl Container + Sync)) -> Result<ReadProject, Stor
     }
 
     let mut attributes: Vec<Attributes> = vec![Attributes::new(); rows];
-    for (name, table) in tables.iter().filter(|(n, _)| n.starts_with("attributes/")) {
-        let (object, key, number, text, flag) = (table.u32s("object")?, table.strs("name")?, table.f64s_opt("number")?, table.strs_opt("text")?, table.bools_opt("flag")?);
-        for i in 0..object.len() {
-            let value = match (number[i], text[i].clone(), flag[i]) {
-                (Some(n), None, None) => AttrValue::Number(n),
-                (None, Some(t), None) => AttrValue::Text(t),
-                (None, None, Some(b)) => AttrValue::Bool(b),
-                _ => return Err(StoreError::Format(format!("{name}: row {i} holds no value, or more than one"))),
-            };
-            let row = object[i] as usize;
-            if row >= rows {
-                return Err(StoreError::Format(format!("{name}: row {i} names object {row} of {rows}")));
-            }
-            attributes[row].insert(key[i].clone(), value);
+    let groups: Vec<(&String, &Table)> = tables.iter().filter(|(n, _)| n.starts_with("attributes/")).collect();
+    for group in in_parallel(groups, |(name, table)| attribute_group(name, table, rows)) {
+        for (row, values) in group? {
+            attributes[row] = values;
         }
     }
 
@@ -878,6 +868,54 @@ pub fn read_project(input: &(impl Container + Sync)) -> Result<ReadProject, Stor
     }
     let project = Project::from_saved(manifest.layers, built).map_err(StoreError::Project)?.with_hidden(manifest.hidden).with_display(manifest.display);
     Ok(ReadProject { project, run_log, ms: start.elapsed().as_secs_f64() * 1e3 })
+}
+
+/// One attribute group's objects and their attributes, read straight from the table's arrays: each name is looked
+/// up once a group (names held once, stage 3), and an object's rows, written in name order, become its attributes.
+fn attribute_group(name: &str, table: &Table, rows: usize) -> Result<Vec<(usize, Attributes)>, StoreError> {
+    let objects = table.arrays::<UInt32Array>("object", &DataType::UInt32)?;
+    let names = table.arrays::<StringArray>("name", &DataType::Utf8)?;
+    let numbers = table.arrays::<Float64Array>("number", &DataType::Float64)?;
+    let texts = table.arrays::<StringArray>("text", &DataType::Utf8)?;
+    let flags = table.arrays::<BooleanArray>("flag", &DataType::Boolean)?;
+    let mut interned: HashMap<&str, &'static str> = HashMap::new();
+    let mut out: Vec<(usize, Attributes)> = Vec::new();
+    let mut current: Option<(usize, Vec<(&'static str, AttrValue)>)> = None;
+    let mut index = 0;
+    for b in 0..objects.len() {
+        let (object, names, numbers, texts, flags) = (objects[b], names[b], numbers[b], texts[b], flags[b]);
+        for i in 0..object.len() {
+            let at = index;
+            index += 1;
+            if object.is_null(i) || names.is_null(i) {
+                return Err(StoreError::Format(format!("{name}: row {at} has no object or no name")));
+            }
+            let row = object.value(i) as usize;
+            if row >= rows {
+                return Err(StoreError::Format(format!("{name}: row {at} names object {row} of {rows}")));
+            }
+            let value = match (numbers.is_valid(i), texts.is_valid(i), flags.is_valid(i)) {
+                (true, false, false) => AttrValue::Number(numbers.value(i)),
+                (false, true, false) => AttrValue::Text(texts.value(i).to_string()),
+                (false, false, true) => AttrValue::Bool(flags.value(i)),
+                _ => return Err(StoreError::Format(format!("{name}: row {at} holds no value, or more than one"))),
+            };
+            let key = names.value(i);
+            let key = *interned.entry(key).or_insert_with(|| zd_core::intern(key));
+            match &mut current {
+                Some((r, entries)) if *r == row => entries.push((key, value)),
+                _ => {
+                    if let Some((r, entries)) = current.replace((row, vec![(key, value)])) {
+                        out.push((r, Attributes::from_iter(entries)));
+                    }
+                }
+            }
+        }
+    }
+    if let Some((r, entries)) = current {
+        out.push((r, Attributes::from_iter(entries)));
+    }
+    Ok(out)
 }
 
 /// Where two projects differ in anything a save keeps, one line each; empty when they're the same. Coordinates,

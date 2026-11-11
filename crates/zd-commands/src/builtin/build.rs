@@ -450,7 +450,7 @@ fn targets_of(step: &BuildOp) -> Vec<StepTarget> {
 /// roads that came out on it, which the step carries on or ends, or the marks of a design.
 fn kept_attributes(attributes: &Attributes) -> Attributes {
     let gone = |key: &str| key.starts_with(&format!("{ROAD_TOP} ")) || [BUILD, BUILD_STEP, BUILD_ID, BUILD_ON, BUILD_RECORD, MADE_BY, STEP_ROW, ROAD, ROAD_FACE].contains(&key);
-    attributes.iter().filter(|(key, _)| !gone(key)).map(|(key, value)| (key.clone(), value.clone())).collect()
+    attributes.iter().filter(|(key, _)| !gone(key)).map(|(key, value)| (key, value.clone())).collect()
 }
 
 /// The roads that came out on a line, as their tops there say, with the width, grade and ways they were built with (decision

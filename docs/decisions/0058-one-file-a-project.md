@@ -1,6 +1,6 @@
 # 0058 — One file a project: `.zdp`, a zip of Parquet tables
 
-Date: 2026-11-11 · Status: accepted; stages 1 and 2 built (Tim, 2026-11-11: "a single file is going to be required", "happy with the zip
+Date: 2026-11-11 · Status: accepted; stages 1 to 3 built (Tim, 2026-11-11: "a single file is going to be required", "happy with the zip
 logic like a Deswik file", "lock in the .zdp file format name", "Yep agree" to the targets). Item 3 of the Review
 10 Nov order; the plan and its measurements are on the Build Plan's Store plan tab. Replaces the folder layout of 0004
 once stage 2 lands.
@@ -110,7 +110,33 @@ Against the targets: saves meet them (one change under 0.5 s, the 101k project u
 nothing written when nothing changed, one file of about 100 MB). **Open doesn't yet**: 3.3 s against 2 s at 43k, and
 14.3 s against 5 s at 200k. Both are mostly building every attribute one by one, which is stage 3's job.
 
+## Stage 3: attribute names held once
+
+`zd_core::Attributes` was a map of its own strings on every object: 11 million name strings on the 43k project, and
+50 million on the made-up 200k one. It is now a short list of name and value, kept in name order, whose names are
+interned (`zd_core::intern`): each held once for the program and pointed to by every object that has it. It reads,
+iterates and saves as the map did (`get`, `insert` with a `String`, indexing, `extend`, collecting, the same JSON, the
+same order), so commands, the app and Python see no change beyond `keys()` and `iter()` giving `&'static str`. An
+interned name is never freed; attribute names are column names, a few hundred to a project, so that's bounded in
+practice.
+
+Reading a `.zdp` builds each attribute group across cores straight from the table's arrays, looking each name up once
+a group.
+
+Measured on 11 November (release build, local disk):
+
+| | Before stage 3 | After | Target |
+|---|---|---|---|
+| Open the 43k project (`.zdp`) | 3.3 s | 0.84 s | under 2 s |
+| Open the made-up 200k project (`.zdp`) | 14.3 s | 2.1 s | under 5 s |
+| Memory once the 43k project is open | 1.7 GB (folder) | 786 MB (`.zdp`), 651 MB (folder) | under 1 GB |
+| Save after one change, 43k / 200k | 152 ms / 481 ms | 144 ms / 407 ms | under 0.5 s |
+
+All 17 projects saved under `testdata` still come back through the tables with no difference. Every target of this
+decision is now met. The `.zdp` file takes more memory than the folder because a save's cache holds the file's
+entries, so the first save after an open encodes only what changed.
+
 ## Still to come
 
-- **Stage 3:** attribute names held once in memory, which open's time and the memory target wait on.
+- **Stage 4:** links that survive a move: both locations tried, Relink by folder, fingerprints checked.
 - **Stage 4:** links that survive a move (both locations tried, Relink by folder, fingerprints checked).

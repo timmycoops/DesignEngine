@@ -949,7 +949,7 @@ pub mod fixtures {
                 i32s(&mut attributes, [handle, values.len() as i32]);
                 let mut tail = Vec::new();
                 for (name, value) in values {
-                    let key = (name.clone(), kind_of(value));
+                    let key = (name.to_string(), kind_of(value));
                     let id = match ids.get(&key) {
                         Some(id) => *id,
                         None => {

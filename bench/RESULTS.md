@@ -359,6 +359,9 @@ As one `.zdp` file (stage 2, same day): the made-up project is a 95.0 MB file, s
 saved after one block renamed in 481 ms (3 of 604 entries encoded), and saved with nothing changed in 412 ms with
 nothing written. The real projects' figures are in decision 0058.
 
+With attribute names held once (stage 3, same day): read back in 1.47 s (was 9.8 s), the file opened in 2.1 s (was
+14.3 s), saved first in 1.0 s, after one change in 407 ms, and with nothing changed in 314 ms.
+
 ## Follow-ups
 
 1. **Re-run on real data.** Put a pit in `testdata/golden/<pit>/` (topo, `<seam>_roof`,

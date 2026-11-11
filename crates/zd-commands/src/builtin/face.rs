@@ -504,7 +504,7 @@ impl<'a> FaceRun<'a, '_> {
         // What a run makes keeps its string's attributes, so a strip's number carries on to its face. Not the roads that
         // came out on the string, which this run has carried on or left, nor the row it was in its own design.
         let attributes = || {
-            let mut kept: Attributes = string.attributes.iter().filter(|(key, _)| !key.starts_with(&format!("{ROAD_TOP} ")) && key.as_str() != STEP_ROW).map(|(key, value)| (key.clone(), value.clone())).collect();
+            let mut kept: Attributes = string.attributes.iter().filter(|(key, _)| !key.starts_with(&format!("{ROAD_TOP} ")) && *key != STEP_ROW).map(|(key, value)| (key, value.clone())).collect();
             kept.insert(MADE_BY.to_string(), AttrValue::Text(self.id.to_string()));
             kept
         };
