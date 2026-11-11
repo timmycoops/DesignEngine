@@ -473,6 +473,17 @@ fn tims_template_rebuilt_from_an_edited_crest() {
 }
 
 /// Copies a folder, for a project opened here to leave the original alone.
+/// The made-up grid pit: `Grid template.zdp` as `testdata/synthetic/grid_template.py` writes it now, else the
+/// `.zdproj` folder it wrote before (decision 0058).
+fn grid_template() -> std::path::PathBuf {
+    let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/synthetic");
+    let file = folder.join("Grid template.zdp");
+    let old = folder.join("Grid template.zdproj");
+    let path = if file.is_file() { file } else { old };
+    assert!(path.exists(), "no made-up grid pit at {}: run testdata/synthetic/grid_template.py to make it", path.display());
+    path
+}
+
 fn copy_folder(from: &std::path::Path, to: &std::path::Path) {
     std::fs::create_dir_all(to).unwrap();
     for entry in std::fs::read_dir(from).unwrap() {
@@ -496,10 +507,16 @@ fn copy_folder(from: &std::path::Path, to: &std::path::Path) {
 #[test]
 #[ignore = "needs the made-up grid pit, which isn't in git; opt in with --ignored"]
 fn a_grid_strip_built_a_step_at_a_time() {
-    let original = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/synthetic/Grid template.zdproj");
-    assert!(original.join("manifest.json").exists(), "no made-up grid pit at {}: run testdata/synthetic/grid_template.py to make it", original.display());
+    let original = grid_template();
     let copy = std::env::temp_dir().join(format!("zd-build-grid-{}", std::process::id()));
-    copy_folder(&original, &copy);
+    let copy = if original.is_dir() {
+        copy_folder(&original, &copy);
+        copy
+    } else {
+        std::fs::create_dir_all(&copy).unwrap();
+        std::fs::copy(&original, copy.join("Grid template.zdp")).unwrap();
+        copy.join("Grid template.zdp")
+    };
     let mut s = Session::open(&copy).unwrap();
     let id = |s: &Session, name: &str| named(s, name).id;
     let grid = |s: &Session, name: &str| json!({ "kind": "surface", "id": id(s, name) });

@@ -25,7 +25,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 | Planar offsets | Clipper2 or Manifold `CrossSection` for plain 2D offsets |
 | Viewport | three.js with `WebGPURenderer` (auto WebGL2 fallback) |
 | Interface | React + TypeScript, shadcn/ui, Tailwind, dockview, TanStack Table |
-| Data at rest | Parquet/Arrow using the OMF2 mesh layout (vertices `x, y, z` f64; triangles `a, b, c` u32, counter-clockwise about an outward normal); DXF/CSV/OMF only for exchange. Evaluate the `omf` Rust crate before writing our own |
+| Data at rest | One `.zdp` file a project: a zip of Parquet/Arrow tables with a JSON manifest, meshes in the OMF2 layout (vertices `x, y, z` f64; triangles `a, b, c` u32, counter-clockwise about an outward normal), saved beside then swapped in (`docs/decisions/0058-one-file-a-project.md`); geology (seam grids, block models) referenced by location, never packed in; DXF/CSV/OMF only for exchange. Evaluate the `omf` Rust crate before writing our own |
 | Python | PyO3 bindings in `crates/zd-py` from Phase 1, built with maturin (reconciliation and test scripts run from Python) |
 | Package manager (JS) | pnpm |
 | Zips | `zip` crate, deflate only (`docs/decisions/0019-solids-by-the-thousand.md`) |
@@ -138,7 +138,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   the bench where the grade can't be met instead of drifting (`docs/decisions/0028-ramps.md`, `0030-ramp-strings.md`).
 - Every object has a stable id (128-bit, generated in-house), a name, a layer, and provenance (the command
   run that made it). Edits write a new revision of the same object; earlier revisions stay for undo
-  (see `docs/decisions/0004-phase1-foundations.md`). A project is a `<name>.zdproj/` folder of Parquet files.
+  (see `docs/decisions/0004-phase1-foundations.md`). A project is one `<name>.zdp` file; older `<name>.zdproj/` folders still open and save as a `.zdp` beside them (`docs/decisions/0058-one-file-a-project.md`).
 - An object can be hidden on its own, under its layer's tick. That's display state saved with the project, not a
   revision and not undone. Hidden means not drawn, snapped to or cut by a section; a command that names the object
   still takes it (`docs/decisions/0026-one-layer-tree.md`). So is how it looks: surfaces and grids colour by RL in

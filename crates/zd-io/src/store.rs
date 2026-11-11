@@ -1,4 +1,5 @@
-//! The project store: a project saved as a `<name>.zdproj/` folder (decision 0004).
+//! The older project store: a project saved as a `<name>.zdproj/` folder (decision 0004). Projects now save as one
+//! `.zdp` file (`zdp.rs`, decision 0058); this reader stays so older folders keep opening.
 //!
 //! ```text
 //! <name>.zdproj/
@@ -58,6 +59,8 @@ pub enum StoreError {
     /// A manifest from another format or a newer version.
     Version { format: String, version: u32 },
     Project(ProjectError),
+    /// Someone else has the project file open: who, and what to do.
+    Locked(String),
 }
 
 impl fmt::Display for StoreError {
@@ -70,6 +73,7 @@ impl fmt::Display for StoreError {
                 write!(f, "not a project this build can open: format '{format}' version {version}")
             }
             StoreError::Project(e) => write!(f, "{e}"),
+            StoreError::Locked(message) => write!(f, "{message}"),
         }
     }
 }

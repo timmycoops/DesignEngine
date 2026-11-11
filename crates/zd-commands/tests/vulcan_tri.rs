@@ -262,7 +262,9 @@ fn repair_closes_fins_cracks_and_small_holes_and_notes_them_on_the_solid() {
     write(&dir.join("clean.00t"), &block([E, N, 250.0], [10.0, 10.0, 10.0]));
     let record = s.run("solid.import", json!({ "path": dir.join("clean.00t").to_string_lossy(), "layer": "coal", "repair": true })).unwrap();
     // Taken with its corners as written, it never reaches the closing step (decision 0052).
-    assert_eq!(record.messages[1], "corners as written; 0 triangles flipped to agree with their neighbours and face up, or out where closed (1 patches, 1 closed); 12 triangles out, 0 ms");
+    // The time at the end varies with the machine's load, so it's left out.
+    let expected = "corners as written; 0 triangles flipped to agree with their neighbours and face up, or out where closed (1 patches, 1 closed); 12 triangles out, ";
+    assert!(record.messages[1].starts_with(expected) && record.messages[1].ends_with(" ms"), "{}", record.messages[1]);
     assert!(record.messages.iter().all(|m| !m.starts_with("closing:")), "{:?}", record.messages);
     assert!(s.project().object(created(&record)[0]).unwrap().attributes.is_empty());
     assert!(s.run("solid.import", json!({ "path": dir.join("clean.00t").to_string_lossy(), "layer": "coal", "repair": true, "fill_limit": 2.0 })).is_err());

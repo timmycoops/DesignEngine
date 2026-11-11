@@ -38,6 +38,8 @@ pub struct ProjectSummary {
     solid_layers: Vec<SolidLayer>,
     /// How objects and layers look: colour by RL or the layer's, opacity, contour bands.
     display: Display,
+    /// Who else had the project file open when it was opened ("Tim on PIT-PC since ..."): a save to it is refused.
+    locked_by: Option<String>,
 }
 
 /// A layer's solids as the viewport draws them.
@@ -105,6 +107,7 @@ fn summary(app: &mut AppInner) -> ProjectSummary {
         objects,
         solid_layers,
         display: project.display().clone(),
+        locked_by: app.locked_by.clone(),
     };
     app.solid_keys = snap_keys;
     summary
@@ -286,33 +289,52 @@ pub async fn open_project(path: String, state: State<'_, AppState>) -> Result<Pr
 
 #[derive(Serialize)]
 pub struct SaveReply {
+    /// The `.zdp` file written: a project opened from an older `.zdproj` folder saves beside it.
     path: String,
-    object_files_written: usize,
-    object_files_reused: usize,
-    files_deleted: usize,
-    bytes_written: u64,
+    /// Nothing had changed since the last save, so nothing was written.
+    unchanged: bool,
+    entries: usize,
+    /// Entries encoded this time; the rest were kept from the last save.
+    encoded: usize,
+    /// The file's size.
+    bytes: u64,
     ms: f64,
 }
 
-/// Saves to `path`, or to the folder last opened or saved when `path` is not given.
+/// Saves to `path`, or to the file last opened or saved when `path` is not given. The project is taken under the
+/// lock in an instant and written off it, so the viewport and commands carry on while a large project saves
+/// (decision 0058).
 #[tauri::command]
 pub async fn save_project(path: Option<String>, state: State<'_, AppState>) -> Result<SaveReply, String> {
     let app = state.app.clone();
     blocking(move || {
-        let mut app = app.lock().unwrap();
-        let path = match path.map(PathBuf::from).or_else(|| app.path.clone()) {
-            Some(p) => p,
-            None => return Err("this project has not been saved yet; choose a folder".to_string()),
+        let job = {
+            let mut app = app.lock().unwrap();
+            let path = match path.map(PathBuf::from).or_else(|| app.path.clone()) {
+                Some(p) => p,
+                None => return Err("this project has not been saved yet; choose a file".to_string()),
+            };
+            app.session.begin_save(&path).map_err(|e| e.to_string())?
         };
-        let report = app.session.save(&path).map_err(|e| e.to_string())?;
-        app.path = Some(path.clone());
+        let result = job.run();
+        let mut app = app.lock().unwrap();
+        // A project opened while this one saved keeps its own log and path.
+        let same = match &result {
+            Ok(saved) => app.session.file().as_deref() == Some(saved.path.as_path()),
+            Err(_) => true,
+        };
+        let saved = if same { app.session.end_save(job, result) } else { result }.map_err(|e| e.to_string())?;
+        if same {
+            app.path = Some(saved.path.clone());
+            app.locked_by = None;
+        }
         Ok(SaveReply {
-            path: path.display().to_string(),
-            object_files_written: report.object_files_written,
-            object_files_reused: report.object_files_reused,
-            files_deleted: report.files_deleted,
-            bytes_written: report.bytes_written,
-            ms: report.ms,
+            path: saved.path.display().to_string(),
+            unchanged: saved.unchanged,
+            entries: saved.entries,
+            encoded: saved.encoded,
+            bytes: saved.bytes,
+            ms: saved.ms,
         })
     })
     .await?

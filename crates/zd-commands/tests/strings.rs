@@ -173,8 +173,8 @@ fn elevation_reverse_and_close_then_undo_to_empty_and_save() {
 
     // Save and reopen: every coordinate bit for bit.
     let dir = std::env::temp_dir().join(format!("zd-strings-save-{}-{}", std::process::id(), zd_core::RunId::new()));
-    s.save(dir.join("pit.zdproj")).unwrap();
-    let reopened = Session::open(dir.join("pit.zdproj")).unwrap();
+    s.save(dir.join("pit.zdp")).unwrap();
+    let reopened = Session::open(dir.join("pit.zdp")).unwrap();
     for object in [id, offset] {
         let (a, b) = (vertices(&s, object), vertices(&reopened, object));
         assert!(a.iter().flatten().zip(b.iter().flatten()).all(|(x, y)| x.to_bits() == y.to_bits()));

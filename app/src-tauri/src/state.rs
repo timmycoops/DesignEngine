@@ -23,8 +23,10 @@ impl Default for AppState {
 
 pub struct AppInner {
     pub session: Session,
-    /// The project folder last opened or saved.
+    /// The project file last opened or saved (or an older `.zdproj` folder opened, which saves as a `.zdp` beside it).
     pub path: Option<PathBuf>,
+    /// Who else had the file open when it was opened: a save to it is refused.
+    pub locked_by: Option<String>,
     /// Local origin shared by every buffer sent to the viewport (engine rule 2); set from the
     /// first object with geometry and kept for the life of the project.
     pub origin: Option<[f64; 3]>,
@@ -47,7 +49,8 @@ pub struct AppInner {
 
 impl AppInner {
     pub fn new(session: Session, path: Option<PathBuf>) -> Self {
-        AppInner { session, path, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), section_meshes: SectionMeshes::new(), section_inputs: None, section_cut: None }
+        let locked_by = session.locked_by();
+        AppInner { session, path, locked_by, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), section_meshes: SectionMeshes::new(), section_inputs: None, section_cut: None }
     }
 
     pub fn handle(&mut self) -> u32 {

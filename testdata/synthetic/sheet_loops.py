@@ -2,7 +2,7 @@
 
     .venv\\Scripts\\python testdata\\synthetic\\sheet_loops.py "Grid walls" [strip ...]
 
-Opens `Grid template.zdproj` (run `grid_template.py` first; pass its folder with ZD_GRID_PIT), runs the design and lists
+Opens `Grid template.zdp` (run `grid_template.py` first; pass its folder with ZD_GRID_PIT), runs the design and lists
 the loops of every face that has more than one, in metres from the template's origin, biggest first. A face that's one
 sheet with no holes has one loop, its edge.
 """
@@ -46,7 +46,7 @@ def main():
     design_name = sys.argv[1] if len(sys.argv) > 1 else "Grid walls"
     strips = set(sys.argv[2:])
     folder = pathlib.Path(os.environ.get("ZD_GRID_PIT", pathlib.Path(__file__).resolve().parent))
-    s = zd.open(str(folder / "Grid template.zdproj"))
+    s = zd.open(str(folder / "Grid template.zdp"))
     design = next(o["id"] for o in s.objects() if o["kind"] == "face_design" and o["name"] == design_name)
     record = s.run("face.project", design=design)
     for o in s.objects(layer=f"faces {design_name}"):

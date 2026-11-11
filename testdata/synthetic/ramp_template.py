@@ -8,7 +8,7 @@ crest where its string crosses.
 
     .venv\\Scripts\\python testdata/synthetic/ramp_template.py [folder]
 
-Writes "Ramp template.zdproj" beside this script, or in the folder given. Then it runs the design once
+Writes "Ramp template.zdp" beside this script, or in the folder given. Then it runs the design once
 without saving the run, and prints what each strip made, so a template that doesn't build says so here.
 """
 
@@ -114,7 +114,7 @@ def main():
     ramp_a, ramp_b = ramp_string(s, "Ramp A", 400.0), ramp_string(s, "Ramp B", 3100.0)
     toes_layer = next(layer["id"] for layer in s.layers() if layer["name"] == "toes")
     design_id = design(s, toes_layer, ramp_a, ramp_b)
-    path = folder / "Ramp template.zdproj"
+    path = folder / "Ramp template.zdp"
     s.save(path)
     print(f"Saved {path}: {len(toes)} strips, 2 ramp strings, the design Ramps on RLs")
     faults = check(s, design_id)

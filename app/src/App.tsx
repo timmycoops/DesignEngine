@@ -1,5 +1,5 @@
 import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { confirm, open, save } from '@tauri-apps/plugin-dialog';
+import { confirm, message, open, save } from '@tauri-apps/plugin-dialog';
 import type { DockviewApi } from 'dockview-react';
 import {
   Aperture,
@@ -498,25 +498,37 @@ export default function App() {
     attempt(async () => {
       let path: string | undefined;
       if (saveAs || !summary?.path) {
-        const chosen = await save({ title: 'Save project as (a .zdproj folder)', defaultPath: 'project.zdproj' });
+        const chosen = await save({ title: 'Save project as', defaultPath: 'project.zdp', filters: [{ name: 'Project', extensions: ['zdp'] }] });
         if (!chosen) return;
-        path = chosen.endsWith('.zdproj') ? chosen : `${chosen}.zdproj`;
+        path = chosen.toLowerCase().endsWith('.zdp') ? chosen : `${chosen}.zdp`;
       }
+      setStatus({ text: 'Saving…' });
       const reply = await saveProject(path);
       setStatus({
-        text: `Saved ${reply.path}: ${reply.object_files_written} files written, ${reply.object_files_reused} reused, ${(reply.bytes_written / 1e6).toFixed(1)} MB in ${reply.ms.toFixed(0)} ms`,
+        text: reply.unchanged
+          ? `Nothing has changed since the last save of ${reply.path}`
+          : `Saved ${reply.path}: ${(reply.bytes / 1e6).toFixed(1)} MB in ${reply.ms.toFixed(0)} ms`,
       });
       show(await projectSummary());
     });
 
-  const onOpen = () =>
+  /** Opens a `.zdp` project file, or an older `.zdproj` folder, which saves as a `.zdp` beside it (decision 0058). */
+  const onOpen = (folder: boolean) =>
     attempt(async () => {
-      const path = await open({ directory: true, title: 'Open project (a .zdproj folder)' });
+      const path = folder
+        ? await open({ directory: true, title: 'Open an older project folder (.zdproj)' })
+        : await open({ title: 'Open project', filters: [{ name: 'Project', extensions: ['zdp'] }] });
       if (!path) return;
       setStatus({ text: `Opening ${path}…` });
       select(null);
-      show(await openProject(path));
+      const opened = await openProject(path);
+      show(opened);
       setStatus({ text: `Opened ${path}` });
+      if (opened.locked_by)
+        await message(`${opened.locked_by} has this project open. You can look and work, but a save to it is refused: use Save as to keep your changes in another file.`, {
+          title: 'Project in use',
+          kind: 'warning',
+        });
     });
 
   const onNew = () =>
@@ -910,8 +922,11 @@ export default function App() {
               <DropdownMenuItem onSelect={onNew}>
                 <FilePlus /> New project
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={onOpen}>
-                <FolderOpen /> Open a project (.zdproj)…
+              <DropdownMenuItem onSelect={() => onOpen(false)}>
+                <FolderOpen /> Open a project (.zdp)…
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onOpen(true)}>
+                <FolderOpen /> Open an older project folder (.zdproj)…
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => onSave(false)}>

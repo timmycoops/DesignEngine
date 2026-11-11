@@ -21,9 +21,11 @@
 //! each object's current revision is saved.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use arrow_array::{Array, ArrayRef, BooleanArray, Float64Array, RecordBatch, StringArray, UInt32Array, UInt64Array};
 use arrow_schema::{DataType, Field, Schema};
@@ -109,6 +111,8 @@ struct EntryInfo {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WriteReport {
     pub entries: usize,
+    /// Entries encoded this time; the rest came from an earlier save unchanged.
+    pub encoded: usize,
     pub bytes: u64,
     pub encode_ms: f64,
     pub write_ms: f64,
@@ -121,19 +125,103 @@ pub struct ReadProject {
     pub ms: f64,
 }
 
+/// A project as a save sees it: its live objects, layers, hidden objects and looks, taken in an instant. Revisions
+/// never change once made, so a save can encode a snapshot while the project carries on.
+#[derive(Clone)]
+pub struct Snapshot {
+    objects: Vec<Arc<Object>>,
+    layers: Vec<Layer>,
+    hidden: Vec<ObjectId>,
+    display: Display,
+}
+
+impl Snapshot {
+    pub fn of(project: &Project) -> Snapshot {
+        let objects: Vec<Arc<Object>> = project.objects().cloned().collect();
+        let hidden = objects.iter().map(|o| o.id).filter(|&id| project.is_hidden(id)).collect();
+        Snapshot { objects, layers: project.layers().to_vec(), hidden, display: saved_display(project) }
+    }
+}
+
+/// What an entry group holds. Attributes by the revisions in it and the row they start at; meshes and grids by the
+/// geometry itself, which a rename or an attribute edit keeps, so those don't encode it again.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum JobKey {
+    Rows(usize, Vec<(ObjectId, u32)>),
+    Geometry(Vec<usize>),
+}
+
+/// The geometry a cached group was encoded from, held so its address can't be taken by other geometry while the key
+/// names it.
+#[derive(Clone)]
+#[allow(dead_code, reason = "held, never read: holding it is the point")]
+enum Pin {
+    None,
+    Meshes(Vec<Arc<TriMesh>>),
+    Grid(Arc<Grid>),
+}
+
+/// Entries an earlier save encoded, by what they held: a group holding the same revisions or geometry in the same
+/// places isn't encoded again (rule 9), whatever its entries are called now.
+#[derive(Default)]
+pub struct EncodeCache {
+    jobs: HashMap<JobKey, (Vec<Encoded>, Pin)>,
+}
+
+/// One entry, encoded, with its checksum.
+#[derive(Clone)]
+pub(crate) struct Encoded {
+    pub(crate) name: String,
+    pub(crate) bytes: Arc<Vec<u8>>,
+    pub(crate) fnv: u64,
+}
+
+impl Encoded {
+    fn new(name: String, bytes: Vec<u8>) -> Encoded {
+        let fnv = fnv1a(&bytes);
+        Encoded { name, bytes: Arc::new(bytes), fnv }
+    }
+}
+
+/// A project's tables, every entry but the run log and the manifest, and a key that changes whenever anything in
+/// them does.
+pub(crate) struct Tables {
+    pub(crate) entries: Vec<Encoded>,
+    pub(crate) encoded: usize,
+    pub(crate) content: u64,
+    objects: usize,
+    layers: Vec<Layer>,
+    hidden: Vec<ObjectId>,
+    display: Display,
+}
+
 /// Encodes the project and puts every entry in the container, the manifest last.
 pub fn write_project(project: &Project, run_log: &str, out: &mut impl Container) -> Result<WriteReport, StoreError> {
     let start = Instant::now();
-    let entries = encode_project(project, run_log)?;
+    let tables = encode_tables(&Snapshot::of(project), &mut EncodeCache::default())?;
+    let encoded = tables.encoded;
+    let entries = finish_entries(tables, run_log)?;
     let encode_ms = start.elapsed().as_secs_f64() * 1e3;
     let start = Instant::now();
-    for (name, bytes) in &entries {
-        out.put(name, bytes)?;
+    for e in &entries {
+        out.put(&e.name, &e.bytes)?;
     }
-    Ok(WriteReport { entries: entries.len(), bytes: entries.iter().map(|(_, b)| b.len() as u64).sum(), encode_ms, write_ms: start.elapsed().as_secs_f64() * 1e3 })
+    Ok(WriteReport {
+        entries: entries.len(),
+        encoded,
+        bytes: entries.iter().map(|e| e.bytes.len() as u64).sum(),
+        encode_ms,
+        write_ms: start.elapsed().as_secs_f64() * 1e3,
+    })
 }
 
-/// Each object's body placed, then the mesh and grid entries to encode.
+/// Every entry of the project in a fixed order, the manifest last.
+pub fn encode_project(project: &Project, run_log: &str) -> Result<Vec<(String, Vec<u8>)>, StoreError> {
+    let tables = encode_tables(&Snapshot::of(project), &mut EncodeCache::default())?;
+    Ok(finish_entries(tables, run_log)?.into_iter().map(|e| (e.name, Arc::unwrap_or_clone(e.bytes))).collect())
+}
+
+/// Each object's body placed, then the mesh and grid jobs to encode.
 type Placement = (Vec<Placed>, Vec<Job<'static>>, Vec<Job<'static>>);
 
 /// A mesh entry's vertices and triangles, by its stem.
@@ -156,57 +244,169 @@ struct MeshAt {
     triangle_count: u64,
 }
 
-/// One entry, or a pair, to encode.
-enum Job<'a> {
-    Objects,
-    Strings,
-    Attributes { group: usize, objects: &'a [Arc<Object>], first: usize },
-    Meshes { stem: String, meshes: Vec<Arc<TriMesh>> },
-    Grid { entry: String, grid: Arc<Grid> },
+/// One entry, or a pair, to encode, named by its first entry, and what it holds when it can be kept from an
+/// earlier save.
+struct Job<'a> {
+    name: String,
+    key: Option<JobKey>,
+    work: Work<'a>,
 }
 
-/// Every entry of the project in a fixed order, the manifest last.
-pub fn encode_project(project: &Project, run_log: &str) -> Result<Vec<(String, Vec<u8>)>, StoreError> {
-    let objects: Vec<Arc<Object>> = project.objects().cloned().collect();
-    let (placed, mesh_jobs, grid_jobs) = place_bodies(&objects)?;
+enum Work<'a> {
+    Objects,
+    Strings,
+    Attributes { objects: &'a [Arc<Object>], first: usize },
+    Meshes { stem: String, meshes: Vec<Arc<TriMesh>> },
+    Grid { grid: Arc<Grid> },
+}
 
-    let mut jobs = vec![Job::Objects, Job::Strings];
+impl Job<'_> {
+    /// Its entries' names: a mesh group's vertices and triangles, else the one entry.
+    fn names(&self) -> Vec<String> {
+        match &self.work {
+            Work::Meshes { stem, .. } => vec![format!("{stem}-vertices.parquet"), format!("{stem}-triangles.parquet")],
+            _ => vec![self.name.clone()],
+        }
+    }
+
+    /// Entries kept from an earlier save under this job's names: a large mesh is named for the revision that holds it
+    /// now, so a rename renames its entries and leaves their bytes.
+    fn renamed(&self, kept: &[Encoded]) -> Vec<Encoded> {
+        kept.iter().zip(self.names()).map(|(e, name)| Encoded { name, ..e.clone() }).collect()
+    }
+}
+
+impl Work<'_> {
+    fn pin(&self) -> Pin {
+        match self {
+            Work::Meshes { meshes, .. } => Pin::Meshes(meshes.clone()),
+            Work::Grid { grid } => Pin::Grid(grid.clone()),
+            _ => Pin::None,
+        }
+    }
+}
+
+/// A key naming geometry by where it is in memory.
+fn geometry<T>(items: &[Arc<T>]) -> JobKey {
+    JobKey::Geometry(items.iter().map(|m| Arc::as_ptr(m) as usize).collect())
+}
+
+/// The project's tables, encoded across cores. Groups the cache holds unchanged are taken from it, and the cache
+/// then holds this save's groups.
+pub(crate) fn encode_tables(snapshot: &Snapshot, cache: &mut EncodeCache) -> Result<Tables, StoreError> {
+    let objects = &snapshot.objects;
+    let (placed, jobs) = plan_jobs(objects)?;
+    // Groups kept from the last save, then the rest encoded.
+    let mut kept: Vec<Option<Vec<Encoded>>> = jobs
+        .iter()
+        .map(|job| job.key.as_ref().and_then(|key| cache.jobs.get(key)).map(|(entries, _)| job.renamed(entries)))
+        .collect();
+    let to_encode: Vec<(usize, &Job)> = jobs.iter().enumerate().filter(|(i, _)| kept[*i].is_none()).collect();
+    let encoded = in_parallel(to_encode, |(i, job)| -> Result<(usize, Vec<Encoded>), StoreError> {
+        let entries = match &job.work {
+            Work::Objects => vec![Encoded::new(job.name.clone(), objects_table(objects, &placed)?)],
+            Work::Strings => vec![Encoded::new(job.name.clone(), strings_table(objects)?)],
+            Work::Attributes { objects, first } => vec![Encoded::new(job.name.clone(), attributes_table(objects, *first)?)],
+            Work::Meshes { stem, meshes } => {
+                let (vertices, triangles) = mesh_tables(meshes)?;
+                vec![Encoded::new(format!("{stem}-vertices.parquet"), vertices), Encoded::new(format!("{stem}-triangles.parquet"), triangles)]
+            }
+            Work::Grid { grid } => vec![Encoded::new(job.name.clone(), encode(vec![column("z", f64s(grid.z.clone()), false)])?)],
+        };
+        Ok((i, entries))
+    });
+    let fresh = encoded.len();
+    for result in encoded {
+        let (i, entries) = result?;
+        kept[i] = Some(entries);
+    }
+
+    cache.jobs.clear();
+    let mut entries = Vec::new();
+    for (job, group) in jobs.into_iter().zip(kept) {
+        let group = group.expect("every job kept or encoded");
+        if let Some(key) = job.key {
+            cache.jobs.insert(key, (group.clone(), job.work.pin()));
+        }
+        entries.extend(group);
+    }
+
+    tables(snapshot, entries, fresh)
+}
+
+/// The tables of these entries, with the key that changes whenever anything in them does.
+fn tables(snapshot: &Snapshot, entries: Vec<Encoded>, encoded: usize) -> Result<Tables, StoreError> {
+    let mut content = Vec::new();
+    for e in &entries {
+        content.extend_from_slice(e.name.as_bytes());
+        content.extend_from_slice(&e.fnv.to_le_bytes());
+    }
+    content.extend(serde_json::to_vec(&(&snapshot.layers, &snapshot.hidden, &snapshot.display)).map_err(|e| StoreError::Format(e.to_string()))?);
+    Ok(Tables {
+        entries,
+        encoded,
+        content: fnv1a(&content),
+        objects: snapshot.objects.len(),
+        layers: snapshot.layers.clone(),
+        hidden: snapshot.hidden.clone(),
+        display: snapshot.display.clone(),
+    })
+}
+
+/// Where each object's body goes, and the entries to encode in their fixed order: objects, strings, attribute
+/// groups, meshes, grids.
+fn plan_jobs(objects: &[Arc<Object>]) -> Result<(Vec<Placed>, Vec<Job<'_>>), StoreError> {
+    let (placed, mesh_jobs, grid_jobs) = place_bodies(objects)?;
+    let mut jobs = vec![Job { name: OBJECTS.into(), key: None, work: Work::Objects }, Job { name: STRINGS.into(), key: None, work: Work::Strings }];
     for (group, chunk) in objects.chunks(GROUP).enumerate() {
         if chunk.iter().any(|o| !o.attributes.is_empty()) {
-            jobs.push(Job::Attributes { group: group + 1, objects: chunk, first: group * GROUP });
+            let first = group * GROUP;
+            let key = JobKey::Rows(first, chunk.iter().map(|o| (o.id, o.revision)).collect());
+            jobs.push(Job { name: format!("attributes/g{:05}.parquet", group + 1), key: Some(key), work: Work::Attributes { objects: chunk, first } });
         }
     }
     jobs.extend(mesh_jobs);
     jobs.extend(grid_jobs);
+    Ok((placed, jobs))
+}
 
-    let encoded = in_parallel(jobs, |job| -> Result<Vec<(String, Vec<u8>)>, StoreError> { match job {
-        Job::Objects => Ok(vec![(OBJECTS.to_string(), objects_table(&objects, &placed)?)]),
-        Job::Strings => Ok(vec![(STRINGS.to_string(), strings_table(&objects)?)]),
-        Job::Attributes { group, objects, first } => Ok(vec![(format!("attributes/g{group:05}.parquet"), attributes_table(objects, first)?)]),
-        Job::Meshes { stem, meshes } => {
-            let (vertices, triangles) = mesh_tables(&meshes)?;
-            Ok(vec![(format!("{stem}-vertices.parquet"), vertices), (format!("{stem}-triangles.parquet"), triangles)])
+/// Fills the cache from entries just read, in place of encoding them again: this build writes the same bytes for
+/// the same project, so the file's own entries are what a save would encode. Only for a file whose tables are all
+/// this build's versions. Returns the content key.
+fn prime_cache(snapshot: &Snapshot, file: &MemoryContainer, checksums: &HashMap<String, u64>, cache: &mut EncodeCache) -> Result<u64, StoreError> {
+    let (_, jobs) = plan_jobs(&snapshot.objects)?;
+    cache.jobs.clear();
+    let mut entries = Vec::new();
+    for job in jobs {
+        let mut group = Vec::new();
+        for name in job.names() {
+            let bytes = file.entries.get(&name).ok_or_else(|| StoreError::Format(format!("{name} is missing from the file")))?;
+            let fnv = *checksums.get(&name).ok_or_else(|| StoreError::Format(format!("{name} is not in the manifest")))?;
+            group.push(Encoded { name, bytes: Arc::new(bytes.clone()), fnv });
         }
-        Job::Grid { entry, grid } => Ok(vec![(entry, encode(vec![column("z", f64s(grid.z.clone()), false)])?)]),
-    }});
-    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
-    for part in encoded {
-        entries.extend(part?);
+        if let Some(key) = job.key {
+            cache.jobs.insert(key, (group.clone(), job.work.pin()));
+        }
+        entries.extend(group);
     }
-    entries.push((RUN_LOG.to_string(), run_log.as_bytes().to_vec()));
+    Ok(tables(snapshot, entries, 0)?.content)
+}
 
-    let infos = in_parallel(entries.iter().collect::<Vec<_>>(), |(name, bytes)| EntryInfo { name: name.clone(), bytes: bytes.len() as u64, fnv1a: format!("{:016x}", fnv1a(bytes)) });
+/// The tables with the run log and the manifest after them.
+pub(crate) fn finish_entries(tables: Tables, run_log: &str) -> Result<Vec<Encoded>, StoreError> {
+    let mut entries = tables.entries;
+    entries.push(Encoded::new(RUN_LOG.to_string(), run_log.as_bytes().to_vec()));
     let manifest = Manifest {
         format: ZDP_FORMAT.into(),
         version: ZDP_VERSION,
         tables: TABLES.iter().map(|(t, v)| (t.to_string(), *v)).collect(),
-        objects: objects.len(),
-        layers: project.layers().to_vec(),
-        hidden: objects.iter().map(|o| o.id).filter(|&id| project.is_hidden(id)).collect(),
-        display: saved_display(project),
-        entries: infos,
+        objects: tables.objects,
+        layers: tables.layers,
+        hidden: tables.hidden,
+        display: tables.display,
+        entries: entries.iter().map(|e| EntryInfo { name: e.name.clone(), bytes: e.bytes.len() as u64, fnv1a: format!("{:016x}", e.fnv) }).collect(),
     };
-    entries.push((MANIFEST.to_string(), serde_json::to_vec_pretty(&manifest).map_err(|e| StoreError::Format(e.to_string()))?));
+    entries.push(Encoded::new(MANIFEST.to_string(), serde_json::to_vec_pretty(&manifest).map_err(|e| StoreError::Format(e.to_string()))?));
     Ok(entries)
 }
 
@@ -221,7 +421,8 @@ fn place_bodies(objects: &[Arc<Object>]) -> Result<Placement, StoreError> {
     let (mut group_number, mut vertices, mut triangles) = (1usize, 0u64, 0u64);
     let close_group = |group: &mut Vec<Arc<TriMesh>>, number: &mut usize, jobs: &mut Vec<Job<'static>>, vertices: &mut u64, triangles: &mut u64| {
         if !group.is_empty() {
-            jobs.push(Job::Meshes { stem: format!("meshes/g{number:05}"), meshes: std::mem::take(group) });
+            let stem = format!("meshes/g{number:05}");
+            jobs.push(Job { name: format!("{stem}-vertices.parquet"), key: Some(geometry(group)), work: Work::Meshes { stem, meshes: std::mem::take(group) } });
             *number += 1;
             (*vertices, *triangles) = (0, 0);
         }
@@ -242,7 +443,8 @@ fn place_bodies(objects: &[Arc<Object>]) -> Result<Placement, StoreError> {
                     let (v, t) = (mesh.vertices.len() as u64, mesh.triangles.len() as u64);
                     let at = if mesh.triangles.len() > LARGE_MESH {
                         let stem = format!("meshes/{}-r{}", object.id, object.revision);
-                        mesh_jobs.push(Job::Meshes { stem: stem.clone(), meshes: vec![mesh.clone()] });
+                        let name = format!("{stem}-vertices.parquet");
+                        mesh_jobs.push(Job { name, key: Some(geometry(std::slice::from_ref(mesh))), work: Work::Meshes { stem: stem.clone(), meshes: vec![mesh.clone()] } });
                         MeshAt { stem, vertex_start: 0, vertex_count: v, triangle_start: 0, triangle_count: t }
                     } else {
                         let at = MeshAt { stem: format!("meshes/g{group_number:05}"), vertex_start: vertices, vertex_count: v, triangle_start: triangles, triangle_count: t };
@@ -261,7 +463,7 @@ fn place_bodies(objects: &[Arc<Object>]) -> Result<Placement, StoreError> {
                 let key = Arc::as_ptr(grid) as usize;
                 let entry = grid_at.entry(key).or_insert_with(|| {
                     let entry = format!("grids/{}-r{}.parquet", object.id, object.revision);
-                    grid_jobs.push(Job::Grid { entry: entry.clone(), grid: grid.clone() });
+                    grid_jobs.push(Job { name: entry.clone(), key: Some(geometry(std::slice::from_ref(grid))), work: Work::Grid { grid: grid.clone() } });
                     entry
                 });
                 Placed::Grid { entry: entry.clone(), grid: grid.clone() }
@@ -732,4 +934,248 @@ pub fn project_differences(a: &Project, b: &Project) -> Vec<String> {
         out.push("looks differ".to_string());
     }
     out
+}
+
+/// Entries held in memory by name: what a `.zdp` file holds once read.
+#[derive(Default)]
+pub struct MemoryContainer {
+    entries: HashMap<String, Vec<u8>>,
+}
+
+impl Container for MemoryContainer {
+    fn put(&mut self, name: &str, bytes: &[u8]) -> Result<(), StoreError> {
+        self.entries.insert(name.to_string(), bytes.to_vec());
+        Ok(())
+    }
+
+    fn get(&self, name: &str) -> Result<Vec<u8>, StoreError> {
+        self.entries.get(name).cloned().ok_or_else(|| StoreError::Format(format!("{name} is missing from the file")))
+    }
+}
+
+/// Writes the entries as one zip at `path`: to a file beside it first, flushed to disk, then swapped in, so a
+/// crash or a dropped connection mid-save leaves the last save whole. Parquet goes in as it is, JSON deflated; every
+/// entry carries the same fixed time, so the same entries make the same file.
+fn write_zip(path: &Path, entries: &[Encoded]) -> Result<u64, StoreError> {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let beside = path.with_file_name(format!("{name}.saving"));
+    if let Some(folder) = path.parent().filter(|f| !f.as_os_str().is_empty()) {
+        std::fs::create_dir_all(folder)?;
+    }
+    let written = (|| -> Result<u64, StoreError> {
+        let mut zip = zip::ZipWriter::new(std::io::BufWriter::with_capacity(1 << 20, File::create(&beside)?));
+        for e in entries {
+            let method = if e.name.ends_with(".json") { zip::CompressionMethod::Deflated } else { zip::CompressionMethod::Stored };
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(method)
+                .last_modified_time(zip::DateTime::default())
+                .large_file(e.bytes.len() as u64 >= u64::from(u32::MAX));
+            zip.start_file(e.name.as_str(), options).map_err(zip_error)?;
+            zip.write_all(&e.bytes)?;
+        }
+        let file = zip.finish().map_err(zip_error)?.into_inner().map_err(|e| StoreError::Io(e.into_error()))?;
+        file.sync_all()?;
+        Ok(file.metadata()?.len())
+    })();
+    match written {
+        Ok(bytes) => {
+            std::fs::rename(&beside, path)?;
+            Ok(bytes)
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&beside);
+            Err(e)
+        }
+    }
+}
+
+/// Every entry of a `.zdp` file, read whole into memory.
+fn read_zip(path: &Path) -> Result<MemoryContainer, StoreError> {
+    let bytes = std::fs::read(path)?;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.as_slice())).map_err(|e| StoreError::Format(format!("{}: not a project file ({e})", path.display())))?;
+    let mut entries = HashMap::with_capacity(zip.len());
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i).map_err(zip_error)?;
+        let name = entry.name().map_err(zip_error)?.into_owned();
+        let mut data = Vec::with_capacity(entry.size() as usize);
+        entry.read_to_end(&mut data).map_err(|e| StoreError::Format(format!("{name}: {e}")))?;
+        entries.insert(name, data);
+    }
+    Ok(MemoryContainer { entries })
+}
+
+fn zip_error(e: zip::result::ZipError) -> StoreError {
+    StoreError::Format(format!("zip: {e}"))
+}
+
+/// Who has a project file open, as its lock note beside it says.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockInfo {
+    pub user: String,
+    pub machine: String,
+    pub pid: u32,
+    pub since_unix_ms: u64,
+}
+
+impl LockInfo {
+    fn ours() -> LockInfo {
+        let var = |names: &[&str]| names.iter().find_map(|n| std::env::var(n).ok()).unwrap_or_else(|| "unknown".into());
+        LockInfo {
+            user: var(&["USERNAME", "USER"]),
+            machine: var(&["COMPUTERNAME", "HOSTNAME"]),
+            pid: std::process::id(),
+            since_unix_ms: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64),
+        }
+    }
+
+    /// The same person on the same machine: a lock of theirs left by a crash, or by another window, is theirs to take.
+    fn same_person(&self, other: &LockInfo) -> bool {
+        self.user.eq_ignore_ascii_case(&other.user) && self.machine.eq_ignore_ascii_case(&other.machine)
+    }
+
+    /// "Tim on PIT-PC since 11 Nov 2026 08:53 UTC".
+    pub fn describe(&self) -> String {
+        format!("{} on {} since {}", self.user, self.machine, utc_time(self.since_unix_ms))
+    }
+}
+
+/// A Unix time in milliseconds as "11 Nov 2026 08:53 UTC".
+fn utc_time(unix_ms: u64) -> String {
+    let secs = unix_ms / 1000;
+    let (days, rest) = ((secs / 86_400) as i64, secs % 86_400);
+    // Days to a civil date (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    format!("{day} {} {year} {:02}:{:02} UTC", MONTHS[(month - 1) as usize], rest / 3_600, rest % 3_600 / 60)
+}
+
+fn lock_path(path: &Path) -> PathBuf {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    path.with_file_name(format!("{name}.lock"))
+}
+
+fn read_lock(path: &Path) -> Option<LockInfo> {
+    serde_json::from_slice(&std::fs::read(lock_path(path)).ok()?).ok()
+}
+
+/// What a save did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SavedFile {
+    pub path: PathBuf,
+    /// Nothing had changed since the last save, so nothing was written.
+    pub unchanged: bool,
+    pub entries: usize,
+    /// Entries encoded this time; the rest were kept from the last save.
+    pub encoded: usize,
+    /// The file's size.
+    pub bytes: u64,
+    pub ms: f64,
+}
+
+/// A `.zdp` project file, what this session last saved to it, and its lock note. A lock someone else holds is
+/// reported on open and refuses a save; ours is taken on open or the first save, and removed when the store goes.
+pub struct ZdpStore {
+    path: PathBuf,
+    cache: EncodeCache,
+    /// The content key of what's in the file, when this session read or wrote it.
+    saved: Option<u64>,
+    /// Ours, once taken.
+    lock: Option<LockInfo>,
+}
+
+impl ZdpStore {
+    /// A store that will save to `path`. Nothing is written until the first save.
+    pub fn create(path: impl Into<PathBuf>) -> ZdpStore {
+        ZdpStore { path: path.into(), cache: EncodeCache::default(), saved: None, lock: None }
+    }
+
+    /// Reads a project file, and takes its lock unless someone else holds it.
+    pub fn open(path: impl Into<PathBuf>) -> Result<(ZdpStore, ReadProject), StoreError> {
+        let path = path.into();
+        let container = read_zip(&path)?;
+        let read = read_project(&container)?;
+        let mut store = ZdpStore::create(path);
+        // What was read is what's saved: the cache is filled from the file's own entries when its tables are this
+        // build's, else by encoding them, so the first save encodes only what changes.
+        let manifest: Manifest = serde_json::from_slice(&container.get(MANIFEST)?).map_err(|e| StoreError::Format(format!("{MANIFEST}: {e}")))?;
+        let current = manifest.version == ZDP_VERSION && manifest.tables == TABLES.iter().map(|(t, v)| (t.to_string(), *v)).collect::<BTreeMap<_, _>>();
+        let snapshot = Snapshot::of(&read.project);
+        let content = if current {
+            let checksums: HashMap<String, u64> = manifest.entries.iter().filter_map(|e| u64::from_str_radix(&e.fnv1a, 16).ok().map(|f| (e.name.clone(), f))).collect();
+            prime_cache(&snapshot, &container, &checksums, &mut store.cache)?
+        } else {
+            encode_tables(&snapshot, &mut store.cache)?.content
+        };
+        store.saved = Some(content);
+        store.take_lock()?;
+        Ok((store, read))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Who else has the file open, when someone does.
+    pub fn locked_by(&self) -> Option<LockInfo> {
+        match (&self.lock, read_lock(&self.path)) {
+            (None, Some(theirs)) if !theirs.same_person(&LockInfo::ours()) => Some(theirs),
+            _ => None,
+        }
+    }
+
+    /// Takes the lock note unless someone else holds it.
+    fn take_lock(&mut self) -> Result<(), StoreError> {
+        if self.lock.is_some() || self.locked_by().is_some() {
+            return Ok(());
+        }
+        let ours = LockInfo::ours();
+        std::fs::write(lock_path(&self.path), serde_json::to_vec_pretty(&ours).map_err(|e| StoreError::Format(e.to_string()))?)?;
+        self.lock = Some(ours);
+        Ok(())
+    }
+
+    /// Saves the snapshot and run log. Nothing is written when neither has changed since this store last read or
+    /// wrote the file (`log_changed` says whether the log has). A file someone else has open is refused.
+    pub fn save(&mut self, snapshot: &Snapshot, run_log: &str, log_changed: bool) -> Result<SavedFile, StoreError> {
+        let start = Instant::now();
+        if let Some(theirs) = self.locked_by() {
+            return Err(StoreError::Locked(format!(
+                "{} has {} open: save it as another file, or if they have closed it, delete {}",
+                theirs.describe(),
+                self.path.display(),
+                lock_path(&self.path).display()
+            )));
+        }
+        let tables = encode_tables(snapshot, &mut self.cache)?;
+        let (content, encoded) = (tables.content, tables.encoded);
+        if !log_changed && self.saved == Some(content) && self.path.is_file() {
+            let bytes = std::fs::metadata(&self.path)?.len();
+            let ms = start.elapsed().as_secs_f64() * 1e3;
+            return Ok(SavedFile { path: self.path.clone(), unchanged: true, entries: tables.entries.len() + 2, encoded, bytes, ms });
+        }
+        let entries = finish_entries(tables, run_log)?;
+        let bytes = write_zip(&self.path, &entries)?;
+        self.saved = Some(content);
+        self.take_lock()?;
+        Ok(SavedFile { path: self.path.clone(), unchanged: false, entries: entries.len(), encoded, bytes, ms: start.elapsed().as_secs_f64() * 1e3 })
+    }
+}
+
+impl Drop for ZdpStore {
+    /// Removes our lock note, if it's still ours.
+    fn drop(&mut self) {
+        if let Some(ours) = &self.lock
+            && read_lock(&self.path).as_ref() == Some(ours)
+        {
+            let _ = std::fs::remove_file(lock_path(&self.path));
+        }
+    }
 }

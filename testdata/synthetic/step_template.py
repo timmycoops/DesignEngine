@@ -15,7 +15,7 @@ A second toe, "Your toe", 400 m south, has no design, to start one from scratch.
 
     .venv\\Scripts\\python testdata/synthetic/step_template.py [folder]
 
-Writes "Step template.zdproj" beside this script, or in the folder given. Then it checks the steps: the face is
+Writes "Step template.zdp" beside this script, or in the folder given. Then it checks the steps: the face is
 clean, the road climbs from RL 115 to 145, and running the design whole gives the same face, vertex for vertex.
 """
 
@@ -132,7 +132,7 @@ def main():
     toe = made(s.run("string.create", name="Toe", layer="toes", points=[at(x, y) for x, y in TOE]))[0]
     s.run("string.create", name="Your toe", layer="toes", points=[at(x, y) for x, y in YOUR_TOE])
     design, rows, ramp, start = step_design(s, toe)
-    path = folder / "Step template.zdproj"
+    path = folder / "Step template.zdp"
     s.save(path)
     print(f"Saved {path}: the toe, your toe, ramp A's string, and the design Steps from Toe with {len(rows)} rows run")
     # The check runs the design whole too, after the save, so that stays out of the project.

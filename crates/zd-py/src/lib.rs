@@ -7,7 +7,7 @@
 //!
 //! ```python
 //! import zd
-//! s = zd.open("pit.zdproj")
+//! s = zd.open("pit.zdp")
 //! for o in s.objects(kind="solid"):
 //!     print(o["name"], s.object(o["id"])["volume"])
 //! record = s.run("surface.import", path="topo.00t", layer="topo")
@@ -42,24 +42,25 @@ impl PySession {
         PySession { inner: Session::with_builtins() }
     }
 
-    /// Opens a `<name>.zdproj` folder. The run log carries on from where it was saved.
+    /// Opens a `.zdp` project file, or an older `<name>.zdproj` folder. The run log carries on from where it was saved.
     #[staticmethod]
     fn open(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
         let inner = py.detach(|| Session::open(&path)).map_err(|e| ProjectError::new_err(format!("{}: {e}", path.display())))?;
         Ok(PySession { inner })
     }
 
-    /// Saves to a `<name>.zdproj` folder; saving again to the same folder rewrites only what
+    /// Saves to a `.zdp` project file (a `.zdproj` path saves as a `.zdp` beside it); saving again re-encodes only what
     /// changed. Returns what the save wrote.
     fn save(&mut self, py: Python<'_>, path: PathBuf) -> PyResult<Py<PyAny>> {
         let report = py.detach(|| self.inner.save(&path)).map_err(|e| ProjectError::new_err(format!("{}: {e}", path.display())))?;
         to_py(
             py,
             &json!({
-                "object_files_written": report.object_files_written,
-                "object_files_reused": report.object_files_reused,
-                "files_deleted": report.files_deleted,
-                "bytes_written": report.bytes_written,
+                "path": report.path.display().to_string(),
+                "unchanged": report.unchanged,
+                "entries": report.entries,
+                "encoded": report.encoded,
+                "bytes": report.bytes,
                 "ms": report.ms,
             }),
         )
@@ -161,7 +162,7 @@ impl PySession {
     }
 }
 
-/// Opens a `<name>.zdproj` folder: the same as `zd.Session.open(path)`.
+/// Opens a `.zdp` project file, or an older `<name>.zdproj` folder: the same as `zd.Session.open(path)`.
 #[pyfunction]
 fn open(py: Python<'_>, path: PathBuf) -> PyResult<PySession> {
     PySession::open(py, path)
