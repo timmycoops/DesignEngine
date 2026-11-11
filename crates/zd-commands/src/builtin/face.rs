@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Change, FaceDesign, FaceDirection, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
-use zd_geom::{COINCIDENT, EdgeRule, EditReport, Face, FaceBench, FaceEdit, FaceRamp, FaceRoad, FaceStep, FaceTarget, GeomError, JoinBoxes, JoinNote, MetBoxes, OffsetSide, RoadTop, SolidRegion, at_line_heights, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_edited_face, project_wall, register_toe, run_on, triangulate_grid};
+use zd_core::{AttrValue, Attributes, Body, Change, Crossings, FaceDesign, FaceDirection, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
+use zd_geom::{COINCIDENT, EdgeRule, EditReport, Face, FaceBench, FaceEdit, FaceRamp, FaceRoad, FaceStep, FaceTarget, GeomError, JoinBoxes, JoinNote, MetBoxes, OffsetSide, RoadTop, SolidRegion, Stretch, at_line_heights, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_edited_face, project_wall, register_toe, run_on, triangulate_grid};
 
 use super::{SideParam, in_parallel};
-use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
+use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Place, Severity};
 
 /// `face.project_step`: one wall from a string up to a target surface or grid, at a fixed batter. It
 /// makes the crest, the wall as a surface, and the string the next step starts from: the crest
@@ -93,10 +93,9 @@ impl Command for ProjectStep {
         let step = project_wall(line, side, p.batter, mesh).map_err(|e| CommandError::Invalid(e.to_string()))?;
         let (toes, conditioned) = next_toe(&step.crest, p.berm, side, p.tolerance, mesh).map_err(|e| CommandError::Invalid(e.to_string()))?;
         let crossings = find_crossings(&step.wall, COINCIDENT);
+        let said = format!("wall at {}° to {}", p.batter, target.name);
         let mut message = format!(
-            "wall at {}° to {}: {} walls, {} squeezed out, {} crest vertices, {} triangles; next toe keeps {} of {} plan vertices",
-            p.batter,
-            target.name,
+            "{said}: {} walls, {} squeezed out, {} crest vertices, {} triangles; next toe keeps {} of {} plan vertices",
             step.log.walls,
             step.log.squeezed_out,
             step.crest.vertices.len(),
@@ -107,14 +106,17 @@ impl Command for ProjectStep {
         if step.log.vertices_dropped > 0 {
             message += &format!("; {} string vertices on the one before in plan were dropped", step.log.vertices_dropped);
         }
+        let mut notes = vec![Note::info(message).on(object.id)];
         if let Some(first) = step.log.no_height.first() {
-            message += &format!("; no height along {} stretch(es), the first from {:.1}, {:.1}", step.log.no_height.len(), first.from[0], first.from[1]);
+            let text = format!("{said}: no height along {} stretch(es), the first from {:.1}, {:.1}", step.log.no_height.len(), first.from[0], first.from[1]);
+            notes.push(stretches_note(Code::WallNoHeight, text, &step.log.no_height).on(object.id));
         }
         if conditioned.off_surface > 0 {
-            message += &format!("; {} next toe vertices have no target under them and keep their elevations", conditioned.off_surface);
+            let text = format!("{said}: {} next toe vertices have no target under them and keep their elevations", conditioned.off_surface);
+            notes.push(Note::warning(Code::ToeNoTarget, text).measured(conditioned.off_surface as f64, "vertices").on(object.id));
         }
         if crossings.pairs > 0 {
-            message += &format!("; {} pairs of wall triangles cross, the first at {}", crossings.pairs, first_site(&crossings.at));
+            notes.push(crossing_note(format!("{said}: {} pairs of wall triangles cross, the first at {}", crossings.pairs, first_site(&crossings.at)), &crossings).on_made(1));
         }
         let base = p.name.clone().unwrap_or_else(|| object.name.clone());
         let layer = p.layer.clone().unwrap_or_else(|| inputs.layer_name(object));
@@ -128,7 +130,9 @@ impl Command for ProjectStep {
             let name = if count == 1 { format!("{base} next toe") } else { format!("{base} next toe ({})", i + 1) };
             create(name, Body::String(toe))
         }));
-        Ok(Outcome::new(changes).message(message))
+        let mut outcome = Outcome::new(changes);
+        outcome.notes = notes;
+        Ok(outcome)
     }
 }
 
@@ -345,7 +349,7 @@ fn run_design(inputs: &Inputs<'_>, design_id: ObjectId, design: &FaceDesign) -> 
     }
     let regions = solid_regions(inputs, design)?;
     let mut changes: Vec<Change> = inputs.objects().filter(|o| o.attributes.get(MADE_BY) == Some(&AttrValue::Text(design_id.to_string()))).map(|o| Change::Delete { id: o.id, base: o.revision }).collect();
-    let mut messages = Vec::new();
+    let mut notes: Vec<Note> = Vec::new();
     let ramp_strings: HashMap<ObjectId, &Polyline> = design.profiles.iter().flat_map(|profile| &profile.ramps).filter(|ramp| ramp.fixed != RampFixed::Line).filter_map(|ramp| Some((ramp.string?, inputs.string(ramp.string?).ok()?.1))).collect();
     let mut crossing: HashSet<(&str, &str)> = HashSet::new();
     let mut not_crossing: HashMap<(&str, &str), Vec<&str>> = HashMap::new();
@@ -363,17 +367,17 @@ fn run_design(inputs: &Inputs<'_>, design_id: ObjectId, design: &FaceDesign) -> 
     // Strips stand alone, so they run side by side.
     let run = FaceRun { design, id: design_id, inputs, targets: &targets, regions: &regions, ramp_strings: &ramp_strings };
     let mut not_built = Vec::new();
-    for strip in in_parallel(&runs, |&(line, id)| run.strip(line, id)) {
+    for (&(_, id), strip) in runs.iter().zip(in_parallel(&runs, |&(line, id)| run.strip(line, id))) {
         let strip = match strip {
             Ok(strip) => strip,
             Err(CommandError::Invalid(why)) => {
-                not_built.push(why.replace("invalid input: ", ""));
+                not_built.push((why.replace("invalid input: ", ""), id));
                 continue;
             }
             Err(e) => return Err(e),
         };
         changes.extend(strip.changes);
-        messages.extend(strip.messages);
+        notes.extend(strip.notes);
         crossing.extend(strip.crossing.iter().map(|ramp| (strip.profile, *ramp)));
         for ramp in &strip.missing {
             not_crossing.entry((strip.profile, *ramp)).or_default().push(strip.name);
@@ -381,33 +385,38 @@ fn run_design(inputs: &Inputs<'_>, design_id: ObjectId, design: &FaceDesign) -> 
     }
     // A strip that can't be built leaves the others standing, and only a run with nothing to show is refused.
     if !not_built.is_empty() && not_built.len() == runs.len() {
-        return Err(CommandError::Invalid(not_built.join("\n")));
+        return Err(CommandError::Invalid(not_built.into_iter().map(|(why, _)| why).collect::<Vec<_>>().join("\n")));
     }
-    messages.extend(not_built.iter().map(|why| format!("{why}. {NOT_BUILT}")));
+    notes.extend(not_built.iter().map(|(why, id)| Note::warning(Code::FaceNotBuilt, format!("{why}. {NOT_BUILT}")).on(*id)));
     for profile in &design.profiles {
         for ramp in &profile.ramps {
             let key = (profile.name.as_str(), ramp.name.as_str());
+            let said = |code: Code, text: String| {
+                let note = Note::warning(code, text);
+                match ramp.string.filter(|id| ramp_strings.contains_key(id)) {
+                    Some(id) => note.on(id),
+                    None => note,
+                }
+            };
             if profile.walls_of(&ramp.name).is_none() {
-                messages.push(format!("Ramp {}: it isn't on a wall yet, so it made no road", ramp.name));
+                notes.push(said(Code::RampNoWall, format!("Ramp {}: it isn't on a wall yet, so it made no road", ramp.name)));
             } else if ramp.fixed == RampFixed::Line {
                 if !crossing.contains(&key) {
-                    messages.push(format!("Ramp {}: no road {} came out on any line using {}, so it has nothing to carry on from", ramp.name, ramp.name, profile.name));
+                    notes.push(said(Code::RampNothingToCarryOn, format!("Ramp {}: no road {} came out on any line using {}, so it has nothing to carry on from", ramp.name, ramp.name, profile.name)));
                 } else if let Some(missed) = not_crossing.get(&key) {
-                    messages.push(format!("Ramp {}: no road {} came out on {}, so it has nothing to carry on from there", ramp.name, ramp.name, missed.join(", ")));
+                    notes.push(said(Code::RampNothingToCarryOn, format!("Ramp {}: no road {} came out on {}, so it has nothing to carry on from there", ramp.name, ramp.name, missed.join(", "))));
                 }
             } else if !ramp.string.is_some_and(|id| ramp_strings.contains_key(&id)) {
-                messages.push(format!("Ramp {}: its string has gone, so it made no road", ramp.name));
+                notes.push(said(Code::RampStringGone, format!("Ramp {}: its string has gone, so it made no road", ramp.name)));
             } else if !crossing.contains(&key) {
-                messages.push(format!("Ramp {}: its string doesn't cross any line using {}", ramp.name, profile.name));
+                notes.push(said(Code::RampNoCrossing, format!("Ramp {}: its string doesn't cross any line using {}", ramp.name, profile.name)));
             } else if let Some(missed) = not_crossing.get(&key) {
-                messages.push(format!("Ramp {}: its string doesn't cross {}", ramp.name, missed.join(", ")));
+                notes.push(said(Code::RampNoCrossing, format!("Ramp {}: its string doesn't cross {}", ramp.name, missed.join(", "))));
             }
         }
     }
     let mut outcome = Outcome::new(changes);
-    for message in messages {
-        outcome = outcome.message(message);
-    }
+    outcome.notes = notes;
     Ok(outcome)
 }
 
@@ -430,7 +439,7 @@ struct StripRun<'a> {
     name: &'a str,
     profile: &'a str,
     changes: Vec<Change>,
-    messages: Vec<String>,
+    notes: Vec<Note>,
     crossing: Vec<&'a str>,
     missing: Vec<&'a str>,
 }
@@ -491,16 +500,16 @@ impl<'a> FaceRun<'a, '_> {
         let steps = steps_of(&rules, &profile.steps, targets, &on_walls)?;
         let face = project_edited_face(&toe, registered, side, profile.direction, &steps, &specs, &edits).map_err(refuse)?;
         let mut changes = Vec::new();
-        let mut messages = vec![line_report(&base, &face, [extended.vertices.len(), shaped.vertices.len()], register.off_grid)];
-        messages.extend(placed.notes);
+        let mut notes = line_report(&base, &face, [extended.vertices.len(), shaped.vertices.len()], register.off_grid);
+        notes.extend(placed.notes);
         let names: Vec<&str> = ramps.iter().map(|ramp| ramp.name.as_str()).collect();
-        messages.extend(face.edits.iter().map(|edit| edit_report(&base, &names, &profile.steps, edit)));
-        messages.extend(face.met.iter().map(|met| met_report(&base, &names, met)));
-        messages.extend(face.join_notes.iter().map(|note| join_note(&base, &names, note)));
+        notes.extend(face.edits.iter().map(|edit| edit_report(&base, &names, &profile.steps, edit)));
+        notes.extend(face.met.iter().map(|met| met_report(&base, &names, met)));
+        notes.extend(face.join_notes.iter().map(|note| join_note(&base, &names, note)));
         if let Some(ProfileStep::Berm { join: Some(true), .. }) = profile.steps.last() {
-            messages.push(format!("{base}: Join on row {}: the ramps turn on the wall above a berm, so add that wall to join them", profile.steps.len()));
+            notes.push(Note::warning(Code::JoinNothing, format!("{base}: Join on row {}: the ramps turn on the wall above a berm, so add that wall to join them", profile.steps.len())));
         }
-        messages.extend((0..ramps.len()).map(|r| ramp_report(&names, &string.name, r, &face)));
+        notes.extend((0..ramps.len()).map(|r| ramp_report(&names, &string.name, r, &face)));
         // What a run makes keeps its string's attributes, so a strip's number carries on to its face. Not the roads that
         // came out on the string, which this run has carried on or left, nor the row it was in its own design.
         let attributes = || {
@@ -560,13 +569,17 @@ impl<'a> FaceRun<'a, '_> {
         }
         let crossings = find_crossings(&face.surface, COINCIDENT);
         if crossings.pairs > 0 {
-            messages.push(format!("{base}: {} pairs of face triangles cross, the first at {}", crossings.pairs, first_site(&crossings.at)));
+            notes.push(crossing_note(format!("{base}: {} pairs of face triangles cross, the first at {}", crossings.pairs, first_site(&crossings.at)), &crossings));
         }
         if let Some(said) = not_one_sheet(&face.surface) {
-            messages.push(format!("{base}: {said}"));
+            notes.push(Note { text: format!("{base}: {}", said.text), ..said });
         }
         changes.push(create(format!("{base} face"), Body::Surface(Surface::new(face.surface).with_crossings(crossings))));
-        Ok(StripRun { name: &string.name, profile: &profile.name, changes, messages, crossing: placed.crossing, missing: placed.missing })
+        // What's said of a strip is said of its string, the one object every line of it has to hand.
+        for note in &mut notes {
+            note.object = note.object.or(Some(id));
+        }
+        Ok(StripRun { name: &string.name, profile: &profile.name, changes, notes, crossing: placed.crossing, missing: placed.missing })
     }
 }
 
@@ -578,7 +591,7 @@ pub(super) struct PlacedRamps<'r> {
     /// Each one whose string crosses this strip, road or not, and each one whose doesn't.
     pub(super) crossing: Vec<&'r str>,
     pub(super) missing: Vec<&'r str>,
-    pub(super) notes: Vec<String>,
+    pub(super) notes: Vec<Note>,
 }
 
 /// Where each ramp lands on a strip: where its string crosses the toe of its first wall. With its end held
@@ -595,7 +608,7 @@ pub(super) fn place_ramps<'r>(profile: &'r FaceProfile, plain: &Face, ramp_strin
         };
         placed.crossing.push(&ramp.name);
         if crossings.len() > 1 {
-            placed.notes.push(format!("Ramp {}: {strip}: its string crosses {} times, and the road goes where it first does", ramp.name, crossings.len()));
+            placed.notes.push(Note::new(Severity::Info, Some(Code::RampCrossesAgain), format!("Ramp {}: {strip}: its string crosses {} times, and the road goes where it first does", ramp.name, crossings.len())));
         }
         placed.on_strip.push((ramp, face_ramp(ramp, crossed.at)));
     }
@@ -625,10 +638,10 @@ fn carry_on_ramps<'r>(profile: &'r FaceProfile, toe: &Polyline, attributes: &Att
         placed.crossing.push(&ramp.name);
         let off = plan_gap_to(toe, top.pit).max(plan_gap_to(toe, top.wall));
         if off > TOP_OFF_LINE {
-            placed.notes.push(format!("Ramp {}: {strip}: its top is {off:.1} m off this line, so it carries on from the nearest place on it", ramp.name));
+            placed.notes.push(Note::new(Severity::Info, Some(Code::RampTopOffLine), format!("Ramp {}: {strip}: its top is {off:.1} m off this line, so it carries on from the nearest place on it", ramp.name)).measured(off, "m"));
         }
         if Some(first) != first_wall {
-            placed.notes.push(format!("Ramp {}: {strip}: it isn't on the first wall, so it starts afresh on step {} from the nearest place to its top", ramp.name, first + 1));
+            placed.notes.push(Note::new(Severity::Info, Some(Code::RampStartsAfresh), format!("Ramp {}: {strip}: it isn't on the first wall, so it starts afresh on step {} from the nearest place to its top", ramp.name, first + 1)));
         }
         placed.on_strip.push((ramp, FaceRamp { back, carries_on: Some(top), ..face_ramp(ramp, [top.wall[0], top.wall[1]]) }));
     }
@@ -818,7 +831,7 @@ const CRACK_SHARE: f64 = 1e-3;
 
 /// A face that isn't one sheet, said with where: its longest edge in plan is its own, and each other edge round it is a
 /// hole or a loose piece (fault 5 of decision 0034). Each is placed at the middle of its corners.
-fn not_one_sheet(sheet: &TriMesh) -> Option<String> {
+fn not_one_sheet(sheet: &TriMesh) -> Option<Note> {
     let loops = zd_geom::boundary_loops(sheet).ok()?;
     if loops.len() < 2 {
         return None;
@@ -894,50 +907,81 @@ fn not_one_sheet(sheet: &TriMesh) -> Option<String> {
     };
     let places: Vec<String> = loops.iter().zip(&rounds).zip(&kinds).take(3).map(|((l, round), kind)| format!("{kind} at {} ({round:.1} m round)", super::surface::site(&middle(l)))).collect();
     let more = if loops.len() > 3 { format!(" and {} more", loops.len() - 3) } else { String::new() };
-    Some(format!("the face isn't one sheet: {} edge{} besides its own: {}{more}", loops.len(), if loops.len() == 1 { "" } else { "s" }, places.join(", ")))
+    let text = format!("the face isn't one sheet: {} edge{} besides its own: {}{more}", loops.len(), if loops.len() == 1 { "" } else { "s" }, places.join(", "));
+    let note = Note::warning(Code::FaceNotOneSheet, text).measured(loops.len() as f64, "edges");
+    Some(match loops.first() {
+        Some(first) => note.at(Place::Point { at: middle(first) }),
+        None => note,
+    })
 }
 
-/// One line's result, naming each place the design needs looking at.
-fn line_report(name: &str, face: &zd_geom::Face, [toe_in, toe_out]: [usize; 2], off_grid: usize) -> String {
+/// One line's result: what it made, then a note for each place the design needs looking at.
+fn line_report(name: &str, face: &zd_geom::Face, [toe_in, toe_out]: [usize; 2], off_grid: usize) -> Vec<Note> {
     let (walls, triangles) = (face.benches.len(), face.surface.triangles.len());
     let mut report = format!("{name}: {walls} walls, {triangles} triangles");
     if toe_out != toe_in {
         report += &format!("; toe conditioned from {toe_in} to {toe_out} vertices");
     }
-    if off_grid > 0 {
-        report += &format!("; {off_grid} toe vertices off their grid carried on at their grade");
-    }
     let (welded, furthest) = face.welded;
     if welded > 0 {
         report += &format!("; {welded} corners within 1 mm of another made one, the furthest {:.2} mm", furthest * 1e3);
     }
+    let mut notes = vec![Note::info(report)];
+    if off_grid > 0 {
+        notes.push(Note::warning(Code::ToeOffGrid, format!("{name}: {off_grid} toe vertices off their grid carried on at their grade")).measured(off_grid as f64, "vertices"));
+    }
     for step in &face.steps {
         let number = step.step + 1;
         if step.no_wall {
-            report += &format!("; step {number} has no height: its target is on or past the string all the way along");
+            notes.push(Note::warning(Code::WallNoHeight, format!("{name}: step {number} has no height: its target is on or past the string all the way along")));
         }
         if let Some(first) = step.no_height.first() {
-            report += &format!("; step {number} has no height along {} stretch(es), the first from {:.1}, {:.1}", step.no_height.len(), first.from[0], first.from[1]);
+            let text = format!("{name}: step {number} has no height along {} stretch(es), the first from {:.1}, {:.1}", step.no_height.len(), first.from[0], first.from[1]);
+            notes.push(stretches_note(Code::WallNoHeight, text, &step.no_height));
         }
         if let Some(first) = step.no_target.first() {
-            report += &format!("; step {number} has no target along {} stretch(es), bridged, the first from {:.1}, {:.1}", step.no_target.len(), first.from[0], first.from[1]);
+            let text = format!("{name}: step {number} has no target along {} stretch(es), bridged, the first from {:.1}, {:.1}", step.no_target.len(), first.from[0], first.from[1]);
+            notes.push(stretches_note(Code::WallNoTarget, text, &step.no_target));
         }
         if step.off_surface > 0 {
-            report += &format!("; step {number}: {} berm vertices have no surface under them and hold their crest's height", step.off_surface);
+            let text = format!("{name}: step {number}: {} berm vertices have no surface under them and hold their crest's height", step.off_surface);
+            notes.push(Note::warning(Code::BermNoSurface, text).measured(step.off_surface as f64, "vertices"));
         }
         if step.pieces_dropped > 0 {
-            report += &format!("; step {number}: a berm pinched into pieces and {} were left out", step.pieces_dropped);
+            let text = format!("{name}: step {number}: a berm pinched into pieces and {} were left out", step.pieces_dropped);
+            notes.push(Note::warning(Code::BermPinched, text).measured(step.pieces_dropped as f64, "pieces"));
         }
         if let Some(first) = step.no_berm.first() {
-            report += &format!("; step {number}: no berm along {} stretch(es) under the minimum bench, the first from {:.1}, {:.1}", step.no_berm.len(), first.from[0], first.from[1]);
+            let text = format!("{name}: step {number}: no berm along {} stretch(es) under the minimum bench, the first from {:.1}, {:.1}", step.no_berm.len(), first.from[0], first.from[1]);
+            notes.push(Note { severity: Severity::Info, ..stretches_note(Code::BermUnderMinBench, text, &step.no_berm) });
         }
     }
-    report
+    notes
+}
+
+/// A note on stretches along a line: placed at the first, measured by their length in plan together.
+pub(super) fn stretches_note(code: Code, text: String, stretches: &[Stretch]) -> Note {
+    let length: f64 = stretches.iter().map(|s| (s.to[0] - s.from[0]).hypot(s.to[1] - s.from[1])).sum();
+    let note = Note::warning(code, text).measured(length, "m");
+    match stretches.first() {
+        Some(first) => note.at(Place::Stretch { from: first.from, to: first.to }),
+        None => note,
+    }
+}
+
+/// A face or wall whose triangles cross: placed at the first crossing, measured in pairs.
+pub(super) fn crossing_note(text: String, crossings: &Crossings) -> Note {
+    let note = Note::warning(Code::FaceCrossing, text).measured(crossings.pairs as f64, "pairs");
+    match crossings.at.first() {
+        Some(&at) => note.at(Place::Point { at }),
+        None => note,
+    }
 }
 
 /// What a line redrawn by hand did, as a line of its own. `names` are the strip's ramps.
-fn edit_report(base: &str, names: &[&str], steps: &[ProfileStep], edit: &EditReport) -> String {
+fn edit_report(base: &str, names: &[&str], steps: &[ProfileStep], edit: &EditReport) -> Note {
     let mut parts = Vec::new();
+    let mut no_box = false;
     if let Some([narrowest, widest]) = edit.berm {
         parts.push(if (widest - narrowest).abs() < 0.05 { format!("the berm below it is {narrowest:.1} m wide") } else { format!("the berm below it is {narrowest:.1} to {widest:.1} m wide") });
     }
@@ -954,6 +998,7 @@ fn edit_report(base: &str, names: &[&str], steps: &[ProfileStep], edit: &EditRep
         if turns_above.iter().any(|t| t == name) {
             // Tim, 2026-11-06: his line was copied before A and B turned on the wall above, so it had no boxes.
             parts.push(format!("ramp {name} turns on row {} but its box isn't in your line, copied before it turned there: take your line off and ✎ again, or switch Join on", edit.after + 2));
+            no_box = true;
         } else {
             parts.push(format!("ramp {name} started {off:.1} m from it, so it goes in from the nearest place on it as it would on the line the steps made"));
         }
@@ -961,46 +1006,77 @@ fn edit_report(base: &str, names: &[&str], steps: &[ProfileStep], edit: &EditRep
     if parts.is_empty() {
         parts.push("in place".into());
     }
+    let (severity, code) = if no_box { (Severity::Warning, Code::LineBoxMissing) } else { (Severity::Info, Code::LineEdited) };
     if edit.joined.is_empty() {
-        return format!("{base}: your line after row {}: {}", edit.after + 1, parts.join("; "));
+        return Note::new(severity, Some(code), format!("{base}: your line after row {}: {}", edit.after + 1, parts.join("; ")));
     }
     let pairs: Vec<String> = edit.joined.iter().map(|[a, b]| format!("{} and {}", names.get(*a).copied().unwrap_or("?"), names.get(*b).copied().unwrap_or("?"))).collect();
-    format!("{base}: row {} joins the switchbacks of {} into one pad: {}", edit.after + 1, pairs.join(", "), parts.join("; "))
+    let text = format!("{base}: row {} joins the switchbacks of {} into one pad: {}", edit.after + 1, pairs.join(", "), parts.join("; "));
+    if no_box { Note::new(severity, Some(code), text) } else { Note::new(Severity::Info, Some(Code::JoinOnePad), text) }
 }
 
 /// Two switchbacks' boxes made one pad by themselves, being within a road's width of each other or overlapping (decision
 /// 0047).
-fn met_report(base: &str, names: &[&str], met: &MetBoxes) -> String {
+fn met_report(base: &str, names: &[&str], met: &MetBoxes) -> Note {
     let [a, b] = met.ramps.map(|r| names.get(r).copied().unwrap_or("?"));
     let how = if met.gap < 0.0 { format!("would have overlapped by {:.1} m", -met.gap) } else { format!("would have been {:.1} m apart, under a road's width", met.gap) };
-    format!("{base}: row {}: the boxes of {a} and {b} {how}, so they're one pad", met.after + 1)
+    Note::new(Severity::Info, Some(Code::JoinOnePad), format!("{base}: row {}: the boxes of {a} and {b} {how}, so they're one pad", met.after + 1))
 }
 
 /// A berm set to join switchbacks with none to join, and why: the run goes on as if it weren't set.
-fn join_note(base: &str, names: &[&str], note: &JoinNote) -> String {
+fn join_note(base: &str, names: &[&str], note: &JoinNote) -> Note {
     let name = |r: usize| names.get(r).copied().unwrap_or("?");
     let row = note.after + 1;
-    match (note.turning.as_slice(), note.facing_away.first()) {
+    let text = match (note.turning.as_slice(), note.facing_away.first()) {
         ([], _) => format!("{base}: Join on row {row}: no ramp turns back on a box on it, so there's nothing to join"),
         ([one], _) => format!("{base}: Join on row {row}: only ramp {} turns on it, so there's nothing to join it to", name(*one)),
         (_, Some([a, b])) => format!("{base}: Join on row {row}: the switchbacks of {} and {} face away from each other, so nothing lies between them to join", name(*a), name(*b)),
         (_, None) => format!("{base}: Join on row {row}: its boxes couldn't be found on the line, so they're left as they are"),
+    };
+    Note::warning(Code::JoinNothing, text)
+}
+
+/// A road's note made a warning by what went wrong with it, the worst saying where: a stop, then a miss of where it's
+/// held, then a steep flat.
+pub(super) fn raise(note: Note, code: Code, place: Option<Place>, value: Option<(f64, &str)>) -> Note {
+    let rank = |code: Option<Code>| match code {
+        Some(Code::RampStopped) => 3,
+        Some(Code::RampOffHold) => 2,
+        Some(Code::RampSteepFlat) => 1,
+        _ => 0,
+    };
+    if rank(Some(code)) <= rank(note.code) {
+        return note;
     }
+    let mut raised = Note { severity: Severity::Warning, code: Some(code), ..note };
+    if let Some(place) = place {
+        raised.place = Some(place);
+    }
+    if let Some((value, unit)) = value {
+        raised = raised.measured(value, unit);
+    }
+    raised
 }
 
 /// How far one ramp got, as a line of its own that the panel shows against it. `names` are the profile's ramps.
-fn ramp_report(names: &[&str], strip: &str, ramp: usize, face: &Face) -> String {
+fn ramp_report(names: &[&str], strip: &str, ramp: usize, face: &Face) -> Note {
     let name = names[ramp];
     let mut parts = Vec::new();
+    let mut note = Note::new(Severity::Info, Some(Code::RampRoad), "");
     for road in face.roads.iter().filter(|road| road.ramp == ramp) {
         let (Some(bottom), Some(top)) = (road.pit_edge.vertices.first(), road.pit_edge.vertices.last()) else { continue };
         let steps = if road.steps[0] == road.steps[1] { format!("step {}", road.steps[0] + 1) } else { format!("steps {} to {}", road.steps[0] + 1, road.steps[1] + 1) };
         parts.push(format!("{steps}, {:.1} m from RL {:.1} to {:.1}, starts at {:.1}, {:.1}", road.pit_edge.plan_length(), bottom[2], top[2], bottom[0], bottom[1]));
+        if note.place.is_none() {
+            note = note.at(Place::Point { at: *bottom }).measured(road.pit_edge.plan_length(), "m");
+        }
         if let Some(miss) = road.off_end {
             parts.push(format!("it comes out {miss:.1} m from where it's held"));
+            note = raise(note, Code::RampOffHold, None, Some((miss, "m")));
         }
         for (at, steepest) in &road.steep_flats {
             parts.push(format!("its flat before the turn at {:.1}, {:.1} follows the floor at up to {:.1} %, steeper than the road", at[0], at[1], steepest * 100.0));
+            note = raise(note, Code::RampSteepFlat, Some(Place::Point { at: *at }), Some((steepest * 100.0, "%")));
         }
     }
     for stopped in face.no_roads.iter().filter(|stopped| stopped.ramp == ramp) {
@@ -1010,8 +1086,9 @@ fn ramp_report(names: &[&str], strip: &str, ramp: usize, face: &Face) -> String 
             (None, None) => stopped.why.clone(),
         };
         parts.push(format!("stopped on step {} at {:.1}, {:.1}: {why}", stopped.step + 1, stopped.at[0], stopped.at[1]));
+        note = raise(note, Code::RampStopped, Some(Place::Point { at: stopped.at }), None);
     }
-    format!("Ramp {name}: {strip}: {}", parts.join("; "))
+    Note { text: format!("Ramp {name}: {strip}: {}", parts.join("; ")), ..note }
 }
 
 #[cfg(test)]
@@ -1038,12 +1115,14 @@ mod tests {
         // Two squares meeting at a corner: the edge touches itself there, and it's still one sheet.
         assert_eq!(not_one_sheet(&TriMesh::new(vertices.clone(), squares(None).into_iter().take(2).chain([[5, 6, 10], [5, 10, 9]]).collect())), None);
         let said = not_one_sheet(&TriMesh::new(vertices.clone(), squares(Some((1, 1))))).expect("a hole");
-        assert_eq!(said, format!("the face isn't one sheet: 1 edge besides its own: a hole at {:.3} {:.3} RL 100.000 (4.0 m round)", e + 1.5, n + 1.5));
+        assert_eq!(said.text, format!("the face isn't one sheet: 1 edge besides its own: a hole at {:.3} {:.3} RL 100.000 (4.0 m round)", e + 1.5, n + 1.5));
+        assert_eq!((said.severity, said.code), (Severity::Warning, Some(Code::FaceNotOneSheet)));
+        assert_eq!(said.place, Some(Place::Point { at: [e + 1.5, n + 1.5, 100.0] }), "at the hole's middle");
         // The middle square on its own beside the ring is a piece apart.
         let apart: Vec<[u32; 3]> = squares(Some((1, 1))).into_iter().chain([[5, 6, 10], [5, 10, 9]].map(|t| t.map(|v| v + 16))).collect();
         let mut beside = TriMesh::new(vertices.clone(), apart);
         beside.vertices.extend(vertices.iter().map(|q| [q[0] + 10.0, q[1], q[2]]));
-        let said = not_one_sheet(&beside).expect("two pieces");
+        let said = not_one_sheet(&beside).expect("two pieces").text;
         assert!(said.contains("a hole at") && said.contains(&format!("a piece apart at {:.3} {:.3}", e + 11.5, n + 1.5)), "{said}");
     }
 }

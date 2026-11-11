@@ -6,7 +6,7 @@ mod common;
 use std::time::Instant;
 
 use serde_json::json;
-use zd_commands::{RunRecord, Session};
+use zd_commands::{Code, RunRecord, Session, Severity};
 use zd_core::{AttrValue, Body, ChangeKind, ObjectId};
 
 const E: f64 = 650_000.0;
@@ -101,6 +101,11 @@ fn a_toe_offset_and_numbered_slices_the_pit_into_a_solid_a_strip() {
     assert_eq!(names[15], "PIT past strip 15");
     // Strip 1 is in front of the first toe, at 100 m east: 500 x the integral of (100 + z) over RL 0 to 100.
     assert_volume(volume(&s, strips[0]), 7_500_000.0, "strip 1");
+    // Each strip's line is said of the solid the run made for it, by id once it has one (0059).
+    let said = record.notes.iter().find(|n| n.text.starts_with("strip 1: ") && n.text.ends_with(" m3")).unwrap_or_else(|| panic!("{:?}", record.messages));
+    assert_eq!(said.object, Some(strips[0]));
+    assert_eq!(said.value.as_ref().map(|v| v.unit.as_str()), Some("m3"));
+    assert_volume(said.value.as_ref().unwrap().value, 7_500_000.0, "strip 1's note");
     for (k, &strip) in strips.iter().enumerate().take(15).skip(1) {
         assert_volume(volume(&s, strip), 2_500_000.0, &format!("strip {}", k + 1));
         assert_eq!(s.project().object(strip).unwrap().attributes.get("strip"), Some(&AttrValue::Number((k + 1) as f64)));
@@ -217,7 +222,17 @@ fn the_made_up_grid_pit_sliced_by_its_strips() {
                 continue;
             }
             // Each fault the run names, with where it is.
-            Ok(record) => record.messages.iter().filter(|m| ["cross", "isn't one sheet", "stopped on step", "Nothing is built"].iter().any(|w| m.contains(w))).for_each(|m| println!("\n{name}: {m}")),
+            Ok(record) => {
+                record.messages.iter().filter(|m| ["cross", "isn't one sheet", "stopped on step", "Nothing is built"].iter().any(|w| m.contains(w))).for_each(|m| println!("\n{name}: {m}"));
+                // Every fault the geometry can place is said with its place (0059, workstream 2).
+                let placeable = [Code::FaceCrossing, Code::FaceNotOneSheet, Code::RampStopped, Code::RampSteepFlat, Code::WallNoTarget];
+                let unplaced: Vec<&str> = record.notes.iter().filter(|n| n.code.is_some_and(|c| placeable.contains(&c)) && n.place.is_none()).map(|n| n.text.as_str()).collect();
+                assert!(unplaced.is_empty(), "{name}: faults with no place: {unplaced:?}");
+                let warnings = record.notes.iter().filter(|n| n.severity == Severity::Warning).count();
+                let placed = record.notes.iter().filter(|n| n.severity == Severity::Warning && n.place.is_some()).count();
+                let without: Vec<&str> = record.notes.iter().filter(|n| n.severity == Severity::Warning && n.place.is_none()).filter_map(|n| n.code.map(|c| c.name())).collect();
+                println!("{name}: {warnings} warnings, {placed} with a place; without: {without:?}");
+            }
         }
         let faces = surfaces_on(&s, &format!("faces {name}"));
         let start = Instant::now();

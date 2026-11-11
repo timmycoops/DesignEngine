@@ -7,7 +7,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use serde_json::json;
-use zd_commands::{RunRecord, Session};
+use zd_commands::{Code, Place, RunRecord, Session, Severity};
 use zd_core::{AttrValue, Body, ChangeKind, Grid, ObjectId, Polyline, TriMesh};
 use zd_geom::{COINCIDENT, OffsetSide, SectionPlane, WallStep, drape_string, find_crossings, next_toe, project_wall, slice_mesh, triangulate_grid};
 
@@ -1810,6 +1810,11 @@ fn a_ramp_that_cant_reach_names_the_step_and_the_face_still_builds() {
     let line = record.messages.iter().find(|m| m.starts_with("Ramp A:")).unwrap();
     assert!(line.contains("stopped on step 1 at"), "{line}");
     assert!(line.contains("reaches the end of the wall at RL 106.0"), "60 m along at 10 %: {line}");
+    // The note: a warning that it stopped, where, said of the strip's string (workstream 2 of 0059).
+    let note = record.notes.iter().find(|n| n.text.starts_with("Ramp A:")).unwrap();
+    assert_eq!((note.severity, note.code, note.object), (Severity::Warning, Some(Code::RampStopped), Some(string)));
+    let Some(Place::Point { at }) = note.place else { panic!("a point: {:?}", note.place) };
+    assert!(at[0] - E > 40.0 && at[0] - E < 101.0, "between where it starts and the end of the wall: {at:?}");
     assert!(s.project().objects().any(|o| o.name == "short Wall face"));
     assert!(!s.project().objects().any(|o| o.name.contains("road")));
 }
@@ -1888,6 +1893,7 @@ fn a_strip_that_cant_be_built_leaves_the_others_standing() {
     let design = created(&s.run("face.save_design", json!({ "name": "one bad", "content": on_each_strip(&strips, floor, road.clone()) })).unwrap())[0];
     let record = s.run("face.project", json!({ "design": design })).unwrap();
     assert!(record.messages.iter().any(|m| m.starts_with("off the floor Wall: ") && m.ends_with("Nothing is built on this string")), "{:?}", record.messages);
+    assert!(record.notes.iter().any(|n| n.code == Some(Code::FaceNotBuilt) && n.text.starts_with("off the floor Wall: ")), "{:?}", record.notes);
     assert!(s.project().objects().any(|o| o.name == "three Wall face"));
     assert!(!s.project().objects().any(|o| o.name == "off the floor Wall face"));
 
@@ -1907,6 +1913,8 @@ fn a_strip_a_ramp_string_misses_runs_plain_and_the_run_says_so() {
     let design = created(&s.run("face.save_design", json!({ "name": "two of three", "content": on_each_strip(&strips, floor, road(across)) })).unwrap())[0];
     let record = s.run("face.project", json!({ "design": design })).unwrap();
     assert!(record.messages.iter().any(|m| m == "Ramp A: its string doesn't cross three"), "{:?}", record.messages);
+    let note = record.notes.iter().find(|n| n.text == "Ramp A: its string doesn't cross three").unwrap();
+    assert_eq!((note.severity, note.code, note.object), (Severity::Warning, Some(Code::RampNoCrossing), Some(across)));
     assert!(s.project().objects().any(|o| o.name == "two Wall road A pit edge"));
     assert!(s.project().objects().any(|o| o.name == "three Wall face"));
     assert!(!s.project().objects().any(|o| o.name == "three Wall road A pit edge"));

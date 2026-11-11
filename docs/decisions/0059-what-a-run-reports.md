@@ -48,8 +48,33 @@ Checked: a made-up command's notes name what it read and what it made; a refusal
 before notes reads back whole. All 18 projects saved under `testdata` open, and their 923 logged runs read back as
 4,842 info notes with their texts unchanged.
 
+## Workstream 2: walls, ramps, steps, builds and strip solids
+
+`face.project_step`, `face.project`, `face.build_step`, `face.rebuild`, `face.join`, `solid.slice_by_faces` and
+`solid.between_surfaces` report notes, with 37 codes in the `wall`, `berm`, `toe`, `face`, `ramp`, `join`, `line`,
+`build`, `slice` and `solid` families.
+
+- **One line, one thing.** A line that used to join several things with semicolons, such as a strip's walls and
+  triangles followed by "step 2 has no height along 3 stretch(es)…", is now a summary line followed by one note for each
+  warning. The words of each are as before, with the strip's or wall's name in front, so each warning can carry its own
+  code and place. The summary keeps what's only information: toe conditioned and corners welded.
+- **Places.** Stretches with no height, no target or no berm are placed at the first stretch and measured by their
+  length together. Crossings are placed at the first crossing, and a face that isn't one sheet at its first edge's
+  middle. A road is placed where it starts; if it stopped, steeped or missed where it's held, it's placed where that
+  happened (a stop first). Gaps filled, toes above the floor, tops below the top and faces crossing are each placed where
+  they are.
+- **Objects.** A strip's notes are said of its string. A step's notes are said of the line it was built from, and a
+  crossing of the wall the step makes. A slice's strip lines are said of the strip solid the run makes.
+
+Checked:
+
+- A wall whose target dips under its toe for 50 m is placed on that stretch, with its 50 m length.
+- A ramp that can't reach is placed where it stopped.
+- A strip's volume line names its solid.
+- On the made-up grid pit, every fault the geometry can place has its place: 233 of its 235 warnings. The two without
+  are a step with no height anywhere and a strip that couldn't be built, which name the strip's string instead.
+
 ## Still to come
 
-- **Workstream 2:** walls, ramps, steps, builds and strip solids give their warnings codes, places and values.
 - **Workstream 3:** seam models, imports and repair, exports, links and the rest.
 - **Workstream 4:** the app colours by severity, a note with a place gets Show, and the 17-word list goes.

@@ -11,7 +11,8 @@ use zd_geom::{COINCIDENT, JoinLog, SliceRefusal, StripSlice, find_crossings, fin
 
 use super::solid::checked_input;
 use super::surface::{default_tolerance, site};
-use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
+use super::face::crossing_note;
+use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Place, Severity};
 
 fn default_attribute() -> String {
     "strip".into()
@@ -123,8 +124,8 @@ fn changed(log: &JoinLog) -> bool {
     log.faces > 1 || weld.vertices_welded + weld.collapsed_dropped + weld.degenerate_dropped + weld.duplicates_dropped + log.stitched > 0 || !log.filled.is_empty()
 }
 
-/// What joining one strip's faces did, in a line.
-fn join_words(attribute: &str, strip: &StripFaces<'_>, log: &JoinLog, triangles: usize) -> String {
+/// What joining one strip's faces did, in a line, then each gap it filled, said where.
+fn join_words(attribute: &str, strip: &StripFaces<'_>, log: &JoinLog, triangles: usize) -> Vec<Note> {
     let mut words = match log.faces {
         1 => format!("{}: one face ({}) of {triangles} triangles", strip.called(attribute), strip.names()),
         n => format!("{}: {n} faces joined ({}) into one of {triangles} triangles", strip.called(attribute), strip.names()),
@@ -144,11 +145,13 @@ fn join_words(attribute: &str, strip: &StripFaces<'_>, log: &JoinLog, triangles:
         1 => words.push_str("; 1 corner lying on an edge, stitched to it"),
         n => words.push_str(&format!("; {n} corners lying on an edge, stitched to it")),
     }
+    let mut notes = vec![Note::info(words)];
     for gap in &log.filled {
         let area = if gap.area < 0.01 { "under 0.01 m²".to_string() } else { format!("{:.2} m²", gap.area) };
-        words.push_str(&format!("; a gap of {area} filled near {}", place(gap.at)));
+        let text = format!("{}: a gap of {area} filled near {}", strip.called(attribute), place(gap.at));
+        notes.push(Note::warning(Code::FaceGapFilled, text).at(Place::Point { at: gap.at }).measured(gap.area, "m2"));
     }
-    words
+    notes
 }
 
 /// `face.join`: one face for each strip number, from the faces given (decision 0049). A strip's faces, up and down or
@@ -200,9 +203,12 @@ impl Command for JoinFaces {
             if log.faces > 1 {
                 joined += 1;
             }
-            outcome = outcome.message(join_words(&p.attribute, strip, &log, mesh.triangle_count()));
+            // A strip's notes are on the face this run makes for it.
+            let face = outcome.changes.len();
+            outcome.notes.extend(join_words(&p.attribute, strip, &log, mesh.triangle_count()).into_iter().map(|note| note.on_made(face)));
             if let Some(first) = crossings.at.first() {
-                outcome = outcome.message(format!("warning: {}: {} pairs of its triangles cross, the first at {}; it can't slice a solid until they're put right", strip.called(&p.attribute), crossings.pairs, site(first)));
+                let text = format!("warning: {}: {} pairs of its triangles cross, the first at {}; it can't slice a solid until they're put right", strip.called(&p.attribute), crossings.pairs, site(first));
+                outcome.notes.push(crossing_note(text, &crossings).on_made(face));
             }
             let mut attributes = Attributes::new();
             attributes.insert(p.attribute.clone(), strip.key.value());
@@ -214,7 +220,8 @@ impl Command for JoinFaces {
             });
         }
         let made = if strips.len() == 1 { "1 face".to_string() } else { format!("{} faces, one a {}", strips.len(), p.attribute) };
-        Ok(outcome.message(format!("{} faces into {made}, {joined} of them joined, in {:.0} ms", p.faces.len(), start.elapsed().as_secs_f64() * 1e3)))
+        outcome.notes.push(Note::info(format!("{} faces into {made}, {joined} of them joined, in {:.0} ms", p.faces.len(), start.elapsed().as_secs_f64() * 1e3)));
+        Ok(outcome)
     }
 }
 
@@ -295,7 +302,7 @@ impl Command for SliceByFaces {
         for strip in &strips {
             let (mesh, log) = one_face(strip, p.tolerance, &p.attribute)?;
             if changed(&log) {
-                outcome = outcome.message(join_words(&p.attribute, strip, &log, mesh.triangle_count()));
+                outcome.notes.extend(join_words(&p.attribute, strip, &log, mesh.triangle_count()));
             }
             faces.push(mesh);
         }
@@ -329,17 +336,17 @@ impl SliceByFaces {
         let t = slice.timings;
         let triangles_in: usize = faces.iter().map(|f| f.triangle_count()).sum();
         let triangles_out: usize = slice.strips.iter().map(|s| s.mesh.triangle_count()).sum();
-        let mut lines = vec![format!(
+        let mut lines = vec![Note::info(format!(
             "'{name}' sliced by {} faces in {ms:.0} ms (closing them {:.0}, strips {:.0}, from Manifold {:.0}): {} + {triangles_in} triangles in, {triangles_out} out",
             faces.len(),
             t.close_ms,
             t.strips_ms,
             t.from_manifold_ms,
             mesh.triangle_count()
-        )];
+        ))];
         let ascending = slice.order.windows(2).all(|w| strips[w[0]].key < strips[w[1]].key);
         let descending = slice.order.windows(2).all(|w| strips[w[0]].key > strips[w[1]].key);
-        lines.push(format!(
+        lines.push(Note::info(format!(
             "faces from the pit out, by how much of '{name}' lies in front of each: {attribute} {}{}",
             numbers.join(", "),
             if ascending || faces.len() == 1 {
@@ -349,7 +356,7 @@ impl SliceByFaces {
             } else {
                 " (not in the order of their numbers)"
             }
-        ));
+        )));
 
         let few = slice.strips.len() <= LINES_PER_STRIP_UP_TO;
         let mut kept = 0;
@@ -360,7 +367,7 @@ impl SliceByFaces {
                 true => (format!("{name} past {attribute} {}", numbers[k - 1]), format!("past {attribute} {}", numbers[k - 1])),
             };
             if piece.mesh.triangles.is_empty() || piece.volume <= tolerance {
-                lines.push(format!("{which}: nothing of '{name}' lies there"));
+                lines.push(Note::warning(Code::SliceEmpty, format!("{which}: nothing of '{name}' lies there")).on(object.id));
                 continue;
             }
             let crossings = find_solid_crossings(&piece.mesh, default_tolerance());
@@ -380,7 +387,7 @@ impl SliceByFaces {
             let solid = Solid::new(piece.mesh.clone()).map_err(CommandError::NotWatertight)?.with_crossings(crossings);
             if few {
                 let parts = if piece.parts > 1 { format!(" in {} parts", piece.parts) } else { String::new() };
-                lines.push(format!("{which}: {:.3} m3{parts}", piece.volume));
+                lines.push(Note::info(format!("{which}: {:.3} m3{parts}", piece.volume)).on_made(outcome.changes.len()).measured(piece.volume, "m3"));
             }
             let mut attributes = object.attributes.clone();
             match last {
@@ -399,33 +406,36 @@ impl SliceByFaces {
         let mut tiny = zd_geom::TinyEdges::default();
         slice.strips.iter().for_each(|s| tiny.add(s.tiny_edges));
         if let Some(line) = super::solid::tiny_edge_words(tiny, slice.strips.iter().filter(|s| s.tiny_edges.joined > 0).count()) {
-            lines.push(line);
+            lines.push(Note::info(line));
         }
         let parted = slice.strips.iter().filter(|s| s.parts > 1).count();
-        lines.push(format!(
+        lines.push(Note::info(format!(
             "'{name}' {:.3} m3 into {kept} solids adding up to {total:.3} m3, within {:.6} m3{}",
             slice.input_volume,
             (total - slice.input_volume).abs(),
             if parted > 0 { format!("; {parted} in more than one part, each kept as one solid") } else { String::new() }
-        ));
+        )).on(object.id).measured(total, "m3"));
         for (k, cut) in slice.faces.iter().enumerate() {
             let face = format!("{} face", strips[k].called(attribute));
             if let Some((by, at)) = cut.toe_above_floor {
-                lines.push(format!("{face}: its toe stands up to {by:.2} m above the floor of '{name}', near {}, and below it the cut goes straight down", place(at)));
+                let text = format!("{face}: its toe stands up to {by:.2} m above the floor of '{name}', near {}, and below it the cut goes straight down", place(at));
+                lines.push(Note::warning(Code::SliceToeAboveFloor, text).at(Place::Point { at }).measured(by, "m"));
             }
             if let Some((by, at)) = cut.top_below_top {
-                lines.push(format!("{face}: its top is up to {by:.2} m below the top of '{name}', near {}, and above it the cut goes straight up", place(at)));
+                let text = format!("{face}: its top is up to {by:.2} m below the top of '{name}', near {}, and above it the cut goes straight up", place(at));
+                lines.push(Note::warning(Code::SliceTopBelowTop, text).at(Place::Point { at }).measured(by, "m"));
             }
         }
         for crossing in &slice.crossings {
-            lines.push(format!(
+            let text = format!(
                 "warning: the {} face crosses faces before it inside '{name}': {:.3} m3 in front of them lies behind it, near {}, and stays with the strips before",
                 strips[crossing.face].called(attribute),
                 crossing.volume,
                 place(crossing.at)
-            ));
+            );
+            lines.push(Note::warning(Code::SliceFacesCross, text).at(Place::Point { at: crossing.at }).measured(crossing.volume, "m3"));
         }
-        outcome.messages.extend(lines);
+        outcome.notes.extend(lines);
         Ok(())
     }
 }
@@ -489,7 +499,7 @@ impl Command for SolidBetween {
         let outline: Vec<[f64; 2]> = line.vertices.iter().map(|v| [v[0], v[1]]).collect();
         let between = solid_between(&top, &bottom, &outline).map_err(|e| CommandError::Invalid(format!("'{}' between '{top_name}' and '{bottom_name}': {e}", string.name)))?;
         if !line.closed {
-            outcome = outcome.message(format!("'{}' isn't closed: it's taken as closed from its last point back to its first", string.name));
+            outcome.notes.push(Note::new(Severity::Info, Some(Code::SolidOutlineOpen), format!("'{}' isn't closed: it's taken as closed from its last point back to its first", string.name)).on(string.id));
         }
         if between.mesh.triangles.is_empty() {
             return Err(CommandError::Invalid(format!("nothing lies between '{top_name}' and '{bottom_name}' inside '{}'", string.name)));
@@ -498,7 +508,7 @@ impl Command for SolidBetween {
         if let Some(first) = crossings.at.first() {
             return Err(CommandError::Invalid(format!("the solid would cross itself, {} pairs, the first at {}; nothing saved", crossings.pairs, site(first))));
         }
-        outcome = outcome.message(format!(
+        outcome.notes.push(Note::info(format!(
             "'{}': {:.3} m3 between '{top_name}' and '{bottom_name}' over {:.1} m2, in {:.0} ms: {} + {} triangles in, {} out{}",
             string.name,
             between.volume,
@@ -508,13 +518,14 @@ impl Command for SolidBetween {
             bottom.triangle_count(),
             between.mesh.triangle_count(),
             if between.parts > 1 { format!(", in {} parts", between.parts) } else { String::new() }
-        ));
+        )).measured(between.volume, "m3"));
         if let Some(line) = super::solid::tiny_edge_words(between.tiny_edges, 1) {
-            outcome = outcome.message(line);
+            outcome.notes.push(Note::info(line));
         }
         for (name, uncovered) in [(&top_name, between.top_uncovered), (&bottom_name, between.bottom_uncovered)] {
             if uncovered > 0.01 {
-                outcome = outcome.message(format!("warning: '{name}' doesn't cover {uncovered:.1} m2 of '{}' in plan, and there's no solid there", string.name));
+                let text = format!("warning: '{name}' doesn't cover {uncovered:.1} m2 of '{}' in plan, and there's no solid there", string.name);
+                outcome.notes.push(Note::warning(Code::SolidNotCovered, text).measured(uncovered, "m2").on(string.id));
             }
         }
         let solid = Solid::new(between.mesh).map_err(CommandError::NotWatertight)?.with_crossings(crossings);

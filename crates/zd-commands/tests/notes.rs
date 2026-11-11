@@ -35,7 +35,7 @@ impl Command for Reports {
         .message("2 strings in 1.2 ms");
         outcome.notes.push(Note::info("read the toe").on(read.id));
         outcome.notes.push(
-            Note::warning(Code::RefusedGeometry, "the crest has no height for 42 m")
+            Note::warning(Code::WallNoHeight, "the crest has no height for 42 m")
                 .on_made(2)
                 .at(Place::Stretch { from: [650_000.0, 7_450_000.0, 96.5], to: [650_042.0, 7_450_000.0, 96.8] })
                 .measured(42.0, "m"),
@@ -112,4 +112,31 @@ fn a_run_log_saved_before_notes_reads_back_whole() {
     assert_eq!(record.messages, ["30 faces", "Strip 7: 42 m of crest has no height"]);
     assert_eq!(record.notes, [Note::info("30 faces"), Note::info("Strip 7: 42 m of crest has no height")]);
     assert_eq!(record.refused, None);
+}
+
+/// A wall whose target dips under its toe for the first 50 m has no height there: the note says so with the stretch, its
+/// length and the toe it stands on (workstream 2). The target rises 0.4 m a metre east from RL 80, so it crosses the
+/// toe's RL 100 50 m along.
+#[test]
+fn a_wall_with_no_height_says_where_and_how_long() {
+    let (e, n) = (650_000.0, 7_450_000.0);
+    let mut s = Session::with_builtins();
+    let rl = |x: f64| 80.0 + 0.4 * (x - e);
+    let corners = [[e - 50.0, n - 50.0], [e + 250.0, n - 50.0], [e + 250.0, n + 250.0], [e - 50.0, n + 250.0]].map(|[x, y]| [x, y, rl(x)]);
+    let made = s.run("surface.from_mesh", json!({ "name": "rising", "layer": "surfaces", "vertices": corners, "triangles": [[0, 1, 2], [0, 2, 3]] })).unwrap();
+    let target = made.outputs[0].id;
+    let toe = s.run("string.create", json!({ "name": "toe", "layer": "design", "points": [[e, n + 50.0, 100.0], [e + 100.0, n + 50.0, 100.0]] })).unwrap().outputs[0].id;
+    let record = s.run("face.project_step", json!({ "string": toe, "target": target, "batter": 45.0, "side": "left" })).unwrap();
+
+    assert!(record.notes[0].text.starts_with("wall at 45° to rising: ") && record.notes[0].severity == Severity::Info, "{:?}", record.messages);
+    let note = record.notes.iter().find(|n| n.code == Some(Code::WallNoHeight)).unwrap_or_else(|| panic!("{:?}", record.messages));
+    assert_eq!(note.severity, Severity::Warning);
+    assert!(note.text.starts_with("wall at 45° to rising: no height along 1 stretch(es), the first from 650000.0, 7450050.0"), "{}", note.text);
+    let Some(Place::Stretch { from, to }) = note.place else { panic!("a stretch: {:?}", note.place) };
+    assert!((from[0] - e).abs() < 1e-6 && (from[1] - (n + 50.0)).abs() < 1e-6, "from the toe's start: {from:?}");
+    assert!((to[0] - (e + 50.0)).abs() < 0.5 && (to[1] - (n + 50.0)).abs() < 1e-6, "to where the target crosses the toe, 50 m along: {to:?}");
+    let value = note.value.as_ref().unwrap();
+    assert_eq!(value.unit, "m");
+    assert!((value.value - (to[0] - from[0])).abs() < 1e-9, "its length in plan: {value:?}");
+    assert_eq!(note.object, Some(toe), "said of the toe it stands on");
 }
