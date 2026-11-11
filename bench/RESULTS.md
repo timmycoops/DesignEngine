@@ -343,6 +343,18 @@ with only the 272 k-triangle design surface drawn, to separate render cost from 
 - Hands-on check (Tim, 2026-10-28, synthetic topo, roof and floor loaded): placing and dragging
   vertices "all feels snappy".
 
+## Store at scale (2026-11-11, decision 0058 stage 1)
+
+`store_scale`, release build, local disk, 48 threads:
+
+| Project | Size as tables | Encode | Write | Read back | Differences |
+|---|---|---|---|---|---|
+| Made-up: 200,000 solids, 21.6 M triangles, 50 M attribute values | 95.0 MB, 604 entries | 1.37 s | 0.12 s | 9.8 s | 0 |
+| Deswik drawing, 43,181 objects (today's folder: 714 MB, open 5.8 s) | 96.6 MB, 138 entries | 0.58 s | 0.09 s | 3.1 s | 0 |
+| Terrace drawing, 101,432 objects (today's folder: 683 MB, open 4.5 s) | 244.0 MB, 310 entries | 0.59 s | 0.18 s | 1.4 s | 0 |
+
+Reads are mostly building attributes one by one; stage 3 (attribute names held once) is for that.
+
 ## Follow-ups
 
 1. **Re-run on real data.** Put a pit in `testdata/golden/<pit>/` (topo, `<seam>_roof`,

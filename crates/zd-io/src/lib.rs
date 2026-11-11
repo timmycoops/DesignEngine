@@ -20,6 +20,7 @@ mod text;
 mod vulcan;
 mod vulcan_tri;
 mod xyz;
+mod zdp;
 
 use std::path::Path;
 
@@ -40,6 +41,7 @@ pub use string_csv::{CsvLog, CsvString, CsvStrings, format_csv_strings, parse_cs
 pub use vulcan::{ELEVATION_VARIABLES, VulcanGrid, VulcanLog, VulcanSeam, VulcanSurface, parse_vulcan_grid, read_vulcan_grid, read_vulcan_seam, vulcan_grid_name};
 pub use vulcan_tri::{VulcanTriLog, VulcanTriangulation, parse_vulcan_triangulation, plain_triangulation_bytes, read_vulcan_triangulation};
 pub use xyz::{GridImport, XyzLog, XyzOptions, parse_xyz_grid, read_xyz_grid, write_xyz_grid};
+pub use zdp::{Container, FolderContainer, ReadProject, WriteReport, ZDP_FORMAT, ZDP_VERSION, encode_project, project_differences, read_project, write_project};
 
 /// What a surface file turned out to hold.
 #[derive(Debug, Clone)]

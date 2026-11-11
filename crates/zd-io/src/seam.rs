@@ -347,7 +347,7 @@ fn modified_ms(path: &Path) -> Result<u64, IoError> {
 }
 
 /// 64-bit FNV-1a: enough to tell whether a file has changed, and no new dependency.
-fn fnv1a(bytes: &[u8]) -> u64 {
+pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &b| (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
 }
 
