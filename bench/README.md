@@ -27,3 +27,14 @@ triangulation and as grid elevations, each over a WebView2 shared buffer and ove
 a polyline vertex through 300 snapped updates. Results go to `bench/out/app-results.json`. Add
 `--surfaces a.dxf,b.xyz` to use real data instead of the synthetic pit. Leave the window in
 front while it runs: a hidden window throttles its frame rate.
+
+## Store at scale (`.zdp` tables)
+
+```powershell
+cargo run --release -p bench --bin store_scale            # 200,000 solids, 250 attributes each
+cargo run --release -p bench --bin store_scale -- 43000 257
+```
+
+Makes block solids of 108 triangles with mostly-zero attributes, writes them as `.zdp` tables to
+`bench/out/store-scale/`, reads them back and checks they're the same bit for bit (decision 0058).
+

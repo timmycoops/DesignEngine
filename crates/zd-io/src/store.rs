@@ -462,7 +462,7 @@ impl ProjectStore {
 /// tens of thousands of solids, two files each.
 /// The looks of what's still in the project: an object deleted keeps its look in the session for an
 /// undo, but undo doesn't survive closing, so it isn't saved.
-fn saved_display(project: &Project) -> Display {
+pub(crate) fn saved_display(project: &Project) -> Display {
     let display = project.display();
     let live: HashSet<ObjectId> = project.objects().map(|o| o.id).collect();
     Display {

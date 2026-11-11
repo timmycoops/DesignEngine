@@ -4914,6 +4914,7 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "base64 0.22.1",
+ "bytes",
  "lz4_flex",
  "parquet",
  "quick-xml",

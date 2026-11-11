@@ -27,6 +27,8 @@ serde = { version = "1", features = ["derive"] }
 parquet = { version = "60", default-features = false, features = ["arrow", "snap"] }
 arrow-array = "60"
 arrow-schema = "60"
+# Parquet's own in-memory buffer, already in the build through parquet: the only way it reads from memory (0058).
+bytes = "1"
 # Solids come as zips of thousands of files (Spry exports them so); deflate is all they use.
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # float_roundtrip: run logs must give back the exact f64 coordinates they were given.
