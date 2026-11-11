@@ -66,6 +66,8 @@ def the_gate_open_list_run_read(tmp, original):
     # Run a command.
     record = s.run("string.set_elevation", string=toe["id"], rl=42.5)
     assert record["status"] == "ok" and record["outputs"][0]["change"] == "revised"
+    assert [n["text"] for n in record["notes"]] == record["messages"], "each line a note, its text as before"
+    assert "refused" not in record
     assert all(p[2] == 42.5 for p in s.object(toe["id"])["points"])
 
     # Read the run log: it carries on from the saved project's.

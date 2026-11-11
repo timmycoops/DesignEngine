@@ -2,6 +2,8 @@ use std::fmt;
 
 use zd_core::{MeshValidity, ObjectId, ObjectKind, ProjectError};
 
+use crate::Code;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommandError {
     UnknownCommand(String),
@@ -44,6 +46,24 @@ impl fmt::Display for CommandError {
 }
 
 impl std::error::Error for CommandError {}
+
+impl CommandError {
+    /// The kind of refusal, as a code a script or the app can rely on (decision 0059).
+    pub fn code(&self) -> Code {
+        match self {
+            CommandError::UnknownCommand(_) => Code::RefusedUnknownCommand,
+            CommandError::BadParams(_) => Code::RefusedBadParams,
+            CommandError::MissingObject(_) => Code::RefusedMissingObject,
+            CommandError::WrongKind { .. } => Code::RefusedWrongKind,
+            CommandError::Invalid(_) => Code::RefusedInvalid,
+            CommandError::NotWatertight(_) => Code::RefusedNotWatertight,
+            CommandError::Geometry(_) => Code::RefusedGeometry,
+            CommandError::Io(_) => Code::RefusedIo,
+            CommandError::Project(_) => Code::RefusedProject,
+            CommandError::Store(_) => Code::RefusedStore,
+        }
+    }
+}
 
 impl From<ProjectError> for CommandError {
     fn from(e: ProjectError) -> Self {
