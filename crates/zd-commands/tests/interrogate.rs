@@ -1,6 +1,7 @@
 //! `solid.interrogate` (decision 0061, workstream 2): each block's seam grids averaged over it by exact partial cells and
 //! written onto it. A made-up seam model of two seams on a 25 m grid, and 60 × 100 m blocks naming their seam by an
-//! attribute. Values to 1 part in a billion.
+//! attribute. Grids are named as Vulcan names them, a three-letter extension ending in `g` (`cu.asg` is ash, `as`, in seam
+//! `cu`). Values to 1 part in a billion.
 
 use std::path::{Path, PathBuf};
 
@@ -77,18 +78,18 @@ fn write_model(dir: &Path) {
         ("cu.srg", flat(100.0)),
         ("cu.sfg", flat(96.0)),
         ("cu.rdg", flat(1.4)),
-        ("cu.ashg", vulcan_grid(|x, _| ash_cu(x) as f32)),
+        ("cu.asg", vulcan_grid(|x, _| ash_cu(x) as f32)),
         ("cl.srg", flat(94.0)),
         ("cl.sfg", flat(90.0)),
         ("cl.rdg", flat(1.5)),
-        ("cl.ashg", flat(20.0)),
+        ("cl.asg", flat(20.0)),
     ];
     for (name, bytes) in files {
         std::fs::write(dir.join(name), bytes).unwrap();
     }
     std::fs::write(
         dir.join("stack.csv"),
-        "horizon,parent,material,working,roof,floor,rd,ash\ncu,,coal,yes,cu.srg,cu.sfg,cu.rdg,cu.ashg\ncl,,coal,yes,cl.srg,cl.sfg,cl.rdg,cl.ashg\n",
+        "horizon,parent,material,working,roof,floor,rd,as\ncu,,coal,yes,cu.srg,cu.sfg,cu.rdg,cu.asg\ncl,,coal,yes,cl.srg,cl.sfg,cl.rdg,cl.asg\n",
     )
     .unwrap();
 }
@@ -179,14 +180,14 @@ fn each_block_takes_its_own_seam_s_grids_by_its_attribute() {
     assert!(record.messages[0].starts_with("2 of 2 blocks interrogated against"), "{:?}", record.messages);
     assert!(record.notes.iter().all(|n| n.code.is_none()), "nothing to warn of: {:?}", record.messages);
     near(number(&s, ids[0], "rd").unwrap(), held(1.4), "cu's RD");
-    near(number(&s, ids[0], "ash").unwrap(), ash_by_hand(70.0, 130.0), "cu's ash, rising east, by the cells' shares");
+    near(number(&s, ids[0], "as").unwrap(), ash_by_hand(70.0, 130.0), "cu's ash, rising east, by the cells' shares");
     near(number(&s, ids[1], "rd").unwrap(), held(1.5), "cl's RD");
-    near(number(&s, ids[1], "ash").unwrap(), 20.0, "cl's ash");
+    near(number(&s, ids[1], "as").unwrap(), 20.0, "cl's ash");
     assert_eq!(s.project().object(ids[0]).unwrap().attributes.get("interrogated"), Some(&AttrValue::Text("stack".into())));
     // One edit of the blocks, undone in one step.
     assert_eq!(s.project().object(ids[0]).unwrap().revision, 2);
     s.undo();
-    assert_eq!(number(&s, ids[0], "ash"), None);
+    assert_eq!(number(&s, ids[0], "as"), None);
 }
 
 #[test]
@@ -195,7 +196,7 @@ fn a_block_off_the_grid_and_one_smaller_than_a_cell() {
     // A 10 m square within the cell of the node 4 east and 3 north: that node's ash.
     let (mut s, model, ids) = project(&t, vec![("small", vec![seam("cu")], cuboid(4.0 * STEP - 3.0, 3.0 * STEP - 6.0, 10.0, 10.0, 96.0, 100.0))]);
     interrogate(&mut s, model, &ids, json!({})).unwrap();
-    near(number(&s, ids[0], "ash").unwrap(), held(ash_cu(4.0 * STEP)), "the node's ash");
+    near(number(&s, ids[0], "as").unwrap(), held(ash_cu(4.0 * STEP)), "the node's ash");
 }
 
 #[test]
@@ -233,12 +234,12 @@ fn a_block_whose_seam_attribute_looks_wrong_is_warned_of_and_still_written() {
 fn an_attribute_from_elsewhere_isn_t_written_over_without_a_prefix() {
     let t = TempDir::new("prefix");
     // Spry's own ash on the block.
-    let (mut s, model, ids) = project(&t, vec![("spry", vec![seam("cu"), ("ash", AttrValue::Number(11.0))], cuboid(70.0, 40.0, 60.0, 100.0, 96.0, 100.0))]);
+    let (mut s, model, ids) = project(&t, vec![("spry", vec![seam("cu"), ("as", AttrValue::Number(11.0))], cuboid(70.0, 40.0, 60.0, 100.0, 96.0, 100.0))]);
     let refused = interrogate(&mut s, model, &ids, json!({})).unwrap_err().to_string();
-    assert!(refused.contains("already has an attribute 'ash'"), "{refused}");
+    assert!(refused.contains("already has an attribute 'as'"), "{refused}");
     interrogate(&mut s, model, &ids, json!({ "prefix": "g_" })).unwrap();
-    near(number(&s, ids[0], "g_ash").unwrap(), ash_by_hand(70.0, 130.0), "ours beside it");
-    near(number(&s, ids[0], "ash").unwrap(), 11.0, "Spry's kept");
+    near(number(&s, ids[0], "g_as").unwrap(), ash_by_hand(70.0, 130.0), "ours beside it");
+    near(number(&s, ids[0], "as").unwrap(), 11.0, "Spry's kept");
     // Run again, it writes its own afresh.
     interrogate(&mut s, model, &ids, json!({ "prefix": "g_" })).unwrap();
     assert_eq!(s.project().object(ids[0]).unwrap().revision, 3);
@@ -250,14 +251,14 @@ fn each_variable_is_weighted_as_asked() {
     // RD 1.4 west of 100 m east and 1.6 east of it; ash by tonnes leans east, by volume it doesn't.
     let (mut s, model, ids) = project(&t, vec![("block", vec![seam("cu")], cuboid(70.0, 40.0, 60.0, 100.0, 96.0, 100.0))]);
     std::fs::write(t.0.join("cu.rdg"), vulcan_grid(|x, _| if x < 100.0 { 1.4 } else { 1.6 })).unwrap();
-    let record = interrogate(&mut s, model, &ids, json!({ "weights": { "ash": [] }, "variables": ["ash"] })).unwrap();
+    let record = interrogate(&mut s, model, &ids, json!({ "weights": { "as": [] }, "variables": ["as"] })).unwrap();
     assert!(record.notes.iter().all(|n| n.code.is_none()), "by volume alone the RD grid isn't read: {:?}", record.messages);
-    near(number(&s, ids[0], "ash").unwrap(), ash_by_hand(70.0, 130.0), "ash by volume alone");
+    near(number(&s, ids[0], "as").unwrap(), ash_by_hand(70.0, 130.0), "ash by volume alone");
     assert_eq!(number(&s, ids[0], "rd"), None, "only what was asked is written");
-    let record = interrogate(&mut s, model, &ids, json!({ "variables": ["ash"] })).unwrap();
+    let record = interrogate(&mut s, model, &ids, json!({ "variables": ["as"] })).unwrap();
     assert!(record.notes.iter().any(|n| n.code == Some(Code::LinkChanged)), "the changed RD grid is said: {:?}", record.messages);
     // By tonnes: the cells east of 100 m weigh 1.6 against 1.4, so the ash leans east.
-    assert!(number(&s, ids[0], "ash").unwrap() > ash_by_hand(70.0, 130.0) + 0.01);
+    assert!(number(&s, ids[0], "as").unwrap() > ash_by_hand(70.0, 130.0) + 0.01);
 }
 
 /// 43,000 made-up 60 × 100 m blocks, 400 across, all in seam `cu`, against a 25 m seam model over them all: what a run
@@ -268,11 +269,11 @@ fn interrogate_43000_blocks() {
     let t = TempDir::new("scale");
     let (cols, rows) = (24_100 / 25 + 2, 10_900 / 25 + 2);
     let grid = |f: &dyn Fn(f64, f64) -> f32| vulcan_grid_of(cols, rows, f);
-    for (name, bytes) in [("cu.srg", grid(&|_, _| 104.0)), ("cu.sfg", grid(&|_, _| 96.0)), ("cu.rdg", grid(&|_, _| 1.4)), ("cu.ashg", grid(&|x, _| ash_cu(x) as f32))] {
+    for (name, bytes) in [("cu.srg", grid(&|_, _| 104.0)), ("cu.sfg", grid(&|_, _| 96.0)), ("cu.rdg", grid(&|_, _| 1.4)), ("cu.asg", grid(&|x, _| ash_cu(x) as f32))] {
         std::fs::write(t.0.join(name), bytes).unwrap();
     }
-    std::fs::write(t.0.join("stack.csv"), "horizon,parent,material,working,roof,floor,rd,ash
-cu,,coal,yes,cu.srg,cu.sfg,cu.rdg,cu.ashg
+    std::fs::write(t.0.join("stack.csv"), "horizon,parent,material,working,roof,floor,rd,as
+cu,,coal,yes,cu.srg,cu.sfg,cu.rdg,cu.asg
 ").unwrap();
     let mut project = Project::new();
     let changes = (0..43_000)
@@ -303,5 +304,5 @@ fn the_seam_can_come_from_another_attribute() {
     let record = interrogate(&mut s, model, &ids, json!({})).unwrap();
     assert!(record.notes.iter().any(|n| n.code == Some(Code::InterrogateNoSeam)), "no `seam` on it");
     interrogate(&mut s, model, &ids, json!({ "seam_attribute": "Seam" })).unwrap();
-    near(number(&s, ids[0], "ash").unwrap(), 20.0, "cl's ash");
+    near(number(&s, ids[0], "as").unwrap(), 20.0, "cl's ash");
 }

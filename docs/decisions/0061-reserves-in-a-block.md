@@ -142,7 +142,7 @@ and 100 m along it, the size a coal mine usually cuts a block to:
 The geology at each block, written onto it:
 
 - **Its seam by an attribute.** `seam_attribute` names the attribute, `seam` unless given; its value is matched to the
-  model's horizon codes, case aside. Those are the codes the seam's grids are named by (`cu` for `pitcu.ashg`), and the
+  model's horizon codes, case aside. Those are the codes the seam's grids are named by (`cu` for `pitcu.asg`), and the
   solids the surface stack makes will carry them (Tim: *"the grid names contain the seam name and the solids will have
   the seam name based on the surface stack - matching the seam name of the grids and the solids post surface stack is
   what we need"*). So **item 7's stacking writes each solid's horizon code as its `seam`**, and the interrogation needs
@@ -156,10 +156,11 @@ The geology at each block, written onto it:
   what a variable is weighted by besides volume. Left out, the model's density is by volume and every other variable by
   coal tonnes (volume × density). A weight that isn't written is averaged too, to weigh by. The weights are the run's
   parameters for now, kept in its record; they can move into the definition later.
-- **Onto the block.** Each value is written as an attribute named by its code, after `prefix` if one is given, with
-  `interrogated` naming the model. A variable with no value over a block (no grid for its seam, or none of its nodes
+- **Onto the block.** Each value is written as an attribute named by its variable code: as Vulcan names a grid, its
+  file's extension is always three letters ending in `g` (Tim), and the code is the two before it (`as` for `.asg`, `rd`
+  for `.rdg`), with `prefix` in front if one is given, and `interrogated` naming the model. A variable with no value over a block (no grid for its seam, or none of its nodes
   under it) is written as nothing and said. An attribute of the same name from elsewhere, one on a block never
-  interrogated (Spry's own `ash`, say), is never written over: the run is refused, asking for a prefix. Run again, it
+  interrogated (Spry's own `as`, say), is never written over: the run is refused, asking for a prefix. Run again, it
   writes its own values afresh.
 - **An edit of the blocks.** A new revision of each, undone in one step, with the earlier revisions kept: engine rule 4's
   new objects don't apply, as a rename's don't. The geometry is unchanged, so the view keeps its meshes.
@@ -177,7 +178,7 @@ Checked on a made-up seam model of two seams, `cu` (RL 96 to 100, RD 1.40, ash r
 - **A block with no seam attribute and one naming `xx`** are left as they were, each said by its code. A block naming its
   seam by `Seam`, as a Spry block might, is interrogated when the run says so.
 - **A block saying `cu` that lies in `cl`** is warned of, placed and named, and given `cu`'s values as its attribute says.
-- **A block carrying Spry's own `ash`**: the run is refused; with the prefix `g_` ours is written beside it and Spry's
+- **A block carrying Spry's own `as`**: the run is refused; with the prefix `g_` ours is written beside it and Spry's
   kept; run again, written afresh.
 - **Weights:** ash by volume alone reads no RD grid; by tonnes, with the RD changed to 1.6 east of 100 m, it leans east
   and the changed RD grid is said.
