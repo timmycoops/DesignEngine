@@ -4,6 +4,7 @@
 //! and closed surfaces an import couldn't make solids fixed by repair (decision 0040).
 
 mod build;
+mod compare;
 mod deswik;
 mod exchange;
 mod face;
@@ -18,6 +19,7 @@ mod string;
 mod strips;
 mod surface;
 
+pub use compare::{CompareSolids, CompareSolidsParams};
 pub use build::{BuildOp, BuildStep, BuildStepParams, Rebuild, RebuildParams};
 pub use deswik::{ImportDeswik, ImportDeswikParams, MeshesAs};
 pub use exchange::{ExportCsv, ExportDxf, ExportParams, ExportSolids, ExportSolidsParams, ImportStrings, ImportStringsParams, LayerInFile};
@@ -79,6 +81,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(SliceByFaces);
     registry.register(SolidBetween);
     registry.register(Interrogate);
+    registry.register(CompareSolids);
     registry.register(ProjectStep);
     registry.register(SaveDesign);
     registry.register(ProjectDesign);
