@@ -9,8 +9,8 @@
 //! The block's volume of record is its mesh's enclosed volume. What's here sets the weights: each lattice node stands for
 //! its cell, and the block's volume there is its thickness at the node times the cell's area. Each variable says how it's
 //! averaged: by that volume alone, or by that volume times other variables at the node. Density is by volume and
-//! qualities by coal tonnes (volume × density) as a rule, and clean-coal qualities by tonnes × yield, but the choice is
-//! the definition's, not the engine's.
+//! qualities by coal tonnes (volume × density) as a rule, but the choice is the definition's, not the engine's. The solid
+//! is seam coal: yield, dilution and coal mixed with waste come later, in the steps that make run-of-mine coal.
 
 use zd_core::{Lattice, TriMesh};
 
@@ -146,7 +146,7 @@ pub fn in_situ_rd(rd_ad: f64, m_ad: f64, m_is: f64) -> f64 {
 
 /// One of the model's variables, and how it's averaged over a block: by the block's volume at each node times each of
 /// the variables named in `weight_by` (by their places in the list) at that node. Density takes none; a raw quality the
-/// density, so it's by coal tonnes; a clean-coal quality the density and the yield.
+/// density, so it's by coal tonnes.
 pub struct Variable<'a> {
     /// The variable's grid on the model's lattice; NaN is no value.
     pub grid: &'a [f64],

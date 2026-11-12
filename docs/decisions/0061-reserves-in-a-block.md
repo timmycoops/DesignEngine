@@ -33,8 +33,8 @@ workflow in deswik."* So:
 - **The interrogation is the geology at the block:** its volume, area and thickness in each horizon, and each of the
   model's variables averaged over it. Nothing else.
 - **Each variable says how it's averaged:** by volume, or by volume times other variables at each node. As a rule
-  density is by volume, raw qualities by coal tonnes (volume × density) and clean-coal qualities by tonnes × yield,
-  but each is set in the definition, so anyone can average anything by whatever they want.
+  density is by volume and qualities by coal tonnes (volume × density), but each is set in the definition, so anyone
+  can average anything by whatever they want.
 - **Tonnes, moisture basis (Preston–Sanders), mining factors and seam rules are steps after the interrogation**, as a
   dataflow is in Spry or a workflow in Deswik. They need a plan of their own, and are not in this item.
 
@@ -50,6 +50,11 @@ quality based on the ash grid contours and values."* So:
   converted.
 - **It should be easy to check by eye**: pick a block of coal, choose one of its seam's grids, such as ash, and see the
   grid's contours and values around the block beside the block's value. Proposed as a workstream in the plan.
+
+And (Tim): *"Don't worry about clean coal as a yield component - when we are doing the interrogation it will be clean
+coal already - that logic comes in once we add dilution and it becomes ROM coal where we have both coal and waste. That
+will have nothing to do with the geological interrogation."* The solid interrogated is seam coal; yield, dilution and
+coal mixed with waste belong to the steps that make run-of-mine coal.
 
 Still open: whether PIT B's Spry project carries tonnes, RD and qualities for each block (it shapes only workstream 4),
 and how a block's seam is known.
@@ -83,8 +88,8 @@ Checked on made-up blocks at mine-grid coordinates, against answers worked by ha
 - **Ash rising 0.1 % a metre east across it, by coal tonnes:** 12.5 %, its value at the middle, to a millionth.
 - **A wedge 3 to 8 m thick, RD 1.40 on its west half and 1.50 on its east, ash 10 % and 20 %:** RD by volume
   16.075 / 11, and ash by coal tonnes 262 / 16.075.
-- **Yield 80 % and 60 %, clean ash 8 % and 9 %:** yield by tonnes 70 %, clean ash by tonnes × yield 1,180 / 140, and the
-  same ash by volume alone 8.5 %.
+- **RD 1.4 and 1.6, CV 25 and 21 MJ/kg:** CV by coal tonnes 68.6 / 3, by volume alone 23, and by the RD and a weight
+  grid together 103.6 / 4.4.
 - **Preston–Sanders:** RD 1.45 at 3 % air-dried and 8 % in situ gives 140.65 / 99.25 = 1.4171285. It is unchanged when
   the moistures are equal.
 - **How much of a block lies in a seam:** a block from RL 100 to 110 against seams meeting at 107 holds 6,000 m³ of one

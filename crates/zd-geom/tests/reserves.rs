@@ -102,17 +102,17 @@ fn density_is_by_volume_and_a_quality_by_coal_tonnes() {
 
 #[test]
 fn a_variable_is_averaged_by_whatever_it_names_as_its_weights() {
-    // A clean-coal quality by coal tonnes times yield: yield 80 % west, 60 % east; clean ash 8 % west, 9 % east;
-    // RD and thickness the same throughout: (80 × 8 + 60 × 9) / (80 + 60) = 1,180 / 140.
+    // RD 1.4 west, 1.6 east; CV 25 MJ/kg west, 21 east; thickness the same throughout.
     let lattice = in_its_squares();
-    let rd = vec![1.4; 900];
-    let yields = grid(&lattice, |x, _| if x < E + 25.0 { 80.0 } else { 60.0 });
-    let clean_ash = grid(&lattice, |x, _| if x < E + 25.0 { 8.0 } else { 9.0 });
-    let c = composite(&whole(&flat(), &lattice), 25.0, &[by(&rd, &[]), by(&yields, &[0]), by(&clean_ash, &[0, 1])]);
-    near(c.values[1].unwrap(), 70.0, 1e-9, "yield by tonnes");
-    near(c.values[2].unwrap(), 1180.0 / 140.0, 1e-9, "clean ash by tonnes × yield");
-    // The same ash by volume alone, as someone may want: the plain mean, 8.5 %.
-    near(composite(&whole(&flat(), &lattice), 25.0, &[by(&clean_ash, &[])]).values[0].unwrap(), 8.5, 1e-9, "by volume");
+    let rd = grid(&lattice, |x, _| if x < E + 25.0 { 1.4 } else { 1.6 });
+    let cv = grid(&lattice, |x, _| if x < E + 25.0 { 25.0 } else { 21.0 });
+    let samples = whole(&flat(), &lattice);
+    // By coal tonnes: (1.4 × 25 + 1.6 × 21) / 3.0 = 68.6 / 3. By volume alone, as someone may want: the plain mean, 23.
+    near(composite(&samples, 25.0, &[by(&rd, &[]), by(&cv, &[0])]).values[1].unwrap(), 68.6 / 3.0, 1e-9, "by tonnes");
+    near(composite(&samples, 25.0, &[by(&cv, &[])]).values[0].unwrap(), 23.0, 1e-9, "by volume");
+    // By as many variables as it names: the RD and a weight grid of 2 west and 1 east, (2.8 × 25 + 1.6 × 21) / 4.4.
+    let weight = grid(&lattice, |x, _| if x < E + 25.0 { 2.0 } else { 1.0 });
+    near(composite(&samples, 25.0, &[by(&rd, &[]), by(&weight, &[]), by(&cv, &[0, 1])]).values[2].unwrap(), 103.6 / 4.4, 1e-9, "by both");
 }
 
 #[test]
