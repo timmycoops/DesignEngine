@@ -123,6 +123,7 @@ codes! {
     InterrogateUnknownSeam = "interrogate.unknown_seam", "Blocks whose seam attribute isn't a horizon of the model, left as they were";
     InterrogateNoValue = "interrogate.no_value", "A variable with no value over a block, so none written";
     InterrogateOutsideSeam = "interrogate.outside_seam", "A block lying less than the share asked between its seam's roof and floor: its seam may be wrong";
+    InterrogateColumnDiffers = "interrogate.column_differs", "A block whose own volume differs from its 2.5D column volume by more than the tolerance";
     StringOffSurface = "string.off_surface", "String vertices with no surface under them, keeping their elevations";
     StringNotCrossed = "string.not_crossed", "Strings a numbering line doesn't cross, left as they were";
     StringCrossesAgain = "string.crosses_again", "A string a numbering line crosses more than once, numbered where it first does";

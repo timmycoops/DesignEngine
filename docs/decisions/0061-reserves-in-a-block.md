@@ -1,7 +1,7 @@
 # 0061 — Interrogating a block: a thin reserves slice against the seam model
 
 Status: agreed 12 November 2026 (Tim: "Agree all seven", the Build Plan's "Reserves slice plan" tab), changed the same day
-as below. Workstreams 1 and 2 of 6.
+as below. Workstreams 1 to 3 of 6.
 
 ## Why
 
@@ -189,8 +189,32 @@ Checked on a made-up seam model of two seams, `cu` (RL 96 to 100, RD 1.40, ash r
 - **43,000 made-up blocks against a 25 m model over 24 by 11 km** (an ignored test): 43,000 interrogated and written in
   4.1 s on every core.
 
+## Workstream 3: the 2.5D column check
+
+`zd_geom::column_volume`: a block's seam's thickness at each node, roof less floor, times the block's plan in the node's
+cell (exact partial cells, the plan of its top in each cell from `cells_in_solid`), summed. It's how Vulcan and Minex work
+out a seam's volume inside a polygon. A null roof or floor, or a floor above its roof, holds none.
+
+`solid.interrogate` works it out for every block from the roof and floor it already reads, writes it onto the block as
+`column_volume` (after any prefix), and sets it against the block's own volume, the volume of record. A block differing
+by more than `volume_tolerance` (0.1 % unless given) is warned of (`interrogate.column_differs`), placed at its middle
+with the difference in %, the five largest by name and the rest counted, and a summary says how many blocks are within
+it and the totals either way. It changes no value. A block of the whole seam's thickness matches its column; a block
+cut short of the roof or floor, as a bench is, holds less than its seam's column there and is warned of, as it should
+be until benches are summed by outline.
+
+Checked:
+
+- **A block turned 30° across 25 m cells, the full 4 m of a flat seam:** its plan in the cells 6,000 m², exact, and its
+  column 24,000 m³, its own volume. Where the roof is null over half of it, the column holds none there.
+- **A seam whose roof rises 0.05 m a metre east, the block's top on it:** its column, cell by cell, 27,000 m³, its own.
+  The same block cut 1 m short of the roof holds 6,000 m³ less than its column.
+- **In the command:** blocks of the whole seam get `column_volume` 24,000 m³ and no warning; a block cut 1 m short of
+  `cu`'s roof is warned of at +33.3 %, placed and named, with its column written all the same, and a 50 % tolerance lets
+  it by. The summary says 1 of 2 blocks within 0.1 %.
+
 ## Still to come
 
-Workstream 3: the 2.5D column check by block outline with exact partial cells. Workstream 4: Deswik's and Spry's numbers
+Workstream 4: Deswik's and Spry's numbers
 beside ours. Workstream 5: the Reserves panel. Workstream 6: the check by eye, a seam's grid as contours and its blocks
 coloured by their values on the same bands.

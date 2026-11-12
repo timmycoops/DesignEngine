@@ -1,14 +1,15 @@
 //! `solid.interrogate`: the geology at each block (decision 0061, workstream 2). A block is a coal solid of one seam, named
 //! by one of its attributes; each of that seam's grids is averaged over it by exact partial cells, as Vulcan does, and the
-//! values are written onto the block as attributes, one a variable, named by its code. Nothing else: tonnes, moisture
-//! basis, dilution and run-of-mine coal are steps after it.
+//! values are written onto the block as attributes, one a variable, named by its code. Its 2.5D column volume is written
+//! beside them as a check (workstream 3). Nothing else: tonnes, moisture basis, dilution and run-of-mine coal are steps
+//! after it.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Body, Change, Grid, Lattice, ObjectId, ObjectKind};
-use zd_geom::{Variable, cells_in_solid, columns_in_solid, composite, thickness_between};
+use zd_geom::{Variable, cells_in_solid, column_volume, columns_in_solid, composite, thickness_between};
 use zd_io::{read_linked_grid, read_linked_surface};
 
 use super::in_parallel_watched;
@@ -16,6 +17,9 @@ use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, 
 
 /// The attribute that says a block has been interrogated, and against which model: what the run writes over is its own.
 pub const INTERROGATED: &str = "interrogated";
+
+/// The attribute a block's 2.5D column volume is written to, after any prefix (m³).
+pub const COLUMN_VOLUME: &str = "column_volume";
 
 /// Blocks listed by name in a note, before the rest are counted.
 const NAMED: usize = 5;
@@ -48,6 +52,14 @@ pub struct InterrogateParams {
     /// wrong. A share, 0 to 1.
     #[serde(default = "in_seam_default")]
     pub in_seam: f64,
+    /// A block whose own volume differs from its 2.5D column volume by more than this share of it is warned of. 0.001 is
+    /// 0.1 %.
+    #[serde(default = "volume_tolerance_default")]
+    pub volume_tolerance: f64,
+}
+
+fn volume_tolerance_default() -> f64 {
+    0.001
 }
 
 fn seam_attribute_default() -> String {
@@ -73,12 +85,19 @@ struct SeamGrids<'a> {
     floor: &'a [f64],
 }
 
+/// A block whose volume differs from its column: by what share, its name, id and middle, and the two volumes.
+type Differs<'a> = (f64, &'a str, ObjectId, [f64; 3], f64, f64);
+
 /// What the run found for one block.
 struct BlockResult {
     values: Vec<(String, Option<f64>)>,
     /// Its share between its seam's roof and floor, where its nodes say.
     in_seam: Option<f64>,
     volume: f64,
+    /// Its 2.5D column volume: its seam's thickness at each node over its plan in the node's cell.
+    column: f64,
+    /// Its own volume, the volume of record.
+    own: f64,
 }
 
 impl Command for Interrogate {
@@ -99,6 +118,7 @@ impl Command for Interrogate {
                 Field::new("weights", FieldType::Text, "What a variable is weighted by besides volume, by code (density by volume, the rest by coal tonnes)"),
                 Field::new("prefix", FieldType::Text, "Put in front of each code to name its attribute"),
                 Field::new("in_seam", FieldType::Number { unit: "" }, "Warn of a block with less than this share between its seam's roof and floor (0.95)"),
+                Field::new("volume_tolerance", FieldType::Number { unit: "" }, "Warn of a block whose volume differs from its 2.5D column by more than this share (0.001)"),
             ],
             outputs: vec![Field::new("solids", FieldType::Objects, "The blocks, each with its values as attributes")],
         }
@@ -110,6 +130,9 @@ impl Command for Interrogate {
         }
         if !(0.0..=1.0).contains(&p.in_seam) {
             return Err(CommandError::Invalid(format!("in_seam is a share from 0 to 1, not {}", p.in_seam)));
+        }
+        if !p.volume_tolerance.is_finite() || p.volume_tolerance < 0.0 {
+            return Err(CommandError::Invalid(format!("volume_tolerance is a share of 0 or more, not {}", p.volume_tolerance)));
         }
         let model_object = inputs.object(p.model)?;
         let Body::SeamModel(model) = &model_object.body else {
@@ -153,7 +176,8 @@ impl Command for Interrogate {
             wanted.insert(seam.clone(), written);
         }
         // Names written are the run's own, or new: an attribute of the same name from elsewhere (Spry's, say) isn't written over.
-        let names: BTreeSet<String> = wanted.values().flatten().map(|c| format!("{}{c}", p.prefix)).collect();
+        let mut names: BTreeSet<String> = wanted.values().flatten().map(|c| format!("{}{c}", p.prefix)).collect();
+        names.insert(format!("{}{COLUMN_VOLUME}", p.prefix));
         if let Some((name, holder)) = blocks.iter().find_map(|(o, ..)| {
             (!o.attributes.contains_key(INTERROGATED)).then(|| names.iter().find(|n| o.attributes.contains_key(n.as_str())).map(|n| (n.clone(), o.name.clone()))).flatten()
         }) {
@@ -249,13 +273,20 @@ impl Command for Interrogate {
                 all += t;
                 inside += thickness_between(&column, g.floor[column.node], g.roof[column.node]).min(t);
             }
-            BlockResult { values: g.codes.iter().cloned().zip(averaged.values).collect(), in_seam: (all > 0.0).then(|| inside / all), volume: averaged.volume }
+            BlockResult {
+                values: g.codes.iter().cloned().zip(averaged.values).collect(),
+                in_seam: (all > 0.0).then(|| inside / all),
+                volume: averaged.volume,
+                column: column_volume(&cells, g.floor, g.roof),
+                own: solid.volume(),
+            }
         })?;
 
         // The values onto the blocks.
         let mut outcome = Outcome::default();
         let mut no_value: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut outside: Vec<(f64, &str, ObjectId, [f64; 3])> = Vec::new();
+        let mut differs: Vec<Differs<'_>> = Vec::new();
         let mut written_codes: BTreeSet<String> = BTreeSet::new();
         for ((object, solid, seam), result) in blocks.iter().zip(&results) {
             let keep: BTreeSet<&String> = wanted[seam].iter().collect();
@@ -281,6 +312,12 @@ impl Command for Interrogate {
                     attributes.remove(&format!("{}{code}", p.prefix));
                     no_value.entry(code.clone()).or_default().push(object.name.clone());
                 }
+            }
+            attributes.insert(format!("{}{COLUMN_VOLUME}", p.prefix), AttrValue::Number(result.column));
+            let off = if result.own > 0.0 { (result.column - result.own) / result.own } else { 0.0 };
+            if off.abs() > p.volume_tolerance {
+                let at = solid.mesh().bounds().map_or([0.0; 3], |b| b.centre());
+                differs.push((off, object.name.as_str(), object.id, at, result.own, result.column));
             }
             attributes.insert(INTERROGATED.into(), AttrValue::Text(model_object.name.clone()));
             if let Some(share) = result.in_seam
@@ -340,6 +377,31 @@ impl Command for Interrogate {
             outcome.notes.push(
                 Note::warning(Code::InterrogateOutsideSeam, format!("{} more blocks lie less than {:.0} % in their seam", outside.len() - NAMED, p.in_seam * 100.0))
                     .measured((outside.len() - NAMED) as f64, "blocks"),
+            );
+        }
+        let (own, column): (f64, f64) = results.iter().fold((0.0, 0.0), |(a, b), r| (a + r.own, b + r.column));
+        outcome.notes.push(Note::info(format!(
+            "Column check: {} of {} blocks within {} % of their 2.5D column volume, {:.0} m³ against {:.0} m³ in all ({:+.3} %)",
+            blocks.len() - differs.len(),
+            blocks.len(),
+            p.volume_tolerance * 100.0,
+            own,
+            column,
+            if own > 0.0 { (column - own) / own * 100.0 } else { 0.0 }
+        )));
+        differs.sort_by(|a, b| b.0.abs().total_cmp(&a.0.abs()));
+        for (off, name, id, at, own, column) in differs.iter().take(NAMED) {
+            outcome.notes.push(
+                Note::warning(Code::InterrogateColumnDiffers, format!("'{name}': {own:.0} m³ against a 2.5D column of {column:.0} m³ ({:+.2} %)", off * 100.0))
+                    .measured(off * 100.0, "%")
+                    .at(Place::Point { at: *at })
+                    .on(*id),
+            );
+        }
+        if differs.len() > NAMED {
+            outcome.notes.push(
+                Note::warning(Code::InterrogateColumnDiffers, format!("{} more blocks differ from their 2.5D column by more than {} %", differs.len() - NAMED, p.volume_tolerance * 100.0))
+                    .measured((differs.len() - NAMED) as f64, "blocks"),
             );
         }
         if !changed.is_empty() {
