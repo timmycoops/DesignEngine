@@ -1,6 +1,7 @@
 # 0061 — Interrogating a block: a thin reserves slice against the seam model
 
-Status: agreed 12 November 2026 (Tim: "Agree all seven", the Build Plan's "Reserves slice plan" tab). Workstream 1 of 5.
+Status: agreed 12 November 2026 (Tim: "Agree all seven", the Build Plan's "Reserves slice plan" tab), changed the same day
+as below. Workstreams 1 and 2 of 6.
 
 ## Why
 
@@ -14,7 +15,7 @@ model's grids, its volume checked against a 2.5D column calculation, and set bes
 
 Agreed with the plan, all as recommended:
 
-1. **The records are a table object in the project**, one row per block, saved in the `.zdp` as its own
+1. **The records are a table object in the project**: changed the same day (below), the values go on the solids. One row per block, saved in the `.zdp` as its own
    table, with CSV out (workstream 2; a new object kind).
 2. **A block's horizon is found by its geometry**: superseded the same day (below). A block is the coal of one seam.
 3. **Tonnes are in situ by Preston–Sanders**: superseded the same day (below). The interrogation gives the geology only.
@@ -76,7 +77,20 @@ quality grid's value at a node holds over its cell in plan, so the averaging use
 its own volume; the seam's roof and floor never enter it. How much of a block lies between its seam's roof and floor is a
 warning only, for a block whose attribute may be wrong (under 95 % in its seam), and changes no value.
 
-Still open: whether PIT B's Spry project carries tonnes, RD and qualities for each block (it shapes only workstream 4).
+And (Tim): *"I have numbers we can compare in Deswik and in Spry. Checking by eye is really just a contour of a grid and a
+colour of a block for the same seam."* So:
+
+- **Workstream 4 sets each block beside Deswik's numbers and Spry's**, whichever carries values, each through a match
+  file Tim edits (source field to our code), reporting counts and differences only.
+- **Workstream 6, the check by eye, is agreed:** a seam's grid drawn as contours, and the blocks of that seam coloured by
+  their own value on the same bands, so a block whose colour doesn't match the contours round it stands out.
+
+And (Tim): *"We would just [put] the values on the solids no?"* Yes: **each block's averaged values go on the block solid
+as attributes, one a variable, named by its code**, as Deswik and Spry keep them. No table object and no change to the
+object model. The run is an edit of the blocks, as a rename or a rebuild is: a new revision of each block it interrogates,
+undone in one step, and run again it writes them afresh with the earlier revisions kept. The geometry doesn't change, so
+the view keeps its meshes; CSV out is the solids' attributes, which the export already lists; and the check by eye
+colours the blocks from the same attributes.
 
 ## Workstream 1 (this record's first PR): cells and averages
 
@@ -123,8 +137,60 @@ and 100 m along it, the size a coal mine usually cuts a block to:
 - **43,000 made-up blocks (ignored test), on one thread:** 731,000 cell shares in 534 ms on 25 m cells, and 3,311,000 in
   2.3 s on 10 m cells, every block's volume whole.
 
+## Workstream 2: `solid.interrogate`
+
+The geology at each block, written onto it:
+
+- **Its seam by an attribute.** `seam_attribute` names the attribute, `seam` unless given; its value is matched to the
+  model's horizon codes, case aside. Those are the codes the seam's grids are named by (`cu` for `pitcu.asg`), and the
+  solids the surface stack makes will carry them (Tim: *"the grid names contain the seam name and the solids will have
+  the seam name based on the surface stack - matching the seam name of the grids and the solids post surface stack is
+  what we need"*). So **item 7's stacking writes each solid's horizon code as its `seam`**, and the interrogation needs
+  nothing set; a block from elsewhere, such as Spry's, names its seam by another attribute. The seam name is always at
+  the front of a grid's name, after any mine code (Tim: `seam1.asg`, or `grnseam1.asg` with the mine code `grn`); the
+  definition takes the mine code off to give the horizon code. A block whose seam comes with the mine code still in front
+  (`grnseam1`) matches too, by the seam's roof grid's name. A block with no such attribute, or one naming no horizon of the model, is left as it was and said, by
+  count and the first few names.
+- **The seam's grids, read for the run.** Each grid a seam needs is read once, in parallel, and checked against its
+  fingerprint from when the model was built: a changed file is read as it is now and said (`link.changed`). A grid that
+  can't be read, or isn't on the model's lattice, refuses the run with nothing written. A model with blocking issues in
+  its stack is refused, as CLAUDE.md says.
+- **What's averaged.** `variables` lists the codes to write; with none, every grid of each block's seam. `weights` says
+  what a variable is weighted by besides volume. Left out, the model's density is by volume and every other variable by
+  coal tonnes (volume × density). A weight that isn't written is averaged too, to weigh by. The weights are the run's
+  parameters for now, kept in its record; they can move into the definition later.
+- **Onto the block.** Each value is written as an attribute named by its variable code: as Vulcan names a grid, its
+  file's extension is always three letters ending in `g` (Tim), and the code is the two before it (`as` for `.asg`, `rd`
+  for `.rdg`), with `prefix` in front if one is given, and `interrogated` naming the model. A variable with no value over a block (no grid for its seam, or none of its nodes
+  under it) is written as nothing and said. An attribute of the same name from elsewhere, one on a block never
+  interrogated (Spry's own `as`, say), is never written over: the run is refused, asking for a prefix. Run again, it
+  writes its own values afresh.
+- **An edit of the blocks.** A new revision of each, undone in one step, with the earlier revisions kept: engine rule 4's
+  new objects don't apply, as a rename's don't. The geometry is unchanged, so the view keeps its meshes.
+- **The in-seam check.** At each node it covers, the share of the block's column between its seam's roof and floor,
+  over all its nodes. A block under `in_seam` (95 % unless given) is warned of, placed at its middle, the five worst by
+  name and the rest counted. It changes no value.
+- **Across the cores**, with progress and Cancel (0060), over the grids and then the blocks.
+
+Checked on a made-up seam model of two seams, `cu` (RL 96 to 100, RD 1.40, ash rising 0.1 % a metre east) and `cl` (RL
+90 to 94, RD 1.50, ash 20 %), on a 25 m grid, with 60 × 100 m blocks sitting anyhow on its cells:
+
+- **Each block takes its own seam's grids by its attribute**, the grids named with a mine code in front (`grncu.asg`), one
+  block saying `CU` and the other `grncl`: `cu`'s RD, and its ash by the cells' shares
+  as worked from the cells' edges alone; `cl`'s RD and ash. One revision of each block, undone in one step.
+- **A 10 m square within one 25 m cell** takes that node's ash.
+- **A block with no seam attribute and one naming `xx`** are left as they were, each said by its code. A block naming its
+  seam by `Seam`, as a Spry block might, is interrogated when the run says so.
+- **A block saying `cu` that lies in `cl`** is warned of, placed and named, and given `cu`'s values as its attribute says.
+- **A block carrying Spry's own `as`**: the run is refused; with the prefix `g_` ours is written beside it and Spry's
+  kept; run again, written afresh.
+- **Weights:** ash by volume alone reads no RD grid; by tonnes, with the RD changed to 1.6 east of 100 m, it leans east
+  and the changed RD grid is said.
+- **43,000 made-up blocks against a 25 m model over 24 by 11 km** (an ignored test): 43,000 interrogated and written in
+  4.1 s on every core.
+
 ## Still to come
 
-Workstream 2: the interrogation command, the table object, each variable's weighting in the definition, grids loaded
-for the run and CSV out. Workstream 3: the 2.5D column
-check by block outline with exact partial cells. Workstream 4: Spry beside ours. Workstream 5: the Reserves panel.
+Workstream 3: the 2.5D column check by block outline with exact partial cells. Workstream 4: Deswik's and Spry's numbers
+beside ours. Workstream 5: the Reserves panel. Workstream 6: the check by eye, a seam's grid as contours and its blocks
+coloured by their values on the same bands.
