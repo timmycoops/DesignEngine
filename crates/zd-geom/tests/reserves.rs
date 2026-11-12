@@ -2,7 +2,7 @@
 //! blocks at mine-grid coordinates. Volumes to 0.001 m³, RD to 1e-9, qualities to 1 part in a million.
 
 use zd_core::{Lattice, TriMesh};
-use zd_geom::{HorizonSample, Variable, columns_in_solid, composite, horizon_samples, in_situ_rd};
+use zd_geom::{Sample, Variable, columns_in_solid, composite, horizon_samples, in_situ_rd, solid_samples};
 
 const E: f64 = 650_000.0;
 const N: f64 = 7_450_000.0;
@@ -47,9 +47,9 @@ fn near(a: f64, b: f64, tolerance: f64, what: &str) {
     assert!((a - b).abs() <= tolerance, "{what}: {a} against {b}");
 }
 
-/// Samples of a block in a horizon wider than it.
-fn whole(mesh: &TriMesh, lattice: &Lattice) -> Vec<HorizonSample> {
-    horizon_samples(&columns_in_solid(mesh, lattice), &vec![0.0; 900], &vec![500.0; 900])
+/// A block's own samples: its whole thickness at each node.
+fn whole(mesh: &TriMesh, lattice: &Lattice) -> Vec<Sample> {
+    solid_samples(&columns_in_solid(mesh, lattice))
 }
 
 /// A variable averaged by volume times the variables at `weights`.
@@ -124,8 +124,8 @@ fn in_situ_rd_is_preston_and_sanders() {
 }
 
 #[test]
-fn a_block_across_two_horizons_splits_by_their_roofs_and_floors() {
-    // A block from RL 100 to 110; horizon A from 107 up, horizon B from 95 to 107: 30 : 70.
+fn how_much_of_a_block_lies_in_a_seam_is_found_from_its_roof_and_floor() {
+    // A check that a block is in its seam. A block from RL 100 to 110; seam A from 107 up, seam B from 95 to 107: 30 : 70.
     let mesh = block(E, N, 100.0, |_| 110.0);
     let lattice = in_its_squares();
     let columns = columns_in_solid(&mesh, &lattice);

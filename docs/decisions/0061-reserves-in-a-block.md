@@ -14,11 +14,9 @@ model's grids, its volume checked against a 2.5D column calculation, and set bes
 
 Agreed with the plan, all as recommended:
 
-1. **The records are a table object in the project**, one row per block and horizon, saved in the `.zdp` as its own
+1. **The records are a table object in the project**, one row per block, saved in the `.zdp` as its own
    table, with CSV out (workstream 2; a new object kind).
-2. **A block's horizon is found by its geometry.** Each node's column through the block is split by the working
-   horizons' roofs and floors, so a block across two gets a record for each, with a note when it takes in more than 1 %
-   of another horizon.
+2. **A block's horizon is found by its geometry**: superseded the same day (below). A block is the coal of one seam.
 3. **Tonnes are in situ by Preston–Sanders**: superseded the same day (below). The interrogation gives the geology only.
 4. **Variables are sampled at the model's lattice nodes** inside each block, the block's volume at a node being its
    thickness there times the cell's area. Exact partial cells are for the volume check.
@@ -40,7 +38,21 @@ workflow in deswik."* So:
 - **Tonnes, moisture basis (Preston–Sanders), mining factors and seam rules are steps after the interrogation**, as a
   dataflow is in Spry or a workflow in Deswik. They need a plan of their own, and are not in this item.
 
-Still open: whether PIT B's Spry project carries tonnes, RD and qualities for each block. It shapes only workstream 4.
+And again (Tim): *"It should be a coal solid of a certain coal seam - the geological model may have insitu density grids
+but all we care about is getting the qualities based on the geology for each grid (or block model) at the individual
+solid - it should be easy to bring up a block of coal and say the ash grid and check that this seam has the correct
+quality based on the ash grid contours and values."* So:
+
+- **A block is a coal solid of one seam**, and each of that seam's grids (later, a block model's variables) is averaged
+  over the solid, by the solid's whole thickness at each node. It isn't split between seams. How much of it lies between
+  its seam's roof and floor is a check that it's in the seam, not a split.
+- **Whatever the grids hold is taken as it is**: an in-situ density grid is a density like any other, with nothing
+  converted.
+- **It should be easy to check by eye**: pick a block of coal, choose one of its seam's grids, such as ash, and see the
+  grid's contours and values around the block beside the block's value. Proposed as a workstream in the plan.
+
+Still open: whether PIT B's Spry project carries tonnes, RD and qualities for each block (it shapes only workstream 4),
+and how a block's seam is known.
 
 ## Workstream 1 (this record's first PR): columns and averages
 
@@ -52,16 +64,17 @@ Still open: whether PIT B's Spry project carries tonnes, RD and qualities for ea
   in plan is counted once, by the top-left rule. A block whose sides stand on grid lines takes the nodes on its west and
   north sides, not its east and south, so its nodes times the cell's area is its plan area. A column through a solid in
   two pieces, one over the other, has two stretches. Faces standing straight up have no plan and are passed over.
-- **`horizon_samples`**: the columns split by one horizon's floor and roof, node by node on the same lattice. A null
-  roof or floor holds none.
+- **`solid_samples`**: the block's whole thickness at each node, which its seam's grids are averaged by.
+- **`horizon_samples`**: the columns between one horizon's floor and roof, node by node on the same lattice; a null roof
+  or floor holds none. Set against `solid_samples`, it says how much of a block lies in its seam.
 - **`composite`**: each variable averaged by its own weighting, the block's volume at each node times the variables it
-  names (`Variable::weight_by`); with the block's sampled volume and plan area, which set its share in each horizon. A
+  names (`Variable::weight_by`); with the block's sampled volume and plan area. A
   node is left out of a variable where it has no value for it or for one of its weights, and counted. Every node still
   counts in the volume.
 - **`in_situ_rd`**: `RD_is = RD_ad × (100 − M_ad) / (100 + RD_ad × (M_is − M_ad) − M_is)`, kept for a step after the
   interrogation.
 
-The block's volume of record stays its mesh's enclosed volume. These samples set the weights and each horizon's share.
+The block's volume of record stays its mesh's enclosed volume. These samples set the weights.
 
 Checked on made-up blocks at mine-grid coordinates, against answers worked by hand:
 
@@ -74,8 +87,8 @@ Checked on made-up blocks at mine-grid coordinates, against answers worked by ha
   same ash by volume alone 8.5 %.
 - **Preston–Sanders:** RD 1.45 at 3 % air-dried and 8 % in situ gives 140.65 / 99.25 = 1.4171285. It is unchanged when
   the moistures are equal.
-- **A block from RL 100 to 110 across two horizons meeting at 107:** 6,000 and 14,000 m³, the block between them.
-  Where one horizon's roof is null, it holds none.
+- **How much of a block lies in a seam:** a block from RL 100 to 110 against seams meeting at 107 holds 6,000 m³ of one
+  and 14,000 m³ of the other. Where a seam's roof is null, it holds none.
 - **A wedge 3 to 8 m thick:** 11,000 m³, as its mesh. Two 3 m pieces one over the other as one mesh: two stretches at
   every node, 12,000 m³.
 - **Nodes with no RD or no value:** left out and counted (a quality by tonnes is left out where the RD is missing too),

@@ -1,7 +1,9 @@
-//! Interrogating a block against a seam model (decision 0061, workstream 1): where a block solid lies at each node of the
-//! model's lattice, how much of that is in each horizon, and each of the model's variables averaged over it.
+//! Interrogating a block against a seam model (decision 0061, workstream 1): a block is a coal solid of one seam, and each
+//! of that seam's grids is averaged over it, from where the solid lies at each node of the model's lattice. How much of
+//! the solid lies between its seam's roof and floor is a check that it's in the seam.
 //!
-//! The interrogation is the geology at the block and nothing more. Tonnes on a moisture basis, mining factors and seam
+//! The interrogation is the geology at the block and nothing more: whatever the grids hold, density in situ or air-dried
+//! included, with nothing converted. Tonnes on a moisture basis, mining factors and seam
 //! rules are steps after it, as a dataflow is in Spry or a workflow in Deswik.
 //!
 //! The block's volume of record is its mesh's enclosed volume. What's here sets the weights: each lattice node stands for
@@ -115,12 +117,17 @@ pub fn thickness_between(column: &NodeColumn, floor: f64, roof: f64) -> f64 {
     column.spans.iter().map(|[bottom, top]| (top.min(roof) - bottom.max(floor)).max(0.0)).sum()
 }
 
-/// One node's share of a block in one horizon: the node, and the block's thickness there in the horizon (m).
-pub type HorizonSample = (usize, f64);
+/// One node of a block: the node, and the block's thickness there (m).
+pub type Sample = (usize, f64);
 
-/// The block's columns split by a horizon's roof and floor grids, node by node, on the same lattice: the nodes where it
-/// holds some of the horizon, with how much.
-pub fn horizon_samples(columns: &[NodeColumn], floor: &[f64], roof: &[f64]) -> Vec<HorizonSample> {
+/// The block's own columns as samples: its whole thickness at each node, which is what its seam's grids are averaged by.
+pub fn solid_samples(columns: &[NodeColumn]) -> Vec<Sample> {
+    columns.iter().map(|c| (c.node, c.thickness())).filter(|s| s.1 > 0.0).collect()
+}
+
+/// The block's columns between a horizon's floor and roof grids, node by node, on the same lattice: the nodes where it
+/// holds some of the horizon, with how much. Set against [`solid_samples`], it says how much of a block lies in its seam.
+pub fn horizon_samples(columns: &[NodeColumn], floor: &[f64], roof: &[f64]) -> Vec<Sample> {
     columns
         .iter()
         .filter_map(|c| {
@@ -146,15 +153,14 @@ pub struct Variable<'a> {
     pub weight_by: &'a [usize],
 }
 
-/// A block in one horizon: how much of it there is, and each variable averaged over it.
+/// A block's samples: how much of it there is, and each variable averaged over it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Composite {
     /// Nodes holding some of the block in the horizon.
     pub nodes: usize,
     /// Plan area those nodes stand for (m²): nodes × the cell's area.
     pub area: f64,
-    /// The block's sampled volume in the horizon (m³): thickness × the cell's area, summed. Its share of the block's own
-    /// volume is set by this against the block's whole sampled volume.
+    /// The block's sampled volume (m³): thickness × the cell's area, summed. Its volume of record is its mesh's.
     pub sampled_volume: f64,
     /// Each variable averaged by its weighting, in the order given; none where no node has it and its weights.
     pub values: Vec<Option<f64>>,
@@ -162,9 +168,9 @@ pub struct Composite {
     pub nodes_without: Vec<usize>,
 }
 
-/// Averages each variable over a block's samples in one horizon by its weighting. A node is left out of a variable where
+/// Averages each variable over a block's samples by its weighting. A node is left out of a variable where
 /// it has no value for it, or none for a variable it's weighted by, and counted.
-pub fn composite(samples: &[HorizonSample], cell_area: f64, variables: &[Variable<'_>]) -> Composite {
+pub fn composite(samples: &[Sample], cell_area: f64, variables: &[Variable<'_>]) -> Composite {
     let thickness: f64 = samples.iter().map(|s| s.1).sum();
     let n = variables.len();
     let (mut weights, mut weighted, mut nodes_without) = (vec![0.0; n], vec![0.0; n], vec![0; n]);
