@@ -1,6 +1,6 @@
 # 0060 — The app at scale: only what changed is sent
 
-Status: agreed 12 November 2026 (Tim: "Agree all four", the Build Plan's "App at scale plan" tab). Workstreams 1 to 3 of 4.
+Status: agreed 12 November 2026 (Tim: "Agree all four", the Build Plan's "App at scale plan" tab). All four workstreams.
 
 ## Why
 
@@ -150,7 +150,52 @@ Hiding one is 2 ms over its 50 ms target. Most of what's left is the app, not th
 project again after every change. A box selecting all 43,000 changes the same table, but it wasn't timed to the frame at
 this scale.
 
+## Workstream 4: plan tiles
+
+- **A layer's solids are drawn and snapped to a tile at a time.** A tile is a 1,000 m square in plan, counted from the
+  grid's zero, and a solid is in the tile holding the middle of its plan. The size is fixed, so a solid's tile never
+  depends on the others. The store bench's made-up blocks, one level over 20 km by 4 km, are 100 tiles of about 430;
+  a real pit's blocks, stacked by seam, are a few thousand to a tile.
+- **Each tile has its own key, mesh, table of hidden and selected, highlight and snap index.** A change to one solid
+  changes its tile's key alone, so the app fetches that tile's mesh and the shell builds that tile's snap index; the
+  rest stand. A solid moved to another layer changes two tiles.
+- **Each solid's tile is kept with the mesh it was worked out from**, so a pit's solids aren't measured again after
+  every change, and each tile's solids are kept from the pass that works out the keys, so a tile's mesh or index doesn't
+  look through every object again. The app fetches the tiles that changed eight at once, as the shell encodes each on its
+  own thread.
+
+Checked in the shell: two cubes in one tile and one 2 km away are two tiles, at the column and row holding the middle
+of each cube's plan; a rename changes no key; deleting one cube changes its tile's key alone, and that tile's mesh
+holds the one cube left. In the release app the select check passes on WebGPU and WebGL2 as before.
+
+Timed to the frame in the release app on the made-up 43,000 blocks as a zip, before and after this workstream:
+
+| Action | Before (one mesh a layer) | Now (tiles) |
+|---|---|---|
+| Move one block to another layer | 1,555 ms | 148 ms |
+| Undo it | 1,533 ms | 166 ms |
+| First draw and snap index, after the import | 1,504 ms | 696 ms |
+| Hide one block | 52 ms | 54 ms |
+| Delete the layer, then undo it | 161, then 356 ms | 174, then 792 ms |
+| Orbit | 60 fps | 60 fps |
+
+Bringing a deleted layer back fetches all 100 tiles, where before it was one mesh: slower, and rare.
+
+## The targets as they stand
+
+| Target | Measured on the made-up 43,000 blocks |
+|---|---|
+| Hide or show one solid under 50 ms, under 10 kB sent, no mesh | 54 and 51 ms to the frame, 0.7 kB, no mesh: just over |
+| A change to one solid under 200 ms to the frame, one tile sent | 148 ms, one tile sent for each layer it touches: met |
+| Snapping on the changed solid within 150 ms | its tile's index is built after the frame; not timed on its own |
+| The project under 10 MB when opened | 9.0 MB: met |
+| Box select all under 100 ms, nothing but ids sent | 25 ms to find them and ids only; not timed to the frame at this scale |
+| Camera and snap through a 60 s run | snaps answered in under 0.1 ms through an 11 s cut, in the shell; frames not timed during a run |
+| Cancel a slice within 1 s, nothing applied | a cut cancelled in 12 ms, nothing applied: met |
+
+What's left of a hide is mostly the app: the panels take the whole project again after every change.
+
 ## Still to come
 
-A change to one solid still builds the layer's snap index again and sends the layer's mesh (1.5 s to move one block to
-another layer): workstream 4, plan tiles.
+Nothing in this item. The panels taking the whole project after a change, and timing box select and frames during a
+run at scale, are noted for the review's housekeeping item.

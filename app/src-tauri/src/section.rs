@@ -92,7 +92,7 @@ pub fn pick_on_section(app: &AppInner, at: [f64; 2], reach: f64) -> Option<Objec
     let nearest = |direction: [f64; 3]| {
         app.solid_casters
             .iter()
-            .filter(|(layer, (key, _))| app.solid_keys.get(layer) == Some(key) && project.layer(**layer).is_some_and(|l| l.visible))
+            .filter(|(tile, (key, _))| app.solid_keys.get(tile) == Some(key) && project.layer(tile.layer).is_some_and(|l| l.visible))
             .filter_map(|(_, (_, caster))| caster.cast(point, direction, project.hidden()))
             .min_by(|a, b| height(a).total_cmp(&height(b)))
     };
@@ -265,7 +265,7 @@ mod tests {
     use zd_core::Project;
 
     use super::*;
-    use crate::state::{SolidCaster, every_layer_solid, solid_snap_keys};
+    use crate::state::{SolidCaster, solid_tile_keys, tile_solids};
 
     const E: f64 = 650_000.0;
     const N: f64 = 7_450_000.0;
@@ -290,11 +290,11 @@ mod tests {
         let b = s.run("solid.from_mesh", cube("b", "coal", 20.0)).unwrap().outputs[0].id;
         let sheet = s.run("surface.from_mesh", sheet()).unwrap().outputs[0].id;
         let mut app = AppInner::new(s, None);
-        let layer = app.session.project().object(a).unwrap().layer;
-        let solids = every_layer_solid(app.session.project(), layer);
-        let keys = solid_snap_keys(app.session.project());
-        app.solid_casters.insert(layer, (keys[&layer].clone(), Arc::new(SolidCaster::new(&solids).unwrap())));
-        app.solid_keys = keys;
+        app.solid_keys = solid_tile_keys(app.session.project(), &mut app.tiles);
+        for (tile, key) in app.solid_keys.clone() {
+            let solids = tile_solids(app.session.project(), &mut app.tiles, tile);
+            app.solid_casters.insert(tile, (key, Arc::new(SolidCaster::new(&solids).unwrap())));
+        }
         (app, a, b, sheet, SectionPlane::through([E, N + 5.0], [E + 100.0, N + 5.0]).unwrap())
     }
 

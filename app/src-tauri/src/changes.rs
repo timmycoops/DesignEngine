@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 use zd_core::{Attributes, Body, Display, Layer, LayerId, Object, ObjectId, ObjectKind, Project};
 
-use crate::state::{AppInner, geometry_key, is_drawn_surface, solid_snap_keys};
+use crate::state::{AppInner, TileId, geometry_key, is_drawn_surface, solid_tile_keys};
 
 /// The attributes the app reads by name, which go with each row. Everything else stays in the shell until asked for.
 pub const ROW_ATTRIBUTES: &[&str] = &["build", "build_id", "build_on", "build_record", "build_step", "face_design", "not_a_solid", "road", "road_face", "step", "strip"];
@@ -67,7 +67,7 @@ pub struct ProjectChanges {
     /// Every object's id in order, when the order is other than what the app held, less what's gone, with the new at
     /// the end: an object brought back by an undo goes back to its place.
     order: Option<Vec<ObjectId>>,
-    /// The layers holding solids, each drawn as one mesh.
+    /// The tiles of the layers holding solids, each drawn as one mesh (decision 0060, workstream 4).
     solid_layers: Vec<SolidLayer>,
     /// How objects and layers look: colour by RL or the layer's, opacity, contour bands.
     display: Display,
@@ -83,11 +83,13 @@ pub struct LogMark {
     pub len: usize,
 }
 
-/// A layer's solids as the viewport draws them.
+/// A tile of a layer's solids as the viewport draws it.
 #[derive(Serialize)]
 pub struct SolidLayer {
     layer: LayerId,
-    /// Changes only when the geometry of a solid on the layer does.
+    /// The tile, column and row of [`crate::state::TILE_M`] squares from the grid's zero.
+    tile: [i64; 2],
+    /// Changes only when the geometry of a solid in the tile does, or one comes or goes.
     key: String,
 }
 
@@ -188,7 +190,7 @@ pub fn changes(app: &mut AppInner, whole: bool) -> ProjectChanges {
     let base = if whole { None } else { sent.epoch };
     sent.origin = origin;
     // Drawn by its solids' geometry alone: hiding one changes its row, and the viewport's table, not the layer's mesh.
-    app.solid_keys = solid_snap_keys(project);
+    app.solid_keys = solid_tile_keys(project, &mut app.tiles);
     reply(app, base, objects, removed, order)
 }
 
@@ -234,7 +236,7 @@ fn reply(app: &mut AppInner, base: Option<u64>, objects: Vec<ObjectSummary>, rem
         objects,
         removed,
         order,
-        solid_layers: app.solid_keys.iter().map(|(layer, key)| SolidLayer { layer: *layer, key: key.clone() }).collect(),
+        solid_layers: app.solid_keys.iter().map(|(&TileId { layer, col, row }, key)| SolidLayer { layer, tile: [col, row], key: key.clone() }).collect(),
         display: project.display().clone(),
         locked_by: app.locked_by.clone(),
         log: LogMark { session: app.log_session, len: app.session.log().len() },

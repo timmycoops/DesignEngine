@@ -217,7 +217,7 @@ export interface StagedMesh {
 
 /** Encodes a drawn object's geometry for fetching. */
 export const stageObject = (id: string) => invoke<StagedMesh>('stage_object', { id });
-export const stageLayerSolids = (layer: string) => invoke<StagedMesh>('stage_layer_solids', { layer });
+export const stageLayerSolids = (layer: string, tile: [number, number]) => invoke<StagedMesh>('stage_layer_solids', { layer, tile });
 /** The selected solids on show as one mesh, to light up over their layers'. */
 /** The box round these objects together, world coordinates, for zoom to selection; null if none has a place. */
 export const objectsBounds = (objects: string[]) => invoke<[Vec3, Vec3] | null>('objects_bounds', { objects });
@@ -389,9 +389,12 @@ export function withLayerOpacity(display: Display, layer: string, opacity: numbe
 }
 
 /** A layer's solids as the viewport draws them. */
+/** A tile of a layer's solids, drawn as one mesh (decision 0060, workstream 4). */
 export interface SolidLayer {
   layer: string;
-  /** Changes only when the geometry of a solid on the layer does. */
+  /** Column and row of the 1,000 m square holding the middle of each solid's plan. */
+  tile: [number, number];
+  /** Changes only when the geometry of a solid in the tile does, or one comes or goes. */
   key: string;
 }
 

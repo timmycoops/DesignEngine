@@ -23,7 +23,7 @@ use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_section, e
 use crate::selection;
 use crate::section::{SectionCut, add_selected, pick_on_section, section_groups, snap_on_section};
 use crate::shared::post_shared_buffer;
-use crate::state::{AppInner, AppState, Running, SolidCaster, bounds, every_layer_solid, geometry_key, is_drawn_surface, solid_snap_keys};
+use crate::state::{AppInner, AppState, Running, SolidCaster, TileId, bounds, geometry_key, is_drawn_surface, tile_solids};
 use crate::synthetic::synthetic_topography;
 
 /// The whole project, in place of what the app holds: after a reload, or when a change didn't follow on from what the
@@ -502,19 +502,20 @@ pub async fn stage_object(id: ObjectId, state: State<'_, AppState>) -> Result<St
     Ok(stage(&state, buffer, name, kind, triangles, String::new(), serde_json::json!({ "encode": encode_ms })))
 }
 
-/// Encodes every solid on a layer as one mesh for the viewport and holds it to be fetched: a pit's
-/// tens of thousands of solids are then a few chunks to draw, not one mesh each. Hidden solids are in it too, each
-/// vertex saying which solid it's of, so hiding or picking one changes a table beside the mesh and not the mesh
-/// (decision 0060, workstream 3).
+/// Encodes a tile of a layer's solids as one mesh for the viewport and holds it to be fetched: a pit's tens of
+/// thousands of solids are then a few chunks a tile to draw, not one mesh each, and a change to one sends its tile again
+/// (decision 0060, workstream 4). Hidden solids are in it too, each vertex saying which solid it's of, so hiding or
+/// picking one changes a table beside the mesh and not the mesh (workstream 3).
 #[tauri::command]
-pub async fn stage_layer_solids(layer: LayerId, state: State<'_, AppState>) -> Result<StagedMesh, String> {
+pub async fn stage_layer_solids(layer: LayerId, tile: [i64; 2], state: State<'_, AppState>) -> Result<StagedMesh, String> {
     let app = state.app.clone();
     let (solids, name, origin) = {
         let mut app = app.lock().unwrap();
         let origin = app.origin().unwrap_or([0.0; 3]);
-        let project = app.session.project();
+        let AppInner { session, tiles, .. } = &mut *app;
+        let project = session.project();
         let name = project.layer(layer).ok_or("no such layer")?.name.clone();
-        (every_layer_solid(project, layer), name, origin)
+        (tile_solids(project, tiles, TileId { layer, col: tile[0], row: tile[1] }), name, origin)
     };
     let header = serde_json::json!({ "id": 0, "name": name, "timings": {} });
     let (buffer, triangles, encode_ms) = blocking(move || {
@@ -723,18 +724,24 @@ pub async fn build_snap_index(state: State<'_, AppState>) -> Result<SnapIndex, S
     enum Source {
         Mesh(ObjectId, usize, Arc<TriMesh>),
         Grid(ObjectId, usize, Arc<zd_core::Grid>),
-        Solids(LayerId, String, Vec<(ObjectId, Arc<TriMesh>)>),
+        Solids(TileId, String, Vec<(ObjectId, Arc<TriMesh>)>),
     }
     enum Built {
         Object(ObjectId, usize, SurfaceRayCaster),
-        Layer(LayerId, String, SolidCaster),
+        Layer(TileId, String, SolidCaster),
     }
     let pending: Vec<Source> = {
         let mut app = state.app.lock().unwrap();
         let live: std::collections::HashSet<ObjectId> = app.session.project().objects().map(|o| o.id).collect();
         app.casters.retain(|id, _| live.contains(id));
-        let keys = solid_snap_keys(app.session.project());
-        app.solid_casters.retain(|layer, _| keys.contains_key(layer));
+        let keys = app.solid_keys.clone();
+        app.solid_casters.retain(|tile, _| keys.contains_key(tile));
+        // Each tile whose index is missing or stale, with its solids: only the tiles that changed are built again.
+        let stale: Vec<(TileId, String)> = keys.iter().filter(|(tile, key)| app.solid_casters.get(tile).is_none_or(|(built, _)| built != *key)).map(|(t, k)| (*t, k.clone())).collect();
+        let tiles: Vec<Source> = {
+            let AppInner { session, tiles, .. } = &mut *app;
+            stale.into_iter().map(|(tile, key)| Source::Solids(tile, key, tile_solids(session.project(), tiles, tile))).collect()
+        };
         let project = app.session.project();
         let objects = project
             .objects()
@@ -745,11 +752,7 @@ pub async fn build_snap_index(state: State<'_, AppState>) -> Result<SnapIndex, S
                 Body::Grid(g) => Source::Grid(o.id, geometry_key(&o.body), g.clone()),
                 Body::Solid(_) | Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) => unreachable!("only drawn surfaces are snapped to one by one"),
             });
-        let layers = keys
-            .iter()
-            .filter(|(layer, key)| app.solid_casters.get(layer).is_none_or(|(built, _)| built != *key))
-            .map(|(layer, key)| Source::Solids(*layer, key.clone(), every_layer_solid(project, *layer)));
-        objects.chain(layers).collect()
+        objects.chain(tiles).collect()
     };
     let surfaces = pending.len();
     let t = Instant::now();
@@ -781,8 +784,8 @@ pub async fn build_snap_index(state: State<'_, AppState>) -> Result<SnapIndex, S
             Built::Object(id, key, caster) => {
                 app.casters.insert(id, (key, Arc::new(caster)));
             }
-            Built::Layer(layer, key, caster) => {
-                app.solid_casters.insert(layer, (key, Arc::new(caster)));
+            Built::Layer(tile, key, caster) => {
+                app.solid_casters.insert(tile, (key, Arc::new(caster)));
             }
         }
     }
@@ -833,7 +836,7 @@ fn snap_along(origin: [f64; 3], direction: [f64; 3], state: &AppState) -> Option
                 (visible(object) && *key == geometry_key(&object.body)).then(|| (*id, caster.clone()))
             })
             .collect();
-        let layers: Vec<Arc<SolidCaster>> = app.solid_casters.iter().filter(|(layer, (key, _))| app.solid_keys.get(layer) == Some(key) && project.layer(**layer).is_some_and(|l| l.visible)).map(|(_, (_, caster))| caster.clone()).collect();
+        let layers: Vec<Arc<SolidCaster>> = app.solid_casters.iter().filter(|(tile, (key, _))| app.solid_keys.get(tile) == Some(key) && project.layer(tile.layer).is_some_and(|l| l.visible)).map(|(_, (_, caster))| caster.clone()).collect();
         (scene_origin, objects, layers, project.hidden().clone())
     };
     let from = [origin[0] + scene_origin[0], origin[1] + scene_origin[1], origin[2] + scene_origin[2]];
@@ -1037,15 +1040,15 @@ mod tests {
         let (ids, rl, down_at) = {
             let mut app = state.app.lock().unwrap();
             changes(&mut app, true);
-            let project = app.session.project();
-            let layer = project.objects().next().unwrap().layer;
             let t = Instant::now();
-            let caster = SolidCaster::new(&every_layer_solid(project, layer)).unwrap();
-            println!("snap index: {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
-            let key = app.solid_keys[&layer].clone();
+            for (tile, key) in app.solid_keys.clone() {
+                let AppInner { session, tiles, .. } = &mut *app;
+                let caster = SolidCaster::new(&tile_solids(session.project(), tiles, tile)).unwrap();
+                app.solid_casters.insert(tile, (key, Arc::new(caster)));
+            }
+            println!("snap index: {} tiles in {:.0} ms", app.solid_casters.len(), t.elapsed().as_secs_f64() * 1e3);
             let first = bounds(app.session.project().objects().next().unwrap()).unwrap();
             let ids: Vec<ObjectId> = app.session.project().objects().map(|o| o.id).collect();
-            app.solid_casters.insert(layer, (key, Arc::new(caster)));
             let origin = app.origin().unwrap();
             let c = first.centre();
             (ids, (first.min[2] + first.max[2]) / 2.0, [c[0] - origin[0], c[1] - origin[1], first.max[2] + 100.0 - origin[2]])
