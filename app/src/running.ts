@@ -46,6 +46,7 @@ const WORDS: Record<string, string> = {
   'solid.import_many': 'importing solids',
   'solid.export_many': 'exporting solids',
   'solid.repair': 'repairing meshes',
+  'solid.interrogate': 'interrogating blocks',
   'spry.import': 'importing from Spry',
   'deswik.import': 'importing from Deswik',
   'face.project': 'running the face design',

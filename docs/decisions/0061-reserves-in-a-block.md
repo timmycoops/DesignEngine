@@ -1,6 +1,7 @@
 # 0061 — Interrogating a block: a thin reserves slice against the seam model
 
-Status: agreed 12 November 2026 (Tim: "Agree all seven", the Build Plan's "Reserves slice plan" tab). Workstream 1 of 5.
+Status: agreed 12 November 2026 (Tim: "Agree all seven", the Build Plan's "Reserves slice plan" tab), changed the same day
+as below. Workstreams 1 and 2 of 6.
 
 ## Why
 
@@ -136,8 +137,50 @@ and 100 m along it, the size a coal mine usually cuts a block to:
 - **43,000 made-up blocks (ignored test), on one thread:** 731,000 cell shares in 534 ms on 25 m cells, and 3,311,000 in
   2.3 s on 10 m cells, every block's volume whole.
 
+## Workstream 2: `solid.interrogate`
+
+The geology at each block, written onto it:
+
+- **Its seam by an attribute.** `seam_attribute` names the attribute; its value is matched to the model's horizon codes,
+  case aside. A block with no such attribute, or one naming no horizon of the model, is left as it was and said, by
+  count and the first few names.
+- **The seam's grids, read for the run.** Each grid a seam needs is read once, in parallel, and checked against its
+  fingerprint from when the model was built: a changed file is read as it is now and said (`link.changed`). A grid that
+  can't be read, or isn't on the model's lattice, refuses the run with nothing written. A model with blocking issues in
+  its stack is refused, as CLAUDE.md says.
+- **What's averaged.** `variables` lists the codes to write; with none, every grid of each block's seam. `weights` says
+  what a variable is weighted by besides volume. Left out, the model's density is by volume and every other variable by
+  coal tonnes (volume × density). A weight that isn't written is averaged too, to weigh by. The weights are the run's
+  parameters for now, kept in its record; they can move into the definition later.
+- **Onto the block.** Each value is written as an attribute named by its code, after `prefix` if one is given, with
+  `interrogated` naming the model. A variable with no value over a block (no grid for its seam, or none of its nodes
+  under it) is written as nothing and said. An attribute of the same name from elsewhere, one on a block never
+  interrogated (Spry's own `ash`, say), is never written over: the run is refused, asking for a prefix. Run again, it
+  writes its own values afresh.
+- **An edit of the blocks.** A new revision of each, undone in one step, with the earlier revisions kept: engine rule 4's
+  new objects don't apply, as a rename's don't. The geometry is unchanged, so the view keeps its meshes.
+- **The in-seam check.** At each node it covers, the share of the block's column between its seam's roof and floor,
+  over all its nodes. A block under `in_seam` (95 % unless given) is warned of, placed at its middle, the five worst by
+  name and the rest counted. It changes no value.
+- **Across the cores**, with progress and Cancel (0060), over the grids and then the blocks.
+
+Checked on a made-up seam model of two seams, `cu` (RL 96 to 100, RD 1.40, ash rising 0.1 % a metre east) and `cl` (RL
+90 to 94, RD 1.50, ash 20 %), on a 25 m grid, with 60 × 100 m blocks sitting anyhow on its cells:
+
+- **Each block takes its own seam's grids by its attribute** (`CU` and `cl`): `cu`'s RD, and its ash by the cells' shares
+  as worked from the cells' edges alone; `cl`'s RD and ash. One revision of each block, undone in one step.
+- **A 10 m square within one 25 m cell** takes that node's ash.
+- **A block with no seam attribute and one naming `xx`** are left as they were, each said by its code.
+- **A block saying `cu` that lies in `cl`** is warned of, placed and named, and given `cu`'s values as its attribute says.
+- **A block carrying Spry's own `ash`**: the run is refused; with the prefix `g_` ours is written beside it and Spry's
+  kept; run again, written afresh.
+- **Weights:** ash by volume alone reads no RD grid; by tonnes, with the RD changed to 1.6 east of 100 m, it leans east
+  and the changed RD grid is said.
+- **43,000 made-up blocks against a 25 m model over 24 by 11 km** (an ignored test): 43,000 interrogated and written in
+  4.1 s on every core.
+
 ## Still to come
 
-Workstream 2: the interrogation command, the table object, each variable's weighting in the definition, grids loaded
-for the run and CSV out. Workstream 3: the 2.5D column
-check by block outline with exact partial cells. Workstream 4: Spry beside ours. Workstream 5: the Reserves panel.
+Workstream 3: the 2.5D column check by block outline with exact partial cells. Workstream 4: Deswik's and Spry's numbers
+beside ours. Workstream 5: the Reserves panel. Workstream 6: the check by eye, a seam's grid as contours and its blocks
+coloured by their values on the same bands.

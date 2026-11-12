@@ -119,6 +119,10 @@ codes! {
     SeamUnpaired = "seam.unpaired", "A horizon whose roof and floor aren't live at the same nodes";
     SeamNoDensity = "seam.no_density", "A working horizon with no density grid: tonnes will need one";
     LinkChanged = "link.changed", "Grid files whose content differs from when the seam model was built";
+    InterrogateNoSeam = "interrogate.no_seam", "Blocks with no seam attribute, left as they were";
+    InterrogateUnknownSeam = "interrogate.unknown_seam", "Blocks whose seam attribute isn't a horizon of the model, left as they were";
+    InterrogateNoValue = "interrogate.no_value", "A variable with no value over a block, so none written";
+    InterrogateOutsideSeam = "interrogate.outside_seam", "A block lying less than the share asked between its seam's roof and floor: its seam may be wrong";
     StringOffSurface = "string.off_surface", "String vertices with no surface under them, keeping their elevations";
     StringNotCrossed = "string.not_crossed", "Strings a numbering line doesn't cross, left as they were";
     StringCrossesAgain = "string.crosses_again", "A string a numbering line crosses more than once, numbered where it first does";
