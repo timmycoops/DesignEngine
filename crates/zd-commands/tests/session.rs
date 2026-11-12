@@ -73,6 +73,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "seam.relink",
             "seam.suggest_definition",
             "solid.between_surfaces",
+            "solid.compare",
             "solid.cut_by_surface",
             "solid.export_many",
             "solid.from_mesh",
@@ -104,7 +105,8 @@ fn registry_lists_every_builtin_with_a_spec() {
         ]
     );
     let specs = serde_json::to_value(session.registry().specs()).unwrap();
-    assert_eq!(specs[23]["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
+    let named = |name: &str| specs.as_array().unwrap().iter().find(|s| s["name"] == name).unwrap().clone();
+    assert_eq!(named("solid.cut_by_surface")["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
     assert_eq!(specs[2]["inputs"][0]["type"], json!({ "kind": "objects" }));
     assert_eq!(specs[0]["params"][1]["type"], json!({ "kind": "texts" }));
 }

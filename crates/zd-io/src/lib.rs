@@ -17,6 +17,7 @@ mod spry;
 mod store;
 mod string_csv;
 mod text;
+mod value_match;
 mod vulcan;
 mod vulcan_tri;
 mod xyz;
@@ -37,6 +38,7 @@ pub use seam::{
 pub use spry::fixtures as spry_fixtures;
 pub use spry::{NODE_LEVELS, SPRY_LEVELS, SpryContents, SpryLayer, SpryLog, SpryMesh, SpryProject, SpryRead, SpryString, SprySolidField, list_spry, read_spry, unpack_spry_blob};
 pub use store::{Opened, ProjectStore, SaveReport, StoreError};
+pub use value_match::{Tolerance, ValueMatch, parse_value_match, read_value_match};
 pub use string_csv::{CsvLog, CsvString, CsvStrings, format_csv_strings, parse_csv_strings, read_csv_strings, write_csv_strings};
 pub use vulcan::{ELEVATION_VARIABLES, VulcanGrid, VulcanLog, VulcanSeam, VulcanSurface, parse_vulcan_grid, read_vulcan_grid, read_vulcan_seam, vulcan_grid_name};
 pub use vulcan_tri::{VulcanTriLog, VulcanTriangulation, parse_vulcan_triangulation, plain_triangulation_bytes, read_vulcan_triangulation};

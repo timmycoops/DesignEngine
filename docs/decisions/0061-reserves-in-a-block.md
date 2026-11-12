@@ -1,7 +1,7 @@
 # 0061 — Interrogating a block: a thin reserves slice against the seam model
 
 Status: agreed 12 November 2026 (Tim: "Agree all seven", the Build Plan's "Reserves slice plan" tab), changed the same day
-as below. Workstreams 1 to 3 of 6.
+as below. Workstreams 1 to 4 of 6.
 
 ## Why
 
@@ -213,8 +213,30 @@ Checked:
   `cu`'s roof is warned of at +33.3 %, placed and named, with its column written all the same, and a 50 % tolerance lets
   it by. The summary says 1 of 2 blocks within 0.1 %.
 
+## Workstream 4: beside Deswik's and Spry's numbers
+
+`solid.compare` sets each block's values beside another package's, as they came in on the blocks: Spry's fields beside
+its Solid field, Deswik's on its meshes. It's a report: nothing in the project changes, and it's kept in the run log.
+
+- **A match file Tim edits** (`zd_io::read_value_match`), kept on his machine: `source,ours,tolerance`, a row a value.
+  `source` is their attribute; `ours` is an attribute the interrogation wrote, or `volume`, the block's own. A tolerance
+  ending in `%` is a share of their value, a plain number is in the value's own unit, and blank is decision 6's: volume
+  0.1 %, density (`rd` unless the run names another) 0.005, any other 0.05. Columns in any order; comments start `#`; a
+  file with mistakes is refused, each by its line.
+- **For each row**, one line: how many blocks were compared, how many are within tolerance, theirs and ours summed, the
+  mean difference, and how many had no value either way. Where any are beyond tolerance, a warning
+  (`compare.beyond`) counts them and names the furthest, placed at its middle. A value Spry keeps as text reads as a
+  number.
+
+Checked on three made-up blocks carrying Spry-style `Volume`, `RD` (as text) and `Ash` beside our `rd` and `as`: volume
+2 of 3 within 0.1 %, the block 100 m³ off named and placed; RD 3 of 3 within 0.005; ash 1 of 2 compared within 0.05, the
+block with no `Ash` counted; nothing changed and nothing to undo. A match file with a word for a tolerance is refused by
+its line.
+
+On real data the run gives counts and differences; Tim runs it on PIT B with his own match file, as the field names stay
+on his machine.
+
 ## Still to come
 
-Workstream 4: Deswik's and Spry's numbers
-beside ours. Workstream 5: the Reserves panel. Workstream 6: the check by eye, a seam's grid as contours and its blocks
+Workstream 5: the Reserves panel. Workstream 6: the check by eye, a seam's grid as contours and its blocks
 coloured by their values on the same bands.
