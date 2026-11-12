@@ -67,8 +67,16 @@ edges, and a block narrower than a cell can miss every node. So **each node's va
 weighted by the block's exact volume inside that cell (exact partial cells)**: the shares add up to the block's volume
 wherever it sits and whatever the spacing, and a block smaller than a cell takes its node's value.
 
-Still open: whether PIT B's Spry project carries tonnes, RD and qualities for each block (it shapes only workstream 4),
-and how a block's seam is known.
+And (Tim), on how a block's seam is known: *"it has to come from an attribute - you would say this seam is this seam type
+filter option to filter. The geometry should also match as well in theory but the quality grids are going to be at an rl
+that is the quality variable and you just intersect the grid nodes into the seam structure - if the roof and floors
+don't match perfectly I don't think it will matter."* So **a block's seam is the value of an attribute the user picks,
+matched to the model's horizon codes (a filter: blocks whose attribute says this seam take this seam's grids)**. A
+quality grid's value at a node holds over its cell in plan, so the averaging uses only where the block lies in plan and
+its own volume; the seam's roof and floor never enter it. How much of a block lies between its seam's roof and floor is a
+warning only, for a block whose attribute may be wrong (under 95 % in its seam), and changes no value.
+
+Still open: whether PIT B's Spry project carries tonnes, RD and qualities for each block (it shapes only workstream 4).
 
 ## Workstream 1 (this record's first PR): cells and averages
 
