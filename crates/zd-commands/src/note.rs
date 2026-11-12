@@ -128,6 +128,10 @@ codes! {
     StringOffSurface = "string.off_surface", "String vertices with no surface under them, keeping their elevations";
     StringNotCrossed = "string.not_crossed", "Strings a numbering line doesn't cross, left as they were";
     StringCrossesAgain = "string.crosses_again", "A string a numbering line crosses more than once, numbered where it first does";
+    StringEndJoined = "string.end_joined", "An end of a line joined to another line across a gap within the tolerance";
+    StringEndShort = "string.end_short", "A line ending inside a polygon it was meant to split, short of the line it should meet";
+    StringClosesNothing = "string.closes_nothing", "A line that closes no area, left out of the polygons";
+    StringIsland = "string.island", "Lines inside a polygon that don't touch its sides, so they don't split it";
 }
 
 impl Serialize for Code {
