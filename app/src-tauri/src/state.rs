@@ -1,11 +1,13 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use zd_commands::Session;
 use zd_core::{AttrValue, Body, LayerId, Object, ObjectId, Project, TriMesh};
 use zd_geom::{GeomError, SurfaceRayCaster};
 
+use crate::changes::Sent;
 use crate::section::{SectionCut, SectionInputs, SectionMeshes};
 
 /// The shell's state: one engine session, plus what the viewport needs around it. Shared with
@@ -45,12 +47,22 @@ pub struct AppInner {
     pub section_inputs: Option<Arc<SectionInputs>>,
     /// The last section cut, for snapping to.
     pub section_cut: Option<SectionCut>,
+    /// What the app was last sent of the project, to send it only what changes.
+    pub sent: Sent,
+    /// Which session's run log the app is sent: a new one with each project opened or started.
+    pub log_session: u64,
+}
+
+/// A number no session's log has had before, in this run of the app.
+fn next_log_session() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl AppInner {
     pub fn new(session: Session, path: Option<PathBuf>) -> Self {
         let locked_by = session.locked_by();
-        AppInner { session, path, locked_by, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), section_meshes: SectionMeshes::new(), section_inputs: None, section_cut: None }
+        AppInner { session, path, locked_by, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), section_meshes: SectionMeshes::new(), section_inputs: None, section_cut: None, sent: Sent::default(), log_session: next_log_session() }
     }
 
     pub fn handle(&mut self) -> u32 {

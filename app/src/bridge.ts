@@ -1,6 +1,7 @@
 // Typed wrappers around the Tauri commands in app/src-tauri/src/commands.rs, and decoding of the
 // compact render buffers described in app/src-tauri/src/render.rs.
 import { invoke } from '@tauri-apps/api/core';
+import { type LogPart, LogStore, ProjectStore } from './projectStore';
 
 export type Vec3 = [number, number, number];
 
@@ -277,6 +278,10 @@ export interface ObjectSummary {
   /** The layer's id (see `Layer.id`), not its name. */
   layer: string;
   kind: ObjectKind;
+  /**
+   * The attributes the app reads by name (`ROW_ATTRIBUTES` in changes.rs, and the `road_top` ones), not all of them:
+   * `objectDetails` and `objectsAttributes` have the rest.
+   */
   attributes: Record<string, boolean | number | string>;
   /** Drawn as a surface: surfaces, solids and elevation grids. */
   drawn: boolean;
@@ -284,9 +289,9 @@ export interface ObjectSummary {
   hidden: boolean;
   /** Changes only when the geometry does. */
   geometry_key: string;
-  /** String vertices, offset from the scene origin. */
-  vertices_local: Vec3[] | null;
-  closed: boolean | null;
+  /** String vertices, offset from the scene origin. Strings only: other rows leave it out. */
+  vertices_local?: Vec3[] | null;
+  closed?: boolean | null;
 }
 
 export interface ProjectSummary {
@@ -302,6 +307,26 @@ export interface ProjectSummary {
   display: Display;
   /** Who else had the project file open when it was opened: a save to it is refused. */
   locked_by: string | null;
+  /** The run log as it stands: which session's, and how many entries. */
+  log: LogMark;
+}
+
+export interface LogMark {
+  session: number;
+  len: number;
+}
+
+/**
+ * What the shell sends after a change (`changes.rs`): the objects added or changed and those gone since what it sent as
+ * `base`, or the whole project when `base` is null. `ProjectStore` takes it and gives back the whole project.
+ */
+export interface ProjectChanges extends Omit<ProjectSummary, 'objects'> {
+  base: number | null;
+  epoch: number;
+  objects: ObjectSummary[];
+  removed: string[];
+  /** Every object's id in order, when it isn't what was held, less what's gone, with the new at the end. */
+  order: string[] | null;
 }
 
 /** In bands by RL, or one colour, the layer's. */
@@ -419,15 +444,29 @@ export interface SaveReply {
   ms: number;
 }
 
-export const projectSummary = () => invoke<ProjectSummary>('project_summary');
+const held = new ProjectStore();
+
+/** The project after a reply's changes, asking for the whole of it if they don't follow on from what the app holds. */
+async function summaryAfter(changes: ProjectChanges): Promise<ProjectSummary> {
+  return held.take(changes) ?? held.take(await invoke<ProjectChanges>('project_summary'))!;
+}
+
+/** The whole project, sent whole. */
+export const projectSummary = async () => held.take(await invoke<ProjectChanges>('project_summary'))!;
 
 /** Runs an engine command by name; rejects with the error text if the command fails. */
-export const runCommand = (name: string, params: Record<string, unknown>) => invoke<RunReply>('run_command', { name, params });
+export const runCommand = async (name: string, params: Record<string, unknown>): Promise<RunReply> => {
+  const reply = await invoke<{ record: RunRecord; changes: ProjectChanges }>('run_command', { name, params });
+  return { record: reply.record, summary: await summaryAfter(reply.changes) };
+};
 
-export const undo = () => invoke<ProjectSummary>('undo');
-export const redo = () => invoke<ProjectSummary>('redo');
-export const newProject = () => invoke<ProjectSummary>('new_project');
-export const openProject = (path: string) => invoke<ProjectSummary>('open_project', { path });
+export const undo = async () => summaryAfter(await invoke<ProjectChanges>('undo'));
+export const redo = async () => summaryAfter(await invoke<ProjectChanges>('redo'));
+export const newProject = async () => summaryAfter(await invoke<ProjectChanges>('new_project'));
+export const openProject = async (path: string) => summaryAfter(await invoke<ProjectChanges>('open_project', { path }));
+
+/** Every attribute of each object, in the order given (a row carries only those the app reads by name). */
+export const objectsAttributes = (objects: string[]) => invoke<Record<string, boolean | number | string>[]>('objects_attributes', { objects });
 
 /** One folder a seam model reads its grids from, with how many of them are there (decision 0058, stage 4). */
 export interface FolderCheck {
@@ -455,10 +494,10 @@ export interface LinksReply {
 export const checkLinks = () => invoke<LinksReply>('check_links');
 /** Saves to `path` (a `.zdp` file), or to the file last opened or saved. */
 export const saveProject = (path?: string) => invoke<SaveReply>('save_project', { path: path ?? null });
-export const setLayerVisible = (layer: string, visible: boolean) =>
-  invoke<ProjectSummary>('set_layer_visible', { layer, visible });
-export const setObjectsVisible = (objects: string[], visible: boolean) =>
-  invoke<ProjectSummary>('set_objects_visible', { objects, visible });
+export const setLayerVisible = async (layer: string, visible: boolean) =>
+  summaryAfter(await invoke<ProjectChanges>('set_layer_visible', { layer, visible }));
+export const setObjectsVisible = async (objects: string[], visible: boolean) =>
+  summaryAfter(await invoke<ProjectChanges>('set_objects_visible', { objects, visible }));
 /** Colours objects by RL or their layer, sets their opacity, or both (null leaves it). Display state, not a run. */
 export const setLooks = (objects: string[], colouring: Colouring | null, opacity: number | null) =>
   invoke<Display>('set_looks', { objects, colouring, opacity });
@@ -491,7 +530,10 @@ export type LogEntry =
   | { event: 'undo' | 'redo'; run: string; at_unix_ms: number }
   | { event: 'saved' | 'opened'; path: string; at_unix_ms: number };
 
-export const runLog = () => invoke<LogEntry[]>('run_log');
+const log = new LogStore();
+
+/** The whole run log, fetching only the entries the app hasn't got. */
+export const runLog = async () => log.take(await invoke<LogPart>('run_log', { session: log.session, from: log.entries.length }));
 
 /** Validity flags in Seequent Evo vocabulary, with the counts behind them. */
 export interface MeshValidity {

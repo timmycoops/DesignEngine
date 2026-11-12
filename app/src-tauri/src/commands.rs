@@ -1,6 +1,6 @@
 //! Commands the viewport calls. Every edit to the project goes through the engine session as a
-//! typed command (`run_command`); the viewport is sent a small JSON summary of the project after
-//! each change, and fetches geometry as binary render buffers (WebGPU shared buffer or raw IPC
+//! typed command (`run_command`); the viewport is sent what changed in the project after each
+//! change (`changes.rs`), and fetches geometry as binary render buffers (WebGPU shared buffer or raw IPC
 //! bytes), never as JSON.
 
 use std::collections::HashMap;
@@ -14,109 +14,23 @@ use tauri::ipc::Response;
 use tauri::{AppHandle, State, Webview};
 use zd_commands::builtin::ModelLinks;
 use zd_commands::{LogEntry, RunRecord, Session};
-use zd_core::{Attributes, Body, Colouring, Contours, Crossings, Display, FaceDesign, Layer, LayerId, MeshValidity, ObjectId, ObjectKind, RunId, SeamModel, TriMesh};
+use zd_core::{Attributes, Body, Colouring, Contours, Crossings, Display, FaceDesign, LayerId, MeshValidity, ObjectId, RunId, SeamModel, TriMesh};
 use zd_geom::{SectionPlane, StackHorizon, SurfaceRayCaster, stack_issue_nodes, triangulate_grid};
 use zd_io::{check_links as check_grid_links, list_deswik_layers, list_spry, read_stack_grids};
 
+use crate::changes::{ProjectChanges, changes};
 use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_section, encode_triangulation};
 use crate::selection;
 use crate::section::{SectionCut, add_selected, pick_on_section, section_groups, snap_on_section};
 use crate::shared::post_shared_buffer;
-use crate::state::{AppInner, AppState, SolidCaster, bounds, every_layer_solid, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_layer_keys, solid_snap_keys};
+use crate::state::{AppInner, AppState, SolidCaster, bounds, every_layer_solid, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_snap_keys};
 use crate::synthetic::synthetic_topography;
 
-/// The project as the interface needs it: layers and every live object, with string vertices
-/// inline (strings are small) and surfaces as a key to fetch their geometry by.
-#[derive(Serialize)]
-pub struct ProjectSummary {
-    path: Option<String>,
-    can_undo: bool,
-    can_redo: bool,
-    origin: Option<[f64; 3]>,
-    layers: Vec<Layer>,
-    objects: Vec<ObjectSummary>,
-    /// The layers holding solids, each drawn as one mesh.
-    solid_layers: Vec<SolidLayer>,
-    /// How objects and layers look: colour by RL or the layer's, opacity, contour bands.
-    display: Display,
-    /// Who else had the project file open when it was opened ("Tim on PIT-PC since ..."): a save to it is refused.
-    locked_by: Option<String>,
-}
-
-/// A layer's solids as the viewport draws them.
-#[derive(Serialize)]
-pub struct SolidLayer {
-    layer: LayerId,
-    /// Changes only when the geometry of a solid on the layer does.
-    key: String,
-}
-
-#[derive(Serialize)]
-pub struct ObjectSummary {
-    id: ObjectId,
-    revision: u32,
-    name: String,
-    layer: LayerId,
-    kind: ObjectKind,
-    attributes: Attributes,
-    /// Drawn as a surface (surfaces, solids, elevation grids).
-    drawn: bool,
-    /// Hidden on its own: see [`zd_core::Project::set_objects_visible`].
-    hidden: bool,
-    /// Changes only when the geometry does; fetch a new render buffer when it changes.
-    geometry_key: String,
-    /// String vertices, offset from the scene origin.
-    vertices_local: Option<Vec<[f64; 3]>>,
-    closed: Option<bool>,
-}
-
-fn summary(app: &mut AppInner) -> ProjectSummary {
-    let origin = app.origin();
-    let o = origin.unwrap_or([0.0; 3]);
-    let local = |p: [f64; 3]| [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
-    let project = app.session.project();
-    let objects = project
-        .objects()
-        .map(|object| {
-            let (vertices_local, closed) = match &object.body {
-                Body::String(line) => (Some(line.vertices.iter().map(|&p| local(p)).collect()), Some(line.closed)),
-                _ => (None, None),
-            };
-            ObjectSummary {
-                id: object.id,
-                revision: object.revision,
-                name: object.name.clone(),
-                layer: object.layer,
-                kind: object.kind(),
-                attributes: object.attributes.clone(),
-                drawn: is_drawn_surface(object),
-                hidden: project.is_hidden(object.id),
-                geometry_key: geometry_key(&object.body).to_string(),
-                vertices_local,
-                closed,
-            }
-        })
-        .collect();
-    let solid_layers = solid_layer_keys(project).into_iter().map(|(layer, key)| SolidLayer { layer, key }).collect();
-    let snap_keys = solid_snap_keys(project);
-    let summary = ProjectSummary {
-        path: app.path.as_ref().map(|p| p.display().to_string()),
-        can_undo: project.can_undo(),
-        can_redo: project.can_redo(),
-        origin,
-        layers: project.layers().to_vec(),
-        objects,
-        solid_layers,
-        display: project.display().clone(),
-        locked_by: app.locked_by.clone(),
-    };
-    app.solid_keys = snap_keys;
-    summary
-}
-
+/// The whole project, in place of what the app holds: after a reload, or when a change didn't follow on from what the
+/// app holds.
 #[tauri::command]
-pub fn project_summary(state: State<'_, AppState>) -> ProjectSummary {
-    summary(&mut state.app.lock().unwrap())
+pub fn project_summary(state: State<'_, AppState>) -> ProjectChanges {
+    changes(&mut state.app.lock().unwrap(), true)
 }
 
 /// One revision of an object and the run that wrote it.
@@ -239,7 +153,7 @@ pub async fn object_details(id: ObjectId, state: State<'_, AppState>) -> Result<
 #[derive(Serialize)]
 pub struct RunReply {
     record: RunRecord,
-    summary: ProjectSummary,
+    changes: ProjectChanges,
 }
 
 /// Runs an engine command by name with JSON parameters. A failure comes back as the error text
@@ -250,40 +164,40 @@ pub async fn run_command(name: String, params: Value, state: State<'_, AppState>
     blocking(move || {
         let mut app = app.lock().unwrap();
         let record = app.session.run(&name, params).map_err(|e| e.to_string())?;
-        Ok(RunReply { record, summary: summary(&mut app) })
+        Ok(RunReply { record, changes: changes(&mut app, false) })
     })
     .await?
 }
 
 #[tauri::command]
-pub fn undo(state: State<'_, AppState>) -> ProjectSummary {
+pub fn undo(state: State<'_, AppState>) -> ProjectChanges {
     let mut app = state.app.lock().unwrap();
     app.session.undo();
-    summary(&mut app)
+    changes(&mut app, false)
 }
 
 #[tauri::command]
-pub fn redo(state: State<'_, AppState>) -> ProjectSummary {
+pub fn redo(state: State<'_, AppState>) -> ProjectChanges {
     let mut app = state.app.lock().unwrap();
     app.session.redo();
-    summary(&mut app)
+    changes(&mut app, false)
 }
 
 #[tauri::command]
-pub fn new_project(state: State<'_, AppState>) -> ProjectSummary {
+pub fn new_project(state: State<'_, AppState>) -> ProjectChanges {
     let mut app = state.app.lock().unwrap();
     *app = AppInner::new(Session::with_builtins(), None);
-    summary(&mut app)
+    changes(&mut app, true)
 }
 
 #[tauri::command]
-pub async fn open_project(path: String, state: State<'_, AppState>) -> Result<ProjectSummary, String> {
+pub async fn open_project(path: String, state: State<'_, AppState>) -> Result<ProjectChanges, String> {
     let app = state.app.clone();
     blocking(move || {
         let session = Session::open(&path).map_err(|e| e.to_string())?;
         let mut app = app.lock().unwrap();
         *app = AppInner::new(session, Some(PathBuf::from(path)));
-        Ok(summary(&mut app))
+        Ok(changes(&mut app, true))
     })
     .await?
 }
@@ -377,17 +291,17 @@ pub async fn save_project(path: Option<String>, state: State<'_, AppState>) -> R
 /// Display state only: not a command, not undone.
 /// Shows or hides objects one by one, under their layer's tick. Display state: not a run, not undone.
 #[tauri::command]
-pub fn set_objects_visible(objects: Vec<ObjectId>, visible: bool, state: State<'_, AppState>) -> ProjectSummary {
+pub fn set_objects_visible(objects: Vec<ObjectId>, visible: bool, state: State<'_, AppState>) -> ProjectChanges {
     let mut app = state.app.lock().unwrap();
     app.session.set_objects_visible(&objects, visible);
-    summary(&mut app)
+    changes(&mut app, false)
 }
 
 #[tauri::command]
-pub fn set_layer_visible(layer: LayerId, visible: bool, state: State<'_, AppState>) -> ProjectSummary {
+pub fn set_layer_visible(layer: LayerId, visible: bool, state: State<'_, AppState>) -> ProjectChanges {
     let mut app = state.app.lock().unwrap();
     app.session.set_layer_visible(layer, visible);
-    summary(&mut app)
+    changes(&mut app, false)
 }
 
 /// Colours objects by RL or by their layer, sets how see-through they are, or both. Display state: not a
@@ -416,9 +330,34 @@ pub fn set_contours(contours: Contours, state: State<'_, AppState>) -> Display {
     app.session.project().display().clone()
 }
 
+/// The run log from entry `from` on, when the app holds the first `from` entries of `session`'s log; the whole log when
+/// it holds another session's (a project opened since), as `from` says.
+#[derive(Serialize)]
+pub struct LogPart {
+    session: u64,
+    from: usize,
+    entries: Vec<LogEntry>,
+}
+
 #[tauri::command]
-pub fn run_log(state: State<'_, AppState>) -> Vec<LogEntry> {
-    state.app.lock().unwrap().session.log().to_vec()
+pub fn run_log(session: Option<u64>, from: Option<usize>, state: State<'_, AppState>) -> LogPart {
+    let app = state.app.lock().unwrap();
+    let log = app.session.log();
+    let from = if session == Some(app.log_session) { from.unwrap_or(0).min(log.len()) } else { 0 };
+    LogPart { session: app.log_session, from, entries: log[from..].to_vec() }
+}
+
+/// Every attribute of each object, in the order asked, for what needs more than a row carries (naming solids' files
+/// by attributes); an object gone has none.
+#[tauri::command]
+pub async fn objects_attributes(objects: Vec<ObjectId>, state: State<'_, AppState>) -> Result<Vec<Attributes>, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        Ok(objects.iter().map(|&id| project.object(id).map(|o| o.attributes.clone()).unwrap_or_default()).collect())
+    })
+    .await?
 }
 
 /// A layer of a Deswik drawing, to pick from before `deswik.import`.

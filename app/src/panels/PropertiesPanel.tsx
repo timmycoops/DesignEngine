@@ -851,7 +851,8 @@ export function PropertiesPanel() {
     else setName(object.name);
   };
   const current = details?.id === object.id ? details : null;
-  const attributes = Object.entries(object.attributes);
+  // A row carries only the attributes the app reads by name; the details have them all.
+  const attributes = Object.entries(current?.attributes ?? object.attributes);
 
   return (
     <ScrollArea className="h-full">

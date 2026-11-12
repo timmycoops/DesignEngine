@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Dialog } from 'radix-ui';
-import type { ObjectSummary } from '../bridge';
+import { type ObjectSummary, objectsAttributes } from '../bridge';
 import { Choice, Select } from '../design-system/kit';
 import { Button } from '../design-system/ui/button';
 import { cn } from 'cn';
@@ -40,22 +40,36 @@ export function ExportSolidsDialog({
   const [picked, setPicked] = useState<string[]>([]);
   const [separator, setSeparator] = useState<string>('.');
   const [layerInFile, setLayerInFile] = useState<'id' | 'name'>('id');
+  // Every attribute of each solid: a row carries only those the app reads by name.
+  const [all, setAll] = useState<Map<string, Record<string, boolean | number | string>> | null>(null);
   // Each time it opens on other solids, the attributes on offer change: start from the solids' own names.
-  useEffect(() => setPicked([]), [solids]);
+  useEffect(() => {
+    setPicked([]);
+    setAll(null);
+    if (!solids || solids.length === 0) return;
+    const ids = solids.map((s) => s.id);
+    let current = true;
+    void objectsAttributes(ids).then((list) => current && setAll(new Map(ids.map((id, k) => [id, list[k]]))));
+    return () => {
+      current = false;
+    };
+  }, [solids]);
+  const attributesOf = (solid: ObjectSummary) => all?.get(solid.id) ?? solid.attributes;
 
   const keys = useMemo(() => {
     const found = new Set<string>();
-    for (const solid of solids ?? []) for (const key of Object.keys(solid.attributes)) found.add(key);
+    for (const solid of solids ?? []) for (const key of Object.keys(all?.get(solid.id) ?? solid.attributes)) found.add(key);
     return ['name', 'layer', ...[...found].filter((key) => key !== 'name' && key !== 'layer').sort()];
-  }, [solids]);
+  }, [solids, all]);
 
   const n = solids?.length ?? 0;
   const part = (solid: ObjectSummary, key: string) => {
     // Each part goes in as it is: a name from Spry is in parts already.
-    return key in solid.attributes ? String(solid.attributes[key]) : key === 'name' ? solid.name : key === 'layer' ? layerName(solid) : '';
+    const attributes = attributesOf(solid);
+    return key in attributes ? String(attributes[key]) : key === 'name' ? solid.name : key === 'layer' ? layerName(solid) : '';
   };
   const fileOf = (solid: ObjectSummary) => `${stem(picked.length === 0 ? solid.name : picked.map((key) => part(solid, key)).join(separator))}.dxf`;
-  const lacking = picked.length === 0 ? 0 : (solids ?? []).filter((solid) => picked.some((key) => key !== 'name' && key !== 'layer' && !(key in solid.attributes))).length;
+  const lacking = picked.length === 0 ? 0 : (solids ?? []).filter((solid) => picked.some((key) => key !== 'name' && key !== 'layer' && !(key in attributesOf(solid)))).length;
 
   return (
     <Dialog.Root open={solids !== null} onOpenChange={(open) => !open && onCancel()}>
@@ -90,6 +104,7 @@ export function ExportSolidsDialog({
                 );
               })}
             </div>
+            {all === null && n > 0 && <div className="text-xs text-muted-foreground">Reading the solids' attributes…</div>}
             <div className="text-xs text-muted-foreground">
               {picked.length === 0
                 ? "Nothing picked: each file takes its solid's name. Pick attributes in the order they go in the name, as Spry names its solids."
