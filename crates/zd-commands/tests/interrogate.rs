@@ -139,7 +139,8 @@ fn number(s: &Session, id: ObjectId, name: &str) -> Option<f64> {
 }
 
 fn interrogate(s: &mut Session, model: ObjectId, solids: &[ObjectId], more: serde_json::Value) -> Result<zd_commands::RunRecord, CommandError> {
-    let mut params = json!({ "solids": solids, "model": model, "seam_attribute": "seam" });
+    // The seam attribute is `seam` unless a run says otherwise, as the surface stack writes it.
+    let mut params = json!({ "solids": solids, "model": model });
     params.as_object_mut().unwrap().extend(more.as_object().unwrap().clone());
     s.run("solid.interrogate", params)
 }
@@ -292,4 +293,15 @@ cu,,coal,yes,cu.srg,cu.sfg,cu.rdg,cu.ashg
     let record = interrogate(&mut s, model, &ids, json!({})).unwrap();
     println!("{} ({:.0} ms all told, {} revisions)", record.messages[0], start.elapsed().as_secs_f64() * 1e3, record.outputs.len());
     assert_eq!(record.outputs.len(), 43_000);
+}
+
+#[test]
+fn the_seam_can_come_from_another_attribute() {
+    let t = TempDir::new("named");
+    // As a Spry block names its seam by its level.
+    let (mut s, model, ids) = project(&t, vec![("block", vec![("Seam", AttrValue::Text("cl".into()))], cuboid(70.0, 40.0, 60.0, 100.0, 90.0, 94.0))]);
+    let record = interrogate(&mut s, model, &ids, json!({})).unwrap();
+    assert!(record.notes.iter().any(|n| n.code == Some(Code::InterrogateNoSeam)), "no `seam` on it");
+    interrogate(&mut s, model, &ids, json!({ "seam_attribute": "Seam" })).unwrap();
+    near(number(&s, ids[0], "ash").unwrap(), 20.0, "cl's ash");
 }

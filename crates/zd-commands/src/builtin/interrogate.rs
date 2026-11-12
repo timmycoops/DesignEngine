@@ -29,7 +29,9 @@ pub struct InterrogateParams {
     pub solids: Vec<ObjectId>,
     /// The seam model whose grids are averaged over them.
     pub model: ObjectId,
-    /// The attribute whose value names each block's seam, matched to the model's horizon codes.
+    /// The attribute whose value names each block's seam, matched to the model's horizon codes: the codes its grids are
+    /// named by, which the surface stack writes onto the solids it makes. `seam` unless given.
+    #[serde(default = "seam_attribute_default")]
     pub seam_attribute: String,
     /// The variables to write, by code; every grid of each block's seam when none are given.
     #[serde(default)]
@@ -45,6 +47,10 @@ pub struct InterrogateParams {
     /// wrong. A share, 0 to 1.
     #[serde(default = "in_seam_default")]
     pub in_seam: f64,
+}
+
+fn seam_attribute_default() -> String {
+    "seam".into()
 }
 
 fn in_seam_default() -> f64 {
@@ -87,7 +93,7 @@ impl Command for Interrogate {
                 Field::object("model", ObjectKind::SeamModel, "The seam model whose grids are averaged over them"),
             ],
             params: vec![
-                Field::new("seam_attribute", FieldType::Text, "The attribute naming each block's seam, matched to the model's horizon codes"),
+                Field::new("seam_attribute", FieldType::Text, "The attribute naming each block's seam, matched to the model's horizon codes (seam)"),
                 Field::new("variables", FieldType::Text, "Variables to write, by code (every grid of the seam when none)"),
                 Field::new("weights", FieldType::Text, "What a variable is weighted by besides volume, by code (density by volume, the rest by coal tonnes)"),
                 Field::new("prefix", FieldType::Text, "Put in front of each code to name its attribute"),

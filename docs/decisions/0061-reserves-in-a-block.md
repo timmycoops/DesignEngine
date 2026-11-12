@@ -141,8 +141,12 @@ and 100 m along it, the size a coal mine usually cuts a block to:
 
 The geology at each block, written onto it:
 
-- **Its seam by an attribute.** `seam_attribute` names the attribute; its value is matched to the model's horizon codes,
-  case aside. A block with no such attribute, or one naming no horizon of the model, is left as it was and said, by
+- **Its seam by an attribute.** `seam_attribute` names the attribute, `seam` unless given; its value is matched to the
+  model's horizon codes, case aside. Those are the codes the seam's grids are named by (`cu` for `pitcu.ashg`), and the
+  solids the surface stack makes will carry them (Tim: *"the grid names contain the seam name and the solids will have
+  the seam name based on the surface stack - matching the seam name of the grids and the solids post surface stack is
+  what we need"*). So **item 7's stacking writes each solid's horizon code as its `seam`**, and the interrogation needs
+  nothing set; a block from elsewhere, such as Spry's, names its seam by another attribute. A block with no such attribute, or one naming no horizon of the model, is left as it was and said, by
   count and the first few names.
 - **The seam's grids, read for the run.** Each grid a seam needs is read once, in parallel, and checked against its
   fingerprint from when the model was built: a changed file is read as it is now and said (`link.changed`). A grid that
@@ -170,7 +174,8 @@ Checked on a made-up seam model of two seams, `cu` (RL 96 to 100, RD 1.40, ash r
 - **Each block takes its own seam's grids by its attribute** (`CU` and `cl`): `cu`'s RD, and its ash by the cells' shares
   as worked from the cells' edges alone; `cl`'s RD and ash. One revision of each block, undone in one step.
 - **A 10 m square within one 25 m cell** takes that node's ash.
-- **A block with no seam attribute and one naming `xx`** are left as they were, each said by its code.
+- **A block with no seam attribute and one naming `xx`** are left as they were, each said by its code. A block naming its
+  seam by `Seam`, as a Spry block might, is interrogated when the run says so.
 - **A block saying `cu` that lies in `cl`** is warned of, placed and named, and given `cu`'s values as its attribute says.
 - **A block carrying Spry's own `ash`**: the run is refused; with the prefix `g_` ours is written beside it and Spry's
   kept; run again, written afresh.
