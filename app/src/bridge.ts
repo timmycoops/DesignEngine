@@ -41,6 +41,8 @@ export interface MeshHeader {
   /** A second number per node to colour by (seam thickness); `flag` marks a node with an issue. */
   value?: { name: string; min: number; max: number; step: number; null: number; flag: number };
   tiles?: TileMeta[];
+  /** A layer's solids: their ids, in the order each vertex numbers its solid (`ChunkGeometry.solids`). */
+  solids?: string[];
 }
 
 /** One draw call's worth of geometry: f32 positions in scene-local coordinates, u16 indices. */
@@ -51,6 +53,8 @@ export interface ChunkGeometry {
   max: Vec3;
   /** Quantised values per vertex, when the buffer carries them (see `MeshHeader.value`). */
   values?: Uint16Array;
+  /** A layer's solids: which solid each vertex is of, by its place in `MeshHeader.solids`. */
+  solids?: Float32Array;
 }
 
 export interface DecodedMesh {
@@ -75,11 +79,15 @@ function decodeTriangulation(buffer: ArrayBuffer, header: MeshHeader): ChunkGeom
   const indexTotal = chunks.reduce((n, c) => n + c.index_count, 0);
   const positions = new Float32Array(buffer, 0, header.vertices * 3);
   const indices = new Uint16Array(buffer, header.vertices * 12, indexTotal);
+  // A layer's solids: after the indices, padded to 4 bytes, the solid each vertex is of.
+  const after = Math.ceil((header.vertices * 12 + indexTotal * 2) / 4) * 4;
+  const solids = header.solids ? new Float32Array(buffer, after, header.vertices) : null;
   return chunks.map((c) => ({
     positions: positions.subarray(c.vertex_start * 3, (c.vertex_start + c.vertex_count) * 3),
     indices: indices.subarray(c.index_start, c.index_start + c.index_count),
     min: c.min,
     max: c.max,
+    solids: solids?.subarray(c.vertex_start, c.vertex_start + c.vertex_count),
   }));
 }
 
@@ -211,7 +219,6 @@ export interface StagedMesh {
 export const stageObject = (id: string) => invoke<StagedMesh>('stage_object', { id });
 export const stageLayerSolids = (layer: string) => invoke<StagedMesh>('stage_layer_solids', { layer });
 /** The selected solids on show as one mesh, to light up over their layers'. */
-export const stageSolids = (objects: string[]) => invoke<StagedMesh>('stage_solids', { objects });
 /** The box round these objects together, world coordinates, for zoom to selection; null if none has a place. */
 export const objectsBounds = (objects: string[]) => invoke<[Vec3, Vec3] | null>('objects_bounds', { objects });
 /**

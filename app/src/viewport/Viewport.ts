@@ -6,6 +6,7 @@ import { CameraController } from './camera';
 import { PointMark } from './markers';
 import { valueColours } from './ramp';
 import { type Bands, bandsFor, colourByRl, type RlUniforms, setBands } from './rlColour';
+import { SolidFlags } from './solidFlags';
 
 interface GpuAdapterLike {
   limits: Record<string, number>;
@@ -407,6 +408,10 @@ export class Viewport {
     // Where the surface lies up and down, by its chunks weighted by triangles: what see-through surfaces sort by.
     const weight = decoded.chunks.reduce((n, c) => n + c.indices.length, 0);
     group.userData.meanZ = weight > 0 ? decoded.chunks.reduce((sum, c) => sum + ((c.min[2] + c.max[2]) / 2) * c.indices.length, 0) / weight : 0;
+    // A layer's solids: a table of which are hidden and selected, read by the shader (decision 0060).
+    const flags = decoded.header.solids ? new SolidFlags(decoded.header.solids) : null;
+    if (flags && material instanceof THREE.MeshStandardNodeMaterial) flags.hideHidden(material);
+    group.userData.flags = flags;
     if (!over && !value && material instanceof THREE.MeshStandardNodeMaterial) {
       const rl = colourByRl(material, colour);
       rl.byRl.value = options.byRl === false ? 0 : 1;
@@ -419,6 +424,7 @@ export class Viewport {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(chunk.positions, 3));
       if (value && chunk.values) geometry.setAttribute('color', new THREE.BufferAttribute(valueColours(chunk.values, value), 3, true));
+      if (chunk.solids) geometry.setAttribute('solid', new THREE.BufferAttribute(chunk.solids, 1));
       let index = indexAttributes.get(chunk.indices);
       if (!index) {
         index = new THREE.BufferAttribute(chunk.indices, 1);
@@ -439,6 +445,36 @@ export class Viewport {
     return group;
   }
 
+  /**
+   * The selected solids of a layer drawn over everything, so one inside the pit still shows: the layer's own geometry
+   * again, with all but the selected solids folded away by its table. Nothing is fetched or copied.
+   */
+  addSolidHighlight(group: THREE.Group, colour: number): THREE.Group | null {
+    const flags = group.userData.flags as SolidFlags | null | undefined;
+    if (!flags) return null;
+    const material = new THREE.MeshStandardNodeMaterial({ color: colour, roughness: 0.92, metalness: 0, side: THREE.FrontSide, depthTest: false, depthWrite: false, flatShading: true });
+    material.forceSinglePass = true;
+    material.transparent = true;
+    lightUp(material, colour);
+    flags.onlySelected(material);
+    const over = new THREE.Group();
+    over.name = `${group.name} selected`;
+    for (const child of group.children) {
+      const mesh = new THREE.Mesh((child as THREE.Mesh).geometry, material);
+      mesh.renderOrder = OVER_ORDER;
+      over.add(mesh);
+    }
+    this.content.add(over);
+    return over;
+  }
+
+  /** Takes a highlight off: its material only, as the geometry is its layer's. */
+  removeSolidHighlight(over: THREE.Group): void {
+    this.content.remove(over);
+    const first = over.children[0] as THREE.Mesh | undefined;
+    (first?.material as THREE.Material | undefined)?.dispose();
+  }
+
   removeMesh(group: THREE.Group): void {
     this.setCopies(1);
     this.surfaces = this.surfaces.filter((s) => s !== group);
@@ -450,6 +486,7 @@ export class Viewport {
       material = mesh.material as THREE.Material;
     }
     material?.dispose();
+    (group.userData.flags as SolidFlags | null | undefined)?.dispose();
     (group.userData.release as (() => void) | undefined)?.();
   }
 

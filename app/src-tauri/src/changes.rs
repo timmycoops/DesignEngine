@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 use zd_core::{Attributes, Body, Display, Layer, LayerId, Object, ObjectId, ObjectKind, Project};
 
-use crate::state::{AppInner, geometry_key, is_drawn_surface, solid_layer_keys, solid_snap_keys};
+use crate::state::{AppInner, geometry_key, is_drawn_surface, solid_snap_keys};
 
 /// The attributes the app reads by name, which go with each row. Everything else stays in the shell until asked for.
 pub const ROW_ATTRIBUTES: &[&str] = &["build", "build_id", "build_on", "build_record", "build_step", "face_design", "not_a_solid", "road", "road_face", "step", "strip"];
@@ -42,6 +42,8 @@ pub struct Sent {
     rows: HashMap<ObjectId, (Arc<Object>, bool)>,
     order: Vec<ObjectId>,
     origin: Option<[f64; 3]>,
+    /// The objects hidden one by one, as sent: a hide or show is told from it without walking every object.
+    hidden: Arc<HashSet<ObjectId>>,
 }
 
 /// The project as the app needs it after a change. With no `base` it's the whole project, in place of what the app
@@ -184,29 +186,59 @@ pub fn changes(app: &mut AppInner, whole: bool) -> ProjectChanges {
     }
 
     let base = if whole { None } else { sent.epoch };
-    let epoch = next_epoch();
-    sent.epoch = Some(epoch);
     sent.origin = origin;
+    // Drawn by its solids' geometry alone: hiding one changes its row, and the viewport's table, not the layer's mesh.
+    app.solid_keys = solid_snap_keys(project);
+    reply(app, base, objects, removed, order)
+}
 
-    let solid_layers = solid_layer_keys(project).into_iter().map(|(layer, key)| SolidLayer { layer, key }).collect();
-    let changes = ProjectChanges {
+/// What changed when the only change can be which objects are hidden, as after a hide or show (or a layer turned on or
+/// off): the objects whose hidden flag is other than was sent, found from the two sets of hidden objects without walking
+/// every object. One of 43,000 hidden is then one row found in microseconds.
+pub fn changes_after_hiding(app: &mut AppInner) -> ProjectChanges {
+    let origin = app.origin();
+    if app.sent.epoch.is_none() || app.sent.origin != origin {
+        return changes(app, false);
+    }
+    let o = origin.unwrap_or([0.0; 3]);
+    let project = app.session.project();
+    let sent = &mut app.sent;
+    let now = project.hidden();
+    let mut objects = Vec::new();
+    for &id in sent.hidden.symmetric_difference(now) {
+        let (Some(object), Some(entry)) = (project.object(id), sent.rows.get_mut(&id)) else { continue };
+        let hidden = now.contains(&id);
+        if entry.1 != hidden {
+            entry.1 = hidden;
+            objects.push(row(project, object, o));
+        }
+    }
+    let base = sent.epoch;
+    reply(app, base, objects, Vec::new(), None)
+}
+
+/// The reply around the objects that changed, recording what's sent.
+fn reply(app: &mut AppInner, base: Option<u64>, objects: Vec<ObjectSummary>, removed: Vec<ObjectId>, order: Option<Vec<ObjectId>>) -> ProjectChanges {
+    let project = app.session.project();
+    let epoch = next_epoch();
+    app.sent.epoch = Some(epoch);
+    app.sent.hidden = project.hidden().clone();
+    ProjectChanges {
         base,
         epoch,
         path: app.path.as_ref().map(|p| p.display().to_string()),
         can_undo: project.can_undo(),
         can_redo: project.can_redo(),
-        origin,
+        origin: app.sent.origin,
         layers: project.layers().to_vec(),
         objects,
         removed,
         order,
-        solid_layers,
+        solid_layers: app.solid_keys.iter().map(|(layer, key)| SolidLayer { layer: *layer, key: key.clone() }).collect(),
         display: project.display().clone(),
         locked_by: app.locked_by.clone(),
         log: LogMark { session: app.log_session, len: app.session.log().len() },
-    };
-    app.solid_keys = solid_snap_keys(project);
-    changes
+    }
 }
 
 #[cfg(test)]
@@ -347,6 +379,35 @@ mod tests {
     }
 
     #[test]
+    fn a_hide_or_show_sends_the_rows_whose_flag_changed_as_the_full_diff_would() {
+        let mut app = AppInner::new(Session::with_builtins(), None);
+        let made: Vec<ObjectId> = (0..6).map(|k| app.session.run("string.create", string(&format!("s{k}"), 200.0 * k as f64)).unwrap().outputs[0].id).collect();
+        let mut held = Held::default();
+        held.take(&changes(&mut app, false));
+        app.session.set_objects_visible(&made[1..3], false);
+        let hidden = changes_after_hiding(&mut app);
+        assert_eq!(hidden.base, Some(held.epoch.unwrap()));
+        let mut got = ids(&hidden.objects);
+        got.sort();
+        let mut want = made[1..3].to_vec();
+        want.sort();
+        assert_eq!(got, want, "the two hidden, and nothing else");
+        held.take(&hidden);
+        held.matches(&mut app);
+        // A layer off, then one of its strings shown: it shows alone, the rest of the layer hidden one by one.
+        let layer = app.session.project().object(made[0]).unwrap().layer;
+        app.session.set_layer_visible(layer, false);
+        held.take(&changes_after_hiding(&mut app));
+        app.session.set_objects_visible(&made[4..5], true);
+        let alone = changes_after_hiding(&mut app);
+        assert_eq!(alone.objects.len(), 3, "the three of the rest not hidden before are now: {:?}", ids(&alone.objects));
+        held.take(&alone);
+        held.matches(&mut app);
+        let nothing = changes(&mut app, false);
+        assert!(nothing.objects.is_empty(), "the full diff finds nothing more");
+    }
+
+    #[test]
     fn a_row_carries_the_attributes_the_app_reads_by_name() {
         let all: Attributes = [
             ("strip", zd_core::AttrValue::Number(7.0)),
@@ -406,5 +467,18 @@ mod tests {
         app.session.set_objects_visible(&ids, false);
         sent(&mut app, "hide all", false);
         sent(&mut app, "nothing changed", false);
+    }
+
+    /// Writes the made-up project's blocks as a zip of solids for the release app's `--bench --solids`, so hiding and
+    /// selecting are timed to the frame at scale: `ZD_SCALE_PROJECT` in, `ZD_SCALE_ZIP` out.
+    #[test]
+    #[ignore]
+    fn export_the_scale_blocks() {
+        let (Ok(path), Ok(zip)) = (std::env::var("ZD_SCALE_PROJECT"), std::env::var("ZD_SCALE_ZIP")) else { return };
+        let mut s = Session::open(&path).unwrap();
+        let objects: Vec<ObjectId> = s.project().objects().map(|o| o.id).collect();
+        let t = std::time::Instant::now();
+        s.run("solid.export_many", json!({ "objects": objects, "path": zip, "overwrite": true })).unwrap();
+        println!("{} solids written in {:.0} ms", objects.len(), t.elapsed().as_secs_f64() * 1e3);
     }
 }

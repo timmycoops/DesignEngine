@@ -37,7 +37,6 @@ fn main() {
             commands::spry_contents,
             commands::stage_object,
             commands::stage_layer_solids,
-            commands::stage_solids,
             commands::objects_bounds,
             commands::objects_in_box,
             commands::section_lines,

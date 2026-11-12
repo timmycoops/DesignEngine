@@ -18,12 +18,12 @@ use zd_core::{Attributes, Body, Colouring, Contours, Crossings, Display, FaceDes
 use zd_geom::{SectionPlane, StackHorizon, SurfaceRayCaster, stack_issue_nodes, triangulate_grid};
 use zd_io::{check_links as check_grid_links, list_deswik_layers, list_spry, read_stack_grids};
 
-use crate::changes::{ProjectChanges, changes};
-use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_section, encode_triangulation};
+use crate::changes::{ProjectChanges, changes, changes_after_hiding};
+use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_section, encode_solids, encode_triangulation};
 use crate::selection;
 use crate::section::{SectionCut, add_selected, pick_on_section, section_groups, snap_on_section};
 use crate::shared::post_shared_buffer;
-use crate::state::{AppInner, AppState, Running, SolidCaster, bounds, every_layer_solid, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_snap_keys};
+use crate::state::{AppInner, AppState, Running, SolidCaster, bounds, every_layer_solid, geometry_key, is_drawn_surface, solid_snap_keys};
 use crate::synthetic::synthetic_topography;
 
 /// The whole project, in place of what the app holds: after a reload, or when a change didn't follow on from what the
@@ -338,7 +338,7 @@ pub async fn set_objects_visible(objects: Vec<ObjectId>, visible: bool, state: S
     let mut app = state.app.lock().unwrap();
     app.idle()?;
     app.session.set_objects_visible(&objects, visible);
-    Ok(changes(&mut app, false))
+    Ok(changes_after_hiding(&mut app))
 }
 
 #[tauri::command]
@@ -346,7 +346,7 @@ pub async fn set_layer_visible(layer: LayerId, visible: bool, state: State<'_, A
     let mut app = state.app.lock().unwrap();
     app.idle()?;
     app.session.set_layer_visible(layer, visible);
-    Ok(changes(&mut app, false))
+    Ok(changes_after_hiding(&mut app))
 }
 
 /// Colours objects by RL or by their layer, sets how see-through they are, or both. Display state: not a
@@ -503,22 +503,25 @@ pub async fn stage_object(id: ObjectId, state: State<'_, AppState>) -> Result<St
 }
 
 /// Encodes every solid on a layer as one mesh for the viewport and holds it to be fetched: a pit's
-/// tens of thousands of solids are then a few chunks to draw, not one mesh each.
+/// tens of thousands of solids are then a few chunks to draw, not one mesh each. Hidden solids are in it too, each
+/// vertex saying which solid it's of, so hiding or picking one changes a table beside the mesh and not the mesh
+/// (decision 0060, workstream 3).
 #[tauri::command]
 pub async fn stage_layer_solids(layer: LayerId, state: State<'_, AppState>) -> Result<StagedMesh, String> {
     let app = state.app.clone();
-    let (meshes, name, origin) = {
+    let (solids, name, origin) = {
         let mut app = app.lock().unwrap();
         let origin = app.origin().unwrap_or([0.0; 3]);
         let project = app.session.project();
         let name = project.layer(layer).ok_or("no such layer")?.name.clone();
-        (layer_solids(project, layer), name, origin)
+        (every_layer_solid(project, layer), name, origin)
     };
     let header = serde_json::json!({ "id": 0, "name": name, "timings": {} });
     let (buffer, triangles, encode_ms) = blocking(move || {
         let t = Instant::now();
-        let mesh = joined_meshes(&meshes);
-        (encode_triangulation(&mesh, origin, header), mesh.triangle_count(), ms(t))
+        let (ids, meshes): (Vec<ObjectId>, Vec<Arc<TriMesh>>) = solids.into_iter().unzip();
+        let triangles = meshes.iter().map(|m| m.triangle_count()).sum();
+        (encode_solids(&ids, &meshes, origin, header), triangles, ms(t))
     })
     .await?;
     Ok(stage(&state, buffer, name, "triangulation", triangles, String::new(), serde_json::json!({ "encode": encode_ms })))
@@ -542,26 +545,6 @@ pub async fn objects_in_box(matrix: [f64; 16], min: [f64; 2], max: [f64; 2], sta
         selection::objects_in_box(app.session.project(), &selection::ScreenBox { matrix, origin, min, max })
     })
     .await
-}
-
-/// The selected solids on show as one mesh, to light up over their layers': one draw however many are picked.
-#[tauri::command]
-pub async fn stage_solids(objects: Vec<ObjectId>, state: State<'_, AppState>) -> Result<StagedMesh, String> {
-    let app = state.app.clone();
-    let (meshes, origin) = {
-        let mut app = app.lock().unwrap();
-        let origin = app.origin().unwrap_or([0.0; 3]);
-        (selection::solids_on_show(app.session.project(), &objects), origin)
-    };
-    let name = format!("{} selected solids", meshes.len());
-    let header = serde_json::json!({ "id": 0, "name": name, "timings": {} });
-    let (buffer, triangles, encode_ms) = blocking(move || {
-        let t = Instant::now();
-        let mesh = joined_meshes(&meshes);
-        (encode_triangulation(&mesh, origin, header), mesh.triangle_count(), ms(t))
-    })
-    .await?;
-    Ok(stage(&state, buffer, name, "triangulation", triangles, String::new(), serde_json::json!({ "encode": encode_ms })))
 }
 
 /// The section through two plan points (mine grid) as binary: where the plane cuts every visible
