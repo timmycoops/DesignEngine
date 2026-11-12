@@ -11,7 +11,7 @@ use zd_core::{AttrValue, Attributes, Body, Change};
 use zd_io::{SPRY_LEVELS, SpryLog, SpryRead, read_spry};
 
 use super::deswik::{Made, MeshesAs, SurfaceTally, import_mesh};
-use super::in_parallel;
+use super::in_parallel_watched;
 use super::solid::{Cleaning, ImportTally, NOT_A_SOLID, VOLUME_AGREES, default_fill_limit};
 use super::surface::default_tolerance;
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome};
@@ -88,7 +88,7 @@ impl Command for ImportSpry {
         }
     }
 
-    fn run(&self, _inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let cleaning = Cleaning { weld_tolerance: p.weld_tolerance, repair: p.repair, fill_limit: p.fill_limit }.checked()?;
         let start = Instant::now();
         let read = SpryRead { solid_fields: p.solid_fields.clone(), layers: p.layers.clone(), volume_field: p.volume_field.clone() };
@@ -120,7 +120,7 @@ impl Command for ImportSpry {
         } else {
             project.meshes
         };
-        let made = in_parallel(&meshes, |m| import_mesh(&m.mesh, &m.layer, "Spry", p.meshes, cleaning, m.node.is_some()));
+        let made = in_parallel_watched(inputs, "meshes", &meshes, |m| import_mesh(&m.mesh, &m.layer, "Spry", p.meshes, cleaning, m.node.is_some()))?;
         let few = meshes.len() <= LINES_PER_MESH_UP_TO;
         let mut tally = ImportTally::default();
         let mut surfaces = SurfaceTally::default();

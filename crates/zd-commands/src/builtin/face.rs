@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, Crossings, FaceDesign, FaceDirection, FaceLine, FaceProfile, LineOn, MOST_TOLERANCE, ObjectId, ObjectKind, Polyline, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, Surface, TriMesh, WallSide};
 use zd_geom::{COINCIDENT, EdgeRule, EditReport, Face, FaceBench, FaceEdit, FaceRamp, FaceRoad, FaceStep, FaceTarget, GeomError, JoinBoxes, JoinNote, MetBoxes, OffsetSide, RoadTop, SolidRegion, Stretch, at_line_heights, conditioned_toe, find_crossings, level_floor, next_toe, plan_crossings, project_edited_face, project_wall, register_toe, run_on, triangulate_grid};
 
-use super::{SideParam, in_parallel};
+use super::{SideParam, in_parallel_watched};
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Place, Severity};
 
 /// `face.project_step`: one wall from a string up to a target surface or grid, at a fixed batter. It
@@ -367,7 +367,7 @@ fn run_design(inputs: &Inputs<'_>, design_id: ObjectId, design: &FaceDesign) -> 
     // Strips stand alone, so they run side by side.
     let run = FaceRun { design, id: design_id, inputs, targets: &targets, regions: &regions, ramp_strings: &ramp_strings };
     let mut not_built = Vec::new();
-    for (&(_, id), strip) in runs.iter().zip(in_parallel(&runs, |&(line, id)| run.strip(line, id))) {
+    for (&(_, id), strip) in runs.iter().zip(in_parallel_watched(inputs, "strips", &runs, |&(line, id)| run.strip(line, id))?) {
         let strip = match strip {
             Ok(strip) => strip,
             Err(CommandError::Invalid(why)) => {

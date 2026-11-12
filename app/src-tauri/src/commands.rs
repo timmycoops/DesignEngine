@@ -23,14 +23,14 @@ use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_section, e
 use crate::selection;
 use crate::section::{SectionCut, add_selected, pick_on_section, section_groups, snap_on_section};
 use crate::shared::post_shared_buffer;
-use crate::state::{AppInner, AppState, SolidCaster, bounds, every_layer_solid, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_snap_keys};
+use crate::state::{AppInner, AppState, Running, SolidCaster, bounds, every_layer_solid, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_snap_keys};
 use crate::synthetic::synthetic_topography;
 
 /// The whole project, in place of what the app holds: after a reload, or when a change didn't follow on from what the
 /// app holds.
 #[tauri::command]
-pub fn project_summary(state: State<'_, AppState>) -> ProjectChanges {
-    changes(&mut state.app.lock().unwrap(), true)
+pub async fn project_summary(state: State<'_, AppState>) -> Result<ProjectChanges, String> {
+    Ok(changes(&mut state.app.lock().unwrap(), true))
 }
 
 /// One revision of an object and the run that wrote it.
@@ -157,45 +157,88 @@ pub struct RunReply {
 }
 
 /// Runs an engine command by name with JSON parameters. A failure comes back as the error text
-/// (and is in the run log either way).
+/// (and is in the run log either way). The run reads the project off the lock and takes it again only to apply what it
+/// made, so the view carries on while it goes; one runs at a time (decision 0060).
 #[tauri::command]
 pub async fn run_command(name: String, params: Value, state: State<'_, AppState>) -> Result<RunReply, String> {
     let app = state.app.clone();
     blocking(move || {
+        let job = {
+            let mut app = app.lock().unwrap();
+            app.idle()?;
+            let job = app.session.begin_run(&name, params);
+            app.running = Some(Running { command: name.clone(), started: Instant::now(), control: job.control() });
+            job
+        };
+        let done = job.run();
         let mut app = app.lock().unwrap();
-        let record = app.session.run(&name, params).map_err(|e| e.to_string())?;
+        app.running = None;
+        let record = app.session.end_run(done).map_err(|e| e.to_string())?;
         Ok(RunReply { record, changes: changes(&mut app, false) })
     })
     .await?
 }
 
+/// The run going, if one is: what it is, how long it's been going and how far it has got.
+#[derive(Serialize)]
+pub struct RunProgress {
+    command: String,
+    seconds: f64,
+    done: u64,
+    /// 0 until the run says what it's counting.
+    total: u64,
+    of: &'static str,
+    cancelled: bool,
+}
+
 #[tauri::command]
-pub fn undo(state: State<'_, AppState>) -> ProjectChanges {
+pub async fn run_progress(state: State<'_, AppState>) -> Result<Option<RunProgress>, String> {
+    let app = state.app.lock().unwrap();
+    Ok(app.running.as_ref().map(|r| {
+        let p = r.control.progress();
+        RunProgress { command: r.command.clone(), seconds: r.started.elapsed().as_secs_f64(), done: p.done, total: p.total, of: p.of, cancelled: r.control.is_cancelled() }
+    }))
+}
+
+/// Asks the run going to stop: it does at the next solid, strip or file, and applies nothing. False if none is going.
+#[tauri::command]
+pub async fn cancel_run(state: State<'_, AppState>) -> Result<bool, String> {
+    let app = state.app.lock().unwrap();
+    Ok(app.running.as_ref().map(|r| r.control.cancel()).is_some())
+}
+
+#[tauri::command]
+pub async fn undo(state: State<'_, AppState>) -> Result<ProjectChanges, String> {
     let mut app = state.app.lock().unwrap();
+    app.idle()?;
     app.session.undo();
-    changes(&mut app, false)
+    Ok(changes(&mut app, false))
 }
 
 #[tauri::command]
-pub fn redo(state: State<'_, AppState>) -> ProjectChanges {
+pub async fn redo(state: State<'_, AppState>) -> Result<ProjectChanges, String> {
     let mut app = state.app.lock().unwrap();
+    app.idle()?;
     app.session.redo();
-    changes(&mut app, false)
+    Ok(changes(&mut app, false))
 }
 
 #[tauri::command]
-pub fn new_project(state: State<'_, AppState>) -> ProjectChanges {
+pub async fn new_project(state: State<'_, AppState>) -> Result<ProjectChanges, String> {
     let mut app = state.app.lock().unwrap();
+    app.idle()?;
     *app = AppInner::new(Session::with_builtins(), None);
-    changes(&mut app, true)
+    Ok(changes(&mut app, true))
 }
 
 #[tauri::command]
 pub async fn open_project(path: String, state: State<'_, AppState>) -> Result<ProjectChanges, String> {
     let app = state.app.clone();
     blocking(move || {
+        app.lock().unwrap().idle()?;
         let session = Session::open(&path).map_err(|e| e.to_string())?;
         let mut app = app.lock().unwrap();
+        app.idle()?;
         *app = AppInner::new(session, Some(PathBuf::from(path)));
         Ok(changes(&mut app, true))
     })
@@ -291,43 +334,48 @@ pub async fn save_project(path: Option<String>, state: State<'_, AppState>) -> R
 /// Display state only: not a command, not undone.
 /// Shows or hides objects one by one, under their layer's tick. Display state: not a run, not undone.
 #[tauri::command]
-pub fn set_objects_visible(objects: Vec<ObjectId>, visible: bool, state: State<'_, AppState>) -> ProjectChanges {
+pub async fn set_objects_visible(objects: Vec<ObjectId>, visible: bool, state: State<'_, AppState>) -> Result<ProjectChanges, String> {
     let mut app = state.app.lock().unwrap();
+    app.idle()?;
     app.session.set_objects_visible(&objects, visible);
-    changes(&mut app, false)
+    Ok(changes(&mut app, false))
 }
 
 #[tauri::command]
-pub fn set_layer_visible(layer: LayerId, visible: bool, state: State<'_, AppState>) -> ProjectChanges {
+pub async fn set_layer_visible(layer: LayerId, visible: bool, state: State<'_, AppState>) -> Result<ProjectChanges, String> {
     let mut app = state.app.lock().unwrap();
+    app.idle()?;
     app.session.set_layer_visible(layer, visible);
-    changes(&mut app, false)
+    Ok(changes(&mut app, false))
 }
 
 /// Colours objects by RL or by their layer, sets how see-through they are, or both. Display state: not a
 /// run, not undone. Only the looks come back, not the whole summary: nothing else changes, and a slider
 /// shouldn't wait on a pit's worth of summary.
 #[tauri::command]
-pub fn set_looks(objects: Vec<ObjectId>, colouring: Option<Colouring>, opacity: Option<f64>, state: State<'_, AppState>) -> Display {
+pub async fn set_looks(objects: Vec<ObjectId>, colouring: Option<Colouring>, opacity: Option<f64>, state: State<'_, AppState>) -> Result<Display, String> {
     let mut app = state.app.lock().unwrap();
+    app.idle()?;
     app.session.set_looks(&objects, colouring, opacity);
-    app.session.project().display().clone()
+    Ok(app.session.project().display().clone())
 }
 
 /// How see-through a layer is. Display state, as above.
 #[tauri::command]
-pub fn set_layer_opacity(layer: LayerId, opacity: f64, state: State<'_, AppState>) -> Display {
+pub async fn set_layer_opacity(layer: LayerId, opacity: f64, state: State<'_, AppState>) -> Result<Display, String> {
     let mut app = state.app.lock().unwrap();
+    app.idle()?;
     app.session.set_layer_opacity(layer, opacity);
-    app.session.project().display().clone()
+    Ok(app.session.project().display().clone())
 }
 
 /// The bands of colour by RL. Display state, as above.
 #[tauri::command]
-pub fn set_contours(contours: Contours, state: State<'_, AppState>) -> Display {
+pub async fn set_contours(contours: Contours, state: State<'_, AppState>) -> Result<Display, String> {
     let mut app = state.app.lock().unwrap();
+    app.idle()?;
     app.session.set_contours(contours);
-    app.session.project().display().clone()
+    Ok(app.session.project().display().clone())
 }
 
 /// The run log from entry `from` on, when the app holds the first `from` entries of `session`'s log; the whole log when
@@ -340,11 +388,11 @@ pub struct LogPart {
 }
 
 #[tauri::command]
-pub fn run_log(session: Option<u64>, from: Option<usize>, state: State<'_, AppState>) -> LogPart {
+pub async fn run_log(session: Option<u64>, from: Option<usize>, state: State<'_, AppState>) -> Result<LogPart, String> {
     let app = state.app.lock().unwrap();
     let log = app.session.log();
     let from = if session == Some(app.log_session) { from.unwrap_or(0).min(log.len()) } else { 0 };
-    LogPart { session: app.log_session, from, entries: log[from..].to_vec() }
+    Ok(LogPart { session: app.log_session, from, entries: log[from..].to_vec() })
 }
 
 /// Every attribute of each object, in the order asked, for what needs more than a row carries (naming solids' files
@@ -478,9 +526,9 @@ pub async fn stage_layer_solids(layer: LayerId, state: State<'_, AppState>) -> R
 
 /// The box round these objects together, world coordinates, for zoom to selection. `None` if none has a place.
 #[tauri::command]
-pub fn objects_bounds(objects: Vec<ObjectId>, state: State<'_, AppState>) -> Option<[[f64; 3]; 2]> {
+pub async fn objects_bounds(objects: Vec<ObjectId>, state: State<'_, AppState>) -> Result<Option<[[f64; 3]; 2]>, String> {
     let app = state.app.lock().unwrap();
-    selection::bounds_of(app.session.project(), &objects).map(|b| [b.min, b.max])
+    Ok(selection::bounds_of(app.session.project(), &objects).map(|b| [b.min, b.max]))
 }
 
 /// Everything on show lying wholly inside a box drawn on the viewport: the camera's view-projection matrix in the
@@ -784,7 +832,11 @@ pub struct SnapHit {
 /// Nearest hit on a drawn surface of a visible layer, along a ray in scene-local coordinates. Hidden
 /// objects are passed over.
 #[tauri::command]
-pub fn snap_ray(origin: [f64; 3], direction: [f64; 3], state: State<'_, AppState>) -> Option<SnapHit> {
+pub async fn snap_ray(origin: [f64; 3], direction: [f64; 3], state: State<'_, AppState>) -> Result<Option<SnapHit>, String> {
+    Ok(snap_along(origin, direction, &state))
+}
+
+fn snap_along(origin: [f64; 3], direction: [f64; 3], state: &AppState) -> Option<SnapHit> {
     let (scene_origin, objects, layers, hidden) = {
         let mut app = state.app.lock().unwrap();
         let scene_origin = app.origin()?;
@@ -818,18 +870,18 @@ pub fn snap_ray(origin: [f64; 3], direction: [f64; 3], state: State<'_, AppState
 
 /// Where a cursor at distance `along` and `rl` on the section snaps to the last cut, if anywhere near.
 #[tauri::command]
-pub fn section_snap(along: f64, rl: f64, vertex_reach: f64, segment_reach: f64, ignoring: Option<[f64; 2]>, state: State<'_, AppState>) -> Option<SnapHit> {
+pub async fn section_snap(along: f64, rl: f64, vertex_reach: f64, segment_reach: f64, ignoring: Option<[f64; 2]>, state: State<'_, AppState>) -> Result<Option<SnapHit>, String> {
     let mut app = state.app.lock().unwrap();
-    let origin = app.origin()?;
-    let hit = snap_on_section(&app, [along, rl], vertex_reach, segment_reach, ignoring)?;
+    let Some(origin) = app.origin() else { return Ok(None) };
+    let Some(hit) = snap_on_section(&app, [along, rl], vertex_reach, segment_reach, ignoring) else { return Ok(None) };
     let world = hit.point;
-    Some(SnapHit { local: [world[0] - origin[0], world[1] - origin[1], world[2] - origin[2]], world, object: None, kind: Some(hit.kind), label: Some(hit.label) })
+    Ok(Some(SnapHit { local: [world[0] - origin[0], world[1] - origin[1], world[2] - origin[2]], world, object: None, kind: Some(hit.kind), label: Some(hit.label) }))
 }
 
 /// What a click at distance `along` and `rl` on the last section cut picks, within `reach` metres.
 #[tauri::command]
-pub fn section_pick(along: f64, rl: f64, reach: f64, state: State<'_, AppState>) -> Option<ObjectId> {
-    pick_on_section(&state.app.lock().unwrap(), [along, rl], reach)
+pub async fn section_pick(along: f64, rl: f64, reach: f64, state: State<'_, AppState>) -> Result<Option<ObjectId>, String> {
+    Ok(pick_on_section(&state.app.lock().unwrap(), [along, rl], reach))
 }
 
 #[derive(Serialize)]
@@ -980,4 +1032,106 @@ fn distance_sq(a: [f64; 3], b: [f64; 3]) -> f64 {
 
 fn ms(start: Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1e3
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+    use std::time::Instant;
+
+    use super::*;
+    use crate::changes::changes;
+
+    /// A long run on a made-up project named by `ZD_SCALE_PROJECT` (the store bench's `store-scale.zdp`, made with
+    /// `store_scale -- 43000 250`), as `run_command` does it: what a snap waits for while the run goes, and how soon a
+    /// cancelled run stops (decision 0060). Counts and timings only.
+    #[test]
+    #[ignore]
+    fn a_run_does_not_hold_the_view() {
+        let Ok(path) = std::env::var("ZD_SCALE_PROJECT") else { return };
+        let state = AppState { app: Arc::new(Mutex::new(AppInner::new(Session::open(&path).unwrap(), None))) };
+        // The snap index over the layer of blocks, as build_snap_index leaves it.
+        let (ids, rl, down_at) = {
+            let mut app = state.app.lock().unwrap();
+            changes(&mut app, true);
+            let project = app.session.project();
+            let layer = project.objects().next().unwrap().layer;
+            let t = Instant::now();
+            let caster = SolidCaster::new(&every_layer_solid(project, layer)).unwrap();
+            println!("snap index: {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
+            let key = app.solid_keys[&layer].clone();
+            let first = bounds(app.session.project().objects().next().unwrap()).unwrap();
+            let ids: Vec<ObjectId> = app.session.project().objects().map(|o| o.id).collect();
+            app.solid_casters.insert(layer, (key, Arc::new(caster)));
+            let origin = app.origin().unwrap();
+            let c = first.centre();
+            (ids, (first.min[2] + first.max[2]) / 2.0, [c[0] - origin[0], c[1] - origin[1], first.max[2] + 100.0 - origin[2]])
+        };
+        let snap = |state: &AppState| {
+            let t = Instant::now();
+            let hit = snap_along(down_at, [0.0, 0.0, -1.0], state);
+            (t.elapsed().as_secs_f64() * 1e3, hit.is_some())
+        };
+        let (idle_ms, hit) = snap(&state);
+        println!("snap with no run going: {idle_ms:.2} ms, hit {hit}");
+
+        let start = |state: &AppState| {
+            let mut app = state.app.lock().unwrap();
+            app.idle().unwrap();
+            let job = app.session.begin_run("solid.cut_by_surface", serde_json::json!({ "solids": ids, "rl": rl, "keep": "below", "layer": "cut" }));
+            app.running = Some(Running { command: "solid.cut_by_surface".into(), started: Instant::now(), control: job.control() });
+            job
+        };
+        let job = start(&state);
+        let control = job.control();
+        let t = Instant::now();
+        let worker = std::thread::spawn(move || job.run());
+        let mut waits = Vec::new();
+        while !worker.is_finished() {
+            let (ms, _) = snap(&state);
+            waits.push(ms);
+            assert!(state.app.lock().unwrap().idle().is_err(), "a change waits while it runs");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let done = worker.join().unwrap();
+        let run_ms = t.elapsed().as_secs_f64() * 1e3;
+        let progress = control.progress();
+        let t = Instant::now();
+        let record = {
+            let mut app = state.app.lock().unwrap();
+            app.running = None;
+            let record = app.session.end_run(done).unwrap();
+            changes(&mut app, false);
+            record
+        };
+        let apply_ms = t.elapsed().as_secs_f64() * 1e3;
+        waits.sort_by(f64::total_cmp);
+        println!(
+            "cut {} solids: {run_ms:.0} ms, {} made; applied and sent in {apply_ms:.0} ms; progress {} of {} {}",
+            ids.len(),
+            record.outputs.len(),
+            progress.done,
+            progress.total,
+            progress.of
+        );
+        println!("snaps during it: {}, p50 {:.2} ms, max {:.2} ms", waits.len(), waits[waits.len() / 2], waits[waits.len() - 1]);
+
+        // Again, cancelled a second in.
+        state.app.lock().unwrap().session.undo();
+        let job = start(&state);
+        let control = job.control();
+        let worker = std::thread::spawn(move || job.run());
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let at = control.progress();
+        let t = Instant::now();
+        control.cancel();
+        let done = worker.join().unwrap();
+        let stop_ms = t.elapsed().as_secs_f64() * 1e3;
+        let mut app = state.app.lock().unwrap();
+        app.running = None;
+        let before = app.session.project().objects().count();
+        let refused = app.session.end_run(done).unwrap_err();
+        println!("cancelled at {} of {} {}: stopped in {stop_ms:.0} ms, {refused}", at.done, at.total, at.of);
+        assert_eq!(app.session.project().objects().count(), before, "nothing applied");
+    }
 }

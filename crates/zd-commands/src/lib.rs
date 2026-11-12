@@ -7,6 +7,7 @@
 
 pub mod builtin;
 mod command;
+mod control;
 mod note;
 mod error;
 mod registry;
@@ -14,8 +15,9 @@ mod session;
 mod spec;
 
 pub use command::{Command, Inputs, Outcome};
+pub use control::{Progress, RunControl};
 pub use error::CommandError;
 pub use note::{Code, Measure, Note, Place, Severity};
 pub use registry::Registry;
-pub use session::{LogEntry, RunRecord, RunStatus, SaveJob, Session};
+pub use session::{LogEntry, RunDone, RunJob, RunRecord, RunStatus, SaveJob, Session};
 pub use spec::{CommandSpec, Field, FieldType};

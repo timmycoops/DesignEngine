@@ -2,6 +2,7 @@
 // compact render buffers described in app/src-tauri/src/render.rs.
 import { invoke } from '@tauri-apps/api/core';
 import { type LogPart, LogStore, ProjectStore } from './projectStore';
+import { running, waitingOn } from './running';
 
 export type Vec3 = [number, number, number];
 
@@ -455,15 +456,45 @@ async function summaryAfter(changes: ProjectChanges): Promise<ProjectSummary> {
 export const projectSummary = async () => held.take(await invoke<ProjectChanges>('project_summary'))!;
 
 /** Runs an engine command by name; rejects with the error text if the command fails. */
+/**
+ * One run at a time (decision 0060): it reads the project off the shell's lock, so the view answers while it goes, and
+ * while it goes nothing else may change the project. The shell refuses that too; this says so before asking.
+ */
 export const runCommand = async (name: string, params: Record<string, unknown>): Promise<RunReply> => {
-  const reply = await invoke<{ record: RunRecord; changes: ProjectChanges }>('run_command', { name, params });
-  return { record: reply.record, summary: await summaryAfter(reply.changes) };
+  if (!running.start(name, performance.now())) throw new Error(waitingOn() ?? 'Waiting on a run');
+  try {
+    const reply = await invoke<{ record: RunRecord; changes: ProjectChanges }>('run_command', { name, params });
+    return { record: reply.record, summary: await summaryAfter(reply.changes) };
+  } finally {
+    running.end();
+  }
 };
 
-export const undo = async () => summaryAfter(await invoke<ProjectChanges>('undo'));
-export const redo = async () => summaryAfter(await invoke<ProjectChanges>('redo'));
-export const newProject = async () => summaryAfter(await invoke<ProjectChanges>('new_project'));
-export const openProject = async (path: string) => summaryAfter(await invoke<ProjectChanges>('open_project', { path }));
+/** Throws, saying what it's waiting on, while a run goes: a change to the project waits until it ends. */
+function idle() {
+  const waiting = waitingOn();
+  if (waiting) throw new Error(waiting);
+}
+
+/** How far the run going has got, if one is. */
+export interface RunProgress {
+  command: string;
+  seconds: number;
+  done: number;
+  /** 0 until the run says what it's counting. */
+  total: number;
+  of: string;
+  cancelled: boolean;
+}
+
+export const runProgress = () => invoke<RunProgress | null>('run_progress');
+/** Asks the run going to stop at the next solid, strip or file; it applies nothing. */
+export const cancelRun = () => invoke<boolean>('cancel_run');
+
+export const undo = async () => (idle(), summaryAfter(await invoke<ProjectChanges>('undo')));
+export const redo = async () => (idle(), summaryAfter(await invoke<ProjectChanges>('redo')));
+export const newProject = async () => (idle(), summaryAfter(await invoke<ProjectChanges>('new_project')));
+export const openProject = async (path: string) => (idle(), summaryAfter(await invoke<ProjectChanges>('open_project', { path })));
 
 /** Every attribute of each object, in the order given (a row carries only those the app reads by name). */
 export const objectsAttributes = (objects: string[]) => invoke<Record<string, boolean | number | string>[]>('objects_attributes', { objects });
@@ -495,14 +526,14 @@ export const checkLinks = () => invoke<LinksReply>('check_links');
 /** Saves to `path` (a `.zdp` file), or to the file last opened or saved. */
 export const saveProject = (path?: string) => invoke<SaveReply>('save_project', { path: path ?? null });
 export const setLayerVisible = async (layer: string, visible: boolean) =>
-  summaryAfter(await invoke<ProjectChanges>('set_layer_visible', { layer, visible }));
+  (idle(), summaryAfter(await invoke<ProjectChanges>('set_layer_visible', { layer, visible })));
 export const setObjectsVisible = async (objects: string[], visible: boolean) =>
-  summaryAfter(await invoke<ProjectChanges>('set_objects_visible', { objects, visible }));
+  (idle(), summaryAfter(await invoke<ProjectChanges>('set_objects_visible', { objects, visible })));
 /** Colours objects by RL or their layer, sets their opacity, or both (null leaves it). Display state, not a run. */
-export const setLooks = (objects: string[], colouring: Colouring | null, opacity: number | null) =>
-  invoke<Display>('set_looks', { objects, colouring, opacity });
-export const setLayerOpacity = (layer: string, opacity: number) => invoke<Display>('set_layer_opacity', { layer, opacity });
-export const setContours = (contours: Contours) => invoke<Display>('set_contours', { contours });
+export const setLooks = async (objects: string[], colouring: Colouring | null, opacity: number | null) =>
+  (idle(), invoke<Display>('set_looks', { objects, colouring, opacity }));
+export const setLayerOpacity = async (layer: string, opacity: number) => (idle(), invoke<Display>('set_layer_opacity', { layer, opacity }));
+export const setContours = async (contours: Contours) => (idle(), invoke<Display>('set_contours', { contours }));
 
 /** A layer of a Deswik drawing, named as Deswik shows it (levels joined by `\`), and its size unzipped. */
 export interface DeswikLayer {

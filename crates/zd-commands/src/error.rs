@@ -20,6 +20,10 @@ pub enum CommandError {
     Project(ProjectError),
     /// Saving or opening the project folder failed.
     Store(String),
+    /// Stopped by whoever started it, with nothing applied (decision 0060).
+    Cancelled,
+    /// The project changed while the run read it, so its changes weren't applied (decision 0060).
+    Changed,
 }
 
 impl fmt::Display for CommandError {
@@ -41,6 +45,8 @@ impl fmt::Display for CommandError {
             CommandError::Io(message) => write!(f, "{message}"),
             CommandError::Project(e) => write!(f, "{e}"),
             CommandError::Store(message) => write!(f, "project store: {message}"),
+            CommandError::Cancelled => write!(f, "cancelled; nothing was changed"),
+            CommandError::Changed => write!(f, "the project changed while this ran, so nothing was changed; run it again"),
         }
     }
 }
@@ -61,6 +67,8 @@ impl CommandError {
             CommandError::Io(_) => Code::RefusedIo,
             CommandError::Project(_) => Code::RefusedProject,
             CommandError::Store(_) => Code::RefusedStore,
+            CommandError::Cancelled => Code::RefusedCancelled,
+            CommandError::Changed => Code::RefusedChanged,
         }
     }
 }

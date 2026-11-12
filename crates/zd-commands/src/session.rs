@@ -9,6 +9,7 @@ use zd_io::{FolderLink, ProjectStore, SavedFile, Snapshot, ZdpStore};
 
 use crate::builtin::{ModelLinks, check_solids_made, seam_links};
 use crate::command::Inputs;
+use crate::control::RunControl;
 use crate::{Code, CommandError, Note, Registry};
 
 /// A run that panicked, refused with what the panic said.
@@ -104,8 +105,9 @@ pub enum LogEntry {
 
 /// A project, the commands that can act on it, and the log of what they did.
 pub struct Session {
-    project: Project,
-    registry: Registry,
+    /// Shared with a run reading it off the session (decision 0060); changed in place once no run holds it.
+    project: Arc<Project>,
+    registry: Arc<Registry>,
     log: Vec<LogEntry>,
     /// The `.zdp` file this session last saved to or opened, shared with a save running off the session.
     store: Option<Arc<Mutex<ZdpStore>>>,
@@ -130,6 +132,62 @@ impl SaveJob {
     pub fn run(&self) -> Result<SavedFile, CommandError> {
         let mut store = self.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         store.save(&self.snapshot, &self.log, self.log_changed).map_err(|e| CommandError::Store(e.to_string()))
+    }
+}
+
+/// A run taken from a session in an instant (decision 0060): the project as it stood, shared and not copied, and the
+/// command to run on it while the session carries on. The session's project stays as it was until [`Session::end_run`].
+pub struct RunJob {
+    registry: Arc<Registry>,
+    project: Arc<Project>,
+    generation: u64,
+    control: Arc<RunControl>,
+    clock: Instant,
+    record: RunRecord,
+}
+
+/// What a run did, to hand to [`Session::end_run`]: its record so far and the changes it asks for. It holds nothing
+/// of the project, so applying them copies nothing.
+pub struct RunDone {
+    record: RunRecord,
+    made: Result<Vec<Change>, CommandError>,
+    generation: u64,
+    control: Arc<RunControl>,
+    clock: Instant,
+}
+
+impl RunJob {
+    /// How far the run has got, and how to cancel it, from another thread.
+    pub fn control(&self) -> Arc<RunControl> {
+        self.control.clone()
+    }
+
+    pub fn command(&self) -> &str {
+        &self.record.command
+    }
+
+    /// Runs the command on the project as it was taken. A panic anywhere in it, the geometry included, refuses the run:
+    /// commands only read the project, and nothing is applied until they're done (the review of 10 November).
+    pub fn run(self) -> RunDone {
+        let RunJob { registry, project, generation, control, clock, mut record } = self;
+        let made = (|| {
+            let command = registry.get(&record.command).ok_or_else(|| CommandError::UnknownCommand(record.command.clone()))?;
+            let inputs = Inputs::new(&project, control.clone());
+            let guarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let (mut outcome, canonical) = command.run_json(&inputs, &record.params)?;
+                let checked = check_solids_made(&mut outcome.changes, &mut outcome.notes);
+                Ok((outcome, canonical, checked))
+            }));
+            record.inputs = inputs.into_read();
+            let (outcome, canonical, checked) = guarded.unwrap_or_else(|panic| Err(stopped_on_a_panic(record.command.as_str(), panic.as_ref())))?;
+            record.params = canonical;
+            record.notes = outcome.notes;
+            record.messages = record.notes.iter().map(|n| n.text.clone()).collect();
+            checked?;
+            Ok(outcome.changes)
+        })();
+        drop(project);
+        RunDone { record, made, generation, control, clock }
     }
 }
 
@@ -182,7 +240,7 @@ fn zdp_path(path: &Path) -> PathBuf {
 
 impl Session {
     pub fn new(registry: Registry) -> Self {
-        Session { project: Project::new(), registry, log: Vec::new(), store: None, saved_log_len: 0, open_notes: Vec::new() }
+        Session { project: Arc::new(Project::new()), registry: Arc::new(registry), log: Vec::new(), store: None, saved_log_len: 0, open_notes: Vec::new() }
     }
 
     /// A new project with the engine's own commands.
@@ -213,7 +271,7 @@ impl Session {
         log.push(LogEntry::Opened { path: path.display().to_string(), at_unix_ms: now_ms() });
         // An old folder hasn't been saved as a file yet; a file just read has nothing new to save.
         let saved_log_len = if store.is_some() { log.len() } else { 0 };
-        let mut session = Session { project, registry, log, store, saved_log_len, open_notes: Vec::new() };
+        let mut session = Session { project: Arc::new(project), registry: Arc::new(registry), log, store, saved_log_len, open_notes: Vec::new() };
         session.relink_beside(&links, path);
         Ok(session)
     }
@@ -318,50 +376,75 @@ impl Session {
 
     /// Display state only: not a command, not undone.
     pub fn set_layer_visible(&mut self, layer: LayerId, visible: bool) -> bool {
-        self.project.set_layer_visible(layer, visible)
+        Arc::make_mut(&mut self.project).set_layer_visible(layer, visible)
     }
 
     /// See [`Project::set_objects_visible`].
     pub fn set_objects_visible(&mut self, objects: &[ObjectId], visible: bool) -> usize {
-        self.project.set_objects_visible(objects, visible)
+        Arc::make_mut(&mut self.project).set_objects_visible(objects, visible)
     }
 
     /// See [`Project::set_looks`]. Display state only: not a command, not undone.
     pub fn set_looks(&mut self, objects: &[ObjectId], colouring: Option<Colouring>, opacity: Option<f64>) -> usize {
-        self.project.set_looks(objects, colouring, opacity)
+        Arc::make_mut(&mut self.project).set_looks(objects, colouring, opacity)
     }
 
     /// See [`Project::set_layer_opacity`]. Display state only.
     pub fn set_layer_opacity(&mut self, layer: LayerId, opacity: f64) -> bool {
-        self.project.set_layer_opacity(layer, opacity)
+        Arc::make_mut(&mut self.project).set_layer_opacity(layer, opacity)
     }
 
     /// See [`Project::set_contours`]. Display state only.
     pub fn set_contours(&mut self, contours: Contours) -> bool {
-        self.project.set_contours(contours)
+        Arc::make_mut(&mut self.project).set_contours(contours)
     }
 
     /// Runs a command by name with JSON parameters. Its changes apply together or not at all, and
     /// the run is logged either way; a failure comes back as the error and as a failed record.
     pub fn run(&mut self, command: &str, params: Value) -> Result<RunRecord, CommandError> {
-        let run = RunId::new();
-        let started_unix_ms = now_ms();
-        let clock = Instant::now();
-        let mut record = RunRecord {
-            run,
-            command: command.to_string(),
-            params: params.clone(),
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-            layers_created: Vec::new(),
-            started_unix_ms,
-            duration_ms: 0.0,
-            notes: Vec::new(),
-            messages: Vec::new(),
-            status: RunStatus::Ok,
-            refused: None,
-        };
-        let result = self.execute(run, command, &params, &mut record);
+        let done = self.begin_run(command, params).run();
+        self.end_run(done)
+    }
+
+    /// Takes a run in an instant (decision 0060): run it with [`RunJob::run`] while the session carries on, watching and
+    /// cancelling it through [`RunJob::control`], then hand what it did to [`Session::end_run`].
+    pub fn begin_run(&self, command: &str, params: Value) -> RunJob {
+        RunJob {
+            registry: self.registry.clone(),
+            project: self.project.clone(),
+            generation: self.project.generation(),
+            control: Arc::new(RunControl::new()),
+            clock: Instant::now(),
+            record: RunRecord {
+                run: RunId::new(),
+                command: command.to_string(),
+                params,
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+                layers_created: Vec::new(),
+                started_unix_ms: now_ms(),
+                duration_ms: 0.0,
+                notes: Vec::new(),
+                messages: Vec::new(),
+                status: RunStatus::Ok,
+                refused: None,
+            },
+        }
+    }
+
+    /// Applies what a run made, if it wasn't cancelled and the project hasn't changed since it was taken, and logs the
+    /// run either way.
+    pub fn end_run(&mut self, done: RunDone) -> Result<RunRecord, CommandError> {
+        let RunDone { mut record, made, generation, control, clock } = done;
+        let result = made.and_then(|made| {
+            if control.is_cancelled() {
+                return Err(CommandError::Cancelled);
+            }
+            if self.project.generation() != generation {
+                return Err(CommandError::Changed);
+            }
+            self.apply(record.run, made, &mut record)
+        });
         record.duration_ms = clock.elapsed().as_secs_f64() * 1e3;
         if let Err(e) = &result {
             record.status = RunStatus::Failed(e.to_string());
@@ -371,25 +454,9 @@ impl Session {
         result.map(|()| record)
     }
 
-    fn execute(&mut self, run: RunId, command: &str, params: &Value, record: &mut RunRecord) -> Result<(), CommandError> {
-        let command = self.registry.get(command).ok_or_else(|| CommandError::UnknownCommand(command.to_string()))?;
-        let inputs = Inputs::new(&self.project);
-        // A panic anywhere in a run, the geometry included, refuses that run and leaves the project as it was: commands
-        // only read the project, and nothing is applied until they're done. Without this a panic would end the app's
-        // session with the lock held (the review of 10 November).
-        let guarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let (mut outcome, canonical) = command.run_json(&inputs, params)?;
-            let checked = check_solids_made(&mut outcome.changes, &mut outcome.notes);
-            Ok((outcome, canonical, checked))
-        }));
-        record.inputs = inputs.into_read();
-        let (outcome, canonical, checked) = guarded.unwrap_or_else(|panic| Err(stopped_on_a_panic(record.command.as_str(), panic.as_ref())))?;
-        record.params = canonical;
-        record.notes = outcome.notes;
-        record.messages = record.notes.iter().map(|n| n.text.clone()).collect();
-        checked?;
-        let ids = changed_objects(&outcome.changes);
-        let applied = self.project.apply(run, outcome.changes)?;
+    fn apply(&mut self, run: RunId, changes: Vec<Change>, record: &mut RunRecord) -> Result<(), CommandError> {
+        let ids = changed_objects(&changes);
+        let applied = Arc::make_mut(&mut self.project).apply(run, changes)?;
         let made = ids.resolve(&applied.changes);
         for note in &mut record.notes {
             if let Some(index) = note.made.take() {
@@ -403,14 +470,14 @@ impl Session {
 
     /// Takes the last run off the project; returns its id.
     pub fn undo(&mut self) -> Option<RunId> {
-        let run = self.project.undo()?;
+        let run = Arc::make_mut(&mut self.project).undo()?;
         self.log.push(LogEntry::Undo { run, at_unix_ms: now_ms() });
         Some(run)
     }
 
     /// Puts the last undone run back; returns its id.
     pub fn redo(&mut self) -> Option<RunId> {
-        let run = self.project.redo()?;
+        let run = Arc::make_mut(&mut self.project).redo()?;
         self.log.push(LogEntry::Redo { run, at_unix_ms: now_ms() });
         Some(run)
     }

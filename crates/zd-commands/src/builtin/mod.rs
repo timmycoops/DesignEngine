@@ -101,6 +101,20 @@ fn finite(point: &[f64; 3]) -> Result<(), CommandError> {
 }
 
 /// Runs `work` on every item across the machine's cores; results come back in item order.
+/// [`in_parallel`] for a long run (decision 0060): says how many of the items are done as each finishes, and once the
+/// run is cancelled takes no more and refuses it, so nothing is applied.
+pub(crate) fn in_parallel_watched<I: Sync, T: Send>(inputs: &crate::Inputs<'_>, of: &'static str, items: &[I], work: impl Fn(&I) -> T + Sync) -> Result<Vec<T>, crate::CommandError> {
+    inputs.progress(0, items.len(), of);
+    let done = in_parallel(items, |item| {
+        inputs.stop_if_cancelled().ok()?;
+        let result = work(item);
+        inputs.step();
+        Some(result)
+    });
+    inputs.stop_if_cancelled()?;
+    Ok(done.into_iter().map(|r| r.expect("not cancelled, so every item ran")).collect())
+}
+
 pub(crate) fn in_parallel<I: Sync, T: Send>(items: &[I], work: impl Fn(&I) -> T + Sync) -> Vec<T> {
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, items.len().max(1));
     // Each core takes the next item not yet taken, so a run of heavy items isn't left to one core while the others

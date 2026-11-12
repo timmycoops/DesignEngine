@@ -291,6 +291,8 @@ pub enum SliceRefusal {
     Face { face: usize, error: GeomError },
     /// A face that stops short of the solid at an end.
     Short { face: usize, end: ShortEnd },
+    /// Told to stop before it was done (decision 0060).
+    Stopped,
 }
 
 impl fmt::Display for SliceRefusal {
@@ -299,6 +301,7 @@ impl fmt::Display for SliceRefusal {
             SliceRefusal::Solid(e) => write!(f, "the solid: {e}"),
             SliceRefusal::Face { face, error } => write!(f, "face {}: {error}", face + 1),
             SliceRefusal::Short { face, end } => write!(f, "face {}: {}", face + 1, short_words(end)),
+            SliceRefusal::Stopped => write!(f, "stopped before it was done"),
         }
     }
 }
@@ -389,6 +392,12 @@ pub struct StripSlice {
 /// A face that stops short of the solid at an end is refused, with about how much more run-on it needs. Faces that
 /// cross inside the solid are sliced anyway, the solid in front of an earlier face staying with it, and reported.
 pub fn slice_solid_by_faces(solid: &TriMesh, faces: &[&TriMesh]) -> Result<StripSlice, SliceRefusal> {
+    slice_solid_by_faces_watched(solid, faces, |_, _| true)
+}
+
+/// [`slice_solid_by_faces`], saying as it goes how many strips of how many are cut, before each: `go_on(done, of)`. It
+/// stops, refused as [`SliceRefusal::Stopped`], at the first `false`.
+pub fn slice_solid_by_faces_watched(solid: &TriMesh, faces: &[&TriMesh], mut go_on: impl FnMut(usize, usize) -> bool) -> Result<StripSlice, SliceRefusal> {
     let validity = solid.validity();
     if !validity.is_watertight() {
         return Err(SliceRefusal::Solid(GeomError::NotWatertight { what: "solid", validity }));
@@ -415,6 +424,9 @@ pub fn slice_solid_by_faces(solid: &TriMesh, faces: &[&TriMesh]) -> Result<Strip
     // The solid's outline in plan, a little wider, which a face's ends must run past.
     let outline = CrossSection::from_polygons(&solid_m.project()).offset(margin, JoinType::Miter, 2.0, 0);
 
+    if !go_on(0, faces.len()) {
+        return Err(SliceRefusal::Stopped);
+    }
     let start = Instant::now();
     let closed: Vec<Result<(Manifold, FaceCut), SliceRefusal>> = std::thread::scope(|scope| {
         let handles: Vec<_> = faces
@@ -471,7 +483,10 @@ pub fn slice_solid_by_faces(solid: &TriMesh, faces: &[&TriMesh]) -> Result<Strip
     let mut pieces = Vec::with_capacity(faces.len() + 1);
     let mut crossings = Vec::new();
     let mut sliced = 0.0;
-    for &face in &order {
+    for (done, &face) in order.iter().enumerate() {
+        if !go_on(done, faces.len()) {
+            return Err(SliceRefusal::Stopped);
+        }
         let (behind, front) = rest.split(&halves[face]);
         for part in [&behind, &front] {
             part.status().map_err(|e| SliceRefusal::Face { face, error: GeomError::Manifold(e.to_string()) })?;

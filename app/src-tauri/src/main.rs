@@ -18,6 +18,8 @@ fn main() {
             commands::project_summary,
             commands::object_details,
             commands::run_command,
+            commands::run_progress,
+            commands::cancel_run,
             commands::undo,
             commands::redo,
             commands::new_project,

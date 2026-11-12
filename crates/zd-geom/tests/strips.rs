@@ -249,3 +249,20 @@ fn where_the_top_doesnt_cover_the_string_there_is_no_solid_and_its_area_is_said(
     assert!((between.top_uncovered - 5_000.0).abs() < 1e-3, "{} m²", between.top_uncovered);
     assert!(between.bottom_uncovered < 1e-6);
 }
+
+#[test]
+fn a_slice_says_how_far_it_has_got_and_stops_when_told() {
+    let faces: Vec<TriMesh> = (0..4).map(|k| batter_45(200.0 + 150.0 * k as f64)).collect();
+    let refs: Vec<&TriMesh> = faces.iter().collect();
+    let mut said = Vec::new();
+    let slice = zd_geom::slice_solid_by_faces_watched(&pit(), &refs, |done, of| {
+        said.push((done, of));
+        true
+    })
+    .unwrap();
+    assert_eq!(said, vec![(0, 4), (0, 4), (1, 4), (2, 4), (3, 4)], "once before closing the faces, then before each strip");
+    assert_eq!(slice.strips.len(), 5);
+    // Told to stop before the third strip: nothing comes back but the refusal.
+    let stopped = zd_geom::slice_solid_by_faces_watched(&pit(), &refs, |done, _| done < 2);
+    assert!(matches!(stopped, Err(SliceRefusal::Stopped)), "{stopped:?}");
+}

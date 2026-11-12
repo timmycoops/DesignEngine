@@ -13,7 +13,7 @@ use std::time::Instant;
 use zd_io::{MeshFile, MeshSelection, SurfaceImport, find_mesh_files, read_surface};
 
 use super::exchange::describe_dxf_faces;
-use super::in_parallel;
+use super::in_parallel_watched;
 use super::surface::{MeshParams, check_crossings, check_solid_crossings, default_tolerance, describe, describe_repair, describe_vulcan, mesh_params, mm, site};
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Severity};
 
@@ -167,7 +167,7 @@ impl Command for ImportSolids {
         }
     }
 
-    fn run(&self, _inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let cleaning = Cleaning { weld_tolerance: p.weld_tolerance, repair: p.repair, fill_limit: p.fill_limit }.checked()?;
         if p.paths.is_empty() {
             return Err(CommandError::Invalid("no files, folders or zips given".into()));
@@ -179,7 +179,7 @@ impl Command for ImportSolids {
             return Err(CommandError::Invalid(format!("no .00t or .dxf files in {}", p.paths.join(", "))));
         }
         let found = describe_selection(&selection);
-        let results = in_parallel(&selection.files, |file| import_mesh_file(file, cleaning));
+        let results = in_parallel_watched(inputs, "files", &selection.files, |file| import_mesh_file(file, cleaning))?;
 
         let few = selection.files.len() <= LINES_PER_SOLID_UP_TO;
         let mut tally = ImportTally::default();
@@ -272,7 +272,7 @@ impl Command for RepairSolids {
         }
         let surfaces = ids.iter().map(|&id| inputs.surface(id)).collect::<Result<Vec<_>, _>>()?;
         let start = Instant::now();
-        let results = in_parallel(&surfaces, |(object, surface)| repair_surface(surface.mesh(), &object.name, cleaning));
+        let results = in_parallel_watched(inputs, "surfaces", &surfaces, |(object, surface)| repair_surface(surface.mesh(), &object.name, cleaning))?;
         let ms = start.elapsed().as_secs_f64() * 1e3;
 
         let mut tally = ImportTally::default();
@@ -1022,9 +1022,15 @@ impl Command for CutBySurface {
             return Err(CommandError::Invalid("below_name and above_name name one solid's parts; with several, each part is named after its solid".into()));
         }
         let solids = ids.iter().map(|&id| inputs.solid(id)).collect::<Result<Vec<_>, _>>()?;
+        // Solids never checked for crossings are checked first, across the cores, watched (decision 0060); what each
+        // says, and the first refusal, in the solids' order.
+        let checked = in_parallel_watched(inputs, "solids checked", &solids, |(object, solid)| {
+            let mut notes = Vec::new();
+            checked_input("solid", &object.name, solid.crossings(), solid.mesh(), true, &mut notes).map(|()| notes)
+        })?;
         let mut checks = Vec::new();
-        for (object, solid) in &solids {
-            checked_input("solid", &object.name, solid.crossings(), solid.mesh(), true, &mut checks)?;
+        for notes in checked {
+            checks.extend(notes?);
         }
         // The cutter: a surface or a grid's triangulation (engine rule 6), the same for every solid,
         // or a level, made as a flat surface over each solid.
@@ -1049,7 +1055,7 @@ impl Command for CutBySurface {
         // The design's triangles found by place once for the run, not looked through for every solid (decision 0056).
         let index = design.as_deref().map(DesignIndex::new).transpose().map_err(|e| CommandError::Geometry(e.to_string()))?;
         // Each solid cut, and its parts checked and made solids, on the core that cut it.
-        let cuts = in_parallel(&solids, |(_, solid)| {
+        let cuts = in_parallel_watched(inputs, "solids", &solids, |(_, solid)| {
             let cut = match (&index, p.rl) {
                 (Some(index), _) => cut_solid_by_indexed_surface(solid.mesh(), index),
                 (None, Some(rl)) => cut_solid_by_surface(solid.mesh(), &level_over(solid.mesh(), rl)),
@@ -1067,7 +1073,7 @@ impl Command for CutBySurface {
                 }
             }
             Ok(CutParts::new(cut, checked, false))
-        });
+        })?;
         let cut_ms = start.elapsed().as_secs_f64() * 1e3;
 
         let few = solids.len() <= LINES_PER_SOLID_UP_TO;
