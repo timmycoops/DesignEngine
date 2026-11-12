@@ -289,13 +289,13 @@ impl Command for SliceByFaces {
         let mut outcome = Outcome::default();
         let solids = ids.iter().map(|&id| inputs.solid(id)).collect::<Result<Vec<_>, _>>()?;
         for (object, solid) in &solids {
-            checked_input("solid", &object.name, solid.crossings(), solid.mesh(), true, &mut outcome.messages)?;
+            checked_input("solid", &object.name, solid.crossings(), solid.mesh(), true, &mut outcome.notes)?;
         }
         let strips = by_strip(inputs, &p.faces, &p.attribute)?;
         for strip in &strips {
             for (object, _) in &strip.faces {
                 let (_, surface) = inputs.surface(object.id)?;
-                checked_input("face", &object.name, surface.crossings(), surface.mesh(), false, &mut outcome.messages)?;
+                checked_input("face", &object.name, surface.crossings(), surface.mesh(), false, &mut outcome.notes)?;
             }
         }
         let mut faces = Vec::with_capacity(strips.len());
@@ -486,7 +486,7 @@ impl Command for SolidBetween {
             let object = inputs.object(id)?;
             match &object.body {
                 Body::Surface(surface) => {
-                    checked_input(what, &object.name, surface.crossings(), surface.mesh(), false, &mut outcome.messages)?;
+                    checked_input(what, &object.name, surface.crossings(), surface.mesh(), false, &mut outcome.notes)?;
                     Ok((object.name.clone(), std::borrow::Cow::Borrowed(surface.mesh())))
                 }
                 Body::Grid(grid) => Ok((object.name.clone(), std::borrow::Cow::Owned(triangulate_grid(grid)))),

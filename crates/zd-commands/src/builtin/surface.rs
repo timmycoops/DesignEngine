@@ -8,7 +8,7 @@ use zd_io::{SurfaceImport, VulcanTriangulation, read_surface};
 
 use super::exchange::describe_dxf_faces;
 use super::finite;
-use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
+use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Place};
 
 /// The weld and crossing tolerance when none is given: 1 mm (decision 0010).
 pub(crate) fn default_tolerance() -> f64 {
@@ -120,15 +120,30 @@ impl Command for ImportSurface {
             path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "surface".into())
         });
         let flags = describe(&surface.validity(), surface.mesh());
+        let notes = mesh_notes(messages, surface.crossings());
         let mut outcome = Outcome::new(vec![Change::Create {
             name,
             layer: p.layer.clone(),
             attributes: Attributes::new(),
             body: Body::Surface(surface),
         }]);
-        outcome.messages = messages;
+        outcome.notes = notes;
         Ok(outcome.message(flags))
     }
+}
+
+/// A mesh's lines as notes, its crossing check last: a warning placed at the first crossing when it crosses itself,
+/// as a surface that does is kept, flagged, and refused by cuts (decision 0059).
+pub(crate) fn mesh_notes(lines: Vec<String>, crossings: Option<&Crossings>) -> Vec<Note> {
+    let mut notes: Vec<Note> = lines.into_iter().map(Note::info).collect();
+    if let (Some(crossings), Some(last)) = (crossings.filter(|c| c.pairs > 0), notes.last_mut()) {
+        let warned = Note::warning(Code::MeshCrossing, std::mem::take(&mut last.text)).measured(crossings.pairs as f64, "pairs");
+        *last = match crossings.at.first() {
+            Some(&at) => warned.at(Place::Point { at }),
+            None => warned,
+        };
+    }
+    notes
 }
 
 /// A mesh read from a file, through the repair step and the crossing check (`check`: by the surface
@@ -310,14 +325,15 @@ impl Command for SurfaceFromMesh {
         let (crossings, checked) = check_crossings(&mesh, p.tolerance);
         let surface = Surface::new(mesh).with_crossings(crossings);
         let flags = describe(&surface.validity(), surface.mesh());
-        Ok(Outcome::new(vec![Change::Create {
+        let notes = mesh_notes(vec![flags, checked], surface.crossings());
+        let mut outcome = Outcome::new(vec![Change::Create {
             name: p.name.clone(),
             layer: p.layer.clone(),
             attributes: Attributes::new(),
             body: Body::Surface(surface),
-        }])
-        .message(flags)
-        .message(checked))
+        }]);
+        outcome.notes = notes;
+        Ok(outcome)
     }
 }
 

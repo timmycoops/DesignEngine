@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
-use zd_commands::Session;
+use zd_commands::{Code, Place, Session, Severity};
 use zd_core::{Body, IssueKind, SeamModel};
 use zd_geom::{StackHorizon, stack_issue_nodes};
 use zd_io::{read_seam_definition, read_stack_grids};
@@ -260,6 +260,10 @@ fn a_crossing_is_flagged_where_it_is_and_blocks_but_nothing_is_changed() {
     assert_eq!((crossing.horizon.as_str(), crossing.other.as_deref(), crossing.nodes), ("cl", Some("cu"), 5 * ROWS));
     assert_eq!((crossing.worst, crossing.at, crossing.blocking), (1.5, Some([E, N]), true));
     assert!(record.messages.contains(&"BLOCKING: cl roof above the floor of cu at 55 nodes, worst 1.500 m at E 500000.0 N 7000000.0".to_string()));
+    // The issue as a note: blocking, coded, at its worst node in plan, by how far it overlaps (0059).
+    let note = record.notes.iter().find(|n| n.code == Some(Code::SeamCrossing)).unwrap();
+    assert_eq!((note.severity, note.place.clone()), (Severity::Blocking, Some(Place::Plan { at: [E, N] })));
+    assert_eq!(note.value.as_ref().map(|v| (v.value, v.unit.as_str())), Some((1.5, "m")));
     assert_eq!(m.blocking_issues().count(), 1, "{:?}", m.issues);
     assert_eq!(std::fs::read(t.0.join("pitcl.srg")).unwrap(), bad, "the grid is left as it is");
 }
@@ -551,6 +555,7 @@ fn relink_by_folder_checks_every_file() {
     let record = relink(&mut s).unwrap();
     assert!(record.messages[0].ends_with(&format!("15 grid files now read from {}", copy.display())), "{:?}", record.messages);
     assert!(record.messages[1].starts_with("WARNING: ") && record.messages[1].contains("1 files differ") && record.messages[1].contains("pitcl.sfg"), "{:?}", record.messages);
+    assert_eq!((record.notes[1].severity, record.notes[1].code), (Severity::Warning, Some(Code::LinkChanged)));
     let m = model(&s);
     assert!(same(&m.folder, &copy));
     assert_eq!(s.links()[0].check.changed.len(), 1);

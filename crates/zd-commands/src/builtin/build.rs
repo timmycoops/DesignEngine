@@ -382,7 +382,6 @@ impl Command for Rebuild {
             let (revised, new_line) = as_revisions(line, &old, outcome.changes);
             rebuilt.insert(line.id, new_line);
             changes.extend(revised);
-            notes.extend(outcome.messages.into_iter().map(Note::info));
             notes.extend(outcome.notes.into_iter().map(|mut note| {
                 note.made = note.made.map(|k| before + k);
                 note

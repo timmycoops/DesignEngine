@@ -14,7 +14,7 @@ use super::deswik::{Made, MeshesAs, SurfaceTally, import_mesh};
 use super::in_parallel;
 use super::solid::{Cleaning, ImportTally, NOT_A_SOLID, VOLUME_AGREES, default_fill_limit};
 use super::surface::default_tolerance;
-use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
+use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome};
 
 /// Run records give a line to each mesh when there are no more than this many, and name this many of
 /// the solids that differ most.
@@ -107,7 +107,7 @@ impl Command for ImportSpry {
             changes.push(Change::Create { name, layer: chosen.unwrap_or(from).to_string(), attributes, body });
         };
 
-        let mut outcome_lines = vec![format!("{} in {read_ms:.0} ms", describe_read(&project.log))];
+        let mut outcome_lines = vec![Note::info(format!("{} in {read_ms:.0} ms", describe_read(&project.log)))];
         for s in project.strings {
             let name = names.next(&s.layer, None);
             on_layer(&s.layer, name, s.attributes, Body::String(s.line));
@@ -115,7 +115,7 @@ impl Command for ImportSpry {
 
         let start = Instant::now();
         let meshes = if p.meshes == MeshesAs::None {
-            outcome_lines.push(format!("{} meshes left out, as asked", project.meshes.len()));
+            outcome_lines.push(Note::info(format!("{} meshes left out, as asked", project.meshes.len())));
             Vec::new()
         } else {
             project.meshes
@@ -135,7 +135,7 @@ impl Command for ImportSpry {
                 Made::Solid(imported) => {
                     tally.add(&imported);
                     if few {
-                        outcome_lines.extend(imported.messages.iter().map(|m| format!("{name}: {m}")));
+                        outcome_lines.extend(imported.messages.iter().map(|m| Note::info(format!("{name}: {m}"))));
                     }
                     if let Some(theirs) = mesh.spry_volume {
                         let ours = imported.solid.volume();
@@ -149,7 +149,7 @@ impl Command for ImportSpry {
                 Made::Surface { surface, messages, refused_as_solid } => {
                     surfaces.add(&surface);
                     if few {
-                        outcome_lines.extend(messages.iter().map(|m| format!("{name}: {m}")));
+                        outcome_lines.extend(messages.iter().map(|m| Note { text: format!("{name}: {}", m.text), ..m.clone() }));
                     }
                     if let Some(why) = refused_as_solid {
                         kept_as_surfaces.push(format!("{name} ({}): {why}", mesh.layer));
@@ -163,14 +163,15 @@ impl Command for ImportSpry {
         let ms = start.elapsed().as_secs_f64() * 1e3;
         if changes.is_empty() {
             if !refused.is_empty() {
-                outcome_lines.push(format!("{} meshes refused, nothing made of them:", refused.len()));
-                outcome_lines.extend(refused);
+                outcome_lines.push(Note::info(format!("{} meshes refused, nothing made of them:", refused.len())));
+                outcome_lines.extend(refused.into_iter().map(Note::info));
             }
-            return Err(CommandError::Invalid(format!("nothing made from {}: {}", p.path, outcome_lines.join("; "))));
+            let said: Vec<&str> = outcome_lines.iter().map(|n| n.text.as_str()).collect();
+            return Err(CommandError::Invalid(format!("nothing made from {}: {}", p.path, said.join("; "))));
         }
 
         let mut outcome = Outcome::new(changes);
-        outcome.messages = outcome_lines;
+        outcome.notes.extend(outcome_lines);
         if tally.solids > 0 {
             outcome = outcome.message(tally.describe(cleaning.weld_tolerance, ms));
         }
@@ -181,22 +182,22 @@ impl Command for ImportSpry {
             // Largest in cubic metres first: a share of a solid of no size says little.
             differ.sort_by(|a, b| (b.1 - b.2).abs().total_cmp(&(a.1 - a.2).abs()));
             let total: f64 = differ.iter().map(|d| d.1 - d.2).sum();
-            outcome = outcome.message(format!(
+            outcome.warned(Code::ImportVolumeDiffers, [format!(
                 "{} solids whose volume differs from Spry's own ({}) by more than a millionth, {total:+.3} m3 in all, the largest first:",
                 differ.len(),
                 p.volume_field.trim()
-            ));
-            outcome.messages.extend(differ.iter().take(LINES_PER_MESH_UP_TO).map(|(name, ours, theirs)| {
+            )]);
+            outcome.warned(Code::ImportVolumeDiffers, differ.iter().take(LINES_PER_MESH_UP_TO).map(|(name, ours, theirs)| {
                 format!("{name}: {ours:.3} m3 here, {theirs:.3} m3 in Spry ({:+.4} %)", 100.0 * (ours - theirs) / theirs)
             }));
         }
         if !kept_as_surfaces.is_empty() {
-            outcome = outcome.message(format!("{} meshes kept as surfaces, as they could not be solids, each flagged not_a_solid:", kept_as_surfaces.len()));
-            outcome.messages.extend(kept_as_surfaces.into_iter().take(LINES_PER_MESH_UP_TO));
+            outcome.warned(Code::SolidNotASolid, [format!("{} meshes kept as surfaces, as they could not be solids, each flagged not_a_solid:", kept_as_surfaces.len())]);
+            outcome.warned(Code::SolidNotASolid, kept_as_surfaces.into_iter().take(LINES_PER_MESH_UP_TO));
         }
         if !refused.is_empty() {
-            outcome = outcome.message(format!("{} meshes refused, nothing made of them:", refused.len()));
-            outcome.messages.extend(refused.into_iter().take(LINES_PER_MESH_UP_TO));
+            outcome.warned(Code::ImportRefused, [format!("{} meshes refused, nothing made of them:", refused.len())]);
+            outcome.warned(Code::ImportRefused, refused.into_iter().take(LINES_PER_MESH_UP_TO));
         }
         Ok(outcome)
     }

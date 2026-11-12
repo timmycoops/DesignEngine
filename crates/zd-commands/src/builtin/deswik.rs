@@ -12,8 +12,8 @@ use zd_io::{DESWIK_LEVELS, DeswikLog, DeswikMesh, read_deswik_layers};
 
 use super::in_parallel;
 use super::solid::{Cleaning, Welded, ImportTally, ImportedSolid, NOT_A_SOLID, VOLUME_AGREES, default_fill_limit, first_open_edge, solid_from_welded, weld_as_needed};
-use super::surface::{check_crossings, default_tolerance, describe_repair, site};
-use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
+use super::surface::{check_crossings, default_tolerance, describe_repair, mesh_notes, site};
+use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome};
 
 /// Run records give a line to each mesh when there are no more than this many.
 const LINES_PER_MESH_UP_TO: usize = 10;
@@ -102,7 +102,7 @@ impl Command for ImportDeswik {
             changes.push(Change::Create { name: names.next(deswik), layer: chosen.unwrap_or(deswik).to_string(), attributes, body });
         };
 
-        let mut outcome_lines = vec![format!("{} in {read_ms:.0} ms", describe_read(&drawing.log))];
+        let mut outcome_lines = vec![Note::info(format!("{} in {read_ms:.0} ms", describe_read(&drawing.log)))];
         for s in drawing.strings {
             on_layer(&s.layer, s.attributes, Body::String(s.line), &mut names);
         }
@@ -110,7 +110,7 @@ impl Command for ImportDeswik {
         let start = Instant::now();
         let meshes: &[DeswikMesh] = if p.meshes == MeshesAs::None {
             if !drawing.meshes.is_empty() {
-                outcome_lines.push(format!("{} meshes left out, as asked", drawing.meshes.len()));
+                outcome_lines.push(Note::info(format!("{} meshes left out, as asked", drawing.meshes.len())));
             }
             &[]
         } else {
@@ -131,7 +131,7 @@ impl Command for ImportDeswik {
                 Made::Solid(imported) => {
                     tally.add(&imported);
                     if few {
-                        outcome_lines.extend(imported.messages.iter().map(|m| format!("{name}: {m}")));
+                        outcome_lines.extend(imported.messages.iter().map(|m| Note::info(format!("{name}: {m}"))));
                     }
                     if let Some(theirs) = mesh.deswik_volume {
                         let ours = imported.solid.volume();
@@ -145,7 +145,7 @@ impl Command for ImportDeswik {
                 Made::Surface { surface, messages, refused_as_solid } => {
                     surfaces.add(&surface);
                     if few {
-                        outcome_lines.extend(messages.iter().map(|m| format!("{name}: {m}")));
+                        outcome_lines.extend(messages.iter().map(|m| Note { text: format!("{name}: {}", m.text), ..m.clone() }));
                     }
                     if let Some(why) = refused_as_solid {
                         kept_as_surfaces.push(format!("{name} ({}): {why}", mesh.layer));
@@ -159,14 +159,15 @@ impl Command for ImportDeswik {
         let ms = start.elapsed().as_secs_f64() * 1e3;
         if changes.is_empty() {
             if !refused.is_empty() {
-                outcome_lines.push(format!("{} meshes refused, nothing made of them:", refused.len()));
-                outcome_lines.extend(refused);
+                outcome_lines.push(Note::info(format!("{} meshes refused, nothing made of them:", refused.len())));
+                outcome_lines.extend(refused.into_iter().map(Note::info));
             }
-            return Err(CommandError::Invalid(format!("nothing made from {}: {}", p.path, outcome_lines.join("; "))));
+            let said: Vec<&str> = outcome_lines.iter().map(|n| n.text.as_str()).collect();
+            return Err(CommandError::Invalid(format!("nothing made from {}: {}", p.path, said.join("; "))));
         }
 
         let mut outcome = Outcome::new(changes);
-        outcome.messages = outcome_lines;
+        outcome.notes.extend(outcome_lines);
         if tally.solids > 0 {
             outcome = outcome.message(tally.describe(cleaning.weld_tolerance, ms));
         }
@@ -177,18 +178,18 @@ impl Command for ImportDeswik {
             // Largest in cubic metres first: a share of a solid of no size says little.
             differ.sort_by(|a, b| (b.1 - b.2).abs().total_cmp(&(a.1 - a.2).abs()));
             let total: f64 = differ.iter().map(|d| d.1 - d.2).sum();
-            outcome = outcome.message(format!("{} solids whose volume differs from Deswik's own by more than a millionth, {total:+.3} m3 in all, the largest first:", differ.len()));
-            outcome.messages.extend(differ.iter().take(LINES_PER_MESH_UP_TO).map(|(name, ours, theirs)| {
+            outcome.warned(Code::ImportVolumeDiffers, [format!("{} solids whose volume differs from Deswik's own by more than a millionth, {total:+.3} m3 in all, the largest first:", differ.len())]);
+            outcome.warned(Code::ImportVolumeDiffers, differ.iter().take(LINES_PER_MESH_UP_TO).map(|(name, ours, theirs)| {
                 format!("{name}: {ours:.3} m3 here, {theirs:.3} m3 in Deswik ({:+.4} %)", 100.0 * (ours - theirs) / theirs)
             }));
         }
         if !kept_as_surfaces.is_empty() {
-            outcome = outcome.message(format!("{} meshes kept as surfaces, as they could not be solids, each flagged not_a_solid:", kept_as_surfaces.len()));
-            outcome.messages.extend(kept_as_surfaces);
+            outcome.warned(Code::SolidNotASolid, [format!("{} meshes kept as surfaces, as they could not be solids, each flagged not_a_solid:", kept_as_surfaces.len())]);
+            outcome.warned(Code::SolidNotASolid, kept_as_surfaces);
         }
         if !refused.is_empty() {
-            outcome = outcome.message(format!("{} meshes refused, nothing made of them:", refused.len()));
-            outcome.messages.extend(refused);
+            outcome.warned(Code::ImportRefused, [format!("{} meshes refused, nothing made of them:", refused.len())]);
+            outcome.warned(Code::ImportRefused, refused);
         }
         Ok(outcome)
     }
@@ -198,7 +199,7 @@ impl Command for ImportDeswik {
 /// nothing.
 pub(super) enum Made {
     Solid(ImportedSolid),
-    Surface { surface: Surface, messages: Vec<String>, refused_as_solid: Option<String> },
+    Surface { surface: Surface, messages: Vec<Note>, refused_as_solid: Option<String> },
     Nothing(String),
 }
 
@@ -248,7 +249,8 @@ pub(super) fn import_mesh(mesh: &TriMesh, layer: &str, source: &str, meshes: Mes
         }
         let repair = describe_repair(&log, &welded);
         let (crossings, checked) = check_crossings(&welded, cleaning.weld_tolerance);
-        Made::Surface { surface: Surface::new(welded).with_crossings(crossings), messages: vec![read, repair, checked], refused_as_solid }
+        let messages = mesh_notes(vec![read, repair, checked], Some(&crossings));
+        Made::Surface { surface: Surface::new(welded).with_crossings(crossings), messages, refused_as_solid }
     }));
     attempt.unwrap_or_else(|_| Made::Nothing("the import stopped on an error in the geometry".into()))
 }

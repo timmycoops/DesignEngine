@@ -379,13 +379,13 @@ impl Session {
         // session with the lock held (the review of 10 November).
         let guarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let (mut outcome, canonical) = command.run_json(&inputs, params)?;
-            let checked = check_solids_made(&mut outcome.changes, &mut outcome.messages);
+            let checked = check_solids_made(&mut outcome.changes, &mut outcome.notes);
             Ok((outcome, canonical, checked))
         }));
         record.inputs = inputs.into_read();
         let (outcome, canonical, checked) = guarded.unwrap_or_else(|panic| Err(stopped_on_a_panic(record.command.as_str(), panic.as_ref())))?;
         record.params = canonical;
-        record.notes = outcome.messages.into_iter().map(Note::info).chain(outcome.notes).collect();
+        record.notes = outcome.notes;
         record.messages = record.notes.iter().map(|n| n.text.clone()).collect();
         checked?;
         let ids = changed_objects(&outcome.changes);

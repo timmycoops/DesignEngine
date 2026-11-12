@@ -99,6 +99,27 @@ codes! {
     SliceFacesCross = "slice.faces_cross", "A face crossing faces before it inside the solid";
     SolidOutlineOpen = "solid.outline_open", "An open outline taken as closed";
     SolidNotCovered = "solid.not_covered", "A surface that doesn't cover the outline in plan, with no solid there";
+    SolidInPieces = "solid.in_pieces", "Solids made in several pieces, each kept as one solid";
+    SolidCavities = "solid.cavities", "Solids made holding cavities, their volume taken out";
+    SolidNotASolid = "solid.not_a_solid", "Meshes that could not be solids, kept as surfaces flagged not_a_solid";
+    MeshCrossing = "mesh.crossing", "A surface whose triangles cross each other, kept and flagged: cuts refuse it";
+    ImportRefused = "import.refused", "Files or meshes refused, nothing made of them";
+    ImportVolumeDiffers = "import.volume_differs", "Solids whose volume differs from the source's own by more than a millionth";
+    ImportSkipped = "import.skipped", "Grids in a seam left out of the import";
+    CutNothingOnSide = "cut.nothing_on_side", "A solid lying wholly on one side of what cuts it";
+    CutNotCovered = "cut.not_covered", "Solids the cutting surface doesn't cover in plan";
+    CutUncut = "cut.uncut", "Solids left uncut, nothing saved for them";
+    ExportLeftOut = "export.left_out", "Solids left out of an export, as their files don't read back the same";
+    SeamLeftOut = "seam.left_out", "A seam left out of a suggested definition";
+    SeamFloorAboveRoof = "seam.floor_above_roof", "A horizon whose floor lies above its roof";
+    SeamCrossing = "seam.crossing", "A working horizon whose roof rises above the floor of the one above";
+    SeamOutsideParent = "seam.outside_parent", "A daughter seam reaching outside its parent";
+    SeamUnpaired = "seam.unpaired", "A horizon whose roof and floor aren't live at the same nodes";
+    SeamNoDensity = "seam.no_density", "A working horizon with no density grid: tonnes will need one";
+    LinkChanged = "link.changed", "Grid files whose content differs from when the seam model was built";
+    StringOffSurface = "string.off_surface", "String vertices with no surface under them, keeping their elevations";
+    StringNotCrossed = "string.not_crossed", "Strings a numbering line doesn't cross, left as they were";
+    StringCrossesAgain = "string.crosses_again", "A string a numbering line crosses more than once, numbered where it first does";
 }
 
 impl Serialize for Code {
