@@ -6,4 +6,5 @@ export { IconButton, RoadBadge, StatusBadge } from './badges';
 export { Choice, Field, NumberInput, Select, TargetInput, TargetOptions } from './fields';
 export { type Range, readNumber, showNumber } from './number';
 export { type RunReport, RunResult, type ToolAction, ToolPanel, ToolSection } from './ToolPanel';
-export { warns } from './words';
+export { NoteLine, ShowNote } from './NoteLine';
+export { canShow, lookAt, noteTone, plainNote } from './notes';

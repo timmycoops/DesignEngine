@@ -1,9 +1,10 @@
 import { ArrowDown, ArrowLeftRight, ArrowUp, Crosshair, Footprints, Move, PenLine, Pencil, Play, Plus, Save, Trash2, Undo2 } from 'lucide-react';
 import { type MouseEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, type LineEdit, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampBerm, type RampFixed, type RampHeading, type RuleValue, type StepTarget, type StepValue, type Vec3, type WallRule, type WallSide } from '@/bridge';
+import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine, type FaceProfile, type HorizonValue, type LineEdit, type Note, objectDetails, type ObjectSummary, type ProfileStep, type Ramp, type RampBerm, type RampFixed, type RampHeading, type RuleValue, type StepTarget, type StepValue, type Vec3, type WallRule, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
+import { NoteLine } from '@/design-system/kit';
 import { rampColour } from '@/viewport/rampColours';
 import { useWorkspace } from '@/workspace/context';
 
@@ -614,7 +615,7 @@ function roadTops(on: ObjectSummary[]): Map<string, { width: number; grade: numb
 }
 
 /** One ramp: its string, what's held, the road, and how far the last run got it on each strip. */
-function RampRow({ ramp, stringName, placed, onWalls, waits, turns, results, swap, onShow, onMove, onChange, onRemove }: { ramp: Ramp; stringName: string | null; placed: Placed | null; onWalls: boolean; waits: boolean; turns: boolean; results: string[]; swap: (() => void) | null; onShow: () => void; onMove: (() => void) | null; onChange: (r: Partial<Ramp>) => void; onRemove: () => void }) {
+function RampRow({ ramp, stringName, placed, onWalls, waits, turns, results, swap, onShow, onMove, onChange, onRemove }: { ramp: Ramp; stringName: string | null; placed: Placed | null; onWalls: boolean; waits: boolean; turns: boolean; results: Note[]; swap: (() => void) | null; onShow: () => void; onMove: (() => void) | null; onChange: (r: Partial<Ramp>) => void; onRemove: () => void }) {
   const fromLine = ramp.fixed === 'line';
   const flip = () => onChange({ heading: ramp.heading === 'along' ? 'back' : 'along' });
   return (
@@ -723,10 +724,8 @@ function RampRow({ ramp, stringName, placed, onWalls, waits, turns, results, swa
         </span>
       </div>
       {!onWalls && <p className="pt-0.5 text-primary">{waits ? 'Not on a wall yet: the next wall you add climbs it.' : 'Not on a wall yet: click the walls it climbs in its column above.'}</p>}
-      {results.map((line, k) => (
-        <p key={k} className={`pt-0.5 ${/stopped|isn't|doesn't|comes out|gone/.test(line) ? 'text-primary' : 'text-muted-foreground'}`}>
-          {line.replace(/^Ramp [^:]*: /, '')}
-        </p>
+      {results.map((note, k) => (
+        <NoteLine key={k} note={note} index={k + 1} text={note.text.replace(/^Ramp [^:]*: /, '')} className="pt-0.5" />
       ))}
     </div>
   );
@@ -891,7 +890,7 @@ export function FaceDesignPanel() {
   const [dirty, setDirty] = useState(false);
   const [profileName, setProfileName] = useState<string | null>(null);
   const [addingLayer, setAddingLayer] = useState('');
-  const [report, setReport] = useState<{ lines: string[]; error?: string }>({ lines: [] });
+  const [report, setReport] = useState<{ notes: Note[]; error?: string }>({ notes: [] });
   const [picking, setPicking] = useState(false);
   /** Each change saves the design and runs it, one undo a step: a step design. */
   const [stepping, setStepping] = useState(false);
@@ -937,7 +936,7 @@ export function FaceDesignPanel() {
     setDirty(true);
     edits.current += 1;
     // What a refused run said was about the design as it was. How far ramps got stays until the next run.
-    setReport((was) => (was.error ? { lines: was.lines } : was));
+    setReport((was) => (was.error ? { notes: was.notes } : was));
     clearRefusal();
   }, [clearRefusal]);
 
@@ -949,14 +948,14 @@ export function FaceDesignPanel() {
     setName(freeName('Face design', designs.map((d) => d.name)));
     setProfileName(null);
     setDirty(true);
-    setReport({ lines: [] });
+    setReport({ notes: [] });
   };
 
   const save = async () => {
     if (!draft) return null;
     const outcome = await runRecord('face.save_design', { design: id, name, content: draft });
     if (!outcome.record) {
-      setReport({ lines: [], error: outcome.error });
+      setReport({ notes: [], error: outcome.error });
       return null;
     }
     const saved = outcome.record.outputs[0].id;
@@ -969,7 +968,7 @@ export function FaceDesignPanel() {
     const saved = await save();
     if (!saved) return;
     const outcome = await runRecord('face.project', { design: saved });
-    setReport(outcome.record ? { lines: outcome.record.messages } : { lines: [], error: outcome.error });
+    setReport(outcome.record ? { notes: outcome.record.notes } : { notes: [], error: outcome.error });
   };
 
   // A step design runs a moment after each change, saved and run in one undo. One that can't run says why and stays
@@ -980,9 +979,9 @@ export function FaceDesignPanel() {
     const at = edits.current;
     const timer = setTimeout(() => {
       void runRecord('face.step', { design: id, name, content: draft }).then((outcome) => {
-        if (!outcome.record) return setReport({ lines: [], error: outcome.error });
+        if (!outcome.record) return setReport({ notes: [], error: outcome.error });
         if (edits.current === at) setDirty(false);
-        setReport({ lines: outcome.record.messages });
+        setReport({ notes: outcome.record.notes });
       });
     }, STEP_WAIT);
     return () => clearTimeout(timer);
@@ -1020,7 +1019,7 @@ export function FaceDesignPanel() {
     const named = freeName(`Steps from ${from.name}`, designs.map((d) => d.name));
     const outcome = await runRecord('face.save_design', { name: named, content });
     const saved = outcome.record?.outputs[0]?.id;
-    if (!saved) return setReport({ lines: [], error: outcome.error });
+    if (!saved) return setReport({ notes: [], error: outcome.error });
     loaded.current = saved;
     setId(saved);
     setDraft(content);
@@ -1028,7 +1027,7 @@ export function FaceDesignPanel() {
     setProfileName(null);
     setDirty(false);
     setStepping(true);
-    setReport({ lines: [] });
+    setReport({ notes: [] });
   };
   const stepTitle = from
     ? `A face built by hand from ${from.name}, a step at a time: each step you add or change runs straight away, and Ctrl+Z takes it off`
@@ -1200,7 +1199,7 @@ export function FaceDesignPanel() {
     if (!start) return;
     const { at, heading, points } = start;
     const row = firstWallAt(at);
-    if (row === undefined) return setReport((was) => ({ lines: was.lines, error: notOnALine }));
+    if (row === undefined) return setReport((was) => ({ notes: was.notes, error: notOnALine }));
     const taken = (profile.ramps ?? []).map((r) => r.name);
     const name = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').find((letter) => !taken.includes(letter)) ?? freeName('R', taken);
     const made = await runRecord('string.create', { name: `Ramp ${name}`, layer: 'ramps', points });
@@ -1217,7 +1216,7 @@ export function FaceDesignPanel() {
     const start = await pickRampStart();
     if (!start) return;
     const row = firstWallAt(start.at);
-    if (row === undefined) return setReport((was) => ({ lines: was.lines, error: notOnALine }));
+    if (row === undefined) return setReport((was) => ({ notes: was.notes, error: notOnALine }));
     const string = ramp.string;
     for (const [index, to] of start.points.entries()) if (!(await runRecord('string.move_vertex', { string, index, to })).record) return;
     // The walls it climbs go with it, and the design changing runs the step.
@@ -1264,12 +1263,12 @@ export function FaceDesignPanel() {
    * redrawn, and it's selected to drag, insert or delete its vertices. */
   const editFromHere = async (row: number) => {
     const line = lineAfter(row);
-    if (typeof line === 'string' || !profile || !stepLine) return setReport((was) => ({ lines: was.lines, error: typeof line === 'string' ? line : undefined }));
+    if (typeof line === 'string' || !profile || !stepLine) return setReport((was) => ({ notes: was.notes, error: typeof line === 'string' ? line : undefined }));
     const details = await objectDetails(line.id);
     if (details.measures.kind !== 'string') return;
     const made = await runRecord('string.create', { name: `${stepLine.name} ${profile.name} your line ${row}`, layer: HAND_LAYER, points: details.measures.points });
     const string = made.record?.outputs[0]?.id;
-    if (!string) return setReport((was) => ({ lines: was.lines, error: made.error }));
+    if (!string) return setReport((was) => ({ notes: was.notes, error: made.error }));
     setEdits([...lineEdits.filter((e) => e.row !== row), { row, string }]);
     select(string);
     frameLine(details.measures.points);
@@ -1291,7 +1290,7 @@ export function FaceDesignPanel() {
     setPicking(false);
     if (!points) return;
     const outcome = await runRecord('string.redraw_stretch', { string, through: points });
-    if (!outcome.record) setReport((was) => ({ lines: was.lines, error: outcome.error }));
+    if (!outcome.record) setReport((was) => ({ notes: was.notes, error: outcome.error }));
   };
   /** A line of yours no row stands for any more goes, if it's on the edited lines layer; undo brings it back. */
   const dropLine = (string: string) => {
@@ -1566,7 +1565,7 @@ export function FaceDesignPanel() {
                 onWalls={profile.steps.some((s) => s.step === 'project' && (s.ramps ?? []).includes(ramp.name))}
                 waits={stepping}
                 turns={profile.steps.some((s) => s.step === 'project' && (s.turns ?? []).includes(ramp.name))}
-                results={report.lines.filter((line) => line.startsWith(`Ramp ${ramp.name}: `))}
+                results={report.notes.filter((note) => note.text.startsWith(`Ramp ${ramp.name}: `))}
                 swap={ramp.fixed !== 'line' && objects.some((o) => o.id === selected && o.kind === 'string') && selected !== ramp.string && !strings.some((s) => s.id === selected && (s.attributes.strip !== undefined || draft.lines.some((line) => line.string === s.id))) ? () => selected && setRamp(k, { string: selected }) : null}
                 onShow={() => ramp.string && select(ramp.string)}
                 onMove={picking ? null : () => void moveRamp(k)}
@@ -1657,12 +1656,11 @@ export function FaceDesignPanel() {
         Run each step{!id && ' (save the design first)'}
       </label>
       {report.error && <p className="whitespace-pre-line px-3 pt-2 text-xs text-destructive">{report.error}</p>}
-      {report.lines
-        .filter((line) => !rampLine(line))
-        .map((line, k) => (
-          <p key={k} className={`px-3 pt-2 text-xs ${line.endsWith('Nothing is built on this string') ? 'text-destructive' : 'text-muted-foreground'}`}>
-            {line}
-          </p>
+      {report.notes
+        .filter((note) => !rampLine(note.text))
+        .map((note, k) => (
+          // Every line of a design run is about a strip, so none leads.
+          <NoteLine key={k} note={note} index={k + 1} className="px-3 pt-2 text-xs" />
         ))}
     </div>
   );

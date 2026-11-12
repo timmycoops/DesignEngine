@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { type BuildOp, type BuildRecord, objectDetails, type ObjectSummary, type Ramp, type RampBerm, type RampHeading, type StepTarget, type Vec3, type WallSide } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
-import { Choice, Field, IconButton, NumberInput, RoadBadge, type RunReport, StatusBadge, TargetInput, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { Choice, Field, IconButton, NumberInput, plainNote, RoadBadge, type RunReport, StatusBadge, TargetInput, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
 
 /**
@@ -202,7 +202,7 @@ export function BuilderPanel() {
   const [side, setSide] = useState<WallSide>('left');
   const [runOn, setRunOn] = useState(0);
   const [name, setName] = useState('');
-  const [report, setReport] = useState<RunReport>({ lines: [] });
+  const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
 
   // The chain of steps up to the picked line, most recent first: what the next step takes after.
@@ -277,8 +277,8 @@ export function BuilderPanel() {
     const ids = new Set(gone.map((s) => s.id));
     const pieces = objects.filter((o) => typeof o.attributes.build_id === 'string' && ids.has(o.attributes.build_id)).map((o) => o.id);
     const outcome = await runRecord('object.delete_many', { objects: pieces });
-    if (!outcome.record) return setReport({ lines: [], error: outcome.error });
-    setReport({ lines: [`Took out step ${step.number}${gone.length > 1 ? ` and the ${gone.length - 1} built on it` : ''}`] });
+    if (!outcome.record) return setReport({ notes: [], error: outcome.error });
+    setReport({ notes: [plainNote(`Took out step ${step.number}${gone.length > 1 ? ` and the ${gone.length - 1} built on it` : ''}`)] });
     const from = steps.find((s) => s.line.id === step.record.from);
     select(from ? from.line.id : objects.some((o) => o.id === step.record.from) ? step.record.from : null);
   };
@@ -302,7 +302,7 @@ export function BuilderPanel() {
     const points = [-RAMP_BEHIND, RAMP_OUT].map((d): Vec3 => [at[0] + out[0] * d, at[1] + out[1] * d, at[2]]);
     const made = await runRecord('string.create', { name: `Ramp ${letter}`, layer: 'ramps', points });
     const string = made.record?.outputs[0]?.id;
-    if (!string) return setReport({ lines: [], error: made.error });
+    if (!string) return setReport({ notes: [], error: made.error });
     setNewRoads((was) => [...was, { name: letter, string, fixed: 'start', heading, width: usualRoadWidth, grade: usualGrade, berm: 'after' }]);
     // Placing the road's string picked it: the line is still the one to build from.
     select(picked.id);
@@ -314,8 +314,8 @@ export function BuilderPanel() {
     clearRefusal();
     const outcome = await runRecord(command, params);
     setBusy(false);
-    if (!outcome.record) return setReport({ lines: [], error: outcome.error });
-    setReport({ lines: outcome.record.messages });
+    if (!outcome.record) return setReport({ notes: [], error: outcome.error });
+    setReport({ notes: outcome.record.notes });
     const next = then(outcome.record.outputs.find((o) => o.change === 'created')?.id);
     if (next) select(next);
   };

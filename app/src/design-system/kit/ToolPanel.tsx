@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { cn } from 'cn';
-import { warns } from './words';
+import type { Note } from '../../bridge';
+import { NoteLine } from './NoteLine';
 
 /**
  * The frame of every tool panel (UI plan, one way of working, item 2): what it does in a line at the top, its sections, and
@@ -76,25 +77,23 @@ export function ToolSection({ title, children, aside, className }: { title?: Rea
   );
 }
 
-/** What a run did, as the panel shows it: its messages, or why it was refused. */
+/** What a run did, as the panel shows it: its notes, or why it was refused. */
 export interface RunReport {
-  lines: string[];
+  notes: Note[];
   error?: string;
 }
 
 /**
- * The lines a run reported. The first says what it made; the rest are muted, but for those that warn (a road stopped, a
- * wall with no height, triangles crossing, a hand edit replaced), which show in the warning colour. A refusal shows in red.
+ * The notes a run reported (decision 0059). The first says what it made; the rest are muted, but for warnings, which show
+ * in the warning colour, and what blocks later use, in red, each with Show where it has a place. A refusal shows in red.
  */
 export function RunResult({ report }: { report: RunReport }) {
-  if (!report.error && report.lines.length === 0) return null;
+  if (!report.error && report.notes.length === 0) return null;
   return (
     <div className={cn('flex max-h-48 flex-col gap-0.5 overflow-auto rounded-md border px-2 py-1.5', report.error ? 'border-destructive/40' : 'border-ok/30')} role="status">
       {report.error && <div className="text-destructive">{report.error}</div>}
-      {report.lines.map((line, k) => (
-        <div key={k} className={k === 0 ? 'text-foreground' : warns(line) ? 'text-warning' : 'text-muted-foreground'}>
-          {line}
-        </div>
+      {report.notes.map((note, k) => (
+        <NoteLine key={k} note={note} index={k} />
       ))}
     </div>
   );

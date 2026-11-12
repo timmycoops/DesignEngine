@@ -337,7 +337,8 @@ impl Command for BuildSeamModel {
         for note in notes {
             outcome = outcome.message(note);
         }
-        outcome.notes.extend(issues.iter().map(issue_note));
+        // An issue is said of the model the run makes, its only change, so Show picks it and takes its RLs for a point in plan.
+        outcome.notes.extend(issues.iter().map(|issue| issue_note(issue).on_made(0)));
         let blocking = issues.iter().filter(|i| i.blocking).count();
         outcome = outcome.message(if blocking == 0 {
             "No blocking issues: the stack can be used for solids and reserves".to_string()

@@ -33,7 +33,7 @@ export function CutPanel() {
   const [limit, setLimit] = useState<string | null>(null);
   const [name, setName] = useState('PIT');
   const [outputs, setOutputs] = useState<Record<Mode, string>>({ strips: 'strips', cut: 'cut', between: 'pit' });
-  const [report, setReport] = useState<RunReport>({ lines: [] });
+  const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
 
   const objects = summary?.objects ?? [];
@@ -77,8 +77,8 @@ export function CutPanel() {
     clearRefusal();
     const outcome = await runRecord(command, params);
     setBusy(false);
-    if (!outcome.record) return setReport({ lines: [], error: outcome.error });
-    setReport({ lines: outcome.record.messages });
+    if (!outcome.record) return setReport({ notes: [], error: outcome.error });
+    setReport({ notes: outcome.record.notes });
     const made = outcome.record.outputs.filter((o) => o.change === 'created').map((o) => o.id);
     const next = pick?.(objects.filter((o) => made.includes(o.id)));
     if (next) select(next);
