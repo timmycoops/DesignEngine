@@ -105,6 +105,24 @@ Checked: a surface crossing itself is placed at the crossing; a seam crossing is
 1.5 m overlap; a changed link is flagged; refused files and strings not crossed carry their codes. All 611 engine tests
 and the Python test pass.
 
+## Workstream 4: the app reads notes
+
+The app no longer judges a line by its words: the 17-word list (`kit/words.ts`) is gone.
+
+- **Colours.** A run's notes show by their severity, in the tool panel's run result, the face design panel (its lines
+  and each ramp's), and the run log's details. The first line says what the run made, information after it is muted,
+  a warning is orange and what blocks later use is red, as the kit's tokens say.
+- **Show.** A note with a place, or a warning about an object, has Show beside it. Show picks the object and takes the
+  view to the place: a point, the stretch it names, or a point in plan at the middle of its object's RLs, as a seam
+  issue has no RL of its own (seam issues now name the model their run makes). The kit holds the line (`NoteLine`)
+  and what Show does comes from the app (`ShowNote`), so a panel needs nothing more to get it.
+- **Counts.** The status line after a run and each run's row in the run log say how many notes to look at, as
+  "1 blocking, 2 warnings".
+
+Checked: the app's typecheck and its 27 tests, which now test the tones, when Show is offered, and the counts. Not
+checked by hand in the app when this was written.
+
 ## Still to come
 
-- **Workstream 4:** the app colours by severity, a note with a place gets Show, and the 17-word list goes.
+All four workstreams are done. Left for later, as agreed: the Issues tab in a Results area (UI plan decision 3), places
+on refusals, and a scored gate run built on the codes (the review's housekeeping item).

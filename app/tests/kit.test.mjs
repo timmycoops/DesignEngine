@@ -1,9 +1,9 @@
-// The kit's number boxes and run results (UI plan): what a box takes as it's typed, how it shows a value, and which of a
-// run's messages read as warnings. Run with `pnpm test`.
+// The kit's number boxes and run results (UI plan): what a box takes as it's typed, how it shows a value, and how a run's
+// notes show. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readNumber, showNumber } from '../src/design-system/kit/number.ts';
-import { warns } from '../src/design-system/kit/words.ts';
+import { canShow, lookAt, noteTone, plainNote } from '../src/design-system/kit/notes.ts';
 
 test('a box takes numbers in range, with thousands commas, and says why it will not take the rest', () => {
   assert.deepEqual(readNumber('65'), { value: 65 });
@@ -24,17 +24,27 @@ test('a value shows as it reads back, with no float noise', () => {
   assert.equal(readNumber(showNumber(0.1 + 0.2)).value, 0.3);
 });
 
-test('the messages that warn are the ones a planner should look at', () => {
-  for (const line of [
-    'road A: stopped at 650100.0, 7450100.0: its top is only 12.0 m along the crest',
-    'the wall has no height along 1 stretch(es), the first from 651054.6, 7450405.4',
-    '2 pairs of the wall\'s triangles cross',
-    'Built crest 1 had been edited by hand: it\'s built again, and undo brings your edit back',
-    "road C: its string doesn't cross the line, so it made no road",
-  ]) {
-    assert.ok(warns(line), line);
-  }
-  for (const line of ['Built step 2: a berm 10 m wide on RL 120.0, from Built crest 1', 'road A: crosses the berm to climb on from its line', 'road A: turns back on the berm, for the wall above', '6 steps built again from Built crest 5 as it is now']) {
-    assert.ok(!warns(line), line);
-  }
+test('a note shows by its severity, never by its words', () => {
+  const stopped = { severity: 'warning', code: 'ramp.stopped', text: 'road A: crosses the berm, then stopped', place: { kind: 'point', at: [650100, 7450100, 120] } };
+  const crossing = { severity: 'blocking', code: 'seam.crossing', text: 'BLOCKING: cl roof above the floor of cu', place: { kind: 'plan', at: [500000, 7000000] } };
+  // Words the old list took for warnings, in a line that says nothing is wrong.
+  const clean = { severity: 'info', text: '3 solids made, checked by the solid rules: none crosses itself' };
+  assert.equal(noteTone(stopped, 1), 'warning');
+  assert.equal(noteTone(crossing, 0), 'blocking', 'a block stands out, first or not');
+  assert.equal(noteTone(clean, 1), 'muted');
+  assert.equal(noteTone(clean, 0), 'lead', 'the first line says what the run made');
+});
+
+test('Show goes where a note has a place, or to what a warning is about', () => {
+  assert.ok(canShow({ severity: 'info', text: 'road A: 120.0 m', place: { kind: 'point', at: [0, 0, 0] } }));
+  assert.ok(canShow({ severity: 'warning', text: 'strip 7: Nothing is built on this string', object: 'id' }));
+  assert.ok(!canShow({ severity: 'info', text: 'strip 1: 2500000.000 m3', object: 'id' }), 'information about an object has nothing to show');
+  assert.ok(!canShow(plainNote('Took out step 3')));
+});
+
+test('the status line counts what to look at', () => {
+  const warning = { severity: 'warning', text: 'w' };
+  assert.equal(lookAt([plainNote('made'), warning, warning, { severity: 'blocking', text: 'b' }]), '1 blocking, 2 warnings');
+  assert.equal(lookAt([plainNote('made'), warning]), '1 warning');
+  assert.equal(lookAt([plainNote('made')]), '');
 });

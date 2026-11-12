@@ -39,6 +39,7 @@ import {
   deswikLayers,
   spryContents,
   type LogEntry,
+  type Note,
   newProject,
   objectsBounds,
   objectsInBox,
@@ -65,6 +66,7 @@ import {
   withLooks,
 } from './bridge';
 import { runChecks } from './bench/runChecks';
+import { lookAt, ShowNote } from './design-system/kit';
 import { Button } from './design-system/ui/button';
 import {
   DropdownMenu,
@@ -99,13 +101,14 @@ interface Status {
   error?: boolean;
 }
 
-/** One line per run: what it made or changed, how long it took, and its first few messages. */
+/** One line per run: what it made or changed, how long it took, how many of its notes to look at, and its first few. */
 function describe(record: RunRecord): string {
   const outputs = record.outputs.map((o) => `${o.name} (${o.change})`);
   const head = `${record.command}: ${outputs.slice(0, 4).join(', ') || 'done'}${outputs.length > 4 ? ` and ${outputs.length - 4} more` : ''} in ${record.duration_ms.toFixed(0)} ms`;
+  const look = lookAt(record.notes);
   const messages = record.messages.slice(0, 2);
   const more = record.messages.length > 2 ? [`(${record.messages.length - 2} more messages in the run log)`] : [];
-  return [head, ...messages, ...more].join(' · ');
+  return [head, ...(look ? [`${look} to look at`] : []), ...messages, ...more].join(' · ');
 }
 
 /** A file name from an object or project name: characters Windows refuses become underscores. */
@@ -362,6 +365,29 @@ export default function App() {
         return null;
       }),
     [toLocal],
+  );
+
+  /**
+   * Show for a note (decision 0059): picks what it's about and takes the view to its place, a point, the stretch it
+   * names, or a point in plan at the middle of its object's RLs, as a point in plan has none of its own.
+   */
+  const showNote = useCallback(
+    (note: Note) => {
+      if (note.object) select(note.object);
+      const place = note.place;
+      if (!place) {
+        if (note.object) zoomTo([note.object]);
+        return;
+      }
+      if (place.kind === 'point') return flyTo(place.at);
+      if (place.kind === 'stretch') return frameLine([place.from, place.to]);
+      void attemptZoom(async () => {
+        const box = note.object ? await objectsBounds([note.object]) : null;
+        flyTo([place.at[0], place.at[1], box ? (box[0][2] + box[1][2]) / 2 : 0]);
+        return null;
+      });
+    },
+    [select, zoomTo, flyTo, frameLine],
   );
 
   /** Frames everything loaded (Shift+F). */
@@ -1188,7 +1214,9 @@ export default function App() {
 
         <main className="min-h-0 flex-1">
           <WorkspaceContext.Provider value={workspace}>
-            <Workspace onReady={(api) => (dockRef.current = api)} />
+            <ShowNote.Provider value={showNote}>
+              <Workspace onReady={(api) => (dockRef.current = api)} />
+            </ShowNote.Provider>
           </WorkspaceContext.Provider>
         </main>
 

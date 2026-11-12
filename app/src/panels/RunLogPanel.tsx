@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { LogEntry, RunRecord } from '@/bridge';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
 import { useWorkspace } from '@/workspace/context';
+import { lookAt, NoteLine } from '@/design-system/kit';
 import { clock, fmt } from './format';
 
 type Outcome = 'ok' | 'failed' | 'undone' | 'session';
@@ -39,7 +40,9 @@ function toRows(log: LogEntry[]): LogRow[] {
         const failed = e.status !== 'ok';
         const outputs = e.outputs.slice(0, OUTPUTS_IN_A_ROW).map((o) => `${o.name} (${o.change})`);
         const more = e.outputs.length > OUTPUTS_IN_A_ROW ? ` and ${e.outputs.length - OUTPUTS_IN_A_ROW} more` : '';
-        const result = failed ? (e.status as { failed: string }).failed : outputs.join(', ') + more || (e.messages[0] ?? 'no change');
+        const look = lookAt(e.notes ?? []);
+        const made = failed ? (e.status as { failed: string }).failed : outputs.join(', ') + more || (e.messages[0] ?? 'no change');
+        const result = look && !failed ? `${made} · ${look}` : made;
         return { index, at: e.started_unix_ms, what: e.command, result, ms: e.duration_ms, outcome: failed ? 'failed' : undone.has(e.run) ? 'undone' : 'ok', record: e };
       }
       case 'undo':
@@ -106,12 +109,12 @@ function RunDetails({ record }: { record: RunRecord }) {
         </div>
       )}
       <pre className="max-h-40 overflow-auto rounded bg-muted px-2 py-1 font-mono text-[11px]">{JSON.stringify(record.params, null, 2)}</pre>
-      {record.messages.length > 0 && (
-        <ul className="list-disc space-y-0.5 pl-4">
-          {record.messages.map((m, i) => (
-            <li key={i}>{m}</li>
+      {record.notes.length > 0 && (
+        <div className="flex flex-col gap-0.5">
+          {record.notes.map((note, i) => (
+            <NoteLine key={i} note={note} index={i} />
           ))}
-        </ul>
+        </div>
       )}
     </div>
   );
