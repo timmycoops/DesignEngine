@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use serde::Serialize;
 use zd_commands::{RunControl, Session};
 use zd_core::{AttrValue, Body, LayerId, Object, ObjectId, Project, TriMesh};
 use zd_geom::{GeomError, SurfaceRayCaster};
@@ -37,10 +38,12 @@ pub struct AppInner {
     pub next_handle: u32,
     /// Snap index per drawn object, with the geometry it was built from. Solids are not here.
     pub casters: HashMap<ObjectId, (usize, Arc<SurfaceRayCaster>)>,
-    /// Snap index per layer of solids, with the key of the solids it was built from.
-    pub solid_casters: HashMap<LayerId, (String, Arc<SolidCaster>)>,
-    /// Each layer's solids as they stand: see [`solid_snap_keys`].
-    pub solid_keys: BTreeMap<LayerId, String>,
+    /// Snap index per tile of a layer's solids, with the key of the solids it was built from.
+    pub solid_casters: HashMap<TileId, (String, Arc<SolidCaster>)>,
+    /// Each tile of each layer's solids as it stands: see [`solid_tile_keys`].
+    pub solid_keys: BTreeMap<TileId, String>,
+    /// Which tile each solid is in, kept with the mesh it was worked out from.
+    pub tiles: Tiles,
     /// Meshes made for the section view, kept between steps.
     pub section_meshes: SectionMeshes,
     /// What the section view cuts, kept until the project changes.
@@ -81,7 +84,7 @@ fn next_log_session() -> u64 {
 impl AppInner {
     pub fn new(session: Session, path: Option<PathBuf>) -> Self {
         let locked_by = session.locked_by();
-        AppInner { session, path, locked_by, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), section_meshes: SectionMeshes::new(), section_inputs: None, section_cut: None, sent: Sent::default(), log_session: next_log_session(), running: None }
+        AppInner { session, path, locked_by, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), tiles: Tiles::default(), section_meshes: SectionMeshes::new(), section_inputs: None, section_cut: None, sent: Sent::default(), log_session: next_log_session(), running: None }
     }
 
     pub fn handle(&mut self) -> u32 {
@@ -123,12 +126,6 @@ pub fn solid_layer_keys(project: &Project) -> BTreeMap<LayerId, String> {
     layer_keys(project, |object| !project.is_hidden(object.id))
 }
 
-/// A key for what each layer's snap index holds: all its solids, as a snap passes over hidden ones, so
-/// hiding one needs no new index.
-pub fn solid_snap_keys(project: &Project) -> BTreeMap<LayerId, String> {
-    layer_keys(project, |_| true)
-}
-
 fn layer_keys(project: &Project, keep: impl Fn(&Object) -> bool) -> BTreeMap<LayerId, String> {
     let mut layers: BTreeMap<LayerId, (usize, u64, u64)> = BTreeMap::new();
     for object in project.objects() {
@@ -141,6 +138,106 @@ fn layer_keys(project: &Project, keep: impl Fn(&Object) -> bool) -> BTreeMap<Lay
         }
     }
     layers.into_iter().map(|(layer, (count, sum, either))| (layer, format!("{count}-{sum:x}-{either:x}"))).collect()
+}
+
+/// A tile's side (m): a layer's solids are drawn and snapped to a tile at a time, by where each sits in plan, so a change
+/// to one sends one tile's mesh and builds one tile's snap index (decision 0060, workstream 4). Fixed, so a solid's tile
+/// never depends on the others: a pit's blocks are a few thousand to a tile.
+pub const TILE_M: f64 = 1000.0;
+
+/// One tile of one layer's solids: the square of [`TILE_M`] holding the middle of each solid's plan, counted from the
+/// grid's zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct TileId {
+    pub layer: LayerId,
+    pub col: i64,
+    pub row: i64,
+}
+
+/// Which tile each solid is in, kept with the mesh it was worked out from, so a pit's solids aren't measured again
+/// after every change. A mesh is held while it's here, so its address can't be another's.
+#[derive(Default)]
+pub struct Tiles {
+    of: HashMap<ObjectId, (Arc<TriMesh>, [i64; 2])>,
+    /// Each tile's solids as the keys were last worked out, in the order they were made: a tile's mesh or snap index is
+    /// made from these, not by looking through every object again.
+    members: HashMap<TileId, Vec<ObjectId>>,
+}
+
+impl Tiles {
+    /// The tile in plan of a solid's mesh: where the middle of its plan lies.
+    pub fn place(mesh: &TriMesh) -> [i64; 2] {
+        mesh.bounds().map_or([0, 0], |b| {
+            let c = b.centre();
+            [(c[0] / TILE_M).floor() as i64, (c[1] / TILE_M).floor() as i64]
+        })
+    }
+
+    fn of(&mut self, id: ObjectId, mesh: &Arc<TriMesh>) -> [i64; 2] {
+        match self.of.get(&id) {
+            Some((was, at)) if Arc::ptr_eq(was, mesh) => *at,
+            _ => {
+                let at = Tiles::place(mesh);
+                self.of.insert(id, (mesh.clone(), at));
+                at
+            }
+        }
+    }
+
+    /// Forgets solids gone, once there are many more remembered than live.
+    fn prune(&mut self, live: usize, project: &Project) {
+        if self.of.len() > 2 * live + 1024 {
+            self.of.retain(|id, _| project.object(*id).is_some());
+        }
+    }
+}
+
+/// A key for each tile of each layer's solids, hidden or not, changed by any change to the geometry of a solid in it,
+/// one coming into it or one leaving. Hiding one changes no key: it's a table beside the mesh.
+pub fn solid_tile_keys(project: &Project, tiles: &mut Tiles) -> BTreeMap<TileId, String> {
+    let mut keys: BTreeMap<TileId, (usize, u64, u64)> = BTreeMap::new();
+    let mut members: HashMap<TileId, Vec<ObjectId>> = HashMap::new();
+    let mut live = 0;
+    for object in project.objects() {
+        let Body::Solid(solid) = &object.body else { continue };
+        live += 1;
+        let [col, row] = tiles.of(object.id, solid.mesh_arc());
+        let tile = TileId { layer: object.layer, col, row };
+        let key = (geometry_key(&object.body) as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(23);
+        let (count, sum, either) = keys.entry(tile).or_default();
+        *count += 1;
+        *sum = sum.wrapping_add(key);
+        *either ^= key;
+        members.entry(tile).or_default().push(object.id);
+    }
+    tiles.prune(live, project);
+    tiles.members = members;
+    keys.into_iter().map(|(tile, (count, sum, either))| (tile, format!("{count}-{sum:x}-{either:x}"))).collect()
+}
+
+/// A tile's solids, hidden or not, with their meshes, in the order they were made.
+pub fn tile_solids(project: &Project, tiles: &mut Tiles, tile: TileId) -> Vec<(ObjectId, Arc<TriMesh>)> {
+    // From the solids the keys were worked out from, each checked still to be in the tile.
+    if let Some(ids) = tiles.members.get(&tile).cloned() {
+        return ids
+            .into_iter()
+            .filter_map(|id| {
+                let object = project.object(id)?;
+                match &object.body {
+                    Body::Solid(s) if object.layer == tile.layer && tiles.of(id, s.mesh_arc()) == [tile.col, tile.row] => Some((id, s.mesh_arc().clone())),
+                    _ => None,
+                }
+            })
+            .collect();
+    }
+    project
+        .objects()
+        .filter(|o| o.layer == tile.layer)
+        .filter_map(|o| match &o.body {
+            Body::Solid(s) => (tiles.of(o.id, s.mesh_arc()) == [tile.col, tile.row]).then(|| (o.id, s.mesh_arc().clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The meshes of a layer's solids that aren't hidden.
@@ -278,18 +375,19 @@ mod tests {
         assert_eq!(solid_layer_keys(s.project()), keys, "the same solids give the same key, so nothing is fetched again");
     }
 
-    /// Hiding changes what a layer draws and not what its snap index holds.
+    /// Hiding changes what a section cuts and not a tile's mesh or snap index.
     #[test]
     fn a_hidden_solid_leaves_the_layers_mesh_and_a_snap_passes_over_it() {
         let mut s = Session::with_builtins();
         let upper = s.run("solid.from_mesh", cube_at("upper", 0.0, 200.0)).unwrap().outputs[0].id;
         let lower = s.run("solid.from_mesh", cube_at("lower", 0.0, 100.0)).unwrap().outputs[0].id;
         let layer = s.project().objects().next().unwrap().layer;
-        let (drawn, snapped) = (solid_layer_keys(s.project()), solid_snap_keys(s.project()));
+        let mut tiles = Tiles::default();
+        let (drawn, snapped) = (solid_layer_keys(s.project()), solid_tile_keys(s.project(), &mut tiles));
 
         s.set_objects_visible(&[upper], false);
-        assert_ne!(solid_layer_keys(s.project()), drawn, "the layer draws again");
-        assert_eq!(solid_snap_keys(s.project()), snapped, "the snap index stands");
+        assert_ne!(solid_layer_keys(s.project()), drawn, "a section cuts the layer again");
+        assert_eq!(solid_tile_keys(s.project(), &mut tiles), snapped, "the tile's mesh and snap index stand");
         let shown = joined_meshes(&layer_solids(s.project(), layer));
         assert!((shown.signed_volume() - 1000.0).abs() < 1e-6, "{}", shown.signed_volume());
 
@@ -304,5 +402,30 @@ mod tests {
         s.set_objects_visible(&[upper, lower], true);
         assert_eq!(solid_layer_keys(s.project()), drawn, "shown again, the same key, so nothing is fetched");
         assert_eq!(caster.cast(from, down, s.project().hidden()).unwrap().0, upper);
+    }
+
+    /// A layer's solids by plan tile: a change to one changes its tile's key alone, and a solid moved into another tile
+    /// changes both.
+    #[test]
+    fn a_change_to_one_solid_changes_its_tile_alone() {
+        let mut s = Session::with_builtins();
+        // Two cubes in one 1,000 m tile and one 2 km east, all on one layer.
+        let a = s.run("solid.from_mesh", cube("a", 0.0)).unwrap().outputs[0].id;
+        s.run("solid.from_mesh", cube("b", 20.0)).unwrap();
+        s.run("solid.from_mesh", cube("far", 2000.0)).unwrap();
+        let mut tiles = Tiles::default();
+        let keys = solid_tile_keys(s.project(), &mut tiles);
+        assert_eq!(keys.len(), 2, "{keys:?}");
+        let near = *keys.keys().find(|t| tile_solids(s.project(), &mut tiles, **t).len() == 2).unwrap();
+        assert_eq!((near.col, near.row), (650, 7450), "the tile holding the middle of each cube's plan");
+
+        s.run("object.rename", json!({ "object": a, "name": "renamed" })).unwrap();
+        assert_eq!(solid_tile_keys(s.project(), &mut tiles), keys, "a rename shares the mesh: nothing to send");
+        s.run("object.delete", json!({ "object": a })).unwrap();
+        let after = solid_tile_keys(s.project(), &mut tiles);
+        let changed: Vec<_> = keys.iter().filter(|(t, k)| after.get(t) != Some(k)).map(|(t, _)| *t).collect();
+        assert_eq!(changed, vec![near], "one tile changed, the other stands");
+        let whole = joined_meshes(&tile_solids(s.project(), &mut tiles, near).into_iter().map(|(_, m)| m).collect::<Vec<_>>());
+        assert!((whole.signed_volume() - 1000.0).abs() < 1e-6, "one cube left in it: {}", whole.signed_volume());
     }
 }

@@ -20,8 +20,25 @@ interface Shown {
   seam?: SeamShown;
 }
 
-/** The `shown` key of a layer's solids. */
-const solidsOf = (layer: string) => `solids:${layer}`;
+/** Tiles fetched at once: enough to keep the shell's cores busy encoding, few enough not to queue the bridge. */
+const TILES_AT_ONCE = 8;
+
+/** `work` on each item, at most `at` at once; the results in the items' order. */
+async function inTurns<T, R>(items: T[], at: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const k = next++;
+      out[k] = await work(items[k]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(at, items.length) }, worker));
+  return out;
+}
+
+/** The `shown` key of a tile of a layer's solids. */
+const solidsOf = (s: { layer: string; tile: [number, number] }) => `solids:${s.layer}:${s.tile[0]},${s.tile[1]}`;
 
 /** A seam model's horizon as the viewport shows it. */
 export interface SeamShown {
@@ -50,8 +67,10 @@ export class SceneSync {
   private selected: string[] = [];
   /** Surfaces, grids and seam horizons lit up in place, by id. */
   private lit = new Map<string, THREE.Group>();
-  /** Each layer's selected solids drawn over everything, from its own geometry, by the `shown` key of its solids. */
+  /** Each tile's selected solids drawn over everything, from its own geometry, by the `shown` key of the tile. */
   private highlights = new Map<string, THREE.Group>();
+  /** The table each solid on show is in, by id: kept as tiles load and go. */
+  private tableOf = new Map<string, SolidFlags>();
   /** The seam models on show changed: one loaded or hidden, or a new name or horizon. */
   onSeams?: (showing: SeamShown[]) => void;
   /** What's coloured by RL on show changed, or its bands did. */
@@ -102,7 +121,7 @@ export class SceneSync {
     const layers = new Map(summary.layers.map((l) => [l.id, l]));
     const seam = (kind: string) => kind === 'seam_model';
     const wanted = new Map(summary.objects.filter((o) => (o.drawn && o.kind !== 'solid') || seam(o.kind)).map((o) => [o.id, o]));
-    const solids = new Map(summary.solid_layers.map((s) => [solidsOf(s.layer), s.key]));
+    const solids = new Map(summary.solid_layers.map((s) => [solidsOf(s), s.key]));
     const keyOf = (id: string) => {
       if (solids.has(id)) return solids.get(id);
       const o = wanted.get(id);
@@ -115,6 +134,7 @@ export class SceneSync {
     for (const [id, shown] of this.shown) {
       if (keyOf(id) !== shown.key && !solids.has(id)) {
         this.dropHighlight(id);
+        this.forgetTable(shown.group);
         this.viewport.removeMesh(shown.group);
         this.shown.delete(id);
         if (!wanted.has(id)) this.horizons.delete(id);
@@ -162,22 +182,35 @@ export class SceneSync {
       this.shown.set(object.id, { key: keyOf(object.id)!, group, seam: view });
       loaded++;
     }
-    for (const { layer: id, key } of summary.solid_layers) {
-      const layer = layers.get(id);
-      const shown = this.shown.get(solidsOf(id));
-      if (shown?.key === key) {
-        shown.group.visible = layer?.visible ?? true;
-        continue;
-      }
-      const staged = await stageLayerSolids(id);
-      const { group } = await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined, byRl: false });
-      group.visible = layer?.visible ?? true;
+    // A tile at a time: a change to one solid sends its tile again, and the rest stand (decision 0060, workstream 4).
+    // Tiles that changed are fetched several at once, as the shell encodes each on its own thread.
+    const stale = summary.solid_layers.filter((tile) => {
+      const shown = this.shown.get(solidsOf(tile));
+      if (shown?.key !== tile.key) return true;
+      shown.group.visible = layers.get(tile.layer)?.visible ?? true;
+      return false;
+    });
+    const fetched = await inTurns(stale, TILES_AT_ONCE, async (tile) => {
+      const layer = layers.get(tile.layer);
+      const staged = await stageLayerSolids(tile.layer, tile.tile);
+      return (await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined, byRl: false })).group;
+    });
+    stale.forEach((tile, k) => {
+      const group = fetched[k];
+      const shownKey = solidsOf(tile);
+      const shown = this.shown.get(shownKey);
+      group.visible = layers.get(tile.layer)?.visible ?? true;
       // The highlight drew the old mesh's geometry: it's made again from the new one below.
-      this.dropHighlight(solidsOf(id));
-      if (shown) this.viewport.removeMesh(shown.group);
-      this.shown.set(solidsOf(id), { key, group });
+      this.dropHighlight(shownKey);
+      if (shown) {
+        this.forgetTable(shown.group);
+        this.viewport.removeMesh(shown.group);
+      }
+      const flags = group.userData.flags as SolidFlags | null | undefined;
+      for (const solid of flags?.ids ?? []) this.tableOf.set(solid, flags!);
+      this.shown.set(shownKey, { key: tile.key, group });
       loaded++;
-    }
+    });
     this.flagSolids(summary);
     this.reportSeams(summary);
     this.restyle(summary);
@@ -218,8 +251,9 @@ export class SceneSync {
       const seam = shown.seam && summary.objects.find((o) => o.id === id);
       if (seam) this.viewport.setLook(shown.group, { colour: 0xffffff, byRl: false, lines: false, opacity: lookOf(display, id).opacity * layerOpacityOf(display, seam.layer) });
     }
-    for (const { layer: id } of summary.solid_layers) {
-      const shown = this.shown.get(solidsOf(id));
+    for (const tile of summary.solid_layers) {
+      const id = tile.layer;
+      const shown = this.shown.get(solidsOf(tile));
       const layer = layers.get(id);
       if (shown) this.viewport.setLook(shown.group, { colour: layer ? colourOf(layer.colour) : 0xffffff, byRl: false, lines: false, opacity: layerOpacityOf(display, id) });
     }
@@ -254,18 +288,17 @@ export class SceneSync {
   private flagSolids(summary: ProjectSummary): void {
     const picked = new Set(this.selected);
     const layers = new Map(summary.layers.map((l) => [l.id, l]));
-    const tables = new Map<string, { group: THREE.Group; flags: SolidFlags }>();
-    for (const { layer: id } of summary.solid_layers) {
-      const group = this.shown.get(solidsOf(id))?.group;
+    const tables = new Map<string, { layer: string; group: THREE.Group; flags: SolidFlags }>();
+    for (const tile of summary.solid_layers) {
+      const group = this.shown.get(solidsOf(tile))?.group;
       const flags = group?.userData.flags as SolidFlags | null | undefined;
-      if (group && flags) tables.set(id, { group, flags });
+      if (group && flags) tables.set(solidsOf(tile), { layer: tile.layer, group, flags });
     }
-    // One pass over the rows: each solid's flags put in its layer's table.
+    // One pass over the rows: each solid's flags put in its tile's table.
     for (const { flags } of tables.values()) flags.begin();
-    for (const o of summary.objects) if (o.kind === 'solid') tables.get(o.layer)?.flags.put(o.id, o.hidden, picked.has(o.id));
-    for (const [id, { group, flags }] of tables) {
+    for (const o of summary.objects) if (o.kind === 'solid') this.tableOf.get(o.id)?.put(o.id, o.hidden, picked.has(o.id));
+    for (const [key, { layer: id, group, flags }] of tables) {
       flags.end();
-      const key = solidsOf(id);
       let over = this.highlights.get(key);
       if (!over && flags.selectedCount > 0) {
         over = this.viewport.addSolidHighlight(group, SELECTED) ?? undefined;
@@ -273,6 +306,12 @@ export class SceneSync {
       }
       if (over) over.visible = flags.selectedCount > 0 && (layers.get(id)?.visible ?? true);
     }
+  }
+
+  /** A tile going: its solids are no longer in its table. */
+  private forgetTable(group: THREE.Group): void {
+    const flags = group.userData.flags as SolidFlags | null | undefined;
+    for (const solid of flags?.ids ?? []) if (this.tableOf.get(solid) === flags) this.tableOf.delete(solid);
   }
 
   private dropHighlight(key: string): void {
