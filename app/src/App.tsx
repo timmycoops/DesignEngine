@@ -23,6 +23,7 @@ import {
   Save,
   SaveAll,
   Scissors,
+  Sigma,
   Slice,
   StepBack,
   StepForward,
@@ -1188,6 +1189,9 @@ export default function App() {
           </ToolButton>
           <ToolButton tip="Cut solids: into strips by faces, by a surface, grid or RL, or one between two surfaces" onClick={() => dockRef.current && showPanel(dockRef.current, 'cut')}>
             <Slice /> Cut
+          </ToolButton>
+          <ToolButton tip="Reserves: interrogate blocks against a seam model, or set them beside Spry's or Deswik's numbers" onClick={() => dockRef.current && showPanel(dockRef.current, 'reserves')}>
+            <Sigma /> Reserves
           </ToolButton>
           <div className="ml-auto">
             <DropdownMenu>

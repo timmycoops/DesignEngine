@@ -1,7 +1,7 @@
 # 0061 — Interrogating a block: a thin reserves slice against the seam model
 
 Status: agreed 12 November 2026 (Tim: "Agree all seven", the Build Plan's "Reserves slice plan" tab), changed the same day
-as below. Workstreams 1 to 4 of 6.
+as below. Workstreams 1 to 5 of 6.
 
 ## Why
 
@@ -236,7 +236,22 @@ its line.
 On real data the run gives counts and differences; Tim runs it on PIT B with his own match file, as the field names stay
 on his machine.
 
+## Workstream 5: the Reserves panel
+
+**Reserves** on the toolbar opens a tool panel made from the kit, as every tool panel is:
+
+- **Interrogate**: the blocks picked, all on the layer of the first, or all on show; the seam model (the last built
+  unless another is chosen); the attribute naming each block's seam (`seam`); the variables to write (every grid of each
+  block's seam when blank); a prefix. One button, *Interrogate n blocks*, Ctrl+Enter, one undo.
+- **Compare**: the same blocks, whose numbers (Spry's or Deswik's), and the match file, chosen from disk. *Compare n
+  blocks* is a report: nothing changes.
+
+What a run says shows in the panel's run result, coloured by severity, with Show beside a note that has a place, as
+0059 gives every panel. The values go out with the solids: *Export solids* lists every attribute in its `solids.csv`.
+
+Checked: the app's typecheck and tests. Not checked by hand in the app.
+
 ## Still to come
 
-Workstream 5: the Reserves panel. Workstream 6: the check by eye, a seam's grid as contours and its blocks
+Workstream 6: the check by eye, a seam's grid as contours and its blocks
 coloured by their values on the same bands.
