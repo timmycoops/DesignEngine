@@ -1,10 +1,14 @@
-//! Reserves inside a solid (decision 0061, workstream 1): where a block solid lies at each node of a seam model's lattice,
-//! how much of that is in each horizon, and its density and qualities composited as CLAUDE.md's reserves conventions say.
+//! Interrogating a block against a seam model (decision 0061, workstream 1): where a block solid lies at each node of the
+//! model's lattice, how much of that is in each horizon, and each of the model's variables averaged over it.
+//!
+//! The interrogation is the geology at the block and nothing more. Tonnes on a moisture basis, mining factors and seam
+//! rules are steps after it, as a dataflow is in Spry or a workflow in Deswik.
 //!
 //! The block's volume of record is its mesh's enclosed volume. What's here sets the weights: each lattice node stands for
-//! its cell, and its weight is the block's thickness at the node times the cell's area. Air-dried RD is composited by
-//! thickness, raw qualities by mass (thickness × air-dried RD), and in-situ RD by Preston–Sanders, node by node, then by
-//! thickness.
+//! its cell, and the block's volume there is its thickness at the node times the cell's area. Each variable says how it's
+//! averaged: by that volume alone, or by that volume times other variables at the node. Density is by volume and
+//! qualities by coal tonnes (volume × density) as a rule, and clean-coal qualities by tonnes × yield, but the choice is
+//! the definition's, not the engine's.
 
 use zd_core::{Lattice, TriMesh};
 
@@ -127,12 +131,22 @@ pub fn horizon_samples(columns: &[NodeColumn], floor: &[f64], roof: &[f64]) -> V
 }
 
 /// In-situ relative density from air-dried RD and the two moistures (%), by Preston and Sanders (1993):
-/// `RD_is = RD_ad × (100 − M_ad) / (100 + RD_ad × (M_is − M_ad) − M_is)`.
+/// `RD_is = RD_ad × (100 − M_ad) / (100 + RD_ad × (M_is − M_ad) − M_is)`. Not part of the interrogation: for a step after
+/// it that puts tonnes on an in-situ basis.
 pub fn in_situ_rd(rd_ad: f64, m_ad: f64, m_is: f64) -> f64 {
     rd_ad * (100.0 - m_ad) / (100.0 + rd_ad * (m_is - m_ad) - m_is)
 }
 
-/// A block's density and qualities in one horizon, composited from its samples.
+/// One of the model's variables, and how it's averaged over a block: by the block's volume at each node times each of
+/// the variables named in `weight_by` (by their places in the list) at that node. Density takes none; a raw quality the
+/// density, so it's by coal tonnes; a clean-coal quality the density and the yield.
+pub struct Variable<'a> {
+    /// The variable's grid on the model's lattice; NaN is no value.
+    pub grid: &'a [f64],
+    pub weight_by: &'a [usize],
+}
+
+/// A block in one horizon: how much of it there is, and each variable averaged over it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Composite {
     /// Nodes holding some of the block in the horizon.
@@ -142,58 +156,26 @@ pub struct Composite {
     /// The block's sampled volume in the horizon (m³): thickness × the cell's area, summed. Its share of the block's own
     /// volume is set by this against the block's whole sampled volume.
     pub sampled_volume: f64,
-    /// Air-dried RD by thickness, where any node has one.
-    pub rd_ad: Option<f64>,
-    /// In-situ RD by thickness, node by node by Preston–Sanders, where the moistures are given and any node has all
-    /// three.
-    pub rd_is: Option<f64>,
-    /// Each quality by mass (thickness × air-dried RD), in the order given; none where no node has both.
-    pub qualities: Vec<Option<f64>>,
-    /// Nodes left out of the RD composite for want of an RD: they still count in the volume.
-    pub nodes_without_rd: usize,
-    /// For each quality, nodes left out for want of a value or an RD.
+    /// Each variable averaged by its weighting, in the order given; none where no node has it and its weights.
+    pub values: Vec<Option<f64>>,
+    /// For each variable, nodes left out for want of its value or one of its weights. They still count in the volume.
     pub nodes_without: Vec<usize>,
 }
 
-/// The grids a composite reads, node by node on the model's lattice; NaN is no value.
-pub struct HorizonGrids<'a> {
-    /// Air-dried RD.
-    pub rd: &'a [f64],
-    /// Each quality's grid.
-    pub qualities: &'a [&'a [f64]],
-    /// In-situ and air-dried moisture (%), for in-situ RD.
-    pub moisture: Option<(&'a [f64], &'a [f64])>,
-}
-
-/// Composites a block's samples in one horizon: RD by thickness, raw qualities by mass, in-situ RD by thickness after
-/// Preston–Sanders at each node.
-pub fn composite(samples: &[HorizonSample], cell_area: f64, grids: &HorizonGrids<'_>) -> Composite {
+/// Averages each variable over a block's samples in one horizon by its weighting. A node is left out of a variable where
+/// it has no value for it, or none for a variable it's weighted by, and counted.
+pub fn composite(samples: &[HorizonSample], cell_area: f64, variables: &[Variable<'_>]) -> Composite {
     let thickness: f64 = samples.iter().map(|s| s.1).sum();
-    let (mut t_rd, mut rd_sum, mut t_is, mut is_sum) = (0.0, 0.0, 0.0, 0.0);
-    let mut nodes_without_rd = 0;
-    let n = grids.qualities.len();
-    let (mut mass, mut weighted, mut nodes_without) = (vec![0.0; n], vec![0.0; n], vec![0; n]);
+    let n = variables.len();
+    let (mut weights, mut weighted, mut nodes_without) = (vec![0.0; n], vec![0.0; n], vec![0; n]);
     for &(node, t) in samples {
-        let rd = grids.rd[node];
-        if !rd.is_finite() {
-            nodes_without_rd += 1;
-            nodes_without.iter_mut().for_each(|w| *w += 1);
-            continue;
-        }
-        t_rd += t;
-        rd_sum += t * rd;
-        if let Some((is, ad)) = grids.moisture
-            && is[node].is_finite()
-            && ad[node].is_finite()
-        {
-            t_is += t;
-            is_sum += t * in_situ_rd(rd, ad[node], is[node]);
-        }
-        for (k, grid) in grids.qualities.iter().enumerate() {
-            let q = grid[node];
-            if q.is_finite() {
-                mass[k] += t * rd;
-                weighted[k] += t * rd * q;
+        let volume = t * cell_area;
+        for (k, v) in variables.iter().enumerate() {
+            let value = v.grid[node];
+            let weight = v.weight_by.iter().fold(volume, |w, &by| w * variables[by].grid[node]);
+            if value.is_finite() && weight.is_finite() {
+                weights[k] += weight;
+                weighted[k] += weight * value;
             } else {
                 nodes_without[k] += 1;
             }
@@ -203,10 +185,7 @@ pub fn composite(samples: &[HorizonSample], cell_area: f64, grids: &HorizonGrids
         nodes: samples.len(),
         area: samples.len() as f64 * cell_area,
         sampled_volume: thickness * cell_area,
-        rd_ad: (t_rd > 0.0).then(|| rd_sum / t_rd),
-        rd_is: (t_is > 0.0).then(|| is_sum / t_is),
-        qualities: (0..n).map(|k| (mass[k] > 0.0).then(|| weighted[k] / mass[k])).collect(),
-        nodes_without_rd,
+        values: (0..n).map(|k| (weights[k] > 0.0).then(|| weighted[k] / weights[k])).collect(),
         nodes_without,
     }
 }

@@ -1,8 +1,8 @@
-//! Reserves inside a solid (decision 0061, workstream 1): known answers worked by hand on made-up blocks at mine-grid
-//! coordinates. Volumes to 0.001 m³, RD to 1e-9, qualities to 1 part in a million.
+//! Interrogating a block against a seam model (decision 0061, workstream 1): known answers worked by hand on made-up
+//! blocks at mine-grid coordinates. Volumes to 0.001 m³, RD to 1e-9, qualities to 1 part in a million.
 
 use zd_core::{Lattice, TriMesh};
-use zd_geom::{HorizonGrids, columns_in_solid, composite, horizon_samples, in_situ_rd};
+use zd_geom::{HorizonSample, Variable, columns_in_solid, composite, horizon_samples, in_situ_rd};
 
 const E: f64 = 650_000.0;
 const N: f64 = 7_450_000.0;
@@ -47,6 +47,16 @@ fn near(a: f64, b: f64, tolerance: f64, what: &str) {
     assert!((a - b).abs() <= tolerance, "{what}: {a} against {b}");
 }
 
+/// Samples of a block in a horizon wider than it.
+fn whole(mesh: &TriMesh, lattice: &Lattice) -> Vec<HorizonSample> {
+    horizon_samples(&columns_in_solid(mesh, lattice), &vec![0.0; 900], &vec![500.0; 900])
+}
+
+/// A variable averaged by volume times the variables at `weights`.
+fn by<'a>(grid: &'a [f64], weights: &'a [usize]) -> Variable<'a> {
+    Variable { grid, weight_by: weights }
+}
+
 #[test]
 fn a_flat_block_takes_its_plan_area_in_nodes_and_its_thickness_at_each() {
     let lattice = on_its_sides();
@@ -59,52 +69,58 @@ fn a_flat_block_takes_its_plan_area_in_nodes_and_its_thickness_at_each() {
         let (x, y) = (lattice.origin[0] + col as f64 * 5.0 - E, lattice.origin[1] + row as f64 * 5.0 - N);
         assert!((0.0..50.0).contains(&x) && (0.0..=40.0).contains(&y) && y > 0.0, "node at {x}, {y} m in the block");
     }
-    let samples = horizon_samples(&columns, &vec![90.0; 900], &vec![110.0; 900]);
-    let c = composite(&samples, 25.0, &HorizonGrids { rd: &vec![1.4; 900], qualities: &[], moisture: None });
+    let c = composite(&whole(&flat(), &lattice), 25.0, &[]);
     near(c.area, 2000.0, 1e-9, "plan area");
     near(c.sampled_volume, 6000.0, 1e-6, "sampled volume");
     near(flat().signed_volume(), 6000.0, 1e-6, "the block's own volume");
 }
 
 #[test]
-fn a_quality_rising_across_the_block_composites_to_its_value_at_the_middle() {
+fn a_quality_rising_across_the_block_averages_to_its_value_at_the_middle() {
     let lattice = in_its_squares();
-    let columns = columns_in_solid(&flat(), &lattice);
-    assert_eq!(columns.len(), 80);
-    // Ash from 10 % at the west side, rising 0.1 % a metre east: 12.5 % in the middle.
-    let ash = grid(&lattice, |x, _| 10.0 + 0.1 * (x - E));
-    let samples = horizon_samples(&columns, &vec![90.0; 900], &vec![110.0; 900]);
-    let c = composite(&samples, 25.0, &HorizonGrids { rd: &vec![1.4; 900], qualities: &[&ash], moisture: None });
-    near(c.qualities[0].unwrap(), 12.5, 12.5e-6, "ash");
-    near(c.rd_ad.unwrap(), 1.4, 1e-9, "RD");
+    // Ash from 10 % at the west side, rising 0.1 % a metre east, by coal tonnes: 12.5 % in the middle.
+    let (rd, ash) = (vec![1.4; 900], grid(&lattice, |x, _| 10.0 + 0.1 * (x - E)));
+    let c = composite(&whole(&flat(), &lattice), 25.0, &[by(&rd, &[]), by(&ash, &[0])]);
+    near(c.values[0].unwrap(), 1.4, 1e-9, "RD");
+    near(c.values[1].unwrap(), 12.5, 12.5e-6, "ash");
 }
 
 #[test]
-fn rd_is_composited_by_thickness_and_qualities_by_mass() {
+fn density_is_by_volume_and_a_quality_by_coal_tonnes() {
     let lattice = in_its_squares();
-    let columns = columns_in_solid(&flat(), &lattice);
-    // RD 1.40 on the west half, 1.50 on the east; ash 10 % west, 20 % east; equal thickness throughout.
+    // A wedge 3 m thick at the west side and 8 m at the east: its west half 4.25 m thick on average, its east 6.75 m.
+    let wedge = block(E, N, 100.0, |x| 103.0 + 0.1 * (x - E));
+    // RD 1.40 west, 1.50 east; ash 10 % west, 20 % east.
     let rd = grid(&lattice, |x, _| if x < E + 25.0 { 1.40 } else { 1.50 });
     let ash = grid(&lattice, |x, _| if x < E + 25.0 { 10.0 } else { 20.0 });
-    let samples = horizon_samples(&columns, &vec![90.0; 900], &vec![110.0; 900]);
-    let c = composite(&samples, 25.0, &HorizonGrids { rd: &rd, qualities: &[&ash], moisture: None });
-    near(c.rd_ad.unwrap(), 1.45, 1e-9, "RD by thickness");
-    // By mass: (1.40 × 10 + 1.50 × 20) / (1.40 + 1.50) = 44 / 2.9.
-    near(c.qualities[0].unwrap(), 44.0 / 2.9, 1e-6 * 15.0, "ash by mass");
+    let c = composite(&whole(&wedge, &lattice), 25.0, &[by(&rd, &[]), by(&ash, &[0])]);
+    // By volume: (1.40 × 4.25 + 1.50 × 6.75) / 11 = 16.075 / 11.
+    near(c.values[0].unwrap(), 16.075 / 11.0, 1e-9, "RD by volume");
+    // By coal tonnes: (1.40 × 4.25 × 10 + 1.50 × 6.75 × 20) / (1.40 × 4.25 + 1.50 × 6.75) = 262.0 / 16.075.
+    near(c.values[1].unwrap(), 262.0 / 16.075, 1e-6 * 17.0, "ash by tonnes");
+}
+
+#[test]
+fn a_variable_is_averaged_by_whatever_it_names_as_its_weights() {
+    // A clean-coal quality by coal tonnes times yield: yield 80 % west, 60 % east; clean ash 8 % west, 9 % east;
+    // RD and thickness the same throughout: (80 × 8 + 60 × 9) / (80 + 60) = 1,180 / 140.
+    let lattice = in_its_squares();
+    let rd = vec![1.4; 900];
+    let yields = grid(&lattice, |x, _| if x < E + 25.0 { 80.0 } else { 60.0 });
+    let clean_ash = grid(&lattice, |x, _| if x < E + 25.0 { 8.0 } else { 9.0 });
+    let c = composite(&whole(&flat(), &lattice), 25.0, &[by(&rd, &[]), by(&yields, &[0]), by(&clean_ash, &[0, 1])]);
+    near(c.values[1].unwrap(), 70.0, 1e-9, "yield by tonnes");
+    near(c.values[2].unwrap(), 1180.0 / 140.0, 1e-9, "clean ash by tonnes × yield");
+    // The same ash by volume alone, as someone may want: the plain mean, 8.5 %.
+    near(composite(&whole(&flat(), &lattice), 25.0, &[by(&clean_ash, &[])]).values[0].unwrap(), 8.5, 1e-9, "by volume");
 }
 
 #[test]
 fn in_situ_rd_is_preston_and_sanders() {
-    // RD 1.45 air-dried, 3 % air-dried moisture, 8 % in situ: 1.45 × 97 / (100 + 1.45 × 5 − 8) = 140.65 / 99.25.
+    // For a step after the interrogation. RD 1.45 air-dried, 3 % air-dried moisture, 8 % in situ:
+    // 1.45 × 97 / (100 + 1.45 × 5 − 8) = 140.65 / 99.25.
     near(in_situ_rd(1.45, 3.0, 8.0), 1.417_128_463_5, 1e-9, "in-situ RD");
     near(in_situ_rd(1.45, 5.0, 5.0), 1.45, 1e-12, "no more moisture in situ than air-dried: the same RD");
-    let lattice = in_its_squares();
-    let samples = horizon_samples(&columns_in_solid(&flat(), &lattice), &vec![90.0; 900], &vec![110.0; 900]);
-    let (rd, is, ad) = (vec![1.45; 900], vec![8.0; 900], vec![3.0; 900]);
-    let c = composite(&samples, 25.0, &HorizonGrids { rd: &rd, qualities: &[], moisture: Some((&is, &ad)) });
-    near(c.rd_is.unwrap(), 140.65 / 99.25, 1e-9, "the block's in-situ RD");
-    // In situ is less dense, so the same volume weighs less: 6,000 m³ at 1.4171 is 8,502.8 t, not 8,700 t.
-    near(c.sampled_volume * c.rd_is.unwrap(), 6000.0 * 140.65 / 99.25, 1e-6, "tonnes in situ");
 }
 
 #[test]
@@ -115,15 +131,13 @@ fn a_block_across_two_horizons_splits_by_their_roofs_and_floors() {
     let columns = columns_in_solid(&mesh, &lattice);
     let a = horizon_samples(&columns, &vec![107.0; 900], &vec![115.0; 900]);
     let b = horizon_samples(&columns, &vec![95.0; 900], &vec![107.0; 900]);
-    let rd = vec![1.4; 900];
-    let grids = HorizonGrids { rd: &rd, qualities: &[], moisture: None };
-    let (va, vb) = (composite(&a, 25.0, &grids).sampled_volume, composite(&b, 25.0, &grids).sampled_volume);
+    let (va, vb) = (composite(&a, 25.0, &[]).sampled_volume, composite(&b, 25.0, &[]).sampled_volume);
     near(va, 6000.0, 1e-6, "in A");
     near(vb, 14_000.0, 1e-6, "in B");
     near((va + vb) / mesh.signed_volume(), 1.0, 1e-12, "together, the block");
     // Where B's roof is null (its east half), the block holds none of B there.
     let roof = grid(&lattice, |x, _| if x < E + 25.0 { 107.0 } else { f64::NAN });
-    near(composite(&horizon_samples(&columns, &vec![95.0; 900], &roof), 25.0, &grids).sampled_volume, 7000.0, 1e-6, "B's west half");
+    near(composite(&horizon_samples(&columns, &vec![95.0; 900], &roof), 25.0, &[]).sampled_volume, 7000.0, 1e-6, "B's west half");
 }
 
 #[test]
@@ -132,11 +146,8 @@ fn a_sloping_top_and_a_solid_in_two_pieces_are_sampled_as_they_lie() {
     // each 5 m square give exactly.
     let wedge = block(E, N, 100.0, |x| 103.0 + 0.1 * (x - E));
     let lattice = in_its_squares();
-    let rd = vec![1.4; 900];
-    let grids = HorizonGrids { rd: &rd, qualities: &[], moisture: None };
-    let all = |m: &TriMesh| horizon_samples(&columns_in_solid(m, &lattice), &vec![0.0; 900], &vec![500.0; 900]);
     near(wedge.signed_volume(), 11_000.0, 1e-6, "the wedge");
-    near(composite(&all(&wedge), 25.0, &grids).sampled_volume, 11_000.0, 1e-6, "the wedge sampled");
+    near(composite(&whole(&wedge, &lattice), 25.0, &[]).sampled_volume, 11_000.0, 1e-6, "the wedge sampled");
     // Two 3 m blocks one over the other with 2 m between, as one mesh: two stretches at every node.
     let mut two = block(E, N, 100.0, |_| 103.0);
     let upper = block(E, N, 105.0, |_| 108.0);
@@ -145,21 +156,19 @@ fn a_sloping_top_and_a_solid_in_two_pieces_are_sampled_as_they_lie() {
     two.triangles.extend(upper.triangles.iter().map(|t| t.map(|i| i + offset)));
     let columns = columns_in_solid(&two, &lattice);
     assert!(columns.iter().all(|c| c.spans == vec![[100.0, 103.0], [105.0, 108.0]]));
-    near(composite(&all(&two), 25.0, &grids).sampled_volume, 12_000.0, 1e-6, "both pieces");
+    near(composite(&whole(&two, &lattice), 25.0, &[]).sampled_volume, 12_000.0, 1e-6, "both pieces");
 }
 
 #[test]
-fn nodes_with_no_rd_or_no_value_are_left_out_and_counted() {
+fn nodes_with_no_value_or_no_weight_are_left_out_and_counted() {
     let lattice = in_its_squares();
-    let samples = horizon_samples(&columns_in_solid(&flat(), &lattice), &vec![90.0; 900], &vec![110.0; 900]);
     // No RD in the block's south row of nodes (10 of 80), and no ash in its west column (8, one of them in that row).
     let rd = grid(&lattice, |_, y| if y < N + 5.0 { f64::NAN } else { 1.4 });
     let ash = grid(&lattice, |x, _| if x < E + 5.0 { f64::NAN } else { 12.0 });
-    let c = composite(&samples, 25.0, &HorizonGrids { rd: &rd, qualities: &[&ash], moisture: None });
+    let c = composite(&whole(&flat(), &lattice), 25.0, &[by(&rd, &[]), by(&ash, &[0])]);
     assert_eq!(c.nodes, 80);
-    assert_eq!(c.nodes_without_rd, 10);
-    assert_eq!(c.nodes_without, vec![10 + 7]);
-    near(c.qualities[0].unwrap(), 12.0, 1e-12, "ash where it's known");
+    assert_eq!(c.nodes_without, vec![10, 10 + 7], "ash by tonnes wants the RD too");
+    near(c.values[1].unwrap(), 12.0, 1e-12, "ash where it's known");
     near(c.sampled_volume, 6000.0, 1e-6, "every node still counts in the volume");
 }
 

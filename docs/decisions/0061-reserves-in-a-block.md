@@ -1,4 +1,4 @@
-# 0061 — Reserves in a block: a thin slice against the seam model
+# 0061 — Interrogating a block: a thin reserves slice against the seam model
 
 Status: agreed 12 November 2026 (Tim: "Agree all seven", the Build Plan's "Reserves slice plan" tab). Workstream 1 of 5.
 
@@ -7,9 +7,8 @@ Status: agreed 12 November 2026 (Tim: "Agree all seven", the Build Plan's "Reser
 Reserves had nothing underneath them (the review of 10 November, finding 5): a seam model linked its quality and
 density grids but nothing read them, nothing sampled inside a solid, and the 2.5D column check existed only for whole
 seams. Item 6 of the agreed order runs a thin slice beside Phase 4's block cutting, so reconciliation with Spry starts
-early, on real blocks: block solids already in a project and a seam model, each block's volume, tonnes and qualities,
-checked against a 2.5D column calculation and set beside Spry's own values by name. No mining factors, seam rules or
-waste yet.
+early, on real blocks: block solids already in a project and a seam model, each block's geology interrogated from the
+model's grids, its volume checked against a 2.5D column calculation, and set beside Spry's own values by name.
 
 ## Decision
 
@@ -20,18 +19,30 @@ Agreed with the plan, all as recommended:
 2. **A block's horizon is found by its geometry.** Each node's column through the block is split by the working
    horizons' roofs and floors, so a block across two gets a record for each, with a note when it takes in more than 1 %
    of another horizon.
-3. **Tonnes are in situ by Preston–Sanders**, with the in-situ and air-dried moisture grids the definition names (two
-   new columns in the definition CSV). A horizon with no moisture grids gives air-dried tonnes, and the run warns.
-4. **Qualities are sampled at the model's lattice nodes** inside each block, each weighted by the block's thickness at
-   the node times the cell's area. Exact partial cells are for the volume check.
+3. **Tonnes are in situ by Preston–Sanders**: superseded the same day (below). The interrogation gives the geology only.
+4. **Variables are sampled at the model's lattice nodes** inside each block, the block's volume at a node being its
+   thickness there times the cell's area. Exact partial cells are for the volume check.
 5. **Spry's fields are matched to our codes by a CSV Tim edits**, kept with the project as the seam definition is.
    Field names stay on his machine.
 6. **Tolerances:** volume 0.1 %, tonnes 0.5 %, RD 0.005, a quality 0.05 in its own unit; each a parameter of the run.
 7. **A small Reserves tool panel** comes in workstream 5, so Tim can run it on PIT B himself.
 
+Changed the same day (Tim): *"the quality should be weight averaged based on volume for density and then coal tonnes for
+qualities - this should be left open to easily let people create whatever they desire. The actual interrogation step
+will be all about the geology at the block - the steps after can alter things as required like a dataflow in spry or a
+workflow in deswik."* So:
+
+- **The interrogation is the geology at the block:** its volume, area and thickness in each horizon, and each of the
+  model's variables averaged over it. Nothing else.
+- **Each variable says how it's averaged:** by volume, or by volume times other variables at each node. As a rule
+  density is by volume, raw qualities by coal tonnes (volume × density) and clean-coal qualities by tonnes × yield,
+  but each is set in the definition, so anyone can average anything by whatever they want.
+- **Tonnes, moisture basis (Preston–Sanders), mining factors and seam rules are steps after the interrogation**, as a
+  dataflow is in Spry or a workflow in Deswik. They need a plan of their own, and are not in this item.
+
 Still open: whether PIT B's Spry project carries tonnes, RD and qualities for each block. It shapes only workstream 4.
 
-## Workstream 1 (this record's first PR): columns and composites
+## Workstream 1 (this record's first PR): columns and averages
 
 `zd-geom::reserves`, pure geometry and sums:
 
@@ -43,14 +54,12 @@ Still open: whether PIT B's Spry project carries tonnes, RD and qualities for ea
   two pieces, one over the other, has two stretches. Faces standing straight up have no plan and are passed over.
 - **`horizon_samples`**: the columns split by one horizon's floor and roof, node by node on the same lattice. A null
   roof or floor holds none.
-- **`composite`**:
-  - air-dried RD by thickness, and raw qualities by mass (thickness × air-dried RD);
-  - in-situ RD worked out node by node by Preston–Sanders, then by thickness;
-  - the block's sampled volume and plan area, which set its share in each horizon.
-
-  A node with no RD is left out of the RD and qualities and counted, and a node with no value for a quality is left out
-  of that one and counted. Every node still counts in the volume.
-- **`in_situ_rd`**: `RD_is = RD_ad × (100 − M_ad) / (100 + RD_ad × (M_is − M_ad) − M_is)`.
+- **`composite`**: each variable averaged by its own weighting, the block's volume at each node times the variables it
+  names (`Variable::weight_by`); with the block's sampled volume and plan area, which set its share in each horizon. A
+  node is left out of a variable where it has no value for it or for one of its weights, and counted. Every node still
+  counts in the volume.
+- **`in_situ_rd`**: `RD_is = RD_ad × (100 − M_ad) / (100 + RD_ad × (M_is − M_ad) − M_is)`, kept for a step after the
+  interrogation.
 
 The block's volume of record stays its mesh's enclosed volume. These samples set the weights and each horizon's share.
 
@@ -58,18 +67,23 @@ Checked on made-up blocks at mine-grid coordinates, against answers worked by ha
 
 - **A 50 × 40 m block, 3 m thick, its sides on grid lines:** 80 nodes at 5 m, each with one stretch from RL 100 to 103,
   on its west and north sides and not its east and south. 2,000 m² and 6,000 m³, as its mesh.
-- **Ash rising 0.1 % a metre east across it:** 12.5 %, its value at the middle, to a millionth.
-- **RD 1.40 on the west half and 1.50 on the east, ash 10 % and 20 %:** RD 1.45, and ash 44 / 2.9 % by mass.
+- **Ash rising 0.1 % a metre east across it, by coal tonnes:** 12.5 %, its value at the middle, to a millionth.
+- **A wedge 3 to 8 m thick, RD 1.40 on its west half and 1.50 on its east, ash 10 % and 20 %:** RD by volume
+  16.075 / 11, and ash by coal tonnes 262 / 16.075.
+- **Yield 80 % and 60 %, clean ash 8 % and 9 %:** yield by tonnes 70 %, clean ash by tonnes × yield 1,180 / 140, and the
+  same ash by volume alone 8.5 %.
 - **Preston–Sanders:** RD 1.45 at 3 % air-dried and 8 % in situ gives 140.65 / 99.25 = 1.4171285. It is unchanged when
-  the moistures are equal. 6,000 m³ is 8,502.8 t in situ.
+  the moistures are equal.
 - **A block from RL 100 to 110 across two horizons meeting at 107:** 6,000 and 14,000 m³, the block between them.
   Where one horizon's roof is null, it holds none.
 - **A wedge 3 to 8 m thick:** 11,000 m³, as its mesh. Two 3 m pieces one over the other as one mesh: two stretches at
   every node, 12,000 m³.
-- **Nodes with no RD or no value:** left out and counted, the volume whole.
+- **Nodes with no RD or no value:** left out and counted (a quality by tonnes is left out where the RD is missing too),
+  the volume whole.
 - **43,000 made-up blocks on a 10 m lattice:** 860,000 node columns in 94 ms on one thread (an ignored test).
 
 ## Still to come
 
-Workstream 2: `reserves.blocks`, the table object, grids loaded for the run and CSV out. Workstream 3: the 2.5D column
+Workstream 2: the interrogation command, the table object, each variable's weighting in the definition, grids loaded
+for the run and CSV out. Workstream 3: the 2.5D column
 check by block outline with exact partial cells. Workstream 4: Spry beside ours. Workstream 5: the Reserves panel.
