@@ -56,6 +56,10 @@ coal already - that logic comes in once we add dilution and it becomes ROM coal 
 will have nothing to do with the geological interrogation."* The solid interrogated is seam coal; yield, dilution and
 coal mixed with waste belong to the steps that make run-of-mine coal.
 
+And (Tim): a block is cut down to whatever size the reserve calls for; in a coal mine a 60 m wide strip and 100 m long
+blocks, cut to the geological grids, is the simple standard most would use, so a block is about 60 × 100 m in plan. The
+tests' blocks are that size.
+
 Still open: whether PIT B's Spry project carries tonnes, RD and qualities for each block (it shapes only workstream 4),
 and how a block's seam is known.
 
@@ -81,24 +85,25 @@ and how a block's seam is known.
 
 The block's volume of record stays its mesh's enclosed volume. These samples set the weights.
 
-Checked on made-up blocks at mine-grid coordinates, against answers worked by hand:
+Checked on made-up blocks at mine-grid coordinates, against answers worked by hand. Each block is 60 m across its
+strip and 100 m along it, the size a coal mine usually cuts a block to:
 
-- **A 50 × 40 m block, 3 m thick, its sides on grid lines:** 80 nodes at 5 m, each with one stretch from RL 100 to 103,
-  on its west and north sides and not its east and south. 2,000 m² and 6,000 m³, as its mesh.
-- **Ash rising 0.1 % a metre east across it, by coal tonnes:** 12.5 %, its value at the middle, to a millionth.
+- **A block 3 m thick, its sides on grid lines:** 240 nodes at 5 m, each with one stretch from RL 100 to 103, on its west
+  and north sides and not its east and south. 6,000 m² and 18,000 m³, as its mesh.
+- **Ash rising 0.1 % a metre east across it, by coal tonnes:** 13 %, its value at the middle, to a millionth.
 - **A wedge 3 to 8 m thick, RD 1.40 on its west half and 1.50 on its east, ash 10 % and 20 %:** RD by volume
   16.075 / 11, and ash by coal tonnes 262 / 16.075.
 - **RD 1.4 and 1.6, CV 25 and 21 MJ/kg:** CV by coal tonnes 68.6 / 3, by volume alone 23, and by the RD and a weight
   grid together 103.6 / 4.4.
 - **Preston–Sanders:** RD 1.45 at 3 % air-dried and 8 % in situ gives 140.65 / 99.25 = 1.4171285. It is unchanged when
   the moistures are equal.
-- **How much of a block lies in a seam:** a block from RL 100 to 110 against seams meeting at 107 holds 6,000 m³ of one
-  and 14,000 m³ of the other. Where a seam's roof is null, it holds none.
-- **A wedge 3 to 8 m thick:** 11,000 m³, as its mesh. Two 3 m pieces one over the other as one mesh: two stretches at
-  every node, 12,000 m³.
+- **How much of a block lies in a seam:** a block from RL 100 to 110 against seams meeting at 107 holds 18,000 m³ of
+  one and 42,000 m³ of the other. Where a seam's roof is null, it holds none.
+- **The wedge:** 33,000 m³, as its mesh. Two 3 m pieces one over the other as one mesh: two stretches at every node,
+  36,000 m³.
 - **Nodes with no RD or no value:** left out and counted (a quality by tonnes is left out where the RD is missing too),
   the volume whole.
-- **43,000 made-up blocks on a 10 m lattice:** 860,000 node columns in 94 ms on one thread (an ignored test).
+- **43,000 made-up blocks on a 10 m lattice:** 2,580,000 node columns in 285 ms on one thread (an ignored test).
 
 ## Still to come
 
