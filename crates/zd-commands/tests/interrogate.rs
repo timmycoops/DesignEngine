@@ -184,6 +184,9 @@ fn each_block_takes_its_own_seam_s_grids_by_its_attribute() {
     near(number(&s, ids[0], "as").unwrap(), ash_by_hand(70.0, 130.0), "cu's ash, rising east, by the cells' shares");
     near(number(&s, ids[1], "rd").unwrap(), held(1.5), "cl's RD");
     near(number(&s, ids[1], "as").unwrap(), 20.0, "cl's ash");
+    // Each block the full 4 m of its seam: its 2.5D column is its own volume, 24,000 m³.
+    near(number(&s, ids[0], "column_volume").unwrap(), 24_000.0, "cu's column");
+    near(number(&s, ids[1], "column_volume").unwrap(), 24_000.0, "cl's column");
     assert_eq!(s.project().object(ids[0]).unwrap().attributes.get("interrogated"), Some(&AttrValue::Text("stack".into())));
     // One edit of the blocks, undone in one step.
     assert_eq!(s.project().object(ids[0]).unwrap().revision, 2);
@@ -260,6 +263,24 @@ fn each_variable_is_weighted_as_asked() {
     assert!(record.notes.iter().any(|n| n.code == Some(Code::LinkChanged)), "the changed RD grid is said: {:?}", record.messages);
     // By tonnes: the cells east of 100 m weigh 1.6 against 1.4, so the ash leans east.
     assert!(number(&s, ids[0], "as").unwrap() > ash_by_hand(70.0, 130.0) + 0.01);
+}
+
+#[test]
+fn a_block_whose_volume_differs_from_its_column_is_warned_of() {
+    let t = TempDir::new("column");
+    // Cut 1 m short of cu's roof, as a bench would be: 18,000 m³ against a column of the seam's 24,000 m³, a third more.
+    let (mut s, model, ids) = project(&t, vec![("bench", vec![seam("cu")], cuboid(70.0, 40.0, 60.0, 100.0, 96.0, 99.0)), ("whole", vec![seam("cu")], cuboid(140.0, 40.0, 60.0, 100.0, 96.0, 100.0))]);
+    let record = interrogate(&mut s, model, &ids, json!({})).unwrap();
+    let warned: Vec<_> = record.notes.iter().filter(|n| n.code == Some(Code::InterrogateColumnDiffers)).collect();
+    assert_eq!(warned.len(), 1, "{:?}", record.messages);
+    assert_eq!(warned[0].object, Some(ids[0]));
+    assert!(warned[0].place.is_some());
+    near(warned[0].value.as_ref().unwrap().value, 100.0 / 3.0, "a third more, in %");
+    assert!(record.messages.iter().any(|m| m.starts_with("Column check: 1 of 2 blocks within 0.1 %")), "{:?}", record.messages);
+    near(number(&s, ids[0], "column_volume").unwrap(), 24_000.0, "written all the same");
+    // A wider tolerance lets it by.
+    let record = interrogate(&mut s, model, &ids, json!({ "volume_tolerance": 0.5 })).unwrap();
+    assert!(record.notes.iter().all(|n| n.code != Some(Code::InterrogateColumnDiffers)));
 }
 
 /// 43,000 made-up 60 × 100 m blocks, 400 across, all in seam `cu`, against a 25 m seam model over them all: what a run

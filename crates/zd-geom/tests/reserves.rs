@@ -4,7 +4,7 @@
 //! partial cells, as Vulcan does). Volumes to 0.001 m³, RD to 1e-9, qualities to 1 part in a million.
 
 use zd_core::{Lattice, TriMesh};
-use zd_geom::{Sample, Variable, cells_in_solid, columns_in_solid, composite, horizon_samples, in_situ_rd};
+use zd_geom::{Sample, Variable, cells_in_solid, column_volume, columns_in_solid, composite, horizon_samples, in_situ_rd};
 
 const E: f64 = 650_000.0;
 const N: f64 = 7_450_000.0;
@@ -247,6 +247,63 @@ fn nodes_with_no_value_or_no_weight_are_left_out_and_counted() {
     assert_eq!(c.nodes_without, vec![12, 12 + 19], "ash by tonnes wants the RD too");
     near(c.values[1].unwrap(), 12.0, 1e-12, "ash where it's known");
     near(c.volume, 18_000.0, 1e-6, "every cell still counts in the volume");
+}
+
+/// A prism over a plan polygon (counter-clockwise), from `z0` up to `top(x)` at each corner: wound outward.
+fn prism(corners: &[[f64; 2]], z0: f64, top: impl Fn(f64) -> f64) -> TriMesh {
+    let n = corners.len() as u32;
+    let mut vertices: Vec<[f64; 3]> = corners.iter().map(|c| [c[0], c[1], z0]).collect();
+    vertices.extend(corners.iter().map(|c| [c[0], c[1], top(c[0])]));
+    let mut triangles = Vec::new();
+    for i in 1..n - 1 {
+        triangles.push([0, i + 1, i]);
+        triangles.push([n, n + i, n + i + 1]);
+    }
+    for i in 0..n {
+        let j = (i + 1) % n;
+        triangles.push([i, j, n + j]);
+        triangles.push([i, n + j, n + i]);
+    }
+    TriMesh::new(vertices, triangles)
+}
+
+/// A 60 × 100 m block turned `degrees` anticlockwise about its middle, as its corners.
+fn turned(degrees: f64) -> Vec<[f64; 2]> {
+    let (s, c) = degrees.to_radians().sin_cos();
+    let middle = [E + 130.0, N + 120.0];
+    [[-30.0, -50.0], [30.0, -50.0], [30.0, 50.0], [-30.0, 50.0]].iter().map(|[x, y]| [middle[0] + x * c - y * s, middle[1] + x * s + y * c]).collect()
+}
+
+#[test]
+fn the_column_volume_of_a_whole_seam_block_is_its_own() {
+    // A block turned 30° across 25 m cells, the full 4 m of a flat seam: its plan in the cells is exact, 6,000 m², and its
+    // column 24,000 m³, its own volume.
+    let lattice = at_25_m();
+    let block = prism(&turned(30.0), 100.0, |_| 104.0);
+    near(block.signed_volume(), 24_000.0, 1e-6, "the block");
+    let samples = cells_in_solid(&block, &lattice);
+    near(samples.iter().map(|s| s.area).sum(), 6000.0, 1e-6, "its plan in the cells");
+    near(column_volume(&samples, &vec![100.0; 400], &vec![104.0; 400]), 24_000.0, 1e-6, "its column");
+    // Where the roof is null over the cells west of its middle, the column holds none there.
+    let roof = grid(&lattice, |x, _| if x < E + 130.0 { f64::NAN } else { 104.0 });
+    assert!(column_volume(&samples, &vec![100.0; 400], &roof) < 15_000.0);
+}
+
+#[test]
+fn a_seam_thickening_across_the_block_gives_its_column_cell_by_cell() {
+    // The seam's roof rises 0.05 m a metre east from 103 m at the block's west side, the block's top on it: on cells wholly
+    // in the block each node's thickness holds over its cell, as it does across a linear seam, so the column is the block.
+    let lattice = in_its_squares();
+    let block = block(E, N, 100.0, |x| 103.0 + 0.05 * (x - E));
+    let samples = cells_in_solid(&block, &lattice);
+    let roof = grid(&lattice, |x, _| 103.0 + 0.05 * (x - E));
+    // 60 × 100 × (3 + 1.5) = 27,000 m³.
+    near(block.signed_volume(), 27_000.0, 1e-6, "the block");
+    near(column_volume(&samples, &vec![100.0; 900], &roof), 27_000.0, 1e-6, "its column");
+    // A block cut 1 m short of the roof, as a bench would be, holds 6,000 m³ less than its seam's column there.
+    let short = self::block(E, N, 100.0, |x| 102.0 + 0.05 * (x - E));
+    let short_cells = cells_in_solid(&short, &lattice);
+    near(column_volume(&short_cells, &vec![100.0; 900], &roof) - short.signed_volume(), 6000.0, 1e-6, "the difference");
 }
 
 /// The cells of 43,000 made-up blocks, 60 × 100 m and 3 m thick, 400 across, on 25 m and 10 m lattices: what workstream

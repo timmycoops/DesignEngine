@@ -231,6 +231,20 @@ pub fn horizon_samples(columns: &[NodeColumn], floor: &[f64], roof: &[f64], cell
         .collect()
 }
 
+/// A block's 2.5D column volume (decision 0061, workstream 3): its seam's thickness at each node, roof less floor, times
+/// the block's plan in the node's cell, summed. It's how Vulcan and Minex work out a seam's volume inside a polygon, with
+/// exact partial cells, and it's set against the block's own volume as a check, never in its place. A null roof or floor,
+/// or a floor above its roof, holds none.
+pub fn column_volume(samples: &[Sample], floor: &[f64], roof: &[f64]) -> f64 {
+    samples
+        .iter()
+        .map(|s| {
+            let (f, r) = (floor[s.node], roof[s.node]);
+            if f.is_finite() && r.is_finite() { s.area * (r - f).max(0.0) } else { 0.0 }
+        })
+        .sum()
+}
+
 /// In-situ relative density from air-dried RD and the two moistures (%), by Preston and Sanders (1993):
 /// `RD_is = RD_ad × (100 − M_ad) / (100 + RD_ad × (M_is − M_ad) − M_is)`. Not part of the interrogation: for a step after
 /// it that puts tonnes on an in-situ basis.
