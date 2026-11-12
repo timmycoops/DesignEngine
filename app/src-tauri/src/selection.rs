@@ -1,10 +1,9 @@
 //! What a selection of several objects needs from the engine: where they are together, to zoom to them; which
-//! objects on show lie wholly inside a box drawn on screen, to select them; and the selected solids as one mesh,
-//! to light them up. View state: nothing here changes the project, and none of it is a command.
+//! objects on show lie wholly inside a box drawn on screen, to select them. The selected solids light up from a
+//! table beside their layer's mesh (decision 0060). View state: nothing here changes the project, and none of it is a
+//! command.
 
-use std::sync::Arc;
-
-use zd_core::{Aabb, Body, Object, ObjectId, Project, TriMesh};
+use zd_core::{Aabb, Body, Object, ObjectId, Project};
 
 use crate::state::{bounds, is_drawn_surface};
 
@@ -75,18 +74,6 @@ pub fn objects_in_box(project: &Project, screen: &ScreenBox) -> Vec<ObjectId> {
     let on_show = |o: &Object| !project.is_hidden(o.id) && project.layer(o.layer).is_some_and(|l| l.visible);
     let pickable = |o: &Object| matches!(o.body, Body::String(_) | Body::SeamModel(_)) || is_drawn_surface(o);
     project.objects().filter(|o| on_show(o) && pickable(o) && screen.holds_object(o)).map(|o| o.id).collect()
-}
-
-/// The solids among `ids`, on show, as they're drawn: hidden ones aren't.
-pub fn solids_on_show(project: &Project, ids: &[ObjectId]) -> Vec<Arc<TriMesh>> {
-    ids.iter()
-        .filter_map(|&id| project.object(id))
-        .filter(|o| !project.is_hidden(o.id) && project.layer(o.layer).is_some_and(|l| l.visible))
-        .filter_map(|o| match &o.body {
-            Body::Solid(s) => Some(s.mesh_arc().clone()),
-            _ => None,
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -195,26 +182,13 @@ mod tests {
         let t = Instant::now();
         let west = objects_in_box(project, &plan([-1.0, -1.0], [0.0, 1.0]));
         let west_ms = t.elapsed().as_secs_f64() * 1e3;
-        let t = Instant::now();
-        let joined = crate::state::joined_meshes(&solids_on_show(project, &ids));
-        let joined_ms = t.elapsed().as_secs_f64() * 1e3;
         eprintln!(
-            "PIT B: {} solids; bounds of all {bounds_ms:.1} ms; box round the pit {} in {every_ms:.1} ms; west half {} in {west_ms:.1} ms; all joined {} triangles in {joined_ms:.1} ms",
+            "PIT B: {} solids; bounds of all {bounds_ms:.1} ms; box round the pit {} in {every_ms:.1} ms; west half {} in {west_ms:.1} ms",
             ids.len(),
             every.len(),
-            west.len(),
-            joined.triangle_count()
+            west.len()
         );
         assert_eq!(every.len(), ids.len(), "the whole pit is inside a box round it");
         assert!(!west.is_empty() && west.len() < ids.len());
-    }
-
-    #[test]
-    fn the_selected_solids_on_show_draw_as_one() {
-        let (mut s, [west, east, line]) = two_cubes_and_a_string();
-        let joined = crate::state::joined_meshes(&solids_on_show(s.project(), &[west, east, line]));
-        assert!((joined.signed_volume() - 2000.0).abs() < 1e-6, "{}", joined.signed_volume());
-        s.set_objects_visible(&[west], false);
-        assert_eq!(solids_on_show(s.project(), &[west, east, line]).len(), 1);
     }
 }

@@ -883,18 +883,22 @@ async function checkClickObjects(viewport: Viewport, summary: ProjectSummary, sh
     return { selected_ms: performance.now() - start, row: row()?.textContent ?? null };
   };
 
+  // A selected solid lights up from its layer's table, drawn over the layer from its own geometry (decision 0060): no copy
+  // is fetched, so what's drawn doesn't grow.
   const before = viewport.triangleCount;
+  const highlight = () => viewport.content.children.some((g) => g.name.endsWith(' selected') && g.visible);
   const onSolid = await click();
   const selectedAt = performance.now();
-  for (let i = 0; i < 300 && viewport.triangleCount === before; i++) await viewport.nextFrame();
+  for (let i = 0; i < 300 && !highlight(); i++) await viewport.nextFrame();
   const litMs = performance.now() - selectedAt + onSolid.selected_ms;
+  const lit = highlight();
   const copyTriangles = viewport.triangleCount - before;
   const inPlace = picture(viewport);
   viewport.focusOn(local, 200);
   await settle();
   const solidPicture = picture(viewport);
   await clear();
-  const cleared = viewport.triangleCount === before;
+  const cleared = !highlight() && viewport.triangleCount === before;
 
   await setLayers((name) => name === 'seam models');
   await settle();
@@ -914,7 +918,7 @@ async function checkClickObjects(viewport: Viewport, summary: ProjectSummary, sh
   viewport.fitView();
   await settle();
   return {
-    solid: { ...onSolid, lit_ms: litMs, expected: summary.objects.find((o) => o.id === id)?.name, copy_triangles: copyTriangles, cleared, in_place: inPlace, picture: solidPicture },
+    solid: { ...onSolid, lit_ms: litMs, lit, expected: summary.objects.find((o) => o.id === id)?.name, copy_triangles: copyTriangles, cleared, in_place: inPlace, picture: solidPicture },
     seam: { ...onSeam, expected: summary.objects.find((o) => o.kind === 'seam_model')?.name, picture: seamPicture },
     surface: { ...onSurface, expected: summary.objects.find((o) => o.kind === 'surface')?.name, picture: surfacePicture },
   };

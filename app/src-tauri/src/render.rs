@@ -7,6 +7,9 @@
 //! - `triangulation` (any TIN): the mesh is split into spatially compact chunks of at most
 //!   65,535 vertices so indices fit in `u16`. Data: `f32` positions (offset from the scene origin)
 //!   for every chunk, then `u16` indices for every chunk, zero-padded to 4 bytes.
+//!   A layer's solids (`encode_solids`) add which solid each vertex is of: an `f32` per vertex, chunk after chunk,
+//!   after the indices, with the solids' ids in the header in that order (`solids`). The viewport hides and lights
+//!   up a solid by its number, so neither sends the mesh again (decision 0060, workstream 3).
 //! - `grid` (surfaces read from a regular grid): only elevations travel, as `u16` multiples of one
 //!   z step over the surface's range (65,535 = null), in tiles of 255 x 255 nodes. The viewport
 //!   rebuilds x and y from the lattice and the triangles by the same rule as
@@ -19,7 +22,9 @@
 use std::time::Instant;
 
 use serde_json::{Value, json};
-use zd_core::{Aabb, Grid, TriMesh};
+use std::sync::Arc;
+
+use zd_core::{Aabb, Grid, ObjectId, TriMesh};
 use zd_geom::SectionPlane;
 
 use crate::section::SectionGroup;
@@ -76,6 +81,23 @@ pub fn encode_section(groups: &[SectionGroup], origin: [f64; 3], plane: &Section
 }
 
 pub fn encode_triangulation(mesh: &TriMesh, origin: [f64; 3], header: Value) -> Vec<u8> {
+    encode_triangulation_of(mesh, None, origin, header)
+}
+
+/// A layer's solids as one triangulation, each vertex saying which solid it's of: the number of the solid in `ids`,
+/// whose meshes `meshes` are, in the same order.
+pub fn encode_solids(ids: &[ObjectId], meshes: &[Arc<TriMesh>], origin: [f64; 3], header: Value) -> Vec<u8> {
+    let mesh = crate::state::joined_meshes(meshes);
+    let mut solid_of = Vec::with_capacity(mesh.vertices.len());
+    for (k, m) in meshes.iter().enumerate() {
+        solid_of.extend(std::iter::repeat_n(k as u32, m.vertices.len()));
+    }
+    let mut header = header;
+    header["solids"] = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().into();
+    encode_triangulation_of(&mesh, Some(&solid_of), origin, header)
+}
+
+fn encode_triangulation_of(mesh: &TriMesh, solid_of: Option<&[u32]>, origin: [f64; 3], header: Value) -> Vec<u8> {
     let start = Instant::now();
     let threads = worker_threads();
     let chunks = chunk_triangles_on(mesh, MAX_CHUNK_VERTICES, TARGET_CHUNK_TRIANGLES, threads);
@@ -84,7 +106,8 @@ pub fn encode_triangulation(mesh: &TriMesh, origin: [f64; 3], header: Value) -> 
     let index_total: usize = chunks.iter().map(|c| c.indices.len()).sum();
     // One zeroed allocation with room for the header, so appending it never reallocates.
     let data_len = vertex_total * 12 + index_total * 2;
-    let mut out = vec![0u8; data_len + 4096 + 320 * chunks.len()];
+    let solids_len = if solid_of.is_some() { vertex_total * 4 + 4 } else { 0 };
+    let mut out = vec![0u8; data_len + solids_len + 4096 + 320 * chunks.len()];
     out.truncate(data_len);
 
     // Each chunk owns a disjoint slice of the position bytes and of the index bytes, so threads
@@ -122,6 +145,13 @@ pub fn encode_triangulation(mesh: &TriMesh, origin: [f64; 3], header: Value) -> 
     }
     drop(jobs);
     pad_to_4(&mut out);
+    if let Some(solid_of) = solid_of {
+        for chunk in &chunks {
+            for &v in &chunk.vertices {
+                out.extend_from_slice(&(solid_of[v as usize] as f32).to_le_bytes());
+            }
+        }
+    }
 
     let mut header = header;
     header["kind"] = "triangulation".into();
@@ -750,5 +780,31 @@ mod tests {
         let plain = encode_grid(&grid, ORIGIN, json!({ "timings": {} }));
         assert!(header_of(&plain).0.get("value").is_none());
         assert_eq!(plain[..12], buf[..12], "elevations unchanged");
+    }
+
+    /// Each vertex of a layer's solids names its solid, so the viewport can hide or light up one by its number.
+    #[test]
+    fn each_vertex_of_a_layers_solids_says_which_solid_it_is_of() {
+        let cube = |x: f64| {
+            let v = (0..8).map(|i| [ORIGIN[0] + x + (i & 1) as f64 * 10.0, ORIGIN[1] + (i >> 1 & 1) as f64 * 10.0, ORIGIN[2] + (i >> 2) as f64 * 10.0]).collect();
+            let t = vec![[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+            Arc::new(TriMesh::new(v, t))
+        };
+        let ids = [ObjectId::new(), ObjectId::new(), ObjectId::new()];
+        let meshes = [cube(0.0), cube(100.0), cube(200.0)];
+        let buf = encode_solids(&ids, &meshes, ORIGIN, json!({ "name": "blocks" }));
+        let (header, _) = header_of(&buf);
+        let solids: Vec<String> = serde_json::from_value(header["solids"].clone()).unwrap();
+        assert_eq!(solids, ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(), "the solids in the order they're numbered");
+        let vertices = header["vertices"].as_u64().unwrap() as usize;
+        let indices: usize = header["chunks"].as_array().unwrap().iter().map(|c| c["index_count"].as_u64().unwrap() as usize).sum();
+        assert_eq!(header["triangles"], 36);
+        let after = (vertices * 12 + indices * 2).next_multiple_of(4);
+        for v in 0..vertices {
+            let x = f32_at(&buf, 3 * v) as f64;
+            let solid = f32::from_le_bytes(buf[after + 4 * v..after + 4 * v + 4].try_into().unwrap());
+            // Cube k is from x = 100 k to 100 k + 10, scene-local.
+            assert_eq!(solid, (x / 100.0).floor() as f32, "vertex {v} at x {x}");
+        }
     }
 }

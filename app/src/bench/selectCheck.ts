@@ -5,7 +5,7 @@
 // view keys: T into plan and out, Z held with a left drag tilting out of plan into 3D about the point under the cursor,
 // 2 for a section, and E to zoom to everything.
 import * as THREE from 'three/webgpu';
-import { objectsBounds, projectSummary, type ProjectSummary, runCommand, type Vec3 } from '../bridge';
+import { objectsBounds, projectSummary, type ProjectSummary, runCommand, setObjectsVisible, type Vec3 } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
 
 type Show = (summary: ProjectSummary) => Promise<void> | undefined;
@@ -120,18 +120,21 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
   expect('Properties shows them together', document.body.textContent?.includes('4 selected') ?? false);
 
   // The selected blocks draw gold over their layer; the others don't.
-  for (let i = 0; i < 20; i++) await viewport.nextFrame();
-  viewport.draw();
-  const picture = new Image();
-  picture.src = canvas.toDataURL('image/png');
-  await picture.decode();
-  const pixels = Object.assign(document.createElement('canvas'), { width: canvas.width, height: canvas.height }).getContext('2d')!;
-  pixels.drawImage(picture, 0, 0);
-  const rect = canvas.getBoundingClientRect();
-  const colourAt = (p: [number, number]) => {
-    const data = pixels.getImageData(Math.round(((p[0] - rect.left) * canvas.width) / rect.width), Math.round(((p[1] - rect.top) * canvas.height) / rect.height), 1, 1).data;
-    return [data[0], data[1], data[2]];
+  const snapshot = async () => {
+    for (let i = 0; i < 20; i++) await viewport.nextFrame();
+    viewport.draw();
+    const picture = new Image();
+    picture.src = canvas.toDataURL('image/png');
+    await picture.decode();
+    const pixels = Object.assign(document.createElement('canvas'), { width: canvas.width, height: canvas.height }).getContext('2d')!;
+    pixels.drawImage(picture, 0, 0);
+    const rect = canvas.getBoundingClientRect();
+    return (p: [number, number]) => {
+      const data = pixels.getImageData(Math.round(((p[0] - rect.left) * canvas.width) / rect.width), Math.round(((p[1] - rect.top) * canvas.height) / rect.height), 1, 1).data;
+      return [data[0], data[1], data[2]];
+    };
   };
+  const colourAt = await snapshot();
   const fromGold = (c: number[]) => Math.hypot(c[0] - GOLD[0], c[1] - GOLD[1], c[2] - GOLD[2]);
   const lit = [1, 2, 3].map((k) => colourAt(screen(topOf(k))));
   const unlit = [0, 4, 5].map((k) => colourAt(screen(topOf(k))));
@@ -140,6 +143,25 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
     Math.max(...lit.map(fromGold)) < Math.min(...unlit.map(fromGold)),
     { selected: lit, others: unlit },
   );
+
+  // Hiding a selected block and another changes the layer's table, not its mesh (decision 0060): both go, gold and all,
+  // and the rest stay as they were.
+  const triangles = viewport.triangleCount;
+  const hideStart = performance.now();
+  await show(await setObjectsVisible([cubes[2], cubes[5]], false));
+  await viewport.nextFrame();
+  const hideMs = performance.now() - hideStart;
+  const hidden = await snapshot();
+  const changedBy = (k: number, before: number[]) => Math.hypot(...hidden(screen(topOf(k))).map((c, i) => c - before[i]));
+  expect("hiding two blocks keeps the layer's mesh", viewport.triangleCount === triangles, { before: triangles, after: viewport.triangleCount, ms: Math.round(hideMs) });
+  expect(
+    'the hidden blocks, one of them selected, are gone and the others stand as they were',
+    changedBy(2, lit[1]) > 30 && changedBy(5, unlit[2]) > 30 && [1, 3].every((k, j) => changedBy(k, lit[[0, 2][j]]) < 6) && changedBy(0, unlit[0]) < 6,
+    { hidden: [2, 5].map((k) => hidden(screen(topOf(k)))), kept: [0, 1, 3].map((k) => hidden(screen(topOf(k)))) },
+  );
+  await show(await setObjectsVisible([cubes[2], cubes[5]], true));
+  const shownAgain = await snapshot();
+  expect('shown again, they come back', Math.hypot(...shownAgain(screen(topOf(2))).map((c, i) => c - lit[1][i])) < 6);
 
   // F frames what's selected; Shift+F everything.
   const ids = selection();

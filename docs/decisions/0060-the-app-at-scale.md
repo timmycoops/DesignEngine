@@ -1,6 +1,6 @@
 # 0060 — The app at scale: only what changed is sent
 
-Status: agreed 12 November 2026 (Tim: "Agree all four", the Build Plan's "App at scale plan" tab). Workstreams 1 and 2 of 4.
+Status: agreed 12 November 2026 (Tim: "Agree all four", the Build Plan's "App at scale plan" tab). Workstreams 1 to 3 of 4.
 
 ## Why
 
@@ -111,7 +111,46 @@ changed meanwhile applies nothing. A slice says how far it's got before each str
 run at a time, the words a waiting button and the status bar use. Not checked by hand in the app: the status bar,
 Cancel and the waiting buttons.
 
+## Workstream 3: hide and select without a mesh
+
+- **A layer's mesh holds every solid on it, hidden ones too, and each vertex says which solid it's of** (an `f32` a
+  vertex after the indices, with the solids' ids in the header, `render.rs`). The layer's key follows its solids'
+  geometry alone, so hiding or showing a solid no longer sends the layer's mesh again.
+- **A table beside the mesh, one texel a solid, says whether it's hidden and whether it's selected**
+  (`viewport/solidFlags.ts`). The shader reads it per vertex: a hidden solid's triangles fold to a point and draw
+  nothing. Hiding a solid or selecting a pit's worth of them changes a few bytes a solid, sent to the GPU only when
+  something changed.
+- **The highlight draws the layer's own geometry again**, over everything as before so a solid inside the pit still
+  shows, with all but the selected solids folded away by the same table. The copy of the selected solids the shell used
+  to make and send (`stage_solids`) is gone.
+- **A hide or show is told from the hidden sets.** It changes nothing but which objects are hidden, so the shell finds
+  the rows to send from the hidden set it last sent and the one now, not by walking every object. A layer turned on or
+  off goes the same way.
+- The section view still cuts only what's on show, so hiding a solid cuts the section's layer again, as before.
+
+Checked: in the shell, each vertex of three cubes names its cube, and a hide or show (a layer off, then one of its
+strings shown alone) sends the same rows as the full comparison would. In the release app, the select check on
+made-up blocks reads pixels: the selected blocks draw gold and the others don't; hiding a selected block and another
+leaves the mesh as it was, both go and the rest stand as they were; shown again, they come back. All of it passes on
+WebGPU and on WebGL2.
+
+Timed to the frame in the release app with `--bench --solids`, on the store bench's made-up 43,000 blocks written as a
+zip of solids:
+
+| Action | Before (main) | Now |
+|---|---|---|
+| Hide one block | 252 ms | 52 ms (11 ms in the shell), no mesh sent |
+| Show it again | 233 ms | 44 ms |
+| The layer off | 68 ms | 45 ms |
+| The layer off, then one block ticked on alone | 241 ms | 158 ms |
+| Every block shown again | 355 ms | 203 ms |
+| Click a block: lit up | 68 ms, a copy of it fetched | 57 ms, nothing fetched |
+
+Hiding one is 2 ms over its 50 ms target. Most of what's left is the app, not the shell: the panels take the whole
+project again after every change. A box selecting all 43,000 changes the same table, but it wasn't timed to the frame at
+this scale.
+
 ## Still to come
 
-The shell still builds the snap index and sends a layer's solids as one mesh after a change to one of them, and hiding a
-solid still sends its layer's mesh again: workstreams 3 (hide and select without a mesh) and 4 (plan tiles).
+A change to one solid still builds the layer's snap index again and sends the layer's mesh (1.5 s to move one block to
+another layer): workstream 4, plan tiles.

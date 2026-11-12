@@ -2,13 +2,14 @@
 // project summary. Geometry is fetched only when an object's geometry key changes, so a rename or a
 // layer toggle never refetches a large mesh. A seam model shows one horizon at a time, its roof
 // coloured by thickness; choosing another horizon reloads that model alone. A layer's solids draw as
-// one mesh, so a pit's tens of thousands of them are a few chunks; any change to one, hiding it included,
-// reloads the layer, and the old mesh stays up until the new one is ready. Anything else hidden on its
-// own is only switched off. How each one looks (by RL or its layer's colour, and how see-through) is
+// one mesh, so a pit's tens of thousands of them are a few chunks; a change to one's geometry reloads the
+// layer, and the old mesh stays up until the new one is ready. Hiding a solid or selecting it changes a
+// table beside the mesh, never the mesh (decision 0060). Anything else hidden on its own is only switched off. How each one looks (by RL or its layer's colour, and how see-through) is
 // uniforms on its material, so a change of look never refetches anything.
 import * as THREE from 'three/webgpu';
-import { type Contours, layerOpacityOf, lookOf, type ObjectSummary, type ProjectSummary, type StagedHorizon, stageLayerSolids, stageObject, stageSeamHorizon, stageSolids } from '../bridge';
+import { type Contours, layerOpacityOf, lookOf, type ObjectSummary, type ProjectSummary, type StagedHorizon, stageLayerSolids, stageObject, stageSeamHorizon } from '../bridge';
 import { colourOf, loadStaged, SELECTED } from './load';
+import type { SolidFlags } from './solidFlags';
 import { type Bands, bandsFor } from './rlColour';
 import type { Viewport } from './Viewport';
 
@@ -49,8 +50,8 @@ export class SceneSync {
   private selected: string[] = [];
   /** Surfaces, grids and seam horizons lit up in place, by id. */
   private lit = new Map<string, THREE.Group>();
-  /** The selected solids on show, as one copy over their layers' meshes, and what each was when it was made. */
-  private litSolids: { keys: string[]; group: THREE.Group } | null = null;
+  /** Each layer's selected solids drawn over everything, from its own geometry, by the `shown` key of its solids. */
+  private highlights = new Map<string, THREE.Group>();
   /** The seam models on show changed: one loaded or hidden, or a new name or horizon. */
   onSeams?: (showing: SeamShown[]) => void;
   /** What's coloured by RL on show changed, or its bands did. */
@@ -113,6 +114,7 @@ export class SceneSync {
     this.viewport.originZ = summary.origin?.[2] ?? 0;
     for (const [id, shown] of this.shown) {
       if (keyOf(id) !== shown.key && !solids.has(id)) {
+        this.dropHighlight(id);
         this.viewport.removeMesh(shown.group);
         this.shown.delete(id);
         if (!wanted.has(id)) this.horizons.delete(id);
@@ -170,13 +172,16 @@ export class SceneSync {
       const staged = await stageLayerSolids(id);
       const { group } = await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined, byRl: false });
       group.visible = layer?.visible ?? true;
+      // The highlight drew the old mesh's geometry: it's made again from the new one below.
+      this.dropHighlight(solidsOf(id));
       if (shown) this.viewport.removeMesh(shown.group);
       this.shown.set(solidsOf(id), { key, group });
       loaded++;
     }
+    this.flagSolids(summary);
     this.reportSeams(summary);
     this.restyle(summary);
-    await this.light(summary, on).catch((e) => this.onError?.(String(e)));
+    this.light(summary);
     return loaded;
   }
 
@@ -228,10 +233,9 @@ export class SceneSync {
 
   /**
    * Brings the highlight in line with what is selected and how it is drawn now. A surface, grid or seam horizon
-   * glows in place. The solids draw as a copy over their layers' meshes, all of them as one, so a box over a pit's
-   * blocks is one fetch and one draw.
+   * glows in place; solids light up from their layer's table (`flagSolids`).
    */
-  private async light(summary: ProjectSummary, on: (o: ObjectSummary) => boolean): Promise<void> {
+  private light(summary: ProjectSummary): void {
     const ids = new Set(this.selected);
     const objects = summary.objects.filter((o) => ids.has(o.id));
     const glowing = new Map(objects.flatMap((o) => {
@@ -241,17 +245,41 @@ export class SceneSync {
     for (const [id, group] of this.lit) if (glowing.get(id) !== group) this.viewport.setLit(group, null);
     for (const [id, group] of glowing) if (this.lit.get(id) !== group) this.viewport.setLit(group, SELECTED);
     this.lit = glowing;
+  }
 
-    const solids = objects.filter((o) => o.kind === 'solid' && on(o));
-    const keys = solids.map((o) => `${o.id}:${o.geometry_key}`);
-    const was = this.litSolids;
-    if (was && was.keys.length === keys.length && was.keys.every((k, i) => k === keys[i])) return;
-    if (was) this.viewport.removeMesh(was.group);
-    this.litSolids = null;
-    if (solids.length === 0) return;
-    const staged = await stageSolids(solids.map((o) => o.id));
-    const { group } = await loadStaged(this.viewport, staged, { colour: SELECTED, over: true });
-    this.litSolids = { keys, group };
+  /**
+   * Each layer's table of solids, hidden and selected, as the summary and the selection have them, and its selected
+   * solids drawn over everything when it has any. A few bytes a solid change; the mesh doesn't.
+   */
+  private flagSolids(summary: ProjectSummary): void {
+    const picked = new Set(this.selected);
+    const layers = new Map(summary.layers.map((l) => [l.id, l]));
+    const tables = new Map<string, { group: THREE.Group; flags: SolidFlags }>();
+    for (const { layer: id } of summary.solid_layers) {
+      const group = this.shown.get(solidsOf(id))?.group;
+      const flags = group?.userData.flags as SolidFlags | null | undefined;
+      if (group && flags) tables.set(id, { group, flags });
+    }
+    // One pass over the rows: each solid's flags put in its layer's table.
+    for (const { flags } of tables.values()) flags.begin();
+    for (const o of summary.objects) if (o.kind === 'solid') tables.get(o.layer)?.flags.put(o.id, o.hidden, picked.has(o.id));
+    for (const [id, { group, flags }] of tables) {
+      flags.end();
+      const key = solidsOf(id);
+      let over = this.highlights.get(key);
+      if (!over && flags.selectedCount > 0) {
+        over = this.viewport.addSolidHighlight(group, SELECTED) ?? undefined;
+        if (over) this.highlights.set(key, over);
+      }
+      if (over) over.visible = flags.selectedCount > 0 && (layers.get(id)?.visible ?? true);
+    }
+  }
+
+  private dropHighlight(key: string): void {
+    const over = this.highlights.get(key);
+    if (!over) return;
+    this.viewport.removeSolidHighlight(over);
+    this.highlights.delete(key);
   }
 
   /** Tells the app which seam models are on show, under their current names, if that has changed. */
