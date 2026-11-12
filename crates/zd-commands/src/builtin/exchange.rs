@@ -425,7 +425,7 @@ impl Command for ExportSolids {
                 (*object, file, layer, k + 1)
             })
             .collect();
-        let written = super::in_parallel(&items, |(object, file, _, id)| {
+        let written = super::in_parallel_watched(inputs, "solids", &items, |(object, file, _, id)| {
             let Body::Solid(solid) = &object.body else { unreachable!("solids only") };
             // The layer in its file is the one thing a DXF's 3DFACEs carry into Deswik, which puts the solid on a layer
             // of that name under the file's: the solid's number, or its file's name.
@@ -436,7 +436,7 @@ impl Command for ExportSolids {
             let text = format_dxf(&[(layer_in_file.as_str(), DxfEntity::Mesh(solid.mesh()))]).map_err(|e| e.to_string())?;
             reads_back(solid, text.as_bytes(), &object.name)?;
             Ok::<Vec<u8>, String>(text.into_bytes())
-        });
+        })?;
 
         let keys: BTreeSet<&str> = objects.iter().flat_map(|o| o.attributes.keys()).collect();
         let mut csv = String::from("id,file,deswik_layer,name,layer,volume_m3,triangles,pieces");

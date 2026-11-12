@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 import { cn } from 'cn';
 import type { Note } from '../../bridge';
 import { NoteLine } from './NoteLine';
+import { useRunning } from './RunGoing';
+import { waitingOn } from '../../running';
 
 /**
  * The frame of every tool panel (UI plan, one way of working, item 2): what it does in a line at the top, its sections, and
@@ -9,12 +11,15 @@ import { NoteLine } from './NoteLine';
  * that button.
  */
 export function ToolPanel({ title, summary, children, result, action, panel }: { title: string; summary: ReactNode; children: ReactNode; result?: RunReport; action?: ToolAction; panel?: string }) {
+  // Another run going: this one waits, saying on what (decision 0060).
+  const going = useRunning();
+  const waiting = action && !action.busy ? waitingOn(going) : null;
   return (
     <div
       className="flex h-full flex-col text-xs"
       data-tool-panel={panel ?? title}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && action && !action.disabled && !action.busy) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && action && !action.disabled && !action.busy && !waiting) {
           e.preventDefault();
           void action.run();
         }
@@ -33,14 +38,14 @@ export function ToolPanel({ title, summary, children, result, action, panel }: {
               <button
                 type="button"
                 className="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-3 font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                disabled={action.disabled || action.busy}
-                title={action.title}
+                disabled={action.disabled || action.busy || waiting !== null}
+                title={waiting ?? action.title}
                 onClick={() => void action.run()}
               >
                 {action.icon}
                 {action.busy ? action.busyLabel ?? 'Working…' : action.label}
               </button>
-              <span className="text-muted-foreground">{action.hint ?? 'One undo · Ctrl+Enter'}</span>
+              <span className="text-muted-foreground">{waiting ?? action.hint ?? 'One undo · Ctrl+Enter'}</span>
             </div>
           )}
         </div>

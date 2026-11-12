@@ -66,7 +66,7 @@ import {
   withLooks,
 } from './bridge';
 import { runChecks } from './bench/runChecks';
-import { lookAt, ShowNote } from './design-system/kit';
+import { lookAt, RunGoing, ShowNote } from './design-system/kit';
 import { Button } from './design-system/ui/button';
 import {
   DropdownMenu,
@@ -1224,6 +1224,7 @@ export default function App() {
           <span className={cn('min-w-0 flex-1 truncate', status.error ? 'text-destructive' : 'text-muted-foreground')} title={status.text}>
             {status.text}
           </span>
+          <RunGoing />
           <span className="shrink-0 text-muted-foreground tabular-nums" title={backend}>
             {stats ? `${stats.fps.toFixed(0)} fps · ${stats.triangles.toLocaleString()} triangles` : '–'}
           </span>

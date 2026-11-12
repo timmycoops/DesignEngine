@@ -247,7 +247,7 @@ pub struct Layer {
 }
 
 /// One object revision, as a run record lists its inputs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ObjectRef {
     pub id: ObjectId,
     pub revision: u32,

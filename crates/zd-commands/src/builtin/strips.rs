@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, Object, ObjectId, ObjectKind, Solid, Surface, TriMesh};
-use zd_geom::{COINCIDENT, JoinLog, SliceRefusal, StripSlice, find_crossings, find_solid_crossings, join_faces, place, short_words, slice_solid_by_faces, solid_between, triangulate_grid};
+use zd_geom::{COINCIDENT, JoinLog, SliceRefusal, StripSlice, find_crossings, find_solid_crossings, join_faces, place, short_words, slice_solid_by_faces_watched, solid_between, triangulate_grid};
 
 use super::solid::checked_input;
 use super::surface::{default_tolerance, site};
@@ -309,14 +309,19 @@ impl Command for SliceByFaces {
         let face_refs: Vec<&TriMesh> = faces.iter().collect();
         let face_name = |k: usize| format!("{} face", strips[k].called(&p.attribute));
 
-        for (object, solid) in &solids {
+        let of = solids.len() * face_refs.len();
+        for (k, (object, solid)) in solids.iter().enumerate() {
             let start = Instant::now();
-            let slice = slice_solid_by_faces(solid.mesh(), &face_refs).map_err(|refusal| {
-                CommandError::Invalid(match refusal {
-                    SliceRefusal::Solid(e) => format!("'{}': {e}", object.name),
-                    SliceRefusal::Face { face, error } => format!("{} ({}): {error}", face_name(face), strips[face].names()),
-                    SliceRefusal::Short { face, end } => format!("{} ({}): {}", face_name(face), strips[face].names(), short_words(&end)),
-                })
+            // Strips counted over every solid, and stopped between one strip and the next when cancelled.
+            let watched = slice_solid_by_faces_watched(solid.mesh(), &face_refs, |done, _| {
+                inputs.progress(k * face_refs.len() + done, of, "strips");
+                inputs.stop_if_cancelled().is_ok()
+            });
+            let slice = watched.map_err(|refusal| match refusal {
+                SliceRefusal::Stopped => CommandError::Cancelled,
+                SliceRefusal::Solid(e) => CommandError::Invalid(format!("'{}': {e}", object.name)),
+                SliceRefusal::Face { face, error } => CommandError::Invalid(format!("{} ({}): {error}", face_name(face), strips[face].names())),
+                SliceRefusal::Short { face, end } => CommandError::Invalid(format!("{} ({}): {}", face_name(face), strips[face].names(), short_words(&end))),
             })?;
             let ms = start.elapsed().as_secs_f64() * 1e3;
             self.report(&mut outcome, object, solid.mesh(), &slice, &strips, &face_refs, ms, p)?;

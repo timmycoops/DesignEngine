@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -5,6 +6,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use zd_core::{Body, Change, Layer, LayerId, Object, ObjectId, ObjectKind, ObjectRef, Polyline, Project, Solid, Surface};
 
+use crate::control::RunControl;
 use crate::{Code, CommandError, CommandSpec, Note};
 
 /// One operation. Implementations are stateless: everything a run needs comes in `params` and
@@ -51,19 +53,42 @@ impl Outcome {
 }
 
 /// Read-only access to the project for a running command. It records every object revision the
-/// command reads, so the run record lists its real inputs.
+/// command reads, so the run record lists its real inputs. A long command also says through it how far it has got,
+/// and checks at each solid, strip or file whether it has been cancelled (decision 0060).
 pub struct Inputs<'a> {
     project: &'a Project,
-    read: Mutex<Vec<ObjectRef>>,
+    /// What it read, in order, and the same as a set: a run over 43,000 solids reads 43,000 of them.
+    read: Mutex<(Vec<ObjectRef>, HashSet<ObjectRef>)>,
+    control: Arc<RunControl>,
 }
 
 impl<'a> Inputs<'a> {
-    pub(crate) fn new(project: &'a Project) -> Self {
-        Inputs { project, read: Mutex::new(Vec::new()) }
+    pub(crate) fn new(project: &'a Project, control: Arc<RunControl>) -> Self {
+        Inputs { project, read: Mutex::new((Vec::new(), HashSet::new())), control }
+    }
+
+    /// Inputs for a run no one can cancel or watch, as in a test of a command's own.
+    pub fn of(project: &'a Project) -> Self {
+        Inputs::new(project, Arc::new(RunControl::new()))
+    }
+
+    /// How far the run has got: `done` of `total` `of` ("solids", "strips", "files").
+    pub fn progress(&self, done: usize, total: usize, of: &'static str) {
+        self.control.set(done, total, of);
+    }
+
+    /// One more done of the total last given, for work spread over threads.
+    pub fn step(&self) {
+        self.control.step();
+    }
+
+    /// Refuses the run if it has been cancelled: call it at each solid, strip or file, and pass the refusal on.
+    pub fn stop_if_cancelled(&self) -> Result<(), CommandError> {
+        if self.control.is_cancelled() { Err(CommandError::Cancelled) } else { Ok(()) }
     }
 
     pub(crate) fn into_read(self) -> Vec<ObjectRef> {
-        self.read.into_inner().expect("reads aren't left half done")
+        self.read.into_inner().expect("reads aren't left half done").0
     }
 
     /// A layer by name, which must exist.
@@ -82,8 +107,8 @@ impl<'a> Inputs<'a> {
         let object = self.project.object(id).ok_or(CommandError::MissingObject(id))?;
         let reference = ObjectRef { id, revision: object.revision };
         let mut read = self.read.lock().expect("reads aren't left half done");
-        if !read.contains(&reference) {
-            read.push(reference);
+        if read.1.insert(reference) {
+            read.0.push(reference);
         }
         Ok(object)
     }

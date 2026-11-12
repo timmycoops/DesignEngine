@@ -8,7 +8,7 @@ use zd_core::{Attributes, Body, Change, Grid, GridLink, Horizon, IssueKind, Latt
 use zd_geom::{StackHorizon, check_seam_stack, suggest_no_seam_rl, suggest_seam_tree};
 use zd_io::{DefinedHorizon, LinkCheck, SeamDefinition, check_links, fingerprint_file, read_linked_grid, read_linked_surface, read_seam_definition, read_vulcan_grid, vulcan_grid_name, write_seam_definition};
 
-use super::in_parallel;
+use super::in_parallel_watched;
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Place};
 
 fn default_tolerance() -> f64 {
@@ -65,7 +65,7 @@ impl Command for SuggestSeamDefinition {
         }
     }
 
-    fn run(&self, _inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let start = Instant::now();
         let out = Path::new(&p.path);
         if out.exists() && !p.overwrite {
@@ -100,7 +100,7 @@ impl Command for SuggestSeamDefinition {
 
         let codes: Vec<&String> = seams.keys().collect();
         let paths: Vec<PathBuf> = codes.iter().flat_map(|c| ["sr", "sf"].map(|v| dir.join(&seams[*c][v]))).collect();
-        let read = in_parallel(&paths, |path| read_vulcan_grid(path).map(|g| g.grid));
+        let read = in_parallel_watched(inputs, "grids", &paths, |path| read_vulcan_grid(path).map(|g| g.grid))?;
         let mut messages = Vec::new();
         let mut usable: Vec<(usize, Grid, Grid)> = Vec::new();
         let mut pairs = read.into_iter();
@@ -229,7 +229,7 @@ impl Command for BuildSeamModel {
         }
     }
 
-    fn run(&self, _inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         if !(p.tolerance.is_finite() && p.tolerance >= 0.0) {
             return Err(CommandError::Invalid("tolerance must be zero or more".into()));
         }
@@ -251,10 +251,10 @@ impl Command for BuildSeamModel {
                     .map(move |(v, f, keep)| (i, v, f.clone(), keep))
             })
             .collect();
-        let read = in_parallel(&jobs, |(_, _, file, keep)| {
+        let read = in_parallel_watched(inputs, "grids", &jobs, |(_, _, file, keep)| {
             let linked = if *keep { read_linked_surface(&definition.path(file)) } else { read_linked_grid(&definition.path(file)) };
             linked.map(|g| (g.fingerprint, Lattice::from(&g.grid), g.note, keep.then_some(g.grid)))
-        });
+        })?;
         let read_ms = start.elapsed().as_secs_f64() * 1e3;
 
         // The model's lattice is the first roof's that reads; every grid must be on it.
@@ -525,7 +525,7 @@ impl Command for RelinkSeamModels {
                 }
             }
         }
-        let found = in_parallel(&jobs, |(_, _, path)| fingerprint_file(path).ok());
+        let found = in_parallel_watched(inputs, "files", &jobs, |(_, _, path)| fingerprint_file(path).ok())?;
         let missing: Vec<String> = jobs.iter().zip(&found).filter(|(_, f)| f.is_none()).map(|((_, _, path), _)| path.to_string_lossy().into_owned()).collect();
         if !missing.is_empty() {
             return Err(CommandError::Invalid(format!("{} of {} grid files aren't in {}, so nothing was relinked: {}", missing.len(), jobs.len(), p.to, listed(&missing))));

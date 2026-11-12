@@ -138,7 +138,8 @@ struct Transaction {
 const LAYER_COLOURS: [[u8; 3]; 6] =
     [[168, 145, 107], [91, 107, 125], [140, 154, 166], [201, 162, 39], [111, 143, 95], [176, 96, 80]];
 
-#[derive(Debug, Default)]
+/// Cloned only to change a project a run is still reading (decision 0060), which the app doesn't do.
+#[derive(Debug, Default, Clone)]
 pub struct Project {
     layers: Vec<Layer>,
     histories: HashMap<ObjectId, Vec<Entry>>,

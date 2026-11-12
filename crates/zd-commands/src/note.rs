@@ -61,6 +61,8 @@ codes! {
     RefusedIo = "refused.io", "A file couldn't be read or written";
     RefusedProject = "refused.project", "The project refused the changes, as for a stale input or a layer that exists";
     RefusedStore = "refused.store", "The project file couldn't be opened or saved";
+    RefusedCancelled = "refused.cancelled", "Cancelled by whoever started it, with nothing applied";
+    RefusedChanged = "refused.changed", "The project changed while the run read it, so nothing was applied";
 
     WallNoHeight = "wall.no_height", "A wall or berm whose target is on or past its line, so it has no height there";
     WallNoTarget = "wall.no_target", "A wall with no target under it, so the gap was bridged";

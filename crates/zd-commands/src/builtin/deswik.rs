@@ -10,7 +10,7 @@ use zd_core::{AttrValue, Attributes, Body, Change, Surface, TriMesh};
 use zd_geom::repair_mesh;
 use zd_io::{DESWIK_LEVELS, DeswikLog, DeswikMesh, read_deswik_layers};
 
-use super::in_parallel;
+use super::in_parallel_watched;
 use super::solid::{Cleaning, Welded, ImportTally, ImportedSolid, NOT_A_SOLID, VOLUME_AGREES, default_fill_limit, first_open_edge, solid_from_welded, weld_as_needed};
 use super::surface::{check_crossings, default_tolerance, describe_repair, mesh_notes, site};
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome};
@@ -84,7 +84,7 @@ impl Command for ImportDeswik {
         }
     }
 
-    fn run(&self, _inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let cleaning = Cleaning { weld_tolerance: p.weld_tolerance, repair: p.repair, fill_limit: p.fill_limit }.checked()?;
         let start = Instant::now();
         let drawing = read_deswik_layers(Path::new(&p.path), &p.layers).map_err(|e| CommandError::Io(format!("{}: {e}", p.path)))?;
@@ -116,7 +116,7 @@ impl Command for ImportDeswik {
         } else {
             &drawing.meshes
         };
-        let made = in_parallel(meshes, |m| import_mesh(&m.mesh, &m.layer, "Deswik", p.meshes, cleaning, false));
+        let made = in_parallel_watched(inputs, "meshes", meshes, |m| import_mesh(&m.mesh, &m.layer, "Deswik", p.meshes, cleaning, false))?;
         let few = meshes.len() <= LINES_PER_MESH_UP_TO;
         let mut tally = ImportTally::default();
         let mut surfaces = SurfaceTally::default();

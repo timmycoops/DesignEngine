@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use zd_commands::Session;
+use zd_commands::{RunControl, Session};
 use zd_core::{AttrValue, Body, LayerId, Object, ObjectId, Project, TriMesh};
 use zd_geom::{GeomError, SurfaceRayCaster};
 
@@ -51,6 +51,25 @@ pub struct AppInner {
     pub sent: Sent,
     /// Which session's run log the app is sent: a new one with each project opened or started.
     pub log_session: u64,
+    /// The run going, if one is: one at a time, and nothing else changes the project until it ends (decision 0060).
+    pub running: Option<Running>,
+}
+
+/// A run going off the lock: what it is, since when, and how to watch and stop it.
+pub struct Running {
+    pub command: String,
+    pub started: std::time::Instant,
+    pub control: Arc<RunControl>,
+}
+
+impl AppInner {
+    /// Refuses a change to the project while a run goes: it would make the run's work stale (decision 0060).
+    pub fn idle(&self) -> Result<(), String> {
+        match &self.running {
+            Some(r) => Err(format!("Waiting on {}: the project can't change until it's done", r.command)),
+            None => Ok(()),
+        }
+    }
 }
 
 /// A number no session's log has had before, in this run of the app.
@@ -62,7 +81,7 @@ fn next_log_session() -> u64 {
 impl AppInner {
     pub fn new(session: Session, path: Option<PathBuf>) -> Self {
         let locked_by = session.locked_by();
-        AppInner { session, path, locked_by, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), section_meshes: SectionMeshes::new(), section_inputs: None, section_cut: None, sent: Sent::default(), log_session: next_log_session() }
+        AppInner { session, path, locked_by, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), section_meshes: SectionMeshes::new(), section_inputs: None, section_cut: None, sent: Sent::default(), log_session: next_log_session(), running: None }
     }
 
     pub fn handle(&mut self) -> u32 {
