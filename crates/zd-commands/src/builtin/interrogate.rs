@@ -418,7 +418,7 @@ impl Command for Interrogate {
 /// Whether a block's seam names this horizon: its code (`seam1`), or its grids' name with the mine code still in front
 /// (`grnseam1`, from `grnseam1.srg`), case aside. Grids are named `<mine code><seam>.<variable>g`, and the definition takes
 /// the mine code off to give the code.
-fn names_seam(horizon: &zd_core::Horizon, named: &str) -> bool {
+pub fn names_seam(horizon: &zd_core::Horizon, named: &str) -> bool {
     let stem = |file: &str| {
         let name = std::path::Path::new(file).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         name.rsplit_once('.').map_or(name.clone(), |(stem, _)| stem.to_string())

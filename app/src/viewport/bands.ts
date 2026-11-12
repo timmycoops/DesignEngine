@@ -59,3 +59,36 @@ export function bandsFor(low: number, high: number, originZ: number, interval: n
   const last = Math.max(Math.floor((high + ON_EDGE) / step) + 1, first + 1);
   return { base: first * step - originZ, interval: step, count: last - first, low: first * step, high: last * step };
 }
+
+/** About this many bands at most over a grid's values. */
+const MOST_VALUE_BANDS = 12;
+
+/** A round step (1, 2 or 5 times a power of ten, as small as needed) giving at most 12 bands over `span`. */
+export function valueStep(span: number): number {
+  if (!(span > 0)) return 1;
+  for (let power = 10 ** Math.floor(Math.log10(span / MOST_VALUE_BANDS)); ; power *= 10) {
+    for (const step of [1, 2, 5]) {
+      if (span / (step * power) <= MOST_VALUE_BANDS) return step * power;
+    }
+  }
+}
+
+/**
+ * Bands over a grid's values, ash or RD, from `low` to `high` in the value's own units (decision 0061, workstream 6):
+ * the grid's contours and the colour of a block of that seam come from the same bands, so a block reads against the
+ * contours round it. A value on an edge is in the band above it, to a millionth of a step.
+ */
+export function valueBands(low: number, high: number): Bands {
+  const step = valueStep(high - low);
+  const onEdge = step * 1e-6;
+  const first = Math.floor((low + onEdge) / step);
+  const last = Math.max(Math.floor((high + onEdge) / step) + 1, first + 1);
+  return { base: first * step, interval: step, count: last - first, low: first * step, high: last * step };
+}
+
+/** The band a value falls in, from 0, or null if it's outside them or isn't a number. */
+export function bandOf(value: number | undefined, bands: Bands): number | null {
+  if (value === undefined || !Number.isFinite(value)) return null;
+  const band = Math.floor((value - bands.base + bands.interval * 1e-6) / bands.interval);
+  return band >= 0 && band < bands.count ? band : null;
+}

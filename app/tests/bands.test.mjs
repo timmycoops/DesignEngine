@@ -160,3 +160,19 @@ test('a shared range puts the same RL in the same band on every surface', () => 
   assert.equal(shared.interval, 10);
   assert.equal(at140, (140 - 80) / 10);
 });
+
+test('a grid of ash or RD takes round bands in its own units, and a block its band by the same edges', async () => {
+  const { valueBands, valueStep, bandOf } = await import('../src/viewport/bands.ts');
+  assert.equal(valueStep(6), 0.5, 'ash 10 to 16 %: half a per cent');
+  assert.equal(valueStep(0.2), 0.02, 'RD 1.35 to 1.55: 0.02');
+  const ash = valueBands(10.2, 15.9);
+  assert.deepEqual([ash.base, ash.interval, ash.count], [10, 0.5, 12]);
+  assert.equal(bandOf(10.2, ash), 0);
+  assert.equal(bandOf(12.5, ash), 5, 'on an edge, in the band above it');
+  assert.equal(bandOf(15.9, ash), 11);
+  assert.equal(bandOf(17, ash), null);
+  assert.equal(bandOf(Number.NaN, ash), null);
+  const rd = valueBands(1.35, 1.55);
+  assert.equal(rd.interval, 0.02);
+  assert.equal(bandOf(1.45, rd), 5, '1.45 a hair under its edge in floating point still goes up');
+});

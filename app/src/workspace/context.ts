@@ -55,8 +55,15 @@ export interface Workspace {
   /** A layer's own line weight in the section (px), or null for the defaults. Display only. */
   lineWeight: (layer: string) => number | null;
   setLineWeight: (layer: string, px: number | null) => void;
-  /** Shows another horizon of a seam model. Display only: not a command, not undone. */
-  showSeamHorizon: (id: string, horizon: string) => void;
+  /** Shows another horizon of a seam model, by its thickness or one of its grids. Display only: not a command, not undone. */
+  showSeamHorizon: (id: string, horizon: string, variable?: string | null) => void;
+  /**
+   * Colours the blocks of a seam model's horizon on show by their value of the grid it's coloured by, on the grid's own
+   * bands, to check them by eye against its contours (decision 0061); with null, by their layers again. Display only.
+   */
+  colourSeamBlocks: (seamView: SeamShown | null) => void;
+  /** Which horizon's grid the blocks are coloured by, as `model#horizon#variable`, or null. */
+  blocksColouredBy: string | null;
   /** Shows the horizon an issue is on and flies the view to its worst node. */
   focusIssue: (id: string, horizon: string, issue: number) => void;
   /** Marks crossing sites (world coordinates) in the viewport, replacing any marked; [] clears them. */

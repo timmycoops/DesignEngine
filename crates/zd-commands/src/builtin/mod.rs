@@ -25,7 +25,7 @@ pub use deswik::{ImportDeswik, ImportDeswikParams, MeshesAs};
 pub use exchange::{ExportCsv, ExportDxf, ExportParams, ExportSolids, ExportSolidsParams, ImportStrings, ImportStringsParams, LayerInFile};
 pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParams, SaveDesign, SaveDesignParams, Step, StepParams};
 pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
-pub use interrogate::{COLUMN_VOLUME, INTERROGATED, Interrogate, InterrogateParams};
+pub use interrogate::{COLUMN_VOLUME, INTERROGATED, Interrogate, InterrogateParams, names_seam};
 pub use layer::{CreateLayer, CreateLayerParams, DeleteLayer, DeleteLayerParams, RecolourLayer, RecolourLayerParams, RenameLayer, RenameLayerParams};
 pub use object::{DeleteObject, DeleteObjects, MoveObjects, MoveObjectsParams, ObjectParams, ObjectsParams, RenameObject, RenameParams};
 pub use seam::{BuildSeamModel, BuildSeamModelParams, ModelLinks, RelinkParams, RelinkSeamModels, SuggestSeamDefinition, SuggestSeamDefinitionParams, seam_links};

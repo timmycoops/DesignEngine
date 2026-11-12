@@ -7,6 +7,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioG
 import { css, ISSUE, NO_COAL, rampCss } from '@/viewport/ramp';
 import { type Bands, INTERVALS, rlColour, rlRampCss } from '@/viewport/rlColour';
 import { DEFAULT_CONTOURS, type SeamShown } from '@/viewport/sceneSync';
+import { valueBands } from '@/viewport/bands';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
 
@@ -122,11 +123,19 @@ function RlLegend() {
   );
 }
 
-/** A seam model's horizon on show: which one (and a picker for the others), the thickness ramp, and its issues. */
+/**
+ * A seam model's horizon on show: which one (and a picker for the others), what it's coloured by, its thickness ramp or
+ * one of its grids' bands, and its issues. Coloured by a grid, the seam's blocks can take their own values' colours on the
+ * same bands, to check them by eye against the contours (decision 0061, workstream 6).
+ */
 function SeamLegend({ seamView }: { seamView: SeamShown }) {
-  const { showSeamHorizon, select } = useWorkspace();
+  const { showSeamHorizon, select, colourSeamBlocks, blocksColouredBy } = useWorkspace();
   const r = seamView.result;
-  const material = (r.horizons.find((h) => h.code === r.horizon)?.material ?? 'coal').toLowerCase();
+  const here = r.horizons.find((h) => h.code === r.horizon);
+  const material = (here?.material ?? 'coal').toLowerCase();
+  const variables = here?.variables ?? [];
+  const bands = r.variable ? valueBands(r.value_range[0], r.value_range[1]) : null;
+  const blocksOn = blocksColouredBy === `${seamView.id}#${r.horizon}#${r.variable}`;
   return (
     <div className="shrink-0 rounded-md border bg-card/90 p-2 text-xs shadow-md backdrop-blur-sm">
       <div className="flex items-center gap-1">
@@ -141,7 +150,7 @@ function SeamLegend({ seamView }: { seamView: SeamShown }) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="max-h-80 overflow-auto">
             {r.horizons.map((h) => (
-              <DropdownMenuItem key={h.code} onSelect={() => showSeamHorizon(seamView.id, h.code)}>
+              <DropdownMenuItem key={h.code} onSelect={() => showSeamHorizon(seamView.id, h.code, h.variables.includes(r.variable ?? '') ? r.variable : null)}>
                 {h.code}
                 {!h.working && <span className="text-muted-foreground">parent</span>}
               </DropdownMenuItem>
@@ -149,15 +158,53 @@ function SeamLegend({ seamView }: { seamView: SeamShown }) {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <p className="mt-1 text-muted-foreground">Roof coloured by {material === 'coal' ? 'seam' : material} thickness</p>
-      <div className="mt-1 h-2.5 rounded-sm" style={{ background: rampCss() }} />
-      <div className="flex justify-between text-muted-foreground tabular-nums">
-        <span>0 m</span>
-        <span>{fmt(r.thickness_max, 2)} m</span>
+      <div className="mt-1 flex items-center gap-1">
+        <span className="text-muted-foreground">Roof coloured by</span>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-6 gap-1 px-2 text-xs" aria-label="What the horizon is coloured by">
+              {r.variable ?? 'thickness'} <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onSelect={() => showSeamHorizon(seamView.id, r.horizon, null)}>thickness</DropdownMenuItem>
+            {variables.map((v) => (
+              <DropdownMenuItem key={v} onSelect={() => showSeamHorizon(seamView.id, r.horizon, v)}>
+                {v}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
+      {bands ? (
+        <>
+          <div className="mt-1 flex h-2.5 overflow-hidden rounded-sm">
+            {Array.from({ length: bands.count }, (_, k) => (
+              <div key={k} className="flex-1" style={{ background: css(rlColour((k + 0.5) / bands.count).map(Math.round) as [number, number, number]) }} />
+            ))}
+          </div>
+          <div className="flex justify-between text-muted-foreground tabular-nums">
+            <span>{fmt(bands.low, 3)}</span>
+            <span>every {fmt(bands.interval, 3)}</span>
+            <span>{fmt(bands.high, 3)}</span>
+          </div>
+          <label className="mt-1 flex items-center gap-1.5" title="Each block whose seam is this horizon, coloured by its own interrogated value on these bands: a block that doesn't match the contours round it stands out">
+            <Checkbox checked={blocksOn} onCheckedChange={(on) => colourSeamBlocks(on === true ? seamView : null)} aria-label="Colour this seam's blocks by their value" />
+            Colour {r.horizon}'s blocks by their {r.variable}
+          </label>
+        </>
+      ) : (
+        <>
+          <div className="mt-1 h-2.5 rounded-sm" style={{ background: rampCss() }} />
+          <div className="flex justify-between text-muted-foreground tabular-nums">
+            <span>0 m</span>
+            <span>{fmt(r.thickness_max, 2)} m</span>
+          </div>
+        </>
+      )}
       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
         <Swatch colour={css(NO_COAL)} label={`No ${material} · ${fmt((100 * (r.nodes - r.coal_nodes)) / Math.max(r.nodes, 1), 1)}%`} />
-        <Swatch colour={css(ISSUE)} label={`Issue · ${fmt(r.flagged_nodes)} nodes`} />
+        {!r.variable && <Swatch colour={css(ISSUE)} label={`Issue · ${fmt(r.flagged_nodes)} nodes`} />}
       </div>
       {r.changed.length > 0 && (
         <p className="mt-1 text-destructive" title={r.changed.join('\n')}>

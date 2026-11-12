@@ -32,6 +32,7 @@ import {
 import { cn } from 'cn';
 import {
   benchConfig,
+  blockValues,
   buildSnapIndex,
   type Colouring,
   type Contours,
@@ -67,6 +68,7 @@ import {
   withLooks,
 } from './bridge';
 import { runChecks } from './bench/runChecks';
+import { valueBands } from './viewport/bands';
 import { lookAt, RunGoing, ShowNote } from './design-system/kit';
 import { Button } from './design-system/ui/button';
 import {
@@ -221,9 +223,37 @@ export default function App() {
     }
   }, []);
 
-  const showSeamHorizon = useCallback((id: string, code: string) => {
+  /** The blocks coloured by a seam grid's value, as `model#horizon#variable`. */
+  const [blocksColouredBy, setBlocksColouredBy] = useState<string | null>(null);
+
+  const showSeamHorizon = useCallback((id: string, code: string, variable: string | null = null) => {
     setStatus({ text: `Reading the grids for ${code}…` });
-    void syncRef.current?.showHorizon(id, code).then(() => setStatus({ text: `Showing ${code}, coloured by thickness` }));
+    // Blocks coloured by another grid's bands would no longer read against what's shown.
+    setBlocksColouredBy(null);
+    void syncRef.current?.colourBlocks(null);
+    void syncRef.current?.showHorizon(id, code, variable).then(() => setStatus({ text: `Showing ${code}, coloured by ${variable ?? 'thickness'}` }));
+  }, []);
+
+  const colourSeamBlocks = useCallback((view: SeamShown | null) => {
+    const r = view?.result;
+    if (!view || !r?.variable) {
+      setBlocksColouredBy(null);
+      void syncRef.current?.colourBlocks(null);
+      return;
+    }
+    const variable = r.variable;
+    void blockValues(view.id, r.horizon, 'seam', variable)
+      .then(async (pairs) => {
+        await syncRef.current?.colourBlocks({ values: new Map(pairs), bands: valueBands(r.value_range[0], r.value_range[1]) });
+        setBlocksColouredBy(`${view.id}#${r.horizon}#${variable}`);
+        setStatus({
+          text:
+            pairs.length === 0
+              ? `No blocks of ${r.horizon} have a ${variable}: interrogate them first (Reserves)`
+              : `${pairs.length} blocks of ${r.horizon} coloured by their ${variable}, on the grid's bands`,
+        });
+      })
+      .catch((e) => setStatus({ text: String(e), error: true }));
   }, []);
 
   /** Shows the horizon an issue is on and flies to its worst node. */
@@ -951,6 +981,8 @@ export default function App() {
       run,
       runRecord,
       seamViews,
+      colourSeamBlocks,
+      blocksColouredBy,
       sectionOpen,
       lineWeight: (layer) => sectionRef.current?.weightOf(layer) ?? null,
       setLineWeight: (layer, px) => sectionRef.current?.setWeight(layer, px),
@@ -967,7 +999,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, seamViews, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
+    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';

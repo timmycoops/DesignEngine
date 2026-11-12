@@ -33,6 +33,36 @@ pub async fn project_summary(state: State<'_, AppState>) -> Result<ProjectChange
     Ok(changes(&mut state.app.lock().unwrap(), true))
 }
 
+/// Each block of one seam with its value of an attribute, to colour it by against the seam's grid (decision 0061,
+/// workstream 6): the solids whose `seam_attribute` names `horizon` of `model`, as the interrogation matches them, and
+/// their `attribute` where it's a number.
+#[tauri::command]
+pub async fn block_values(model: ObjectId, horizon: String, seam_attribute: String, attribute: String, state: State<'_, AppState>) -> Result<Vec<(ObjectId, f64)>, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let object = project.object(model).ok_or("no such seam model")?;
+        let Body::SeamModel(m) = &object.body else { return Err(format!("'{}' is not a seam model", object.name)) };
+        let h = m.horizon(&horizon).ok_or_else(|| format!("no horizon '{horizon}' in '{}'", object.name))?;
+        let text = |v: &zd_core::AttrValue| match v {
+            zd_core::AttrValue::Text(t) => t.trim().to_string(),
+            zd_core::AttrValue::Number(n) => format!("{n}"),
+            zd_core::AttrValue::Bool(b) => b.to_string(),
+        };
+        Ok(project
+            .objects()
+            .filter(|o| matches!(o.body, Body::Solid(_)))
+            .filter(|o| o.attributes.get(&seam_attribute).is_some_and(|v| zd_commands::builtin::names_seam(h, &text(v))))
+            .filter_map(|o| match o.attributes.get(&attribute) {
+                Some(zd_core::AttrValue::Number(n)) if n.is_finite() => Some((o.id, *n)),
+                _ => None,
+            })
+            .collect())
+    })
+    .await?
+}
+
 /// One revision of an object and the run that wrote it.
 #[derive(Serialize)]
 pub struct RevisionSummary {
@@ -587,6 +617,10 @@ pub struct StagedHorizon {
     changed: Vec<String>,
     /// Every horizon, top first, to choose from.
     horizons: Vec<HorizonChoice>,
+    /// The grid the horizon is coloured by, by its code; none for its thickness.
+    variable: Option<String>,
+    /// The values the colours span: the thickness from 0, or the grid's lowest to highest where there's coal.
+    value_range: [f64; 2],
 }
 
 #[derive(Serialize)]
@@ -594,6 +628,8 @@ pub struct HorizonChoice {
     code: String,
     material: String,
     working: bool,
+    /// Its grids besides roof and floor, by code: what it can be coloured by.
+    variables: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -604,9 +640,10 @@ pub struct IssueMarker {
 }
 
 /// Reads a seam model's roofs and floors in place and stages one horizon's roof (the first working
-/// horizon if none is named) with its thickness per node, marking the nodes of blocking issues.
+/// horizon if none is named) with its thickness per node, marking the nodes of blocking issues; or, with `variable`, one of
+/// its grids per node where it holds coal, to check its blocks by eye against (decision 0061, workstream 6).
 #[tauri::command]
-pub async fn stage_seam_horizon(id: ObjectId, horizon: Option<String>, state: State<'_, AppState>) -> Result<StagedHorizon, String> {
+pub async fn stage_seam_horizon(id: ObjectId, horizon: Option<String>, variable: Option<String>, state: State<'_, AppState>) -> Result<StagedHorizon, String> {
     let (model, name, origin) = {
         let mut app = state.app.lock().unwrap();
         let origin = app.origin().unwrap_or([0.0; 3]);
@@ -619,7 +656,8 @@ pub async fn stage_seam_horizon(id: ObjectId, horizon: Option<String>, state: St
         None => model.working_section().next().or(model.horizons.first()).ok_or("the model has no horizons")?.code.clone(),
     };
     let title = name.clone();
-    let horizons = model.horizons.iter().map(|h| HorizonChoice { code: h.code.clone(), material: h.material.clone(), working: h.working }).collect();
+    let coloured_by = variable.clone();
+    let horizons = model.horizons.iter().map(|h| HorizonChoice { code: h.code.clone(), material: h.material.clone(), working: h.working, variables: h.grids.keys().cloned().collect() }).collect();
     let (buffer, triangles, staged_horizon, encode_ms) = blocking(move || -> Result<_, String> {
         let t = Instant::now();
         let index = model.horizons.iter().position(|h| h.code == code).ok_or_else(|| format!("no horizon '{code}' in the model"))?;
@@ -654,18 +692,40 @@ pub async fn stage_seam_horizon(id: ObjectId, horizon: Option<String>, state: St
                 Some(IssueMarker { issue, position: [x - origin[0], y - origin[1], z - origin[2]] })
             })
             .collect();
-        let values = NodeValues { name: "thickness", values: &thickness, flagged: &flags, range: [0.0, thickness_max] };
+        // A grid of the horizon, where it holds coal, in place of its thickness.
+        let chosen: Option<(String, Vec<f64>)> = match &variable {
+            None => None,
+            Some(v) => {
+                let link = model.horizons[index].grids.get(v).ok_or_else(|| format!("horizon '{code}' has no grid '{v}'"))?;
+                let grid = zd_io::read_linked_grid(&model.path(link)).map_err(|e| e.to_string())?.grid;
+                if !grid.same_lattice(roof) {
+                    return Err(format!("{v} of '{code}' isn't on the model's lattice"));
+                }
+                Some((v.clone(), grid.z.iter().zip(&thickness).map(|(z, t)| if t.is_nan() { f64::NAN } else { *z }).collect()))
+            }
+        };
+        let (shown, range): (&[f64], [f64; 2]) = match &chosen {
+            None => (&thickness, [0.0, thickness_max]),
+            Some((_, values)) => {
+                let live = values.iter().copied().filter(|z| z.is_finite());
+                let range = live.fold([f64::INFINITY, f64::NEG_INFINITY], |[lo, hi], z| [lo.min(z), hi.max(z)]);
+                (values, if range[0] <= range[1] { range } else { [0.0, 0.0] })
+            }
+        };
+        // A grid's own values carry no issues to mark: the stack's are on the thickness.
+        let no_flags = vec![false; shown.len()];
+        let values = NodeValues { name: if chosen.is_some() { "variable" } else { "thickness" }, values: shown, flagged: if chosen.is_some() { &no_flags } else { &flags }, range };
         let header = serde_json::json!({ "id": 0, "name": format!("{title} {code}"), "timings": {} });
         let buffer = encode_grid_with(roof, Some(&values), origin, header);
         let triangles = 2 * (roof.cols - 1) * (roof.rows - 1);
-        let horizon = (code, thickness_max, thickness.iter().filter(|t| !t.is_nan()).count(), roof.z.len(), flags.iter().filter(|&&f| f).count(), markers, grids.changed);
+        let horizon = (code, thickness_max, thickness.iter().filter(|t| !t.is_nan()).count(), roof.z.len(), flags.iter().filter(|&&f| f).count(), markers, grids.changed, range);
         Ok((buffer, triangles, horizon, ms(t)))
     })
     .await??;
-    let (code, thickness_max, coal_nodes, nodes, flagged_nodes, markers, changed) = staged_horizon;
+    let (code, thickness_max, coal_nodes, nodes, flagged_nodes, markers, changed, value_range) = staged_horizon;
     let log = if changed.is_empty() { String::new() } else { format!("{} grid file(s) changed since the model was built", changed.len()) };
     let staged = stage(&state, buffer, format!("{name} {code}"), "grid", triangles, log, serde_json::json!({ "read_and_encode": encode_ms }));
-    Ok(StagedHorizon { staged, horizon: code, thickness_max, coal_nodes, nodes, flagged_nodes, markers, changed, horizons })
+    Ok(StagedHorizon { staged, horizon: code, thickness_max, coal_nodes, nodes, flagged_nodes, markers, changed, horizons, variable: coloured_by, value_range })
 }
 
 /// Generates a synthetic topography of `cells` x `cells` and stages it in the `grid` or

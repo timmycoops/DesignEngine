@@ -853,12 +853,24 @@ export interface StagedHorizon {
   markers: { issue: number; position: Vec3 }[];
   /** Grid files changed since the model was built. */
   changed: string[];
-  /** Every horizon, top first, to choose from. */
-  horizons: { code: string; material: string; working: boolean }[];
+  /** Every horizon, top first, to choose from, with the grids it can be coloured by. */
+  horizons: { code: string; material: string; working: boolean; variables: string[] }[];
+  /** The grid the horizon is coloured by, by its code; null for its thickness. */
+  variable: string | null;
+  /** The values the colours span. */
+  value_range: [number, number];
 }
 
-/** Reads a seam model's grids in place and stages one horizon (the first working one if none is named). */
-export const stageSeamHorizon = (id: string, horizon: string | null) => invoke<StagedHorizon>('stage_seam_horizon', { id, horizon });
+/**
+ * Reads a seam model's grids in place and stages one horizon (the first working one if none is named), coloured by its
+ * thickness or by one of its grids (decision 0061, workstream 6).
+ */
+export const stageSeamHorizon = (id: string, horizon: string | null, variable: string | null = null) =>
+  invoke<StagedHorizon>('stage_seam_horizon', { id, horizon, variable });
+
+/** Each block of one seam of a model with its value of an attribute: `[id, value]`. */
+export const blockValues = (model: string, horizon: string, seamAttribute: string, attribute: string) =>
+  invoke<[string, number][]>('block_values', { model, horizon, seamAttribute, attribute });
 
 export interface SnapIndex {
   ms: number;
