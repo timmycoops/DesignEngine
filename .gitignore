@@ -32,3 +32,5 @@ __pycache__/
 
 # Made by testdata/synthetic/grid_template.py
 testdata/synthetic/grids/
+# Made by testdata/synthetic/reserves_workflow.py
+testdata/synthetic/reserves/
