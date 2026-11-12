@@ -20,7 +20,7 @@ mod string;
 mod strips;
 mod surface;
 
-pub use blocks::{PolygonsFromLines, PolygonsFromLinesParams};
+pub use blocks::{CutByPolygons, CutByPolygonsParams, PolygonsFromLines, PolygonsFromLinesParams};
 pub use compare::{CompareSolids, CompareSolidsParams};
 pub use build::{BuildOp, BuildStep, BuildStepParams, Rebuild, RebuildParams};
 pub use deswik::{ImportDeswik, ImportDeswikParams, MeshesAs};
@@ -63,6 +63,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(OffsetString);
     registry.register(NumberStrings);
     registry.register(PolygonsFromLines);
+    registry.register(CutByPolygons);
     registry.register(DrapeString);
     registry.register(SetElevation);
     registry.register(ReverseString);

@@ -1,15 +1,19 @@
 //! Blocks (decision 0062). A block is a named polygon in plan, and a solid is cut vertically where it sits. The
 //! polygons are made the way a planner lays blocks out: a line across the strips offset every 100 m, lines drawn to close
-//! them, and a polygon made of each area they close (`string.polygons_from_lines`).
+//! them, and a polygon made of each area they close (`string.polygons_from_lines`). Each solid is then cut by each
+//! polygon's vertical prism (`solid.cut_by_polygons`), the piece taking the polygon's name as its block.
 
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{Attributes, Body, Change, ObjectId, ObjectKind, Polyline};
-use zd_geom::polygons_from_lines;
+use zd_core::{AttrValue, Attributes, Body, Change, Object, ObjectId, ObjectKind, Polyline, Solid};
+use zd_geom::{PolygonCut, cut_solid_by_polygons, find_solid_crossings, polygons_from_lines, polygons_overlapping};
 
-use super::surface::site;
-use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Place};
+use super::in_parallel_watched;
+use super::solid::checked_input;
+use super::surface::{default_tolerance as crossing_tolerance, site};
+use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Place, Severity};
 
 /// More joins or short ends than this and the run sums them up after listing the first ones.
 const LINES_UP_TO: usize = 10;
@@ -150,5 +154,304 @@ impl Command for PolygonsFromLines {
         }
         outcome.notes.extend(notes);
         Ok(outcome)
+    }
+}
+
+/// `solid.cut_by_polygons`: each solid cut vertically by each block polygon (decision 0062). A piece keeps its solid's
+/// attributes, takes the polygon's name as its block and any of the polygon's attributes the solid hasn't, and is named
+/// from a pattern of attributes. What lies outside every polygon is one remainder for each solid, on a layer of its own.
+/// Polygons that overlap are refused, as they'd count the overlap twice. The pieces and remainder add back to the solid,
+/// and any difference is said. The inputs are left as they are.
+pub struct CutByPolygons;
+
+fn default_block() -> String {
+    "block".into()
+}
+
+fn default_pattern() -> String {
+    "{strip}_{block}_{seam}".into()
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CutByPolygonsParams {
+    /// The solids to cut, each on its own.
+    pub solids: Vec<ObjectId>,
+    /// The block polygons: closed strings.
+    pub polygons: Vec<ObjectId>,
+    /// Layer for the blocks.
+    pub layer: String,
+    /// Layer for what lies outside every polygon; "<layer> outside" by default.
+    #[serde(default)]
+    pub outside_layer: Option<String>,
+    /// The attribute that takes each polygon's name; `block` by default.
+    #[serde(default = "default_block")]
+    pub attribute: String,
+    /// Each block's name: attributes in braces, `{solid}` the solid's name and `{polygon}` the polygon's; one a block
+    /// hasn't is left out with the separator before it. `{strip}_{block}_{seam}` by default.
+    #[serde(default = "default_pattern")]
+    pub name: String,
+}
+
+/// Overlaps smaller than this (m²) are a shared edge drawn twice, not an overlap.
+const OVERLAP: f64 = 0.01;
+
+/// A difference between the pieces and their solid within this share of its volume is rounding.
+const ADDS_UP: f64 = 1e-6;
+
+/// More blocks with one name than this, or solids outside every polygon, and the run sums them up.
+const NAMED_UP_TO: usize = 5;
+
+/// What separates the parts of a name.
+fn separator(c: char) -> bool {
+    "_- ".contains(c)
+}
+
+/// A value as it goes in a name: whole numbers without a decimal point.
+fn word(value: &AttrValue) -> String {
+    match value {
+        AttrValue::Number(n) if n.fract() == 0.0 && n.abs() < 1e15 => format!("{}", *n as i64),
+        AttrValue::Number(n) => n.to_string(),
+        AttrValue::Text(t) => t.trim().to_string(),
+        AttrValue::Bool(b) => b.to_string(),
+    }
+}
+
+/// The name from the pattern: each `{key}` its value; one with no value is left out with the separator before it.
+fn block_name(pattern: &str, attributes: &Attributes, solid: &str, polygon: &str) -> String {
+    let mut out = String::new();
+    let mut rest = pattern;
+    while let Some(open) = rest.find('{') {
+        let Some(close) = rest[open..].find('}') else { break };
+        let key = &rest[open + 1..open + close];
+        let value = match key {
+            "solid" => solid.to_string(),
+            "polygon" => polygon.to_string(),
+            _ => attributes.get(key).map(word).unwrap_or_default(),
+        };
+        let before = &rest[..open];
+        if value.is_empty() {
+            // Words before it stay; the separator just before it goes.
+            out.push_str(before.trim_end_matches(separator));
+        } else if out.is_empty() {
+            out.push_str(before.trim_start_matches(separator));
+            out.push_str(&value);
+        } else {
+            out.push_str(before);
+            out.push_str(&value);
+        }
+        rest = &rest[open + close + 1..];
+    }
+    out.push_str(rest);
+    let name = out.trim_matches(separator);
+    if name.is_empty() { format!("{solid} {polygon}") } else { name.to_string() }
+}
+
+/// A closed string's ring in plan, its last point dropped where it repeats the first.
+fn plan_ring(line: &Polyline) -> Vec<[f64; 2]> {
+    let mut ring: Vec<[f64; 2]> = line.vertices.iter().map(|v| [v[0], v[1]]).collect();
+    if ring.len() > 1 && ring.first() == ring.last() {
+        ring.pop();
+    }
+    ring
+}
+
+/// The first few names, quoted, and how many more.
+fn named(names: &[String]) -> String {
+    let first = names.iter().take(NAMED_UP_TO).map(|n| format!("'{n}'")).collect::<Vec<_>>().join(", ");
+    if names.len() > NAMED_UP_TO { format!("{first} and {} more", names.len() - NAMED_UP_TO) } else { first }
+}
+
+type Cut = (PolygonCut, Vec<Result<Solid, CommandError>>);
+
+impl Command for CutByPolygons {
+    type Params = CutByPolygonsParams;
+    const NAME: &'static str = "solid.cut_by_polygons";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Cut solids into blocks by polygons: a vertical cut where each polygon sits, the piece taking its name",
+            inputs: vec![Field::new("solids", FieldType::Objects, "The solids to cut, each on its own"), Field::new("polygons", FieldType::Objects, "The block polygons: closed strings")],
+            params: vec![
+                Field::new("layer", FieldType::Layer, "Layer for the blocks"),
+                Field::new("outside_layer", FieldType::Layer, "Layer for what lies outside every polygon; <layer> outside by default"),
+                Field::new("attribute", FieldType::Text, "The attribute taking each polygon's name; block by default"),
+                Field::new("name", FieldType::Text, "Each block's name from its attributes in braces; {strip}_{block}_{seam} by default"),
+            ],
+            outputs: vec![Field::new("blocks", FieldType::Objects, "Each solid's blocks in the polygons' order, then what's outside them")],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        if p.solids.is_empty() {
+            return Err(CommandError::Invalid("give the solids to cut".into()));
+        }
+        if p.polygons.is_empty() {
+            return Err(CommandError::Invalid("give the block polygons".into()));
+        }
+        if p.attribute.trim().is_empty() {
+            return Err(CommandError::Invalid("the block's name needs an attribute to go in".into()));
+        }
+        let mut notes = Vec::new();
+        let mut polygons: Vec<&Object> = Vec::new();
+        let mut rings = Vec::new();
+        let mut open = Vec::new();
+        for &id in &p.polygons {
+            if polygons.iter().any(|o| o.id == id) {
+                return Err(CommandError::Invalid(format!("polygon {id} is given twice")));
+            }
+            let (object, line) = inputs.string(id)?;
+            let ring = plan_ring(line);
+            if ring.len() < 3 {
+                return Err(CommandError::Invalid(format!("'{}' has fewer than three points in plan, so it closes no area", object.name)));
+            }
+            if !line.closed {
+                open.push(object.name.clone());
+            }
+            polygons.push(object);
+            rings.push(ring);
+        }
+        if !open.is_empty() {
+            let text = format!("{} open strings taken as closed, from their last point back to their first: {}", open.len(), named(&open));
+            notes.push(Note::new(Severity::Info, Some(Code::SolidOutlineOpen), text).measured(open.len() as f64, "strings"));
+        }
+        let overlaps = polygons_overlapping(&rings, OVERLAP);
+        if let Some(&(i, j, area, at)) = overlaps.first() {
+            let more = if overlaps.len() > 1 { format!(", and {} more pairs overlap", overlaps.len() - 1) } else { String::new() };
+            return Err(CommandError::Invalid(format!(
+                "'{}' and '{}' overlap by {area:.2} m² about {:.3} {:.3}, so a block there would be counted twice{more}: nothing cut",
+                polygons[i].name, polygons[j].name, at[0], at[1]
+            )));
+        }
+
+        let mut solids: Vec<(&Object, &Solid)> = Vec::new();
+        for &id in &p.solids {
+            if solids.iter().any(|(o, _)| o.id == id) {
+                return Err(CommandError::Invalid(format!("solid {id} is given twice")));
+            }
+            let (object, solid) = inputs.solid(id)?;
+            checked_input("solid", &object.name, solid.crossings(), solid.mesh(), true, &mut notes)?;
+            solids.push((object.as_ref(), solid));
+        }
+
+        let started = Instant::now();
+        let cuts = in_parallel_watched(inputs, "solids", &solids, |(object, solid)| -> Result<Cut, CommandError> {
+            let cut = cut_solid_by_polygons(solid.mesh(), &rings).map_err(|e| CommandError::Geometry(format!("'{}': {e}", object.name)))?;
+            // Each piece searched for crossings here, on its own thread, so the check after takes it as it is.
+            let made = cut
+                .pieces
+                .iter()
+                .chain(&cut.remainder)
+                .map(|piece| {
+                    let crossings = find_solid_crossings(&piece.mesh, crossing_tolerance());
+                    Solid::new(piece.mesh.clone()).map(|s| s.with_crossings(crossings)).map_err(CommandError::NotWatertight)
+                })
+                .collect();
+            Ok((cut, made))
+        })?;
+        let ms = started.elapsed().as_secs_f64() * 1000.0;
+
+        let outside_layer = p.outside_layer.clone().filter(|l| !l.trim().is_empty()).unwrap_or_else(|| format!("{} outside", p.layer));
+        let mut changes = Vec::new();
+        let mut names: BTreeMap<String, usize> = BTreeMap::new();
+        let (mut blocks, mut remainders) = (0, 0);
+        let mut wholly_outside = Vec::new();
+        let (mut worst, mut worst_of) = (0.0_f64, String::new());
+        let (mut volume_in, mut volume_blocks, mut volume_outside) = (0.0, 0.0, 0.0);
+        let (mut triangles_in, mut triangles_out) = (0, 0);
+        for ((object, solid), result) in solids.iter().zip(cuts) {
+            let (cut, made) = result?;
+            let mut made = made.into_iter();
+            triangles_in += solid.mesh().triangle_count();
+            volume_in += cut.input_volume;
+            let share = cut.difference().abs() / cut.input_volume.abs().max(f64::MIN_POSITIVE);
+            if share > worst {
+                worst = share;
+                worst_of = object.name.clone();
+            }
+            if share > ADDS_UP {
+                let text = format!("'{}': its blocks and remainder come to {:+.3} m³ against its {:.3} m³", object.name, cut.difference(), cut.input_volume);
+                notes.push(Note::warning(Code::BlockVolumeDiffers, text).on(object.id).measured(cut.difference(), "m3"));
+            }
+            for piece in &cut.pieces {
+                let solid = made.next().expect("a solid for each piece")?;
+                let polygon = polygons[piece.polygon];
+                let mut attributes = object.attributes.clone();
+                attributes.insert(p.attribute.clone(), AttrValue::Text(polygon.name.clone()));
+                for (key, value) in polygon.attributes.iter() {
+                    if !attributes.contains_key(key) {
+                        attributes.insert(key.to_string(), value.clone());
+                    }
+                }
+                let name = block_name(&p.name, &attributes, &object.name, &polygon.name);
+                *names.entry(name.clone()).or_default() += 1;
+                blocks += 1;
+                volume_blocks += piece.volume;
+                triangles_out += piece.mesh.triangle_count();
+                changes.push(Change::Create { name, layer: p.layer.clone(), attributes, body: Body::Solid(solid) });
+            }
+            if let Some(rest) = &cut.remainder {
+                let solid = made.next().expect("a solid for the remainder")?;
+                if cut.pieces.is_empty() {
+                    wholly_outside.push(object.name.clone());
+                }
+                remainders += 1;
+                volume_outside += rest.volume;
+                triangles_out += rest.mesh.triangle_count();
+                changes.push(Change::Create { name: format!("{} outside the polygons", object.name), layer: outside_layer.clone(), attributes: object.attributes.clone(), body: Body::Solid(solid) });
+            }
+        }
+        if blocks == 0 {
+            return Err(CommandError::Invalid(format!("none of the {} solids reaches into any of the {} polygons: nothing cut", solids.len(), polygons.len())));
+        }
+        if !wholly_outside.is_empty() {
+            let text = format!("{} lie outside every polygon: each kept whole on '{outside_layer}'", named(&wholly_outside));
+            notes.push(Note::warning(Code::SolidOutsidePolygons, text).measured(wholly_outside.len() as f64, "solids"));
+        }
+        let repeated: Vec<String> = names.iter().filter(|(_, n)| **n > 1).map(|(name, _)| name.clone()).collect();
+        if !repeated.is_empty() {
+            let sharing: usize = names.values().filter(|n| **n > 1).sum();
+            let text = format!("{sharing} blocks share {} names: {}. Block names should be unique: put an attribute that tells them apart in the name pattern", repeated.len(), named(&repeated));
+            notes.push(Note::warning(Code::BlockNameRepeated, text).measured(repeated.len() as f64, "names"));
+        }
+        let outside = if remainders > 0 { format!(" and {remainders} remainders outside them") } else { String::new() };
+        let mut outcome = Outcome::new(changes)
+            .message(format!("{} solids cut by {} polygons into {blocks} blocks{outside}, in {ms:.0} ms: {triangles_in} triangles in, {triangles_out} out", solids.len(), polygons.len()))
+            .message(format!("Volumes: {volume_in:.3} m³ in, {volume_blocks:.3} m³ in blocks, {volume_outside:.3} m³ outside the polygons"))
+            .message(if worst_of.is_empty() {
+                "Blocks and remainders add back to every solid exactly".to_string()
+            } else {
+                format!("Blocks and remainders add back to each solid within {worst:.1e} of its volume, the most for '{worst_of}'")
+            });
+        // Blocks in more than one part are said by the solid rules' check, which every run's solids go through.
+        outcome.notes.extend(notes);
+        Ok(outcome)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn attributes(pairs: &[(&str, AttrValue)]) -> Attributes {
+        let mut a = Attributes::new();
+        for (k, v) in pairs {
+            a.insert(k.to_string(), v.clone());
+        }
+        a
+    }
+
+    #[test]
+    fn names_come_from_the_pattern_and_leave_out_what_a_block_hasnt() {
+        let all = attributes(&[("strip", AttrValue::Number(5.0)), ("block", AttrValue::Text("B07".into())), ("seam", AttrValue::Text("U".into()))]);
+        assert_eq!(block_name("{strip}_{block}_{seam}", &all, "s", "p"), "5_B07_U");
+        let no_seam = attributes(&[("strip", AttrValue::Number(5.0)), ("block", AttrValue::Text("B07".into()))]);
+        assert_eq!(block_name("{strip}_{block}_{seam}", &no_seam, "s", "p"), "5_B07");
+        let no_strip = attributes(&[("block", AttrValue::Text("B07".into())), ("seam", AttrValue::Text("U".into()))]);
+        assert_eq!(block_name("{strip}_{block}_{seam}", &no_strip, "s", "p"), "B07_U");
+        assert_eq!(block_name("S{strip} {polygon} of {solid}", &all, "Pit strip 5", "Block 7"), "S5 Block 7 of Pit strip 5");
+        assert_eq!(block_name("{nothing}", &all, "s", "p"), "s p");
+        assert_eq!(word(&AttrValue::Number(2.5)), "2.5");
     }
 }
