@@ -18,8 +18,8 @@ Agreed with the plan, all as recommended:
    table, with CSV out (workstream 2; a new object kind).
 2. **A block's horizon is found by its geometry**: superseded the same day (below). A block is the coal of one seam.
 3. **Tonnes are in situ by Preston–Sanders**: superseded the same day (below). The interrogation gives the geology only.
-4. **Variables are sampled at the model's lattice nodes** inside each block, the block's volume at a node being its
-   thickness there times the cell's area. Exact partial cells are for the volume check.
+4. **Variables are sampled at the model's lattice nodes** inside each block: changed the same day (below) to exact partial
+   cells, as Vulcan does.
 5. **Spry's fields are matched to our codes by a CSV Tim edits**, kept with the project as the seam definition is.
    Field names stay on his machine.
 6. **Tolerances:** volume 0.1 %, tonnes 0.5 %, RD 0.005, a quality 0.05 in its own unit; each a parameter of the run.
@@ -60,50 +60,60 @@ And (Tim): a block is cut down to whatever size the reserve calls for; in a coal
 blocks, cut to the geological grids, is the simple standard most would use, so a block is about 60 × 100 m in plan. The
 tests' blocks are that size.
 
+And (Tim): the weighting depends on how large the grid's cells are against the block, and geological models are
+generally 25 m but vary; he is happy to follow Vulcan's logic to start with and tweak it later. At 25 m a 60 × 100 m
+block takes in 2 or 3 nodes across, so counting each node inside it with its whole cell is off by up to a quarter at its
+edges, and a block narrower than a cell can miss every node. So **each node's value holds over the cell centred on it,
+weighted by the block's exact volume inside that cell (exact partial cells)**: the shares add up to the block's volume
+wherever it sits and whatever the spacing, and a block smaller than a cell takes its node's value.
+
 Still open: whether PIT B's Spry project carries tonnes, RD and qualities for each block (it shapes only workstream 4),
 and how a block's seam is known.
 
-## Workstream 1 (this record's first PR): columns and averages
+## Workstream 1 (this record's first PR): cells and averages
 
 `zd-geom::reserves`, pure geometry and sums:
 
-- **`columns_in_solid`**: every lattice node a solid lies over, with where a vertical line through the node is inside
-  it, bottom first. Each face's plan is tested against the nodes in its box, its height at a node found from where the
-  node sits in it, and a face whose outward normal points down is entered going up. A node on the edge between two faces
-  in plan is counted once, by the top-left rule. A block whose sides stand on grid lines takes the nodes on its west and
-  north sides, not its east and south, so its nodes times the cell's area is its plan area. A column through a solid in
-  two pieces, one over the other, has two stretches. Faces standing straight up have no plan and are passed over.
-- **`solid_samples`**: the block's whole thickness at each node, which its seam's grids are averaged by.
-- **`horizon_samples`**: the columns between one horizon's floor and roof, node by node on the same lattice; a null roof
-  or floor holds none. Set against `solid_samples`, it says how much of a block lies in its seam.
-- **`composite`**: each variable averaged by its own weighting, the block's volume at each node times the variables it
-  names (`Variable::weight_by`); with the block's sampled volume and plan area. A
-  node is left out of a variable where it has no value for it or for one of its weights, and counted. Every node still
-  counts in the volume.
+- **`cells_in_solid`**: the block's volume in each node's cell, the cell centred on the node, and the plan area of its top
+  there. Each face is clipped to each cell it lies over (Sutherland and Hodgman), and the integral of its height over the
+  piece is added for a face that looks up and taken away for one that looks down, as a closed solid's volume is; the
+  cell's walls stand straight up and add nothing. Heights are taken from the solid's lowest point, so the sums aren't of
+  large RLs.
+- **`composite`**: each variable averaged by its own weighting, the block's volume in each node's cell times the
+  variables it names (`Variable::weight_by`), with the block's volume and plan area in its cells. A node is left out of a
+  variable where it has no value for it or for one of its weights, and counted. Every cell still counts in the volume.
+- **`columns_in_solid`** and **`horizon_samples`**: where a vertical line through each node is inside the block, and how
+  much of that lies between a seam's floor and roof, each node standing for its whole cell: a check that a block lies in
+  its seam, coarse where the grid is coarse against the block. A node on the edge between two faces in plan is counted
+  once, by the top-left rule.
 - **`in_situ_rd`**: `RD_is = RD_ad × (100 − M_ad) / (100 + RD_ad × (M_is − M_ad) − M_is)`, kept for a step after the
   interrogation.
 
-The block's volume of record stays its mesh's enclosed volume. These samples set the weights.
+The block's volume of record stays its mesh's enclosed volume, which its cells' shares add up to.
 
-Checked on made-up blocks at mine-grid coordinates, against answers worked by hand. Each block is 60 m across its
-strip and 100 m along it, the size a coal mine usually cuts a block to:
+Checked on made-up blocks at mine-grid coordinates, against answers worked by hand. Each block is 60 m across its strip
+and 100 m along it, the size a coal mine usually cuts a block to:
 
-- **A block 3 m thick, its sides on grid lines:** 240 nodes at 5 m, each with one stretch from RL 100 to 103, on its west
-  and north sides and not its east and south. 6,000 m² and 18,000 m³, as its mesh.
-- **Ash rising 0.1 % a metre east across it, by coal tonnes:** 13 %, its value at the middle, to a millionth.
-- **A wedge 3 to 8 m thick, RD 1.40 on its west half and 1.50 on its east, ash 10 % and 20 %:** RD by volume
-  16.075 / 11, and ash by coal tonnes 262 / 16.075.
+- **A block 3 m thick on 5 m cells half over its sides:** 13 × 21 cells, the side ones halved and the corners quartered,
+  adding to 18,000 m³ and 6,000 m², as its mesh. On cells whose edges run along its sides, 240 whole cells of 75 m³.
+- **On 25 m cells sitting anyhow against it:** 18,000 m³ and 6,000 m², and ash rising across it averaged by each cell's
+  share as worked from the cells' edges alone. A metre east, the same volume.
+- **A 10 m square within one 25 m cell:** one node, 300 m³, and that node's value.
+- **Ash rising 0.1 % a metre east, by coal tonnes:** 13 %, its value at the middle, whether the cells sit wholly in the
+  block or half over its sides.
+- **A wedge 3 to 8 m thick, RD 1.40 on its west half and 1.50 on its east, ash 10 % and 20 %:** 33,000 m³ in its cells, RD
+  by volume 16.075 / 11, and ash by coal tonnes 262 / 16.075.
 - **RD 1.4 and 1.6, CV 25 and 21 MJ/kg:** CV by coal tonnes 68.6 / 3, by volume alone 23, and by the RD and a weight
   grid together 103.6 / 4.4.
 - **Preston–Sanders:** RD 1.45 at 3 % air-dried and 8 % in situ gives 140.65 / 99.25 = 1.4171285. It is unchanged when
   the moistures are equal.
 - **How much of a block lies in a seam:** a block from RL 100 to 110 against seams meeting at 107 holds 18,000 m³ of
   one and 42,000 m³ of the other. Where a seam's roof is null, it holds none.
-- **The wedge:** 33,000 m³, as its mesh. Two 3 m pieces one over the other as one mesh: two stretches at every node,
-  36,000 m³.
+- **Two 3 m pieces one over the other as one mesh:** two stretches at every node, 36,000 m³ in its cells.
 - **Nodes with no RD or no value:** left out and counted (a quality by tonnes is left out where the RD is missing too),
   the volume whole.
-- **43,000 made-up blocks on a 10 m lattice:** 2,580,000 node columns in 285 ms on one thread (an ignored test).
+- **43,000 made-up blocks (ignored test), on one thread:** 731,000 cell shares in 534 ms on 25 m cells, and 3,311,000 in
+  2.3 s on 10 m cells, every block's volume whole.
 
 ## Still to come
 
