@@ -101,9 +101,9 @@ fn main() {
     project
         .apply(RunId::new(), vec![Change::Revise { id: block.id, base: block.revision, name: Some("block 0 moved".into()), layer: None, attributes: None, body: None }])
         .expect("renamed");
-    let changed = store.save(&Snapshot::of(&project), "[1]", true).expect("saved");
+    let changed = store.save(&Snapshot::of(&project), "[]", true).expect("saved");
     println!("save after one change: {:.0} ms, {} of {} entries encoded", changed.ms, changed.encoded, changed.entries);
-    let unchanged = store.save(&Snapshot::of(&project), "[1]", false).expect("saved");
+    let unchanged = store.save(&Snapshot::of(&project), "[]", false).expect("saved");
     assert!(unchanged.unchanged);
     println!("save with nothing changed: {:.0} ms, nothing written", unchanged.ms);
 }

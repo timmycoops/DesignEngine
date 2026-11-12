@@ -1,6 +1,7 @@
 // Hides the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod changes;
 mod commands;
 mod render;
 mod section;
@@ -29,6 +30,7 @@ fn main() {
             commands::set_layer_opacity,
             commands::set_contours,
             commands::run_log,
+            commands::objects_attributes,
             commands::deswik_layers,
             commands::spry_contents,
             commands::stage_object,
