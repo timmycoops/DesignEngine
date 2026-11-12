@@ -11,6 +11,7 @@ import { type Contours, layerOpacityOf, lookOf, type ObjectSummary, type Project
 import { colourOf, loadStaged, SELECTED } from './load';
 import type { SolidFlags } from './solidFlags';
 import { type Bands, bandsFor } from './rlColour';
+import { bandOf } from './bands';
 import type { Viewport } from './Viewport';
 
 interface Shown {
@@ -63,6 +64,10 @@ export class SceneSync {
   private latest: ProjectSummary | null = null;
   /** The horizon shown for each seam model: the first working one until another is chosen. */
   private horizons = new Map<string, string>();
+  /** The grid each seam model's horizon is coloured by, or none for its thickness. */
+  private variables = new Map<string, string>();
+  /** Blocks coloured by their value on a seam grid's bands, by id; or none. */
+  private blockBands: { values: Map<string, number>; bands: Bands } | null = null;
   private seams: SeamShown[] = [];
   private selected: string[] = [];
   /** Surfaces, grids and seam horizons lit up in place, by id. */
@@ -91,8 +96,19 @@ export class SceneSync {
   }
 
   /** Shows another horizon of a seam model. */
-  showHorizon(id: string, code: string): Promise<number> {
+  showHorizon(id: string, code: string, variable: string | null = null): Promise<number> {
     this.horizons.set(id, code);
+    if (variable) this.variables.set(id, variable);
+    else this.variables.delete(id);
+    return this.latest ? this.apply(this.latest) : Promise.resolve(0);
+  }
+
+  /**
+   * Colours blocks by their value on a seam grid's bands, the same the grid's contours are drawn in, so a block reads
+   * against the contours round it (decision 0061, workstream 6); or with null, by their layers again.
+   */
+  colourBlocks(coloured: { values: Map<string, number>; bands: Bands } | null): Promise<number> {
+    this.blockBands = coloured;
     return this.latest ? this.apply(this.latest) : Promise.resolve(0);
   }
 
@@ -126,7 +142,7 @@ export class SceneSync {
       if (solids.has(id)) return solids.get(id);
       const o = wanted.get(id);
       if (!o) return undefined;
-      return seam(o.kind) ? `${o.geometry_key}#${this.horizons.get(id) ?? ''}` : o.geometry_key;
+      return seam(o.kind) ? `${o.geometry_key}#${this.horizons.get(id) ?? ''}#${this.variables.get(id) ?? ''}` : o.geometry_key;
     };
     const on = (o: ObjectSummary) => (layers.get(o.layer)?.visible ?? true) && !o.hidden;
     // Before anything loads, so a surface's first frame has its bands on round RLs.
@@ -137,7 +153,10 @@ export class SceneSync {
         this.forgetTable(shown.group);
         this.viewport.removeMesh(shown.group);
         this.shown.delete(id);
-        if (!wanted.has(id)) this.horizons.delete(id);
+        if (!wanted.has(id)) {
+          this.horizons.delete(id);
+          this.variables.delete(id);
+        }
       }
     }
     let loaded = 0;
@@ -156,7 +175,7 @@ export class SceneSync {
       let view: SeamShown | undefined;
       if (seam(object.kind)) {
         try {
-          const result = await stageSeamHorizon(object.id, this.horizons.get(object.id) ?? null);
+          const result = await stageSeamHorizon(object.id, this.horizons.get(object.id) ?? null, this.variables.get(object.id) ?? null);
           this.horizons.set(object.id, result.horizon);
           group = (await loadStaged(this.viewport, result.staged)).group;
           view = { id: object.id, name: object.name, result };
@@ -296,7 +315,13 @@ export class SceneSync {
     }
     // One pass over the rows: each solid's flags put in its tile's table.
     for (const { flags } of tables.values()) flags.begin();
-    for (const o of summary.objects) if (o.kind === 'solid') this.tableOf.get(o.id)?.put(o.id, o.hidden, picked.has(o.id));
+    const coloured = this.blockBands;
+    for (const o of summary.objects) {
+      if (o.kind !== 'solid') continue;
+      const band = coloured ? bandOf(coloured.values.get(o.id), coloured.bands) : null;
+      this.tableOf.get(o.id)?.put(o.id, o.hidden, picked.has(o.id), band);
+    }
+    for (const { flags } of tables.values()) flags.bandCount.value = coloured?.bands.count ?? 1;
     for (const [key, { layer: id, group, flags }] of tables) {
       flags.end();
       let over = this.highlights.get(key);

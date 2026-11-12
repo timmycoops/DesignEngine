@@ -5,7 +5,8 @@ import type { DecodedMesh, Vec3 } from '../bridge';
 import { CameraController } from './camera';
 import { PointMark } from './markers';
 import { valueColours } from './ramp';
-import { type Bands, bandsFor, colourByRl, type RlUniforms, setBands } from './rlColour';
+import { type Bands, bandsFor, colourByRl, colourByValue, NO_VALUE, type RlUniforms, setBands } from './rlColour';
+import { valueBands } from './bands';
 import { SolidFlags } from './solidFlags';
 
 interface GpuAdapterLike {
@@ -83,6 +84,19 @@ export interface SurfaceLook {
 function lightUp(material: THREE.MeshStandardMaterial | THREE.MeshStandardNodeMaterial, colour: number | null): void {
   material.emissive.setHex(colour ?? 0x000000);
   material.emissiveIntensity = colour === null ? 1 : LIT;
+}
+
+/** A grid coloured by one of its values shows nodes with no value in this grey, as the thickness ramp does. */
+const NO_VALUE_GREY = 0x70747a;
+
+/** A grid's quantised values back as numbers, NO_VALUE where a node has none. */
+function nodeValues(values: Uint16Array, value: { min: number; step: number; null: number; flag: number }): Float32Array {
+  const out = new Float32Array(values.length);
+  for (let i = 0; i < values.length; i++) {
+    const q = values[i];
+    out[i] = q === value.null || q === value.flag ? NO_VALUE : value.min + q * value.step;
+  }
+  return out;
 }
 
 export class Viewport {
@@ -381,11 +395,13 @@ export class Viewport {
    */
   addMesh(decoded: DecodedMesh, release?: () => void, options: { colour?: number; over?: boolean; byRl?: boolean } = {}): THREE.Group {
     const { colour = SURFACE_COLOURS[this.surfaces.length % SURFACE_COLOURS.length], over = false } = options;
-    // A grid that carries values (seam thickness) is coloured by them, still shaded by the light.
+    // A grid that carries values is coloured by them, still shaded by the light: its thickness on the smooth ramp, or one
+    // of its grids (ash, RD) in bands with contour lines, to check blocks against by eye (decision 0061).
     const value = decoded.header.value;
+    const byValue = value?.name === 'variable';
     const material = new (over ? THREE.MeshStandardMaterial : THREE.MeshStandardNodeMaterial)({
       color: value ? 0xffffff : colour,
-      vertexColors: value !== undefined,
+      vertexColors: value !== undefined && !byValue,
       roughness: 0.92,
       metalness: 0,
       // A copy drawn over everything, as a selected string is, so a solid inside the pit still shows.
@@ -417,13 +433,21 @@ export class Viewport {
       rl.byRl.value = options.byRl === false ? 0 : 1;
       if (group.userData.zRange) setBands(rl, bandsFor(z[0] + this.originZ, z[1] + this.originZ, this.originZ, null), true);
       group.userData.rl = rl;
+      // A block with a band in its table takes that band's colour: a seam's blocks against its grid's contours.
+      if (flags) flags.colourByBand(material);
+    }
+    if (byValue && value && material instanceof THREE.MeshStandardNodeMaterial) {
+      const bands = valueBands(value.min, value.max);
+      setBands(colourByValue(material, NO_VALUE_GREY), bands, true);
+      group.userData.valueBands = bands;
     }
     // Grid tiles of one size share an index array; share the attribute so it uploads once.
     const indexAttributes = new Map<Uint16Array, THREE.BufferAttribute>();
     for (const chunk of decoded.chunks) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(chunk.positions, 3));
-      if (value && chunk.values) geometry.setAttribute('color', new THREE.BufferAttribute(valueColours(chunk.values, value), 3, true));
+      if (value && chunk.values && !byValue) geometry.setAttribute('color', new THREE.BufferAttribute(valueColours(chunk.values, value), 3, true));
+      if (value && chunk.values && byValue) geometry.setAttribute('value', new THREE.BufferAttribute(nodeValues(chunk.values, value), 1));
       if (chunk.solids) geometry.setAttribute('solid', new THREE.BufferAttribute(chunk.solids, 1));
       let index = indexAttributes.get(chunk.indices);
       if (!index) {

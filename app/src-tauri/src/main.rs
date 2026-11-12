@@ -41,6 +41,7 @@ fn main() {
             commands::objects_in_box,
             commands::section_lines,
             commands::stage_seam_horizon,
+            commands::block_values,
             commands::prepare_synthetic,
             commands::fetch_mesh_shared,
             commands::fetch_mesh_ipc,

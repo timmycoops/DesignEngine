@@ -163,6 +163,35 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
   const shownAgain = await snapshot();
   expect('shown again, they come back', Math.hypot(...shownAgain(screen(topOf(2))).map((c, i) => c - lit[1][i])) < 6);
 
+  // Blocks coloured by their value's band, as against a seam grid's contours (decision 0061): two blocks on bands 0 and 1
+  // of 2 through their tile's table, nothing else changed; then back.
+  // The blocks may lie in more than one plan tile: each tile's table takes the bands of its own.
+  const tables = viewport.content.children.map((g) => g.userData.flags as import('../viewport/solidFlags').SolidFlags | null | undefined).filter((f): f is import('../viewport/solidFlags').SolidFlags => !!f);
+  const setBands = (band: (k: number) => number | null, count: number) => {
+    for (const flags of tables) {
+      flags.begin();
+      for (const [k, id] of cubes.entries()) flags.put(id, false, false, band(k));
+      flags.end();
+      flags.bandCount.value = count;
+    }
+  };
+  if (tables.length > 0) {
+    const before = await snapshot();
+    const [b0, b4, b5] = [before(screen(topOf(0))), before(screen(topOf(4))), before(screen(topOf(5)))];
+    setBands((k) => (k === 0 ? 0 : k === 4 ? 1 : null), 2);
+    const banded = await snapshot();
+    const [c0, c4, c5] = [banded(screen(topOf(0))), banded(screen(topOf(4))), banded(screen(topOf(5)))];
+    const apart = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    expect(
+      "blocks on two bands take the bands' colours, the rest their own",
+      apart(c0, b0) > 20 && apart(c4, b4) > 20 && apart(c0, c4) > 20 && apart(c5, b5) < 6,
+      { band0: c0, band1: c4, unbanded: c5 },
+    );
+    setBands(() => null, 1);
+  } else {
+    expect("blocks on two bands take the bands' colours, the rest their own", false, 'no table on the blocks');
+  }
+
   // F frames what's selected; Shift+F everything.
   const ids = selection();
   const box = await objectsBounds(ids);

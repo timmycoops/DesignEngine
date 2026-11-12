@@ -1,7 +1,7 @@
 # 0061 — Interrogating a block: a thin reserves slice against the seam model
 
 Status: agreed 12 November 2026 (Tim: "Agree all seven", the Build Plan's "Reserves slice plan" tab), changed the same day
-as below. Workstreams 1 to 5 of 6.
+as below. All six workstreams.
 
 ## Why
 
@@ -251,7 +251,38 @@ What a run says shows in the panel's run result, coloured by severity, with Show
 
 Checked: the app's typecheck and tests. Not checked by hand in the app.
 
+## Workstream 6: the check by eye
+
+Tim: *"a contour of a grid and a colour of a block for the same seam."*
+
+- **A horizon coloured by one of its grids.** The seam legend in the viewport has **Roof coloured by**: the thickness, as
+  before, or any of the horizon's grids. A grid is drawn where the horizon holds coal, in round bands in its own units
+  (`valueBands`: 1, 2 or 5 times a power of ten, at most 12 bands, so ash from 10.2 to 15.9 % is 0.5 % a band and RD
+  0.02) with a contour line at each edge, in the shader that colours by RL, and grey where there's no value. The legend
+  shows the bands and the step.
+- **The seam's blocks on the same bands.** *Colour cu's blocks by their as* takes each block whose `seam` names the
+  horizon (`block_values`, matched as the interrogation matches them) and colours it by its own interrogated value, in the
+  band the grid's contours put that value in. The band goes in the block's tile's table beside hidden and selected
+  (0060), so nothing is sent but a byte a block; the shader takes the band's colour from the same ramp. Choosing another
+  horizon or grid puts the blocks back in their layers' colours.
+- A block's number is rounded where the shader reads its table per pixel: arriving interpolated, a solid's number could
+  read as the one before it.
+
+Checked:
+
+- **Bands:** ash from 10.2 to 15.9 % gives 12 bands of 0.5 % from 10; a value on an edge is in the band above; RD from
+  1.35 to 1.55 gives 0.02, and 1.45 lands in its band despite floating point (app tests).
+- **Blocks on bands, in the release app's select check:** two of six cubes put on bands 0 and 1 of 2 through their
+  tile's table take the two bands' colours, the rest keep their own, and they come back; on WebGPU and WebGL2. This
+  caught the interpolated number above.
+- **A grid in bands, in the release app with `--solids --seam`:** a made-up seam over the 43,000 made-up blocks, its ash
+  rising from 10 % in the west to 30 % in the east, drawn in plan by its ash: west, middle and east read as three
+  colours, its range 10 to 30.15.
+
+Not checked by hand: the legend's picker and its toggle, and blocks coloured from a real interrogation.
+
 ## Still to come
 
-Workstream 6: the check by eye, a seam's grid as contours and its blocks
-coloured by their values on the same bands.
+Nothing in this item. After it: the steps after the interrogation (tonnes, moisture basis, dilution and run-of-mine
+coal, factors and rules) as a dataflow, which need their own plan; and item 7's block cutting, whose stacking writes each
+solid's horizon code as its `seam`.

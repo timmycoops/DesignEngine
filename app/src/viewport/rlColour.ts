@@ -6,7 +6,7 @@
 // true RL, so the first edge is passed in local z: the origin's z is a whole metre (state.rs `origin`),
 // so `base` below is exact and every edge lands on a round RL.
 import * as THREE from 'three/webgpu';
-import { clamp, float, floor, fract, fwidth, max, min, mix, positionLocal, smoothstep, texture, uniform, vec2 } from 'three/tsl';
+import { attribute, clamp, float, floor, fract, fwidth, max, min, mix, positionLocal, smoothstep, step, texture, uniform, vec2 } from 'three/tsl';
 import { type Bands, MIN_PER_PIXEL, ON_EDGE } from './bands';
 import { DEFAULT_RL_PALETTE, paletteColour, RL_PALETTES, type RlPaletteName } from './rlPalettes';
 
@@ -83,7 +83,35 @@ const LINE_SHADE = 0.42;
  * or moving the bands never rebuilds the shader.
  */
 export function colourByRl(material: THREE.MeshStandardNodeMaterial, colour: number): RlUniforms {
-  const u: RlUniforms = {
+  const u = uniforms(colour);
+  // Bands from the lowest edge: whole numbers at the edges. What lies on an edge, to ON_EDGE, is in the band above
+  // it, so a berm on a round RL is one colour (bands.ts; tests/bands.test.mjs does the same sums in f32).
+  material.colorNode = mix(u.layerColour, banded(positionLocal.z, u, float(ON_EDGE)), u.byRl);
+  return u;
+}
+
+/** What a grid's `value` attribute holds where a node has no value: below any value a grid holds. */
+export const NO_VALUE = -1e30;
+
+/**
+ * Colours a grid by its values (decision 0061, workstream 6): the same bands and contour lines as by RL, over the
+ * `value` attribute in the value's own units, grey where a node has no value. Its bands are set with `setBands`.
+ */
+export function colourByValue(material: THREE.MeshStandardNodeMaterial, noValue: number): RlUniforms {
+  const u = uniforms(noValue);
+  const value = attribute('value', 'float');
+  const known = step(float(NO_VALUE / 2), value);
+  material.colorNode = mix(u.layerColour, banded(value, u, u.interval.mul(1e-6)), known);
+  return u;
+}
+
+/** A band's colour from the shared ramp: band `band` (from 0, as a float) of `count`. */
+export function bandColour(band: THREE.Node<'float'>, count: THREE.Node<'float'>) {
+  return texture(ramp(), vec2(band.add(0.5).div(count), 0.5)).rgb;
+}
+
+function uniforms(colour: number): RlUniforms {
+  return {
     layerColour: uniform(new THREE.Color(colour)),
     byRl: uniform(1),
     base: uniform(0),
@@ -91,23 +119,23 @@ export function colourByRl(material: THREE.MeshStandardNodeMaterial, colour: num
     count: uniform(1),
     lines: uniform(1),
   };
-  // Bands from the lowest edge: whole numbers at the edges. What lies on an edge, to ON_EDGE, is in the band above
-  // it, so a berm on a round RL is one colour (bands.ts; tests/bands.test.mjs does the same sums in f32).
-  const b = positionLocal.z.sub(u.base).add(ON_EDGE).div(u.interval);
+}
+
+/** Bands of `height` from the lowest edge, smoothed where they crowd, with a contour line at each edge. */
+function banded(height: THREE.Node<'float'>, u: RlUniforms, onEdge: THREE.Node<'float'>) {
+  const b = height.sub(u.base).add(onEdge).div(u.interval);
   const band = clamp(floor(b), float(0), u.count.sub(1));
   const map = ramp();
   const stepped = texture(map, vec2(band.add(0.5).div(u.count), 0.5)).rgb;
   // Zoomed out until a band is under a few pixels, the bands blur into the smooth ramp, not a moire.
   const perPixel = max(fwidth(b), float(MIN_PER_PIXEL));
   const smooth = texture(map, vec2(clamp(b.div(u.count), float(0), float(1)), 0.5)).rgb;
-  const banded = mix(stepped, smooth, smoothstep(0.25, 0.6, perPixel));
+  const bandedColour = mix(stepped, smooth, smoothstep(0.25, 0.6, perPixel));
   // A line about a pixel wide either side of each edge, faded out where edges crowd closer than a few pixels.
   const fromEdge = min(fract(b), float(1).sub(fract(b)));
   const onLine = float(1).sub(smoothstep(perPixel.mul(0.5), perPixel.mul(1.5), fromEdge));
   const crowded = float(1).sub(smoothstep(0.12, 0.3, perPixel));
-  const lined = mix(banded, banded.mul(LINE_SHADE), onLine.mul(crowded).mul(u.lines));
-  material.colorNode = mix(u.layerColour, lined, u.byRl);
-  return u;
+  return mix(bandedColour, bandedColour.mul(LINE_SHADE), onLine.mul(crowded).mul(u.lines));
 }
 
 /** Puts one surface's bands into its uniforms. */

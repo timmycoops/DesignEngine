@@ -20,6 +20,7 @@ import {
   type Vec3,
   snapRay,
   stageObject,
+  stageSeamHorizon,
   type Transport,
   undo,
   writeResults,
@@ -704,6 +705,8 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
   const ready = performance.now();
   await viewport.nextFrame();
   const painted = performance.now();
+  // With a seam model: one of its grids drawn in bands, to check blocks against by eye (decision 0061, workstream 6).
+  const byEye = config.seam ? await checkByEye(viewport, reply.summary, show) : undefined;
   const tree = await checkTree(reply.summary);
   const hide = await checkHide(viewport, reply.summary, show);
   const click = await checkClickObjects(viewport, reply.summary, show);
@@ -731,6 +734,7 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
   const undoStart = performance.now();
   await show(await undo());
   return {
+    by_eye: byEye,
     solids: reply.summary.objects.length,
     triangles,
     engine_ms: reply.record.duration_ms,
@@ -1712,6 +1716,38 @@ function screen(viewport: Viewport, over: HTMLCanvasElement[]): string {
     if (at.width > 0) context?.drawImage(canvas, (at.left - box.left) * scale, (at.top - box.top) * scale, at.width * scale, at.height * scale);
   }
   return copy.toDataURL('image/png');
+}
+
+/**
+ * A seam model's grid of variable `as` drawn on its horizon in bands with contour lines, seen in plan with the solids and
+ * the model's own view out of the way: its west and east, where the made-up ash differs by several bands, are told apart
+ * by colour (decision 0061, workstream 6).
+ */
+async function checkByEye(viewport: Viewport, summary: ProjectSummary, show: (summary: ProjectSummary) => Promise<void> | undefined) {
+  const model = summary.objects.find((o) => o.kind === 'seam_model');
+  if (!model) return { error: 'no seam model' };
+  const solids = summary.layers.find((l) => l.name === 'solids');
+  if (solids) await show(await setLayerVisible(solids.id, false));
+  await show(await setObjectsVisible([model.id], false));
+  const staged = await stageSeamHorizon(model.id, null, 'as');
+  const { group } = await loadStaged(viewport, staged.staged);
+  viewport.setPlanView(true);
+  viewport.fitView();
+  for (let i = 0; i < 30; i++) await viewport.nextFrame();
+  const image = new Image();
+  image.src = picture(viewport);
+  await image.decode();
+  const canvas = Object.assign(document.createElement('canvas'), { width: image.width, height: image.height });
+  const context = canvas.getContext('2d')!;
+  context.drawImage(image, 0, 0);
+  const at = (fx: number) => [...context.getImageData(Math.round(image.width * fx), Math.round(image.height / 2), 1, 1).data.slice(0, 3)];
+  const [west, middle, east] = [at(0.3), at(0.5), at(0.7)];
+  const apart = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  viewport.removeMesh(group);
+  viewport.setPlanView(false);
+  await show(await setObjectsVisible([model.id], true));
+  if (solids) await show(await setLayerVisible(solids.id, true));
+  return { variable: staged.variable, value_range: staged.value_range, west, middle, east, told_apart: apart(west, east) > 30 && apart(west, middle) > 10 };
 }
 
 /** What the viewport shows now, as a PNG data URL: drawn again and copied before the frame is gone. */
