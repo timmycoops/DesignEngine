@@ -72,24 +72,24 @@ fn ash_cu(x: f64) -> f64 {
     10.0 + 0.1 * x
 }
 
-/// Two seams: `cu` from RL 96 to 100 (RD 1.40, ash rising east), and below it `cl` from 90 to 94 (RD 1.50, ash 20 %).
+/// Two seams named as Vulcan names a mine's grids, a mine code `grn` in front: `cu` from RL 96 to 100 (RD 1.40, ash rising east), and below it `cl` from 90 to 94 (RD 1.50, ash 20 %).
 fn write_model(dir: &Path) {
     let files: [(&str, Vec<u8>); 8] = [
-        ("cu.srg", flat(100.0)),
-        ("cu.sfg", flat(96.0)),
-        ("cu.rdg", flat(1.4)),
-        ("cu.asg", vulcan_grid(|x, _| ash_cu(x) as f32)),
-        ("cl.srg", flat(94.0)),
-        ("cl.sfg", flat(90.0)),
-        ("cl.rdg", flat(1.5)),
-        ("cl.asg", flat(20.0)),
+        ("grncu.srg", flat(100.0)),
+        ("grncu.sfg", flat(96.0)),
+        ("grncu.rdg", flat(1.4)),
+        ("grncu.asg", vulcan_grid(|x, _| ash_cu(x) as f32)),
+        ("grncl.srg", flat(94.0)),
+        ("grncl.sfg", flat(90.0)),
+        ("grncl.rdg", flat(1.5)),
+        ("grncl.asg", flat(20.0)),
     ];
     for (name, bytes) in files {
         std::fs::write(dir.join(name), bytes).unwrap();
     }
     std::fs::write(
         dir.join("stack.csv"),
-        "horizon,parent,material,working,roof,floor,rd,as\ncu,,coal,yes,cu.srg,cu.sfg,cu.rdg,cu.asg\ncl,,coal,yes,cl.srg,cl.sfg,cl.rdg,cl.asg\n",
+        "horizon,parent,material,working,roof,floor,rd,as\ncu,,coal,yes,grncu.srg,grncu.sfg,grncu.rdg,grncu.asg\ncl,,coal,yes,grncl.srg,grncl.sfg,grncl.rdg,grncl.asg\n",
     )
     .unwrap();
 }
@@ -172,9 +172,10 @@ fn ash_by_hand(x0: f64, x1: f64) -> f64 {
 fn each_block_takes_its_own_seam_s_grids_by_its_attribute() {
     let t = TempDir::new("seams");
     // Two blocks on the same plan, sitting anyhow on the 25 m cells: one in `cu`, named in capitals, one in `cl`.
+    // The lower one names its seam with the mine code still in front.
     let (mut s, model, ids) = project(
         &t,
-        vec![("upper", vec![seam("CU")], cuboid(70.0, 40.0, 60.0, 100.0, 96.0, 100.0)), ("lower", vec![seam("cl")], cuboid(70.0, 40.0, 60.0, 100.0, 90.0, 94.0))],
+        vec![("upper", vec![seam("CU")], cuboid(70.0, 40.0, 60.0, 100.0, 96.0, 100.0)), ("lower", vec![seam("grncl")], cuboid(70.0, 40.0, 60.0, 100.0, 90.0, 94.0))],
     );
     let record = interrogate(&mut s, model, &ids, json!({})).unwrap();
     assert!(record.messages[0].starts_with("2 of 2 blocks interrogated against"), "{:?}", record.messages);
@@ -250,7 +251,7 @@ fn each_variable_is_weighted_as_asked() {
     let t = TempDir::new("weights");
     // RD 1.4 west of 100 m east and 1.6 east of it; ash by tonnes leans east, by volume it doesn't.
     let (mut s, model, ids) = project(&t, vec![("block", vec![seam("cu")], cuboid(70.0, 40.0, 60.0, 100.0, 96.0, 100.0))]);
-    std::fs::write(t.0.join("cu.rdg"), vulcan_grid(|x, _| if x < 100.0 { 1.4 } else { 1.6 })).unwrap();
+    std::fs::write(t.0.join("grncu.rdg"), vulcan_grid(|x, _| if x < 100.0 { 1.4 } else { 1.6 })).unwrap();
     let record = interrogate(&mut s, model, &ids, json!({ "weights": { "as": [] }, "variables": ["as"] })).unwrap();
     assert!(record.notes.iter().all(|n| n.code.is_none()), "by volume alone the RD grid isn't read: {:?}", record.messages);
     near(number(&s, ids[0], "as").unwrap(), ash_by_hand(70.0, 130.0), "ash by volume alone");
@@ -269,11 +270,11 @@ fn interrogate_43000_blocks() {
     let t = TempDir::new("scale");
     let (cols, rows) = (24_100 / 25 + 2, 10_900 / 25 + 2);
     let grid = |f: &dyn Fn(f64, f64) -> f32| vulcan_grid_of(cols, rows, f);
-    for (name, bytes) in [("cu.srg", grid(&|_, _| 104.0)), ("cu.sfg", grid(&|_, _| 96.0)), ("cu.rdg", grid(&|_, _| 1.4)), ("cu.asg", grid(&|x, _| ash_cu(x) as f32))] {
+    for (name, bytes) in [("grncu.srg", grid(&|_, _| 104.0)), ("grncu.sfg", grid(&|_, _| 96.0)), ("grncu.rdg", grid(&|_, _| 1.4)), ("grncu.asg", grid(&|x, _| ash_cu(x) as f32))] {
         std::fs::write(t.0.join(name), bytes).unwrap();
     }
     std::fs::write(t.0.join("stack.csv"), "horizon,parent,material,working,roof,floor,rd,as
-cu,,coal,yes,cu.srg,cu.sfg,cu.rdg,cu.asg
+cu,,coal,yes,grncu.srg,grncu.sfg,grncu.rdg,grncu.asg
 ").unwrap();
     let mut project = Project::new();
     let changes = (0..43_000)

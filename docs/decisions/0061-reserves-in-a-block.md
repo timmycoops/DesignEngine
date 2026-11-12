@@ -146,7 +146,10 @@ The geology at each block, written onto it:
   solids the surface stack makes will carry them (Tim: *"the grid names contain the seam name and the solids will have
   the seam name based on the surface stack - matching the seam name of the grids and the solids post surface stack is
   what we need"*). So **item 7's stacking writes each solid's horizon code as its `seam`**, and the interrogation needs
-  nothing set; a block from elsewhere, such as Spry's, names its seam by another attribute. A block with no such attribute, or one naming no horizon of the model, is left as it was and said, by
+  nothing set; a block from elsewhere, such as Spry's, names its seam by another attribute. The seam name is always at
+  the front of a grid's name, after any mine code (Tim: `seam1.asg`, or `grnseam1.asg` with the mine code `grn`); the
+  definition takes the mine code off to give the horizon code. A block whose seam comes with the mine code still in front
+  (`grnseam1`) matches too, by the seam's roof grid's name. A block with no such attribute, or one naming no horizon of the model, is left as it was and said, by
   count and the first few names.
 - **The seam's grids, read for the run.** Each grid a seam needs is read once, in parallel, and checked against its
   fingerprint from when the model was built: a changed file is read as it is now and said (`link.changed`). A grid that
@@ -172,7 +175,8 @@ The geology at each block, written onto it:
 Checked on a made-up seam model of two seams, `cu` (RL 96 to 100, RD 1.40, ash rising 0.1 % a metre east) and `cl` (RL
 90 to 94, RD 1.50, ash 20 %), on a 25 m grid, with 60 × 100 m blocks sitting anyhow on its cells:
 
-- **Each block takes its own seam's grids by its attribute** (`CU` and `cl`): `cu`'s RD, and its ash by the cells' shares
+- **Each block takes its own seam's grids by its attribute**, the grids named with a mine code in front (`grncu.asg`), one
+  block saying `CU` and the other `grncl`: `cu`'s RD, and its ash by the cells' shares
   as worked from the cells' edges alone; `cl`'s RD and ash. One revision of each block, undone in one step.
 - **A 10 m square within one 25 m cell** takes that node's ash.
 - **A block with no seam attribute and one naming `xx`** are left as they were, each said by its code. A block naming its

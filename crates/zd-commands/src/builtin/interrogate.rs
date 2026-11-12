@@ -29,8 +29,9 @@ pub struct InterrogateParams {
     pub solids: Vec<ObjectId>,
     /// The seam model whose grids are averaged over them.
     pub model: ObjectId,
-    /// The attribute whose value names each block's seam, matched to the model's horizon codes: the codes its grids are
-    /// named by, which the surface stack writes onto the solids it makes. `seam` unless given.
+    /// The attribute whose value names each block's seam, matched to the model's horizon codes: the seam names its grids
+    /// carry after any mine code (`seam1` of `grnseam1.asg`), which the surface stack writes onto the solids it makes; the
+    /// name with the mine code in front matches too. `seam` unless given.
     #[serde(default = "seam_attribute_default")]
     pub seam_attribute: String,
     /// The variables to write, by code; every grid of each block's seam when none are given.
@@ -133,7 +134,7 @@ impl Command for Interrogate {
                 AttrValue::Number(n) => format!("{n}"),
                 AttrValue::Bool(b) => b.to_string(),
             };
-            match model.horizons.iter().find(|h| h.code.eq_ignore_ascii_case(&named)) {
+            match model.horizons.iter().find(|h| names_seam(h, &named)) {
                 Some(h) => blocks.push((object, solid, h.code.clone())),
                 None => unknown.entry(named).or_default().push(object.name.clone()),
             }
@@ -350,6 +351,17 @@ impl Command for Interrogate {
         }
         Ok(outcome)
     }
+}
+
+/// Whether a block's seam names this horizon: its code (`seam1`), or its grids' name with the mine code still in front
+/// (`grnseam1`, from `grnseam1.srg`), case aside. Grids are named `<mine code><seam>.<variable>g`, and the definition takes
+/// the mine code off to give the code.
+fn names_seam(horizon: &zd_core::Horizon, named: &str) -> bool {
+    let stem = |file: &str| {
+        let name = std::path::Path::new(file).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        name.rsplit_once('.').map_or(name.clone(), |(stem, _)| stem.to_string())
+    };
+    horizon.code.eq_ignore_ascii_case(named) || stem(&horizon.roof.file).eq_ignore_ascii_case(named)
 }
 
 /// The first few, and how many more.
