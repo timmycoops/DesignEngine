@@ -14,7 +14,7 @@ model's grids, its volume checked against a 2.5D column calculation, and set bes
 
 Agreed with the plan, all as recommended:
 
-1. **The records are a table object in the project**, one row per block, saved in the `.zdp` as its own
+1. **The records are a table object in the project**: changed the same day (below), the values go on the solids. One row per block, saved in the `.zdp` as its own
    table, with CSV out (workstream 2; a new object kind).
 2. **A block's horizon is found by its geometry**: superseded the same day (below). A block is the coal of one seam.
 3. **Tonnes are in situ by Preston–Sanders**: superseded the same day (below). The interrogation gives the geology only.
@@ -83,6 +83,13 @@ colour of a block for the same seam."* So:
   file Tim edits (source field to our code), reporting counts and differences only.
 - **Workstream 6, the check by eye, is agreed:** a seam's grid drawn as contours, and the blocks of that seam coloured by
   their own value on the same bands, so a block whose colour doesn't match the contours round it stands out.
+
+And (Tim): *"We would just [put] the values on the solids no?"* Yes: **each block's averaged values go on the block solid
+as attributes, one a variable, named by its code**, as Deswik and Spry keep them. No table object and no change to the
+object model. The run is an edit of the blocks, as a rename or a rebuild is: a new revision of each block it interrogates,
+undone in one step, and run again it writes them afresh with the earlier revisions kept. The geometry doesn't change, so
+the view keeps its meshes; CSV out is the solids' attributes, which the export already lists; and the check by eye
+colours the blocks from the same attributes.
 
 ## Workstream 1 (this record's first PR): cells and averages
 
