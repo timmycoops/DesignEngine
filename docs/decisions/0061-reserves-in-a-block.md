@@ -76,7 +76,13 @@ quality grid's value at a node holds over its cell in plan, so the averaging use
 its own volume; the seam's roof and floor never enter it. How much of a block lies between its seam's roof and floor is a
 warning only, for a block whose attribute may be wrong (under 95 % in its seam), and changes no value.
 
-Still open: whether PIT B's Spry project carries tonnes, RD and qualities for each block (it shapes only workstream 4).
+And (Tim): *"I have numbers we can compare in Deswik and in Spry. Checking by eye is really just a contour of a grid and a
+colour of a block for the same seam."* So:
+
+- **Workstream 4 sets each block beside Deswik's numbers and Spry's**, whichever carries values, each through a match
+  file Tim edits (source field to our code), reporting counts and differences only.
+- **Workstream 6, the check by eye, is agreed:** a seam's grid drawn as contours, and the blocks of that seam coloured by
+  their own value on the same bands, so a block whose colour doesn't match the contours round it stands out.
 
 ## Workstream 1 (this record's first PR): cells and averages
 
