@@ -15,6 +15,7 @@ mod halfspace;
 mod orient;
 mod ray;
 mod repair;
+mod reserves;
 mod road;
 mod rule;
 mod self_union;
@@ -45,6 +46,7 @@ pub use section_snap::{CutSegment, SectionSnap, SectionSnapKind, snap_to_section
 pub use slice::{SectionPlane, SliceIndex, SliceLine, slice_indexed, slice_mesh, string_near_plane};
 pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_nodes, suggest_no_seam_rl, suggest_seam_tree};
 pub use face::{EditReport, Face, FaceBench, FaceEdit, FaceStep, FaceTarget, JoinBoxes, JoinNote, MetBoxes, RegisterLog, TooClose, StepReport, WallToCome, at_line_heights, conditioned_toe, level_floor, project_edited_face, project_face, register_toe, run_on};
+pub use reserves::{Composite, NodeColumn, Sample, Variable, cells_in_solid, columns_in_solid, composite, horizon_samples, in_situ_rd, thickness_between};
 pub use road::{FaceRamp, FaceRoad, NoRoad, RoadTop};
 pub use wall::{ConditionLog, Stretch, WallLog, WallStep, next_toe, project_wall, project_wall_by_edge};
 pub use strips::{Crossing, FaceCut, FilledGap, JoinLog, ShortEnd, SliceRefusal, SliceTimings, StripPiece, StripSlice, join_faces, place, short_words, slice_solid_by_faces, slice_solid_by_faces_watched};
