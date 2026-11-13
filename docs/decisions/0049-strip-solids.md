@@ -47,7 +47,10 @@ topography. A face covers a strip of ground, so it has to be closed to one side.
    their numbers. Strip n is what lies in front of face n of what the strips before it left (decision 2 of the plan): each
    is cut from what's left, so the strips and what's behind the last face add up to the solid, with no gaps and nothing
    counted twice. Named `<solid> strip <n>`, with the solid's attributes and `strip`; what's behind the last is
-   `<solid> past strip <N>` with `past_strip`. A side with nothing on it is left out and said.
+   `<solid> past strip <N>` with `past_strip`. A side with nothing on it is left out and said. (Since 13 November 2026, Tim's
+   choice: what's behind the last face is the next strip, numbered on as the faces' numbers go, `<solid> strip <N+1>` with
+   `strip`, and the run says it's behind the last face, so it can be deleted before the seam cut. Strips named by text keep
+   `past`.)
 7. **Faces crossing inside the solid are sliced anyway and reported** (decision 4): the solid in front of an earlier face
    that lies behind a later one stays with the earlier strip, and the run says how much and where. Where two faces meet, a
    strip pinches to nothing and its solid would touch itself: that's refused, naming the two faces and the place, as the

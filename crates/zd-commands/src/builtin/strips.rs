@@ -51,6 +51,22 @@ impl Key {
     }
 }
 
+/// The strip after the last, going on as the faces' numbers go from the pit out: the last two's step (6 after 4 and 5,
+/// 8 after 4 and 6, 2 after 4 and 3), or one more after a single face. None where they're named by text or two share a
+/// number.
+fn next_strip(order: &[&Key]) -> Option<f64> {
+    let numbered = |k: &Key| match k {
+        Key::Number(n) => Some(*n),
+        Key::Name(_) => None,
+    };
+    let last = numbered(order.last()?)?;
+    let step = match order.len() {
+        1 => 1.0,
+        n => last - numbered(order[n - 2])?,
+    };
+    (step != 0.0).then_some(last + step)
+}
+
 /// The faces of one strip.
 struct StripFaces<'a> {
     key: Key,
@@ -363,13 +379,19 @@ impl SliceByFaces {
             }
         )));
 
+        // What's behind the last face is numbered as the next strip, going on as the faces' numbers go, so it's named and
+        // carried like the rest, to delete or keep. Strips named by text, or a next number one of the faces already has,
+        // leave it `past` the last.
+        let next = next_strip(slice.order.iter().map(|&k| &strips[k].key).collect::<Vec<_>>().as_slice());
+        let next = next.filter(|n| !strips.iter().any(|s| s.key == Key::Number(*n)));
         let few = slice.strips.len() <= LINES_PER_STRIP_UP_TO;
         let mut kept = 0;
         for (k, piece) in slice.strips.iter().enumerate() {
             let last = k == slice.order.len();
-            let (piece_name, which) = match last {
-                false => (format!("{name} {attribute} {}", numbers[k]), format!("{attribute} {}", numbers[k])),
-                true => (format!("{name} past {attribute} {}", numbers[k - 1]), format!("past {attribute} {}", numbers[k - 1])),
+            let (piece_name, which) = match (last, next) {
+                (false, _) => (format!("{name} {attribute} {}", numbers[k]), format!("{attribute} {}", numbers[k])),
+                (true, Some(n)) => (format!("{name} {attribute} {}", number(n)), format!("{attribute} {} (behind the last face)", number(n))),
+                (true, None) => (format!("{name} past {attribute} {}", numbers[k - 1]), format!("past {attribute} {}", numbers[k - 1])),
             };
             if piece.mesh.triangles.is_empty() || piece.volume <= tolerance {
                 lines.push(Note::warning(Code::SliceEmpty, format!("{which}: nothing of '{name}' lies there")).on(object.id));
@@ -395,11 +417,14 @@ impl SliceByFaces {
                 lines.push(Note::info(format!("{which}: {:.3} m3{parts}", piece.volume)).on_made(outcome.changes.len()).measured(piece.volume, "m3"));
             }
             let mut attributes = object.attributes.clone();
-            match last {
-                false => {
+            match (last, next) {
+                (false, _) => {
                     attributes.insert(attribute.clone(), strips[slice.order[k]].key.value());
                 }
-                true => {
+                (true, Some(n)) => {
+                    attributes.insert(attribute.clone(), AttrValue::Number(n));
+                }
+                (true, None) => {
                     attributes.remove(attribute);
                     attributes.insert(format!("past_{attribute}"), strips[slice.order[k - 1]].key.value());
                 }
@@ -558,4 +583,21 @@ fn heights(face: &TriMesh, at: [f64; 3]) -> Vec<f64> {
         }
     }
     found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_strip_after_the_last_goes_on_as_the_numbers_go() {
+        let n = |v: &[f64]| next_strip(&v.iter().map(|&x| Key::Number(x)).collect::<Vec<_>>().iter().collect::<Vec<_>>());
+        assert_eq!(n(&[1.0, 2.0, 3.0]), Some(4.0));
+        assert_eq!(n(&[20.0, 22.0, 24.0]), Some(26.0), "every other");
+        assert_eq!(n(&[6.0, 5.0, 4.0]), Some(3.0), "numbered from the far side in");
+        assert_eq!(n(&[7.0]), Some(8.0), "one face");
+        assert_eq!(n(&[3.0, 3.0]), None);
+        let named = [Key::Number(1.0), Key::Name("A".into())];
+        assert_eq!(next_strip(&named.iter().collect::<Vec<_>>()), None, "named by text");
+    }
 }

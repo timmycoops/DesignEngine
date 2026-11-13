@@ -187,7 +187,7 @@ export function CutPanel() {
               {strips.unnumbered.length > 3 ? '…' : ''}
             </div>
           )}
-          <div className="text-muted-foreground">Strip n is the solid in front of face n, back to the face before. What's behind the last face is kept too.</div>
+          <div className="text-muted-foreground">Strip n is the solid in front of face n, back to the face before. What's behind the last face is kept too, as the next strip, to delete if it isn't one.</div>
         </ToolSection>
       )}
 

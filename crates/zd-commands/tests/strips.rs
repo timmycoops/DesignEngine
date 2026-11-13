@@ -98,7 +98,9 @@ fn a_toe_offset_and_numbered_slices_the_pit_into_a_solid_a_strip() {
     let names: Vec<String> = strips.iter().map(|&id| s.project().object(id).unwrap().name.clone()).collect();
     assert_eq!(names[0], "PIT strip 1");
     assert_eq!(names[14], "PIT strip 15");
-    assert_eq!(names[15], "PIT past strip 15");
+    // What's behind the last face is the next strip, named and numbered like the rest, to delete or keep.
+    assert_eq!(names[15], "PIT strip 16");
+    assert!(record.messages.iter().any(|m| m.starts_with("strip 16 (behind the last face): ")), "{:?}", record.messages);
     // Strip 1 is in front of the first toe, at 100 m east: 500 x the integral of (100 + z) over RL 0 to 100.
     assert_volume(volume(&s, strips[0]), 7_500_000.0, "strip 1");
     // Each strip's line is said of the solid the run made for it, by id once it has one (0059).
@@ -110,8 +112,9 @@ fn a_toe_offset_and_numbered_slices_the_pit_into_a_solid_a_strip() {
         assert_volume(volume(&s, strip), 2_500_000.0, &format!("strip {}", k + 1));
         assert_eq!(s.project().object(strip).unwrap().attributes.get("strip"), Some(&AttrValue::Number((k + 1) as f64)));
     }
-    assert_volume(volume(&s, strips[15]), 7_500_000.0, "past strip 15");
-    assert_eq!(s.project().object(strips[15]).unwrap().attributes.get("past_strip"), Some(&AttrValue::Number(15.0)));
+    assert_volume(volume(&s, strips[15]), 7_500_000.0, "strip 16, behind the last face");
+    assert_eq!(s.project().object(strips[15]).unwrap().attributes.get("strip"), Some(&AttrValue::Number(16.0)));
+    assert!(s.project().object(strips[15]).unwrap().attributes.get("past_strip").is_none());
     let total: f64 = strips.iter().map(|&id| volume(&s, id)).sum();
     assert_volume(total, volume(&s, pit), "the strips add up to the pit");
 
