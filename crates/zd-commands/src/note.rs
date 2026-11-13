@@ -135,6 +135,9 @@ codes! {
     SolidOutsidePolygons = "solid.outside_polygons", "Solids lying outside every block polygon, each kept whole as its remainder";
     BlockNameRepeated = "block.name_repeated", "Blocks given the same name, which should be unique";
     BlockVolumeDiffers = "block.volume_differs", "A solid whose blocks and remainder don't add back to its volume";
+    SolidOffGrids = "solid.off_grids", "Solids reaching off the seam model's grids, what's off them kept whole";
+    SeamThinLeftOut = "seam.thin_left_out", "Volume left out of a seam cut where a layer is thinner than the minimum";
+    SeamCutDiffers = "seam.cut_differs", "A solid whose pieces from the seam cut don't add back to its volume";
 }
 
 impl Serialize for Code {

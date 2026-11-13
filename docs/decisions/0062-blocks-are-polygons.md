@@ -1,7 +1,7 @@
 # 0062 — Blocks are polygons: strips cut by seams, then by block polygons
 
 Status: agreed 13 November 2026 (Tim: "Agree all eight", the Build Plan's "Block cutting plan" tab). Item 7 of the
-agreed order, Phase 4 block cutting. Workstream 1 built.
+agreed order, Phase 4 block cutting. Workstreams 1 to 3 built.
 
 ## Why
 
@@ -29,7 +29,8 @@ All eight as recommended:
    names the layer of the stack (OB, U, U-M, M and so on).
 3. **A slab is made only where it's thicker than 0.01 m.** Thinner is left out and its volume said.
 4. **Seams then blocks**, Tim's order. The two cuts don't depend on each other, so either order gives the same blocks.
-5. **Names are `{strip}_{block}_{seam}`** by default, editable, checked unique.
+5. **Names are `{strip}_{block}_{seam}`** by default, editable, checked unique. (Made `{strip}_{block}_{horizon}` with
+   workstream 3, so waste isn't named like the coal of its seam: see below.)
 6. **The column check takes the block's outline at mid-seam**, its section halfway between roof and floor, instead of its
    whole plan: the polygon Minex or Vulcan would use at the seam, so the batter drops out.
 7. **No automatic small-piece limit**, as decided in Phase 1: a select-by-volume filter in the app.
@@ -108,6 +109,48 @@ Timing on the made-up pit (`reserves_workflow.py`): its 32 strip-level seam and 
 92,510 triangles in, cut by 15 polygons into 471 blocks (99,558 triangles out) in 107 ms, adding back to within 1e-13.
 Their names repeat until the solids carry `seam` (workstream 3).
 
+### Workstream 3: cut by seams
+
+`solid.cut_by_seams` cuts each solid by a seam model's working section in one run (`zd_geom::layer_stack`,
+`zd_geom::cut_solid_by_layers`). The roofs and floors are read where the model links them, checked by fingerprint, and
+blanked where the model marks a seam absent; nothing needs importing as an object.
+
+- **The layers**, top down: the overburden above the first roof, each seam, each interburden between a floor and the next
+  roof, and what's below the last floor.
+- **Each layer is a slab between its two grids**, made where it's thicker than the minimum (0.01 m, decision 3). Inside each
+  grid triangle the thickness is a plane, so the slab is clipped exactly where it passes the minimum, with a wall that
+  high there. A seam with no thickness makes no slab, so nothing coincides and nothing is refused. A solid's piece of a
+  layer is one Manifold intersection with its slab, over the cells under the solid only. What the slabs leave out is said
+  by its volume (`seam.thin_left_out`).
+- **A seam with no height at a node** (null, or at the model's no-seam RL) is laid on the floor of the seam above there,
+  so the waste between goes with the seam below it; with no seam above, on the roof of the one below, so the overburden
+  reaches down to it. A surface rising above the one over it, within the model's tolerance (crossings beyond it block the
+  model), is lowered onto it, and both are counted.
+- **A piece keeps its solid's attributes** and carries `horizon` (OB, a seam's code, `U-M`, `below L`), `material` (the
+  horizon's for a seam, `waste` otherwise) and `seam`: its own for coal, the seam below it for waste, none below the last
+  floor (decision 2). Named `{solid} {horizon}` by default.
+- **What lies off the grids** in plan is kept whole on its own layer and said (`solid.off_grids`). The pieces, what's off
+  the grids and what's too thin add back to the solid; a difference over a millionth is said (`seam.cut_differs`).
+- Solids are cut in parallel, with progress and Cancel.
+
+**Names, changed from decision 5.** Waste carries the seam below it, so a block's overburden and its first seam's coal both
+had `seam` U, and `{strip}_{block}_{seam}` named them alike. The default for `solid.cut_by_polygons` is now
+`{strip}_{block}_{horizon}`: coal names are as agreed (a seam's horizon is its code), and waste is told apart (`5_B07_OB`,
+`5_B07_U-M`). For Tim to confirm.
+
+Checked with volumes worked by hand (`crates/zd-geom/tests/layers.rs`, to 0.001 m³): three flat seams cut a strip into its
+seven layers exactly; a 65° battered strip keeping its batter in every layer; a seam thinning to nothing across one cell
+and lying on its floor beyond, its coal ending where it's 0.01 m thick and the 0.015 m³ wedge past it left out and said; a
+seam absent from x = 300 m, its waste going with the seam below; a top seam absent, the overburden reaching the next; a
+strip reaching off the grids; a strip standing on the last floor, nothing below it; surfaces crossing by 1 mm lowered and
+counted. Through the registry (`crates/zd-commands/tests/cut_by_seams.rs`): five named layers with their attributes in one
+undo; a seam running out; off the grids; seams then blocks, every name unique and the coal interrogated by its `seam`.
+
+Timing on the made-up pit (`reserves_workflow.py`): its 7 strip solids, 41,178 triangles, cut by three seams into 42 pieces
+(21 coal, 21 waste; 123,768 triangles in the slabs, 128,612 out) in 319 ms, adding back to within 3e-13, with 7.975 m³
+thinner than 0.01 m left out where U runs out under the weathering. Nothing refused: cutting at each roof and floor in turn
+had refused 2 of 6 strips there. Then cut by 15 block polygons into 616 blocks in 129 ms, no name repeated.
+
 ## Still to come
 
-Workstreams 3 to 6, each in its own PR.
+Workstreams 4 to 6, each in its own PR.

@@ -75,6 +75,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "solid.between_surfaces",
             "solid.compare",
             "solid.cut_by_polygons",
+            "solid.cut_by_seams",
             "solid.cut_by_surface",
             "solid.export_many",
             "solid.from_mesh",
