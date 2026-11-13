@@ -421,10 +421,11 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
     seams = { button: seamLabel, ms: seamMs, said: resultLines().slice(0, 3), pieces: made.length, names: made.map((o) => o.name) };
   }
 
-  // By polygons (decision 0062): lines across the pit every 100 m and two past it closed into block polygons, then the
-  // solids on show (the seam pieces, or the strips without --seam) cut into blocks from the panel.
+  // By polygons (decision 0062): lines across the pit every 100 m, from 50 m before it to 50 m past it, and two past its
+  // sides closed into block polygons covering it, then the solids on show (the seam pieces, or the strips without --seam)
+  // cut into blocks from the panel.
   const across = [];
-  for (let k = 0; k <= 10; k++) across.push((await runCommand('string.create', { name: `across ${k}`, layer: 'block lines', points: [[E + 100 * k - 50, N - 100, 0], [E + 100 * k - 50, N + 600, 0]] })).record.outputs[0].id);
+  for (let k = 0; k <= 11; k++) across.push((await runCommand('string.create', { name: `across ${k}`, layer: 'block lines', points: [[E + 100 * k - 50, N - 100, 0], [E + 100 * k - 50, N + 600, 0]] })).record.outputs[0].id);
   for (const [name, y] of [['south', -60], ['north', 560]] as const) across.push((await runCommand('string.create', { name, layer: 'block lines', points: [[E - 100, N + y, 0], [E + 1100, N + y, 0]] })).record.outputs[0].id);
   const closedUp = await runCommand('string.polygons_from_lines', { strings: across, layer: 'block polygons', name: 'B#' });
   const keep = seams ? 'layers' : 'strips';
@@ -436,6 +437,10 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
   buttons().find((b) => b.textContent?.trim().startsWith('On show'))?.click();
   await wait(300);
   const polygonsOffered = panelText().match(/\d+ block polygons/)?.[0] ?? '';
+  // The polygons checked against the solids before the cut: they run past the pit on every side.
+  const coverStarted = performance.now();
+  for (let k = 0; k < 100 && !/The polygons cover|don't cover every solid/.test(panelText()); k++) await wait(100);
+  const cover = { covered: /The polygons cover/.test(panelText()), ms: Math.round(performance.now() - coverStarted) };
   const blockLabel = buttons().find((b) => /^Cut \d+ solids? into blocks$/.test(b.textContent?.trim() ?? ''))?.textContent?.trim() ?? '';
   const blockMs = await press(blockLabel);
   const afterBlocks = await projectSummary();
@@ -450,6 +455,7 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
   const blocks = {
     polygons_made: closedUp.record.outputs.length,
     polygons_offered: polygonsOffered,
+    cover,
     button: blockLabel,
     ms: blockMs,
     said: resultLines().slice(0, 3),

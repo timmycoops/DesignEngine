@@ -590,6 +590,18 @@ pub async fn check_slice(solids: Vec<ObjectId>, faces: Vec<ObjectId>, state: Sta
     .await?
 }
 
+/// Where block polygons leave the solids uncovered in plan, found before a cut by polygons: a warning for each part of a
+/// solid outside them all. Read off the project as it stands while the app carries on.
+#[tauri::command]
+pub async fn check_cut_by_polygons(solids: Vec<ObjectId>, polygons: Vec<ObjectId>, state: State<'_, AppState>) -> Result<Vec<zd_commands::Note>, String> {
+    let project = state.app.lock().unwrap().session.shared_project();
+    blocking(move || {
+        let params = serde_json::from_value(serde_json::json!({ "solids": solids, "polygons": polygons, "layer": "blocks" })).map_err(|e| e.to_string())?;
+        zd_commands::builtin::check_cut_by_polygons(&project, &params).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
 /// Everything on show lying wholly inside a box drawn on the viewport: the camera's view-projection matrix in the
 /// scene's local frame (column-major, as three.js keeps it) and the box's corners in normalised device coordinates.
 #[tauri::command]

@@ -1,12 +1,13 @@
 //! Blocks cut from solids by polygons (decision 0062): each solid is cut vertically where each polygon sits, by one
 //! Manifold boolean with the polygon's prism run past the solid's top and bottom. What lies outside every polygon is the
-//! remainder. The pieces and the remainder add up to the solid.
+//! remainder. The pieces and the remainder add up to the solid. The polygons must cover the solid in plan, which
+//! [`polygons_uncovered`] checks before a cut: a gap is the polygons to fix, not ground to leave out.
 //!
 //! Both are worked about a whole-metre origin near the solid, so mine grid coordinates keep their precision.
 
 use std::time::Instant;
 
-use manifold_csg::{CrossSection, Manifold};
+use manifold_csg::{CrossSection, JoinType, Manifold};
 use zd_core::TriMesh;
 
 use crate::cut::{from_manifold, to_manifold};
@@ -80,6 +81,100 @@ pub fn cut_solid_by_polygons(solid: &TriMesh, polygons: &[Vec<[f64; 2]>]) -> Res
     let outside = if prisms.is_empty() { solid_m } else { solid_m.difference(&Manifold::batch_union(&prisms)) };
     let remainder = piece_of(&outside, usize::MAX, origin)?;
     Ok(PolygonCut { pieces, remainder, input_volume, polygons_near, ms: started.elapsed().as_secs_f64() * 1000.0 })
+}
+
+/// Gaps in the cover narrower than this (m), between two polygons or between a polygon and the solid's edge, are lines
+/// drawn on the same place parting by rounding, not ground left out.
+pub const COVER_SLIVER: f64 = 0.01;
+
+/// A gap in the cover smaller than this in plan (m²) is nothing.
+const COVER_AREA: f64 = 0.01;
+
+/// A part of a solid's footprint in plan outside every polygon.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Uncovered {
+    /// Its area in plan (m²).
+    pub area: f64,
+    /// About its middle, in mine-grid coordinates.
+    pub at: [f64; 2],
+}
+
+/// Where the polygons leave a closed solid uncovered in plan: each part of its footprint outside every polygon, largest
+/// first. Empty when they cover it. Slivers narrower than [`COVER_SLIVER`] are left out. Polygons are plan rings either way
+/// round, the first point not repeated at the end.
+pub fn polygons_uncovered(solid: &TriMesh, polygons: &[Vec<[f64; 2]>]) -> Result<Vec<Uncovered>, GeomError> {
+    let validity = solid.validity();
+    if !validity.is_watertight() {
+        return Err(GeomError::NotWatertight { what: "solid", validity });
+    }
+    let bounds = solid.bounds().ok_or_else(|| GeomError::InvalidInput("empty solid".into()))?;
+    let centre = bounds.centre();
+    let origin = [centre[0].round(), centre[1].round()];
+    let solid_m = to_manifold(solid, [-origin[0], -origin[1], 0.0], "solid")?;
+    let footprint = CrossSection::from_polygons(&solid_m.project());
+    let near: Vec<CrossSection> = polygons
+        .iter()
+        .filter(|p| p.len() >= 3 && near(p, [bounds.min[0], bounds.min[1]], [bounds.max[0], bounds.max[1]]))
+        .map(|p| section(p, origin))
+        .collect();
+    let gap = if near.is_empty() { footprint } else { footprint.difference(&CrossSection::batch_union(&near)) };
+    // Opened by half the sliver width: what's thinner than a sliver closes up and is gone.
+    let half = COVER_SLIVER / 2.0;
+    let gap = gap.offset(-half, JoinType::Miter, 2.0, 0).offset(half, JoinType::Miter, 2.0, 0);
+    let mut found: Vec<Uncovered> = gap
+        .decompose()
+        .into_iter()
+        .filter_map(|part| {
+            let area = part.area();
+            if area < COVER_AREA {
+                return None;
+            }
+            let [x, y] = middle(&part);
+            Some(Uncovered { area, at: [origin[0] + x, origin[1] + y] })
+        })
+        .collect();
+    found.sort_by(|a, b| b.area.total_cmp(&a.area));
+    Ok(found)
+}
+
+/// About the middle of a part in plan: its outer ring's centroid, or the middle of its box where that falls outside it.
+fn middle(part: &CrossSection) -> [f64; 2] {
+    let rings = part.to_polygons();
+    let Some(outer) = rings.iter().max_by(|a, b| ring_area(a).abs().total_cmp(&ring_area(b).abs())) else { return [0.0, 0.0] };
+    let (twice, mut cx, mut cy) = (2.0 * ring_area(outer), 0.0, 0.0);
+    for k in 0..outer.len() {
+        let (p, q) = (outer[k], outer[(k + 1) % outer.len()]);
+        let cross = p[0] * q[1] - q[0] * p[1];
+        cx += (p[0] + q[0]) * cross;
+        cy += (p[1] + q[1]) * cross;
+    }
+    if twice.abs() > 0.0 {
+        let c = [cx / (3.0 * twice), cy / (3.0 * twice)];
+        if inside(outer, c) {
+            return c;
+        }
+    }
+    let (lo, hi) = plan_box(outer);
+    [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0]
+}
+
+/// A ring's signed area (anticlockwise positive).
+fn ring_area(ring: &[[f64; 2]]) -> f64 {
+    let n = ring.len();
+    (0..n).map(|k| ring[k][0] * ring[(k + 1) % n][1] - ring[(k + 1) % n][0] * ring[k][1]).sum::<f64>() / 2.0
+}
+
+/// Whether a point lies inside a ring (crossing count).
+fn inside(ring: &[[f64; 2]], p: [f64; 2]) -> bool {
+    let n = ring.len();
+    let mut within = false;
+    for k in 0..n {
+        let (a, b) = (ring[k], ring[(k + 1) % n]);
+        if (a[1] > p[1]) != (b[1] > p[1]) && p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]) {
+            within = !within;
+        }
+    }
+    within
 }
 
 /// Whether two plan rings overlap by more than `least` (m²): each overlap as the two polygons, its area and its centre.

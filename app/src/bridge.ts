@@ -225,6 +225,8 @@ export const objectsBounds = (objects: string[]) => invoke<[Vec3, Vec3] | null>(
 export const solidsUnder = (objects: string[], volume: number) => invoke<string[]>('solids_under', { objects, volume });
 /** What slicing these solids by these faces would refuse, found before the cut: a warning for each face that doesn't pass right through a solid. */
 export const checkSlice = (solids: string[], faces: string[]) => invoke<Note[]>('check_slice', { solids, faces });
+/** What cutting these solids by these block polygons would refuse, found before the cut: a warning for each part of a solid outside them all. */
+export const checkCutByPolygons = (solids: string[], polygons: string[]) => invoke<Note[]>('check_cut_by_polygons', { solids, polygons });
 /**
  * Everything on show lying wholly inside a box on the viewport: the camera's view-projection matrix in the scene's
  * local frame (column-major) and the box's corners in normalised device coordinates.

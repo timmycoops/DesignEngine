@@ -40,6 +40,7 @@ fn main() {
             commands::objects_bounds,
             commands::solids_under,
             commands::check_slice,
+            commands::check_cut_by_polygons,
             commands::objects_in_box,
             commands::section_lines,
             commands::stage_seam_horizon,

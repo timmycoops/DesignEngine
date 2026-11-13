@@ -1,6 +1,6 @@
 import { Combine, Grid3x3, Layers, Slice } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { checkSlice, type Note, type ObjectSummary, type StepTarget } from '@/bridge';
+import { checkCutByPolygons, checkSlice, type Note, type ObjectSummary, type StepTarget } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { Choice, Field, NoteLine, NumberInput, type RunReport, Select, TargetInput, TargetOptions, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
@@ -68,31 +68,6 @@ export function CutPanel() {
   const faces = objects.filter((o) => o.kind === 'surface' && o.layer === facesOn);
   const strips = byStrip(faces);
 
-  // The faces checked against the solids before the cut, each time either changes: any face that doesn't pass right
-  // through a solid, past its ends, above its top and below its floor, is listed, and the slice waits until it's fixed.
-  const checkKey = mode === 'strips' && chosen.length > 0 && strips.strips.length > 0 && strips.unnumbered.length === 0 ? [...chosen, ...faces].map((o) => `${o.id}:${o.revision}`).join(',') : null;
-  const [check, setCheck] = useState<{ key: string; notes?: Note[]; error?: string } | null>(null);
-  useEffect(() => {
-    if (checkKey === null) return;
-    let stale = false;
-    const solidIds = chosen.map((o) => o.id);
-    const faceIds = faces.map((o) => o.id);
-    const wait = setTimeout(() => {
-      setCheck({ key: checkKey });
-      checkSlice(solidIds, faceIds).then(
-        (notes) => !stale && setCheck({ key: checkKey, notes }),
-        (error: unknown) => !stale && setCheck({ key: checkKey, error: String(error) }),
-      );
-    }, 250);
-    return () => {
-      stale = true;
-      clearTimeout(wait);
-    };
-    // The key holds every id and revision the check reads.
-  }, [checkKey]);
-  const checked = check && check.key === checkKey ? check : null;
-  const shortfalls = checked?.notes?.filter((n) => n.severity === 'warning') ?? [];
-
   const strings = objects.filter((o) => o.kind === 'string');
   const closed = strings.filter((o) => o.closed);
   const pickedString = strings.find((o) => o.id === selected);
@@ -114,6 +89,62 @@ export function CutPanel() {
   const polygons = closed.filter((o) => o.layer === polygonsOn);
   const pattern = mode === 'seams' || mode === 'polygons' ? patterns[mode] : '';
   const setPattern = (text: string) => mode === 'seams' || mode === 'polygons' ? setPatterns((was) => ({ ...was, [mode]: text })) : undefined;
+
+  // What a cut would refuse, checked before it each time the solids or what cuts them change: into strips, any face
+  // that doesn't pass right through a solid, past its ends, above its top and below its floor; by polygons, any part of a
+  // solid outside them all. Each is listed, and the cut waits until it's fixed.
+  const ids = (list: ObjectSummary[]) => list.map((o) => `${o.id}:${o.revision}`).join(',');
+  const checkKey =
+    mode === 'strips' && chosen.length > 0 && strips.strips.length > 0 && strips.unnumbered.length === 0
+      ? `strips|${ids(chosen)}|${ids(faces)}`
+      : mode === 'polygons' && chosen.length > 0 && polygons.length > 0
+        ? `polygons|${ids(chosen)}|${ids(polygons)}`
+        : null;
+  const [check, setCheck] = useState<{ key: string; notes?: Note[]; error?: string } | null>(null);
+  useEffect(() => {
+    if (checkKey === null) return;
+    let stale = false;
+    const solidIds = chosen.map((o) => o.id);
+    const cutIds = (mode === 'strips' ? faces : polygons).map((o) => o.id);
+    const ask = mode === 'strips' ? checkSlice : checkCutByPolygons;
+    const wait = setTimeout(() => {
+      setCheck({ key: checkKey });
+      ask(solidIds, cutIds).then(
+        (notes) => !stale && setCheck({ key: checkKey, notes }),
+        (error: unknown) => !stale && setCheck({ key: checkKey, error: String(error) }),
+      );
+    }, 250);
+    return () => {
+      stale = true;
+      clearTimeout(wait);
+    };
+    // The key holds the mode and every id and revision the check reads.
+  }, [checkKey]);
+  const checked = check && check.key === checkKey ? check : null;
+  const shortfalls = checked?.notes?.filter((n) => n.severity === 'warning') ?? [];
+  const theSolids = chosen.length === 1 ? 'the solid' : `the ${chosen.length} solids`;
+  /** The check's state in words: checking, passed, or what's wrong, each listed. */
+  const checkStatus = (label: string, checking: string, passed: string, failed: string) =>
+    checkKey !== null && (
+      <div className="flex flex-col gap-0.5" role="status" aria-label={label}>
+        {!checked || (!checked.notes && !checked.error) ? (
+          <span className="text-muted-foreground">{checking}</span>
+        ) : checked.error ? (
+          <span className="text-destructive">{checked.error}</span>
+        ) : shortfalls.length === 0 ? (
+          <span className="text-ok">{passed}</span>
+        ) : (
+          <>
+            <span className="text-warning">{failed}</span>
+            <div className="flex max-h-40 flex-col gap-0.5 overflow-auto">
+              {shortfalls.map((note, k) => (
+                <NoteLine key={k} note={note} index={k + 1} />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    );
 
   const output = outputs[mode].trim();
   const setOutput = (text: string) => setOutputs((was) => ({ ...was, [mode]: text }));
@@ -159,10 +190,11 @@ export function CutPanel() {
         return {
           label: `Cut ${plural(chosen.length, 'solid')} into blocks`,
           icon: <Grid3x3 className="size-3.5" />,
-          disabled: chosen.length === 0 || polygons.length === 0 || output === '' || pattern.trim() === '',
+          disabled: chosen.length === 0 || polygons.length === 0 || shortfalls.length > 0 || output === '' || pattern.trim() === '',
           busy,
           busyLabel: 'Cutting…',
           title: 'Each solid cut vertically where each polygon sits, the piece taking its name as its block',
+          hint: shortfalls.length > 0 ? 'Fix the polygons first' : undefined,
           run: () => runIt('solid.cut_by_polygons', { solids: chosen.map((o) => o.id), polygons: polygons.map((o) => o.id), layer: output, name: pattern.trim() }),
         };
       case 'cut':
@@ -259,25 +291,11 @@ export function CutPanel() {
               {strips.unnumbered.length > 3 ? '…' : ''}
             </div>
           )}
-          {checkKey !== null && (
-            <div className="flex flex-col gap-0.5" role="status" aria-label="Faces against the solids">
-              {!checked || (!checked.notes && !checked.error) ? (
-                <span className="text-muted-foreground">Checking the faces pass right through {chosen.length === 1 ? 'the solid' : 'the solids'}…</span>
-              ) : checked.error ? (
-                <span className="text-destructive">{checked.error}</span>
-              ) : shortfalls.length === 0 ? (
-                <span className="text-ok">Every face passes right through {chosen.length === 1 ? 'the solid' : `the ${chosen.length} solids`}</span>
-              ) : (
-                <>
-                  <span className="text-warning">Not every face passes right through: carry these on past the solid, then slice</span>
-                  <div className="flex max-h-40 flex-col gap-0.5 overflow-auto">
-                    {shortfalls.map((note, k) => (
-                      <NoteLine key={k} note={note} index={k + 1} />
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
+          {checkStatus(
+            'Faces against the solids',
+            `Checking the faces pass right through ${theSolids}…`,
+            `Every face passes right through ${theSolids}`,
+            'Not every face passes right through: carry these on past the solid, then slice',
           )}
           <div className="text-muted-foreground">
             Every face must pass right through the solid: past it at both ends, above its top and below its floor. Strip n is the solid in front of face n, back to the face before. What's behind the
@@ -325,7 +343,16 @@ export function CutPanel() {
               </Select>
             )}
           </Field>
-          <div className="text-muted-foreground">A vertical cut where each polygon sits. What's outside them all is kept on a layer of its own. Overlapping polygons are refused.</div>
+          {checkStatus(
+            'Polygons over the solids',
+            `Checking the polygons cover ${theSolids}…`,
+            `The polygons cover ${theSolids}`,
+            "The polygons don't cover every solid: carry them on over these, then cut",
+          )}
+          <div className="text-muted-foreground">
+            A vertical cut where each polygon sits. The polygons must cover every solid in plan, crest to crest: a solid reaching outside them is the polygons to fix. Overlapping polygons are
+            refused.
+          </div>
         </ToolSection>
       )}
 

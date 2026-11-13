@@ -2,7 +2,7 @@
 //! Volumes to 1 part in a million of the solid unless said.
 
 use zd_core::TriMesh;
-use zd_geom::{cut_solid_by_polygons, polygons_overlapping};
+use zd_geom::{COVER_SLIVER, cut_solid_by_polygons, polygons_overlapping, polygons_uncovered};
 
 const E: f64 = 650_000.0;
 const N: f64 = 7_450_000.0;
@@ -136,4 +136,56 @@ fn overlapping_polygons_are_found_and_neighbours_are_not() {
     assert!((at[0] - E - 95.0).abs() < 1e-6 && (at[1] - N - 30.0).abs() < 1e-6, "{at:?}");
     assert_eq!((found[1].0, found[1].1), (1, 3));
     assert!((found[1].2 - 90.0 * 160.0).abs() < 1e-6);
+}
+
+/// Polygons over the whole strip cover it, battered sides and all; over the west 1,000 m they leave the east 500 m, 30,000 m²
+/// in plan, about its middle.
+#[test]
+fn polygons_over_the_whole_solid_cover_it_and_a_short_set_leaves_the_rest() {
+    let strip = square_strip(0.0, 1500.0);
+    let started = std::time::Instant::now();
+    assert!(polygons_uncovered(&strip, &across(0.0, 15)).unwrap().is_empty());
+    println!("checked {} triangles against 15 polygons in {:.1} ms", strip.triangle_count(), started.elapsed().as_secs_f64() * 1000.0);
+    let lean = 30.0 / 65f64.to_radians().tan();
+    let battered = along_strike(0.0, 300.0, &[(0.0, 0.0), (60.0, 0.0), (60.0 + lean, 30.0), (-lean, 30.0)]);
+    assert!(polygons_uncovered(&battered, &across(0.0, 3)).unwrap().is_empty(), "the crest's 14 m past the toe is inside the polygons");
+
+    let gaps = polygons_uncovered(&strip, &across(0.0, 10)).unwrap();
+    assert_eq!(gaps.len(), 1);
+    assert!((gaps[0].area - 30_000.0).abs() < 1e-3, "{}", gaps[0].area);
+    assert!((gaps[0].at[0] - (E + 1250.0)).abs() < 1e-3 && (gaps[0].at[1] - (N + 30.0)).abs() < 1e-3, "{:?}", gaps[0].at);
+}
+
+/// A crest's lean past polygons drawn to the toe is uncovered: 14 m by 300 m each side for a 30 m wall at 65°.
+#[test]
+fn polygons_drawn_to_the_toe_leave_the_battered_walls_uncovered() {
+    let lean = 30.0 / 65f64.to_radians().tan();
+    let battered = along_strike(0.0, 300.0, &[(0.0, 0.0), (60.0, 0.0), (60.0 + lean, 30.0), (-lean, 30.0)]);
+    let to_the_toe: Vec<Vec<[f64; 2]>> = (0..3).map(|k| rectangle(100.0 * k as f64, 0.0, 100.0 * (k + 1) as f64, 60.0)).collect();
+    let gaps = polygons_uncovered(&battered, &to_the_toe).unwrap();
+    assert_eq!(gaps.len(), 2, "{gaps:?}");
+    for gap in &gaps {
+        assert!((gap.area - 300.0 * lean).abs() < 1e-3 * 300.0 * lean, "{} against {}", gap.area, 300.0 * lean);
+    }
+}
+
+/// Polygons a millimetre apart, or with an edge on the solid's own edge, cover it: slivers under COVER_SLIVER are rounding.
+/// A metre apart, the gap is 60 m² between them. A solid away from every polygon is uncovered whole.
+#[test]
+fn slivers_are_rounding_and_a_metre_gap_or_a_solid_away_is_found() {
+    let strip = square_strip(0.0, 300.0);
+    let apart = |gap: f64| vec![rectangle(0.0, -50.0, 150.0, 110.0), rectangle(150.0 + gap, -50.0, 300.0, 110.0)];
+    assert!(polygons_uncovered(&strip, &apart(0.001)).unwrap().is_empty());
+    assert!(COVER_SLIVER > 0.001);
+    let on_its_edges = vec![rectangle(0.0, 0.0, 300.0, 60.0)];
+    assert!(polygons_uncovered(&strip, &on_its_edges).unwrap().is_empty());
+
+    let gaps = polygons_uncovered(&strip, &apart(1.0)).unwrap();
+    assert_eq!(gaps.len(), 1);
+    assert!((gaps[0].area - 60.0).abs() < 1e-3, "{}", gaps[0].area);
+    assert!((gaps[0].at[0] - (E + 150.5)).abs() < 1e-3, "{:?}", gaps[0].at);
+
+    let away = polygons_uncovered(&square_strip(5_000.0, 5_100.0), &across(0.0, 3)).unwrap();
+    assert_eq!(away.len(), 1);
+    assert!((away[0].area - 6_000.0).abs() < 1e-3);
 }
