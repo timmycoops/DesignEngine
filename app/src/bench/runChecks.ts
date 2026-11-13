@@ -368,6 +368,10 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
   button('Into strips')?.click();
   await wait(500);
   const pickedAfterMaking = panelText();
+  // The faces checked against the pit before the cut: they run 50 m past its top and floor and 60 m past its ends.
+  const checkStarted = performance.now();
+  for (let k = 0; k < 100 && !/passes right through|Not every face/.test(panelText()); k++) await wait(100);
+  const check = { through: panelText().includes('Every face passes right through the solid'), ms: Math.round(performance.now() - checkStarted) };
   const facesSaid = panelText().match(/\d+ faces on \d+ strips: [0-9–]+/)?.[0] ?? '';
   const sliceLabel = buttons().find((b) => b.textContent?.trim().startsWith('Slice '))?.textContent?.trim() ?? '';
   const slicedMs = await press(sliceLabel);
@@ -375,6 +379,7 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
   const stripVolumes = Object.values(strips);
   const sliced = {
     faces_said: facesSaid,
+    check,
     button: sliceLabel,
     ms: slicedMs,
     said: resultLines().filter((l) => l.includes('sliced by') || l.includes('adding up') || l.includes('from the pit out')),

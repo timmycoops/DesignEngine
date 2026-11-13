@@ -111,8 +111,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   to its line (`docs/decisions/0048-build-a-step.md`). A face is told apart by its strip number: `face.join` makes one
   face a strip from up and down faces, several runs or a build's steps, welded, stitched and gaps filled, every change
   said; `solid.slice_by_faces` closes each face behind it past the solid, its triangles facing the pit, and slices the
-  solid from the pit out, each strip cut from what the strips before it left so they add up to the solid; a face short of
-  the solid at an end is refused with the run-on it needs (`docs/decisions/0049-strip-solids.md`).
+  solid from the pit out, each strip cut from what the strips before it left so they add up to the solid; a face that
+  doesn't pass right through the solid (past both ends, above its top, below its floor; one stopping on them doesn't) is
+  refused, every shortfall listed, and the Cut solids panel checks before the cut; carrying faces on past the solid is
+  the designer's, not automated (`docs/decisions/0049-strip-solids.md`).
 - `Ramp`: centreline or start point, direction, start and end bench, width, grade (%, ratio or degrees,
   measured on the inside edge by default, which is the pit side), inside and outside taper, entry type, flat or
   graded switchbacks with radius. It's a named ramp in a `FaceProfile`, set by a string drawn across the strips: each line

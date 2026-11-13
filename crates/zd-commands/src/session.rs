@@ -366,6 +366,11 @@ impl Session {
         &self.project
     }
 
+    /// The project as it stands, shared and not copied, to read off the session while it carries on (decision 0060).
+    pub fn shared_project(&self) -> Arc<Project> {
+        self.project.clone()
+    }
+
     pub fn registry(&self) -> &Registry {
         &self.registry
     }
