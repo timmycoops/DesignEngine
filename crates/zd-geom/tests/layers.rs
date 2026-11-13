@@ -2,7 +2,7 @@
 //! coordinates. Volumes to 0.001 m³ unless said.
 
 use zd_core::{Lattice, TriMesh};
-use zd_geom::{LayerCut, cut_solid_by_layers, layer_stack};
+use zd_geom::{LayerCut, cut_solid_by_layers, grid_hole_patches, layer_stack, solid_off_the_grids};
 
 const E: f64 = 650_000.0;
 const N: f64 = 7_450_000.0;
@@ -183,4 +183,63 @@ fn surfaces_crossing_within_the_tolerance_are_lowered_and_counted() {
     let stack = layer_stack(LATTICE, &horizons).unwrap();
     assert_eq!(stack.lowered, 31 * 21);
     assert!(near(stack.most_lowered, 0.001, 1e-9));
+}
+
+/// Holes at these nodes (col, row) of the lattice.
+fn holes_at(nodes: &[(usize, usize)]) -> Vec<bool> {
+    let mut holes = vec![false; LATTICE.cols * LATTICE.rows];
+    for &(c, r) in nodes {
+        holes[r * LATTICE.cols + c] = true;
+    }
+    holes
+}
+
+#[test]
+fn grids_over_the_whole_solid_with_no_hole_under_it_cover_it() {
+    let started = std::time::Instant::now();
+    let cover = solid_off_the_grids(&strip(0.0, 500.0, 0.0, 30.0), LATTICE, &holes_at(&[])).unwrap();
+    assert!(cover.covered(), "{cover:?}");
+    println!("checked in {:.1} ms", started.elapsed().as_secs_f64() * 1e3);
+    // A hole well away from the solid, east of it and north, doesn't count.
+    assert!(solid_off_the_grids(&strip(0.0, 500.0, 0.0, 30.0), LATTICE, &holes_at(&[(57, 15)])).unwrap().covered());
+}
+
+#[test]
+fn a_solid_past_the_grids_edge_is_found_with_the_area_past_it() {
+    // The strip starts 100 m west of E, the grids 50 m west: 50 x 60 m past their edge, about (E - 75, N + 30).
+    let cover = solid_off_the_grids(&strip(-100.0, 500.0, 0.0, 30.0), LATTICE, &holes_at(&[])).unwrap();
+    assert_eq!(cover.past_edge.len(), 1, "{cover:?}");
+    assert!(near(cover.past_edge[0].area, 3_000.0, 1e-6), "{:?}", cover.past_edge);
+    assert!(near(cover.past_edge[0].at[0], E - 75.0, 1e-6) && near(cover.past_edge[0].at[1], N + 30.0, 1e-6), "{:?}", cover.past_edge);
+    assert!(cover.over_holes.is_empty());
+}
+
+#[test]
+fn a_hole_under_the_solid_takes_the_four_cells_round_it_and_one_on_its_edge_takes_none() {
+    // A hole at node (E + 50, N + 30), inside the strip: the four 10 m cells round it, 400 m² about the node.
+    let cover = solid_off_the_grids(&strip(0.0, 500.0, 0.0, 30.0), LATTICE, &holes_at(&[(10, 8)])).unwrap();
+    assert!(cover.past_edge.is_empty());
+    assert_eq!(cover.over_holes.len(), 1, "{cover:?}");
+    assert!(near(cover.over_holes[0].area, 400.0, 1e-6), "{:?}", cover.over_holes);
+    assert!(near(cover.over_holes[0].at[0], E + 50.0, 1e-6) && near(cover.over_holes[0].at[1], N + 30.0, 1e-6), "{:?}", cover.over_holes);
+    // At (E + 50, N): half its cells are under the strip, 200 m².
+    let cover = solid_off_the_grids(&strip(0.0, 500.0, 0.0, 30.0), LATTICE, &holes_at(&[(10, 5)])).unwrap();
+    assert!(near(cover.over_holes.iter().map(|u| u.area).sum::<f64>(), 200.0, 1e-6), "{:?}", cover.over_holes);
+    // At (E + 50, N + 70), 10 m north of the strip: its cells only touch it.
+    assert!(solid_off_the_grids(&strip(0.0, 500.0, 0.0, 30.0), LATTICE, &holes_at(&[(10, 12)])).unwrap().covered());
+    // Two holes side by side make one part: six cells, 600 m².
+    let cover = solid_off_the_grids(&strip(0.0, 500.0, 0.0, 30.0), LATTICE, &holes_at(&[(10, 8), (11, 8)])).unwrap();
+    assert_eq!(cover.over_holes.len(), 1, "{cover:?}");
+    assert!(near(cover.over_holes[0].area, 600.0, 1e-6), "{:?}", cover.over_holes);
+}
+
+#[test]
+fn holes_in_a_grid_are_told_apart_largest_first() {
+    // Three nodes joined corner to corner about (E + 50, N + 30), and one alone at (E + 300, N + 100).
+    let holes = holes_at(&[(9, 7), (10, 8), (11, 9), (35, 15)]);
+    let found = grid_hole_patches(LATTICE, &holes);
+    assert_eq!(found.iter().map(|h| h.nodes).collect::<Vec<_>>(), [3, 1]);
+    assert_eq!(found[0].at, [E + 50.0, N + 30.0]);
+    assert_eq!(found[1].at, [E + 300.0, N + 100.0]);
+    assert!(grid_hole_patches(LATTICE, &holes_at(&[])).is_empty());
 }

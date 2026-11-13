@@ -32,7 +32,7 @@ mod strips;
 mod wall;
 
 pub use blocks::{COVER_SLIVER, PolygonCut, PolygonPiece, Uncovered, cut_solid_by_polygons, polygons_overlapping, polygons_uncovered};
-pub use layers::{LayerCut, LayerPiece, LayerStack, cut_solid_by_layers, layer_stack};
+pub use layers::{GridCover, GridHole, LayerCut, LayerPiece, LayerStack, cut_solid_by_layers, grid_hole_patches, layer_stack, solid_off_the_grids};
 pub use between::{Between, solid_between};
 pub use cut::{CutResult, CutTimings, DesignIndex, TINY_EDGE, TinyEdges, cut_solid_by_indexed_surface, cut_solid_by_surface, cut_solid_by_whole_surface, join_tiny_edges};
 pub use error::GeomError;

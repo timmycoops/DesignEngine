@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
-use zd_core::{Fingerprint, Grid, GridLink, SeamModel, blank_no_seam, blank_no_thickness, same_path};
+use zd_core::{Fingerprint, Grid, GridLink, SeamModel, blank_no_seam, blank_no_thickness, grid_holes, same_path};
 
 use crate::text::{csv_cell, csv_fields, decode_text};
 use crate::{IoError, XyzOptions, parse_vulcan_grid, parse_xyz_grid, vulcan_grid_name};
@@ -294,6 +294,9 @@ pub struct StackGrids {
     pub floors: Vec<Grid>,
     /// Files that differ from the fingerprint the model recorded: the model is out of date.
     pub changed: Vec<String>,
+    /// For each horizon, the nodes where its roof or floor held no height as read and its no-seam RL doesn't mark it
+    /// absent: holes in the grids, never filled (decision 0063).
+    pub holes: Vec<Vec<bool>>,
 }
 
 impl StackGrids {
@@ -328,12 +331,13 @@ pub fn read_stack_grids(model: &SeamModel) -> Result<StackGrids, IoError> {
         roofs.push(roof);
         floors.push(floor);
     }
+    let holes = roofs.iter().zip(&floors).map(|(roof, floor)| grid_holes(roof, floor, model.no_seam)).collect();
     if let Some(rl) = model.no_seam {
         for (roof, floor) in roofs.iter_mut().zip(&mut floors) {
             blank_no_seam(roof, floor, rl);
         }
     }
-    Ok(StackGrids { roofs, floors, changed })
+    Ok(StackGrids { roofs, floors, changed, holes })
 }
 
 /// Where a seam model's grid files are now, against what it recorded (decision 0058, stage 4).

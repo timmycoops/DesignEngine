@@ -5,7 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
-use zd_commands::{Code, RunRecord, Session};
+use zd_commands::builtin::{CutBySeamsParams, check_cut_by_seams};
+use zd_commands::{Code, Note, RunRecord, Session, Severity};
 use zd_core::{AttrValue, Body, ChangeKind, ObjectId, RunId};
 
 const E: f64 = 500_000.0;
@@ -168,20 +169,77 @@ fn a_seam_running_out_leaves_coal_only_where_it_is_and_says_what_was_too_thin() 
     assert!((total + 0.01875 - 180_000.0).abs() < 0.001);
 }
 
-/// A strip reaching 50 m west of the grids: 50 × 60 × 30 = 90,000 m³ kept whole off them and said; the rest cut.
+/// What the Cut solids panel reads before a cut by seams.
+fn check(s: &Session, solids: &[ObjectId], model: ObjectId) -> Vec<Note> {
+    let params: CutBySeamsParams = serde_json::from_value(json!({ "solids": solids, "model": model, "layer": "layers" })).unwrap();
+    check_cut_by_seams(s.project(), &params).unwrap()
+}
+
+/// A strip reaching 50 m west of the grids (decision 0063): found by the check, 50 × 60 m past their edge about its
+/// middle, and refused by the cut with nothing made. Kept to the grids, it's checked and cut.
 #[test]
-fn what_lies_off_the_grids_is_kept_whole_and_said() {
+fn a_strip_past_the_grids_edge_is_found_first_and_refused() {
     let t = TempDir::new("off");
     write_model(&t.0, |_| 100.0);
     let (mut s, model) = session(&t.0);
     let strip = box_solid(&mut s, "Strip 5", (-50.0, 100.0), (50.0, 110.0), (80.0, 110.0));
-    let record = s.run("solid.cut_by_seams", json!({ "solids": [strip], "model": model, "layer": "layers" })).unwrap();
-    let off: Vec<ObjectId> = created(&record).into_iter().filter(|&id| layer_of(&s, id) == "layers off the grids").collect();
-    assert_eq!(off.len(), 1);
-    assert!((volume(&s, off[0]) - 90_000.0).abs() < 0.001);
-    assert!(record.notes.iter().any(|n| n.code == Some(Code::SolidOffGrids)));
-    let on: f64 = created(&record).iter().filter(|id| !off.contains(id)).map(|&id| volume(&s, id)).sum();
-    assert!((on - 180_000.0).abs() < 0.001);
+    let notes = check(&s, &[strip], model);
+    let off: Vec<&Note> = notes.iter().filter(|n| n.severity == Severity::Warning).collect();
+    assert_eq!(off.len(), 1, "{notes:?}");
+    assert_eq!(off[0].code, Some(Code::SolidOffGrids));
+    assert_eq!(off[0].text, "'Strip 5' reaches past the edge of the grids by 3000.0 m² about 499975.000 7000080.000");
+    assert_eq!(off[0].object, Some(strip));
+
+    let before = s.project().objects().count();
+    let refused = s.run("solid.cut_by_seams", json!({ "solids": [strip], "model": model, "layer": "layers" })).unwrap_err().to_string();
+    let want = "the grids of 'stack' don't reach over a solid with no hole under it, so nothing is cut: 'Strip 5' reaches past their edge by 3000.0 m² about 499975.000 7000080.000. Fix the geology model and import the grids again, or keep the solids to where the grids are, then cut";
+    assert!(refused.contains(want), "{refused}");
+    assert_eq!(s.project().objects().count(), before, "nothing made");
+
+    let kept = box_solid(&mut s, "Strip 6", (0.0, 100.0), (50.0, 110.0), (80.0, 110.0));
+    let notes = check(&s, &[kept], model);
+    assert!(notes.iter().all(|n| n.severity != Severity::Warning), "{notes:?}");
+    assert!(notes.iter().any(|n| n.text == "the grids reach over all 1 solids with no hole under them"), "{notes:?}");
+    let record = s.run("solid.cut_by_seams", json!({ "solids": [kept], "model": model, "layer": "layers" })).unwrap();
+    let total: f64 = created(&record).iter().map(|&id| volume(&s, id)).sum();
+    assert!((total - 180_000.0).abs() < 0.001, "{total}");
+    assert!(created(&record).iter().all(|&id| layer_of(&s, id) == "layers"), "no layer off the grids");
+}
+
+/// A hole in cl's roof and floor all along x = 250 m, nine nodes holding no height (decision 0063): said on the model,
+/// never filled; a strip over it found by the check, the two 25 m cells either side under it (50 × 60 m), and refused;
+/// a strip clear of it cut as before.
+#[test]
+fn a_hole_in_the_grids_under_a_strip_is_found_first_and_refused() {
+    let t = TempDir::new("hole");
+    write_model(&t.0, |_| 100.0);
+    let holed = |z: f32| vulcan_grid(move |x| if x == 250.0 { f32::NAN } else { z });
+    std::fs::write(t.0.join("grncl.srg"), holed(94.0)).unwrap();
+    std::fs::write(t.0.join("grncl.sfg"), holed(90.0)).unwrap();
+    let mut s = Session::with_builtins();
+    let built = s.run("seam.build_model", json!({ "definition": t.0.join("stack.csv").to_string_lossy(), "layer": "geology" })).unwrap();
+    let model = created(&built)[0];
+    let holes = built.notes.iter().find(|n| n.code == Some(Code::SeamHoles)).expect("the holes said on the model");
+    assert!(holes.text.starts_with("warning: cl roof or floor holds no height at 9 nodes, the largest hole at E 500250.0 N 7000100.0"), "{}", holes.text);
+
+    let over = box_solid(&mut s, "Strip 7", (200.0, 300.0), (50.0, 110.0), (80.0, 110.0));
+    let notes = check(&s, &[over], model);
+    let found: Vec<&Note> = notes.iter().filter(|n| n.severity == Severity::Warning).collect();
+    assert_eq!(found.len(), 1, "{notes:?}");
+    assert_eq!(found[0].code, Some(Code::SolidOverGridHoles));
+    assert_eq!(found[0].text, "'Strip 7' lies over a hole in the grids by 3000.0 m² about 500250.000 7000080.000");
+    let refused = s.run("solid.cut_by_seams", json!({ "solids": [over], "model": model, "layer": "layers" })).unwrap_err().to_string();
+    assert!(refused.contains("'Strip 7' reaches over holes in them by 3000.0 m² about 500250.000 7000080.000"), "{refused}");
+
+    let clear = box_solid(&mut s, "Strip 5", (100.0, 200.0), (50.0, 110.0), (80.0, 110.0));
+    assert!(check(&s, &[clear], model).iter().all(|n| n.severity != Severity::Warning));
+    let record = s.run("solid.cut_by_seams", json!({ "solids": [clear], "model": model, "layer": "layers" })).unwrap();
+    let total: f64 = created(&record).iter().map(|&id| volume(&s, id)).sum();
+    assert!((total - 180_000.0).abs() < 0.001, "{total}");
+    // Both strips at once: refused for the one over the hole, nothing made.
+    let before = s.project().objects().count();
+    assert!(s.run("solid.cut_by_seams", json!({ "solids": [clear, over], "model": model, "layer": "layers" })).is_err());
+    assert_eq!(s.project().objects().count(), before);
 }
 
 /// Seams then blocks, Tim's order: the pieces cut by block polygons are named block and horizon (no strip number here),
@@ -230,7 +288,7 @@ fn a_solid_off_the_grids_or_no_thickness_is_refused() {
     let (mut s, model) = session(&t.0);
     let far = box_solid(&mut s, "Far", (1000.0, 1100.0), (50.0, 110.0), (80.0, 110.0));
     let refused = s.run("solid.cut_by_seams", json!({ "solids": [far], "model": model, "layer": "layers" })).unwrap_err();
-    assert!(refused.to_string().contains("none of the 1 solids lies on the grids"), "{refused}");
+    assert!(refused.to_string().contains("'Far' reaches past their edge by 6000.0 m²"), "{refused}");
     let strip = box_solid(&mut s, "Strip", (0.0, 100.0), (50.0, 110.0), (80.0, 110.0));
     let refused = s.run("solid.cut_by_seams", json!({ "solids": [strip], "model": model, "layer": "layers", "min_thickness": 0 })).unwrap_err();
     assert!(refused.to_string().contains("minimum thickness"), "{refused}");

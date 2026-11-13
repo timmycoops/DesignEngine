@@ -524,6 +524,7 @@ const issueText: Record<StackIssue['kind'], (i: StackIssue) => string> = {
   outside_parent: (i) => `${i.horizon} outside its parent ${i.other ?? '?'}`,
   unpaired: (i) => `${i.horizon} roof and floor not live at the same nodes`,
   no_density: (i) => `${i.horizon} has no density grid`,
+  holes: (i) => `${i.horizon} roof or floor has holes: no height at ${i.nodes} nodes`,
 };
 
 /** The model's issues; click a blocking one to show its horizon and fly to its worst node. */

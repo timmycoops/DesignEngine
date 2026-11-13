@@ -57,6 +57,7 @@ fn rank(kind: IssueKind) -> u8 {
         IssueKind::OutsideParent => 2,
         IssueKind::Crossing => 3,
         IssueKind::NoDensity => 4,
+        IssueKind::Holes => 5,
     }
 }
 

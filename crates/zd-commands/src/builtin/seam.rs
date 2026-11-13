@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{Attributes, Body, Change, Grid, GridLink, Horizon, IssueKind, Lattice, ObjectId, ObjectKind, Project, SeamModel, StackIssue, blank_no_seam};
-use zd_geom::{StackHorizon, check_seam_stack, suggest_no_seam_rl, suggest_seam_tree};
+use zd_core::{Attributes, Body, Change, Grid, GridLink, Horizon, IssueKind, Lattice, ObjectId, ObjectKind, Project, SeamModel, StackIssue, blank_no_seam, grid_holes};
+use zd_geom::{StackHorizon, check_seam_stack, grid_hole_patches, suggest_no_seam_rl, suggest_seam_tree};
 use zd_io::{DefinedHorizon, LinkCheck, SeamDefinition, check_links, fingerprint_file, read_linked_grid, read_linked_surface, read_seam_definition, read_vulcan_grid, vulcan_grid_name, write_seam_definition};
 
 use super::in_parallel_watched;
@@ -285,6 +285,10 @@ impl Command for BuildSeamModel {
         }
         let lattice = lattice.expect("a definition has at least one horizon, and every grid read");
 
+        // Holes as read, where a node holds no height and the no-seam RL doesn't mark the seam absent: said, never
+        // filled; the geology model is fixed and the grids imported again (decision 0063).
+        let holes: Vec<Vec<bool>> = grids.iter().map(|g| grid_holes(&g["roof"], &g["floor"], definition.no_seam)).collect();
+
         // The definition's own rule, counted on each horizon so the record shows what it took out.
         let mut blanked = vec![0; definition.horizons.len()];
         if let Some(rl) = definition.no_seam {
@@ -316,6 +320,13 @@ impl Command for BuildSeamModel {
         let wants_density = |h: &&DefinedHorizon| h.working && !h.material.eq_ignore_ascii_case("waste");
         for h in definition.horizons.iter().filter(wants_density).filter(|h| !h.grids.contains_key(&density)) {
             issues.push(StackIssue { kind: IssueKind::NoDensity, horizon: h.code.clone(), other: None, nodes: 0, worst: 0.0, at: None, blocking: false });
+        }
+        for (h, holes) in definition.horizons.iter().zip(&holes) {
+            let patches = grid_hole_patches(lattice, holes);
+            if let Some(largest) = patches.first() {
+                let nodes = patches.iter().map(|p| p.nodes).sum();
+                issues.push(StackIssue { kind: IssueKind::Holes, horizon: h.code.clone(), other: None, nodes, worst: 0.0, at: Some(largest.at), blocking: false });
+            }
         }
 
         let mut outcome = Outcome::default().message(format!(
@@ -398,6 +409,7 @@ fn issue_note(issue: &StackIssue) -> Note {
         IssueKind::OutsideParent => Code::SeamOutsideParent,
         IssueKind::Unpaired => Code::SeamUnpaired,
         IssueKind::NoDensity => Code::SeamNoDensity,
+        IssueKind::Holes => Code::SeamHoles,
     };
     let note = if issue.blocking { Note::blocking(code, describe_issue(issue)) } else { Note::warning(code, describe_issue(issue)) };
     let note = if issue.worst > 0.0 { note.measured(issue.worst, "m") } else if issue.nodes > 0 { note.measured(issue.nodes as f64, "nodes") } else { note };
@@ -410,14 +422,20 @@ fn issue_note(issue: &StackIssue) -> Note {
 fn describe_issue(issue: &StackIssue) -> String {
     let severity = if issue.blocking { "BLOCKING" } else { "warning" };
     let other = issue.other.as_deref().unwrap_or("?");
+    let at = issue.at.map(|[x, y]| format!(" at E {x:.1} N {y:.1}")).unwrap_or_default();
     let what = match issue.kind {
         IssueKind::FloorAboveRoof => format!("{} floor above its roof", issue.horizon),
         IssueKind::Crossing => format!("{} roof above the floor of {other}", issue.horizon),
         IssueKind::OutsideParent => format!("{} outside its parent {other}", issue.horizon),
         IssueKind::Unpaired => format!("{} roof and floor not live at the same nodes", issue.horizon),
         IssueKind::NoDensity => return format!("{severity}: {} has no density grid; tonnes will need one", issue.horizon),
+        IssueKind::Holes => {
+            return format!(
+                "{severity}: {} roof or floor holds no height at {} nodes, the largest hole{at}: fix the geology model and import the grids again. A cut by seams refuses a solid over a hole",
+                issue.horizon, issue.nodes
+            );
+        }
     };
-    let at = issue.at.map(|[x, y]| format!(" at E {x:.1} N {y:.1}")).unwrap_or_default();
     if issue.worst > 0.0 {
         format!("{severity}: {what} at {} nodes, worst {:.3} m{at}", issue.nodes, issue.worst)
     } else {

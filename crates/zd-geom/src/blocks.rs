@@ -118,6 +118,12 @@ pub fn polygons_uncovered(solid: &TriMesh, polygons: &[Vec<[f64; 2]>]) -> Result
         .map(|p| section(p, origin))
         .collect();
     let gap = if near.is_empty() { footprint } else { footprint.difference(&CrossSection::batch_union(&near)) };
+    Ok(uncovered_parts(&gap, origin))
+}
+
+/// Each part of a gap in plan worked about `origin`, largest first, with slivers narrower than [`COVER_SLIVER`] and
+/// specks under a hundredth of a square metre left out.
+pub(crate) fn uncovered_parts(gap: &CrossSection, origin: [f64; 2]) -> Vec<Uncovered> {
     // Opened by half the sliver width: what's thinner than a sliver closes up and is gone.
     let half = COVER_SLIVER / 2.0;
     let gap = gap.offset(-half, JoinType::Miter, 2.0, 0).offset(half, JoinType::Miter, 2.0, 0);
@@ -134,7 +140,7 @@ pub fn polygons_uncovered(solid: &TriMesh, polygons: &[Vec<[f64; 2]>]) -> Result
         })
         .collect();
     found.sort_by(|a, b| b.area.total_cmp(&a.area));
-    Ok(found)
+    found
 }
 
 /// About the middle of a part in plan: its outer ring's centroid, or the middle of its box where that falls outside it.

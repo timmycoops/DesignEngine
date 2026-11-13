@@ -6,7 +6,8 @@
 //! where its thickness passes that minimum inside each grid triangle, with a wall of the minimum's height there; a seam
 //! with no thickness, at a subcrop or a washout, then makes no slab at all, and nothing coincides. A solid's piece of a
 //! layer is one Manifold intersection with its slab. What the slabs leave out, where a layer is thinner than the
-//! minimum, is said by its volume; what lies off the grids is kept whole.
+//! minimum, is said by its volume. The grids must reach over the whole solid with no hole under it, which
+//! [`solid_off_the_grids`] finds before the cut (decision 0063); what lies off them is kept apart, so the cut adds up.
 //!
 //! Everything is worked about a whole-metre origin near the solid, so mine grid coordinates keep their precision.
 
@@ -16,6 +17,7 @@ use std::time::Instant;
 use manifold_csg::{CrossSection, Manifold};
 use zd_core::{Lattice, TriMesh};
 
+use crate::blocks::{Uncovered, uncovered_parts};
 use crate::cut::{from_manifold, to_manifold};
 use crate::{GeomError, TinyEdges, join_tiny_edges};
 
@@ -192,6 +194,115 @@ pub fn cut_solid_by_layers(solid: &TriMesh, stack: &LayerStack, min_thickness: f
     let rest = if slabs.is_empty() { on } else { on.difference(&Manifold::batch_union(&slabs)) };
     rest.status().map_err(|e| GeomError::Manifold(e.to_string()))?;
     Ok(LayerCut { pieces, outside, thin: rest.volume(), input_volume, slab_triangles, ms: started.elapsed().as_secs_f64() * 1000.0 })
+}
+
+/// Where a solid can't be cut by a seam model's grids, found before the cut (decision 0063).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GridCover {
+    /// Each part of its footprint in plan past the grids' edge, largest first.
+    pub past_edge: Vec<Uncovered>,
+    /// Each part of its footprint over a grid cell with a hole at a corner, largest first.
+    pub over_holes: Vec<Uncovered>,
+}
+
+impl GridCover {
+    /// The grids reach over the whole solid, with no hole under it.
+    pub fn covered(&self) -> bool {
+        self.past_edge.is_empty() && self.over_holes.is_empty()
+    }
+}
+
+/// Where a closed solid reaches past a seam model's grids in plan, or over a hole in them: `holes` flags each node of
+/// `lattice` (`row * cols + col`) where a working horizon holds no height. A cell with a hole at any corner can't place
+/// the layers, so the whole cell counts. Slivers narrower than [`COVER_SLIVER`](crate::COVER_SLIVER) are left out.
+/// Nothing is filled: a hole is the geology model's to fix.
+pub fn solid_off_the_grids(solid: &TriMesh, lattice: Lattice, holes: &[bool]) -> Result<GridCover, GeomError> {
+    let validity = solid.validity();
+    if !validity.is_watertight() {
+        return Err(GeomError::NotWatertight { what: "solid", validity });
+    }
+    let (cols, rows) = (lattice.cols, lattice.rows);
+    if cols < 2 || rows < 2 || holes.len() != cols * rows {
+        return Err(GeomError::InvalidInput("the holes must flag every node of a lattice two nodes or more each way".into()));
+    }
+    let bounds = solid.bounds().ok_or_else(|| GeomError::InvalidInput("empty solid".into()))?;
+    let centre = bounds.centre();
+    let origin = [centre[0].round(), centre[1].round()];
+    let solid_m = to_manifold(solid, [-origin[0], -origin[1], 0.0], "solid")?;
+    let footprint = CrossSection::from_polygons(&solid_m.project());
+    let [x0, y0] = lattice.origin;
+    let [dx, dy] = lattice.cell_size;
+    let node = |c: usize, r: usize| [x0 + c as f64 * dx - origin[0], y0 + r as f64 * dy - origin[1]];
+    let rect = |a: [f64; 2], b: [f64; 2]| CrossSection::from_polygons(&[vec![a, [b[0], a[1]], b, [a[0], b[1]]]]);
+    let past_edge = uncovered_parts(&footprint.difference(&rect(node(0, 0), node(cols - 1, rows - 1))), origin);
+
+    // The cells under the solid with a hole at a corner, a row's run of them at a time.
+    let first = |lo: f64, start: f64, step: f64, count: usize| (((lo - start) / step).floor().max(0.0) as usize).min(count - 2);
+    let last = |hi: f64, start: f64, step: f64, count: usize| (((hi - start) / step).ceil().max(0.0) as usize).min(count - 1);
+    let (c0, c1) = (first(bounds.min[0], x0, dx, cols), last(bounds.max[0], x0, dx, cols));
+    let (r0, r1) = (first(bounds.min[1], y0, dy, rows), last(bounds.max[1], y0, dy, rows));
+    let hole = |c: usize, r: usize| holes[r * cols + c];
+    let mut runs = Vec::new();
+    for r in r0..r1 {
+        let mut run = None;
+        for c in c0..=c1 {
+            let bad = c < c1 && (hole(c, r) || hole(c + 1, r) || hole(c, r + 1) || hole(c + 1, r + 1));
+            match (bad, run) {
+                (true, None) => run = Some(c),
+                (false, Some(start)) => {
+                    runs.push(rect(node(start, r), node(c, r + 1)));
+                    run = None;
+                }
+                _ => {}
+            }
+        }
+    }
+    let over_holes = if runs.is_empty() { Vec::new() } else { uncovered_parts(&footprint.intersection(&CrossSection::batch_union(&runs)), origin) };
+    Ok(GridCover { past_edge, over_holes })
+}
+
+/// One hole in a grid: nodes holding no height, joined side to side or corner to corner.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GridHole {
+    pub nodes: usize,
+    /// Its node nearest the middle of its nodes, in mine-grid coordinates.
+    pub at: [f64; 2],
+}
+
+/// The holes among a lattice's flagged nodes (`row * cols + col`), largest first.
+pub fn grid_hole_patches(lattice: Lattice, holes: &[bool]) -> Vec<GridHole> {
+    let (cols, rows) = (lattice.cols, lattice.rows);
+    let xy = |i: usize| [lattice.origin[0] + (i % cols) as f64 * lattice.cell_size[0], lattice.origin[1] + (i / cols) as f64 * lattice.cell_size[1]];
+    let mut seen = vec![false; holes.len().min(cols * rows)];
+    let mut found = Vec::new();
+    for start in 0..seen.len() {
+        if seen[start] || !holes[start] {
+            continue;
+        }
+        seen[start] = true;
+        let (mut patch, mut next) = (Vec::new(), vec![start]);
+        while let Some(i) = next.pop() {
+            patch.push(i);
+            let (c, r) = ((i % cols) as isize, (i / cols) as isize);
+            for (dc, dr) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+                let (nc, nr) = (c + dc, r + dr);
+                if nc < 0 || nr < 0 || nc >= cols as isize || nr >= rows as isize {
+                    continue;
+                }
+                let j = nr as usize * cols + nc as usize;
+                if holes[j] && !seen[j] {
+                    seen[j] = true;
+                    next.push(j);
+                }
+            }
+        }
+        let n = patch.len() as f64;
+        let mean = patch.iter().map(|&i| xy(i)).fold([0.0, 0.0], |[a, b], [x, y]| [a + x / n, b + y / n]);
+        let nearest = patch.iter().map(|&i| xy(i)).min_by(|p, q| ((p[0] - mean[0]).hypot(p[1] - mean[1])).total_cmp(&(q[0] - mean[0]).hypot(q[1] - mean[1])));
+        found.push(GridHole { nodes: patch.len(), at: nearest.unwrap_or(mean) });
+    }
+    found.sort_by_key(|h| std::cmp::Reverse(h.nodes));
+    found
 }
 
 /// The part of a lattice under a solid, worked about a local origin.

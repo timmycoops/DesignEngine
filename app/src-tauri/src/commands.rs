@@ -602,6 +602,18 @@ pub async fn check_cut_by_polygons(solids: Vec<ObjectId>, polygons: Vec<ObjectId
     .await?
 }
 
+/// Where a seam model's grids don't reach over the solids, found before a cut by seams: a warning for each part of a
+/// solid past their edge or over a hole in them. Reads the model's grids in place, while the app carries on.
+#[tauri::command]
+pub async fn check_cut_by_seams(solids: Vec<ObjectId>, model: ObjectId, state: State<'_, AppState>) -> Result<Vec<zd_commands::Note>, String> {
+    let project = state.app.lock().unwrap().session.shared_project();
+    blocking(move || {
+        let params = serde_json::from_value(serde_json::json!({ "solids": solids, "model": model, "layer": "layers" })).map_err(|e| e.to_string())?;
+        zd_commands::builtin::check_cut_by_seams(&project, &params).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
 /// Everything on show lying wholly inside a box drawn on the viewport: the camera's view-projection matrix in the
 /// scene's local frame (column-major, as three.js keeps it) and the box's corners in normalised device coordinates.
 #[tauri::command]

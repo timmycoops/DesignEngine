@@ -41,6 +41,7 @@ fn main() {
             commands::solids_under,
             commands::check_slice,
             commands::check_cut_by_polygons,
+            commands::check_cut_by_seams,
             commands::objects_in_box,
             commands::section_lines,
             commands::stage_seam_horizon,

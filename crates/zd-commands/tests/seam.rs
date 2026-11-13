@@ -176,6 +176,29 @@ fn a_roof_with_nothing_in_a_node_is_still_unpaired() {
     assert_eq!((unpaired.nodes, unpaired.blocking), (121, true));
 }
 
+/// A hole in the grids (decision 0063): nine nodes holding nothing in roof and floor, from 50 to 70 m east and 30 to
+/// 50 m north, and two more alone at the far corner. Said with where the largest is, never filled, and the model can
+/// still be used where a solid keeps clear of them.
+#[test]
+fn holes_in_a_seams_grids_are_said_with_where_the_largest_is() {
+    let t = TempDir::new("holes");
+    let hole = |x: f64, y: f64| ((50.0..=70.0).contains(&x) && (30.0..=50.0).contains(&y)) || (x >= 190.0 && y == 100.0);
+    let grid = move |z: f32| flagged_grid(COLS, move |x, y| if hole(x, y) { (0.0, 0) } else { (z, 1) });
+    let (s, record) = built_from(&t, "a,,coal,yes,a.srg,a.sfg\n", vec![("a.srg", grid(103.0)), ("a.sfg", grid(100.0))]);
+    let m = model(&s);
+    let holes = m.issues.iter().find(|i| i.kind == IssueKind::Holes).unwrap_or_else(|| panic!("{:?}", m.issues));
+    assert_eq!((holes.horizon.as_str(), holes.nodes, holes.at, holes.blocking), ("a", 11, Some([E + 60.0, N + 40.0]), false));
+    assert!(m.is_usable(), "{:?}", m.issues);
+    let text = "warning: a roof or floor holds no height at 11 nodes, the largest hole at E 500060.0 N 7000040.0: fix the geology model and import the grids again. A cut by seams refuses a solid over a hole";
+    assert!(record.messages.iter().any(|l| l == text), "{:?}", record.messages);
+    let note = record.notes.iter().find(|n| n.code == Some(Code::SeamHoles)).expect("a seam.holes note");
+    assert_eq!((note.severity, note.value.as_ref().map(|m| m.value)), (Severity::Warning, Some(11.0)));
+    // The grids are read as they are, the holes flagged for the cut.
+    let grids = read_stack_grids(&m).unwrap();
+    assert_eq!(grids.roofs[0].null_count(), 11);
+    assert_eq!(grids.holes[0].iter().filter(|h| **h).count(), 11);
+}
+
 /// What the checks find on real models. `ZD_SEAM_DEFINITIONS` lists definition files with `;`.
 #[test]
 #[ignore = "needs ZD_SEAM_DEFINITIONS"]
