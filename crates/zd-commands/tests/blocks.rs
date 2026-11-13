@@ -3,7 +3,7 @@
 
 use serde_json::json;
 use zd_commands::{Code, RunRecord, Session, Severity};
-use zd_core::{Body, ChangeKind, ObjectId};
+use zd_core::{AttrValue, Body, ChangeKind, ObjectId};
 
 const E: f64 = 650_000.0;
 const N: f64 = 7_450_000.0;
@@ -91,4 +91,120 @@ fn lines_closing_nothing_are_refused_or_named() {
     assert_eq!(created(&record).len(), 1);
     let unused = record.notes.iter().find(|n| n.code == Some(Code::StringClosesNothing)).unwrap();
     assert!(unused.text.contains("'a' closes no area"));
+}
+
+/// A box at mine coordinates, `x` east and `y` north from the origin, RL 0 to `high`: wound outward.
+fn box_solid(s: &mut Session, name: &str, x: (f64, f64), y: (f64, f64), high: f64) -> ObjectId {
+    let vertices: Vec<[f64; 3]> = (0..8)
+        .map(|i| [E + if i & 1 == 1 { x.1 } else { x.0 }, N + if i >> 1 & 1 == 1 { y.1 } else { y.0 }, if i >> 2 & 1 == 1 { high } else { 0.0 }])
+        .collect();
+    let triangles = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+    created(&s.run("solid.from_mesh", json!({ "name": name, "layer": "strips", "vertices": vertices, "triangles": triangles })).unwrap())[0]
+}
+
+fn volume(s: &Session, id: ObjectId) -> f64 {
+    let Body::Solid(solid) = &s.project().object(id).unwrap().body else { panic!("a solid") };
+    solid.mesh().signed_volume()
+}
+
+fn layer_of(s: &Session, id: ObjectId) -> String {
+    s.project().layer(s.project().object(id).unwrap().layer).unwrap().name.clone()
+}
+
+/// Block polygons over a strip 1,500 m long: a south and a north line past its sides and 16 lines across every 100 m.
+fn block_polygons(s: &mut Session) -> Vec<ObjectId> {
+    let mut lines = vec![line(s, "south", &[(-20.0, -50.0), (1520.0, -50.0)]), line(s, "north", &[(-20.0, 110.0), (1520.0, 110.0)])];
+    for k in 0..16 {
+        let x = 100.0 * k as f64;
+        lines.push(line(s, &format!("across {k}"), &[(x, -80.0), (x, 140.0)]));
+    }
+    created(&s.run("string.polygons_from_lines", json!({ "strings": lines, "layer": "block polygons", "name": "B#" })).unwrap())
+}
+
+/// A strip 1,500 × 60 × 30 m cut by 15 polygons across it: 15 blocks of 180,000 m³, each named for its polygon and
+/// carrying it as `block`, nothing outside, all in one undo.
+#[test]
+fn a_strip_cut_by_block_polygons_into_named_blocks() {
+    let mut s = Session::with_builtins();
+    let strip = box_solid(&mut s, "Strip 5", (0.0, 1500.0), (0.0, 60.0), 30.0);
+    let polygons = block_polygons(&mut s);
+    assert_eq!(polygons.len(), 15);
+    let before = s.project().objects().count();
+    let record = s.run("solid.cut_by_polygons", json!({ "solids": [strip], "polygons": polygons, "layer": "blocks" })).unwrap();
+    let made = created(&record);
+    println!("{}", record.messages.join("\n"));
+    assert_eq!(made.len(), 15);
+    for (k, &id) in made.iter().enumerate() {
+        let object = s.project().object(id).unwrap();
+        assert_eq!(object.name, format!("B{}", k + 1), "no strip or seam yet, so the block alone");
+        assert_eq!(object.attributes.get("block"), Some(&AttrValue::Text(format!("B{}", k + 1))));
+        assert!((volume(&s, id) - 180_000.0).abs() < 0.18, "{}", volume(&s, id));
+    }
+    assert!(record.notes.iter().all(|n| n.severity != Severity::Warning), "{:?}", record.notes);
+    assert!(record.messages.iter().any(|m| m.contains("into 15 blocks")));
+    s.undo().unwrap();
+    assert_eq!(s.project().objects().count(), before);
+}
+
+/// The strip's own attributes stay and win over a polygon's of the same name; the polygon's others come with it; the
+/// name pattern takes both.
+#[test]
+fn a_block_keeps_its_solids_attributes_and_takes_the_polygons_others() {
+    let mut s = Session::with_builtins();
+    let solid = box_solid(&mut s, "Strip", (0.0, 1500.0), (0.0, 60.0), 30.0);
+    // Cut at RL 20: the part below carries cut_side = below.
+    let below = created(&s.run("solid.cut_by_surface", json!({ "solid": solid, "rl": 20.0, "keep": "below", "layer": "strips" })).unwrap())[0];
+    let polygons = block_polygons(&mut s);
+    // The polygons numbered across as strip, which the solid hasn't, then as cut_side, which it has (the last
+    // numbering names them).
+    let across = |s: &mut Session, attribute: &str, start: f64| {
+        s.run("string.number_across", json!({ "strings": polygons, "from": [E - 50.0, N + 30.0, 0.0], "to": [E + 1550.0, N + 30.0, 0.0], "start": start, "attribute": attribute, "name": "B#" })).unwrap();
+    };
+    across(&mut s, "strip", 701.0);
+    across(&mut s, "cut_side", 1.0);
+    let record = s.run("solid.cut_by_polygons", json!({ "solids": [below], "polygons": polygons, "layer": "blocks", "name": "S{strip} {block} {cut_side}" })).unwrap();
+    let first = s.project().object(created(&record)[0]).unwrap();
+    assert_eq!(first.attributes.get("cut_side"), Some(&AttrValue::Text("below".into())), "the solid's own wins");
+    assert_eq!(first.attributes.get("strip"), Some(&AttrValue::Number(701.0)), "the polygon's comes with it");
+    assert_eq!(first.name, "S701 B1 below");
+    assert!((volume(&s, first.id) - 120_000.0).abs() < 0.12);
+}
+
+/// Blocks over the west 1,000 m: the east 500 m is the remainder, on its own layer. A second strip away from every
+/// polygon is kept whole there and said. Two strips cut by the same polygons share names unless the pattern tells them
+/// apart.
+#[test]
+fn what_lies_outside_is_kept_and_repeated_names_are_said() {
+    let mut s = Session::with_builtins();
+    let strip = box_solid(&mut s, "Strip 1", (0.0, 1500.0), (0.0, 60.0), 30.0);
+    let away = box_solid(&mut s, "Away", (5_000.0, 5_100.0), (0.0, 60.0), 30.0);
+    let polygons = block_polygons(&mut s);
+    let record = s.run("solid.cut_by_polygons", json!({ "solids": [strip, away], "polygons": polygons[..10], "layer": "blocks" })).unwrap();
+    let made = created(&record);
+    assert_eq!(made.len(), 12, "10 blocks, the east of the strip and the strip away");
+    let outside: Vec<ObjectId> = made.iter().copied().filter(|&id| layer_of(&s, id) == "blocks outside").collect();
+    assert_eq!(outside.len(), 2);
+    assert!((volume(&s, outside[0]) - 900_000.0).abs() < 0.9);
+    let note = record.notes.iter().find(|n| n.code == Some(Code::SolidOutsidePolygons)).expect("the strip away is said");
+    assert!(note.text.contains("'Away'"), "{}", note.text);
+
+    let second = box_solid(&mut s, "Strip 2", (0.0, 1500.0), (60.0, 120.0), 30.0);
+    let shared = s.run("solid.cut_by_polygons", json!({ "solids": [strip, second], "polygons": polygons, "layer": "more blocks" })).unwrap();
+    let note = shared.notes.iter().find(|n| n.code == Some(Code::BlockNameRepeated)).expect("names repeat");
+    assert!(note.text.starts_with("30 blocks share 15 names"), "{}", note.text);
+    let apart = s.run("solid.cut_by_polygons", json!({ "solids": [strip, second], "polygons": polygons, "layer": "named blocks", "name": "{solid} {block}" })).unwrap();
+    assert!(apart.notes.iter().all(|n| n.code != Some(Code::BlockNameRepeated)));
+}
+
+#[test]
+fn overlapping_polygons_are_refused() {
+    let mut s = Session::with_builtins();
+    let strip = box_solid(&mut s, "Strip", (0.0, 300.0), (0.0, 60.0), 30.0);
+    let square = |s: &mut Session, name: &str, x0: f64| {
+        let points = [[E + x0, N - 50.0, 0.0], [E + x0 + 100.0, N - 50.0, 0.0], [E + x0 + 100.0, N + 110.0, 0.0], [E + x0, N + 110.0, 0.0]];
+        created(&s.run("string.create", json!({ "name": name, "layer": "p", "closed": true, "points": points })).unwrap())[0]
+    };
+    let (a, b) = (square(&mut s, "A", 0.0), square(&mut s, "B", 90.0));
+    let refused = s.run("solid.cut_by_polygons", json!({ "solids": [strip], "polygons": [a, b], "layer": "blocks" })).unwrap_err();
+    assert!(refused.to_string().contains("'A' and 'B' overlap by 1600.00 m²"), "{refused}");
 }

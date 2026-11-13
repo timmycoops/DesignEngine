@@ -5,6 +5,7 @@
 //! string geometry, section lines, and the import repair step with its crossing check.
 
 mod between;
+mod blocks;
 mod close;
 mod crossings;
 mod cut;
@@ -29,6 +30,7 @@ mod string;
 mod strips;
 mod wall;
 
+pub use blocks::{PolygonCut, PolygonPiece, cut_solid_by_polygons, polygons_overlapping};
 pub use between::{Between, solid_between};
 pub use cut::{CutResult, CutTimings, DesignIndex, TINY_EDGE, TinyEdges, cut_solid_by_indexed_surface, cut_solid_by_surface, cut_solid_by_whole_surface, join_tiny_edges};
 pub use error::GeomError;

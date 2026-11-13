@@ -132,6 +132,9 @@ codes! {
     StringEndShort = "string.end_short", "A line ending inside a polygon it was meant to split, short of the line it should meet";
     StringClosesNothing = "string.closes_nothing", "A line that closes no area, left out of the polygons";
     StringIsland = "string.island", "Lines inside a polygon that don't touch its sides, so they don't split it";
+    SolidOutsidePolygons = "solid.outside_polygons", "Solids lying outside every block polygon, each kept whole as its remainder";
+    BlockNameRepeated = "block.name_repeated", "Blocks given the same name, which should be unique";
+    BlockVolumeDiffers = "block.volume_differs", "A solid whose blocks and remainder don't add back to its volume";
 }
 
 impl Serialize for Code {

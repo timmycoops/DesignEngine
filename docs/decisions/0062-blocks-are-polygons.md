@@ -75,6 +75,39 @@ and Tim's layout, two bent lines of 2,000 vertices each and 15 lines across ever
 (4,013 segments in, 30 crossings, 6.7 ms in release). Through the registry (`crates/zd-commands/tests/blocks.rs`): named
 blocks in one undo, a short end joined or listed, lines closing nothing refused or named.
 
+### Workstream 2: cut by polygons
+
+`solid.cut_by_polygons` cuts each solid by each block polygon's vertical prism (`zd_geom::cut_solid_by_polygons`): the
+polygon in plan, either way round, extruded past the solid's top and bottom, one Manifold boolean each about a
+whole-metre origin near the solid. Only polygons whose plan box meets the solid's are cut with.
+
+- **A block keeps its solid's attributes** (`strip` stays) and takes the polygon's name as `block` (the attribute can be
+  named). The polygon's other attributes come with it where the solid hasn't one of the same name: the solid's own win.
+- **Names** come from a pattern of attributes in braces, `{strip}_{block}_{seam}` by default, with `{solid}` and
+  `{polygon}` for the names. One a block hasn't is left out with the separator before it, so a block with no seam yet is
+  `5_B07`. Names repeated across the run are said (`block.name_repeated`), with how many share them.
+- **What lies outside every polygon** is one remainder for each solid, on its own layer (`<layer> outside` by default),
+  keeping the solid's attributes. A solid wholly outside is kept whole there and said (`solid.outside_polygons`).
+- **Overlapping polygons are refused**, naming the pair, the overlap's area and where it is: a block there would be
+  counted twice. Overlaps under 0.01 m² are a shared edge drawn twice.
+- **The pieces and remainder add back to the solid**; a difference over a millionth of its volume is said
+  (`block.volume_differs`). Open strings are taken as closed and said. Each piece is searched for crossings on its own
+  thread, and blocks in more than one part are said by the solid rules' check every run goes through.
+- Solids are cut in parallel, with progress and Cancel.
+
+Checked with volumes worked by hand (`crates/zd-geom/tests/blocks.rs`, to 1 part in a million): a 1,500 × 60 × 30 m
+strip cut by 15 polygons into blocks of 180,000 m³ that add back exactly; a strip with 65° sides cut by polygons wider
+than it, each piece keeping the batter (its trapezoid section × 100 m); the east 500 m outside ten polygons as the
+remainder; a square turned 30° taking its own area; a clockwise polygon, a U-shaped polygon making one piece of two
+parts, a far polygon left out; overlaps found and shared edges not. Through the registry
+(`crates/zd-commands/tests/blocks.rs`): polygons from lines then 15 named blocks in one undo; the solid's attributes
+winning over the polygon's; the remainder and a solid wholly outside; repeated names said and told apart by the
+pattern; overlapping polygons refused.
+
+Timing on the made-up pit (`reserves_workflow.py`): its 32 strip-level seam and waste solids with 65° and 45° faces,
+92,510 triangles in, cut by 15 polygons into 471 blocks (99,558 triangles out) in 107 ms, adding back to within 1e-13.
+Their names repeat until the solids carry `seam` (workstream 3).
+
 ## Still to come
 
-Workstreams 2 to 6, each in its own PR.
+Workstreams 3 to 6, each in its own PR.
