@@ -276,8 +276,8 @@ async function checkBuilder(viewport: Viewport, log: (line: string) => void, sho
  * `--cut`: the Cut solids panel (decision 0049) as Tim would use it, through its own buttons. Fifteen toes 50 m apart, numbered
  * by a line across and built up to RL 150 and down to RL -50 at 45°; the panel opened from the toolbar; the pit made between
  * a topography at RL 100 and a floor at RL 0 inside its limit; picked and sliced into strips by the faces' layer; the faces
- * joined a face a strip; and the pit cut at RL 50, keeping both sides. Every volume is known: strip 1 and what's past strip
- * 15 7,500,000 m³ each, every strip between 2,500,000 m³, the pit 50,000,000 m³.
+ * joined a face a strip; and the pit cut at RL 50, keeping both sides. Every volume is known: strip 1 and strip 16, behind
+ * the last face, 7,500,000 m³ each, every strip between 2,500,000 m³, the pit 50,000,000 m³.
  */
 async function checkCut(viewport: Viewport, log: (line: string) => void, show: Show, stringLayer: () => StringLayer | null, seam: string | null) {
   const layer = stringLayer();
@@ -378,7 +378,7 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
     strips: Object.keys(strips).length,
     strip_1: strips['PIT strip 1'],
     strip_8: strips['PIT strip 8'],
-    past_strip_15: strips['PIT past strip 15'],
+    strip_16_behind_the_last_face: strips['PIT strip 16'],
     total: Math.round(stripVolumes.reduce((a, b) => a + b, 0) * 1000) / 1000,
   };
 
