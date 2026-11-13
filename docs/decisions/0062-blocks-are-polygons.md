@@ -1,7 +1,7 @@
 # 0062 — Blocks are polygons: strips cut by seams, then by block polygons
 
 Status: agreed 13 November 2026 (Tim: "Agree all eight", the Build Plan's "Block cutting plan" tab). Item 7 of the
-agreed order, Phase 4 block cutting. Workstreams 1 to 3 built.
+agreed order, Phase 4 block cutting. Workstreams 1 to 4 built.
 
 ## Why
 
@@ -136,7 +136,7 @@ blanked where the model marks a seam absent; nothing needs importing as an objec
 **Names, changed from decision 5.** Waste carries the seam below it, so a block's overburden and its first seam's coal both
 had `seam` U, and `{strip}_{block}_{seam}` named them alike. The default for `solid.cut_by_polygons` is now
 `{strip}_{block}_{horizon}`: coal names are as agreed (a seam's horizon is its code), and waste is told apart (`5_B07_OB`,
-`5_B07_U-M`). For Tim to confirm.
+`5_B07_U-M`). Tim agreed on 13 November ("Keep it").
 
 Checked with volumes worked by hand (`crates/zd-geom/tests/layers.rs`, to 0.001 m³): three flat seams cut a strip into its
 seven layers exactly; a 65° battered strip keeping its batter in every layer; a seam thinning to nothing across one cell
@@ -151,6 +151,35 @@ Timing on the made-up pit (`reserves_workflow.py`): its 7 strip solids, 41,178 t
 thinner than 0.01 m left out where U runs out under the weathering. Nothing refused: cutting at each roof and floor in turn
 had refused 2 of 6 strips there. Then cut by 15 block polygons into 616 blocks in 129 ms, no name repeated.
 
+### Workstream 4: the column check at mid-seam
+
+`solid.interrogate`'s 2.5D column check (decision 0061, workstream 3) now takes each block's plan at mid-seam
+(`zd_geom::mid_seam_cells`): where the surface halfway between its seam's roof and floor lies inside it, by exact partial
+cells, the polygon Minex or Vulcan would take for it at the seam. Its column is the seam's thickness at each node times
+that plan in the node's cell. A battered wall widens a block's whole plan but not its section at mid-seam, so it drops out.
+
+- **How:** the block is cut at the mid-seam surface (the roof and floor grids averaged, triangulated over the cells under
+  it) into the part below and the part above, one Manifold intersection each. A face of the block the cut doesn't touch
+  looks up from one part or the other, and the section is the top of the part below, so in each cell the section's plan
+  is the two parts' upward plan less the block's.
+- Where the roof or floor is null the mid-seam surface is taken below the block, so there's no section there, as there's no
+  seam. A block whose plan at mid-seam can't be worked out takes its whole plan, as before, and is named
+  (`interrogate.column_whole_plan`).
+- The column volume written onto each block (`column_volume`) is this one.
+
+Checked with volumes worked by hand (`crates/zd-geom/tests/reserves.rs`, to 1e-6 m³): a block with a 65° east side through
+a 4 m seam, its whole plan 4 cot 65° wider than at its floor, its section at mid-seam 2 cot 65° wider, its column its own
+volume on 25 m and 5 m cells, where its whole plan gave 100 × 4 × 4 cot 65° m³ more; a strip between two parallel 65° faces,
+its column its own 24,000 m³; a seam dipping 1 in 10, the section on the dipping mid-seam; a block short of mid-seam having
+none, and a null roof having none. Through the registry: a battered block passes the check, its column written.
+
+On the made-up pit (`reserves_workflow.py`, after cutting by seams and then by 15 polygons): 269 of 301 coal blocks are
+within 0.1 % of their column and the pit is +0.002 % in all, where the whole plan had every block over (U +1.6 %, M +2.4 %,
+L +4.9 %). Every L and M block is within it (L +0.001 %, M 0.000 %). The 32 outside are U blocks along its subcrop, where U
+thins to nothing inside a 25 m cell and the column holds each node's thickness over its whole cell, as Vulcan and Minex do;
+most are under 1,500 m³. Interrogating them took 59 ms. The 43,000 made-up blocks (ignored test) interrogate in 4.4 s on
+every core, against 4.1 s before.
+
 ## Still to come
 
-Workstreams 4 to 6, each in its own PR.
+Workstreams 5 and 6, each in its own PR.

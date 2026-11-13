@@ -124,6 +124,7 @@ codes! {
     InterrogateNoValue = "interrogate.no_value", "A variable with no value over a block, so none written";
     InterrogateOutsideSeam = "interrogate.outside_seam", "A block lying less than the share asked between its seam's roof and floor: its seam may be wrong";
     InterrogateColumnDiffers = "interrogate.column_differs", "A block whose own volume differs from its 2.5D column volume by more than the tolerance";
+    InterrogateColumnWholePlan = "interrogate.column_whole_plan", "Blocks whose plan at mid-seam couldn't be worked out, so their column check takes their whole plan";
     CompareBeyond = "compare.beyond", "Blocks whose value differs from another package's by more than its tolerance";
     StringOffSurface = "string.off_surface", "String vertices with no surface under them, keeping their elevations";
     StringNotCrossed = "string.not_crossed", "Strings a numbering line doesn't cross, left as they were";
