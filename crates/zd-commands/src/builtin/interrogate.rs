@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Body, Change, Grid, Lattice, ObjectId, ObjectKind};
-use zd_geom::{Variable, cells_in_solid, column_volume, columns_in_solid, composite, thickness_between};
+use zd_geom::{Variable, cells_in_solid, column_volume, columns_in_solid, composite, mid_seam_cells, thickness_between};
 use zd_io::{read_linked_grid, read_linked_surface};
 
 use super::in_parallel_watched;
@@ -94,8 +94,10 @@ struct BlockResult {
     /// Its share between its seam's roof and floor, where its nodes say.
     in_seam: Option<f64>,
     volume: f64,
-    /// Its 2.5D column volume: its seam's thickness at each node over its plan in the node's cell.
+    /// Its 2.5D column volume: its seam's thickness at each node over its plan at mid-seam in the node's cell.
     column: f64,
+    /// Why its plan at mid-seam couldn't be worked out, if it couldn't: the column then takes its whole plan.
+    whole_plan: Option<String>,
     /// Its own volume, the volume of record.
     own: f64,
 }
@@ -273,11 +275,17 @@ impl Command for Interrogate {
                 all += t;
                 inside += thickness_between(&column, g.floor[column.node], g.roof[column.node]).min(t);
             }
+            // The column at mid-seam, so a battered wall doesn't widen it (decision 0062, workstream 4).
+            let (column, whole_plan) = match mid_seam_cells(mesh, &lattice, g.floor, g.roof) {
+                Ok(mid) => (column_volume(&mid, g.floor, g.roof), None),
+                Err(e) => (column_volume(&cells, g.floor, g.roof), Some(e.to_string())),
+            };
             BlockResult {
                 values: g.codes.iter().cloned().zip(averaged.values).collect(),
                 in_seam: (all > 0.0).then(|| inside / all),
                 volume: averaged.volume,
-                column: column_volume(&cells, g.floor, g.roof),
+                column,
+                whole_plan,
                 own: solid.volume(),
             }
         })?;
@@ -381,7 +389,7 @@ impl Command for Interrogate {
         }
         let (own, column): (f64, f64) = results.iter().fold((0.0, 0.0), |(a, b), r| (a + r.own, b + r.column));
         outcome.notes.push(Note::info(format!(
-            "Column check: {} of {} blocks within {} % of their 2.5D column volume, {:.0} m³ against {:.0} m³ in all ({:+.3} %)",
+            "Column check, on each block's plan at mid-seam: {} of {} blocks within {} % of their 2.5D column volume, {:.0} m³ against {:.0} m³ in all ({:+.3} %)",
             blocks.len() - differs.len(),
             blocks.len(),
             p.volume_tolerance * 100.0,
@@ -402,6 +410,13 @@ impl Command for Interrogate {
             outcome.notes.push(
                 Note::warning(Code::InterrogateColumnDiffers, format!("{} more blocks differ from their 2.5D column by more than {} %", differs.len() - NAMED, p.volume_tolerance * 100.0))
                     .measured((differs.len() - NAMED) as f64, "blocks"),
+            );
+        }
+        let whole_plan: Vec<String> = blocks.iter().zip(&results).filter_map(|((o, ..), r)| r.whole_plan.as_ref().map(|why| format!("{} ({why})", o.name))).collect();
+        if !whole_plan.is_empty() {
+            outcome.notes.push(
+                Note::warning(Code::InterrogateColumnWholePlan, format!("{} blocks' plan at mid-seam couldn't be worked out, so their columns take their whole plan, battered walls and all: {}", whole_plan.len(), listed(&whole_plan)))
+                    .measured(whole_plan.len() as f64, "blocks"),
             );
         }
         if !changed.is_empty() {

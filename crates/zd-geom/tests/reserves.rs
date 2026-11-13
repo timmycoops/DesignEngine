@@ -4,7 +4,7 @@
 //! partial cells, as Vulcan does). Volumes to 0.001 m³, RD to 1e-9, qualities to 1 part in a million.
 
 use zd_core::{Lattice, TriMesh};
-use zd_geom::{Sample, Variable, cells_in_solid, column_volume, columns_in_solid, composite, horizon_samples, in_situ_rd};
+use zd_geom::{Sample, Variable, cells_in_solid, column_volume, columns_in_solid, composite, horizon_samples, in_situ_rd, mid_seam_cells};
 
 const E: f64 = 650_000.0;
 const N: f64 = 7_450_000.0;
@@ -304,6 +304,99 @@ fn a_seam_thickening_across_the_block_gives_its_column_cell_by_cell() {
     let short = self::block(E, N, 100.0, |x| 102.0 + 0.05 * (x - E));
     let short_cells = cells_in_solid(&short, &lattice);
     near(column_volume(&short_cells, &vec![100.0; 900], &roof) - short.signed_volume(), 6000.0, 1e-6, "the difference");
+}
+
+/// A block 100 m long running north from `N`, with the same convex section all along: `section` in (east, RL) about `(E, 0)`.
+/// Wound outward.
+fn along_north(section: &[(f64, f64)]) -> TriMesh {
+    let n = section.len();
+    let mut vertices = Vec::new();
+    for y in [N, N + LONG] {
+        vertices.extend(section.iter().map(|&(x, z)| [E + x, y, z]));
+    }
+    let mut triangles = Vec::new();
+    for k in 1..n - 1 {
+        triangles.push([n as u32, (n + k) as u32, (n + k + 1) as u32]);
+        triangles.push([0, (k + 1) as u32, k as u32]);
+    }
+    for k in 0..n {
+        let (a, b) = (k as u32, ((k + 1) % n) as u32);
+        triangles.push([a, b, b + n as u32]);
+        triangles.push([a, b + n as u32, a + n as u32]);
+    }
+    let mesh = TriMesh::new(vertices, triangles);
+    if mesh.signed_volume() < 0.0 { TriMesh::new(mesh.vertices, mesh.triangles.iter().map(|t| [t[0], t[2], t[1]]).collect()) } else { mesh }
+}
+
+/// How far a 65° batter runs out in 1 m of height.
+fn cot65() -> f64 {
+    65f64.to_radians().tan().recip()
+}
+
+#[test]
+fn a_battered_wall_drops_out_of_the_column_at_mid_seam() {
+    // A seam from 100 to 104, the block 60 m across at its floor with its east side at 65°, leaning out: its plan is
+    // 60 + 4 cot 65° wide, its section at mid-seam (102) 60 + 2 cot 65°, which times the 4 m seam is its own section.
+    let c = cot65();
+    let block = along_north(&[(0.0, 100.0), (60.0, 100.0), (60.0 + 4.0 * c, 104.0), (0.0, 104.0)]);
+    let own = 100.0 * 4.0 * (60.0 + 2.0 * c);
+    near(block.signed_volume(), own, 1e-6, "the block");
+    for lattice in [at_25_m(), on_its_sides()] {
+        let nodes = lattice.cols * lattice.rows;
+        let (floor, roof) = (vec![100.0; nodes], vec![104.0; nodes]);
+        let whole = column_volume(&cells_in_solid(&block, &lattice), &floor, &roof);
+        near(whole, 100.0 * 4.0 * (60.0 + 4.0 * c), 1e-6, "by its whole plan, as before");
+        let mid = mid_seam_cells(&block, &lattice, &floor, &roof).unwrap();
+        near(mid.iter().map(|s| s.area).sum(), 100.0 * (60.0 + 2.0 * c), 1e-6, "its plan at mid-seam");
+        near(column_volume(&mid, &floor, &roof), own, 1e-6, "its column at mid-seam");
+        near(mid.iter().map(|s| s.volume).sum(), own, 1e-6, "the samples' volumes");
+    }
+}
+
+#[test]
+fn a_strip_between_two_parallel_faces_has_its_width_at_mid_seam() {
+    // Both sides at 65° the same way, as a strip between two faces is: its plan is 4 cot 65° wider than its 60 m width,
+    // which it has at every height. Its column at mid-seam is its own volume, 24,000 m³.
+    let c = cot65();
+    let block = along_north(&[(0.0, 100.0), (60.0, 100.0), (60.0 + 4.0 * c, 104.0), (4.0 * c, 104.0)]);
+    near(block.signed_volume(), 24_000.0, 1e-6, "the block");
+    let lattice = at_25_m();
+    let nodes = lattice.cols * lattice.rows;
+    let (floor, roof) = (vec![100.0; nodes], vec![104.0; nodes]);
+    let mid = mid_seam_cells(&block, &lattice, &floor, &roof).unwrap();
+    near(column_volume(&mid, &floor, &roof), 24_000.0, 1e-6, "its column at mid-seam");
+    assert!(column_volume(&cells_in_solid(&block, &lattice), &floor, &roof) > 24_000.0 + 100.0 * 4.0 * 4.0 * c - 1e-6);
+}
+
+#[test]
+fn a_dipping_seam_takes_its_section_on_the_dipping_mid_seam() {
+    // Roof and floor dip 1 in 10 to the east, 4 m apart, the block between them with vertical sides: its section at
+    // mid-seam is its plan, 6,000 m², and its column 24,000 m³, on cells sitting anyhow.
+    let lattice = at_25_m();
+    let dip = |x: f64| 100.0 - 0.1 * (x - E);
+    let block = along_north(&[(0.0, dip(E)), (60.0, dip(E + 60.0)), (60.0, dip(E + 60.0) + 4.0), (0.0, dip(E) + 4.0)]);
+    let floor = grid(&lattice, |x, _| dip(x));
+    let roof = grid(&lattice, |x, _| dip(x) + 4.0);
+    let mid = mid_seam_cells(&block, &lattice, &floor, &roof).unwrap();
+    near(mid.iter().map(|s| s.area).sum(), 6000.0, 1e-6, "its plan at mid-seam");
+    near(column_volume(&mid, &floor, &roof), 24_000.0, 1e-6, "its column");
+}
+
+#[test]
+fn a_block_short_of_mid_seam_or_where_the_seam_is_null_has_no_section() {
+    let lattice = at_25_m();
+    let nodes = lattice.cols * lattice.rows;
+    let (floor, roof) = (vec![100.0; nodes], vec![104.0; nodes]);
+    // The bottom 1.5 m of the seam, as a bench under its middle: nothing at mid-seam.
+    let low = block(E, N, 100.0, |_| 101.5);
+    assert!(mid_seam_cells(&low, &lattice, &floor, &roof).unwrap().is_empty());
+    // The whole seam, its roof null west of x = E + 30.7: the section only where both are live, on the east nodes' cells.
+    let whole = block(E, N, 100.0, |_| 104.0);
+    let roof = grid(&lattice, |x, _| if x < E + 30.7 { f64::NAN } else { 104.0 });
+    let mid = mid_seam_cells(&whole, &lattice, &floor, &roof).unwrap();
+    assert!(mid.iter().all(|s| roof[s.node].is_finite() || s.volume == 0.0));
+    let live = mid.iter().filter(|s| roof[s.node].is_finite()).map(|s| s.area).sum::<f64>();
+    assert!(live > 0.0 && live < 6000.0, "{live}");
 }
 
 /// The cells of 43,000 made-up blocks, 60 × 100 m and 3 m thick, 400 across, on 25 m and 10 m lattices: what workstream

@@ -276,11 +276,34 @@ fn a_block_whose_volume_differs_from_its_column_is_warned_of() {
     assert_eq!(warned[0].object, Some(ids[0]));
     assert!(warned[0].place.is_some());
     near(warned[0].value.as_ref().unwrap().value, 100.0 / 3.0, "a third more, in %");
-    assert!(record.messages.iter().any(|m| m.starts_with("Column check: 1 of 2 blocks within 0.1 %")), "{:?}", record.messages);
+    assert!(record.messages.iter().any(|m| m.starts_with("Column check, on each block's plan at mid-seam: 1 of 2 blocks within 0.1 %")), "{:?}", record.messages);
     near(number(&s, ids[0], "column_volume").unwrap(), 24_000.0, "written all the same");
     // A wider tolerance lets it by.
     let record = interrogate(&mut s, model, &ids, json!({ "volume_tolerance": 0.5 })).unwrap();
     assert!(record.notes.iter().all(|n| n.code != Some(Code::InterrogateColumnDiffers)));
+}
+
+/// cu's full 4 m, 100 m long, 60 m across at its floor and its east side at 65°, leaning out as a highwall does: its plan is
+/// 4 cot 65° wider than its section at mid-seam, which is what its column takes (decision 0062, workstream 4), so it's
+/// within the tolerance where its whole plan was 3.1 % over.
+#[test]
+fn a_battered_block_passes_the_column_check_at_mid_seam() {
+    let t = TempDir::new("battered");
+    let c = 65f64.to_radians().tan().recip();
+    let section = [(70.0, 96.0), (130.0, 96.0), (130.0 + 4.0 * c, 100.0), (70.0, 100.0)];
+    let mut vertices = Vec::new();
+    for y in [N + 40.0, N + 140.0] {
+        vertices.extend(section.iter().map(|&(x, z)| [E + x, y, z]));
+    }
+    // Wound outward: looking along the section from the south end, it runs anticlockwise.
+    let triangles = vec![[4, 6, 5], [4, 7, 6], [0, 1, 2], [0, 2, 3], [0, 5, 1], [0, 4, 5], [1, 6, 2], [1, 5, 6], [2, 7, 3], [2, 6, 7], [3, 4, 0], [3, 7, 4]];
+    let block = TriMesh::new(vertices, triangles);
+    let own = 100.0 * 4.0 * (60.0 + 2.0 * c);
+    near(block.signed_volume(), own, "the block");
+    let (mut s, model, ids) = project(&t, vec![("battered", vec![seam("cu")], block)]);
+    let record = interrogate(&mut s, model, &ids, json!({})).unwrap();
+    assert!(record.notes.iter().all(|n| n.code != Some(Code::InterrogateColumnDiffers) && n.code != Some(Code::InterrogateColumnWholePlan)), "{:?}", record.messages);
+    near(number(&s, ids[0], "column_volume").unwrap(), own, "its column at mid-seam");
 }
 
 /// 43,000 made-up 60 × 100 m blocks, 400 across, all in seam `cu`, against a 25 m seam model over them all: what a run

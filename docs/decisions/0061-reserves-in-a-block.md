@@ -193,7 +193,9 @@ Checked on a made-up seam model of two seams, `cu` (RL 96 to 100, RD 1.40, ash r
 
 `zd_geom::column_volume`: a block's seam's thickness at each node, roof less floor, times the block's plan in the node's
 cell (exact partial cells, the plan of its top in each cell from `cells_in_solid`), summed. It's how Vulcan and Minex work
-out a seam's volume inside a polygon. A null roof or floor, or a floor above its roof, holds none.
+out a seam's volume inside a polygon. A null roof or floor, or a floor above its roof, holds none. (Since decision 0062,
+workstream 4, the interrogation's check takes the block's plan at mid-seam instead of the plan of its top, so battered walls
+drop out.)
 
 `solid.interrogate` works it out for every block from the roof and floor it already reads, writes it onto the block as
 `column_volume` (after any prefix), and sets it against the block's own volume, the volume of record. A block differing

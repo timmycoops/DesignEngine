@@ -12,7 +12,13 @@
 //! qualities by coal tonnes (volume × density) as a rule, but the choice is the definition's, not the engine's. The solid
 //! is seam coal: yield, dilution and coal mixed with waste come later, in the steps that make run-of-mine coal.
 
-use zd_core::{Lattice, TriMesh};
+use std::collections::BTreeMap;
+
+use manifold_csg::Manifold;
+use zd_core::{Grid, Lattice, TriMesh};
+
+use crate::cut::{from_manifold, to_manifold};
+use crate::{GeomError, Side, close_surface_to_halfspace, triangulate_grid};
 
 /// Where a vertical line through one lattice node lies inside a solid: each stretch from where it enters to where it
 /// leaves, bottom first, as `[bottom, top]` RL.
@@ -135,12 +141,17 @@ pub struct Sample {
 /// up counted and one that looks down taken away, as a closed solid's volume is; the cell's walls stand straight up and
 /// add nothing. The solid must be closed and wound outward.
 pub fn cells_in_solid(mesh: &TriMesh, lattice: &Lattice) -> Vec<Sample> {
+    shares_in_cells(mesh, lattice).into_iter().filter(|(_, (volume, _))| *volume > 0.0).map(|(node, (volume, area))| Sample { node, volume, area }).collect()
+}
+
+/// For each node's cell a solid reaches into: its volume there, and the plan area of its faces looking up there.
+fn shares_in_cells(mesh: &TriMesh, lattice: &Lattice) -> BTreeMap<usize, (f64, f64)> {
     let [ox, oy] = lattice.origin;
     let [dx, dy] = lattice.cell_size;
     let cell_area = dx * dy;
     // Heights from the solid's lowest point, so the sums aren't of large RLs; the result is the same for any datum.
     let datum = mesh.vertices.iter().map(|v| v[2]).fold(f64::INFINITY, f64::min);
-    let mut shares: std::collections::BTreeMap<usize, (f64, f64)> = std::collections::BTreeMap::new();
+    let mut shares: BTreeMap<usize, (f64, f64)> = BTreeMap::new();
     for t in &mesh.triangles {
         // In cells from the lattice's origin: node (c, r) at (c, r), its cell from c - ½ to c + ½.
         let [a, b, c] = t.map(|i| {
@@ -174,7 +185,62 @@ pub fn cells_in_solid(mesh: &TriMesh, lattice: &Lattice) -> Vec<Sample> {
             }
         }
     }
-    shares.into_iter().filter(|(_, (volume, _))| *volume > 0.0).map(|(node, (volume, area))| Sample { node, volume, area }).collect()
+    shares
+}
+
+/// A block's plan at mid-seam in each node's cell (decision 0062, workstream 4): where the surface halfway between its
+/// seam's roof and floor lies inside it, by exact partial cells. It's the polygon Minex or Vulcan would take for the block
+/// at the seam, so a battered wall, which widens the block's whole plan, drops out of the column check. Each sample's
+/// `area` is that plan in the cell (m²) and its `volume` the area times the seam's thickness at the node: the cell's part
+/// of the 2.5D column volume.
+///
+/// The block is cut at the mid-seam surface into the part below it and the part above. A face of the block the cut
+/// doesn't touch looks up from one part or the other, and the section is the top of the part below, so in each cell the
+/// section's plan is the two parts' upward plan less the block's. Where the roof or floor is null the mid-seam surface is
+/// taken below the block: no section there, as no seam.
+pub fn mid_seam_cells(mesh: &TriMesh, lattice: &Lattice, floor: &[f64], roof: &[f64]) -> Result<Vec<Sample>, GeomError> {
+    let bounds = mesh.bounds().ok_or_else(|| GeomError::InvalidInput("empty block".into()))?;
+    let [ox, oy] = lattice.origin;
+    let [dx, dy] = lattice.cell_size;
+    let (cols, rows) = (lattice.cols as i64, lattice.rows as i64);
+    // Nodes from one past the block each way, held at the nearest edge node past the lattice's, so the surface reaches
+    // over every cell the block is in.
+    let (c0, c1) = (((bounds.min[0] - ox) / dx).floor() as i64 - 1, ((bounds.max[0] - ox) / dx).ceil() as i64 + 1);
+    let (r0, r1) = (((bounds.min[1] - oy) / dy).floor() as i64 - 1, ((bounds.max[1] - oy) / dy).ceil() as i64 + 1);
+    let below = bounds.min[2] - 1.0;
+    let mid = |c: i64, r: i64| {
+        let i = (r.clamp(0, rows - 1) * cols + c.clamp(0, cols - 1)) as usize;
+        let (f, t) = (floor[i], roof[i]);
+        if f.is_finite() && t.is_finite() { 0.5 * (f + t) } else { below }
+    };
+    let centre = bounds.centre();
+    let origin = [centre[0].round(), centre[1].round(), 0.0];
+    let (wc, wr) = ((c1 - c0 + 1) as usize, (r1 - r0 + 1) as usize);
+    let z: Vec<f64> = (0..wr).flat_map(|r| (0..wc).map(move |c| (c, r))).map(|(c, r)| mid(c0 + c as i64, r0 + r as i64)).collect();
+    let (lowest, highest) = z.iter().fold((bounds.min[2], bounds.max[2]), |(lo, hi), &z| (lo.min(z), hi.max(z)));
+    let window = Grid::new([ox + c0 as f64 * dx - origin[0], oy + r0 as f64 * dy - origin[1]], [dx, dy], wc, wr, z);
+    let surface = triangulate_grid(&window);
+    let below_mid = to_manifold(&close_surface_to_halfspace(&surface, Side::Below, lowest - 1.0)?.mesh, [0.0; 3], "the half-space below mid-seam")?;
+    let above_mid = to_manifold(&close_surface_to_halfspace(&surface, Side::Above, highest + 1.0)?.mesh, [0.0; 3], "the half-space above mid-seam")?;
+    let block = to_manifold(mesh, [-origin[0], -origin[1], 0.0], "the block")?;
+    let up = |m: &Manifold| -> Result<BTreeMap<usize, (f64, f64)>, GeomError> {
+        m.status().map_err(|e| GeomError::Manifold(e.to_string()))?;
+        Ok(shares_in_cells(&from_manifold(m, origin), lattice))
+    };
+    let (lower, upper, whole) = (up(&block.intersection(&below_mid))?, up(&block.intersection(&above_mid))?, shares_in_cells(mesh, lattice));
+    let area_of = |shares: &BTreeMap<usize, (f64, f64)>, node: usize| shares.get(&node).map_or(0.0, |s| s.1);
+    let least = 1e-9 * dx * dy;
+    Ok(lower
+        .keys()
+        .filter_map(|&node| {
+            let area = area_of(&lower, node) + area_of(&upper, node) - area_of(&whole, node);
+            (area > least).then(|| {
+                let (f, t) = (floor[node], roof[node]);
+                let thickness = if f.is_finite() && t.is_finite() { (t - f).max(0.0) } else { 0.0 };
+                Sample { node, volume: area * thickness, area }
+            })
+        })
+        .collect())
 }
 
 /// A plan polygon clipped to a cell, Sutherland and Hodgman's way, its heights carried along its edges: the face is flat,
