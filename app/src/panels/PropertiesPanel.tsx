@@ -11,6 +11,7 @@ import {
   objectsBounds,
   type ObjectSummary,
   type SeamModel,
+  solidsUnder,
   type StackIssue,
   type Vec3,
 } from '@/bridge';
@@ -682,6 +683,60 @@ function NumberAcross({ strings, which }: { strings: ObjectSummary[]; which: str
   );
 }
 
+/**
+ * A polygon of every area the strings close in plan (`string.polygons_from_lines`, decision 0062): lines across the
+ * strips every 100 m and lines past the pit closing them make the block polygons, named west to east.
+ */
+function PolygonsFromLines({ strings }: { strings: ObjectSummary[] }) {
+  const { runRecord, setSelection } = useWorkspace();
+  const [name, setName] = useState('B#');
+  const [layer, setLayer] = useState('block polygons');
+  const [tolerance, setTolerance] = useState('1');
+  const mm = tolerance.trim() === '' ? null : Number(tolerance);
+  const make = async () => {
+    const outcome = await runRecord('string.polygons_from_lines', { strings: strings.map((o) => o.id), layer: layer.trim(), name, tolerance: (mm ?? 1) / 1000 });
+    const made = outcome.record?.outputs.filter((o) => o.change === 'created').map((o) => o.id) ?? [];
+    if (made.length > 0) setSelection(made);
+  };
+  return (
+    <ToolRow label="Polygons" apply={`Close (${strings.length})`} disabled={!name.trim() || !layer.trim() || mm === null || !Number.isFinite(mm) || mm < 0} onApply={() => void make()}>
+      <SmallInput value={name} onChange={setName} placeholder="name" title="Each polygon's name, numbered west to east in place of #" />
+      <SmallInput value={layer} onChange={setLayer} placeholder="layer" title="The layer the polygons go on" />
+      <SmallInput value={tolerance} onChange={setTolerance} placeholder="mm" title="An end this close to another line (mm) is joined to it and said" />
+    </ToolRow>
+  );
+}
+
+/**
+ * Keeps selected only the solids holding less than a volume: small pieces to look at and delete by hand (decision 0062;
+ * no automatic limit). Select a layer's solids from the tree first.
+ */
+function SolidsUnder({ solids }: { solids: ObjectSummary[] }) {
+  const { setSelection } = useWorkspace();
+  const [volume, setVolume] = useState('100');
+  const [said, setSaid] = useState<string | null>(null);
+  const v = volume.trim() === '' ? null : Number(volume);
+  const narrow = async () => {
+    if (v === null) return;
+    const under = await solidsUnder(
+      solids.map((o) => o.id),
+      v,
+    );
+    if (under.length === 0) return setSaid(`None of the ${fmt(solids.length)} holds less than ${fmt(v)} m³`);
+    setSaid(null);
+    setSelection(under);
+  };
+  return (
+    <>
+      <ToolRow label="Under" apply="Keep those selected" disabled={v === null || !Number.isFinite(v) || v <= 0} onApply={() => void narrow()}>
+        <SmallInput value={volume} onChange={setVolume} placeholder="m³" title="Keep selected only the solids holding less than this (m³)" />
+        <span className="text-muted-foreground">m³</span>
+      </ToolRow>
+      {said && <p className="px-3 py-0.5 text-xs text-muted-foreground">{said}</p>}
+    </>
+  );
+}
+
 /** How many of each kind, most first: "12 solids · 3 strings". */
 function kindCounts(objects: ObjectSummary[]): string {
   const counts = new Map<string, number>();
@@ -723,6 +778,7 @@ function SelectionProperties({ objects }: { objects: ObjectSummary[] }) {
   const seeThrough = objects.filter(canSeeThrough);
   const colourings = new Set(coloured.map((o) => lookOf(summary?.display, o.id).colouring));
   const strings = objects.filter((o) => o.kind === 'string');
+  const solids = objects.filter((o) => o.kind === 'solid');
 
   return (
     <ScrollArea className="h-full">
@@ -790,6 +846,12 @@ function SelectionProperties({ objects }: { objects: ObjectSummary[] }) {
       {strings.length > 0 && (
         <Section title="Strings">
           <NumberAcross strings={strings} which="the strings selected" />
+          <PolygonsFromLines strings={strings} />
+        </Section>
+      )}
+      {solids.length > 0 && (
+        <Section title="Solids">
+          <SolidsUnder solids={solids} />
         </Section>
       )}
       <Section title="Each">

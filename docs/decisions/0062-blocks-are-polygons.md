@@ -1,7 +1,7 @@
 # 0062 — Blocks are polygons: strips cut by seams, then by block polygons
 
 Status: agreed 13 November 2026 (Tim: "Agree all eight", the Build Plan's "Block cutting plan" tab). Item 7 of the
-agreed order, Phase 4 block cutting. Workstreams 1 to 4 built.
+agreed order, Phase 4 block cutting. Workstreams 1 to 5 built.
 
 ## Why
 
@@ -180,6 +180,27 @@ thins to nothing inside a 25 m cell and the column holds each node's thickness o
 most are under 1,500 m³. Interrogating them took 59 ms. The 43,000 made-up blocks (ignored test) interrogate in 4.4 s on
 every core, against 4.1 s before.
 
+### Workstream 5: the app
+
+- **Cut solids panel**, two more modes (decision 8):
+  - **By seams.** The solids taken as in every mode (picked, their layer, or on show), the seam model (the last built
+    unless chosen), the thinnest layer made (0.01 m) and the names (`{solid} {horizon}`). It runs `solid.cut_by_seams`.
+  - **By polygons.** The block polygons are the closed strings on a layer, the layer with the most of them offered first.
+    The names default to `{strip}_{block}_{horizon}`. It runs `solid.cut_by_polygons`.
+- **Polygons from lines**, with the string tools: select the lines (the toe's offsets across the strips and the lines
+  closing them) and Polygons in Properties, beside Number across. It gives the name (`B#`), the layer
+  (`block polygons`) and the tolerance in mm, and the polygons made are selected.
+- **Select by volume** (decision 7): with several selected, Solids, Under *n* m³, Keep those selected narrows the selection to
+  the solids holding less than that. Select a layer's solids from the tree first (Select all on it); the selection's own
+  Delete then takes them out, in one undo. The app asks the engine for the volumes (`solids_under`), as it holds none itself.
+
+Checked in the release app with `--bench --cut --seam testdata/synthetic/reserves/stack.csv`, through the panel's own
+buttons. A 1,000 × 500 m pit between two surfaces, cut by the made-up pit's seam model with By seams, gave 7 pieces named
+`PIT OB` to `PIT below L` in 120 ms, adding back to within 1.5e-16. Lines across it every 100 m, closed into 10 polygons
+and offered by the panel, cut the 7 pieces into 69 blocks with no name repeated (`B1_OB`…) and 7 remainders past the
+polygons in 33 ms. The volume filter found the 2 blocks under 1,000 m³. The Polygons and Under rows in Properties weren't
+driven by the bench.
+
 ## Still to come
 
-Workstreams 5 and 6, each in its own PR.
+Workstream 6: the made-up pit redone with these commands, then PIT B by counts and timings only.

@@ -565,6 +565,18 @@ pub async fn objects_bounds(objects: Vec<ObjectId>, state: State<'_, AppState>) 
     Ok(selection::bounds_of(app.session.project(), &objects).map(|b| [b.min, b.max]))
 }
 
+/// The solids among these objects holding less than `volume` (m³), in the order given: the filter that picks out small
+/// pieces to look at and delete by hand (decision 0062, its seventh: no automatic limit, as decided in Phase 1).
+#[tauri::command]
+pub async fn solids_under(objects: Vec<ObjectId>, volume: f64, state: State<'_, AppState>) -> Result<Vec<ObjectId>, String> {
+    let app = state.app.lock().unwrap();
+    let project = app.session.project();
+    Ok(objects
+        .into_iter()
+        .filter(|id| matches!(project.object(*id).map(|o| &o.body), Some(zd_core::Body::Solid(solid)) if solid.volume() < volume))
+        .collect())
+}
+
 /// Everything on show lying wholly inside a box drawn on the viewport: the camera's view-projection matrix in the
 /// scene's local frame (column-major, as three.js keeps it) and the box's corners in normalised device coordinates.
 #[tauri::command]
