@@ -87,11 +87,18 @@ whole-metre origin near the solid. Only polygons whose plan box meets the solid'
 - **Names** come from a pattern of attributes in braces, `{strip}_{block}_{seam}` by default, with `{solid}` and
   `{polygon}` for the names. One a block hasn't is left out with the separator before it, so a block with no seam yet is
   `5_B07`. Names repeated across the run are said (`block.name_repeated`), with how many share them.
-- **What lies outside every polygon** is one remainder for each solid, on its own layer (`<layer> outside` by default),
-  keeping the solid's attributes. A solid wholly outside is kept whole there and said (`solid.outside_polygons`).
+- **The polygons must cover every solid in plan** (Tim, 13 Nov 2026): a block polygon set that doesn't reach over the
+  whole of a solid is the polygons to fix, not ground to leave out. Before anything is cut, each solid's footprint in plan
+  is taken less the polygons (`zd_geom::polygons_uncovered`), and a solid reaching outside them is refused, every gap
+  listed with its area and where it is; nothing is cut. A solid wholly outside every polygon is refused the same way.
+  Gaps narrower than 1 cm, where lines drawn on the same place part by rounding, are left out of the check; the volume of
+  any such sliver the cut leaves is said, in no block. The Cut solids panel runs the same check
+  (`check_cut_by_polygons`, `solid.outside_polygons` warnings) as the solids or polygons change, lists what's uncovered
+  with Show, and holds the cut ("Fix the polygons first"). Until then, what lay outside was kept as a remainder on a
+  layer of its own (`<layer> outside`); that layer and its parameter are gone.
 - **Overlapping polygons are refused**, naming the pair, the overlap's area and where it is: a block there would be
   counted twice. Overlaps under 0.01 m² are a shared edge drawn twice.
-- **The pieces and remainder add back to the solid**; a difference over a millionth of its volume is said
+- **The blocks add back to the solid**; a difference over a millionth of its volume is said
   (`block.volume_differs`). Open strings are taken as closed and said. Each piece is searched for crossings on its own
   thread, and blocks in more than one part are said by the solid rules' check every run goes through.
 - Solids are cut in parallel, with progress and Cancel.
@@ -99,11 +106,15 @@ whole-metre origin near the solid. Only polygons whose plan box meets the solid'
 Checked with volumes worked by hand (`crates/zd-geom/tests/blocks.rs`, to 1 part in a million): a 1,500 × 60 × 30 m
 strip cut by 15 polygons into blocks of 180,000 m³ that add back exactly; a strip with 65° sides cut by polygons wider
 than it, each piece keeping the batter (its trapezoid section × 100 m); the east 500 m outside ten polygons as the
-remainder; a square turned 30° taking its own area; a clockwise polygon, a U-shaped polygon making one piece of two
+remainder, and found uncovered beforehand as 30,000 m² about its middle; polygons drawn to the toe of a 30 m wall at 65°
+leaving the crest's lean uncovered, 300 × 14.0 m each side; polygons a millimetre apart or on the solid's own edge
+covering it, a metre apart leaving 60 m², and a solid away from them all uncovered whole; a square turned 30° taking its
+own area; a clockwise polygon, a U-shaped polygon making one piece of two
 parts, a far polygon left out; overlaps found and shared edges not. Through the registry
 (`crates/zd-commands/tests/blocks.rs`): polygons from lines then 15 named blocks in one undo; the solid's attributes
-winning over the polygon's; the remainder and a solid wholly outside; repeated names said and told apart by the
-pattern; overlapping polygons refused.
+winning over the polygon's; a strip reaching 500 m past the polygons and a strip away from them all, found by the check
+on their solids and refused by the cut, nothing made, then cut when the polygons cover it; repeated names said and told
+apart by the pattern; overlapping polygons refused.
 
 Timing on the made-up pit (`reserves_workflow.py`): its 32 strip-level seam and waste solids with 65° and 45° faces,
 92,510 triangles in, cut by 15 polygons into 471 blocks (99,558 triangles out) in 107 ms, adding back to within 1e-13.
@@ -198,7 +209,9 @@ Checked in the release app with `--bench --cut --seam testdata/synthetic/reserve
 buttons. A 1,000 × 500 m pit between two surfaces, cut by the made-up pit's seam model with By seams, gave 7 pieces named
 `PIT OB` to `PIT below L` in 120 ms, adding back to within 1.5e-16. Lines across it every 100 m, closed into 10 polygons
 and offered by the panel, cut the 7 pieces into 69 blocks with no name repeated (`B1_OB`…) and 7 remainders past the
-polygons in 33 ms. The volume filter found the 2 blocks under 1,000 m³. The Polygons and Under rows in Properties weren't
+polygons in 33 ms. Those polygons stopped 50 m short of the pit's east end; with the polygons required to cover it
+(13 Nov 2026), the lines run from 50 m before the pit to 50 m past it: the panel's check passes, and 11 polygons cut the
+7 pieces into 76 blocks adding back to the 50,000,000 m³ pit within 1.1e-15, in 34 ms. The volume filter found the 2 blocks under 1,000 m³. The Polygons and Under rows in Properties weren't
 driven by the bench.
 
 ## Still to come

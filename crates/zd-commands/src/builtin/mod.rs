@@ -20,7 +20,7 @@ mod string;
 mod strips;
 mod surface;
 
-pub use blocks::{CutByPolygons, CutByPolygonsParams, CutBySeams, CutBySeamsParams, PolygonsFromLines, PolygonsFromLinesParams};
+pub use blocks::{CutByPolygons, CutByPolygonsParams, check_cut_by_polygons, CutBySeams, CutBySeamsParams, PolygonsFromLines, PolygonsFromLinesParams};
 pub use compare::{CompareSolids, CompareSolidsParams};
 pub use build::{BuildOp, BuildStep, BuildStepParams, Rebuild, RebuildParams};
 pub use deswik::{ImportDeswik, ImportDeswikParams, MeshesAs};

@@ -65,7 +65,9 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   string between two surfaces or grids (`solid.between_surfaces`), and every cut is one Cut solids panel: into strips by
   faces, by a surface, grid or RL, or between surfaces (`docs/decisions/0049-strip-solids.md`). A block is a named
   polygon in plan, made from lines (lines across the strips offset every 100 m and lines closing them,
-  `string.polygons_from_lines`), and a solid is cut vertically where it sits, the piece taking its name as `block`; strips
+  `string.polygons_from_lines`), and a solid is cut vertically where it sits, the piece taking its name as `block`; the
+  polygons must cover every solid in plan, checked before the cut and refused with each gap listed, the polygons being
+  what to fix; strips
   are cut by the seam model's horizons in one run, each piece carrying `seam`, `material` and `horizon`
   (`docs/decisions/0062-blocks-are-polygons.md`).
 - `Grid`: regular raster (origin, cell size, rows, cols, z values with NaN for nulls). A Vulcan roof, floor or

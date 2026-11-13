@@ -2,6 +2,7 @@
 //! two lines closing them make a polygon of each area, named west to east; ends that stop short are joined or listed.
 
 use serde_json::json;
+use zd_commands::builtin::{CutByPolygonsParams, check_cut_by_polygons};
 use zd_commands::{Code, RunRecord, Session, Severity};
 use zd_core::{AttrValue, Body, ChangeKind, ObjectId};
 
@@ -170,25 +171,47 @@ fn a_block_keeps_its_solids_attributes_and_takes_the_polygons_others() {
     assert!((volume(&s, first.id) - 120_000.0).abs() < 0.12);
 }
 
-/// Blocks over the west 1,000 m: the east 500 m is the remainder, on its own layer. A second strip away from every
-/// polygon is kept whole there and said. Two strips cut by the same polygons share names unless the pattern tells them
-/// apart.
+/// Blocks over the west 1,000 m leave the east 500 m of the strip, 30,000 m² in plan, and a strip away from every
+/// polygon is left whole, 6,000 m²: the check finds both on their solids, and the cut is refused naming them, nothing
+/// made. With all 15 polygons over the strip alone the check passes and the cut goes ahead.
 #[test]
-fn what_lies_outside_is_kept_and_repeated_names_are_said() {
+fn solids_the_polygons_dont_cover_are_found_first_and_refused() {
     let mut s = Session::with_builtins();
     let strip = box_solid(&mut s, "Strip 1", (0.0, 1500.0), (0.0, 60.0), 30.0);
     let away = box_solid(&mut s, "Away", (5_000.0, 5_100.0), (0.0, 60.0), 30.0);
     let polygons = block_polygons(&mut s);
-    let record = s.run("solid.cut_by_polygons", json!({ "solids": [strip, away], "polygons": polygons[..10], "layer": "blocks" })).unwrap();
-    let made = created(&record);
-    assert_eq!(made.len(), 12, "10 blocks, the east of the strip and the strip away");
-    let outside: Vec<ObjectId> = made.iter().copied().filter(|&id| layer_of(&s, id) == "blocks outside").collect();
-    assert_eq!(outside.len(), 2);
-    assert!((volume(&s, outside[0]) - 900_000.0).abs() < 0.9);
-    let note = record.notes.iter().find(|n| n.code == Some(Code::SolidOutsidePolygons)).expect("the strip away is said");
-    assert!(note.text.contains("'Away'"), "{}", note.text);
+    let short = json!({ "solids": [strip, away], "polygons": polygons[..10], "layer": "blocks" });
+    let params: CutByPolygonsParams = serde_json::from_value(short.clone()).unwrap();
+    let started = std::time::Instant::now();
+    let found = check_cut_by_polygons(s.project(), &params).unwrap();
+    println!("checked in {:.1} ms: {found:?}", started.elapsed().as_secs_f64() * 1000.0);
+    let warnings: Vec<_> = found.iter().filter(|n| n.code == Some(Code::SolidOutsidePolygons)).collect();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[0].text.starts_with("'Strip 1' reaches outside the polygons by 30000.0 m² about 651250.000 7450030.000"), "{}", warnings[0].text);
+    assert!(warnings[1].text.starts_with("'Away' reaches outside the polygons by 6000.0 m²"), "{}", warnings[1].text);
+    assert!(warnings.iter().all(|n| n.place.is_some()));
 
-    let second = box_solid(&mut s, "Strip 2", (0.0, 1500.0), (60.0, 120.0), 30.0);
+    let before = s.project().objects().count();
+    let refused = s.run("solid.cut_by_polygons", short).unwrap_err().to_string();
+    assert!(refused.contains("the block polygons don't cover 2 solids, so nothing is cut: 'Strip 1' reaches outside them by 30000.0 m²"), "{refused}");
+    assert!(refused.contains("'Away' reaches outside them by 6000.0 m²"), "{refused}");
+    assert!(refused.ends_with("Carry the polygons on over the whole of each solid, then cut"), "{refused}");
+    assert_eq!(s.project().objects().count(), before, "nothing made");
+
+    let whole: CutByPolygonsParams = serde_json::from_value(json!({ "solids": [strip], "polygons": polygons, "layer": "blocks" })).unwrap();
+    let found = check_cut_by_polygons(s.project(), &whole).unwrap();
+    assert!(found.iter().all(|n| n.severity != Severity::Warning), "{found:?}");
+    assert!(found.iter().any(|n| n.text == "the polygons cover all 1 solids"));
+    assert_eq!(created(&s.run("solid.cut_by_polygons", json!({ "solids": [strip], "polygons": polygons, "layer": "blocks" })).unwrap()).len(), 15);
+}
+
+/// Two strips cut by the same polygons share names unless the pattern tells them apart.
+#[test]
+fn repeated_names_are_said() {
+    let mut s = Session::with_builtins();
+    let strip = box_solid(&mut s, "Strip 1", (0.0, 1500.0), (0.0, 60.0), 30.0);
+    let second = box_solid(&mut s, "Strip 2", (0.0, 1500.0), (60.0, 100.0), 30.0);
+    let polygons = block_polygons(&mut s);
     let shared = s.run("solid.cut_by_polygons", json!({ "solids": [strip, second], "polygons": polygons, "layer": "more blocks" })).unwrap();
     let note = shared.notes.iter().find(|n| n.code == Some(Code::BlockNameRepeated)).expect("names repeat");
     assert!(note.text.starts_with("30 blocks share 15 names"), "{}", note.text);
