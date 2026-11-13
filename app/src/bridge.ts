@@ -937,6 +937,8 @@ export interface BenchConfig {
   builder: boolean;
   /** With `--cut`, the Cut solids panel driven as Tim would: a pit between two surfaces, sliced into strips, cut at an RL (decision 0049). */
   cut: boolean;
+  /** With `--section-guide`, the dashed line from a section's first point to the cursor, on a made-up topography. */
+  section_guide: boolean;
 }
 
 /** Saves a PNG data URL of the viewport as `<name>.png` in the `--pictures` folder. Bench only. */

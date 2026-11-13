@@ -28,6 +28,7 @@ import {
 } from '../bridge';
 import { loadStaged } from '../viewport/load';
 import { takePalettePictures, takePictures } from './pictures';
+import { checkSectionGuide } from './sectionGuideCheck';
 import { checkSelect } from './selectCheck';
 import { checkShell } from './shellCheck';
 import type { DockviewApi } from 'dockview-react';
@@ -78,7 +79,9 @@ export async function runChecks(
   viewport.setFieldOfView(FIELD_OF_VIEW_DEFAULT, false);
 
   try {
-    if (config.pictures) {
+    if (config.section_guide) {
+      results.section_guide = await checkSectionGuide(viewport, log, show, section, strings, !!config.pictures);
+    } else if (config.pictures) {
       const take = config.palettes ? takePalettePictures : takePictures;
       results.pictures = await take(viewport, config.surfaces, config.strings, log, show);
     } else if (config.design_lines) {

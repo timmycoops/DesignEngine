@@ -981,6 +981,9 @@ pub struct BenchConfig {
     /// With `--shell`, panels minimised to strips and brought back, every panel hidden with the ` key, and the toolbar's
     /// groups. The layout saved on the machine is put back after.
     shell: bool,
+    /// With `--section-guide`, the dashed line a two-point section draws from its first point to the cursor, on a
+    /// made-up topography: shown after the first click, following the cursor, cleared by Esc and by the second click.
+    section_guide: bool,
 }
 
 /// Present when the app was started with `--bench`: the viewport then runs Checks 1, 3 and 4
@@ -1027,6 +1030,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         cut: args.iter().any(|a| a == "--cut"),
         select: args.iter().any(|a| a == "--select"),
         shell: args.iter().any(|a| a == "--shell"),
+        section_guide: args.iter().any(|a| a == "--section-guide"),
     })
 }
 

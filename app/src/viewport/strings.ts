@@ -117,6 +117,15 @@ const HANDLE_PX = 10;
 const HANDLE_SPACING_PX = 12;
 const CLICK_SLOP_PX = 4;
 const PREVIEW = 0x66d9ff;
+/**
+ * Where a section will cut, from its first point to the cursor: dashes in the theme's foreground over a line in the
+ * scene's background, so it reads on the dark background and on every RL colour alike.
+ */
+const SECTION_GUIDE = 0xe9ecef;
+const SECTION_GUIDE_UNDER = 0x161e29;
+/** The guide's dashes and the gaps between them, on screen (px). */
+const SECTION_DASH_PX = 10;
+const SECTION_GAP_PX = 6;
 const MAX_HANDLES = 8192;
 const SNAP_MARK_PX = 7;
 /** A snap marker's colour says what the point will land on. */
@@ -147,6 +156,10 @@ export class StringLayer {
   private highlight: THREE.Line;
   private markedLines: THREE.LineSegments;
   private preview: THREE.Line;
+  /** Section mode, the first point picked: a dashed line from it to the cursor, over a dark one. */
+  private sectionGuide: THREE.Line;
+  private sectionGuideUnder: THREE.Line;
+  private sectionGuideSet = false;
   private handles: THREE.InstancedMesh;
   private dummy = new THREE.Object3D();
   private pending: SnapHit[] = [];
@@ -197,8 +210,19 @@ export class StringLayer {
     this.handles.count = 0;
     this.handles.renderOrder = 13;
     this.handles.frustumCulled = false;
-    viewport.overlay.add(this.group, this.highlight, this.markedLines, this.preview, this.handles);
+    const guide = new THREE.BufferGeometry();
+    guide.setAttribute('position', new THREE.Float32BufferAttribute(6, 3));
+    guide.setAttribute('lineDistance', new THREE.Float32BufferAttribute(2, 1));
+    this.sectionGuideUnder = new THREE.Line(guide, new THREE.LineBasicMaterial({ color: SECTION_GUIDE_UNDER, depthTest: false }));
+    this.sectionGuide = new THREE.Line(guide, new THREE.LineDashedMaterial({ color: SECTION_GUIDE, dashSize: 1, gapSize: 1, depthTest: false }));
+    for (const [line, order] of [[this.sectionGuideUnder, 12], [this.sectionGuide, 12.5]] as const) {
+      line.renderOrder = order;
+      line.frustumCulled = false;
+      line.visible = false;
+    }
+    viewport.overlay.add(this.group, this.highlight, this.markedLines, this.preview, this.sectionGuideUnder, this.sectionGuide, this.handles);
     viewport.beforeRender.add(() => this.placeHandles());
+    viewport.beforeRender.add(() => this.placeSectionGuide());
     this.snapMark = new PointMark(viewport, SNAP_MARK_PX);
     this.snapLabel = Object.assign(document.createElement('div'), { className: 'snap-label', hidden: true });
     viewport.renderer.domElement.parentElement?.append(this.snapLabel);
@@ -530,7 +554,52 @@ export class StringLayer {
     this.hoverInFlight = false;
     if (this.mode !== 'select' || this.wanted) this.showSnap(hit, at);
     if (this.wanted && this.trail.length > 0 && hit) this.showPreview([...this.trail, new THREE.Vector3(...hit.local)]);
+    if (!this.wanted && this.mode === 'section' && this.pending.length === 1 && hit) this.aimSectionGuide(this.pending[0].local, hit.local);
     void this.pumpHover();
+  }
+
+  /** The section guide runs from the first point to where the cursor lands. */
+  private aimSectionGuide(from: Vec3, to: Vec3): void {
+    const geometry = this.sectionGuide.geometry;
+    const position = geometry.getAttribute('position') as THREE.BufferAttribute;
+    position.setXYZ(0, ...from);
+    position.setXYZ(1, ...to);
+    position.needsUpdate = true;
+    // Dashes measured from the first point, so they stand still there as the cursor moves.
+    const distance = geometry.getAttribute('lineDistance') as THREE.BufferAttribute;
+    distance.setX(1, Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]));
+    distance.needsUpdate = true;
+    this.sectionGuideSet = true;
+  }
+
+  /** The section guide's two ends as drawn, scene-local, or null while it's hidden. For the bench. */
+  get sectionGuideEnds(): [THREE.Vector3, THREE.Vector3] | null {
+    if (!this.sectionGuide.visible) return null;
+    const position = this.sectionGuide.geometry.getAttribute('position') as THREE.BufferAttribute;
+    return [new THREE.Vector3().fromBufferAttribute(position, 0), new THREE.Vector3().fromBufferAttribute(position, 1)];
+  }
+
+  /** The section guide draws dashed. For the bench. */
+  get sectionGuideDashed(): boolean {
+    return this.sectionGuide.material instanceof THREE.LineDashedMaterial;
+  }
+
+  /**
+   * Each frame: the guide shows only while a section has its first point and not its second, so the second click,
+   * Esc, Backspace or leaving section mode clears it. Its dashes keep one size on screen at any zoom.
+   */
+  private placeSectionGuide(): void {
+    const picking = this.mode === 'section' && this.pending.length === 1 && !this.wanted;
+    if (!picking) this.sectionGuideSet = false;
+    const shown = picking && this.sectionGuideSet;
+    this.sectionGuide.visible = this.sectionGuideUnder.visible = shown;
+    if (!shown) return;
+    const position = this.sectionGuide.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const middle = new THREE.Vector3().fromBufferAttribute(position, 0).lerp(new THREE.Vector3().fromBufferAttribute(position, 1), 0.5);
+    const pixel = this.viewport.pixelSize(middle);
+    const material = this.sectionGuide.material as THREE.LineDashedMaterial;
+    material.dashSize = pixel * SECTION_DASH_PX;
+    material.gapSize = pixel * SECTION_GAP_PX;
   }
 
   private showSnap(hit: SnapHit | null, at: { x: number; y: number }): void {
@@ -657,7 +726,7 @@ export class StringLayer {
         this.pending = [];
         this.refreshPreview();
         this.placeHandles();
-        this.actions.status('String abandoned');
+        this.actions.status(this.mode === 'section' ? 'Section: pick the first point' : 'String abandoned');
       }
       if (e.key === 'Backspace' && this.pending.length > 0) {
         this.pending.pop();
