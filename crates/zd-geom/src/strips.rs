@@ -282,6 +282,30 @@ pub struct ShortEnd {
     pub run_on: Option<f64>,
 }
 
+/// How far past the solid's top and below its floor a face must reach to cut it cleanly (m). A face whose top lies on
+/// the solid's top, as one built to the topography a solid was made from does, doesn't.
+pub const CLEAR_OF_SOLID: f64 = 0.01;
+
+/// Where a face doesn't pass right through the solid it's to slice.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Shortfall {
+    /// It stops short of the solid at an end.
+    End(ShortEnd),
+    /// Its top line doesn't stand above the solid's top: the most it's below it (m; 0 or less where it lies on it, within
+    /// [`CLEAR_OF_SOLID`]), and where on the line.
+    Top { by: f64, at: [f64; 3] },
+    /// Its toe line doesn't reach below the solid's floor: the most it stands above it (m; 0 or less where it lies on
+    /// it), and where on the line.
+    Toe { by: f64, at: [f64; 3] },
+}
+
+/// A face's shortfall, the face by its place in the list given.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FaceShort {
+    pub face: usize,
+    pub shortfall: Shortfall,
+}
+
 /// Why a slice can't go ahead.
 #[derive(Debug)]
 pub enum SliceRefusal {
@@ -289,8 +313,8 @@ pub enum SliceRefusal {
     Solid(GeomError),
     /// A face, by its place in the list given.
     Face { face: usize, error: GeomError },
-    /// A face that stops short of the solid at an end.
-    Short { face: usize, end: ShortEnd },
+    /// Faces that don't pass right through the solid, every one found.
+    Short(Vec<FaceShort>),
     /// Told to stop before it was done (decision 0060).
     Stopped,
 }
@@ -300,7 +324,10 @@ impl fmt::Display for SliceRefusal {
         match self {
             SliceRefusal::Solid(e) => write!(f, "the solid: {e}"),
             SliceRefusal::Face { face, error } => write!(f, "face {}: {error}", face + 1),
-            SliceRefusal::Short { face, end } => write!(f, "face {}: {}", face + 1, short_words(end)),
+            SliceRefusal::Short(shorts) => {
+                let words: Vec<String> = shorts.iter().map(|s| format!("face {}: {}", s.face + 1, shortfall_words(&s.shortfall))).collect();
+                write!(f, "{}", words.join("; "))
+            }
             SliceRefusal::Stopped => write!(f, "stopped before it was done"),
         }
     }
@@ -314,17 +341,26 @@ pub fn short_words(end: &ShortEnd) -> String {
     }
 }
 
+/// A shortfall in words, with what to do about it.
+pub fn shortfall_words(shortfall: &Shortfall) -> String {
+    match shortfall {
+        Shortfall::End(end) => short_words(end),
+        Shortfall::Top { by, at } if *by > CLEAR_OF_SOLID => {
+            format!("its top is up to {by:.2} m below the solid's top near {}: carry the face on above the solid", place(*at))
+        }
+        Shortfall::Top { at, .. } => format!("its top stops on the solid's top near {}, not past it: carry the face on above the solid", place(*at)),
+        Shortfall::Toe { by, at } if *by > CLEAR_OF_SOLID => {
+            format!("its toe stands up to {by:.2} m above the solid's floor near {}: carry the face on below the solid", place(*at))
+        }
+        Shortfall::Toe { at, .. } => format!("its toe stops on the solid's floor near {}, not past it: carry the face on below the solid", place(*at)),
+    }
+}
+
 /// What one face does to the solid on its own.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FaceCut {
     /// The solid in front of this face, on the pit side (m³).
     pub front: f64,
-    /// Where the face's toe line stands above the solid's floor, so below it the cut goes straight down: the most it
-    /// stands above (m), and where on the line.
-    pub toe_above_floor: Option<(f64, [f64; 3])>,
-    /// Where the face's top line is below the solid's top, so above it the cut goes straight up: the most it's below
-    /// (m), and where on the line.
-    pub top_below_top: Option<(f64, [f64; 3])>,
     /// Triangles in the face.
     pub triangles: usize,
 }
@@ -389,84 +425,163 @@ pub struct StripSlice {
 /// of the solid lies in front of each, so it isn't their names that order them; each strip is what's in front of its
 /// face of what the strips before it left, so the strips and what's behind the last face add up to the solid.
 ///
-/// A face that stops short of the solid at an end is refused, with about how much more run-on it needs. Faces that
-/// cross inside the solid are sliced anyway, the solid in front of an earlier face staying with it, and reported.
+/// Every face must pass right through the solid: past its outline at both ends, above its top and below its floor, so
+/// it cuts the solid cleanly. Any that doesn't is refused before anything is cut, every shortfall of every face listed
+/// ([`faces_through_solid`] finds them on its own, to check before a slice). Faces that cross inside the solid are
+/// sliced anyway, the solid in front of an earlier face staying with it, and reported.
 pub fn slice_solid_by_faces(solid: &TriMesh, faces: &[&TriMesh]) -> Result<StripSlice, SliceRefusal> {
     slice_solid_by_faces_watched(solid, faces, |_, _| true)
+}
+
+/// The solid and faces made ready to slice: the solid in Manifold and its outline in plan, near the origin.
+struct Prepared {
+    solid_m: Manifold,
+    /// The solid's outline in plan, a little wider, which a face's ends must run past.
+    outline: CrossSection,
+    origin: [f64; 3],
+    z_low: f64,
+    z_high: f64,
+}
+
+impl Prepared {
+    fn new(solid: &TriMesh, faces: &[&TriMesh]) -> Result<Prepared, SliceRefusal> {
+        let validity = solid.validity();
+        if !validity.is_watertight() {
+            return Err(SliceRefusal::Solid(GeomError::NotWatertight { what: "solid", validity }));
+        }
+        if faces.is_empty() {
+            return Err(SliceRefusal::Solid(GeomError::InvalidInput("there are no faces to slice by".into())));
+        }
+        let solid_bounds = solid.bounds().ok_or_else(|| SliceRefusal::Solid(GeomError::InvalidInput("the solid is empty".into())))?;
+        let mut face_bounds: Vec<zd_core::Aabb> = Vec::with_capacity(faces.len());
+        for (face, mesh) in faces.iter().enumerate() {
+            face_bounds.push(mesh.bounds().ok_or_else(|| SliceRefusal::Face { face, error: GeomError::InvalidInput("it has no triangles".into()) })?);
+        }
+        let lowest = face_bounds.iter().map(|b| b.min[2]).fold(solid_bounds.min[2], f64::min);
+        let highest = face_bounds.iter().map(|b| b.max[2]).fold(solid_bounds.max[2], f64::max);
+        let margin = 1.0 + 0.01 * (highest - lowest);
+        let centre = solid_bounds.centre();
+        let origin = [centre[0].round(), centre[1].round(), 0.0];
+        let solid_m = to_manifold(solid, [-origin[0], -origin[1], 0.0], "solid").map_err(SliceRefusal::Solid)?;
+        let outline = CrossSection::from_polygons(&solid_m.project()).offset(margin, JoinType::Miter, 2.0, 0);
+        Ok(Prepared { solid_m, outline, origin, z_low: lowest - margin, z_high: highest + margin })
+    }
+
+    /// A face near the origin, laid out in plan against the solid's outline.
+    fn plan(&self, face: usize, mesh: &TriMesh) -> Result<FacePlan, SliceRefusal> {
+        face_plan(&mesh.translated([-self.origin[0], -self.origin[1], 0.0]), &self.outline).map_err(|error| SliceRefusal::Face { face, error })
+    }
+
+    /// Where a face laid out in plan doesn't pass right through the solid, in mine-grid coordinates.
+    fn shortfalls(&self, plan: &FacePlan) -> Vec<Shortfall> {
+        let to_grid = |p: [f64; 3]| [p[0] + self.origin[0], p[1] + self.origin[1], p[2]];
+        let mut found: Vec<Shortfall> = plan.short.iter().map(|end| Shortfall::End(ShortEnd { at: to_grid(end.at), ..end.clone() })).collect();
+        // Each corner of the toe line and of the top line, against the solid's floor and top straight under or over it.
+        let gap = |facing: Facing| {
+            let mut most: Option<(f64, [f64; 3])> = None;
+            for &(p, _) in plan.corners.iter().filter(|(_, f)| *f == facing) {
+                let hits = self.solid_m.ray_cast([p[0], p[1], self.z_high], [p[0], p[1], self.z_low]);
+                let Some((floor, top)) = hits.iter().map(|h| h.position[2]).fold(None, |m: Option<(f64, f64)>, z| Some(m.map_or((z, z), |(lo, hi)| (lo.min(z), hi.max(z))))) else {
+                    continue;
+                };
+                let by = if facing == Facing::Front { p[2] - floor } else { top - p[2] };
+                if by > -CLEAR_OF_SOLID && most.is_none_or(|(m, _)| by > m) {
+                    most = Some((by, to_grid(p)));
+                }
+            }
+            most
+        };
+        if let Some((by, at)) = gap(Facing::Behind) {
+            found.push(Shortfall::Top { by, at });
+        }
+        if let Some((by, at)) = gap(Facing::Front) {
+            found.push(Shortfall::Toe { by, at });
+        }
+        found
+    }
+}
+
+/// Where each face doesn't pass right through the solid: short of it at an end, its top not above the solid's top or
+/// its toe not below its floor, by [`CLEAR_OF_SOLID`]. Nothing is cut; it's what a slice would refuse, found first.
+pub fn faces_through_solid(solid: &TriMesh, faces: &[&TriMesh]) -> Result<Vec<FaceShort>, SliceRefusal> {
+    let prepared = Prepared::new(solid, faces)?;
+    let found: Vec<Result<Vec<FaceShort>, SliceRefusal>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = faces
+            .iter()
+            .enumerate()
+            .map(|(face, mesh)| {
+                let prepared = &prepared;
+                scope.spawn(move || {
+                    let plan = prepared.plan(face, mesh)?;
+                    Ok(prepared.shortfalls(&plan).into_iter().map(|shortfall| FaceShort { face, shortfall }).collect())
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().expect("checking a face doesn't panic")).collect()
+    });
+    let mut shorts = Vec::new();
+    for result in found {
+        shorts.extend(result?);
+    }
+    Ok(shorts)
 }
 
 /// [`slice_solid_by_faces`], saying as it goes how many strips of how many are cut, before each: `go_on(done, of)`. It
 /// stops, refused as [`SliceRefusal::Stopped`], at the first `false`.
 pub fn slice_solid_by_faces_watched(solid: &TriMesh, faces: &[&TriMesh], mut go_on: impl FnMut(usize, usize) -> bool) -> Result<StripSlice, SliceRefusal> {
-    let validity = solid.validity();
-    if !validity.is_watertight() {
-        return Err(SliceRefusal::Solid(GeomError::NotWatertight { what: "solid", validity }));
-    }
-    if faces.is_empty() {
-        return Err(SliceRefusal::Solid(GeomError::InvalidInput("there are no faces to slice by".into())));
-    }
-    let solid_bounds = solid.bounds().ok_or_else(|| SliceRefusal::Solid(GeomError::InvalidInput("the solid is empty".into())))?;
-    let mut face_bounds: Vec<zd_core::Aabb> = Vec::with_capacity(faces.len());
-    for (face, mesh) in faces.iter().enumerate() {
-        face_bounds.push(mesh.bounds().ok_or_else(|| SliceRefusal::Face { face, error: GeomError::InvalidInput("it has no triangles".into()) })?);
-    }
-    let lowest = face_bounds.iter().map(|b| b.min[2]).fold(solid_bounds.min[2], f64::min);
-    let highest = face_bounds.iter().map(|b| b.max[2]).fold(solid_bounds.max[2], f64::max);
-    let margin = 1.0 + 0.01 * (highest - lowest);
-    let (z_low, z_high) = (lowest - margin, highest + margin);
-
-    let centre = solid_bounds.centre();
-    let origin = [centre[0].round(), centre[1].round(), 0.0];
-    let to_local = [-origin[0], -origin[1], 0.0];
-    let solid_m = to_manifold(solid, to_local, "solid").map_err(SliceRefusal::Solid)?;
+    let prepared = Prepared::new(solid, faces)?;
+    let origin = prepared.origin;
     let input_volume = solid.signed_volume();
     let tolerance = (1e-6 * input_volume.abs()).max(1e-3);
-    // The solid's outline in plan, a little wider, which a face's ends must run past.
-    let outline = CrossSection::from_polygons(&solid_m.project()).offset(margin, JoinType::Miter, 2.0, 0);
 
     if !go_on(0, faces.len()) {
         return Err(SliceRefusal::Stopped);
     }
     let start = Instant::now();
-    let closed: Vec<Result<(Manifold, FaceCut), SliceRefusal>> = std::thread::scope(|scope| {
+    // Each face laid out in plan and checked through the solid; any short of it, and nothing is cut.
+    let planned: Vec<Result<(FacePlan, Vec<Shortfall>), SliceRefusal>> = std::thread::scope(|scope| {
         let handles: Vec<_> = faces
             .iter()
             .enumerate()
             .map(|(face, mesh)| {
-                let (solid_m, outline) = (&solid_m, &outline);
+                let prepared = &prepared;
                 scope.spawn(move || {
-                    let local = mesh.translated(to_local);
-                    let behind = behind_face(&local, outline, z_low, z_high).map_err(|refusal| match refusal {
-                        Behind::Error(error) => SliceRefusal::Face { face, error },
-                        Behind::Short(mut end) => {
-                            end.at = [end.at[0] + origin[0], end.at[1] + origin[1], end.at[2]];
-                            SliceRefusal::Short { face, end }
-                        }
-                    })?;
-                    let (behind, edge) = behind;
-                    let front = solid_m.difference(&behind);
+                    let plan = prepared.plan(face, mesh)?;
+                    let short = prepared.shortfalls(&plan);
+                    Ok((plan, short))
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().expect("laying out a face doesn't panic")).collect()
+    });
+    let mut plans = Vec::with_capacity(faces.len());
+    let mut shorts = Vec::new();
+    for (face, result) in planned.into_iter().enumerate() {
+        let (plan, short) = result?;
+        shorts.extend(short.into_iter().map(|shortfall| FaceShort { face, shortfall }));
+        plans.push(plan);
+    }
+    if !shorts.is_empty() {
+        return Err(SliceRefusal::Short(shorts));
+    }
+    let closed: Vec<Result<(Manifold, FaceCut), SliceRefusal>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = plans
+            .iter()
+            .enumerate()
+            .map(|(face, plan)| {
+                let prepared = &prepared;
+                let triangles = faces[face].triangle_count();
+                scope.spawn(move || {
+                    let behind = behind_face(plan, prepared.z_low, prepared.z_high).map_err(|error| SliceRefusal::Face { face, error })?;
+                    let front = prepared.solid_m.difference(&behind);
                     front.status().map_err(|e| SliceRefusal::Face { face, error: GeomError::Manifold(e.to_string()) })?;
-                    let gap = |facing: Facing| {
-                        let mut most: Option<(f64, [f64; 3])> = None;
-                        for &(p, _) in edge.iter().filter(|(_, f)| *f == facing) {
-                            let hits = solid_m.ray_cast([p[0], p[1], z_high], [p[0], p[1], z_low]);
-                            let Some((floor, top)) = hits.iter().map(|h| h.position[2]).fold(None, |m: Option<(f64, f64)>, z| Some(m.map_or((z, z), |(lo, hi)| (lo.min(z), hi.max(z))))) else {
-                                continue;
-                            };
-                            let by = if facing == Facing::Front { p[2] - floor } else { top - p[2] };
-                            if by > 0.01 && most.is_none_or(|(m, _)| by > m) {
-                                most = Some((by, [p[0] + origin[0], p[1] + origin[1], p[2]]));
-                            }
-                        }
-                        most
-                    };
-                    let (toe_above_floor, top_below_top) = (gap(Facing::Front), gap(Facing::Behind));
-                    Ok((behind, FaceCut { front: front.volume(), toe_above_floor, top_below_top, triangles: mesh.triangle_count() }))
+                    Ok((behind, FaceCut { front: front.volume(), triangles }))
                 })
             })
             .collect();
         handles.into_iter().map(|h| h.join().expect("a face's half-space doesn't panic")).collect()
     });
+    let solid_m = &prepared.solid_m;
     let mut halves = Vec::with_capacity(faces.len());
     let mut cuts = Vec::with_capacity(faces.len());
     for result in closed {
@@ -529,16 +644,16 @@ pub fn slice_solid_by_faces_watched(solid: &TriMesh, faces: &[&TriMesh], mut go_
 /// A corner of a face's outer ring, and the way the edge from it looks.
 type Corner = ([f64; 3], Facing);
 
-/// Why a face couldn't be closed behind.
-enum Behind {
-    Error(GeomError),
-    Short(ShortEnd),
-}
-
-impl From<GeomError> for Behind {
-    fn from(error: GeomError) -> Self {
-        Behind::Error(error)
-    }
+/// A face (in local coordinates) laid out in plan against the solid's outline.
+struct FacePlan {
+    /// The face wound upward.
+    up: TriMesh,
+    /// The corners of its outer ring, each with the way the edge from it looks.
+    corners: Vec<Corner>,
+    /// The parts of the outline past the face in plan that lie behind it.
+    behind: Vec<CrossSection>,
+    /// Where it stops short of the outline at an end, each end found.
+    short: Vec<ShortEnd>,
 }
 
 /// Which way a face's edge looks out from it.
@@ -552,29 +667,27 @@ enum Facing {
     Along,
 }
 
-/// The half-space behind a face (in local coordinates), past the solid's outline: below the face down to `z_low`, and
-/// over the parts of the outline behind its top line from `z_low` to `z_high`, 1 mm into the face's own plan so the
-/// two overlap.
-fn behind_face(face: &TriMesh, outline: &CrossSection, z_low: f64, z_high: f64) -> Result<(Manifold, Vec<Corner>), Behind> {
+/// A face (in local coordinates) laid out in plan against the solid's outline: which way each edge of its outer ring
+/// looks, which parts of the outline past it lie behind it, and any end that stops short of the outline, so what's past
+/// that end can't be told in front of it from behind.
+fn face_plan(face: &TriMesh, outline: &CrossSection) -> Result<FacePlan, GeomError> {
     let (up, _) = orient_upward(face)?;
     let loops = boundary_loops(&up)?;
     if loops.len() != 1 {
-        return Err(GeomError::Refused(format!("it has {} edges all round, not one: join its pieces into one face first", loops.len())).into());
+        return Err(GeomError::Refused(format!("it has {} edges all round, not one: join its pieces into one face first", loops.len())));
     }
     let ring = &loops[0];
     let plan: Vec<[f64; 2]> = ring.iter().map(|&v| [up.vertices[v as usize][0], up.vertices[v as usize][1]]).collect();
     if signed_area(&plan) <= 0.0 {
-        return Err(GeomError::Refused("it folds back on itself in plan, so it can't be told which side is the pit".into()).into());
+        return Err(GeomError::Refused("it folds back on itself in plan, so it can't be told which side is the pit".into()));
     }
-    let below = close_surface_to_halfspace(&up, Side::Below, z_low)?;
-    let below_m = to_manifold(&below.mesh, [0.0; 3], "the half-space below the face")?;
-
     let edges = facing_edges(&up, ring, &plan);
     // Each corner of the ring with the way the edge from it looks.
     let corners: Vec<Corner> = ring.iter().zip(&edges).map(|(&v, e)| (up.vertices[v as usize], e.0)).collect();
     let index = EdgeIndex::new(&plan);
     let footprint = CrossSection::from_polygons(std::slice::from_ref(&plan));
     let mut behind = Vec::new();
+    let mut short = Vec::new();
     for piece in outline.difference(&footprint).decompose() {
         let polygons = piece.to_polygons();
         let (mut front, mut back, mut along) = (0, 0, Vec::new());
@@ -588,7 +701,10 @@ fn behind_face(face: &TriMesh, outline: &CrossSection, z_low: f64, z_high: f64) 
             }
         }
         let is_behind = match (front > 0, back > 0) {
-            (true, true) => return Err(Behind::Short(short_end(&up, ring, &plan, &edges, &along, &polygons))),
+            (true, true) => {
+                short.extend(short_ends(&up, ring, &plan, &edges, &along, &polygons));
+                continue;
+            }
             (false, true) => true,
             (true, false) => false,
             // Not touching the face: in front of it or behind it, by the nearest edge's slope.
@@ -604,14 +720,22 @@ fn behind_face(face: &TriMesh, outline: &CrossSection, z_low: f64, z_high: f64) 
             behind.push(piece);
         }
     }
-    if behind.is_empty() {
-        return Ok((below_m, corners));
+    Ok(FacePlan { up, corners, behind, short })
+}
+
+/// The half-space behind a face laid out in plan, past the solid's outline: below the face down to `z_low`, and over the
+/// parts of the outline behind its top line from `z_low` to `z_high`, 1 mm into the face's own plan so the two overlap.
+fn behind_face(plan: &FacePlan, z_low: f64, z_high: f64) -> Result<Manifold, GeomError> {
+    let below = close_surface_to_halfspace(&plan.up, Side::Below, z_low)?;
+    let below_m = to_manifold(&below.mesh, [0.0; 3], "the half-space below the face")?;
+    if plan.behind.is_empty() {
+        return Ok(below_m);
     }
-    let behind = CrossSection::batch_union(&behind).offset(1e-3, JoinType::Miter, 2.0, 0);
+    let behind = CrossSection::batch_union(&plan.behind).offset(1e-3, JoinType::Miter, 2.0, 0);
     let prism = Manifold::extrude(&behind, z_high - z_low).translate(0.0, 0.0, z_low);
     let half = below_m.union(&prism);
     half.status().map_err(|e| GeomError::Manifold(e.to_string()))?;
-    Ok((half, corners))
+    Ok(half)
 }
 
 /// Which way each edge of the face's outer ring looks, with the slope beside it in plan: the horizontal part of the
@@ -674,31 +798,49 @@ fn facing_edges(up: &TriMesh, ring: &[u32], plan: &[[f64; 2]]) -> Vec<(Facing, [
         .collect()
 }
 
-/// Where a face's end stops inside the outline, and about how far the outline runs on past it.
-fn short_end(up: &TriMesh, ring: &[u32], plan: &[[f64; 2]], edges: &[(Facing, [f64; 2])], along: &[usize], polygons: &[Vec<[f64; 2]>]) -> ShortEnd {
+/// Where a face's ends stop inside the outline, each end (a run of edges along the face, one after another round its
+/// ring) once, and about how far the outline runs on past it.
+fn short_ends(up: &TriMesh, ring: &[u32], plan: &[[f64; 2]], edges: &[(Facing, [f64; 2])], along: &[usize], polygons: &[Vec<[f64; 2]>]) -> Vec<ShortEnd> {
     let z = |i: usize| (up.vertices[ring[i] as usize][2] + up.vertices[ring[(i + 1) % ring.len()] as usize][2]) / 2.0;
-    let mut best: Option<(f64, [f64; 3])> = None;
-    for &e in along {
-        let (p, q) = (plan[e], plan[(e + 1) % plan.len()]);
-        let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
-        let length = dx.hypot(dy);
-        if length == 0.0 || edges[e].0 != Facing::Along {
-            continue;
-        }
-        let (out, middle) = ([dy / length, -dx / length], [(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0]);
-        let reach = polygons.iter().flatten().map(|r| (r[0] - middle[0]) * out[0] + (r[1] - middle[1]) * out[1]).fold(0.0, f64::max);
-        if best.is_none_or(|(most, _)| reach > most) {
-            best = Some((reach, [middle[0], middle[1], z(e)]));
+    let n = ring.len();
+    let mut ends: Vec<usize> = along.iter().copied().filter(|&e| edges[e].0 == Facing::Along && plan[e] != plan[(e + 1) % n]).collect();
+    ends.sort_unstable();
+    ends.dedup();
+    // Runs of edges one after another round the ring, the last joining the first if the ring wraps there.
+    let mut runs: Vec<Vec<usize>> = Vec::new();
+    for &e in &ends {
+        match runs.last_mut() {
+            Some(run) if run.last().is_some_and(|&last| last + 1 == e) => run.push(e),
+            _ => runs.push(vec![e]),
         }
     }
-    match best {
-        Some((reach, at)) => ShortEnd { at, run_on: Some(reach) },
-        None => {
-            let n = polygons[0].len() as f64;
-            let (x, y) = polygons[0].iter().fold((0.0, 0.0), |(x, y), p| (x + p[0], y + p[1]));
-            ShortEnd { at: [x / n, y / n, 0.0], run_on: None }
-        }
+    if runs.len() > 1 && runs[0][0] == 0 && runs.last().and_then(|r| r.last()) == Some(&(n - 1)) {
+        let first = runs.remove(0);
+        runs.last_mut().expect("more than one run").extend(first);
     }
+    let found: Vec<ShortEnd> = runs
+        .iter()
+        .filter_map(|run| {
+            let mut best: Option<(f64, [f64; 3])> = None;
+            for &e in run {
+                let (p, q) = (plan[e], plan[(e + 1) % n]);
+                let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
+                let length = dx.hypot(dy);
+                let (out, middle) = ([dy / length, -dx / length], [(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0]);
+                let reach = polygons.iter().flatten().map(|r| (r[0] - middle[0]) * out[0] + (r[1] - middle[1]) * out[1]).fold(0.0, f64::max);
+                if best.is_none_or(|(most, _)| reach > most) {
+                    best = Some((reach, [middle[0], middle[1], z(e)]));
+                }
+            }
+            best.map(|(reach, at)| ShortEnd { at, run_on: Some(reach) })
+        })
+        .collect();
+    if !found.is_empty() {
+        return found;
+    }
+    let count = polygons[0].len() as f64;
+    let (x, y) = polygons[0].iter().fold((0.0, 0.0), |(x, y), p| (x + p[0], y + p[1]));
+    vec![ShortEnd { at: [x / count, y / count, 0.0], run_on: None }]
 }
 
 /// The edges of a ring in plan, found by place.

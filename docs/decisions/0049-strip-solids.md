@@ -36,12 +36,20 @@ topography. A face covers a strip of ground, so it has to be closed to one side.
    to a cap under everything, and over the parts of the solid's outline (in plan, 1 m and 1 % of the height wider) that lie
    behind its top line, from that cap to one above everything, 1 mm into the face's own plan so the two overlap. Which parts
    of the outline lie behind is read from the face's edges: an edge whose wall looks out of the face is its toe (front), one
-   whose wall looks into it is its top (behind), with a berm beside an edge looked past to the wall beyond. Below the toe
-   the cut goes straight down, and above the top straight up: the run says where the toe stands above the solid's floor, or
-   the top is below its top, by how much and where, read straight down the face's own edges.
-5. **A face short of the solid at an end is refused** (decision 3 of the plan), with about how much more run-on its line
-   needs there and where: past its end, the outline touches both its toe and its top, so nothing says which side is which.
-   Faces are built oversized and the cut does the fitting (0023).
+   whose wall looks into it is its top (behind), with a berm beside an edge looked past to the wall beyond. (Until 13
+   November 2026, below the toe the cut went straight down and above the top straight up, and the run said so after; now
+   such a face is refused, item 5.)
+5. **A face must pass right through the solid, or it's refused** (decision 3 of the plan). Short of the solid at an end:
+   past its end the outline touches both its toe and its top, so nothing says which side is which, and the run says about
+   how much more run-on its line needs there and where. Its top not above the solid's top, or its toe not below its floor,
+   by 1 cm (`CLEAR_OF_SOLID`), read straight down the face's own edges: the run says by how much and where, and to carry
+   the face on past the solid. A face that stops on the solid's top or floor, as one built to the topography a pit was made
+   from does, is refused too: it doesn't cut cleanly. Every shortfall of every face is listed at once, and nothing is cut.
+   Faces are built oversized and the cut does the fitting (0023); carrying a face on past the solid is the designer's, as
+   in Deswik or Spry, by a row up to an RL above the topography and a profile down from the toe (Tim, 13 November 2026:
+   not automated). **Checked before the cut**: the Cut solids panel checks the picked solids against the faces' layer as
+   either changes (`check_slice`, `faces_through_solid` in `zd-geom`), with nothing cut: each shortfall listed with Show,
+   and Slice waits until the faces are fixed, so no time goes on a cut that can't work.
 6. **Slicing.** `solid.slice_by_faces` takes solids and faces, groups the faces by strip number and joins each strip's.
    Each face is closed behind it, and the faces go from the pit out by how much of the solid lies in front of each, not by
    their numbers. Strip n is what lies in front of face n of what the strips before it left (decision 2 of the plan): each
@@ -70,9 +78,15 @@ topography. A face covers a strip of ground, so it has to be closed to one side.
 - A 1000 x 500 x 100 m box sliced by fifteen 45° faces 50 m apart, given out of order: sixteen strips of 7,500,000,
   2,500,000 (fourteen) and 7,500,000 m³ to 1 m³ (exact to the millimetre in practice), in order, each watertight and one
   part. 12 + 240 triangles in, 192 out, 19 ms in a debug build.
-- A face with a 20 m berm: 13,100,000 m³ in front of it. A toe at RL 20: straight down below it, 20 m above the floor said.
-  A face to RL 60: 40 m below the top said. A face starting 100 m into the box: refused, 103 m more run-on (the outline's
-  3 m margin past the side). A 45° and an 80° face crossing: the 273,000 m³ between them reported with the later face.
+- A face with a 20 m berm: 13,100,000 m³ in front of it. A toe at RL 20: refused, 20 m above the floor said. A face to RL
+  60: refused, 40 m below the top said. A face from the box's floor to its top: refused at both, and 1 m past each it
+  slices, 16,250,000 m³ in front. A face starting 100 m into the box: refused, 103 m more run-on (the outline's 3 m margin
+  past the side); one short at both ends with its toe 10 m up, and another 30 m below the top: all four found at once, the
+  check finding what the slice refuses, in 8 ms in a debug build. A 45° and an 80° face crossing: the 273,000 m³ between
+  them reported with the later face.
+- Through the commands: two faces built up to the pit's top RL and from its floor, checked before the cut: a warning for
+  each face's top and toe, each with its place, and the slice refused naming both; carried on to RL 110 and down to RL
+  -10, the check passes and strip 1 is 16,250,000 m³ to 1 m³.
 - An up and a down face with different toe vertices join into one, six corners stitched, area kept to 1 cm².
 - A build from a toe drawn by hand on RL -10 (a 45° wall to RL 60, a 10 m berm, a 45° wall to RL 150): its two sheets join by
   its name into one face, refused by strip number, and the pit in front of it is 16,400,000 m³ to 1 m³. In the app the

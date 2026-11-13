@@ -40,7 +40,7 @@ pub use string::{
     NumberStringsParams, OffsetString, OffsetStringParams, RedrawStretch, RedrawStretchParams, ReverseString, SetClosed, SetClosedParams, SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam,
     SmoothString, SmoothStringParams, SplitString, SplitStringParams, StringParams,
 };
-pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, SolidBetween, SolidBetweenParams};
+pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, SolidBetween, SolidBetweenParams, check_slice};
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
 
 use crate::{CommandError, Registry};

@@ -577,6 +577,19 @@ pub async fn solids_under(objects: Vec<ObjectId>, volume: f64, state: State<'_, 
         .collect())
 }
 
+/// What slicing these solids into strips by these faces would refuse, found before the cut and nothing cut (decision
+/// 0049): each face, joined by strip as the slice joins it, against each solid, past its ends, above its top and below
+/// its floor. Read off the project as it stands while the app carries on.
+#[tauri::command]
+pub async fn check_slice(solids: Vec<ObjectId>, faces: Vec<ObjectId>, state: State<'_, AppState>) -> Result<Vec<zd_commands::Note>, String> {
+    let project = state.app.lock().unwrap().session.shared_project();
+    blocking(move || {
+        let params = serde_json::from_value(serde_json::json!({ "solids": solids, "faces": faces, "layer": "strips" })).map_err(|e| e.to_string())?;
+        zd_commands::builtin::check_slice(&project, &params).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
 /// Everything on show lying wholly inside a box drawn on the viewport: the camera's view-projection matrix in the
 /// scene's local frame (column-major, as three.js keeps it) and the box's corners in normalised device coordinates.
 #[tauri::command]

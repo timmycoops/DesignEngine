@@ -1,9 +1,9 @@
 import { Combine, Grid3x3, Layers, Slice } from 'lucide-react';
-import { useMemo, useState } from 'react';
-import type { ObjectSummary, StepTarget } from '@/bridge';
+import { useEffect, useMemo, useState } from 'react';
+import { checkSlice, type Note, type ObjectSummary, type StepTarget } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
-import { Choice, Field, NumberInput, type RunReport, Select, TargetInput, TargetOptions, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { Choice, Field, NoteLine, NumberInput, type RunReport, Select, TargetInput, TargetOptions, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
 import { byStrip, facesLine } from './strips';
 
@@ -68,6 +68,31 @@ export function CutPanel() {
   const faces = objects.filter((o) => o.kind === 'surface' && o.layer === facesOn);
   const strips = byStrip(faces);
 
+  // The faces checked against the solids before the cut, each time either changes: any face that doesn't pass right
+  // through a solid, past its ends, above its top and below its floor, is listed, and the slice waits until it's fixed.
+  const checkKey = mode === 'strips' && chosen.length > 0 && strips.strips.length > 0 && strips.unnumbered.length === 0 ? [...chosen, ...faces].map((o) => `${o.id}:${o.revision}`).join(',') : null;
+  const [check, setCheck] = useState<{ key: string; notes?: Note[]; error?: string } | null>(null);
+  useEffect(() => {
+    if (checkKey === null) return;
+    let stale = false;
+    const solidIds = chosen.map((o) => o.id);
+    const faceIds = faces.map((o) => o.id);
+    const wait = setTimeout(() => {
+      setCheck({ key: checkKey });
+      checkSlice(solidIds, faceIds).then(
+        (notes) => !stale && setCheck({ key: checkKey, notes }),
+        (error: unknown) => !stale && setCheck({ key: checkKey, error: String(error) }),
+      );
+    }, 250);
+    return () => {
+      stale = true;
+      clearTimeout(wait);
+    };
+    // The key holds every id and revision the check reads.
+  }, [checkKey]);
+  const checked = check && check.key === checkKey ? check : null;
+  const shortfalls = checked?.notes?.filter((n) => n.severity === 'warning') ?? [];
+
   const strings = objects.filter((o) => o.kind === 'string');
   const closed = strings.filter((o) => o.closed);
   const pickedString = strings.find((o) => o.id === selected);
@@ -113,10 +138,11 @@ export function CutPanel() {
         return {
           label: `Slice ${plural(chosen.length, 'solid')} into strips`,
           icon: <Slice className="size-3.5" />,
-          disabled: chosen.length === 0 || strips.strips.length === 0 || strips.unnumbered.length > 0 || output === '',
+          disabled: chosen.length === 0 || strips.strips.length === 0 || strips.unnumbered.length > 0 || shortfalls.length > 0 || output === '',
           busy,
           busyLabel: 'Slicing…',
           title: 'Each strip is what lies in front of its face of what the strips before it left, so they add up to the solid',
+          hint: shortfalls.length > 0 ? 'Fix the faces first' : undefined,
           run: () => runIt('solid.slice_by_faces', { solids: chosen.map((o) => o.id), faces: faces.map((o) => o.id), layer: output }),
         };
       case 'seams':
@@ -233,7 +259,30 @@ export function CutPanel() {
               {strips.unnumbered.length > 3 ? '…' : ''}
             </div>
           )}
-          <div className="text-muted-foreground">Strip n is the solid in front of face n, back to the face before. What's behind the last face is kept too, as the next strip, to delete if it isn't one.</div>
+          {checkKey !== null && (
+            <div className="flex flex-col gap-0.5" role="status" aria-label="Faces against the solids">
+              {!checked || (!checked.notes && !checked.error) ? (
+                <span className="text-muted-foreground">Checking the faces pass right through {chosen.length === 1 ? 'the solid' : 'the solids'}…</span>
+              ) : checked.error ? (
+                <span className="text-destructive">{checked.error}</span>
+              ) : shortfalls.length === 0 ? (
+                <span className="text-ok">Every face passes right through {chosen.length === 1 ? 'the solid' : `the ${chosen.length} solids`}</span>
+              ) : (
+                <>
+                  <span className="text-warning">Not every face passes right through: carry these on past the solid, then slice</span>
+                  <div className="flex max-h-40 flex-col gap-0.5 overflow-auto">
+                    {shortfalls.map((note, k) => (
+                      <NoteLine key={k} note={note} index={k + 1} />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          <div className="text-muted-foreground">
+            Every face must pass right through the solid: past it at both ends, above its top and below its floor. Strip n is the solid in front of face n, back to the face before. What's behind the
+            last face is kept too, as the next strip, to delete if it isn't one.
+          </div>
         </ToolSection>
       )}
 

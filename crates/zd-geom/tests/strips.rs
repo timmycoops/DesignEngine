@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use zd_core::TriMesh;
-use zd_geom::{SliceRefusal, join_faces, slice_solid_by_faces};
+use zd_geom::{FaceShort, Shortfall, SliceRefusal, faces_through_solid, join_faces, shortfall_words, slice_solid_by_faces};
 
 const E: f64 = 650_000.0;
 const N: f64 = 7_450_000.0;
@@ -87,8 +87,8 @@ fn fifteen_45_degree_faces_slice_the_pit_into_sixteen_strips() {
     for (i, cut) in slice.faces.iter().enumerate() {
         let toe = toes[given[i]];
         assert_volume(cut.front, 500.0 * (100.0 * toe + 5000.0), &format!("in front of the face at {toe}"));
-        assert!(cut.toe_above_floor.is_none() && cut.top_below_top.is_none(), "{cut:?}");
     }
+    assert!(faces_through_solid(&pit(), &refs).unwrap().is_empty(), "every face passes right through the pit");
 }
 
 #[test]
@@ -104,37 +104,85 @@ fn a_face_with_a_berm_has_its_known_volume_in_front() {
     assert_volume(slice.strips[1].volume, 50_000_000.0 - front, "behind it");
 }
 
+/// The shortfalls a slice refuses, which [`faces_through_solid`] finds the same without cutting.
+fn refused(faces: &[&TriMesh]) -> Vec<FaceShort> {
+    let found = faces_through_solid(&pit(), faces).unwrap();
+    match slice_solid_by_faces(&pit(), faces) {
+        Err(SliceRefusal::Short(shorts)) => {
+            assert_eq!(shorts, found, "the check finds what the slice refuses");
+            shorts
+        }
+        other => panic!("refused as short, not {other:?}"),
+    }
+}
+
 #[test]
-fn below_the_lowest_line_the_cut_goes_straight_down_and_says_how_much() {
-    // A face from its toe at RL 20 only: below RL 20 the cut is straight down under the toe at 300 m east.
-    let short = face(&[[300.0, 20.0], [430.0, 150.0]], -100.0, 600.0, 2);
-    let slice = slice_solid_by_faces(&pit(), &[&short]).unwrap();
-    // 500 x (300 x 20 below the toe, and the integral of 300 + (z - 20) over 20 to 100).
-    let front = 500.0 * (300.0 * 20.0 + 300.0 * 80.0 + 3_200.0);
-    assert_volume(slice.strips[0].volume, front, "in front");
-    let (above, at) = slice.faces[0].toe_above_floor.expect("the toe stands above the pit's floor");
-    assert!((above - 20.0).abs() < 1e-9 && (at[0] - (E + 300.0)).abs() < 1e-9, "{above} m at {at:?}");
-    assert!(slice.faces[0].top_below_top.is_none());
+fn a_face_short_of_the_floor_or_the_top_is_refused_with_how_far() {
+    // A face from its toe at RL 20 only, 300 m east: it stands 20 m above the pit's floor.
+    let toe_up = face(&[[300.0, 20.0], [430.0, 150.0]], -100.0, 600.0, 2);
+    let shorts = refused(&[&batter_45(100.0), &toe_up]);
+    assert_eq!(shorts.len(), 1, "{shorts:?}");
+    assert_eq!(shorts[0].face, 1);
+    let Shortfall::Toe { by, at } = shorts[0].shortfall else { panic!("its toe: {shorts:?}") };
+    assert!((by - 20.0).abs() < 1e-9 && (at[0] - (E + 300.0)).abs() < 1e-9, "{by} m at {at:?}");
+    assert!(shortfall_words(&shorts[0].shortfall).contains("toe stands up to 20.00 m above the solid's floor"));
+
     // A face up to RL 60 only: its top is 40 m below the pit's.
     let low = face(&[[250.0, -50.0], [300.0, 0.0], [360.0, 60.0]], -100.0, 600.0, 2);
-    let (below, _) = slice_solid_by_faces(&pit(), &[&low]).unwrap().faces[0].top_below_top.expect("its top is below the pit's");
-    assert!((below - 40.0).abs() < 1e-9, "{below} m");
+    let shorts = refused(&[&low]);
+    let [FaceShort { face: 0, shortfall: Shortfall::Top { by, .. } }] = shorts.as_slice() else { panic!("its top: {shorts:?}") };
+    assert!((by - 40.0).abs() < 1e-9, "{by} m");
+}
+
+#[test]
+fn a_face_that_stops_on_the_solids_top_and_floor_is_refused_too() {
+    // From its toe on the pit's floor at 300 m east up at 45° to the pit's top, as a face built to the surfaces the pit
+    // was made between is: it meets the pit's top and floor, and goes no further.
+    let flush = face(&[[300.0, 0.0], [400.0, 100.0]], -100.0, 600.0, 2);
+    let shorts = refused(&[&flush]);
+    assert_eq!(shorts.len(), 2, "its top and its toe: {shorts:?}");
+    let words: Vec<String> = shorts.iter().map(|s| shortfall_words(&s.shortfall)).collect();
+    assert!(words[0].contains("its top stops on the solid's top") && words[0].contains("carry the face on above the solid"), "{words:?}");
+    assert!(words[1].contains("its toe stops on the solid's floor") && words[1].contains("carry the face on below the solid"), "{words:?}");
+    // Carried on 1 m past each, it slices: 500 x the integral of (300 + z) over RL 0 to 100.
+    let through = face(&[[299.0, -1.0], [401.0, 101.0]], -100.0, 600.0, 2);
+    let slice = slice_solid_by_faces(&pit(), &[&through]).unwrap();
+    assert_volume(slice.strips[0].volume, 500.0 * (300.0 * 100.0 + 5000.0), "in front of it");
 }
 
 #[test]
 fn a_face_short_of_the_pit_at_an_end_is_refused_with_the_run_on_it_needs() {
     // Starts 100 m north of the pit's south side.
     let short = face(&[[250.0, -50.0], [300.0, 0.0], [450.0, 150.0]], 100.0, 600.0, 4);
-    match slice_solid_by_faces(&pit(), &[&batter_45(100.0), &short]) {
-        Err(SliceRefusal::Short { face, end }) => {
-            assert_eq!(face, 1);
-            let more = end.run_on.expect("its end is found");
-            // 100 m back to the pit's side, and the 3 m margin past it.
-            assert!((100.0..=104.0).contains(&more), "{more} m");
-            assert!((end.at[1] - (N + 100.0)).abs() < 1e-6, "at its south end: {:?}", end.at);
-        }
-        other => panic!("refused as short, not {other:?}"),
-    }
+    let shorts = refused(&[&batter_45(100.0), &short]);
+    let [FaceShort { face: 1, shortfall: Shortfall::End(end) }] = shorts.as_slice() else { panic!("its end: {shorts:?}") };
+    let more = end.run_on.expect("its end is found");
+    // 100 m back to the pit's side, and the 3 m margin past it.
+    assert!((100.0..=104.0).contains(&more), "{more} m");
+    assert!((end.at[1] - (N + 100.0)).abs() < 1e-6, "at its south end: {:?}", end.at);
+}
+
+#[test]
+fn every_shortfall_of_every_face_is_found_at_once() {
+    // Short at both ends (100 m in from each side), and its toe 10 m above the floor; and a second face whose top is
+    // 30 m below the pit's.
+    let ends = face(&[[300.0, 10.0], [450.0, 160.0]], 100.0, 400.0, 3);
+    let low = face(&[[550.0, -50.0], [600.0, 0.0], [670.0, 70.0]], -100.0, 600.0, 2);
+    let start = Instant::now();
+    let shorts = refused(&[&batter_45(100.0), &ends, &low]);
+    println!("checked in {:.1} ms", start.elapsed().as_secs_f64() * 1e3);
+    let kinds: Vec<(usize, &str)> = shorts
+        .iter()
+        .map(|s| {
+            let kind = match s.shortfall {
+                Shortfall::End(_) => "end",
+                Shortfall::Top { .. } => "top",
+                Shortfall::Toe { .. } => "toe",
+            };
+            (s.face, kind)
+        })
+        .collect();
+    assert_eq!(kinds, vec![(1, "end"), (1, "end"), (1, "toe"), (2, "top")]);
 }
 
 #[test]

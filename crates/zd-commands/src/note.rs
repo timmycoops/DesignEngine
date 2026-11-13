@@ -96,8 +96,9 @@ codes! {
     BuildEditedRebuilt = "build.edited_rebuilt", "A line edited by hand, built again: undo brings the edit back";
     BuildLineMoved = "build.line_moved", "A berm's line not where the berm puts it now, so the wall stands on it as it is";
     SliceEmpty = "slice.empty", "A strip with nothing of the solid in it";
-    SliceToeAboveFloor = "slice.toe_above_floor", "A face whose toe stands above the solid's floor, the cut going straight down below it";
-    SliceTopBelowTop = "slice.top_below_top", "A face whose top is below the solid's top, the cut going straight up above it";
+    SliceToeAboveFloor = "slice.toe_above_floor", "A face whose toe doesn't reach below the solid's floor, found before a slice";
+    SliceTopBelowTop = "slice.top_below_top", "A face whose top doesn't stand above the solid's top, found before a slice";
+    SliceEndShort = "slice.end_short", "A face that stops short of the solid at an end, found before a slice";
     SliceFacesCross = "slice.faces_cross", "A face crossing faces before it inside the solid";
     SolidOutlineOpen = "solid.outline_open", "An open outline taken as closed";
     SolidNotCovered = "solid.not_covered", "A surface that doesn't cover the outline in plan, with no solid there";

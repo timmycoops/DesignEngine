@@ -55,7 +55,7 @@ pub use face::{EditReport, Face, FaceBench, FaceEdit, FaceStep, FaceTarget, Join
 pub use reserves::{Composite, NodeColumn, Sample, Variable, cells_in_solid, column_volume, columns_in_solid, composite, horizon_samples, in_situ_rd, mid_seam_cells, thickness_between};
 pub use road::{FaceRamp, FaceRoad, NoRoad, RoadTop};
 pub use wall::{ConditionLog, Stretch, WallLog, WallStep, next_toe, project_wall, project_wall_by_edge};
-pub use strips::{Crossing, FaceCut, FilledGap, JoinLog, ShortEnd, SliceRefusal, SliceTimings, StripPiece, StripSlice, join_faces, place, short_words, slice_solid_by_faces, slice_solid_by_faces_watched};
+pub use strips::{CLEAR_OF_SOLID, Crossing, FaceCut, FaceShort, FilledGap, JoinLog, ShortEnd, Shortfall, SliceRefusal, SliceTimings, StripPiece, StripSlice, faces_through_solid, join_faces, place, short_words, shortfall_words, slice_solid_by_faces, slice_solid_by_faces_watched};
 pub use string::{Corner, DrapeLog, OffsetSide, ON_THE_STRING, PlanCrossing, drape_string, filter_string, grade_string, join_strings, offset_string, plan_crossings, redraw_stretch, smooth_string, split_string};
 
 /// Below this many triangles a search stays on one thread.

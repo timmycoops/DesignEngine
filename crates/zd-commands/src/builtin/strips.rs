@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, Object, ObjectId, ObjectKind, Solid, Surface, TriMesh};
-use zd_geom::{COINCIDENT, JoinLog, SliceRefusal, StripSlice, find_crossings, find_solid_crossings, join_faces, place, short_words, slice_solid_by_faces_watched, solid_between, triangulate_grid};
+use zd_geom::{COINCIDENT, JoinLog, Shortfall, SliceRefusal, StripSlice, faces_through_solid, find_crossings, find_solid_crossings, join_faces, place, shortfall_words, slice_solid_by_faces_watched, solid_between, triangulate_grid};
 
 use super::solid::checked_input;
 use super::surface::{default_tolerance, site};
@@ -295,33 +295,8 @@ impl Command for SliceByFaces {
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let ids: Vec<ObjectId> = p.solid.into_iter().chain(p.solids.iter().copied()).collect();
-        if ids.is_empty() {
-            return Err(CommandError::Invalid("give the solid (or solids) to slice".into()));
-        }
-        if let Some(twice) = ids.iter().enumerate().find_map(|(i, id)| ids[..i].contains(id).then_some(id)) {
-            return Err(CommandError::Invalid(format!("solid {twice} is given twice")));
-        }
         let mut outcome = Outcome::default();
-        let solids = ids.iter().map(|&id| inputs.solid(id)).collect::<Result<Vec<_>, _>>()?;
-        for (object, solid) in &solids {
-            checked_input("solid", &object.name, solid.crossings(), solid.mesh(), true, &mut outcome.notes)?;
-        }
-        let strips = by_strip(inputs, &p.faces, &p.attribute)?;
-        for strip in &strips {
-            for (object, _) in &strip.faces {
-                let (_, surface) = inputs.surface(object.id)?;
-                checked_input("face", &object.name, surface.crossings(), surface.mesh(), false, &mut outcome.notes)?;
-            }
-        }
-        let mut faces = Vec::with_capacity(strips.len());
-        for strip in &strips {
-            let (mesh, log) = one_face(strip, p.tolerance, &p.attribute)?;
-            if changed(&log) {
-                outcome.notes.extend(join_words(&p.attribute, strip, &log, mesh.triangle_count()));
-            }
-            faces.push(mesh);
-        }
+        let (solids, strips, faces) = slice_inputs(inputs, p, &mut outcome.notes)?;
         let face_refs: Vec<&TriMesh> = faces.iter().collect();
         let face_name = |k: usize| format!("{} face", strips[k].called(&p.attribute));
 
@@ -337,13 +312,84 @@ impl Command for SliceByFaces {
                 SliceRefusal::Stopped => CommandError::Cancelled,
                 SliceRefusal::Solid(e) => CommandError::Invalid(format!("'{}': {e}", object.name)),
                 SliceRefusal::Face { face, error } => CommandError::Invalid(format!("{} ({}): {error}", face_name(face), strips[face].names())),
-                SliceRefusal::Short { face, end } => CommandError::Invalid(format!("{} ({}): {}", face_name(face), strips[face].names(), short_words(&end))),
+                SliceRefusal::Short(shorts) => {
+                    let each: Vec<String> = shorts.iter().map(|s| format!("{} ({}): {}", face_name(s.face), strips[s.face].names(), shortfall_words(&s.shortfall))).collect();
+                    let faces = shorts.iter().map(|s| s.face).collect::<std::collections::BTreeSet<_>>().len();
+                    let some = if faces == 1 { "a face doesn't".to_string() } else { format!("{faces} faces don't") };
+                    CommandError::Invalid(format!("'{}': {some} pass right through it, so nothing is cut; {}", object.name, each.join("; ")))
+                }
             })?;
             let ms = start.elapsed().as_secs_f64() * 1e3;
             self.report(&mut outcome, object, solid.mesh(), &slice, &strips, &face_refs, ms, p)?;
         }
         Ok(outcome)
     }
+}
+
+/// The solids a slice takes, its faces by strip, and each strip's faces joined into one, as checked inputs.
+#[allow(clippy::type_complexity)]
+fn slice_inputs<'a>(inputs: &Inputs<'a>, p: &SliceByFacesParams, notes: &mut Vec<Note>) -> Result<(Vec<(&'a Arc<Object>, &'a Solid)>, Vec<StripFaces<'a>>, Vec<TriMesh>), CommandError> {
+    let ids: Vec<ObjectId> = p.solid.into_iter().chain(p.solids.iter().copied()).collect();
+    if ids.is_empty() {
+        return Err(CommandError::Invalid("give the solid (or solids) to slice".into()));
+    }
+    if let Some(twice) = ids.iter().enumerate().find_map(|(i, id)| ids[..i].contains(id).then_some(id)) {
+        return Err(CommandError::Invalid(format!("solid {twice} is given twice")));
+    }
+    let solids = ids.iter().map(|&id| inputs.solid(id)).collect::<Result<Vec<_>, _>>()?;
+    for (object, solid) in &solids {
+        checked_input("solid", &object.name, solid.crossings(), solid.mesh(), true, notes)?;
+    }
+    let strips = by_strip(inputs, &p.faces, &p.attribute)?;
+    for strip in &strips {
+        for (object, _) in &strip.faces {
+            let (_, surface) = inputs.surface(object.id)?;
+            checked_input("face", &object.name, surface.crossings(), surface.mesh(), false, notes)?;
+        }
+    }
+    let mut faces = Vec::with_capacity(strips.len());
+    for strip in &strips {
+        let (mesh, log) = one_face(strip, p.tolerance, &p.attribute)?;
+        if changed(&log) {
+            notes.extend(join_words(&p.attribute, strip, &log, mesh.triangle_count()));
+        }
+        faces.push(mesh);
+    }
+    Ok((solids, strips, faces))
+}
+
+/// What `solid.slice_by_faces` would refuse, found before it runs and nothing cut: each face, joined by strip as the
+/// slice joins it, against each solid, past its ends, above its top and below its floor (decision 0049). A warning for
+/// each shortfall, with where and what to do; a line for each solid every face passes right through. Inputs that can't
+/// be sliced at all, such as a face with no strip number, are refused as the slice refuses them.
+pub fn check_slice(project: &zd_core::Project, p: &SliceByFacesParams) -> Result<Vec<Note>, CommandError> {
+    let inputs = Inputs::of(project);
+    let mut notes = Vec::new();
+    let (solids, strips, faces) = slice_inputs(&inputs, p, &mut notes)?;
+    let face_refs: Vec<&TriMesh> = faces.iter().collect();
+    for (object, solid) in &solids {
+        let shorts = faces_through_solid(solid.mesh(), &face_refs).map_err(|refusal| match refusal {
+            SliceRefusal::Face { face, error } => CommandError::Invalid(format!("{} face ({}): {error}", strips[face].called(&p.attribute), strips[face].names())),
+            other => CommandError::Invalid(format!("'{}': {other}", object.name)),
+        })?;
+        if shorts.is_empty() {
+            notes.push(Note::info(format!("every face passes right through '{}'", object.name)).on(object.id));
+        }
+        for short in shorts {
+            let face = format!("{} face", strips[short.face].called(&p.attribute));
+            let (code, at, by) = match &short.shortfall {
+                Shortfall::End(end) => (Code::SliceEndShort, end.at, end.run_on),
+                Shortfall::Top { by, at } => (Code::SliceTopBelowTop, *at, Some(by.max(0.0))),
+                Shortfall::Toe { by, at } => (Code::SliceToeAboveFloor, *at, Some(by.max(0.0))),
+            };
+            let mut note = Note::warning(code, format!("'{}', {face}: {}", object.name, shortfall_words(&short.shortfall))).on(object.id).at(Place::Point { at });
+            if let Some(by) = by {
+                note = note.measured(by, "m");
+            }
+            notes.push(note);
+        }
+    }
+    Ok(notes)
 }
 
 impl SliceByFaces {
@@ -445,17 +491,6 @@ impl SliceByFaces {
             (total - slice.input_volume).abs(),
             if parted > 0 { format!("; {parted} in more than one part, each kept as one solid") } else { String::new() }
         )).on(object.id).measured(total, "m3"));
-        for (k, cut) in slice.faces.iter().enumerate() {
-            let face = format!("{} face", strips[k].called(attribute));
-            if let Some((by, at)) = cut.toe_above_floor {
-                let text = format!("{face}: its toe stands up to {by:.2} m above the floor of '{name}', near {}, and below it the cut goes straight down", place(at));
-                lines.push(Note::warning(Code::SliceToeAboveFloor, text).at(Place::Point { at }).measured(by, "m"));
-            }
-            if let Some((by, at)) = cut.top_below_top {
-                let text = format!("{face}: its top is up to {by:.2} m below the top of '{name}', near {}, and above it the cut goes straight up", place(at));
-                lines.push(Note::warning(Code::SliceTopBelowTop, text).at(Place::Point { at }).measured(by, "m"));
-            }
-        }
         for crossing in &slice.crossings {
             let text = format!(
                 "warning: the {} face crosses faces before it inside '{name}': {:.3} m3 in front of them lies behind it, near {}, and stays with the strips before",

@@ -166,8 +166,64 @@ fn a_strip_whose_face_stops_short_is_refused_with_the_run_on_it_needs() {
     let design = created(&s.run("face.save_design", json!({ "name": "short", "content": content })).unwrap())[0];
     s.run("face.project", json!({ "design": design })).unwrap();
     let error = s.run("solid.slice_by_faces", json!({ "solid": pit, "faces": surfaces_on(&s, "faces"), "layer": "strips" })).unwrap_err().to_string();
-    assert!(error.starts_with("strip 7 face"), "{error}");
+    assert!(error.contains("'PIT': a face doesn't pass right through it, so nothing is cut; strip 7 face ('"), "{error}");
     assert!(error.contains("stops short of the solid at its end") && error.contains("m more run-on"), "{error}");
+}
+
+/// Faces built up to the pit's top and down to its floor, as faces built to the surfaces a pit was made between are:
+/// each stops on the pit and goes no further, so the check before the cut lists every one and the slice is refused.
+/// Carried on past the pit by a row up and a row down, they pass right through it and slice it.
+#[test]
+fn faces_that_stop_on_the_pit_are_found_before_the_cut_and_refused() {
+    let mut s = Session::with_builtins();
+    let pit = pit(&mut s);
+    let toes: Vec<ObjectId> = [300.0, 500.0]
+        .iter()
+        .map(|x| created(&s.run("string.create", json!({ "name": "toe", "layer": "toes", "points": [[E + x, N - 50.0, 0.0], [E + x, N + 550.0, 0.0]] })).unwrap())[0])
+        .collect();
+    s.run("string.number_across", json!({ "strings": toes, "from": [E, N + 250.0, 0.0], "to": [E + 1000.0, N + 250.0, 0.0], "start": 1.0 })).unwrap();
+    let design = |s: &mut Session, name: &str, top: f64, rows: serde_json::Value| {
+        let mut up = vec![json!({ "step": "project", "to": { "kind": "rl", "rl": 100.0 }, "batter": 45.0 })];
+        if top > 100.0 {
+            up.push(json!({ "step": "project", "to": { "kind": "rl", "rl": top }, "batter": 45.0 }));
+        }
+        let lines: Vec<_> = toes.iter().flat_map(|t| ["Up", "Down"].map(|profile| json!({ "string": t, "profile": profile, "side": "right", "run_on": [60.0, 60.0] }))).collect();
+        let lines: Vec<_> = lines.into_iter().filter(|l| l["profile"] == "Up" || top > 100.0).collect();
+        let mut profiles = vec![json!({ "name": "Up", "direction": "up", "register": { "kind": "rl", "rl": 0.0 }, "steps": up })];
+        if top > 100.0 {
+            profiles.push(json!({ "name": "Down", "direction": "down", "register": { "kind": "rl", "rl": 0.0 }, "steps": rows }));
+        }
+        let content = json!({ "layer": name, "lines": lines, "profiles": profiles });
+        let design = created(&s.run("face.save_design", json!({ "name": name, "content": content })).unwrap())[0];
+        s.run("face.project", json!({ "design": design })).unwrap();
+        surfaces_on(s, name)
+    };
+    let flush = design(&mut s, "flush", 100.0, json!([]));
+    let params = |faces: &[ObjectId]| serde_json::from_value::<zd_commands::builtin::SliceByFacesParams>(json!({ "solid": pit, "faces": faces, "layer": "strips" })).unwrap();
+
+    let start = Instant::now();
+    let notes = zd_commands::builtin::check_slice(s.project(), &params(&flush)).unwrap();
+    println!("checked before the cut in {:.0} ms", start.elapsed().as_secs_f64() * 1e3);
+    notes.iter().for_each(|n| println!("  {}", n.text));
+    let warnings: Vec<_> = notes.iter().filter(|n| n.severity == Severity::Warning).collect();
+    let codes: Vec<Code> = warnings.iter().filter_map(|n| n.code).collect();
+    assert_eq!(codes, vec![Code::SliceTopBelowTop, Code::SliceToeAboveFloor, Code::SliceTopBelowTop, Code::SliceToeAboveFloor], "each face's top and toe");
+    assert!(warnings.iter().all(|n| n.object == Some(pit) && n.place.is_some()), "each on the pit, with its place");
+    assert!(warnings[0].text.starts_with("'PIT', strip 1 face: its top stops on the solid's top near E 650400.0"), "{}", warnings[0].text);
+    let error = s.run("solid.slice_by_faces", json!({ "solid": pit, "faces": flush, "layer": "strips" })).unwrap_err().to_string();
+    assert!(error.starts_with("'PIT': 2 faces don't pass right through it, so nothing is cut; strip 1 face ("), "{error}");
+    assert!(error.contains("carry the face on above the solid") && error.contains("carry the face on below the solid"), "{error}");
+    assert!(s.project().layer_named("strips").is_none(), "nothing cut");
+
+    // Carried on: up past RL 100 to RL 110, and down from the toe to RL -10.
+    let through = design(&mut s, "through", 110.0, json!([{ "step": "project", "to": { "kind": "rl", "rl": -10.0 }, "batter": 45.0 }]));
+    let notes = zd_commands::builtin::check_slice(s.project(), &params(&through)).unwrap();
+    assert!(notes.iter().all(|n| n.severity != Severity::Warning), "{notes:?}");
+    assert!(notes.iter().any(|n| n.text == "every face passes right through 'PIT'"), "{notes:?}");
+    let strips = created(&s.run("solid.slice_by_faces", json!({ "solid": pit, "faces": through, "layer": "strips" })).unwrap());
+    assert_eq!(strips.len(), 3);
+    // Strip 1 in front of the toe at 300 m east: 500 x the integral of (300 + z) over RL 0 to 100.
+    assert_volume(volume(&s, strips[0]), 500.0 * (300.0 * 100.0 + 5000.0), "strip 1");
 }
 
 #[test]

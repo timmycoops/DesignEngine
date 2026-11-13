@@ -223,6 +223,8 @@ export const stageLayerSolids = (layer: string, tile: [number, number]) => invok
 export const objectsBounds = (objects: string[]) => invoke<[Vec3, Vec3] | null>('objects_bounds', { objects });
 /** The solids among these holding less than `volume` m³, in the order given: small pieces to look at and delete by hand. */
 export const solidsUnder = (objects: string[], volume: number) => invoke<string[]>('solids_under', { objects, volume });
+/** What slicing these solids by these faces would refuse, found before the cut: a warning for each face that doesn't pass right through a solid. */
+export const checkSlice = (solids: string[], faces: string[]) => invoke<Note[]>('check_slice', { solids, faces });
 /**
  * Everything on show lying wholly inside a box on the viewport: the camera's view-projection matrix in the scene's
  * local frame (column-major) and the box's corners in normalised device coordinates.

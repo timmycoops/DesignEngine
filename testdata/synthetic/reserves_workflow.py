@@ -9,6 +9,8 @@ model on them. Then, in order, each step a command the app has:
 2. Faces: a base toe draped on the L floor, offset north five times 60 m apart and numbered across, and one face
    design (65 degrees to the base of weathering, then 45 degrees to the topography) run on all six. No berm: one on
    the base of weathering lies on U's roof where U runs into the weathering, and the cut by that roof is refused there.
+   Each face is carried on past the pit, up at 45 degrees to RL 400 and down from the toe at 65 degrees to RL -300, so
+   it passes right through the pit it slices: one that stops on the pit's top or floor is refused.
 3. Strips: the solid from the topography to the L floor inside the pit's limit, sliced by the faces.
 4. Seams: the strips cut by each seam's roof and floor grids, keeping both sides, so each strip ends as overburden,
    U, U-M interburden, M, M-L interburden and L. Each floor grid is renamed to its seam's code first, so the coal
@@ -122,10 +124,16 @@ def faces(s, g):
     steps = [
         {"step": "project", "to": {"kind": "surface", "id": g["BOW sf"]}, "batter": 65.0, "ramps": []},
         {"step": "project", "to": {"kind": "surface", "id": g["TOPO sf"]}, "batter": 45.0, "ramps": []},
+        # On past the topography, so the face passes right through the pit's top.
+        {"step": "project", "to": {"kind": "rl", "rl": 400.0}, "batter": 45.0, "ramps": []},
     ]
-    profile = {"name": "Highwall", "direction": "up", "register": {"kind": "surface", "id": g["L sf"]}, "condition": 0.1, "steps": steps, "ramps": []}
-    line = {"layer": toes_layer, "profile": "Highwall", "side": "left", "run_on": [100.0, 100.0]}
-    design = made(s.run("face.save_design", name="Highwall", content={"layer": "faces", "lines": [line], "profiles": [profile]}))[0]
+    register = {"kind": "surface", "id": g["L sf"]}
+    up = {"name": "Highwall", "direction": "up", "register": register, "condition": 0.1, "steps": steps, "ramps": []}
+    # And down from the toe on the L floor, so it passes right through the pit's floor.
+    down = {"name": "Highwall down", "direction": "down", "register": register, "condition": 0.1, "ramps": [],
+            "steps": [{"step": "project", "to": {"kind": "rl", "rl": -300.0}, "batter": 65.0, "ramps": []}]}
+    lines = [{"layer": toes_layer, "profile": name, "side": "left", "run_on": [100.0, 100.0]} for name in ("Highwall", "Highwall down")]
+    design = made(s.run("face.save_design", name="Highwall", content={"layer": "faces", "lines": lines, "profiles": [up, down]}))[0]
     s.run("face.project", design=design)
     return [o["id"] for o in s.objects(layer="faces") if o["kind"] == "surface"]
 
