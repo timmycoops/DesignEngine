@@ -221,6 +221,8 @@ export const stageLayerSolids = (layer: string, tile: [number, number]) => invok
 /** The selected solids on show as one mesh, to light up over their layers'. */
 /** The box round these objects together, world coordinates, for zoom to selection; null if none has a place. */
 export const objectsBounds = (objects: string[]) => invoke<[Vec3, Vec3] | null>('objects_bounds', { objects });
+/** The solids among these holding less than `volume` m³, in the order given: small pieces to look at and delete by hand. */
+export const solidsUnder = (objects: string[], volume: number) => invoke<string[]>('solids_under', { objects, volume });
 /**
  * Everything on show lying wholly inside a box on the viewport: the camera's view-projection matrix in the scene's
  * local frame (column-major) and the box's corners in normalised device coordinates.

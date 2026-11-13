@@ -38,6 +38,7 @@ fn main() {
             commands::stage_object,
             commands::stage_layer_solids,
             commands::objects_bounds,
+            commands::solids_under,
             commands::objects_in_box,
             commands::section_lines,
             commands::stage_seam_horizon,

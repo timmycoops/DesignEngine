@@ -1,24 +1,26 @@
-import { Combine, Slice } from 'lucide-react';
+import { Combine, Grid3x3, Layers, Slice } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { ObjectSummary, StepTarget } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
-import { Choice, Field, type RunReport, Select, TargetInput, TargetOptions, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { Choice, Field, NumberInput, type RunReport, Select, TargetInput, TargetOptions, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
 import { byStrip, facesLine } from './strips';
 
 /**
  * Cut solids (decision 0049, UI plan): one panel for every cut. Cut solids by a surface, a grid or an RL, keeping either
  * side; slice them into strips by faces, each face told apart by its strip number, a solid a strip adding up to the
- * solid; or make the large solid between two surfaces inside a closed string. The solids and faces stay as they are,
- * and each run is one undo. Made from the kit, as every tool panel is.
+ * solid; cut them by a seam model's horizons in one run, each piece carrying its seam, material and horizon, or into
+ * blocks by polygons, each piece taking its polygon's name (decision 0062); or make the large solid between two surfaces
+ * inside a closed string. The solids, faces and polygons stay as they are, and each run is one undo. Made from the kit,
+ * as every tool panel is.
  */
 
-type Mode = 'strips' | 'cut' | 'between';
+type Mode = 'strips' | 'seams' | 'polygons' | 'cut' | 'between';
 type Scope = 'picked' | 'layer' | 'visible';
 
-const MODES: readonly Mode[] = ['strips', 'cut', 'between'];
-const MODE_LABELS: Record<Mode, string> = { strips: 'Into strips', cut: 'By a surface', between: 'Between surfaces' };
+const MODES: readonly Mode[] = ['strips', 'seams', 'polygons', 'cut', 'between'];
+const MODE_LABELS: Record<Mode, string> = { strips: 'Into strips', seams: 'By seams', polygons: 'By polygons', cut: 'By a surface', between: 'Between surfaces' };
 const SCOPES: readonly Scope[] = ['picked', 'layer', 'visible'];
 
 export function CutPanel() {
@@ -32,7 +34,11 @@ export function CutPanel() {
   const [bottom, setBottom] = useState<string | null>(null);
   const [limit, setLimit] = useState<string | null>(null);
   const [name, setName] = useState('PIT');
-  const [outputs, setOutputs] = useState<Record<Mode, string>>({ strips: 'strips', cut: 'cut', between: 'pit' });
+  const [model, setModel] = useState<string | null>(null);
+  const [minThickness, setMinThickness] = useState(0.01);
+  const [polygonsLayer, setPolygonsLayer] = useState<string | null>(null);
+  const [patterns, setPatterns] = useState({ seams: '{solid} {horizon}', polygons: '{strip}_{block}_{horizon}' });
+  const [outputs, setOutputs] = useState<Record<Mode, string>>({ strips: 'strips', seams: 'layers', polygons: 'blocks', cut: 'cut', between: 'pit' });
   const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
 
@@ -69,6 +75,21 @@ export function CutPanel() {
   const topOf = surfaces.find((o) => o.id === top) ?? null;
   const bottomOf = surfaces.find((o) => o.id === bottom) ?? null;
 
+  // The seam model: the one chosen, or the last built.
+  const models = objects.filter((o) => o.kind === 'seam_model');
+  const modelOf = models.find((o) => o.id === model) ?? models[models.length - 1] ?? null;
+
+  // The block polygons: the closed strings on a layer. The layer with the most of them comes first.
+  const polygonLayers = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const o of objects) if (o.kind === 'string' && o.closed) counts.set(o.layer, (counts.get(o.layer) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([id, count]) => ({ id, count }));
+  }, [objects]);
+  const polygonsOn = polygonsLayer ?? polygonLayers[0]?.id ?? null;
+  const polygons = closed.filter((o) => o.layer === polygonsOn);
+  const pattern = mode === 'seams' || mode === 'polygons' ? patterns[mode] : '';
+  const setPattern = (text: string) => mode === 'seams' || mode === 'polygons' ? setPatterns((was) => ({ ...was, [mode]: text })) : undefined;
+
   const output = outputs[mode].trim();
   const setOutput = (text: string) => setOutputs((was) => ({ ...was, [mode]: text }));
 
@@ -97,6 +118,26 @@ export function CutPanel() {
           busyLabel: 'Slicing…',
           title: 'Each strip is what lies in front of its face of what the strips before it left, so they add up to the solid',
           run: () => runIt('solid.slice_by_faces', { solids: chosen.map((o) => o.id), faces: faces.map((o) => o.id), layer: output }),
+        };
+      case 'seams':
+        return {
+          label: `Cut ${plural(chosen.length, 'solid')} by seams`,
+          icon: <Layers className="size-3.5" />,
+          disabled: chosen.length === 0 || !modelOf || output === '' || pattern.trim() === '',
+          busy,
+          busyLabel: 'Cutting…',
+          title: "Overburden, each seam, each interburden and what's below the last floor, in one run; each piece carries its seam, material and horizon",
+          run: () => runIt('solid.cut_by_seams', { solids: chosen.map((o) => o.id), model: modelOf?.id, layer: output, min_thickness: minThickness, name: pattern.trim() }),
+        };
+      case 'polygons':
+        return {
+          label: `Cut ${plural(chosen.length, 'solid')} into blocks`,
+          icon: <Grid3x3 className="size-3.5" />,
+          disabled: chosen.length === 0 || polygons.length === 0 || output === '' || pattern.trim() === '',
+          busy,
+          busyLabel: 'Cutting…',
+          title: 'Each solid cut vertically where each polygon sits, the piece taking its name as its block',
+          run: () => runIt('solid.cut_by_polygons', { solids: chosen.map((o) => o.id), polygons: polygons.map((o) => o.id), layer: output, name: pattern.trim() }),
         };
       case 'cut':
         return {
@@ -135,6 +176,11 @@ export function CutPanel() {
           <Input className="h-7 w-40 px-1.5 text-xs" value={name} aria-label="Name of the solid" onChange={(e) => setName(e.target.value)} />
         </Field>
       )}
+      {(mode === 'seams' || mode === 'polygons') && (
+        <Field label="Names" hint="Attributes in braces, {solid} for the solid's name; one a piece hasn't is left out with the separator before it">
+          <Input className="h-7 w-40 px-1.5 text-xs" value={pattern} aria-label="Name of each piece" onChange={(e) => setPattern(e.target.value)} />
+        </Field>
+      )}
     </ToolSection>
   );
 
@@ -142,7 +188,7 @@ export function CutPanel() {
     <ToolPanel
       title="Cut solids"
       panel="cut"
-      summary="Slice solids into strips by faces, cut them by a surface, grid or RL, or make one between two surfaces. What's given stays as it is."
+      summary="Slice solids into strips by faces, cut them by seams or into blocks by polygons, cut them by a surface, grid or RL, or make one between two surfaces. What's given stays as it is."
       result={report}
       action={action}
     >
@@ -188,6 +234,49 @@ export function CutPanel() {
             </div>
           )}
           <div className="text-muted-foreground">Strip n is the solid in front of face n, back to the face before. What's behind the last face is kept too.</div>
+        </ToolSection>
+      )}
+
+      {mode === 'seams' && (
+        <ToolSection title="Seams">
+          <Field label="Seam model">
+            {models.length === 0 ? (
+              <span className="text-muted-foreground">Build a seam model first: Seam model on the toolbar</span>
+            ) : (
+              <Select value={modelOf?.id ?? ''} aria-label="Seam model" onChange={(e) => setModel(e.target.value)}>
+                {models.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Thinnest" hint="A layer is made only where it's thicker than this; the volume left out is said">
+            <NumberInput value={minThickness} onChange={setMinThickness} label="Thinnest layer made" unit="m" range={{ min: 0, minIncluded: false }} />
+          </Field>
+          <div className="text-muted-foreground">
+            Its working seams' roofs and floors, read where the model links them. Waste goes with the seam below it; what lies off the grids is kept whole on a layer of its own.
+          </div>
+        </ToolSection>
+      )}
+
+      {mode === 'polygons' && (
+        <ToolSection title="Polygons">
+          <Field label="On layer" hint={polygons.length > 0 ? `${plural(polygons.length, 'block polygon')}, each piece taking its name as its block` : undefined}>
+            {polygonLayers.length === 0 ? (
+              <span className="text-muted-foreground">No closed strings yet: select lines across the strips and Polygons in Properties</span>
+            ) : (
+              <Select value={polygonsOn ?? ''} aria-label="Layer of block polygons" onChange={(e) => setPolygonsLayer(e.target.value)}>
+                {polygonLayers.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {layerName(l.id)} ({l.count})
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <div className="text-muted-foreground">A vertical cut where each polygon sits. What's outside them all is kept on a layer of its own. Overlapping polygons are refused.</div>
         </ToolSection>
       )}
 

@@ -19,6 +19,7 @@ import {
   type SnapHit,
   type Vec3,
   snapRay,
+  solidsUnder,
   stageObject,
   stageSeamHorizon,
   type Transport,
@@ -85,7 +86,7 @@ export async function runChecks(
     } else if (config.builder) {
       results.builder = await checkBuilder(viewport, log, show, strings);
     } else if (config.cut) {
-      results.cut = await checkCut(viewport, log, show, strings);
+      results.cut = await checkCut(viewport, log, show, strings, config.seam);
     } else if (config.select) {
       results.select = await checkSelect(viewport, log, show, selection);
     } else if (config.shell) {
@@ -278,7 +279,7 @@ async function checkBuilder(viewport: Viewport, log: (line: string) => void, sho
  * joined a face a strip; and the pit cut at RL 50, keeping both sides. Every volume is known: strip 1 and what's past strip
  * 15 7,500,000 m³ each, every strip between 2,500,000 m³, the pit 50,000,000 m³.
  */
-async function checkCut(viewport: Viewport, log: (line: string) => void, show: Show, stringLayer: () => StringLayer | null) {
+async function checkCut(viewport: Viewport, log: (line: string) => void, show: Show, stringLayer: () => StringLayer | null, seam: string | null) {
   const layer = stringLayer();
   if (!layer) return { error: 'no string layer' };
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -397,12 +398,65 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
   const cutMs = await press('Cut 1 solid');
   const parts = await volumesOn('cut');
 
+  // By seams (decision 0062), with `--seam`: the pit, still picked, cut by the model's horizons in one run.
+  let seams: Record<string, unknown> | null = null;
+  if (seam) {
+    const built = await runCommand('seam.build_model', { definition: seam, layer: 'seam models' });
+    await show(built.summary);
+    button('By seams')?.click();
+    await wait(400);
+    const seamLabel = buttons().find((b) => /^Cut \d+ solids? by seams$/.test(b.textContent?.trim() ?? ''))?.textContent?.trim() ?? '';
+    const seamMs = await press(seamLabel);
+    const pieces = await projectSummary();
+    const onLayers = pieces.layers.find((l) => l.name === 'layers')?.id;
+    const made = pieces.objects.filter((o) => o.layer === onLayers);
+    seams = { button: seamLabel, ms: seamMs, said: resultLines().slice(0, 3), pieces: made.length, names: made.map((o) => o.name) };
+  }
+
+  // By polygons (decision 0062): lines across the pit every 100 m and two past it closed into block polygons, then the
+  // solids on show (the seam pieces, or the strips without --seam) cut into blocks from the panel.
+  const across = [];
+  for (let k = 0; k <= 10; k++) across.push((await runCommand('string.create', { name: `across ${k}`, layer: 'block lines', points: [[E + 100 * k - 50, N - 100, 0], [E + 100 * k - 50, N + 600, 0]] })).record.outputs[0].id);
+  for (const [name, y] of [['south', -60], ['north', 560]] as const) across.push((await runCommand('string.create', { name, layer: 'block lines', points: [[E - 100, N + y, 0], [E + 1100, N + y, 0]] })).record.outputs[0].id);
+  const closedUp = await runCommand('string.polygons_from_lines', { strings: across, layer: 'block polygons', name: 'B#' });
+  const keep = seams ? 'layers' : 'strips';
+  let summary = closedUp.summary;
+  for (const l of summary.layers) if (l.name !== keep && l.name !== 'block polygons') summary = await setLayerVisible(l.id, false);
+  await show(summary);
+  button('By polygons')?.click();
+  await wait(400);
+  buttons().find((b) => b.textContent?.trim().startsWith('On show'))?.click();
+  await wait(300);
+  const polygonsOffered = panelText().match(/\d+ block polygons/)?.[0] ?? '';
+  const blockLabel = buttons().find((b) => /^Cut \d+ solids? into blocks$/.test(b.textContent?.trim() ?? ''))?.textContent?.trim() ?? '';
+  const blockMs = await press(blockLabel);
+  const afterBlocks = await projectSummary();
+  const blocksLayer = afterBlocks.layers.find((l) => l.name === 'blocks')?.id;
+  const madeBlocks = afterBlocks.objects.filter((o) => o.layer === blocksLayer);
+  const names = madeBlocks.map((o) => o.name);
+  // The small-piece filter: the blocks under 1,000 m³.
+  const small = await solidsUnder(
+    madeBlocks.map((o) => o.id),
+    1000,
+  );
+  const blocks = {
+    polygons_made: closedUp.record.outputs.length,
+    polygons_offered: polygonsOffered,
+    button: blockLabel,
+    ms: blockMs,
+    said: resultLines().slice(0, 3),
+    blocks: madeBlocks.length,
+    names_unique: new Set(names).size === names.length,
+    first_names: names.slice(0, 6),
+    under_1000_m3: small.length,
+  };
+
   // Properties no longer cuts: it points to the panel.
   [...document.querySelectorAll('.dv-tab')].find((t) => t.textContent?.trim() === 'Properties')?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
   [...document.querySelectorAll('.dv-tab')].find((t) => t.textContent?.trim() === 'Properties')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   await wait(500);
   const properties = document.body.textContent?.includes('Cut it, or slice it into strips, in') ?? false;
-  const result = { panel_opened_from_toolbar: !!open, pit_picked_after_making: pickedAfterMaking.includes('Picked (1)'), between, sliced, joined, cut: { typed_rl: typedRl, ms: cutMs, parts }, properties_points_to_the_panel: properties };
+  const result = { panel_opened_from_toolbar: !!open, pit_picked_after_making: pickedAfterMaking.includes('Picked (1)'), between, sliced, joined, cut: { typed_rl: typedRl, ms: cutMs, parts }, seams, blocks, properties_points_to_the_panel: properties };
   log(`cut: ${JSON.stringify(result)}`);
   return result;
 }
