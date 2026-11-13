@@ -6,6 +6,7 @@
 
 mod between;
 mod blocks;
+mod layers;
 mod close;
 mod crossings;
 mod cut;
@@ -31,6 +32,7 @@ mod strips;
 mod wall;
 
 pub use blocks::{PolygonCut, PolygonPiece, cut_solid_by_polygons, polygons_overlapping};
+pub use layers::{LayerCut, LayerPiece, LayerStack, cut_solid_by_layers, layer_stack};
 pub use between::{Between, solid_between};
 pub use cut::{CutResult, CutTimings, DesignIndex, TINY_EDGE, TinyEdges, cut_solid_by_indexed_surface, cut_solid_by_surface, cut_solid_by_whole_surface, join_tiny_edges};
 pub use error::GeomError;

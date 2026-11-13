@@ -1,14 +1,16 @@
 //! Blocks (decision 0062). A block is a named polygon in plan, and a solid is cut vertically where it sits. The
 //! polygons are made the way a planner lays blocks out: a line across the strips offset every 100 m, lines drawn to close
 //! them, and a polygon made of each area they close (`string.polygons_from_lines`). Each solid is then cut by each
-//! polygon's vertical prism (`solid.cut_by_polygons`), the piece taking the polygon's name as its block.
+//! polygon's vertical prism (`solid.cut_by_polygons`), the piece taking the polygon's name as its block. Strips are cut by
+//! the seam model's horizons in one run (`solid.cut_by_seams`), each piece carrying its seam, material and horizon.
 
 use std::collections::BTreeMap;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Change, Object, ObjectId, ObjectKind, Polyline, Solid};
-use zd_geom::{PolygonCut, cut_solid_by_polygons, find_solid_crossings, polygons_from_lines, polygons_overlapping};
+use zd_core::{AttrValue, Attributes, Body, Change, Horizon, Lattice, Object, ObjectId, ObjectKind, Polyline, Solid};
+use zd_geom::{LayerCut, PolygonCut, cut_solid_by_layers, cut_solid_by_polygons, find_solid_crossings, layer_stack, polygons_from_lines, polygons_overlapping};
+use zd_io::read_stack_grids;
 
 use super::in_parallel_watched;
 use super::solid::checked_input;
@@ -169,7 +171,7 @@ fn default_block() -> String {
 }
 
 fn default_pattern() -> String {
-    "{strip}_{block}_{seam}".into()
+    "{strip}_{block}_{horizon}".into()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -188,7 +190,8 @@ pub struct CutByPolygonsParams {
     #[serde(default = "default_block")]
     pub attribute: String,
     /// Each block's name: attributes in braces, `{solid}` the solid's name and `{polygon}` the polygon's; one a block
-    /// hasn't is left out with the separator before it. `{strip}_{block}_{seam}` by default.
+    /// hasn't is left out with the separator before it. `{strip}_{block}_{horizon}` by default: a coal block's horizon is its
+    /// seam, and waste's tells it from the coal of the seam it goes with (OB, U-M).
     #[serde(default = "default_pattern")]
     pub name: String,
 }
@@ -277,7 +280,7 @@ impl Command for CutByPolygons {
                 Field::new("layer", FieldType::Layer, "Layer for the blocks"),
                 Field::new("outside_layer", FieldType::Layer, "Layer for what lies outside every polygon; <layer> outside by default"),
                 Field::new("attribute", FieldType::Text, "The attribute taking each polygon's name; block by default"),
-                Field::new("name", FieldType::Text, "Each block's name from its attributes in braces; {strip}_{block}_{seam} by default"),
+                Field::new("name", FieldType::Text, "Each block's name from its attributes in braces; {strip}_{block}_{horizon} by default"),
             ],
             outputs: vec![Field::new("blocks", FieldType::Objects, "Each solid's blocks in the polygons' order, then what's outside them")],
         }
@@ -429,6 +432,242 @@ impl Command for CutByPolygons {
         Ok(outcome)
     }
 }
+
+/// `solid.cut_by_seams`: each solid cut by a seam model's horizons in one run (decision 0062), into the overburden, each
+/// seam, each interburden and what's below the last floor. Each layer is a slab between its two grids, read from the
+/// model's linked files, made where it's thicker than a minimum; what's thinner is left out and its volume said. A piece
+/// keeps its solid's attributes and carries `seam` (its own for coal, the seam below it for waste), `material` and
+/// `horizon`. What lies off the grids is kept whole on a layer of its own. The inputs are left as they are.
+pub struct CutBySeams;
+
+fn default_min_thickness() -> f64 {
+    0.01
+}
+
+fn default_seam_pattern() -> String {
+    "{solid} {horizon}".into()
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CutBySeamsParams {
+    /// The solids to cut, each on its own.
+    pub solids: Vec<ObjectId>,
+    /// The seam model whose working section cuts them.
+    pub model: ObjectId,
+    /// Layer for the pieces.
+    pub layer: String,
+    /// Layer for what lies off the model's grids; "<layer> off the grids" by default.
+    #[serde(default)]
+    pub outside_layer: Option<String>,
+    /// A layer is made only where it's thicker than this (m); 0.01 by default.
+    #[serde(default = "default_min_thickness")]
+    pub min_thickness: f64,
+    /// Each piece's name: attributes in braces, `{solid}` the solid's name. `{solid} {horizon}` by default.
+    #[serde(default = "default_seam_pattern")]
+    pub name: String,
+}
+
+/// What one layer of the stack is: its horizon's name, its material and the seam it goes with.
+struct LayerKind {
+    horizon: String,
+    material: String,
+    seam: Option<String>,
+}
+
+/// The layers of a working section, top down: overburden, then each horizon and the waste below it.
+fn layer_kinds(working: &[&Horizon]) -> Vec<LayerKind> {
+    let waste = |horizon: String, seam: Option<&Horizon>| LayerKind { horizon, material: "waste".into(), seam: seam.map(|h| h.code.clone()) };
+    let mut kinds = vec![waste("OB".into(), working.first().copied())];
+    for (k, h) in working.iter().enumerate() {
+        let material = if h.material.trim().is_empty() { "coal".to_string() } else { h.material.trim().to_string() };
+        kinds.push(LayerKind { horizon: h.code.clone(), material, seam: Some(h.code.clone()) });
+        kinds.push(match working.get(k + 1) {
+            Some(below) => waste(format!("{}-{}", h.code, below.code), Some(below)),
+            None => waste(format!("below {}", h.code), None),
+        });
+    }
+    kinds
+}
+
+type SeamCut = (LayerCut, Vec<Result<Solid, CommandError>>);
+
+impl Command for CutBySeams {
+    type Params = CutBySeamsParams;
+    const NAME: &'static str = "solid.cut_by_seams";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Cut solids by a seam model's horizons in one run: overburden, each seam, each interburden and below",
+            inputs: vec![
+                Field::new("solids", FieldType::Objects, "The solids to cut, each on its own"),
+                Field::object("model", ObjectKind::SeamModel, "The seam model whose working section cuts them"),
+            ],
+            params: vec![
+                Field::new("layer", FieldType::Layer, "Layer for the pieces"),
+                Field::new("outside_layer", FieldType::Layer, "Layer for what lies off the model's grids; <layer> off the grids by default"),
+                Field::new("min_thickness", FieldType::Number { unit: "m" }, "A layer is made only where it's thicker than this; 0.01 by default"),
+                Field::new("name", FieldType::Text, "Each piece's name from its attributes in braces; {solid} {horizon} by default"),
+            ],
+            outputs: vec![Field::new("pieces", FieldType::Objects, "Each solid's pieces top down, then what's off the grids")],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        if p.solids.is_empty() {
+            return Err(CommandError::Invalid("give the solids to cut".into()));
+        }
+        if !(p.min_thickness > 0.0 && p.min_thickness.is_finite()) {
+            return Err(CommandError::Invalid(format!("a minimum thickness of {} m isn't more than nothing", p.min_thickness)));
+        }
+        let model_object = inputs.object(p.model)?;
+        let Body::SeamModel(model) = &model_object.body else {
+            return Err(CommandError::WrongKind { id: p.model, expected: ObjectKind::SeamModel, found: model_object.body.kind() });
+        };
+        if !model.is_usable() {
+            return Err(CommandError::Invalid(format!("'{}' has blocking issues in its stack: correct the grids and build it again first", model_object.name)));
+        }
+        let working: Vec<&Horizon> = model.working_section().collect();
+        if working.is_empty() {
+            return Err(CommandError::Invalid(format!("'{}' has no working horizons to cut by", model_object.name)));
+        }
+        let mut notes = Vec::new();
+        let mut solids: Vec<(&Object, &Solid)> = Vec::new();
+        for &id in &p.solids {
+            if solids.iter().any(|(o, _)| o.id == id) {
+                return Err(CommandError::Invalid(format!("solid {id} is given twice")));
+            }
+            let (object, solid) = inputs.solid(id)?;
+            checked_input("solid", &object.name, solid.crossings(), solid.mesh(), true, &mut notes)?;
+            solids.push((object.as_ref(), solid));
+        }
+
+        // The working section's roofs and floors, read where the model links them, absent seams blanked.
+        let started = Instant::now();
+        let grids = read_stack_grids(model).map_err(|e| CommandError::Invalid(format!("'{}': {e}", model_object.name)))?;
+        let mut pairs: Vec<(&[f64], &[f64])> = Vec::new();
+        for (h, (roof, floor)) in model.horizons.iter().zip(grids.roofs.iter().zip(&grids.floors)) {
+            if !h.working {
+                continue;
+            }
+            if Lattice::from(roof) != model.lattice || Lattice::from(floor) != model.lattice {
+                return Err(CommandError::Invalid(format!("'{}': {}'s roof or floor isn't on the model's lattice: build the model again", model_object.name, h.code)));
+            }
+            pairs.push((&roof.z, &floor.z));
+        }
+        let stack = layer_stack(model.lattice, &pairs).map_err(|e| CommandError::Invalid(e.to_string()))?;
+        if !grids.changed.is_empty() {
+            let text = format!("{} grid files differ from when '{}' was built, and were read as they are now: {}", grids.changed.len(), model_object.name, named(&grids.changed));
+            notes.push(Note::warning(Code::LinkChanged, text).measured(grids.changed.len() as f64, "files").on(model_object.id));
+        }
+        if stack.absent > 0 {
+            let text = format!("{} horizon nodes hold no seam: each laid on the floor of the seam above, or the roof of the one below at the top, so the waste there goes with the seam below", stack.absent);
+            notes.push(Note::info(text).measured(stack.absent as f64, "nodes"));
+        }
+        if stack.lowered > 0 {
+            let text = format!("{} roof and floor nodes lay above the surface over them, by up to {:.4} m, within the model's tolerance: lowered onto it for the cut", stack.lowered, stack.most_lowered);
+            notes.push(Note::info(text).measured(stack.most_lowered, "m"));
+        }
+        let read_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+        let cuts = in_parallel_watched(inputs, "solids", &solids, |(object, solid)| -> Result<SeamCut, CommandError> {
+            let cut = cut_solid_by_layers(solid.mesh(), &stack, p.min_thickness).map_err(|e| CommandError::Geometry(format!("'{}': {e}", object.name)))?;
+            let made = cut
+                .pieces
+                .iter()
+                .chain(&cut.outside)
+                .map(|piece| {
+                    let crossings = find_solid_crossings(&piece.mesh, crossing_tolerance());
+                    Solid::new(piece.mesh.clone()).map(|s| s.with_crossings(crossings)).map_err(CommandError::NotWatertight)
+                })
+                .collect();
+            Ok((cut, made))
+        })?;
+        let ms = started.elapsed().as_secs_f64() * 1000.0;
+
+        let kinds = layer_kinds(&working);
+        let outside_layer = p.outside_layer.clone().filter(|l| !l.trim().is_empty()).unwrap_or_else(|| format!("{} off the grids", p.layer));
+        let mut changes = Vec::new();
+        let mut by_layer = vec![0.0; kinds.len()];
+        let (mut coal, mut waste, mut off) = (0, 0, Vec::new());
+        let (mut volume_in, mut volume_off, mut thin) = (0.0, 0.0, 0.0);
+        let (mut triangles_in, mut triangles_out, mut slab_triangles) = (0, 0, 0);
+        let (mut worst, mut worst_of) = (0.0_f64, String::new());
+        for ((object, solid), result) in solids.iter().zip(cuts) {
+            let (cut, made) = result?;
+            let mut made = made.into_iter();
+            triangles_in += solid.mesh().triangle_count();
+            slab_triangles += cut.slab_triangles;
+            volume_in += cut.input_volume;
+            thin += cut.thin;
+            let share = cut.difference().abs() / cut.input_volume.abs().max(f64::MIN_POSITIVE);
+            if share > worst {
+                worst = share;
+                worst_of = object.name.clone();
+            }
+            if share > ADDS_UP {
+                let text = format!("'{}': its pieces, what's off the grids and what's too thin come to {:+.3} m³ against its {:.3} m³", object.name, cut.difference(), cut.input_volume);
+                notes.push(Note::warning(Code::SeamCutDiffers, text).on(object.id).measured(cut.difference(), "m3"));
+            }
+            for piece in &cut.pieces {
+                let solid = made.next().expect("a solid for each piece")?;
+                let kind = &kinds[piece.layer];
+                let mut attributes = object.attributes.clone();
+                attributes.insert("horizon".into(), AttrValue::Text(kind.horizon.clone()));
+                attributes.insert("material".into(), AttrValue::Text(kind.material.clone()));
+                match &kind.seam {
+                    Some(seam) => attributes.insert("seam".into(), AttrValue::Text(seam.clone())),
+                    None => attributes.remove("seam"),
+                };
+                if kind.material == "waste" { waste += 1 } else { coal += 1 }
+                by_layer[piece.layer] += piece.volume;
+                triangles_out += piece.mesh.triangle_count();
+                let name = block_name(&p.name, &attributes, &object.name, &kind.horizon);
+                changes.push(Change::Create { name, layer: p.layer.clone(), attributes, body: Body::Solid(solid) });
+            }
+            if let Some(rest) = &cut.outside {
+                let solid = made.next().expect("a solid for what's off the grids")?;
+                off.push(object.name.clone());
+                volume_off += rest.volume;
+                triangles_out += rest.mesh.triangle_count();
+                changes.push(Change::Create { name: format!("{} off the grids", object.name), layer: outside_layer.clone(), attributes: object.attributes.clone(), body: Body::Solid(solid) });
+            }
+        }
+        if coal + waste == 0 {
+            return Err(CommandError::Invalid(format!("none of the {} solids lies on the grids of '{}': nothing cut", solids.len(), model_object.name)));
+        }
+        if !off.is_empty() {
+            let text = format!("{} reach off the grids of '{}': {volume_off:.3} m³ kept whole on '{outside_layer}'", named(&off), model_object.name);
+            notes.push(Note::warning(Code::SolidOffGrids, text).measured(volume_off, "m3").on(model_object.id));
+        }
+        if thin > NOTHING {
+            let text = format!("{thin:.3} m³ left out where a layer is thinner than {} m", p.min_thickness);
+            notes.push(Note::new(Severity::Info, Some(Code::SeamThinLeftOut), text).measured(thin, "m3"));
+        }
+        let layers: Vec<String> = kinds.iter().zip(&by_layer).filter(|(_, v)| **v > 0.0).map(|(k, v)| format!("{} {v:.3}", k.horizon)).collect();
+        let off_text = if off.is_empty() { String::new() } else { format!(", and {} pieces off the grids", off.len()) };
+        let mut outcome = Outcome::new(changes)
+            .message(format!(
+                "{} solids cut by the {} seams of '{}' into {} pieces ({coal} coal, {waste} waste){off_text}, in {ms:.0} ms ({read_ms:.0} ms reading the grids): {triangles_in} triangles in, {slab_triangles} in the layers, {triangles_out} out",
+                solids.len(),
+                working.len(),
+                model_object.name,
+                coal + waste
+            ))
+            .message(format!("Volumes (m³): {volume_in:.3} in; {}; {thin:.3} thinner than {} m; {volume_off:.3} off the grids", layers.join(", "), p.min_thickness))
+            .message(if worst_of.is_empty() {
+                "Pieces add back to every solid exactly".to_string()
+            } else {
+                format!("Pieces add back to each solid within {worst:.1e} of its volume, the most for '{worst_of}'")
+            });
+        outcome.notes.extend(notes);
+        Ok(outcome)
+    }
+}
+
+/// A volume (m³) this small is nothing.
+const NOTHING: f64 = 1e-6;
 
 #[cfg(test)]
 mod tests {
