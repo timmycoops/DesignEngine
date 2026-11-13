@@ -118,6 +118,7 @@ codes! {
     SeamCrossing = "seam.crossing", "A working horizon whose roof rises above the floor of the one above";
     SeamOutsideParent = "seam.outside_parent", "A daughter seam reaching outside its parent";
     SeamUnpaired = "seam.unpaired", "A horizon whose roof and floor aren't live at the same nodes";
+    SeamHoles = "seam.holes", "A horizon whose roof or floor holds no height at some nodes: holes to fix in the geology model, never filled";
     SeamNoDensity = "seam.no_density", "A working horizon with no density grid: tonnes will need one";
     LinkChanged = "link.changed", "Grid files whose content differs from when the seam model was built";
     InterrogateNoSeam = "interrogate.no_seam", "Blocks with no seam attribute, left as they were";
@@ -137,7 +138,8 @@ codes! {
     SolidOutsidePolygons = "solid.outside_polygons", "Part of a solid outside every block polygon, found before a cut by polygons, which it holds";
     BlockNameRepeated = "block.name_repeated", "Blocks given the same name, which should be unique";
     BlockVolumeDiffers = "block.volume_differs", "A solid whose blocks and remainder don't add back to its volume";
-    SolidOffGrids = "solid.off_grids", "Solids reaching off the seam model's grids, what's off them kept whole";
+    SolidOffGrids = "solid.off_grids", "Part of a solid past the edge of the seam model's grids, found before a cut by seams, which it holds";
+    SolidOverGridHoles = "solid.over_grid_holes", "Part of a solid over a hole in the seam model's grids, found before a cut by seams, which it holds";
     SeamThinLeftOut = "seam.thin_left_out", "Volume left out of a seam cut where a layer is thinner than the minimum";
     SeamCutDiffers = "seam.cut_differs", "A solid whose pieces from the seam cut don't add back to its volume";
 }

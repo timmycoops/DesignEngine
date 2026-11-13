@@ -413,12 +413,16 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
     await show(built.summary);
     button('By seams')?.click();
     await wait(400);
+    // The grids checked against the pit before the cut (decision 0063): they reach over it with no hole under it.
+    const gridsStarted = performance.now();
+    for (let k = 0; k < 100 && !/The grids reach over|don't reach over every solid/.test(panelText()); k++) await wait(100);
+    const grids = { covered: /The grids reach over/.test(panelText()), ms: Math.round(performance.now() - gridsStarted) };
     const seamLabel = buttons().find((b) => /^Cut \d+ solids? by seams$/.test(b.textContent?.trim() ?? ''))?.textContent?.trim() ?? '';
     const seamMs = await press(seamLabel);
     const pieces = await projectSummary();
     const onLayers = pieces.layers.find((l) => l.name === 'layers')?.id;
     const made = pieces.objects.filter((o) => o.layer === onLayers);
-    seams = { button: seamLabel, ms: seamMs, said: resultLines().slice(0, 3), pieces: made.length, names: made.map((o) => o.name) };
+    seams = { button: seamLabel, grids, ms: seamMs, said: resultLines().slice(0, 3), pieces: made.length, names: made.map((o) => o.name) };
   }
 
   // By polygons (decision 0062): lines across the pit every 100 m, from 50 m before it to 50 m past it, and two past its

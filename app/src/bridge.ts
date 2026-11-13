@@ -227,6 +227,8 @@ export const solidsUnder = (objects: string[], volume: number) => invoke<string[
 export const checkSlice = (solids: string[], faces: string[]) => invoke<Note[]>('check_slice', { solids, faces });
 /** What cutting these solids by these block polygons would refuse, found before the cut: a warning for each part of a solid outside them all. */
 export const checkCutByPolygons = (solids: string[], polygons: string[]) => invoke<Note[]>('check_cut_by_polygons', { solids, polygons });
+/** What cutting these solids by a seam model would refuse, found before the cut: a warning for each part of a solid past the edge of its grids or over a hole in them. */
+export const checkCutBySeams = (solids: string[], model: string) => invoke<Note[]>('check_cut_by_seams', { solids, model });
 /**
  * Everything on show lying wholly inside a box on the viewport: the camera's view-projection matrix in the scene's
  * local frame (column-major) and the box's corners in normalised device coordinates.
@@ -629,7 +631,7 @@ export interface Horizon {
   grids: Record<string, GridLink>;
 }
 
-export type IssueKind = 'floor_above_roof' | 'crossing' | 'outside_parent' | 'unpaired' | 'no_density';
+export type IssueKind = 'floor_above_roof' | 'crossing' | 'outside_parent' | 'unpaired' | 'no_density' | 'holes';
 
 /** A problem found when the stack was checked; the grids are never changed to hide it. */
 export interface StackIssue {

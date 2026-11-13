@@ -83,6 +83,10 @@ pub enum IssueKind {
     Unpaired,
     /// A working horizon with no density grid (a warning: volumes do not need it, tonnes will).
     NoDensity,
+    /// The roof or floor holds no height at some nodes, where the model's no-seam RL doesn't mark the seam absent: a
+    /// hole in the grids, to fix in the geology model and import again. A warning: a cut by seams refuses a solid over
+    /// one (decision 0063).
+    Holes,
 }
 
 /// One problem found when the stack was checked.
@@ -123,6 +127,14 @@ pub struct SeamModel {
     /// Top of the stack first.
     pub horizons: Vec<Horizon>,
     pub issues: Vec<StackIssue>,
+}
+
+/// Where a horizon's grids have holes, as read and before [`blank_no_seam`]: a node whose roof or floor holds no
+/// height, unless the model's no-seam RL marks the seam absent there. A seam that's absent is part of the model; a
+/// node with no height is not, and nothing fills it (decision 0063).
+pub fn grid_holes(roof: &Grid, floor: &Grid, no_seam: Option<f64>) -> Vec<bool> {
+    let marked = |z: f64| no_seam.is_some_and(|rl| z as f32 == rl as f32);
+    roof.z.iter().zip(&floor.z).map(|(&r, &f)| (r.is_nan() || f.is_nan()) && !(marked(r) || marked(f))).collect()
 }
 
 /// Blanks a horizon where its model marks it absent: a node with its roof or floor at `rl` holds no

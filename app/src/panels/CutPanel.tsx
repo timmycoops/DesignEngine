@@ -1,6 +1,6 @@
 import { Combine, Grid3x3, Layers, Slice } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { checkCutByPolygons, checkSlice, type Note, type ObjectSummary, type StepTarget } from '@/bridge';
+import { checkCutByPolygons, checkCutBySeams, checkSlice, type Note, type ObjectSummary, type StepTarget } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { Choice, Field, NoteLine, NumberInput, type RunReport, Select, TargetInput, TargetOptions, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
@@ -91,22 +91,25 @@ export function CutPanel() {
   const setPattern = (text: string) => mode === 'seams' || mode === 'polygons' ? setPatterns((was) => ({ ...was, [mode]: text })) : undefined;
 
   // What a cut would refuse, checked before it each time the solids or what cuts them change: into strips, any face
-  // that doesn't pass right through a solid, past its ends, above its top and below its floor; by polygons, any part of a
-  // solid outside them all. Each is listed, and the cut waits until it's fixed.
+  // that doesn't pass right through a solid, past its ends, above its top and below its floor; by seams, any part of a
+  // solid past the edge of the model's grids or over a hole in them; by polygons, any part of a solid outside them all.
+  // Each is listed, and the cut waits until it's fixed.
   const ids = (list: ObjectSummary[]) => list.map((o) => `${o.id}:${o.revision}`).join(',');
   const checkKey =
     mode === 'strips' && chosen.length > 0 && strips.strips.length > 0 && strips.unnumbered.length === 0
       ? `strips|${ids(chosen)}|${ids(faces)}`
-      : mode === 'polygons' && chosen.length > 0 && polygons.length > 0
-        ? `polygons|${ids(chosen)}|${ids(polygons)}`
-        : null;
+      : mode === 'seams' && chosen.length > 0 && modelOf
+        ? `seams|${ids(chosen)}|${ids([modelOf])}`
+        : mode === 'polygons' && chosen.length > 0 && polygons.length > 0
+          ? `polygons|${ids(chosen)}|${ids(polygons)}`
+          : null;
   const [check, setCheck] = useState<{ key: string; notes?: Note[]; error?: string } | null>(null);
   useEffect(() => {
     if (checkKey === null) return;
     let stale = false;
     const solidIds = chosen.map((o) => o.id);
-    const cutIds = (mode === 'strips' ? faces : polygons).map((o) => o.id);
-    const ask = mode === 'strips' ? checkSlice : checkCutByPolygons;
+    const cutIds = (mode === 'strips' ? faces : mode === 'seams' ? (modelOf ? [modelOf] : []) : polygons).map((o) => o.id);
+    const ask = mode === 'strips' ? checkSlice : mode === 'seams' ? (s: string[], c: string[]) => checkCutBySeams(s, c[0]) : checkCutByPolygons;
     const wait = setTimeout(() => {
       setCheck({ key: checkKey });
       ask(solidIds, cutIds).then(
@@ -180,10 +183,11 @@ export function CutPanel() {
         return {
           label: `Cut ${plural(chosen.length, 'solid')} by seams`,
           icon: <Layers className="size-3.5" />,
-          disabled: chosen.length === 0 || !modelOf || output === '' || pattern.trim() === '',
+          disabled: chosen.length === 0 || !modelOf || shortfalls.length > 0 || output === '' || pattern.trim() === '',
           busy,
           busyLabel: 'Cutting…',
           title: "Overburden, each seam, each interburden and what's below the last floor, in one run; each piece carries its seam, material and horizon",
+          hint: shortfalls.length > 0 ? 'Fix the grids or the solids first' : undefined,
           run: () => runIt('solid.cut_by_seams', { solids: chosen.map((o) => o.id), model: modelOf?.id, layer: output, min_thickness: minThickness, name: pattern.trim() }),
         };
       case 'polygons':
@@ -322,8 +326,15 @@ export function CutPanel() {
           <Field label="Thinnest" hint="A layer is made only where it's thicker than this; the volume left out is said">
             <NumberInput value={minThickness} onChange={setMinThickness} label="Thinnest layer made" unit="m" range={{ min: 0, minIncluded: false }} />
           </Field>
+          {checkStatus(
+            'Grids under the solids',
+            `Checking the grids reach over ${theSolids}…`,
+            `The grids reach over ${theSolids}, with no hole under them`,
+            "The grids don't reach over every solid: fix the geology model and import the grids again, or keep the solids to where the grids are",
+          )}
           <div className="text-muted-foreground">
-            Its working seams' roofs and floors, read where the model links them. Waste goes with the seam below it; what lies off the grids is kept whole on a layer of its own.
+            Its working seams' roofs and floors, read where the model links them. Waste goes with the seam below it. The grids must reach over every solid in plan with no hole under
+            it; holes are never filled.
           </div>
         </ToolSection>
       )}
