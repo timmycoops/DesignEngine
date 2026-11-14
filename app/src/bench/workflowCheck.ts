@@ -150,7 +150,7 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     expect('one undo takes the run back', undone.every((r, k) => r === revisions[k] - 1), { revisions, undone });
     await show(await projectSummary());
 
-    // Cases (decision 0066): the pause taken out, a case "60" added and its cut set to RL 60 in the settings grid, then
+    // Cases (decision 0066): the pause taken out, a case "60" added and its cut set to RL 60 under the step, then
     // Run all cases: Base's pieces again on 'cut', the case's on 'cut 60', 360,000 below RL 60 and 240,000 above, tagged
     // with its case; one undo takes both back.
     await press(labelled('Take this step out', 3));
@@ -160,8 +160,10 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     await press(button('Add'));
     const caseList = document.querySelector<HTMLSelectElement>('select[aria-label="Case"]');
     expect('the new case is picked', caseList?.value === '60', caseList?.value);
+    labelled('Settings of step 2')?.click();
+    await wait(200);
     const cell = document.querySelector<HTMLInputElement>('input[aria-label="60: step 2 rl"]');
-    expect('the settings grid has the case column, its cell reading as Base', cell !== null && cell.value === '' && cell.placeholder === '40', cell?.placeholder);
+    expect("step 2's settings open under it as the case has them, its box reading as Base", cell !== null && cell.value === '' && cell.placeholder === '40', cell?.placeholder);
     if (cell) {
       cell.focus();
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(cell, '60');
@@ -173,7 +175,7 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     }
     const saved = await objectDetails(captureWorkflowId());
     const settings = saved.measures.kind === 'workflow' ? saved.measures.workflow.cases?.[0]?.settings : undefined;
-    expect('the cell saved as what the case changes', JSON.stringify(settings) === JSON.stringify({ 2: { rl: 60 } }), settings);
+    expect('the box saved as what the case changes', JSON.stringify(settings) === JSON.stringify({ 2: { rl: 60 } }), settings);
     const beforeCases = await projectSummary();
     const casesRan = await press(buttons().find((b) => b.textContent?.trim().startsWith('Run all 2 cases')));
     expect('Run all cases pressed', casesRan !== null, casesRan);

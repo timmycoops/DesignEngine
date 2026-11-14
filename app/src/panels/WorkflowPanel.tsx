@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Eye, Layers, Pause, Play, Plus, SkipForward, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Eye, Layers, Pause, Play, Plus, SkipForward, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
@@ -7,7 +7,7 @@ import { objectDetails, projectSummary } from '@/bridge';
 import { Field, IconButton, plainNote, type RunReport, Select, StatusBadge, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
-import { BASE, caseValue, onlyLayers, ruleWords, settingRows, stepsOfCase, tidyLayers, withSetting } from './workflow';
+import { BASE, caseValue, changesOfCase, onlyLayers, ruleWords, type SettingRow, settingsOfStep, stepsOfCase, tidyLayers, withSetting } from './workflow';
 
 /**
  * Workflow (decision 0065): saved steps run again in one go. A workflow is captured from runs in the Run log, or built
@@ -20,9 +20,13 @@ import { BASE, caseValue, onlyLayers, ruleWords, settingRows, stepsOfCase, tidyL
  * from and what it ended with: the layers of what its last step made are shown, the layers only the steps in between
  * made are hidden, and a layer holding anything drawn by hand is left as it is.
  *
- * Cases (decision 0066): Base is the steps as they stand; a case changes some settings, in the settings grid, and runs
- * on its own layers (`8 blocks 50m`), tagging what it makes with its case. The case picked is the one Run runs, and the
- * one the steps' badges, a click on a step and its eye show; Run all cases runs Base and every case as one undo.
+ * Cases (decision 0066): Base is the steps as they stand; a case changes some settings and runs on its own layers
+ * (`8 blocks 50m`), tagging what it makes with its case. The case picked is the one Run runs, and the one the steps'
+ * badges, a click on a step, its eye and its settings show; Run all cases runs Base and every case as one undo.
+ *
+ * Settings sit with their step: its sliders open them under it, as the case picked has them. In Base they're the
+ * step's own; in a case an empty box reads as Base (its value greyed in it) and what the case changes shows in blue,
+ * with a blue badge on the step saying how many it changes.
  */
 
 /** Tidy after a run: on unless turned off, remembered on this machine. */
@@ -61,6 +65,14 @@ export function WorkflowPanel() {
   const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
+  // The steps whose settings are open under them, by id.
+  const [opened, setOpened] = useState<ReadonlySet<number>>(new Set());
+  const toggleSettings = (step: number) =>
+    setOpened((was) => {
+      const next = new Set(was);
+      if (!next.delete(step)) next.add(step);
+      return next;
+    });
 
   // The workflow's steps, read again whenever it's saved as a new revision.
   const id = chosen?.id ?? null;
@@ -134,8 +146,8 @@ export function WorkflowPanel() {
     });
   };
 
-  /** Settings changed in the grid: Base's are the step's own, a case's are what it changes. */
-  const setCell = (name: string, row: ReturnType<typeof settingRows>[number], text: string) => {
+  /** A setting changed under its step: Base's are the step's own, a case's are what it changes. */
+  const setCell = (name: string, row: SettingRow, text: string) => {
     if (!workflow) return;
     const next = withSetting(workflow, name, row, text);
     if (!next) return setReport({ notes: [], error: `'${text}' isn't a ${typeof row.base === 'number' ? 'number' : 'true or false'}, as ${row.field} has to be` });
@@ -191,7 +203,7 @@ export function WorkflowPanel() {
   };
 
   const steps = workflow ? stepsOfCase(workflow, caseName) : [];
-  const rows = workflow ? settingRows(workflow) : [];
+  const changes = workflow ? changesOfCase(workflow, caseName) : new Map<number, number>();
   const columns = [BASE, ...cases.map((c) => c.name)];
   const ofCase = caseName === BASE ? '' : ` of ${caseName}`;
   const action: ToolAction | undefined = chosen
@@ -266,57 +278,12 @@ export function WorkflowPanel() {
               </IconButton>
             )}
           </Field>
-          <Field label="New case" hint="The steps as Base, on layers named for it, until you change a setting below">
+          <Field label="New case" hint="The steps as Base, on layers named for it, until you change a step's settings">
             <Input className="h-7 w-28 px-1.5 text-xs" value={newCase} placeholder="50m" aria-label="New case name" onChange={(e) => setNewCase(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addCase()} />
             <Button variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={!newCase.trim() || columns.some((c) => c.toLowerCase() === newCase.trim().toLowerCase())} onClick={addCase}>
               <Plus className="size-3.5" /> Add
             </Button>
           </Field>
-          {rows.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-xs" aria-label="Settings by case">
-                <thead>
-                  <tr className="text-left text-muted-foreground">
-                    <th className="py-1 pr-2 font-normal">Setting</th>
-                    {columns.map((name) => (
-                      <th key={name} className={`px-1 py-1 font-normal ${name === caseName ? 'text-foreground' : ''}`}>
-                        {name}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row, k) => (
-                    <tr key={`${row.step}:${row.field}`} className={k > 0 && rows[k - 1].step !== row.step ? 'border-t' : undefined}>
-                      <td className="max-w-[9rem] truncate py-0.5 pr-2 text-muted-foreground" title={`Step ${row.position}, ${row.command}: ${row.field}`}>
-                        {k === 0 || rows[k - 1].step !== row.step ? `${row.position}. ` : ''}
-                        {row.field}
-                      </td>
-                      {columns.map((name) => {
-                        const own = caseValue(workflow, name, row);
-                        const shown = own === undefined ? '' : String(own);
-                        return (
-                          <td key={name} className="px-1 py-0.5">
-                            <Input
-                              key={`${revision}:${name}:${shown}`}
-                              className={`h-6 w-20 px-1 text-xs ${name !== BASE && own !== undefined ? 'text-edited' : ''}`}
-                              defaultValue={shown}
-                              placeholder={name === BASE ? '' : String(row.base)}
-                              aria-label={`${name}: step ${row.position} ${row.field}`}
-                              title={name !== BASE && own === undefined ? 'As Base' : undefined}
-                              onBlur={(e) => e.target.value !== shown && setCell(name, row, e.target.value)}
-                              onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-                            />
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="mt-1 text-muted-foreground">A case's empty cell reads as Base; what it changes shows in blue. Its layers are named for it: 8 blocks {cases[0]?.name ?? '50m'}.</div>
-            </div>
-          )}
         </ToolSection>
       )}
 
@@ -380,7 +347,22 @@ export function WorkflowPanel() {
                   >
                     {step.action.kind === 'command' ? step.action.command : 'Pause'}
                   </button>
+                  {changes.has(step.id) && (
+                    <StatusBadge tone="edited" title={`${caseName} changes ${plural(changes.get(step.id)!, 'setting')} of this step`}>
+                      {changes.get(step.id)} changed
+                    </StatusBadge>
+                  )}
                   <LastBadge step={step} />
+                  {step.action.kind === 'command' && (
+                    <IconButton
+                      label={`Settings of step ${at + 1}`}
+                      className={opened.has(step.id) ? 'bg-primary/20 text-primary' : undefined}
+                      disabled={settingsOfStep(workflow, step.id).length === 0}
+                      onClick={() => toggleSettings(step.id)}
+                    >
+                      <SlidersHorizontal />
+                    </IconButton>
+                  )}
                   {step.action.kind === 'command' && (
                     <IconButton
                       label={only?.step === step.id ? 'Show all again' : `Only step ${at + 1}: what it made on show, every other layer off`}
@@ -411,6 +393,16 @@ export function WorkflowPanel() {
                         {field}: {ruleWords(workflow, rule)}
                       </span>
                     ))}
+                  {step.action.kind === 'command' && opened.has(step.id) && (
+                    <StepSettings
+                      rows={settingsOfStep(workflow, step.id)}
+                      hidden={Object.keys(step.action.settings ?? {}).length - settingsOfStep(workflow, step.id).length}
+                      caseName={caseName}
+                      revision={revision}
+                      valueOf={(row) => caseValue(workflow, caseName, row)}
+                      set={(row, text) => setCell(caseName, row, text)}
+                    />
+                  )}
                   {editing === at ? (
                     <Input
                       autoFocus
@@ -435,6 +427,43 @@ export function WorkflowPanel() {
         </ToolSection>
       )}
     </ToolPanel>
+  );
+}
+
+/**
+ * A step's plain settings as the case picked has them, under the step: Base's are the step's own; a case's empty box
+ * reads as Base, its value greyed in it, and what the case changes shows in blue. Emptied, a case's box goes back to Base.
+ */
+function StepSettings({ rows, hidden, caseName, revision, valueOf, set }: { rows: SettingRow[]; hidden: number; caseName: string; revision: number; valueOf: (row: SettingRow) => unknown; set: (row: SettingRow, text: string) => void }) {
+  const inCase = caseName !== BASE;
+  return (
+    <div className="my-1 rounded border border-border/60 px-2 py-1">
+      <div className="mb-0.5 text-[11px]">{inCase ? `As ${caseName}: an empty box reads as Base, what ${caseName} changes is blue` : 'Base: the step as it stands'}</div>
+      <div className="grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-x-2 gap-y-0.5">
+        {rows.map((row) => {
+          const own = valueOf(row);
+          const shown = own === undefined ? '' : String(own);
+          return (
+            <label key={row.field} className="contents">
+              <span className="truncate" title={`${row.command}: ${row.field}`}>
+                {row.field}
+              </span>
+              <Input
+                key={`${revision}:${caseName}:${shown}`}
+                className={`h-6 px-1 text-xs ${inCase && own !== undefined ? 'text-edited' : ''}`}
+                defaultValue={shown}
+                placeholder={inCase ? String(row.base) : ''}
+                aria-label={`${caseName}: step ${row.position} ${row.field}`}
+                title={inCase && own === undefined ? 'As Base' : undefined}
+                onBlur={(e) => e.target.value !== shown && set(row, e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+              />
+            </label>
+          );
+        })}
+      </div>
+      {hidden > 0 && <div className="mt-0.5 text-[11px]">{plural(hidden, 'more setting')} (lists and tables) set in its tool</div>}
+    </div>
   );
 }
 

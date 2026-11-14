@@ -2,7 +2,7 @@
 // capture them. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BASE, caseValue, onlyLayers, readSetting, ruleWords, settingRows, stepsOfCase, tickRuns, tidyLayers, withSetting } from '../src/panels/workflow.ts';
+import { BASE, caseValue, changesOfCase, onlyLayers, readSetting, ruleWords, settingRows, settingsOfStep, stepsOfCase, tickRuns, tidyLayers, withSetting } from '../src/panels/workflow.ts';
 
 const workflow = {
   steps: [
@@ -92,4 +92,12 @@ test('a cell typed changes Base or the case, an empty case cell reads as Base ag
   assert.equal(readSetting('true', false), true);
   assert.equal(readSetting('maybe', false), null);
   assert.equal(readSetting('2 faces', 'x'), '2 faces');
+});
+
+test("a step's settings show under it, and a case says how many of each step's it changes", () => {
+  assert.deepEqual(settingsOfStep(cased, 3).map((r) => r.field), ['distance', 'times', 'closed'], 'no lists of points');
+  assert.deepEqual(settingsOfStep(cased, 2), [], 'a pause has none');
+  assert.deepEqual([...changesOfCase(cased, '50m')], [[3, 2]]);
+  assert.equal(changesOfCase(cased, BASE).size, 0, 'Base changes nothing');
+  assert.equal(changesOfCase(withSetting(withSetting(cased, '50m', settingsOfStep(cased, 3)[0], ''), '50m', settingsOfStep(cased, 3)[1], ''), '50m').size, 0, 'emptied, none');
 });

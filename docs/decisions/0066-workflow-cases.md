@@ -58,3 +58,12 @@ stage 3).
 On the made-up pit, Base (100 m blocks) and `50m` (the block line offset 50 m, 30 times) run side by side on their own
 layers, each case's blocks adding up to its seam pieces, and the two cases' totals the same, to 1e-6 m³; with
 known-answer tests.
+
+## Settings under their step (14 November 2026)
+
+Tim: settings belong with the step they drive, so they're seen at the time, beside the inputs that step takes. The
+settings grid (a row a setting, a column a case) is gone. Each command step's sliders open its plain settings under it,
+as the case picked has them: Base's are the step's own; in a case an empty box reads as Base, its value greyed in it,
+what the case changes shows in blue, and the step carries a blue badge saying how many it changes. One case at a time;
+a side-by-side compare of cases is the report's (stage 3). Lists and tables (points, profiles) are still set in the
+step's tool. Nothing changes in the engine or the saved workflow.
