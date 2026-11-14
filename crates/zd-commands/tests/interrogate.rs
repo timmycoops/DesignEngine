@@ -283,6 +283,37 @@ fn a_block_whose_volume_differs_from_its_column_is_warned_of() {
     assert!(record.notes.iter().all(|n| n.code != Some(Code::InterrogateColumnDiffers)));
 }
 
+/// A block of cu's full 4 m (RL 96 to 100) benched at RL 97 by the bench cut (decision 0071): 6,000 m³ below it and 18,000
+/// above. Each bench's column is the seam inside its levels, its own volume; the check takes the two together, 24,000 m³
+/// against their shares of the seam's column, so neither is warned of, where each on its own as a whole seam would be
+/// (the lower holds no mid-seam, the upper all of it). With the lower bench left out, the upper is warned of, a third more.
+#[test]
+fn a_block_s_benches_of_a_seam_are_checked_together() {
+    let t = TempDir::new("benches");
+    let (mut s, model, ids) = project(&t, vec![("3_B1_cu", vec![seam("cu"), ("block", AttrValue::Text("B1".into()))], cuboid(70.0, 40.0, 60.0, 100.0, 96.0, 100.0))]);
+    let cut = s.run("solid.cut_by_benches", json!({ "solids": [ids[0]], "layer": "benches", "rules": [{ "from": 97.0, "to": 97.0, "every": 1.0 }] })).unwrap();
+    let benches: Vec<ObjectId> = cut.outputs.iter().map(|o| o.id).collect();
+    assert_eq!(benches.len(), 2);
+    let record = interrogate(&mut s, model, &benches, json!({})).unwrap();
+    assert!(record.notes.iter().all(|n| n.code != Some(Code::InterrogateColumnDiffers)), "{:?}", record.messages);
+    assert!(
+        record.messages.iter().any(|m| m.starts_with("Column check, on each block's plan at mid-seam, a block's 2 benches of a seam taken together (1 sets of more than one): 1 of 1 blocks and bench sets within 0.1 %")),
+        "{:?}",
+        record.messages
+    );
+    near(number(&s, benches[0], "column_volume").unwrap(), 6_000.0, "the seam inside the bench below 97");
+    near(number(&s, benches[1], "column_volume").unwrap(), 18_000.0, "the seam inside the bench from 97");
+    for &b in &benches {
+        assert!(number(&s, b, "column_delta").unwrap().abs() < 1e-9, "the two together, 24,000 m³ against 24,000");
+    }
+    // The upper bench alone: it holds the mid-seam, so its share is the seam's whole column, 24,000 m³ against its 18,000.
+    let record = interrogate(&mut s, model, &benches[1..], json!({})).unwrap();
+    let warned: Vec<_> = record.notes.iter().filter(|n| n.code == Some(Code::InterrogateColumnDiffers)).collect();
+    assert_eq!(warned.len(), 1, "{:?}", record.messages);
+    near(warned[0].value.as_ref().unwrap().value, 100.0 / 3.0, "a third more, in %");
+    near(number(&s, benches[1], "column_delta").unwrap(), -25.0, "18,000 against 24,000");
+}
+
 /// cu's full 4 m, 100 m long, 60 m across at its floor and its east side at 65°, leaning out as a highwall does: its plan is
 /// 4 cot 65° wider than its section at mid-seam, which is what its column takes (decision 0062, workstream 4), so it's
 /// within the tolerance where its whole plan was 3.1 % over.

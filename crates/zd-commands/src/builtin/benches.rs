@@ -23,6 +23,15 @@ use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, 
 /// the block cut. Flaps thinner than the flap thickness are taken off and said. The inputs are left as they are.
 pub struct CutByBenches;
 
+/// The attributes each bench carries its floor and top RL in, where it has them, so a later step needn't read them off
+/// its name: the interrogation's column check takes the seam inside them (decision 0071).
+pub const BENCH_FLOOR: &str = "bench_floor";
+pub const BENCH_TOP: &str = "bench_top";
+
+/// The attribute each bench carries the id of the solid it was benched from in: a block's benches of a seam are told apart
+/// by it, their block and their seam, so the column check can take them together (decision 0071).
+pub const BENCHED_FROM: &str = "benched_from";
+
 /// Which level names a bench.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -337,6 +346,13 @@ impl Command for CutByBenches {
                 let bench = bench_value(piece.floor, piece.top, by);
                 let mut attributes = object.attributes.clone();
                 attributes.insert(p.attribute.clone(), bench.clone());
+                attributes.insert(BENCHED_FROM.into(), AttrValue::Text(object.id.to_string()));
+                for (key, level) in [(BENCH_FLOOR, piece.floor), (BENCH_TOP, piece.top)] {
+                    match level {
+                        Some(rl) => attributes.insert(key.into(), AttrValue::Number(rl)),
+                        None => attributes.remove(key),
+                    };
+                }
                 let entry = by_bench.entry(word(&bench)).or_default();
                 entry.0 += piece.volume;
                 entry.1 += 1;

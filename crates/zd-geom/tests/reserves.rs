@@ -4,7 +4,7 @@
 //! partial cells, as Vulcan does). Volumes to 0.001 m³, RD to 1e-9, qualities to 1 part in a million.
 
 use zd_core::{Lattice, TriMesh};
-use zd_geom::{Sample, Variable, cells_in_solid, column_volume, columns_in_solid, composite, horizon_samples, in_situ_rd, mid_seam_cells};
+use zd_geom::{EVERY_RL, Sample, Variable, cells_in_solid, column_volume, column_volume_within, columns_in_solid, composite, cut_solid_by_levels, horizon_samples, in_situ_rd, mid_seam_cells, mid_seam_cells_within};
 
 const E: f64 = 650_000.0;
 const N: f64 = 7_450_000.0;
@@ -397,6 +397,67 @@ fn a_block_short_of_mid_seam_or_where_the_seam_is_null_has_no_section() {
     assert!(mid.iter().all(|s| roof[s.node].is_finite() || s.volume == 0.0));
     let live = mid.iter().filter(|s| roof[s.node].is_finite()).map(|s| s.area).sum::<f64>();
     assert!(live > 0.0 && live < 6000.0, "{live}");
+}
+
+/// A bench's column is the part of its seam inside its levels (decision 0071). A 4 m flat seam from RL 100 to 104 cut at RL
+/// 101.5: the bench below it holds 1.5 m of the seam over its 6,000 m², 9,000 m³, and the bench above 2.5 m, 15,000 m³,
+/// each its own volume, adding up to the seam's 24,000; checked as a whole seam, the lower had no section at mid-seam
+/// and the upper took all 24,000.
+#[test]
+fn a_bench_s_column_is_the_part_of_its_seam_inside_its_levels() {
+    let lattice = at_25_m();
+    let nodes = lattice.cols * lattice.rows;
+    let (floor, roof) = (vec![100.0; nodes], vec![104.0; nodes]);
+    let (low, high) = (block(E, N, 100.0, |_| 101.5), block(E, N, 101.5, |_| 104.0));
+    let column = |b: &TriMesh, within: [f64; 2]| column_volume_within(&mid_seam_cells_within(b, &lattice, &floor, &roof, within).unwrap(), &floor, &roof, within);
+    near(column(&low, [f64::NEG_INFINITY, 101.5]), 9_000.0, 1e-6, "the bench below 101.5");
+    near(column(&high, [101.5, 111.5]), 15_000.0, 1e-6, "the bench from 101.5 to 111.5");
+    near(column(&low, EVERY_RL), 0.0, 1e-9, "as a whole seam: short of mid-seam, no section");
+    near(column(&high, EVERY_RL), 24_000.0, 1e-6, "as a whole seam: all of it");
+    // A bench holding none of the seam has no column.
+    near(column(&high, [110.0, 120.0]), 0.0, 1e-9, "a bench above the seam");
+    // Without a bench it's the column it always was.
+    let whole = block(E, N, 100.0, |_| 104.0);
+    near(column(&whole, EVERY_RL), column_volume(&mid_seam_cells(&whole, &lattice, &floor, &roof).unwrap(), &floor, &roof), 1e-9, "unchanged");
+}
+
+/// A seam dipping 1 in 10 east, 4 m thick, between vertical sides 60 m apart: RL 100 to 94 at its floor. Cut at RL 99 by
+/// the bench cut, the level crosses the floor 10 m in and the roof 50 m in, and the benches either side hold 12,000 m³
+/// each.
+///
+/// - Each bench's share of the seam's column (the whole seam's thickness over the part of its mid-seam section inside the
+///   bench) adds up with the other's to the seam's 24,000 m³ exactly, on 5 m cells and on 25 m cells sitting anyhow: the
+///   check of a block's benches of a seam together is as exact as the check of the block was before benches.
+/// - Each bench's own column (the seam inside its levels, over its plan at that part's mid-height) is its volume on 5 m
+///   cells whose nodes stand where the level crosses the floor and roof. On 25 m cells it's off by up to 7 %, as a 25 m
+///   node can't follow the bend in the clipped thickness where the level crosses inside its cell: the coarseness every
+///   column has where a seam thins inside a cell (0062, workstream 4), and why the warning is judged on the benches
+///   together.
+#[test]
+fn benches_of_a_dipping_seam_each_take_their_part_of_its_column() {
+    for (lattice, exact) in [(on_its_sides(), true), (at_25_m(), false)] {
+        let dip = |x: f64| 100.0 - 0.1 * (x - E);
+        let seam = along_north(&[(0.0, dip(E)), (60.0, dip(E + 60.0)), (60.0, dip(E + 60.0) + 4.0), (0.0, dip(E) + 4.0)]);
+        let floor = grid(&lattice, |x, _| dip(x));
+        let roof = grid(&lattice, |x, _| dip(x) + 4.0);
+        let cut = cut_solid_by_levels(&seam, &[99.0], 0.0).unwrap();
+        assert_eq!(cut.pieces.len(), 2);
+        let mut shares = 0.0;
+        for piece in &cut.pieces {
+            near(piece.volume, 12_000.0, 1e-6, "a bench");
+            let share = column_volume(&mid_seam_cells(&piece.mesh, &lattice, &floor, &roof).unwrap(), &floor, &roof);
+            let within = [piece.floor.unwrap_or(f64::NEG_INFINITY), piece.top.unwrap_or(f64::INFINITY)];
+            let own = column_volume_within(&mid_seam_cells_within(&piece.mesh, &lattice, &floor, &roof, within).unwrap(), &floor, &roof, within);
+            println!("{} m cells, bench {within:?}: {:.1} m³, its share of the seam's column {share:.1} m³, its own column {own:.1} m³", lattice.cell_size[0], piece.volume);
+            if exact {
+                near(own, piece.volume, 1e-6, "a bench's own column, nodes on the crossings");
+            } else {
+                near(own, piece.volume, 0.07 * piece.volume, "a bench's own column on 25 m cells");
+            }
+            shares += share;
+        }
+        near(shares, 24_000.0, 1e-6, "the two benches' shares together: the seam's column");
+    }
 }
 
 /// The cells of 43,000 made-up blocks, 60 × 100 m and 3 m thick, 400 across, on 25 m and 10 m lattices: what workstream

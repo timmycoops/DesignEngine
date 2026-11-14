@@ -22,7 +22,7 @@ mod strips;
 mod surface;
 mod workflow;
 
-pub use benches::{BenchEnd, BenchRule, CutByBenches, CutByBenchesParams, rule_for};
+pub use benches::{BENCH_FLOOR, BENCH_TOP, BENCHED_FROM, BenchEnd, BenchRule, CutByBenches, CutByBenchesParams, rule_for};
 pub use blocks::{CutByPolygons, CutByPolygonsParams, CutBySeams, CutBySeamsParams, PolygonsFromLines, PolygonsFromLinesParams, check_cut_by_polygons, check_cut_by_seams, horizon_order};
 pub use compare::{CompareSolids, CompareSolidsParams};
 pub use build::{BuildOp, BuildStep, BuildStepParams, Rebuild, RebuildParams};
@@ -30,7 +30,7 @@ pub use deswik::{ImportDeswik, ImportDeswikParams, MeshesAs};
 pub use exchange::{ExportCsv, ExportDxf, ExportParams, ExportSolids, ExportSolidsParams, ImportStrings, ImportStringsParams, LayerInFile};
 pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParams, SaveDesign, SaveDesignParams, Step, StepParams};
 pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
-pub use interrogate::{COLUMN_VOLUME, INTERROGATED, Interrogate, InterrogateParams, names_seam};
+pub use interrogate::{COLUMN_DELTA, COLUMN_VOLUME, INTERROGATED, Interrogate, InterrogateParams, names_seam};
 pub use layer::{CreateLayer, CreateLayerParams, DeleteLayer, DeleteLayerParams, RecolourLayer, RecolourLayerParams, RenameLayer, RenameLayerParams};
 pub use object::{DeleteObject, DeleteObjects, MoveObjects, MoveObjectsParams, ObjectParams, ObjectsParams, RenameObject, RenameParams};
 pub use seam::{BuildSeamModel, BuildSeamModelParams, ModelLinks, RelinkParams, RelinkSeamModels, SuggestSeamDefinition, SuggestSeamDefinitionParams, seam_links};

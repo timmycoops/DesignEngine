@@ -15,7 +15,7 @@ export interface SolidRow {
 }
 
 /** The attributes a cut writes, first and in this order; every other after them by name. */
-const FIRST = ['strip', 'block', 'seam', 'horizon', 'material', 'case'];
+const FIRST = ['strip', 'block', 'seam', 'horizon', 'bench', 'material', 'case'];
 
 /** The attributes as columns: those any row has, the cut's own first. `numeric` when every value there is a number. */
 export function attributeColumns(rows: readonly SolidRow[]): { key: string; numeric: boolean }[] {

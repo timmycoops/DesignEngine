@@ -199,6 +199,25 @@ fn shares_in_cells(mesh: &TriMesh, lattice: &Lattice) -> BTreeMap<usize, (f64, f
 /// section's plan is the two parts' upward plan less the block's. Where the roof or floor is null the mid-seam surface is
 /// taken below the block: no section there, as no seam.
 pub fn mid_seam_cells(mesh: &TriMesh, lattice: &Lattice, floor: &[f64], roof: &[f64]) -> Result<Vec<Sample>, GeomError> {
+    mid_seam_cells_within(mesh, lattice, floor, roof, EVERY_RL)
+}
+
+/// No bench: the seam from its floor to its roof.
+pub const EVERY_RL: [f64; 2] = [f64::NEG_INFINITY, f64::INFINITY];
+
+/// The seam's floor and roof at a node clipped to a bench's levels `[floor, top]` (decision 0071): the part of the seam
+/// inside the bench, or `None` where the node has no height. Where the bench holds none of the seam the two cross, and the
+/// node holds no thickness, but its mid-height still runs on between its neighbours', as a seam with no thickness does:
+/// the surface the section is cut on stays whole where a level crosses the seam's floor or roof.
+fn seam_within(f: f64, t: f64, within: [f64; 2]) -> Option<(f64, f64)> {
+    (f.is_finite() && t.is_finite()).then(|| (f.max(within[0]), t.min(within[1])))
+}
+
+/// [`mid_seam_cells`] for a bench (decision 0071): the seam clipped to the bench's levels `[floor, top]` at each node, the
+/// section taken halfway between the clipped floor and roof, and each sample's volume the clipped thickness. So a bench's
+/// column is the part of its seam's column inside it, and a block's benches add up to its column. Where the bench holds
+/// none of the seam it holds no thickness.
+pub fn mid_seam_cells_within(mesh: &TriMesh, lattice: &Lattice, floor: &[f64], roof: &[f64], within: [f64; 2]) -> Result<Vec<Sample>, GeomError> {
     let bounds = mesh.bounds().ok_or_else(|| GeomError::InvalidInput("empty block".into()))?;
     let [ox, oy] = lattice.origin;
     let [dx, dy] = lattice.cell_size;
@@ -210,8 +229,10 @@ pub fn mid_seam_cells(mesh: &TriMesh, lattice: &Lattice, floor: &[f64], roof: &[
     let below = bounds.min[2] - 1.0;
     let mid = |c: i64, r: i64| {
         let i = (r.clamp(0, rows - 1) * cols + c.clamp(0, cols - 1)) as usize;
-        let (f, t) = (floor[i], roof[i]);
-        if f.is_finite() && t.is_finite() { 0.5 * (f + t) } else { below }
+        match seam_within(floor[i], roof[i], within) {
+            Some((f, t)) => 0.5 * (f + t),
+            None => below,
+        }
     };
     let centre = bounds.centre();
     let origin = [centre[0].round(), centre[1].round(), 0.0];
@@ -235,8 +256,7 @@ pub fn mid_seam_cells(mesh: &TriMesh, lattice: &Lattice, floor: &[f64], roof: &[
         .filter_map(|&node| {
             let area = area_of(&lower, node) + area_of(&upper, node) - area_of(&whole, node);
             (area > least).then(|| {
-                let (f, t) = (floor[node], roof[node]);
-                let thickness = if f.is_finite() && t.is_finite() { (t - f).max(0.0) } else { 0.0 };
+                let thickness = seam_within(floor[node], roof[node], within).map_or(0.0, |(f, t)| (t - f).max(0.0));
                 Sample { node, volume: area * thickness, area }
             })
         })
@@ -302,13 +322,13 @@ pub fn horizon_samples(columns: &[NodeColumn], floor: &[f64], roof: &[f64], cell
 /// exact partial cells, and it's set against the block's own volume as a check, never in its place. A null roof or floor,
 /// or a floor above its roof, holds none.
 pub fn column_volume(samples: &[Sample], floor: &[f64], roof: &[f64]) -> f64 {
-    samples
-        .iter()
-        .map(|s| {
-            let (f, r) = (floor[s.node], roof[s.node]);
-            if f.is_finite() && r.is_finite() { s.area * (r - f).max(0.0) } else { 0.0 }
-        })
-        .sum()
+    column_volume_within(samples, floor, roof, EVERY_RL)
+}
+
+/// [`column_volume`] for a bench (decision 0071): the seam's thickness inside the bench's levels `[floor, top]` at each
+/// node, times the block's plan in the node's cell, summed.
+pub fn column_volume_within(samples: &[Sample], floor: &[f64], roof: &[f64], within: [f64; 2]) -> f64 {
+    samples.iter().map(|s| seam_within(floor[s.node], roof[s.node], within).map_or(0.0, |(f, r)| s.area * (r - f).max(0.0))).sum()
 }
 
 /// In-situ relative density from air-dried RD and the two moistures (%), by Preston and Sanders (1993):

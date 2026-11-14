@@ -8,18 +8,25 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Body, Change, Grid, Lattice, ObjectId, ObjectKind};
-use zd_geom::{Variable, cells_in_solid, column_volume, columns_in_solid, composite, mid_seam_cells, thickness_between};
+use zd_core::{AttrValue, Body, Change, Grid, Lattice, Object, ObjectId, ObjectKind};
+use zd_geom::{EVERY_RL, Variable, cells_in_solid, column_volume_within, columns_in_solid, composite, mid_seam_cells_within, thickness_between};
 use zd_io::{read_linked_grid, read_linked_surface};
 
 use super::in_parallel_watched;
+use super::benches::{BENCH_FLOOR, BENCH_TOP, BENCHED_FROM};
+use super::blocks::word as words;
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Place};
 
 /// The attribute that says a block has been interrogated, and against which model: what the run writes over is its own.
 pub const INTERROGATED: &str = "interrogated";
 
-/// The attribute a block's 2.5D column volume is written to, after any prefix (m³).
+/// The attribute a block's 2.5D column volume is written to, after any prefix (m³). For a bench (decision 0071), the
+/// part of its seam inside its levels.
 pub const COLUMN_VOLUME: &str = "column_volume";
+
+/// The attribute the column check's difference is written to, after any prefix: the block's volume less its column, as a
+/// percentage of the column. For a bench, of the block's benches of its seam together (decision 0071).
+pub const COLUMN_DELTA: &str = "column_delta";
 
 /// Blocks listed by name in a note, before the rest are counted.
 const NAMED: usize = 5;
@@ -86,7 +93,7 @@ struct SeamGrids<'a> {
 }
 
 /// A block whose volume differs from its column: by what share, its name, id and middle, and the two volumes.
-type Differs<'a> = (f64, &'a str, ObjectId, [f64; 3], f64, f64);
+type Differs = (f64, String, ObjectId, [f64; 3], f64, f64);
 
 /// What the run found for one block.
 struct BlockResult {
@@ -94,8 +101,12 @@ struct BlockResult {
     /// Its share between its seam's roof and floor, where its nodes say.
     in_seam: Option<f64>,
     volume: f64,
-    /// Its 2.5D column volume: its seam's thickness at each node over its plan at mid-seam in the node's cell.
+    /// Its 2.5D column volume: its seam's thickness at each node over its plan at mid-seam in the node's cell. For a bench,
+    /// the seam inside its levels over its plan at that part's mid-height.
     column: f64,
+    /// Its share of its seam's column: the seam's whole thickness over the part of the mid-seam section inside it. The
+    /// shares of a block's benches of a seam add up to the column of the block (decision 0071); unbenched, its column.
+    share: f64,
     /// Why its plan at mid-seam couldn't be worked out, if it couldn't: the column then takes its whole plan.
     whole_plan: Option<String>,
     /// Its own volume, the volume of record.
@@ -180,6 +191,7 @@ impl Command for Interrogate {
         // Names written are the run's own, or new: an attribute of the same name from elsewhere (Spry's, say) isn't written over.
         let mut names: BTreeSet<String> = wanted.values().flatten().map(|c| format!("{}{c}", p.prefix)).collect();
         names.insert(format!("{}{COLUMN_VOLUME}", p.prefix));
+        names.insert(format!("{}{COLUMN_DELTA}", p.prefix));
         if let Some((name, holder)) = blocks.iter().find_map(|(o, ..)| {
             (!o.attributes.contains_key(INTERROGATED)).then(|| names.iter().find(|n| o.attributes.contains_key(n.as_str())).map(|n| (n.clone(), o.name.clone()))).flatten()
         }) {
@@ -255,7 +267,16 @@ impl Command for Interrogate {
             .collect();
 
         let lattice = model.lattice;
-        let results = in_parallel_watched(inputs, "solids", &blocks, |(_, solid, seam)| {
+        // A bench's levels, where the bench cut wrote them: its column is the part of its seam inside them (decision 0071).
+        let level = |o: &Object, key: &str| match o.attributes.get(key) {
+            Some(AttrValue::Number(rl)) if rl.is_finite() => Some(*rl),
+            _ => None,
+        };
+        let within: Vec<[f64; 2]> = blocks.iter().map(|(o, ..)| [level(o, BENCH_FLOOR).unwrap_or(EVERY_RL[0]), level(o, BENCH_TOP).unwrap_or(EVERY_RL[1])]).collect();
+        let benched = within.iter().filter(|w| **w != EVERY_RL).count();
+        let jobs: Vec<_> = blocks.iter().zip(within.iter().copied()).collect();
+        let results = in_parallel_watched(inputs, "solids", &jobs, |((_, solid, seam), within)| {
+            let within = *within;
             let g = &seam_grids[seam];
             let mesh = solid.mesh();
             // A weight with no grid on this seam takes every node out of what's weighted by it.
@@ -276,25 +297,49 @@ impl Command for Interrogate {
                 inside += thickness_between(&column, g.floor[column.node], g.roof[column.node]).min(t);
             }
             // The column at mid-seam, so a battered wall doesn't widen it (decision 0062, workstream 4).
-            let (column, whole_plan) = match mid_seam_cells(mesh, &lattice, g.floor, g.roof) {
-                Ok(mid) => (column_volume(&mid, g.floor, g.roof), None),
-                Err(e) => (column_volume(&cells, g.floor, g.roof), Some(e.to_string())),
+            let column_of = |within: [f64; 2]| match mid_seam_cells_within(mesh, &lattice, g.floor, g.roof, within) {
+                Ok(mid) => (column_volume_within(&mid, g.floor, g.roof, within), None),
+                Err(e) => (column_volume_within(&cells, g.floor, g.roof, within), Some(e.to_string())),
             };
+            let (share, whole_plan) = column_of(EVERY_RL);
+            let column = if within == EVERY_RL { share } else { column_of(within).0 };
             BlockResult {
                 values: g.codes.iter().cloned().zip(averaged.values).collect(),
                 in_seam: (all > 0.0).then(|| inside / all),
                 volume: averaged.volume,
                 column,
+                share,
                 whole_plan,
                 own: solid.volume(),
             }
         })?;
 
+        // The column check by set: a block on its own, or a block's benches of a seam together, told apart by the solid they
+        // were benched from, their block and their seam (decision 0071). Their shares add up to the block's column.
+        let mut sets: BTreeMap<(String, String, String), Vec<usize>> = BTreeMap::new();
+        for (k, (object, _, seam)) in blocks.iter().enumerate() {
+            let key = match object.attributes.get(BENCHED_FROM) {
+                Some(from) => (words(from), object.attributes.get("block").map(words).unwrap_or_default(), seam.clone()),
+                None => (format!("\u{0}{k}"), String::new(), String::new()),
+            };
+            sets.entry(key).or_default().push(k);
+        }
+        let mut set_of = vec![0usize; blocks.len()];
+        let mut set_figures: Vec<(f64, f64, usize)> = Vec::new();
+        for members in sets.values() {
+            let (own, share) = members.iter().fold((0.0, 0.0), |(a, b), &k| (a + results[k].own, b + results[k].share));
+            for &k in members {
+                set_of[k] = set_figures.len();
+            }
+            set_figures.push((own, share, members.len()));
+        }
+        let mut set_said = vec![false; set_figures.len()];
+
         // The values onto the blocks.
         let mut outcome = Outcome::default();
         let mut no_value: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut outside: Vec<(f64, &str, ObjectId, [f64; 3])> = Vec::new();
-        let mut differs: Vec<Differs<'_>> = Vec::new();
+        let mut differs: Vec<Differs> = Vec::new();
         let mut written_codes: BTreeSet<String> = BTreeSet::new();
         for ((object, solid, seam), result) in blocks.iter().zip(&results) {
             let keep: BTreeSet<&String> = wanted[seam].iter().collect();
@@ -322,10 +367,18 @@ impl Command for Interrogate {
                 }
             }
             attributes.insert(format!("{}{COLUMN_VOLUME}", p.prefix), AttrValue::Number(result.column));
-            let off = if result.own > 0.0 { (result.column - result.own) / result.own } else { 0.0 };
-            if off.abs() > p.volume_tolerance {
+            let k = set_of[outcome.changes.len()];
+            let (own, share, benches) = set_figures[k];
+            match (share > 0.0).then(|| (own - share) / share * 100.0) {
+                Some(delta) => attributes.insert(format!("{}{COLUMN_DELTA}", p.prefix), AttrValue::Number(delta)),
+                None => attributes.remove(&format!("{}{COLUMN_DELTA}", p.prefix)),
+            };
+            let off = if own > 0.0 { (share - own) / own } else { 0.0 };
+            if off.abs() > p.volume_tolerance && !set_said[k] {
+                set_said[k] = true;
                 let at = solid.mesh().bounds().map_or([0.0; 3], |b| b.centre());
-                differs.push((off, object.name.as_str(), object.id, at, result.own, result.column));
+                let name = if benches > 1 { format!("{}' and its {} other benches of {seam}, together", object.name, benches - 1) } else { format!("{}'", object.name) };
+                differs.push((off, name, object.id, at, own, share));
             }
             attributes.insert(INTERROGATED.into(), AttrValue::Text(model_object.name.clone()));
             if let Some(share) = result.in_seam
@@ -387,11 +440,14 @@ impl Command for Interrogate {
                     .measured((outside.len() - NAMED) as f64, "blocks"),
             );
         }
-        let (own, column): (f64, f64) = results.iter().fold((0.0, 0.0), |(a, b), r| (a + r.own, b + r.column));
+        let (own, column): (f64, f64) = results.iter().fold((0.0, 0.0), |(a, b), r| (a + r.own, b + r.share));
+        let grouped = set_figures.iter().filter(|s| s.2 > 1).count();
         outcome.notes.push(Note::info(format!(
-            "Column check, on each block's plan at mid-seam: {} of {} blocks within {} % of their 2.5D column volume, {:.0} m³ against {:.0} m³ in all ({:+.3} %)",
-            blocks.len() - differs.len(),
-            blocks.len(),
+            "Column check, on each block's plan at mid-seam{}: {} of {} {} within {} % of their 2.5D column volume, {:.0} m³ against {:.0} m³ in all ({:+.3} %)",
+            if benched > 0 { format!(", a block's {benched} benches of a seam taken together ({grouped} sets of more than one)") } else { String::new() },
+            set_figures.len() - differs.len(),
+            set_figures.len(),
+            if set_figures.len() == blocks.len() { "blocks" } else { "blocks and bench sets" },
             p.volume_tolerance * 100.0,
             own,
             column,
@@ -400,7 +456,7 @@ impl Command for Interrogate {
         differs.sort_by(|a, b| b.0.abs().total_cmp(&a.0.abs()));
         for (off, name, id, at, own, column) in differs.iter().take(NAMED) {
             outcome.notes.push(
-                Note::warning(Code::InterrogateColumnDiffers, format!("'{name}': {own:.0} m³ against a 2.5D column of {column:.0} m³ ({:+.2} %)", off * 100.0))
+                Note::warning(Code::InterrogateColumnDiffers, format!("'{name}: {own:.0} m³ against a 2.5D column of {column:.0} m³ ({:+.2} %)", off * 100.0))
                     .measured(off * 100.0, "%")
                     .at(Place::Point { at: *at })
                     .on(*id),
