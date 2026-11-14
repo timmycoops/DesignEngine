@@ -36,7 +36,7 @@
   <h2>1. Open it</h2>
   <div class="card">
     <p>Open <span class="path">testdata\synthetic\reserves\workflow demo\Workflow demo.zdp</span></p>
-    <p>Click <b>Workflow</b> on the toolbar. The panel lists the 19 steps. Each step shows what it takes, the note on why, and what it made last time <span class="tag ok">526 made</span>.</p>
+    <p>Click <b>Workflow</b> on the toolbar. The panel lists the 19 steps. Each step shows what it takes, the note on why, and what it made last time <span class="tag ok">531 made</span>.</p>
   </div>
 
   <h2>2. What's yours, what the workflow makes</h2>
@@ -57,7 +57,8 @@
   <div class="card">
     <ol>
       <li><b>Run.</b> Press <b>Run 18 steps</b>. It stops at step 14, the pause: "look at the strips". Tick <b>4 strips</b> to look, then press <b>Continue from step 15</b>. The same 531 blocks are made again in place, as new revisions of the same blocks. Ctrl+Z takes back each part.</li>
-      <li><b>Change the design.</b> Drag the west end of the base toe (Strip 1 on <b>1 toes</b>) 20 m north. Run, then Continue. The toes, faces, strips and blocks all follow (most of the blocks change), in under a second.</li>
+      <li><b>Change the design.</b> Drag the west end of the base toe (Strip 1 on <b>1 toes</b>) 20 m south. Run, then Continue. The toes, faces, roads, strips and blocks all follow (423 of the 531 blocks change), in under a second.</li>
+      <li><b>Move the road.</b> Drag the ramp string 30 m east (both ends), then Run and Continue: every strip's road starts 30 m further east, and 216 blocks change.</li>
       <li><b>See a check stop it.</b> Drag Block line 0 30 m east, then press &#9654; on step 15 to run from there. Step 18 is refused <span class="tag bad">refused</span>: the polygons no longer cover the pit's west edge, and the cut never runs. Ctrl+Z to put the line back.</li>
       <li><b>Cases.</b> Pick <b>50m</b> under Cases: the same steps with the block lines 50 m apart (the settings grid shows its two changes in blue: distance 50, times 30). Run it, or <b>Run all 2 cases</b>: Base's blocks on <b>8 blocks</b>, the 50 m blocks on <b>8 blocks 50m</b>, each tagged with its case, the same total either way. Type a new case's name and Add, then change any setting in its column.</li>
       <li><b>Make your own.</b> Work a pit by hand. In the Run log, tick the first run, Shift-tick the last, name it, and press <b>Capture as a workflow</b>.</li>
