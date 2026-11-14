@@ -27,6 +27,7 @@ import {
   Slice,
   StepBack,
   StepForward,
+  Table2,
   Undo2,
   Workflow as WorkflowIcon,
 } from 'lucide-react';
@@ -1336,6 +1337,9 @@ export default function App() {
           </ToolButton>
           <ToolButton tip="Reserves: interrogate blocks against a seam model, or set them beside Spry's or Deswik's numbers" onClick={() => dockRef.current && showPanel(dockRef.current, 'reserves')}>
             <Sigma /> Reserves
+          </ToolButton>
+          <ToolButton tip="Block table: solids and their attributes to sort, filter, add up, select or delete" onClick={() => dockRef.current && showPanel(dockRef.current, 'blocks')}>
+            <Table2 /> Blocks
           </ToolButton>
           <ToolButton tip="Workflow: saved steps run again in one go, captured from the Run log or added from the tools" onClick={() => dockRef.current && showPanel(dockRef.current, 'workflow')}>
             <WorkflowIcon /> Workflow

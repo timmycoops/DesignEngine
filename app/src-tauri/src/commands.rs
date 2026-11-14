@@ -621,6 +621,35 @@ pub async fn objects_attributes(objects: Vec<ObjectId>, state: State<'_, AppStat
     .await?
 }
 
+/// A solid as the block table shows it: its own volume, the volume of record, and every attribute.
+#[derive(Serialize)]
+pub struct SolidRow {
+    volume: Option<f64>,
+    attributes: Attributes,
+}
+
+/// Each solid's volume and attributes, in the order asked, for the block table (Workflow plan, stage 4); anything gone
+/// or not a solid has neither.
+#[tauri::command]
+pub async fn solids_table(objects: Vec<ObjectId>, state: State<'_, AppState>) -> Result<Vec<SolidRow>, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        Ok(objects
+            .iter()
+            .map(|&id| match project.object(id) {
+                Some(o) => match &o.body {
+                    zd_core::Body::Solid(s) => SolidRow { volume: Some(s.volume()), attributes: o.attributes.clone() },
+                    _ => SolidRow { volume: None, attributes: Attributes::default() },
+                },
+                None => SolidRow { volume: None, attributes: Attributes::default() },
+            })
+            .collect())
+    })
+    .await?
+}
+
 /// A layer of a Deswik drawing, to pick from before `deswik.import`.
 #[derive(Serialize)]
 pub struct DeswikLayerRow {

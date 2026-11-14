@@ -1,0 +1,194 @@
+import { Download, MousePointerSquareDashed, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { solidsTable } from '@/bridge';
+import { columnHelper, DataTable } from '@/design-system/DataTable';
+import { Choice, Field, NumberInput, Select } from '@/design-system/kit';
+import { Button } from '@/design-system/ui/button';
+import { Input } from '@/design-system/ui/input';
+import { useWorkspace } from '@/workspace/context';
+import { attributeColumns, csvOf, densityColumns, shownRows, type SolidRow, totalsOf } from './blockTable';
+import { fmt } from './format';
+
+/**
+ * The block table (Workflow plan, stage 4; decision 0069): solids as rows, their own volume and every attribute, to
+ * see, sort and filter. Taken from a layer, from what's picked, or from what's on show. A click on a row picks its solid;
+ * Select shown picks every row the filter keeps, and Delete shown deletes them in one run, one undo, as at a pause to
+ * take off what's under 50 bcm. The totals add up what's shown: how many, their volume and, by a density column, tonnes.
+ */
+
+type Take = 'layer' | 'picked' | 'shown';
+const TAKES: readonly Take[] = ['layer', 'picked', 'shown'];
+const TAKE_LABELS: Record<Take, string> = { layer: 'A layer', picked: 'Picked', shown: 'On show' };
+
+const helper = columnHelper<SolidRow>();
+
+export function BlockTable() {
+  const { summary, selection, setSelection, runRecord } = useWorkspace();
+  const [take, setTake] = useState<Take>('layer');
+  const [layerId, setLayerId] = useState<string | null>(null);
+  const [words, setWords] = useState('');
+  const [under, setUnder] = useState(0);
+  const [density, setDensity] = useState<string | null>(null);
+  const [rows, setRows] = useState<SolidRow[]>([]);
+  const [confirming, setConfirming] = useState(false);
+  const [said, setSaid] = useState<{ error?: string; text?: string }>({});
+
+  const solids = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'solid'), [summary]);
+  const layerName = useMemo(() => new Map((summary?.layers ?? []).map((l) => [l.id, l.name])), [summary]);
+  // Layers holding solids, those with blocks first: a cut into blocks is what the table is mostly for.
+  const solidLayers = useMemo(() => {
+    const ids = [...new Set(solids.map((o) => o.layer))];
+    const hasBlocks = (id: string) => solids.some((o) => o.layer === id && 'block' in o.attributes);
+    return ids.sort((a, b) => Number(hasBlocks(b)) - Number(hasBlocks(a)));
+  }, [solids]);
+  const layer = layerId && solidLayers.includes(layerId) ? layerId : (solidLayers[0] ?? null);
+
+  const taken = useMemo(() => {
+    const visible = new Map((summary?.layers ?? []).map((l) => [l.id, l.visible]));
+    if (take === 'layer') return solids.filter((o) => o.layer === layer);
+    if (take === 'picked') return solids.filter((o) => selection.includes(o.id));
+    return solids.filter((o) => visible.get(o.layer) && !o.hidden);
+  }, [take, layer, solids, selection, summary]);
+
+  // Volumes and every attribute, read in one call whenever what's taken, or any of it, changes.
+  const key = taken.map((o) => `${o.id}@${o.revision}`).join(',');
+  useEffect(() => {
+    let live = true;
+    if (taken.length === 0) {
+      setRows([]);
+      return;
+    }
+    void solidsTable(taken.map((o) => o.id)).then((list) => {
+      if (!live) return;
+      setRows(taken.map((o, k) => ({ id: o.id, name: o.name, layer: layerName.get(o.layer) ?? '', volume: list[k]?.volume ?? NaN, attributes: list[k]?.attributes ?? {} })));
+    });
+    return () => {
+      live = false;
+    };
+    // `key` stands for `taken`: the same solids at the same revisions read the same.
+  }, [key, layerName]);
+
+  const columns = useMemo(() => attributeColumns(rows), [rows]);
+  const densities = useMemo(() => densityColumns(columns), [columns]);
+  const rd = density && densities.includes(density) ? density : (densities[0] ?? null);
+  const shown = useMemo(() => shownRows(rows, { words, under }), [rows, words, under]);
+  const totals = useMemo(() => totalsOf(shown, rd), [shown, rd]);
+  const picked = useMemo(() => new Set(selection), [selection]);
+
+  const tableColumns = useMemo(
+    () => [
+      helper.accessor('name', { header: 'Name', cell: (c) => <span title={c.getValue()}>{c.getValue()}</span> }),
+      helper.accessor('volume', { header: 'Volume m³', cell: (c) => <span className="block text-right tabular-nums">{fmt(c.getValue())}</span> }),
+      ...columns.map((col) =>
+        helper.accessor((r) => r.attributes[col.key] ?? (col.numeric ? Number.NEGATIVE_INFINITY : ''), {
+          id: `a:${col.key}`,
+          header: col.key,
+          cell: (c) => {
+            const v = c.row.original.attributes[col.key];
+            if (v === undefined) return null;
+            return typeof v === 'number' ? <span className="block text-right tabular-nums">{Number.isInteger(v) ? String(v) : fmt(v, 3)}</span> : String(v);
+          },
+        }),
+      ),
+      ...(take === 'layer' ? [] : [helper.accessor('layer', { header: 'Layer' })]),
+    ],
+    [columns, take],
+  );
+
+  const deleteShown = async () => {
+    setConfirming(false);
+    const ids = shown.map((r) => r.id);
+    const outcome = await runRecord('object.delete_many', { objects: ids });
+    if (outcome.error) return setSaid({ error: outcome.error });
+    setSelection([]);
+    setSaid({ text: `${fmt(ids.length)} solid${ids.length === 1 ? '' : 's'} deleted, ${fmt(totals.volume)} m³; one undo brings them back` });
+  };
+
+  const saveCsv = () => {
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([csvOf(shown, columns)], { type: 'text/csv' }));
+    link.download = `${take === 'layer' ? (layerName.get(layer ?? '') ?? 'solids') : take === 'picked' ? 'picked solids' : 'solids on show'}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  return (
+    <div className="flex h-full min-h-0 flex-col text-xs" data-tool-panel="blocks">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1">
+        <Field label="Take">
+          <Choice value={take} options={TAKES} labels={TAKE_LABELS} onChange={setTake} label="Which solids" />
+        </Field>
+        {take === 'layer' && (
+          <Select value={layer ?? ''} aria-label="Layer of solids" onChange={(e) => setLayerId(e.target.value)}>
+            {solidLayers.length === 0 && <option value="">No solids</option>}
+            {solidLayers.map((id) => (
+              <option key={id} value={id}>
+                {layerName.get(id)}
+              </option>
+            ))}
+          </Select>
+        )}
+        <Input className="h-7 w-44 px-1.5 text-xs" value={words} placeholder="Filter: 3 M coal…" aria-label="Filter the rows" onChange={(e) => setWords(e.target.value)} />
+        <Field label="Under" hint="Only rows under this volume; 0 for any">
+          <NumberInput value={under} onChange={setUnder} label="Volume under" unit="m³" width="w-24" />
+        </Field>
+        {densities.length > 0 && (
+          <Field label="Density">
+            <Select value={rd ?? ''} aria-label="Density column" onChange={(e) => setDensity(e.target.value)}>
+              {densities.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1" role="status" aria-label="Totals of the rows shown">
+        <span>
+          <b className="tabular-nums">{fmt(totals.count)}</b> of {fmt(rows.length)} shown · <b className="tabular-nums">{fmt(totals.volume)}</b> m³
+          {totals.tonnes !== null && (
+            <>
+              {' '}· <b className="tabular-nums">{fmt(totals.tonnes)}</b> t by {rd}
+              {totals.weighed < totals.count && <span className="text-muted-foreground"> ({fmt(totals.weighed)} rows with one)</span>}
+            </>
+          )}
+        </span>
+        <span className="ml-auto flex items-center gap-1">
+          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={shown.length === 0} title="Pick every row shown, in the view and the tree" onClick={() => setSelection(shown.map((r) => r.id))}>
+            <MousePointerSquareDashed className="size-3.5" /> Select shown
+          </Button>
+          {confirming ? (
+            <>
+              <Button variant="destructive" size="sm" className="h-6 px-2 text-xs" onClick={() => void deleteShown()}>
+                Delete {fmt(shown.length)}, {fmt(totals.volume)} m³
+              </Button>
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setConfirming(false)}>
+                Keep
+              </Button>
+            </>
+          ) : (
+            <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={shown.length === 0} title="Delete every row shown, in one run: one undo brings them back" onClick={() => setConfirming(true)}>
+              <Trash2 className="size-3.5" /> Delete shown
+            </Button>
+          )}
+          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={shown.length === 0} title="The rows shown as CSV, exact values" onClick={saveCsv}>
+            <Download className="size-3.5" /> CSV
+          </Button>
+        </span>
+        {said.error ? <span className="w-full text-destructive">{said.error}</span> : said.text ? <span className="w-full text-ok">{said.text}</span> : null}
+      </div>
+      <div className="min-h-0 flex-1">
+        <DataTable
+          data={shown}
+          columns={tableColumns}
+          rowId={(r) => r.id}
+          rowClassName={(r) => (picked.has(r.id) ? 'bg-selection' : undefined)}
+          onRowClick={(r) => setSelection([r.id])}
+          empty={take === 'picked' ? 'Pick solids in the view or the tree to list them' : 'No solids to list'}
+          windowed={[undefined, '7rem', ...columns.map(() => '6rem'), ...(take === 'layer' ? [] : ['8rem'])]}
+        />
+      </div>
+    </div>
+  );
+}
