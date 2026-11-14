@@ -3,9 +3,11 @@ workflow with a note on every step and a pause to look at the strips, saved as "
 
 What you draw by hand stays yours, and the workflow does the rest from it:
 
-- the base toe (on '1 toes'), the pit limit (on '0 pit limit') and the first block line with the two closing lines
-  (on '6 block lines') are drawn first and are not steps: edit any of them, run the workflow again, and everything
-  after follows;
+- the base toe (on '1 toes'), the pit limit (on '0 pit limit'), the ramp string (on '0 ramp strings') and the
+  first block line with the two closing lines (on '6 block lines') are drawn first and are not steps: edit any of them,
+  run the workflow again, and everything after follows;
+- the highwall has a 50 m road at 10 % up both walls of every strip, starting where the ramp string crosses each toe at
+  the west end and climbing east to the topography;
 - each step puts what it makes on a layer numbered in the order of the workflow: '1 toes', '2 faces', '3 pit',
   '4 strips', '5 seam pieces', '6 block lines', '7 block polygons', '8 blocks';
 - it's saved with only the toes, the pit limit, the block lines and the blocks on show, so what the run makes is what
@@ -37,7 +39,7 @@ NOTES = {
     "string.offset Toe": "The base toe offset north a strip width (60 m) five times: one toe a strip.",
     "string.number_across": "Each toe numbered by a line across them, south to north: its strip number.",
     "string.drape": "The toe draped on the L floor, so the face starts on the seam it mines to.",
-    "face.save_design": "The highwall profile: 65 degrees to the base of weathering, 45 to the topography, on to RL 400 up and RL -300 down so each face passes right through the pit.",
+    "face.save_design": "The highwall profile: 65 degrees to the base of weathering, 45 to the topography, on to RL 400 up and RL -300 down so each face passes right through the pit. A 50 m road at 10 % climbs both walls of every strip, from where its string crosses the toe at the west end, east to the topography.",
     "face.project": "One face a toe, on '2 faces'.",
     "solid.between_surfaces": "The pit: topography to the L floor inside the pit limit, on '3 pit'.",
     "solid.slice_by_faces": "The pit sliced into strips by the faces, each strip what lies in front of its face, on '4 strips'. Checked first: every face must pass right through the pit.",
@@ -51,7 +53,14 @@ NOTES = {
 }
 
 # On show when it's saved: what you draw and what the workflow ends with.
-SHOWN = {"0 pit limit", "1 toes", "6 block lines", "8 blocks", "8 blocks 50m"}
+SHOWN = {"0 pit limit", "0 ramp strings", "1 toes", "6 block lines", "8 blocks", "8 blocks 50m"}
+
+# The roads: 50 m wide at 10 %, Tim's standard (coal ramp norms), each set by a string drawn across the strips.
+ROAD = {"width": 50.0, "grade": 10.0}
+# One road, set by a string across the strips just west of the toe's west end: it starts where the string crosses
+# each toe and climbs east, along the strip, up both walls to the topography (1.1 to 1.3 km a strip). Started inside
+# the pit's west end, the road leaves no room for the full wall behind it there, and the slice refuses the faces.
+RAMPS = (("A", -50.0, "start"),)
 
 
 def drawn_by_hand(s):
@@ -63,10 +72,12 @@ def drawn_by_hand(s):
                        points=[at(LIMIT_WEST, LIMIT_SOUTH - 200.0, -300.0), at(LIMIT_WEST, LIMIT_NORTH + 200.0, -300.0)]))[0]
     for name, y in (("South closing line", LIMIT_SOUTH - 100.0), ("North closing line", LIMIT_NORTH + 100.0)):
         s.run("string.create", name=name, layer="6 block lines", points=[at(LIMIT_WEST - 100.0, y, -300.0), at(LIMIT_EAST + 100.0, y, -300.0)])
-    return toe, limit, first
+    # A string across the strips for each road, the road starting where it crosses each toe.
+    ramps = {name: made(s.run("string.create", name=f"Ramp {name}", layer="0 ramp strings", points=[at(x, -150.0), at(x, 600.0)]))[0] for name, x, _ in RAMPS}
+    return toe, limit, first, ramps
 
 
-def the_steps(s, g, model, toe, limit, first):
+def the_steps(s, g, model, toe, limit, first, ramps):
     """Toe to interrogated blocks, each run a step to capture; returns the runs in order."""
     runs = []
 
@@ -81,13 +92,15 @@ def the_steps(s, g, model, toe, limit, first):
     for t in toes:
         run("string.drape", string=t, surface=g["L sf"], crossings=False)
     toes_layer = next(layer["id"] for layer in s.layers() if layer["name"] == "1 toes")
+    roads = [name for name, _, _ in RAMPS]
     steps = [
-        {"step": "project", "to": {"kind": "surface", "id": g["BOW sf"]}, "batter": 65.0, "ramps": []},
-        {"step": "project", "to": {"kind": "surface", "id": g["TOPO sf"]}, "batter": 45.0, "ramps": []},
+        {"step": "project", "to": {"kind": "surface", "id": g["BOW sf"]}, "batter": 65.0, "ramps": roads},
+        {"step": "project", "to": {"kind": "surface", "id": g["TOPO sf"]}, "batter": 45.0, "ramps": roads},
         {"step": "project", "to": {"kind": "rl", "rl": 400.0}, "batter": 45.0, "ramps": []},
     ]
     register = {"kind": "surface", "id": g["L sf"]}
-    up = {"name": "Highwall", "direction": "up", "register": register, "condition": 0.1, "steps": steps, "ramps": []}
+    road_list = [{"name": name, "string": ramps[name], "fixed": fixed, "heading": "along", **ROAD} for name, _, fixed in RAMPS]
+    up = {"name": "Highwall", "direction": "up", "register": register, "condition": 0.1, "steps": steps, "ramps": road_list}
     down = {"name": "Highwall down", "direction": "down", "register": register, "condition": 0.1, "ramps": [],
             "steps": [{"step": "project", "to": {"kind": "rl", "rl": -300.0}, "batter": 65.0, "ramps": []}]}
     lines = [{"layer": toes_layer, "profile": name, "side": "left", "run_on": [100.0, 100.0]} for name in ("Highwall", "Highwall down")]
@@ -127,9 +140,9 @@ def main():
     definition = write_grids(folder)
     s = zd.Session()
     g, model = import_grids(s, folder, definition)
-    toe, limit, first = drawn_by_hand(s)
+    toe, limit, first, ramps = drawn_by_hand(s)
     started = time.perf_counter()
-    runs = the_steps(s, g, model, toe, limit, first)
+    runs = the_steps(s, g, model, toe, limit, first, ramps)
     by_hand = time.perf_counter() - started
 
     record = s.capture_workflow("Toe to blocks", runs)
