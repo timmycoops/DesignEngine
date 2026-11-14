@@ -24,7 +24,7 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
   };
   const buttons = () => [...document.querySelectorAll<HTMLButtonElement>('button')];
   const button = (text: string) => buttons().find((b) => b.textContent?.trim() === text);
-  const labelled = (label: string) => document.querySelector<HTMLElement>(`[aria-label="${label}"]`);
+  const labelled = (label: string, nth = 1) => document.querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)[nth - 1] ?? null;
   const panelText = (panel: string) => document.querySelector(`[data-tool-panel="${panel}"]`)?.textContent ?? '';
   const typeInto = (label: string, value: string) => {
     const input = document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
@@ -47,6 +47,8 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     const d = await objectDetails(id);
     return { volume: d.measures.kind === 'solid' ? d.measures.volume : NaN, revision: d.history[d.history.length - 1]?.revision ?? 0 };
   };
+  let workflowId = '';
+  const captureWorkflowId = () => workflowId;
   const E = 650000;
   const N = 7450000;
 
@@ -85,6 +87,7 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     const captured = await press(button('Capture as a workflow'));
     expect('Capture pressed', captured !== null, captured);
     await wait(800);
+    workflowId = (await projectSummary()).objects.find((o) => o.kind === 'workflow')?.id ?? '';
     const workflowPanel = panelText('workflow');
     expect('the Workflow panel opens on it with its two steps', workflowPanel.includes('Steps (2)'), workflowPanel.slice(0, 200));
     expect('the cut takes what step 1 made', workflowPanel.includes('solids: the objects step 1 made'), workflowPanel.slice(0, 400));
@@ -146,6 +149,46 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     const undone = (await Promise.all(pieces.map(solid))).map((p) => p.revision);
     expect('one undo takes the run back', undone.every((r, k) => r === revisions[k] - 1), { revisions, undone });
     await show(await projectSummary());
+
+    // Cases (decision 0066): the pause taken out, a case "60" added and its cut set to RL 60 in the settings grid, then
+    // Run all cases: Base's pieces again on 'cut', the case's on 'cut 60', 360,000 below RL 60 and 240,000 above, tagged
+    // with its case; one undo takes both back.
+    await press(labelled('Take this step out', 3));
+    expect('the pause taken out', panelText('workflow').includes('Steps (2)'));
+    typeInto('New case name', '60');
+    await wait(200);
+    await press(button('Add'));
+    const caseList = document.querySelector<HTMLSelectElement>('select[aria-label="Case"]');
+    expect('the new case is picked', caseList?.value === '60', caseList?.value);
+    const cell = document.querySelector<HTMLInputElement>('input[aria-label="60: step 2 rl"]');
+    expect('the settings grid has the case column, its cell reading as Base', cell !== null && cell.value === '' && cell.placeholder === '40', cell?.placeholder);
+    if (cell) {
+      cell.focus();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(cell, '60');
+      cell.dispatchEvent(new Event('input', { bubbles: true }));
+      cell.blur();
+      await wait(800);
+    }
+    const saved = await objectDetails(captureWorkflowId());
+    const settings = saved.measures.kind === 'workflow' ? saved.measures.workflow.cases?.[0]?.settings : undefined;
+    expect('the cell saved as what the case changes', JSON.stringify(settings) === JSON.stringify({ 2: { rl: 60 } }), settings);
+    const beforeCases = await projectSummary();
+    const casesRan = await press(buttons().find((b) => b.textContent?.trim().startsWith('Run all 2 cases')));
+    expect('Run all cases pressed', casesRan !== null, casesRan);
+    const now = await projectSummary();
+    const layerId = (name: string) => now.layers.find((l) => l.name === name)?.id;
+    const solidsOn = (name: string) => now.objects.filter((o) => o.layer === layerId(name) && o.kind === 'solid');
+    const casePieces = await Promise.all(solidsOn('cut 60').map((o) => objectDetails(o.id)));
+    const volumes60 = casePieces.map((d) => (d.measures.kind === 'solid' ? d.measures.volume : NaN)).sort((a, b) => a - b);
+    expect("the case's pieces on 'cut 60': 240,000 and 360,000 m3", volumes60.length === 2 && Math.abs(volumes60[0] - 240000) < 1e-6 && Math.abs(volumes60[1] - 360000) < 1e-6, volumes60);
+    const below = casePieces.find((d) => d.name.includes('below'));
+    expect('below RL 60 is 360,000 m3', below?.measures.kind === 'solid' && Math.abs(below.measures.volume - 360000) < 1e-6, below?.name);
+    expect('tagged with its case', casePieces.every((d) => d.attributes.case === '60'), casePieces.map((d) => d.attributes.case));
+    const basePieces = await Promise.all(solidsOn('cut').map((o) => objectDetails(o.id)));
+    expect("Base's pieces still on 'cut', tagged Base", basePieces.length === 2 && basePieces.every((d) => d.attributes.case === 'Base'), basePieces.map((d) => d.attributes.case));
+    await show(await undo());
+    const undoneAll = await projectSummary();
+    expect('one undo takes both cases back', !undoneAll.objects.some((o) => o.layer === layerId('cut 60')) && undoneAll.objects.length === beforeCases.objects.length, { before: beforeCases.objects.length, undoneAll: undoneAll.objects.length });
   } catch (e) {
     expect('ran without an error', false, String(e));
   }

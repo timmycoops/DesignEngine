@@ -142,11 +142,21 @@ impl PySession {
     /// each step made last time is made again as the next revisions of the same objects. Returns the workflow run's
     /// record: `status` is `finished`, `paused` or `refused`, with `at` the step it stopped at, and `steps` says what
     /// each step did. A refusal is in the record, not raised.
-    #[pyo3(signature = (workflow, from_step=1))]
-    fn run_workflow(&mut self, py: Python<'_>, workflow: &str, from_step: usize) -> PyResult<Py<PyAny>> {
+    /// `case` runs one of the workflow's cases (decision 0066), on its own layers; Base if left out.
+    #[pyo3(signature = (workflow, from_step=1, case=None))]
+    fn run_workflow(&mut self, py: Python<'_>, workflow: &str, from_step: usize, case: Option<&str>) -> PyResult<Py<PyAny>> {
         let id = object_id(workflow)?;
-        let record = py.detach(|| self.inner.run_workflow(id, from_step)).map_err(|e| CommandError::new_err(e.to_string()))?;
+        let case = case.unwrap_or(zd_core::BASE_CASE).to_string();
+        let record = py.detach(|| self.inner.run_case(id, from_step, &case)).map_err(|e| CommandError::new_err(e.to_string()))?;
         to_py(py, &json!(record))
+    }
+
+    /// Runs every case of a workflow from its first step, Base first, as one undo step (decision 0066); a pause or a
+    /// refusal stops it at that case. Returns each case's run record.
+    fn run_all_cases(&mut self, py: Python<'_>, workflow: &str) -> PyResult<Py<PyAny>> {
+        let id = object_id(workflow)?;
+        let records = py.detach(|| self.inner.run_all_cases(id)).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &json!(records))
     }
 
     /// Every run, undo, redo, save and open, oldest first, as saved in the project.

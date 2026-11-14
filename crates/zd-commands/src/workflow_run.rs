@@ -8,10 +8,10 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use zd_core::{Body, Change, ChangeKind, LastRun, Object, ObjectId, ObjectKind, Project, RunId, StepAction, Workflow};
+use zd_core::{AttrValue, BASE_CASE, Body, Change, ChangeKind, LastRun, Object, ObjectId, ObjectKind, Project, RunId, StepAction, Workflow};
 
 use crate::builtin::{check_cut_by_polygons, check_cut_by_seams, check_slice};
-use crate::workflow::{resolve, step_params};
+use crate::workflow::{CASE_ATTRIBUTE, CaseScope, resolve_in, step_params};
 use crate::{CommandError, LogEntry, Note, RunControl, RunDone, RunJob, Session, Severity};
 
 /// What happened at one step of a workflow run.
@@ -68,6 +68,9 @@ pub struct WorkflowRecord {
     pub run: RunId,
     pub workflow: ObjectId,
     pub name: String,
+    /// The case it ran (decision 0066): Base, or one of the workflow's cases.
+    #[serde(default = "base_case")]
+    pub case: String,
     /// The position it ran from, from 1.
     pub from: usize,
     pub steps: Vec<StepRun>,
@@ -77,11 +80,20 @@ pub struct WorkflowRecord {
     pub duration_ms: f64,
 }
 
+fn base_case() -> String {
+    BASE_CASE.to_string()
+}
+
 /// A workflow run under way. It goes step by step through [`Session::next_step`] and [`Session::end_step`], each
 /// step's command run off the session in between as any run is (decision 0060), and ends with
 /// [`Session::end_workflow`].
 pub struct WorkflowRun {
+    /// The workflow as its case runs it: the case's settings, and its own last runs.
     workflow: Workflow,
+    /// The workflow as it's saved, to keep the case's last runs in at the end.
+    saved: Workflow,
+    /// What the case sees, and the suffix of its layers.
+    scope: CaseScope,
     next: usize,
     record: WorkflowRecord,
     since: usize,
@@ -266,6 +278,44 @@ fn refused_last(run: &mut WorkflowRun, at: usize, command_run: Option<RunId>) {
     last.refused = true;
 }
 
+/// Every layer a step's parameters write to, by name, taken to the case's own (decision 0066): a `layer` holding a
+/// name, at any depth (a face design's own `layer` too), and never one holding a layer's id.
+fn case_layers(value: &mut Value, suffix: &str) {
+    match value {
+        Value::Object(fields) => {
+            for (key, field) in fields.iter_mut() {
+                match field {
+                    Value::String(name) if key == "layer" => {
+                        if !name.is_empty() && ObjectId::parse(name).is_none() {
+                            name.push_str(suffix);
+                        }
+                    }
+                    other => case_layers(other, suffix),
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(|item| case_layers(item, suffix)),
+        _ => {}
+    }
+}
+
+/// What a step makes, tagged with the case that made it (decision 0066): what it creates and what it makes again,
+/// never the inputs it changes.
+fn tag_case(changes: &mut [Change], again: &HashSet<ObjectId>, case: &str) {
+    let tag = || AttrValue::Text(case.to_string());
+    for change in changes.iter_mut() {
+        match change {
+            Change::Create { attributes, .. } => {
+                attributes.insert(CASE_ATTRIBUTE.to_string(), tag());
+            }
+            Change::Revise { id, attributes: Some(attributes), .. } if again.contains(id) => {
+                attributes.insert(CASE_ATTRIBUTE.to_string(), tag());
+            }
+            _ => {}
+        }
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
@@ -274,6 +324,13 @@ impl Session {
     /// Starts a run of a workflow from the step at `from` (from 1). Steps before it aren't run: a rule taking what one
     /// of them made reads its last run.
     pub fn begin_workflow(&self, workflow: ObjectId, from: usize) -> Result<WorkflowRun, CommandError> {
+        self.begin_case(workflow, from, BASE_CASE)
+    }
+
+    /// [`Session::begin_workflow`] for one of its cases (decision 0066): the steps with the case's settings, its layers
+    /// named `<layer> <case>`, what it makes tagged `case`, and its rules seeing what it made and what no step made,
+    /// never another case's.
+    pub fn begin_case(&self, workflow: ObjectId, from: usize, case: &str) -> Result<WorkflowRun, CommandError> {
         let object = self.project().object(workflow).ok_or(CommandError::MissingObject(workflow))?;
         let Body::Workflow(content) = &object.body else {
             return Err(CommandError::WrongKind { id: workflow, expected: ObjectKind::Workflow, found: object.kind() });
@@ -281,10 +338,22 @@ impl Session {
         if from == 0 || from > content.steps.len() {
             return Err(CommandError::Invalid(format!("'{}' has {} steps, so it can't run from step {from}", object.name, content.steps.len())));
         }
+        let view = content.as_case(case).ok_or_else(|| CommandError::Invalid(format!("'{}' has no case named '{case}'", object.name)))?;
+        // What the other cases made, Base's included, is out of this case's sight.
+        let mut others: HashSet<ObjectId> = HashSet::new();
+        if case != BASE_CASE {
+            others.extend(content.steps.iter().filter_map(|s| s.last.as_ref()).flat_map(|l| l.made.iter().copied()));
+        }
+        for other in content.cases.iter().filter(|c| c.name != case) {
+            others.extend(other.last.values().flat_map(|l| l.made.iter().copied()));
+        }
+        let suffix = if case == BASE_CASE { String::new() } else { format!(" {case}") };
         Ok(WorkflowRun {
-            workflow: (**content).clone(),
+            workflow: view,
+            saved: (**content).clone(),
+            scope: CaseScope { case: Some(case.to_string()), others, suffix },
             next: from - 1,
-            record: WorkflowRecord { run: RunId::new(), workflow, name: object.name.clone(), from, steps: Vec::new(), status: WorkflowStatus::Finished, started_unix_ms: now_ms(), duration_ms: 0.0 },
+            record: WorkflowRecord { run: RunId::new(), workflow, name: object.name.clone(), case: case.to_string(), from, steps: Vec::new(), status: WorkflowStatus::Finished, started_unix_ms: now_ms(), duration_ms: 0.0 },
             since: self.undo_steps(),
             clock: Instant::now(),
             over: false,
@@ -314,7 +383,7 @@ impl Session {
                     let mut found = BTreeMap::new();
                     let mut refused = None;
                     for (field, rule) in inputs {
-                        match resolve(self.project(), &run.workflow, at, rule) {
+                        match resolve_in(self.project(), &run.workflow, at, rule, &run.scope) {
                             Ok(ids) => {
                                 found.insert(field.clone(), (rule.many, ids));
                             }
@@ -333,7 +402,10 @@ impl Session {
                         run.stop(WorkflowStatus::Refused { at: at + 1 });
                         return None;
                     }
-                    let params = step_params(settings, &found);
+                    let mut params = step_params(settings, &found);
+                    if !run.scope.suffix.is_empty() {
+                        case_layers(&mut params, &run.scope.suffix);
+                    }
                     let job = StepJob { job: self.begin_run(command, params) };
                     run.out = Some((at, started));
                     return Some(job);
@@ -359,7 +431,11 @@ impl Session {
         }
         let ended = done.map(|done| {
             let mut again = HashSet::new();
-            let ended = self.end_run_with(done, |project, changes, notes| again = make_again(project, changes, notes, &last_made));
+            let case = run.record.case.clone();
+            let ended = self.end_run_with(done, |project, changes, notes| {
+                again = make_again(project, changes, notes, &last_made);
+                tag_case(changes, &again, &case);
+            });
             (ended, again)
         });
         match ended {
@@ -416,7 +492,8 @@ impl Session {
         run.over = true;
         let id = run.record.workflow;
         if let Some(name) = self.project().object(id).filter(|o| matches!(o.body, Body::Workflow(_))).map(|o| o.name.clone()) {
-            let params = serde_json::json!({ "workflow": id, "name": name, "content": run.workflow });
+            run.saved.keep_case_runs(&run.record.case, &run.workflow);
+            let params = serde_json::json!({ "workflow": id, "name": name, "content": run.saved });
             // It saved as it reads, so it saves again; were it refused, the steps' work would stay applied all the same.
             let _ = self.run("workflow.save", params);
         }
@@ -428,11 +505,63 @@ impl Session {
 
     /// Runs a workflow from the step at `from` (from 1) to its end, a pause or the first refusal, as one undo step.
     pub fn run_workflow(&mut self, workflow: ObjectId, from: usize) -> Result<WorkflowRecord, CommandError> {
-        let mut run = self.begin_workflow(workflow, from)?;
+        self.run_case(workflow, from, BASE_CASE)
+    }
+
+    /// [`Session::run_workflow`] for one of its cases (decision 0066).
+    pub fn run_case(&mut self, workflow: ObjectId, from: usize, case: &str) -> Result<WorkflowRecord, CommandError> {
+        let mut run = self.begin_case(workflow, from, case)?;
         while let Some(job) = self.next_step(&mut run) {
             let done = job.run();
             self.end_step(&mut run, done);
         }
         Ok(self.end_workflow(run))
+    }
+
+    /// The workflow's cases in the order Run all cases runs them: Base, then each case as listed.
+    pub fn case_names(&self, workflow: ObjectId) -> Result<Vec<String>, CommandError> {
+        let content = self.workflow(workflow)?;
+        Ok(std::iter::once(BASE_CASE.to_string()).chain(content.cases.iter().map(|c| c.name.clone())).collect())
+    }
+
+    /// Runs every case from its first step, Base first, as one undo step; a pause or a refusal stops it at that case.
+    pub fn run_all_cases(&mut self, workflow: ObjectId) -> Result<Vec<WorkflowRecord>, CommandError> {
+        let names = self.case_names(workflow)?;
+        let since = self.undo_steps();
+        let mut records = Vec::new();
+        for name in names {
+            let record = self.run_case(workflow, 1, &name)?;
+            let stop = record.status != WorkflowStatus::Finished;
+            records.push(record);
+            if stop {
+                break;
+            }
+        }
+        if let Some(first) = records.first() {
+            self.join_undo(since, first.run);
+        }
+        Ok(records)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_case_writes_to_its_own_layers_by_name_never_to_another_layer_by_id() {
+        let toes = ObjectId::new().to_string();
+        let mut params = serde_json::json!({
+            "layer": "8 blocks",
+            "name": "B#",
+            "content": { "layer": "2 faces", "lines": [{ "layer": toes, "profile": "Highwall" }] },
+            "empty": { "layer": "" },
+        });
+        case_layers(&mut params, " 50m");
+        assert_eq!(params["layer"], "8 blocks 50m");
+        assert_eq!(params["name"], "B#");
+        assert_eq!(params["content"]["layer"], "2 faces 50m");
+        assert_eq!(params["content"]["lines"][0]["layer"], serde_json::json!(toes), "a layer held by its id is left as it is");
+        assert_eq!(params["empty"]["layer"], "");
     }
 }

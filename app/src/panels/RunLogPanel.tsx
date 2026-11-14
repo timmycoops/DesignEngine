@@ -58,7 +58,8 @@ function toRows(log: LogEntry[]): LogRow[] {
       case 'workflow': {
         const ran = e.steps.filter((s) => s.outcome === 'ran').length;
         const ended = e.status === 'finished' ? 'finished' : `${e.status} at step ${e.at}`;
-        const result = `${e.name}: ${ran} step${ran === 1 ? '' : 's'} run from step ${e.from}, ${ended}`;
+        const which = e.case && e.case !== 'Base' ? ` (${e.case})` : '';
+        const result = `${e.name}${which}: ${ran} step${ran === 1 ? '' : 's'} run from step ${e.from}, ${ended}`;
         return { index, at: e.started_unix_ms, what: 'Workflow', result, ms: e.duration_ms, outcome: e.status === 'refused' ? 'failed' : undone.has(e.run) ? 'undone' : 'ok', record: null };
       }
     }

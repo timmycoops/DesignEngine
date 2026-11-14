@@ -218,35 +218,77 @@ pub struct WorkflowReply {
     changes: ProjectChanges,
 }
 
-/// Runs a workflow from the step at `from` (from 1) to its end, a pause or the first refusal (decision 0065). Each
-/// step's command runs off the lock as any run does (0060), the run going named for it so the status line says what
-/// it's doing and Cancel stops it; nothing else changes the project until the workflow is done. One undo.
+/// Runs a workflow, or one of its cases (decision 0066), from the step at `from` (from 1) to its end, a pause or the first
+/// refusal (decision 0065). Each step's command runs off the lock as any run does (0060), the run going named for it so
+/// the status line says what it's doing and Cancel stops it; nothing else changes the project until it's done. One undo.
 #[tauri::command]
-pub async fn run_workflow(workflow: ObjectId, from: usize, state: State<'_, AppState>) -> Result<WorkflowReply, String> {
+pub async fn run_workflow(workflow: ObjectId, from: usize, case: Option<String>, state: State<'_, AppState>) -> Result<WorkflowReply, String> {
     let app = state.app.clone();
     blocking(move || {
-        let mut run = {
-            let app = app.lock().unwrap();
-            app.idle()?;
-            app.session.begin_workflow(workflow, from).map_err(|e| e.to_string())?
-        };
-        loop {
-            let job = {
-                let mut app = app.lock().unwrap();
-                let Some(job) = app.session.next_step(&mut run) else { break };
-                app.running = Some(Running { command: job.command().to_string(), started: Instant::now(), control: job.control() });
-                job
-            };
-            let done = job.run();
-            let mut app = app.lock().unwrap();
-            app.session.end_step(&mut run, done);
-        }
+        let record = run_one_case(&app, workflow, from, case.as_deref().unwrap_or(zd_core::BASE_CASE))?;
         let mut app = app.lock().unwrap();
-        app.running = None;
-        let record = app.session.end_workflow(run);
         Ok(WorkflowReply { record, changes: changes(&mut app, false) })
     })
     .await?
+}
+
+/// Every case's run, Base first.
+#[derive(Serialize)]
+pub struct CasesReply {
+    records: Vec<zd_commands::WorkflowRecord>,
+    changes: ProjectChanges,
+}
+
+/// Runs every case of a workflow from its first step, Base first, as one undo (decision 0066); a pause or a refusal
+/// stops it at that case.
+#[tauri::command]
+pub async fn run_all_cases(workflow: ObjectId, state: State<'_, AppState>) -> Result<CasesReply, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let (names, since) = {
+            let app = app.lock().unwrap();
+            app.idle()?;
+            (app.session.case_names(workflow).map_err(|e| e.to_string())?, app.session.undo_steps())
+        };
+        let mut records = Vec::new();
+        for name in names {
+            let record = run_one_case(&app, workflow, 1, &name)?;
+            let stop = record.status != zd_commands::WorkflowStatus::Finished;
+            records.push(record);
+            if stop {
+                break;
+            }
+        }
+        let mut app = app.lock().unwrap();
+        if let Some(first) = records.first() {
+            app.session.join_undo(since, first.run);
+        }
+        Ok(CasesReply { records, changes: changes(&mut app, false) })
+    })
+    .await?
+}
+
+/// One case of a workflow run step by step, each step's command off the lock.
+fn run_one_case(app: &std::sync::Arc<std::sync::Mutex<AppInner>>, workflow: ObjectId, from: usize, case: &str) -> Result<zd_commands::WorkflowRecord, String> {
+    let mut run = {
+        let app = app.lock().unwrap();
+        app.idle()?;
+        app.session.begin_case(workflow, from, case).map_err(|e| e.to_string())?
+    };
+    loop {
+        let job = {
+            let mut app = app.lock().unwrap();
+            let Some(job) = app.session.next_step(&mut run) else { break };
+            app.running = Some(Running { command: job.command().to_string(), started: Instant::now(), control: job.control() });
+            job
+        };
+        let done = job.run();
+        let mut app = app.lock().unwrap();
+        app.session.end_step(&mut run, done);
+    }
+    let mut app = app.lock().unwrap();
+    app.running = None;
+    Ok(app.session.end_workflow(run))
 }
 
 /// Captures runs from the run log as a new workflow (decision 0065), saved by a `workflow.save` run.

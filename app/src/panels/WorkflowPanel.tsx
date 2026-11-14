@@ -1,12 +1,13 @@
-import { ArrowDown, ArrowUp, Eye, Pause, Play, Plus, SkipForward, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Eye, Layers, Pause, Play, Plus, SkipForward, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import type { LogEntry, Note, ObjectSummary, Workflow, WorkflowRecord, WorkflowStep } from '@/bridge';
 import { objectDetails, projectSummary } from '@/bridge';
 import { Field, IconButton, plainNote, type RunReport, Select, StatusBadge, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
-import { onlyLayers, ruleWords, tidyLayers } from './workflow';
+import { BASE, caseValue, onlyLayers, ruleWords, settingRows, stepsOfCase, tidyLayers, withSetting } from './workflow';
 
 /**
  * Workflow (decision 0065): saved steps run again in one go. A workflow is captured from runs in the Run log, or built
@@ -18,6 +19,10 @@ import { onlyLayers, ruleWords, tidyLayers } from './workflow';
  * every other layer off until Show all again. Tidy after a run (on by default) leaves on screen what the run started
  * from and what it ended with: the layers of what its last step made are shown, the layers only the steps in between
  * made are hidden, and a layer holding anything drawn by hand is left as it is.
+ *
+ * Cases (decision 0066): Base is the steps as they stand; a case changes some settings, in the settings grid, and runs
+ * on its own layers (`8 blocks 50m`), tagging what it makes with its case. The case picked is the one Run runs, and the
+ * one the steps' badges, a click on a step and its eye show; Run all cases runs Base and every case as one undo.
  */
 
 /** Tidy after a run: on unless turned off, remembered on this machine. */
@@ -43,7 +48,9 @@ function reportOf(record: WorkflowRecord): RunReport {
 }
 
 export function WorkflowPanel() {
-  const { summary, log, runRecord, runWorkflow, addingTo, setAddingTo, setSelection, zoomTo, setLayersVisible } = useWorkspace();
+  const { summary, log, runRecord, runWorkflow, runAllCases, addingTo, setAddingTo, setSelection, zoomTo, setLayersVisible } = useWorkspace();
+  const [pickedCase, setPickedCase] = useState(BASE);
+  const [newCase, setNewCase] = useState('');
   const [tidy, setTidy] = useState(readTidy);
   // Only one step on show: which, and how the layers stood before, to put back.
   const [only, setOnly] = useState<{ step: number; was: { id: string; visible: boolean }[] } | null>(null);
@@ -70,12 +77,14 @@ export function WorkflowPanel() {
   }, [id, revision]);
   // The revision before shows until the new one has been read.
   const workflow = content && content.id === id ? content.workflow : null;
+  const cases = workflow?.cases ?? [];
+  const caseName = pickedCase === BASE || cases.some((c) => c.name === pickedCase) ? pickedCase : BASE;
 
-  // The last run of this workflow, from the log: where Continue goes after a pause.
+  // The last run of this workflow's case, from the log: where Continue goes after a pause.
   const last = useMemo(() => {
-    const runs = log.filter((e): e is Extract<LogEntry, { event: 'workflow' }> => e.event === 'workflow' && e.workflow === chosen?.id);
+    const runs = log.filter((e): e is Extract<LogEntry, { event: 'workflow' }> => e.event === 'workflow' && e.workflow === chosen?.id && (e.case ?? BASE) === caseName);
     return runs[runs.length - 1] ?? null;
-  }, [log, chosen]);
+  }, [log, chosen, caseName]);
   const continueFrom = last?.status === 'paused' && workflow && last.at < workflow.steps.length ? last.at + 1 : null;
 
   const save = async (next: Workflow) => {
@@ -83,7 +92,14 @@ export function WorkflowPanel() {
     const outcome = await runRecord('workflow.save', { workflow: chosen.id, name: chosen.name, content: next });
     if (outcome.error) setReport({ notes: [], error: outcome.error });
   };
-  const edit = (change: (steps: WorkflowStep[]) => WorkflowStep[]) => workflow && void save({ steps: change(workflow.steps.map((s) => ({ ...s }))) });
+  const edit = (change: (steps: WorkflowStep[]) => WorkflowStep[]) => {
+    if (!workflow) return;
+    const steps = change(workflow.steps.map((s) => ({ ...s })));
+    // A step taken out takes what each case changed of it, and its runs in each case, with it.
+    const kept = new Set(steps.map((s) => String(s.id)));
+    const keep = <T,>(m: Record<string, T> | undefined) => Object.fromEntries(Object.entries(m ?? {}).filter(([k]) => kept.has(k)));
+    void save({ ...workflow, steps, cases: (workflow.cases ?? []).map((c) => ({ ...c, settings: keep(c.settings), last: keep(c.last) })) });
+  };
   const move = (at: number, by: number) =>
     edit((steps) => {
       const [step] = steps.splice(at, 1);
@@ -95,21 +111,54 @@ export function WorkflowPanel() {
   const run = async (from: number) => {
     if (!chosen) return;
     setBusy(true);
-    const outcome = await runWorkflow(chosen.id, from);
+    const outcome = await runWorkflow(chosen.id, from, caseName);
     if (outcome.record && tidy) await tidyAfter(chosen.id, outcome.record);
     setBusy(false);
     setReport(outcome.record ? reportOf(outcome.record) : { notes: [], error: outcome.error });
   };
 
-  /** The run's inputs and its result on screen, the layers in between hidden. */
-  const tidyAfter = async (id: string, record: WorkflowRecord) => {
+  /** Base and every case, from their first steps, as one undo. */
+  const runAll = async () => {
+    if (!chosen) return;
+    setBusy(true);
+    const outcome = await runAllCases(chosen.id);
+    const records = outcome.records ?? [];
+    if (records.length > 0 && tidy) await tidyAfter(chosen.id, records[records.length - 1], records.map((r) => r.case));
+    setBusy(false);
+    if (!outcome.records) return setReport({ notes: [], error: outcome.error });
+    const reports = records.map((r) => ({ case: r.case, report: reportOf(r) }));
+    const failed = reports.find((r) => r.report.error);
+    setReport({
+      notes: reports.flatMap((r) => r.report.notes.map((n, k) => (k === 0 ? { ...n, text: `${r.case}: ${n.text}` } : n))),
+      error: failed ? `${failed.case}: ${failed.report.error}` : undefined,
+    });
+  };
+
+  /** Settings changed in the grid: Base's are the step's own, a case's are what it changes. */
+  const setCell = (name: string, row: ReturnType<typeof settingRows>[number], text: string) => {
+    if (!workflow) return;
+    const next = withSetting(workflow, name, row, text);
+    if (!next) return setReport({ notes: [], error: `'${text}' isn't a ${typeof row.base === 'number' ? 'number' : 'true or false'}, as ${row.field} has to be` });
+    void save(next);
+  };
+
+  const addCase = () => {
+    const name = newCase.trim();
+    if (!workflow || !name) return;
+    setNewCase('');
+    setPickedCase(name);
+    void save({ ...workflow, cases: [...cases, { name }] });
+  };
+
+  /** The run's inputs and its result on screen, the layers in between hidden: for every case run, when several are. */
+  const tidyAfter = async (id: string, record: WorkflowRecord, ran: string[] = [record.case ?? BASE]) => {
     const last = [...record.steps].reverse().find((s) => s.outcome === 'ran');
     if (!last) return;
     const [details, now] = await Promise.all([objectDetails(id), projectSummary()]);
     if (details.measures.kind !== 'workflow') return;
-    const steps = details.measures.workflow.steps;
-    const made = steps.map((s) => s.last?.made ?? []);
-    const result = steps.find((s) => s.id === last.step)?.last?.made ?? [];
+    const all = details.measures.workflow;
+    const made = [BASE, ...(all.cases ?? []).map((c) => c.name)].flatMap((name) => stepsOfCase(all, name).map((s) => s.last?.made ?? []));
+    const result = ran.flatMap((name) => stepsOfCase(all, name).find((s) => s.id === last.step)?.last?.made ?? []);
     const { show, hide } = tidyLayers(made, result, now.objects);
     setOnly(null);
     await setLayersVisible(show, hide);
@@ -141,12 +190,15 @@ export function WorkflowPanel() {
     await setLayersVisible(show, hide);
   };
 
-  const steps = workflow?.steps ?? [];
+  const steps = workflow ? stepsOfCase(workflow, caseName) : [];
+  const rows = workflow ? settingRows(workflow) : [];
+  const columns = [BASE, ...cases.map((c) => c.name)];
+  const ofCase = caseName === BASE ? '' : ` of ${caseName}`;
   const action: ToolAction | undefined = chosen
     ? continueFrom
-      ? { label: `Continue from step ${continueFrom}`, icon: <SkipForward className="size-3.5" />, disabled: !workflow, busy, busyLabel: 'Running…', title: 'Runs on from the step after the pause', run: () => run(continueFrom) }
+      ? { label: `Continue${ofCase} from step ${continueFrom}`, icon: <SkipForward className="size-3.5" />, disabled: !workflow, busy, busyLabel: 'Running…', title: 'Runs on from the step after the pause', run: () => run(continueFrom) }
       : {
-          label: `Run ${plural(steps.filter((s) => s.on !== false && s.action.kind === 'command').length, 'step')}`,
+          label: `Run ${plural(steps.filter((s) => s.on !== false && s.action.kind === 'command').length, 'step')}${ofCase}`,
           icon: <Play className="size-3.5" />,
           disabled: !workflow || steps.length === 0,
           busy,
@@ -185,7 +237,92 @@ export function WorkflowPanel() {
 
       {chosen && workflow && (
         <ToolSection
-          title={`Steps (${steps.length})`}
+          title="Cases"
+          aside={
+            cases.length > 0 ? (
+              <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={busy} title="Base and every case from their first steps, each on its own layers, as one undo" onClick={() => void runAll()}>
+                <Layers className="size-3.5" /> Run all {columns.length} cases
+              </Button>
+            ) : undefined
+          }
+        >
+          <Field label="Case" hint="Run runs this one; the steps show what it made">
+            <Select value={caseName} aria-label="Case" onChange={(e) => setPickedCase(e.target.value)}>
+              {columns.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </Select>
+            {caseName !== BASE && (
+              <IconButton
+                label={`Take case ${caseName} out (what it made stays, on its own layers)`}
+                onClick={() => {
+                  setPickedCase(BASE);
+                  void save({ ...workflow, cases: cases.filter((c) => c.name !== caseName) });
+                }}
+              >
+                <Trash2 />
+              </IconButton>
+            )}
+          </Field>
+          <Field label="New case" hint="The steps as Base, on layers named for it, until you change a setting below">
+            <Input className="h-7 w-28 px-1.5 text-xs" value={newCase} placeholder="50m" aria-label="New case name" onChange={(e) => setNewCase(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addCase()} />
+            <Button variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={!newCase.trim() || columns.some((c) => c.toLowerCase() === newCase.trim().toLowerCase())} onClick={addCase}>
+              <Plus className="size-3.5" /> Add
+            </Button>
+          </Field>
+          {rows.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-xs" aria-label="Settings by case">
+                <thead>
+                  <tr className="text-left text-muted-foreground">
+                    <th className="py-1 pr-2 font-normal">Setting</th>
+                    {columns.map((name) => (
+                      <th key={name} className={`px-1 py-1 font-normal ${name === caseName ? 'text-foreground' : ''}`}>
+                        {name}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, k) => (
+                    <tr key={`${row.step}:${row.field}`} className={k > 0 && rows[k - 1].step !== row.step ? 'border-t' : undefined}>
+                      <td className="max-w-[9rem] truncate py-0.5 pr-2 text-muted-foreground" title={`Step ${row.position}, ${row.command}: ${row.field}`}>
+                        {k === 0 || rows[k - 1].step !== row.step ? `${row.position}. ` : ''}
+                        {row.field}
+                      </td>
+                      {columns.map((name) => {
+                        const own = caseValue(workflow, name, row);
+                        const shown = own === undefined ? '' : String(own);
+                        return (
+                          <td key={name} className="px-1 py-0.5">
+                            <Input
+                              key={`${revision}:${name}:${shown}`}
+                              className={`h-6 w-20 px-1 text-xs ${name !== BASE && own !== undefined ? 'text-edited' : ''}`}
+                              defaultValue={shown}
+                              placeholder={name === BASE ? '' : String(row.base)}
+                              aria-label={`${name}: step ${row.position} ${row.field}`}
+                              title={name !== BASE && own === undefined ? 'As Base' : undefined}
+                              onBlur={(e) => e.target.value !== shown && setCell(name, row, e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                            />
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="mt-1 text-muted-foreground">A case's empty cell reads as Base; what it changes shows in blue. Its layers are named for it: 8 blocks {cases[0]?.name ?? '50m'}.</div>
+            </div>
+          )}
+        </ToolSection>
+      )}
+
+      {chosen && workflow && (
+        <ToolSection
+          title={`Steps (${steps.length})${ofCase}`}
           aside={
             <>
               <IconButton

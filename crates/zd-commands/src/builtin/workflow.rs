@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{Attributes, Body, Change, ObjectId, ObjectKind, Source, StepAction, Workflow};
+use zd_core::{Attributes, BASE_CASE, Body, Change, ObjectId, ObjectKind, Source, StepAction, Workflow};
 
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome};
 
@@ -90,6 +90,27 @@ fn check_steps(workflow: &Workflow) -> Result<Vec<Note>, CommandError> {
                 Source::Named(name) if name.trim().is_empty() => return Err(CommandError::Invalid(format!("step {}'s input '{field}' names no object", at + 1))),
                 Source::Layer(name) if name.trim().is_empty() => return Err(CommandError::Invalid(format!("step {}'s input '{field}' names no layer", at + 1))),
                 _ => {}
+            }
+        }
+    }
+    // Cases (decision 0066): each named, once, not Base, changing only the settings of steps that are there.
+    let mut names = HashSet::new();
+    for case in &workflow.cases {
+        let name = case.name.trim();
+        if name.is_empty() {
+            return Err(CommandError::Invalid("a case has no name".into()));
+        }
+        if name.eq_ignore_ascii_case(BASE_CASE) {
+            return Err(CommandError::Invalid(format!("'{BASE_CASE}' is the steps as they stand; a case needs another name")));
+        }
+        if !names.insert(name.to_lowercase()) {
+            return Err(CommandError::Invalid(format!("two cases are named '{name}'")));
+        }
+        for (id, changes) in &case.settings {
+            let Some(step) = workflow.step(*id) else { return Err(CommandError::Invalid(format!("case '{name}' changes step id {id}, which isn't there"))) };
+            let StepAction::Command { inputs, .. } = &step.action else { return Err(CommandError::Invalid(format!("case '{name}' changes a pause"))) };
+            if let Some(field) = changes.keys().find(|k| inputs.contains_key(*k)) {
+                return Err(CommandError::Invalid(format!("case '{name}' changes '{field}', an input found by rule, not a setting")));
             }
         }
     }

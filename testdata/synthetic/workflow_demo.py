@@ -51,7 +51,7 @@ NOTES = {
 }
 
 # On show when it's saved: what you draw and what the workflow ends with.
-SHOWN = {"0 pit limit", "1 toes", "6 block lines", "8 blocks"}
+SHOWN = {"0 pit limit", "1 toes", "6 block lines", "8 blocks", "8 blocks 50m"}
 
 
 def drawn_by_hand(s):
@@ -145,19 +145,39 @@ def main():
         rules = ", ".join(f"{field} from {next(iter(r['from']))}" for field, r in action.get("inputs", {}).items())
         print(f"   {k:2}. {what}" + (f" ({rules})" if rules else ""))
 
-    # Run once as a workflow, so each step shows what its last run made: to the pause, then on from it.
-    started = time.perf_counter()
-    first_part = s.run_workflow(workflow)
-    pause = first_part.get("at")
-    assert first_part["status"] == "paused", [(r["position"], r["outcome"], r.get("refused"), [n["text"] for n in r.get("checked", []) if n["severity"] != "info"][:3]) for r in first_part["steps"] if r["outcome"] != "ran"]
-    rest = s.run_workflow(workflow, from_step=pause + 1)
-    assert rest["status"] == "finished", rest["status"]
-    print(f"Run as a workflow: steps 1 to {pause - 1}, paused at {pause}, then {pause + 1} to the end, in {time.perf_counter() - started:.1f} s "
-          f"(the runs by hand took {by_hand:.1f} s)")
-    blocks = s.objects(layer="8 blocks", kind="solid")
-    coal = [b for b in blocks if b["attributes"].get("material") == "coal"]
-    total = sum(s.object(b["id"])["volume"] for b in blocks)
-    print(f"   {len(blocks)} blocks on '8 blocks' ({len(coal)} coal), {total:,.0f} m3 in all")
+    # A case (decision 0066): 50 m blocks, the block line offset 50 m 30 times instead of 100 m 15 times.
+    content = s.object(workflow)["workflow"]
+    blocks_step = next(st["id"] for st in content["steps"] if st["action"]["kind"] == "command" and st["action"]["command"] == "string.offset" and st["action"]["settings"].get("name") == "Block line")
+    count = round((LIMIT_EAST - LIMIT_WEST) / BLOCK_LENGTH)
+    content["cases"] = [{"name": "50m", "settings": {str(blocks_step): {"distance": BLOCK_LENGTH / 2, "times": 2 * count}}}]
+    s.run("workflow.save", workflow=workflow, name="Toe to blocks", content=content)
+
+    # Each case run as a workflow, so each step shows what its last run made: to the pause, then on from it.
+    for case in ("Base", "50m"):
+        started = time.perf_counter()
+        first_part = s.run_workflow(workflow, case=case)
+        pause = first_part.get("at")
+        assert first_part["status"] == "paused", [(r["position"], r["outcome"], r.get("refused"), [n["text"] for n in r.get("checked", []) if n["severity"] != "info"][:3]) for r in first_part["steps"] if r["outcome"] != "ran"]
+        rest = s.run_workflow(workflow, from_step=pause + 1, case=case)
+        assert rest["status"] == "finished", [(r["position"], r.get("refused")) for r in rest["steps"] if r["outcome"] == "refused"]
+        print(f"{case}: steps 1 to {pause - 1}, paused at {pause}, then {pause + 1} to the end, in {time.perf_counter() - started:.1f} s"
+              + (f" (the runs by hand took {by_hand:.1f} s)" if case == "Base" else ""))
+
+    # Each case's blocks add up to its seam pieces, and the two cases to the same total, to 1e-6 m3.
+    totals = {}
+    for case, suffix in (("Base", ""), ("50m", " 50m")):
+        blocks = s.objects(layer=f"8 blocks{suffix}", kind="solid")
+        pieces = s.objects(layer=f"5 seam pieces{suffix}", kind="solid")
+        coal = [b for b in blocks if b["attributes"].get("material") == "coal"]
+        tagged = all(b["attributes"].get("case") == case for b in blocks)
+        total = sum(s.object(b["id"])["volume"] for b in blocks)
+        within = sum(s.object(p["id"])["volume"] for p in pieces)
+        totals[case] = total
+        print(f"   {case}: {len(blocks)} blocks on '8 blocks{suffix}' ({len(coal)} coal), {total:,.6f} m3; seam pieces {within:,.6f} m3; "
+              f"differ by {abs(total - within):.3g} m3; every block tagged case={case}: {tagged}")
+        assert tagged and abs(total - within) <= 1e-6, case
+    assert abs(totals["Base"] - totals["50m"]) <= 1e-6, totals
+    print(f"   the two cases' totals differ by {abs(totals['Base'] - totals['50m']):.3g} m3")
 
     for layer in s.layers():
         s.set_layer_visible(layer["name"], layer["name"] in SHOWN)

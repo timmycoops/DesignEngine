@@ -375,7 +375,7 @@ fn a_cut_is_checked_before_it_runs_and_refused_with_what_the_check_found() {
     let mut inputs = std::collections::BTreeMap::new();
     inputs.insert("solids".to_string(), rule(Source::Named("Pit".into()), Some(ObjectKind::Solid)));
     inputs.insert("polygons".to_string(), rule(Source::Layer("polygons".into()), Some(ObjectKind::String)));
-    let w = Workflow { steps: vec![zd_core::WorkflowStep { id: 1, note: String::new(), on: true, action: StepAction::Command { command: "solid.cut_by_polygons".into(), settings: json!({ "layer": "blocks" }), inputs }, last: None }] };
+    let w = Workflow { cases: Vec::new(), steps: vec![zd_core::WorkflowStep { id: 1, note: String::new(), on: true, action: StepAction::Command { command: "solid.cut_by_polygons".into(), settings: json!({ "layer": "blocks" }), inputs }, last: None }] };
     s.run("object.rename", json!({ "object": pit, "name": "Pit" })).unwrap();
     let id = created(&s.run("workflow.save", json!({ "name": "Blocks", "content": w })).unwrap())[0];
     let runs = s.log().iter().filter(|e| matches!(e, LogEntry::Run(_))).count();

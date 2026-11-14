@@ -52,9 +52,11 @@ import {
   projectSummary,
   redo,
   type RunRecord,
+  type WorkflowRecord,
   type ModelLinks,
   runCommand,
   runWorkflow as runWorkflowCall,
+  runAllCases as runAllCasesCall,
   captureWorkflow as captureWorkflowCall,
   addWorkflowStep,
   checkLinks,
@@ -109,6 +111,14 @@ interface Status {
 }
 
 /** One line per run: what it made or changed, how long it took, how many of its notes to look at, and its first few. */
+/** A workflow run in a line for the status line: its case, how many steps ran and how it ended. */
+function workflowWords(r: WorkflowRecord): string {
+  const ran = r.steps.filter((s) => s.outcome === 'ran').length;
+  const ended = r.status === 'finished' ? 'finished' : r.status === 'paused' ? `paused at step ${r.at}` : `refused at step ${r.at}`;
+  const which = r.case && r.case !== 'Base' ? ` (${r.case})` : '';
+  return `${r.name}${which}: ${ran} step${ran === 1 ? '' : 's'} run from step ${r.from} in ${(r.duration_ms / 1000).toFixed(1)} s, ${ended}`;
+}
+
 function describe(record: RunRecord): string {
   const outputs = record.outputs.map((o) => `${o.name} (${o.change})`);
   const head = `${record.command}: ${outputs.slice(0, 4).join(', ') || 'done'}${outputs.length > 4 ? ` and ${outputs.length - 4} more` : ''} in ${record.duration_ms.toFixed(0)} ms`;
@@ -371,15 +381,28 @@ export default function App() {
 
   // Workflows (decision 0065): run, capture and add a step, each showing the project after it as any run does.
   const runWorkflow = useCallback(
-    async (workflow: string, from: number) => {
+    async (workflow: string, from: number, workflowCase?: string) => {
       try {
-        const reply = await runWorkflowCall(workflow, from);
+        const reply = await runWorkflowCall(workflow, from, workflowCase);
         show(reply.summary);
         const r = reply.record;
-        const ran = r.steps.filter((s) => s.outcome === 'ran').length;
-        const ended = r.status === 'finished' ? 'finished' : r.status === 'paused' ? `paused at step ${r.at}` : `refused at step ${r.at}`;
-        setStatus({ text: `${r.name}: ${ran} step${ran === 1 ? '' : 's'} run from step ${r.from} in ${(r.duration_ms / 1000).toFixed(1)} s, ${ended}`, error: r.status === 'refused' });
+        setStatus({ text: workflowWords(r), error: r.status === 'refused' });
         return { record: reply.record };
+      } catch (e) {
+        setStatus({ text: String(e), error: true });
+        void runLog().then(setLog);
+        return { error: String(e) };
+      }
+    },
+    [show],
+  );
+  const runAllCases = useCallback(
+    async (workflow: string) => {
+      try {
+        const reply = await runAllCasesCall(workflow);
+        show(reply.summary);
+        setStatus({ text: reply.records.map(workflowWords).join(' · '), error: reply.records.some((r) => r.status === 'refused') });
+        return { records: reply.records };
       } catch (e) {
         setStatus({ text: String(e), error: true });
         void runLog().then(setLog);
@@ -1057,6 +1080,7 @@ export default function App() {
       focusIssue,
       clearRefusal,
       runWorkflow,
+      runAllCases,
       captureWorkflow,
       addingTo,
       setAddingTo,
@@ -1071,7 +1095,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, captureWorkflow, addingTo, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
+    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';
