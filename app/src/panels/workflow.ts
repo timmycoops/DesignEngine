@@ -83,7 +83,7 @@ export function stepsOfCase(workflow: Workflow, name: string): WorkflowStep[] {
   return workflow.steps.map((s) => ({ ...s, last: last[String(s.id)] as LastStepRun | undefined }));
 }
 
-/** A row of the settings grid: one plain setting of one step. */
+/** One plain setting of one step, as it shows under the step. */
 export interface SettingRow {
   step: number;
   /** Where the step is, from 1. */
@@ -94,7 +94,7 @@ export interface SettingRow {
   base: string | number | boolean;
 }
 
-/** Every plain setting (a number, text, or true or false) of every command step, in order: the grid's rows. */
+/** Every plain setting (a number, text, or true or false) of every command step, in order. */
 export function settingRows(workflow: Workflow): SettingRow[] {
   const rows: SettingRow[] = [];
   workflow.steps.forEach((step, at) => {
@@ -104,6 +104,22 @@ export function settingRows(workflow: Workflow): SettingRow[] {
     }
   });
   return rows;
+}
+
+/** One step's plain settings, as rows: what shows under the step in the Workflow panel. */
+export function settingsOfStep(workflow: Workflow, step: number): SettingRow[] {
+  return settingRows(workflow).filter((r) => r.step === step);
+}
+
+/** How many settings of each step a case changes, by step id: none for Base, which is the steps as they stand. */
+export function changesOfCase(workflow: Workflow, name: string): Map<number, number> {
+  const changes = new Map<number, number>();
+  if (name === BASE) return changes;
+  for (const [step, set] of Object.entries(workflow.cases?.find((c) => c.name === name)?.settings ?? {})) {
+    const n = Object.keys(set ?? {}).length;
+    if (n > 0) changes.set(Number(step), n);
+  }
+  return changes;
 }
 
 /** What a case has in a cell: its own value, or undefined where it reads as Base. */
@@ -123,7 +139,7 @@ export function readSetting(text: string, like: string | number | boolean): stri
 }
 
 /**
- * The workflow with one cell of the settings grid changed: Base's changes the step's own setting; a case's sets what the
+ * The workflow with one setting changed under its step: Base's changes the step's own setting; a case's sets what the
  * case changes, and an empty cell takes the change away, so the case reads as Base again. Null where the text isn't a
  * value of the setting's type.
  */
