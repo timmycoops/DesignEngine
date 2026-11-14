@@ -213,6 +213,7 @@ crates/zd-core       object types, ids, layers
 crates/zd-geom       projection, offsets, triangulation, booleans, section lines
 crates/zd-commands   typed commands, registry, run log
 crates/zd-io         DXF/CSV/OMF import-export, zips and folders of solids, Parquet project store
+crates/zd-reserves   reserves dataflow: block columns, units, labels, splits, fields that add up (0070)
 crates/zd-py         PyO3 bindings (Phase 1)
 app/src-tauri        Tauri shell, command bridge, binary transfer
 app/src              React: viewport/, panels/, forms/, design-system/

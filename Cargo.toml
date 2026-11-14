@@ -5,6 +5,7 @@ members = [
     "crates/zd-geom",
     "crates/zd-io",
     "crates/zd-commands",
+    "crates/zd-reserves",
     "crates/zd-py",
     "bench",
     "app/src-tauri",
@@ -21,6 +22,7 @@ zd-core = { path = "crates/zd-core" }
 zd-geom = { path = "crates/zd-geom" }
 zd-io = { path = "crates/zd-io" }
 zd-commands = { path = "crates/zd-commands" }
+zd-reserves = { path = "crates/zd-reserves" }
 manifold-csg = "0.4.1"
 serde = { version = "1", features = ["derive"] }
 # The locked Parquet/Arrow layer for the project store; only the Arrow bridge and Snappy codec.
