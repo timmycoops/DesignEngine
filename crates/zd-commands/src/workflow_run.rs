@@ -563,5 +563,11 @@ mod tests {
         assert_eq!(params["content"]["layer"], "2 faces 50m");
         assert_eq!(params["content"]["lines"][0]["layer"], serde_json::json!(toes), "a layer held by its id is left as it is");
         assert_eq!(params["empty"]["layer"], "");
+        // A bench rule's own layer (decision 0071) follows the case too; a rule naming none still takes the run's.
+        let mut benches = serde_json::json!({ "layer": "9 benches", "rules": [{ "when": { "material": "coal" }, "layer": "9 coal benches" }, { "benched": false }] });
+        case_layers(&mut benches, " 50m");
+        assert_eq!(benches["rules"][0]["layer"], "9 coal benches 50m");
+        assert_eq!(benches["layer"], "9 benches 50m");
+        assert!(benches["rules"][1].get("layer").is_none());
     }
 }

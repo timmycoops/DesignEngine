@@ -134,6 +134,31 @@ fn rules_read_top_down_decide_whats_benched_and_how() {
     assert!(record.messages.iter().any(|m| m.contains("2 benched into 4 pieces, 2 carried over whole")), "{:?}", record.messages);
 }
 
+/// Each rule can send what it takes to a layer of its own: coal benches to one, waste benches to another, the
+/// interburden it leaves whole to a third; a solid whose rule names no layer, or that no rule takes, goes to the run's.
+#[test]
+fn each_rule_can_name_its_own_output_layer() {
+    let mut s = session();
+    let ob = box_solid(&mut s, "OB", (0.0, 100.0), (0.0, 60.0), (20.0, 40.0), json!({ "horizon": "OB", "material": "waste" }));
+    let um = box_solid(&mut s, "U-M", (0.0, 100.0), (0.0, 60.0), (10.0, 17.0), json!({ "horizon": "U-M", "material": "waste" }));
+    let u = box_solid(&mut s, "U", (0.0, 100.0), (0.0, 60.0), (17.0, 20.0), json!({ "horizon": "U", "material": "coal" }));
+    let below = box_solid(&mut s, "below L", (0.0, 100.0), (0.0, 60.0), (-10.0, 0.0), json!({ "horizon": "below L", "material": "waste" }));
+    let rules = json!([
+        { "when": { "horizon": "U-M" }, "benched": false, "layer": "9 kept whole" },
+        { "when": { "material": "coal" }, "layer": "9 coal benches" },
+        { "when": { "horizon": "OB" }, "layer": "9 waste benches" },
+        { "when": { "horizon": "below L" }, "layer": "  " },
+    ]);
+    let record = s.run("solid.cut_by_benches", json!({ "solids": [ob, um, u, below], "layer": "9 benches", "rules": rules })).unwrap();
+    println!("{}", record.messages.join("\n"));
+    let layer_of = |s: &Session, id: ObjectId| s.project().layer(s.project().object(id).unwrap().layer).unwrap().name.clone();
+    let mut placed: Vec<(String, String)> = created(&record).iter().map(|&id| (s.project().object(id).unwrap().name.clone(), layer_of(&s, id))).collect();
+    placed.sort();
+    let expected = [("OB 20", "9 waste benches"), ("OB 30", "9 waste benches"), ("U 10", "9 coal benches"), ("U-M", "9 kept whole"), ("below L below 0", "9 benches")];
+    assert_eq!(placed, expected.map(|(a, b)| (a.to_string(), b.to_string())));
+    assert!(record.messages.iter().any(|m| m.contains("Onto layers: '9 benches' 1, '9 coal benches' 1, '9 kept whole' 1, '9 waste benches' 2")), "{:?}", record.messages);
+}
+
 /// Levels from RL 0 to 30 against a box from RL -5 to 37: the ground below and above them a piece each, `below 0` and
 /// `above 30`, and the three benches between.
 #[test]

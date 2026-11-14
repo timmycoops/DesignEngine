@@ -28,6 +28,10 @@ Bench.
    from, to, every and whether a bench is named by its floor or its top. A solid no rule benches is carried over whole
    onto the same layer, so the layer holds everything for the block cut, and the run names them. By default one rule:
    everything, RL 0 to 500 every 10 m, by the floor.
+   **Each rule may name its own output layer** (Tim, 15 November: "majority of the time it will be one layer but I can
+   see people using it with various outputs"): what it takes, benched or carried over whole, goes there; a rule naming
+   none, or a solid no rule takes, goes to the run's layer. In a workflow case a rule's layer takes the case's name as
+   the run's does (`9 coal benches 50m`), and the next step takes what the step made, on every layer.
 4. **The label is `bench`**, the bench's floor RL as a number (or its top RL if the rule says so): the bench from RL 70
    to 80 is 70 by its bottom, 80 by its top. Names are `{solid} {bench}` from the cut, and block names default to
    `{strip}_{block}_{horizon}_{bench}`, the bench left out (with its separator) where a solid has none.
@@ -49,7 +53,7 @@ Bench.
   them). Worked about a whole-metre origin near the solid in plan. Each piece's flaps are taken off by the seam cut's own
   flap remover. `bench_levels(from, to, every)` makes the levels, at most 100,000.
 - **`solid.cut_by_benches`** (`crates/zd-commands/src/builtin/benches.rs`): `solids`, `layer`, `rules`
-  (`when`, `benched`, `from`, `to`, `every`, `named_by`), `flap_thickness`, `name`, `attribute`. Solids are cut in
+  (`when`, `benched`, `from`, `to`, `every`, `named_by`, `layer`), `flap_thickness`, `name`, `attribute`. Solids are cut in
   parallel, with progress and Cancel. A rule asking for an attribute no solid carries is warned of (likely mistyped), and
   one taking no solid is said (`bench.rule_unused`); a rule whose levels can't be made is refused, by its number.
   Pieces that don't add back to their solid within a millionth are warned of (`bench.cut_differs`). The run says each
@@ -74,7 +78,8 @@ Bench.
   example rules (interburden whole, coal on strips 1–5 whole, other coal every 5 m, the rest every 10 m by the top)
   each solid taking its first rule, those left whole carried over and named; `below 0` and `above 30` past the levels;
   benches cut into blocks named `3_B1_OB_0`, `3_B1_OB_10`, and `3_B1_U` for coal left whole; a mistyped attribute
-  warned of, a rule taking nothing said, levels running downward refused naming the rule.
+  warned of, a rule taking nothing said, levels running downward refused naming the rule; coal benches, waste benches and
+  the interburden kept whole each onto its rule's layer, a rule naming a blank layer onto the run's.
 
 ### On the made-up demo pit (`testdata/synthetic/bench_levels.py`)
 

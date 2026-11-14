@@ -73,11 +73,14 @@ pub struct BenchRule {
     /// Whether a bench is named by its floor (the default) or its top.
     #[serde(default)]
     pub named_by: BenchEnd,
+    /// The layer for what this rule takes, benched or carried over whole; blank or left out, the run's layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
 }
 
 impl Default for BenchRule {
     fn default() -> Self {
-        BenchRule { when: BTreeMap::new(), benched: true, from: default_from(), to: default_to(), every: default_every(), named_by: BenchEnd::Bottom }
+        BenchRule { when: BTreeMap::new(), benched: true, from: default_from(), to: default_to(), every: default_every(), named_by: BenchEnd::Bottom, layer: None }
     }
 }
 
@@ -102,7 +105,7 @@ fn default_attribute() -> String {
 pub struct CutByBenchesParams {
     /// The solids to cut, each on its own.
     pub solids: Vec<ObjectId>,
-    /// Layer for the benches, and for the solids no rule benches.
+    /// Layer for the benches and the solids left whole, unless their rule names its own.
     pub layer: String,
     /// The bench rules, read top down, the first that fits a solid winning; by default one: everything from RL 0 to 500
     /// every 10 m, named by the floor.
@@ -170,15 +173,21 @@ impl BenchRule {
         self.when.iter().all(|(key, list)| list_fits(list, attribute(attributes, key)))
     }
 
+    /// The layer for what this rule takes: its own, or the run's where it names none.
+    pub fn layer_or<'a>(&'a self, run: &'a str) -> &'a str {
+        self.layer.as_deref().map(str::trim).filter(|l| !l.is_empty()).unwrap_or(run)
+    }
+
     /// The rule in a few words, for what a run says.
     fn words(&self) -> String {
         let when: Vec<String> = self.when.iter().filter(|(_, l)| !l.trim().is_empty()).map(|(k, l)| format!("{k} {}", l.trim())).collect();
         let which = if when.is_empty() { "everything".to_string() } else { when.join(", ") };
+        let onto = self.layer.as_deref().map(str::trim).filter(|l| !l.is_empty()).map(|l| format!(", onto '{l}'")).unwrap_or_default();
         if self.benched {
             let by = if self.named_by == BenchEnd::Top { ", named by the top" } else { "" };
-            format!("{which}: RL {} to {} every {} m{by}", self.from, self.to, self.every)
+            format!("{which}: RL {} to {} every {} m{by}{onto}", self.from, self.to, self.every)
         } else {
-            format!("{which}: not benched")
+            format!("{which}: not benched{onto}")
         }
     }
 }
@@ -217,8 +226,8 @@ impl Command for CutByBenches {
             summary: "Cut solids at bench levels by bench rules, each piece taking its bench",
             inputs: vec![Field::new("solids", FieldType::Objects, "The solids to cut, each on its own")],
             params: vec![
-                Field::new("layer", FieldType::Layer, "Layer for the benches and the solids left whole"),
-                Field::new("rules", FieldType::Text, "Bench rules read top down, the first a solid fits winning: when (attribute to values), benched, from, to, every, named_by"),
+                Field::new("layer", FieldType::Layer, "Layer for the benches and the solids left whole, unless their rule names its own"),
+                Field::new("rules", FieldType::Text, "Bench rules read top down, the first a solid fits winning: when (attribute to values), benched, from, to, every, named_by, layer"),
                 Field::new("flap_thickness", FieldType::Number { unit: "m" }, "Flaps thinner than this are taken off each piece and said; 0.01 by default, 0 for none"),
                 Field::new("name", FieldType::Text, "Each piece's name from its attributes in braces; {solid} {bench} by default"),
                 Field::new("attribute", FieldType::Text, "The attribute that takes each piece's bench; bench by default"),
@@ -293,15 +302,18 @@ impl Command for CutByBenches {
         let mut by_bench: BTreeMap<String, (f64, usize)> = BTreeMap::new();
         let (mut worst, mut worst_of) = (0.0_f64, String::new());
         let mut taken = vec![0usize; p.rules.len()];
+        let mut onto: BTreeMap<String, usize> = BTreeMap::new();
         for ((object, solid, rule), cut) in solids.iter().zip(cuts) {
             if let Some(k) = rule {
                 taken[*k] += 1;
             }
+            let layer = rule.map_or(p.layer.as_str(), |k| p.rules[k].layer_or(&p.layer)).to_string();
             let Some(result) = cut else {
                 // No rule benches it: carried over whole, as it is.
                 whole.push(object.name.clone());
                 let name = block_name(&p.name, &object.attributes, &object.name, "");
-                changes.push(Change::Create { name, layer: p.layer.clone(), attributes: object.attributes.clone(), body: Body::Solid((*solid).clone()) });
+                *onto.entry(layer.clone()).or_default() += 1;
+                changes.push(Change::Create { name, layer, attributes: object.attributes.clone(), body: Body::Solid((*solid).clone()) });
                 continue;
             };
             let (cut, made) = result?;
@@ -332,7 +344,8 @@ impl Command for CutByBenches {
                 triangles_out += piece.mesh.triangle_count();
                 pieces += 1;
                 let name = block_name(&p.name, &attributes, &object.name, "");
-                changes.push(Change::Create { name, layer: p.layer.clone(), attributes, body: Body::Solid(solid) });
+                *onto.entry(layer.clone()).or_default() += 1;
+                changes.push(Change::Create { name, layer: layer.clone(), attributes, body: Body::Solid(solid) });
             }
         }
         if !whole.is_empty() {
@@ -360,6 +373,7 @@ impl Command for CutByBenches {
                 whole.len()
             ))
             .message(format!("Rules: {}", rules.join("; ")))
+            .message(format!("Onto layers: {}", onto.iter().map(|(l, n)| format!("'{l}' {n}")).collect::<Vec<_>>().join(", ")))
             .message(format!("Volumes (m³): {volume_in:.3} benched in, {volume_out:.3} out, {flaps:.3} in flaps; by bench: {}{more}", listed.join(", ")))
             .message(if worst_of.is_empty() {
                 "Benches add back to every solid exactly".to_string()
