@@ -72,6 +72,13 @@ note on why, and runs them again in one go.
    The shell runs a workflow step by step off its lock (`run_workflow`), the status line naming each step's command and
    Cancel stopping it. `zd-app --bench --workflow` drives it as Tim would.
 
+After the stage, on Tim's first try (14 November): a rule by layer or name must find the same objects as they are now
+too, not only as they were, as numbering renames a hand-drawn base toe; otherwise capture keeps it as picked.
+`testdata/synthetic/workflow_demo.py` builds "Workflow demo.zdp": what's drawn by hand (base toe, pit limit, first block
+line, closing lines) stays out of the workflow as its inputs, each step's output goes on a layer numbered in the order
+it's made, every step has a note, a pause stops after the strips, and it's saved with only the inputs and the blocks on
+show (`set_layer_visible` in Python). `workflow_demo_guide.html` is a one-page guide to it.
+
 Seeing what a step did (Tim's options A and B, 14 November): a click on a step selects what it last made and zooms to
 it; its eye shows only that, every other layer off until Show all again; and Tidy after a run (on by default) leaves the
 run's inputs and its last step's result on screen, hiding the layers only the steps in between made, and leaving alone

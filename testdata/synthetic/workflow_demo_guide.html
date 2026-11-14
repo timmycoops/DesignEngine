@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workflow guide</title>
+<style>
+  :root { --bg: #16181c; --panel: #1f2228; --text: #e7e9ee; --muted: #9aa1ad; --gold: #c9a227; --green: #6f9f5f; --orange: #d98c3a; --red: #c95a4a; --line: #2e333b; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 22px 26px 30px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 22px 0 8px; color: var(--gold); text-transform: uppercase; letter-spacing: .04em; }
+  p { margin: 6px 0; }
+  .muted { color: var(--muted); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 8px 0; }
+  .path { font-family: Consolas, monospace; font-size: 13px; color: var(--gold); word-break: break-all; }
+  ol, ul { margin: 6px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  .layers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+  .layer { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: 14px; }
+  .layer b { color: var(--gold); margin-right: 4px; }
+  .on { border-color: var(--green); }
+  .tag { display: inline-block; font-size: 12px; border-radius: 4px; padding: 0 6px; margin-left: 4px; }
+  .ok { background: rgba(111,159,95,.2); color: var(--green); }
+  .bad { background: rgba(201,90,74,.2); color: var(--red); }
+  .opt { display: grid; grid-template-columns: 34px 1fr; gap: 4px 10px; margin: 8px 0; }
+  .opt .k { font-weight: 700; color: var(--gold); font-size: 18px; }
+  .opt .t b { display: block; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Workflow demo: how to use it</h1>
+  <p class="muted">Made-up pit, toe to interrogated blocks, 19 steps (decision 0065). Built by <code>workflow_demo.py</code>.</p>
+
+  <h2>1. Open it</h2>
+  <div class="card">
+    <p>Open <span class="path">testdata\synthetic\reserves\workflow demo\Workflow demo.zdp</span></p>
+    <p>Click <b>Workflow</b> on the toolbar. The panel lists the 19 steps. Each step shows what it takes, the note on why, and what it made last time <span class="tag ok">526 made</span>.</p>
+  </div>
+
+  <h2>2. What's yours, what the workflow makes</h2>
+  <div class="card">
+    <p><b>Yours (drawn by hand, not steps):</b> the base toe, the pit limit, Block line 0 and the two closing lines. Edit these and run again.</p>
+    <p><b>The geology (not steps):</b> the grids and the seam model. The workflow reads them.</p>
+    <p><b>The workflow's:</b> everything else, each on a layer numbered in the order it's made:</p>
+    <div class="layers">
+      <div class="layer on"><b>0</b>pit limit</div><div class="layer on"><b>1</b>toes</div><div class="layer"><b>2</b>faces</div>
+      <div class="layer"><b>3</b>pit</div><div class="layer"><b>4</b>strips</div><div class="layer"><b>5</b>seam pieces</div>
+      <div class="layer on"><b>6</b>block lines</div><div class="layer"><b>7</b>block polygons</div><div class="layer on"><b>8</b>blocks</div>
+    </div>
+    <p class="muted">Green: on show when you open it. The others are a tick away in Layers. That's the answer to "turn everything off to see it": only your lines and the end result show.</p>
+  </div>
+
+  <h2>3. Try this</h2>
+  <div class="card">
+    <ol>
+      <li><b>Run.</b> Press <b>Run 18 steps</b>. It stops at step 14, the pause: "look at the strips". Tick <b>4 strips</b> to look, then press <b>Continue from step 15</b>. The same 526 blocks are made again in place, as new revisions of the same blocks. Ctrl+Z takes back each part.</li>
+      <li><b>Change the design.</b> Drag the west end of the base toe (Strip 1 on <b>1 toes</b>) 20 m north. Run, then Continue. The toes, faces, strips and blocks all follow (393 of the 526 blocks change), in under a second.</li>
+      <li><b>See a check stop it.</b> Drag Block line 0 30 m east, then press &#9654; on step 15 to run from there. Step 18 is refused <span class="tag bad">refused</span>: the polygons no longer cover the pit's west edge, and the cut never runs. Ctrl+Z to put the line back.</li>
+      <li><b>Make your own.</b> Work a pit by hand. In the Run log, tick the first run, Shift-tick the last, name it, and press <b>Capture as a workflow</b>.</li>
+    </ol>
+  </div>
+
+  <h2>4. What we could build next</h2>
+  <div class="opt"><div class="k">A</div><div class="t"><b>Show a step</b>Click a step: what it made is selected and zoomed to. "Only this step" hides everything else.</div></div>
+  <div class="opt"><div class="k">B</div><div class="t"><b>Tidy as it runs</b>A switch so each run shows its inputs and the last step's result, and hides the layers in between.</div></div>
+  <div class="opt"><div class="k">C</div><div class="t"><b>Settings in the panel</b>Change the block length (100 m), strip width (60 m), batters and layer names right on the step, instead of rerunning the tool and capturing again.</div></div>
+  <div class="opt"><div class="k">D</div><div class="t"><b>Cases</b> <span class="muted">(stage 2)</span> Base and "50 m blocks" side by side, each on its own layers (8 blocks 50m), from one workflow.</div></div>
+  <div class="opt"><div class="k">E</div><div class="t"><b>Report</b> <span class="muted">(stage 3)</span> One HTML page a run: volumes, tonnes and qualities by seam, strip and block, and what was left out.</div></div>
+  <div class="opt"><div class="k">F</div><div class="t"><b>Numbered layers by itself</b>On capture, offer to put each step's output on a numbered layer, as in this demo.</div></div>
+</main>
+</body>
+</html>

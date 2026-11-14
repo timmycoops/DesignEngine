@@ -459,3 +459,22 @@ fn an_object_deleted_before_the_project_was_opened_is_found_by_its_name() {
     assert_eq!(made[..2].iter().map(|&t| revision(&s, t)).collect::<Vec<_>>(), [2, 2], "the other toes made again as revisions");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn an_input_renamed_since_is_not_found_by_its_old_name() {
+    // The base toe drawn by hand and offset, then numbering renames every toe "Strip 1" to "Strip 3": run again, the
+    // offset would find no "Base toe", so capture keeps the toe as picked, and the run goes through.
+    let mut s = Session::with_builtins();
+    let base = created(&s.run("string.create", json!({ "name": "Base toe", "layer": "toes", "points": [[E, N, 0.0], [E + 500.0, N, 0.0]] })).unwrap())[0];
+    let offsets = s.run("string.offset", json!({ "string": base, "distance": 60.0, "side": "left", "times": 2, "name": "Toe", "layer": "toes" })).unwrap();
+    let toes: Vec<ObjectId> = std::iter::once(base).chain(created(&offsets)).collect();
+    let numbered = s.run("string.number_across", json!({ "strings": toes, "from": [E + 250.0, N - 30.0, 0.0], "to": [E + 250.0, N + 200.0, 0.0], "start": 1.0 })).unwrap();
+    assert_ne!(s.project().object(base).unwrap().name, "Base toe", "numbering renames it");
+    let id = created(&s.capture_workflow("Toes", &[offsets.run, numbered.run]).unwrap())[0];
+    let w = workflow(&s, id);
+    assert_eq!(inputs_of(&w, 0)["string"].from, Source::Picked(vec![base]));
+    let record = s.run_workflow(id, 1).unwrap();
+    assert_eq!(record.status, WorkflowStatus::Finished, "{:?}", record.steps.iter().find_map(|r| r.refused.clone()));
+    // Made (1) and numbered (2), then made again (3) and numbered again (4).
+    assert_eq!(created(&offsets).iter().map(|&t| revision(&s, t)).collect::<Vec<_>>(), [4, 4]);
+}
