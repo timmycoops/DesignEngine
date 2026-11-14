@@ -128,6 +128,10 @@ def a_workflow_is_captured_and_run_again():
     assert s.undo() == record["run"] and [s.object(p)["revision"] for p in pieces] == [1, 1]
     paused = s.run_workflow(workflow, from_step=2)
     assert paused["from"] == 2 and paused["status"] == "finished"
+    # A layer shown or hidden: display state, not a run.
+    runs = len(s.log())
+    assert s.set_layer_visible("surfaces", False) and not next(l for l in s.layers() if l["name"] == "surfaces")["visible"]
+    assert not s.set_layer_visible("no such layer", False) and len(s.log()) == runs
 
 
 def main():
