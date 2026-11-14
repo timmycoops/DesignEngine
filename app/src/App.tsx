@@ -102,8 +102,8 @@ import { type Mode, StringLayer } from './viewport/strings';
 import { typing } from './viewport/camera';
 import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Viewport';
 import { Input } from '@/design-system/ui/input';
-import { type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
-import { ALL_PANELS_KEY, PANELS, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
+import { type AddingTo, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
+import { ALL_PANELS_KEY, PANELS, type PanelId, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
 
 interface Status {
   text: string;
@@ -434,10 +434,21 @@ export default function App() {
     },
     [workflowRun],
   );
-  const [addingTo, setAddingTo] = useState<{ id: string; name: string } | null>(null);
+  const [addingTo, setAddingTo] = useState<AddingTo | null>(null);
+  const [toolAsk, setToolAsk] = useState<{ panel: PanelId; mode?: string; n: number } | null>(null);
+  const openTool = useCallback((panel: PanelId, mode?: string) => {
+    if (dockRef.current) showPanel(dockRef.current, panel);
+    setToolAsk((was) => ({ panel, mode, n: (was?.n ?? 0) + 1 }));
+  }, []);
   const [workflowPick, setWorkflowPick] = useState<{ id: string | null; case: string }>({ id: null, case: 'Base' });
   const addStep = useCallback(
-    async (command: string, params: Record<string, unknown>) => (addingTo ? workflowRun(() => addWorkflowStep(addingTo.id, command, params)) : { error: 'Pick a workflow to add to first' }),
+    async (command: string, params: Record<string, unknown>) => {
+      if (!addingTo) return { error: 'Pick a workflow to add to first' };
+      const outcome = await workflowRun(() => addWorkflowStep(addingTo.id, command, params, undefined, addingTo.at));
+      // The next step added goes after this one, so steps added one after another stay in that order.
+      if (outcome.record && addingTo.at !== undefined) setAddingTo({ ...addingTo, at: addingTo.at + 1 });
+      return outcome;
+    },
     [addingTo, workflowRun],
   );
 
@@ -1069,6 +1080,8 @@ export default function App() {
       setContours: changeContours,
       rlShown,
       openPanel: (id) => dockRef.current && showPanel(dockRef.current, id),
+      openTool,
+      toolAsk,
       run,
       runRecord,
       seamViews,
@@ -1098,7 +1111,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
+    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';

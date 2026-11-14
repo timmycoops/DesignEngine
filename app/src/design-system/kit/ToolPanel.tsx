@@ -11,7 +11,8 @@ import { waitingOn } from '../../running';
  * The frame of every tool panel (UI plan, one way of working, item 2): what it does in a line at the top, its sections, and
  * at the foot what the last run did above the one button named for what it does. Ctrl+Enter anywhere in the panel presses
  * that button. While the Workflow panel is adding steps, a panel whose action says what it runs reads Add to workflow
- * instead, and adds its command and settings as the workflow's last step, running nothing (decision 0065).
+ * instead, and adds its command and settings as the workflow's last step, running nothing (decision 0065), or after the
+ * step a tool was dropped on in the workflow canvas (decision 0067).
  */
 export function ToolPanel({ title, summary, children, result, action: own, panel }: { title: string; summary: ReactNode; children: ReactNode; result?: RunReport; action?: ToolAction; panel?: string }) {
   const { addingTo, addStep } = useWorkspace();
@@ -22,8 +23,8 @@ export function ToolPanel({ title, summary, children, result, action: own, panel
           label: `Add to ${addingTo.name}`,
           icon: <ListPlus className="size-3.5" />,
           disabled: own.disabled,
-          title: `Adds ${step.command} with these settings as the last step of ${addingTo.name}, its objects found by rule; nothing runs`,
-          hint: 'Adds a step; nothing runs · Ctrl+Enter',
+          title: `Adds ${step.command} with these settings as ${addingTo.at === undefined ? 'the last step' : `step ${addingTo.at + 1}`} of ${addingTo.name}, its objects found by rule; nothing runs`,
+          hint: `Adds ${addingTo.at === undefined ? 'a step at the end' : `step ${addingTo.at + 1}`}; nothing runs · Ctrl+Enter`,
           run: () => addStep(step.command, step.params),
         }
       : own;
