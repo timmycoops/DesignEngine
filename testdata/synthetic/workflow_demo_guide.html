@@ -36,16 +36,17 @@
   <h2>1. Open it</h2>
   <div class="card">
     <p>Open <span class="path">testdata\synthetic\reserves\workflow demo\Workflow demo.zdp</span></p>
-    <p>Click <b>Workflow</b> on the toolbar. The panel lists the 19 steps. Each step shows what it takes, the note on why, and what it made last time <span class="tag ok">526 made</span>.</p>
+    <p>Click <b>Workflow</b> on the toolbar. The panel lists the 19 steps. Each step shows what it takes, the note on why, and what it made last time <span class="tag ok">533 made</span>.</p>
   </div>
 
   <h2>2. What's yours, what the workflow makes</h2>
   <div class="card">
-    <p><b>Yours (drawn by hand, not steps):</b> the base toe, the pit limit, Block line 0 and the two closing lines. Edit these and run again.</p>
+    <p><b>Yours (drawn by hand, not steps):</b> the base toe, the pit limit, the ramp strings, Block line 0 and the two closing lines. Edit these and run again.</p>
+    <p><b>The highwall and roads:</b> 65&deg; to the base of weathering, a 30 m berm there, 45&deg; to the topography. 50 m roads at 10 % start where the ramp strings cross the toes, 100 m inside the pit's west end, with the toe moved back behind each start for its entrance: road A climbs straight up both walls of strips 1 to 5; road B, on strip 6, the final highwall, climbs east to the berm, turns back on a switchback box, and climbs west to the topography. Move a ramp string and run again to move its roads.</p>
     <p><b>The geology (not steps):</b> the grids and the seam model. The workflow reads them.</p>
     <p><b>The workflow's:</b> everything else, each on a layer numbered in the order it's made:</p>
     <div class="layers">
-      <div class="layer on"><b>0</b>pit limit</div><div class="layer on"><b>1</b>toes</div><div class="layer"><b>2</b>faces</div>
+      <div class="layer on"><b>0</b>pit limit, ramp strings</div><div class="layer on"><b>1</b>toes</div><div class="layer"><b>2</b>faces</div>
       <div class="layer"><b>3</b>pit</div><div class="layer"><b>4</b>strips</div><div class="layer"><b>5</b>seam pieces</div>
       <div class="layer on"><b>6</b>block lines</div><div class="layer"><b>7</b>block polygons</div><div class="layer on"><b>8</b>blocks</div>
     </div>
@@ -55,8 +56,9 @@
   <h2>3. Try this</h2>
   <div class="card">
     <ol>
-      <li><b>Run.</b> Press <b>Run 18 steps</b>. It stops at step 14, the pause: "look at the strips". Tick <b>4 strips</b> to look, then press <b>Continue from step 15</b>. The same 526 blocks are made again in place, as new revisions of the same blocks. Ctrl+Z takes back each part.</li>
-      <li><b>Change the design.</b> Drag the west end of the base toe (Strip 1 on <b>1 toes</b>) 20 m north. Run, then Continue. The toes, faces, strips and blocks all follow (393 of the 526 blocks change), in under a second.</li>
+      <li><b>Run.</b> Press <b>Run 18 steps</b>. It stops at step 14, the pause: "look at the strips". Tick <b>4 strips</b> to look, then press <b>Continue from step 15</b>. The same 533 blocks are made again in place, as new revisions of the same blocks. Ctrl+Z takes back each part.</li>
+      <li><b>Change the design.</b> Drag the west end of the base toe (Strip 1 on <b>1 toes</b>) 20 m south. Run, then Continue. The toes, faces, roads, strips and blocks all follow (438 of the 533 blocks change), in under a second.</li>
+      <li><b>Move a road.</b> Drag Ramp A's string 30 m east (both ends), then Run and Continue: strips 1 to 5's roads start 30 m further east, and 284 blocks change.</li>
       <li><b>See a check stop it.</b> Drag Block line 0 30 m east, then press &#9654; on step 15 to run from there. Step 18 is refused <span class="tag bad">refused</span>: the polygons no longer cover the pit's west edge, and the cut never runs. Ctrl+Z to put the line back.</li>
       <li><b>Cases.</b> Pick <b>50m</b> under Cases: the same steps with the block lines 50 m apart (the settings grid shows its two changes in blue: distance 50, times 30). Run it, or <b>Run all 2 cases</b>: Base's blocks on <b>8 blocks</b>, the 50 m blocks on <b>8 blocks 50m</b>, each tagged with its case, the same total either way. Type a new case's name and Add, then change any setting in its column.</li>
       <li><b>Make your own.</b> Work a pit by hand. In the Run log, tick the first run, Shift-tick the last, name it, and press <b>Capture as a workflow</b>.</li>
