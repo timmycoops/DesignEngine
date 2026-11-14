@@ -79,6 +79,11 @@ line, closing lines) stays out of the workflow as its inputs, each step's output
 it's made, every step has a note, a pause stops after the strips, and it's saved with only the inputs and the blocks on
 show (`set_layer_visible` in Python). `workflow_demo_guide.html` is a one-page guide to it.
 
+Seeing what a step did (Tim's options A and B, 14 November): a click on a step selects what it last made and zooms to
+it; its eye shows only that, every other layer off until Show all again; and Tidy after a run (on by default) leaves the
+run's inputs and its last step's result on screen, hiding the layers only the steps in between made, and leaving alone
+any layer that holds something drawn by hand. Display only: nothing is undone or saved as a run.
+
 ## Not here
 
 Cases and the settings grid (stage 2), the HTML report (stage 3), templates across projects, grouping and utility steps.

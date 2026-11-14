@@ -964,6 +964,20 @@ export default function App() {
     [attempt, show],
   );
 
+  const setLayersShown = useCallback(
+    async (on: string[], off: string[]) => {
+      let last: ProjectSummary | null = null;
+      try {
+        for (const layer of on) last = await setLayerVisible(layer, true);
+        for (const layer of off) last = await setLayerVisible(layer, false);
+      } catch (e) {
+        setStatus({ text: String(e), error: true });
+      }
+      if (last) await show(last);
+    },
+    [show],
+  );
+
   const setObjectsShown = useCallback(
     (objects: string[], visible: boolean) => void attempt(async () => show(await setObjectsVisible(objects, visible))),
     [attempt, show],
@@ -1024,6 +1038,7 @@ export default function App() {
       zoomTo,
       setActiveLayer,
       setLayerVisible: setVisible,
+      setLayersVisible: setLayersShown,
       setObjectsVisible: setObjectsShown,
       setLooks: changeLooks,
       setLayerOpacity: changeLayerOpacity,
@@ -1056,7 +1071,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, captureWorkflow, addingTo, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
+    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, captureWorkflow, addingTo, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';
