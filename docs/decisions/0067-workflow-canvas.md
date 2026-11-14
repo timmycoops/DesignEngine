@@ -33,9 +33,20 @@ graph too, Spry-style, and wants the same canvas.
    read from it, keeping the kind, the filter and whether it takes many. A wire from a step after it is refused, as the
    engine refuses a rule reading a later step; a wire can't be deleted, since every input needs a rule.
 
+7. **Tools dragged in add steps** (added 14 November 2026, Tim: "Yes, start it"). A list at the canvas's left holds
+   every tool whose panel can add a step (0065): Builder's Build a step; Cut solids' Between surfaces, Into strips, By a
+   surface, By seams and By polygons; Reserves' Interrogate. A tool dragged onto a step opens its panel set to it, its
+   button reading Add to the workflow and the step going in after the step it was dropped on; what that step last made
+   is picked, so a panel taking what's picked starts from it, and the engine finds it again as "what step N made", as
+   Add to workflow always has. Dropped on the empty canvas, or clicked, it goes after the step open beside the canvas,
+   or at the end. Each step added after it goes after the last, so steps added one after another keep their order. The
+   panel sets the step up: a tool with nothing set has no step to add, and every input needs a rule. Tools whose panels
+   can't add a step yet (offsets, face design, strip numbers, block lines) are captured from the Run log; each joins the
+   list as its panel gains Add to workflow.
+
 ## Not here
 
-Dragging tools in from a list to add steps (next, as its own PR); groups that fold away; positions saved by hand;
+Steps from tools whose panels can't add one yet; groups that fold away; positions saved by hand;
 branching (if/then nodes), which would be an engine change; the dataflow's table nodes (stage 5).
 
 ## Done when
@@ -51,4 +62,11 @@ refused. Known-answer tests for the layout and the rewiring.
 `WorkflowCanvas.tsx` (the dock tab "Workflow canvas", opened from the Workflow panel's Canvas button, below the viewport),
 and `workflowParts.tsx` (what the panel and the canvas share: the workflow and case picked, a step's settings, its badge).
 Checked by hand on the demo workflow (19 steps, 7 input nodes, the pause between steps 13 and 15) in a page outside the
-app with the bridge stood in; `zd-app --bench --workflow` doesn't drive the canvas yet.
+app with the bridge stood in.
+
+The tools (7): `app/src/panels/workflowTools.ts` (the list, where a dropped step goes, what's picked, with known-answer
+tests in `app/tests/workflowTools.test.mjs`); the canvas's tool list and drop; `openTool` in the workspace, which opens a
+panel and asks it for one of what it does; `add_workflow_step`'s place (`at`) passed from the app. Checked by hand in the
+same page (a drop on step 15 of the demo adds as step 16 with step 15's 36 pieces picked; a mouse drag onto the empty
+canvas adds at the end), and `zd-app --bench --workflow` now clicks step 1 and By a surface on the canvas, adds the step
+from the Cut solids panel and checks it went in as step 2, its solids found as what step 1 makes.

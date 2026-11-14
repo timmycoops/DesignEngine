@@ -3,6 +3,13 @@ import type { Colouring, Contours, LogEntry, ProjectSummary, RunRecord, Vec3, Wo
 import type { RlShown, SeamShown } from '@/viewport/sceneSync';
 import type { PanelId } from './Workspace';
 
+/** The workflow steps are being added to, and where the next goes (from 0; the end when left out). */
+export interface AddingTo {
+  id: string;
+  name: string;
+  at?: number;
+}
+
 /** What every panel reads, and the actions they share. App owns the state. */
 export interface Workspace {
   summary: ProjectSummary | null;
@@ -44,6 +51,10 @@ export interface Workspace {
   rlShown: RlShown;
   /** Brings a tool panel to the front, opening it where it belongs if it's closed. */
   openPanel: (id: PanelId) => void;
+  /** The same, and asks the panel to show one of what it does (Cut solids' By polygons, say), as a tool dropped on the canvas does. */
+  openTool: (id: PanelId, mode?: string) => void;
+  /** The last ask to a panel to show one of what it does; `n` counts asks, so asking the same again shows it again. */
+  toolAsk: { panel: PanelId; mode?: string; n: number } | null;
   /** Runs an engine command; reports the outcome on the status line. False if it failed. */
   run: (name: string, params: Record<string, unknown>) => Promise<boolean>;
   /** The same, handing back the run's record, or why it failed, for a panel to show. */
@@ -59,10 +70,13 @@ export interface Workspace {
   /** The workflow and case the Workflow panel and the canvas show (decision 0067); a null id is the last one made. */
   workflowPick: { id: string | null; case: string };
   setWorkflowPick: (pick: { id: string | null; case: string }) => void;
-  /** The workflow the tool panels add steps to, their button reading Add to workflow; null when not adding. */
-  addingTo: { id: string; name: string } | null;
-  setAddingTo: (workflow: { id: string; name: string } | null) => void;
-  /** Adds a tool panel's command and settings to the workflow being added to, as its last step. */
+  /**
+   * The workflow the tool panels add steps to, their button reading Add to workflow; null when not adding. `at` is where
+   * the next step goes (from 0), after the step a tool was dropped on in the canvas; the end when left out.
+   */
+  addingTo: AddingTo | null;
+  setAddingTo: (workflow: AddingTo | null) => void;
+  /** Adds a tool panel's command and settings to the workflow being added to, at `at` or as its last step; the next goes after it. */
   addStep: (command: string, params: Record<string, unknown>) => Promise<{ record?: RunRecord; error?: string }>;
   /** Each seam model the viewport shows, on the horizon it shows coloured by thickness. */
   seamViews: SeamShown[];

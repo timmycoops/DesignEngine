@@ -1,6 +1,6 @@
 import { Background, Controls, type Edge, Handle, MarkerType, type Node, type NodeProps, Position, ReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ListOrdered, Pause, Scan } from 'lucide-react';
+import { ListOrdered, PanelLeftClose, PanelLeftOpen, Pause, Scan } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { WorkflowStep } from '@/bridge';
 import { Field, IconButton, Select, StatusBadge } from '@/design-system/kit';
@@ -8,6 +8,7 @@ import { useWorkspace } from '@/workspace/context';
 import { BASE, caseValue, changesOfCase, ruleWords, type SettingRow, settingsOfStep, stepsOfCase, withSetting } from './workflow';
 import { type GraphNode, rewire, workflowGraph } from './workflowGraph';
 import { LastBadge, plural, StepSettings, usePickedWorkflow } from './workflowParts';
+import { CANVAS_TOOLS, type CanvasTool, dropWords, madeByStep, placeOfDrop, toolByKey } from './workflowTools';
 
 /**
  * The workflow canvas (decision 0067): the workflow picked in the Workflow panel drawn as nodes and wires. A node a step,
@@ -18,7 +19,14 @@ import { LastBadge, plural, StepSettings, usePickedWorkflow } from './workflowPa
  * Drawing a wire from a step's right edge, or an input node's, onto a step's input changes that input's rule to read
  * from it; a wire from a later step is refused in words. The workflow and case are the Workflow panel's: picking either
  * here picks it there.
+ *
+ * Tools at the left add steps: one dragged onto a step opens its panel set to it, its button reading Add to the workflow,
+ * the step going in after the one it was dropped on, with what that step made picked; dropped on the empty canvas, or
+ * clicked, it goes after the step open beside the canvas, or at the end.
  */
+
+/** The drag's own type, so nothing else dropped on the canvas is taken for a tool. */
+const TOOL_DRAG = 'application/x-zd-tool';
 
 const COLUMN = 290;
 const GAP = 28;
@@ -35,6 +43,43 @@ interface InputData extends Record<string, unknown> {
 }
 
 const kindWords: Record<string, string> = { layer: 'layer', named: 'named', picked: 'as picked', gone: 'gone' };
+
+/** The tools, grouped by their panel, each dragged onto the canvas or clicked to add its step. */
+function ToolList({ onPick, onClose }: { onPick: (tool: CanvasTool) => void; onClose: () => void }) {
+  const groups = [...new Set(CANVAS_TOOLS.map((t) => t.group))];
+  return (
+    <div className="flex w-44 shrink-0 flex-col gap-1.5 overflow-y-auto border-r border-border p-2" aria-label="Tools to add">
+      <div className="flex items-center gap-1">
+        <span className="flex-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Add a step</span>
+        <IconButton label="Hide the tools" onClick={onClose}>
+          <PanelLeftClose />
+        </IconButton>
+      </div>
+      {groups.map((group) => (
+        <div key={group} className="flex flex-col gap-0.5">
+          <div className="text-muted-foreground">{group}</div>
+          {CANVAS_TOOLS.filter((t) => t.group === group).map((tool) => (
+            <button
+              key={tool.key}
+              type="button"
+              draggable
+              className="cursor-grab rounded-md border border-border bg-card px-2 py-1 text-left hover:border-primary active:cursor-grabbing"
+              title={`${tool.command}, on ${tool.takes}: drag onto a step to add it after that step, or click to add it after the step open, or at the end`}
+              aria-label={`Add ${group}: ${tool.label}`}
+              onDragStart={(e) => {
+                e.dataTransfer.setData(TOOL_DRAG, tool.key);
+                e.dataTransfer.effectAllowed = 'copy';
+              }}
+              onClick={() => onPick(tool)}
+            >
+              {tool.label}
+            </button>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function StepNode({ data }: NodeProps<Node<StepData>>) {
   const { node, changed, focused } = data;
@@ -94,7 +139,8 @@ function InputNode({ data }: NodeProps<Node<InputData>>) {
 const nodeTypes = { step: StepNode, pause: PauseNode, input: InputNode };
 
 export function WorkflowCanvas() {
-  const { summary, setSelection, zoomTo, openPanel } = useWorkspace();
+  const { summary, setSelection, zoomTo, openPanel, openTool, setAddingTo } = useWorkspace();
+  const [toolsOpen, setToolsOpen] = useState(true);
   const { workflows, chosen, workflow, revision, caseName, pick, pickCase, save } = usePickedWorkflow();
   const [focus, setFocus] = useState<number | null>(null);
   const [said, setSaid] = useState<{ error?: string; text?: string }>({});
@@ -166,12 +212,38 @@ export function WorkflowCanvas() {
     zoomTo(made);
   };
 
+  /** A tool dropped after a step (or at the end): its panel opened set to it, adding there, what that step made picked. */
+  const addTool = (tool: CanvasTool, onStep: number | null) => {
+    if (!workflow || !chosen) return;
+    const at = placeOfDrop(workflow, onStep);
+    const after = at > 0 ? stepsOfCase(workflow, caseName)[at - 1] : undefined;
+    const picked = madeByStep(after, (id) => summary?.objects.some((o) => o.id === id) ?? false);
+    if (picked.length > 0) setSelection(picked);
+    setAddingTo({ id: chosen.id, name: chosen.name, at });
+    openTool(tool.panel, tool.mode);
+    setSaid({ text: dropWords(workflow, chosen.name, tool, at, picked.length) });
+  };
+
+  const dropped = (e: React.DragEvent) => {
+    const tool = toolByKey(e.dataTransfer.getData(TOOL_DRAG));
+    if (!tool) return;
+    e.preventDefault();
+    const id = (e.target as Element).closest?.('.react-flow__node')?.getAttribute('data-id') ?? '';
+    addTool(tool, id.startsWith('step:') ? Number(id.slice(5)) : focus);
+  };
+
   if (!chosen) return <div className="p-3 text-xs text-muted-foreground">No workflow yet: capture runs from the Run log, then the canvas draws it.</div>;
 
   return (
     <div className="flex h-full min-h-0 text-xs" data-tool-panel="canvas">
+      {toolsOpen && <ToolList onPick={(tool) => addTool(tool, focus)} onClose={() => setToolsOpen(false)} />}
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1">
+          {!toolsOpen && (
+            <IconButton label="Show the tools, to add a step" onClick={() => setToolsOpen(true)}>
+              <PanelLeftOpen />
+            </IconButton>
+          )}
           <Field label="Workflow">
             <Select value={chosen.id} aria-label="Canvas workflow" onChange={(e) => pick(e.target.value)}>
               {workflows.map((o) => (
@@ -191,10 +263,18 @@ export function WorkflowCanvas() {
             </Select>
           </Field>
           <span className="min-w-0 flex-1 truncate text-muted-foreground">
-          {said.error ? <span className="text-destructive">{said.error}</span> : said.text ? <span className="text-ok">{said.text}</span> : 'Drag from a step’s right edge onto a later step’s input to wire it; click a step for its settings'}
+          {said.error ? <span className="text-destructive">{said.error}</span> : said.text ? <span className="text-ok">{said.text}</span> : 'Drag a tool onto a step to add one after it; drag from a step’s right edge onto a later step’s input to wire it; click a step for its settings'}
           </span>
         </div>
-        <div className="relative min-h-0 flex-1">
+        <div
+          className="relative min-h-0 flex-1"
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes(TOOL_DRAG)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+          }}
+          onDrop={dropped}
+        >
         <ReactFlow
           key={chosen.id}
           nodes={nodes}
