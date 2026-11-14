@@ -21,7 +21,7 @@ mod strips;
 mod surface;
 mod workflow;
 
-pub use blocks::{CutByPolygons, CutByPolygonsParams, CutBySeams, CutBySeamsParams, PolygonsFromLines, PolygonsFromLinesParams, check_cut_by_polygons, check_cut_by_seams};
+pub use blocks::{CutByPolygons, CutByPolygonsParams, CutBySeams, CutBySeamsParams, PolygonsFromLines, PolygonsFromLinesParams, check_cut_by_polygons, check_cut_by_seams, horizon_order};
 pub use compare::{CompareSolids, CompareSolidsParams};
 pub use build::{BuildOp, BuildStep, BuildStepParams, Rebuild, RebuildParams};
 pub use deswik::{ImportDeswik, ImportDeswikParams, MeshesAs};
