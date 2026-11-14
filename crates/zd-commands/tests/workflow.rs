@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use serde_json::json;
 use zd_commands::workflow::resolve;
-use zd_commands::{Code, RunRecord, Session, Severity};
+use zd_commands::{Code, LogEntry, RunRecord, Session, Severity, StepOutcome, WorkflowStatus};
 use zd_core::{AttrValue, Body, ChangeKind, InputRule, ObjectId, ObjectKind, Source, StepAction, Workflow};
 
 const E: f64 = 650_000.0;
@@ -219,4 +219,243 @@ fn a_saved_workflow_is_revised_and_undone_as_one_object() {
     assert_eq!(workflow(&s, id).steps[1].note, "cut at the base of weathering");
     s.undo();
     assert_eq!(workflow(&s, id).steps[1].note, "");
+}
+
+// Running (workstream 2).
+
+fn revision(s: &Session, id: ObjectId) -> u32 {
+    s.project().object(id).unwrap().revision
+}
+
+fn save(s: &mut Session, id: ObjectId, w: &Workflow) {
+    let name = s.project().object(id).unwrap().name.clone();
+    s.run("workflow.save", json!({ "workflow": id, "name": name, "content": w })).unwrap();
+}
+
+/// The box pit captured: the session, the workflow, the pit and the two pieces.
+fn captured_box_pit() -> (Session, ObjectId, ObjectId, Vec<ObjectId>) {
+    let (mut s, solid, cut) = box_pit();
+    let id = created(&s.capture_workflow("Box pit", &[solid.run, cut.run]).unwrap())[0];
+    (s, id, created(&solid)[0], created(&cut))
+}
+
+#[test]
+fn a_rerun_makes_the_same_objects_again_as_their_next_revisions_and_undoes_in_one() {
+    let (mut s, id, pit, pieces) = captured_box_pit();
+    let volumes: Vec<f64> = pieces.iter().map(|&p| volume(&s, p)).collect();
+    let started = Instant::now();
+    let record = s.run_workflow(id, 1).unwrap();
+    println!("box pit run again in {:.1} ms", started.elapsed().as_secs_f64() * 1e3);
+    assert_eq!(record.status, WorkflowStatus::Finished);
+    assert_eq!(record.steps.iter().map(|r| r.outcome).collect::<Vec<_>>(), [StepOutcome::Ran, StepOutcome::Ran]);
+    // The same objects, at their next revisions, with the same volumes (to 1e-6 m³): 240,000 and 360,000 m³.
+    assert_eq!((revision(&s, pit), revision(&s, pieces[0]), revision(&s, pieces[1])), (2, 2, 2));
+    for (&p, v) in pieces.iter().zip(&volumes) {
+        assert!((volume(&s, p) - v).abs() < 1e-6, "{} against {v}", volume(&s, p));
+    }
+    let mut sorted = volumes.clone();
+    sorted.sort_by(f64::total_cmp);
+    assert!((sorted[0] - 240_000.0).abs() < 1e-6 && (sorted[1] - 360_000.0).abs() < 1e-6, "{sorted:?}");
+    assert_eq!(s.project().objects().filter(|o| matches!(o.body, Body::Solid(_))).count(), 3, "nothing new made");
+    // Each step's last run is this one's, and the log holds the workflow run after its steps.
+    let w = workflow(&s, id);
+    assert!(w.steps.iter().all(|step| step.last.as_ref().unwrap().workflow_run == Some(record.run)));
+    assert_eq!(w.steps[1].last.as_ref().unwrap().made, pieces);
+    assert!(matches!(s.log().last(), Some(LogEntry::Workflow(r)) if r.run == record.run));
+    // One undo takes the whole run back, the workflow's last runs with it; redo puts it back.
+    assert_eq!(s.undo(), Some(record.run));
+    assert_eq!((revision(&s, pit), revision(&s, pieces[0]), revision(&s, pieces[1])), (1, 1, 1));
+    assert_eq!(workflow(&s, id).steps[0].last.as_ref().unwrap().workflow_run, None);
+    assert_eq!(s.redo(), Some(record.run));
+    assert_eq!(revision(&s, pieces[1]), 2);
+}
+
+#[test]
+fn a_rerun_picks_up_a_revised_outline() {
+    let (mut s, id, pit, pieces) = captured_box_pit();
+    // Not part of the workflow: the outline's south-east corner moved 10 m east, so the pit is a trapezoid 100 m and
+    // 110 m along its parallel sides and 60 m across, 6,300 m² by 100 m.
+    let outline = s.project().objects().find(|o| o.name == "Outline").unwrap().id;
+    s.run("string.move_vertex", json!({ "string": outline, "index": 1, "to": [E + 110.0, N, 0.0] })).unwrap();
+    let record = s.run_workflow(id, 1).unwrap();
+    assert_eq!(record.status, WorkflowStatus::Finished);
+    // Volume tolerance 1e-6 m³.
+    assert!((volume(&s, pit) - 630_000.0).abs() < 1e-6, "pit {}", volume(&s, pit));
+    let mut v: Vec<f64> = pieces.iter().map(|&p| volume(&s, p)).collect();
+    v.sort_by(f64::total_cmp);
+    assert!((v[0] - 252_000.0).abs() < 1e-6 && (v[1] - 378_000.0).abs() < 1e-6, "{v:?}");
+}
+
+#[test]
+fn run_from_a_step_keeps_what_the_steps_before_it_made() {
+    let (mut s, id, pit, pieces) = captured_box_pit();
+    let record = s.run_workflow(id, 2).unwrap();
+    assert_eq!((record.from, record.steps.len(), record.status), (2, 1, WorkflowStatus::Finished));
+    assert_eq!((revision(&s, pit), revision(&s, pieces[0])), (1, 2), "the pit as it was, its pieces cut again");
+    assert!(s.run_workflow(id, 3).unwrap_err().to_string().contains("can't run from step 3"));
+    assert!(s.run_workflow(id, 0).is_err());
+}
+
+#[test]
+fn a_pause_stops_the_run_and_continue_runs_on_from_the_next_step() {
+    let (mut s, id, pit, pieces) = captured_box_pit();
+    let mut w = workflow(&s, id);
+    let pause = zd_core::WorkflowStep { id: w.next_id(), note: "delete what's under 50 BCM".into(), on: true, action: StepAction::Pause, last: None };
+    w.steps.insert(1, pause);
+    save(&mut s, id, &w);
+    let before = s.project().undo_steps();
+    let paused = s.run_workflow(id, 1).unwrap();
+    assert_eq!(paused.status, WorkflowStatus::Paused { at: 2 });
+    assert_eq!((revision(&s, pit), revision(&s, pieces[0])), (2, 1), "stopped before the cut");
+    assert_eq!(s.project().undo_steps(), before + 1, "the part before the pause is one undo");
+    // Hand work at the pause is its own run; Continue runs from the step after the pause, another undo.
+    s.run("object.rename", json!({ "object": pit, "name": "Pit, looked at" })).unwrap();
+    let rest = s.run_workflow(id, 3).unwrap();
+    assert_eq!((rest.status, revision(&s, pieces[0])), (WorkflowStatus::Finished, 2));
+    assert_eq!(s.project().undo_steps(), before + 3);
+    // Run from the pause itself passes over it.
+    let again = s.run_workflow(id, 2).unwrap();
+    assert_eq!((again.steps[0].outcome, again.status), (StepOutcome::Off, WorkflowStatus::Finished));
+    // A step switched off is passed over.
+    let mut off = workflow(&s, id);
+    off.steps[0].on = false;
+    off.steps[1].on = false;
+    save(&mut s, id, &off);
+    let record = s.run_workflow(id, 1).unwrap();
+    assert_eq!(record.steps.iter().map(|r| r.outcome).collect::<Vec<_>>(), [StepOutcome::Off, StepOutcome::Off, StepOutcome::Ran]);
+    assert_eq!(revision(&s, pit), 3, "renamed by hand, then left alone");
+}
+
+fn workflow_with_rl(s: &Session, id: ObjectId, rl: Option<f64>) -> Workflow {
+    let mut w = workflow(s, id);
+    let StepAction::Command { settings, .. } = &mut w.steps[1].action else { panic!() };
+    settings["rl"] = json!(rl);
+    w
+}
+
+#[test]
+fn the_first_refusal_stops_the_run_and_says_why() {
+    let (mut s, id, pit, pieces) = captured_box_pit();
+    // An input its rule can't find.
+    let outline = s.project().objects().find(|o| o.name == "Outline").unwrap().id;
+    s.run("object.delete", json!({ "object": outline })).unwrap();
+    let record = s.run_workflow(id, 1).unwrap();
+    assert_eq!(record.status, WorkflowStatus::Refused { at: 1 });
+    assert_eq!(record.steps.len(), 1);
+    let why = record.steps[0].refused.as_deref().unwrap();
+    assert!(why.contains("'string'") && why.contains("finds nothing") && why.contains("layer 'outline'"), "{why}");
+    assert_eq!((revision(&s, pit), revision(&s, pieces[0])), (1, 1), "nothing run");
+    assert!(workflow(&s, id).steps[0].last.as_ref().unwrap().refused);
+    s.undo();
+    s.undo();
+    // The command refusing: a cut with neither a surface nor an RL. The step before it stays applied.
+    let w = workflow_with_rl(&s, id, None);
+    save(&mut s, id, &w);
+    let record = s.run_workflow(id, 1).unwrap();
+    assert_eq!(record.status, WorkflowStatus::Refused { at: 2 });
+    assert!(record.steps[1].run.is_some() && record.steps[1].refused.is_some());
+    assert_eq!((revision(&s, pit), revision(&s, pieces[0])), (2, 1));
+    // Once fixed, the run after makes again what the refused step made the time before.
+    let w = workflow_with_rl(&s, id, Some(40.0));
+    save(&mut s, id, &w);
+    let fixed = s.run_workflow(id, 2).unwrap();
+    assert_eq!((fixed.status, revision(&s, pieces[0])), (WorkflowStatus::Finished, 2));
+}
+
+#[test]
+fn a_cut_is_checked_before_it_runs_and_refused_with_what_the_check_found() {
+    let (mut s, _, pit, _) = captured_box_pit();
+    let polygon = |s: &mut Session, name: &str, x0: f64, x1: f64| {
+        let points = [[x0, N - 10.0, 0.0], [x1, N - 10.0, 0.0], [x1, N + 70.0, 0.0], [x0, N + 70.0, 0.0]];
+        created(&s.run("string.create", json!({ "name": name, "layer": "polygons", "points": points, "closed": true })).unwrap())[0]
+    };
+    // One polygon over the west half only: the check finds the east half outside it.
+    polygon(&mut s, "B1", E - 10.0, E + 50.0);
+    let rule = |from: Source, kind| InputRule { from, kind, filter: Default::default(), many: true };
+    let mut inputs = std::collections::BTreeMap::new();
+    inputs.insert("solids".to_string(), rule(Source::Named("Pit".into()), Some(ObjectKind::Solid)));
+    inputs.insert("polygons".to_string(), rule(Source::Layer("polygons".into()), Some(ObjectKind::String)));
+    let w = Workflow { steps: vec![zd_core::WorkflowStep { id: 1, note: String::new(), on: true, action: StepAction::Command { command: "solid.cut_by_polygons".into(), settings: json!({ "layer": "blocks" }), inputs }, last: None }] };
+    s.run("object.rename", json!({ "object": pit, "name": "Pit" })).unwrap();
+    let id = created(&s.run("workflow.save", json!({ "name": "Blocks", "content": w })).unwrap())[0];
+    let runs = s.log().iter().filter(|e| matches!(e, LogEntry::Run(_))).count();
+    let record = s.run_workflow(id, 1).unwrap();
+    assert_eq!(record.status, WorkflowStatus::Refused { at: 1 });
+    let step = &record.steps[0];
+    assert!(step.checked.iter().any(|n| n.code == Some(Code::SolidOutsidePolygons)), "{:?}", step.checked);
+    assert!(step.refused.as_deref().unwrap().contains("check before the cut"), "{:?}", step.refused);
+    assert_eq!(step.run, None, "the cut never ran");
+    assert_eq!(s.log().iter().filter(|e| matches!(e, LogEntry::Run(_))).count(), runs + 1, "only the workflow's own save");
+    // The east half added: two blocks of 300,000 m³ (to 1e-6 m³), named from their polygons.
+    polygon(&mut s, "B2", E + 50.0, E + 110.0);
+    let record = s.run_workflow(id, 1).unwrap();
+    assert_eq!(record.status, WorkflowStatus::Finished, "{:?}", record.steps[0].refused);
+    let blocks = workflow(&s, id).steps[0].last.as_ref().unwrap().made.clone();
+    assert_eq!(blocks.len(), 2);
+    for b in &blocks {
+        assert!((volume(&s, *b) - 300_000.0).abs() < 1e-6, "{}", volume(&s, *b));
+    }
+}
+
+#[test]
+fn a_workflow_run_in_the_log_saves_and_opens() {
+    let (mut s, id, _, _) = captured_box_pit();
+    let record = s.run_workflow(id, 1).unwrap();
+    let dir = std::env::temp_dir().join(format!("zd-workflow-{}", ObjectId::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Run.zdp");
+    s.save(&path).unwrap();
+    let opened = Session::open(&path).unwrap();
+    assert!(opened.log().iter().any(|e| matches!(e, LogEntry::Workflow(r) if *r == record)));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_step_added_from_a_tool_takes_an_earlier_steps_output_by_rule() {
+    let (mut s, id, pit, pieces) = captured_box_pit();
+    // As the Cut solids panel would run it: the pieces cut again at RL 70 onto their own layer.
+    let params = json!({ "solids": pieces, "rl": 70.0, "keep": "both", "layer": "cut again" });
+    let (at, step) = s.step_from(id, None, "solid.cut_by_surface", &params, "the upper bench").unwrap();
+    assert_eq!((at, step.id, step.note.as_str()), (2, 3, "the upper bench"));
+    let StepAction::Command { inputs, settings, .. } = &step.action else { panic!() };
+    assert_eq!(inputs["solids"].from, Source::Step(2));
+    assert_eq!(settings["rl"], json!(70.0));
+    assert!(s.step_from(id, None, "solid.no_such_thing", &params, "").is_err());
+    s.add_workflow_step(id, None, "solid.cut_by_surface", &params, "the upper bench").unwrap();
+    let record = s.run_workflow(id, 1).unwrap();
+    assert_eq!(record.status, WorkflowStatus::Finished);
+    // 240,000 below RL 40 and 360,000 above, the upper cut again at RL 70 into 180,000 and 180,000 (to 1e-6 m³); the
+    // lower piece lies wholly below RL 70, so it comes through whole.
+    let made = workflow(&s, id).steps[2].last.as_ref().unwrap().made.clone();
+    let total: f64 = made.iter().map(|&b| volume(&s, b)).sum();
+    assert!((total - 600_000.0).abs() < 1e-6, "{total}");
+    assert!(made.iter().any(|&b| (volume(&s, b) - 180_000.0).abs() < 1e-6));
+    assert_eq!(revision(&s, pit), 2);
+}
+
+#[test]
+fn an_object_deleted_before_the_project_was_opened_is_found_by_its_name() {
+    let mut s = Session::with_builtins();
+    let base = created(&s.run("string.create", json!({ "name": "Base toe", "layer": "toes", "points": [[E, N, 0.0], [E + 500.0, N, 0.0]] })).unwrap())[0];
+    let offsets = s.run("string.offset", json!({ "string": base, "distance": 60.0, "side": "left", "times": 3, "name": "Toe", "layer": "toes" })).unwrap();
+    let made = created(&offsets);
+    assert_eq!(made.len(), 3);
+    let last = *made.last().unwrap();
+    let name = s.project().object(last).unwrap().name.clone();
+    let deleted = s.run("object.delete", json!({ "object": last })).unwrap();
+    let dir = std::env::temp_dir().join(format!("zd-workflow-{}", ObjectId::new()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Toes.zdp");
+    s.save(&path).unwrap();
+    // Opened again, the deleted toe's revisions are gone; the log still names it.
+    let mut s = Session::open(&path).unwrap();
+    let id = created(&s.capture_workflow("Toes", &[offsets.run, deleted.run]).unwrap())[0];
+    let w = workflow(&s, id);
+    assert_eq!(inputs_of(&w, 1)["object"].from, Source::Named(name.clone()));
+    // Run again: the offset makes the last toe anew (the one it made is deleted), and the delete finds it by name.
+    let record = s.run_workflow(id, 1).unwrap();
+    assert_eq!(record.status, WorkflowStatus::Finished, "{:?}", record.steps.last().unwrap().refused);
+    assert!(s.project().objects().all(|o| o.name != name));
+    assert_eq!(made[..2].iter().map(|&t| revision(&s, t)).collect::<Vec<_>>(), [2, 2], "the other toes made again as revisions");
+    std::fs::remove_dir_all(&dir).ok();
 }

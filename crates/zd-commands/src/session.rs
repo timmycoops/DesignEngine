@@ -101,6 +101,8 @@ pub enum LogEntry {
     Redo { run: RunId, at_unix_ms: u64 },
     Saved { path: String, at_unix_ms: u64 },
     Opened { path: String, at_unix_ms: u64 },
+    /// A workflow run (decision 0065): its steps' own runs are logged before it, each as a run.
+    Workflow(crate::WorkflowRecord),
 }
 
 /// A project, the commands that can act on it, and the log of what they did.
@@ -164,6 +166,15 @@ impl RunJob {
 
     pub fn command(&self) -> &str {
         &self.record.command
+    }
+
+    /// The project as the run takes it, to check it before the run.
+    pub(crate) fn project(&self) -> &Project {
+        &self.project
+    }
+
+    pub(crate) fn params(&self) -> &Value {
+        &self.record.params
     }
 
     /// Runs the command on the project as it was taken. A panic anywhere in it, the geometry included, refuses the run:
@@ -440,14 +451,22 @@ impl Session {
     /// Applies what a run made, if it wasn't cancelled and the project hasn't changed since it was taken, and logs the
     /// run either way.
     pub fn end_run(&mut self, done: RunDone) -> Result<RunRecord, CommandError> {
+        self.end_run_with(done, |_, _, _| {})
+    }
+
+    /// [`Session::end_run`], with what the run asks for reworked against the project before it's applied: a workflow
+    /// step makes again what it made last time as the next revisions of the same objects (decision 0065).
+    pub(crate) fn end_run_with(&mut self, done: RunDone, rework: impl FnOnce(&Project, &mut Vec<Change>, &mut Vec<Note>)) -> Result<RunRecord, CommandError> {
         let RunDone { mut record, made, generation, control, clock } = done;
-        let result = made.and_then(|made| {
+        let result = made.and_then(|mut made| {
             if control.is_cancelled() {
                 return Err(CommandError::Cancelled);
             }
             if self.project.generation() != generation {
                 return Err(CommandError::Changed);
             }
+            rework(&self.project, &mut made, &mut record.notes);
+            record.messages = record.notes.iter().map(|n| n.text.clone()).collect();
             self.apply(record.run, made, &mut record)
         });
         record.duration_ms = clock.elapsed().as_secs_f64() * 1e3;
@@ -471,6 +490,21 @@ impl Session {
         record.outputs = applied.changes;
         record.layers_created = applied.layers_created.into_iter().map(|l| l.name).collect();
         Ok(())
+    }
+
+    /// How many runs undo can take off now.
+    pub(crate) fn undo_steps(&self) -> usize {
+        self.project.undo_steps()
+    }
+
+    /// Makes the runs applied since undo could take off `since` of them one undo step, under `run`.
+    pub(crate) fn join_undo(&mut self, since: usize, run: RunId) -> usize {
+        Arc::make_mut(&mut self.project).join_since(since, run)
+    }
+
+    /// Logs a workflow run once its steps are done.
+    pub(crate) fn log_workflow(&mut self, record: crate::WorkflowRecord) {
+        self.log.push(LogEntry::Workflow(record));
     }
 
     /// Takes the last run off the project; returns its id.

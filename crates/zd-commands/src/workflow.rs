@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::{Map, Value};
-use zd_core::{AttrValue, ChangeKind, InputRule, LastRun, Object, ObjectId, ObjectKind, Project, RunId, Source, StepAction, Workflow, WorkflowStep};
+use zd_core::{AttrValue, Body, ChangeKind, InputRule, LastRun, Object, ObjectId, ObjectKind, Project, RunId, Source, StepAction, Workflow, WorkflowStep};
 
 use crate::builtin::SaveWorkflowParams;
 use crate::{CommandError, LogEntry, RunRecord, RunStatus, Session, Severity};
@@ -132,6 +132,8 @@ struct Timeline<'a> {
     events: HashMap<ObjectId, Vec<(usize, u32, ChangeKind)>>,
     /// Every object the log or the project knows, in the order first seen.
     known: Vec<ObjectId>,
+    /// Each object's name as the log last gives it: all that's left of one deleted before the project was opened.
+    names: HashMap<ObjectId, String>,
 }
 
 impl<'a> Timeline<'a> {
@@ -139,6 +141,7 @@ impl<'a> Timeline<'a> {
         let mut events: HashMap<ObjectId, Vec<(usize, u32, ChangeKind)>> = HashMap::new();
         let mut known = Vec::new();
         let mut seen = HashSet::new();
+        let mut names = HashMap::new();
         for (at, entry) in log.iter().enumerate() {
             let LogEntry::Run(r) = entry else { continue };
             if !applied.contains(&r.run) {
@@ -146,6 +149,7 @@ impl<'a> Timeline<'a> {
             }
             for change in &r.outputs {
                 events.entry(change.id).or_default().push((at, change.revision, change.change));
+                names.insert(change.id, change.name.clone());
                 if seen.insert(change.id) {
                     known.push(change.id);
                 }
@@ -156,7 +160,7 @@ impl<'a> Timeline<'a> {
                 known.push(object.id);
             }
         }
-        Timeline { project, events, known }
+        Timeline { project, events, known, names }
     }
 
     /// The object as it stood just before the log entry at `at`, if it was there then and can still be read: the
@@ -189,27 +193,49 @@ struct Captured {
     outputs: Vec<ObjectId>,
 }
 
-/// The simplest rule that finds exactly `targets` among `there` (what was there when the run read them).
-fn rule_for(targets: &[ObjectId], many: bool, there: &[&Object], earlier: &[Captured], layer_name: impl Fn(&Object) -> Option<String>) -> InputRule {
+/// The simplest rule that finds exactly `targets` among `there` (what was there when the run read them). A rule by
+/// layer or name must find them among what's there now too: a run again sees the project as it stands then, with what
+/// later steps made the time before, as a layer a step's input was alone on that later steps added to. `gone_name` is
+/// the name the log gives an object that can't be read any more.
+fn rule_for(targets: &[ObjectId], many: bool, there: &[&Object], now: &[&Object], earlier: &[Captured], layer_name: impl Fn(&Object) -> Option<String>, gone_name: impl Fn(ObjectId) -> Option<String>) -> InputRule {
     let wanted: HashSet<ObjectId> = targets.iter().copied().collect();
     let by_id: HashMap<ObjectId, &Object> = there.iter().map(|o| (o.id, *o)).collect();
+    // What was there then, and what's there now that wasn't.
+    let then_and_now: Vec<&Object> = there.iter().copied().chain(now.iter().copied().filter(|o| !by_id.contains_key(&o.id))).collect();
     let picked: Option<Vec<&Object>> = targets.iter().map(|id| by_id.get(id).copied()).collect();
     let rule = |from: Source, kind: Option<ObjectKind>, filter: BTreeMap<String, AttrValue>| InputRule { from, kind, filter, many };
-    let Some(picked) = picked else { return rule(Source::Picked(targets.to_vec()), None, BTreeMap::new()) };
-    // The filters to try, simplest first: none, the kind, an attribute they share, then both.
+    let Some(picked) = picked else {
+        // One deleted since and not held any more: by the name the log gives it, if nothing there then had that name.
+        // A step that made it makes it again under that name, as a strip sliced and then deleted is.
+        if let [one] = targets
+            && let Some(name) = gone_name(*one)
+            && !then_and_now.iter().any(|o| o.name == name)
+        {
+            return rule(Source::Named(name), None, BTreeMap::new());
+        }
+        return rule(Source::Picked(targets.to_vec()), None, BTreeMap::new());
+    };
     let kind = picked.first().map(|o| o.kind()).filter(|k| picked.iter().all(|o| o.kind() == *k));
     let shared: Vec<(String, AttrValue)> = match picked.first() {
         Some(first) => first.attributes.iter().filter(|(key, value)| picked.iter().all(|o| o.attributes.get(key) == Some(value))).map(|(k, v)| (k.to_string(), v.clone())).collect(),
         None => Vec::new(),
     };
-    let mut filters: Vec<(Option<ObjectKind>, BTreeMap<String, AttrValue>)> = vec![(None, BTreeMap::new())];
-    filters.extend(kind.map(|k| (Some(k), BTreeMap::new())));
-    filters.extend(shared.iter().map(|(k, v)| (None, BTreeMap::from([(k.clone(), v.clone())]))));
-    if kind.is_some() {
-        filters.extend(shared.iter().map(|(k, v)| (kind, BTreeMap::from([(k.clone(), v.clone())]))));
-    }
-    let finds = |pool: &mut dyn Iterator<Item = &Object>, kind: Option<ObjectKind>, filter: &BTreeMap<String, AttrValue>| -> bool {
-        let found: HashSet<ObjectId> = pool.filter(|o| kind.is_none_or(|k| o.kind() == k) && filter.iter().all(|(key, value)| o.attributes.get(key) == Some(value))).map(|o| o.id).collect();
+    // The filters to try in a pool, simplest first: none, the kind, an attribute they share, then both. An attribute
+    // everything in the pool carries comes before one only some carry: it's more likely what made them set it, where an
+    // attribute read as it is now may have been added since, as an interrogation adds its own.
+    let filters = |pool: &[&Object]| {
+        let mut keys: Vec<&(String, AttrValue)> = shared.iter().collect();
+        keys.sort_by_key(|(key, _)| !pool.iter().all(|o| o.attributes.contains_key(key)));
+        let mut filters: Vec<(Option<ObjectKind>, BTreeMap<String, AttrValue>)> = vec![(None, BTreeMap::new())];
+        filters.extend(kind.map(|k| (Some(k), BTreeMap::new())));
+        filters.extend(keys.iter().map(|(k, v)| (None, BTreeMap::from([(k.clone(), v.clone())]))));
+        if kind.is_some() {
+            filters.extend(keys.iter().map(|(k, v)| (kind, BTreeMap::from([(k.clone(), v.clone())]))));
+        }
+        filters
+    };
+    let finds = |pool: &[&Object], kind: Option<ObjectKind>, filter: &BTreeMap<String, AttrValue>| -> bool {
+        let found: HashSet<ObjectId> = pool.iter().filter(|o| kind.is_none_or(|k| o.kind() == k) && filter.iter().all(|(key, value)| o.attributes.get(key) == Some(value))).map(|o| o.id).collect();
         found == wanted
     };
     // What an earlier step made, the latest first.
@@ -217,9 +243,10 @@ fn rule_for(targets: &[ObjectId], many: bool, there: &[&Object], earlier: &[Capt
         if !wanted.iter().all(|id| step.outputs.contains(id)) {
             continue;
         }
-        for (kind, filter) in &filters {
-            if finds(&mut step.outputs.iter().filter_map(|id| by_id.get(id).copied()), *kind, filter) {
-                return rule(Source::Step(step.id), *kind, filter.clone());
+        let pool: Vec<&Object> = step.outputs.iter().filter_map(|id| by_id.get(id).copied()).collect();
+        for (kind, filter) in filters(&pool) {
+            if finds(&pool, kind, &filter) {
+                return rule(Source::Step(step.id), kind, filter);
             }
         }
     }
@@ -227,15 +254,16 @@ fn rule_for(targets: &[ObjectId], many: bool, there: &[&Object], earlier: &[Capt
     if let Some(layer) = picked.first().map(|o| o.layer).filter(|l| picked.iter().all(|o| o.layer == *l))
         && let Some(name) = layer_name(picked[0])
     {
-        for (kind, filter) in &filters {
-            if finds(&mut there.iter().copied().filter(|o| o.layer == layer), *kind, filter) {
-                return rule(Source::Layer(name), *kind, filter.clone());
+        let pool: Vec<&Object> = then_and_now.iter().copied().filter(|o| o.layer == layer).collect();
+        for (kind, filter) in filters(&pool) {
+            if finds(&pool, kind, &filter) {
+                return rule(Source::Layer(name), kind, filter);
             }
         }
     }
     // One object by its name, the only one of its kind so named.
     if let [one] = picked.as_slice()
-        && there.iter().filter(|o| o.name == one.name && o.kind() == one.kind()).count() == 1
+        && then_and_now.iter().filter(|o| o.name == one.name && o.kind() == one.kind()).count() == 1
     {
         return rule(Source::Named(one.name.clone()), Some(one.kind()), BTreeMap::new());
     }
@@ -298,24 +326,15 @@ impl Session {
         let timeline = Timeline::new(project, log, &applied);
         let known = |id: ObjectId| timeline.events.contains_key(&id) || project.object(id).is_some();
         let layer_name = |o: &Object| project.layer(o.layer).map(|l| l.name.clone());
+        let now: Vec<&Object> = project.objects().map(|o| o.as_ref()).collect();
         let mut steps: Vec<WorkflowStep> = Vec::new();
         let mut earlier: Vec<Captured> = Vec::new();
         for (index, (at, record)) in picked.iter().enumerate() {
             let there = timeline.there_before(*at);
-            let mut settings = Map::new();
-            let mut inputs = BTreeMap::new();
-            for (field, value) in record.params.as_object().into_iter().flatten() {
-                match ids_in(value, &known) {
-                    Some((many, ids)) => {
-                        // What earlier steps made, as it stood when this run read it.
-                        let alive: Vec<Captured> = earlier.iter().map(|c| Captured { id: c.id, outputs: c.outputs.iter().copied().filter(|&id| timeline.before(id, *at).is_some()).collect() }).collect();
-                        inputs.insert(field.clone(), rule_for(&ids, many, &there, &alive, layer_name));
-                    }
-                    None => {
-                        settings.insert(field.clone(), value.clone());
-                    }
-                }
-            }
+            // What earlier steps made, as it stood when this run read it.
+            let alive: Vec<Captured> = earlier.iter().map(|c| Captured { id: c.id, outputs: c.outputs.iter().copied().filter(|&id| timeline.before(id, *at).is_some()).collect() }).collect();
+            let gone_name = |id: ObjectId| timeline.names.get(&id).cloned();
+            let (settings, inputs) = split_params(&record.params, &known, |ids, many| rule_for(ids, many, &there, &now, &alive, layer_name, gone_name));
             let id = index as u32 + 1;
             let made: Vec<ObjectId> = record.outputs.iter().filter(|c| c.change == ChangeKind::Created).map(|c| c.id).collect();
             let revised: Vec<ObjectId> = record.outputs.iter().filter(|c| c.change == ChangeKind::Revised).map(|c| c.id).collect();
@@ -325,7 +344,7 @@ impl Session {
                 id,
                 note: String::new(),
                 on: true,
-                action: StepAction::Command { command: record.command.clone(), settings: Value::Object(settings), inputs },
+                action: StepAction::Command { command: record.command.clone(), settings, inputs },
                 last: Some(LastRun {
                     run: record.run,
                     workflow_run: None,
@@ -341,4 +360,64 @@ impl Session {
         }
         Ok(Workflow { steps })
     }
+
+    /// The step a tool panel's command and settings make, to go into a workflow at `at` (from 0; the end if left out),
+    /// the steps before it its earlier steps (decision 0065, Add to workflow). Each object id in the settings becomes
+    /// the simplest rule that finds the same objects now, as in a capture: what an earlier step last made first. Nothing
+    /// is saved; returns where it goes and the step.
+    pub fn step_from(&self, workflow: ObjectId, at: Option<usize>, command: &str, params: &Value, note: &str) -> Result<(usize, WorkflowStep), CommandError> {
+        if self.registry().get(command).is_none() {
+            return Err(CommandError::UnknownCommand(command.to_string()));
+        }
+        let content = self.workflow(workflow)?;
+        let at = at.unwrap_or(content.steps.len()).min(content.steps.len());
+        let project = self.project();
+        let there: Vec<&Object> = project.objects().map(|o| o.as_ref()).collect();
+        let earlier: Vec<Captured> = content.steps[..at]
+            .iter()
+            .filter_map(|s| s.last.as_ref().map(|l| Captured { id: s.id, outputs: l.outputs().filter(|&id| project.object(id).is_some()).collect() }))
+            .collect();
+        let known = |id: ObjectId| project.object(id).is_some();
+        let layer_name = |o: &Object| project.layer(o.layer).map(|l| l.name.clone());
+        let (settings, inputs) = split_params(params, &known, |ids, many| rule_for(ids, many, &there, &there, &earlier, layer_name, |_| None));
+        let step = WorkflowStep { id: content.next_id(), note: note.to_string(), on: true, action: StepAction::Command { command: command.to_string(), settings, inputs }, last: None };
+        Ok((at, step))
+    }
+
+    /// [`Session::step_from`], the step put in the workflow and saved by a `workflow.save` run.
+    pub fn add_workflow_step(&mut self, workflow: ObjectId, at: Option<usize>, command: &str, params: &Value, note: &str) -> Result<RunRecord, CommandError> {
+        let (at, step) = self.step_from(workflow, at, command, params, note)?;
+        let mut content = self.workflow(workflow)?.clone();
+        content.steps.insert(at, step);
+        let name = self.project().object(workflow).map(|o| o.name.clone()).unwrap_or_default();
+        let params = serde_json::to_value(SaveWorkflowParams { workflow: Some(workflow), name, content }).map_err(|e| CommandError::BadParams(e.to_string()))?;
+        self.run("workflow.save", params)
+    }
+
+    /// A workflow's content, by its id.
+    pub fn workflow(&self, id: ObjectId) -> Result<&Workflow, CommandError> {
+        let object = self.project().object(id).ok_or(CommandError::MissingObject(id))?;
+        match &object.body {
+            Body::Workflow(w) => Ok(w),
+            _ => Err(CommandError::WrongKind { id, expected: ObjectKind::Workflow, found: object.kind() }),
+        }
+    }
+}
+
+/// A run's or a panel's parameters as a step's settings and inputs: each one holding an object's id, or a list of them,
+/// an input by the rule `rule` gives it; every other one a setting.
+fn split_params(params: &Value, known: &impl Fn(ObjectId) -> bool, mut rule: impl FnMut(&[ObjectId], bool) -> InputRule) -> (Value, BTreeMap<String, InputRule>) {
+    let mut settings = Map::new();
+    let mut inputs = BTreeMap::new();
+    for (field, value) in params.as_object().into_iter().flatten() {
+        match ids_in(value, known) {
+            Some((many, ids)) => {
+                inputs.insert(field.clone(), rule(&ids, many));
+            }
+            None => {
+                settings.insert(field.clone(), value.clone());
+            }
+        }
+    }
+    (Value::Object(settings), inputs)
 }
