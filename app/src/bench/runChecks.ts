@@ -429,14 +429,45 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
   }
 
   // By polygons (decision 0062): lines across the pit every 100 m, from 50 m before it to 50 m past it, and two past its
-  // sides closed into block polygons covering it, then the solids on show (the seam pieces, or the strips without --seam)
-  // cut into blocks from the panel.
+  // sides closed into block polygons covering it, then the solids on show (the benches made below) cut into blocks from
+  // the panel.
   const across = [];
   for (let k = 0; k <= 11; k++) across.push((await runCommand('string.create', { name: `across ${k}`, layer: 'block lines', points: [[E + 100 * k - 50, N - 100, 0], [E + 100 * k - 50, N + 600, 0]] })).record.outputs[0].id);
   for (const [name, y] of [['south', -60], ['north', 560]] as const) across.push((await runCommand('string.create', { name, layer: 'block lines', points: [[E - 100, N + y, 0], [E + 1100, N + y, 0]] })).record.outputs[0].id);
   const closedUp = await runCommand('string.polygons_from_lines', { strings: across, layer: 'block polygons', name: 'B#' });
-  const keep = seams ? 'layers' : 'strips';
+
+  // By benches (decision 0071): the seam pieces (or the strips without --seam) on show, cut every 10 m from RL 0 to 500,
+  // the first horizon unticked so it's carried over whole, then the benches cut into blocks below.
   let summary = closedUp.summary;
+  for (const l of summary.layers) if (l.name !== (seams ? 'layers' : 'strips')) summary = await setLayerVisible(l.id, false);
+  await show(summary);
+  button('By benches')?.click();
+  await wait(400);
+  buttons().find((b) => b.textContent?.trim().startsWith('On show'))?.click();
+  await wait(600);
+  const ticks = [...document.querySelectorAll<HTMLButtonElement>('button[role="checkbox"][aria-label^="Bench "]')];
+  const horizons = ticks.map((t) => t.getAttribute('aria-label')?.slice('Bench '.length) ?? '');
+  ticks[0]?.click();
+  await wait(300);
+  const benchSaid = panelText().match(/Of the \d+ solids, \d+ benched and \d+ carried over whole/)?.[0] ?? '';
+  const benchLabel = buttons().find((b) => /^Bench \d+ solids?$/.test(b.textContent?.trim() ?? ''))?.textContent?.trim() ?? '';
+  const benchMs = await press(benchLabel);
+  const afterBenches = await projectSummary();
+  const benchesLayer = afterBenches.layers.find((l) => l.name === 'benches')?.id;
+  const madeBenches = afterBenches.objects.filter((o) => o.layer === benchesLayer);
+  const benches = {
+    horizons,
+    left_whole: horizons[0] ?? null,
+    said_before: benchSaid,
+    button: benchLabel,
+    ms: benchMs,
+    said: resultLines().slice(0, 4),
+    made: madeBenches.length,
+    first_names: madeBenches.map((o) => o.name).slice(0, 6),
+  };
+
+  const keep = 'benches';
+  summary = afterBenches;
   for (const l of summary.layers) if (l.name !== keep && l.name !== 'block polygons') summary = await setLayerVisible(l.id, false);
   await show(summary);
   button('By polygons')?.click();
@@ -477,7 +508,7 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
   [...document.querySelectorAll('.dv-tab')].find((t) => t.textContent?.trim() === 'Properties')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   await wait(500);
   const properties = document.body.textContent?.includes('Cut it, or slice it into strips, in') ?? false;
-  const result = { panel_opened_from_toolbar: !!open, pit_picked_after_making: pickedAfterMaking.includes('Picked (1)'), between, sliced, joined, cut: { typed_rl: typedRl, ms: cutMs, parts }, seams, blocks, properties_points_to_the_panel: properties };
+  const result = { panel_opened_from_toolbar: !!open, pit_picked_after_making: pickedAfterMaking.includes('Picked (1)'), between, sliced, joined, cut: { typed_rl: typedRl, ms: cutMs, parts }, seams, benches, blocks, properties_points_to_the_panel: properties };
   log(`cut: ${JSON.stringify(result)}`);
   return result;
 }

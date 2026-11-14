@@ -96,8 +96,34 @@ to 51 m³ (0.7 parts per million) less than the unbenched blocks: the flaps at t
 level is a plane split, so benching costs about what the seam cut does; benching first is slower because the seam cut
 then runs on more solids.
 
+## Built: workstream 2, the app
+
+- **By benches**, a mode of the Cut solids panel between By seams and By polygons. The solids are taken as in every mode
+  (picked, all on the layer of the first, or on show). Its Benches section:
+  - **Levels** (or **Others** once there are more rules): from, to, every and Bottom or Top, the rule for everything
+    else, the last in the table.
+  - **Horizons**: a tick for each horizon the solids carry (read with the block table's `solids_table`), in the order the
+    seam cut made them. Unticked, a horizon is carried over whole; the ticks keep one rule at the top listing those
+    horizons. A horizon another rule decides shows that rule's number and can't be ticked there.
+  - **Rules, first that fits**: each rule's filter typed as `horizon: U-M, M-L; strip: 1-5`, Bench or not, its levels,
+    its own layer (blank the run's), how many of the solids it takes, and up, down and remove. Under them, how many solids
+    are benched and how many carried over whole.
+  - **CSV** in and out: a column for each attribute filtered on, then `benched`, `from`, `to`, `every`, `named_by` and
+    `layer`; a file with mistakes is refused line by line and changes nothing.
+  - **Flaps**, and the names (`{solid} {bench}`) and output layer (`benches`) in Output. The button reads *Bench n
+    solids*, Ctrl+Enter, and Add to the workflow as every panel's does.
+- The matching is the engine's, written again in `app/src/panels/benchRules.ts` so the panel shows what each rule takes
+  before the cut; `app/tests/benchRules.test.mjs` checks it against the same cases as the engine's tests.
+- **By benches** is a tool on the workflow canvas. The Cut solids panel's By polygons names default to
+  `{strip}_{block}_{horizon}_{bench}`.
+- **The demo pit** (`testdata/synthetic/workflow_demo.py`) benches its seam pieces as step 16, RL −300 to 500 every 10 m,
+  onto `6 benches`; the layers after it move up one (`7 block lines`, `8 block polygons`, `9 blocks`). Base makes 1,815
+  blocks and 50m 3,580, every one with its bench, adding up to the benches within 1e-11 and the benches to the seam pieces
+  less 51.054 m³ of flaps; the workflow report reconciles each case within 0.0004 m³ with the flaps counted as left out. 26
+  of the 143 benches are in more than one part, where a level crosses a seam twice: each stays one solid, said, as a strip
+  or a block in parts does.
+
 ## Still to come
 
-Workstream 2 (the app: By benches in the Cut solids panel with horizon ticks and the rule table, CSV in and out, the
-canvas tool, the demo pit's step), 3 (the column check and the report by bench) and 4 (the column engine's bench labels
-and in situ shares, after 0070's PR merges).
+Workstream 3 (the column check and the report by bench) and 4 (the column engine's bench labels and in situ shares, after
+0070's PR merges).

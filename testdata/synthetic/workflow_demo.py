@@ -4,13 +4,13 @@ workflow with a note on every step and a pause to look at the strips, saved as "
 What you draw by hand stays yours, and the workflow does the rest from it:
 
 - the base toe (on '1 toes'), the pit limit (on '0 pit limit'), the ramp strings (on '0 ramp strings') and the
-  first block line with the two closing lines (on '6 block lines') are drawn first and are not steps: edit any of them,
+  first block line with the two closing lines (on '7 block lines') are drawn first and are not steps: edit any of them,
   run the workflow again, and everything after follows;
 - the highwall is 65 degrees to the base of weathering, a 30 m berm there, then 45 degrees to the topography, with 50 m
   roads at 10 % starting 100 m inside the pit's west end: A straight up both walls of strips 1 to 5, and B on strip 6,
   the final highwall, turning back on the berm, a switchback;
 - each step puts what it makes on a layer numbered in the order of the workflow: '1 toes', '2 faces', '3 pit',
-  '4 strips', '5 seam pieces', '6 block lines', '7 block polygons', '8 blocks';
+  '4 strips', '5 seam pieces', '6 benches', '7 block lines', '8 block polygons', '9 blocks';
 - it's saved with only the toes, the pit limit, the block lines and the blocks on show, so what the run makes is what
   you see; the grids, faces, pit, strips, seam pieces and polygons are a tick away in Layers.
 
@@ -47,14 +47,18 @@ NOTES = {
     "object.delete": "What's behind the last face isn't a strip: deleted.",
     "pause": "Look at the strips: tick '4 strips' in Layers. Delete any you don't want, then Continue.",
     "solid.cut_by_seams": "Each strip cut by the seam model's horizons in one run: overburden, U, U-M, M, M-L, L and below, each piece carrying its seam, material and horizon, on '5 seam pieces'. Checked first: the grids must cover every strip.",
+    "solid.cut_by_benches": "Every seam piece cut at bench levels, RL -300 to 500 every 10 m, each piece taking its bench (its floor RL), on '6 benches'. The bench rules in this step's settings decide what's benched and how: by horizon, material, strip or any attribute.",
     "string.offset Block line": "The first block line offset east every 100 m to the pit's east end: the block length is this distance.",
-    "string.polygons_from_lines": "The block lines and the two closing lines made into block polygons B1 to B15, west to east, on '7 block polygons'.",
-    "solid.cut_by_polygons": "Every seam piece cut vertically by the block polygons, each block named strip_block_horizon, on '8 blocks'. Checked first: the polygons must cover every piece.",
+    "string.polygons_from_lines": "The block lines and the two closing lines made into block polygons B1 to B15, west to east, on '8 block polygons'.",
+    "solid.cut_by_polygons": "Every bench cut vertically by the block polygons, each block named strip_block_horizon_bench, on '9 blocks'. Checked first: the polygons must cover every piece.",
     "solid.interrogate": "Each coal block's qualities (ash, sulphur, RD) averaged from the seam grids over it, written onto it.",
 }
 
+# The bench rules (decision 0071): everything benched every 10 m, each bench named by its floor RL.
+BENCH_RULES = [{"from": -300.0, "to": 500.0, "every": 10.0}]
+
 # On show when it's saved: what you draw and what the workflow ends with.
-SHOWN = {"0 pit limit", "0 ramp strings", "1 toes", "6 block lines", "8 blocks", "8 blocks 50m"}
+SHOWN = {"0 pit limit", "0 ramp strings", "1 toes", "7 block lines", "9 blocks", "9 blocks 50m"}
 
 # The roads: 50 m wide at 10 %, Tim's standard (coal ramp norms), each set by a string drawn across the strips.
 ROAD = {"width": 50.0, "grade": 10.0}
@@ -74,10 +78,10 @@ def drawn_by_hand(s):
     toe = made(s.run("string.create", name="Base toe", layer="1 toes", points=[at(x, y, 0.0) for x, y in BASE]))[0]
     limit = made(s.run("string.create", name="Pit limit", layer="0 pit limit", closed=True,
                        points=[at(LIMIT_WEST, LIMIT_SOUTH), at(LIMIT_EAST, LIMIT_SOUTH), at(LIMIT_EAST, LIMIT_NORTH), at(LIMIT_WEST, LIMIT_NORTH)]))[0]
-    first = made(s.run("string.create", name="Block line 0", layer="6 block lines",
+    first = made(s.run("string.create", name="Block line 0", layer="7 block lines",
                        points=[at(LIMIT_WEST, LIMIT_SOUTH - 200.0, -300.0), at(LIMIT_WEST, LIMIT_NORTH + 200.0, -300.0)]))[0]
     for name, y in (("South closing line", LIMIT_SOUTH - 100.0), ("North closing line", LIMIT_NORTH + 100.0)):
-        s.run("string.create", name=name, layer="6 block lines", points=[at(LIMIT_WEST - 100.0, y, -300.0), at(LIMIT_EAST + 100.0, y, -300.0)])
+        s.run("string.create", name=name, layer="7 block lines", points=[at(LIMIT_WEST - 100.0, y, -300.0), at(LIMIT_EAST + 100.0, y, -300.0)])
     # A string across the strips for each road, the road starting where it crosses each toe.
     ramps = {name: made(s.run("string.create", name=f"Ramp {name}", layer="0 ramp strings", points=[at(x, south), at(x, north)]))[0] for name, x, south, north, _, _ in RAMPS}
     return toe, limit, first, ramps
@@ -121,11 +125,12 @@ def the_steps(s, g, model, toe, limit, first, ramps):
     strips = made(run("solid.slice_by_faces", solid=pit, faces=faces, layer="4 strips"))
     run("object.delete", object=strips[-1])
     pieces = made(run("solid.cut_by_seams", solids=strips[:-1], model=model, layer="5 seam pieces"))
+    benches = made(run("solid.cut_by_benches", solids=pieces, layer="6 benches", rules=BENCH_RULES))
     count = round((LIMIT_EAST - LIMIT_WEST) / BLOCK_LENGTH)
-    run("string.offset", string=first, distance=BLOCK_LENGTH, side="right", times=count, name="Block line", layer="6 block lines")
-    block_lines = [o["id"] for o in s.objects(layer="6 block lines", kind="string")]
-    polygons = made(run("string.polygons_from_lines", strings=block_lines, layer="7 block polygons", name="B#"))
-    blocks = made(run("solid.cut_by_polygons", solids=pieces, polygons=polygons, layer="8 blocks"))
+    run("string.offset", string=first, distance=BLOCK_LENGTH, side="right", times=count, name="Block line", layer="7 block lines")
+    block_lines = [o["id"] for o in s.objects(layer="7 block lines", kind="string")]
+    polygons = made(run("string.polygons_from_lines", strings=block_lines, layer="8 block polygons", name="B#"))
+    blocks = made(run("solid.cut_by_polygons", solids=benches, polygons=polygons, layer="9 blocks"))
     coal = [b for b in blocks if s.object(b)["attributes"].get("material") == "coal"]
     run("solid.interrogate", solids=coal, model=model)
     return runs
@@ -186,22 +191,27 @@ def main():
         print(f"{case}: steps 1 to {pause - 1}, paused at {pause}, then {pause + 1} to the end, in {time.perf_counter() - started:.1f} s"
               + (f" (the runs by hand took {by_hand:.1f} s)" if case == "Base" else ""))
 
-    # Each case's blocks add up to its seam pieces, and the two cases to the same total, to one part in a million million of
-    # the total (75 m3 in 75 million): the solid booleans' rounding, which the cut by polygons itself says is within
-    # 1.1e-10 of each piece's volume (0.0005 m3 on 4.6 million).
-    tolerance = lambda total: 1e-12 * total
+    # Each case's blocks add up to its benches, and the two cases to the same total, to one part in a hundred thousand
+    # million of the total (0.00076 m3 in 76 million): the solid booleans' rounding, which the cut by polygons itself says
+    # is within 1.1e-10 of each piece's volume, over some 1,800 blocks (0.00016 m3 found). The benches are the seam pieces
+    # less the flaps at the levels, which the bench cut says (decision 0071): within a millionth.
+    tolerance = lambda total: 1e-11 * total
     totals = {}
     for case, suffix in (("Base", ""), ("50m", " 50m")):
-        blocks = s.objects(layer=f"8 blocks{suffix}", kind="solid")
+        blocks = s.objects(layer=f"9 blocks{suffix}", kind="solid")
+        benches = s.objects(layer=f"6 benches{suffix}", kind="solid")
         pieces = s.objects(layer=f"5 seam pieces{suffix}", kind="solid")
         coal = [b for b in blocks if b["attributes"].get("material") == "coal"]
-        tagged = all(b["attributes"].get("case") == case for b in blocks)
+        tagged = all(b["attributes"].get("case") == case and "bench" in b["attributes"] for b in blocks)
         total = sum(s.object(b["id"])["volume"] for b in blocks)
-        within = sum(s.object(p["id"])["volume"] for p in pieces)
+        within = sum(s.object(p["id"])["volume"] for p in benches)
+        seams = sum(s.object(p["id"])["volume"] for p in pieces)
         totals[case] = total
-        print(f"   {case}: {len(blocks)} blocks on '8 blocks{suffix}' ({len(coal)} coal), {total:,.6f} m3; seam pieces {within:,.6f} m3; "
-              f"differ by {abs(total - within):.3g} m3; every block tagged case={case}: {tagged}")
+        print(f"   {case}: {len(blocks)} blocks on '9 blocks{suffix}' ({len(coal)} coal), {total:,.6f} m3; {len(benches)} benches {within:,.6f} m3, "
+              f"differ by {abs(total - within):.3g} m3; seam pieces {seams:,.3f} m3, {seams - within:.3f} m3 in flaps at the levels; "
+              f"every block tagged case={case} and benched: {tagged}")
         assert tagged and abs(total - within) <= tolerance(total), case
+        assert 0.0 <= seams - within <= 1e-6 * seams, case
     assert abs(totals["Base"] - totals["50m"]) <= tolerance(totals["Base"]), totals
     print(f"   the two cases' totals differ by {abs(totals['Base'] - totals['50m']):.3g} m3")
 

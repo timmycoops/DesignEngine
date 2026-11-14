@@ -52,7 +52,7 @@ def main():
     the_steps(s, g, model, toe, limit, first, ramps)
     strips = [o["id"] for o in s.objects(layer="4 strips", kind="solid")]
     pieces = [o["id"] for o in s.objects(layer="5 seam pieces", kind="solid")]
-    polygons = [o["id"] for o in s.objects(layer="7 block polygons", kind="string")]
+    polygons = [o["id"] for o in s.objects(layer="8 block polygons", kind="string")]
     print(f"The demo pit: {len(strips)} strips, {volume(s, strips):,.3f} m3; {len(pieces)} seam pieces; {len(polygons)} block polygons")
 
     print("Without benches:")

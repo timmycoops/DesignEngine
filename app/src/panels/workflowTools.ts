@@ -31,6 +31,7 @@ export const CANVAS_TOOLS: readonly CanvasTool[] = [
   { key: 'cut:strips', group: 'Cut solids', label: 'Into strips', command: 'solid.slice_by_faces', panel: 'cut', mode: 'strips', takes: 'solids and a face a strip' },
   { key: 'cut:cut', group: 'Cut solids', label: 'By a surface', command: 'solid.cut_by_surface', panel: 'cut', mode: 'cut', takes: 'solids and a surface, grid or RL' },
   { key: 'cut:seams', group: 'Cut solids', label: 'By seams', command: 'solid.cut_by_seams', panel: 'cut', mode: 'seams', takes: 'solids and a seam model' },
+  { key: 'cut:benches', group: 'Cut solids', label: 'By benches', command: 'solid.cut_by_benches', panel: 'cut', mode: 'benches', takes: 'solids and bench rules' },
   { key: 'cut:polygons', group: 'Cut solids', label: 'By polygons', command: 'solid.cut_by_polygons', panel: 'cut', mode: 'polygons', takes: 'solids and block polygons' },
   { key: 'reserves:interrogate', group: 'Reserves', label: 'Interrogate', command: 'solid.interrogate', panel: 'reserves', mode: 'interrogate', takes: 'blocks and a seam model' },
 ];
