@@ -159,6 +159,25 @@ impl PySession {
         to_py(py, &json!(records))
     }
 
+    /// The workflow report's figures (decision 0068): every case from its latest run, its blocks by seam and material,
+    /// what was left out and the reconciliation to the pit, the steps and the inputs. `utc_offset_minutes` dates it in
+    /// local time (`time.localtime().tm_gmtoff // 60`); UTC if left out.
+    #[pyo3(signature = (workflow, utc_offset_minutes=None))]
+    fn workflow_report(&self, py: Python<'_>, workflow: &str, utc_offset_minutes: Option<i32>) -> PyResult<Py<PyAny>> {
+        let id = object_id(workflow)?;
+        let report = self.inner.workflow_report(id, utc_offset_minutes.unwrap_or(0)).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &json!(report))
+    }
+
+    /// Writes the workflow report as one HTML page that opens offline (decision 0068), into `folder`, or the project's
+    /// `<project> reports` folder beside its file, dated as `workflow_report` is. Returns the page's path.
+    #[pyo3(signature = (workflow, folder=None, utc_offset_minutes=None))]
+    fn write_workflow_report(&self, workflow: &str, folder: Option<&str>, utc_offset_minutes: Option<i32>) -> PyResult<String> {
+        let id = object_id(workflow)?;
+        let path = self.inner.write_workflow_report(id, utc_offset_minutes.unwrap_or(0), folder.map(std::path::Path::new)).map_err(|e| CommandError::new_err(e.to_string()))?;
+        Ok(path.display().to_string())
+    }
+
     /// Every run, undo, redo, save and open, oldest first, as saved in the project.
     fn log(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_py(py, &json!(self.inner.log()))

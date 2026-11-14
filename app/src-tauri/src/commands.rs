@@ -318,6 +318,80 @@ pub async fn add_workflow_step(workflow: ObjectId, at: Option<usize>, command: S
     .await?
 }
 
+/// A workflow report written beside the project (decision 0068).
+#[derive(Serialize)]
+pub struct ReportFile {
+    path: String,
+    name: String,
+    modified_unix_ms: u64,
+}
+
+fn report_file(path: &std::path::Path) -> Option<ReportFile> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    Some(ReportFile {
+        path: path.display().to_string(),
+        name: path.file_stem()?.to_string_lossy().into_owned(),
+        modified_unix_ms: modified.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
+    })
+}
+
+/// Writes a workflow's report, every case from its latest run, as one HTML page in the reports folder beside the project,
+/// and opens it in the default browser (decision 0068). `utc_offset_minutes` dates it in the machine's local time.
+#[tauri::command]
+pub async fn write_workflow_report(workflow: ObjectId, utc_offset_minutes: i32, state: State<'_, AppState>) -> Result<ReportFile, String> {
+    let app = state.app.clone();
+    let path = blocking(move || {
+        let app = app.lock().unwrap();
+        app.session.write_workflow_report(workflow, utc_offset_minutes, None).map_err(|e| e.to_string())
+    })
+    .await??;
+    open_in_browser(&path)?;
+    report_file(&path).ok_or_else(|| format!("the report was written but can't be read back: {}", path.display()))
+}
+
+/// The reports beside the project for a workflow, newest first.
+#[tauri::command]
+pub fn workflow_reports(workflow: ObjectId, state: State<'_, AppState>) -> Result<Vec<ReportFile>, String> {
+    let app = state.app.lock().unwrap();
+    let Some(file) = app.session.file() else { return Ok(Vec::new()) };
+    let name = app.session.project().object(workflow).map(|o| o.name.clone()).unwrap_or_default();
+    let folder = zd_commands::report::reports_folder(&file);
+    let Ok(entries) = std::fs::read_dir(&folder) else { return Ok(Vec::new()) };
+    let mut files: Vec<ReportFile> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("html")))
+        .filter(|p| p.file_stem().is_some_and(|s| s.to_string_lossy().starts_with(&format!("{name} "))))
+        .filter_map(|p| report_file(&p))
+        .collect();
+    files.sort_by(|a, b| b.modified_unix_ms.cmp(&a.modified_unix_ms));
+    Ok(files)
+}
+
+/// Opens a report in the default browser: only a page in the project's reports folder.
+#[tauri::command]
+pub fn open_workflow_report(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let app = state.app.lock().unwrap();
+    let file = app.session.file().ok_or("the project isn't saved, so it has no reports")?;
+    let path = std::path::PathBuf::from(path);
+    let folder = std::fs::canonicalize(zd_commands::report::reports_folder(&file)).ok();
+    let inside = folder.is_some() && path.parent().and_then(|p| std::fs::canonicalize(p).ok()) == folder;
+    if !inside || !path.extension().is_some_and(|x| x.eq_ignore_ascii_case("html")) {
+        return Err("only a report in the project's reports folder opens from here".into());
+    }
+    open_in_browser(&path)
+}
+
+/// The page in the machine's default browser.
+fn open_in_browser(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(windows)]
+    let opened = std::process::Command::new("explorer").arg(path).spawn();
+    #[cfg(target_os = "macos")]
+    let opened = std::process::Command::new("open").arg(path).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let opened = std::process::Command::new("xdg-open").arg(path).spawn();
+    opened.map(|_| ()).map_err(|e| format!("the report is at {}, but it couldn't be opened: {e}", path.display()))
+}
+
 /// The run going, if one is: what it is, how long it's been going and how far it has got.
 #[derive(Serialize)]
 pub struct RunProgress {

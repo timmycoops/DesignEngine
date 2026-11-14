@@ -537,6 +537,13 @@ struct LayerKind {
     seam: Option<String>,
 }
 
+/// The horizons a cut by seams names its pieces' `horizon` by, top down, each with its material: overburden, then each
+/// seam of the working section and the waste below it. A workflow report orders its rows by them (decision 0068).
+pub fn horizon_order(model: &zd_core::SeamModel) -> Vec<(String, String)> {
+    let working: Vec<&Horizon> = model.working_section().collect();
+    layer_kinds(&working).into_iter().map(|k| (k.horizon, k.material)).collect()
+}
+
 /// The layers of a working section, top down: overburden, then each horizon and the waste below it.
 fn layer_kinds(working: &[&Horizon]) -> Vec<LayerKind> {
     let waste = |horizon: String, seam: Option<&Horizon>| LayerKind { horizon, material: "waste".into(), seam: seam.map(|h| h.code.clone()) };

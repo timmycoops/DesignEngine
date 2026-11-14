@@ -1,7 +1,20 @@
 use serde::{Deserialize, Serialize};
-use zd_core::{Change, ObjectId};
+use zd_core::{Body, Change, Object, ObjectId};
 
-use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
+use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Severity};
+
+/// What deleting these objects takes out of the solids, said as a note measured in m³, so a workflow report can account
+/// for solids deleted by hand at a pause (decision 0068). Nothing said when none is a solid.
+fn solids_deleted(objects: &[&Object]) -> Option<Note> {
+    let volumes: Vec<f64> = objects.iter().filter_map(|o| if let Body::Solid(s) = &o.body { Some(s.volume()) } else { None }).collect();
+    if volumes.is_empty() {
+        return None;
+    }
+    let total: f64 = volumes.iter().sum();
+    let n = volumes.len();
+    let text = format!("{n} solid{} deleted, {total:.3} m³", if n == 1 { "" } else { "s" });
+    Some(Note::new(Severity::Info, Some(Code::ObjectSolidsDeleted), text).measured(total, "m3"))
+}
 
 /// `object.rename`: the next revision of an object, with a new name.
 pub struct RenameObject;
@@ -65,7 +78,9 @@ impl Command for DeleteObject {
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let object = inputs.object(p.object)?;
-        Ok(Outcome::new(vec![Change::Delete { id: object.id, base: object.revision }]))
+        let mut outcome = Outcome::new(vec![Change::Delete { id: object.id, base: object.revision }]);
+        outcome.notes.extend(solids_deleted(&[object.as_ref()]));
+        Ok(outcome)
     }
 }
 
@@ -94,8 +109,10 @@ impl Command for DeleteObjects {
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let changes = p.objects.iter().map(|&id| inputs.object(id).map(|o| Change::Delete { id: o.id, base: o.revision })).collect::<Result<_, _>>()?;
-        Ok(Outcome::new(changes))
+        let objects = p.objects.iter().map(|&id| inputs.object(id)).collect::<Result<Vec<_>, _>>()?;
+        let mut outcome = Outcome::new(objects.iter().map(|o| Change::Delete { id: o.id, base: o.revision }).collect());
+        outcome.notes.extend(solids_deleted(&objects.iter().map(|o| o.as_ref()).collect::<Vec<_>>()));
+        Ok(outcome)
     }
 }
 

@@ -533,6 +533,23 @@ export const addWorkflowStep = async (workflow: string, command: string, params:
   return { record: reply.record, summary: await summaryAfter(reply.changes) };
 };
 
+/** A workflow report, an HTML page in the reports folder beside the project (decision 0068). */
+export interface ReportFile {
+  path: string;
+  name: string;
+  modified_unix_ms: number;
+}
+
+/** Writes a workflow's report, every case from its latest run, and opens it in the browser. */
+export const writeWorkflowReport = (workflow: string): Promise<ReportFile> =>
+  invoke<ReportFile>('write_workflow_report', { workflow, utcOffsetMinutes: -new Date().getTimezoneOffset() });
+
+/** The reports written for a workflow, newest first; none while the project isn't saved. */
+export const workflowReports = (workflow: string): Promise<ReportFile[]> => invoke<ReportFile[]>('workflow_reports', { workflow });
+
+/** Opens one of them in the browser. */
+export const openWorkflowReport = (path: string): Promise<void> => invoke<void>('open_workflow_report', { path });
+
 /** Throws, saying what it's waiting on, while a run goes: a change to the project waits until it ends. */
 function idle() {
   const waiting = waitingOn();
