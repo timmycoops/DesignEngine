@@ -2,7 +2,7 @@
 // capture them. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ruleWords, tickRuns } from '../src/panels/workflow.ts';
+import { onlyLayers, ruleWords, tickRuns, tidyLayers } from '../src/panels/workflow.ts';
 
 const workflow = {
   steps: [
@@ -31,4 +31,28 @@ test('a click ticks one run, a Shift-click every run between, never one that can
   ticked = tickRuns(ticked, tickable, 3, 6, true);
   assert.deepEqual([...ticked].sort(), [2], 'unticking runs back the same way');
   assert.deepEqual([...tickRuns(new Set(), tickable, 4, null, false)], []);
+});
+
+// Toes drawn by hand and offset on one layer, faces, a pit, strips and blocks each on their own, and the grids.
+const objects = [
+  { id: 'base', layer: 'toes' }, { id: 'toe2', layer: 'toes' },
+  { id: 'face1', layer: 'faces' }, { id: 'face2', layer: 'faces' },
+  { id: 'pit', layer: 'pit' }, { id: 'strip1', layer: 'strips' },
+  { id: 'block1', layer: 'blocks' }, { id: 'block2', layer: 'blocks' },
+  { id: 'topo', layer: 'grids' },
+];
+const made = [['toe2'], ['face1', 'face2'], ['pit'], ['strip1'], ['block1', 'block2']];
+
+test('a tidy run shows its result and hides what only the steps in between made, never what was drawn by hand', () => {
+  const { show, hide } = tidyLayers(made, ['block1', 'block2'], objects);
+  assert.deepEqual(show, ['blocks']);
+  assert.deepEqual(hide.sort(), ['faces', 'pit', 'strips'], 'toes holds the hand-drawn base toe, the grids no step made');
+  // Paused after the strips: the strips are the result.
+  assert.deepEqual(tidyLayers(made, ['strip1'], objects), { show: ['strips'], hide: ['faces', 'pit', 'blocks'] });
+});
+
+test('only a step shows its layers and turns off every other layer on show', () => {
+  const layers = ['toes', 'faces', 'pit', 'strips', 'blocks', 'grids'].map((id) => ({ id, visible: id !== 'pit' }));
+  assert.deepEqual(onlyLayers(['face1', 'face2'], objects, layers), { show: ['faces'], hide: ['toes', 'strips', 'blocks', 'grids'] });
+  assert.deepEqual(onlyLayers(['gone'], objects, layers).show, [], 'what the step made is gone: nothing to show');
 });

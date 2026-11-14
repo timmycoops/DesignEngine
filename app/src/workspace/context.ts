@@ -26,6 +26,8 @@ export interface Workspace {
   zoomTo: (ids: string[]) => void;
   setActiveLayer: (name: string) => void;
   setLayerVisible: (layer: string, visible: boolean) => void;
+  /** Shows and hides several layers in one go, drawn once when they're all set. Display only: not undone. */
+  setLayersVisible: (show: string[], hide: string[]) => Promise<void>;
   /** Shows or hides objects one by one, under their layer's tick. Display only: not undone. */
   setObjectsVisible: (objects: string[], visible: boolean) => void;
   /**

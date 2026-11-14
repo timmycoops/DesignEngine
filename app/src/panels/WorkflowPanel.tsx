@@ -1,19 +1,34 @@
-import { ArrowDown, ArrowUp, Pause, Play, Plus, SkipForward, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Eye, Pause, Play, Plus, SkipForward, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Input } from '@/design-system/ui/input';
 import type { LogEntry, Note, ObjectSummary, Workflow, WorkflowRecord, WorkflowStep } from '@/bridge';
-import { objectDetails } from '@/bridge';
+import { objectDetails, projectSummary } from '@/bridge';
 import { Field, IconButton, plainNote, type RunReport, Select, StatusBadge, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
-import { ruleWords } from './workflow';
+import { onlyLayers, ruleWords, tidyLayers } from './workflow';
 
 /**
  * Workflow (decision 0065): saved steps run again in one go. A workflow is captured from runs in the Run log, or built
  * by adding steps from the tool panels in Add to workflow mode; each step is a command with its settings and a rule for
  * each input, or a pause. Run runs every step in order, Run from here keeps what the steps before made, a pause stops
  * the run for hand work, and the first refusal stops it with that step's notes. A run is one undo. Made from the kit.
+ *
+ * Seeing what a step did: a click on a step selects what it last made and zooms to it, and its eye shows only that,
+ * every other layer off until Show all again. Tidy after a run (on by default) leaves on screen what the run started
+ * from and what it ended with: the layers of what its last step made are shown, the layers only the steps in between
+ * made are hidden, and a layer holding anything drawn by hand is left as it is.
  */
+
+/** Tidy after a run: on unless turned off, remembered on this machine. */
+const TIDY_KEY = 'zd.workflow.tidy';
+const readTidy = () => {
+  try {
+    return localStorage.getItem(TIDY_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+};
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -28,7 +43,10 @@ function reportOf(record: WorkflowRecord): RunReport {
 }
 
 export function WorkflowPanel() {
-  const { summary, log, runRecord, runWorkflow, addingTo, setAddingTo } = useWorkspace();
+  const { summary, log, runRecord, runWorkflow, addingTo, setAddingTo, setSelection, zoomTo, setLayersVisible } = useWorkspace();
+  const [tidy, setTidy] = useState(readTidy);
+  // Only one step on show: which, and how the layers stood before, to put back.
+  const [only, setOnly] = useState<{ step: number; was: { id: string; visible: boolean }[] } | null>(null);
   const workflows = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'workflow'), [summary]);
   const [picked, setPicked] = useState<string | null>(null);
   const chosen: ObjectSummary | null = workflows.find((o) => o.id === picked) ?? workflows[workflows.length - 1] ?? null;
@@ -78,8 +96,49 @@ export function WorkflowPanel() {
     if (!chosen) return;
     setBusy(true);
     const outcome = await runWorkflow(chosen.id, from);
+    if (outcome.record && tidy) await tidyAfter(chosen.id, outcome.record);
     setBusy(false);
     setReport(outcome.record ? reportOf(outcome.record) : { notes: [], error: outcome.error });
+  };
+
+  /** The run's inputs and its result on screen, the layers in between hidden. */
+  const tidyAfter = async (id: string, record: WorkflowRecord) => {
+    const last = [...record.steps].reverse().find((s) => s.outcome === 'ran');
+    if (!last) return;
+    const [details, now] = await Promise.all([objectDetails(id), projectSummary()]);
+    if (details.measures.kind !== 'workflow') return;
+    const steps = details.measures.workflow.steps;
+    const made = steps.map((s) => s.last?.made ?? []);
+    const result = steps.find((s) => s.id === last.step)?.last?.made ?? [];
+    const { show, hide } = tidyLayers(made, result, now.objects);
+    setOnly(null);
+    await setLayersVisible(show, hide);
+  };
+
+  /** What a step last made, selected and zoomed to. */
+  const showStep = (step: WorkflowStep) => {
+    const made = (step.last?.made ?? []).filter((id) => summary?.objects.some((o) => o.id === id));
+    if (made.length === 0) return;
+    setSelection(made);
+    zoomTo(made);
+  };
+
+  /** Only what a step last made on show; again, or Show all again, puts the layers back as they were. */
+  const onlyStep = async (step: WorkflowStep) => {
+    const layers = summary?.layers ?? [];
+    if (only) {
+      const was = only.was;
+      setOnly(null);
+      await setLayersVisible(
+        was.filter((l) => l.visible).map((l) => l.id),
+        was.filter((l) => !l.visible).map((l) => l.id),
+      );
+      if (only.step === step.id) return;
+    }
+    const { show, hide } = onlyLayers(step.last?.made ?? [], summary?.objects ?? [], layers);
+    if (show.length === 0) return;
+    setOnly({ step: step.id, was: layers.map((l) => ({ id: l.id, visible: l.visible })) });
+    await setLayersVisible(show, hide);
   };
 
   const steps = workflow?.steps ?? [];
@@ -142,6 +201,30 @@ export function WorkflowPanel() {
             </>
           }
         >
+          <label className="flex items-center gap-1.5 text-muted-foreground" title="After a run, show what it started from and what its last step made, and hide the layers only the steps in between made">
+            <input
+              type="checkbox"
+              checked={tidy}
+              aria-label="Tidy after a run"
+              onChange={(e) => {
+                setTidy(e.target.checked);
+                try {
+                  localStorage.setItem(TIDY_KEY, e.target.checked ? 'on' : 'off');
+                } catch {
+                  // Storage unavailable: the switch holds for this session.
+                }
+              }}
+            />
+            Tidy after a run: inputs and the result on show, the layers in between hidden
+          </label>
+          {only && (
+            <div className="flex items-center gap-2 text-primary">
+              Showing only step {steps.findIndex((s) => s.id === only.step) + 1}
+              <button type="button" className="underline" onClick={() => void onlyStep(steps.find((s) => s.id === only.step)!)}>
+                Show all again
+              </button>
+            </div>
+          )}
           {adding && <div className="text-primary">Adding: each tool panel's button reads Add to workflow, and adds its command and settings as the last step.</div>}
           {steps.length === 0 && <div className="text-muted-foreground">No steps yet.</div>}
           <ol className="flex flex-col gap-1">
@@ -150,10 +233,27 @@ export function WorkflowPanel() {
                 <div className="flex items-center gap-1">
                   <input type="checkbox" checked={step.on !== false} aria-label={`Step ${at + 1} on`} title="On: switched off, a step is passed over" onChange={(e) => edit((s) => s.map((t, k) => (k === at ? { ...t, on: e.target.checked ? undefined : false } : t)))} />
                   <span className="w-5 text-right tabular-nums text-muted-foreground">{at + 1}</span>
-                  <span className="min-w-0 flex-1 truncate font-medium" title={step.action.kind === 'command' ? step.action.command : 'Pause'}>
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 truncate text-left font-medium hover:text-primary disabled:hover:text-foreground"
+                    title={step.last?.made.length ? `Select and zoom to the ${plural(step.last.made.length, 'object')} it made` : step.action.kind === 'command' ? step.action.command : 'Pause'}
+                    aria-label={`Show step ${at + 1}`}
+                    disabled={!step.last?.made.length}
+                    onClick={() => showStep(step)}
+                  >
                     {step.action.kind === 'command' ? step.action.command : 'Pause'}
-                  </span>
+                  </button>
                   <LastBadge step={step} />
+                  {step.action.kind === 'command' && (
+                    <IconButton
+                      label={only?.step === step.id ? 'Show all again' : `Only step ${at + 1}: what it made on show, every other layer off`}
+                      className={only?.step === step.id ? 'bg-primary/20 text-primary' : undefined}
+                      disabled={!step.last?.made.length}
+                      onClick={() => void onlyStep(step)}
+                    >
+                      <Eye />
+                    </IconButton>
+                  )}
                   <IconButton label={`Run from step ${at + 1}, keeping what the steps before made`} disabled={busy} onClick={() => void run(at + 1)}>
                     <Play />
                   </IconButton>

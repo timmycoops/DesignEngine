@@ -38,3 +38,37 @@ export function tickRuns(ticked: ReadonlySet<number>, tickable: ReadonlySet<numb
   }
   return next;
 }
+
+/** An object as the layer logic needs it: its id and its layer's id. */
+export interface Placed {
+  id: string;
+  layer: string;
+}
+
+/** Layers to show and to hide, by id. */
+export interface LayerChange {
+  show: string[];
+  hide: string[];
+}
+
+/**
+ * The layers that tidy a workflow's run (option B): the layers holding what its last step made are shown, and the layers
+ * holding only what the other steps made are hidden, so the run's inputs and its result are what's on screen. A layer
+ * holding anything no step made (a toe drawn by hand, the grids) is left as it is.
+ */
+export function tidyLayers(made: string[][], result: string[], objects: Placed[]): LayerChange {
+  const byStep = new Set(made.flat());
+  const layerOf = new Map(objects.map((o) => [o.id, o.layer]));
+  const shown = new Set(result.map((id) => layerOf.get(id)).filter((l): l is string => l !== undefined));
+  const holdsOthers = new Set(objects.filter((o) => !byStep.has(o.id)).map((o) => o.layer));
+  const stepLayers = new Set([...byStep].map((id) => layerOf.get(id)).filter((l): l is string => l !== undefined));
+  const hide = [...stepLayers].filter((l) => !shown.has(l) && !holdsOthers.has(l));
+  return { show: [...shown], hide };
+}
+
+/** The layers that show only what one step made (option A): its layers on, every other layer on show off. */
+export function onlyLayers(made: string[], objects: Placed[], layers: { id: string; visible: boolean }[]): LayerChange {
+  const layerOf = new Map(objects.map((o) => [o.id, o.layer]));
+  const show = new Set(made.map((id) => layerOf.get(id)).filter((l): l is string => l !== undefined));
+  return { show: [...show], hide: layers.filter((l) => l.visible && !show.has(l.id)).map((l) => l.id) };
+}

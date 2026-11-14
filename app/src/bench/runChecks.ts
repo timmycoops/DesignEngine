@@ -96,7 +96,7 @@ export async function runChecks(
     } else if (config.shell) {
       results.shell = await checkShell(viewport, log, dock);
     } else if (config.workflow) {
-      results.workflow = await checkWorkflow(viewport, log, show, dock);
+      results.workflow = await checkWorkflow(viewport, log, show, dock, selection);
     } else if (config.solids) {
       results.solids = await checkSolids(viewport, config, config.solids, log, show, section, strings);
     } else {

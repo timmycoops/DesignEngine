@@ -12,7 +12,7 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type Show = (summary: ProjectSummary) => Promise<void> | undefined;
 
-export async function checkWorkflow(_viewport: Viewport, log: (line: string) => void, show: Show, dock: () => DockviewApi | null) {
+export async function checkWorkflow(_viewport: Viewport, log: (line: string) => void, show: Show, dock: () => DockviewApi | null, selection: () => string[]) {
   const api = dock();
   if (!api) return { error: 'no dock' };
   const results: Record<string, unknown> = {};
@@ -98,6 +98,26 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     expect('the panel says what ran', panelText('workflow').includes('2 steps run from step 1'), panelText('workflow').slice(-300));
     const runlog = document.body.textContent ?? '';
     expect('the run log has the workflow run', runlog.includes('Box pit: 2 steps run from step 1, finished'));
+
+    // Tidy after a run (on by default): the pit, which only step 1 made, hidden; the pieces, the result, on show; the
+    // surfaces and the outline, drawn before, left as they were.
+    const shown = async () => Object.fromEntries((await projectSummary()).layers.map((l) => [l.name, l.visible]));
+    let layers = await shown();
+    expect('tidy: the result on show, the step in between hidden, the inputs as they were', layers.cut === true && layers.pit === false && layers.surfaces === true && layers.outline === true, layers);
+
+    // A click on step 1 selects what it made, the pit, and zooms to it.
+    await press(labelled('Show step 1'));
+    expect('a click on a step selects what it made', JSON.stringify(selection()) === JSON.stringify([pit]), selection());
+
+    // Its eye shows only that: the pit's layer on, every other layer off; again puts them back.
+    await press(document.querySelector<HTMLElement>('[aria-label^="Only step 1"]'));
+    layers = await shown();
+    const on = Object.entries(layers).filter(([, v]) => v).map(([k]) => k);
+    expect('only step 1: its layer alone on show', JSON.stringify(on) === JSON.stringify(['pit']), on);
+    expect('the panel says so', panelText('workflow').includes('Showing only step 1'));
+    await press(button('Show all again'));
+    layers = await shown();
+    expect('show all again puts the layers back', layers.cut === true && layers.pit === false && layers.surfaces === true && layers.outline === true, layers);
 
     // Add to workflow: while adding, the Cut solids panel's button adds a step instead of running.
     await press(labelled('Add steps from the tool panels: their button reads Add to workflow'));
