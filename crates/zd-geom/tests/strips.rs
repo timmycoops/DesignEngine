@@ -314,3 +314,30 @@ fn a_slice_says_how_far_it_has_got_and_stops_when_told() {
     let stopped = zd_geom::slice_solid_by_faces_watched(&pit(), &refs, |done, _| done < 2);
     assert!(matches!(stopped, Err(SliceRefusal::Stopped)), "{stopped:?}");
 }
+
+/// A face's own detail finer than the join's tolerance stays as its face made it: the weld is for where faces meet. An up
+/// face holding two corners 0.4 mm apart (as a berm laid on its grid does where a grid line passes that close to its
+/// corner, 0064) joins a down face at a 1 mm tolerance with both kept; only the two toe corners the faces share weld.
+#[test]
+fn a_faces_own_detail_finer_than_the_tolerance_is_not_welded() {
+    let at = |x: f64, z: f64| [E + x, N, z];
+    let down = TriMesh::new(vec![at(0.0, 0.0), at(10.0, 0.0), at(10.0, -10.0), at(0.0, -10.0)], vec![[0, 2, 1], [0, 3, 2]]);
+    // The up face: corners c0 to c3, and p and q 0.4 mm apart in the middle, with the two slivers between them.
+    let (p, q) = (at(5.0, 5.0), at(5.0004, 5.0));
+    let up = TriMesh::new(
+        vec![at(0.0, 0.0), at(10.0, 0.0), at(10.0, 10.0), at(0.0, 10.0), p, q],
+        vec![[0, 1, 5], [0, 5, 4], [1, 2, 5], [2, 3, 4], [2, 4, 5], [3, 0, 4]],
+    );
+    let (joined, log) = join_faces(&[&down, &up], 0.001).unwrap();
+    assert_eq!(log.weld.vertices_welded, 2, "the two toe corners, nothing inside a face: {log:?}");
+    assert!(joined.vertices.contains(&p) && joined.vertices.contains(&q), "both kept where the face put them");
+    assert_eq!(joined.triangles.len(), 8, "the slivers too");
+    // Area tolerance 1e-9 m²: 100 m² down and 100 m² up, one sheet.
+    let area: f64 = joined.triangles.iter().map(|t| {
+        let [a, b, c] = t.map(|i| joined.vertices[i as usize]);
+        let (u, v) = ([b[0] - a[0], b[1] - a[1], b[2] - a[2]], [c[0] - a[0], c[1] - a[1], c[2] - a[2]]);
+        0.5 * ((u[1] * v[2] - u[2] * v[1]).powi(2) + (u[2] * v[0] - u[0] * v[2]).powi(2) + (u[0] * v[1] - u[1] * v[0]).powi(2)).sqrt()
+    }).sum();
+    assert!((area - 200.0).abs() < 1e-9, "{area}");
+    assert_eq!(zd_geom::boundary_loops(&joined).unwrap().len(), 1);
+}
