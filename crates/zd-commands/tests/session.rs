@@ -105,6 +105,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "string.split",
             "surface.from_mesh",
             "surface.import",
+            "workflow.save",
         ]
     );
     let specs = serde_json::to_value(session.registry().specs()).unwrap();

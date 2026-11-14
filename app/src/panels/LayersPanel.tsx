@@ -1,4 +1,4 @@
-import { Box, ChevronDown, ChevronRight, Grid3x3, Layers, type LucideIcon, Mountain, PencilRuler, Spline } from 'lucide-react';
+import { Box, ChevronDown, ChevronRight, Grid3x3, Layers, type LucideIcon, Mountain, PencilRuler, Spline, Workflow } from 'lucide-react';
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { type Colouring, type Layer, layerOpacityOf, lookOf, type ObjectKind, type ObjectSummary } from '@/bridge';
 import { ROW_HEIGHT, useRowWindow } from '@/design-system/DataTable';
@@ -44,6 +44,7 @@ const kindIcon: Record<ObjectKind, LucideIcon> = {
   grid: Grid3x3,
   seam_model: Layers,
   face_design: PencilRuler,
+  workflow: Workflow,
 };
 
 type LayerEntry = { kind: 'layer'; layer: Layer; count: number; hidden: number; open: boolean };

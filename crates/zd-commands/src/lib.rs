@@ -13,6 +13,7 @@ mod error;
 mod registry;
 mod session;
 mod spec;
+pub mod workflow;
 
 pub use command::{Command, Inputs, Outcome};
 pub use control::{Progress, RunControl};

@@ -19,6 +19,7 @@ mod spry;
 mod string;
 mod strips;
 mod surface;
+mod workflow;
 
 pub use blocks::{CutByPolygons, CutByPolygonsParams, CutBySeams, CutBySeamsParams, PolygonsFromLines, PolygonsFromLinesParams, check_cut_by_polygons, check_cut_by_seams};
 pub use compare::{CompareSolids, CompareSolidsParams};
@@ -42,6 +43,7 @@ pub use string::{
 };
 pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, SolidBetween, SolidBetweenParams, check_slice};
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
+pub use workflow::{SaveWorkflow, SaveWorkflowParams, WORKFLOW_LAYER};
 
 use crate::{CommandError, Registry};
 
@@ -101,6 +103,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(ExportDxf);
     registry.register(ExportCsv);
     registry.register(ExportSolids);
+    registry.register(SaveWorkflow);
 }
 
 fn finite(point: &[f64; 3]) -> Result<(), CommandError> {

@@ -285,7 +285,7 @@ export interface Layer {
   visible: boolean;
 }
 
-export type ObjectKind = 'string' | 'surface' | 'solid' | 'grid' | 'seam_model' | 'face_design';
+export type ObjectKind = 'string' | 'surface' | 'solid' | 'grid' | 'seam_model' | 'face_design' | 'workflow';
 
 export interface ObjectSummary {
   id: string;
@@ -822,7 +822,42 @@ export type Measures =
       z_range: [number, number] | null;
     }
   | { kind: 'seam_model'; model: SeamModel }
-  | { kind: 'face_design'; design: FaceDesign };
+  | { kind: 'face_design'; design: FaceDesign }
+  | { kind: 'workflow'; workflow: Workflow };
+
+/** Saved steps run again in one go (decision 0065). */
+export interface Workflow {
+  steps: WorkflowStep[];
+}
+
+export interface WorkflowStep {
+  id: number;
+  note?: string;
+  /** Left out when on. */
+  on?: boolean;
+  action: { kind: 'command'; command: string; settings: Record<string, unknown>; inputs: Record<string, InputRule> } | { kind: 'pause' };
+  last?: LastStepRun;
+}
+
+/** How a step finds an input each time it runs. */
+export interface InputRule {
+  from: { step: number } | { layer: string } | { named: string } | { picked: string[] };
+  kind?: ObjectKind;
+  where?: Record<string, string | number | boolean>;
+  many: boolean;
+}
+
+export interface LastStepRun {
+  run: string;
+  workflow_run?: string;
+  at_unix_ms: number;
+  ms: number;
+  made: string[];
+  revised?: string[];
+  deleted?: number;
+  warnings?: number;
+  refused?: boolean;
+}
 
 /** One revision of an object and the run that wrote it. */
 export interface RevisionSummary {
