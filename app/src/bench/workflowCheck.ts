@@ -234,6 +234,25 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     await wait(300);
     expect('the Report section asks for the project to be saved first', panelText('workflow').includes('Save the project first: reports go in a folder beside it'));
     expect('and its button is off till then', buttons().find((b) => b.textContent?.trim() === 'Write report')?.disabled === true);
+
+    // The block table (decision 0069): the two pieces on 'cut' listed at their own volumes and added up; filtered to the
+    // piece below RL 40; deleted from the table in one run, and one undo brings it back.
+    showPanel(api, 'blocks');
+    await wait(800);
+    choose('Layer of solids', layerId('cut') ?? '');
+    await wait(1000);
+    const totals = () => document.querySelector('[aria-label="Totals of the rows shown"]')?.textContent ?? '';
+    expect("the block table lists the two pieces on 'cut', 600,000 m³", totals().includes('2 of 2 shown') && totals().includes('600,000'), totals());
+    typeInto('Filter the rows', 'below');
+    await wait(400);
+    expect('filtered to the piece below RL 40: 40 m × 6,000 m², 240,000 m³', totals().includes('1 of 2 shown') && totals().includes('240,000'), totals());
+    await press(button('Delete shown'));
+    await press(buttons().find((b) => b.textContent?.trim().startsWith('Delete 1,')));
+    const afterDelete = await projectSummary();
+    expect('Delete shown deletes it in one run', afterDelete.objects.filter((o) => o.layer === layerId('cut') && o.kind === 'solid').length === 1);
+    await show(await undo());
+    const restored = await projectSummary();
+    expect('and one undo brings it back', restored.objects.filter((o) => o.layer === layerId('cut') && o.kind === 'solid').length === 2);
   } catch (e) {
     expect('ran without an error', false, String(e));
   }

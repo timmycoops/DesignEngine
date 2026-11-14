@@ -40,6 +40,7 @@ fn main() {
             commands::set_contours,
             commands::run_log,
             commands::objects_attributes,
+            commands::solids_table,
             commands::deswik_layers,
             commands::spry_contents,
             commands::stage_object,

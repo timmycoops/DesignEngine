@@ -579,6 +579,9 @@ export const openProject = async (path: string) => (idle(), summaryAfter(await i
 /** Every attribute of each object, in the order given (a row carries only those the app reads by name). */
 export const objectsAttributes = (objects: string[]) => invoke<Record<string, boolean | number | string>[]>('objects_attributes', { objects });
 
+/** Each solid's own volume and every attribute, in the order asked, for the block table; null volume if it's gone. */
+export const solidsTable = (objects: string[]) => invoke<{ volume: number | null; attributes: Record<string, boolean | number | string> }[]>('solids_table', { objects });
+
 /** One folder a seam model reads its grids from, with how many of them are there (decision 0058, stage 4). */
 export interface FolderCheck {
   folder: string;
