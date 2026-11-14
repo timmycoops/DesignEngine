@@ -11,6 +11,8 @@ mod control;
 mod note;
 mod error;
 mod registry;
+pub mod report;
+mod report_html;
 mod session;
 mod spec;
 pub mod workflow;

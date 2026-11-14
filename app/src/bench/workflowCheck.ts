@@ -229,6 +229,11 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     showPanel(api, 'workflow');
     await wait(300);
     await press(labelled('Stop adding from the tool panels'));
+    // The report (decision 0068): the bench's project isn't saved, so the Report section says to save first, its button off.
+    showPanel(api, 'workflow');
+    await wait(300);
+    expect('the Report section asks for the project to be saved first', panelText('workflow').includes('Save the project first: reports go in a folder beside it'));
+    expect('and its button is off till then', buttons().find((b) => b.textContent?.trim() === 'Write report')?.disabled === true);
   } catch (e) {
     expect('ran without an error', false, String(e));
   }

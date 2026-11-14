@@ -1,9 +1,9 @@
-import { ArrowDown, ArrowUp, Eye, Layers, Pause, Play, Plus, SkipForward, SlidersHorizontal, Trash2, Workflow } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp, Eye, FileText, Layers, Pause, Play, Plus, SkipForward, SlidersHorizontal, Trash2, Workflow } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
-import type { LogEntry, Note, WorkflowRecord, WorkflowStep } from '@/bridge';
-import { objectDetails, projectSummary } from '@/bridge';
+import type { LogEntry, Note, ReportFile, WorkflowRecord, WorkflowStep } from '@/bridge';
+import { objectDetails, openWorkflowReport, projectSummary, workflowReports, writeWorkflowReport } from '@/bridge';
 import { Field, IconButton, plainNote, type RunReport, Select, StatusBadge, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { LastBadge, plural, StepSettings, usePickedWorkflow } from './workflowParts';
 import { useWorkspace } from '@/workspace/context';
@@ -71,6 +71,34 @@ export function WorkflowPanel() {
     });
 
   const cases = workflow?.cases ?? [];
+
+  // The reports written for this workflow beside the project (decision 0068), newest first.
+  const [reports, setReports] = useState<ReportFile[]>([]);
+  const [reportSaid, setReportSaid] = useState<{ error?: string; text?: string }>({});
+  const [writing, setWriting] = useState(false);
+  const projectPath = summary?.path ?? null;
+  useEffect(() => {
+    if (!chosen || !projectPath) return setReports([]);
+    let live = true;
+    void workflowReports(chosen.id)
+      .then((list) => live && setReports(list))
+      .catch(() => live && setReports([]));
+    return () => {
+      live = false;
+    };
+  }, [chosen, projectPath]);
+  const writeReport = async () => {
+    if (!chosen) return;
+    setWriting(true);
+    try {
+      const file = await writeWorkflowReport(chosen.id);
+      setReportSaid({ text: `Written and opened in your browser: ${file.name}` });
+      setReports(await workflowReports(chosen.id));
+    } catch (e) {
+      setReportSaid({ error: String(e) });
+    }
+    setWriting(false);
+  };
 
   // The last run of this workflow's case, from the log: where Continue goes after a pause.
   const last = useMemo(() => {
@@ -272,6 +300,46 @@ export function WorkflowPanel() {
               <Plus className="size-3.5" /> Add
             </Button>
           </Field>
+        </ToolSection>
+      )}
+
+      {chosen && workflow && (
+        <ToolSection
+          title="Report"
+          aside={
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              disabled={writing || busy || !projectPath}
+              title={projectPath ? 'Every case from its latest run, as one HTML page beside the project, opened in your browser' : 'Save the project first: reports go in a folder beside it'}
+              onClick={() => void writeReport()}
+            >
+              <FileText className="size-3.5" /> {writing ? 'Writing…' : 'Write report'}
+            </Button>
+          }
+        >
+          {!projectPath ? (
+            <div className="text-muted-foreground">Save the project first: reports go in a folder beside it.</div>
+          ) : reports.length === 0 ? (
+            <div className="text-muted-foreground">No report yet: totals by case, seam and block, what was left out and how it adds up to the pit.</div>
+          ) : (
+            <div className="flex flex-col">
+              {reports.slice(0, 5).map((r) => (
+                <button
+                  key={r.path}
+                  type="button"
+                  className="truncate text-left text-primary hover:underline"
+                  title={`Open ${r.path} in your browser`}
+                  onClick={() => void openWorkflowReport(r.path).catch((e) => setReportSaid({ error: String(e) }))}
+                >
+                  {r.name}
+                </button>
+              ))}
+              {reports.length > 5 && <span className="text-muted-foreground">and {reports.length - 5} older, in the reports folder beside the project</span>}
+            </div>
+          )}
+          {reportSaid.error ? <div className="text-destructive">{reportSaid.error}</div> : reportSaid.text ? <div className="text-ok">{reportSaid.text}</div> : null}
         </ToolSection>
       )}
 
