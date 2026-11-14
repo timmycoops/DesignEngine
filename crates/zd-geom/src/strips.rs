@@ -38,6 +38,11 @@ pub struct JoinLog {
 /// The faces of one strip joined into one surface, wound upward: welded where they meet within `tolerance` (m),
 /// stitched where a corner of one lies on another's edge, and any gap they close all round filled. Faces that don't
 /// meet, or that overlap so an edge is shared three ways, are refused.
+///
+/// Only where faces meet: a corner on one face's edge is made one with the nearest corner on another face's edge within
+/// the tolerance, and every other corner stays where its face put it. Detail a face holds finer than the tolerance, as a
+/// berm laid on its grid has where a grid line passes within a millimetre of its corner (0064), isn't folded onto
+/// itself by a weld meant for the seams between faces.
 pub fn join_faces(faces: &[&TriMesh], tolerance: f64) -> Result<(TriMesh, JoinLog), GeomError> {
     if faces.is_empty() {
         return Err(GeomError::InvalidInput("there are no faces to join".into()));
@@ -46,15 +51,25 @@ pub fn join_faces(faces: &[&TriMesh], tolerance: f64) -> Result<(TriMesh, JoinLo
         return Err(GeomError::InvalidInput(format!("a join tolerance of {tolerance} m isn't one")));
     }
     let mut all = TriMesh::default();
-    for face in faces {
+    let mut face_of = Vec::new();
+    let mut on_edge = Vec::new();
+    for (f, face) in faces.iter().enumerate() {
         if face.triangles.is_empty() {
             return Err(GeomError::InvalidInput("a face has no triangles".into()));
         }
         let base = all.vertices.len() as u32;
         all.vertices.extend_from_slice(&face.vertices);
         all.triangles.extend(face.triangles.iter().map(|t| t.map(|v| v + base)));
+        let edge: std::collections::HashSet<u32> = boundary_edges(face).iter().flat_map(|e| [e.0, e.1]).collect();
+        face_of.extend(std::iter::repeat_n(f, face.vertices.len()));
+        on_edge.extend((0..face.vertices.len() as u32).map(|v| edge.contains(&v)));
     }
-    let (welded, weld) = repair_mesh(&all, tolerance);
+    let (met, joined, furthest) = weld_where_faces_meet(&all, &face_of, &on_edge, tolerance);
+    // Then only what's the same point: a corner repeated, a triangle that collapsed or is there twice.
+    let (welded, mut weld) = repair_mesh(&met, SAME_POINT);
+    weld.tolerance = tolerance;
+    weld.vertices_welded += joined;
+    weld.largest_move = weld.largest_move.max(furthest);
     let (stitched_mesh, stitched) = stitch(welded, tolerance);
     let pieces = pieces_of(&stitched_mesh);
     if pieces.len() > 1 {
@@ -71,6 +86,64 @@ pub fn join_faces(faces: &[&TriMesh], tolerance: f64) -> Result<(TriMesh, JoinLo
     })?;
     let filled = fill_gaps(&mut mesh)?;
     Ok((mesh, JoinLog { faces: faces.len(), weld, stitched, filled }))
+}
+
+/// Corners closer than this (m) are one point, whichever faces they're on.
+const SAME_POINT: f64 = 1e-9;
+
+/// `mesh` with each corner on a face's edge made one with the nearest corner on another face's edge within `tolerance`:
+/// the joined mesh, how many corners were made one with another, and the furthest any moved (m). Corners are taken in
+/// order, so the first face's corners stay where they are.
+fn weld_where_faces_meet(mesh: &TriMesh, face_of: &[usize], on_edge: &[bool], tolerance: f64) -> (TriMesh, usize, f64) {
+    let mut into: Vec<u32> = (0..mesh.vertices.len() as u32).collect();
+    let (mut joined, mut furthest) = (0, 0.0_f64);
+    if tolerance > 0.0 {
+        let cell = |p: [f64; 3]| p.map(|c| (c / tolerance).floor() as i64);
+        let mut kept: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
+        for v in 0..mesh.vertices.len() {
+            if !on_edge[v] {
+                continue;
+            }
+            let p = mesh.vertices[v];
+            let c = cell(p);
+            let mut nearest: Option<(f64, u32)> = None;
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        for &w in kept.get(&[c[0] + dx, c[1] + dy, c[2] + dz]).into_iter().flatten() {
+                            if face_of[w as usize] == face_of[v] {
+                                continue;
+                            }
+                            let q = mesh.vertices[w as usize];
+                            let d = ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)).sqrt();
+                            if d <= tolerance && nearest.is_none_or(|(e, _)| d < e) {
+                                nearest = Some((d, w));
+                            }
+                        }
+                    }
+                }
+            }
+            match nearest {
+                Some((d, w)) => {
+                    into[v] = w;
+                    joined += 1;
+                    furthest = furthest.max(d);
+                }
+                None => kept.entry(c).or_default().push(v as u32),
+            }
+        }
+    }
+    // The corners made one with another go, so nothing weighs them twice.
+    let mut kept = vec![u32::MAX; mesh.vertices.len()];
+    let mut vertices = Vec::with_capacity(mesh.vertices.len() - joined);
+    for (v, p) in mesh.vertices.iter().enumerate() {
+        if into[v] == v as u32 {
+            kept[v] = vertices.len() as u32;
+            vertices.push(*p);
+        }
+    }
+    let triangles = mesh.triangles.iter().map(|t| t.map(|v| kept[into[v as usize] as usize])).collect();
+    (TriMesh::new(vertices, triangles), joined, furthest)
 }
 
 /// A triangle's edge from one corner to the next, and the corners lying on it with how far along each is.
