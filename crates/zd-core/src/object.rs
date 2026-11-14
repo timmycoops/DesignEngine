@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Crossings, FaceDesign, Grid, LayerId, MeshValidity, ObjectId, RunId, SeamModel, TriMesh};
+use crate::{Crossings, FaceDesign, Grid, LayerId, MeshValidity, ObjectId, RunId, SeamModel, TriMesh, Workflow};
 
 /// What kind of thing an object is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -14,6 +14,7 @@ pub enum ObjectKind {
     Grid,
     SeamModel,
     FaceDesign,
+    Workflow,
 }
 
 /// A string: ordered f64 vertices, open or closed.
@@ -191,6 +192,8 @@ pub enum Body {
     SeamModel(Arc<SeamModel>),
     /// Lines, profiles and rules; a run makes its strings and surfaces as objects of their own.
     FaceDesign(Arc<FaceDesign>),
+    /// Steps run again in one go, with what each did last (decision 0065).
+    Workflow(Arc<Workflow>),
 }
 
 impl Body {
@@ -202,6 +205,7 @@ impl Body {
             Body::Grid(_) => ObjectKind::Grid,
             Body::SeamModel(_) => ObjectKind::SeamModel,
             Body::FaceDesign(_) => ObjectKind::FaceDesign,
+            Body::Workflow(_) => ObjectKind::Workflow,
         }
     }
 }

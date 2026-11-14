@@ -34,7 +34,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Crossings, Display, FaceDesign, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, RunId, SeamModel, Solid, Surface, TriMesh};
+use zd_core::{AttrValue, Attributes, Body, Crossings, Display, FaceDesign, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, RunId, SeamModel, Solid, Surface, TriMesh, Workflow};
 
 use crate::seam::fnv1a;
 use crate::store::{StoreError, saved_display};
@@ -513,6 +513,7 @@ fn place_bodies(objects: &[Arc<Object>]) -> Result<Placement, StoreError> {
             }
             Body::SeamModel(model) => Placed::Json(serde_json::to_string(&**model).map_err(|e| StoreError::Format(e.to_string()))?),
             Body::FaceDesign(design) => Placed::Json(serde_json::to_string(&**design).map_err(|e| StoreError::Format(e.to_string()))?),
+            Body::Workflow(workflow) => Placed::Json(serde_json::to_string(&**workflow).map_err(|e| StoreError::Format(e.to_string()))?),
         };
         placed.push(entry);
     }
@@ -528,6 +529,7 @@ fn kind_name(body: &Body) -> &'static str {
         Body::Grid(_) => "grid",
         Body::SeamModel(_) => "seam_model",
         Body::FaceDesign(_) => "face_design",
+        Body::Workflow(_) => "workflow",
     }
 }
 
@@ -886,13 +888,13 @@ pub fn read_project(input: &(impl Container + Sync)) -> Result<ReadProject, Stor
                 };
                 Body::Grid(grid)
             }
-            kind @ ("seam_model" | "face_design") => {
+            kind @ ("seam_model" | "face_design" | "workflow") => {
                 let json = body[row].as_deref().ok_or_else(|| needs(row, "body"))?;
                 let bad = |e: serde_json::Error| StoreError::Format(format!("{OBJECTS}: {kind} '{}': {e}", names[row]));
-                if kind == "seam_model" {
-                    Body::SeamModel(Arc::new(serde_json::from_str::<SeamModel>(json).map_err(bad)?))
-                } else {
-                    Body::FaceDesign(Arc::new(serde_json::from_str::<FaceDesign>(json).map_err(bad)?))
+                match kind {
+                    "seam_model" => Body::SeamModel(Arc::new(serde_json::from_str::<SeamModel>(json).map_err(bad)?)),
+                    "face_design" => Body::FaceDesign(Arc::new(serde_json::from_str::<FaceDesign>(json).map_err(bad)?)),
+                    _ => Body::Workflow(Arc::new(serde_json::from_str::<Workflow>(json).map_err(bad)?)),
                 }
             }
             other => return Err(StoreError::Format(format!("{OBJECTS}: '{}' is of a kind this build doesn't know: {other}", names[row]))),
@@ -1005,6 +1007,7 @@ pub fn project_differences(a: &Project, b: &Project) -> Vec<String> {
             }
             (Body::SeamModel(p), Body::SeamModel(q)) => p == q,
             (Body::FaceDesign(p), Body::FaceDesign(q)) => p == q,
+            (Body::Workflow(p), Body::Workflow(q)) => p == q,
             _ => false,
         };
         if !same {

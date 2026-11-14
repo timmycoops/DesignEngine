@@ -229,7 +229,7 @@ fn bounds(body: &Body) -> Option<[[f64; 3]; 2]> {
             let far = [g.origin[0] + (g.cols - 1) as f64 * g.cell_size[0], g.origin[1] + (g.rows - 1) as f64 * g.cell_size[1]];
             Some([[g.origin[0], g.origin[1], lo], [far[0], far[1], hi]])
         }
-        Body::SeamModel(_) | Body::FaceDesign(_) => None,
+        Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) => None,
     }
 }
 
@@ -269,6 +269,7 @@ fn measures(body: &Body) -> Value {
         }),
         Body::SeamModel(m) => json!({ "model": **m }),
         Body::FaceDesign(d) => json!({ "design": **d }),
+        Body::Workflow(w) => json!({ "workflow": **w }),
     }
 }
 

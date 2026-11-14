@@ -24,6 +24,7 @@ export const kindLabel: Record<ObjectKind, string> = {
   grid: 'Grid',
   seam_model: 'Seam model',
   face_design: 'Face design',
+  workflow: 'Workflow',
 };
 
 /** Coloured by RL or its layer's colour on its own: surfaces and elevation grids. A solid goes by its layer. */

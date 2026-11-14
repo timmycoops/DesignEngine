@@ -41,7 +41,7 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use serde::{Deserialize, Serialize};
 use zd_core::{
-    Attributes, Body, Crossings, Display, FaceDesign, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, ProjectError, RunId, SeamModel, Solid,
+    Attributes, Body, Crossings, Display, FaceDesign, Workflow, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, ProjectError, RunId, SeamModel, Solid,
     Surface, TriMesh,
 };
 
@@ -152,6 +152,7 @@ enum StoredBody {
     Grid { origin: [f64; 2], cell_size: [f64; 2], cols: usize, rows: usize, z: String },
     SeamModel { model: SeamModel },
     FaceDesign { design: FaceDesign },
+    Workflow { workflow: Workflow },
 }
 
 /// Files already on disk for a shared mesh or grid, so a later save can point at them again.
@@ -261,6 +262,7 @@ impl ProjectStore {
                 }
                 StoredBody::SeamModel { model } => Body::SeamModel(Arc::new(model)),
                 StoredBody::FaceDesign { design } => Body::FaceDesign(Arc::new(design)),
+                StoredBody::Workflow { workflow } => Body::Workflow(Arc::new(workflow)),
             };
             objects.push(Object {
                 id: stored.id,
@@ -313,6 +315,7 @@ impl ProjectStore {
                 }
                 Body::SeamModel(model) => StoredBody::SeamModel { model: (**model).clone() },
                 Body::FaceDesign(design) => StoredBody::FaceDesign { design: (**design).clone() },
+                Body::Workflow(workflow) => StoredBody::Workflow { workflow: (**workflow).clone() },
             };
             stored.push(StoredObject {
                 id: object.id,

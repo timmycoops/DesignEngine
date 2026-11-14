@@ -115,6 +115,7 @@ pub fn geometry_key(body: &Body) -> usize {
         Body::Grid(g) => Arc::as_ptr(g) as usize,
         Body::SeamModel(m) => Arc::as_ptr(m) as usize,
         Body::FaceDesign(d) => Arc::as_ptr(d) as usize,
+        Body::Workflow(w) => Arc::as_ptr(w) as usize,
         Body::String(_) => 0,
     }
 }
@@ -309,7 +310,7 @@ pub fn is_drawn_surface(object: &Object) -> bool {
     match &object.body {
         Body::Surface(_) | Body::Solid(_) => true,
         Body::Grid(_) => object.attributes.get("role") != Some(&AttrValue::Text("property".into())),
-        Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) => false,
+        Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) => false,
     }
 }
 
@@ -326,7 +327,7 @@ pub fn bounds(object: &Object) -> Option<zd_core::Aabb> {
             let far = g.node_xy(g.cols - 1, g.rows - 1);
             Some(zd_core::Aabb { min: [g.origin[0], g.origin[1], lo], max: [far[0], far[1], hi] })
         }
-        Body::FaceDesign(_) => None,
+        Body::FaceDesign(_) | Body::Workflow(_) => None,
         // Its grids stay in their files; the build recorded the working section's elevation range.
         Body::SeamModel(m) => {
             let [lo, hi] = m.z_range?;

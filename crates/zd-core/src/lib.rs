@@ -15,6 +15,7 @@ mod object;
 mod project;
 mod seam;
 mod validity;
+mod workflow;
 
 pub use attributes::intern;
 pub use bounds::Aabb;
@@ -27,3 +28,4 @@ pub use object::{AttrValue, Attributes, Body, Layer, Object, ObjectKind, ObjectR
 pub use project::{Applied, AppliedChange, Change, ChangeKind, Project, ProjectError};
 pub use seam::{Fingerprint, GridLink, Horizon, IssueKind, Lattice, SeamModel, StackIssue, blank_no_seam, blank_no_thickness, grid_holes, moved_path, relative_path, same_path};
 pub use validity::{CrossingCheck, Crossings, MeshValidity, is_zero_area};
+pub use workflow::{InputRule, LastRun, Source, StepAction, Workflow, WorkflowStep};

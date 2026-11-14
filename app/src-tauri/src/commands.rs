@@ -96,6 +96,7 @@ pub enum Measures {
     Grid { origin: [f64; 2], cell_size: [f64; 2], cols: usize, rows: usize, nulls: usize, z_range: Option<[f64; 2]> },
     SeamModel { model: SeamModel },
     FaceDesign { design: FaceDesign },
+    Workflow { workflow: zd_core::Workflow },
 }
 
 fn measure(body: &Body) -> Measures {
@@ -133,6 +134,7 @@ fn measure(body: &Body) -> Measures {
         },
         Body::SeamModel(m) => Measures::SeamModel { model: (**m).clone() },
         Body::FaceDesign(d) => Measures::FaceDesign { design: (**d).clone() },
+        Body::Workflow(w) => Measures::Workflow { workflow: (**w).clone() },
     }
 }
 
@@ -524,7 +526,7 @@ pub async fn stage_object(id: ObjectId, state: State<'_, AppState>) -> Result<St
                 let buffer = encode_grid(g, origin, header);
                 (buffer, "grid", 2 * (g.cols - 1) * (g.rows - 1))
             }
-            Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) => unreachable!("only drawn surfaces are staged"),
+            Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) => unreachable!("only drawn surfaces are staged"),
         };
         (buffer, kind, triangles, ms(t))
     })
@@ -859,7 +861,7 @@ pub async fn build_snap_index(state: State<'_, AppState>) -> Result<SnapIndex, S
             .map(|o| match &o.body {
                 Body::Surface(s) => Source::Mesh(o.id, geometry_key(&o.body), s.mesh_arc().clone()),
                 Body::Grid(g) => Source::Grid(o.id, geometry_key(&o.body), g.clone()),
-                Body::Solid(_) | Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) => unreachable!("only drawn surfaces are snapped to one by one"),
+                Body::Solid(_) | Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) => unreachable!("only drawn surfaces are snapped to one by one"),
             });
         objects.chain(tiles).collect()
     };
