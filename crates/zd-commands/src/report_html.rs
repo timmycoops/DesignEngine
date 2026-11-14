@@ -120,7 +120,7 @@ fn summary(h: &mut String, r: &Report) {
         let vs = |f: &dyn Fn(&CaseFigures) -> Option<f64>, dp: usize| -> String {
             let v = f(c);
             let text = v.map(|v| fixed(v, dp)).unwrap_or("–".into());
-            match (k > 0, v, base.and_then(|b| f(b))) {
+            match (k > 0, v, base.and_then(f)) {
                 (true, Some(v), Some(b)) => format!("{text} <span class=\"d\">{}</span>", signed(v - b, dp)),
                 _ => text,
             }

@@ -439,10 +439,8 @@ impl Session {
             Source::Named(name) => format!("the {} named '{name}'", kind.unwrap_or("object")),
             Source::Picked(ids) => format!("{} object{} as picked", ids.len(), if ids.len() == 1 { "" } else { "s" }),
         };
-        if matches!(rule.from, Source::Step(_)) {
-            if let Some(k) = kind {
-                words.push_str(&format!(", {k}s"));
-            }
+        if let (Source::Step(_), Some(k)) = (&rule.from, kind) {
+            words.push_str(&format!(", {k}s"));
         }
         if !rule.filter.is_empty() {
             let filter: Vec<String> = rule.filter.iter().map(|(k, v)| format!("{k} = {}", attr_words(v))).collect();

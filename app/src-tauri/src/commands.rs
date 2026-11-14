@@ -363,7 +363,7 @@ pub fn workflow_reports(workflow: ObjectId, state: State<'_, AppState>) -> Resul
         .filter(|p| p.file_stem().is_some_and(|s| s.to_string_lossy().starts_with(&format!("{name} "))))
         .filter_map(|p| report_file(&p))
         .collect();
-    files.sort_by(|a, b| b.modified_unix_ms.cmp(&a.modified_unix_ms));
+    files.sort_by_key(|f| std::cmp::Reverse(f.modified_unix_ms));
     Ok(files)
 }
 
