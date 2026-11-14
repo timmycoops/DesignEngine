@@ -5,6 +5,7 @@
 //! string geometry, section lines, and the import repair step with its crossing check.
 
 mod between;
+mod benches;
 mod blocks;
 mod layers;
 mod close;
@@ -32,6 +33,7 @@ mod string;
 mod strips;
 mod wall;
 
+pub use benches::{BenchCut, BenchPiece, MAX_LEVELS, bench_levels, cut_solid_by_levels};
 pub use blocks::{COVER_SLIVER, PolygonCut, PolygonPiece, Uncovered, cut_solid_by_polygons, polygons_overlapping, polygons_uncovered};
 pub use layers::{GridCover, GridHole, LayerCut, LayerPiece, LayerStack, cut_solid_by_layers, grid_hole_patches, layer_stack, solid_off_the_grids};
 pub use between::{Between, solid_between};
