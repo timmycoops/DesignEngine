@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { Colouring, Contours, LogEntry, ProjectSummary, RunRecord, Vec3 } from '@/bridge';
+import type { Colouring, Contours, LogEntry, ProjectSummary, RunRecord, Vec3, WorkflowRecord } from '@/bridge';
 import type { RlShown, SeamShown } from '@/viewport/sceneSync';
 import type { PanelId } from './Workspace';
 
@@ -48,6 +48,15 @@ export interface Workspace {
   runRecord: (name: string, params: Record<string, unknown>) => Promise<{ record?: RunRecord; error?: string }>;
   /** Takes a refusal off the status line, once what it was about has changed. */
   clearRefusal: () => void;
+  /** Runs a workflow from a step (from 1), handing back its record, or why it couldn't start (decision 0065). */
+  runWorkflow: (workflow: string, from: number) => Promise<{ record?: WorkflowRecord; error?: string }>;
+  /** Captures runs from the run log as a new workflow, and opens the Workflow panel on it. */
+  captureWorkflow: (name: string, runs: string[]) => Promise<{ record?: RunRecord; error?: string }>;
+  /** The workflow the tool panels add steps to, their button reading Add to workflow; null when not adding. */
+  addingTo: { id: string; name: string } | null;
+  setAddingTo: (workflow: { id: string; name: string } | null) => void;
+  /** Adds a tool panel's command and settings to the workflow being added to, as its last step. */
+  addStep: (command: string, params: Record<string, unknown>) => Promise<{ record?: RunRecord; error?: string }>;
   /** Each seam model the viewport shows, on the horizon it shows coloured by thickness. */
   seamViews: SeamShown[];
   /** A section is showing in place of the plan view. */

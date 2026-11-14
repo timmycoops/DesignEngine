@@ -211,6 +211,71 @@ pub async fn run_command(name: String, params: Value, state: State<'_, AppState>
     .await?
 }
 
+/// A workflow run's record and what it changed.
+#[derive(Serialize)]
+pub struct WorkflowReply {
+    record: zd_commands::WorkflowRecord,
+    changes: ProjectChanges,
+}
+
+/// Runs a workflow from the step at `from` (from 1) to its end, a pause or the first refusal (decision 0065). Each
+/// step's command runs off the lock as any run does (0060), the run going named for it so the status line says what
+/// it's doing and Cancel stops it; nothing else changes the project until the workflow is done. One undo.
+#[tauri::command]
+pub async fn run_workflow(workflow: ObjectId, from: usize, state: State<'_, AppState>) -> Result<WorkflowReply, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let mut run = {
+            let app = app.lock().unwrap();
+            app.idle()?;
+            app.session.begin_workflow(workflow, from).map_err(|e| e.to_string())?
+        };
+        loop {
+            let job = {
+                let mut app = app.lock().unwrap();
+                let Some(job) = app.session.next_step(&mut run) else { break };
+                app.running = Some(Running { command: job.command().to_string(), started: Instant::now(), control: job.control() });
+                job
+            };
+            let done = job.run();
+            let mut app = app.lock().unwrap();
+            app.session.end_step(&mut run, done);
+        }
+        let mut app = app.lock().unwrap();
+        app.running = None;
+        let record = app.session.end_workflow(run);
+        Ok(WorkflowReply { record, changes: changes(&mut app, false) })
+    })
+    .await?
+}
+
+/// Captures runs from the run log as a new workflow (decision 0065), saved by a `workflow.save` run.
+#[tauri::command]
+pub async fn capture_workflow(name: String, runs: Vec<RunId>, state: State<'_, AppState>) -> Result<RunReply, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let mut app = app.lock().unwrap();
+        app.idle()?;
+        let record = app.session.capture_workflow(&name, &runs).map_err(|e| e.to_string())?;
+        Ok(RunReply { record, changes: changes(&mut app, false) })
+    })
+    .await?
+}
+
+/// Adds a tool panel's command and settings to a workflow as a step, at `at` (from 0) or at the end, its objects turned
+/// into rules (decision 0065, Add to workflow).
+#[tauri::command]
+pub async fn add_workflow_step(workflow: ObjectId, at: Option<usize>, command: String, params: Value, note: Option<String>, state: State<'_, AppState>) -> Result<RunReply, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let mut app = app.lock().unwrap();
+        app.idle()?;
+        let record = app.session.add_workflow_step(workflow, at, &command, &params, note.as_deref().unwrap_or("")).map_err(|e| e.to_string())?;
+        Ok(RunReply { record, changes: changes(&mut app, false) })
+    })
+    .await?
+}
+
 /// The run going, if one is: what it is, how long it's been going and how far it has got.
 #[derive(Serialize)]
 pub struct RunProgress {
@@ -1023,6 +1088,9 @@ pub struct BenchConfig {
     /// With `--section-guide`, the dashed line a two-point section draws from its first point to the cursor, on a
     /// made-up topography: shown after the first click, following the cursor, cleared by Esc and by the second click.
     section_guide: bool,
+    /// With `--workflow`, the Run log's Capture and the Workflow panel driven as Tim would: two runs captured, run again,
+    /// a step's Add to workflow, a pause, one undo (decision 0065).
+    workflow: bool,
 }
 
 /// Present when the app was started with `--bench`: the viewport then runs Checks 1, 3 and 4
@@ -1070,6 +1138,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         select: args.iter().any(|a| a == "--select"),
         shell: args.iter().any(|a| a == "--shell"),
         section_guide: args.iter().any(|a| a == "--section-guide"),
+        workflow: args.iter().any(|a| a == "--workflow"),
     })
 }
 

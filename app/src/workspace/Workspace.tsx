@@ -20,6 +20,7 @@ import { PropertiesPanel } from '@/panels/PropertiesPanel';
 import { ReservesPanel } from '@/panels/ReservesPanel';
 import { RunLogPanel } from '@/panels/RunLogPanel';
 import { ViewportPanel } from '@/panels/ViewportPanel';
+import { WorkflowPanel } from '@/panels/WorkflowPanel';
 
 const components = {
   viewport: ViewportPanel,
@@ -30,6 +31,7 @@ const components = {
   builder: BuilderPanel,
   cut: CutPanel,
   reserves: ReservesPanel,
+  workflow: WorkflowPanel,
 };
 
 /** The key that hides every panel, so the viewport fills the window, and brings them back. */
@@ -56,6 +58,7 @@ export const PANELS: { id: PanelId; title: string; place: AddPanelOptions['posit
   { id: 'builder', title: 'Builder', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 440 } },
   { id: 'cut', title: 'Cut solids', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 400 } },
   { id: 'reserves', title: 'Reserves', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 400 } },
+  { id: 'workflow', title: 'Workflow', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 420 } },
 ];
 
 const LAYOUT_KEY = 'zd.workspace.layout.v3';

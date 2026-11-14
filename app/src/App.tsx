@@ -28,6 +28,7 @@ import {
   StepBack,
   StepForward,
   Undo2,
+  Workflow as WorkflowIcon,
 } from 'lucide-react';
 import { cn } from 'cn';
 import {
@@ -53,6 +54,9 @@ import {
   type RunRecord,
   type ModelLinks,
   runCommand,
+  runWorkflow as runWorkflowCall,
+  captureWorkflow as captureWorkflowCall,
+  addWorkflowStep,
   checkLinks,
   runLog,
   saveProject,
@@ -364,6 +368,54 @@ export default function App() {
   const run = useCallback(async (name: string, params: Record<string, unknown>) => !!(await runRecord(name, params)).record, [runRecord]);
 
   const clearRefusal = useCallback(() => setStatus((was) => (was.error ? { text: '' } : was)), []);
+
+  // Workflows (decision 0065): run, capture and add a step, each showing the project after it as any run does.
+  const runWorkflow = useCallback(
+    async (workflow: string, from: number) => {
+      try {
+        const reply = await runWorkflowCall(workflow, from);
+        show(reply.summary);
+        const r = reply.record;
+        const ran = r.steps.filter((s) => s.outcome === 'ran').length;
+        const ended = r.status === 'finished' ? 'finished' : r.status === 'paused' ? `paused at step ${r.at}` : `refused at step ${r.at}`;
+        setStatus({ text: `${r.name}: ${ran} step${ran === 1 ? '' : 's'} run from step ${r.from} in ${(r.duration_ms / 1000).toFixed(1)} s, ${ended}`, error: r.status === 'refused' });
+        return { record: reply.record };
+      } catch (e) {
+        setStatus({ text: String(e), error: true });
+        void runLog().then(setLog);
+        return { error: String(e) };
+      }
+    },
+    [show],
+  );
+  const workflowRun = useCallback(
+    async (call: () => Promise<{ record: RunRecord; summary: ProjectSummary }>) => {
+      try {
+        const reply = await call();
+        show(reply.summary);
+        setStatus({ text: describe(reply.record) });
+        return { record: reply.record };
+      } catch (e) {
+        setStatus({ text: String(e), error: true });
+        void runLog().then(setLog);
+        return { error: String(e) };
+      }
+    },
+    [show],
+  );
+  const captureWorkflow = useCallback(
+    async (name: string, runs: string[]) => {
+      const outcome = await workflowRun(() => captureWorkflowCall(name, runs));
+      if (outcome.record && dockRef.current) showPanel(dockRef.current, 'workflow');
+      return outcome;
+    },
+    [workflowRun],
+  );
+  const [addingTo, setAddingTo] = useState<{ id: string; name: string } | null>(null);
+  const addStep = useCallback(
+    async (command: string, params: Record<string, unknown>) => (addingTo ? workflowRun(() => addWorkflowStep(addingTo.id, command, params)) : { error: 'Pick a workflow to add to first' }),
+    [addingTo, workflowRun],
+  );
 
   const viewportMounted = useCallback(() => setHostMounted(true), []);
 
@@ -989,6 +1041,11 @@ export default function App() {
       showSeamHorizon,
       focusIssue,
       clearRefusal,
+      runWorkflow,
+      captureWorkflow,
+      addingTo,
+      setAddingTo,
+      addStep,
       markCrossings,
       flyTo,
       frameLine,
@@ -999,7 +1056,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
+    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, captureWorkflow, addingTo, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';
@@ -1224,6 +1281,9 @@ export default function App() {
           </ToolButton>
           <ToolButton tip="Reserves: interrogate blocks against a seam model, or set them beside Spry's or Deswik's numbers" onClick={() => dockRef.current && showPanel(dockRef.current, 'reserves')}>
             <Sigma /> Reserves
+          </ToolButton>
+          <ToolButton tip="Workflow: saved steps run again in one go, captured from the Run log or added from the tools" onClick={() => dockRef.current && showPanel(dockRef.current, 'workflow')}>
+            <WorkflowIcon /> Workflow
           </ToolButton>
           <div className="ml-auto">
             <DropdownMenu>

@@ -1,6 +1,8 @@
+import { ListPlus } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cn } from 'cn';
 import type { Note } from '../../bridge';
+import { useWorkspace } from '../../workspace/context';
 import { NoteLine } from './NoteLine';
 import { useRunning } from './RunGoing';
 import { waitingOn } from '../../running';
@@ -8,9 +10,23 @@ import { waitingOn } from '../../running';
 /**
  * The frame of every tool panel (UI plan, one way of working, item 2): what it does in a line at the top, its sections, and
  * at the foot what the last run did above the one button named for what it does. Ctrl+Enter anywhere in the panel presses
- * that button.
+ * that button. While the Workflow panel is adding steps, a panel whose action says what it runs reads Add to workflow
+ * instead, and adds its command and settings as the workflow's last step, running nothing (decision 0065).
  */
-export function ToolPanel({ title, summary, children, result, action, panel }: { title: string; summary: ReactNode; children: ReactNode; result?: RunReport; action?: ToolAction; panel?: string }) {
+export function ToolPanel({ title, summary, children, result, action: own, panel }: { title: string; summary: ReactNode; children: ReactNode; result?: RunReport; action?: ToolAction; panel?: string }) {
+  const { addingTo, addStep } = useWorkspace();
+  const step = own?.step;
+  const action: ToolAction | undefined =
+    addingTo && own && step
+      ? {
+          label: `Add to ${addingTo.name}`,
+          icon: <ListPlus className="size-3.5" />,
+          disabled: own.disabled,
+          title: `Adds ${step.command} with these settings as the last step of ${addingTo.name}, its objects found by rule; nothing runs`,
+          hint: 'Adds a step; nothing runs · Ctrl+Enter',
+          run: () => addStep(step.command, step.params),
+        }
+      : own;
   // Another run going: this one waits, saying on what (decision 0060).
   const going = useRunning();
   const waiting = action && !action.busy ? waitingOn(going) : null;
@@ -65,6 +81,8 @@ export interface ToolAction {
   busy?: boolean;
   busyLabel?: string;
   hint?: string;
+  /** What it runs, so it can be added to a workflow as a step instead (decision 0065). */
+  step?: { command: string; params: Record<string, unknown> };
 }
 
 /** A titled part of a tool panel: Inputs, Settings, Output, or one of its own. */

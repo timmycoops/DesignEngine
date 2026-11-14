@@ -40,6 +40,7 @@ export const running = {
 
 /** What a run is doing, in words, for the status bar and the buttons waiting on it. */
 const WORDS: Record<string, string> = {
+  workflow: 'running the workflow',
   'solid.slice_by_faces': 'slicing into strips',
   'solid.cut_by_surface': 'cutting solids',
   'solid.between_surfaces': 'making the solid between surfaces',

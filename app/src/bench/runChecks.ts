@@ -31,6 +31,7 @@ import { takePalettePictures, takePictures } from './pictures';
 import { checkSectionGuide } from './sectionGuideCheck';
 import { checkSelect } from './selectCheck';
 import { checkShell } from './shellCheck';
+import { checkWorkflow } from './workflowCheck';
 import type { DockviewApi } from 'dockview-react';
 import { PolylineTool } from '../viewport/PolylineTool';
 import type { SectionView } from '../viewport/section';
@@ -94,6 +95,8 @@ export async function runChecks(
       results.select = await checkSelect(viewport, log, show, selection);
     } else if (config.shell) {
       results.shell = await checkShell(viewport, log, dock);
+    } else if (config.workflow) {
+      results.workflow = await checkWorkflow(viewport, log, show, dock);
     } else if (config.solids) {
       results.solids = await checkSolids(viewport, config, config.solids, log, show, section, strings);
     } else {
