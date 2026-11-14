@@ -364,10 +364,28 @@ fn run_design(inputs: &Inputs<'_>, design_id: ObjectId, design: &FaceDesign) -> 
     for &(_, id) in &runs {
         inputs.string(id)?;
     }
-    // Strips stand alone, so they run side by side.
+    // Strips stand alone, so they run side by side: the faces going up first, then those going down, each from the toe
+    // as the roads of the face going up from its string moved it.
     let run = FaceRun { design, id: design_id, inputs, targets: &targets, regions: &regions, ramp_strings: &ramp_strings };
+    let down = |line: &FaceLine| design.profile(&line.profile).is_some_and(|p| p.direction == FaceDirection::Down);
+    let ups: Vec<(&FaceLine, ObjectId)> = runs.iter().filter(|(line, _)| !down(line)).copied().collect();
+    let downs: Vec<(&FaceLine, ObjectId)> = runs.iter().filter(|(line, _)| down(line)).copied().collect();
+    let mut ran_up = in_parallel_watched(inputs, "strips", &ups, |&(line, id)| run.strip(line, id, None))?;
+    // Only where the string goes up one way: with several profiles going up from one string, which the face going down
+    // pairs with isn't said, so it starts from the string as drawn.
+    let mut going_up: HashMap<ObjectId, usize> = HashMap::new();
+    for &(_, id) in &ups {
+        *going_up.entry(id).or_default() += 1;
+    }
+    let feet: HashMap<ObjectId, Polyline> = ups.iter().zip(&ran_up).filter(|((_, id), _)| going_up[id] == 1).filter_map(|(&(_, id), ran)| Some((id, ran.as_ref().ok()?.foot.clone()?))).collect();
+    let mut ran_down = in_parallel_watched(inputs, "strips", &downs, |&(line, id)| run.strip(line, id, feet.get(&id)))?;
+    let mut results = Vec::with_capacity(runs.len());
+    let (mut u, mut d) = (ran_up.drain(..), ran_down.drain(..));
+    for (line, _) in &runs {
+        results.push(if down(line) { d.next() } else { u.next() }.expect("a run for each line"));
+    }
     let mut not_built = Vec::new();
-    for (&(_, id), strip) in runs.iter().zip(in_parallel_watched(inputs, "strips", &runs, |&(line, id)| run.strip(line, id))?) {
+    for (&(_, id), strip) in runs.iter().zip(results) {
         let strip = match strip {
             Ok(strip) => strip,
             Err(CommandError::Invalid(why)) => {
@@ -442,11 +460,14 @@ struct StripRun<'a> {
     notes: Vec<Note>,
     crossing: Vec<&'a str>,
     missing: Vec<&'a str>,
+    /// A face going up whose roads' entrances moved its toe back: the foot of its first wall, for a face going down from
+    /// the same string to start from (decision 0031).
+    foot: Option<Polyline>,
 }
 
 impl<'a> FaceRun<'a, '_> {
     /// One line on one string: a face, its toes and crests, and any roads.
-    fn strip(&self, line: &'a FaceLine, id: ObjectId) -> Result<StripRun<'a>, CommandError> {
+    fn strip(&self, line: &'a FaceLine, id: ObjectId, foot: Option<&Polyline>) -> Result<StripRun<'a>, CommandError> {
         let (design, inputs, targets) = (self.design, self.inputs, self.targets);
         let (string, path) = inputs.string(id)?;
         let profile = design.profile(&line.profile).ok_or_else(|| CommandError::Invalid(format!("no profile called {}", line.profile)))?;
@@ -466,9 +487,15 @@ impl<'a> FaceRun<'a, '_> {
             }
         };
         let (mut toe, register) = register_toe(&shaped, registered).map_err(refuse)?;
+        // A face going down starts from the toe as the roads of the face going up from the same string moved it, so the
+        // two meet on it: the floor an entrance leaves open behind a road is in front of both (decision 0031).
+        let from_foot = profile.direction == FaceDirection::Down && foot.is_some();
+        if let (FaceDirection::Down, Some(foot)) = (profile.direction, foot) {
+            toe = foot.clone();
+        }
         // A crest another design's run made is already where that design left it, so a design run from it starts from
         // the same line as one design would, and only its run-on lies on the grid.
-        if string.attributes.get(MADE_BY).is_some_and(|by| *by != AttrValue::Text(self.id.to_string())) {
+        if !from_foot && string.attributes.get(MADE_BY).is_some_and(|by| *by != AttrValue::Text(self.id.to_string())) {
             toe = at_line_heights(&toe, path, profile.condition.unwrap_or(0.0) + ON_THE_LINE);
         }
         let (side, faces) = match line.side {
@@ -499,6 +526,10 @@ impl<'a> FaceRun<'a, '_> {
         let on_walls = walls_ramps(&profile.steps, &ramps);
         let steps = steps_of(&rules, &profile.steps, targets, &on_walls)?;
         let face = project_edited_face(&toe, registered, side, profile.direction, &steps, &specs, &edits).map_err(refuse)?;
+        let moved = match (profile.direction, face.benches.first()) {
+            (FaceDirection::Up, Some(first)) if first.toe.vertices != toe.vertices && !face.roads.is_empty() => Some(first.toe.clone()),
+            _ => None,
+        };
         let mut changes = Vec::new();
         let mut notes = line_report(&base, &face, [extended.vertices.len(), shaped.vertices.len()], register.off_grid);
         notes.extend(placed.notes);
@@ -579,7 +610,7 @@ impl<'a> FaceRun<'a, '_> {
         for note in &mut notes {
             note.object = note.object.or(Some(id));
         }
-        Ok(StripRun { name: &string.name, profile: &profile.name, changes, notes, crossing: placed.crossing, missing: placed.missing })
+        Ok(StripRun { name: &string.name, profile: &profile.name, changes, notes, crossing: placed.crossing, missing: placed.missing, foot: moved })
     }
 }
 

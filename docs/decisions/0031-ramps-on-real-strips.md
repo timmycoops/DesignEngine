@@ -65,3 +65,15 @@ the metres along the crest to a micrometre, and it's a full berm past the taper.
   It's reported, not fixed, and the planner turns the road or moves the string.
 - **At 65 degrees with 30 m berms Strip 1's second wall runs off its target,** with no ramp on it. It reports in red now and the others
   build, but why it runs off hasn't been found. A gap should bridge and report, as 0024 says.
+
+## The face going down follows the moved toe (14 November 2026)
+
+Found by the workflow demo's road (0065): a road starting inside the pit moves the toe behind its start back by the road,
+and the floor there is left open. The face going down from the same string hung from the toe as drawn, so between the two
+faces lay a slot of open floor from the road's start to the end of the line, and the slice refused the strip's face as
+stopping short of the pit. Now a design runs its faces going up first, and a face going down starts from the foot of the
+face going up from the same string, where that face's roads moved it: the two meet on the moved toe, and the floor behind
+the road is in front of both, in the strip being mined. Where a string has more than one profile going up, which one the
+face going down pairs with isn't said, and it starts from the string as drawn. (Laying the floor itself into the face was
+tried first: it lies on the pit's floor, the toe's own register surface, and the coplanar sheets left strips crossing
+themselves.)

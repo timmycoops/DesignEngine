@@ -612,3 +612,55 @@ fn grid_template() -> std::path::PathBuf {
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/synthetic");
     [folder.join("Grid template.zdp"), folder.join("Grid template.zdproj")].into_iter().find(|p| p.exists()).expect("run testdata/synthetic/grid_template.py first")
 }
+
+/// A road starting inside the pit (decision 0031): behind its start the toe moves back by the road, and the face going down
+/// starts from that moved toe too, so the two meet and the slice cuts. Before, the face going down hung from the toe as
+/// drawn, leaving a slot of open floor between the faces from the road's start to the end of the line, and the slice
+/// refused the face as stopping short of the pit there.
+///
+/// One toe at 300 m east, RL 0, running north past the pit; up at 45° to RL 30 with a 10 m road at 10 % starting where a
+/// string crosses it at 250 m north and climbing north 300 m, then on at 45° to RL 150; down at 45° to RL -50. The pit is 1000 m by 500 m, RL 0 to 100.
+/// Without the road, the strip in front is 500 × ∫ (300 + z) dz over RL 0 to 100 = 17,500,000 m³. The road is 10 m wide
+/// square to itself, climbing at sin(a) = 0.1 off the toe, so it stands b = 10 cos a = 9.94987 m back from it, and rises
+/// 0.1 / cos a = 0.100504 m a metre north. Behind its start, for the pit's 250 m south of it, the whole wall stands b
+/// back: 100 b × 250 = 248,747 m³ more. North of its start, for the pit's 250 m, the wall above the road stands b back:
+/// b × ∫ (100 - 0.100504 t) dt over 0 to 250 = 217,497 m³ more. 466,244 m³ in all, to within 1,000 m³ for the entrance's
+/// last road width leading up to the road's start.
+#[test]
+fn a_road_starting_inside_the_pit_moves_the_face_going_down_back_with_its_toe() {
+    let mut s = Session::with_builtins();
+    let pit = pit(&mut s);
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "toes", "points": [[E + 300.0, N - 50.0, 0.0], [E + 300.0, N + 550.0, 0.0]] })).unwrap())[0];
+    s.run("string.number_across", json!({ "strings": [toe], "from": [E, N + 250.0, 0.0], "to": [E + 1000.0, N + 250.0, 0.0], "start": 1.0 })).unwrap();
+    let ramp = created(&s.run("string.create", json!({ "name": "ramp", "layer": "ramps", "points": [[E + 200.0, N + 250.0, 0.0], [E + 400.0, N + 250.0, 0.0]] })).unwrap())[0];
+    let lines: Vec<_> = ["Up", "Down"].iter().map(|profile| json!({ "string": toe, "profile": profile, "side": "right", "run_on": [60.0, 60.0] })).collect();
+    let content = json!({
+        "layer": "faces",
+        "lines": lines,
+        "profiles": [
+            { "name": "Up", "direction": "up", "register": { "kind": "rl", "rl": 0.0 }, "ramps": [{ "name": "A", "string": ramp, "fixed": "start", "heading": "along", "width": 10.0, "grade": 10.0 }],
+              "steps": [{ "step": "project", "to": { "kind": "rl", "rl": 30.0 }, "batter": 45.0, "ramps": ["A"] }, { "step": "project", "to": { "kind": "rl", "rl": 150.0 }, "batter": 45.0 }] },
+            { "name": "Down", "direction": "down", "register": { "kind": "rl", "rl": 0.0 }, "steps": [{ "step": "project", "to": { "kind": "rl", "rl": -50.0 }, "batter": 45.0 }] },
+        ],
+    });
+    let design = created(&s.run("face.save_design", json!({ "name": "with a road", "content": content })).unwrap())[0];
+    let run = s.run("face.project", json!({ "design": design })).unwrap();
+    assert!(run.notes.iter().any(|n| n.text.contains("Ramp A") && n.text.contains("starts at")), "{:?}", run.messages);
+    let faces = surfaces_on(&s, "faces");
+    assert_eq!(faces.len(), 2);
+    // The face going down starts from the moved toe: 10 m back, at 310 m east, behind the road's start.
+    let down = faces.iter().copied().find(|&f| s.project().object(f).unwrap().name.contains("Down")).unwrap();
+    let Body::Surface(surface) = &s.project().object(down).unwrap().body else { panic!("a surface") };
+    let top: Vec<[f64; 3]> = surface.mesh().vertices.iter().filter(|p| p[2].abs() < 1e-9).copied().collect();
+    // 10 m square to a road climbing at sin(angle) = 0.1 off the toe: 9.95 m back.
+    assert!(top.iter().any(|p| (p[0] - E - 310.0).abs() < 0.1 && p[1] - N < 200.0), "the moved toe: {top:?}");
+    assert!(top.iter().any(|p| (p[0] - E - 300.0).abs() < 1e-6 && p[1] - N > 300.0), "the toe as drawn past the road");
+
+    let record = s.run("solid.slice_by_faces", json!({ "solid": pit, "faces": faces, "layer": "strips" })).unwrap();
+    let strips = created(&record);
+    assert_eq!(strips.len(), 2);
+    let (front, behind) = (volume(&s, strips[0]), volume(&s, strips[1]));
+    // To a cubic metre (the pit is 50,000,000 m³): they add up, and the strip in front holds the moved-back wall.
+    assert_volume(front + behind, 50_000_000.0, "the strips add up to the pit");
+    assert!((front - 17_500_000.0 - 466_244.0).abs() < 1_000.0, "the strip in front: {front:.0} m³");
+}
