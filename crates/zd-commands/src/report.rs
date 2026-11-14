@@ -54,6 +54,8 @@ pub struct CaseFigures {
     pub waste: GroupRow,
     /// Waste below the last floor.
     pub below: GroupRow,
+    /// A row a bench, top down, where any block has one; blocks with none last, as not benched.
+    pub benches: Vec<BenchRow>,
     /// Waste bcm a coal tonne.
     pub strip_ratio: Option<f64>,
     /// The attribute the interrogation wrote density to, when a step interrogated the blocks.
@@ -93,6 +95,8 @@ pub struct BlockRow {
     pub strip: Option<String>,
     pub block: Option<String>,
     pub horizon: Option<String>,
+    /// Its bench, where the bench cut gave it one (decision 0071).
+    pub bench: Option<String>,
     pub seam: Option<String>,
     pub material: Option<String>,
     pub volume: f64,
@@ -102,6 +106,20 @@ pub struct BlockRow {
     pub values: BTreeMap<String, f64>,
     /// Its 2.5D column volume, where the interrogation wrote one.
     pub column: Option<f64>,
+    /// The column check's difference (%): its volume less its column, over the column; for a bench, its block's benches
+    /// of the seam together, as the interrogation wrote it (decision 0071).
+    pub delta: Option<f64>,
+}
+
+/// One bench's coal and waste, the waste above the last floor as the strip ratio counts it (decision 0071).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct BenchRow {
+    pub bench: String,
+    pub coal: GroupRow,
+    pub waste: GroupRow,
+    /// Waste bcm a coal tonne.
+    pub strip_ratio: Option<f64>,
+    pub blocks: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -245,6 +263,7 @@ impl Session {
         let model = model_of(interrogation).or_else(|| model_of(step_of("solid.cut_by_seams").and_then(record_of)));
         let density = interrogation.zip(model).map(|(_, m)| format!("{prefix}{}", m.density));
         let column_key = format!("{prefix}{}", crate::builtin::COLUMN_VOLUME);
+        let delta_key = format!("{prefix}{}", crate::builtin::COLUMN_DELTA);
         let mut quality_codes: Vec<String> = Vec::new();
         if let (Some(_), Some(m)) = (interrogation, model) {
             for h in m.working_section() {
@@ -261,7 +280,7 @@ impl Session {
             .iter()
             .filter_map(|&id| project.object(id))
             .filter(|o| matches!(o.body, Body::Solid(_)) && o.attributes.contains_key("block"))
-            .map(|o| block_row(o, density.as_deref(), &quality_codes, &column_key))
+            .map(|o| block_row(o, density.as_deref(), &quality_codes, &column_key, &delta_key))
             .collect();
         let qualities: Vec<String> = quality_codes.into_iter().filter(|q| blocks.iter().any(|b| b.values.contains_key(q))).collect();
 
@@ -286,6 +305,7 @@ impl Session {
         let waste = composite("Waste", "waste", &blocks.iter().filter(|b| !is_coal(b) && !is_below(b)).collect::<Vec<_>>(), &qualities);
         let below = composite("Below the last floor", "waste", &blocks.iter().filter(|b| !is_coal(b) && is_below(b)).collect::<Vec<_>>(), &qualities);
         let strip_ratio = coal.tonnes.filter(|t| *t > 0.0).map(|t| waste.volume / t);
+        let benches = by_bench(&blocks, &qualities);
         let no_density = blocks.iter().filter(is_coal).filter(|b| b.rd.is_none()).count();
 
         // What was left out: the cut's measured notes, and solids deleted by hand that a step of this case had made.
@@ -388,7 +408,7 @@ impl Session {
             })
             .unwrap_or_default();
 
-        CaseFigures { name: case.to_string(), ran, changes, blocks, horizons, coal, waste, below, strip_ratio, density, qualities, no_density, left_out, pit, warnings }
+        CaseFigures { name: case.to_string(), ran, changes, blocks, horizons, coal, waste, below, benches, strip_ratio, density, qualities, no_density, left_out, pit, warnings }
     }
 
     fn step_lines(&self, w: &Workflow, cases: &[String]) -> Vec<StepLine> {
@@ -552,8 +572,9 @@ fn attr_words(v: &AttrValue) -> String {
     }
 }
 
-fn block_row(o: &Object, density: Option<&str>, qualities: &[String], column: &str) -> BlockRow {
+fn block_row(o: &Object, density: Option<&str>, qualities: &[String], column: &str, delta: &str) -> BlockRow {
     let volume = solid_volume(o);
+    let column = number(o, column);
     let material = text(o, "material");
     let rd = if material.as_deref() == Some("coal") { density.and_then(|d| number(o, d)) } else { None };
     BlockRow {
@@ -561,14 +582,58 @@ fn block_row(o: &Object, density: Option<&str>, qualities: &[String], column: &s
         strip: text(o, "strip"),
         block: text(o, "block"),
         horizon: text(o, "horizon"),
+        bench: text(o, "bench"),
         seam: text(o, "seam"),
         material,
         volume,
         rd,
         tonnes: rd.map(|rd| volume * rd),
         values: qualities.iter().filter_map(|q| number(o, q).map(|v| (q.clone(), v))).collect(),
-        column: number(o, column),
+        column,
+        // Written by the interrogation since benches; worked out here for blocks interrogated before.
+        delta: number(o, delta).or_else(|| column.filter(|c| *c != 0.0).map(|c| (volume - c) / c * 100.0)),
     }
+}
+
+/// The blocks by bench (decision 0071): a row a bench, top down by its RL, `above` before the numbers and `below` after,
+/// and the blocks with no bench last; none at all where no block has one.
+fn by_bench(blocks: &[BlockRow], qualities: &[String]) -> Vec<BenchRow> {
+    if blocks.iter().all(|b| b.bench.is_none()) {
+        return Vec::new();
+    }
+    let mut names: Vec<String> = blocks.iter().map(|b| b.bench.clone().unwrap_or_default()).collect();
+    names.sort();
+    names.dedup();
+    // Above the levels first, then the numbers highest first, then below them, then none.
+    let place = |n: &str| -> (u8, f64) {
+        if n.is_empty() {
+            (3, 0.0)
+        } else if let Ok(rl) = n.parse::<f64>() {
+            (1, -rl)
+        } else if let Some(rl) = n.strip_prefix("above ").and_then(|r| r.parse::<f64>().ok()) {
+            (0, -rl)
+        } else if let Some(rl) = n.strip_prefix("below ").and_then(|r| r.parse::<f64>().ok()) {
+            (2, -rl)
+        } else {
+            (2, 0.0)
+        }
+    };
+    names.sort_by(|a, b| {
+        let (x, y) = (place(a), place(b));
+        x.0.cmp(&y.0).then(x.1.total_cmp(&y.1)).then(a.cmp(b))
+    });
+    let is_coal = |b: &&BlockRow| b.material.as_deref() == Some("coal");
+    let is_below = |b: &&BlockRow| b.horizon.as_deref().is_some_and(|h| h.starts_with("below "));
+    names
+        .into_iter()
+        .map(|name| {
+            let of: Vec<&BlockRow> = blocks.iter().filter(|b| b.bench.as_deref().unwrap_or("") == name).collect();
+            let coal = composite("Coal", "coal", &of.iter().copied().filter(is_coal).collect::<Vec<_>>(), qualities);
+            let waste = composite("Waste", "waste", &of.iter().copied().filter(|b| !is_coal(b) && !is_below(b)).collect::<Vec<_>>(), qualities);
+            let strip_ratio = coal.tonnes.filter(|t| *t > 0.0).map(|t| waste.volume / t);
+            BenchRow { bench: if name.is_empty() { "not benched".into() } else { name }, coal, waste, strip_ratio, blocks: of.len() }
+        })
+        .collect()
 }
 
 /// Blocks added up: volume; for coal, tonnes over those with a density, RD by volume and every other value by tonnes.
@@ -669,6 +734,7 @@ mod tests {
             strip: None,
             block: None,
             horizon: None,
+            bench: None,
             seam: None,
             material: Some("coal".into()),
             volume: v,
@@ -676,6 +742,7 @@ mod tests {
             tonnes: Some(v * rd),
             values: [("ash".to_string(), ash)].into(),
             column: None,
+            delta: None,
         };
         let (a, b) = (block(72_000.0, 1.4, 10.0), block(72_000.0, 1.5, 20.0));
         let row = composite("Coal", "coal", &[&a, &b], &["ash".into()]);
@@ -684,6 +751,44 @@ mod tests {
         assert!((row.rd.unwrap() - 1.45).abs() < 1e-12);
         assert!((row.qualities["ash"] - 3_168_000.0 / 208_800.0).abs() < 1e-12);
         assert_eq!(row.blocks, 2);
+    }
+
+    /// By bench (decision 0071): top down, `above` first and `below` after the numbers, blocks with no bench last; each
+    /// bench's coal tonnes by RD and its own strip ratio over the waste above the last floor.
+    #[test]
+    fn blocks_add_up_by_bench_top_down() {
+        let row = |bench: Option<&str>, horizon: &str, material: &str, v: f64| BlockRow {
+            name: String::new(),
+            strip: None,
+            block: None,
+            horizon: Some(horizon.into()),
+            bench: bench.map(String::from),
+            seam: None,
+            material: Some(material.into()),
+            volume: v,
+            rd: (material == "coal").then_some(1.5),
+            tonnes: (material == "coal").then_some(v * 1.5),
+            values: BTreeMap::new(),
+            column: None,
+            delta: None,
+        };
+        let blocks = vec![
+            row(Some("10"), "OB", "waste", 60_000.0),
+            row(Some("10"), "U", "coal", 10_000.0),
+            row(Some("below 0"), "below L", "waste", 5_000.0),
+            row(Some("20"), "OB", "waste", 30_000.0),
+            row(Some("above 30"), "OB", "waste", 1_000.0),
+            row(Some("-10"), "L", "coal", 2_000.0),
+            row(None, "U-M", "waste", 7_000.0),
+        ];
+        let benches = by_bench(&blocks, &[]);
+        let names: Vec<&str> = benches.iter().map(|b| b.bench.as_str()).collect();
+        assert_eq!(names, ["above 30", "20", "10", "-10", "below 0", "not benched"]);
+        let ten = &benches[2];
+        assert_eq!((ten.coal.volume, ten.coal.tonnes, ten.waste.volume, ten.blocks), (10_000.0, Some(15_000.0), 60_000.0, 2));
+        assert!((ten.strip_ratio.unwrap() - 4.0).abs() < 1e-12, "60,000 bcm over 15,000 t");
+        assert_eq!(benches[4].waste.volume, 0.0, "below the last floor isn't waste the strip ratio counts");
+        assert!(by_bench(&blocks.iter().filter(|b| b.bench.is_none()).cloned().collect::<Vec<_>>(), &[]).is_empty(), "no benches, no rows");
     }
 
     #[test]

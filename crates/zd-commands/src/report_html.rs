@@ -75,7 +75,8 @@ pub fn page(r: &Report) -> String {
         let _ = write!(h, "<span class=\"tag warn\">{warnings} warning{}</span>", s(warnings));
     }
     h.push_str("<span class=\"tag\">Tonnes on the density grid's own basis (usually air dried); in situ comes with the reserves dataflow</span></div>");
-    h.push_str("<div class=\"toc\"><a href=\"#summary\">Summary</a><a href=\"#seams\">By seam</a><a href=\"#blocks\">Blocks</a><a href=\"#left-out\">Left out</a><a href=\"#steps\">Steps</a><a href=\"#inputs\">Inputs</a><a href=\"#warnings\">Warnings</a></div>");
+    let bench_link = if r.cases.first().is_some_and(|c| !c.benches.is_empty()) { "<a href=\"#benches\">By bench</a>" } else { "" };
+    let _ = write!(h, "<div class=\"toc\"><a href=\"#summary\">Summary</a><a href=\"#seams\">By seam</a>{bench_link}<a href=\"#blocks\">Blocks</a><a href=\"#left-out\">Left out</a><a href=\"#steps\">Steps</a><a href=\"#inputs\">Inputs</a><a href=\"#warnings\">Warnings</a></div>");
 
     summary(&mut h, r);
     if r.cases.len() > 1 {
@@ -88,6 +89,7 @@ pub fn page(r: &Report) -> String {
     for (k, c) in r.cases.iter().enumerate() {
         let _ = write!(h, "<div data-case=\"{}\">", esc(&c.name));
         by_seam(&mut h, c, k);
+        by_bench(&mut h, c, k);
         blocks(&mut h, c, k, &r.workflow);
         left_out(&mut h, c);
         case_warnings(&mut h, c);
@@ -179,10 +181,34 @@ fn group_row(h: &mut String, row: &GroupRow, qualities: &[String], total: bool) 
     let _ = write!(h, "{}</tr>", num(Some(row.blocks as f64), 0));
 }
 
+/// A row a bench, top down (decision 0071): its coal, tonnes and qualities, its waste and strip ratio.
+fn by_bench(h: &mut String, c: &CaseFigures, k: usize) {
+    if c.benches.is_empty() {
+        return;
+    }
+    let _ = write!(h, "<h2 id=\"{}\">By bench <span class=\"mut\" style=\"font-weight:400\">({})</span></h2>", if k == 0 { "benches" } else { "" }, esc(&c.name));
+    let _ = write!(h, "<div class=\"scroll\"><table class=\"sortable\" id=\"benches-{k}\"><thead><tr><th class=\"l\">Bench</th><th>Coal m³</th><th>Coal t</th><th>RD</th>");
+    for q in &c.qualities {
+        let _ = write!(h, "<th>{}</th>", esc(q));
+    }
+    h.push_str("<th>Waste bcm</th><th>SR</th><th>Blocks</th></tr></thead><tbody>");
+    for b in &c.benches {
+        let rl = b.bench.parse::<f64>().map(|v| format!(" data-v=\"{v}\"")).unwrap_or_default();
+        let _ = write!(h, "<tr><td class=\"l\"{rl}>{}</td>{}{}{}", esc(&b.bench), num(Some(b.coal.volume), 0), num(b.coal.tonnes, 0), num(b.coal.rd, 3));
+        for q in &c.qualities {
+            h.push_str(&num(b.coal.qualities.get(q).copied(), 2));
+        }
+        let _ = write!(h, "{}{}{}</tr>", num(Some(b.waste.volume), 0), num(b.strip_ratio, 2), num(Some(b.blocks as f64), 0));
+    }
+    h.push_str("</tbody></table></div>");
+    h.push_str("<div class=\"mut\">A bench is named by the RL its rule names it by, its floor unless the rule says its top. Waste in bcm, above the last floor; the strip ratio is the bench's own.</div>");
+}
+
 fn blocks(h: &mut String, c: &CaseFigures, k: usize, workflow: &str) {
     if c.blocks.is_empty() {
         return;
     }
+    let benched = c.blocks.iter().any(|b| b.bench.is_some());
     let _ = write!(h, "<h2 id=\"{}\">Blocks <span class=\"mut\" style=\"font-weight:400\">({})</span></h2>", if k == 0 { "blocks" } else { "" }, esc(&c.name));
     let _ = write!(
         h,
@@ -191,26 +217,35 @@ fn blocks(h: &mut String, c: &CaseFigures, k: usize, workflow: &str) {
         esc(&c.name),
         n = c.blocks.len()
     );
-    let _ = write!(h, "<div class=\"scroll\"><table class=\"sortable\" id=\"blocks-{k}\"><thead><tr><th>Block</th><th>Strip</th><th class=\"l\">Horizon</th><th class=\"l\">Material</th><th>Volume m³</th><th>Tonnes</th><th>RD</th>");
+    let _ = write!(h, "<div class=\"scroll\"><table class=\"sortable\" id=\"blocks-{k}\"><thead><tr><th>Block</th><th>Strip</th><th class=\"l\">Horizon</th>{}<th class=\"l\">Material</th><th>Volume m³</th><th>Tonnes</th><th>RD</th>", if benched { "<th class=\"l\">Bench</th>" } else { "" });
     for q in &c.qualities {
         let _ = write!(h, "<th>{}</th>", esc(q));
     }
-    h.push_str("<th>Column m³</th><th>Δ</th></tr></thead><tbody>");
+    h.push_str("<th title=\"The 2.5D column: the seam's thickness at each node over the block's plan at mid-seam; for a bench, the seam inside its levels\">Column m³</th><th title=\"The block's volume less its column, over the column; for a bench, its block's benches of the seam together\">Δ</th></tr></thead><tbody>");
     for b in &c.blocks {
-        block_line(h, b, &c.qualities);
+        block_line(h, b, &c.qualities, benched);
     }
     h.push_str("</tbody></table></div>");
+    if benched {
+        h.push_str("<div class=\"mut\">Δ for a bench is of its block's benches of the seam together, as the column check takes them: a bench's own column, the seam inside its levels, is close but not exact where a level crosses the seam inside a grid cell.</div>");
+    }
 }
 
-fn block_line(h: &mut String, b: &BlockRow, qualities: &[String]) {
+fn block_line(h: &mut String, b: &BlockRow, qualities: &[String], benched: bool) {
     let strip = b.strip.as_deref().unwrap_or("");
     let strip_v = strip.parse::<f64>().map(|v| format!(" data-v=\"{v}\"")).unwrap_or_default();
-    let _ = write!(h, "<tr><td>{}</td><td{strip_v}>{}</td><td class=\"l\">{}</td><td class=\"l\">{}</td>{}{}{}", esc(&b.name), esc(strip), esc(b.horizon.as_deref().unwrap_or("")), esc(b.material.as_deref().unwrap_or("")), num(Some(b.volume), 0), num(b.tonnes, 0), num(b.rd, 3));
+    let bench = if benched {
+        let text = b.bench.as_deref().unwrap_or("");
+        let v = text.parse::<f64>().map(|v| format!(" data-v=\"{v}\"")).unwrap_or_default();
+        format!("<td class=\"l\"{v}>{}</td>", esc(text))
+    } else {
+        String::new()
+    };
+    let _ = write!(h, "<tr><td>{}</td><td{strip_v}>{}</td><td class=\"l\">{}</td>{bench}<td class=\"l\">{}</td>{}{}{}", esc(&b.name), esc(strip), esc(b.horizon.as_deref().unwrap_or("")), esc(b.material.as_deref().unwrap_or("")), num(Some(b.volume), 0), num(b.tonnes, 0), num(b.rd, 3));
     for q in qualities {
         h.push_str(&num(b.values.get(q).copied(), 2));
     }
-    let delta = b.column.filter(|c| *c != 0.0).map(|c| (b.volume - c) / c * 100.0);
-    let _ = write!(h, "{}{}</tr>", num(b.column, 0), delta.map(|d| format!("<td data-v=\"{d}\">{d:.2}%</td>")).unwrap_or("<td></td>".into()));
+    let _ = write!(h, "{}{}</tr>", num(b.column, 0), b.delta.map(|d| format!("<td data-v=\"{d}\">{d:.2}%</td>")).unwrap_or("<td></td>".into()));
 }
 
 fn left_out(h: &mut String, c: &CaseFigures) {

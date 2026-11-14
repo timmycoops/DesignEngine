@@ -123,7 +123,45 @@ then runs on more solids.
   of the 143 benches are in more than one part, where a level crosses a seam twice: each stays one solid, said, as a strip
   or a block in parts does.
 
+## Built: workstream 3, the column check and the report
+
+Tim, 15 November, on the demo pit's report: the Column m³ and Δ of benched coal made no sense. A bench holds part of its
+seam, but the check took the seam's whole thickness at its mid-seam, so the bench holding the seam's middle had all of
+it and the other none.
+
+- **The bench cut writes each bench's levels and source**: `bench_floor` and `bench_top` (RLs, where it has them), and
+  `benched_from`, the id of the solid it was cut from.
+- **A bench's own column** (`column_volume`) is the part of its seam inside its levels: at each node the seam's floor
+  and roof clipped to them, the section taken at that part's mid-height, the thickness the clipped one
+  (`zd_geom::mid_seam_cells_within`, `column_volume_within`). Where a bench holds none of the seam at a node, the node holds
+  no thickness and its mid-height runs on between its neighbours', so no section is lost where a level crosses the seam.
+  It's exact where the grid's nodes follow the bend in the clipped thickness; on 25 m cells a level crossing the seam
+  inside a cell leaves it a few percent out, the coarseness every column has where a seam thins inside a cell.
+- **The check is judged on a block's benches of a seam together** (decision 6), told apart by `benched_from`, `block` and
+  seam: each bench's share of its seam's column (the whole thickness over the part of the mid-seam section inside it) adds
+  up to the block's column exactly, against their volumes added up. A block with no `benched_from` is a set of its own,
+  as before. A set beyond the tolerance is warned of once, by its first bench "and its n other benches of U, together".
+  Each block carries the set's difference as `column_delta` (%, its volume less its column over the column).
+- **The report**: a Bench column in the blocks table, Δ read from `column_delta` (worked out as before for blocks
+  interrogated earlier), and **By bench**, a table a case, a row a bench top down (`above` first, `below` after the
+  numbers, blocks with no bench last as not benched), with coal volume, tonnes, RD and qualities, waste bcm above the last
+  floor and the bench's own strip ratio. The block table puts `bench` after `horizon`.
+
+Known answers (`crates/zd-geom/tests/reserves.rs`, `crates/zd-commands/tests/interrogate.rs`, `report.rs`):
+
+- A 4 m flat seam cut at RL 101.5: the bench below 9,000 m³ and above 15,000 m³, each its own column; as whole seams
+  the lower had none and the upper 24,000.
+- A seam dipping 1 in 10 cut at RL 99, 12,000 m³ each side: the two shares add up to 24,000 m³ to 1e-6 on 5 m and 25 m
+  cells; each bench's own column 12,000 on 5 m cells whose nodes stand on the crossings, 11,234 and 12,636 on 25 m cells.
+- Through the commands: a full `cu` block benched at RL 97, 6,000 and 18,000 m³, columns 6,000 and 18,000, `column_delta`
+  0 on both and no warning; the upper bench alone warned of at a third more, `column_delta` −25 %.
+- By bench: rows top down from `above 30` to `not benched`; bench 10's 10,000 m³ coal at RD 1.5 under 60,000 bcm, strip
+  ratio 4.0; waste below the last floor not counted.
+- The demo pit, benched every 10 m, set beside the same blocks cut without benches: 263 block-seams either way, 39 beyond
+  0.1 % either way (U thinning out at its subcrop, and L at the west end), the largest difference between the two checks
+  0.011 %, from the flaps taken off at the levels. Interrogating its 475 benched coal blocks takes 96 ms, against 38 ms for
+  the 263 unbenched.
+
 ## Still to come
 
-Workstream 3 (the column check and the report by bench) and 4 (the column engine's bench labels and in situ shares, after
-0070's PR merges).
+Workstream 4 (the column engine's bench labels and in situ shares, after 0070's PR merges).
