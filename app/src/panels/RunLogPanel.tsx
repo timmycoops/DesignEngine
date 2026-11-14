@@ -51,6 +51,12 @@ function toRows(log: LogEntry[]): LogRow[] {
       case 'saved':
       case 'opened':
         return { index, at: e.at_unix_ms, what: e.event === 'saved' ? 'Saved' : 'Opened', result: e.path, ms: null, outcome: 'session', record: null };
+      case 'workflow': {
+        const ran = e.steps.filter((s) => s.outcome === 'ran').length;
+        const ended = e.status === 'finished' ? 'finished' : `${e.status} at step ${e.at}`;
+        const result = `${e.name}: ${ran} step${ran === 1 ? '' : 's'} run from step ${e.from}, ${ended}`;
+        return { index, at: e.started_unix_ms, what: 'Workflow', result, ms: e.duration_ms, outcome: e.status === 'refused' ? 'failed' : undone.has(e.run) ? 'undone' : 'ok', record: null };
+      }
     }
   });
   return rows.reverse();

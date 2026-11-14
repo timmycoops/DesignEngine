@@ -577,7 +577,34 @@ export const spryContents = (path: string) => invoke<SpryContents>('spry_content
 export type LogEntry =
   | ({ event: 'run' } & RunRecord)
   | { event: 'undo' | 'redo'; run: string; at_unix_ms: number }
-  | { event: 'saved' | 'opened'; path: string; at_unix_ms: number };
+  | { event: 'saved' | 'opened'; path: string; at_unix_ms: number }
+  | ({ event: 'workflow' } & WorkflowRecord);
+
+/** One step of a workflow run (decision 0065). */
+export interface StepRun {
+  step: number;
+  /** Where it is in the order, from 1. */
+  position: number;
+  command?: string;
+  outcome: 'ran' | 'off' | 'paused' | 'refused';
+  /** Its command's run in the log. */
+  run?: string;
+  refused?: string;
+  /** What the check before a cut found. */
+  checked?: Note[];
+  ms: number;
+}
+
+/** A workflow run, in the run log after its steps' own runs. */
+export type WorkflowRecord = {
+  run: string;
+  workflow: string;
+  name: string;
+  from: number;
+  steps: StepRun[];
+  started_unix_ms: number;
+  duration_ms: number;
+} & ({ status: 'finished' } | { status: 'paused' | 'refused'; at: number });
 
 const log = new LogStore();
 

@@ -2,7 +2,7 @@
 
 Status: agreed 14 November 2026 (Tim: "Go for it", on the stage 1 plan as it stood). Stage 1 (the frame) of the Build
 Plan's "Workflow plan" tab, whose eight decisions Tim agreed the same day ("Yep I agree"). Cases (stage 2) and the HTML
-report (stage 3) are designed for here but not built. Workstream 1 (the object, rules, capture) built.
+report (stage 3) are designed for here but not built. Workstreams 1 (the object, rules, capture) and 2 (running) built.
 
 ## Why
 
@@ -25,7 +25,9 @@ note on why, and runs them again in one go.
    Objects come in the order the earlier step made them, or the project's order for a layer.
 4. **Capture** turns runs from the run log (those still applied: not refused, not undone) into steps. Each input id
    becomes the simplest rule that finds exactly the same objects at that point: an earlier captured step's output, whole
-   or filtered; else a layer, whole or filtered; else a named object; else the ids. Capture is a session operation that
+   or filtered; else a layer, whole or filtered; else a named object; else the ids. A rule by layer or name must also
+   find them among what's there now, as a run again sees the layer with what later steps added the time before. An
+   attribute every object in the pool carries is tried before one only some carry. Capture is a session operation that
    saves the workflow with `workflow.save`, so it's logged and undone like any run.
 5. **Add to workflow**: a tool panel built on the kit has a mode in which its foot button reads Add to workflow and adds
    the panel's command and settings as a step, its picked objects turned into rules the same way.
@@ -37,10 +39,13 @@ note on why, and runs them again in one go.
 8. **One undo a run**: the steps of one run (to the end, a refusal or a pause) apply as one undo step, with the
    workflow's last-run record. Hand work at a pause is undone on its own, and Continue is another undo step.
 9. **A rerun makes new revisions of what the last run made** (agreed decision 6). What a step makes is matched to what it
-   made last time by layer, name and kind: a match becomes the next revision of that object (same id), what wasn't made
-   again is deleted, and what's new is created; the counts are said in the step's notes. Commands are unchanged: the
-   runner turns their creates into revisions before applying them.
-10. **Python**: `s.capture_workflow(...)`, `s.run_workflow(workflow, from_step=...)`, `s.workflow(...)`.
+   made last time by layer, name and kind, then what's left by layer and kind alone, in order (an input renamed renames
+   what's made from it): a match becomes the next revision of that object (same id), what wasn't made again is deleted,
+   and what's new is created; the counts are said in the step's notes. Where a command deletes what it made before and
+   makes it anew (`face.project`), the delete and the create become one revision. Commands are unchanged: the runner
+   turns their creates into revisions before applying them.
+10. **Python**: `s.capture_workflow(name, runs)`, `s.run_workflow(workflow, from_step=1)`; the workflow itself reads as
+    `s.object(id)["workflow"]`.
 
 ## Workstreams
 
@@ -50,8 +55,14 @@ note on why, and runs them again in one go.
    survive closing a project, so an object's attributes then are read from its revision while the project holds it, and
    as it is now after). An input is any parameter holding an object's id, or a list of them, whether or not the
    command's spec lists it, so `face.save_design`'s design is one.
-2. **Running**: run, run from step N, pause, stop at a refusal, checks before cuts, one undo a run, reruns as revisions,
-   a `workflow` entry in the run log, Python.
+2. **Running**: `Session::run_workflow`, or step by step (`begin_workflow`, `next_step`, a `StepJob` run off the
+   session, `end_step`, `end_workflow`) so the app can run each step as it runs any command (0060). A pause stops the
+   run unless the run starts from it; a step switched off is passed over. The workflow's last runs are saved by a
+   `workflow.save` run at the end, and `Project::join_since` makes every run the workflow run applied one undo step
+   under its own run id, logged as a `workflow` entry after its steps' runs. `Session::step_from` and
+   `add_workflow_step` make the step a panel's command and settings would add. On the made-up pit (`workflow_rerun.py`):
+   23 steps captured in 3 ms (15 rules by step, 12 by layer, 1 by name, none kept as picked), run again in 0.7 s
+   against 0.6 s for the runs by hand, the same 526 blocks to 0 m³, their attributes the same, one undo.
 3. **The app**: the Workflow panel, Capture in the Run log, Add to workflow on the kit's tool panels.
 
 ## Not here

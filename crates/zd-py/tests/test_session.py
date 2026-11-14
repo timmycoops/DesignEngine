@@ -103,10 +103,38 @@ def the_gate_open_list_run_read(tmp, original):
             pass
 
 
+def a_workflow_is_captured_and_run_again():
+    """Decision 0065: a 100 m by 60 m pit from RL 0 to 100 cut at RL 40, captured from its runs and run again: the same
+    solids at their next revisions, 240,000 and 360,000 m3 (to 1e-6 m3), undone in one."""
+    s = zd.Session()
+    e, n = 650_000.0, 7_450_000.0
+    corners = [[e - 100, n - 100], [e + 300, n - 100], [e + 300, n + 300], [e - 100, n + 300]]
+    top, bottom = (s.run("surface.from_mesh", name=name, layer="surfaces", vertices=[[x, y, z] for x, y in corners], triangles=[[0, 1, 2], [0, 2, 3]])["outputs"][0]["id"]
+                   for name, z in (("Top", 100.0), ("Bottom", 0.0)))
+    outline = s.run("string.create", name="Outline", layer="outline", closed=True,
+                    points=[[e, n, 0.0], [e + 100, n, 0.0], [e + 100, n + 60, 0.0], [e, n + 60, 0.0]])["outputs"][0]["id"]
+    solid = s.run("solid.between_surfaces", top=top, bottom=bottom, string=outline, layer="pit")
+    cut = s.run("solid.cut_by_surface", solids=[solid["outputs"][0]["id"]], rl=40.0, layer="cut")
+    workflow = s.capture_workflow("Box pit", [solid["run"], cut["run"]])["outputs"][0]["id"]
+    steps = s.object(workflow)["workflow"]["steps"]
+    assert steps[1]["action"]["inputs"]["solids"]["from"] == {"step": 1}, steps[1]
+    pieces = [o["id"] for o in cut["outputs"]]
+    record = s.run_workflow(workflow)
+    assert record["status"] == "finished" and [step["outcome"] for step in record["steps"]] == ["ran", "ran"], record
+    volumes = sorted(s.object(p)["volume"] for p in pieces)
+    assert [s.object(p)["revision"] for p in pieces] == [2, 2]
+    assert abs(volumes[0] - 240_000.0) < 1e-6 and abs(volumes[1] - 360_000.0) < 1e-6, volumes
+    assert s.log()[-1]["event"] == "workflow"
+    assert s.undo() == record["run"] and [s.object(p)["revision"] for p in pieces] == [1, 1]
+    paused = s.run_workflow(workflow, from_step=2)
+    assert paused["from"] == 2 and paused["status"] == "finished"
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         original = a_project_is_made_saved_and_opened(tmp)
         the_gate_open_list_run_read(tmp, original)
+    a_workflow_is_captured_and_run_again()
     print(f"zd {zd.__version__}: open, list, run and read the log all pass")
 
 

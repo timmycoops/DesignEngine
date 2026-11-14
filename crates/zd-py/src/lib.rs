@@ -126,6 +126,29 @@ impl PySession {
         to_py(py, &json!(record))
     }
 
+    /// Captures runs from the run log as a new workflow (decision 0065), each run a step and each object id it was given
+    /// a rule that finds the same objects again. `runs` are run ids from `log()`, still applied (not refused, not
+    /// undone). Returns the `workflow.save` run record; the workflow is its output.
+    fn capture_workflow(&mut self, py: Python<'_>, name: &str, runs: Vec<String>) -> PyResult<Py<PyAny>> {
+        let runs = runs
+            .iter()
+            .map(|r| serde_json::from_value(Value::String(r.clone())).map_err(|_| PyValueError::new_err(format!("'{r}' is not a run id"))))
+            .collect::<PyResult<Vec<zd_core::RunId>>>()?;
+        let record = py.detach(|| self.inner.capture_workflow(name, &runs)).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &json!(record))
+    }
+
+    /// Runs a workflow from step `from_step` (from 1) to its end, a pause or the first refusal, as one undo step. What
+    /// each step made last time is made again as the next revisions of the same objects. Returns the workflow run's
+    /// record: `status` is `finished`, `paused` or `refused`, with `at` the step it stopped at, and `steps` says what
+    /// each step did. A refusal is in the record, not raised.
+    #[pyo3(signature = (workflow, from_step=1))]
+    fn run_workflow(&mut self, py: Python<'_>, workflow: &str, from_step: usize) -> PyResult<Py<PyAny>> {
+        let id = object_id(workflow)?;
+        let record = py.detach(|| self.inner.run_workflow(id, from_step)).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &json!(record))
+    }
+
     /// Every run, undo, redo, save and open, oldest first, as saved in the project.
     fn log(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_py(py, &json!(self.inner.log()))

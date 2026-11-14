@@ -14,6 +14,7 @@ mod registry;
 mod session;
 mod spec;
 pub mod workflow;
+mod workflow_run;
 
 pub use command::{Command, Inputs, Outcome};
 pub use control::{Progress, RunControl};
@@ -22,3 +23,4 @@ pub use note::{Code, Measure, Note, Place, Severity};
 pub use registry::Registry;
 pub use session::{LogEntry, RunDone, RunJob, RunRecord, RunStatus, SaveJob, Session};
 pub use spec::{CommandSpec, Field, FieldType};
+pub use workflow_run::{StepDone, StepJob, StepOutcome, StepRun, WorkflowRecord, WorkflowRun, WorkflowStatus};

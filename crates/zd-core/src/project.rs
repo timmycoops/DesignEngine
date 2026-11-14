@@ -388,6 +388,29 @@ impl Project {
         Some(run)
     }
 
+    /// How many runs undo can take off.
+    pub fn undo_steps(&self) -> usize {
+        self.done.len()
+    }
+
+    /// Makes the runs applied since undo could take off `since` of them one undo step, under `run`: a workflow run's
+    /// steps undo and redo together (decision 0065). Returns how many runs were joined.
+    pub fn join_since(&mut self, since: usize, run: RunId) -> usize {
+        if self.done.len() <= since {
+            return 0;
+        }
+        let parts: Vec<Transaction> = self.done.drain(since..).collect();
+        let joined = parts.len();
+        let mut whole = Transaction { run, layers: Vec::new(), layer_edits: Vec::new(), entries: Vec::new() };
+        for part in parts {
+            whole.layers.extend(part.layers);
+            whole.layer_edits.extend(part.layer_edits);
+            whole.entries.extend(part.entries);
+        }
+        self.done.push(whole);
+        joined
+    }
+
     /// Puts the last undone run back; returns its id.
     pub fn redo(&mut self) -> Option<RunId> {
         let transaction = self.undone.pop()?;
@@ -665,6 +688,63 @@ mod tests {
         for expected in snapshots.iter().skip(1) {
             p.redo().unwrap();
             assert_eq!(&snapshot(&p), expected);
+        }
+    }
+
+    #[test]
+    fn runs_joined_as_one_undo_step_undo_and_redo_together() {
+        // A workflow run's steps (decision 0065): random runs creating, revising and deleting objects and renaming
+        // layers, joined in groups of up to five; undo and redo step a whole group, and retrace it exactly.
+        let mut p = Project::new();
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let layers = |p: &Project| p.layers().iter().map(|l| (l.id, l.name.clone())).collect::<Vec<_>>();
+        let mut snapshots = vec![(snapshot(&p), layers(&p))];
+        let mut groups = Vec::new();
+        for group in 0..30 {
+            let since = p.undo_steps();
+            let runs = 1 + next(5);
+            for step in 0..runs {
+                let live: Vec<Arc<Object>> = p.objects().cloned().collect();
+                let change = match (live.is_empty(), next(4)) {
+                    (true, _) | (_, 0) => create(&format!("g{group}s{step}"), &format!("L{}", next(4)), line(&[[step as f64, 0.0, 0.0], [0.0, group as f64, 0.0]])),
+                    (_, 1) => {
+                        let o = &live[next(live.len())];
+                        let mut v = vertices(o);
+                        v.push([next(100) as f64, next(100) as f64, 2.5]);
+                        Change::revise_body(o, line(&v))
+                    }
+                    (_, 2) => {
+                        let layer = &p.layers()[next(p.layers().len())];
+                        Change::ReviseLayer { id: layer.id, name: Some(format!("{} g{group}", layer.name)), colour: None }
+                    }
+                    _ => {
+                        let o = &live[next(live.len())];
+                        Change::Delete { id: o.id, base: o.revision }
+                    }
+                };
+                p.apply(RunId::new(), vec![change]).unwrap();
+            }
+            let run = RunId::new();
+            assert_eq!(p.join_since(since, run), runs);
+            assert_eq!(p.undo_steps(), since + 1);
+            groups.push(run);
+            snapshots.push((snapshot(&p), layers(&p)));
+        }
+        assert_eq!(p.join_since(p.undo_steps(), RunId::new()), 0, "nothing new, nothing joined");
+        for (expected, run) in snapshots.iter().rev().skip(1).zip(groups.iter().rev()) {
+            assert_eq!(p.undo(), Some(*run));
+            assert_eq!(&(snapshot(&p), layers(&p)), expected);
+        }
+        assert!(p.undo().is_none() && p.layers().is_empty());
+        for expected in snapshots.iter().skip(1) {
+            p.redo().unwrap();
+            assert_eq!(&(snapshot(&p), layers(&p)), expected);
         }
     }
 

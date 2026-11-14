@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Crossings, FaceDesign, Grid, LayerId, MeshValidity, ObjectId, RunId, SeamModel, TriMesh, Workflow};
 
 /// What kind of thing an object is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ObjectKind {
     String,
