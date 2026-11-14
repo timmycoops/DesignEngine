@@ -3,11 +3,12 @@ workflow with a note on every step and a pause to look at the strips, saved as "
 
 What you draw by hand stays yours, and the workflow does the rest from it:
 
-- the base toe (on '1 toes'), the pit limit (on '0 pit limit'), the ramp string (on '0 ramp strings') and the
+- the base toe (on '1 toes'), the pit limit (on '0 pit limit'), the ramp strings (on '0 ramp strings') and the
   first block line with the two closing lines (on '6 block lines') are drawn first and are not steps: edit any of them,
   run the workflow again, and everything after follows;
-- the highwall has a 50 m road at 10 % up both walls of every strip, starting where the ramp string crosses each toe at
-  the west end and climbing east to the topography;
+- the highwall is 65 degrees to the base of weathering, a 30 m berm there, then 45 degrees to the topography, with 50 m
+  roads at 10 % starting 100 m inside the pit's west end: A straight up both walls of strips 1 to 5, and B on strip 6,
+  the final highwall, turning back on the berm, a switchback;
 - each step puts what it makes on a layer numbered in the order of the workflow: '1 toes', '2 faces', '3 pit',
   '4 strips', '5 seam pieces', '6 block lines', '7 block polygons', '8 blocks';
 - it's saved with only the toes, the pit limit, the block lines and the blocks on show, so what the run makes is what
@@ -39,7 +40,7 @@ NOTES = {
     "string.offset Toe": "The base toe offset north a strip width (60 m) five times: one toe a strip.",
     "string.number_across": "Each toe numbered by a line across them, south to north: its strip number.",
     "string.drape": "The toe draped on the L floor, so the face starts on the seam it mines to.",
-    "face.save_design": "The highwall profile: 65 degrees to the base of weathering, 45 to the topography, on to RL 400 up and RL -300 down so each face passes right through the pit. A 50 m road at 10 % climbs both walls of every strip, from where its string crosses the toe at the west end, east to the topography.",
+    "face.save_design": "The highwall profile: 65 degrees to the base of weathering, 45 to the topography, on to RL 400 up and RL -300 down so each face passes right through the pit. A 30 m berm at the base of weathering. 50 m roads at 10 %: A straight up both walls of strips 1 to 5, B on strip 6 turning back on the berm, a switchback.",
     "face.project": "One face a toe, on '2 faces'.",
     "solid.between_surfaces": "The pit: topography to the L floor inside the pit limit, on '3 pit'.",
     "solid.slice_by_faces": "The pit sliced into strips by the faces, each strip what lies in front of its face, on '4 strips'. Checked first: every face must pass right through the pit.",
@@ -57,10 +58,15 @@ SHOWN = {"0 pit limit", "0 ramp strings", "1 toes", "6 block lines", "8 blocks",
 
 # The roads: 50 m wide at 10 %, Tim's standard (coal ramp norms), each set by a string drawn across the strips.
 ROAD = {"width": 50.0, "grade": 10.0}
-# One road, set by a string across the strips just west of the toe's west end: it starts where the string crosses
-# each toe and climbs east, along the strip, up both walls to the topography (1.1 to 1.3 km a strip). Started inside
-# the pit's west end, the road leaves no room for the full wall behind it there, and the slice refuses the faces.
-RAMPS = (("A", -50.0, "start"),)
+# The berm at the base of weathering the road turns back on, and the least bench height that stands one.
+BERM, MIN_BENCH = 30.0, 3.0
+# The roads, each set by a string drawn across the strips it serves, starting where it crosses each toe 100 m inside the
+# pit's west end: behind its start the toe moves back by the road, its entrance, and the face going down follows it.
+# A climbs straight up both walls of strips 1 to 5; B, on strip 6, the final highwall, climbs east to the berm at the
+# base of weathering, turns back on a switchback box there, and climbs west to the topography. A switchback's box is the
+# road, the berm and the road again wide (130 m), more than a strip, so only the last strip, with nothing mined behind it,
+# takes one. Name, x, south and north ends of its string, how it's held, and whether it turns.
+RAMPS = (("A", 150.0, -150.0, 280.0, "start", False), ("B", 150.0, 280.0, 600.0, "start", True))
 
 
 def drawn_by_hand(s):
@@ -73,7 +79,7 @@ def drawn_by_hand(s):
     for name, y in (("South closing line", LIMIT_SOUTH - 100.0), ("North closing line", LIMIT_NORTH + 100.0)):
         s.run("string.create", name=name, layer="6 block lines", points=[at(LIMIT_WEST - 100.0, y, -300.0), at(LIMIT_EAST + 100.0, y, -300.0)])
     # A string across the strips for each road, the road starting where it crosses each toe.
-    ramps = {name: made(s.run("string.create", name=f"Ramp {name}", layer="0 ramp strings", points=[at(x, -150.0), at(x, 600.0)]))[0] for name, x, _ in RAMPS}
+    ramps = {name: made(s.run("string.create", name=f"Ramp {name}", layer="0 ramp strings", points=[at(x, south), at(x, north)]))[0] for name, x, south, north, _, _ in RAMPS}
     return toe, limit, first, ramps
 
 
@@ -92,14 +98,18 @@ def the_steps(s, g, model, toe, limit, first, ramps):
     for t in toes:
         run("string.drape", string=t, surface=g["L sf"], crossings=False)
     toes_layer = next(layer["id"] for layer in s.layers() if layer["name"] == "1 toes")
-    roads = [name for name, _, _ in RAMPS]
+    roads = [r[0] for r in RAMPS]
+    turning = [r[0] for r in RAMPS if r[5]]
+    # The road climbs the first wall to the base of weathering, turns back on a switchback box on the berm there, and
+    # climbs the weathered wall the other way to the topography.
     steps = [
         {"step": "project", "to": {"kind": "surface", "id": g["BOW sf"]}, "batter": 65.0, "ramps": roads},
-        {"step": "project", "to": {"kind": "surface", "id": g["TOPO sf"]}, "batter": 45.0, "ramps": roads},
+        {"step": "berm", "width": BERM, "min_bench": MIN_BENCH},
+        {"step": "project", "to": {"kind": "surface", "id": g["TOPO sf"]}, "batter": 45.0, "ramps": roads, "turns": turning},
         {"step": "project", "to": {"kind": "rl", "rl": 400.0}, "batter": 45.0, "ramps": []},
     ]
     register = {"kind": "surface", "id": g["L sf"]}
-    road_list = [{"name": name, "string": ramps[name], "fixed": fixed, "heading": "along", **ROAD} for name, _, fixed in RAMPS]
+    road_list = [{"name": name, "string": ramps[name], "fixed": fixed, "heading": "along", **ROAD} for name, _, _, _, fixed, _ in RAMPS]
     up = {"name": "Highwall", "direction": "up", "register": register, "condition": 0.1, "steps": steps, "ramps": road_list}
     down = {"name": "Highwall down", "direction": "down", "register": register, "condition": 0.1, "ramps": [],
             "steps": [{"step": "project", "to": {"kind": "rl", "rl": -300.0}, "batter": 65.0, "ramps": []}]}
@@ -176,7 +186,10 @@ def main():
         print(f"{case}: steps 1 to {pause - 1}, paused at {pause}, then {pause + 1} to the end, in {time.perf_counter() - started:.1f} s"
               + (f" (the runs by hand took {by_hand:.1f} s)" if case == "Base" else ""))
 
-    # Each case's blocks add up to its seam pieces, and the two cases to the same total, to 1e-6 m3.
+    # Each case's blocks add up to its seam pieces, and the two cases to the same total, to one part in a million million of
+    # the total (75 m3 in 75 million): the solid booleans' rounding, which the cut by polygons itself says is within
+    # 1.1e-10 of each piece's volume (0.0005 m3 on 4.6 million).
+    tolerance = lambda total: 1e-12 * total
     totals = {}
     for case, suffix in (("Base", ""), ("50m", " 50m")):
         blocks = s.objects(layer=f"8 blocks{suffix}", kind="solid")
@@ -188,8 +201,8 @@ def main():
         totals[case] = total
         print(f"   {case}: {len(blocks)} blocks on '8 blocks{suffix}' ({len(coal)} coal), {total:,.6f} m3; seam pieces {within:,.6f} m3; "
               f"differ by {abs(total - within):.3g} m3; every block tagged case={case}: {tagged}")
-        assert tagged and abs(total - within) <= 1e-6, case
-    assert abs(totals["Base"] - totals["50m"]) <= 1e-6, totals
+        assert tagged and abs(total - within) <= tolerance(total), case
+    assert abs(totals["Base"] - totals["50m"]) <= tolerance(totals["Base"]), totals
     print(f"   the two cases' totals differ by {abs(totals['Base'] - totals['50m']):.3g} m3")
 
     for layer in s.layers():
