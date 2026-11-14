@@ -143,6 +143,9 @@ codes! {
     SeamThinLeftOut = "seam.thin_left_out", "Volume left out of a seam cut where a layer is thinner than the minimum";
     SeamFlapsLeftOut = "seam.flaps_left_out", "Volume taken off a seam cut's pieces as flaps thinner than the flap thickness";
     SeamCutDiffers = "seam.cut_differs", "A solid whose pieces from the seam cut don't add back to its volume";
+    BenchFlapsLeftOut = "bench.flaps_left_out", "Volume taken off a bench cut's pieces as flaps thinner than the flap thickness";
+    BenchCutDiffers = "bench.cut_differs", "A solid whose benches don't add back to its volume";
+    BenchRuleUnused = "bench.rule_unused", "A bench rule no solid takes, or one asking for an attribute no solid carries";
     WorkflowPicked = "workflow.picked", "A workflow step's input that is the objects as picked, as no rule finds them";
     ObjectSolidsDeleted = "object.solids_deleted", "Solids deleted, with their volume, so a report can account for it";
 }

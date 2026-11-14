@@ -298,6 +298,7 @@ impl Session {
                 let what = match note.code {
                     Some(Code::SeamThinLeftOut) => Some("Layers thinner than the minimum"),
                     Some(Code::SeamFlapsLeftOut) => Some("Flaps under the flap thickness"),
+                    Some(Code::BenchFlapsLeftOut) => Some("Flaps under the flap thickness, at bench levels"),
                     _ => None,
                 };
                 if let (Some(what), Some(m)) = (what, &note.value) {

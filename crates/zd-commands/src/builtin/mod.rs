@@ -3,6 +3,7 @@
 //! from DXF and CSV, objects out to DXF and CSV. Deswik drawings in (decision 0036), Spry projects in (decision 0039),
 //! and closed surfaces an import couldn't make solids fixed by repair (decision 0040).
 
+mod benches;
 mod blocks;
 mod build;
 mod compare;
@@ -21,6 +22,7 @@ mod strips;
 mod surface;
 mod workflow;
 
+pub use benches::{BenchEnd, BenchRule, CutByBenches, CutByBenchesParams, rule_for};
 pub use blocks::{CutByPolygons, CutByPolygonsParams, CutBySeams, CutBySeamsParams, PolygonsFromLines, PolygonsFromLinesParams, check_cut_by_polygons, check_cut_by_seams, horizon_order};
 pub use compare::{CompareSolids, CompareSolidsParams};
 pub use build::{BuildOp, BuildStep, BuildStepParams, Rebuild, RebuildParams};
@@ -67,6 +69,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(PolygonsFromLines);
     registry.register(CutByPolygons);
     registry.register(CutBySeams);
+    registry.register(CutByBenches);
     registry.register(DrapeString);
     registry.register(SetElevation);
     registry.register(ReverseString);

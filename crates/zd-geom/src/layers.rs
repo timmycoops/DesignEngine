@@ -227,7 +227,7 @@ const FLAP_REACH: f64 = 0.005;
 /// edge where a strip's surface runs into a seam's roof or floor at a low angle, or a sheet with no thickness where the
 /// two lie on each other, as a berm built on the seam's roof does. It's cut out straight down where the two faces are
 /// that close, as Deswik removes flaps before cutting. A steep wall meeting a seam is no flap.
-fn without_flaps(piece: Manifold, thickness: f64) -> Result<(Manifold, f64), GeomError> {
+pub(crate) fn without_flaps(piece: Manifold, thickness: f64) -> Result<(Manifold, f64), GeomError> {
     piece.status().map_err(|e| GeomError::Manifold(e.to_string()))?;
     if thickness <= 0.0 || piece.is_empty() {
         return Ok((piece, 0.0));

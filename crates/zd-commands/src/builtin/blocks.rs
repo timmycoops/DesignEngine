@@ -172,7 +172,7 @@ fn default_block() -> String {
 }
 
 fn default_pattern() -> String {
-    "{strip}_{block}_{horizon}".into()
+    "{strip}_{block}_{horizon}_{bench}".into()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -188,8 +188,8 @@ pub struct CutByPolygonsParams {
     #[serde(default = "default_block")]
     pub attribute: String,
     /// Each block's name: attributes in braces, `{solid}` the solid's name and `{polygon}` the polygon's; one a block
-    /// hasn't is left out with the separator before it. `{strip}_{block}_{horizon}` by default: a coal block's horizon is its
-    /// seam, and waste's tells it from the coal of the seam it goes with (OB, U-M).
+    /// hasn't is left out with the separator before it. `{strip}_{block}_{horizon}_{bench}` by default: a coal block's horizon is its
+    /// seam, and waste's tells it from the coal of the seam it goes with (OB, U-M); `bench` is there once cut by benches.
     #[serde(default = "default_pattern")]
     pub name: String,
 }
@@ -198,7 +198,7 @@ pub struct CutByPolygonsParams {
 const OVERLAP: f64 = 0.01;
 
 /// A difference between the pieces and their solid within this share of its volume is rounding.
-const ADDS_UP: f64 = 1e-6;
+pub(super) const ADDS_UP: f64 = 1e-6;
 
 /// More blocks with one name than this, or solids the polygons don't cover, and the run sums them up.
 const NAMED_UP_TO: usize = 5;
@@ -209,7 +209,7 @@ fn separator(c: char) -> bool {
 }
 
 /// A value as it goes in a name: whole numbers without a decimal point.
-fn word(value: &AttrValue) -> String {
+pub(super) fn word(value: &AttrValue) -> String {
     match value {
         AttrValue::Number(n) if n.fract() == 0.0 && n.abs() < 1e15 => format!("{}", *n as i64),
         AttrValue::Number(n) => n.to_string(),
@@ -219,7 +219,7 @@ fn word(value: &AttrValue) -> String {
 }
 
 /// The name from the pattern: each `{key}` its value; one with no value is left out with the separator before it.
-fn block_name(pattern: &str, attributes: &Attributes, solid: &str, polygon: &str) -> String {
+pub(super) fn block_name(pattern: &str, attributes: &Attributes, solid: &str, polygon: &str) -> String {
     let mut out = String::new();
     let mut rest = pattern;
     while let Some(open) = rest.find('{') {
@@ -258,7 +258,7 @@ fn plan_ring(line: &Polyline) -> Vec<[f64; 2]> {
 }
 
 /// The first few names, quoted, and how many more.
-fn named(names: &[String]) -> String {
+pub(super) fn named(names: &[String]) -> String {
     let first = names.iter().take(NAMED_UP_TO).map(|n| format!("'{n}'")).collect::<Vec<_>>().join(", ");
     if names.len() > NAMED_UP_TO { format!("{first} and {} more", names.len() - NAMED_UP_TO) } else { first }
 }
@@ -382,7 +382,7 @@ impl Command for CutByPolygons {
             params: vec![
                 Field::new("layer", FieldType::Layer, "Layer for the blocks"),
                 Field::new("attribute", FieldType::Text, "The attribute taking each polygon's name; block by default"),
-                Field::new("name", FieldType::Text, "Each block's name from its attributes in braces; {strip}_{block}_{horizon} by default"),
+                Field::new("name", FieldType::Text, "Each block's name from its attributes in braces; {strip}_{block}_{horizon}_{bench} by default"),
             ],
             outputs: vec![Field::new("blocks", FieldType::Objects, "Each solid's blocks in the polygons' order")],
         }
