@@ -320,8 +320,9 @@ export function BuilderPanel() {
     if (next) select(next);
   };
 
-  const build = async () => {
-    if (!picked) return;
+  /** What Build runs: the step from the picked line, as set in the panel. */
+  const buildParams = (): Record<string, unknown> | null => {
+    if (!picked) return null;
     const stop = roads.filter((r) => (op === 'berm' ? atBerm[r.name] === 'ends' : climbs[r.name] === false)).map((r) => r.name);
     const step: BuildOp =
       op === 'project'
@@ -329,6 +330,12 @@ export function BuilderPanel() {
         : { op: 'berm', width, ...(bermOn ? { on: bermOn } : {}), ...(turning.length ? { turns: turning } : {}), ...(join !== 'auto' ? { join: join === 'on' } : {}), ...(stop.length ? { stop } : {}) };
     const params: Record<string, unknown> = { from: picked.id, step };
     if (byHand) Object.assign(params, { lies_on: liesOn, side, name: name.trim() || picked.name, ...(runOn > 0 ? { run_on: [runOn, runOn] } : {}) });
+    return params;
+  };
+
+  const build = async () => {
+    const params = buildParams();
+    if (!picked || !params) return;
     await runStep('face.build_step', params, (line) => {
       if (byHand) setBuildName(name.trim() || picked.name);
       return line ?? null;
@@ -356,6 +363,7 @@ export function BuilderPanel() {
       ? {
           label: `Rebuild ${n} step${n === 1 ? '' : 's'} from here`,
           run: rebuild,
+          step: { command: 'face.rebuild', params: { from: picked.id } },
           icon: <RotateCcw className="size-3.5" />,
           busy,
           busyLabel: 'Rebuilding…',
@@ -364,6 +372,7 @@ export function BuilderPanel() {
       : {
           label: op === 'project' ? 'Build wall' : 'Build berm',
           run: build,
+          step: { command: 'face.build_step', params: buildParams() ?? {} },
           icon: <Hammer className="size-3.5" />,
           busy,
           busyLabel: 'Building…',

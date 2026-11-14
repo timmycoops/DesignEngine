@@ -67,6 +67,8 @@ export function ReservesPanel() {
     if (typeof picked === 'string') setMatches(picked);
   };
 
+  // What the button runs, and the same as a step for a workflow (decision 0065).
+  const calls = (command: string, params: Record<string, unknown>) => ({ run: () => runIt(command, params), step: { command, params } });
   const action: ToolAction =
     mode === 'interrogate'
       ? {
@@ -76,14 +78,13 @@ export function ReservesPanel() {
           busy,
           busyLabel: 'Interrogating…',
           title: "Each block's seam grids averaged over it by exact partial cells, written onto it as attributes; one undo",
-          run: () =>
-            runIt('solid.interrogate', {
-              solids: chosen.map((o) => o.id),
-              model: modelOf?.id,
-              seam_attribute: seamAttribute.trim(),
-              ...(prefix.trim() ? { prefix: prefix.trim() } : {}),
-              ...(codes.length > 0 ? { variables: codes } : {}),
-            }),
+          ...calls('solid.interrogate', {
+            solids: chosen.map((o) => o.id),
+            model: modelOf?.id,
+            seam_attribute: seamAttribute.trim(),
+            ...(prefix.trim() ? { prefix: prefix.trim() } : {}),
+            ...(codes.length > 0 ? { variables: codes } : {}),
+          }),
         }
       : {
           label: `Compare ${plural(chosen.length, 'block')}`,

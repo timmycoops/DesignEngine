@@ -2,7 +2,7 @@
 
 Status: agreed 14 November 2026 (Tim: "Go for it", on the stage 1 plan as it stood). Stage 1 (the frame) of the Build
 Plan's "Workflow plan" tab, whose eight decisions Tim agreed the same day ("Yep I agree"). Cases (stage 2) and the HTML
-report (stage 3) are designed for here but not built. Workstreams 1 (the object, rules, capture) and 2 (running) built.
+report (stage 3) are designed for here but not built. Workstreams 1 to 3 built: the object, rules and capture; running; the app.
 
 ## Why
 
@@ -63,7 +63,14 @@ note on why, and runs them again in one go.
    `add_workflow_step` make the step a panel's command and settings would add. On the made-up pit (`workflow_rerun.py`):
    23 steps captured in 3 ms (15 rules by step, 12 by layer, 1 by name, none kept as picked), run again in 0.7 s
    against 0.6 s for the runs by hand, the same 526 blocks to 0 m³, their attributes the same, one undo.
-3. **The app**: the Workflow panel, Capture in the Run log, Add to workflow on the kit's tool panels.
+3. **The app**: a Workflow panel on the toolbar, made from the kit: the workflow picked, its steps in order with each
+   input's rule in words, a note on why (click to write), on/off, up and down, take out, Run from here, and what the
+   last run made, warned or refused in the kit's colours; Run, or Continue after a pause, at its foot, one undo. The Run
+   log ticks applied runs (Shift-click ticks a range) and Captures them as a workflow, opening the panel on it. While
+   the panel is adding steps, a kit panel whose action says what it runs (`ToolAction.step`: Cut solids, Reserves,
+   Builder) reads Add to <workflow> at its foot and adds its command and settings as the last step, running nothing.
+   The shell runs a workflow step by step off its lock (`run_workflow`), the status line naming each step's command and
+   Cancel stopping it. `zd-app --bench --workflow` drives it as Tim would.
 
 ## Not here
 

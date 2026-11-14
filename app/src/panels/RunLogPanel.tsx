@@ -1,9 +1,13 @@
+import { ListPlus, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { LogEntry, RunRecord } from '@/bridge';
+import { Button } from '@/design-system/ui/button';
+import { Input } from '@/design-system/ui/input';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
 import { useWorkspace } from '@/workspace/context';
 import { lookAt, NoteLine } from '@/design-system/kit';
 import { clock, fmt } from './format';
+import { tickRuns } from './workflow';
 
 type Outcome = 'ok' | 'failed' | 'undone' | 'session';
 
@@ -67,7 +71,7 @@ const OUTPUTS_IN_A_ROW = 4;
 const OUTPUTS_IN_DETAILS = 200;
 
 const helper = columnHelper<LogRow>();
-const columns = helper.columns([
+const logColumns = [
   helper.accessor('index', { header: '#', cell: (c) => <span className="text-muted-foreground tabular-nums">{c.getValue()}</span> }),
   helper.accessor('at', { header: 'Time', cell: (c) => <span className="tabular-nums">{clock(c.getValue())}</span> }),
   helper.accessor('what', { header: 'Command', cell: (c) => <span className={outcomeTone[c.row.original.outcome]}>{c.getValue()}</span> }),
@@ -86,7 +90,10 @@ const columns = helper.columns([
       return <span className="tabular-nums">{ms === null ? '' : fmt(ms, ms < 10 ? 1 : 0)}</span>;
     },
   }),
-]);
+];
+
+/** A run that can be captured into a workflow: applied, not refused or undone (decision 0065). */
+const capturable = (r: LogRow) => r.record !== null && r.outcome === 'ok';
 
 function RunDetails({ record }: { record: RunRecord }) {
   const { summary, select } = useWorkspace();
@@ -126,24 +133,85 @@ function RunDetails({ record }: { record: RunRecord }) {
   );
 }
 
-/** Every run, undo, redo, save and open this session; click a run for its parameters and messages. */
+/**
+ * Every run, undo, redo, save and open this session; click a run for its parameters and messages. Tick runs (Shift-click
+ * ticks every run between) and Capture them as a workflow, each run a step (decision 0065).
+ */
 export function RunLogPanel() {
-  const { log } = useWorkspace();
+  const { log, captureWorkflow } = useWorkspace();
   const rows = useMemo(() => toRows(log), [log]);
   const [picked, setPicked] = useState<number | null>(null);
   const record = rows.find((r) => r.index === picked)?.record ?? null;
+  const [ticked, setTicked] = useState<Set<number>>(new Set());
+  const [lastTicked, setLastTicked] = useState<number | null>(null);
+  const [name, setName] = useState('Workflow');
+  const [capturing, setCapturing] = useState(false);
+  const tickable = useMemo(() => new Set(rows.filter(capturable).map((r) => r.index)), [rows]);
+  const live = [...ticked].filter((i) => tickable.has(i));
+  const tick = (index: number, range: boolean) => {
+    setTicked((was) => tickRuns(was, tickable, index, lastTicked, range));
+    setLastTicked(index);
+  };
+  const columns = useMemo(
+    () =>
+      helper.columns([
+        helper.display({
+          id: 'capture',
+          header: () => <span title="Tick runs to capture them as a workflow; Shift-click ticks every run between">✓</span>,
+          cell: (c) =>
+            capturable(c.row.original) ? (
+              <input
+                type="checkbox"
+                checked={ticked.has(c.row.original.index)}
+                aria-label={`Capture run ${c.row.original.index}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  tick(c.row.original.index, e.shiftKey);
+                }}
+                onChange={() => undefined}
+              />
+            ) : null,
+        }),
+        ...logColumns,
+      ]),
+    [ticked, tickable, lastTicked],
+  );
+  const capture = async () => {
+    const runs = rows
+      .filter((r) => ticked.has(r.index) && capturable(r))
+      .sort((a, b) => a.index - b.index)
+      .map((r) => r.record!.run);
+    setCapturing(true);
+    const outcome = await captureWorkflow(name.trim() || 'Workflow', runs);
+    setCapturing(false);
+    if (outcome.record) setTicked(new Set());
+  };
   // The panel is usually wide and short, so details sit beside the table.
   return (
     <div className="flex h-full">
-      <div className="min-w-0 flex-1 overflow-auto">
-        <DataTable
-          data={rows}
-          columns={columns}
-          rowId={(r) => String(r.index)}
-          selected={picked === null ? null : String(picked)}
-          onRowClick={(r) => setPicked(r.index === picked ? null : r.index)}
-          empty="No runs yet."
-        />
+      <div className="flex min-w-0 flex-1 flex-col">
+        {live.length > 0 && (
+          <div className="flex shrink-0 items-center gap-2 border-b px-2 py-1 text-xs">
+            <span className="text-muted-foreground">{live.length} run{live.length === 1 ? '' : 's'} ticked</span>
+            <Input className="h-6 w-48 px-1.5 text-xs" value={name} aria-label="Workflow name" onChange={(e) => setName(e.target.value)} />
+            <Button size="sm" className="h-6 px-2 text-xs" disabled={capturing} title="Each run a step, in log order, its objects found by rule; opens the Workflow panel" onClick={() => void capture()}>
+              <ListPlus className="size-3.5" /> Capture as a workflow
+            </Button>
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setTicked(new Set())}>
+              <X className="size-3.5" /> Clear
+            </Button>
+          </div>
+        )}
+        <div className="min-h-0 flex-1 overflow-auto">
+          <DataTable
+            data={rows}
+            columns={columns}
+            rowId={(r) => String(r.index)}
+            selected={picked === null ? null : String(picked)}
+            onRowClick={(r) => setPicked(r.index === picked ? null : r.index)}
+            empty="No runs yet."
+          />
+        </div>
       </div>
       {record && (
         <div className="w-[38%] max-w-[36rem] shrink-0 overflow-auto border-l">

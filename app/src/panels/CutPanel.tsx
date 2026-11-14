@@ -167,6 +167,8 @@ export function CutPanel() {
   };
 
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  // What the button runs, and the same as a step for a workflow (decision 0065).
+  const calls = (command: string, params: Record<string, unknown>) => ({ run: () => runIt(command, params), step: { command, params } });
   const action: ToolAction = (() => {
     switch (mode) {
       case 'strips':
@@ -178,7 +180,7 @@ export function CutPanel() {
           busyLabel: 'Slicing…',
           title: 'Each strip is what lies in front of its face of what the strips before it left, so they add up to the solid',
           hint: shortfalls.length > 0 ? 'Fix the faces first' : undefined,
-          run: () => runIt('solid.slice_by_faces', { solids: chosen.map((o) => o.id), faces: faces.map((o) => o.id), layer: output }),
+          ...calls('solid.slice_by_faces', { solids: chosen.map((o) => o.id), faces: faces.map((o) => o.id), layer: output }),
         };
       case 'seams':
         return {
@@ -189,7 +191,7 @@ export function CutPanel() {
           busyLabel: 'Cutting…',
           title: "Overburden, each seam, each interburden and what's below the last floor, in one run; each piece carries its seam, material and horizon",
           hint: shortfalls.length > 0 ? 'Fix the grids or the solids first' : undefined,
-          run: () => runIt('solid.cut_by_seams', { solids: chosen.map((o) => o.id), model: modelOf?.id, layer: output, min_thickness: minThickness, flap_thickness: flapThickness, name: pattern.trim() }),
+          ...calls('solid.cut_by_seams', { solids: chosen.map((o) => o.id), model: modelOf?.id, layer: output, min_thickness: minThickness, flap_thickness: flapThickness, name: pattern.trim() }),
         };
       case 'polygons':
         return {
@@ -200,7 +202,7 @@ export function CutPanel() {
           busyLabel: 'Cutting…',
           title: 'Each solid cut vertically where each polygon sits, the piece taking its name as its block',
           hint: shortfalls.length > 0 ? 'Fix the polygons first' : undefined,
-          run: () => runIt('solid.cut_by_polygons', { solids: chosen.map((o) => o.id), polygons: polygons.map((o) => o.id), layer: output, name: pattern.trim() }),
+          ...calls('solid.cut_by_polygons', { solids: chosen.map((o) => o.id), polygons: polygons.map((o) => o.id), layer: output, name: pattern.trim() }),
         };
       case 'cut':
         return {
@@ -208,7 +210,7 @@ export function CutPanel() {
           disabled: chosen.length === 0 || by === null || output === '',
           busy,
           busyLabel: 'Cutting…',
-          run: () => runIt('solid.cut_by_surface', { solids: chosen.map((o) => o.id), ...(by?.kind === 'rl' ? { rl: by.rl } : { surface: by?.id }), keep, layer: output }),
+          ...calls('solid.cut_by_surface', { solids: chosen.map((o) => o.id), ...(by?.kind === 'rl' ? { rl: by.rl } : { surface: by?.id }), keep, layer: output }),
         };
       case 'between':
         return {
@@ -216,7 +218,7 @@ export function CutPanel() {
           disabled: !around || !topOf || !bottomOf || topOf.id === bottomOf.id || output === '',
           busy,
           busyLabel: 'Making…',
-          run: () => runIt('solid.between_surfaces', { top: topOf?.id, bottom: bottomOf?.id, string: around?.id, layer: output, ...(name.trim() ? { name: name.trim() } : {}) }),
+          ...calls('solid.between_surfaces', { top: topOf?.id, bottom: bottomOf?.id, string: around?.id, layer: output, ...(name.trim() ? { name: name.trim() } : {}) }),
         };
     }
   })();

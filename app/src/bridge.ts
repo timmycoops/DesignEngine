@@ -488,6 +488,40 @@ export const runCommand = async (name: string, params: Record<string, unknown>):
   }
 };
 
+/** A workflow run's record and the project after it (decision 0065). */
+export interface WorkflowReply {
+  record: WorkflowRecord;
+  summary: ProjectSummary;
+}
+
+/**
+ * Runs a workflow from step `from` (from 1) to its end, a pause or the first refusal; one undo. One run at a time, as
+ * any command: the status line names each step's command as it goes, and Cancel stops it.
+ */
+export const runWorkflow = async (workflow: string, from: number): Promise<WorkflowReply> => {
+  if (!running.start('workflow', performance.now())) throw new Error(waitingOn() ?? 'Waiting on a run');
+  try {
+    const reply = await invoke<{ record: WorkflowRecord; changes: ProjectChanges }>('run_workflow', { workflow, from });
+    return { record: reply.record, summary: await summaryAfter(reply.changes) };
+  } finally {
+    running.end();
+  }
+};
+
+/** Captures runs from the run log as a new workflow, each object id a rule; saved by a `workflow.save` run. */
+export const captureWorkflow = async (name: string, runs: string[]): Promise<RunReply> => {
+  idle();
+  const reply = await invoke<{ record: RunRecord; changes: ProjectChanges }>('capture_workflow', { name, runs });
+  return { record: reply.record, summary: await summaryAfter(reply.changes) };
+};
+
+/** Adds a tool panel's command and settings to a workflow as its last step, its objects turned into rules. */
+export const addWorkflowStep = async (workflow: string, command: string, params: Record<string, unknown>, note?: string): Promise<RunReply> => {
+  idle();
+  const reply = await invoke<{ record: RunRecord; changes: ProjectChanges }>('add_workflow_step', { workflow, at: null, command, params, note: note ?? null });
+  return { record: reply.record, summary: await summaryAfter(reply.changes) };
+};
+
 /** Throws, saying what it's waiting on, while a run goes: a change to the project waits until it ends. */
 function idle() {
   const waiting = waitingOn();
@@ -1001,6 +1035,8 @@ export interface BenchConfig {
   select: boolean;
   /** With `--shell`, panels minimised and brought back, and the toolbar's groups. */
   shell: boolean;
+  /** With `--workflow`, the Run log's Capture and the Workflow panel driven as Tim would (decision 0065). */
+  workflow: boolean;
   /** With `--builder`, the Builder panel driven as Tim would, from a toe up, with an edit between steps (decision 0048). */
   builder: boolean;
   /** With `--cut`, the Cut solids panel driven as Tim would: a pit between two surfaces, sliced into strips, cut at an RL (decision 0049). */
