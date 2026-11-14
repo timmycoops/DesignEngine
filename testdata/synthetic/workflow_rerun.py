@@ -63,6 +63,9 @@ def blocks(s):
 
 
 def same_attributes(a, b):
+    # A workflow run tags what it makes with its case (decision 0066); the runs by hand had none.
+    a = {k: v for k, v in a.items() if k != "case"}
+    b = {k: v for k, v in b.items() if k != "case"}
     if a.keys() != b.keys():
         return False
     for key, x in a.items():

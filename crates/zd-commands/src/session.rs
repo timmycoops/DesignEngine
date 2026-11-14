@@ -493,12 +493,12 @@ impl Session {
     }
 
     /// How many runs undo can take off now.
-    pub(crate) fn undo_steps(&self) -> usize {
+    pub fn undo_steps(&self) -> usize {
         self.project.undo_steps()
     }
 
     /// Makes the runs applied since undo could take off `since` of them one undo step, under `run`.
-    pub(crate) fn join_undo(&mut self, since: usize, run: RunId) -> usize {
+    pub fn join_undo(&mut self, since: usize, run: RunId) -> usize {
         Arc::make_mut(&mut self.project).join_since(since, run)
     }
 

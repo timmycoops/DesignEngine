@@ -498,11 +498,22 @@ export interface WorkflowReply {
  * Runs a workflow from step `from` (from 1) to its end, a pause or the first refusal; one undo. One run at a time, as
  * any command: the status line names each step's command as it goes, and Cancel stops it.
  */
-export const runWorkflow = async (workflow: string, from: number): Promise<WorkflowReply> => {
+export const runWorkflow = async (workflow: string, from: number, workflowCase = 'Base'): Promise<WorkflowReply> => {
   if (!running.start('workflow', performance.now())) throw new Error(waitingOn() ?? 'Waiting on a run');
   try {
-    const reply = await invoke<{ record: WorkflowRecord; changes: ProjectChanges }>('run_workflow', { workflow, from });
+    const reply = await invoke<{ record: WorkflowRecord; changes: ProjectChanges }>('run_workflow', { workflow, from, case: workflowCase });
     return { record: reply.record, summary: await summaryAfter(reply.changes) };
+  } finally {
+    running.end();
+  }
+};
+
+/** Runs every case of a workflow from its first step, Base first, as one undo (decision 0066). */
+export const runAllCases = async (workflow: string): Promise<{ records: WorkflowRecord[]; summary: ProjectSummary }> => {
+  if (!running.start('workflow', performance.now())) throw new Error(waitingOn() ?? 'Waiting on a run');
+  try {
+    const reply = await invoke<{ records: WorkflowRecord[]; changes: ProjectChanges }>('run_all_cases', { workflow });
+    return { records: reply.records, summary: await summaryAfter(reply.changes) };
   } finally {
     running.end();
   }
@@ -634,6 +645,8 @@ export type WorkflowRecord = {
   run: string;
   workflow: string;
   name: string;
+  /** Base, or one of its cases. */
+  case: string;
   from: number;
   steps: StepRun[];
   started_unix_ms: number;
@@ -886,9 +899,19 @@ export type Measures =
   | { kind: 'face_design'; design: FaceDesign }
   | { kind: 'workflow'; workflow: Workflow };
 
-/** Saved steps run again in one go (decision 0065). */
+/** Saved steps run again in one go (decision 0065), and its cases (decision 0066). */
 export interface Workflow {
   steps: WorkflowStep[];
+  cases?: Case[];
+}
+
+/** A case: the steps with some settings changed, on its own layers, tagged `case`. */
+export interface Case {
+  name: string;
+  /** What it changes, by step id (as text) and setting name. */
+  settings?: Record<string, Record<string, unknown>>;
+  /** Each step's last run in this case, by step id (as text). */
+  last?: Record<string, LastStepRun>;
 }
 
 export interface WorkflowStep {

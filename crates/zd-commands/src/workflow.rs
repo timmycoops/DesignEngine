@@ -12,7 +12,45 @@ use crate::{CommandError, LogEntry, RunRecord, RunStatus, Session, Severity};
 /// The objects a rule finds now, for the step at `at` in the workflow's order: live ones only, in the order the rule
 /// gives. A rule for one object must find exactly one; a rule for many must find some.
 pub fn resolve(project: &Project, workflow: &Workflow, at: usize, rule: &InputRule) -> Result<Vec<ObjectId>, String> {
-    let keep = |o: &Object| rule.kind.is_none_or(|k| o.kind() == k) && rule.filter.iter().all(|(key, value)| o.attributes.get(key) == Some(value));
+    resolve_in(project, workflow, at, rule, &CaseScope::default())
+}
+
+/// What one case of a workflow sees (decision 0066): the objects it made and those no workflow step made, never another
+/// case's; and its layers, each named `<layer> <case>`.
+#[derive(Debug, Default, Clone)]
+pub struct CaseScope {
+    /// The case's name, none for a workflow with no cases run as it stands.
+    pub case: Option<String>,
+    /// What the workflow's other cases made: out of sight.
+    pub others: HashSet<ObjectId>,
+    /// The suffix its layers take, " 50m"; empty for Base.
+    pub suffix: String,
+}
+
+impl CaseScope {
+    /// Whether the case can see an object: one tagged with another case, or that another case made, it can't.
+    pub fn sees(&self, object: &Object) -> bool {
+        if self.others.contains(&object.id) {
+            return false;
+        }
+        match (&self.case, object.attributes.get(CASE_ATTRIBUTE)) {
+            (Some(case), Some(AttrValue::Text(tag))) => tag == case,
+            _ => true,
+        }
+    }
+
+    /// A layer name as this case writes to it.
+    pub fn layer(&self, name: &str) -> String {
+        format!("{name}{}", self.suffix)
+    }
+}
+
+/// The attribute naming the case that made an object (decision 0066).
+pub const CASE_ATTRIBUTE: &str = "case";
+
+/// [`resolve`] as one case sees the project.
+pub fn resolve_in(project: &Project, workflow: &Workflow, at: usize, rule: &InputRule, scope: &CaseScope) -> Result<Vec<ObjectId>, String> {
+    let keep = |o: &Object| scope.sees(o) && rule.kind.is_none_or(|k| o.kind() == k) && rule.filter.iter().all(|(key, value)| o.attributes.get(key) == Some(value));
     let found: Vec<ObjectId> = match &rule.from {
         Source::Step(id) => {
             let Some(position) = workflow.position(*id).filter(|&p| p < at) else { return Err(format!("takes what step id {id} made, which isn't before it")) };
@@ -20,10 +58,11 @@ pub fn resolve(project: &Project, workflow: &Workflow, at: usize, rule: &InputRu
             let mut seen = HashSet::new();
             last.outputs().filter(|id| seen.insert(*id)).filter(|&id| project.object(id).is_some_and(|o| keep(o))).collect()
         }
-        Source::Layer(name) => match project.layer_named(name) {
-            Some(layer) => project.objects().filter(|o| o.layer == layer.id && keep(o)).map(|o| o.id).collect(),
-            None => Vec::new(),
-        },
+        // On the layer, and on the case's own layer of that name.
+        Source::Layer(name) => {
+            let layers: Vec<_> = [name.clone(), scope.layer(name)].iter().filter_map(|n| project.layer_named(n).map(|l| l.id)).collect();
+            project.objects().filter(|o| layers.contains(&o.layer) && keep(o)).map(|o| o.id).collect()
+        }
         Source::Named(name) => project.objects().filter(|o| &o.name == name && keep(o)).map(|o| o.id).collect(),
         Source::Picked(ids) => {
             let gone = ids.iter().filter(|&&id| project.object(id).is_none()).count();
@@ -363,7 +402,7 @@ impl Session {
                 }),
             });
         }
-        Ok(Workflow { steps })
+        Ok(Workflow { steps, cases: Vec::new() })
     }
 
     /// The step a tool panel's command and settings make, to go into a workflow at `at` (from 0; the end if left out),

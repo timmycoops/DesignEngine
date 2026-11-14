@@ -2,7 +2,7 @@
  * Workflows in words (decision 0065): how a step's input rule reads in the Workflow panel, and how ticking runs in the
  * Run log works, a Shift-click ticking every run between.
  */
-import type { InputRule, Workflow } from '../bridge';
+import type { InputRule, LastStepRun, Workflow, WorkflowStep } from '../bridge';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const kindWord = (kind: string) => kind.replace('_', ' ');
@@ -71,4 +71,83 @@ export function onlyLayers(made: string[], objects: Placed[], layers: { id: stri
   const layerOf = new Map(objects.map((o) => [o.id, o.layer]));
   const show = new Set(made.map((id) => layerOf.get(id)).filter((l): l is string => l !== undefined));
   return { show: [...show], hide: layers.filter((l) => l.visible && !show.has(l.id)).map((l) => l.id) };
+}
+
+/** The name of the case a workflow's steps are as they stand (decision 0066). */
+export const BASE = 'Base';
+
+/** A step as one case sees it: its last run that case's own. */
+export function stepsOfCase(workflow: Workflow, name: string): WorkflowStep[] {
+  if (name === BASE) return workflow.steps;
+  const last = workflow.cases?.find((c) => c.name === name)?.last ?? {};
+  return workflow.steps.map((s) => ({ ...s, last: last[String(s.id)] as LastStepRun | undefined }));
+}
+
+/** A row of the settings grid: one plain setting of one step. */
+export interface SettingRow {
+  step: number;
+  /** Where the step is, from 1. */
+  position: number;
+  command: string;
+  field: string;
+  /** Base's value. */
+  base: string | number | boolean;
+}
+
+/** Every plain setting (a number, text, or true or false) of every command step, in order: the grid's rows. */
+export function settingRows(workflow: Workflow): SettingRow[] {
+  const rows: SettingRow[] = [];
+  workflow.steps.forEach((step, at) => {
+    if (step.action.kind !== 'command') return;
+    for (const [field, value] of Object.entries(step.action.settings ?? {})) {
+      if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') rows.push({ step: step.id, position: at + 1, command: step.action.command, field, base: value });
+    }
+  });
+  return rows;
+}
+
+/** What a case has in a cell: its own value, or undefined where it reads as Base. */
+export function caseValue(workflow: Workflow, name: string, row: SettingRow): unknown {
+  if (name === BASE) return row.base;
+  return workflow.cases?.find((c) => c.name === name)?.settings?.[String(row.step)]?.[row.field];
+}
+
+/** A cell's text read as the setting's own type: null where it isn't one. */
+export function readSetting(text: string, like: string | number | boolean): string | number | boolean | null {
+  if (typeof like === 'number') {
+    const n = Number(text.trim());
+    return text.trim() !== '' && Number.isFinite(n) ? n : null;
+  }
+  if (typeof like === 'boolean') return text.trim() === 'true' ? true : text.trim() === 'false' ? false : null;
+  return text;
+}
+
+/**
+ * The workflow with one cell of the settings grid changed: Base's changes the step's own setting; a case's sets what the
+ * case changes, and an empty cell takes the change away, so the case reads as Base again. Null where the text isn't a
+ * value of the setting's type.
+ */
+export function withSetting(workflow: Workflow, name: string, row: SettingRow, text: string): Workflow | null {
+  if (name !== BASE && text.trim() === '') {
+    const cases = (workflow.cases ?? []).map((c) => {
+      if (c.name !== name) return c;
+      const settings = { ...(c.settings ?? {}) };
+      const changes = { ...(settings[String(row.step)] ?? {}) };
+      delete changes[row.field];
+      if (Object.keys(changes).length === 0) delete settings[String(row.step)];
+      else settings[String(row.step)] = changes;
+      return { ...c, settings };
+    });
+    return { ...workflow, cases };
+  }
+  const value = readSetting(text, row.base);
+  if (value === null) return null;
+  if (name === BASE) {
+    const steps = workflow.steps.map((s) => (s.id === row.step && s.action.kind === 'command' ? { ...s, action: { ...s.action, settings: { ...s.action.settings, [row.field]: value } } } : s));
+    return { ...workflow, steps };
+  }
+  const cases = (workflow.cases ?? []).map((c) =>
+    c.name !== name ? c : { ...c, settings: { ...(c.settings ?? {}), [String(row.step)]: { ...(c.settings?.[String(row.step)] ?? {}), [row.field]: value } } },
+  );
+  return { ...workflow, cases };
 }

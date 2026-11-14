@@ -128,6 +128,16 @@ def a_workflow_is_captured_and_run_again():
     assert s.undo() == record["run"] and [s.object(p)["revision"] for p in pieces] == [1, 1]
     paused = s.run_workflow(workflow, from_step=2)
     assert paused["from"] == 2 and paused["status"] == "finished"
+    # A case (decision 0066): cut at RL 60 on its own layers, tagged with its case.
+    content = s.object(workflow)["workflow"]
+    content["cases"] = [{"name": "60", "settings": {"2": {"rl": 60.0}}}]
+    s.run("workflow.save", workflow=workflow, name="Box pit", content=content)
+    records = s.run_all_cases(workflow)
+    assert [(r["case"], r["status"]) for r in records] == [("Base", "finished"), ("60", "finished")], records
+    case = sorted(s.object(o["id"])["volume"] for o in s.objects(layer="cut 60", kind="solid"))
+    assert abs(case[0] - 240_000.0) < 1e-6 and abs(case[1] - 360_000.0) < 1e-6, case
+    assert all(o["attributes"]["case"] == "60" for o in s.objects(layer="cut 60"))
+    assert s.run_workflow(workflow, case="60")["case"] == "60"
     # A layer shown or hidden: display state, not a run.
     runs = len(s.log())
     assert s.set_layer_visible("surfaces", False) and not next(l for l in s.layers() if l["name"] == "surfaces")["visible"]

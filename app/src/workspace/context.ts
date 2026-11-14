@@ -51,7 +51,9 @@ export interface Workspace {
   /** Takes a refusal off the status line, once what it was about has changed. */
   clearRefusal: () => void;
   /** Runs a workflow from a step (from 1), handing back its record, or why it couldn't start (decision 0065). */
-  runWorkflow: (workflow: string, from: number) => Promise<{ record?: WorkflowRecord; error?: string }>;
+  runWorkflow: (workflow: string, from: number, workflowCase?: string) => Promise<{ record?: WorkflowRecord; error?: string }>;
+  /** Runs every case of a workflow, Base first, as one undo (decision 0066). */
+  runAllCases: (workflow: string) => Promise<{ records?: WorkflowRecord[]; error?: string }>;
   /** Captures runs from the run log as a new workflow, and opens the Workflow panel on it. */
   captureWorkflow: (name: string, runs: string[]) => Promise<{ record?: RunRecord; error?: string }>;
   /** The workflow the tool panels add steps to, their button reading Add to workflow; null when not adding. */
