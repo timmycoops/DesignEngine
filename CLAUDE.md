@@ -24,7 +24,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 | Wall offsets | Straight skeleton on wall planes in `zd-geom` (each segment's plane set by its batter, hips where planes meet); a berm is the conditioned crest moved out and registered back on the grid; no offset-then-repair (`docs/decisions/0023-wall-step.md`) |
 | Planar offsets | Clipper2 or Manifold `CrossSection` for plain 2D offsets |
 | Viewport | three.js with `WebGPURenderer` (auto WebGL2 fallback) |
-| Interface | React + TypeScript, shadcn/ui, Tailwind, dockview, TanStack Table |
+| Interface | React + TypeScript, shadcn/ui, Tailwind, dockview, TanStack Table, React Flow (`@xyflow/react`) for node graphs (`docs/decisions/0067-workflow-canvas.md`) |
 | Data at rest | One `.zdp` file a project: a zip of Parquet/Arrow tables with a JSON manifest, meshes in the OMF2 layout (vertices `x, y, z` f64; triangles `a, b, c` u32, counter-clockwise about an outward normal), saved beside then swapped in (`docs/decisions/0058-one-file-a-project.md`); geology (seam grids, block models) referenced by location, never packed in; DXF/CSV/OMF only for exchange. Evaluate the `omf` Rust crate before writing our own |
 | Python | PyO3 bindings in `crates/zd-py` from Phase 1, built with maturin (reconciliation and test scripts run from Python) |
 | Package manager (JS) | pnpm |

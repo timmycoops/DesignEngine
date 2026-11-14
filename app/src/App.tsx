@@ -435,6 +435,7 @@ export default function App() {
     [workflowRun],
   );
   const [addingTo, setAddingTo] = useState<{ id: string; name: string } | null>(null);
+  const [workflowPick, setWorkflowPick] = useState<{ id: string | null; case: string }>({ id: null, case: 'Base' });
   const addStep = useCallback(
     async (command: string, params: Record<string, unknown>) => (addingTo ? workflowRun(() => addWorkflowStep(addingTo.id, command, params)) : { error: 'Pick a workflow to add to first' }),
     [addingTo, workflowRun],
@@ -1084,6 +1085,8 @@ export default function App() {
       captureWorkflow,
       addingTo,
       setAddingTo,
+      workflowPick,
+      setWorkflowPick,
       addStep,
       markCrossings,
       flyTo,
@@ -1095,7 +1098,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
+    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex],
   );
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';

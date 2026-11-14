@@ -1,10 +1,11 @@
-import { ArrowDown, ArrowUp, Eye, Layers, Pause, Play, Plus, SkipForward, SlidersHorizontal, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp, Eye, Layers, Pause, Play, Plus, SkipForward, SlidersHorizontal, Trash2, Workflow } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
-import type { LogEntry, Note, ObjectSummary, Workflow, WorkflowRecord, WorkflowStep } from '@/bridge';
+import type { LogEntry, Note, WorkflowRecord, WorkflowStep } from '@/bridge';
 import { objectDetails, projectSummary } from '@/bridge';
 import { Field, IconButton, plainNote, type RunReport, Select, StatusBadge, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { LastBadge, plural, StepSettings, usePickedWorkflow } from './workflowParts';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
 import { BASE, caseValue, changesOfCase, onlyLayers, ruleWords, type SettingRow, settingsOfStep, stepsOfCase, tidyLayers, withSetting } from './workflow';
@@ -39,7 +40,6 @@ const readTidy = () => {
   }
 };
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** What a workflow run said, as the panel's result: what each step that stopped it found. */
 function reportOf(record: WorkflowRecord): RunReport {
@@ -52,16 +52,12 @@ function reportOf(record: WorkflowRecord): RunReport {
 }
 
 export function WorkflowPanel() {
-  const { summary, log, runRecord, runWorkflow, runAllCases, addingTo, setAddingTo, setSelection, zoomTo, setLayersVisible } = useWorkspace();
-  const [pickedCase, setPickedCase] = useState(BASE);
+  const { summary, log, runWorkflow, runAllCases, addingTo, setAddingTo, setSelection, zoomTo, setLayersVisible, openPanel } = useWorkspace();
+  const { workflows, chosen, workflow, revision, caseName, pick, pickCase, save: saveWorkflow } = usePickedWorkflow();
   const [newCase, setNewCase] = useState('');
   const [tidy, setTidy] = useState(readTidy);
   // Only one step on show: which, and how the layers stood before, to put back.
   const [only, setOnly] = useState<{ step: number; was: { id: string; visible: boolean }[] } | null>(null);
-  const workflows = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'workflow'), [summary]);
-  const [picked, setPicked] = useState<string | null>(null);
-  const chosen: ObjectSummary | null = workflows.find((o) => o.id === picked) ?? workflows[workflows.length - 1] ?? null;
-  const [content, setContent] = useState<{ id: string; revision: number; workflow: Workflow } | null>(null);
   const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
@@ -74,23 +70,7 @@ export function WorkflowPanel() {
       return next;
     });
 
-  // The workflow's steps, read again whenever it's saved as a new revision.
-  const id = chosen?.id ?? null;
-  const revision = chosen?.revision ?? 0;
-  useEffect(() => {
-    if (!id) return;
-    let stale = false;
-    void objectDetails(id).then((details) => {
-      if (!stale && details.measures.kind === 'workflow') setContent({ id, revision, workflow: details.measures.workflow });
-    });
-    return () => {
-      stale = true;
-    };
-  }, [id, revision]);
-  // The revision before shows until the new one has been read.
-  const workflow = content && content.id === id ? content.workflow : null;
   const cases = workflow?.cases ?? [];
-  const caseName = pickedCase === BASE || cases.some((c) => c.name === pickedCase) ? pickedCase : BASE;
 
   // The last run of this workflow's case, from the log: where Continue goes after a pause.
   const last = useMemo(() => {
@@ -99,10 +79,9 @@ export function WorkflowPanel() {
   }, [log, chosen, caseName]);
   const continueFrom = last?.status === 'paused' && workflow && last.at < workflow.steps.length ? last.at + 1 : null;
 
-  const save = async (next: Workflow) => {
-    if (!chosen) return;
-    const outcome = await runRecord('workflow.save', { workflow: chosen.id, name: chosen.name, content: next });
-    if (outcome.error) setReport({ notes: [], error: outcome.error });
+  const save = async (next: Parameters<typeof saveWorkflow>[0]) => {
+    const error = await saveWorkflow(next);
+    if (error) setReport({ notes: [], error });
   };
   const edit = (change: (steps: WorkflowStep[]) => WorkflowStep[]) => {
     if (!workflow) return;
@@ -158,7 +137,7 @@ export function WorkflowPanel() {
     const name = newCase.trim();
     if (!workflow || !name) return;
     setNewCase('');
-    setPickedCase(name);
+    pickCase(name);
     void save({ ...workflow, cases: [...cases, { name }] });
   };
 
@@ -231,12 +210,21 @@ export function WorkflowPanel() {
       result={report}
       action={action}
     >
-      <ToolSection title="Workflow">
+      <ToolSection
+        title="Workflow"
+        aside={
+          chosen ? (
+            <Button variant="outline" size="sm" className="h-6 px-2 text-xs" title="The workflow as nodes and wires: what each step reads, and wiring an input by drawing" onClick={() => openPanel('canvas')}>
+              <Workflow className="size-3.5" /> Canvas
+            </Button>
+          ) : undefined
+        }
+      >
         {workflows.length === 0 ? (
           <div className="text-muted-foreground">No workflow yet: tick runs in the Run log and Capture them, the quickest way to start.</div>
         ) : (
           <Field label="Workflow">
-            <Select value={chosen?.id ?? ''} aria-label="Workflow" onChange={(e) => setPicked(e.target.value)}>
+            <Select value={chosen?.id ?? ''} aria-label="Workflow" onChange={(e) => pick(e.target.value)}>
               {workflows.map((o) => (
                 <option key={o.id} value={o.id}>
                   {o.name}
@@ -259,7 +247,7 @@ export function WorkflowPanel() {
           }
         >
           <Field label="Case" hint="Run runs this one; the steps show what it made">
-            <Select value={caseName} aria-label="Case" onChange={(e) => setPickedCase(e.target.value)}>
+            <Select value={caseName} aria-label="Case" onChange={(e) => pickCase(e.target.value)}>
               {columns.map((name) => (
                 <option key={name} value={name}>
                   {name}
@@ -270,7 +258,7 @@ export function WorkflowPanel() {
               <IconButton
                 label={`Take case ${caseName} out (what it made stays, on its own layers)`}
                 onClick={() => {
-                  setPickedCase(BASE);
+                  pickCase(BASE);
                   void save({ ...workflow, cases: cases.filter((c) => c.name !== caseName) });
                 }}
               >
@@ -428,52 +416,4 @@ export function WorkflowPanel() {
       )}
     </ToolPanel>
   );
-}
-
-/**
- * A step's plain settings as the case picked has them, under the step: Base's are the step's own; a case's empty box
- * reads as Base, its value greyed in it, and what the case changes shows in blue. Emptied, a case's box goes back to Base.
- */
-function StepSettings({ rows, hidden, caseName, revision, valueOf, set }: { rows: SettingRow[]; hidden: number; caseName: string; revision: number; valueOf: (row: SettingRow) => unknown; set: (row: SettingRow, text: string) => void }) {
-  const inCase = caseName !== BASE;
-  return (
-    <div className="my-1 rounded border border-border/60 px-2 py-1">
-      <div className="mb-0.5 text-[11px]">{inCase ? `As ${caseName}: an empty box reads as Base, what ${caseName} changes is blue` : 'Base: the step as it stands'}</div>
-      <div className="grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-x-2 gap-y-0.5">
-        {rows.map((row) => {
-          const own = valueOf(row);
-          const shown = own === undefined ? '' : String(own);
-          return (
-            <label key={row.field} className="contents">
-              <span className="truncate" title={`${row.command}: ${row.field}`}>
-                {row.field}
-              </span>
-              <Input
-                key={`${revision}:${caseName}:${shown}`}
-                className={`h-6 px-1 text-xs ${inCase && own !== undefined ? 'text-edited' : ''}`}
-                defaultValue={shown}
-                placeholder={inCase ? String(row.base) : ''}
-                aria-label={`${caseName}: step ${row.position} ${row.field}`}
-                title={inCase && own === undefined ? 'As Base' : undefined}
-                onBlur={(e) => e.target.value !== shown && set(row, e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-              />
-            </label>
-          );
-        })}
-      </div>
-      {hidden > 0 && <div className="mt-0.5 text-[11px]">{plural(hidden, 'more setting')} (lists and tables) set in its tool</div>}
-    </div>
-  );
-}
-
-/** What a step's last run did, in a word and its colour: green ran, orange warned, red refused. */
-function LastBadge({ step }: { step: WorkflowStep }) {
-  const last = step.last;
-  if (!last) return null;
-  const made = `${last.made.length} made`;
-  const title = `${made}${last.revised?.length ? `, ${last.revised.length} changed` : ''}${last.deleted ? `, ${last.deleted} deleted` : ''} in ${fmt(last.ms, 0)} ms`;
-  if (last.refused) return <StatusBadge tone="refused" title="Refused the last time: the run log says why">refused</StatusBadge>;
-  if (last.warnings) return <StatusBadge tone="warning" title={title}>{plural(last.warnings, 'warning')}</StatusBadge>;
-  return <StatusBadge tone="ok" title={title}>{made}</StatusBadge>;
 }

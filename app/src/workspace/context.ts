@@ -56,6 +56,9 @@ export interface Workspace {
   runAllCases: (workflow: string) => Promise<{ records?: WorkflowRecord[]; error?: string }>;
   /** Captures runs from the run log as a new workflow, and opens the Workflow panel on it. */
   captureWorkflow: (name: string, runs: string[]) => Promise<{ record?: RunRecord; error?: string }>;
+  /** The workflow and case the Workflow panel and the canvas show (decision 0067); a null id is the last one made. */
+  workflowPick: { id: string | null; case: string };
+  setWorkflowPick: (pick: { id: string | null; case: string }) => void;
   /** The workflow the tool panels add steps to, their button reading Add to workflow; null when not adding. */
   addingTo: { id: string; name: string } | null;
   setAddingTo: (workflow: { id: string; name: string } | null) => void;
