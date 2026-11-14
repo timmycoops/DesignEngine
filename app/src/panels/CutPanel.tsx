@@ -36,6 +36,7 @@ export function CutPanel() {
   const [name, setName] = useState('PIT');
   const [model, setModel] = useState<string | null>(null);
   const [minThickness, setMinThickness] = useState(0.01);
+  const [flapThickness, setFlapThickness] = useState(0.01);
   const [polygonsLayer, setPolygonsLayer] = useState<string | null>(null);
   const [patterns, setPatterns] = useState({ seams: '{solid} {horizon}', polygons: '{strip}_{block}_{horizon}' });
   const [outputs, setOutputs] = useState<Record<Mode, string>>({ strips: 'strips', seams: 'layers', polygons: 'blocks', cut: 'cut', between: 'pit' });
@@ -188,7 +189,7 @@ export function CutPanel() {
           busyLabel: 'Cutting…',
           title: "Overburden, each seam, each interburden and what's below the last floor, in one run; each piece carries its seam, material and horizon",
           hint: shortfalls.length > 0 ? 'Fix the grids or the solids first' : undefined,
-          run: () => runIt('solid.cut_by_seams', { solids: chosen.map((o) => o.id), model: modelOf?.id, layer: output, min_thickness: minThickness, name: pattern.trim() }),
+          run: () => runIt('solid.cut_by_seams', { solids: chosen.map((o) => o.id), model: modelOf?.id, layer: output, min_thickness: minThickness, flap_thickness: flapThickness, name: pattern.trim() }),
         };
       case 'polygons':
         return {
@@ -325,6 +326,9 @@ export function CutPanel() {
           </Field>
           <Field label="Thinnest" hint="A layer is made only where it's thicker than this; the volume left out is said">
             <NumberInput value={minThickness} onChange={setMinThickness} label="Thinnest layer made" unit="m" range={{ min: 0, minIncluded: false }} />
+          </Field>
+          <Field label="Flaps" hint="Where a piece is thinner than this between its top and bottom, as where a berm lies on a seam's roof, it's taken off; the volume is said. 0 for none">
+            <NumberInput value={flapThickness} onChange={setFlapThickness} label="Flap thickness" unit="m" range={{ min: 0 }} />
           </Field>
           {checkStatus(
             'Grids under the solids',

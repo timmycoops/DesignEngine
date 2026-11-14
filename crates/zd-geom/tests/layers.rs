@@ -54,7 +54,7 @@ fn three_seams() -> Vec<Vec<f64>> {
 fn cut(solid: &TriMesh, surfaces: &[Vec<f64>]) -> LayerCut {
     let horizons: Vec<(&[f64], &[f64])> = surfaces.chunks(2).map(|p| (p[0].as_slice(), p[1].as_slice())).collect();
     let stack = layer_stack(LATTICE, &horizons).unwrap();
-    cut_solid_by_layers(solid, &stack, 0.01).unwrap()
+    cut_solid_by_layers(solid, &stack, 0.01, 0.0).unwrap()
 }
 
 /// Each layer's piece volume, 0 where none.
@@ -132,7 +132,7 @@ fn an_absent_seam_leaves_its_waste_with_the_seam_below() {
     let stack = layer_stack(LATTICE, &horizons).unwrap();
     assert_eq!(stack.absent, 26 * 21, "x = 300 to 550 on every row");
     assert_eq!(stack.lowered, 0);
-    let cut = cut_solid_by_layers(&strip(0.0, 500.0, 0.0, 30.0), &stack, 0.01).unwrap();
+    let cut = cut_solid_by_layers(&strip(0.0, 500.0, 0.0, 30.0), &stack, 0.01, 0.0).unwrap();
     let got = by_layer(&cut, 7);
     assert!(near(got[4], 308_400.0, 0.001), "M-L {}", got[4]);
     assert!(got[2] < 60.0 * (5.0 * 290.0 + 25.0) + 0.001 && got[3] < 60.0 * (3.0 * 290.0 + 15.0) + 0.001);
@@ -242,4 +242,54 @@ fn holes_in_a_grid_are_told_apart_largest_first() {
     assert_eq!(found[0].at, [E + 50.0, N + 30.0]);
     assert_eq!(found[1].at, [E + 300.0, N + 100.0]);
     assert!(grid_hole_patches(LATTICE, &holes_at(&[])).is_empty());
+}
+
+/// The same with flaps thinner than 1 cm taken off (decision 0064).
+fn cut_with_flaps(solid: &TriMesh, surfaces: &[Vec<f64>]) -> LayerCut {
+    let horizons: Vec<(&[f64], &[f64])> = surfaces.chunks(2).map(|p| (p[0].as_slice(), p[1].as_slice())).collect();
+    let stack = layer_stack(LATTICE, &horizons).unwrap();
+    cut_solid_by_layers(solid, &stack, 0.01, 0.01).unwrap()
+}
+
+/// A strip whose top lies 4 mm over U's roof (RL 25): the overburden in it is a film 4 mm thick, a flap: 4 mm × 500 ×
+/// 60 m = 120 m³, taken off and said, and the rest cut as before. With no flap thickness the film is a piece.
+#[test]
+fn a_film_over_a_seam_roof_is_a_flap_taken_off_and_said() {
+    let solid = strip(0.0, 500.0, 0.0, 25.004);
+    let kept = cut(&solid, &three_seams());
+    assert!(near(by_layer(&kept, 7)[0], 120.0, 1e-6), "{:?}", by_layer(&kept, 7));
+    assert_eq!(kept.flapped, 0);
+
+    let cut = cut_with_flaps(&solid, &three_seams());
+    let got = by_layer(&cut, 7);
+    assert_eq!(got[0], 0.0, "no overburden piece");
+    assert!(near(cut.flaps, 120.0, 1e-6), "{}", cut.flaps);
+    assert_eq!(cut.flapped, 1);
+    for (layer, want) in [(1, 2.0), (2, 5.0), (3, 3.0)] {
+        assert!(near(got[layer], want * 30_000.0, 1e-6), "layer {layer}: {}", got[layer]);
+    }
+    assert!(cut.difference().abs() < 1e-6, "adds up with the flap: {}", cut.difference());
+}
+
+/// A strip's top rising north at 1 in 100 through U's roof at 30 m north: the overburden in it is a wedge 0.01 (y - 30)
+/// thick. It's thinner than 1 cm for its first metre, and cut out 5 mm further, so the flap is 500 × 0.005 × 1.005² =
+/// 2.5250625 m³ and the rest of the wedge, 500 × 30 × 0.3 / 2 = 2,250 m³ in all, is the overburden piece.
+#[test]
+fn a_low_wedge_is_cut_off_where_thinner_than_the_flap() {
+    let solid = along_strike(0.0, 500.0, &[(0.0, 0.0), (60.0, 0.0), (60.0, 25.3), (0.0, 24.7)]);
+    let cut = cut_with_flaps(&solid, &three_seams());
+    let got = by_layer(&cut, 7);
+    assert!(near(cut.flaps, 2.5250625, 1e-6), "{}", cut.flaps);
+    assert!(near(got[0], 2250.0 - 2.5250625, 1e-6), "{}", got[0]);
+    assert!(cut.difference().abs() < 1e-6, "{}", cut.difference());
+}
+
+/// A strip with battered sides (about 72°) through the three seams: where a wall meets a seam is no flap.
+#[test]
+fn a_wall_through_a_seam_is_no_flap() {
+    let solid = along_strike(0.0, 500.0, &[(0.0, 0.0), (60.0, 0.0), (50.0, 30.0), (10.0, 30.0)]);
+    let cut = cut_with_flaps(&solid, &three_seams());
+    assert_eq!(cut.flapped, 0);
+    assert_eq!(cut.flaps, 0.0);
+    assert!(cut.difference().abs() < 1e-5, "adds up to 0.00001 m³ of 750,000: {}", cut.difference());
 }

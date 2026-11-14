@@ -141,6 +141,7 @@ codes! {
     SolidOffGrids = "solid.off_grids", "Part of a solid past the edge of the seam model's grids, found before a cut by seams, which it holds";
     SolidOverGridHoles = "solid.over_grid_holes", "Part of a solid over a hole in the seam model's grids, found before a cut by seams, which it holds";
     SeamThinLeftOut = "seam.thin_left_out", "Volume left out of a seam cut where a layer is thinner than the minimum";
+    SeamFlapsLeftOut = "seam.flaps_left_out", "Volume taken off a seam cut's pieces as flaps thinner than the flap thickness";
     SeamCutDiffers = "seam.cut_differs", "A solid whose pieces from the seam cut don't add back to its volume";
 }
 

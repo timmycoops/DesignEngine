@@ -153,6 +153,9 @@ pub struct Face {
     pub too_close: Vec<TooClose>,
     /// Corners of the face's pieces made one with another within a millimetre, and the furthest any was apart (m).
     pub welded: (usize, f64),
+    /// What was laid on the grids it was built to (decision 0064): berms registered on a grid lie on it, not on chords
+    /// across its cells.
+    pub draped: crate::GridDrape,
 }
 
 /// Two switchbacks facing each other on a berm whose roads' tops are too close for both to turn on it (decision 0047):
@@ -463,7 +466,8 @@ fn face_with_roads(toe: &Polyline, register: &TriMesh, side: OffsetSide, directi
                 face.no_roads.extend(held_back.into_values());
                 face.no_roads.sort_by_key(|n| n.ramp);
                 let (surface, welded) = face_sheet(&face.meshes, &face.meets);
-                return Ok(Face { surface, welded, benches: face.benches, steps: face.steps, roads: face.roads, no_roads: face.no_roads, berm_line: face.berm_line, edits: face.edits, join_notes: face.join_notes, met: face.met, too_close: face.too_close });
+                let (surface, draped) = crate::drape_on_grids(&surface, &grids_of(register, steps));
+                return Ok(Face { surface, welded, draped, benches: face.benches, steps: face.steps, roads: face.roads, no_roads: face.no_roads, berm_line: face.berm_line, edits: face.edits, join_notes: face.join_notes, met: face.met, too_close: face.too_close });
             }
             Err(e @ GeomError::Refused(_)) => return Err(e),
             Err(e) => {
@@ -620,6 +624,22 @@ pub(crate) fn going_down(why: &str) -> String {
     }
     out.push_str(&why);
     out
+}
+
+/// The grids a face is built to: the one its toe registers on and each one a wall goes to or a berm registers on, once
+/// each. A level target is flat and needs no draping.
+fn grids_of<'a>(register: &'a TriMesh, steps: &[FaceStep<'a>]) -> Vec<&'a TriMesh> {
+    let mut grids: Vec<&TriMesh> = vec![register];
+    for step in steps {
+        let target = match step {
+            FaceStep::Project { to: FaceTarget::Surface(s), .. } | FaceStep::Berm { on: Some(FaceTarget::Surface(s)), .. } => Some(*s),
+            _ => None,
+        };
+        if let Some(s) = target.filter(|s| !grids.iter().any(|g| std::ptr::eq(*g, *s))) {
+            grids.push(s);
+        }
+    }
+    grids
 }
 
 /// One mesh, sharing vertices within a micrometre of each other. A wall and a berm work out the same point apart, so the
