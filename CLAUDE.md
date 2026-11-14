@@ -72,7 +72,11 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   (`docs/decisions/0062-blocks-are-polygons.md`); the grids must reach over every solid in plan with no hole under it,
   checked before the cut and refused with each place listed (`docs/decisions/0063-seam-grids-are-never-filled.md`);
   flaps thinner than 1 cm (where a strip's surface runs along a seam's roof or floor) are taken off each piece and said,
-  as Deswik removes flaps (`docs/decisions/0064-berms-on-their-grid-and-flaps.md`).
+  as Deswik removes flaps (`docs/decisions/0064-berms-on-their-grid-and-flaps.md`). After the seams and before the
+  blocks, pieces are cut at bench levels by bench rules (`solid.cut_by_benches`): a table read top down, the first rule a
+  piece's attributes fit saying whether it's benched and from what RL to what RL every so many metres, each bench taking
+  `bench`, its floor RL by default or its top; a piece no rule benches is carried over whole
+  (`docs/decisions/0071-benches.md`).
 - `Grid`: regular raster (origin, cell size, rows, cols, z values with NaN for nulls). A Vulcan roof, floor or
   topography reads whole: a node flagged off keeps the height it holds, with a warning if it steps far from the
   live nodes (`docs/decisions/0025-a-grid-stays-in-space.md`).
