@@ -2,7 +2,7 @@
 // buttons. A made-up pit 100 m by 60 m from RL 0 to 100 made between two surfaces and cut at RL 40 (240,000 and 360,000
 // m³); the two runs ticked in the Run log and captured; the Workflow panel shows the steps and their rules; Run makes the
 // same two pieces again as their next revisions; the Cut solids panel's button reads Add to workflow while adding; a
-// pause added and run to; one undo takes the run back.
+// pause added and run to; one undo takes the run back; cases; and a tool on the workflow canvas added after step 1.
 import type { DockviewApi } from 'dockview-react';
 import { objectDetails, type ProjectSummary, projectSummary, runCommand, undo } from '../bridge';
 import { showPanel } from '../workspace/Workspace';
@@ -193,6 +193,42 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     await show(await undo());
     const undoneAll = await projectSummary();
     expect('one undo takes both cases back', !undoneAll.objects.some((o) => o.layer === layerId('cut 60')) && undoneAll.objects.length === beforeCases.objects.length, { before: beforeCases.objects.length, undoneAll: undoneAll.objects.length });
+
+    // The canvas (decision 0067): step 1 clicked, then a tool, opens Cut solids on By a surface adding after step 1, with
+    // what step 1 made picked; Add puts the step in as step 2, the cut that was step 2 now step 3, its solids found as
+    // what step 1 makes.
+    const choose = (label: string, value: string) => {
+      const list = document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`);
+      if (!list) return false;
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(list, value);
+      list.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    };
+    showPanel(api, 'workflow');
+    await wait(300);
+    choose('Case', 'Base');
+    showPanel(api, 'canvas');
+    await wait(1000);
+    expect('the canvas lists the tools to add', labelled('Add Cut solids: By a surface') !== null);
+    document.querySelector<HTMLElement>('.react-flow__node[data-id="step:1"]')?.click();
+    await wait(300);
+    await press(labelled('Add Cut solids: By a surface'));
+    expect('a tool after step 1 picks what step 1 made', JSON.stringify(selection()) === JSON.stringify([pit]), selection());
+    const cutPanel = panelText('cut');
+    expect('its panel opens on it, adding as step 2', button('Add to Box pit') !== undefined && cutPanel.includes('Adds step 2'), cutPanel.slice(-160));
+    choose('Surface, grid or RL to cut by', 'rl');
+    await wait(300);
+    await press(button('Add to Box pit'));
+    const added = await objectDetails(captureWorkflowId());
+    const steps = added.measures.kind === 'workflow' ? added.measures.workflow.steps : [];
+    const commands = steps.map((s) => (s.action.kind === 'command' ? s.action.command : 'pause'));
+    expect('the step goes in after step 1', JSON.stringify(commands) === JSON.stringify(['solid.between_surfaces', 'solid.cut_by_surface', 'solid.cut_by_surface']), commands);
+    const solidsRule = steps[1]?.action.kind === 'command' ? steps[1].action.inputs.solids : undefined;
+    expect('its solids are what step 1 makes', solidsRule !== undefined && 'step' in solidsRule.from && solidsRule.from.step === steps[0].id, solidsRule);
+    expect('the next added would go after it', panelText('cut').includes('Adds step 3'));
+    showPanel(api, 'workflow');
+    await wait(300);
+    await press(labelled('Stop adding from the tool panels'));
   } catch (e) {
     expect('ran without an error', false, String(e));
   }

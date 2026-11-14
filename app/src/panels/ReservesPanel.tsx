@@ -1,5 +1,5 @@
 import { FolderOpen, Scale, Sigma } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
@@ -20,8 +20,12 @@ const MODE_LABELS: Record<Mode, string> = { interrogate: 'Interrogate', compare:
 const SCOPES: readonly Scope[] = ['picked', 'layer', 'visible'];
 
 export function ReservesPanel() {
-  const { summary, selection, runRecord, clearRefusal } = useWorkspace();
+  const { summary, selection, runRecord, clearRefusal, toolAsk } = useWorkspace();
   const [mode, setMode] = useState<Mode>('interrogate');
+  // A tool dropped on the workflow canvas asks for one of what this does (decision 0067).
+  useEffect(() => {
+    if (toolAsk?.panel === 'reserves' && MODES.includes(toolAsk.mode as Mode)) setMode(toolAsk.mode as Mode);
+  }, [toolAsk]);
   const [scope, setScope] = useState<Scope>('picked');
   const [model, setModel] = useState<string | null>(null);
   const [seamAttribute, setSeamAttribute] = useState('seam');

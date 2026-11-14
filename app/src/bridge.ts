@@ -527,9 +527,9 @@ export const captureWorkflow = async (name: string, runs: string[]): Promise<Run
 };
 
 /** Adds a tool panel's command and settings to a workflow as its last step, its objects turned into rules. */
-export const addWorkflowStep = async (workflow: string, command: string, params: Record<string, unknown>, note?: string): Promise<RunReply> => {
+export const addWorkflowStep = async (workflow: string, command: string, params: Record<string, unknown>, note?: string, at?: number): Promise<RunReply> => {
   idle();
-  const reply = await invoke<{ record: RunRecord; changes: ProjectChanges }>('add_workflow_step', { workflow, at: null, command, params, note: note ?? null });
+  const reply = await invoke<{ record: RunRecord; changes: ProjectChanges }>('add_workflow_step', { workflow, at: at ?? null, command, params, note: note ?? null });
   return { record: reply.record, summary: await summaryAfter(reply.changes) };
 };
 
