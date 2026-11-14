@@ -169,6 +169,18 @@ impl PySession {
         self.inner.open_notes().to_vec()
     }
 
+    /// Shows or hides a layer by name, as its tick in the app does: display state, saved with the project, not a run
+    /// and not undone. False if no layer has that name.
+    fn set_layer_visible(&mut self, layer: &str, visible: bool) -> bool {
+        match self.inner.project().layer_named(layer).map(|l| l.id) {
+            Some(id) => {
+                self.inner.set_layer_visible(id, visible);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Every command: its name, summary, inputs, parameters and outputs.
     fn commands(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         to_py(py, &json!(self.inner.registry().specs()))

@@ -194,9 +194,9 @@ struct Captured {
 }
 
 /// The simplest rule that finds exactly `targets` among `there` (what was there when the run read them). A rule by
-/// layer or name must find them among what's there now too: a run again sees the project as it stands then, with what
-/// later steps made the time before, as a layer a step's input was alone on that later steps added to. `gone_name` is
-/// the name the log gives an object that can't be read any more.
+/// layer or name must find them in `now` too, as they are now: a run again sees the project as it stands then, with what
+/// later steps made the time before, as a layer a step's input was alone on that later steps added to, or a toe that
+/// numbering has renamed since. `gone_name` is the name the log gives an object that can't be read any more.
 fn rule_for(targets: &[ObjectId], many: bool, there: &[&Object], now: &[&Object], earlier: &[Captured], layer_name: impl Fn(&Object) -> Option<String>, gone_name: impl Fn(ObjectId) -> Option<String>) -> InputRule {
     let wanted: HashSet<ObjectId> = targets.iter().copied().collect();
     let by_id: HashMap<ObjectId, &Object> = there.iter().map(|o| (o.id, *o)).collect();
@@ -234,10 +234,13 @@ fn rule_for(targets: &[ObjectId], many: bool, there: &[&Object], now: &[&Object]
         }
         filters
     };
-    let finds = |pool: &[&Object], kind: Option<ObjectKind>, filter: &BTreeMap<String, AttrValue>| -> bool {
-        let found: HashSet<ObjectId> = pool.iter().filter(|o| kind.is_none_or(|k| o.kind() == k) && filter.iter().all(|(key, value)| o.attributes.get(key) == Some(value))).map(|o| o.id).collect();
-        found == wanted
+    let found = |pool: &[&Object], kind: Option<ObjectKind>, filter: &BTreeMap<String, AttrValue>| -> HashSet<ObjectId> {
+        pool.iter().filter(|o| kind.is_none_or(|k| o.kind() == k) && filter.iter().all(|(key, value)| o.attributes.get(key) == Some(value))).map(|o| o.id).collect()
     };
+    let finds = |pool: &[&Object], kind: Option<ObjectKind>, filter: &BTreeMap<String, AttrValue>| found(pool, kind, filter) == wanted;
+    // The targets still there now, which the same rule must find among what's there now, as it is now.
+    let alive: HashSet<ObjectId> = now.iter().map(|o| o.id).filter(|id| wanted.contains(id)).collect();
+    let finds_now = |pool: &[&Object], kind: Option<ObjectKind>, filter: &BTreeMap<String, AttrValue>| alive.is_empty() || found(pool, kind, filter) == alive;
     // What an earlier step made, the latest first.
     for step in earlier.iter().rev() {
         if !wanted.iter().all(|id| step.outputs.contains(id)) {
@@ -255,8 +258,9 @@ fn rule_for(targets: &[ObjectId], many: bool, there: &[&Object], now: &[&Object]
         && let Some(name) = layer_name(picked[0])
     {
         let pool: Vec<&Object> = then_and_now.iter().copied().filter(|o| o.layer == layer).collect();
+        let pool_now: Vec<&Object> = now.iter().copied().filter(|o| layer_name(o).as_deref() == Some(name.as_str())).collect();
         for (kind, filter) in filters(&pool) {
-            if finds(&pool, kind, &filter) {
+            if finds(&pool, kind, &filter) && finds_now(&pool_now, kind, &filter) {
                 return rule(Source::Layer(name), kind, filter);
             }
         }
@@ -264,6 +268,7 @@ fn rule_for(targets: &[ObjectId], many: bool, there: &[&Object], now: &[&Object]
     // One object by its name, the only one of its kind so named.
     if let [one] = picked.as_slice()
         && then_and_now.iter().filter(|o| o.name == one.name && o.kind() == one.kind()).count() == 1
+        && finds_now(&now.iter().copied().filter(|o| o.name == one.name).collect::<Vec<_>>(), Some(one.kind()), &BTreeMap::new())
     {
         return rule(Source::Named(one.name.clone()), Some(one.kind()), BTreeMap::new());
     }
