@@ -166,7 +166,9 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
       cell.focus();
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(cell, '60');
       cell.dispatchEvent(new Event('input', { bubbles: true }));
-      cell.blur();
+      // Leaving the cell, as a Tab or a click elsewhere does. Sent as the event itself: with the window not in front
+      // (the screen locked, another window active), focus() and blur() don't move focus, and no blur comes.
+      cell.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
       await wait(800);
     }
     const saved = await objectDetails(captureWorkflowId());
