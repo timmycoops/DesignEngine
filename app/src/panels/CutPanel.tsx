@@ -1,26 +1,29 @@
-import { Combine, Grid3x3, Layers, Slice } from 'lucide-react';
+import { Combine, Grid3x3, Layers, Rows3, Slice } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { checkCutByPolygons, checkCutBySeams, checkSlice, type Note, type ObjectSummary, type StepTarget } from '@/bridge';
+import { checkCutByPolygons, checkCutBySeams, checkSlice, type Note, type ObjectSummary, type StepTarget, solidsTable } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { Choice, Field, NoteLine, NumberInput, type RunReport, Select, TargetInput, TargetOptions, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
+import { BenchRulesSection } from './BenchRulesSection';
+import { type Attributes, type BenchRule, everything, rulesParam } from './benchRules';
 import { byStrip, facesLine } from './strips';
 
 /**
  * Cut solids (decision 0049, UI plan): one panel for every cut. Cut solids by a surface, a grid or an RL, keeping either
  * side; slice them into strips by faces, each face told apart by its strip number, a solid a strip adding up to the
  * solid; cut them by a seam model's horizons in one run, each piece carrying its seam, material and horizon, or into
- * blocks by polygons, each piece taking its polygon's name (decision 0062); or make the large solid between two surfaces
+ * blocks by polygons, each piece taking its polygon's name (decision 0062); cut them at bench levels by bench rules, each
+ * piece taking its bench (decision 0071); or make the large solid between two surfaces
  * inside a closed string. The solids, faces and polygons stay as they are, and each run is one undo. Made from the kit,
  * as every tool panel is.
  */
 
-type Mode = 'strips' | 'seams' | 'polygons' | 'cut' | 'between';
+type Mode = 'strips' | 'seams' | 'benches' | 'polygons' | 'cut' | 'between';
 type Scope = 'picked' | 'layer' | 'visible';
 
-const MODES: readonly Mode[] = ['strips', 'seams', 'polygons', 'cut', 'between'];
-const MODE_LABELS: Record<Mode, string> = { strips: 'Into strips', seams: 'By seams', polygons: 'By polygons', cut: 'By a surface', between: 'Between surfaces' };
+const MODES: readonly Mode[] = ['strips', 'seams', 'benches', 'polygons', 'cut', 'between'];
+const MODE_LABELS: Record<Mode, string> = { strips: 'Into strips', seams: 'By seams', benches: 'By benches', polygons: 'By polygons', cut: 'By a surface', between: 'Between surfaces' };
 const SCOPES: readonly Scope[] = ['picked', 'layer', 'visible'];
 
 export function CutPanel() {
@@ -42,8 +45,9 @@ export function CutPanel() {
   const [minThickness, setMinThickness] = useState(0.01);
   const [flapThickness, setFlapThickness] = useState(0.01);
   const [polygonsLayer, setPolygonsLayer] = useState<string | null>(null);
-  const [patterns, setPatterns] = useState({ seams: '{solid} {horizon}', polygons: '{strip}_{block}_{horizon}' });
-  const [outputs, setOutputs] = useState<Record<Mode, string>>({ strips: 'strips', seams: 'layers', polygons: 'blocks', cut: 'cut', between: 'pit' });
+  const [patterns, setPatterns] = useState({ seams: '{solid} {horizon}', benches: '{solid} {bench}', polygons: '{strip}_{block}_{horizon}_{bench}' });
+  const [outputs, setOutputs] = useState<Record<Mode, string>>({ strips: 'strips', seams: 'layers', benches: 'benches', polygons: 'blocks', cut: 'cut', between: 'pit' });
+  const [benchRules, setBenchRules] = useState<BenchRule[]>([everything()]);
   const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
 
@@ -92,8 +96,30 @@ export function CutPanel() {
   }, [objects]);
   const polygonsOn = polygonsLayer ?? polygonLayers[0]?.id ?? null;
   const polygons = closed.filter((o) => o.layer === polygonsOn);
-  const pattern = mode === 'seams' || mode === 'polygons' ? patterns[mode] : '';
-  const setPattern = (text: string) => mode === 'seams' || mode === 'polygons' ? setPatterns((was) => ({ ...was, [mode]: text })) : undefined;
+  const named = mode === 'seams' || mode === 'benches' || mode === 'polygons';
+  const pattern = named ? patterns[mode] : '';
+  const setPattern = (text: string) => (named ? setPatterns((was) => ({ ...was, [mode]: text })) : undefined);
+
+  // The solids' attributes, read for By benches so it can show what each rule takes and a tick for each horizon.
+  const benchKey = mode === 'benches' && chosen.length > 0 ? chosen.map((o) => `${o.id}:${o.revision}`).join(',') : null;
+  const [benchSolids, setBenchSolids] = useState<{ key: string; attributes: Attributes[] } | null>(null);
+  useEffect(() => {
+    if (benchKey === null) return;
+    let stale = false;
+    const wait = setTimeout(() => {
+      solidsTable(chosen.map((o) => o.id)).then(
+        (rows) => !stale && setBenchSolids({ key: benchKey, attributes: rows.map((r) => r.attributes) }),
+        () => !stale && setBenchSolids(null),
+      );
+    }, 150);
+    return () => {
+      stale = true;
+      clearTimeout(wait);
+    };
+    // The key holds every id and revision read.
+  }, [benchKey]);
+  const benchAttributes = benchSolids && benchSolids.key === benchKey ? benchSolids.attributes : null;
+  const badRule = benchRules.findIndex((r) => r.benched && !(r.every > 0 && r.to >= r.from));
 
   // What a cut would refuse, checked before it each time the solids or what cuts them change: into strips, any face
   // that doesn't pass right through a solid, past its ends, above its top and below its floor; by seams, any part of a
@@ -197,6 +223,17 @@ export function CutPanel() {
           hint: shortfalls.length > 0 ? 'Fix the grids or the solids first' : undefined,
           ...calls('solid.cut_by_seams', { solids: chosen.map((o) => o.id), model: modelOf?.id, layer: output, min_thickness: minThickness, flap_thickness: flapThickness, name: pattern.trim() }),
         };
+      case 'benches':
+        return {
+          label: `Bench ${plural(chosen.length, 'solid')}`,
+          icon: <Rows3 className="size-3.5" />,
+          disabled: chosen.length === 0 || benchRules.length === 0 || badRule >= 0 || output === '' || pattern.trim() === '',
+          busy,
+          busyLabel: 'Benching…',
+          title: 'Each solid cut at the levels of the first rule it fits, each piece taking its bench; a solid no rule benches carried over whole',
+          hint: badRule >= 0 ? `Rule ${badRule + 1}: its levels run downward or have no interval` : undefined,
+          ...calls('solid.cut_by_benches', { solids: chosen.map((o) => o.id), layer: output, rules: rulesParam(benchRules), flap_thickness: flapThickness, name: pattern.trim() }),
+        };
       case 'polygons':
         return {
           label: `Cut ${plural(chosen.length, 'solid')} into blocks`,
@@ -237,7 +274,7 @@ export function CutPanel() {
 
   const outputSection = (
     <ToolSection title="Output">
-      <Field label="To layer">
+      <Field label="To layer" hint={mode === 'benches' ? "Where a rule names no layer of its own" : undefined}>
         <Input className="h-7 w-40 px-1.5 text-xs" value={outputs[mode]} aria-label="Layer for what's made" onChange={(e) => setOutput(e.target.value)} />
       </Field>
       {mode === 'between' && (
@@ -245,7 +282,7 @@ export function CutPanel() {
           <Input className="h-7 w-40 px-1.5 text-xs" value={name} aria-label="Name of the solid" onChange={(e) => setName(e.target.value)} />
         </Field>
       )}
-      {(mode === 'seams' || mode === 'polygons') && (
+      {named && (
         <Field label="Names" hint="Attributes in braces, {solid} for the solid's name; one a piece hasn't is left out with the separator before it">
           <Input className="h-7 w-40 px-1.5 text-xs" value={pattern} aria-label="Name of each piece" onChange={(e) => setPattern(e.target.value)} />
         </Field>
@@ -257,7 +294,7 @@ export function CutPanel() {
     <ToolPanel
       title="Cut solids"
       panel="cut"
-      summary="Slice solids into strips by faces, cut them by seams or into blocks by polygons, cut them by a surface, grid or RL, or make one between two surfaces. What's given stays as it is."
+      summary="Slice solids into strips by faces, cut them by seams, at bench levels or into blocks by polygons, cut them by a surface, grid or RL, or make one between two surfaces. What's given stays as it is."
       result={report}
       action={action}
     >
@@ -348,6 +385,8 @@ export function CutPanel() {
           </div>
         </ToolSection>
       )}
+
+      {mode === 'benches' && <BenchRulesSection rules={benchRules} onChange={setBenchRules} solids={benchAttributes} flapThickness={flapThickness} onFlapThickness={setFlapThickness} />}
 
       {mode === 'polygons' && (
         <ToolSection title="Polygons">

@@ -44,7 +44,7 @@ test('every tool is one of what a panel that adds steps does, each key once', ()
   for (const tool of CANVAS_TOOLS) assert.ok(['builder', 'cut', 'reserves'].includes(tool.panel), tool.key);
   assert.deepEqual(
     CANVAS_TOOLS.filter((t) => t.panel === 'cut').map((t) => t.mode).sort(),
-    ['between', 'cut', 'polygons', 'seams', 'strips'],
+    ['benches', 'between', 'cut', 'polygons', 'seams', 'strips'],
     "every one of Cut solids' choices",
   );
 });
