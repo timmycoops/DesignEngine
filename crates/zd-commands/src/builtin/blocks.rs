@@ -501,6 +501,10 @@ fn default_min_thickness() -> f64 {
     0.01
 }
 
+fn default_flap_thickness() -> f64 {
+    0.01
+}
+
 fn default_seam_pattern() -> String {
     "{solid} {horizon}".into()
 }
@@ -517,6 +521,10 @@ pub struct CutBySeamsParams {
     /// A layer is made only where it's thicker than this (m); 0.01 by default.
     #[serde(default = "default_min_thickness")]
     pub min_thickness: f64,
+    /// Where a piece is thinner than this between its top and bottom (m), a flap, it's taken off and its volume said
+    /// (decision 0064); 0.01 by default, 0 for none.
+    #[serde(default = "default_flap_thickness")]
+    pub flap_thickness: f64,
     /// Each piece's name: attributes in braces, `{solid}` the solid's name. `{solid} {horizon}` by default.
     #[serde(default = "default_seam_pattern")]
     pub name: String,
@@ -683,6 +691,7 @@ impl Command for CutBySeams {
             params: vec![
                 Field::new("layer", FieldType::Layer, "Layer for the pieces"),
                 Field::new("min_thickness", FieldType::Number { unit: "m" }, "A layer is made only where it's thicker than this; 0.01 by default"),
+                Field::new("flap_thickness", FieldType::Number { unit: "m" }, "Flaps thinner than this are taken off each piece and said; 0.01 by default, 0 for none"),
                 Field::new("name", FieldType::Text, "Each piece's name from its attributes in braces; {solid} {horizon} by default"),
             ],
             outputs: vec![Field::new("pieces", FieldType::Objects, "Each solid's pieces top down")],
@@ -692,6 +701,9 @@ impl Command for CutBySeams {
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         if !(p.min_thickness > 0.0 && p.min_thickness.is_finite()) {
             return Err(CommandError::Invalid(format!("a minimum thickness of {} m isn't more than nothing", p.min_thickness)));
+        }
+        if !(p.flap_thickness >= 0.0 && p.flap_thickness.is_finite()) {
+            return Err(CommandError::Invalid(format!("a flap thickness of {} m is less than nothing", p.flap_thickness)));
         }
         let mut notes = Vec::new();
         let started = Instant::now();
@@ -723,7 +735,7 @@ impl Command for CutBySeams {
         let read_ms = started.elapsed().as_secs_f64() * 1000.0;
 
         let cuts = in_parallel_watched(inputs, "solids", solids, |(object, solid)| -> Result<SeamCut, CommandError> {
-            let cut = cut_solid_by_layers(solid.mesh(), stack, p.min_thickness).map_err(|e| CommandError::Geometry(format!("'{}': {e}", object.name)))?;
+            let cut = cut_solid_by_layers(solid.mesh(), stack, p.min_thickness, p.flap_thickness).map_err(|e| CommandError::Geometry(format!("'{}': {e}", object.name)))?;
             let made = cut
                 .pieces
                 .iter()
@@ -741,6 +753,7 @@ impl Command for CutBySeams {
         let mut by_layer = vec![0.0; kinds.len()];
         let (mut coal, mut waste) = (0, 0);
         let (mut volume_in, mut volume_off, mut thin) = (0.0, 0.0, 0.0);
+        let (mut flapped, mut flaps) = (0, 0.0);
         let (mut triangles_in, mut triangles_out, mut slab_triangles) = (0, 0, 0);
         let (mut worst, mut worst_of) = (0.0_f64, String::new());
         for ((object, solid), result) in solids.iter().zip(cuts) {
@@ -750,13 +763,15 @@ impl Command for CutBySeams {
             slab_triangles += cut.slab_triangles;
             volume_in += cut.input_volume;
             thin += cut.thin;
+            flapped += cut.flapped;
+            flaps += cut.flaps;
             let share = cut.difference().abs() / cut.input_volume.abs().max(f64::MIN_POSITIVE);
             if share > worst {
                 worst = share;
                 worst_of = object.name.clone();
             }
             if share > ADDS_UP {
-                let text = format!("'{}': its pieces, what's too thin and any sliver past the grids' edge come to {:+.3} m³ against its {:.3} m³", object.name, cut.difference(), cut.input_volume);
+                let text = format!("'{}': its pieces, what's too thin, its flaps and any sliver past the grids' edge come to {:+.3} m³ against its {:.3} m³", object.name, cut.difference(), cut.input_volume);
                 notes.push(Note::warning(Code::SeamCutDiffers, text).on(object.id).measured(cut.difference(), "m3"));
             }
             for piece in &cut.pieces {
@@ -788,6 +803,10 @@ impl Command for CutBySeams {
             let text = format!("{thin:.3} m³ left out where a layer is thinner than {} m", p.min_thickness);
             notes.push(Note::new(Severity::Info, Some(Code::SeamThinLeftOut), text).measured(thin, "m3"));
         }
+        if flaps > NOTHING {
+            let text = format!("{flaps:.3} m³ in flaps thinner than {} m taken off {flapped} pieces, left out", p.flap_thickness);
+            notes.push(Note::new(Severity::Info, Some(Code::SeamFlapsLeftOut), text).measured(flaps, "m3"));
+        }
         let layers: Vec<String> = kinds.iter().zip(&by_layer).filter(|(_, v)| **v > 0.0).map(|(k, v)| format!("{} {v:.3}", k.horizon)).collect();
         let mut outcome = Outcome::new(changes)
             .message(format!(
@@ -797,7 +816,7 @@ impl Command for CutBySeams {
                 model_object.name,
                 coal + waste
             ))
-            .message(format!("Volumes (m³): {volume_in:.3} in; {}; {thin:.3} thinner than {} m", layers.join(", "), p.min_thickness))
+            .message(format!("Volumes (m³): {volume_in:.3} in; {}; {thin:.3} thinner than {} m; {flaps:.3} in flaps", layers.join(", "), p.min_thickness))
             .message(if worst_of.is_empty() {
                 "Pieces add back to every solid exactly".to_string()
             } else {

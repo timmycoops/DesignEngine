@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use manifold_csg::{CrossSection, Manifold};
+use manifold_csg::{CrossSection, JoinType, Manifold};
 use zd_core::{Lattice, TriMesh};
 
 use crate::blocks::{Uncovered, uncovered_parts};
@@ -112,6 +112,10 @@ pub struct LayerCut {
     pub outside: Option<LayerPiece>,
     /// Volume on the grids in no slab, where a layer is thinner than the minimum (m³).
     pub thin: f64,
+    /// Flaps taken off the pieces, where a piece is thinner than the flap thickness between faces nearly flat (its top
+    /// and bottom, as where a strip's berm lies along a seam's roof): how many pieces had them, and their volume (m³).
+    pub flapped: usize,
+    pub flaps: f64,
     pub input_volume: f64,
     /// Triangles in the slabs it was cut by.
     pub slab_triangles: usize,
@@ -121,14 +125,18 @@ pub struct LayerCut {
 impl LayerCut {
     /// The pieces, what's off the grids and what's too thin together, less the solid (m³): what the cut lost or gained.
     pub fn difference(&self) -> f64 {
-        self.pieces.iter().chain(&self.outside).map(|p| p.volume).sum::<f64>() + self.thin - self.input_volume
+        self.pieces.iter().chain(&self.outside).map(|p| p.volume).sum::<f64>() + self.thin + self.flaps - self.input_volume
     }
 }
 
-/// Cuts a closed solid by every layer of `stack` thicker than `min_thickness`: one piece a layer it reaches into.
-pub fn cut_solid_by_layers(solid: &TriMesh, stack: &LayerStack, min_thickness: f64) -> Result<LayerCut, GeomError> {
+/// Cuts a closed solid by every layer of `stack` thicker than `min_thickness`: one piece a layer it reaches into, with
+/// its flaps thinner than `flap_thickness` taken off (none with 0).
+pub fn cut_solid_by_layers(solid: &TriMesh, stack: &LayerStack, min_thickness: f64, flap_thickness: f64) -> Result<LayerCut, GeomError> {
     if !(min_thickness > 0.0 && min_thickness.is_finite()) {
         return Err(GeomError::InvalidInput("the minimum thickness must be more than nothing".into()));
+    }
+    if !(flap_thickness >= 0.0 && flap_thickness.is_finite()) {
+        return Err(GeomError::InvalidInput("the flap thickness can't be less than nothing".into()));
     }
     let validity = solid.validity();
     if !validity.is_watertight() {
@@ -165,6 +173,7 @@ pub fn cut_solid_by_layers(solid: &TriMesh, stack: &LayerStack, min_thickness: f
     let mut pieces = Vec::new();
     let mut slabs = Vec::new();
     let mut slab_triangles = 0;
+    let (mut flapped, mut flaps) = (0, 0.0);
     if bounds.max[0] >= x0 && bounds.max[1] >= y0 && bounds.min[0] <= x1 && bounds.min[1] <= y1 {
         let (c0, c1) = span(bounds.min[0], bounds.max[0], x0, dx, lattice.cols);
         let (r0, r1) = span(bounds.min[1], bounds.max[1], y0, dy, lattice.rows);
@@ -184,7 +193,12 @@ pub fn cut_solid_by_layers(solid: &TriMesh, stack: &LayerStack, min_thickness: f
                 }
                 slab_triangles += slab.triangle_count();
                 let slab = to_manifold(&slab, [0.0; 3], "a layer's slab")?;
-                if let Some(piece) = piece_of(&on.intersection(&slab), layer, origin)? {
+                let (inside, flap) = without_flaps(on.intersection(&slab), flap_thickness)?;
+                if flap > 0.0 {
+                    flapped += 1;
+                    flaps += flap;
+                }
+                if let Some(piece) = piece_of(&inside, layer, origin)? {
                     pieces.push(piece);
                 }
                 slabs.push(slab);
@@ -193,7 +207,193 @@ pub fn cut_solid_by_layers(solid: &TriMesh, stack: &LayerStack, min_thickness: f
     }
     let rest = if slabs.is_empty() { on } else { on.difference(&Manifold::batch_union(&slabs)) };
     rest.status().map_err(|e| GeomError::Manifold(e.to_string()))?;
-    Ok(LayerCut { pieces, outside, thin: rest.volume(), input_volume, slab_triangles, ms: started.elapsed().as_secs_f64() * 1000.0 })
+    Ok(LayerCut { pieces, outside, thin: rest.volume(), flapped, flaps, input_volume, slab_triangles, ms: started.elapsed().as_secs_f64() * 1000.0 })
+}
+
+/// Faces steeper than this (the up component of their normal less than this) aren't the top or bottom of a flap: a
+/// flap lies along a seam, and seams dip under 30°.
+const FLAP_FACE: f64 = 0.5;
+
+/// Flaps with less area than this in plan (m²) are left: rounding, not a flap.
+const FLAP_AREA: f64 = 1e-6;
+
+/// How far past where it's the flap thickness a flap is cut out, in plan (m). Where a berm lies on a seam's roof, the
+/// piece is the flap thickness thick just where the layer is the minimum thickness thick, so a cut there would stand on
+/// the layer's own wall at its edge, two walls a hair apart.
+const FLAP_REACH: f64 = 0.005;
+
+/// A layer's piece with its flaps taken off (decision 0064), and their volume (m³). A flap is where the piece's top
+/// and bottom, nearly flat faces, one facing up over one facing down, come within `thickness` of each other: a knife
+/// edge where a strip's surface runs into a seam's roof or floor at a low angle, or a sheet with no thickness where the
+/// two lie on each other, as a berm built on the seam's roof does. It's cut out straight down where the two faces are
+/// that close, as Deswik removes flaps before cutting. A steep wall meeting a seam is no flap.
+fn without_flaps(piece: Manifold, thickness: f64) -> Result<(Manifold, f64), GeomError> {
+    piece.status().map_err(|e| GeomError::Manifold(e.to_string()))?;
+    if thickness <= 0.0 || piece.is_empty() {
+        return Ok((piece, 0.0));
+    }
+    let mesh = from_manifold(&piece, [0.0; 3]);
+    let (outline, [low, high]) = flap_outline(&mesh, thickness);
+    if outline.is_empty() {
+        return Ok((piece, 0.0));
+    }
+    let sections: Vec<CrossSection> = outline.iter().map(|p| CrossSection::from_polygons(std::slice::from_ref(p))).collect();
+    let area = CrossSection::batch_union(&sections).offset(FLAP_REACH, JoinType::Square, 2.0, 0);
+    if area.is_empty() || area.area() < FLAP_AREA {
+        return Ok((piece, 0.0));
+    }
+    let prism = area.extrude(high - low + 2.0).translate(0.0, 0.0, low - 1.0);
+    let kept = piece.difference(&prism);
+    kept.status().map_err(|e| GeomError::Manifold(e.to_string()))?;
+    let removed = piece.volume() - kept.volume();
+    Ok((kept, removed.max(0.0)))
+}
+
+type Tri = [[f64; 3]; 3];
+
+/// The up component of a triangle's unit normal.
+fn facing_up(a: &Tri) -> f64 {
+    let (u, v) = ([a[1][0] - a[0][0], a[1][1] - a[0][1], a[1][2] - a[0][2]], [a[2][0] - a[0][0], a[2][1] - a[0][1], a[2][2] - a[0][2]]);
+    let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    if len < 1e-15 { 0.0 } else { n[2] / len }
+}
+
+/// A triangle's lowest and highest corner.
+fn tri_box(a: &Tri) -> ([f64; 3], [f64; 3]) {
+    let lo = [0, 1, 2].map(|k| a[0][k].min(a[1][k]).min(a[2][k]));
+    let hi = [0, 1, 2].map(|k| a[0][k].max(a[1][k]).max(a[2][k]));
+    (lo, hi)
+}
+
+/// The height of a (not vertical) triangle's plane over a plan point.
+fn plane_height(a: &Tri, p: [f64; 2]) -> f64 {
+    let d = (a[1][0] - a[0][0]) * (a[2][1] - a[0][1]) - (a[2][0] - a[0][0]) * (a[1][1] - a[0][1]);
+    let u = ((p[0] - a[0][0]) * (a[2][1] - a[0][1]) - (a[2][0] - a[0][0]) * (p[1] - a[0][1])) / d;
+    let w = ((a[1][0] - a[0][0]) * (p[1] - a[0][1]) - (p[0] - a[0][0]) * (a[1][1] - a[0][1])) / d;
+    a[0][2] + u * (a[1][2] - a[0][2]) + w * (a[2][2] - a[0][2])
+}
+
+/// Where a closed mesh's nearly flat faces, one facing up over one facing down, are within `thickness` of each other (or
+/// pass through each other by up to it), as convex polygons in plan wound anticlockwise, and the lowest and highest
+/// they reach.
+fn flap_outline(mesh: &TriMesh, thickness: f64) -> (Vec<Vec<[f64; 2]>>, [f64; 2]) {
+    let (mut tops, mut bottoms): (Vec<Tri>, Vec<Tri>) = (Vec::new(), Vec::new());
+    for t in &mesh.triangles {
+        let a: Tri = t.map(|i| mesh.vertices[i as usize]);
+        let up = facing_up(&a);
+        if up > FLAP_FACE {
+            tops.push(a);
+        } else if up < -FLAP_FACE {
+            bottoms.push(a);
+        }
+    }
+    let mut out = Vec::new();
+    let (mut low, mut high) = (f64::INFINITY, f64::NEG_INFINITY);
+    if tops.is_empty() || bottoms.is_empty() {
+        return (out, [low, high]);
+    }
+    // The bottoms by plan cell.
+    let (lo, hi) = bottoms.iter().map(tri_box).fold(([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]), |(lo, hi), (a, b)| ([lo[0].min(a[0]), lo[1].min(a[1])], [hi[0].max(b[0]), hi[1].max(b[1])]));
+    let cell = (((hi[0] - lo[0]).max(1e-3) * (hi[1] - lo[1]).max(1e-3) / bottoms.len() as f64).sqrt() * 2.0).max(1e-3);
+    let (cols, rows) = (((hi[0] - lo[0]) / cell) as usize + 1, ((hi[1] - lo[1]) / cell) as usize + 1);
+    let at = |v: f64, o: f64, n: usize| (((v - o) / cell).floor().max(0.0) as usize).min(n - 1);
+    let mut cells: Vec<Vec<u32>> = vec![Vec::new(); cols * rows];
+    for (k, b) in bottoms.iter().enumerate() {
+        let (a, z) = tri_box(b);
+        for r in at(a[1], lo[1], rows)..=at(z[1], lo[1], rows) {
+            for c in at(a[0], lo[0], cols)..=at(z[0], lo[0], cols) {
+                cells[r * cols + c].push(k as u32);
+            }
+        }
+    }
+    let mut seen: Vec<u32> = Vec::new();
+    for top in &tops {
+        let (a, z) = tri_box(top);
+        if z[0] < lo[0] || a[0] > hi[0] || z[1] < lo[1] || a[1] > hi[1] {
+            continue;
+        }
+        seen.clear();
+        for r in at(a[1], lo[1], rows)..=at(z[1], lo[1], rows) {
+            for c in at(a[0], lo[0], cols)..=at(z[0], lo[0], cols) {
+                seen.extend(&cells[r * cols + c]);
+            }
+        }
+        seen.sort_unstable();
+        seen.dedup();
+        for &k in &seen {
+            let bottom = &bottoms[k as usize];
+            let (ba, bz) = tri_box(bottom);
+            if bz[0] < a[0] || ba[0] > z[0] || bz[1] < a[1] || ba[1] > z[1] || ba[2] > z[2] + thickness || bz[2] < a[2] - thickness {
+                continue;
+            }
+            // Where the two overlap in plan, and there where they're within the thickness of each other.
+            let gap = |p: [f64; 2]| plane_height(top, p) - plane_height(bottom, p);
+            let mut poly = plan_overlap(top, bottom);
+            if poly.len() >= 3 {
+                poly = clip_where(&poly, |p| thickness - gap(p));
+            }
+            if poly.len() >= 3 {
+                poly = clip_where(&poly, |p| gap(p) + thickness);
+            }
+            if poly.len() < 3 || polygon_area(&poly).abs() < FLAP_AREA {
+                continue;
+            }
+            for p in &poly {
+                for z in [plane_height(top, *p), plane_height(bottom, *p)] {
+                    low = low.min(z);
+                    high = high.max(z);
+                }
+            }
+            if polygon_area(&poly) < 0.0 {
+                poly.reverse();
+            }
+            out.push(poly);
+        }
+    }
+    (out, [low, high])
+}
+
+/// Two triangles' overlap in plan, a convex polygon.
+fn plan_overlap(a: &Tri, b: &Tri) -> Vec<[f64; 2]> {
+    let turn = (b[1][0] - b[0][0]) * (b[2][1] - b[0][1]) - (b[2][0] - b[0][0]) * (b[1][1] - b[0][1]) > 0.0;
+    let mut poly: Vec<[f64; 2]> = a.iter().map(|p| [p[0], p[1]]).collect();
+    for k in 0..3 {
+        let (p, q) = (b[k], b[(k + 1) % 3]);
+        poly = clip_where(&poly, |r| {
+            let s = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+            if turn { s } else { -s }
+        });
+        if poly.len() < 3 {
+            return Vec::new();
+        }
+    }
+    poly
+}
+
+/// A convex polygon clipped to where `inside` is not negative (a linear function in plan).
+fn clip_where(poly: &[[f64; 2]], inside: impl Fn([f64; 2]) -> f64) -> Vec<[f64; 2]> {
+    let mut out = Vec::with_capacity(poly.len() + 1);
+    for i in 0..poly.len() {
+        let (r, s) = (poly[i], poly[(i + 1) % poly.len()]);
+        let (dr, ds) = (inside(r), inside(s));
+        if dr >= 0.0 {
+            out.push(r);
+        }
+        if (dr >= 0.0) != (ds >= 0.0) {
+            let t = dr / (dr - ds);
+            out.push([r[0] + t * (s[0] - r[0]), r[1] + t * (s[1] - r[1])]);
+        }
+    }
+    out
+}
+
+/// A polygon's area in plan, positive anticlockwise.
+fn polygon_area(poly: &[[f64; 2]]) -> f64 {
+    0.5 * (0..poly.len()).map(|i| {
+        let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+        a[0] * b[1] - b[0] * a[1]
+    }).sum::<f64>()
 }
 
 /// Where a solid can't be cut by a seam model's grids, found before the cut (decision 0063).

@@ -293,3 +293,24 @@ fn a_solid_off_the_grids_or_no_thickness_is_refused() {
     let refused = s.run("solid.cut_by_seams", json!({ "solids": [strip], "model": model, "layer": "layers", "min_thickness": 0 })).unwrap_err();
     assert!(refused.to_string().contains("minimum thickness"), "{refused}");
 }
+
+/// A strip whose top lies 4 mm over cu's roof (RL 100): the overburden in it is a flap 4 mm × 100 × 60 m = 24 m³,
+/// taken off and said by default (decision 0064); with no flap thickness it's a piece of its own.
+#[test]
+fn a_film_over_the_roof_is_taken_off_as_a_flap_and_said() {
+    let t = TempDir::new("flap");
+    write_model(&t.0, |_| 100.0);
+    let (mut s, model) = session(&t.0);
+    let strip = box_solid(&mut s, "Strip 5", (0.0, 100.0), (50.0, 110.0), (80.0, 100.004));
+    let record = s.run("solid.cut_by_seams", json!({ "solids": [strip], "model": model, "layer": "layers" })).unwrap();
+    let flaps = record.notes.iter().find(|n| n.code == Some(Code::SeamFlapsLeftOut)).expect("the flap said");
+    assert_eq!(flaps.text, "24.000 m³ in flaps thinner than 0.01 m taken off 1 pieces, left out");
+    assert!((flaps.value.as_ref().map(|m| m.value).unwrap() - 24.0).abs() < 1e-6);
+    let total: f64 = created(&record).iter().map(|&id| volume(&s, id)).sum();
+    assert!((total - 100.0 * 60.0 * 20.0).abs() < 1e-6, "the strip less its flap: {total}");
+
+    let record = s.run("solid.cut_by_seams", json!({ "solids": [strip], "model": model, "layer": "kept", "flap_thickness": 0.0 })).unwrap();
+    assert!(record.notes.iter().all(|n| n.code != Some(Code::SeamFlapsLeftOut)));
+    let total: f64 = created(&record).iter().map(|&id| volume(&s, id)).sum();
+    assert!((total - 100.0 * 60.0 * 20.004).abs() < 1e-6, "{total}");
+}

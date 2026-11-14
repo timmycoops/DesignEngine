@@ -70,7 +70,9 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   what to fix; strips
   are cut by the seam model's horizons in one run, each piece carrying `seam`, `material` and `horizon`
   (`docs/decisions/0062-blocks-are-polygons.md`); the grids must reach over every solid in plan with no hole under it,
-  checked before the cut and refused with each place listed (`docs/decisions/0063-seam-grids-are-never-filled.md`).
+  checked before the cut and refused with each place listed (`docs/decisions/0063-seam-grids-are-never-filled.md`);
+  flaps thinner than 1 cm (where a strip's surface runs along a seam's roof or floor) are taken off each piece and said,
+  as Deswik removes flaps (`docs/decisions/0064-berms-on-their-grid-and-flaps.md`).
 - `Grid`: regular raster (origin, cell size, rows, cols, z values with NaN for nulls). A Vulcan roof, floor or
   topography reads whole: a node flagged off keeps the height it holds, with a warning if it steps far from the
   live nodes (`docs/decisions/0025-a-grid-stays-in-space.md`).
@@ -98,7 +100,9 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   ways takes a profile for each, and the top or bottom string is made by hand after the run. Still to come: berm on
   roof and berm on floor per horizon, minimum and maximum bench height, wall type (face, side, end). Side (left or
   right for open highwall strings) is on the line. A face is built oversized, past the pit shell, and the cut does
-  the fitting (`docs/decisions/0023-wall-step.md`). `FaceDesign` is the saved object the Face design panel edits:
+  the fitting (`docs/decisions/0023-wall-step.md`). A face lies on the grids it's built to: a berm on a grid is split
+  along the grid's triangles, not a chord across its cells, and the seams are stacked from the same grids
+  (`docs/decisions/0064-berms-on-their-grid-and-flaps.md`). `FaceDesign` is the saved object the Face design panel edits:
   lines, profiles and any shared rules together (`docs/decisions/0024-face-design.md`). A face built by hand is a step
   design: a face design on one string that saves and runs whole as each step is added (`face.step`, one undo a step),
   with ramps placed by clicking. Faces are built from strings, never by moving a surface's points
