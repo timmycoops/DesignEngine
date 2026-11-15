@@ -620,6 +620,7 @@ function DataflowView({ flow }: { flow: Dataflow }) {
   return (
     <>
       <Section title="Dataflow">
+        <Field label="Levels">{(flow.levels ?? []).map((l) => (l.default ? `${l.attribute} (else ${l.default})` : l.attribute)).join(' › ') || 'pit › strip › block › seam › bench'}</Field>
         <Field label="Steps">{steps.join(', ') || 'none'}</Field>
         <Field label="Parameter tables">{flow.parameters.map((id) => names.get(id) ?? 'missing').join(', ') || 'none'}</Field>
         <Field label="Fields">{fmt(flow.fields.length)}</Field>
@@ -631,19 +632,19 @@ function DataflowView({ flow }: { flow: Dataflow }) {
   );
 }
 
-/** A results table's rows added up by write point: by horizon, coal and waste, and by bench (decision 0072). */
+/** A reserves table's leaves added up by a top folder (decision 0074): by seam and the folder below, its totals, and by
+ * bench. */
 function WriteView({ w }: { w: WriteFigures }) {
   const heads = w.columns.map(([n, u]) => (u ? `${n.replace(/_/g, ' ')} ${u.replace('m3', 'm³').replace('m2', 'm²')}` : n.replace(/_/g, ' ')));
-  const line = (r: WriteFigures['horizons'][number]) => [r.label, r.material, ...r.values.map(cell), fmt(r.rows)];
-  const totals = [w.coal, w.waste].filter((r): r is NonNullable<typeof r> => r !== null);
+  const line = (r: WriteFigures['seams'][number]) => [r.label, r.material, ...r.values.map(cell), fmt(r.rows)];
   return (
     <>
-      <Section title={`${w.write.replace(/_/g, ' ')} by horizon`}>
-        <CellTable headers={['Horizon', 'Material', ...heads, 'Rows']} rows={[...w.horizons, ...totals].map(line)} />
+      <Section title={`${w.write} by seam`}>
+        <CellTable headers={['Seam', 'Folder', ...heads, 'Leaves']} rows={[...w.seams, ...w.totals].map(line)} />
       </Section>
       {w.benches.length > 0 && (
-        <Section title={`${w.write.replace(/_/g, ' ')} by bench`}>
-          <CellTable headers={['Bench', 'Material', ...heads, 'Rows']} rows={w.benches.map(line)} />
+        <Section title={`${w.write} by bench`}>
+          <CellTable headers={['Bench', 'Folder', ...heads, 'Leaves']} rows={w.benches.map(line)} />
         </Section>
       )}
     </>
@@ -758,10 +759,10 @@ function Measurements({ d }: { d: ObjectDetails }) {
     case 'table':
       return (
         <>
-          <Section title="Results table">
-            <Field label="Rows">{fmt(m.rows)}</Field>
+          <Section title="Reserves table">
+            <Field label="Leaves">{fmt(m.rows)}</Field>
             <Field label="Columns">{fmt(m.columns.length)}</Field>
-            <Field label="Write points">{m.figures.writes.map((w) => w.write.replace(/_/g, ' ')).join(', ') || 'none'}</Field>
+            <Field label="Top folders">{m.figures.writes.map((w) => w.write).join(', ') || 'none'}</Field>
             <p className="px-3 py-1 text-xs text-muted-foreground">Each column added up by its own rule: summed, by volume, by tonnes, the largest or the smallest.</p>
           </Section>
           {m.figures.writes.map((w) => (

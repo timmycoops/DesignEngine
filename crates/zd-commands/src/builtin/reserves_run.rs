@@ -99,18 +99,16 @@ pub struct RunReservesParams {
     pub name: String,
 }
 
-/// One row a step writes.
+/// What a step writes (decision 0074): a piece of a unit on a leaf of the reserves table, under a folder. The leaf is
+/// the values of the dataflow's levels below the column (seam and bench by default), from the block the piece came from;
+/// the folder a path such as `Insitu\Coal`, its last part the material from the seam stack. Texts are words for columns
+/// of their own, such as the working section's name.
 #[derive(Debug, Clone)]
-struct Row {
-    write: &'static str,
-    horizon: String,
-    seam: String,
-    material: String,
-    bench: Option<String>,
-    became: Option<String>,
-    units: usize,
-    sources: Vec<String>,
+struct Piece {
+    folder: String,
+    leaf: Vec<String>,
     values: Vec<f64>,
+    texts: Vec<(String, String)>,
 }
 
 /// A column in work: the column, its horizons' names by stack place, the attributes of each input unit's block (what
@@ -121,7 +119,9 @@ pub struct ColumnRun<'a> {
     attributes: Vec<Attributes>,
     tables: &'a [Arc<ParameterTable>],
     dataflow: &'a Dataflow,
-    rows: Vec<Row>,
+    rows: Vec<Piece>,
+    /// The attributes of the levels below the column, top down: what a piece's leaf is read from.
+    lower: &'a [String],
     said: Said,
     /// Volume added from outside the model (the underburden), kept out of the column's balance to its blocks.
     added_volume: f64,
@@ -178,7 +178,7 @@ struct Stopped {
 
 struct Ran {
     key: ColumnKey,
-    rows: Vec<Row>,
+    rows: Vec<Piece>,
     said: Said,
     /// Inputs' volume less the column's balance at the end: what no step should change.
     imbalance: f64,
@@ -193,10 +193,13 @@ pub(crate) struct Prepared {
     tables: Vec<Arc<ParameterTable>>,
     horizons: Vec<String>,
     steps: Vec<(&'static str, StepFn, DataflowStep)>,
-    /// Blocks by case, strip and block.
+    /// The attributes of the levels above the seam, which make a column, and of those below it, which make a leaf.
+    upper: Vec<String>,
+    lower: Vec<String>,
+    /// Blocks by case and their values of the upper levels.
     columns: BTreeMap<ColumnKey, Vec<Arc<Object>>>,
-    /// Blocks with no strip or block, by name.
-    unplaced: Vec<String>,
+    /// Blocks missing a level that has no default, by name, with the level.
+    unplaced: Vec<(String, String)>,
 }
 
 impl Command for RunReserves {
@@ -206,7 +209,7 @@ impl Command for RunReserves {
     fn spec(&self) -> CommandSpec {
         CommandSpec {
             name: Self::NAME,
-            summary: "Run a reserves dataflow over blocks: a column a strip and block, its steps in order, a results table a case",
+            summary: "Run a reserves dataflow over blocks: a column a pit, strip and block (the dataflow's levels above the seam), its steps in order, a reserves table a case",
             inputs: vec![
                 Field::object("dataflow", ObjectKind::Dataflow, "The dataflow"),
                 Field::new("blocks", FieldType::Objects, "The block solids"),
@@ -280,22 +283,31 @@ pub(crate) fn prepare(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError
         let name = STEPS.iter().find(|(n, _)| *n == s.step).map(|(n, _)| *n).expect("a registered step");
         steps.push((name, f, s.clone()));
     }
+    let split = dataflow.column_levels();
+    let upper: Vec<String> = dataflow.levels[..split].iter().map(|l| l.attribute.clone()).collect();
+    let lower: Vec<String> = dataflow.levels[split..].iter().map(|l| l.attribute.clone()).collect();
     let mut columns: BTreeMap<ColumnKey, Vec<Arc<Object>>> = BTreeMap::new();
     let mut unplaced = Vec::new();
-    for &id in &p.blocks {
+    'blocks: for &id in &p.blocks {
         let object = get(id)?;
         if !matches!(object.body, Body::Solid(_)) {
             return Err(CommandError::WrongKind { id, expected: ObjectKind::Solid, found: object.kind() });
         }
         let word = |key: &str| attribute_ci(&object.attributes, key).map(attribute_word).filter(|w| !w.is_empty());
-        let (Some(strip), Some(block)) = (word("strip"), word("block")) else {
-            unplaced.push(object.name.clone());
-            continue;
-        };
+        let mut path = Vec::with_capacity(split);
+        for level in &dataflow.levels[..split] {
+            match word(&level.attribute).or_else(|| level.default.clone()) {
+                Some(v) => path.push(v),
+                None => {
+                    unplaced.push((object.name.clone(), level.attribute.clone()));
+                    continue 'blocks;
+                }
+            }
+        }
         let case = word("case").unwrap_or_else(|| BASE.to_string());
-        columns.entry(ColumnKey { case, strip, block }).or_default().push(object);
+        columns.entry(ColumnKey { case, path }).or_default().push(object);
     }
-    Ok(Prepared { name: flow.name.clone(), dataflow: dataflow.clone(), fields, tables, horizons, steps, columns, unplaced })
+    Ok(Prepared { name: flow.name.clone(), dataflow: dataflow.clone(), fields, tables, horizons, steps, upper, lower, columns, unplaced })
 }
 
 /// The plan area of a solid: its upward-facing triangles in plan, about its first vertex so mine coordinates keep their
@@ -458,12 +470,25 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
     }
     let volume = prepared.fields.volume();
     let input_volume = column.balance()[volume];
-    let mut run = ColumnRun { column, horizons: prepared.horizons.clone(), attributes, tables: &prepared.tables, dataflow: &prepared.dataflow, rows: Vec::new(), said: Said::default(), added_volume: 0.0, block_area };
+    let mut run = ColumnRun {
+        column,
+        horizons: prepared.horizons.clone(),
+        attributes,
+        tables: &prepared.tables,
+        dataflow: &prepared.dataflow,
+        rows: Vec::new(),
+        lower: &prepared.lower,
+        said: Said::default(),
+        added_volume: 0.0,
+        block_area,
+    };
+    // Imported: each block as read, before any step.
+    write_pieces(&mut run, |_| Some("Imported".into()), |_| Vec::new());
     if let Some(p) = preview.as_deref_mut() {
         p.push(view(&run, "as input"));
     }
     for (name, step, settings) in &prepared.steps {
-        step(&mut run, settings).map_err(|why| stop(format!("{}/{} at {name}: {why}", key.strip, key.block)))?;
+        step(&mut run, settings).map_err(|why| stop(format!("{} at {name}: {why}", key.words())))?;
         if let Some(p) = preview.as_deref_mut() {
             p.push(view(&run, name));
         }
@@ -473,16 +498,10 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
 }
 
 /// The column after each of the dataflow's steps, for one block: the canvas's before and after (decision 0072, point 7).
-pub fn reserves_preview(
-    get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>,
-    p: &RunReservesParams,
-    case: &str,
-    strip: &str,
-    block: &str,
-) -> Result<Vec<StepView>, CommandError> {
+pub fn reserves_preview(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>, p: &RunReservesParams, case: &str, path: &[String]) -> Result<Vec<StepView>, CommandError> {
     let prepared = prepare(get, p)?;
-    let key = ColumnKey { case: case.to_string(), strip: strip.to_string(), block: block.to_string() };
-    let blocks = prepared.columns.get(&key).ok_or_else(|| CommandError::Invalid(format!("no blocks of case {case}, strip {strip}, block {block}")))?;
+    let key = ColumnKey { case: case.to_string(), path: path.to_vec() };
+    let blocks = prepared.columns.get(&key).ok_or_else(|| CommandError::Invalid(format!("no blocks of case {case} at {}", key.words())))?;
     let mut views = Vec::new();
     run_column(&prepared, &key, blocks, Some(&mut views)).map_err(|s| CommandError::Invalid(s.why))?;
     Ok(views)
@@ -504,7 +523,7 @@ fn small_volumes(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), Str
         run.column.label_became(at, Became { kind: BecameKind::SmallVolume, detail: String::new() });
         run.said.count("set aside as small volumes".into(), v);
     }
-    write_groups(run, "small_volume", |u| u.became.as_ref().is_some_and(|b| b.kind == BecameKind::SmallVolume), Some("small volume"));
+    write_pieces(run, |u| u.became.as_ref().is_some_and(|b| b.kind == BecameKind::SmallVolume).then(|| "Small volume".into()), |_| Vec::new());
     Ok(())
 }
 
@@ -807,44 +826,26 @@ fn working_sections(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), 
         run.column.unit_mut(i).section = Some(Labels { material: if coal { "coal".into() } else { "waste".into() }, seam: name, id: Some(id) });
     }
 
-    // The sections write: each section, then the thin and discarded plies.
+    // The writes: each section's units under Working section, with its number and name; thin and discarded coal under
+    // Loss, as Spry's Loss\Thin, Loss\Discarded and Loss\High Insitu Ash.
     for units in &sections {
-        let label = run.column.units()[units[0]].section.clone().expect("labelled");
-        let names: Vec<String> = units.iter().map(|&i| run.name_of(i)).collect();
         let v = sum(run, units, volume);
         run.said.count("coal formed into working sections".into(), v);
-        run.rows.push(Row {
-            write: "sections",
-            horizon: label.seam.clone(),
-            seam: label.seam.clone(),
-            material: "coal".into(),
-            bench: None,
-            became: None,
-            units: units.len(),
-            sources: names,
-            values: run.column.add_up(units.iter().copied()),
-        });
     }
-    for i in 0..run.column.len() {
-        let u = &run.column.units()[i];
-        let Some(b) = &u.became else { continue };
-        let words = match (b.kind, b.detail.as_str()) {
-            (BecameKind::ThinLoss, _) => "thin loss".to_string(),
-            (BecameKind::Discarded, d) => format!("discarded, {d}"),
-            _ => continue,
-        };
-        run.rows.push(Row {
-            write: "sections",
-            horizon: run.horizons[u.stack as usize].clone(),
-            seam: u.in_situ.seam.clone(),
-            material: u.in_situ.material.clone(),
-            bench: None,
-            became: Some(words),
-            units: 1,
-            sources: vec![run.name_of(i)],
-            values: u.values().to_vec(),
-        });
-    }
+    write_pieces(
+        run,
+        |u| match &u.became {
+            Some(b) if b.kind == BecameKind::ThinLoss => Some("Loss\\Thin".into()),
+            Some(b) if b.kind == BecameKind::Discarded && b.detail == "high in situ ash" => Some("Loss\\High insitu ash".into()),
+            Some(b) if b.kind == BecameKind::Discarded => Some("Loss\\Discarded".into()),
+            _ if u.section.as_ref().is_some_and(|s| s.material == "coal") => Some("Working section".into()),
+            _ => None,
+        },
+        |u| match &u.section {
+            Some(s) if s.material == "coal" => vec![("Working section\\id".into(), s.id.map_or(String::new(), |i| i.to_string())), ("Working section\\name".into(), s.seam.clone())],
+            _ => Vec::new(),
+        },
+    );
     Ok(())
 }
 
@@ -901,63 +902,47 @@ fn in_situ(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String> {
             }
         }
     }
-    write_groups(run, "in_situ", |u| !u.is_set_aside(), None);
+    write_pieces(run, |u| (!u.is_set_aside()).then(|| "Insitu".into()), |_| Vec::new());
     Ok(())
 }
 
-/// Writes the units `take` picks, a row a horizon and bench, at a write point; the underburden is never written.
-fn write_groups(run: &mut ColumnRun<'_>, write: &'static str, take: impl Fn(&Unit) -> bool, became: Option<&str>) {
-    let units = run.column.units();
-    let kept: Vec<bool> = units.iter().map(|u| take(u) && !run.is_out_of_model(u)).collect();
-    let groups = run.column.runs(|a, b| a.stack == b.stack && a.in_situ == b.in_situ);
-    for g in groups {
-        // Within a horizon, the units taken, as runs of their own.
-        let mut at = g.start;
-        while at < g.end {
-            if !kept[at] {
-                at += 1;
-                continue;
-            }
-            let start = at;
-            while at < g.end && kept[at] {
-                at += 1;
-            }
-            let first = &run.column.units()[start];
-            let (horizon, seam, material) = (run.horizons[first.stack as usize].clone(), first.in_situ.seam.clone(), first.in_situ.material.clone());
-            for row in run.column.by_bench(start..at) {
-                let sources = sources(&run.column, &row);
-                run.rows.push(Row {
-                    write,
-                    horizon: horizon.clone(),
-                    seam: seam.clone(),
-                    material: material.clone(),
-                    bench: row.bench.as_ref().map(|b| b.label.clone()),
-                    became: became.map(str::to_string),
-                    units: sources.len(),
-                    sources,
-                    values: row.values,
-                });
-            }
+/// Writes each unit `folder` names a folder for (decision 0074): a piece a bench it holds, a joined unit's summed fields
+/// shared out by its benches' in situ shares, each on the leaf of the block it came from, under `folder\Material` (the
+/// unit's material from the seam stack), or the folder as named where it already ends in a material or kind. The
+/// underburden, outside the model, is never written.
+fn write_pieces(run: &mut ColumnRun<'_>, folder: impl Fn(&Unit) -> Option<String>, texts: impl Fn(&Unit) -> Vec<(String, String)>) {
+    let fields = run.column.fields();
+    let summed: Vec<bool> = (0..fields.len()).map(|f| fields.is_summed(f)).collect();
+    let mut pieces = Vec::new();
+    for u in run.column.units() {
+        if run.is_out_of_model(u) {
+            continue;
+        }
+        let Some(top) = folder(u) else { continue };
+        // A folder of its own (Loss\Thin) as named; a stage gets the material below it.
+        let folder = if top.contains('\\') { top } else { format!("{top}\\{}", title(&u.in_situ.material)) };
+        let texts = texts(u);
+        let shares: Vec<(u32, f64)> = match u.joined {
+            Some(j) => run.column.joins()[j as usize].benches.iter().map(|b| (b.origin, b.share)).collect(),
+            None => vec![(u.origin, 1.0)],
+        };
+        for (origin, share) in shares {
+            let values = u.values().iter().zip(&summed).map(|(v, s)| if *s { v * share } else { *v }).collect();
+            let attributes = &run.attributes[origin as usize];
+            let leaf = run.lower.iter().map(|l| attribute_ci(attributes, l).map(attribute_word).unwrap_or_default()).collect();
+            pieces.push(Piece { folder: folder.clone(), leaf, values, texts: texts.clone() });
         }
     }
+    run.rows.extend(pieces);
 }
 
-/// The blocks a written row came from: for a joined unit, the bench of its join the row is.
-fn sources(column: &Column, row: &zd_reserves::BenchRow) -> Vec<String> {
-    let mut names = Vec::new();
-    for id in &row.units {
-        let Some(at) = column.position(*id) else { continue };
-        let u = &column.units()[at];
-        let origin = match (u.joined, &row.bench) {
-            (Some(j), Some(b)) => column.joins()[j as usize].benches.iter().find(|jb| jb.bench == *b).map_or(u.origin, |jb| jb.origin),
-            _ => u.origin,
-        };
-        let name = column.origins()[origin as usize].name.clone();
-        if !names.contains(&name) {
-            names.push(name);
-        }
+/// A material as a folder: its first letter capital, as Spry's Coal and Waste.
+fn title(material: &str) -> String {
+    let mut c = material.trim().chars();
+    match c.next() {
+        Some(first) => first.to_uppercase().chain(c).collect(),
+        None => "Unknown".into(),
     }
-    names
 }
 
 fn unit_of_kind(kind: FieldKind) -> &'static str {
@@ -975,54 +960,101 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-/// The results table of one case's columns: labels, then a column a field with its unit and rule, then tonnes where the
-/// dataflow has a density (volume × density, on the density's own basis).
+/// The reserves table of one case's columns (decision 0074): a row a leaf (the case, then a value a level), a column a
+/// field under each folder its pieces were written to, `Insitu\Coal\volume` say, each a leaf's pieces added up by the
+/// field's rule, with the field's unit. Where a folder holds an in situ density, its tonnes on the in situ basis, its
+/// air-dried tonnes and each quality on the in situ basis beside them; where only an RD, its tonnes on the RD's basis.
+/// A column with no value at all is left out.
 fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
-    let rows: Vec<(&ColumnKey, &Row)> = ran.iter().flat_map(|r| r.rows.iter().map(move |row| (&r.key, row))).collect();
-    let text = |f: &dyn Fn(&ColumnKey, &Row) -> Option<String>| rows.iter().map(|(k, r)| f(k, r)).collect::<Vec<_>>();
-    let mut columns = vec![
-        TableColumn::text("case", text(&|k, _| Some(k.case.clone()))),
-        TableColumn::text("strip", text(&|k, _| Some(k.strip.clone()))),
-        TableColumn::text("block", text(&|k, _| Some(k.block.clone()))),
-        TableColumn::text("write", text(&|_, r| Some(r.write.to_string()))),
-        TableColumn::text("horizon", text(&|_, r| Some(r.horizon.clone()))),
-        TableColumn::text("seam", text(&|_, r| Some(r.seam.clone()).filter(|s| !s.is_empty()))),
-        TableColumn::text("material", text(&|_, r| Some(r.material.clone()))),
-        TableColumn::text("bench", text(&|_, r| r.bench.clone())),
-        TableColumn::text("became", text(&|_, r| r.became.clone())),
-        TableColumn::adding("units", "", AddUp::Sum, rows.iter().map(|(_, r)| Some(r.units as f64)).collect()),
-        TableColumn::text("from", text(&|_, r| Some(r.sources.join("; ")))),
-    ];
     let fields = prepared.fields.list();
-    for (i, f) in fields.iter().enumerate() {
-        let values = rows.iter().map(|(_, r)| Some(r.values[i]).filter(|v| !v.is_nan())).collect();
-        // A thickness adds down a column and an area is a column's largest; across blocks neither adds up, so a report
-        // shows them on each row and totals neither.
-        let across = if matches!(f.kind, FieldKind::Thickness | FieldKind::Area) { None } else { Some(f.add_up.clone()) };
-        columns.push(TableColumn { name: f.name.clone(), unit: unit_of_kind(f.kind).to_string(), add_up: across, values: zd_core::ColumnValues::Number(values) });
-    }
-    // Tonnes on the in situ basis where the in situ step works an in situ density (JORC's basis), with air-dried tonnes
-    // and each quality on the in situ basis beside them; otherwise on the density's own basis, as before.
-    let v = prepared.fields.volume();
-    let setting = |key: &str| prepared.steps.iter().find(|(n, _, _)| *n == "in_situ").map_or(key.to_string(), |(_, _, s)| s.setting(key).to_string());
-    let field = |key: &str| fields.iter().position(|f| f.name == setting(key));
-    let tonnes = |d: usize| rows.iter().map(|(_, r)| Some(r.values[v] * r.values[d]).filter(|t| !t.is_nan())).collect::<Vec<_>>();
-    match (field("rd"), field("rd_is")) {
-        (Some(rd), Some(rd_is)) => {
-            columns.push(TableColumn::adding("tonnes", "t", AddUp::Sum, tonnes(rd_is)));
-            columns.push(TableColumn::adding("tonnes_ad", "t", AddUp::Sum, tonnes(rd)));
-            if let (Some(mad), Some(mis)) = (field("mad"), field("mis")) {
-                for (q, f) in fields.iter().enumerate().filter(|(_, f)| f.kind == FieldKind::Quality) {
-                    let values = rows.iter().map(|(_, r)| Some(r.values[q] * (1.0 - r.values[mis] / 100.0) / (1.0 - r.values[mad] / 100.0)).filter(|x| x.is_finite())).collect();
-                    columns.push(TableColumn::adding(&format!("{}_is", f.name), "", AddUp::Mass { density: setting("rd_is") }, values));
+    // The leaves in the order they were first written, and what each holds.
+    // A leaf: its key (case and level values), each folder's pieces' values, and its words by column.
+    type Leaf = (Vec<String>, BTreeMap<String, Vec<Vec<f64>>>, BTreeMap<String, String>);
+    let mut leaves: Vec<Leaf> = Vec::new();
+    let mut at: BTreeMap<Vec<String>, usize> = BTreeMap::new();
+    let mut folders: Vec<String> = Vec::new();
+    let mut text_columns: Vec<String> = Vec::new();
+    for r in ran {
+        for piece in &r.rows {
+            let mut key = vec![r.key.case.clone()];
+            key.extend(r.key.path.iter().cloned());
+            key.extend(piece.leaf.iter().cloned());
+            let i = *at.entry(key.clone()).or_insert_with(|| {
+                leaves.push((key, BTreeMap::new(), BTreeMap::new()));
+                leaves.len() - 1
+            });
+            if !folders.contains(&piece.folder) {
+                folders.push(piece.folder.clone());
+            }
+            leaves[i].1.entry(piece.folder.clone()).or_default().push(piece.values.clone());
+            for (column, word) in &piece.texts {
+                if !text_columns.contains(column) {
+                    text_columns.push(column.clone());
+                }
+                let held = leaves[i].2.entry(column.clone()).or_default();
+                if held.is_empty() {
+                    *held = word.clone();
+                } else if !held.split("; ").any(|w| w == word) {
+                    held.push_str("; ");
+                    held.push_str(word);
                 }
             }
         }
-        _ => {
-            if let Some(d) = fields.iter().position(|f| f.kind == FieldKind::Density) {
-                columns.push(TableColumn::adding("tonnes", "t", AddUp::Sum, tonnes(d)));
+    }
+    let mut columns = vec![TableColumn::text("case", leaves.iter().map(|l| Some(l.0[0].clone())).collect())];
+    for (n, level) in prepared.upper.iter().chain(&prepared.lower).enumerate() {
+        columns.push(TableColumn::text(level, leaves.iter().map(|l| Some(l.0[n + 1].clone()).filter(|v| !v.is_empty())).collect()));
+    }
+    let setting = |key: &str| prepared.steps.iter().find(|(n, _, _)| *n == "in_situ").map_or(key.to_string(), |(_, _, s)| s.setting(key).to_string());
+    let field = |key: &str| fields.iter().position(|f| f.name == setting(key));
+    let v = prepared.fields.volume();
+    for folder in &folders {
+        // Each leaf's pieces in this folder, added up by the fields' rules.
+        let added: Vec<Option<Vec<f64>>> = leaves
+            .iter()
+            .map(|l| {
+                l.1.get(folder).map(|pieces| {
+                    let refs: Vec<&[f64]> = pieces.iter().map(Vec::as_slice).collect();
+                    zd_reserves::add_up_values(&prepared.fields, &refs)
+                })
+            })
+            .collect();
+        let value = |f: usize| added.iter().map(|a| a.as_ref().map(|a| a[f]).filter(|x| x.is_finite())).collect::<Vec<_>>();
+        let mut push = |column: TableColumn| {
+            if let zd_core::ColumnValues::Number(values) = &column.values
+                && values.iter().any(Option::is_some)
+            {
+                columns.push(column);
+            }
+        };
+        for (i, f) in fields.iter().enumerate() {
+            // A thickness adds down a column and an area is a column's largest; across leaves neither adds up, so a
+            // summary shows neither.
+            let across = if matches!(f.kind, FieldKind::Thickness | FieldKind::Area) { None } else { Some(f.add_up.clone()) };
+            push(TableColumn { name: format!("{folder}\\{}", f.name), unit: unit_of_kind(f.kind).to_string(), add_up: across, values: zd_core::ColumnValues::Number(value(i)) });
+        }
+        let tonnes = |d: usize| added.iter().map(|a| a.as_ref().map(|a| a[v] * a[d]).filter(|x| x.is_finite())).collect::<Vec<_>>();
+        let named = |n: &str| format!("{folder}\\{n}");
+        match (field("rd"), field("rd_is")) {
+            (Some(rd), Some(rd_is)) if added.iter().flatten().any(|a| a[rd_is].is_finite()) => {
+                push(TableColumn::adding(&named("tonnes"), "t", AddUp::Sum, tonnes(rd_is)));
+                push(TableColumn::adding(&named("tonnes_ad"), "t", AddUp::Sum, tonnes(rd)));
+                if let (Some(mad), Some(mis)) = (field("mad"), field("mis")) {
+                    for (q, f) in fields.iter().enumerate().filter(|(_, f)| f.kind == FieldKind::Quality) {
+                        let values = added.iter().map(|a| a.as_ref().map(|a| a[q] * (1.0 - a[mis] / 100.0) / (1.0 - a[mad] / 100.0)).filter(|x| x.is_finite())).collect();
+                        push(TableColumn::adding(&named(&format!("{}_is", f.name)), "", AddUp::Mass { density: named(&setting("rd_is")) }, values));
+                    }
+                }
+            }
+            _ => {
+                if let Some(d) = fields.iter().position(|f| f.kind == FieldKind::Density) {
+                    push(TableColumn::adding(&named("tonnes"), "t", AddUp::Sum, tonnes(d)));
+                }
             }
         }
+    }
+    for column in &text_columns {
+        columns.push(TableColumn::text(column, leaves.iter().map(|l| l.2.get(column).cloned().filter(|w| !w.is_empty())).collect()));
     }
     Table { columns }
 }
@@ -1039,7 +1071,7 @@ fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: V
         let rows = table.rows();
         let name = p.name.replace("{dataflow}", &prepared.name).replace("{case}", case);
         changes.push(Change::Create { name: name.clone(), layer: p.layer.clone(), attributes: Attributes::new(), body: Body::Table(Arc::new(table)) });
-        messages.push(format!("{name}: {} block{}, {rows} row{}", of.len(), plural(of.len()), plural(rows)));
+        messages.push(format!("{name}: {} block{}, {rows} lea{}", of.len(), plural(of.len()), if rows == 1 { "f" } else { "ves" }));
     }
     let steps: Vec<&str> = prepared.steps.iter().map(|(n, _, _)| *n).collect();
     let mut head = format!(
@@ -1096,17 +1128,20 @@ fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: V
     }
     if !prepared.unplaced.is_empty() {
         let n = prepared.unplaced.len();
-        let named: Vec<&str> = prepared.unplaced.iter().take(NAMED).map(String::as_str).collect();
-        outcome.notes.push(Note::warning(Code::ReservesBlockStopped, format!("{n} solid{} with no strip or block left out: {}", plural(n), named.join(", "))));
+        let mut levels: Vec<&str> = prepared.unplaced.iter().map(|(_, l)| l.as_str()).collect();
+        levels.sort();
+        levels.dedup();
+        let named: Vec<&str> = prepared.unplaced.iter().take(NAMED).map(|(b, _)| b.as_str()).collect();
+        outcome.notes.push(Note::warning(Code::ReservesBlockStopped, format!("{n} solid{} with no {} and no default for it left out: {}", plural(n), levels.join(" or "), named.join(", "))));
     }
     // A field read from blocks that some have no value for, said once with how many.
     for (i, f) in prepared.dataflow.fields.iter().enumerate() {
         if !matches!(f.source, FieldSource::Attribute { .. } | FieldSource::Parameter { .. }) {
             continue;
         }
-        let missing = ran.iter().flat_map(|r| r.rows.iter()).filter(|row| row.values[i].is_nan()).count();
+        let missing = ran.iter().flat_map(|r| r.rows.iter()).filter(|piece| piece.folder.starts_with("Insitu\\") && piece.values[i].is_nan()).count();
         if missing > 0 {
-            outcome.notes.push(Note::new(Severity::Info, Some(Code::ReservesValueMissing), format!("{missing} row{} written with no {}: no block attribute or parameter row gave it", plural(missing), f.field.name)));
+            outcome.notes.push(Note::new(Severity::Info, Some(Code::ReservesValueMissing), format!("{missing} in situ piece{} with no {}: no block attribute or parameter row gave it", plural(missing), f.field.name)));
         }
     }
     outcome
@@ -1186,7 +1221,7 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
     let row = |material: &str| ParameterRow { when: [("material".to_string(), material.to_string())].into(), values: BTreeMap::new() };
     let default = ParameterRow { when: BTreeMap::new(), values: [("underburden_thickness".to_string(), ParamValue::Number(UNDERBURDEN_THICKNESS))].into() };
     let table = ParameterTable { filters: vec!["material".into(), "seam".into()], columns, rows: vec![row("waste"), row("coal"), default] };
-    (table, Dataflow { fields, steps, parameters: Vec::new() })
+    (table, Dataflow { levels: zd_core::default_levels(), fields, steps, parameters: Vec::new() })
 }
 
 impl crate::Session {

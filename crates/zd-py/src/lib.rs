@@ -174,13 +174,14 @@ impl PySession {
     }
 
     /// One block's column after each of a dataflow's steps (decision 0072): `params` as `reserves.run` takes them, the block
-    /// by case, strip and block. A list of steps, each with its units and their values by field.
-    #[pyo3(signature = (params, strip, block, case=None))]
-    fn reserves_preview(&self, py: Python<'_>, params: &Bound<'_, PyDict>, strip: &str, block: &str, case: Option<&str>) -> PyResult<Py<PyAny>> {
+    /// by case and its values of the dataflow's levels above the seam (`["Pit", "3", "B1"]` by default, decision 0074). A
+    /// list of steps, each with its units and their values by field.
+    #[pyo3(signature = (params, path, case=None))]
+    fn reserves_preview(&self, py: Python<'_>, params: &Bound<'_, PyDict>, path: Vec<String>, case: Option<&str>) -> PyResult<Py<PyAny>> {
         let p: zd_commands::builtin::RunReservesParams = serde_json::from_value(from_py(params.as_any())?).map_err(|e| CommandError::new_err(e.to_string()))?;
         let project = self.inner.project();
         let get = |id| project.object(id).cloned().ok_or(zd_commands::CommandError::MissingObject(id));
-        let views = zd_commands::builtin::reserves_preview(&get, &p, case.unwrap_or(zd_core::BASE_CASE), strip, block).map_err(|e| CommandError::new_err(e.to_string()))?;
+        let views = zd_commands::builtin::reserves_preview(&get, &p, case.unwrap_or(zd_core::BASE_CASE), &path).map_err(|e| CommandError::new_err(e.to_string()))?;
         to_py(py, &json!(views))
     }
 

@@ -37,7 +37,7 @@ const N: f64 = f64::NAN;
 
 /// The block's units, pushed bottom up so the sort has work to do.
 fn column() -> Column {
-    let mut c = Column::new(ColumnKey { case: "Base".into(), strip: "5".into(), block: "B1".into() }, fields());
+    let mut c = Column::new(ColumnKey::new("Base", &["5", "B1"]), fields());
     let rows: [(&str, u32, &str, &str, [f64; 7]); 5] = [
         ("below cl", 4, "waste", "", [2000.0, 20.0, 100.0, 2.3, 85.0, N, N]),
         ("cl", 3, "coal", "cl", [300.0, 3.0, 100.0, 1.5, 20.0, 0.5, 25.0]),

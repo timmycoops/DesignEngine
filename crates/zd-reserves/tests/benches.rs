@@ -53,7 +53,7 @@ const ROWS: [Row; 6] = [
 ];
 
 fn column() -> Column {
-    let mut c = Column::new(ColumnKey { case: "Base".into(), strip: "5".into(), block: "B1".into() }, fields());
+    let mut c = Column::new(ColumnKey::new("Base", &["5", "B1"]), fields());
     for (name, stack, bench, material, seam, values) in ROWS {
         let origin = Origin { object: format!("solid-{name}"), name: format!("5_B1_{name}") };
         let bench = bench.map(|(label, floor)| Bench::new(label, floor));
@@ -262,7 +262,7 @@ fn demo_pit_sized_columns_join_and_write_by_bench_quickly() {
     let mut rows = 0;
     let mut units = 0;
     for k in 0..90 {
-        let mut c = Column::new(ColumnKey { case: "Base".into(), strip: (k / 10).to_string(), block: format!("B{}", k % 10) }, fields.clone());
+        let mut c = Column::new(ColumnKey { case: "Base".into(), path: vec![(k / 10).to_string(), format!("B{}", k % 10)] }, fields.clone());
         for stack in (0..6u32).rev() {
             for b in 0..4 {
                 let floor = 100.0 - 10.0 * f64::from(stack * 4 + b);

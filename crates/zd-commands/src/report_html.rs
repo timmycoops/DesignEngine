@@ -217,17 +217,17 @@ fn reserves(h: &mut String, c: &CaseFigures, k: usize) {
         for (w, write) in table.writes.iter().enumerate() {
             let _ = write!(h, "<h3>{} · {}</h3>", esc(&table.name), esc(&write.write.replace('_', " ")));
             let heads: String = write.columns.iter().map(|(n, u)| format!("<th>{}{}</th>", esc(&n.replace('_', " ")), if u.is_empty() { String::new() } else { format!(" {}", esc(&u.replace("m3", "m³").replace("m2", "m²").replace("t/m3", "t/m³"))) })).collect();
-            let _ = write!(h, "<div class=\"scroll\"><table class=\"sortable\" id=\"reserves-{k}-{t}-{w}\"><thead><tr><th>Horizon</th><th class=\"l\">Material</th>{heads}<th>Rows</th></tr></thead><tbody>");
-            for row in &write.horizons {
+            let _ = write!(h, "<div class=\"scroll\"><table class=\"sortable\" id=\"reserves-{k}-{t}-{w}\"><thead><tr><th>Seam</th><th class=\"l\">Folder</th>{heads}<th>Leaves</th></tr></thead><tbody>");
+            for row in &write.seams {
                 res_row(h, row, false);
             }
             h.push_str("</tbody><tbody>");
-            for row in [&write.coal, &write.waste].into_iter().flatten() {
+            for row in &write.totals {
                 res_row(h, row, true);
             }
             h.push_str("</tbody></table></div>");
             if !write.benches.is_empty() {
-                let _ = write!(h, "<div class=\"scroll\"><table class=\"sortable\" id=\"reserves-bench-{k}-{t}-{w}\"><thead><tr><th class=\"l\">Bench</th><th class=\"l\">Material</th>{heads}<th>Rows</th></tr></thead><tbody>");
+                let _ = write!(h, "<div class=\"scroll\"><table class=\"sortable\" id=\"reserves-bench-{k}-{t}-{w}\"><thead><tr><th class=\"l\">Bench</th><th class=\"l\">Folder</th>{heads}<th>Leaves</th></tr></thead><tbody>");
                 for row in &write.benches {
                     res_row(h, row, false);
                 }
@@ -235,7 +235,7 @@ fn reserves(h: &mut String, c: &CaseFigures, k: usize) {
             }
         }
     }
-    h.push_str("<div class=\"mut\">Each column adds up by its own rule as the dataflow declares it: summed, by volume, by tonnes, the largest or the smallest. A field a dataflow adds shows here as a column of its own.</div>");
+    h.push_str("<div class=\"mut\">A table a top folder, as the reserves table holds it (Imported, Insitu, Loss and the rest), by seam and the folder below it. Each column adds up by its own rule as the dataflow declares it: summed, by volume, by tonnes, the largest or the smallest. A field a dataflow adds shows here as a column of its own.</div>");
 }
 
 fn res_row(h: &mut String, row: &crate::report::ResRow, total: bool) {

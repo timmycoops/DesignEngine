@@ -252,6 +252,7 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
         .unwrap();
     let table_id = named(&p, "assumptions").id;
     let dataflow = Dataflow {
+        levels: zd_core::default_levels(),
         fields: vec![
             field("volume", FieldKind::Volume, AddUp::Sum, FieldSource::Volume),
             field("thickness", FieldKind::Thickness, AddUp::Sum, FieldSource::Thickness),

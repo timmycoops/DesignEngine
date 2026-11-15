@@ -71,10 +71,37 @@ impl DataflowStep {
     }
 }
 
-/// A dataflow: its fields, its steps in order and the parameter tables it reads, first to last.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// One level of the reserves table's tree (decision 0074): a block attribute, and the value a block without it takes,
+/// if any.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Level {
+    pub attribute: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+}
+
+impl Level {
+    pub fn new(attribute: &str) -> Self {
+        Level { attribute: attribute.to_string(), default: None }
+    }
+}
+
+/// Pit, strip, block, seam and bench, a block with no pit in pit `Pit` (decision 0074).
+pub fn default_levels() -> Vec<Level> {
+    let mut levels: Vec<Level> = ["pit", "strip", "block", "seam", "bench"].into_iter().map(Level::new).collect();
+    levels[0].default = Some("Pit".into());
+    levels
+}
+
+/// A dataflow: its levels, fields, steps in order and the parameter tables it reads, first to last.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Dataflow {
+    /// The reserves table's levels top down, block attributes (Tim: "a custom attribute essentially ... these control
+    /// the grouping logic and how the table tree looks"): those above `seam` make a column; all of them the tree.
+    #[serde(default = "default_levels")]
+    pub levels: Vec<Level>,
     pub fields: Vec<DataflowField>,
     #[serde(default)]
     pub steps: Vec<DataflowStep>,
@@ -83,7 +110,18 @@ pub struct Dataflow {
     pub parameters: Vec<ObjectId>,
 }
 
+impl Default for Dataflow {
+    fn default() -> Self {
+        Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new() }
+    }
+}
+
 impl Dataflow {
+    /// How many of the levels make a column: those above `seam`, else all but the last.
+    pub fn column_levels(&self) -> usize {
+        self.levels.iter().position(|l| l.attribute.eq_ignore_ascii_case("seam")).unwrap_or(self.levels.len().saturating_sub(1))
+    }
+
     /// The fields as the column engine checks them: names unique, one volume and one thickness, each summed, every mass
     /// average naming a density.
     pub fn engine_fields(&self) -> Result<Fields, String> {
@@ -93,6 +131,17 @@ impl Dataflow {
     /// Whether the dataflow holds together: its fields, and its steps named, each once.
     pub fn check(&self) -> Result<(), String> {
         self.engine_fields()?;
+        if self.levels.is_empty() {
+            return Err("the dataflow has no levels".into());
+        }
+        for (i, l) in self.levels.iter().enumerate() {
+            if l.attribute.trim().is_empty() {
+                return Err(format!("level {} names no attribute", i + 1));
+            }
+            if self.levels[..i].iter().any(|m| m.attribute.eq_ignore_ascii_case(&l.attribute)) {
+                return Err(format!("the level {} is listed twice", l.attribute));
+            }
+        }
         for (i, s) in self.steps.iter().enumerate() {
             if s.step.trim().is_empty() {
                 return Err(format!("step {} has no name", i + 1));
@@ -117,6 +166,7 @@ mod tests {
 
     fn dataflow() -> Dataflow {
         Dataflow {
+            levels: default_levels(),
             fields: vec![
                 field("volume", FieldKind::Volume, AddUp::Sum, FieldSource::Volume),
                 field("thickness", FieldKind::Thickness, AddUp::Sum, FieldSource::Thickness),

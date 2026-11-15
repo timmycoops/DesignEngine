@@ -7,6 +7,10 @@
 //! | U       | 16 - 20 | coal     | 20,000 | benches 18 and 16, 10,000 m³ each   | 1.4; 1.4, 1.6 | 10  |
 //! | U-L     | 15 - 16 | waste    | 5,000  | 5,000                               | 2.3 (a row)   |     |
 //! | L       | 12 - 15 | coal     | 15,000 | 15,000                              | 1.5           | 20  |
+//!
+//! Since decision 0074 the results are a reserves table: a row a leaf (case, pit, strip, block, seam, bench), the waste
+//! above a seam on the seam's leaf (OB on U's, U-L on L's), and a column a field under its folder, `Insitu\Coal\volume`.
+//! B1 has two leaves, U and L; B2 four, U unbenched (holding OB), U's benches 18 and 16, and L.
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -136,10 +140,33 @@ fn close(a: f64, b: f64) -> bool {
     (a - b).abs() <= TOLERANCE * b.abs().max(1.0)
 }
 
-/// The row of a block, horizon and bench.
-fn row(t: &Table, block: &str, horizon: &str, bench: Option<&str>) -> usize {
-    let (blocks, horizons, benches) = (texts(t, "block"), texts(t, "horizon"), texts(t, "bench"));
-    (0..t.rows()).find(|&i| blocks[i].as_deref() == Some(block) && horizons[i].as_deref() == Some(horizon) && benches[i].as_deref() == bench).expect("a row")
+/// The leaf of a block, seam and bench.
+fn leaf(t: &Table, block: &str, seam: &str, bench: Option<&str>) -> usize {
+    let (blocks, seams, benches) = (texts(t, "block"), texts(t, "seam"), texts(t, "bench"));
+    (0..t.rows()).find(|&i| blocks[i].as_deref() == Some(block) && seams[i].as_deref() == Some(seam) && benches[i].as_deref() == bench).expect("a leaf")
+}
+
+/// A field's value on a leaf, by its folder path; none where the leaf has none or no leaf has the column.
+fn value(t: &Table, at: usize, path: &str) -> Option<f64> {
+    t.column(path).and_then(|c| match &c.values {
+        ColumnValues::Number(v) => v[at],
+        _ => None,
+    })
+}
+
+/// A column summed over every leaf.
+fn total(t: &Table, path: &str) -> f64 {
+    t.column(path).map_or(0.0, |c| match &c.values {
+        ColumnValues::Number(v) => v.iter().flatten().sum(),
+        _ => 0.0,
+    })
+}
+
+const COAL: &str = "Insitu\\Coal";
+const WASTE: &str = "Insitu\\Waste";
+
+fn at(folder: &str, field: &str) -> String {
+    format!("{folder}\\{field}")
 }
 
 #[test]
@@ -153,36 +180,70 @@ fn each_block_s_horizons_and_benches_are_written_in_situ_with_their_own_values()
     assert_eq!(made.len(), 1, "one table, Base");
     assert_eq!(s.project().object(made[0]).unwrap().name, "Reserves Base");
     let t = table(&s, made[0]);
-    assert_eq!(t.rows(), 9, "B1's four horizons, B2's with U's two benches");
+    assert_eq!(t.rows(), 6, "B1's U and L; B2's U, its benches 18 and 16, and L");
     assert!(record.messages[0].starts_with("2 of 2 blocks ran through initialise, in_situ, join_benches; 180000.0 m3 in"), "{}", record.messages[0]);
+    assert_eq!(record.messages[1], "Reserves Base: 2 blocks, 6 leaves");
+    let levels: Vec<&str> = t.columns.iter().take(6).map(|c| c.name.as_str()).collect();
+    assert_eq!(levels, ["case", "pit", "strip", "block", "seam", "bench"], "the default levels");
+    assert_eq!(texts(&t, "pit")[0].as_deref(), Some("Pit"), "no pit attribute: the level's default");
 
-    // Rows top down by the stack in each block.
-    let b1: Vec<String> = (0..t.rows()).filter(|&i| texts(&t, "block")[i].as_deref() == Some("B1")).map(|i| texts(&t, "horizon")[i].clone().unwrap()).collect();
-    assert_eq!(b1, ["OB", "U", "U-L", "L"]);
-    let (volume, thickness, area, rd, ash, tonnes, cutoff) =
-        (numbers(&t, "volume"), numbers(&t, "thickness"), numbers(&t, "area"), numbers(&t, "rd"), numbers(&t, "ash"), numbers(&t, "tonnes"), numbers(&t, "ash_cutoff"));
-    let u = row(&t, "B1", "U", None);
-    assert!(close(volume[u].unwrap(), 20_000.0) && close(thickness[u].unwrap(), 4.0) && close(area[u].unwrap(), 5_000.0));
-    assert!(close(rd[u].unwrap(), 1.4) && close(tonnes[u].unwrap(), 28_000.0) && close(ash[u].unwrap(), 10.0) && close(cutoff[u].unwrap(), 35.0));
+    // B1's U leaf: its coal and the overburden above it, side by side.
+    let u = leaf(&t, "B1", "U", None);
+    let coal = |f: &str| value(&t, u, &at(COAL, f)).unwrap();
+    assert!(close(coal("volume"), 20_000.0) && close(coal("thickness"), 4.0) && close(coal("area"), 5_000.0));
+    assert!(close(coal("rd"), 1.4) && close(coal("tonnes"), 28_000.0) && close(coal("ash"), 10.0) && close(coal("ash_cutoff"), 35.0));
+    assert!(close(value(&t, u, &at(WASTE, "volume")).unwrap(), 50_000.0) && close(value(&t, u, &at(WASTE, "tonnes")).unwrap(), 115_000.0));
+    assert!(close(value(&t, u, &at(WASTE, "rd")).unwrap(), 2.3), "waste RD from the parameter row");
+    assert!(t.column(&at(WASTE, "ash")).is_none(), "no waste has an ash, so no column");
 
-    // B2's U benches written as they are, each with its own RD and tonnes: in situ comes before the join.
-    let (top, bottom) = (row(&t, "B2", "U", Some("18")), row(&t, "B2", "U", Some("16")));
-    assert!(top < bottom, "benches top down");
-    assert!(close(volume[top].unwrap(), 10_000.0) && close(rd[top].unwrap(), 1.4) && close(tonnes[top].unwrap(), 14_000.0));
-    assert!(close(volume[bottom].unwrap(), 10_000.0) && close(rd[bottom].unwrap(), 1.6) && close(tonnes[bottom].unwrap(), 16_000.0));
-    assert_eq!(texts(&t, "from")[top].as_deref(), Some("3_B2_U_18"));
+    // B2's U benches, each with its own RD and tonnes: in situ comes before the join. B2's OB on U unbenched.
+    let (top, bottom, unbenched) = (leaf(&t, "B2", "U", Some("18")), leaf(&t, "B2", "U", Some("16")), leaf(&t, "B2", "U", None));
+    assert!(unbenched < top && top < bottom, "top down");
+    assert!(close(value(&t, top, &at(COAL, "volume")).unwrap(), 10_000.0) && close(value(&t, top, &at(COAL, "rd")).unwrap(), 1.4) && close(value(&t, top, &at(COAL, "tonnes")).unwrap(), 14_000.0));
+    assert!(close(value(&t, bottom, &at(COAL, "tonnes")).unwrap(), 16_000.0) && value(&t, bottom, &at(WASTE, "volume")).is_none());
+    assert!(close(value(&t, unbenched, &at(WASTE, "volume")).unwrap(), 50_000.0) && value(&t, unbenched, &at(COAL, "volume")).is_none());
 
-    // Waste RD from the parameter row; waste has no ash, said once; everything adds up to the blocks.
-    let ob = row(&t, "B1", "OB", None);
-    assert!(close(rd[ob].unwrap(), 2.3) && close(tonnes[ob].unwrap(), 115_000.0) && ash[ob].is_none());
-    let total: f64 = volume.iter().map(|v| v.unwrap()).sum();
-    assert!(close(total, 180_000.0));
+    // Imported: each block as read; everything adds up to the blocks either way.
+    assert!(close(total(&t, "Imported\\Coal\\volume"), 70_000.0) && close(total(&t, "Imported\\Waste\\volume"), 110_000.0));
+    assert!(close(total(&t, &at(COAL, "volume")) + total(&t, &at(WASTE, "volume")), 180_000.0));
     let missing: Vec<&str> = record.notes.iter().filter(|n| n.code == Some(Code::ReservesValueMissing)).map(|n| n.text.as_str()).collect();
-    assert_eq!(missing, ["4 rows written with no ash: no block attribute or parameter row gave it"]);
+    assert_eq!(missing, ["4 in situ pieces with no ash: no block attribute or parameter row gave it"]);
     assert!(record.notes.iter().all(|n| n.severity < Severity::Warning), "{:?}", record.notes);
-    // How each column adds up goes with it, for the report.
-    assert_eq!(t.column("ash").unwrap().add_up, Some(zd_reserves::AddUp::Mass { density: "rd".into() }));
-    assert_eq!(t.column("thickness").unwrap().add_up, None, "a thickness doesn't add up across blocks");
+    // How each column adds up goes with it, for any summary.
+    assert_eq!(t.column(&at(COAL, "ash")).unwrap().add_up, Some(zd_reserves::AddUp::Mass { density: "rd".into() }));
+    assert_eq!(t.column(&at(COAL, "thickness")).unwrap().add_up, None, "a thickness doesn't add up across leaves");
+}
+
+/// The levels are the dataflow's: here pit, strip, block and seam, no bench, each block in pit West, so B2's U benches
+/// share one leaf, 20,000 m³ at RD 1.5 by volume; a block with no strip and no default is left out, said.
+#[test]
+fn the_levels_set_the_columns_and_the_leaves() {
+    let mut s = session();
+    let mut ids = blocks(&mut s, None);
+    ids.push(box_solid(&mut s, "stray", 300.0, (12.0, 15.0), json!({ "block": "B9", "horizon": "L", "material": "coal", "seam": "L", "rd": 1.5 })));
+    let table_id = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": "when material,rd (t/m3),underburden_thickness (m)\nwaste,2.3,\n,,0\n" })).unwrap())[0];
+    let content = json!({
+        "levels": [{ "attribute": "pit", "default": "West" }, { "attribute": "strip" }, { "attribute": "block" }, { "attribute": "seam" }],
+        "fields": [
+            { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
+            { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
+            { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
+        ],
+        "steps": [{ "step": "initialise" }, { "step": "in_situ" }],
+        "parameters": [table_id],
+    });
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0];
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let levels: Vec<&str> = t.columns.iter().take(5).map(|c| c.name.as_str()).collect();
+    assert_eq!(levels, ["case", "pit", "strip", "block", "seam"]);
+    assert_eq!(t.rows(), 4, "B1 and B2, U and L each");
+    assert!(texts(&t, "pit").iter().all(|p| p.as_deref() == Some("West")));
+    let blocks = texts(&t, "block");
+    let u2 = (0..t.rows()).find(|&i| blocks[i].as_deref() == Some("B2") && texts(&t, "seam")[i].as_deref() == Some("U")).unwrap();
+    assert!(close(value(&t, u2, &at(COAL, "volume")).unwrap(), 20_000.0) && close(value(&t, u2, &at(COAL, "rd")).unwrap(), 1.5));
+    let stopped: Vec<&str> = record.notes.iter().filter(|n| n.code == Some(Code::ReservesBlockStopped)).map(|n| n.text.as_str()).collect();
+    assert_eq!(stopped, ["1 solid with no strip and no default for it left out: stray"]);
 }
 
 #[test]
@@ -197,9 +258,8 @@ fn a_step_s_own_rows_are_read_first_and_cases_get_a_table_each() {
     let names: Vec<String> = made.iter().map(|&id| s.project().object(id).unwrap().name.clone()).collect();
     assert_eq!(names, ["Reserves 50m", "Reserves Base"]);
     let t = table(&s, made[1]);
-    let cutoff = numbers(&t, "ash_cutoff");
-    assert!(close(cutoff[row(&t, "B1", "U", None)].unwrap(), 30.0), "the step's row for U");
-    assert!(close(cutoff[row(&t, "B1", "L", None)].unwrap(), 35.0), "the dataflow's table for L");
+    assert!(close(value(&t, leaf(&t, "B1", "U", None), &at(COAL, "ash_cutoff")).unwrap(), 30.0), "the step's row for U");
+    assert!(close(value(&t, leaf(&t, "B1", "L", None), &at(COAL, "ash_cutoff")).unwrap(), 35.0), "the dataflow's table for L");
     assert_eq!(texts(&table(&s, made[0]), "case")[0].as_deref(), Some("50m"));
 }
 
@@ -238,7 +298,8 @@ fn the_preview_shows_a_block_s_column_after_each_step() {
     let p: RunReservesParams = serde_json::from_value(json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
     let project = s.project();
     let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
-    let views = reserves_preview(&get, &p, "Base", "3", "B2").unwrap();
+    let path = ["Pit".to_string(), "3".to_string(), "B2".to_string()];
+    let views = reserves_preview(&get, &p, "Base", &path).unwrap();
     let steps: Vec<&str> = views.iter().map(|v| v.step.as_str()).collect();
     assert_eq!(steps, ["as input", "initialise", "in_situ", "join_benches"]);
     let horizons = |i: usize| views[i].units.iter().map(|u| u.horizon.clone()).collect::<Vec<_>>();
@@ -270,13 +331,13 @@ waste,2.3,6000,
 ");
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
     let t = table(&s, created(&record)[0]);
-    let (write, horizon, became, volume) = (texts(&t, "write"), texts(&t, "horizon"), texts(&t, "became"), numbers(&t, "volume"));
-    let small: Vec<usize> = (0..t.rows()).filter(|&i| write[i].as_deref() == Some("small_volume")).collect();
-    assert_eq!(small.len(), 2);
-    assert!(small.iter().all(|&i| horizon[i].as_deref() == Some("U-L") && became[i].as_deref() == Some("small volume") && close(volume[i].unwrap(), 5_000.0)));
-    assert!((0..t.rows()).all(|i| write[i].as_deref() != Some("in_situ") || horizon[i].as_deref() != Some("U-L")), "not in situ");
-    let total: f64 = volume.iter().map(|v| v.unwrap()).sum();
-    assert!(close(total, 180_000.0), "every block written once, at one write point or the other");
+    for block in ["B1", "B2"] {
+        let l = leaf(&t, block, "L", None);
+        assert!(close(value(&t, l, "Small volume\\Waste\\volume").unwrap(), 5_000.0), "U-L on L's leaf as a small volume");
+        assert!(value(&t, l, &at(WASTE, "volume")).is_none(), "and not in situ");
+    }
+    let written = total(&t, &at(COAL, "volume")) + total(&t, &at(WASTE, "volume")) + total(&t, "Small volume\\Waste\\volume");
+    assert!(close(written, 180_000.0), "every block written once, in situ or as a small volume");
     assert_eq!(notes_of(&record, Code::ReservesSmallVolume), ["2 units set aside as small volumes, 10000.0 m3"]);
 }
 
@@ -290,7 +351,7 @@ fn underburden_goes_below_the_last_coal_out_of_the_model() {
     let p: RunReservesParams = serde_json::from_value(json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
     let project = s.project();
     let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
-    let views = reserves_preview(&get, &p, "Base", "3", "B1").unwrap();
+    let views = reserves_preview(&get, &p, "Base", &["Pit".to_string(), "3".to_string(), "B1".to_string()]).unwrap();
     let ub = views[2].units.last().unwrap();
     assert_eq!((ub.horizon.as_str(), ub.material.as_str()), ("underburden", "waste"));
     assert!(close(ub.values["volume"], 50_000.0) && close(ub.values["thickness"], 10.0) && close(ub.values["rd"], 2.3), "{:?}", ub.values);
@@ -298,7 +359,8 @@ fn underburden_goes_below_the_last_coal_out_of_the_model() {
     assert_eq!(notes_of(&record, Code::ReservesUnderburden), ["2 units underburden added below the last coal, out of model, 100000.0 m3"]);
     assert!(record.messages[0].contains("180000.0 m3 in, every column balanced to 0.0e0"), "{}", record.messages[0]);
     let t = table(&s, created(&record)[0]);
-    assert!(texts(&t, "horizon").iter().all(|h| h.as_deref() != Some("underburden")), "never written");
+    assert!(close(total(&t, &at(COAL, "volume")) + total(&t, &at(WASTE, "volume")), 180_000.0), "the underburden never written");
+    assert_eq!(t.rows(), 6);
 
     // Real waste below L in B1: none added there.
     ids.push(box_solid(&mut s, "3_B1_below L", 0.0, (5.0, 12.0), json!({ "strip": 3.0, "block": "B1", "horizon": "below L", "material": "waste" })));
@@ -319,10 +381,9 @@ coal,,5,10,12,3.5
     let flow = flow(&mut s, json!(STEPS_3A.map(|s| json!({ "step": s }))), csv);
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
     let t = table(&s, created(&record)[0]);
-    let ash = numbers(&t, "ash");
-    assert!(close(ash[row(&t, "B1", "L", None)].unwrap(), 12.0), "outside its limits");
-    assert!(close(ash[row(&t, "B1", "U", None)].unwrap(), 10.0), "on its limit, kept");
-    assert!(close(ash[row(&t, "B1", "OB", None)].unwrap(), 60.0), "waste takes its default");
+    assert!(close(value(&t, leaf(&t, "B1", "L", None), &at(COAL, "ash")).unwrap(), 12.0), "outside its limits");
+    assert!(close(value(&t, leaf(&t, "B1", "U", None), &at(COAL, "ash")).unwrap(), 10.0), "on its limit, kept");
+    assert!(close(value(&t, leaf(&t, "B1", "U", None), &at(WASTE, "ash")).unwrap(), 60.0), "waste takes its default");
     let mut said = notes_of(&record, Code::ReservesDefaulted);
     said.sort();
     assert_eq!(said, ["2 units ash: coal outside its limits given its default, 30000.0 m3", "6 units ash: waste given its default, 210000.0 m3"], "the underburden too, as Spry");
@@ -371,18 +432,17 @@ fn coal_is_written_on_the_in_situ_basis_by_preston_sanders() {
     let flow = moist_flow(&mut s, "when material,rd (t/m3),mad (%),mis (%),mrom (%),underburden_thickness (m)\nwaste,2.3,,,,0\ncoal,,3,8,10,\n");
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
     let t = table(&s, created(&record)[0]);
-    let (tonnes, tonnes_ad, rd_is, rd_rom, ash_is) = (numbers(&t, "tonnes"), numbers(&t, "tonnes_ad"), numbers(&t, "rd_is"), numbers(&t, "rd_rom"), numbers(&t, "ash_is"));
     let dis = |rd: f64| rd * 0.97 / (1.0 + rd * 0.05 - 0.08);
-    let u = row(&t, "B1", "U", None);
-    assert!(close(rd_is[u].unwrap(), 1.358 / 0.99) && close(tonnes[u].unwrap(), 20_000.0 * 1.358 / 0.99) && close(tonnes_ad[u].unwrap(), 28_000.0));
-    assert!(close(ash_is[u].unwrap(), 10.0 * 0.92 / 0.97) && close(rd_rom[u].unwrap(), dis(1.4) * 0.92 / 0.90));
+    let u = leaf(&t, "B1", "U", None);
+    let coal = |f: &str| value(&t, u, &at(COAL, f)).unwrap();
+    assert!(close(coal("rd_is"), 1.358 / 0.99) && close(coal("tonnes"), 20_000.0 * 1.358 / 0.99) && close(coal("tonnes_ad"), 28_000.0));
+    assert!(close(coal("ash_is"), 10.0 * 0.92 / 0.97) && close(coal("rd_rom"), dis(1.4) * 0.92 / 0.90));
     for (bench, rd) in [("18", 1.4), ("16", 1.6)] {
-        let b = row(&t, "B2", "U", Some(bench));
-        assert!(close(tonnes[b].unwrap(), 10_000.0 * dis(rd)), "bench {bench}");
+        let b = leaf(&t, "B2", "U", Some(bench));
+        assert!(close(value(&t, b, &at(COAL, "tonnes")).unwrap(), 10_000.0 * dis(rd)), "bench {bench}");
     }
-    let ob = row(&t, "B1", "OB", None);
-    assert!(close(tonnes[ob].unwrap(), 115_000.0) && close(rd_rom[ob].unwrap(), 2.3));
-    assert_eq!(t.column("ash_is").unwrap().add_up, Some(zd_reserves::AddUp::Mass { density: "rd_is".into() }));
+    assert!(close(value(&t, u, &at(WASTE, "tonnes")).unwrap(), 115_000.0) && close(value(&t, u, &at(WASTE, "rd_rom")).unwrap(), 2.3));
+    assert_eq!(t.column(&at(COAL, "ash_is")).unwrap().add_up, Some(zd_reserves::AddUp::Mass { density: at(COAL, "rd_is") }));
 }
 
 /// Coal with no in situ moisture can't be put on the in situ basis: its block stops, said with what's missing.
@@ -394,7 +454,7 @@ fn coal_with_no_in_situ_moisture_stops_its_block() {
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
     assert!(record.messages[0].starts_with("0 of 2 blocks ran"), "{}", record.messages[0]);
     let stopped = record.notes.iter().find(|n| n.code == Some(Code::ReservesBlockStopped)).unwrap();
-    assert!(stopped.text.contains("3/B1 at in_situ: 3_B1_U is coal with no mis"), "{}", stopped.text);
+    assert!(stopped.text.contains("Pit/3/B1 at in_situ: 3_B1_U is coal with no mis"), "{}", stopped.text);
 }
 
 // Decision 0073, workstream 3c: working sections, a hand-worked column.
@@ -461,7 +521,7 @@ fn working_sections_form_by_the_seam_rules_in_spry_order() {
     let views = {
         let project = s.project();
         let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
-        reserves_preview(&get, &p, "Base", "1", "B1").unwrap()
+        reserves_preview(&get, &p, "Base", &["Pit".to_string(), "1".to_string(), "B1".to_string()]).unwrap()
     };
     let last = views.last().unwrap();
     let labels: Vec<(String, Option<String>, Option<String>)> = last.units.iter().map(|u| (u.horizon.clone(), u.section.clone(), u.became.clone())).collect();
@@ -488,22 +548,19 @@ fn working_sections_form_by_the_seam_rules_in_spry_order() {
 
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": SECTION_STACK, "layer": "reserves" })).unwrap();
     let t = table(&s, created(&record)[0]);
-    let (horizon, became, volume, thickness) = (texts(&t, "horizon"), texts(&t, "became"), numbers(&t, "volume"), numbers(&t, "thickness"));
-    let written: Vec<(String, Option<String>, f64, f64)> =
-        (0..t.rows()).map(|i| (horizon[i].clone().unwrap(), became[i].clone(), volume[i].unwrap(), thickness[i].unwrap())).collect();
-    let w = |h: &str, b: Option<&str>, v: f64, m: f64| (h.to_string(), b.map(str::to_string), v, m);
-    let expected = [
-        w("A-B", None, 19_000.0, 3.8),
-        w("E", None, 10_000.0, 2.0),
-        w("F", None, 2_500.0, 0.5),
-        w("C", Some("thin loss"), 2_000.0, 0.4),
-        w("D", Some("discarded, high in situ ash"), 15_000.0, 3.0),
-    ];
-    assert_eq!(written.len(), expected.len(), "{written:?}");
-    for (got, want) in written.iter().zip(&expected) {
-        assert_eq!((&got.0, &got.1), (&want.0, &want.1));
-        assert!(close(got.2, want.2) && close(got.3, want.3), "{got:?} against {want:?}");
-    }
+    // Each seam's leaf: its coal in a working section with the section's number and name, the parting in A-B on B's
+    // leaf as working section waste, thin C and discarded D under Loss.
+    let seam = |s: &str| leaf(&t, "B1", s, None);
+    let ws = |s: &str, f: &str| value(&t, seam(s), &format!("Working section\\Coal\\{f}"));
+    let name = |s: &str| texts(&t, "Working section\\name")[seam(s)].clone();
+    let id = |s: &str| texts(&t, "Working section\\id")[seam(s)].clone();
+    assert!(close(ws("A", "volume").unwrap(), 10_000.0) && close(ws("B", "volume").unwrap(), 7_500.0));
+    assert!(close(value(&t, seam("B"), "Working section\\Waste\\volume").unwrap(), 1_500.0), "the parting, on B's leaf");
+    assert_eq!((name("A"), id("A"), name("B")), (Some("A-B".into()), Some("2".into()), Some("A-B".into())));
+    assert_eq!((name("E"), id("E"), name("F"), id("F")), (Some("E".into()), Some("4".into()), Some("F".into()), Some("6".into())));
+    assert!(close(ws("E", "volume").unwrap(), 10_000.0) && close(ws("F", "volume").unwrap(), 2_500.0));
+    assert!(close(value(&t, seam("C"), "Loss\\Thin\\volume").unwrap(), 2_000.0) && ws("C", "volume").is_none());
+    assert!(close(value(&t, seam("D"), "Loss\\High insitu ash\\volume").unwrap(), 15_000.0) && ws("D", "volume").is_none());
     assert!(record.messages[0].contains("every column balanced to 0.0e0"), "{}", record.messages[0]);
     let said: Vec<String> = record.notes.iter().filter(|n| n.code == Some(Code::ReservesDefaulted)).map(|n| n.text.clone()).collect();
     assert!(said.iter().any(|t| t == "3 units coal formed into working sections, 31500.0 m3"), "{said:?}");
@@ -519,10 +576,20 @@ fn a_forced_split_puts_the_parting_with_the_ply_above() {
     let flow = flow(&mut s, section_steps(), &csv);
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": SECTION_STACK, "layer": "reserves" })).unwrap();
     let t = table(&s, created(&record)[0]);
-    let (horizon, volume) = (texts(&t, "horizon"), numbers(&t, "volume"));
-    let a = (0..t.rows()).find(|&i| horizon[i].as_deref() == Some("A")).expect("section A");
-    let b = (0..t.rows()).find(|&i| horizon[i].as_deref() == Some("B")).expect("section B");
-    assert!(close(volume[a].unwrap(), 11_500.0) && close(volume[b].unwrap(), 7_500.0));
+    let (seams, names) = (texts(&t, "seam"), texts(&t, "Working section\\name"));
+    let at_seam = |s: &str| (0..t.rows()).find(|&i| seams[i].as_deref() == Some(s)).unwrap();
+    assert_eq!(names[at_seam("A")].as_deref(), Some("A"));
+    // B's leaf holds the parting, which went with A above it, and B's own coal.
+    assert_eq!(names[at_seam("B")].as_deref(), Some("A; B"));
+    // Each section's volume, from the preview: A with the parting 11,500 m³, B 7,500.
+    let p: RunReservesParams = serde_json::from_value(json!({ "dataflow": flow, "blocks": ids, "stack": SECTION_STACK, "layer": "reserves" })).unwrap();
+    let views = {
+        let project = s.project();
+        let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+        reserves_preview(&get, &p, "Base", &["Pit".to_string(), "1".to_string(), "B1".to_string()]).unwrap()
+    };
+    let in_section = |name: &str| views.last().unwrap().units.iter().filter(|u| u.section.as_deref() == Some(name)).map(|u| u.values["volume"]).sum::<f64>();
+    assert!(close(in_section("2 coal A"), 11_500.0) && close(in_section("3 coal B"), 7_500.0));
 }
 
 /// A coal ply no row gives a min_coal_thickness can't be judged: its block stops, said.

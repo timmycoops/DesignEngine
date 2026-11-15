@@ -65,9 +65,9 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     await wait(60);
   }
   await wait(300);
-  const base = await shown('Reserves Base', 'in situ by horizon');
-  for (let k = 0; k < 50 && !(document.body.textContent ?? '').includes('sections by horizon'); k++) await wait(100);
-  const parts = ['Results table', 'in situ by horizon', 'in situ by bench', 'sections by horizon', 'Coal', '6,461,308', 'tonnes ad t'].map((w) => [w, !!(document.body.textContent ?? '').includes(w)] as const);
-  expect('a results table shows its in situ rows by horizon and by bench and its working sections, coal and waste totalled', parts.every(([, ok]) => ok), { found: !!base, parts, around: base ? base.slice(Math.max(0, base.indexOf('Results table') - 50), base.indexOf('Results table') + 400) : null });
+  const base = await shown('Reserves Base', 'Insitu by seam');
+  for (let k = 0; k < 50 && !(document.body.textContent ?? '').includes('Working section by seam'); k++) await wait(100);
+  const parts = ['Reserves table', 'Imported by seam', 'Insitu by seam', 'Insitu by bench', 'Working section by seam', 'Loss by seam', 'Total', '6,461,308', 'tonnes ad t'].map((w) => [w, !!(document.body.textContent ?? '').includes(w)] as const);
+  expect('a reserves table shows each top folder by seam and by bench, with its totals', parts.every(([, ok]) => ok), { found: !!base, parts, around: base ? base.slice(Math.max(0, base.indexOf('Reserves table') - 50), base.indexOf('Reserves table') + 400) : null });
   return { ...results, failures };
 }
