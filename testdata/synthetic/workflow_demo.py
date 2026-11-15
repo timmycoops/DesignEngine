@@ -267,6 +267,14 @@ def main():
         dilution = {kind: under("Dilution", kind, "volume") for kind in ("Roof", "Floor", "Edge", "Other")}
         print("      losses, m3: " + ", ".join(f"{k.lower()} {v:,.1f}" for k, v in losses.items()))
         print("      dilution, m3: " + ", ".join(f"{k.lower()} {v:,.1f}" for k, v in dilution.items()))
+        # ROM (0074, 4d): ROM coal and waste are the blocks less small volumes, plus underburden taken (out of model);
+        # Scheduled is ROM as it stands; clean coal is the coal alone.
+        rom_coal, rom_waste = under("ROM", "Coal", "volume"), under("ROM", "Waste", "volume")
+        small, out = total("Small volume", "volume"), under("Summary", "Out of model", "volume")
+        print(f"      ROM coal {rom_coal:,.1f} m3, {under('ROM', 'Coal', 'tonnes'):,.1f} t at ROM moisture; ROM waste {rom_waste:,.1f} m3; "
+              f"small volumes {small:,.1f} m3; out of model {out:,.1f} m3; clean coal {under('Clean coal', 'Coal', 'volume'):,.1f} m3")
+        assert abs(rom_coal + rom_waste - (volume - small + out)) <= 1e-9 * volume, (rom_coal, rom_waste, volume, small, out)
+        assert abs(under("Scheduled", "Coal", "volume") - rom_coal) <= 1e-9 * volume and abs(under("Scheduled", "Waste", "volume") - rom_waste) <= 1e-9 * volume
         assert abs(imported - volume) <= 1e-9 * volume, (imported, volume)
         assert abs(written_ad - tonnes_ad) <= 1e-9 * tonnes_ad, (written_ad, tonnes_ad)
         assert abs(written - volume) <= 1e-9 * volume and abs(written_t - tonnes) <= 1e-9 * tonnes, case

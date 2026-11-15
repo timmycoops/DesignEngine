@@ -302,3 +302,59 @@ On the demo pit, whose seams are built to dip about 3° north, the 475 coal bloc
 two under 0.5°. Before the benches shared their seam's dip, they averaged 2.27°, the benches between levels reading
 flat. True thickness averages 0.17 % less than the vertical. In situ is unchanged, 0 from the blocks, and the run takes
 26 ms.
+
+## Built: 4d, ROM, final, Scheduled and clean coal
+
+**`rom`** comes after `rom_ash_cutoff` (decision 8). It works each unit's ROM values:
+
+- **Dilution and partings with no moisture of their own** take their coal section's `mad`, `mis` and `mrom`. Each is
+  said, with the volume it covers.
+- **`align_dilution_mad`** (yes on the coal row) puts a dilution's or parting's qualities on its coal's air-dried basis,
+  × (1 − Mad coal) ÷ (1 − Mad own).
+- **A negative quality** (Spry's sentinel for "use the coal's") takes its coal section's.
+- **ROM density** for every unit is `rd_is` × (1 − Mis) ÷ (1 − Mrom).
+
+**`final`** comes last (decision 9). It writes what each unit ends as, on the leaf where it ends:
+
+- **`ROM\Coal`**, a section at a time. Plies and partings stay on their own leaves. Roof dilution goes on the section's
+  first ply, floor dilution on its last, and edge and other dilution are shared over its plies by volume. A loss
+  received from a neighbouring coal section goes on the first ply if it's a floor loss, the last otherwise.
+- **`aggregate_sections`** (yes on the coal row) gives each ROM coal piece its section's qualities, averaged by each
+  field's rule, as Spry's.
+- **`Clean coal\Coal`** is the plies alone, on their own qualities.
+- **`ROM\Waste`** is everything else but small volumes, on its own leaf. A loss is waste where it went: on the first
+  unit of the waste it went into for a floor loss, the last otherwise.
+- **`Scheduled`** copies ROM, coal and waste, until scheduling sets it.
+- **`Summary\Out of model`**: underburden taken into ROM coal as floor dilution is written there on the coal's leaf,
+  and said under the underburden note. The rest of the underburden is never written.
+- **The ROM basis.** Under `ROM`, `Scheduled` and `Clean coal`, tonnes are on `rd_rom`, beside `tonnes_ad`, and each
+  quality has a `_rom` column, × (1 − Mrom) ÷ (1 − Mad).
+
+A section the ROM ash cut-off rejects now sends its partings back as waste too, so they're written in ROM waste. The
+starter adds `align_dilution_mad` and `aggregate_sections`.
+
+Known answers (`crates/zd-commands/tests/reserves_run.rs`):
+
+- **The 4c dilution column, final.** ROM coal: A 10,854 m³, B 15,906 m³. ROM waste: OB 49,646 m³ on A's leaf, A-B
+  24,094 m³ on B's, the waste below 19,500 m³. Together that's the blocks' 120,000 m³, and Scheduled is the same.
+  Clean coal is 10,000 and 15,000 m³. A's ROM tonnes, with no ROM density in the dataflow, are 10,000 × 1.4 + 854 × 2.3.
+- **Floor loss 0.2 m alone.** ROM coal: A 9,000 m³, B 14,000 m³. ROM waste on B's leaf is A-B's 25,000 m³ and A's
+  1,000 m³ loss. The waste below is 21,000 m³.
+- **No waste below B.** B's 500 m³ of floor dilution comes from the underburden: ROM coal B is 15,500 m³, and 500 m³ is
+  out of model.
+- **`aggregate_sections`.** A and B carry the section's ash with it, their own without. Clean coal keeps the coal's own.
+- **Moisture at Mad 3 %, Mis 8 %, Mrom 10 %.** A's floor dilution takes A's moistures, said. A's ROM tonnes are its
+  10,000 m³ at its Preston–Sanders in situ density, and the 500 m³ at 2.3, each × 0.92 ÷ 0.90.
+
+On the demo pit (mrom 10 %):
+
+| | Base | 50m |
+|---|---|---|
+| ROM coal | 6,247,551.1 m³, 9,234,451.4 t | 6,246,287.6 m³, 9,233,317.0 t |
+| ROM waste | 69,785,976.1 m³ | 69,787,249.5 m³ |
+| out of model | 30,369.7 m³ | 30,379.6 m³ |
+| clean coal | 6,050,936.8 m³ | 6,048,893.2 m³ |
+
+- ROM coal and waste are the blocks less small volumes plus the out-of-model volume, to 1e-9. Scheduled equals ROM.
+- In situ is unchanged, 0 from the blocks.
+- The run takes 46 ms for 90 columns through all ten steps.
