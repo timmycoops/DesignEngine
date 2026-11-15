@@ -245,7 +245,7 @@ def main():
         cols = table["columns"]
         # A field summed over every material under a top folder: Insitu\Coal\volume and Insitu\Waste\volume.
         total = lambda top, field: sum(v for name, values in cols.items() if name.startswith(top + "\\") and name.endswith("\\" + field) and name.count("\\") == 2 for v in values if v is not None)
-        ids = cols.get("Working section\id", [])
+        ids = cols.get("Working section\\id", [])
         sections = len({(cols["strip"][i], cols["block"][i], w) for i, ws in enumerate(ids) if ws for w in ws.split("; ")})
         blocks = [s.object(b["id"]) for b in s.objects(layer=f"9 blocks{suffix}", kind="solid")]
         volume = sum(b["volume"] for b in blocks)
