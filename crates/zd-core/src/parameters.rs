@@ -88,6 +88,20 @@ pub struct Found<'a> {
     pub value: &'a ParamValue,
 }
 
+/// The table (its place in the list read) and row a value comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Given {
+    pub table: usize,
+    pub row: usize,
+}
+
+/// Where a picked thing takes its values from: each table's rows it fits, and each value column's table and row.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Picked {
+    pub fits: Vec<Vec<usize>>,
+    pub gives: BTreeMap<String, Given>,
+}
+
 /// A parameter table: filter columns, value columns and rows read top down.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -153,6 +167,23 @@ impl ParameterTable {
     /// The rows of each table in turn, the first table's first: a case's or a step's own rows read before the rest.
     pub fn lookup_in<'a>(tables: &[&'a ParameterTable], attributes: &Attributes, column: &str) -> Option<Found<'a>> {
         tables.iter().enumerate().find_map(|(t, table)| table.lookup(attributes, column).map(|(row, value)| Found { table: t, row, value }))
+    }
+
+    /// Where a thing carrying these attributes takes its values from (decision 0075, 5d), the tables read in order: for each
+    /// table the rows it fits, and for each value column the table and row that give it, the first row that fits and
+    /// holds it. A column no fitting row holds isn't in `gives`.
+    pub fn picked(tables: &[&ParameterTable], attributes: &Attributes) -> Picked {
+        let fits = tables.iter().map(|t| t.rows.iter().enumerate().filter(|(_, r)| filter_fits(&r.when, attributes)).map(|(i, _)| i).collect()).collect();
+        let mut gives = BTreeMap::new();
+        for column in tables.iter().flat_map(|t| &t.columns) {
+            if gives.keys().any(|k: &String| k.eq_ignore_ascii_case(&column.name)) {
+                continue;
+            }
+            if let Some(found) = ParameterTable::lookup_in(tables, attributes, &column.name) {
+                gives.insert(column.name.clone(), Given { table: found.table, row: found.row });
+            }
+        }
+        Picked { fits, gives }
     }
 
     /// The table as CSV, its filters first.
@@ -297,6 +328,26 @@ mod tests {
         assert_eq!((found.table, found.row, found.value), (0, 0, &ParamValue::Number(28.0)));
         let found = ParameterTable::lookup_in(&[&case, &base], &u3, "waste_rd").unwrap();
         assert_eq!((found.table, found.row), (1, 1));
+    }
+
+    /// U in strip 3, a case table read first: the case's row 1 gives the ash cut-off; the base's row 2 the waste RD (its
+    /// row 1 fits but gives none) and row 3 the loader. It fits the case's row 1 and the base's rows 1 to 3; L in strip 3
+    /// fits only the base's last row.
+    #[test]
+    fn a_picked_thing_s_values_are_traced_to_their_table_and_row() {
+        let base = ParameterTable::from_csv(CSV).unwrap();
+        let case = ParameterTable::from_csv("when seam,ash_cutoff (%)\nU,28\n").unwrap();
+        let u3 = attrs(&[("seam", AttrValue::Text("U".into())), ("strip", AttrValue::Number(3.0))]);
+        let p = ParameterTable::picked(&[&case, &base], &u3);
+        assert_eq!(p.fits, [vec![0], vec![0, 1, 2]]);
+        assert_eq!(p.gives["ash_cutoff"], Given { table: 0, row: 0 });
+        assert_eq!(p.gives["waste_rd"], Given { table: 1, row: 1 });
+        assert_eq!(p.gives["loader"], Given { table: 1, row: 2 });
+        assert_eq!(p.gives.len(), 3, "a column named in both tables is traced once");
+        let l3 = attrs(&[("seam", AttrValue::Text("L".into())), ("strip", AttrValue::Number(3.0))]);
+        let p = ParameterTable::picked(&[&case, &base], &l3);
+        assert_eq!(p.fits, [vec![], vec![2]]);
+        assert_eq!(p.gives["ash_cutoff"], Given { table: 1, row: 2 });
     }
 
     #[test]

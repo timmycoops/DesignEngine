@@ -28,6 +28,7 @@ import {
   StepBack,
   StepForward,
   Sheet,
+  SlidersHorizontal,
   Table2,
   Undo2,
   Workflow as WorkflowIcon,
@@ -1344,6 +1345,9 @@ export default function App() {
           </ToolButton>
           <ToolButton tip="Reserves table: a node's fields down the side, broken down by its children across, from Imported to Scheduled" onClick={() => dockRef.current && showPanel(dockRef.current, 'restable')}>
             <Sheet /> Reserves table
+          </ToolButton>
+          <ToolButton tip="Parameters: parameter tables and dataflows edited as grids, a picked solid's values marked where they come from" onClick={() => dockRef.current && showPanel(dockRef.current, 'params')}>
+            <SlidersHorizontal /> Parameters
           </ToolButton>
           <ToolButton tip="Workflow: saved steps run again in one go, captured from the Run log or added from the tools" onClick={() => dockRef.current && showPanel(dockRef.current, 'workflow')}>
             <WorkflowIcon /> Workflow

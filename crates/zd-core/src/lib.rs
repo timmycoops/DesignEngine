@@ -31,7 +31,7 @@ pub use grid::Grid;
 pub use id::{LayerId, ObjectId, RunId};
 pub use mesh::TriMesh;
 pub use object::{AttrValue, Attributes, Body, Layer, Object, ObjectKind, ObjectRef, Pieces, Polyline, Solid, Surface};
-pub use parameters::{Found, ParamValue, ParameterRow, ParameterTable, ValueColumn};
+pub use parameters::{Found, Given, ParamValue, Picked, ParameterRow, ParameterTable, ValueColumn};
 pub use project::{Applied, AppliedChange, Change, ChangeKind, Project, ProjectError};
 pub use seam::{Fingerprint, GridLink, Horizon, IssueKind, Lattice, SeamModel, StackIssue, blank_no_seam, blank_no_thickness, grid_holes, moved_path, relative_path, same_path};
 pub use table::{ColumnHeader, ColumnValues, Table, TableColumn};

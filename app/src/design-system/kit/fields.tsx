@@ -125,6 +125,41 @@ export function TargetInput({ value, surfaces, onChange, label, none }: { value:
   );
 }
 
+/**
+ * A cell of a grid that's edited in place (the Parameters tab): the text as typed, edited cells in blue, a cell that can't
+ * be saved outlined red with why in its tooltip, and the cell a picked thing takes its value from in gold.
+ */
+export function CellInput({
+  value,
+  onChange,
+  label,
+  edited,
+  why,
+  picked,
+  numeric,
+  className,
+  ...props
+}: { value: string; onChange: (value: string) => void; label: string; edited?: boolean; why?: string | null; picked?: boolean; numeric?: boolean } & Omit<ComponentProps<'input'>, 'value' | 'onChange'>) {
+  return (
+    <input
+      className={cn(
+        'h-6 w-full min-w-0 rounded-sm border border-transparent bg-transparent px-1 text-xs outline-none hover:border-input focus-visible:border-ring focus-visible:bg-input/30',
+        numeric && 'text-right tabular-nums',
+        edited && 'text-edited',
+        picked && 'bg-selection font-semibold text-primary',
+        why && 'border-destructive ring-1 ring-destructive/40',
+        className,
+      )}
+      value={value}
+      aria-label={label}
+      aria-invalid={!!why}
+      title={why ?? (picked ? `${label}: where the picked solid takes its value` : label)}
+      onChange={(e) => onChange(e.target.value)}
+      {...props}
+    />
+  );
+}
+
 /** A label beside what it labels, the labels of a panel lined up. */
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: ReactNode }) {
   const id = useId();

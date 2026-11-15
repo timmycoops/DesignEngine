@@ -2,7 +2,7 @@
 // 0073), read as Tim would see them. The project (the demo pit saved by testdata/synthetic/workflow_demo.py, its
 // dataflow the starter's) is opened, each object clicked in the Layers panel, and what Properties shows read back.
 import type { DockviewApi } from 'dockview-react';
-import { openProject, type ProjectSummary, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree } from '../bridge';
+import { objectDetails, openProject, type ProjectSummary, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, undo } from '../bridge';
 import { showPanel } from '../workspace/Workspace';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -142,5 +142,68 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     expect('the pit equals its strips added up', !!vol && Math.abs((vol.values[0] ?? 0) - sum) <= 1e-9 * Math.abs(sum), { pit: vol?.values[0], strips: sum });
     expect('the 50m table opens in under 200 ms and a block in under 100 ms', treeMs + pitMs < 200 && blockMs < 100, { leaves: tree.leaves, treeMs: Math.round(treeMs), pitMs: Math.round(pitMs), blockMs: Math.round(blockMs) });
   }
+  await checkParameters(summary, api, expect, show);
   return { ...results, failures };
+}
+
+type Expect = (what: string, ok: boolean, detail?: unknown) => void;
+
+/**
+ * The Parameters tab (decision 0075, 5d) on the demo pit's assumptions: the solids Select its solids picked mark the cells
+ * their values come from, as the engine traces them; a word in a number column stops the save; an edit saves as the next
+ * revision and an undo puts it back.
+ */
+async function checkParameters(summary: ProjectSummary, api: DockviewApi, expect: Expect, show: Show) {
+  const assumptions = summary.objects.find((o) => o.name === 'Reserves assumptions');
+  if (!assumptions) return expect('the demo has its assumptions table', false);
+  showPanel(api, 'params');
+  const panel = () => document.querySelector<HTMLElement>('[data-tool-panel="parameters"]');
+  for (let k = 0; k < 50 && !panel(); k++) await wait(100);
+  panel()?.querySelector<HTMLButtonElement>('[data-slot="parameters-item"][data-name="Reserves assumptions"]')?.click();
+  for (let k = 0; k < 50 && !panel()?.querySelector('[data-slot="parameters-grid"]'); k++) await wait(100);
+  const details = await objectDetails(assumptions.id);
+  if (details.measures.kind !== 'parameter_table') return expect('the assumptions open as a parameter table', false);
+  const t = details.measures.parameters;
+  const heads = [...(panel()?.querySelectorAll<HTMLElement>('[data-slot="parameters-grid"] th[data-col]') ?? [])].map((h) => h.dataset.col);
+  expect("the grid shows the table's filters then its values", JSON.stringify(heads) === JSON.stringify([...t.filters, ...t.columns.map((c) => c.name)]), heads);
+  expect('a row a row of the table', panel()?.querySelectorAll('[data-slot="parameters-grid"] tbody tr').length === t.rows.length, t.rows.length);
+
+  // The picked solid's values, in gold, where the engine says they come from.
+  for (let k = 0; k < 50 && !panel()?.querySelector('[data-slot="parameters-picked"]'); k++) await wait(100);
+  const gold = [...(panel()?.querySelectorAll<HTMLInputElement>('[data-slot="parameters-grid"] input[title$="where the picked solid takes its value"]') ?? [])].map((i) => i.getAttribute('aria-label'));
+  const pickedLine = panel()?.querySelector('[data-slot="parameters-picked"]')?.textContent ?? '';
+  expect('a picked solid marks the cell each value comes from, as the engine traces it', gold.length > 0 && pickedLine.includes('fits row'), { gold: gold.length, line: pickedLine.replace(/^\S+/, '…') });
+
+  // An edit: a word refused, then a number saved as the next revision, then undone.
+  const ri = t.rows.findIndex((r) => t.columns.some((c) => !c.text && typeof r.values[c.name] === 'number'));
+  const column = t.columns.find((c) => !c.text && typeof t.rows[ri]?.values[c.name] === 'number');
+  if (ri < 0 || !column) return expect('the table has a number to edit', false);
+  const before = t.rows[ri].values[column.name] as number;
+  const cell = () => panel()?.querySelector<HTMLInputElement>(`input[aria-label="Row ${ri + 1}, ${column.name}"]`) ?? null;
+  const type = (text: string) => {
+    const input = cell();
+    if (!input) return;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, text);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const saveButton = () => [...(panel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent?.trim() === 'Save') ?? null;
+  type('3O');
+  await wait(400);
+  expect('a word in a number column is refused before saving', cell()?.getAttribute('aria-invalid') === 'true' && !!saveButton()?.disabled, { why: cell()?.title });
+  type(String(before + 1));
+  await wait(400);
+  expect('a number edited shows as edited, and Save is on', !!cell()?.className.includes('text-edited') && saveButton()?.disabled === false);
+  saveButton()?.click();
+  let after: number | string | undefined;
+  for (let k = 0; k < 50; k++) {
+    await wait(100);
+    const d = await objectDetails(assumptions.id);
+    if (d.measures.kind === 'parameter_table') after = d.measures.parameters.rows[ri].values[column.name];
+    if (after === before + 1) break;
+  }
+  const revisions = (await objectDetails(assumptions.id)).history.length;
+  expect('Save writes the edit as the next revision', after === before + 1 && revisions === details.history.length + 1, { column: column.name, before, after, revisions });
+  await show(await undo());
+  const undone = await objectDetails(assumptions.id);
+  expect('an undo puts the table back', undone.measures.kind === 'parameter_table' && undone.measures.parameters.rows[ri].values[column.name] === before && undone.history.length === details.history.length);
 }
