@@ -82,5 +82,37 @@ botom of the stack)". The tab's **Across** choice is Children (as above) or **Le
 adding up to 10,000 m³. On the demo pit, block 3_B1 runs U 130 to U 100, M 110 to M 50, L 60 to L 20, its leaves adding up
 to its 64,519.3 m³ of ROM coal (to the shown decimals). The 50m pit's 2,847 leaves show the first 500 in 48 ms.
 
+## Built: 5d, the Parameters tab
+
+Tim picked 5d before PIT B against Spry on 16 November ("the formulas will give the same answers if we have the same data
+and assumptions"), and agreed its plan as written.
+
+- **A Parameters tab** (toolbar, beside Reserves table): the project's parameter tables and dataflows listed on the left,
+  the one picked edited on the right. Properties still only shows them.
+- **A parameter table as a grid**: its `when` filter columns, then its value columns with their units and whether they
+  hold numbers or words; cells as the CSV and bench rules write them (`U`, `1-5`, `U, M`, blank for any). Rows are added,
+  taken out and moved (the order is the order it's read); columns added, renamed, moved among their kind and taken out.
+  Cells pasted from Excel fill from the cell pasted into, adding rows; rows copy out with their headings.
+- **Edits are held until Save**, edited cells in blue. A word in a number column, or a column with no name or named
+  twice, is red with why, and Save stays off; so does anything the engine's own check refuses (`parameters_check`).
+  Save (Ctrl+Enter) runs `parameters.save` on the table: its next revision, one undo. **Copy as a new table** saves it as
+  a new one, a case's table to read first. A row left blank in every cell isn't saved.
+- **Where a picked solid's values come from**: the tables read are those of the dataflow that reads this one, in its
+  order, or this one alone. The rows the solid fits are marked by their numbers, and each value it takes from this table
+  is gold in its row; a value taken from another table says which and its row under the column's heading
+  (`ParameterTable::picked`). The marks are of the saved table.
+- **A dataflow** the same way: its levels (attribute and default, in order), its parameter tables in the order read, its
+  steps on or off with their settings, and its fields (name, kind, how it adds up, where its value comes from). Saved
+  with `dataflow.save`, checked first by `Dataflow::check`.
+- **Saving never reruns the reserves**: the tab says tables made before need Run reserves again. Running from the
+  dataflow's panel comes with 5c.
+
+No new command: both saves were already revisions. Known answers: `ParameterTable::picked` on a case table read before
+the base (U in strip 3 takes its ash cut-off from the case's row 1, its waste RD from the base's row 2 because its row 1
+fits but gives none, its loader from row 3). The grid's own logic (round trip, problems, edits followed through moved rows
+and columns, Excel paste and copy) in `app/tests/parametersGrid.test.mjs`. The app check on the demo pit: the grid's
+columns are the table's, the picked block's solid marks 17 cells gold and fits rows 2 and 3, `3O` in a number column is
+refused, an edit saves as revision 2 and an undo puts it back.
+
 Not yet: folder state saved with the table (it's remembered on the machine for now), and fields as columns, the other
 way round.

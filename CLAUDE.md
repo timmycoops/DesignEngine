@@ -96,7 +96,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   See `docs/decisions/0007-seam-model.md`.
 - `ParameterTable`: assumptions any tool reads (reserves settings now; dragline, haulage, equipment later): filter
   columns (the bench rules' syntax) and value columns with units, read top down, each value from the first row that fits
-  and holds it, tables read in order so a case's rows go first; CSV in and out. `Dataflow`: a reserves dataflow's fields
+  and holds it, tables read in order so a case's rows go first; CSV in and out; edited as grids, with the dataflow, in the Parameters tab, a picked solid's
+  values traced to their row (`docs/decisions/0075-reserves-in-the-app.md`). `Dataflow`: a reserves dataflow's fields
   (with where each value comes from), steps by name and the parameter tables it reads. `Table`: results, a table a case,
   values as Parquet in the `.zdp`, read by the HTML report and the app's Reserves table tab, fields as rows and a
   node's children across, its solids matched by the levels the table records (`docs/decisions/0075-reserves-in-the-app.md`). `reserves.run` runs a dataflow a column a pit, strip

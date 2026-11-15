@@ -978,7 +978,7 @@ export interface Dataflow {
   /** The reserves table's levels top down (decision 0074): those above `seam` make a column. */
   levels?: { attribute: string; default?: string }[];
   fields: { name: string; kind: string; add_up: AddUp; from: string; attribute?: string; column?: string }[];
-  steps: { step: string; on?: boolean }[];
+  steps: { step: string; on?: boolean; settings?: Record<string, string> }[];
   parameters: string[];
 }
 
@@ -1006,6 +1006,25 @@ export interface ParameterTable {
   columns: { name: string; unit?: string; text?: boolean; note?: string }[];
   rows: { when?: Record<string, string>; values: Record<string, number | string> }[];
 }
+
+/** Where a picked solid takes its values from (decision 0075, 5d): each table's rows it fits, each column's table and row. */
+export interface Picked {
+  fits: number[][];
+  gives: Record<string, { table: number; row: number }>;
+}
+
+/** The tables read with a parameter table, in order (its dataflow's, or it alone), and where a picked solid's values come from. */
+export interface ParametersPicked {
+  tables: [string, string][];
+  dataflow: string | null;
+  picked: Picked | null;
+}
+
+export const parametersPicked = (table: string, solid: string | null) => invoke<ParametersPicked>('parameters_picked', { table, solid });
+/** The engine's check of a parameter table as edited, before it's saved: resolves, or rejects with why. */
+export const parametersCheck = (content: ParameterTable) => invoke<null>('parameters_check', { content });
+/** The engine's check of a dataflow as edited, before it's saved. */
+export const dataflowCheck = (content: Dataflow) => invoke<null>('dataflow_check', { content });
 
 /** Saved steps run again in one go (decision 0065), and its cases (decision 0066). */
 export interface Workflow {

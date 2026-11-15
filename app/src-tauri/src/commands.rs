@@ -688,6 +688,60 @@ pub async fn reserves_breakdown(object: ObjectId, node: Vec<String>, open: Vec<V
     .await?
 }
 
+/// The parameter tables read with one, in order, and where a picked solid takes its values from (decision 0075, 5d).
+#[derive(Serialize)]
+pub struct ParametersPicked {
+    /// The tables read: a dataflow's that reads this one, in its order, or this one alone.
+    tables: Vec<(ObjectId, String)>,
+    /// The dataflow they're read by, if any.
+    dataflow: Option<String>,
+    picked: Option<zd_core::Picked>,
+}
+
+/// The tables read with a parameter table (those of the first dataflow that reads it, in its order, or it alone) and, for
+/// a picked solid, the rows it fits and the row each value comes from.
+#[tauri::command]
+pub async fn parameters_picked(table: ObjectId, solid: Option<ObjectId>, state: State<'_, AppState>) -> Result<ParametersPicked, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let reader = project.objects().find_map(|o| match &o.body {
+            zd_core::Body::Dataflow(d) if d.parameters.contains(&table) => Some((o.name.clone(), d.parameters.clone())),
+            _ => None,
+        });
+        let (dataflow, ids) = match reader {
+            Some((name, ids)) => (Some(name), ids),
+            None => (None, vec![table]),
+        };
+        let mut tables = Vec::new();
+        let mut bodies = Vec::new();
+        for id in ids {
+            let Some(o) = project.object(id) else { continue };
+            if let zd_core::Body::ParameterTable(t) = &o.body {
+                tables.push((id, o.name.clone()));
+                bodies.push(t.clone());
+            }
+        }
+        let refs: Vec<&zd_core::ParameterTable> = bodies.iter().map(|t| &**t).collect();
+        let picked = solid.and_then(|s| project.object(s)).filter(|s| matches!(s.body, zd_core::Body::Solid(_))).map(|s| zd_core::ParameterTable::picked(&refs, &s.attributes));
+        Ok(ParametersPicked { tables, dataflow, picked })
+    })
+    .await?
+}
+
+/// Whether a parameter table as edited holds together, before it's saved: the engine's own check.
+#[tauri::command]
+pub fn parameters_check(content: zd_core::ParameterTable) -> Result<(), String> {
+    content.check()
+}
+
+/// Whether a dataflow as edited holds together, before it's saved: the engine's own check.
+#[tauri::command]
+pub fn dataflow_check(content: zd_core::Dataflow) -> Result<(), String> {
+    content.check()
+}
+
 /// The solids a reserves table's node was made from (decision 0075): every solid of the table's case whose levels, as
 /// the run placed it, start with the node's. To select them.
 #[tauri::command]
