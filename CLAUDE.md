@@ -98,7 +98,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   columns (the bench rules' syntax) and value columns with units, read top down, each value from the first row that fits
   and holds it, tables read in order so a case's rows go first; CSV in and out. `Dataflow`: a reserves dataflow's fields
   (with where each value comes from), steps by name and the parameter tables it reads. `Table`: results, a table a case,
-  values as Parquet in the `.zdp`, read by the HTML report (`docs/decisions/0072-dataflow-parameters-tables.md`).
+  values as Parquet in the `.zdp`, read by the HTML report. `reserves.run` runs a dataflow a column a strip and
+  block, its steps registered by name (`docs/decisions/0072-dataflow-parameters-tables.md`).
 - `Rule`: a function from a string to one value per edge. Types: fixed, fixed list, inside polygon,
   inside solid, segment azimuth, by horizon. Later: block model, geotech solid with transition distance.
   Blending between rules may only widen berms and flatten slopes: where a value changes along a straight run, a

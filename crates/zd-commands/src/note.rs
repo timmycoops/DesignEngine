@@ -147,6 +147,8 @@ codes! {
     BenchCutDiffers = "bench.cut_differs", "A solid whose benches don't add back to its volume";
     BenchRuleUnused = "bench.rule_unused", "A bench rule no solid takes, or one asking for an attribute no solid carries";
     DataflowNoColumn = "dataflow.no_column", "A dataflow setting that none of its parameter tables has a column for";
+    ReservesBlockStopped = "reserves.block_stopped", "A block a reserves run left out, and why: a horizon not in the stack, a setting no parameter row gives";
+    ReservesValueMissing = "reserves.value_missing", "Rows a reserves run wrote with no value for a field read from blocks";
     WorkflowPicked = "workflow.picked", "A workflow step's input that is the objects as picked, as no rule finds them";
     ObjectSolidsDeleted = "object.solids_deleted", "Solids deleted, with their volume, so a report can account for it";
 }

@@ -3,6 +3,7 @@
 //! report reads these, so a metric a step adds reaches the report as a new column.
 
 use serde::{Deserialize, Serialize};
+use zd_reserves::AddUp;
 
 /// A column's values.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -25,23 +26,32 @@ impl ColumnValues {
     }
 }
 
-/// One column: its name, its unit and its values.
+/// One column: its name, its unit, how it adds up over rows, and its values.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableColumn {
     pub name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub unit: String,
+    /// How the column adds up over rows (a dataflow field's rule), so a report totals a new metric right without
+    /// knowing it; none for a label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_up: Option<AddUp>,
     #[serde(flatten)]
     pub values: ColumnValues,
 }
 
 impl TableColumn {
     pub fn number(name: &str, unit: &str, values: Vec<Option<f64>>) -> Self {
-        TableColumn { name: name.to_string(), unit: unit.to_string(), values: ColumnValues::Number(values) }
+        TableColumn { name: name.to_string(), unit: unit.to_string(), add_up: None, values: ColumnValues::Number(values) }
+    }
+
+    /// A number column that adds up by a rule.
+    pub fn adding(name: &str, unit: &str, add_up: AddUp, values: Vec<Option<f64>>) -> Self {
+        TableColumn { name: name.to_string(), unit: unit.to_string(), add_up: Some(add_up), values: ColumnValues::Number(values) }
     }
 
     pub fn text(name: &str, values: Vec<Option<String>>) -> Self {
-        TableColumn { name: name.to_string(), unit: String::new(), values: ColumnValues::Text(values) }
+        TableColumn { name: name.to_string(), unit: String::new(), add_up: None, values: ColumnValues::Text(values) }
     }
 }
 
@@ -55,6 +65,8 @@ pub struct ColumnHeader {
     /// Words rather than numbers.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub text: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_up: Option<AddUp>,
 }
 
 /// A table: columns of one length, names unique.
@@ -91,7 +103,7 @@ impl Table {
 
     /// The columns' names, units and kinds.
     pub fn headers(&self) -> Vec<ColumnHeader> {
-        self.columns.iter().map(|c| ColumnHeader { name: c.name.clone(), unit: c.unit.clone(), text: matches!(c.values, ColumnValues::Text(_)) }).collect()
+        self.columns.iter().map(|c| ColumnHeader { name: c.name.clone(), unit: c.unit.clone(), text: matches!(c.values, ColumnValues::Text(_)), add_up: c.add_up.clone() }).collect()
     }
 }
 
@@ -109,7 +121,7 @@ mod tests {
         };
         t.check().unwrap();
         assert_eq!(t.rows(), 2);
-        assert_eq!(t.headers()[1], ColumnHeader { name: "volume".into(), unit: "m3".into(), text: false });
+        assert_eq!(t.headers()[1], ColumnHeader { name: "volume".into(), unit: "m3".into(), text: false, add_up: None });
         let json = serde_json::to_string(&t).unwrap();
         assert_eq!(serde_json::from_str::<Table>(&json).unwrap(), t);
         let mut short = t.clone();

@@ -949,7 +949,7 @@ pub fn read_project(input: &(impl Container + Sync)) -> Result<ReadProject, Stor
                             .iter()
                             .map(|h| {
                                 let values = if h.text { ColumnValues::Text(values.strs_opt(&h.name)?) } else { ColumnValues::Number(values.f64s_opt(&h.name)?) };
-                                Ok(TableColumn { name: h.name.clone(), unit: h.unit.clone(), values })
+                                Ok(TableColumn { name: h.name.clone(), unit: h.unit.clone(), add_up: h.add_up.clone(), values })
                             })
                             .collect::<Result<Vec<_>, StoreError>>()?;
                         if columns.first().is_some_and(|c: &TableColumn| c.values.len() != values.rows()) {
@@ -1034,6 +1034,7 @@ fn attribute_group(name: &str, table: &Table, rows: usize) -> Result<Vec<(usize,
 fn same_column(a: &TableColumn, b: &TableColumn) -> bool {
     a.name == b.name
         && a.unit == b.unit
+        && a.add_up == b.add_up
         && match (&a.values, &b.values) {
             (ColumnValues::Number(p), ColumnValues::Number(q)) => p.iter().map(|v| v.map(f64::to_bits)).eq(q.iter().map(|v| v.map(f64::to_bits))),
             (ColumnValues::Text(p), ColumnValues::Text(q)) => p == q,

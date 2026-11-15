@@ -244,7 +244,7 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
     let results = Table {
         columns: vec![
             TableColumn::text("seam", vec![Some("U".into()), None, Some(String::new())]),
-            TableColumn::number("volume", "m3", vec![Some(1234.5), None, Some(-0.0)]),
+            TableColumn::adding("volume", "m3", AddUp::Sum, vec![Some(1234.5), None, Some(-0.0)]),
             TableColumn::number("ash", "%", vec![Some(f64::NAN), Some(12.25), None]),
         ],
     };

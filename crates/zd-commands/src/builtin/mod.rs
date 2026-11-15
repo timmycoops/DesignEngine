@@ -22,6 +22,7 @@ mod strips;
 mod surface;
 mod workflow;
 mod dataflow;
+mod reserves_run;
 
 pub use benches::{BENCH_FLOOR, BENCH_TOP, BENCHED_FROM, BenchEnd, BenchRule, CutByBenches, CutByBenchesParams, rule_for};
 pub use blocks::{CutByPolygons, CutByPolygonsParams, CutBySeams, CutBySeamsParams, PolygonsFromLines, PolygonsFromLinesParams, check_cut_by_polygons, check_cut_by_seams, horizon_order};
@@ -47,6 +48,7 @@ pub use string::{
 pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, SolidBetween, SolidBetweenParams, check_slice};
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
 pub use workflow::{SaveWorkflow, SaveWorkflowParams, WORKFLOW_LAYER};
+pub use reserves_run::{RunReserves, RunReservesParams, STEPS, StepView, UnitView, reserves_preview};
 pub use dataflow::{DATAFLOW_LAYER, ExportParameters, PARAMETERS_LAYER, SaveDataflow, SaveParameters};
 
 use crate::{CommandError, Registry};
@@ -56,6 +58,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(SaveParameters);
     registry.register(ExportParameters);
     registry.register(SaveDataflow);
+    registry.register(RunReserves);
     registry.register(RenameLayer);
     registry.register(RecolourLayer);
     registry.register(DeleteLayer);

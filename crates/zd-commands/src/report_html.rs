@@ -76,7 +76,8 @@ pub fn page(r: &Report) -> String {
     }
     h.push_str("<span class=\"tag\">Tonnes on the density grid's own basis (usually air dried); in situ comes with the reserves dataflow</span></div>");
     let bench_link = if r.cases.first().is_some_and(|c| !c.benches.is_empty()) { "<a href=\"#benches\">By bench</a>" } else { "" };
-    let _ = write!(h, "<div class=\"toc\"><a href=\"#summary\">Summary</a><a href=\"#seams\">By seam</a>{bench_link}<a href=\"#blocks\">Blocks</a><a href=\"#left-out\">Left out</a><a href=\"#steps\">Steps</a><a href=\"#inputs\">Inputs</a><a href=\"#warnings\">Warnings</a></div>");
+    let reserves_link = if r.cases.iter().any(|c| !c.reserves.is_empty()) { "<a href=\"#reserves\">Reserves</a>" } else { "" };
+    let _ = write!(h, "<div class=\"toc\"><a href=\"#summary\">Summary</a><a href=\"#seams\">By seam</a>{bench_link}{reserves_link}<a href=\"#blocks\">Blocks</a><a href=\"#left-out\">Left out</a><a href=\"#steps\">Steps</a><a href=\"#inputs\">Inputs</a><a href=\"#warnings\">Warnings</a></div>");
 
     summary(&mut h, r);
     if r.cases.len() > 1 {
@@ -90,6 +91,7 @@ pub fn page(r: &Report) -> String {
         let _ = write!(h, "<div data-case=\"{}\">", esc(&c.name));
         by_seam(&mut h, c, k);
         by_bench(&mut h, c, k);
+        reserves(&mut h, c, k);
         blocks(&mut h, c, k, &r.workflow);
         left_out(&mut h, c);
         case_warnings(&mut h, c);
@@ -202,6 +204,50 @@ fn by_bench(h: &mut String, c: &CaseFigures, k: usize) {
     }
     h.push_str("</tbody></table></div>");
     h.push_str("<div class=\"mut\">A bench is named by the RL its rule names it by, its floor unless the rule says its top. Waste in bcm, above the last floor; the strip ratio is the bench's own.</div>");
+}
+
+/// What a reserves run wrote (decision 0072): each table by write point, by horizon then coal and waste, and by bench;
+/// every column the dataflow's, added up by its own rule.
+fn reserves(h: &mut String, c: &CaseFigures, k: usize) {
+    if c.reserves.is_empty() {
+        return;
+    }
+    let _ = write!(h, "<h2 id=\"{}\">Reserves <span class=\"mut\" style=\"font-weight:400\">({})</span></h2>", if k == 0 { "reserves" } else { "" }, esc(&c.name));
+    for (t, table) in c.reserves.iter().enumerate() {
+        for (w, write) in table.writes.iter().enumerate() {
+            let _ = write!(h, "<h3>{} · {}</h3>", esc(&table.name), esc(&write.write.replace('_', " ")));
+            let heads: String = write.columns.iter().map(|(n, u)| format!("<th>{}{}</th>", esc(&n.replace('_', " ")), if u.is_empty() { String::new() } else { format!(" {}", esc(&u.replace("m3", "m³").replace("m2", "m²").replace("t/m3", "t/m³"))) })).collect();
+            let _ = write!(h, "<div class=\"scroll\"><table class=\"sortable\" id=\"reserves-{k}-{t}-{w}\"><thead><tr><th>Horizon</th><th class=\"l\">Material</th>{heads}<th>Rows</th></tr></thead><tbody>");
+            for row in &write.horizons {
+                res_row(h, row, false);
+            }
+            h.push_str("</tbody><tbody>");
+            for row in [&write.coal, &write.waste].into_iter().flatten() {
+                res_row(h, row, true);
+            }
+            h.push_str("</tbody></table></div>");
+            if !write.benches.is_empty() {
+                let _ = write!(h, "<div class=\"scroll\"><table class=\"sortable\" id=\"reserves-bench-{k}-{t}-{w}\"><thead><tr><th class=\"l\">Bench</th><th class=\"l\">Material</th>{heads}<th>Rows</th></tr></thead><tbody>");
+                for row in &write.benches {
+                    res_row(h, row, false);
+                }
+                h.push_str("</tbody></table></div>");
+            }
+        }
+    }
+    h.push_str("<div class=\"mut\">Each column adds up by its own rule as the dataflow declares it: summed, by volume, by tonnes, the largest or the smallest. A field a dataflow adds shows here as a column of its own.</div>");
+}
+
+fn res_row(h: &mut String, row: &crate::report::ResRow, total: bool) {
+    let _ = write!(h, "<tr{}><td>{}</td><td class=\"l\">{}</td>", if total { " class=\"tot\"" } else { "" }, esc(&row.label), esc(&row.material));
+    for v in &row.values {
+        let dp = match v {
+            Some(x) if x.abs() >= 1000.0 || x.fract() == 0.0 => 0,
+            _ => 3,
+        };
+        h.push_str(&num(*v, dp));
+    }
+    let _ = write!(h, "{}</tr>", num(Some(row.rows as f64), 0));
 }
 
 fn blocks(h: &mut String, c: &CaseFigures, k: usize, workflow: &str) {

@@ -87,8 +87,27 @@ def drawn_by_hand(s):
     return toe, limit, first, ramps
 
 
-def the_steps(s, g, model, toe, limit, first, ramps):
-    """Toe to interrogated blocks, each run a step to capture; returns the runs in order."""
+def reserves_dataflow(s):
+    """The reserves dataflow and its assumptions (decision 0072), made by hand: volume, thickness and area from each
+    block, RD, ash and sulphur from the interrogation, waste RD and the ash cut-off from a parameter table."""
+    table = made(s.run("parameters.save", name="Demo assumptions", csv="when material,rd (t/m3),ash_cutoff (%)\nwaste,2.3,\ncoal,,35\n"))[0]
+    field = lambda name, kind, by, source: {"name": name, "kind": kind, "add_up": by, **source}
+    fields = [
+        field("volume", "volume", {"by": "sum"}, {"from": "volume"}),
+        field("thickness", "thickness", {"by": "sum"}, {"from": "thickness"}),
+        field("area", "area", {"by": "max"}, {"from": "plan_area"}),
+        field("rd", "density", {"by": "volume"}, {"from": "attribute", "attribute": "rd"}),
+        field("as", "quality", {"by": "mass", "density": "rd"}, {"from": "attribute", "attribute": "as"}),
+        field("ts", "quality", {"by": "mass", "density": "rd"}, {"from": "attribute", "attribute": "ts"}),
+        field("ash_cutoff", "setting", {"by": "min"}, {"from": "parameter", "column": "ash_cutoff"}),
+    ]
+    steps = [{"step": "initialise"}, {"step": "in_situ"}, {"step": "join_benches"}]
+    return made(s.run("dataflow.save", name="Reserves", content={"fields": fields, "steps": steps, "parameters": [table]}))[0]
+
+
+def the_steps(s, g, model, toe, limit, first, ramps, flow=None):
+    """Toe to interrogated blocks, each run a step to capture, and with a dataflow the reserves run over the blocks;
+    returns the runs in order."""
     runs = []
 
     def run(command, **params):
@@ -133,6 +152,8 @@ def the_steps(s, g, model, toe, limit, first, ramps):
     blocks = made(run("solid.cut_by_polygons", solids=benches, polygons=polygons, layer="9 blocks"))
     coal = [b for b in blocks if s.object(b)["attributes"].get("material") == "coal"]
     run("solid.interrogate", solids=coal, model=model)
+    if flow is not None:
+        run("reserves.run", dataflow=flow, blocks=blocks, model=model, layer="10 reserves")
     return runs
 
 
@@ -156,8 +177,9 @@ def main():
     s = zd.Session()
     g, model = import_grids(s, folder, definition)
     toe, limit, first, ramps = drawn_by_hand(s)
+    flow = reserves_dataflow(s)
     started = time.perf_counter()
-    runs = the_steps(s, g, model, toe, limit, first, ramps)
+    runs = the_steps(s, g, model, toe, limit, first, ramps, flow)
     by_hand = time.perf_counter() - started
 
     record = s.capture_workflow("Toe to blocks", runs)
@@ -214,6 +236,28 @@ def main():
         assert 0.0 <= seams - within <= 1e-6 * seams, case
     assert abs(totals["Base"] - totals["50m"]) <= tolerance(totals["Base"]), totals
     print(f"   the two cases' totals differ by {abs(totals['Base'] - totals['50m']):.3g} m3")
+
+    # The reserves run (decision 0072): each case's in situ table adds up to its blocks' volumes and tonnes (volume x
+    # the interrogated RD for coal, the parameter table's 2.3 for waste) to 1e-9.
+    for case, suffix in (("Base", ""), ("50m", " 50m")):
+        tables = s.objects(layer=f"10 reserves{suffix}", kind="table")
+        assert len(tables) == 1, tables
+        table = s.object(tables[0]["id"])
+        cols = table["columns"]
+        blocks = [s.object(b["id"]) for b in s.objects(layer=f"9 blocks{suffix}", kind="solid")]
+        volume = sum(b["volume"] for b in blocks)
+        tonnes = sum(b["volume"] * (b["attributes"].get("rd") if b["attributes"].get("material") == "coal" else 2.3) for b in blocks)
+        written, written_t = sum(v for v in cols["volume"] if v is not None), sum(v for v in cols["tonnes"] if v is not None)
+        benched = sum(1 for b in cols["bench"] if b)
+        print(f"   {case}: '{tables[0]['name']}', {table['rows']} in situ rows ({benched} by bench) from {len(blocks)} blocks; "
+              f"{written:,.3f} m3 and {written_t:,.3f} t, against the blocks by {abs(written - volume):.3g} m3 and {abs(written_t - tonnes):.3g} t")
+        assert table["rows"] == len(blocks), (table["rows"], len(blocks))
+        assert abs(written - volume) <= 1e-9 * volume and abs(written_t - tonnes) <= 1e-9 * tonnes, case
+    blocks = [b["id"] for b in s.objects(layer="9 blocks", kind="solid")]
+    started = time.perf_counter()
+    record = s.run("reserves.run", dataflow=flow, blocks=blocks, model=model, layer="timing")
+    print(f"   reserves.run alone on Base: {len(blocks)} blocks in {(time.perf_counter() - started) * 1000:.0f} ms; {record['messages'][0]}")
+    s.undo()
 
     for layer in s.layers():
         s.set_layer_visible(layer["name"], layer["name"] in SHOWN)
