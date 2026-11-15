@@ -22,7 +22,30 @@ type Follow = 'on' | 'off';
 const FOLLOWS: readonly Follow[] = ['on', 'off'];
 const FOLLOW_LABELS: Record<Follow, string> = { on: 'Follow the pick', off: 'Stay' };
 
+// Across a node: its children (each opening to its own), or every leaf under it top of the stack to the bottom, no
+// subtotals between (Tim, 16 November 2026).
+type Across = 'children' | 'leaves';
+const ACROSS: readonly Across[] = ['children', 'leaves'];
+const ACROSS_LABELS: Record<Across, string> = { children: 'Children', leaves: 'Leaves' };
+
 const FOLDED_KEY = 'zd.reservesTable.folded.v1';
+const ACROSS_KEY = 'zd.reservesTable.across.v1';
+
+function readAcross(): Across {
+  try {
+    return localStorage.getItem(ACROSS_KEY) === 'leaves' ? 'leaves' : 'children';
+  } catch {
+    return 'children';
+  }
+}
+
+function writeAcross(across: Across) {
+  try {
+    localStorage.setItem(ACROSS_KEY, across);
+  } catch {
+    // Storage unavailable: children again next time.
+  }
+}
 
 function readFolded(): Set<string> {
   try {
@@ -63,6 +86,11 @@ export function ReservesTable() {
   const [fields, setFields] = useState<Fields>('key');
   const [follow, setFollow] = useState<Follow>('on');
   const [folded, setFolded] = useState<Set<string>>(readFolded);
+  const [across, setAcrossState] = useState<Across>(readAcross);
+  const setAcross = (a: Across) => {
+    setAcrossState(a);
+    writeAcross(a);
+  };
   const [said, setSaid] = useState<string | null>(null);
 
   const tableKey = table ? `${table.id}@${table.revision}` : '';
@@ -89,7 +117,7 @@ export function ReservesTable() {
   useEffect(() => {
     let live = true;
     if (!table) return setBreakdown(null);
-    void reservesBreakdown(table.id, node, open)
+    void reservesBreakdown(table.id, node, open, across === 'leaves')
       .then((b) => {
         if (!live) return;
         setBreakdown(b);
@@ -99,7 +127,19 @@ export function ReservesTable() {
     return () => {
       live = false;
     };
-  }, [tableKey, keyOf(node), openKey]);
+  }, [tableKey, keyOf(node), openKey, across]);
+
+  // Across leaves, a line where the leaf's parent changes (one seam's benches from the next).
+  const groupStarts = useMemo(() => {
+    const starts = new Set<number>();
+    if (!breakdown) return starts;
+    breakdown.columns.forEach((c, i) => {
+      if (c.depth !== 1) return;
+      const before = breakdown.columns[i - 1];
+      if (across === 'children' || !before || before.depth !== 1 || !samePath(before.path.slice(0, -1), c.path.slice(0, -1))) starts.add(i);
+    });
+    return starts;
+  }, [breakdown, across]);
 
   // A solid picked in the view or the tree: its block, its seam opened, its leaf marked.
   useEffect(() => {
@@ -187,6 +227,9 @@ export function ReservesTable() {
           <Field label="Fields">
             <Choice value={fields} options={FIELDS} labels={FIELD_LABELS} onChange={setFields} label="Which fields" />
           </Field>
+          <Field label="Across">
+            <Choice value={across} options={ACROSS} labels={ACROSS_LABELS} onChange={setAcross} label="Across the node: its children, or every leaf top of the stack to the bottom" />
+          </Field>
           <Choice value={follow} options={FOLLOWS} labels={FOLLOW_LABELS} onChange={setFollow} label="Follow a solid picked in the view" />
           <span className="ml-auto flex items-center gap-1">
             {said && <span className="text-ok">{said}</span>}
@@ -199,13 +242,18 @@ export function ReservesTable() {
           </span>
         </div>
         {error && <div className="px-2 py-1 text-destructive">{error}</div>}
+        {breakdown && breakdown.hidden > 0 && (
+          <div className="px-2 py-1 text-warning">
+            The first {fmt(breakdown.columns.length - 1)} of {fmt(breakdown.columns.length - 1 + breakdown.hidden)} leaves shown: pick a strip or block for the rest. The total holds them all.
+          </div>
+        )}
         <div className="min-h-0 flex-1 overflow-auto">
           {breakdown && (
             <table className="border-separate border-spacing-0 tabular-nums" data-slot="reserves-breakdown">
               <thead className="sticky top-0 z-10 bg-card">
                 <tr>
                   <th className="sticky left-0 z-20 min-w-56 border-b border-border bg-card px-2 py-1 text-left font-medium text-muted-foreground">field</th>
-                  {breakdown.columns.map((c) => {
+                  {breakdown.columns.map((c, i) => {
                     const marked = leaf !== null && startsWith(leaf, c.path) && c.depth > 0;
                     return (
                       <th
@@ -214,7 +262,7 @@ export function ReservesTable() {
                         className={cn(
                           'min-w-24 border-b border-border px-2 py-1 text-right font-medium whitespace-nowrap',
                           c.depth === 0 && 'bg-muted/50 font-semibold',
-                          c.depth === 1 && 'border-l border-border',
+                          groupStarts.has(i) && 'border-l border-border',
                           c.depth > 1 && 'font-normal text-muted-foreground',
                           marked && 'text-primary',
                         )}
@@ -244,8 +292,8 @@ export function ReservesTable() {
                           {r.label}
                         </button>
                       </td>
-                      {breakdown.columns.map((c) => (
-                        <td key={keyOf(c.path)} className={cn('border-b border-border', c.depth === 0 && 'bg-muted/50', c.depth === 1 && 'border-l')} />
+                      {breakdown.columns.map((c, i) => (
+                        <td key={keyOf(c.path)} className={cn('border-b border-border', c.depth === 0 && 'bg-muted/50', groupStarts.has(i) && 'border-l')} />
                       ))}
                     </tr>
                   ) : (
@@ -259,7 +307,8 @@ export function ReservesTable() {
                           className={cn(
                             'px-2 py-px text-right whitespace-nowrap',
                             c.depth === 0 && 'bg-muted/50 font-semibold',
-                            c.depth === 1 && 'border-l border-border font-medium',
+                            c.depth === 1 && 'font-medium',
+                            groupStarts.has(i) && 'border-l border-border',
                             c.depth > 1 && 'text-muted-foreground',
                             leaf !== null && c.depth > 0 && samePath(leaf.slice(0, c.path.length), c.path) && 'text-primary',
                           )}

@@ -67,5 +67,20 @@ Known answers:
 The pit equals its strips added up to 1e-9. On the 50m case's 2,847 leaves, the tree takes 8 ms, the pit's breakdown
 7 ms, and a block with a seam opened 4 ms.
 
+## Across leaves
+
+Tim, 16 November: "i want to make sure i have the option of seing just the leaves as well from left to right (Top to
+botom of the stack)". The tab's **Across** choice is Children (as above) or **Leaves**:
+
+- the node's total, then every leaf under it in the tree's order, with no subtotals between: under a block, U's benches
+  top down, then M's, then L's;
+- a leaf is labelled by its words below the node ("U 130" under a block, "B10 U 110" under a strip);
+- a line where the leaf's parent changes, so one seam's benches stand apart from the next;
+- up to 500 leaves across; past that the rest are counted and a lower node is picked to see them, the total holding them all.
+
+`reserves_view::breakdown_leaves`. Known answers: strip 1 of the made-up table runs B2 U, B10 U 110, B10 U 100, B10 L,
+adding up to 10,000 m³. On the demo pit, block 3_B1 runs U 130 to U 100, M 110 to M 50, L 60 to L 20, its leaves adding up
+to its 64,519.3 m³ of ROM coal (to the shown decimals). The 50m pit's 2,847 leaves show the first 500 in 48 ms.
+
 Not yet: folder state saved with the table (it's remembered on the machine for now), and fields as columns, the other
 way round.

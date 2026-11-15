@@ -615,11 +615,16 @@ export interface Breakdown {
   node: string[];
   columns: BreakdownColumn[];
   fields: BreakdownField[];
+  /** Leaves past the first 500 not shown, broken down to its leaves. */
+  hidden: number;
 }
 
 export const reservesTree = (object: string) => invoke<ReservesNode>('reserves_tree', { object });
-/** A reserves table's node with its fields down the side and its children across, each in `open` opened. */
-export const reservesBreakdown = (object: string, node: string[], open: string[][]) => invoke<Breakdown>('reserves_breakdown', { object, node, open });
+/**
+ * A reserves table's node with its fields down the side and across its children, each in `open` opened; or, with
+ * `leaves`, every leaf under it in stack order with no subtotals.
+ */
+export const reservesBreakdown = (object: string, node: string[], open: string[][], leaves = false) => invoke<Breakdown>('reserves_breakdown', { object, node, open, leaves });
 /** The solids a reserves table's node was made from, to select. */
 export const reservesSolids = (object: string, node: string[]) => invoke<string[]>('reserves_solids', { object, node });
 /** Where a solid sits in a reserves table, or null if it isn't in it. */
