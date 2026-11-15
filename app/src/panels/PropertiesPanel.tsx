@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Check, Focus, Minus, Trash2, X } from 'lucide-react';
 import {
+  type AddUp,
   type Colouring,
   type Crossings,
+  type Dataflow,
   layerOpacityOf,
   lookOf,
   type MeshValidity,
@@ -14,6 +16,7 @@ import {
   solidsUnder,
   type StackIssue,
   type Vec3,
+  type WriteFigures,
 } from '@/bridge';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
 import { Badge } from '@/design-system/ui/badge';
@@ -559,6 +562,94 @@ function Issues({ id, issues }: { id: string; issues: StackIssue[] }) {
   );
 }
 
+type Cells = { key: string; cells: string[] };
+const cellHelper = columnHelper<Cells>();
+
+/** A small read-only table of words, a header a column. */
+function CellTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
+  const data = useMemo(() => rows.map((cells, i) => ({ key: String(i), cells })), [rows]);
+  const columns = useMemo(
+    () => cellHelper.columns(headers.map((h, c) => cellHelper.accessor((r) => r.cells[c] ?? '', { id: `c${c}`, header: h, cell: (x) => <span className="tabular-nums">{x.getValue()}</span> }))),
+    [headers],
+  );
+  return <DataTable data={data} columns={columns} rowId={(r) => r.key} />;
+}
+
+const addUpWords = (a: AddUp | undefined) => {
+  if (!a) return '';
+  switch (a.by) {
+    case 'sum':
+      return 'summed';
+    case 'volume':
+      return 'by volume';
+    case 'mass':
+      return `by tonnes (${a.density})`;
+    case 'max':
+      return 'largest';
+    case 'min':
+      return 'smallest';
+  }
+};
+
+const fromWords = (f: Dataflow['fields'][number]) => {
+  switch (f.from) {
+    case 'volume':
+      return 'solid volume';
+    case 'plan_area':
+      return 'plan area';
+    case 'thickness':
+      return 'volume ÷ plan area';
+    case 'attribute':
+      return `attribute ${f.attribute ?? ''}`;
+    case 'parameter':
+      return `parameter ${f.column ?? ''}`;
+    case 'worked':
+      return 'worked by a step';
+    default:
+      return f.from;
+  }
+};
+
+const cell = (v: number | string | null | undefined) => (v === null || v === undefined ? '–' : typeof v === 'string' ? v : Math.abs(v) >= 1000 || Number.isInteger(v) ? fmt(v) : fmt(v, 3));
+
+/** A dataflow's fields, steps and the parameter tables it reads, by name (decision 0072). */
+function DataflowView({ flow }: { flow: Dataflow }) {
+  const { summary } = useWorkspace();
+  const names = new Map((summary?.objects ?? []).map((o) => [o.id, o.name]));
+  const steps = flow.steps.map((s) => (s.on === false ? `${s.step} (off)` : s.step));
+  return (
+    <>
+      <Section title="Dataflow">
+        <Field label="Steps">{steps.join(', ') || 'none'}</Field>
+        <Field label="Parameter tables">{flow.parameters.map((id) => names.get(id) ?? 'missing').join(', ') || 'none'}</Field>
+        <Field label="Fields">{fmt(flow.fields.length)}</Field>
+      </Section>
+      <Section title="Fields">
+        <CellTable headers={['Field', 'Kind', 'Adds up', 'From']} rows={flow.fields.map((f) => [f.name, f.kind, addUpWords(f.add_up), fromWords(f)])} />
+      </Section>
+    </>
+  );
+}
+
+/** A results table's rows added up by write point: by horizon, coal and waste, and by bench (decision 0072). */
+function WriteView({ w }: { w: WriteFigures }) {
+  const heads = w.columns.map(([n, u]) => (u ? `${n.replace(/_/g, ' ')} ${u.replace('m3', 'm³').replace('m2', 'm²')}` : n.replace(/_/g, ' ')));
+  const line = (r: WriteFigures['horizons'][number]) => [r.label, r.material, ...r.values.map(cell), fmt(r.rows)];
+  const totals = [w.coal, w.waste].filter((r): r is NonNullable<typeof r> => r !== null);
+  return (
+    <>
+      <Section title={`${w.write.replace(/_/g, ' ')} by horizon`}>
+        <CellTable headers={['Horizon', 'Material', ...heads, 'Rows']} rows={[...w.horizons, ...totals].map(line)} />
+      </Section>
+      {w.benches.length > 0 && (
+        <Section title={`${w.write.replace(/_/g, ' ')} by bench`}>
+          <CellTable headers={['Bench', 'Material', ...heads, 'Rows']} rows={w.benches.map(line)} />
+        </Section>
+      )}
+    </>
+  );
+}
+
 function Measurements({ d }: { d: ObjectDetails }) {
   const m = d.measures;
   switch (m.kind) {
@@ -626,6 +717,58 @@ function Measurements({ d }: { d: ObjectDetails }) {
         </Section>
       );
     }
+    case 'parameter_table': {
+      const t = m.parameters;
+      const headers = [...t.filters.map((f) => `when ${f}`), ...t.columns.map((c) => (c.unit ? `${c.name} (${c.unit})` : c.name))];
+      const rows = t.rows.map((r) => [
+        ...t.filters.map((f) => Object.entries(r.when ?? {}).find(([k]) => k.toLowerCase() === f.toLowerCase())?.[1] ?? ''),
+        ...t.columns.map((c) => {
+          const v = r.values[c.name];
+          return v === undefined ? '' : String(v);
+        }),
+      ]);
+      const saveCsv = () => {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(new Blob([m.csv], { type: 'text/csv' }));
+        link.download = `${d.name}.csv`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+      };
+      return (
+        <>
+          <Section title="Parameter table">
+            <Field label="Rows">{fmt(t.rows.length)}</Field>
+            <Field label="Filters on">{t.filters.join(', ') || 'nothing'}</Field>
+            <Field label="Values">{t.columns.map((c) => c.name).join(', ')}</Field>
+            <p className="px-3 py-1 text-xs text-muted-foreground">Read top down: each value comes from the first row that fits and holds it; a blank filter fits anything.</p>
+            <div className="px-3 py-1">
+              <Button size="sm" variant="outline" onClick={saveCsv}>
+                Save as CSV
+              </Button>
+            </div>
+          </Section>
+          <Section title="Rows">
+            <CellTable headers={headers} rows={rows} />
+          </Section>
+        </>
+      );
+    }
+    case 'dataflow':
+      return <DataflowView flow={m.dataflow} />;
+    case 'table':
+      return (
+        <>
+          <Section title="Results table">
+            <Field label="Rows">{fmt(m.rows)}</Field>
+            <Field label="Columns">{fmt(m.columns.length)}</Field>
+            <Field label="Write points">{m.figures.writes.map((w) => w.write.replace(/_/g, ' ')).join(', ') || 'none'}</Field>
+            <p className="px-3 py-1 text-xs text-muted-foreground">Each column added up by its own rule: summed, by volume, by tonnes, the largest or the smallest.</p>
+          </Section>
+          {m.figures.writes.map((w) => (
+            <WriteView key={w.write} w={w} />
+          ))}
+        </>
+      );
     case 'seam_model': {
       const { model } = m;
       const blocking = model.issues.filter((i) => i.blocking).length;
