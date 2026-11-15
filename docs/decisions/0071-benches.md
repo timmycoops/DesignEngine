@@ -2,7 +2,7 @@
 
 Status: agreed 15 November 2026 (Tim: "this is basically the logic - we may need to alter later on but for now this is
 good", the Build Plan's "Bench levels plan" tab, all eight decisions with decisions 1 to 4 as revised to his comments
-that day). Workstream 1, the cut, is built here.
+that day). All four workstreams are built here.
 
 ## Why
 
@@ -162,6 +162,46 @@ Known answers (`crates/zd-geom/tests/reserves.rs`, `crates/zd-commands/tests/int
   0.011 %, from the flaps taken off at the levels. Interrogating its 475 benched coal blocks takes 96 ms, against 38 ms for
   the 263 unbenched.
 
+## Built: workstream 4, benches in the column engine
+
+On main after 0070's column engine merged (PR 151), in `crates/zd-reserves`, Spry's way (decision 8):
+
+- **An input unit may be a bench** (`Column::push_bench_input`, a `Bench` of its label as the cut wrote it and its floor
+  RL, minus infinity for the ground below the levels; a bench with no RL is refused). A unit is a block's horizon and
+  bench.
+- **The sort puts a horizon's benches top down** by their floors, after the seam model's stack order, as Spry sorts by
+  seam, material and bench. This settles 0070's "benches inside a seam come when they come".
+- **`join_benches` joins each horizon's benches into one unit** before the working sections: every run of two or more
+  input benches of one stack place and in situ labels, nothing done to them yet, becomes one unit added up by its fields'
+  rules, so the column balances as before. The join (`Column::joins`) keeps each bench's in situ values, for the in situ
+  rows written by bench, and its share of the horizon's volume (by thickness where it has no volume, equal where it has
+  neither). A lone bench, or one already worked, stays as it is.
+- **A piece split from a joined unit keeps its join**, so loss, dilution and ROM pieces all know their benches.
+- **`by_bench` puts units back on the benches at a write**: a joined unit's summed fields shared out by its benches' in
+  situ shares, its averages and settings as they are; a bench as input on its own bench; units never benched in a row of
+  their own, last. Rows run top down and add up to the units written. So ROM coal and its dilution are spread over a
+  seam's benches in proportion to the in situ volume, not placed on the bench they came from, as Spry's Import to ROM
+  does, and dilution from the waste above goes back on that waste's own benches.
+
+Known answers (`crates/zd-reserves/tests/benches.rs`, to 1e-12):
+
+- cu benched 98, 96 and 94 at 1,000, 3,000 and 2,000 m³ (RD 1.4, 1.5, 1.6; ash 10, 12, 14), pushed out of order, sorts
+  top down and joins to 6,000 m³ and 6 m, RD 9,100 / 6,000 by volume and ash 112,800 / 9,100 by tonnes, shares 1/6, 1/2
+  and 1/3; the overburden's two benches join the same way; the column balances to its inputs.
+- Half a metre of roof loss off the joined cu goes back as 500 m³ by share (250 on bench 96), and the 5,500 m³ left as
+  916.7, 2,750 and 1,833.3, each at the joined RD and ash.
+- 0.2 m of the overburden taken as dilution goes back 80 and 120 m³ on its own benches 110 and 100, at its RD.
+- Before joining each bench writes as its input exactly; after, each bench's volume and thickness come back to 1e-12 and
+  the unbenched cl is last.
+- Shares by thickness where there's no volume (0.25, 0.75) and equal where there's neither; a lone bench or one set
+  aside isn't joined; a bench with no RL refused.
+
+Timing: the demo pit benched every 10 m has 90 block columns and 1,815 units, at most 23 a column, about six horizons a
+column, 474 horizons in more than one bench (counted from `workflow_demo.py`). The runner isn't built yet (0070,
+workstream 2), so the timing is on 90 columns of six horizons of four benches (2,160 units): sorted, joined, a roof loss
+split off every horizon and every unit written by bench in 2.4 ms in release.
+
 ## Still to come
 
-Workstream 4 (the column engine's bench labels and in situ shares, after 0070's PR merges).
+Nothing in this decision. The dataflow's runner and steps (0070, workstreams 2 on) call `join_benches` after the sort
+and `by_bench` at each write.

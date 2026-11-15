@@ -35,6 +35,9 @@ a dilution shortfall undoes losses without saying, and losses are written out be
 7. **The ROM ash cut-off is tested once after dilution**, as Spry does, so PIT B can be compared; each rejected
    section is said. Iterating can come later.
 8. **No benches in v1:** a unit is a block's horizon. Benches and their shares come when the cuts make benches.
+   *Changed by 0071 (decision 8):* a unit is a block's horizon and bench; a horizon's benches sort top down, are joined
+   with their in situ shares for the working sections, loss and dilution, and are put back by share at each write
+   (`join_benches`, `by_bench`).
 9. **Stored on the air-dried basis with the moisture factors;** in situ and ROM bases are worked out at the write
    points, each written row listing the units it came from.
 10. **The object and the stack:** a dataflow is a new object in the `.zdp`, its results tables kept as Parquet
@@ -56,7 +59,7 @@ A made-up column matches its hand-worked tables to 1e-9 relative, its shortfall 
 Base and 50m give the same ROM totals; PIT B's working sections and ROM coal by seam match Spry's within the reserves
 tolerances (tonnes 0.5%, 0061), said by counts and differences only.
 
-Not in stage 5: benches; yield, product and washability; waste allocation (Spry's); Python steps (stage 6);
+Not in stage 5: yield, product and washability; waste allocation (Spry's); Python steps (stage 6);
 reporting the results and comparing cases (stage 7); ROM solids.
 
 ## Built: workstream 1, the column engine
