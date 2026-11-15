@@ -72,7 +72,8 @@ pub struct CaseFigures {
     pub reserves: Vec<ReservesFigures>,
 }
 
-/// One results table, summed by write point: by horizon and material top down, coal and waste, and by bench.
+/// One reserves table summed by its top folders (decision 0074): Imported, Insitu, Loss and the rest, each by seam and
+/// material below it, a total a material, and by bench.
 #[derive(Debug, Clone, Serialize)]
 pub struct ReservesFigures {
     pub name: String,
@@ -81,13 +82,15 @@ pub struct ReservesFigures {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WriteFigures {
+    /// The top folder: Imported, Insitu, Loss.
     pub write: String,
-    /// The number columns shown, each with its unit, in the table's order: those that say how they add up.
+    /// The fields under it shown, each with its unit, in the table's order: those that say how they add up.
     pub columns: Vec<(String, String)>,
-    pub horizons: Vec<ResRow>,
-    pub coal: Option<ResRow>,
-    pub waste: Option<ResRow>,
-    /// A row a bench top down, where any row has one.
+    /// A row a seam and the folder below the top (the material, or a kind of loss), top down.
+    pub seams: Vec<ResRow>,
+    /// A row a folder below the top, every seam.
+    pub totals: Vec<ResRow>,
+    /// A row a bench and folder, top down, where any leaf has a bench.
     pub benches: Vec<ResRow>,
 }
 
@@ -651,36 +654,69 @@ fn bench_place(n: &str) -> (u8, f64) {
     }
 }
 
-/// A results table summed by write point (decision 0072): rows grouped by horizon and material in the order they
-/// first come (top down, as each column writes), coal and waste, and by bench; each number column added up by its own
-/// rule, so a metric a step adds is totalled right without the report knowing it.
+/// A reserves table summed by its top folders (decision 0074). A field's column is its folder path, as
+/// `Insitu\Coal\volume`: the top folder is a stage, the folders between it and the field a material or a kind of loss.
+/// Leaves are grouped by `seam` and `bench` where the table has them, in the order they come (top down, as each column
+/// writes), and each column is added up by its own rule over the leaves with a value in it, a weight looked up beside it
+/// (the volume under the same folders, or the density the rule names), so a field a step adds is totalled right without
+/// the report knowing it.
 pub fn reserves_figures(name: &str, table: &Table) -> ReservesFigures {
-    let text = |col: &str| -> Vec<String> {
-        match table.column(col).map(|c| &c.values) {
-            Some(ColumnValues::Text(v)) => v.iter().map(|s| s.clone().unwrap_or_default()).collect(),
-            _ => vec![String::new(); table.rows()],
-        }
+    let rows = table.rows();
+    let level = |want: &str| -> Option<Vec<String>> {
+        table.columns.iter().find(|c| c.name.eq_ignore_ascii_case(want) && !c.name.contains('\\')).and_then(|c| match &c.values {
+            ColumnValues::Text(v) => Some(v.iter().map(|s| s.clone().unwrap_or_default()).collect()),
+            _ => None,
+        })
     };
-    let (write, horizon, material, bench) = (text("write"), text("horizon"), text("material"), text("bench"));
-    let numbers: Vec<(&zd_core::TableColumn, &AddUp, &Vec<Option<f64>>)> = table
+    let seam = level("seam").unwrap_or_else(|| vec![String::new(); rows]);
+    let bench = level("bench");
+    let numbers: BTreeMap<&str, &Vec<Option<f64>>> = table
         .columns
         .iter()
-        .filter_map(|c| match (&c.add_up, &c.values) {
-            (Some(rule), ColumnValues::Number(v)) => Some((c, rule, v)),
+        .filter_map(|c| match &c.values {
+            ColumnValues::Number(v) => Some((c.name.as_str(), v)),
             _ => None,
         })
         .collect();
-    // The volume an average weighs by: the first summed column in m3.
-    let volume = numbers.iter().find(|(c, r, _)| c.unit == "m3" && **r == AddUp::Sum).map(|(_, _, v)| *v);
-    let add = |rows: &[usize]| -> Vec<Option<f64>> {
-        numbers
+    // Each summed field under a folder path, by stage, then by the folder below it.
+    // A stage: its name, the folders below it, and its fields with their units.
+    type Stage = (String, Vec<String>, Vec<(String, String)>);
+    let mut stages: Vec<Stage> = Vec::new();
+    for c in &table.columns {
+        let (Some(_), ColumnValues::Number(_)) = (&c.add_up, &c.values) else { continue };
+        let parts: Vec<&str> = c.name.split('\\').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let (stage, field) = (parts[0].to_string(), parts[parts.len() - 1].to_string());
+        let below = parts[1..parts.len() - 1].join("\\");
+        let at = match stages.iter().position(|s| s.0 == stage) {
+            Some(at) => at,
+            None => {
+                stages.push((stage, Vec::new(), Vec::new()));
+                stages.len() - 1
+            }
+        };
+        if !stages[at].1.contains(&below) {
+            stages[at].1.push(below);
+        }
+        if !stages[at].2.iter().any(|(f, _)| *f == field) {
+            stages[at].2.push((field, c.unit.clone()));
+        }
+    }
+    let path = |stage: &str, below: &str, field: &str| if below.is_empty() { format!("{stage}\\{field}") } else { format!("{stage}\\{below}\\{field}") };
+    let add = |stage: &str, below: &str, fields: &[(String, String)], leaves: &[usize]| -> Vec<Option<f64>> {
+        fields
             .iter()
-            .map(|(_, rule, v)| {
-                let at = |i: usize| v[i];
+            .map(|(field, _)| {
+                let name = path(stage, below, field);
+                let column = table.column(&name)?;
+                let (Some(rule), ColumnValues::Number(v)) = (&column.add_up, &column.values) else { return None };
+                let volume = numbers.get(path(stage, below, "volume").as_str()).copied();
                 let weighted = |w: &dyn Fn(usize) -> Option<f64>| {
                     let (mut sum, mut total) = (0.0, 0.0);
-                    for &i in rows {
-                        let (Some(x), Some(w)) = (at(i), w(i)) else { continue };
+                    for &i in leaves {
+                        let (Some(x), Some(w)) = (v[i], w(i)) else { continue };
                         if w != 0.0 {
                             sum += w * x;
                             total += w;
@@ -690,78 +726,67 @@ pub fn reserves_figures(name: &str, table: &Table) -> ReservesFigures {
                 };
                 match rule {
                     AddUp::Sum => {
-                        let values: Vec<f64> = rows.iter().filter_map(|&i| at(i)).collect();
+                        let values: Vec<f64> = leaves.iter().filter_map(|&i| v[i]).collect();
                         (!values.is_empty()).then(|| values.iter().sum())
                     }
                     AddUp::Volume => weighted(&|i| volume.and_then(|vol| vol[i])),
                     AddUp::Mass { density } => {
-                        let d = numbers.iter().find(|(c, _, _)| c.name == *density).map(|(_, _, v)| *v);
+                        let d = if density.contains('\\') { density.clone() } else { path(stage, below, density) };
+                        let d = numbers.get(d.as_str()).copied();
                         weighted(&|i| Some(volume?[i]? * d?[i]?))
                     }
-                    AddUp::Max => rows.iter().filter_map(|&i| at(i)).reduce(f64::max),
-                    AddUp::Min => rows.iter().filter_map(|&i| at(i)).reduce(f64::min),
+                    AddUp::Max => leaves.iter().filter_map(|&i| v[i]).reduce(f64::max),
+                    AddUp::Min => leaves.iter().filter_map(|&i| v[i]).reduce(f64::min),
                 }
             })
             .collect()
     };
-    let mut points: Vec<String> = Vec::new();
-    for w in &write {
-        if !points.contains(w) {
-            points.push(w.clone());
-        }
-    }
-    let writes = points
+    let writes = stages
         .into_iter()
-        .map(|point| {
-            let of: Vec<usize> = (0..table.rows()).filter(|&i| write[i] == point).collect();
-            let mut groups: Vec<(String, String)> = Vec::new();
-            for &i in &of {
-                let key = (horizon[i].clone(), material[i].clone());
-                if !groups.contains(&key) {
-                    groups.push(key);
+        .map(|(stage, belows, fields)| {
+            // A leaf is in a folder where any of its fields there has a value.
+            let holds = |below: &str, i: usize| fields.iter().any(|(f, _)| numbers.get(path(&stage, below, f).as_str()).is_some_and(|v| v[i].is_some()));
+            let row = |label: String, below: &str, leaves: Vec<usize>| ResRow { label, material: below.to_string(), rows: leaves.len(), values: add(&stage, below, &fields, &leaves) };
+            let mut seams_in_order: Vec<&str> = Vec::new();
+            for s in &seam {
+                if !seams_in_order.contains(&s.as_str()) {
+                    seams_in_order.push(s);
                 }
             }
-            let row = |label: String, material: String, rows: Vec<usize>| ResRow { label, material, rows: rows.len(), values: add(&rows) };
-            let horizons = groups
-                .into_iter()
-                .map(|(h, m)| {
-                    let rows = of.iter().copied().filter(|&i| horizon[i] == h && material[i] == m).collect();
-                    row(h, m, rows)
-                })
-                .collect();
-            let coal: Vec<usize> = of.iter().copied().filter(|&i| material[i] == "coal").collect();
-            let waste: Vec<usize> = of.iter().copied().filter(|&i| material[i] != "coal").collect();
-            let mut names: Vec<String> = of.iter().map(|&i| bench[i].clone()).collect();
-            names.sort();
-            names.dedup();
-            names.sort_by(|a, b| {
-                let (x, y) = (bench_place(a), bench_place(b));
-                x.0.cmp(&y.0).then(x.1.total_cmp(&y.1)).then(a.cmp(b))
-            });
-            let benches = if names.iter().all(String::is_empty) {
-                Vec::new()
-            } else {
-                // Each bench's coal, then its waste: a bench holds both, and their RDs don't blend.
-                let mut kinds: Vec<String> = of.iter().map(|&i| material[i].clone()).collect();
-                kinds.sort_by_key(|m| (m != "coal", m.clone()));
-                kinds.dedup();
-                names
-                    .into_iter()
-                    .flat_map(|n| kinds.iter().map(move |m| (n.clone(), m.clone())))
-                    .filter_map(|(n, m)| {
-                        let rows: Vec<usize> = of.iter().copied().filter(|&i| bench[i] == n && material[i] == m).collect();
-                        (!rows.is_empty()).then(|| row(if n.is_empty() { "not benched".into() } else { n }, m, rows))
-                    })
-                    .collect()
-            };
-            WriteFigures {
-                write: point,
-                columns: numbers.iter().map(|(c, _, _)| (c.name.clone(), c.unit.clone())).collect(),
-                horizons,
-                coal: (!coal.is_empty()).then(|| row("Coal".into(), "coal".into(), coal)),
-                waste: (!waste.is_empty()).then(|| row("Waste".into(), "waste".into(), waste)),
-                benches,
+            let mut seams = Vec::new();
+            for s in &seams_in_order {
+                for below in &belows {
+                    let leaves: Vec<usize> = (0..rows).filter(|&i| seam[i] == *s && holds(below, i)).collect();
+                    if !leaves.is_empty() {
+                        seams.push(row(if s.is_empty() { "(no seam)".into() } else { s.to_string() }, below, leaves));
+                    }
+                }
             }
+            let totals = belows.iter().filter_map(|below| {
+                let leaves: Vec<usize> = (0..rows).filter(|&i| holds(below, i)).collect();
+                (!leaves.is_empty()).then(|| row("Total".into(), below, leaves))
+            }).collect();
+            let mut benches = Vec::new();
+            if let Some(bench) = &bench
+                && bench.iter().any(|b| !b.is_empty())
+            {
+                let mut names: Vec<String> = bench.clone();
+                names.sort();
+                names.dedup();
+                names.sort_by(|a, b| {
+                    let (x, y) = (bench_place(a), bench_place(b));
+                    x.0.cmp(&y.0).then(x.1.total_cmp(&y.1)).then(a.cmp(b))
+                });
+                for n in names {
+                    for below in &belows {
+                        let leaves: Vec<usize> = (0..rows).filter(|&i| bench[i] == n && holds(below, i)).collect();
+                        if !leaves.is_empty() {
+                            benches.push(row(if n.is_empty() { "not benched".into() } else { n.clone() }, below, leaves));
+                        }
+                    }
+                }
+            }
+            WriteFigures { write: stage, columns: fields, seams, totals, benches }
         })
         .collect();
     ReservesFigures { name: name.to_string(), writes }
@@ -914,38 +939,44 @@ mod tests {
 
     /// By bench (decision 0071): top down, `above` first and `below` after the numbers, blocks with no bench last; each
     /// bench's coal tonnes by RD and its own strip ratio over the waste above the last floor.
-    /// A results table summed by its columns' own rules (decision 0072): U's benches 18 and 16 of 10,000 m³ at RD 1.4 and
-    /// 1.6 and ash 10 and 12 make U 20,000 m³ at RD 1.5 by volume and ash 332,000 / 30,000 by tonnes; the cut-off by
-    /// the smallest; a column of nothing is nothing, never zero.
+    /// A reserves table summed by its folders and each column's rule (decision 0074): seam U's two bench leaves of
+    /// 10,000 m³ at RD 1.4 and 1.6 and ash 10 and 12, with the waste above it on the same leaves, add up to U coal
+    /// 20,000 m³ at RD 1.5 by volume and ash 332,000 / 30,000 by tonnes, and U waste on its own; a column of nothing is
+    /// nothing, never zero.
     #[test]
-    fn a_results_table_adds_up_by_each_column_s_rule() {
+    fn a_reserves_table_adds_up_by_folder_and_each_column_s_rule() {
         use zd_core::TableColumn;
-        let w = |n: usize| vec![Some("in_situ".to_string()); n];
         let s = |v: &[&str]| v.iter().map(|x| (!x.is_empty()).then(|| x.to_string())).collect::<Vec<_>>();
+        let n = |v: &[f64]| v.iter().map(|x| (!x.is_nan()).then_some(*x)).collect::<Vec<_>>();
         let table = Table {
             columns: vec![
-                TableColumn::text("write", w(3)),
-                TableColumn::text("horizon", s(&["OB", "U", "U"])),
-                TableColumn::text("material", s(&["waste", "coal", "coal"])),
-                TableColumn::text("bench", s(&["", "18", "16"])),
-                TableColumn::adding("volume", "m3", AddUp::Sum, vec![Some(50_000.0), Some(10_000.0), Some(10_000.0)]),
-                TableColumn::adding("rd", "t/m3", AddUp::Volume, vec![Some(2.3), Some(1.4), Some(1.6)]),
-                TableColumn::adding("ash", "%", AddUp::Mass { density: "rd".into() }, vec![None, Some(10.0), Some(12.0)]),
-                TableColumn::adding("ash_cutoff", "%", AddUp::Min, vec![None, Some(35.0), Some(30.0)]),
-                TableColumn::adding("worked", "", AddUp::Sum, vec![None, None, None]),
+                TableColumn::text("case", s(&["Base", "Base", "Base"])),
+                TableColumn::text("seam", s(&["U", "U", "L"])),
+                TableColumn::text("bench", s(&["18", "16", ""])),
+                TableColumn::adding("Insitu\\Coal\\volume", "m3", AddUp::Sum, n(&[10_000.0, 10_000.0, 6_000.0])),
+                TableColumn::adding("Insitu\\Coal\\rd", "t/m3", AddUp::Volume, n(&[1.4, 1.6, 1.5])),
+                TableColumn::adding("Insitu\\Coal\\ash", "%", AddUp::Mass { density: "rd".into() }, n(&[10.0, 12.0, 20.0])),
+                TableColumn::adding("Insitu\\Coal\\ash_cutoff", "%", AddUp::Min, n(&[35.0, 30.0, 35.0])),
+                TableColumn::adding("Insitu\\Coal\\worked", "", AddUp::Sum, n(&[f64::NAN, f64::NAN, f64::NAN])),
+                TableColumn::adding("Insitu\\Waste\\volume", "m3", AddUp::Sum, n(&[50_000.0, f64::NAN, f64::NAN])),
+                TableColumn::adding("Insitu\\Waste\\rd", "t/m3", AddUp::Volume, n(&[2.3, f64::NAN, f64::NAN])),
+                TableColumn::adding("Loss\\Thin\\volume", "m3", AddUp::Sum, n(&[f64::NAN, f64::NAN, 500.0])),
             ],
         };
         let f = reserves_figures("Reserves Base", &table);
-        assert_eq!(f.writes.len(), 1);
+        assert_eq!(f.writes.iter().map(|w| w.write.as_str()).collect::<Vec<_>>(), ["Insitu", "Loss"]);
         let w = &f.writes[0];
         assert_eq!(w.columns.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["volume", "rd", "ash", "ash_cutoff", "worked"]);
-        assert_eq!(w.horizons.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["OB", "U"]);
-        let u = &w.horizons[1];
+        assert_eq!(w.seams.iter().map(|r| (r.label.as_str(), r.material.as_str())).collect::<Vec<_>>(), [("U", "Coal"), ("U", "Waste"), ("L", "Coal")]);
+        let u = &w.seams[0];
         let close = |a: Option<f64>, b: f64| (a.unwrap() - b).abs() < 1e-12 * b.abs().max(1.0);
         assert!(close(u.values[0], 20_000.0) && close(u.values[1], 1.5) && close(u.values[2], 332_000.0 / 30_000.0) && close(u.values[3], 30.0));
         assert_eq!(u.values[4], None, "nothing, not zero");
-        assert!(close(w.coal.as_ref().unwrap().values[0], 20_000.0) && close(w.waste.as_ref().unwrap().values[1], 2.3));
-        assert_eq!(w.benches.iter().map(|r| (r.label.as_str(), r.material.as_str())).collect::<Vec<_>>(), [("18", "coal"), ("16", "coal"), ("not benched", "waste")]);
+        assert!(close(w.seams[1].values[0], 50_000.0) && close(w.seams[1].values[1], 2.3) && w.seams[1].values[2].is_none());
+        assert_eq!(w.totals.iter().map(|r| (r.material.as_str(), r.rows)).collect::<Vec<_>>(), [("Coal", 3), ("Waste", 1)]);
+        assert!(close(w.totals[0].values[0], 26_000.0));
+        assert_eq!(w.benches.iter().map(|r| (r.label.as_str(), r.material.as_str())).collect::<Vec<_>>(), [("18", "Coal"), ("18", "Waste"), ("16", "Coal"), ("not benched", "Coal")]);
+        assert!(close(f.writes[1].seams[0].values[0], 500.0) && f.writes[1].seams[0].material == "Thin");
     }
 
     #[test]

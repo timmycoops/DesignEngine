@@ -927,6 +927,8 @@ export type AddUp = { by: 'sum' | 'volume' | 'max' | 'min' } | { by: 'mass'; den
 
 /** A reserves dataflow (decisions 0070, 0072): its fields, where each value comes from, its steps and its tables. */
 export interface Dataflow {
+  /** The reserves table's levels top down (decision 0074): those above `seam` make a column. */
+  levels?: { attribute: string; default?: string }[];
   fields: { name: string; kind: string; add_up: AddUp; from: string; attribute?: string; column?: string }[];
   steps: { step: string; on?: boolean }[];
   parameters: string[];
@@ -941,11 +943,12 @@ export interface ResRow {
 }
 
 export interface WriteFigures {
+  /** The top folder: Imported, Insitu, Loss. */
   write: string;
   columns: [string, string][];
-  horizons: ResRow[];
-  coal: ResRow | null;
-  waste: ResRow | null;
+  /** A row a seam and the folder below the top (material or kind of loss), top down. */
+  seams: ResRow[];
+  totals: ResRow[];
   benches: ResRow[];
 }
 

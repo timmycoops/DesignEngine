@@ -19,12 +19,23 @@ use crate::fields::{Fields, Weight};
 /// A unit's id, unique in its column.
 pub type UnitId = u32;
 
-/// Which block a column is: one case's strip and block.
+/// Which block a column is: one case's values of the dataflow's levels above the seam (pit, strip and block by default,
+/// decision 0074), top down.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ColumnKey {
     pub case: String,
-    pub strip: String,
-    pub block: String,
+    pub path: Vec<String>,
+}
+
+impl ColumnKey {
+    pub fn new(case: &str, path: &[&str]) -> Self {
+        ColumnKey { case: case.to_string(), path: path.iter().map(|s| s.to_string()).collect() }
+    }
+
+    /// The path in a few words: `Pit/3/B1`.
+    pub fn words(&self) -> String {
+        self.path.join("/")
+    }
 }
 
 /// What a column's input unit was made from: the solid (its object id and name) the cuts made.
@@ -490,7 +501,7 @@ fn shares(fields: &Fields, benches: &[Unit]) -> Vec<f64> {
 /// Values added up by each field's rule. A sum adds; a volume or mass average weighs by volume or volume × density,
 /// leaving out values of no weight; the largest and smallest are of all. Nothing missing is hidden: a missing value
 /// (NaN) among values that weigh gives a missing answer. No values, or no weight, gives NaN for an average.
-pub(crate) fn add_up_values(fields: &Fields, units: &[&[f64]]) -> Vec<f64> {
+pub fn add_up_values(fields: &Fields, units: &[&[f64]]) -> Vec<f64> {
     let volume = fields.volume();
     (0..fields.len())
         .map(|i| match fields.weight(i) {

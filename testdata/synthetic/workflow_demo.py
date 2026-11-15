@@ -234,30 +234,31 @@ def main():
     assert abs(totals["Base"] - totals["50m"]) <= tolerance(totals["Base"]), totals
     print(f"   the two cases' totals differ by {abs(totals['Base'] - totals['50m']):.3g} m3")
 
-    # The reserves run (decisions 0072, 0073): each case's in situ table adds up to its blocks' volumes and tonnes to
-    # 1e-9: air dried, volume x the interrogated RD for coal and the parameter table's 2.3 for waste; in situ, coal's
-    # by Preston-Sanders at Mad 3.5 % and Mis 8 %, waste's as given.
+    # The reserves run (decisions 0072 to 0074): each case's reserves table, a leaf a pit, strip, block, seam and bench,
+    # adds up to its blocks' volumes and tonnes to 1e-9, in its Imported folders and its Insitu ones: air dried, volume x
+    # the interrogated RD for coal and the parameter table's 2.3 for waste; in situ, coal's by Preston-Sanders at Mad
+    # 3.5 % and Mis 8 %, waste's as given.
     for case, suffix in (("Base", ""), ("50m", " 50m")):
         tables = s.objects(layer=f"10 reserves{suffix}", kind="table")
         assert len(tables) == 1, tables
         table = s.object(tables[0]["id"])
-        # The in situ rows alone: the sections write follows them.
-        at = [i for i, w in enumerate(table["columns"]["write"]) if w == "in_situ"]
-        cols = {name: [values[i] for i in at] for name, values in table["columns"].items()}
-        sections = sum(1 for i, w in enumerate(table["columns"]["write"]) if w == "sections" and table["columns"]["became"][i] is None)
+        cols = table["columns"]
+        # A field summed over every material under a top folder: Insitu\Coalolume and Insitu\Wasteolume.
+        total = lambda top, field: sum(v for name, values in cols.items() if name.startswith(top + "\\") and name.endswith("\\" + field) and name.count("\\") == 2 for v in values if v is not None)
+        ids = cols.get("Working section\id", [])
+        sections = len({(cols["strip"][i], cols["block"][i], w) for i, ws in enumerate(ids) if ws for w in ws.split("; ")})
         blocks = [s.object(b["id"]) for b in s.objects(layer=f"9 blocks{suffix}", kind="solid")]
         volume = sum(b["volume"] for b in blocks)
         ps = lambda rd: rd * 0.965 / (1 + rd * (0.08 - 0.035) - 0.08)
         coal_ = lambda b: b["attributes"].get("material") == "coal"
         tonnes_ad = sum(b["volume"] * (b["attributes"]["rd"] if coal_(b) else 2.3) for b in blocks)
         tonnes = sum(b["volume"] * (ps(b["attributes"]["rd"]) if coal_(b) else 2.3) for b in blocks)
-        written, written_t = sum(v for v in cols["volume"] if v is not None), sum(v for v in cols["tonnes"] if v is not None)
-        written_ad = sum(v for v in cols["tonnes_ad"] if v is not None)
-        assert abs(written_ad - tonnes_ad) <= 1e-9 * tonnes_ad, (written_ad, tonnes_ad)
+        imported, written, written_t, written_ad = total("Imported", "volume"), total("Insitu", "volume"), total("Insitu", "tonnes"), total("Insitu", "tonnes_ad")
         benched = sum(1 for b in cols["bench"] if b)
-        print(f"   {case}: '{tables[0]['name']}', {sections} working sections, {len(at)} in situ rows ({benched} by bench) from {len(blocks)} blocks; "
+        print(f"   {case}: '{tables[0]['name']}', {table['rows']} leaves ({benched} benched) from {len(blocks)} blocks, {sections} working sections; "
               f"{written:,.3f} m3, {written_t:,.3f} t in situ and {written_ad:,.3f} t air dried, against the blocks by {abs(written - volume):.3g} m3, {abs(written_t - tonnes):.3g} t and {abs(written_ad - tonnes_ad):.3g} t")
-        assert len(at) == len(blocks), (len(at), len(blocks))
+        assert abs(imported - volume) <= 1e-9 * volume, (imported, volume)
+        assert abs(written_ad - tonnes_ad) <= 1e-9 * tonnes_ad, (written_ad, tonnes_ad)
         assert abs(written - volume) <= 1e-9 * volume and abs(written_t - tonnes) <= 1e-9 * tonnes, case
     blocks = [b["id"] for b in s.objects(layer="9 blocks", kind="solid")]
     started = time.perf_counter()
