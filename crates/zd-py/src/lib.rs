@@ -162,6 +162,17 @@ impl PySession {
     /// The workflow report's figures (decision 0068): every case from its latest run, its blocks by seam and material,
     /// what was left out and the reconciliation to the pit, the steps and the inputs. `utc_offset_minutes` dates it in
     /// local time (`time.localtime().tm_gmtoff // 60`); UTC if left out.
+    /// One block's column after each of a dataflow's steps (decision 0072): `params` as `reserves.run` takes them, the block
+    /// by case, strip and block. A list of steps, each with its units and their values by field.
+    #[pyo3(signature = (params, strip, block, case=None))]
+    fn reserves_preview(&self, py: Python<'_>, params: &Bound<'_, PyDict>, strip: &str, block: &str, case: Option<&str>) -> PyResult<Py<PyAny>> {
+        let p: zd_commands::builtin::RunReservesParams = serde_json::from_value(from_py(params.as_any())?).map_err(|e| CommandError::new_err(e.to_string()))?;
+        let project = self.inner.project();
+        let get = |id| project.object(id).cloned().ok_or(zd_commands::CommandError::MissingObject(id));
+        let views = zd_commands::builtin::reserves_preview(&get, &p, case.unwrap_or(zd_core::BASE_CASE), strip, block).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &json!(views))
+    }
+
     #[pyo3(signature = (workflow, utc_offset_minutes=None))]
     fn workflow_report(&self, py: Python<'_>, workflow: &str, utc_offset_minutes: Option<i32>) -> PyResult<Py<PyAny>> {
         let id = object_id(workflow)?;

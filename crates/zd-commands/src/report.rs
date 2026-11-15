@@ -14,7 +14,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::Value;
-use zd_core::{AttrValue, BASE_CASE, Body, ChangeKind, InputRule, Object, ObjectId, ObjectKind, RunId, SeamModel, Source, StepAction, Workflow};
+use zd_core::{AttrValue, BASE_CASE, Body, ChangeKind, ColumnValues, InputRule, Object, ObjectId, ObjectKind, RunId, SeamModel, Source, StepAction, Table, Workflow};
+use zd_reserves::AddUp;
 
 use crate::builtin::horizon_order;
 use crate::{Code, CommandError, LogEntry, RunRecord, Session, Severity};
@@ -67,6 +68,36 @@ pub struct CaseFigures {
     pub left_out: Vec<LeftOut>,
     pub pit: Option<Pit>,
     pub warnings: Vec<WarningLine>,
+    /// The results tables a reserves run of the case made (decision 0072), each by write point.
+    pub reserves: Vec<ReservesFigures>,
+}
+
+/// One results table, summed by write point: by horizon and material top down, coal and waste, and by bench.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReservesFigures {
+    pub name: String,
+    pub writes: Vec<WriteFigures>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WriteFigures {
+    pub write: String,
+    /// The number columns shown, each with its unit, in the table's order: those that say how they add up.
+    pub columns: Vec<(String, String)>,
+    pub horizons: Vec<ResRow>,
+    pub coal: Option<ResRow>,
+    pub waste: Option<ResRow>,
+    /// A row a bench top down, where any row has one.
+    pub benches: Vec<ResRow>,
+}
+
+/// Rows added up by each column's own rule.
+#[derive(Debug, Clone, Serialize)]
+pub struct ResRow {
+    pub label: String,
+    pub material: String,
+    pub rows: usize,
+    pub values: Vec<Option<f64>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -408,7 +439,15 @@ impl Session {
             })
             .unwrap_or_default();
 
-        CaseFigures { name: case.to_string(), ran, changes, blocks, horizons, coal, waste, below, benches, strip_ratio, density, qualities, no_density, left_out, pit, warnings }
+        let reserves = outputs
+            .iter()
+            .filter_map(|&id| project.object(id))
+            .filter_map(|o| match &o.body {
+                Body::Table(t) => Some(reserves_figures(&o.name, t)),
+                _ => None,
+            })
+            .collect();
+        CaseFigures { name: case.to_string(), ran, changes, blocks, horizons, coal, waste, below, benches, strip_ratio, density, qualities, no_density, left_out, pit, warnings, reserves }
     }
 
     fn step_lines(&self, w: &Workflow, cases: &[String]) -> Vec<StepLine> {
@@ -597,6 +636,137 @@ fn block_row(o: &Object, density: Option<&str>, qualities: &[String], column: &s
 
 /// The blocks by bench (decision 0071): a row a bench, top down by its RL, `above` before the numbers and `below` after,
 /// and the blocks with no bench last; none at all where no block has one.
+/// Where a bench sorts, top down: above the levels first, then the numbers highest first, then below them, then none.
+fn bench_place(n: &str) -> (u8, f64) {
+    if n.is_empty() {
+        (3, 0.0)
+    } else if let Ok(rl) = n.parse::<f64>() {
+        (1, -rl)
+    } else if let Some(rl) = n.strip_prefix("above ").and_then(|r| r.parse::<f64>().ok()) {
+        (0, -rl)
+    } else if let Some(rl) = n.strip_prefix("below ").and_then(|r| r.parse::<f64>().ok()) {
+        (2, -rl)
+    } else {
+        (2, 0.0)
+    }
+}
+
+/// A results table summed by write point (decision 0072): rows grouped by horizon and material in the order they
+/// first come (top down, as each column writes), coal and waste, and by bench; each number column added up by its own
+/// rule, so a metric a step adds is totalled right without the report knowing it.
+pub fn reserves_figures(name: &str, table: &Table) -> ReservesFigures {
+    let text = |col: &str| -> Vec<String> {
+        match table.column(col).map(|c| &c.values) {
+            Some(ColumnValues::Text(v)) => v.iter().map(|s| s.clone().unwrap_or_default()).collect(),
+            _ => vec![String::new(); table.rows()],
+        }
+    };
+    let (write, horizon, material, bench) = (text("write"), text("horizon"), text("material"), text("bench"));
+    let numbers: Vec<(&zd_core::TableColumn, &AddUp, &Vec<Option<f64>>)> = table
+        .columns
+        .iter()
+        .filter_map(|c| match (&c.add_up, &c.values) {
+            (Some(rule), ColumnValues::Number(v)) => Some((c, rule, v)),
+            _ => None,
+        })
+        .collect();
+    // The volume an average weighs by: the first summed column in m3.
+    let volume = numbers.iter().find(|(c, r, _)| c.unit == "m3" && **r == AddUp::Sum).map(|(_, _, v)| *v);
+    let add = |rows: &[usize]| -> Vec<Option<f64>> {
+        numbers
+            .iter()
+            .map(|(_, rule, v)| {
+                let at = |i: usize| v[i];
+                let weighted = |w: &dyn Fn(usize) -> Option<f64>| {
+                    let (mut sum, mut total) = (0.0, 0.0);
+                    for &i in rows {
+                        let (Some(x), Some(w)) = (at(i), w(i)) else { continue };
+                        if w != 0.0 {
+                            sum += w * x;
+                            total += w;
+                        }
+                    }
+                    (total != 0.0).then(|| sum / total)
+                };
+                match rule {
+                    AddUp::Sum => {
+                        let values: Vec<f64> = rows.iter().filter_map(|&i| at(i)).collect();
+                        (!values.is_empty()).then(|| values.iter().sum())
+                    }
+                    AddUp::Volume => weighted(&|i| volume.and_then(|vol| vol[i])),
+                    AddUp::Mass { density } => {
+                        let d = numbers.iter().find(|(c, _, _)| c.name == *density).map(|(_, _, v)| *v);
+                        weighted(&|i| Some(volume?[i]? * d?[i]?))
+                    }
+                    AddUp::Max => rows.iter().filter_map(|&i| at(i)).reduce(f64::max),
+                    AddUp::Min => rows.iter().filter_map(|&i| at(i)).reduce(f64::min),
+                }
+            })
+            .collect()
+    };
+    let mut points: Vec<String> = Vec::new();
+    for w in &write {
+        if !points.contains(w) {
+            points.push(w.clone());
+        }
+    }
+    let writes = points
+        .into_iter()
+        .map(|point| {
+            let of: Vec<usize> = (0..table.rows()).filter(|&i| write[i] == point).collect();
+            let mut groups: Vec<(String, String)> = Vec::new();
+            for &i in &of {
+                let key = (horizon[i].clone(), material[i].clone());
+                if !groups.contains(&key) {
+                    groups.push(key);
+                }
+            }
+            let row = |label: String, material: String, rows: Vec<usize>| ResRow { label, material, rows: rows.len(), values: add(&rows) };
+            let horizons = groups
+                .into_iter()
+                .map(|(h, m)| {
+                    let rows = of.iter().copied().filter(|&i| horizon[i] == h && material[i] == m).collect();
+                    row(h, m, rows)
+                })
+                .collect();
+            let coal: Vec<usize> = of.iter().copied().filter(|&i| material[i] == "coal").collect();
+            let waste: Vec<usize> = of.iter().copied().filter(|&i| material[i] != "coal").collect();
+            let mut names: Vec<String> = of.iter().map(|&i| bench[i].clone()).collect();
+            names.sort();
+            names.dedup();
+            names.sort_by(|a, b| {
+                let (x, y) = (bench_place(a), bench_place(b));
+                x.0.cmp(&y.0).then(x.1.total_cmp(&y.1)).then(a.cmp(b))
+            });
+            let benches = if names.iter().all(String::is_empty) {
+                Vec::new()
+            } else {
+                // Each bench's coal, then its waste: a bench holds both, and their RDs don't blend.
+                let mut kinds: Vec<String> = of.iter().map(|&i| material[i].clone()).collect();
+                kinds.sort_by_key(|m| (m != "coal", m.clone()));
+                kinds.dedup();
+                names
+                    .into_iter()
+                    .flat_map(|n| kinds.iter().map(move |m| (n.clone(), m.clone())))
+                    .filter_map(|(n, m)| {
+                        let rows: Vec<usize> = of.iter().copied().filter(|&i| bench[i] == n && material[i] == m).collect();
+                        (!rows.is_empty()).then(|| row(if n.is_empty() { "not benched".into() } else { n }, m, rows))
+                    })
+                    .collect()
+            };
+            WriteFigures {
+                write: point,
+                columns: numbers.iter().map(|(c, _, _)| (c.name.clone(), c.unit.clone())).collect(),
+                horizons,
+                coal: (!coal.is_empty()).then(|| row("Coal".into(), "coal".into(), coal)),
+                waste: (!waste.is_empty()).then(|| row("Waste".into(), "waste".into(), waste)),
+                benches,
+            }
+        })
+        .collect();
+    ReservesFigures { name: name.to_string(), writes }
+}
+
 fn by_bench(blocks: &[BlockRow], qualities: &[String]) -> Vec<BenchRow> {
     if blocks.iter().all(|b| b.bench.is_none()) {
         return Vec::new();
@@ -604,22 +774,8 @@ fn by_bench(blocks: &[BlockRow], qualities: &[String]) -> Vec<BenchRow> {
     let mut names: Vec<String> = blocks.iter().map(|b| b.bench.clone().unwrap_or_default()).collect();
     names.sort();
     names.dedup();
-    // Above the levels first, then the numbers highest first, then below them, then none.
-    let place = |n: &str| -> (u8, f64) {
-        if n.is_empty() {
-            (3, 0.0)
-        } else if let Ok(rl) = n.parse::<f64>() {
-            (1, -rl)
-        } else if let Some(rl) = n.strip_prefix("above ").and_then(|r| r.parse::<f64>().ok()) {
-            (0, -rl)
-        } else if let Some(rl) = n.strip_prefix("below ").and_then(|r| r.parse::<f64>().ok()) {
-            (2, -rl)
-        } else {
-            (2, 0.0)
-        }
-    };
     names.sort_by(|a, b| {
-        let (x, y) = (place(a), place(b));
+        let (x, y) = (bench_place(a), bench_place(b));
         x.0.cmp(&y.0).then(x.1.total_cmp(&y.1)).then(a.cmp(b))
     });
     let is_coal = |b: &&BlockRow| b.material.as_deref() == Some("coal");
@@ -758,6 +914,40 @@ mod tests {
 
     /// By bench (decision 0071): top down, `above` first and `below` after the numbers, blocks with no bench last; each
     /// bench's coal tonnes by RD and its own strip ratio over the waste above the last floor.
+    /// A results table summed by its columns' own rules (decision 0072): U's benches 18 and 16 of 10,000 m³ at RD 1.4 and
+    /// 1.6 and ash 10 and 12 make U 20,000 m³ at RD 1.5 by volume and ash 332,000 / 30,000 by tonnes; the cut-off by
+    /// the smallest; a column of nothing is nothing, never zero.
+    #[test]
+    fn a_results_table_adds_up_by_each_column_s_rule() {
+        use zd_core::TableColumn;
+        let w = |n: usize| vec![Some("in_situ".to_string()); n];
+        let s = |v: &[&str]| v.iter().map(|x| (!x.is_empty()).then(|| x.to_string())).collect::<Vec<_>>();
+        let table = Table {
+            columns: vec![
+                TableColumn::text("write", w(3)),
+                TableColumn::text("horizon", s(&["OB", "U", "U"])),
+                TableColumn::text("material", s(&["waste", "coal", "coal"])),
+                TableColumn::text("bench", s(&["", "18", "16"])),
+                TableColumn::adding("volume", "m3", AddUp::Sum, vec![Some(50_000.0), Some(10_000.0), Some(10_000.0)]),
+                TableColumn::adding("rd", "t/m3", AddUp::Volume, vec![Some(2.3), Some(1.4), Some(1.6)]),
+                TableColumn::adding("ash", "%", AddUp::Mass { density: "rd".into() }, vec![None, Some(10.0), Some(12.0)]),
+                TableColumn::adding("ash_cutoff", "%", AddUp::Min, vec![None, Some(35.0), Some(30.0)]),
+                TableColumn::adding("worked", "", AddUp::Sum, vec![None, None, None]),
+            ],
+        };
+        let f = reserves_figures("Reserves Base", &table);
+        assert_eq!(f.writes.len(), 1);
+        let w = &f.writes[0];
+        assert_eq!(w.columns.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["volume", "rd", "ash", "ash_cutoff", "worked"]);
+        assert_eq!(w.horizons.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["OB", "U"]);
+        let u = &w.horizons[1];
+        let close = |a: Option<f64>, b: f64| (a.unwrap() - b).abs() < 1e-12 * b.abs().max(1.0);
+        assert!(close(u.values[0], 20_000.0) && close(u.values[1], 1.5) && close(u.values[2], 332_000.0 / 30_000.0) && close(u.values[3], 30.0));
+        assert_eq!(u.values[4], None, "nothing, not zero");
+        assert!(close(w.coal.as_ref().unwrap().values[0], 20_000.0) && close(w.waste.as_ref().unwrap().values[1], 2.3));
+        assert_eq!(w.benches.iter().map(|r| (r.label.as_str(), r.material.as_str())).collect::<Vec<_>>(), [("18", "coal"), ("16", "coal"), ("not benched", "waste")]);
+    }
+
     #[test]
     fn blocks_add_up_by_bench_top_down() {
         let row = |bench: Option<&str>, horizon: &str, material: &str, v: f64| BlockRow {
