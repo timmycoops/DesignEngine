@@ -222,9 +222,9 @@ fn a_block_that_can_t_run_is_left_out_with_why_and_the_rest_go_on() {
 fn a_step_this_build_doesn_t_have_or_no_stack_is_refused() {
     let mut s = session();
     let ids = blocks(&mut s, None);
-    let flow = dataflow(&mut s, &["initialise", "working_sections"]);
+    let flow = dataflow(&mut s, &["initialise", "rom_loss"]);
     let err = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap_err();
-    assert!(err.to_string().contains("names a step working_sections, which this build doesn't have; it has small_volumes, initialise, in_situ, join_benches"), "{err}");
+    assert!(err.to_string().contains("names a step rom_loss, which this build doesn't have; it has small_volumes, initialise, in_situ, join_benches, working_sections"), "{err}");
     let flow = dataflow(&mut s, &["initialise"]);
     let err = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "layer": "reserves" })).unwrap_err();
     assert!(err.to_string().contains("no stack order"), "{err}");
@@ -395,4 +395,144 @@ fn coal_with_no_in_situ_moisture_stops_its_block() {
     assert!(record.messages[0].starts_with("0 of 2 blocks ran"), "{}", record.messages[0]);
     let stopped = record.notes.iter().find(|n| n.code == Some(Code::ReservesBlockStopped)).unwrap();
     assert!(stopped.text.contains("3/B1 at in_situ: 3_B1_U is coal with no mis"), "{}", stopped.text);
+}
+
+// Decision 0073, workstream 3c: working sections, a hand-worked column.
+
+/// One block, 100 m by 50 m (5,000 m²), top down:
+///
+/// | horizon | m    | m³     | what happens                                                                        |
+/// |---------|------|--------|-------------------------------------------------------------------------------------|
+/// | OB      | 10   | 50,000 | waste                                                                               |
+/// | A       | 2    | 10,000 | starts a section                                                                    |
+/// | A-B     | 0.3  | 1,500  | under 1 m: B's 7,500 m³ × 0.5 = 3,750 covers 1,500, so it joins as parting dilution |
+/// | B       | 1.5  | 7,500  | section A-B, 3.8 m                                                                  |
+/// | B-C     | 5    | 25,000 | over 1 m: a break                                                                   |
+/// | C       | 0.4  | 2,000  | alone, 0.4 m ≤ 0.45 m: thin loss                                                    |
+/// | C-D     | 0.2  | 1,000  | waste                                                                               |
+/// | D       | 3    | 15,000 | ash 40 % over the 30 % cut-off: discarded, a break                                  |
+/// | D-E     | 0.25 | 1,250  | waste                                                                               |
+/// | E       | 2    | 10,000 | section E                                                                           |
+/// | E-F     | 0.9  | 4,500  | under 1 m, but F's 2,500 × 0.5 = 1,250 doesn't cover 4,500: stays waste             |
+/// | F       | 0.5  | 2,500  | section F, 0.5 m > 0.45 m                                                           |
+/// | below F | 3.95 | 19,750 | real waste below: no underburden                                                    |
+fn section_column(s: &mut Session) -> Vec<ObjectId> {
+    let rows: [(&str, f64, f64, &str, &str, f64); 13] = [
+        ("OB", 40.0, 50.0, "waste", "A", f64::NAN),
+        ("A", 38.0, 40.0, "coal", "A", 10.0),
+        ("A-B", 37.7, 38.0, "waste", "B", f64::NAN),
+        ("B", 36.2, 37.7, "coal", "B", 12.0),
+        ("B-C", 31.2, 36.2, "waste", "C", f64::NAN),
+        ("C", 30.8, 31.2, "coal", "C", 15.0),
+        ("C-D", 30.6, 30.8, "waste", "D", f64::NAN),
+        ("D", 27.6, 30.6, "coal", "D", 40.0),
+        ("D-E", 27.35, 27.6, "waste", "E", f64::NAN),
+        ("E", 25.35, 27.35, "coal", "E", 11.0),
+        ("E-F", 24.45, 25.35, "waste", "F", f64::NAN),
+        ("F", 23.95, 24.45, "coal", "F", 11.0),
+        ("below F", 20.0, 23.95, "waste", "", f64::NAN),
+    ];
+    rows.iter()
+        .map(|&(h, z0, z1, material, seam, ash)| {
+            let mut a = json!({ "strip": 1.0, "block": "B1", "horizon": h, "material": material, "seam": seam });
+            if material == "coal" {
+                a["rd"] = json!(1.4);
+                a["ash"] = json!(ash);
+            }
+            box_solid(s, &format!("1_B1_{h}"), 0.0, (z0, z1), a)
+        })
+        .collect()
+}
+
+const SECTION_STACK: [&str; 13] = ["OB", "A", "A-B", "B", "B-C", "C", "C-D", "D", "D-E", "E", "E-F", "F", "below F"];
+
+const SECTION_CSV: &str = "when material,when seam,rd (t/m3),min_parting (m),ws_strip_ratio,min_coal_thickness (m),insitu_ash_cutoff (%),ws_split\nwaste,,2.3,,,,,\ncoal,,,1,0.5,0.45,30,\n";
+
+fn section_steps() -> serde_json::Value {
+    json!([{ "step": "initialise" }, { "step": "join_benches" }, { "step": "working_sections" }])
+}
+
+#[test]
+fn working_sections_form_by_the_seam_rules_in_spry_order() {
+    let mut s = session();
+    let ids = section_column(&mut s);
+    let flow = flow(&mut s, section_steps(), SECTION_CSV);
+    let p: RunReservesParams = serde_json::from_value(json!({ "dataflow": flow, "blocks": ids, "stack": SECTION_STACK, "layer": "reserves" })).unwrap();
+    let views = {
+        let project = s.project();
+        let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+        reserves_preview(&get, &p, "Base", "1", "B1").unwrap()
+    };
+    let last = views.last().unwrap();
+    let labels: Vec<(String, Option<String>, Option<String>)> = last.units.iter().map(|u| (u.horizon.clone(), u.section.clone(), u.became.clone())).collect();
+    let expect = |h: &str, section: Option<&str>, became: Option<&str>| (h.to_string(), section.map(str::to_string), became.map(str::to_string));
+    assert_eq!(
+        labels,
+        [
+            expect("OB", Some("1 waste A"), None),
+            expect("A", Some("2 coal A-B"), None),
+            expect("A-B", Some("2 coal A-B"), Some("dilution (parting)")),
+            expect("B", Some("2 coal A-B"), None),
+            expect("B-C", Some("3 waste C"), None),
+            expect("C", None, Some("thinloss (thin)")),
+            // Thin C is set aside, so the waste either side of it is one run, as Spry puts thin loss in its waste.
+            expect("C-D", Some("3 waste D"), None),
+            expect("D", Some("3 waste D"), Some("discarded (high in situ ash)")),
+            expect("D-E", Some("3 waste E"), None),
+            expect("E", Some("4 coal E"), None),
+            expect("E-F", Some("5 waste F"), None),
+            expect("F", Some("6 coal F"), None),
+            expect("below F", Some("7 waste"), None),
+        ]
+    );
+
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": SECTION_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let (horizon, became, volume, thickness) = (texts(&t, "horizon"), texts(&t, "became"), numbers(&t, "volume"), numbers(&t, "thickness"));
+    let written: Vec<(String, Option<String>, f64, f64)> =
+        (0..t.rows()).map(|i| (horizon[i].clone().unwrap(), became[i].clone(), volume[i].unwrap(), thickness[i].unwrap())).collect();
+    let w = |h: &str, b: Option<&str>, v: f64, m: f64| (h.to_string(), b.map(str::to_string), v, m);
+    let expected = [
+        w("A-B", None, 19_000.0, 3.8),
+        w("E", None, 10_000.0, 2.0),
+        w("F", None, 2_500.0, 0.5),
+        w("C", Some("thin loss"), 2_000.0, 0.4),
+        w("D", Some("discarded, high in situ ash"), 15_000.0, 3.0),
+    ];
+    assert_eq!(written.len(), expected.len(), "{written:?}");
+    for (got, want) in written.iter().zip(&expected) {
+        assert_eq!((&got.0, &got.1), (&want.0, &want.1));
+        assert!(close(got.2, want.2) && close(got.3, want.3), "{got:?} against {want:?}");
+    }
+    assert!(record.messages[0].contains("every column balanced to 0.0e0"), "{}", record.messages[0]);
+    let said: Vec<String> = record.notes.iter().filter(|n| n.code == Some(Code::ReservesDefaulted)).map(|n| n.text.clone()).collect();
+    assert!(said.iter().any(|t| t == "3 units coal formed into working sections, 31500.0 m3"), "{said:?}");
+}
+
+/// Forced splits: A named A1 and B named B1 split section A-B into A, with the parting (which goes with the ply above),
+/// and B.
+#[test]
+fn a_forced_split_puts_the_parting_with_the_ply_above() {
+    let mut s = session();
+    let ids = section_column(&mut s);
+    let csv = format!("{SECTION_CSV},A,,,,,,A1\n,B,,,,,,B1\n");
+    let flow = flow(&mut s, section_steps(), &csv);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": SECTION_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let (horizon, volume) = (texts(&t, "horizon"), numbers(&t, "volume"));
+    let a = (0..t.rows()).find(|&i| horizon[i].as_deref() == Some("A")).expect("section A");
+    let b = (0..t.rows()).find(|&i| horizon[i].as_deref() == Some("B")).expect("section B");
+    assert!(close(volume[a].unwrap(), 11_500.0) && close(volume[b].unwrap(), 7_500.0));
+}
+
+/// A coal ply no row gives a min_coal_thickness can't be judged: its block stops, said.
+#[test]
+fn a_section_rule_no_row_gives_stops_the_block() {
+    let mut s = session();
+    let ids = section_column(&mut s);
+    let csv = "when material,rd (t/m3),min_parting (m),ws_strip_ratio\nwaste,2.3,,\ncoal,,1,0.5\n";
+    let flow = flow(&mut s, section_steps(), csv);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": SECTION_STACK, "layer": "reserves" })).unwrap();
+    let stopped = record.notes.iter().find(|n| n.code == Some(Code::ReservesBlockStopped)).unwrap();
+    assert!(stopped.text.contains("1_B1_A has no min_coal_thickness"), "{}", stopped.text);
 }

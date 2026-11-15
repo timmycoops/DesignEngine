@@ -141,3 +141,63 @@ On the demo pit, the starter's coal row is given Mad 3.5 %, Mis 8 % and Mrom 10 
 - Both match their blocks to 0 t, with coal by Preston-Sanders on each block's interrogated RD.
 - 50m is 0.107 t different in situ, as Preston-Sanders isn't linear in RD and the blocks average it differently. Its
   air-dried tonnes are the same.
+
+## Built: 3c, working sections
+
+`working_sections` runs after `join_benches`. It applies decisions 6 and 7, in Spry's order:
+
+1. **Coal is discarded** by hand (`discard` yes) or by its in situ ash over `insitu_ash_cutoff`. It is carried as waste
+   and always breaks a section. The step's `ash` setting names the field, and the starter sets it to the model's ash
+   code.
+2. **A run of waste between plies** breaks the column when it is thicker than `min_parting`. The run's own setting is
+   used, else the larger of the two plies'.
+3. **Top down within each group**, the next parting and the ply below it join a section if that ply's coal volume ×
+   `ws_strip_ratio` covers the parting's volume, bcm for bcm. The ratio is the largest of the section's plies' and the
+   ply's own. Otherwise the section closes, and the next one starts at that ply.
+4. **A section counts** if its thickness, partings in, exceeds `min_coal_thickness`, the largest of its plies'. The coal
+   of a section that doesn't is thin loss, set aside, and its partings stay waste.
+5. **A section splits** where its plies' `ws_split` names change, and each parting goes with the ply above.
+
+Then the labels and the write:
+
+- Each section's units carry its working section label: its number top down, counting the waste between sections, coal
+  or waste, and its name (roof seam, or roof-floor). Thin coal is set aside, so the waste either side of it is one run,
+  as Spry puts thin loss in its waste.
+- A parting in a section is parting dilution.
+- The preview shows each unit's section.
+- A coal ply no row gives a rule stops its block, said with the rule.
+- The `sections` write gives a row for each section (its units added up by their rules, partings in), then each thin and
+  each discarded ply.
+
+The starter adds `min_parting`, `ws_strip_ratio`, `min_coal_thickness`, `insitu_ash_cutoff`, `discard` and `ws_split`
+to its parameter table.
+
+Known answers (`crates/zd-commands/tests/reserves_run.rs`): one 5,000 m² block, with the rules min parting 1 m, ratio
+0.5, minimum 0.45 m and in situ ash cut-off 30 %.
+
+- **A-B.** A (2 m) and B (1.5 m) form section A-B, 3.8 m and 19,000 m³. The 0.3 m parting A-B joins because B's
+  7,500 m³ × 0.5 covers its 1,500 m³, and it becomes parting dilution.
+- **B-C.** At 5 m it breaks.
+- **C.** C (0.4 m) is alone and becomes thin loss.
+- **D.** D's 40 % ash discards it, a break.
+- **E and F.** E (2 m) is a section. The 0.9 m parting E-F stays waste, as F's 2,500 m³ × 0.5 doesn't cover 4,500 m³.
+  So F (0.5 m) is a section of its own.
+- **The numbering**, top down, is waste 1, A-B 2, waste 3 (B-C to D-E, around thin C), E 4, waste 5, F 6 and the waste
+  below 7.
+- **A forced split** (A1, B1) gives A at 11,500 m³ with the parting, and B at 7,500 m³.
+- **A missing rule.** With no `min_coal_thickness`, the block stops: "1_B1_A has no min_coal_thickness".
+
+The demo pit sets coal's rules to min parting 0.5 m, ratio 1, minimum 0.3 m and cut-off 35 %:
+
+| case | sections | L | M | U | thin loss |
+|---|---|---|---|---|---|
+| Base | 256 | 90 (3,682,315.617 m³) | 90 (1,956,673.751 m³) | 76 (820,516.419 m³) | 7 (1,802.5 m³) |
+| 50m | 509 | 180 (3,682,315.617 m³) | 180 (1,956,673.751 m³) | 149 (820,067.356 m³) | 15 (2,251.6 m³) |
+
+- L and M are the same in both cases.
+- U's subcrop leaves 449 m³ more as thin loss in 50m's smaller blocks, as block size changes where a thinning seam is
+  cut.
+- The in situ tables still match their blocks to 0.
+- The run took 9 ms.
+
+Still to come: PIT B's working sections against Spry's, by counts and differences only (0070, workstream 6).

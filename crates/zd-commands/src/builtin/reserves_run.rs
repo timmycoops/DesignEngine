@@ -42,7 +42,7 @@ pub const OUT_OF_MODEL: &str = "out of model";
 pub const UNDERBURDEN_THICKNESS: f64 = 10.0;
 
 /// The steps a dataflow can name, in Spry's order, with what each does.
-pub const STEPS: [(&str, &str); 4] = [
+pub const STEPS: [(&str, &str); 5] = [
     ("small_volumes", "sets aside and writes each unit under its min_volume, never dropping it"),
     (
         "initialise",
@@ -53,6 +53,10 @@ pub const STEPS: [(&str, &str); 4] = [
         "works each unit's in situ density by Preston-Sanders from its RD, air-dried and in situ moisture, and its ROM density, then writes each horizon's benches as they are, before anything is joined",
     ),
     ("join_benches", "joins each horizon's benches into one unit with their in situ shares, so later writes put pieces back by share"),
+    (
+        "working_sections",
+        "sets aside coal discarded by hand or by its in situ ash, forms working sections top down by min_parting, ws_strip_ratio and min_coal_thickness, splits them by ws_split, labels partings and thin coal, and writes each section",
+    ),
 ];
 
 fn step_fn(name: &str) -> Option<StepFn> {
@@ -61,6 +65,7 @@ fn step_fn(name: &str) -> Option<StepFn> {
         "initialise" => Some(initialise),
         "in_situ" => Some(in_situ),
         "join_benches" => Some(join_benches),
+        "working_sections" => Some(working_sections),
         _ => None,
     }
 }
@@ -311,6 +316,15 @@ fn plan_area(mesh: &TriMesh) -> f64 {
     twice / 2.0
 }
 
+/// A word from the parameter tables, read in order.
+fn parameter_text(tables: &[Arc<ParameterTable>], attributes: &Attributes, column: &str) -> Option<String> {
+    let refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
+    ParameterTable::lookup_in(&refs, attributes, column).map(|f| match f.value {
+        ParamValue::Number(n) => n.to_string(),
+        ParamValue::Text(t) => t.trim().to_string(),
+    })
+}
+
 /// A value from the parameter tables, read in order.
 fn parameter(tables: &[Arc<ParameterTable>], attributes: &Attributes, column: &str) -> Option<f64> {
     let refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
@@ -397,6 +411,8 @@ pub struct UnitView {
     /// For a joined unit, its benches and their shares.
     pub joined: Vec<(String, f64)>,
     pub became: Option<String>,
+    /// Its working section, once formed: its number, coal or waste, and its name.
+    pub section: Option<String>,
     /// Each field's value by name.
     pub values: BTreeMap<String, f64>,
 }
@@ -418,6 +434,7 @@ fn view(run: &ColumnRun<'_>, step: &str) -> StepView {
             bench: u.bench.as_ref().map(|b| b.label.clone()),
             joined: u.joined.map(|j| run.column.joins()[j as usize].benches.iter().map(|b| (b.bench.label.clone(), b.share)).collect()).unwrap_or_default(),
             became: u.became.as_ref().map(became),
+            section: u.section.as_ref().map(|s| format!("{} {} {}", s.id.map_or(String::new(), |i| i.to_string()), s.material, s.seam).trim().to_string()),
             values: fields.list().iter().zip(u.values()).map(|(f, v)| (f.name.clone(), *v)).collect(),
         })
         .collect();
@@ -601,6 +618,234 @@ fn quality_defaults(run: &mut ColumnRun<'_>) {
             }
         }
     }
+}
+
+/// What the walk sees: a coal ply, or a run of waste (discarded coal with it) between plies.
+#[derive(Debug, Clone)]
+enum Item {
+    Ply(usize),
+    Waste(Vec<usize>),
+}
+
+/// `working_sections` (decision 0073, points 6 and 7), after the benches are joined, in Spry's order:
+///
+/// 1. coal set aside by hand (`discard` yes) or by its in situ ash over `insitu_ash_cutoff` is discarded: carried as
+///    waste, and always a break;
+/// 2. a run of waste between plies thicker than `min_parting` breaks the column into groups (the run's own setting,
+///    else the larger of the plies' either side);
+/// 3. within a group, top down, a section starts at its first ply; the next parting and the ply below it join it if that
+///    ply's coal volume × `ws_strip_ratio` (the largest of the section's plies' and its own) covers the parting's volume,
+///    bcm for bcm; otherwise the section closes and the next starts at that ply;
+/// 4. a section counts if its thickness, partings in, exceeds `min_coal_thickness` (the largest of its plies'); the coal
+///    of one that doesn't is thin loss, set aside, and its partings stay waste;
+/// 5. a section is split where its plies' `ws_split` names change, the parting going with the ply above.
+///
+/// Sections are numbered top down with the waste between them, each coal section named by its roof and floor seams; a
+/// parting in a section is parting dilution. Each section, thin ply and discarded ply is written at `sections`.
+fn working_sections(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String> {
+    let fields = run.column.fields();
+    let (thickness, volume) = (fields.thickness(), fields.volume());
+    let ash = fields.at(step.setting("ash")).ok();
+    let active: Vec<usize> = (0..run.column.len()).filter(|&i| !run.column.units()[i].is_set_aside()).collect();
+
+    // 1. Discarded coal.
+    for &i in &active {
+        let u = &run.column.units()[i];
+        if !is_coal(u) || u.became.is_some() {
+            continue;
+        }
+        let attributes = &run.attributes[u.origin as usize];
+        let by_hand = parameter_text(run.tables, attributes, step.setting("discard")).is_some_and(|t| matches!(t.to_lowercase().as_str(), "yes" | "y" | "true" | "1"));
+        let high = ash.zip(run.parameter(i, step.setting("insitu_ash_cutoff"))).is_some_and(|(a, cut)| u.value(a) > cut);
+        if by_hand || high {
+            let detail = if by_hand { "user specified" } else { "high in situ ash" };
+            let v = u.value(volume);
+            run.column.label_became(i, Became { kind: BecameKind::Discarded, detail: detail.into() });
+            run.said.count(format!("coal discarded, {detail}"), v);
+        }
+    }
+
+    // The plies and the waste between them, top down.
+    let is_ply = |run: &ColumnRun<'_>, i: usize| {
+        let u = &run.column.units()[i];
+        is_coal(u) && u.became.is_none()
+    };
+    let mut items: Vec<Item> = Vec::new();
+    for &i in &active {
+        if is_ply(run, i) {
+            items.push(Item::Ply(i));
+        } else if let Some(Item::Waste(w)) = items.last_mut() {
+            w.push(i);
+        } else {
+            items.push(Item::Waste(vec![i]));
+        }
+    }
+    let need = |run: &ColumnRun<'_>, i: usize, key: &str| -> Result<f64, String> {
+        run.parameter(i, step.setting(key)).ok_or_else(|| format!("{} has no {} (no parameter row gives it)", run.name_of(i), step.setting(key)))
+    };
+    let sum = |run: &ColumnRun<'_>, units: &[usize], f: usize| units.iter().map(|&i| run.column.units()[i].value(f)).sum::<f64>();
+
+    // 2. Groups of plies, split at thick partings and discarded coal.
+    let mut groups: Vec<Vec<Item>> = Vec::new();
+    let mut current: Vec<Item> = Vec::new();
+    for (k, item) in items.iter().enumerate() {
+        match item {
+            Item::Ply(_) => current.push(item.clone()),
+            Item::Waste(w) => {
+                let between = matches!(items.get(k.wrapping_sub(1)), Some(Item::Ply(_))) && matches!(items.get(k + 1), Some(Item::Ply(_)));
+                let discarded = w.iter().any(|&i| run.column.units()[i].became.as_ref().is_some_and(|b| b.kind == BecameKind::Discarded));
+                let breaks = !between || discarded || {
+                    let own = w.iter().filter_map(|&i| run.parameter(i, step.setting("min_parting"))).fold(f64::NAN, f64::max);
+                    let limit = if own.is_nan() {
+                        let (Item::Ply(above), Item::Ply(below)) = (&items[k - 1], &items[k + 1]) else { unreachable!("between plies") };
+                        need(run, *above, "min_parting")?.max(need(run, *below, "min_parting")?)
+                    } else {
+                        own
+                    };
+                    sum(run, w, thickness) > limit
+                };
+                if breaks {
+                    if !current.is_empty() {
+                        groups.push(std::mem::take(&mut current));
+                    }
+                } else {
+                    current.push(item.clone());
+                }
+            }
+        }
+    }
+    if !current.is_empty() {
+        groups.push(current);
+    }
+
+    // 3. Within each group, sections top down by the strip ratio; 4. kept if thick enough; 5. split by name.
+    let mut sections: Vec<Vec<usize>> = Vec::new();
+    let mut thin: Vec<usize> = Vec::new();
+    for group in groups {
+        let mut formed: Vec<(Vec<usize>, Vec<usize>)> = Vec::new(); // (units, plies)
+        let mut k = 0;
+        while k < group.len() {
+            let Item::Ply(first) = group[k] else { unreachable!("a group starts and ends with a ply") };
+            let (mut units, mut plies) = (vec![first], vec![first]);
+            let mut ratio = need(run, first, "ws_strip_ratio")?;
+            k += 1;
+            while k + 1 < group.len() {
+                let (Item::Waste(parting), Item::Ply(ply)) = (&group[k], &group[k + 1]) else { unreachable!("plies and partings alternate") };
+                let threshold = ratio.max(need(run, *ply, "ws_strip_ratio")?);
+                if run.column.units()[*ply].value(volume) * threshold >= sum(run, parting, volume) {
+                    units.extend(parting);
+                    units.push(*ply);
+                    plies.push(*ply);
+                    ratio = threshold;
+                    k += 2;
+                } else {
+                    k += 1;
+                    break;
+                }
+            }
+            formed.push((units, plies));
+        }
+        for (units, plies) in formed {
+            let mut minimum: f64 = 0.0;
+            for &p in &plies {
+                minimum = minimum.max(need(run, p, "min_coal_thickness")?);
+            }
+            if sum(run, &units, thickness) <= minimum {
+                thin.extend(plies);
+                continue;
+            }
+            // Forced splits: a new part where the plies' names change, each parting with the ply above.
+            let name = |run: &ColumnRun<'_>, i: usize| parameter_text(run.tables, &run.attributes[run.column.units()[i].origin as usize], step.setting("ws_split")).unwrap_or_default();
+            let mut part: Vec<usize> = Vec::new();
+            let mut last: Option<String> = None;
+            for &i in &units {
+                if is_ply(run, i) {
+                    let n = name(run, i);
+                    if last.as_ref().is_some_and(|l| *l != n) {
+                        // The partings since the last ply go with the ply above.
+                        sections.push(std::mem::take(&mut part));
+                    }
+                    last = Some(n);
+                }
+                part.push(i);
+            }
+            sections.push(part);
+        }
+    }
+
+    // Labels: thin coal set aside, partings in sections are dilution, numbers top down.
+    for &i in &thin {
+        let v = run.column.units()[i].value(volume);
+        run.column.label_became(i, Became { kind: BecameKind::ThinLoss, detail: "thin".into() });
+        run.said.count("coal in no working section, thin loss".into(), v);
+    }
+    let section_of: BTreeMap<usize, usize> = sections.iter().enumerate().flat_map(|(s, units)| units.iter().map(move |&i| (i, s))).collect();
+    let mut id = 0u32;
+    let mut previous: Option<Option<usize>> = None;
+    for &i in &active {
+        if run.column.units()[i].is_set_aside() {
+            continue;
+        }
+        let s = section_of.get(&i).copied();
+        if previous != Some(s) {
+            id += 1;
+            previous = Some(s);
+        }
+        let name = match s {
+            Some(s) => {
+                let plies: Vec<usize> = sections[s].iter().copied().filter(|&p| is_ply(run, p)).collect();
+                let seam = |p: usize| run.column.units()[p].in_situ.seam.clone();
+                let (roof, floor) = (seam(plies[0]), seam(*plies.last().expect("a section has a ply")));
+                if roof == floor { roof } else { format!("{roof}-{floor}") }
+            }
+            None => run.column.units()[i].in_situ.seam.clone(),
+        };
+        let coal = s.is_some();
+        if coal && !is_ply(run, i) {
+            run.column.label_became(i, Became { kind: BecameKind::Dilution, detail: "parting".into() });
+        }
+        run.column.unit_mut(i).section = Some(Labels { material: if coal { "coal".into() } else { "waste".into() }, seam: name, id: Some(id) });
+    }
+
+    // The sections write: each section, then the thin and discarded plies.
+    for units in &sections {
+        let label = run.column.units()[units[0]].section.clone().expect("labelled");
+        let names: Vec<String> = units.iter().map(|&i| run.name_of(i)).collect();
+        let v = sum(run, units, volume);
+        run.said.count("coal formed into working sections".into(), v);
+        run.rows.push(Row {
+            write: "sections",
+            horizon: label.seam.clone(),
+            seam: label.seam.clone(),
+            material: "coal".into(),
+            bench: None,
+            became: None,
+            units: units.len(),
+            sources: names,
+            values: run.column.add_up(units.iter().copied()),
+        });
+    }
+    for i in 0..run.column.len() {
+        let u = &run.column.units()[i];
+        let Some(b) = &u.became else { continue };
+        let words = match (b.kind, b.detail.as_str()) {
+            (BecameKind::ThinLoss, _) => "thin loss".to_string(),
+            (BecameKind::Discarded, d) => format!("discarded, {d}"),
+            _ => continue,
+        };
+        run.rows.push(Row {
+            write: "sections",
+            horizon: run.horizons[u.stack as usize].clone(),
+            seam: u.in_situ.seam.clone(),
+            material: u.in_situ.material.clone(),
+            bench: None,
+            became: Some(words),
+            units: 1,
+            sources: vec![run.name_of(i)],
+            values: u.values().to_vec(),
+        });
+    }
+    Ok(())
 }
 
 /// `join_benches`: each horizon's benches joined into one unit, each bench's in situ share of its volume kept.
@@ -804,7 +1049,8 @@ fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: V
         plural(ran.len() + stopped.len()),
         if steps.is_empty() { "no steps".to_string() } else { steps.join(", ") }
     );
-    let volume: f64 = ran.iter().map(|r| r.input_volume).sum();
+    // Plus 0.0 so no columns says 0.0, never -0.0.
+    let volume: f64 = ran.iter().map(|r| r.input_volume).sum::<f64>() + 0.0;
     let worst = ran.iter().map(|r| (r.imbalance / r.input_volume.max(1.0)).abs()).fold(0.0, f64::max);
     head.push_str(&format!("; {volume:.1} m3 in, every column balanced to {worst:.1e} of its volume; {:.0} ms", started.elapsed().as_secs_f64() * 1000.0));
     messages.insert(0, head);
@@ -902,7 +1148,18 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
     fields.push(field("rd_rom", FieldKind::Density, AddUp::Volume, FieldSource::Worked));
     fields.push(field("mis", FieldKind::Moisture, AddUp::Mass { density: "rd_is".into() }, FieldSource::Attribute { attribute: "mis".into() }));
     fields.push(field("mrom", FieldKind::Moisture, AddUp::Mass { density: "rd_rom".into() }, FieldSource::Parameter { column: "mrom".into() }));
-    let steps = STEPS.iter().map(|(name, _)| DataflowStep::on(name)).collect();
+    // Working sections read the ash under the model's own code.
+    let ash = ["ash", "as", "ash_ad", "asad"].into_iter().find(|a| qualities.iter().any(|q| q == a));
+    let steps = STEPS
+        .iter()
+        .map(|(name, _)| {
+            let mut step = DataflowStep::on(name);
+            if let (true, Some(ash)) = (*name == "working_sections", ash) {
+                step.settings.insert("ash".into(), ash.into());
+            }
+            step
+        })
+        .collect();
     let mut columns = vec![
         ValueColumn::number("min_volume", "m3"),
         ValueColumn::number("max_thickness", "m"),
@@ -911,6 +1168,12 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
         ValueColumn::number("mad", "%"),
         ValueColumn::number("mis", "%"),
         ValueColumn::number("mrom", "%"),
+        ValueColumn::number("min_parting", "m"),
+        ValueColumn::number("ws_strip_ratio", ""),
+        ValueColumn::number("min_coal_thickness", "m"),
+        ValueColumn::number("insitu_ash_cutoff", "%"),
+        ValueColumn::text("discard"),
+        ValueColumn::text("ws_split"),
     ];
     let moistures = ["mad".to_string(), "mis".to_string(), "mrom".to_string()];
     let qualities: Vec<String> = qualities.into_iter().filter(|q| !moistures.contains(q)).collect();
