@@ -97,7 +97,7 @@ def reserves_dataflow(s, model):
     waste = next(r for r in table["rows"] if r.get("when", {}).get("material") == "waste")
     waste["values"]["rd_default"] = 2.3
     coal = next(r for r in table["rows"] if r.get("when", {}).get("material") == "coal")
-    coal["values"].update({"mad": 3.5, "mis": 8.0, "mrom": 10.0})
+    coal["values"].update({"mad": 3.5, "mis": 8.0, "mrom": 10.0, "min_parting": 0.5, "ws_strip_ratio": 1.0, "min_coal_thickness": 0.3, "insitu_ash_cutoff": 35.0})
     s.run("parameters.save", table=made_["parameters"], name="Reserves assumptions", content=table)
     return made_["dataflow"]
 
@@ -241,7 +241,10 @@ def main():
         tables = s.objects(layer=f"10 reserves{suffix}", kind="table")
         assert len(tables) == 1, tables
         table = s.object(tables[0]["id"])
-        cols = table["columns"]
+        # The in situ rows alone: the sections write follows them.
+        at = [i for i, w in enumerate(table["columns"]["write"]) if w == "in_situ"]
+        cols = {name: [values[i] for i in at] for name, values in table["columns"].items()}
+        sections = sum(1 for i, w in enumerate(table["columns"]["write"]) if w == "sections" and table["columns"]["became"][i] is None)
         blocks = [s.object(b["id"]) for b in s.objects(layer=f"9 blocks{suffix}", kind="solid")]
         volume = sum(b["volume"] for b in blocks)
         ps = lambda rd: rd * 0.965 / (1 + rd * (0.08 - 0.035) - 0.08)
@@ -252,9 +255,9 @@ def main():
         written_ad = sum(v for v in cols["tonnes_ad"] if v is not None)
         assert abs(written_ad - tonnes_ad) <= 1e-9 * tonnes_ad, (written_ad, tonnes_ad)
         benched = sum(1 for b in cols["bench"] if b)
-        print(f"   {case}: '{tables[0]['name']}', {table['rows']} in situ rows ({benched} by bench) from {len(blocks)} blocks; "
+        print(f"   {case}: '{tables[0]['name']}', {sections} working sections, {len(at)} in situ rows ({benched} by bench) from {len(blocks)} blocks; "
               f"{written:,.3f} m3, {written_t:,.3f} t in situ and {written_ad:,.3f} t air dried, against the blocks by {abs(written - volume):.3g} m3, {abs(written_t - tonnes):.3g} t and {abs(written_ad - tonnes_ad):.3g} t")
-        assert table["rows"] == len(blocks), (table["rows"], len(blocks))
+        assert len(at) == len(blocks), (len(at), len(blocks))
         assert abs(written - volume) <= 1e-9 * volume and abs(written_t - tonnes) <= 1e-9 * tonnes, case
     blocks = [b["id"] for b in s.objects(layer="9 blocks", kind="solid")]
     started = time.perf_counter()
