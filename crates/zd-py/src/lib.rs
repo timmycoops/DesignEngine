@@ -162,6 +162,17 @@ impl PySession {
     /// The workflow report's figures (decision 0068): every case from its latest run, its blocks by seam and material,
     /// what was left out and the reconciliation to the pit, the steps and the inputs. `utc_offset_minutes` dates it in
     /// local time (`time.localtime().tm_gmtoff // 60`); UTC if left out.
+    /// Saves a starter parameter table and a dataflow reading it from a seam model (decision 0073): every step, a field
+    /// for the density and each quality grid, and a table with every column the steps read. Two runs, each undone on its
+    /// own. Gives back `{"parameters": id, "dataflow": id}`.
+    #[pyo3(signature = (model, name=None))]
+    fn dataflow_starter(&mut self, py: Python<'_>, model: &str, name: Option<&str>) -> PyResult<Py<PyAny>> {
+        let id = object_id(model)?;
+        let name = name.unwrap_or("Reserves").to_string();
+        let (table, flow) = py.detach(|| self.inner.dataflow_starter(id, &name)).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &json!({ "parameters": table, "dataflow": flow }))
+    }
+
     /// One block's column after each of a dataflow's steps (decision 0072): `params` as `reserves.run` takes them, the block
     /// by case, strip and block. A list of steps, each with its units and their values by field.
     #[pyo3(signature = (params, strip, block, case=None))]

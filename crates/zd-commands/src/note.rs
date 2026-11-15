@@ -149,6 +149,10 @@ codes! {
     DataflowNoColumn = "dataflow.no_column", "A dataflow setting that none of its parameter tables has a column for";
     ReservesBlockStopped = "reserves.block_stopped", "A block a reserves run left out, and why: a horizon not in the stack, a setting no parameter row gives";
     ReservesValueMissing = "reserves.value_missing", "Rows a reserves run wrote with no value for a field read from blocks";
+    ReservesSmallVolume = "reserves.small_volume", "Units a reserves run set aside as small volumes, with their volume";
+    ReservesUnderburden = "reserves.underburden", "Underburden a reserves run added below the last coal, outside the model";
+    ReservesDefaulted = "reserves.defaulted", "Values a reserves run gave their defaults, by field and why";
+    ReservesOutOfRange = "reserves.out_of_range", "Blocks thicker or wider than a reserves run's maximums";
     WorkflowPicked = "workflow.picked", "A workflow step's input that is the objects as picked, as no rule finds them";
     ObjectSolidsDeleted = "object.solids_deleted", "Solids deleted, with their volume, so a report can account for it";
 }

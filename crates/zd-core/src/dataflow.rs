@@ -5,6 +5,8 @@
 //! Built to take more (Tim, 15 November 2026): fields are data, so a new quality or metric is a new field; steps are named,
 //! so a new step slots in by name; parameter tables carry any columns.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use zd_reserves::{Field, Fields};
 
@@ -46,18 +48,26 @@ fn is_true(b: &bool) -> bool {
     *b
 }
 
-/// One step, by name, on or off.
+/// One step, by name, on or off, with its settings: the names of the fields and parameter columns it reads where they
+/// aren't the usual ones (decision 0073, point 8), so a site's own names work without renaming them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DataflowStep {
     pub step: String,
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub on: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub settings: BTreeMap<String, String>,
 }
 
 impl DataflowStep {
     pub fn on(step: &str) -> Self {
-        DataflowStep { step: step.to_string(), on: true }
+        DataflowStep { step: step.to_string(), on: true, settings: BTreeMap::new() }
+    }
+
+    /// A setting's value, or the usual name where the step doesn't set it.
+    pub fn setting<'a>(&'a self, key: &'a str) -> &'a str {
+        self.settings.get(key).map(String::as_str).filter(|s| !s.trim().is_empty()).unwrap_or(key)
     }
 }
 
@@ -115,7 +125,7 @@ mod tests {
                 field("ash", FieldKind::Quality, AddUp::Mass { density: "rd".into() }, FieldSource::Attribute { attribute: "as".into() }),
                 field("ash_cutoff", FieldKind::Setting, AddUp::Min, FieldSource::Parameter { column: "ash_cutoff".into() }),
             ],
-            steps: vec![DataflowStep::on("initialise"), DataflowStep { step: "in_situ".into(), on: false }],
+            steps: vec![DataflowStep::on("initialise"), DataflowStep { step: "in_situ".into(), on: false, settings: BTreeMap::new() }],
             parameters: vec![ObjectId::new()],
         }
     }

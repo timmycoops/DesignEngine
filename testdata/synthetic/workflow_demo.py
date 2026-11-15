@@ -87,22 +87,16 @@ def drawn_by_hand(s):
     return toe, limit, first, ramps
 
 
-def reserves_dataflow(s):
-    """The reserves dataflow and its assumptions (decision 0072), made by hand: volume, thickness and area from each
-    block, RD, ash and sulphur from the interrogation, waste RD and the ash cut-off from a parameter table."""
-    table = made(s.run("parameters.save", name="Demo assumptions", csv="when material,rd (t/m3),ash_cutoff (%)\nwaste,2.3,\ncoal,,35\n"))[0]
-    field = lambda name, kind, by, source: {"name": name, "kind": kind, "add_up": by, **source}
-    fields = [
-        field("volume", "volume", {"by": "sum"}, {"from": "volume"}),
-        field("thickness", "thickness", {"by": "sum"}, {"from": "thickness"}),
-        field("area", "area", {"by": "max"}, {"from": "plan_area"}),
-        field("rd", "density", {"by": "volume"}, {"from": "attribute", "attribute": "rd"}),
-        field("as", "quality", {"by": "mass", "density": "rd"}, {"from": "attribute", "attribute": "as"}),
-        field("ts", "quality", {"by": "mass", "density": "rd"}, {"from": "attribute", "attribute": "ts"}),
-        field("ash_cutoff", "setting", {"by": "min"}, {"from": "parameter", "column": "ash_cutoff"}),
-    ]
-    steps = [{"step": "initialise"}, {"step": "in_situ"}, {"step": "join_benches"}]
-    return made(s.run("dataflow.save", name="Reserves", content={"fields": fields, "steps": steps, "parameters": [table]}))[0]
+def reserves_dataflow(s, model):
+    """The reserves dataflow and its assumptions (decisions 0072, 0073), from the starter: volume, thickness and area
+    from each block, RD, ash and sulphur from the interrogation, every step; then the waste row of its parameter table
+    given an RD of 2.3, as a planner would fill it in."""
+    made_ = s.dataflow_starter(model, "Reserves")
+    table = s.object(made_["parameters"])["parameters"]
+    waste = next(r for r in table["rows"] if r.get("when", {}).get("material") == "waste")
+    waste["values"]["rd_default"] = 2.3
+    s.run("parameters.save", table=made_["parameters"], name="Reserves assumptions", content=table)
+    return made_["dataflow"]
 
 
 def the_steps(s, g, model, toe, limit, first, ramps, flow=None):
@@ -177,7 +171,7 @@ def main():
     s = zd.Session()
     g, model = import_grids(s, folder, definition)
     toe, limit, first, ramps = drawn_by_hand(s)
-    flow = reserves_dataflow(s)
+    flow = reserves_dataflow(s, model)
     started = time.perf_counter()
     runs = the_steps(s, g, model, toe, limit, first, ramps, flow)
     by_hand = time.perf_counter() - started
