@@ -658,6 +658,85 @@ pub async fn solids_table(objects: Vec<ObjectId>, state: State<'_, AppState>) ->
     .await?
 }
 
+/// A reserves table's tree of levels (decision 0075): every node with how many leaves are under it.
+#[tauri::command]
+pub async fn reserves_tree(object: ObjectId, state: State<'_, AppState>) -> Result<zd_commands::reserves_view::TreeNode, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        match &app.session.project().object(object).ok_or("no such object")?.body {
+            zd_core::Body::Table(t) => Ok(zd_commands::reserves_view::tree(t)),
+            _ => Err("not a table".to_string()),
+        }
+    })
+    .await?
+}
+
+/// A reserves table's node broken down (decision 0075): its fields down the side, its total and children across, each
+/// child in `open` followed by its own.
+#[tauri::command]
+pub async fn reserves_breakdown(object: ObjectId, node: Vec<String>, open: Vec<Vec<String>>, state: State<'_, AppState>) -> Result<zd_commands::reserves_view::Breakdown, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        match &app.session.project().object(object).ok_or("no such object")?.body {
+            zd_core::Body::Table(t) => zd_commands::reserves_view::breakdown(t, &node, &open),
+            _ => Err("not a table".to_string()),
+        }
+    })
+    .await?
+}
+
+/// The solids a reserves table's node was made from (decision 0075): every solid of the table's case whose levels, as
+/// the run placed it, start with the node's. To select them.
+#[tauri::command]
+pub async fn reserves_solids(object: ObjectId, node: Vec<String>, state: State<'_, AppState>) -> Result<Vec<ObjectId>, String> {
+    use zd_commands::reserves_view::{case_of, leaf_of, level_defaults, levels};
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let table = project.object(object).ok_or("no such object")?;
+        let zd_core::Body::Table(t) = &table.body else { return Err("not a table".to_string()) };
+        let (levels, defaults, case) = (levels(t), level_defaults(&table.attributes), case_of(&table.attributes));
+        Ok(project
+            .objects()
+            .filter(|o| matches!(o.body, zd_core::Body::Solid(_)) && case_of(&o.attributes) == case)
+            .filter(|o| leaf_of(&levels, &defaults, &o.attributes).starts_with(&node))
+            .map(|o| o.id)
+            .collect())
+    })
+    .await?
+}
+
+/// Where a solid sits in a reserves table (decision 0075): its levels' words as the run placed it, if it's of the table's
+/// case and the table holds that leaf.
+#[tauri::command]
+pub async fn reserves_node_of(object: ObjectId, solid: ObjectId, state: State<'_, AppState>) -> Result<Option<Vec<String>>, String> {
+    use zd_commands::reserves_view::{case_of, leaf_of, level_defaults, levels};
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let table = project.object(object).ok_or("no such object")?;
+        let zd_core::Body::Table(t) = &table.body else { return Err("not a table".to_string()) };
+        let Some(s) = project.object(solid) else { return Ok(None) };
+        if !matches!(s.body, zd_core::Body::Solid(_)) || case_of(&s.attributes) != case_of(&table.attributes) {
+            return Ok(None);
+        }
+        let levels = levels(t);
+        let leaf = leaf_of(&levels, &level_defaults(&table.attributes), &s.attributes);
+        let held = (0..t.rows()).any(|i| {
+            levels.iter().zip(&leaf).all(|(l, w)| match t.column(l).map(|c| &c.values) {
+                Some(zd_core::ColumnValues::Text(v)) => v[i].as_deref().unwrap_or("") == w,
+                _ => w.is_empty(),
+            })
+        });
+        Ok(held.then_some(leaf))
+    })
+    .await?
+}
+
 /// A layer of a Deswik drawing, to pick from before `deswik.import`.
 #[derive(Serialize)]
 pub struct DeswikLayerRow {

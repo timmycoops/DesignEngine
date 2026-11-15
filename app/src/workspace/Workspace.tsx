@@ -22,6 +22,7 @@ import { RunLogPanel } from '@/panels/RunLogPanel';
 import { ViewportPanel } from '@/panels/ViewportPanel';
 import { WorkflowCanvas } from '@/panels/WorkflowCanvas';
 import { BlockTable } from '@/panels/BlockTablePanel';
+import { ReservesTable } from '@/panels/ReservesTablePanel';
 import { WorkflowPanel } from '@/panels/WorkflowPanel';
 
 const components = {
@@ -36,6 +37,7 @@ const components = {
   workflow: WorkflowPanel,
   canvas: WorkflowCanvas,
   blocks: BlockTable,
+  restable: ReservesTable,
 };
 
 /** The key that hides every panel, so the viewport fills the window, and brings them back. */
@@ -65,6 +67,7 @@ export const PANELS: { id: PanelId; title: string; place: AddPanelOptions['posit
   { id: 'workflow', title: 'Workflow', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 420 } },
   { id: 'canvas', title: 'Workflow canvas', place: { referencePanel: 'viewport', direction: 'below' }, size: { height: 420 } },
   { id: 'blocks', title: 'Block table', place: { referencePanel: 'viewport', direction: 'below' }, size: { height: 320 } },
+  { id: 'restable', title: 'Reserves table', place: { referencePanel: 'viewport', direction: 'below' }, size: { height: 420 } },
 ];
 
 const LAYOUT_KEY = 'zd.workspace.layout.v3';

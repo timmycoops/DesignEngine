@@ -582,6 +582,49 @@ export const objectsAttributes = (objects: string[]) => invoke<Record<string, bo
 /** Each solid's own volume and every attribute, in the order asked, for the block table; null volume if it's gone. */
 export const solidsTable = (objects: string[]) => invoke<{ volume: number | null; attributes: Record<string, boolean | number | string> }[]>('solids_table', { objects });
 
+/** A node of a reserves table's tree of levels (decision 0075): its level values, label, leaves under it and children. */
+export interface ReservesNode {
+  path: string[];
+  label: string;
+  leaves: number;
+  children: ReservesNode[];
+}
+
+/** One column of a node's breakdown: the node's total (depth 0), a child (1), or an opened child's child (2, …). */
+export interface BreakdownColumn {
+  label: string;
+  path: string[];
+  depth: number;
+  leaves: number;
+  opens: boolean;
+  open: boolean;
+}
+
+/** One field of a breakdown, a value per column added up by its rule; a field of words has words instead. */
+export interface BreakdownField {
+  column: string;
+  folders: string[];
+  name: string;
+  unit: string;
+  values: (number | null)[];
+  words: (string | null)[] | null;
+}
+
+export interface Breakdown {
+  levels: string[];
+  node: string[];
+  columns: BreakdownColumn[];
+  fields: BreakdownField[];
+}
+
+export const reservesTree = (object: string) => invoke<ReservesNode>('reserves_tree', { object });
+/** A reserves table's node with its fields down the side and its children across, each in `open` opened. */
+export const reservesBreakdown = (object: string, node: string[], open: string[][]) => invoke<Breakdown>('reserves_breakdown', { object, node, open });
+/** The solids a reserves table's node was made from, to select. */
+export const reservesSolids = (object: string, node: string[]) => invoke<string[]>('reserves_solids', { object, node });
+/** Where a solid sits in a reserves table, or null if it isn't in it. */
+export const reservesNodeOf = (object: string, solid: string) => invoke<string[] | null>('reserves_node_of', { object, solid });
+
 /** One folder a seam model reads its grids from, with how many of them are there (decision 0058, stage 4). */
 export interface FolderCheck {
   folder: string;

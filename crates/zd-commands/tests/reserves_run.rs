@@ -1178,3 +1178,46 @@ fn length_is_along_the_strip_and_width_across_it() {
         assert!((n(id, "length") - 80.0).abs() < 1e-9 && (n(id, "width") - 50.0).abs() < 1e-9, "{} {}", n(id, "length"), n(id, "width"));
     }
 }
+
+/// No waste below B: B's 0.2 m floor loss (1,000 m³) goes into the underburden, which has no leaf, so it's ROM waste on
+/// B's own leaf; no leaf without a seam is written.
+#[test]
+fn a_loss_into_the_underburden_is_rom_waste_on_its_own_leaf() {
+    let mut s = session();
+    let ids: Vec<ObjectId> = loss_column(&mut s).into_iter().take(4).collect();
+    let flow = flow(&mut s, final_steps(), &dilution_csv([0.0, 0.2, 0.0, 0.0], [0.0; 4], ""));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    assert!(texts(&t, "seam").iter().all(Option::is_some), "{:?}", texts(&t, "seam"));
+    assert!(close(at_seam(&t, Some("B"), "ROM\\Coal\\volume"), 14_000.0));
+    assert!(close(at_seam(&t, Some("B"), "ROM\\Waste\\volume"), 25_000.0 + 1_000.0 + 1_000.0), "A-B's own, A's floor loss into it and B's own floor loss: {}", at_seam(&t, Some("B"), "ROM\\Waste\\volume"));
+    assert!(close(total(&t, "ROM\\Coal\\volume") + total(&t, "ROM\\Waste\\volume"), 100_000.0));
+}
+
+/// A reserves table carries its levels and their defaults, so each block's solid is matched to the leaf the run put it
+/// on (decision 0075): every block of the loss column, which has no `pit`, lands on a leaf the table holds, under Pit.
+#[test]
+fn a_table_s_leaves_are_matched_to_their_solids() {
+    use zd_commands::reserves_view::{breakdown, case_of, leaf_of, level_defaults, levels};
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, final_steps(), &dilution_csv([0.0; 4], [0.0; 4], ""));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let object = s.project().object(id).unwrap().clone();
+    assert_eq!(object.attributes.get("levels"), Some(&zd_core::AttrValue::Text("pit=Pit;strip;block;seam;bench".into())));
+    let t = table(&s, id);
+    let (levels, defaults) = (levels(&t), level_defaults(&object.attributes));
+    assert_eq!(levels, ["pit", "strip", "block", "seam", "bench"]);
+    for &b in &ids {
+        let solid = s.project().object(b).unwrap();
+        let leaf = leaf_of(&levels, &defaults, &solid.attributes);
+        assert_eq!(leaf[0], "Pit", "the default where a block has none");
+        assert_eq!(case_of(&solid.attributes), "Base");
+        assert!(breakdown(&t, &leaf, &[]).is_ok(), "{leaf:?} is a leaf of the table");
+    }
+    // The block's breakdown: its seams across, its ROM coal and waste the blocks' 120,000 m³.
+    let b = breakdown(&t, &["Pit".into(), "1".into(), "B1".into()], &[]).unwrap();
+    let total = |f: &str| b.fields.iter().find(|x| x.column == f).and_then(|x| x.values[0]).unwrap_or(0.0);
+    assert!(close(total("ROM\\Coal\\volume") + total("ROM\\Waste\\volume"), 120_000.0));
+}
