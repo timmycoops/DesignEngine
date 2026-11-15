@@ -243,7 +243,7 @@ def main():
         assert len(tables) == 1, tables
         table = s.object(tables[0]["id"])
         cols = table["columns"]
-        # A field summed over every material under a top folder: Insitu\Coalolume and Insitu\Wasteolume.
+        # A field summed over every material under a top folder: Insitu\Coal\volume and Insitu\Waste\volume.
         total = lambda top, field: sum(v for name, values in cols.items() if name.startswith(top + "\\") and name.endswith("\\" + field) and name.count("\\") == 2 for v in values if v is not None)
         ids = cols.get("Working section\id", [])
         sections = len({(cols["strip"][i], cols["block"][i], w) for i, ws in enumerate(ids) if ws for w in ws.split("; ")})
