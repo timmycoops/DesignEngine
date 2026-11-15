@@ -234,7 +234,8 @@ weird solid outputs." So the dataflow reads only what the blocks carry, as Spry'
   - `volume`;
   - `plan_area`, its footprint in plan;
   - `thickness`, volume over plan area;
-  - `length` and `width`, the sides of the smallest rectangle round its footprint, the longer first;
+  - `length` and `width`, the sides of the smallest rectangle round its footprint: the length along its strip and the
+    width across it (see "Length along the strip" below);
   - `centroid_x`, `centroid_y` and `centroid_z`.
   It's a command like any other, so a workflow step. The demo pit measures its blocks as step 20, before the
   interrogation.
@@ -273,7 +274,27 @@ On the demo pit:
   length is the longest of its benches' measured lengths; it was the top bench's own footprint.
 - The run takes 29 ms.
 - The 50m case's longer side is still the strip's width where its blocks are shorter than the strip is wide. Its edge
-  loss can be corrected in the parameters, or with a `length` attribute on the blocks.
+  loss can be corrected in the parameters, or with a `length` attribute on the blocks. Settled below.
+
+### Length along the strip
+
+Tim, 15 November: "Length is along the strip by default yes and width is the width of the strip - so perpendicular to
+the length".
+
+- **A strip's way** is the longer side of the smallest rectangle round all its blocks measured in the run: those with
+  the same `pit` and `strip`.
+- **A block's length** is the side of its own smallest rectangle nearer that way, and its width the other. A block
+  shorter than the strip is wide keeps its length along the strip. A block on a curving strip is measured square to its
+  own sides.
+- **A block with no `strip`** is measured on its own, the longer side its length, and the run says how many. So is a
+  strip of one block, or a strip measured one block at a time: measure a strip's blocks together.
+
+Known answer: strip 1, three blocks 50 m along and 80 m across, turned 30° at mine coordinates, gives each 50 m long and
+80 m wide. A block of another pit's strip 1, and one with no strip, are 80 m long and 50 m wide.
+
+On the demo pit, 50m blocks now average 49.2 m long and 72.6 m wide, and Base blocks 98.1 m and 73.3 m. Edge loss is
+5,217.9 m³ in Base and 5,137.8 m³ in 50m (it was 7,137.3 m³), and edge dilution 1,953.4 and 1,924.2 m³: the same coal
+in shorter blocks along the same strips gives about the same edge.
 
 ### Dip and true thickness
 
