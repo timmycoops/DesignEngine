@@ -105,6 +105,7 @@ fn flow(s: &mut Session, steps: serde_json::Value, csv: &str) -> ObjectId {
             { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
             { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
             { "name": "area", "kind": "area", "add_up": { "by": "max" }, "from": "plan_area" },
+            { "name": "length", "kind": "length", "add_up": { "by": "max" }, "from": "attribute", "attribute": "length" },
             { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
             { "name": "ash", "kind": "quality", "add_up": { "by": "mass", "density": "rd" }, "from": "attribute", "attribute": "ash" },
             { "name": "ash_cutoff", "kind": "setting", "add_up": { "by": "min" }, "from": "parameter", "column": "ash_cutoff" },
@@ -207,7 +208,7 @@ fn each_block_s_horizons_and_benches_are_written_in_situ_with_their_own_values()
     assert!(close(total(&t, "Imported\\Coal\\volume"), 70_000.0) && close(total(&t, "Imported\\Waste\\volume"), 110_000.0));
     assert!(close(total(&t, &at(COAL, "volume")) + total(&t, &at(WASTE, "volume")), 180_000.0));
     let missing: Vec<&str> = record.notes.iter().filter(|n| n.code == Some(Code::ReservesValueMissing)).map(|n| n.text.as_str()).collect();
-    assert_eq!(missing, ["4 in situ pieces with no ash: no block attribute or parameter row gave it"]);
+    assert_eq!(missing, ["9 in situ pieces with no length: no block attribute or parameter row gave it", "4 in situ pieces with no ash: no block attribute or parameter row gave it"], "these blocks were never measured");
     assert!(record.notes.iter().all(|n| n.severity < Severity::Warning), "{:?}", record.notes);
     // How each column adds up goes with it, for any summary.
     assert_eq!(t.column(&at(COAL, "ash")).unwrap().add_up, Some(zd_reserves::AddUp::Mass { density: "rd".into() }));
@@ -282,9 +283,9 @@ fn a_block_that_can_t_run_is_left_out_with_why_and_the_rest_go_on() {
 fn a_step_this_build_doesn_t_have_or_no_stack_is_refused() {
     let mut s = session();
     let ids = blocks(&mut s, None);
-    let flow = dataflow(&mut s, &["initialise", "rom_loss"]);
+    let flow = dataflow(&mut s, &["initialise", "rom_final"]);
     let err = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap_err();
-    assert!(err.to_string().contains("names a step rom_loss, which this build doesn't have; it has small_volumes, initialise, in_situ, join_benches, working_sections"), "{err}");
+    assert!(err.to_string().contains("names a step rom_final, which this build doesn't have; it has small_volumes, initialise, in_situ, join_benches, working_sections, rom_loss, rom_dilution, rom_ash_cutoff"), "{err}");
     let flow = dataflow(&mut s, &["initialise"]);
     let err = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "layer": "reserves" })).unwrap_err();
     assert!(err.to_string().contains("no stack order"), "{err}");
@@ -602,4 +603,404 @@ fn a_section_rule_no_row_gives_stops_the_block() {
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": SECTION_STACK, "layer": "reserves" })).unwrap();
     let stopped = record.notes.iter().find(|n| n.code == Some(Code::ReservesBlockStopped)).unwrap();
     assert!(stopped.text.contains("1_B1_A has no min_coal_thickness"), "{}", stopped.text);
+}
+
+// Decision 0074, workstream 4b: ROM loss, a hand-worked column.
+
+/// A block's length is the longer side of the smallest rectangle round it in plan: 80 m for an 80 m by 20 m footprint
+/// turned 30° at mine coordinates, whatever its corners.
+#[test]
+fn a_block_s_length_is_the_long_side_of_its_smallest_rectangle() {
+    let (c, s) = (30f64.to_radians().cos(), 30f64.to_radians().sin());
+    let corner = |u: f64, v: f64, z: f64| [E + u * c - v * s, N + u * s + v * c, z];
+    let vertices = vec![corner(0.0, 0.0, 0.0), corner(80.0, 0.0, 0.0), corner(80.0, 20.0, 0.0), corner(0.0, 20.0, 0.0), corner(40.0, 10.0, 5.0)];
+    let mesh = zd_core::TriMesh::new(vertices, vec![[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4], [0, 2, 1], [0, 3, 2]]);
+    let length = zd_commands::builtin::block_length(&mesh);
+    assert!((length - 80.0).abs() < 1e-9, "{length}");
+}
+
+const LOSS_STACK: [&str; 5] = ["OB", "A", "A-B", "B", "below B"];
+
+/// One block, 100 m by 50 m (5,000 m², 100 m long): OB 10 m, A coal 2 m, A-B 5 m (a break), B coal 3 m, waste below.
+fn loss_column(s: &mut Session) -> Vec<ObjectId> {
+    let rows: [(&str, f64, f64, &str, &str); 5] =
+        [("OB", 40.0, 50.0, "waste", "A"), ("A", 38.0, 40.0, "coal", "A"), ("A-B", 33.0, 38.0, "waste", "B"), ("B", 30.0, 33.0, "coal", "B"), ("below B", 26.0, 30.0, "waste", "")];
+    let ids = rows
+        .iter()
+        .map(|&(h, z0, z1, material, seam)| {
+            let mut a = json!({ "strip": 1.0, "block": "B1", "horizon": h, "material": material, "seam": seam });
+            if material == "coal" {
+                a["rd"] = json!(1.4);
+                a["ash"] = json!(10.0);
+            }
+            box_solid(s, &format!("1_B1_{h}"), 0.0, (z0, z1), a)
+        })
+        .collect::<Vec<_>>();
+    // The block's geometry measured onto it, as the dataflow reads it (decision 0074).
+    s.run("solid.measure", json!({ "solids": ids })).unwrap();
+    ids
+}
+
+fn loss_csv(roof: f64, floor: f64) -> String {
+    format!(
+        "when material,rd (t/m3),min_parting (m),ws_strip_ratio,min_coal_thickness (m),roof_loss (m),floor_loss (m),edge_loss (m),other_loss (%)\nwaste,2.3,,,,,,,\ncoal,,1,0.5,0.5,{roof},{floor},0.05,2\n"
+    )
+}
+
+fn loss_steps() -> serde_json::Value {
+    json!([{ "step": "initialise" }, { "step": "join_benches" }, { "step": "working_sections" }, { "step": "rom_loss" }])
+}
+
+/// Roof 0.1 m, floor 0.2 m, edge 0.05 m, other 2 %. A (10,000 m³): roof 500 m³ into OB, edge 0.05 × 100 m × 2 m = 10
+/// m³ and other 200 m³ into OB, floor 1,000 m³ into A-B; 8,290 m³ left. B (15,000 m³): roof 500 m³, edge 15 m³ and
+/// other 300 m³ into A-B, floor 1,000 m³ into the waste below; 13,185 m³ left.
+#[test]
+fn rom_loss_takes_roof_floor_edge_and_other_loss_into_the_waste_beside() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, loss_steps(), &loss_csv(0.1, 0.2));
+    let p: RunReservesParams = serde_json::from_value(json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let views = {
+        let project = s.project();
+        let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+        reserves_preview(&get, &p, "Base", &["Pit".to_string(), "1".to_string(), "B1".to_string()]).unwrap()
+    };
+    let last = views.last().unwrap();
+    assert_eq!(last.step, "rom_loss");
+    let pieces: Vec<(String, Option<String>, Option<String>, f64)> = last.units.iter().map(|u| (u.horizon.clone(), u.became.clone(), u.rom.clone(), u.values["volume"])).collect();
+    let want = |h: &str, became: Option<&str>, rom: Option<&str>, v: f64| (h.to_string(), became.map(str::to_string), rom.map(str::to_string), v);
+    let expected = [
+        want("OB", None, None, 50_000.0),
+        want("A", Some("loss (roof)"), Some("1 waste A"), 500.0),
+        want("A", Some("loss (edge)"), Some("1 waste A"), 10.0),
+        want("A", Some("loss (other)"), Some("1 waste A"), 200.0),
+        want("A", None, None, 8_290.0),
+        want("A", Some("loss (floor)"), Some("3 waste B"), 1_000.0),
+        want("A-B", None, None, 25_000.0),
+        want("B", Some("loss (roof)"), Some("3 waste B"), 500.0),
+        want("B", Some("loss (edge)"), Some("3 waste B"), 15.0),
+        want("B", Some("loss (other)"), Some("3 waste B"), 300.0),
+        want("B", None, None, 13_185.0),
+        want("B", Some("loss (floor)"), Some("5 waste"), 1_000.0),
+        want("below B", None, None, 20_000.0),
+    ];
+    assert_eq!(pieces.len(), expected.len(), "{pieces:?}");
+    for (got, want) in pieces.iter().zip(&expected) {
+        assert_eq!((&got.0, &got.1, &got.2), (&want.0, &want.1, &want.2), "{got:?}");
+        assert!(close(got.3, want.3), "{got:?} against {want:?}");
+    }
+
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert!(record.messages[0].contains("every column balanced to 0.0e0"), "{}", record.messages[0]);
+    let t = table(&s, created(&record)[0]);
+    let loss = |seam: &str, kind: &str| value(&t, leaf(&t, "B1", seam, None), &format!("Loss\\{kind}\\volume")).unwrap_or(0.0);
+    assert!(close(loss("A", "Roof"), 500.0) && close(loss("A", "Floor"), 1_000.0) && close(loss("A", "Edge"), 10.0) && close(loss("A", "Other"), 200.0));
+    assert!(close(loss("B", "Roof"), 500.0) && close(loss("B", "Floor"), 1_000.0) && close(loss("B", "Edge"), 15.0) && close(loss("B", "Other"), 300.0));
+    let said = notes_of(&record, Code::ReservesDefaulted);
+    assert!(said.iter().any(|n| n == "2 units roof loss, 1000.0 m3") && said.iter().any(|n| n == "2 units other loss, 500.0 m3"), "{said:?}");
+}
+
+/// Roof 1 m and floor 1.5 m: A (10,000 m³) can't give 5,000 + 7,500 m³, so it is all thin loss, written under Loss\Thin;
+/// B (15,000 m³) gives its roof loss into A-B, the nearest waste above, with A's.
+#[test]
+fn a_section_short_of_its_loss_is_thin_loss() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, loss_steps(), &loss_csv(1.0, 1.5));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let a = leaf(&t, "B1", "A", None);
+    assert!(close(value(&t, a, "Loss\\Thin\\volume").unwrap(), 10_000.0) && value(&t, a, "Loss\\Roof\\volume").is_none());
+    let b = leaf(&t, "B1", "B", None);
+    assert!(close(value(&t, b, "Loss\\Roof\\volume").unwrap(), 5_000.0) && close(value(&t, b, "Loss\\Floor\\volume").unwrap(), 7_500.0));
+    let said = notes_of(&record, Code::ReservesDefaulted);
+    assert!(said.iter().any(|n| n == "1 unit coal in a working section short of its roof and floor loss, thin loss, 10000.0 m3"), "{said:?}");
+}
+
+/// Two coal sections touching (A and B split by name, the parting with A): nothing is lost across their boundary
+/// unless `loss_between_coal` says so, and then A's floor loss goes into B.
+#[test]
+fn no_loss_across_a_coal_boundary_unless_asked() {
+    let mut s = session();
+    let ids = section_column(&mut s);
+    let csv = "when material,when seam,rd (t/m3),min_parting (m),ws_strip_ratio,min_coal_thickness (m),insitu_ash_cutoff (%),ws_split,roof_loss (m),floor_loss (m),edge_loss (m),other_loss (%),loss_between_coal\nwaste,,2.3,,,,,,,,,,\ncoal,A,,1,0.5,0.45,30,A1,0.1,0.1,0,0,\ncoal,B,,1,0.5,0.45,30,B1,0.1,0.1,0,0,\ncoal,,,1,0.5,0.45,30,,0.1,0.1,0,0,\n";
+    let steps = json!([{ "step": "initialise" }, { "step": "join_benches" }, { "step": "working_sections" }, { "step": "rom_loss" }]);
+    let flow_off = flow(&mut s, steps.clone(), csv);
+    let record = s.run("reserves.run", json!({ "dataflow": flow_off, "blocks": ids, "stack": SECTION_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let at_seam = |t: &Table, s: &str| (0..t.rows()).find(|&i| texts(t, "seam")[i].as_deref() == Some(s)).unwrap();
+    assert!(value(&t, at_seam(&t, "A"), "Loss\\Floor\\volume").is_none(), "A's floor is B, coal");
+    assert!(value(&t, at_seam(&t, "B"), "Loss\\Roof\\volume").is_none(), "B's roof is A, coal");
+    assert!(close(value(&t, at_seam(&t, "A"), "Loss\\Roof\\volume").unwrap(), 500.0), "A's roof is OB");
+
+    // Asked on A's row: A's floor loss, 0.1 m over 5,000 m² = 500 m³ off the bottom of section A (its parting), goes into
+    // section B, coal; B's own row doesn't ask, so B's roof still takes nothing from A.
+    let yes = csv.replace("0.1,0.1,0,0,\ncoal,B", "0.1,0.1,0,0,yes\ncoal,B");
+    let flow_on = flow(&mut s, steps, &yes);
+    let p: RunReservesParams = serde_json::from_value(json!({ "dataflow": flow_on, "blocks": ids, "stack": SECTION_STACK, "layer": "reserves" })).unwrap();
+    let views = {
+        let project = s.project();
+        let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+        reserves_preview(&get, &p, "Base", &["Pit".to_string(), "1".to_string(), "B1".to_string()]).unwrap()
+    };
+    let into_b: Vec<(String, f64)> = views.last().unwrap().units.iter().filter(|u| u.rom.as_deref() == Some("3 coal B")).map(|u| (u.became.clone().unwrap_or_default(), u.values["volume"])).collect();
+    assert_eq!(into_b.len(), 1, "{into_b:?}");
+    assert_eq!(into_b[0].0, "loss (floor)");
+    assert!(close(into_b[0].1, 500.0));
+    assert!(views.last().unwrap().units.iter().all(|u| u.rom.as_deref() != Some("2 coal A")), "nothing from B into A");
+}
+
+// Decision 0074, workstream 4c: ROM dilution and the ROM ash cut-off, on the loss column.
+
+/// The loss column's parameters with dilution and a ROM ash cut-off: losses `l` (roof, floor, edge, other), dilution `d`
+/// (roof, floor, edge m, other %), waste ash 80 by default, and B's cut-off.
+fn dilution_csv(l: [f64; 4], d: [f64; 4], b_cutoff: &str) -> String {
+    format!(
+        "when material,when seam,rd (t/m3),ash_default (%),min_parting (m),ws_strip_ratio,min_coal_thickness (m),roof_loss (m),floor_loss (m),edge_loss (m),other_loss (%),roof_dilution (m),floor_dilution (m),edge_dilution (m),other_dilution (%),rom_ash_cutoff (%)\nwaste,,2.3,80,,,,,,,,,,,,\ncoal,B,,,1,0.5,0.5,{},{},{},{},{},{},{},{},{b_cutoff}\ncoal,,,,1,0.5,0.5,{},{},{},{},{},{},{},{},\n",
+        l[0], l[1], l[2], l[3], d[0], d[1], d[2], d[3], l[0], l[1], l[2], l[3], d[0], d[1], d[2], d[3]
+    )
+}
+
+fn dilution_steps() -> serde_json::Value {
+    json!([{ "step": "initialise" }, { "step": "join_benches" }, { "step": "working_sections" }, { "step": "rom_loss" }, { "step": "rom_dilution" }, { "step": "rom_ash_cutoff" }])
+}
+
+fn preview_of(s: &Session, flow: ObjectId, ids: &[ObjectId], stack: &[&str]) -> Vec<zd_commands::builtin::StepView> {
+    let p: RunReservesParams = serde_json::from_value(json!({ "dataflow": flow, "blocks": ids, "stack": stack, "layer": "reserves" })).unwrap();
+    let project = s.project();
+    let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+    reserves_preview(&get, &p, "Base", &["Pit".to_string(), "1".to_string(), "B1".to_string()]).unwrap()
+}
+
+/// A ROM section's volume from the preview: what was sent to it, and its own units not sent away or set aside.
+fn rom_volume(view: &zd_commands::builtin::StepView, section: &str) -> f64 {
+    view.units
+        .iter()
+        .filter(|u| match &u.rom {
+            Some(r) => r == section,
+            None => u.section.as_deref() == Some(section) && u.became.as_deref().is_none_or(|b| b.starts_with("dilution (parting)")),
+        })
+        .map(|u| u.values["volume"])
+        .sum()
+}
+
+/// No loss; dilution roof 0.05 m, floor 0.1 m, edge 0.02 m, other 1 %. OB gives A its roof dilution 250 m³, edge
+/// 0.02 × 100 m × 2 m = 4 m³ and other 100 m³; A-B gives A its floor dilution 500 m³ off its top and B its roof 250 m³,
+/// edge 6 m³ and other 150 m³ off its bottom; the waste below gives B its floor 500 m³. ROM A 10,854 m³, ROM B 15,906 m³.
+#[test]
+fn rom_dilution_cuts_each_waste_interval_for_the_coal_either_side() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, dilution_steps(), &dilution_csv([0.0; 4], [0.05, 0.1, 0.02, 1.0], ""));
+    let views = preview_of(&s, flow, &ids, &LOSS_STACK);
+    let last = views.last().unwrap();
+    assert!(close(rom_volume(last, "2 coal A"), 10_854.0), "{}", rom_volume(last, "2 coal A"));
+    assert!(close(rom_volume(last, "4 coal B"), 15_906.0), "{}", rom_volume(last, "4 coal B"));
+    let pieces: Vec<(String, String, f64)> =
+        last.units.iter().filter(|u| u.became.as_deref().is_some_and(|b| b.starts_with("dilution"))).map(|u| (u.horizon.clone(), u.became.clone().unwrap(), u.values["volume"])).collect();
+    let want = [
+        ("OB", "dilution (roof)", 250.0),
+        ("OB", "dilution (edge)", 4.0),
+        ("OB", "dilution (other)", 100.0),
+        ("A-B", "dilution (floor)", 500.0),
+        ("A-B", "dilution (roof)", 250.0),
+        ("A-B", "dilution (edge)", 6.0),
+        ("A-B", "dilution (other)", 150.0),
+        ("below B", "dilution (floor)", 500.0),
+    ];
+    let mut got = pieces.clone();
+    got.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    let mut want: Vec<(String, String, f64)> = want.iter().map(|(h, b, v)| (h.to_string(), b.to_string(), *v)).collect();
+    want.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    assert_eq!(got.len(), want.len(), "{pieces:?}");
+    for (g, w) in got.iter().zip(&want) {
+        assert_eq!((&g.0, &g.1), (&w.0, &w.1));
+        assert!(close(g.2, w.2), "{g:?} against {w:?}");
+    }
+
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert!(record.messages[0].contains("every column balanced to 0.0e0"), "{}", record.messages[0]);
+    let t = table(&s, created(&record)[0]);
+    // Each dilution on the leaf of the waste it was taken from: OB on A's, A-B on B's.
+    let d = |seam: &str, kind: &str| value(&t, leaf(&t, "B1", seam, None), &format!("Dilution\\{kind}\\Waste\\volume")).or_else(|| value(&t, leaf(&t, "B1", seam, None), &format!("Dilution\\{kind}\\volume"))).unwrap_or(0.0);
+    assert!(close(d("A", "Roof"), 250.0) && close(d("A", "Edge"), 4.0) && close(d("A", "Other"), 100.0));
+    assert!(close(d("B", "Floor"), 500.0) && close(d("B", "Roof"), 250.0) && close(d("B", "Edge"), 6.0) && close(d("B", "Other"), 150.0));
+}
+
+/// A-B (25,000 m³) asked for A's floor dilution 3 m (15,000 m³) and B's roof 2.5 m (12,500 m³): 27,500 m³. Each is
+/// shared out by 25,000 ÷ 27,500, and the losses sent into A-B (A's floor loss and B's roof loss, 500 m³ each) go back to
+/// their coal; said.
+#[test]
+fn a_waste_too_thin_for_its_dilution_shares_it_out_and_returns_its_losses() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, dilution_steps(), &dilution_csv([0.1, 0.1, 0.0, 0.0], [2.5, 3.0, 0.0, 0.0], ""));
+    let views = preview_of(&s, flow, &ids, &LOSS_STACK);
+    let last = views.last().unwrap();
+    let into = |section: &str, kind: &str| last.units.iter().filter(|u| u.rom.as_deref() == Some(section) && u.became.as_deref() == Some(kind)).map(|u| u.values["volume"]).sum::<f64>();
+    assert!(close(into("2 coal A", "dilution (floor)"), 15_000.0 * 25_000.0 / 27_500.0));
+    assert!(close(into("4 coal B", "dilution (roof)"), 12_500.0 * 25_000.0 / 27_500.0));
+    assert!(close(into("3 waste B", "loss (floor)") + into("3 waste B", "loss (roof)"), 0.0), "the losses sent into A-B are back");
+    assert!(close(into("1 waste A", "loss (roof)"), 500.0), "A's roof loss into OB stays");
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 short of their dilution (dilution shared out, losses sent there returned): 1_B1_A-B (25000.0 of 27500.0 m3 asked)"]);
+    assert!(notes_of(&record, Code::ReservesDefaulted).iter().any(|n| n == "1 unit loss sent into waste short of its dilution, returned to its coal, 1000.0 m3"), "{:?}", notes_of(&record, Code::ReservesDefaulted));
+}
+
+/// B's ROM ash with its dilution (906 m³ of waste at RD 2.3 and 80 % ash with 15,000 m³ of coal at 1.4 and 10 %) is
+/// 376,704 ÷ 23,083.8 = 16.32 %, over its 15 % cut-off: B is rejected, its coal high ROM ash loss and its dilution back
+/// to waste. A, with no cut-off, keeps its ROM.
+#[test]
+fn the_rom_ash_cut_off_rejects_a_section_once() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, dilution_steps(), &dilution_csv([0.0; 4], [0.05, 0.1, 0.02, 1.0], "15"));
+    let views = preview_of(&s, flow, &ids, &LOSS_STACK);
+    let last = views.last().unwrap();
+    assert!(close(rom_volume(last, "4 coal B"), 0.0), "B rejected");
+    assert!(last.units.iter().all(|u| u.rom.as_deref() != Some("4 coal B")), "its dilution back to waste");
+    assert!(close(rom_volume(last, "2 coal A"), 10_854.0), "A as it was");
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 ROM section over its ash cut-off, rejected: 1_B1_B section B (16.32 over 15.00)"]);
+    let t = table(&s, created(&record)[0]);
+    assert!(close(value(&t, leaf(&t, "B1", "B", None), "Loss\\High ROM ash\\volume").unwrap(), 15_000.0));
+}
+
+// Decision 0074: block geometry measured onto the blocks; the dataflow reads it.
+
+/// A 100 m by 50 m block from RL 38 to 40 at mine coordinates: 10,000 m³ over 5,000 m², 2 m thick, 100 m long and 50 m
+/// wide, its centroid in its middle.
+#[test]
+fn solid_measure_writes_each_block_s_geometry_onto_it() {
+    let mut s = session();
+    let id = box_solid(&mut s, "block", 0.0, (38.0, 40.0), json!({ "strip": 1.0 }));
+    let record = s.run("solid.measure", json!({ "solids": [id] })).unwrap();
+    assert!(record.messages[0].starts_with("measured 1 block: 10000.0 m3 over 5000.0 m2 in plan"), "{}", record.messages[0]);
+    let a = &s.project().object(id).unwrap().attributes;
+    let n = |k: &str| match a.get(k) {
+        Some(zd_core::AttrValue::Number(v)) => *v,
+        other => panic!("{k}: {other:?}"),
+    };
+    assert!(close(n("volume"), 10_000.0) && close(n("plan_area"), 5_000.0) && close(n("thickness"), 2.0));
+    assert!(close(n("length"), 100.0) && close(n("width"), 50.0));
+    assert!(close(n("centroid_x"), E + 50.0) && close(n("centroid_y"), N + 25.0) && close(n("centroid_z"), 39.0));
+    assert!(close(n("dip"), 0.0) && close(n("true_thickness"), 2.0), "flat: true thickness is the vertical");
+    assert!(a.get("strip").is_some(), "the block keeps what it had");
+}
+
+/// A block 100 m by 50 m in plan, 2 m thick vertically, its floor and roof dipping 10° to the east: 10,000 m³ over
+/// 5,000 m², dip 10°, true thickness 2 × cos 10° = 1.96962 m, the vertical kept beside it.
+#[test]
+fn solid_measure_gives_dip_and_true_thickness() {
+    let mut s = session();
+    let slope = 10f64.to_radians().tan();
+    let vertices: Vec<[f64; 3]> = (0..8)
+        .map(|i| {
+            let x = if i & 1 == 1 { 100.0 } else { 0.0 };
+            let y = if i >> 1 & 1 == 1 { 50.0 } else { 0.0 };
+            let floor = 30.0 - x * slope;
+            [E + x, N + y, if i >> 2 & 1 == 1 { floor + 2.0 } else { floor }]
+        })
+        .collect();
+    let triangles = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+    let id = created(&s.run("solid.from_mesh", json!({ "name": "dipping", "layer": "blocks", "vertices": vertices, "triangles": triangles })).unwrap())[0];
+    s.run("solid.measure", json!({ "solids": [id] })).unwrap();
+    let a = &s.project().object(id).unwrap().attributes;
+    let n = |k: &str| match a.get(k) {
+        Some(zd_core::AttrValue::Number(v)) => *v,
+        other => panic!("{k}: {other:?}"),
+    };
+    assert!(close(n("volume"), 10_000.0) && close(n("plan_area"), 5_000.0) && close(n("thickness"), 2.0));
+    assert!(close(n("dip"), 10.0), "{}", n("dip"));
+    assert!(close(n("true_thickness"), 2.0 * 10f64.to_radians().cos()) && (n("true_thickness") - 1.96962).abs() < 1e-5);
+}
+
+/// A bench between two levels, flat top and bottom, takes its seam's dip from the block's other benches of that seam (the
+/// same `benched_from` and `block`): beside the 10° bench above, the flat 2 m box measures 10° and 2 × cos 10° true. On
+/// its own, with only level faces, it dips 0.
+#[test]
+fn a_bench_between_two_levels_dips_as_its_seam() {
+    let mut s = session();
+    let slope = 10f64.to_radians().tan();
+    let vertices: Vec<[f64; 3]> = (0..8)
+        .map(|i| {
+            let x = if i & 1 == 1 { 100.0 } else { 0.0 };
+            let y = if i >> 1 & 1 == 1 { 50.0 } else { 0.0 };
+            let floor = 30.0 - x * slope;
+            [E + x, N + y, if i >> 2 & 1 == 1 { floor + 2.0 } else { floor }]
+        })
+        .collect();
+    let triangles = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+    let dipping = created(&s.run("solid.from_mesh", json!({ "name": "bench 30", "layer": "blocks", "vertices": vertices, "triangles": triangles })).unwrap())[0];
+    s.run("test.tag", json!({ "object": dipping, "attributes": { "benched_from": "seam U", "block": "B1" } })).unwrap();
+    let flat = box_solid(&mut s, "bench 20", 0.0, (20.0, 22.0), json!({ "benched_from": "seam U", "block": "B1" }));
+    let alone = box_solid(&mut s, "alone", 200.0, (20.0, 22.0), json!({ "block": "B2" }));
+    s.run("solid.measure", json!({ "solids": [dipping, flat, alone] })).unwrap();
+    let n = |id: ObjectId, k: &str| match s.project().object(id).unwrap().attributes.get(k) {
+        Some(zd_core::AttrValue::Number(v)) => *v,
+        other => panic!("{k}: {other:?}"),
+    };
+    assert!(close(n(flat, "dip"), 10.0) && close(n(flat, "true_thickness"), 2.0 * 10f64.to_radians().cos()), "{}", n(flat, "dip"));
+    assert!(close(n(dipping, "dip"), 10.0));
+    assert!(close(n(alone, "dip"), 0.0) && close(n(alone, "true_thickness"), 2.0));
+}
+
+/// The loss column with edge loss but no measure: edge loss has no length to run along, so the block stops, said.
+#[test]
+fn edge_loss_on_an_unmeasured_block_stops_it() {
+    let mut s = session();
+    let rows: [(&str, f64, f64, &str, &str); 5] =
+        [("OB", 40.0, 50.0, "waste", "A"), ("A", 38.0, 40.0, "coal", "A"), ("A-B", 33.0, 38.0, "waste", "B"), ("B", 30.0, 33.0, "coal", "B"), ("below B", 26.0, 30.0, "waste", "")];
+    let ids: Vec<ObjectId> = rows
+        .iter()
+        .map(|&(h, z0, z1, material, seam)| {
+            let mut a = json!({ "strip": 1.0, "block": "B1", "horizon": h, "material": material, "seam": seam });
+            if material == "coal" {
+                a["rd"] = json!(1.4);
+            }
+            box_solid(&mut s, &format!("1_B1_{h}"), 0.0, (z0, z1), a)
+        })
+        .collect();
+    let flow = flow(&mut s, loss_steps(), &loss_csv(0.1, 0.2));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let stopped = record.notes.iter().find(|n| n.code == Some(Code::ReservesBlockStopped)).unwrap();
+    assert!(stopped.text.contains("1_B1_A has no length: measure the blocks (solid.measure) or give one in a parameter row"), "{}", stopped.text);
+}
+
+/// A length that looks wrong, from an odd solid, corrected in the parameters: a minimum equal to the maximum forces the
+/// default, so A's edge loss runs along 120 m, not its measured 100: 0.05 × 120 × 2 = 12 m³.
+#[test]
+fn a_parameter_row_corrects_a_measured_length() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let csv = loss_csv(0.1, 0.2).replace("other_loss (%)\n", "other_loss (%),length_min (m),length_max (m),length_default (m)\n").replace(",2\n", ",2,120,120,120\n").replace("waste,2.3,,,,,,,\n", "waste,2.3,,,,,,,,,,\n");
+    let flow = flow(&mut s, loss_steps(), &csv);
+    let views = preview_of(&s, flow, &ids, &LOSS_STACK);
+    let edge: f64 = views.last().unwrap().units.iter().filter(|u| u.horizon == "A" && u.became.as_deref() == Some("loss (edge)")).map(|u| u.values["volume"]).sum();
+    assert!(close(edge, 12.0), "{edge}");
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert!(notes_of(&record, Code::ReservesDefaulted).iter().any(|n| n == "2 units length: coal forced to its default, 25000.0 m3"), "{:?}", notes_of(&record, Code::ReservesDefaulted));
+}
+
+/// A block whose volume attribute isn't its solid's (measured, then cut again) is named; the run reads what it carries.
+#[test]
+fn a_block_whose_measured_volume_isn_t_its_solid_s_is_named() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    s.run("test.tag", json!({ "object": ids[1], "attributes": { "volume": 9_000.0 } })).unwrap();
+    let table_id = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": "when material,rd (t/m3),underburden_thickness (m)\nwaste,2.3,\n,,0\n" })).unwrap())[0];
+    let content = json!({
+        "fields": [
+            { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "attribute", "attribute": "volume" },
+            { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "attribute", "attribute": "thickness" },
+            { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
+        ],
+        "steps": [{ "step": "initialise" }, { "step": "in_situ" }],
+        "parameters": [table_id],
+    });
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0];
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 block whose volume isn't its solid's (measured before it was cut again?): 1_B1_A"]);
+    let t = table(&s, created(&record)[0]);
+    assert!(close(value(&t, leaf(&t, "B1", "A", None), "Insitu\\Coal\\volume").unwrap(), 9_000.0), "the data table's volume");
 }

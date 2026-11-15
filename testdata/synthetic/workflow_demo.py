@@ -51,6 +51,7 @@ NOTES = {
     "string.offset Block line": "The first block line offset east every 100 m to the pit's east end: the block length is this distance.",
     "string.polygons_from_lines": "The block lines and the two closing lines made into block polygons B1 to B15, west to east, on '8 block polygons'.",
     "solid.cut_by_polygons": "Every bench cut vertically by the block polygons, each block named strip_block_horizon_bench, on '9 blocks'. Checked first: the polygons must cover every piece.",
+    "solid.measure": "Each block's volume, plan area, thickness, length, width and centroid written onto it, for the reserves dataflow to read.",
     "solid.interrogate": "Each coal block's qualities (ash, sulphur, RD) averaged from the seam grids over it, written onto it.",
 }
 
@@ -95,9 +96,11 @@ def reserves_dataflow(s, model):
     made_ = s.dataflow_starter(model, "Reserves")
     table = s.object(made_["parameters"])["parameters"]
     waste = next(r for r in table["rows"] if r.get("when", {}).get("material") == "waste")
-    waste["values"]["rd_default"] = 2.3
+    waste["values"].update({"rd_default": 2.3, "as_default": 85.0, "ts_default": 0.3})
     coal = next(r for r in table["rows"] if r.get("when", {}).get("material") == "coal")
-    coal["values"].update({"mad": 3.5, "mis": 8.0, "mrom": 10.0, "min_parting": 0.5, "ws_strip_ratio": 1.0, "min_coal_thickness": 0.3, "insitu_ash_cutoff": 35.0})
+    coal["values"].update({"mad": 3.5, "mis": 8.0, "mrom": 10.0, "min_parting": 0.5, "ws_strip_ratio": 1.0, "min_coal_thickness": 0.3, "insitu_ash_cutoff": 35.0,
+                          "roof_loss": 0.1, "floor_loss": 0.1, "edge_loss": 0.05, "other_loss": 1.0,
+                          "roof_dilution": 0.05, "floor_dilution": 0.05, "edge_dilution": 0.02, "other_dilution": 0.5, "rom_ash_cutoff": 30.0})
     s.run("parameters.save", table=made_["parameters"], name="Reserves assumptions", content=table)
     return made_["dataflow"]
 
@@ -147,6 +150,8 @@ def the_steps(s, g, model, toe, limit, first, ramps, flow=None):
     block_lines = [o["id"] for o in s.objects(layer="7 block lines", kind="string")]
     polygons = made(run("string.polygons_from_lines", strings=block_lines, layer="8 block polygons", name="B#"))
     blocks = made(run("solid.cut_by_polygons", solids=benches, polygons=polygons, layer="9 blocks"))
+    # Every block's geometry onto it (decision 0074): what the dataflow reads, to check and correct in its parameters.
+    run("solid.measure", solids=blocks)
     coal = [b for b in blocks if s.object(b)["attributes"].get("material") == "coal"]
     run("solid.interrogate", solids=coal, model=model)
     if flow is not None:
@@ -257,6 +262,11 @@ def main():
         benched = sum(1 for b in cols["bench"] if b)
         print(f"   {case}: '{tables[0]['name']}', {table['rows']} leaves ({benched} benched) from {len(blocks)} blocks, {sections} working sections; "
               f"{written:,.3f} m3, {written_t:,.3f} t in situ and {written_ad:,.3f} t air dried, against the blocks by {abs(written - volume):.3g} m3, {abs(written_t - tonnes):.3g} t and {abs(written_ad - tonnes_ad):.3g} t")
+        under = lambda *parts: sum(v for v in cols.get(chr(92).join(parts), []) if v is not None)
+        losses = {kind: under("Loss", kind, "volume") for kind in ("Roof", "Floor", "Edge", "Other", "Thin", "High ROM ash")}
+        dilution = {kind: under("Dilution", kind, "volume") for kind in ("Roof", "Floor", "Edge", "Other")}
+        print("      losses, m3: " + ", ".join(f"{k.lower()} {v:,.1f}" for k, v in losses.items()))
+        print("      dilution, m3: " + ", ".join(f"{k.lower()} {v:,.1f}" for k, v in dilution.items()))
         assert abs(imported - volume) <= 1e-9 * volume, (imported, volume)
         assert abs(written_ad - tonnes_ad) <= 1e-9 * tonnes_ad, (written_ad, tonnes_ad)
         assert abs(written - volume) <= 1e-9 * volume and abs(written_t - tonnes) <= 1e-9 * tonnes, case

@@ -87,6 +87,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "solid.import",
             "solid.import_many",
             "solid.interrogate",
+            "solid.measure",
             "solid.repair",
             "solid.slice_by_faces",
             "spry.import",

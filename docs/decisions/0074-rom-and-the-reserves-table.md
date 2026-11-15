@@ -109,3 +109,196 @@ The demo pit, Base and 50m:
 - Base's 169,112,828.499 t in situ and 169,304,790.747 t air dried are both 0 from its blocks.
 - `reserves.run` takes 12 to 15 ms for 90 columns.
 - `zd-app --bench --dataflow` reads Properties back on it and passes all four checks.
+
+## Built: 4b, ROM loss
+
+`rom_loss` comes after `working_sections`, Spry's way (decisions 4 and 5).
+
+- **Sections.** It reads the working sections and the waste between them, top down, from the labels
+  `working_sections` gave.
+- **Roof and floor loss.** For each coal section:
+  - roof loss is `roof_loss` m and floor loss `floor_loss` m, the largest of the section's plies', over the section's
+    area (the largest of its units');
+  - the roof loss comes off its top into the section above, and the floor loss off its bottom into the section below
+    (the underburden where it's the last coal);
+  - a column that ends in coal with nothing below stops its block, said.
+- **Coal boundaries.** Across a boundary with another coal section nothing is taken, unless the section's first ply's
+  row says `loss_between_coal` yes. Then the loss goes into that coal section.
+- **Edge and other loss** come off each coal ply's top into the nearest waste above. Edge loss is `edge_loss` m × the
+  block's length × the ply's thickness, and other loss is `other_loss` % of the ply's volume, both as the ply stood
+  before roof and floor loss, as Spry's are. With no waste above, there's none.
+- **A section short of its loss.** A section that can't give its roof and floor loss, or then its edge and other loss,
+  is thin loss, all of it. Its partings go back to waste, in the nearest waste section, as Spry's are. Said.
+- **Labels.** Each piece taken is labelled loss of its kind, and its ROM label names the section it went to. The
+  preview shows both.
+- **The writes.** Each loss goes on the leaf it came from, coal alone as Spry writes it: `Loss\Roof`, `Loss\Floor`,
+  `Loss\Edge`, `Loss\Other`, and `Loss\Thin` for a section short of its loss.
+- **The block's length** (`block_length`) is the longer side of the smallest rectangle round its footprint, from the
+  convex hull of its vertices. A block's `length` attribute (the step's setting names it) is used before it.
+- **The starter** adds `roof_loss`, `floor_loss`, `edge_loss`, `other_loss` and `loss_between_coal`.
+
+Known answers (`crates/zd-commands/tests/reserves_run.rs`):
+
+- **Length.** An 80 m by 20 m footprint turned 30° at mine coordinates is 80 m long.
+- **One 5,000 m², 100 m block.** Roof 0.1 m, floor 0.2 m, edge 0.05 m, other 2 %.
+  - A, 10,000 m³: roof 500 m³, edge 10 m³ and other 200 m³ go into OB, and floor 1,000 m³ into A-B. 8,290 m³ is left.
+  - B, 15,000 m³: roof 500 m³, edge 15 m³ and other 300 m³ go into A-B, and floor 1,000 m³ into the waste below.
+    13,185 m³ is left.
+  - Every piece is in place and labelled, each loss is on its leaf, and the column balances to 0.
+- **Roof 1 m, floor 1.5 m.** A can't give 12,500 m³, so all 10,000 m³ is thin loss. B gives 5,000 m³ and 7,500 m³.
+- **Two coal sections touching.** Nothing crosses the boundary. Asked on A's row, A's floor loss (500 m³, off its
+  parting) goes into section B.
+
+On the demo pit the coal rules are roof 0.1 m, floor 0.1 m, edge 0.05 m and other 1 %.
+
+| | Base | 50m |
+|---|---|---|
+| roof loss | 166,168.9 m³ | 166,101.9 m³ |
+| floor loss | 166,168.9 m³ | 166,101.9 m³ |
+| edge loss | 5,039.9 m³ | 6,352.9 m³ |
+| other loss | 64,595.1 m³ | 64,590.6 m³ |
+| thin loss | 1,802.5 m³ | 2,251.6 m³ |
+
+- In situ is unchanged, 0 from the blocks.
+- The run took 19 ms.
+- **Edge loss is higher in 50m.** Its blocks are 50 m along the strip and 60 m across it, so the longer side of the
+  smallest rectangle is the strip's width, not the block's length along the strip. Where edge loss must follow the
+  strip, the blocks need a `length` attribute. Tim to say whether the rule should be the length along the strip.
+
+## Built: 4c, dilution and the ROM ash cut-off
+
+**`rom_dilution`** comes after `rom_loss`, Spry's way (decision 6). Each waste interval, top down, gives dilution to
+the coal either side of it:
+
+- **Floor dilution** for the coal section above comes off its top: `floor_dilution` m, the largest of that section's
+  plies', over its area.
+- **Roof dilution** for the coal section below comes off its bottom: `roof_dilution` m.
+- **Edge and other dilution** come off its bottom for every coal section below it, down to the next waste. Edge is
+  `edge_dilution` m × the block's length × each ply's thickness; other is `other_dilution` % of each ply's volume.
+- **A waste too thin to give it all** shares each out in proportion to what it holds. The losses sent into it go back to
+  their coal, as Spry's. Ours says so: the waste and the losses returned are counted, and each interval is named with
+  what it held against what was asked.
+- **Labels and writes.** Pieces are labelled dilution of their kind, their ROM label the coal section they go to, and
+  written on the leaf they were taken from under `Dilution\Roof`, `\Floor`, `\Edge` and `\Other`. Spry writes dilution
+  on the ROM node; that comes with 4d.
+
+**`rom_ash_cutoff`** comes after it (decision 7), once.
+
+- Each ROM coal section's ash is its members' ash averaged by the field's rule. The members are its coal, its partings
+  and the dilution sent to it; the step's `ash` setting names the field, and the starter sets it to the model's ash.
+- The ash is tested against `rom_ash_cutoff`, the smallest of the section's plies'. A section with none isn't tested.
+- **A section over its cut-off is rejected.** Its coal, and the losses it sent away, become high ROM ash loss. Its
+  dilution goes back to its waste and its partings back to waste.
+- Each rejection is named with its ash and cut-off. The coal is written under `Loss\High ROM ash`.
+- A section with no ash to test is named.
+
+The starter adds the four dilution columns and `rom_ash_cutoff`.
+
+Known answers (`crates/zd-commands/tests/reserves_run.rs`, the loss column):
+
+- **No loss; dilution roof 0.05 m, floor 0.1 m, edge 0.02 m, other 1 %.**
+  - OB gives A 250 m³ roof, 4 m³ edge and 100 m³ other dilution.
+  - A-B gives A 500 m³ floor off its top, and B 250 m³ roof, 6 m³ edge and 150 m³ other off its bottom.
+  - The waste below gives B 500 m³ floor.
+  - ROM A is 10,854 m³ and ROM B 15,906 m³; every piece and write checked, and the column balances to 0.
+- **A waste too thin.** A-B (25,000 m³) is asked for 15,000 + 12,500 m³, so each is shared by 25,000 ÷ 27,500. The
+  500 m³ losses A and B sent into it go back; A's roof loss into OB stays. Both are said.
+- **The ROM ash cut-off.** B's diluted ash, 376,704 ÷ 23,083.8 = 16.32 %, is over its 15 % cut-off.
+  - B is rejected: 15,000 m³ under `Loss\High ROM ash`, its dilution back to waste.
+  - A, with no cut-off, is unchanged at 10,854 m³.
+
+The demo pit's waste row adds ash 85 % and sulphur 0.3 %. Its coal row adds dilution roof 0.05 m, floor 0.05 m, edge
+0.02 m and other 0.5 %, and a ROM ash cut-off of 30 %.
+
+| | Base | 50m |
+|---|---|---|
+| roof dilution | 83,084.5 m³ | 83,051.0 m³ |
+| floor dilution | 52,714.7 m³ | 52,671.3 m³ |
+| edge dilution | 1,886.8 m³ | 2,378.4 m³ |
+| other dilution | 30,287.7 m³ | 30,279.5 m³ |
+| high ROM ash loss | 10,035.4 m³ | 9,586.3 m³ |
+
+- Floor dilution is less than roof at the same thickness. L's floor dilution comes from the underburden, outside the
+  model and never written; 4d reports it as out-of-model volume.
+- In situ is unchanged, 0 from the blocks.
+- The run takes 25 ms for 90 columns.
+
+## Built: block geometry measured onto the blocks
+
+Tim, 15 November, on the block length 4b worked out inside the run: "The dataflow - will just utilize what is inside the
+data table ( the block length would come from an interrogation step essentially )", and "block geometry will be in the
+interrogation - that way we can check it and even alter it with parameters in the dataflow if it looks funny because if
+weird solid outputs." So the dataflow reads only what the blocks carry, as Spry's dataflow reads its Imported fields.
+
+- **`solid.measure`** writes each block's geometry onto it, coal and waste, as attributes (with any prefix):
+  - `volume`;
+  - `plan_area`, its footprint in plan;
+  - `thickness`, volume over plan area;
+  - `length` and `width`, the sides of the smallest rectangle round its footprint, the longer first;
+  - `centroid_x`, `centroid_y` and `centroid_z`.
+  It's a command like any other, so a workflow step. The demo pit measures its blocks as step 20, before the
+  interrogation.
+- **The dataflow reads the measures.**
+  - A new field kind, `length` (m, the largest of a column's units), is read like any field.
+  - Edge loss and dilution read a coal unit's `length` field; the step's setting names it. Where it's asked for and a
+    unit has none, the block stops: "measure the blocks (solid.measure) or give one in a parameter row".
+  - No block length is worked out inside the run any more.
+- **The starter** reads `volume`, `thickness`, `plan_area` and `length` from the blocks. A block with no volume of record
+  stops, said. The parameter table gains the `_min`, `_max` and `_default` of `thickness`, `area` and `length`.
+- **A measure that looks wrong is corrected in the parameters.** Limits and defaults (decision 3 of 0073) now cover every
+  field but the volume, for coal and waste alike:
+  - a value outside its limits, or with none, takes the default;
+  - a minimum equal to the maximum forces it, as Spry's do;
+  - waste still takes its quality, density and moisture defaults outright.
+- **The solids are still the check.**
+  - The run compares each block's volume field with its solid's, and names any that differ by more than a millionth
+    (measured before it was cut again).
+  - The run uses the solid only for this check, the column's largest area for the underburden, and the old `volume`,
+    `plan_area` and `thickness` field sources, kept for dataflows saved with them.
+
+Known answers (`crates/zd-commands/tests/reserves_run.rs`):
+
+- **Measure.** A 100 m by 50 m block from RL 38 to 40 measures 10,000 m³ over 5,000 m², 2 m thick, 100 m long and 50 m
+  wide, its centroid in its middle. It keeps its other attributes.
+- **No length.** Edge loss on blocks never measured stops the block, said.
+- **A forced length.** `length_min` = `length_max` = `length_default` = 120 m forces A's length, so its edge loss is
+  0.05 × 120 × 2 = 12 m³. Both coal units are said, as forced to their default.
+- **A volume that isn't the solid's.** A block whose volume attribute (9,000 m³) isn't its solid's (10,000 m³) is named.
+  The run writes the 9,000 it carries.
+
+On the demo pit:
+
+- In situ is unchanged, 0 from the blocks.
+- Edge loss is now 5,291.8 m³ in Base and 7,149.1 m³ in 50m, and edge dilution 1,981.1 and 2,678.4 m³. A joined seam's
+  length is the longest of its benches' measured lengths; it was the top bench's own footprint.
+- The run takes 29 ms.
+- The 50m case's longer side is still the strip's width where its blocks are shorter than the strip is wide. Its edge
+  loss can be corrected in the parameters, or with a `length` attribute on the blocks.
+
+### Dip and true thickness
+
+Tim, 15 November: "Thickness will be equally important", then "Yep let's ensure we have both true thickness very
+important".
+
+- **`solid.measure` also writes `dip` and `true_thickness`.**
+  - `dip` is in degrees. It's read from the faces of the seam's floor and roof: faces within 60° of level, each weighted
+    by its area. Walls are left out.
+  - `true_thickness` is the vertical `thickness` × cos dip. The vertical stays beside it.
+  - A face exactly level is a bench or RL cut, not the seam. It's left out where there are others.
+  - A block's benches of one seam (the same `benched_from` and `block`) share the dip read from all their faces. So a
+    bench between two levels, flat top and bottom, dips as its seam does. A solid with only level faces dips 0.
+- **The starter's `thickness` field reads `true_thickness`**, so the seam rules (minimum parting, minimum coal
+  thickness) and the loss and dilution thicknesses work in true thickness.
+
+Known answers:
+
+- A block 100 m by 50 m, 2 m thick vertically and dipping 10°: dip 10°, true thickness 2 × cos 10° = 1.96962 m, the 2 m
+  vertical kept beside it.
+- A flat 2 m bench beside it, from the same seam piece and block: also 10° and 1.96962 m. The same box on its own dips
+  0.
+- A flat block: dip 0, true thickness equal to the vertical.
+
+On the demo pit, whose seams are built to dip about 3° north, the 475 coal blocks average 3.24° (0.10° to 4.57°), with
+two under 0.5°. Before the benches shared their seam's dip, they averaged 2.27°, the benches between levels reading
+flat. True thickness averages 0.17 % less than the vertical. In situ is unchanged, 0 from the blocks, and the run takes
+26 ms.

@@ -17,12 +17,13 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{
-    AttrValue, Attributes, Body, Change, Dataflow, DataflowStep, FieldSource, Object, ObjectId, ObjectKind, ParamValue, ParameterTable, Table, TableColumn, TriMesh, attribute_ci,
+    AttrValue, Attributes, Body, Change, Dataflow, DataflowStep, FieldSource, Object, ObjectId, ObjectKind, ParamValue, ParameterTable, Table, TableColumn, attribute_ci,
     attribute_word,
 };
-use zd_reserves::{AddUp, Became, BecameKind, Bench, Column, ColumnKey, FieldKind, Fields, Labels, Origin, Unit};
+use zd_reserves::{AddUp, Amount, Became, BecameKind, Bench, Column, ColumnKey, End, FieldKind, Fields, Labels, Origin, Unit, UnitId};
 
 use super::blocks::horizon_order;
+use super::measure::plan_area;
 use super::in_parallel_watched;
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Severity};
 
@@ -42,7 +43,7 @@ pub const OUT_OF_MODEL: &str = "out of model";
 pub const UNDERBURDEN_THICKNESS: f64 = 10.0;
 
 /// The steps a dataflow can name, in Spry's order, with what each does.
-pub const STEPS: [(&str, &str); 5] = [
+pub const STEPS: [(&str, &str); 8] = [
     ("small_volumes", "sets aside and writes each unit under its min_volume, never dropping it"),
     (
         "initialise",
@@ -57,6 +58,15 @@ pub const STEPS: [(&str, &str); 5] = [
         "working_sections",
         "sets aside coal discarded by hand or by its in situ ash, forms working sections top down by min_parting, ws_strip_ratio and min_coal_thickness, splits them by ws_split, labels partings and thin coal, and writes each section",
     ),
+    (
+        "rom_loss",
+        "takes each working section's roof loss to the waste above and floor loss to the waste below (roof_loss, floor_loss m), edge loss (edge_loss m x the block's length x the ply's thickness) and other loss (other_loss %) to the waste above; a section short of its loss is thin loss",
+    ),
+    (
+        "rom_dilution",
+        "cuts each waste interval into floor dilution for the coal above, roof dilution for the coal below (floor_dilution, roof_dilution m), and edge and other dilution (edge_dilution m, other_dilution %) for the coal below; a waste too thin for them all is shared out and its losses go back, said",
+    ),
+    ("rom_ash_cutoff", "tests each ROM coal section's diluted air-dried ash once against rom_ash_cutoff; a section over it becomes high ROM ash loss, its dilution goes back to waste and its losses come back"),
 ];
 
 fn step_fn(name: &str) -> Option<StepFn> {
@@ -66,6 +76,9 @@ fn step_fn(name: &str) -> Option<StepFn> {
         "in_situ" => Some(in_situ),
         "join_benches" => Some(join_benches),
         "working_sections" => Some(working_sections),
+        "rom_loss" => Some(rom_loss),
+        "rom_dilution" => Some(rom_dilution),
+        "rom_ash_cutoff" => Some(rom_ash_cutoff),
         _ => None,
     }
 }
@@ -310,24 +323,6 @@ pub(crate) fn prepare(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError
     Ok(Prepared { name: flow.name.clone(), dataflow: dataflow.clone(), fields, tables, horizons, steps, upper, lower, columns, unplaced })
 }
 
-/// The plan area of a solid: its upward-facing triangles in plan, about its first vertex so mine coordinates keep their
-/// precision. For a block, whose walls are vertical, its footprint.
-fn plan_area(mesh: &TriMesh) -> f64 {
-    let Some(&o) = mesh.vertices.first() else { return 0.0 };
-    let twice: f64 = mesh
-        .triangles
-        .iter()
-        .map(|t| {
-            let [a, b, c] = t.map(|i| {
-                let v = mesh.vertices[i as usize];
-                [v[0] - o[0], v[1] - o[1]]
-            });
-            ((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])).max(0.0)
-        })
-        .sum();
-    twice / 2.0
-}
-
 /// A word from the parameter tables, read in order.
 fn parameter_text(tables: &[Arc<ParameterTable>], attributes: &Attributes, column: &str) -> Option<String> {
     let refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
@@ -404,6 +399,12 @@ fn unit_of(prepared: &Prepared, object: &Object) -> Result<(u32, Labels, Option<
         };
         values.push(value);
     }
+    // The volume of record, as the blocks carry it: none stops the block.
+    if let Some(v) = prepared.dataflow.fields.iter().position(|f| f.field.kind == FieldKind::Volume)
+        && !values[v].is_finite()
+    {
+        return Err(format!("{} has no {}: measure the blocks (solid.measure) or read the volume from the solid", object.name, prepared.dataflow.fields[v].field.name));
+    }
     Ok((stack as u32, Labels::new(&material, &word("seam")), bench_of(object)?, values))
 }
 
@@ -425,6 +426,8 @@ pub struct UnitView {
     pub became: Option<String>,
     /// Its working section, once formed: its number, coal or waste, and its name.
     pub section: Option<String>,
+    /// Where it goes in ROM, once a step has sent it somewhere: the section's number, coal or waste, and its name.
+    pub rom: Option<String>,
     /// Each field's value by name.
     pub values: BTreeMap<String, f64>,
 }
@@ -447,6 +450,7 @@ fn view(run: &ColumnRun<'_>, step: &str) -> StepView {
             joined: u.joined.map(|j| run.column.joins()[j as usize].benches.iter().map(|b| (b.bench.label.clone(), b.share)).collect()).unwrap_or_default(),
             became: u.became.as_ref().map(became),
             section: u.section.as_ref().map(|s| format!("{} {} {}", s.id.map_or(String::new(), |i| i.to_string()), s.material, s.seam).trim().to_string()),
+            rom: u.rom.as_ref().map(|s| format!("{} {} {}", s.id.map_or(String::new(), |i| i.to_string()), s.material, s.seam).trim().to_string()),
             values: fields.list().iter().zip(u.values()).map(|(f, v)| (f.name.clone(), *v)).collect(),
         })
         .collect();
@@ -458,9 +462,17 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
     let stop = |why: String| Stopped { why };
     let mut column = Column::new(key.clone(), prepared.fields.clone());
     let mut attributes = Vec::with_capacity(blocks.len());
+    let mut mismatched: Vec<String> = Vec::new();
     let mut block_area: f64 = 0.0;
     for object in blocks {
         let (stack, labels, bench, values) = unit_of(prepared, object).map_err(stop)?;
+        // The volume the block carries against its solid's: a block measured before it was last cut is said.
+        if let (Body::Solid(solid), Some(v)) = (&object.body, prepared.dataflow.fields.iter().position(|f| f.field.kind == FieldKind::Volume)) {
+            let (carried, own) = (values[v], solid.volume());
+            if (carried - own).abs() > 1e-6 * own.abs().max(1.0) {
+                mismatched.push(object.name.clone());
+            }
+        }
         let origin = Origin { object: object.id.to_string(), name: object.name.clone() };
         column.push_bench_input(origin, stack, labels, bench, values).map_err(|e| stop(e.to_string()))?;
         attributes.push(object.attributes.clone());
@@ -482,6 +494,9 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
         added_volume: 0.0,
         block_area,
     };
+    for name in &mismatched {
+        run.said.name("whose volume isn't its solid's (measured before it was cut again?)", name);
+    }
     // Imported: each block as read, before any step.
     write_pieces(&mut run, |_| Some("Imported".into()), |_| Vec::new());
     if let Some(p) = preview.as_deref_mut() {
@@ -608,31 +623,46 @@ fn add_underburden(run: &mut ColumnRun<'_>, step: &DataflowStep) {
     run.said.count("underburden added below the last coal, out of model".into(), volume);
 }
 
-/// Each quality and density field given its limits and defaults (decision 0073, point 3): `<field>_min`, `<field>_max`
-/// and `<field>_default`. Coal outside its limits, inclusive, or with no value, takes the default; waste takes its
-/// default outright, as it has no grids. Each replacement counted by field and material.
+/// Each field but the volume given its limits and defaults (decisions 0073, point 3, and 0074): `<field>_min`,
+/// `<field>_max` and `<field>_default`. A value outside its limits, inclusive, or with none, takes the default; a minimum
+/// equal to the maximum forces it, as Spry's do. So a block's measured thickness, area or length that looks wrong, from an
+/// odd solid, is corrected in the parameters without touching the block. Waste takes its quality, density and moisture
+/// defaults outright, as it has no grids. Each replacement counted by field and material.
 fn quality_defaults(run: &mut ColumnRun<'_>) {
-    let fields: Vec<(usize, String)> =
-        run.column.fields().list().iter().enumerate().filter(|(_, f)| matches!(f.kind, FieldKind::Quality | FieldKind::Density | FieldKind::Moisture)).map(|(i, f)| (i, f.name.clone())).collect();
+    let fields: Vec<(usize, String, bool)> = run
+        .column
+        .fields()
+        .list()
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| !matches!(f.kind, FieldKind::Volume | FieldKind::Setting))
+        .map(|(i, f)| (i, f.name.clone(), matches!(f.kind, FieldKind::Quality | FieldKind::Density | FieldKind::Moisture)))
+        .collect();
     let volume = run.column.fields().volume();
     for at in 0..run.column.len() {
         if run.column.units()[at].is_set_aside() {
             continue;
         }
         let coal = is_coal(&run.column.units()[at]);
-        for (i, name) in &fields {
+        for (i, name, grade) in &fields {
             let Some(default) = run.parameter(at, &format!("{name}_default")) else { continue };
             let value = run.column.units()[at].value(*i);
-            let replace = if coal {
-                let (min, max) = (run.parameter(at, &format!("{name}_min")), run.parameter(at, &format!("{name}_max")));
-                value.is_nan() || min.is_some_and(|m| value < m) || max.is_some_and(|m| value > m)
-            } else {
-                true
-            };
+            let (min, max) = (run.parameter(at, &format!("{name}_min")), run.parameter(at, &format!("{name}_max")));
+            let forced = min.is_some() && min == max;
+            let replace = if coal || !grade { forced || value.is_nan() || min.is_some_and(|m| value < m) || max.is_some_and(|m| value > m) } else { true };
             if replace {
                 let v = run.column.units()[at].value(volume);
                 run.column.unit_mut(at).set(*i, default);
-                let why = if !coal { "waste given its default" } else if value.is_nan() { "coal with none given its default" } else { "coal outside its limits given its default" };
+                let material = if coal { "coal" } else { "waste" };
+                let why = if !coal && *grade {
+                    "waste given its default".to_string()
+                } else if forced {
+                    format!("{material} forced to its default")
+                } else if value.is_nan() {
+                    format!("{material} with none given its default")
+                } else {
+                    format!("{material} outside its limits given its default")
+                };
                 run.said.count(format!("{name}: {why}"), v);
             }
         }
@@ -849,6 +879,438 @@ fn working_sections(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), 
     Ok(())
 }
 
+/// One working section or run of waste between them, top down: its number, whether it's coal, its name and its units.
+#[derive(Debug, Clone)]
+struct Section {
+    id: u32,
+    coal: bool,
+    name: String,
+    units: Vec<UnitId>,
+}
+
+/// The column's working sections and the waste between them, top down, from the labels `working_sections` gave.
+fn sections_of(run: &ColumnRun<'_>) -> Vec<Section> {
+    let mut out: Vec<Section> = Vec::new();
+    for u in run.column.units() {
+        if u.is_set_aside() {
+            continue;
+        }
+        let Some(s) = &u.section else { continue };
+        let id = s.id.unwrap_or(0);
+        match out.last_mut() {
+            Some(last) if last.id == id => last.units.push(u.id),
+            _ => out.push(Section { id, coal: s.material == "coal", name: s.seam.clone(), units: vec![u.id] }),
+        }
+    }
+    out
+}
+
+/// Takes `volume` off the top or bottom of these units, splitting the last one it reaches: the pieces taken, top down.
+fn take_volume(run: &mut ColumnRun<'_>, units: &[UnitId], volume: f64, end: End) -> Result<Vec<UnitId>, String> {
+    let v = run.column.fields().volume();
+    let mut left = volume;
+    let mut taken = Vec::new();
+    let order: Vec<UnitId> = if end == End::Top { units.to_vec() } else { units.iter().rev().copied().collect() };
+    for id in order {
+        if left <= 0.0 {
+            break;
+        }
+        let at = run.column.position(id).ok_or("a unit went missing")?;
+        let has = run.column.units()[at].value(v);
+        if has <= left * (1.0 + 1e-12) {
+            taken.push(id);
+            left -= has;
+        } else {
+            let split = run.column.split(at, Amount::Volume(left), end).map_err(|e| e.to_string())?;
+            taken.push(run.column.units()[split.piece].id);
+            left = 0.0;
+        }
+    }
+    if end == End::Bottom {
+        taken.reverse();
+    }
+    Ok(taken)
+}
+
+/// Labels pieces as loss of a kind, sent to a section in ROM.
+fn send_loss(run: &mut ColumnRun<'_>, pieces: &[UnitId], kind: &str, to: &Section) {
+    for &id in pieces {
+        let Some(at) = run.column.position(id) else { continue };
+        run.column.label_became(at, Became { kind: BecameKind::Loss, detail: kind.into() });
+        run.column.unit_mut(at).rom = Some(Labels { material: if to.coal { "coal".into() } else { "waste".into() }, seam: to.name.clone(), id: Some(to.id) });
+    }
+}
+
+/// `rom_loss` (decision 0074, point 4), Spry's way. For each working section, top down:
+///
+/// - roof loss, `roof_loss` m (the largest of its plies') over its area (the largest of its units'), off its top into
+///   the section above; floor loss, `floor_loss` m, off its bottom into the section below (the underburden where it's the
+///   last coal); across a boundary with another coal section only where `loss_between_coal` is yes;
+/// - a section that doesn't hold its roof and floor loss is thin loss, all of it;
+/// - then, for each of its coal plies, edge loss (`edge_loss` m × the block's length × the ply's thickness) and other
+///   loss (`other_loss` % of the ply's volume) off its top into the nearest waste above; a section that doesn't hold
+///   them is thin loss.
+///
+/// The block's length is its `length` attribute (the step's setting names it), else the longer side of the smallest
+/// rectangle round it in plan. Each loss is written on the leaf it came from, under `Loss\Roof`, `Loss\Floor`,
+/// `Loss\Edge` and `Loss\Other`, coal alone as Spry writes it.
+fn rom_loss(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String> {
+    let fields = run.column.fields();
+    let (v, thickness) = (fields.volume(), fields.thickness());
+    let area = fields.list().iter().position(|f| f.kind == FieldKind::Area);
+    let sections = sections_of(run);
+    let across = |run: &ColumnRun<'_>, at: usize| parameter_text(run.tables, &run.attributes[run.column.units()[at].origin as usize], step.setting("loss_between_coal")).is_some_and(|t| matches!(t.to_lowercase().as_str(), "yes" | "y" | "true" | "1"));
+    for (k, s) in sections.iter().enumerate() {
+        if !s.coal {
+            continue;
+        }
+        let plies: Vec<usize> = s.units.iter().filter_map(|&id| run.column.position(id)).filter(|&at| is_coal(&run.column.units()[at])).collect();
+        let largest = |run: &ColumnRun<'_>, key: &str| -> Result<f64, String> {
+            let mut most: f64 = 0.0;
+            for &at in &plies {
+                let value = run.parameter(at, step.setting(key)).ok_or_else(|| format!("{} has no {} (no parameter row gives it)", run.name_of(at), step.setting(key)))?;
+                most = most.max(value);
+            }
+            Ok(most)
+        };
+        let (roof, floor, edge, other) = (largest(run, "roof_loss")?, largest(run, "floor_loss")?, largest(run, "edge_loss")?, largest(run, "other_loss")?);
+        let section_area = match area {
+            Some(a) => s.units.iter().filter_map(|&id| run.column.position(id)).map(|at| run.column.units()[at].value(a)).fold(0.0, f64::max),
+            None => run.block_area,
+        };
+        let between = plies.first().is_some_and(|&at| across(run, at));
+        let above = k.checked_sub(1).map(|j| sections[j].clone()).filter(|a| !a.coal || between);
+        let below = sections.get(k + 1).cloned().filter(|b| !b.coal || between);
+        let (roof_v, floor_v) = (if above.is_some() { roof * section_area } else { 0.0 }, floor * section_area);
+        let held: f64 = s.units.iter().filter_map(|&id| run.column.position(id)).map(|at| run.column.units()[at].value(v)).sum();
+        if floor_v > 0.0 && below.is_none() && sections.get(k + 1).is_none() {
+            return Err(format!("working section {} ({}) has no waste below it for its floor loss: the column ends in coal with no underburden", s.id, s.name));
+        }
+        // Too thin for its roof and floor loss: thin loss, all of it.
+        if held <= roof_v + floor_v {
+            thin_section(run, s, &sections, k, "short of its roof and floor loss");
+            continue;
+        }
+        // Edge and other loss come from each ply as it stood before roof and floor loss, as Spry's do.
+        let mut asked = Vec::new();
+        for &at in &plies {
+            let length = if edge > 0.0 { length_of(run, at, step)? } else { 0.0 };
+            let u = &run.column.units()[at];
+            asked.push((u.id, edge * length * u.value(thickness), other / 100.0 * u.value(v)));
+        }
+        let mut rest = s.units.clone();
+        if let Some(above) = &above
+            && roof_v > 0.0
+        {
+            let pieces = take_volume(run, &rest, roof_v, End::Top)?;
+            rest = units_left(run, &pieces, &rest);
+            send_loss(run, &pieces, "roof", above);
+            say_loss(run, &pieces, "roof");
+        }
+        if let Some(below) = &below
+            && floor_v > 0.0
+        {
+            let pieces = take_volume(run, &rest, floor_v, End::Bottom)?;
+            rest = units_left(run, &pieces, &rest);
+            send_loss(run, &pieces, "floor", below);
+            say_loss(run, &pieces, "floor");
+        }
+        // Edge and other loss, from each coal ply's top, into the nearest waste above.
+        let Some(waste_above) = sections[..k].iter().rev().find(|w| !w.coal).cloned() else { continue };
+        let remaining: f64 = rest.iter().filter_map(|&id| run.column.position(id)).map(|at| run.column.units()[at].value(v)).sum();
+        let wanted: f64 = asked.iter().map(|(_, e, o)| e + o).sum();
+        if remaining <= wanted {
+            thin_section(run, s, &sections, k, "short of its edge and other loss");
+            continue;
+        }
+        for (ply, e, o) in asked {
+            // What's left of the ply: the piece that kept its id, unless all of it went as roof or floor loss.
+            let in_rest: Vec<UnitId> = rest.iter().copied().filter(|&id| id == ply).collect();
+            if in_rest.is_empty() {
+                continue;
+            }
+            for (amount, kind) in [(e, "edge"), (o, "other")] {
+                if amount <= 0.0 {
+                    continue;
+                }
+                let pieces = take_volume(run, &in_rest, amount, End::Top)?;
+                send_loss(run, &pieces, kind, &waste_above);
+                say_loss(run, &pieces, kind);
+            }
+        }
+    }
+    // The writes: each loss on the leaf it came from, coal alone.
+    write_pieces(
+        run,
+        |u| match &u.became {
+            Some(b) if b.kind == BecameKind::Loss && is_coal(u) => Some(format!("Loss\\{}", title(&b.detail))),
+            Some(b) if b.kind == BecameKind::ThinLoss && b.detail.starts_with("short") && is_coal(u) => Some("Loss\\Thin".into()),
+            _ => None,
+        },
+        |_| Vec::new(),
+    );
+    Ok(())
+}
+
+/// The units of a section still in it after pieces were taken: what was `rest` less the pieces taken (a unit split keeps
+/// its id for what's left of it).
+fn units_left(run: &ColumnRun<'_>, pieces: &[UnitId], rest: &[UnitId]) -> Vec<UnitId> {
+    rest.iter().copied().filter(|id| !pieces.contains(id) && run.column.position(*id).is_some()).collect()
+}
+
+fn say_loss(run: &mut ColumnRun<'_>, pieces: &[UnitId], kind: &str) {
+    let v = run.column.fields().volume();
+    let volume: f64 = pieces.iter().filter_map(|&id| run.column.position(id)).map(|at| run.column.units()[at].value(v)).sum();
+    run.said.count(format!("{kind} loss"), volume);
+}
+
+/// A section too thin for its loss: its coal thin loss and its partings waste again, all of it in the nearest waste (above,
+/// else below), as Spry.
+fn thin_section(run: &mut ColumnRun<'_>, s: &Section, sections: &[Section], k: usize, why: &str) {
+    let to = sections[..k].iter().rev().find(|w| !w.coal).or_else(|| sections[k + 1..].iter().find(|w| !w.coal)).cloned();
+    let v = run.column.fields().volume();
+    let mut volume = 0.0;
+    for &id in &s.units {
+        let Some(at) = run.column.position(id) else { continue };
+        let coal = is_coal(&run.column.units()[at]);
+        if coal {
+            volume += run.column.units()[at].value(v);
+            run.column.label_became(at, Became { kind: BecameKind::ThinLoss, detail: why.into() });
+        } else {
+            run.column.unit_mut(at).became = None;
+        }
+        if let Some(to) = &to {
+            run.column.unit_mut(at).section = Some(Labels { material: "waste".into(), seam: to.name.clone(), id: Some(to.id) });
+        }
+    }
+    run.said.count(format!("coal in a working section {why}, thin loss"), volume);
+}
+
+/// The largest of a coal section's plies' values of a setting; a ply no row gives it stops the block.
+fn largest_of(run: &ColumnRun<'_>, s: &Section, step: &DataflowStep, key: &str) -> Result<f64, String> {
+    let mut most: f64 = 0.0;
+    for &id in &s.units {
+        let Some(at) = run.column.position(id) else { continue };
+        if !is_coal(&run.column.units()[at]) || run.column.units()[at].became.is_some() {
+            continue;
+        }
+        let value = run.parameter(at, step.setting(key)).ok_or_else(|| format!("{} has no {} (no parameter row gives it)", run.name_of(at), step.setting(key)))?;
+        most = most.max(value);
+    }
+    Ok(most)
+}
+
+/// A section's area: the largest of its units' plan areas, else the column's largest block.
+fn section_area(run: &ColumnRun<'_>, s: &Section) -> f64 {
+    match run.column.fields().list().iter().position(|f| f.kind == FieldKind::Area) {
+        Some(a) => s.units.iter().filter_map(|&id| run.column.position(id)).map(|at| run.column.units()[at].value(a)).fold(0.0, f64::max),
+        None => run.block_area,
+    }
+}
+
+/// A coal unit's length in plan, the dataflow's `length` field (the step's setting names it): what the interrogation
+/// measured on its block (decision 0074), or what the parameter rows correct it to. Asked for edge loss or dilution
+/// where there's none, the block stops.
+fn length_of(run: &ColumnRun<'_>, at: usize, step: &DataflowStep) -> Result<f64, String> {
+    let field = run.column.fields().at(step.setting("length")).map_err(|_| format!("the dataflow has no {} field for edge loss and dilution: add one, read from the blocks' measured length", step.setting("length")))?;
+    let length = run.column.units()[at].value(field);
+    if length.is_finite() { Ok(length) } else { Err(format!("{} has no {}: measure the blocks (solid.measure) or give one in a parameter row", run.name_of(at), step.setting("length"))) }
+}
+
+/// `rom_dilution` (decision 0074, point 6), Spry's way. Each waste interval, top down, gives dilution to the coal either
+/// side of it, cut in Spry's order: floor dilution for the coal above off its top (`floor_dilution` m, the largest of
+/// that section's plies', over its area); roof dilution for the coal below off its bottom (`roof_dilution` m); then
+/// edge dilution (`edge_dilution` m × the block's length × the ply's thickness) and other dilution (`other_dilution` %
+/// of the ply's volume) for every coal section below it down to the next waste. Where the waste can't give it all, each
+/// is shared out in proportion to what it holds, and the losses that were sent into that waste go back to their coal, as
+/// Spry's; ours says so, with the volumes. Each piece is labelled dilution of its kind, its ROM label the coal section it
+/// goes to, and written under `Dilution\Roof`, `\Floor`, `\Edge` and `\Other` on the leaf it was taken from.
+fn rom_dilution(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String> {
+    let v = run.column.fields().volume();
+    let thickness = run.column.fields().thickness();
+    let sections = sections_of(run);
+    for (k, w) in sections.iter().enumerate() {
+        if w.coal {
+            continue;
+        }
+        let above = k.checked_sub(1).map(|j| sections[j].clone()).filter(|s| s.coal);
+        // The coal sections below this waste, down to the next waste.
+        let below: Vec<Section> = sections[k + 1..].iter().take_while(|s| s.coal).cloned().collect();
+        let mut asks: Vec<(&'static str, f64, Section)> = Vec::new();
+        if let Some(a) = &above {
+            let floor = largest_of(run, a, step, "floor_dilution")?;
+            asks.push(("floor", floor * section_area(run, a), a.clone()));
+        }
+        if let Some(b) = below.first() {
+            let roof = largest_of(run, b, step, "roof_dilution")?;
+            asks.push(("roof", roof * section_area(run, b), b.clone()));
+        }
+        for b in &below {
+            let (edge, other) = (largest_of(run, b, step, "edge_dilution")?, largest_of(run, b, step, "other_dilution")?);
+            let (mut e, mut o) = (0.0, 0.0);
+            for &id in &b.units {
+                let Some(at) = run.column.position(id) else { continue };
+                let u = &run.column.units()[at];
+                if !is_coal(u) || u.became.is_some() {
+                    continue;
+                }
+                if edge > 0.0 {
+                    e += edge * length_of(run, at, step)? * u.value(thickness);
+                }
+                o += other / 100.0 * u.value(v);
+            }
+            asks.push(("edge", e, b.clone()));
+            asks.push(("other", o, b.clone()));
+        }
+        asks.retain(|(_, volume, _)| *volume > 0.0);
+        let total: f64 = asks.iter().map(|(_, volume, _)| volume).sum();
+        if total <= 0.0 {
+            continue;
+        }
+        let held: f64 = w.units.iter().filter_map(|&id| run.column.position(id)).map(|at| run.column.units()[at].value(v)).sum();
+        if held < total * (1.0 - 1e-12) {
+            // Too thin: shared out, and the losses sent into it go back to their coal.
+            let scale = held / total;
+            for ask in &mut asks {
+                ask.1 *= scale;
+            }
+            let mut returned = 0.0;
+            for i in 0..run.column.len() {
+                let u = &run.column.units()[i];
+                let sent_here = u.became.as_ref().is_some_and(|b| b.kind == BecameKind::Loss) && u.rom.as_ref().is_some_and(|r| r.id == Some(w.id));
+                if sent_here {
+                    returned += u.value(v);
+                    let unit = run.column.unit_mut(i);
+                    unit.became = None;
+                    unit.rom = None;
+                }
+            }
+            run.said.count("waste in intervals short of their dilution, all of it given as dilution shared out".into(), held);
+            if returned > 0.0 {
+                run.said.count("loss sent into waste short of its dilution, returned to its coal".into(), returned);
+            }
+            let first = w.units.iter().find_map(|&id| run.column.position(id)).map(|at| run.name_of(at)).unwrap_or_default();
+            run.said.name("short of their dilution (dilution shared out, losses sent there returned)", &format!("{first} ({:.1} of {:.1} m3 asked)", held, total));
+        }
+        // Floor dilution off the top; the rest off the bottom, roof first.
+        let mut rest = w.units.clone();
+        for (kind, volume, to) in asks.iter().filter(|(kind, _, _)| *kind == "floor") {
+            let pieces = take_volume(run, &rest, *volume, End::Top)?;
+            rest = units_left(run, &pieces, &rest);
+            send_dilution(run, &pieces, kind, to);
+        }
+        for (kind, volume, to) in asks.iter().filter(|(kind, _, _)| *kind != "floor") {
+            let pieces = take_volume(run, &rest, *volume, End::Bottom)?;
+            rest = units_left(run, &pieces, &rest);
+            send_dilution(run, &pieces, kind, to);
+        }
+    }
+    write_pieces(
+        run,
+        |u| match &u.became {
+            Some(b) if b.kind == BecameKind::Dilution && b.detail != "parting" => Some(format!("Dilution\\{}", title(&b.detail))),
+            _ => None,
+        },
+        |_| Vec::new(),
+    );
+    Ok(())
+}
+
+/// Labels pieces as dilution of a kind, sent to a coal section in ROM.
+fn send_dilution(run: &mut ColumnRun<'_>, pieces: &[UnitId], kind: &str, to: &Section) {
+    let v = run.column.fields().volume();
+    let mut volume = 0.0;
+    for &id in pieces {
+        let Some(at) = run.column.position(id) else { continue };
+        volume += run.column.units()[at].value(v);
+        run.column.label_became(at, Became { kind: BecameKind::Dilution, detail: kind.into() });
+        run.column.unit_mut(at).rom = Some(Labels { material: "coal".into(), seam: to.name.clone(), id: Some(to.id) });
+    }
+    run.said.count(format!("{kind} dilution"), volume);
+}
+
+/// What a ROM section holds: the units sent to it, and its own units not sent elsewhere or set aside.
+fn rom_members(run: &ColumnRun<'_>, id: u32) -> Vec<usize> {
+    (0..run.column.len())
+        .filter(|&i| {
+            let u = &run.column.units()[i];
+            match &u.rom {
+                Some(r) => r.id == Some(id),
+                None => !u.is_set_aside() && u.section.as_ref().is_some_and(|s| s.id == Some(id) && s.material == "coal"),
+            }
+        })
+        .collect()
+}
+
+/// `rom_ash_cutoff` (decision 0074, point 7), once, as Spry. Each ROM coal section's ash, its air-dried ash averaged
+/// over its coal, partings and dilution by the field's rule (the step's `ash` setting names the field), against
+/// `rom_ash_cutoff` (the smallest of its plies'; none, no test). Over it, the section is rejected: its coal becomes high
+/// ROM ash loss, its dilution goes back to its waste, and the losses it sent to its neighbours come back as high ROM ash
+/// loss too. Each rejection is said with the ash and the cut-off; the coal is written under `Loss\High ROM ash` on its
+/// leaves.
+fn rom_ash_cutoff(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String> {
+    let Ok(ash) = run.column.fields().at(step.setting("ash")) else { return Ok(()) };
+    let v = run.column.fields().volume();
+    for s in sections_of(run).into_iter().filter(|s| s.coal) {
+        let mut cutoff = f64::INFINITY;
+        for &id in &s.units {
+            let Some(at) = run.column.position(id) else { continue };
+            if is_coal(&run.column.units()[at])
+                && let Some(c) = run.parameter(at, step.setting("rom_ash_cutoff"))
+            {
+                cutoff = cutoff.min(c);
+            }
+        }
+        if !cutoff.is_finite() {
+            continue;
+        }
+        let members = rom_members(run, s.id);
+        let rom_ash = run.column.add_up(members.iter().copied())[ash];
+        if !rom_ash.is_finite() {
+            run.said.name("ROM section with no ash to test against its cut-off", &format!("{} section {}", run.name_of(members[0]), s.name));
+            continue;
+        }
+        if rom_ash <= cutoff {
+            continue;
+        }
+        let mut volume = 0.0;
+        for i in 0..run.column.len() {
+            let u = &run.column.units()[i];
+            let from_here = u.section.as_ref().is_some_and(|x| x.id == Some(s.id));
+            let to_here = u.rom.as_ref().is_some_and(|r| r.id == Some(s.id));
+            let is_dilution = u.became.as_ref().is_some_and(|b| b.kind == BecameKind::Dilution && b.detail != "parting");
+            if to_here && is_dilution {
+                // Dilution back to its waste.
+                let unit = run.column.unit_mut(i);
+                unit.became = None;
+                unit.rom = None;
+            } else if from_here && is_coal(u) && (u.became.is_none() || u.became.as_ref().is_some_and(|b| b.kind == BecameKind::Loss)) {
+                volume += u.value(v);
+                let unit = run.column.unit_mut(i);
+                unit.became = Some(Became { kind: BecameKind::HighAshLoss, detail: "rom ash".into() });
+                unit.rom = None;
+            } else if from_here && !is_coal(u) {
+                let unit = run.column.unit_mut(i);
+                if unit.became.as_ref().is_some_and(|b| b.detail == "parting") {
+                    unit.became = None;
+                }
+            }
+        }
+        run.said.count("coal in a ROM section over its ash cut-off, high ROM ash loss".into(), volume);
+        let first = s.units.iter().find_map(|&id| run.column.position(id)).map(|at| run.name_of(at)).unwrap_or_default();
+        run.said.name("ROM section over its ash cut-off, rejected", &format!("{first} section {} ({rom_ash:.2} over {cutoff:.2})", s.name));
+    }
+    write_pieces(
+        run,
+        |u| match &u.became {
+            Some(b) if b.kind == BecameKind::HighAshLoss => Some("Loss\\High ROM ash".into()),
+            _ => None,
+        },
+        |_| Vec::new(),
+    );
+    Ok(())
+}
+
 /// `join_benches`: each horizon's benches joined into one unit, each bench's in situ share of its volume kept.
 fn join_benches(run: &mut ColumnRun<'_>, _: &DataflowStep) -> Result<(), String> {
     run.column.join_benches();
@@ -950,6 +1412,7 @@ fn unit_of_kind(kind: FieldKind) -> &'static str {
         FieldKind::Volume => "m3",
         FieldKind::Thickness => "m",
         FieldKind::Area => "m2",
+        FieldKind::Length => "m",
         FieldKind::Density => "t/m3",
         FieldKind::Moisture => "%",
         _ => "",
@@ -1030,7 +1493,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
         for (i, f) in fields.iter().enumerate() {
             // A thickness adds down a column and an area is a column's largest; across leaves neither adds up, so a
             // summary shows neither.
-            let across = if matches!(f.kind, FieldKind::Thickness | FieldKind::Area) { None } else { Some(f.add_up.clone()) };
+            let across = if matches!(f.kind, FieldKind::Thickness | FieldKind::Area | FieldKind::Length) { None } else { Some(f.add_up.clone()) };
             push(TableColumn { name: format!("{folder}\\{}", f.name), unit: unit_of_kind(f.kind).to_string(), add_up: across, values: zd_core::ColumnValues::Number(value(i)) });
         }
         let tonnes = |d: usize| added.iter().map(|a| a.as_ref().map(|a| a[v] * a[d]).filter(|x| x.is_finite())).collect::<Vec<_>>();
@@ -1117,7 +1580,10 @@ fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: V
         if blocks.len() > NAMED {
             words.push(format!("and {} more", blocks.len() - NAMED));
         }
-        outcome.notes.push(Note::warning(Code::ReservesOutOfRange, format!("{} block{} {check}: {}", blocks.len(), plural(blocks.len()), words.join(", "))));
+        let what = if check.starts_with("ROM section") || check.starts_with("short of") { "" } else { " block" };
+        let n = blocks.len();
+        let label = if what.is_empty() { format!("{n} {check}") } else { format!("{n}{what}{} {check}", plural(n)) };
+        outcome.notes.push(Note::warning(Code::ReservesOutOfRange, format!("{label}: {}", words.join(", "))));
     }
     if !stopped.is_empty() {
         let mut words: Vec<String> = stopped.iter().take(NAMED).map(|s| s.why.clone()).collect();
@@ -1164,10 +1630,14 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
         }
     }
     let field = |name: &str, kind, add_up, source| DataflowField { field: EngineField::new(name, kind, add_up), source };
+    // Geometry as solid.measure wrote it onto the blocks (decision 0074): the dataflow reads the data table.
+    let measured = |name: &str| FieldSource::Attribute { attribute: name.to_string() };
     let mut fields = vec![
-        field("volume", FieldKind::Volume, AddUp::Sum, FieldSource::Volume),
-        field("thickness", FieldKind::Thickness, AddUp::Sum, FieldSource::Thickness),
-        field("area", FieldKind::Area, AddUp::Max, FieldSource::PlanArea),
+        field("volume", FieldKind::Volume, AddUp::Sum, measured("volume")),
+        // True thickness: what the seam rules and loss and dilution thicknesses are about (Tim, 15 November 2026).
+        field("thickness", FieldKind::Thickness, AddUp::Sum, measured("true_thickness")),
+        field("area", FieldKind::Area, AddUp::Max, measured("plan_area")),
+        field("length", FieldKind::Length, AddUp::Max, measured("length")),
         field(&density, FieldKind::Density, AddUp::Volume, FieldSource::Attribute { attribute: density.clone() }),
     ];
     for q in &qualities {
@@ -1189,7 +1659,7 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
         .iter()
         .map(|(name, _)| {
             let mut step = DataflowStep::on(name);
-            if let (true, Some(ash)) = (*name == "working_sections", ash) {
+            if let (true, Some(ash)) = (["working_sections", "rom_ash_cutoff"].contains(name), ash) {
                 step.settings.insert("ash".into(), ash.into());
             }
             step
@@ -1209,11 +1679,28 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
         ValueColumn::number("insitu_ash_cutoff", "%"),
         ValueColumn::text("discard"),
         ValueColumn::text("ws_split"),
+        ValueColumn::number("roof_loss", "m"),
+        ValueColumn::number("floor_loss", "m"),
+        ValueColumn::number("edge_loss", "m"),
+        ValueColumn::number("other_loss", "%"),
+        ValueColumn::text("loss_between_coal"),
+        ValueColumn::number("roof_dilution", "m"),
+        ValueColumn::number("floor_dilution", "m"),
+        ValueColumn::number("edge_dilution", "m"),
+        ValueColumn::number("other_dilution", "%"),
+        ValueColumn::number("rom_ash_cutoff", "%"),
     ];
     let moistures = ["mad".to_string(), "mis".to_string(), "mrom".to_string()];
     let qualities: Vec<String> = qualities.into_iter().filter(|q| !moistures.contains(q)).collect();
-    for q in std::iter::once(&density).chain(&qualities).chain(&moistures) {
-        let unit = if *q == density { "t/m3" } else if moistures.contains(q) { "%" } else { "" };
+    let geometry = ["thickness".to_string(), "area".to_string(), "length".to_string()];
+    for q in geometry.iter().chain(std::iter::once(&density)).chain(&qualities).chain(&moistures) {
+        let unit = match q.as_str() {
+            "thickness" | "length" => "m",
+            "area" => "m2",
+            _ if *q == density => "t/m3",
+            _ if moistures.contains(q) => "%",
+            _ => "",
+        };
         for end in ["min", "max", "default"] {
             columns.push(ValueColumn::number(&format!("{q}_{end}"), unit));
         }
