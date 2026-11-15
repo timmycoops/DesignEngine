@@ -101,3 +101,43 @@ The run said:
 - 1,340 waste rows have no ash or sulphur.
 
 The run took 9 ms for 90 columns.
+
+## Built: 3b, in situ
+
+- **A moisture field kind** (`FieldKind::Moisture`, in %). Quality limits and defaults (decision 3) take moistures too.
+- **`in_situ` works each unit's densities, then writes**, as before.
+  - Coal: the in situ density by Preston-Sanders from its RD, Mad and Mis. Its ROM density is that × (1 − Mis) ÷
+    (1 − Mrom) where it has an Mrom.
+  - Waste: its RD is in situ as given, and its ROM density the same unless it has moistures.
+  - Coal with no RD, Mad or Mis stops its block, said with what's missing.
+  - A dataflow with no `rd_is` field is written on its RD's own basis, as before.
+  - The step's settings name the fields where a site's differ: `rd`, `mad`, `mis`, `mrom`, `rd_is`, `rd_rom`.
+  - `preston_sanders(rd, mad, mis)` is public, with moistures as fractions.
+- **The results table.** Where the dataflow works an in situ density:
+  - `tonnes` is on the in situ basis (JORC's), with `tonnes_ad` (volume × RD) beside it;
+  - each quality also comes on the in situ basis, `<quality>_is` = air dried × (1 − Mis) ÷ (1 − Mad), added up by in
+    situ tonnes.
+  Qualities stay air dried in the column, as Spry stores them. Raw qualities are still averaged by volume × RD, as
+  CLAUDE.md has it; Spry's air-dried tonnes on the in situ volume differ only by a factor in each ply's moistures, left
+  for PIT B's comparison to show.
+- **The starter** adds `mad` and `mis` (from a grid of that code where the model has one, else a parameter row), `mrom`
+  (a parameter row), and `rd_is` and `rd_rom` (worked). Each moisture is averaged by the tonnes on its own basis. The
+  parameter table gains `mad`, `mis`, `mrom` and their limits.
+
+Known answers (`crates/zd-commands/tests/reserves_run.rs`):
+
+- **Preston-Sanders by hand.** RD 1.45, Mad 3 %, Mis 8 % gives 1.4065 ÷ 0.9925 = 1.4171.
+- **The two blocks, at Mad 3 %, Mis 8 %, Mrom 10 %.**
+  - B1's U (RD 1.4) has an in situ density of 1.358 ÷ 0.99, so 20,000 m³ is 27,434.3 t in situ against 28,000 t air
+    dried.
+  - Its ash of 10 % air dried is 10 × 0.92 ÷ 0.97 in situ, and its ROM density is the in situ × 0.92 ÷ 0.90.
+  - B2's U benches each use their own RD.
+  - OB, 50,000 m³ at 2.3, is 115,000 t either way.
+- **Missing moisture.** U with no Mis stops both blocks: "3_B1_U is coal with no mis".
+
+On the demo pit, the starter's coal row is given Mad 3.5 %, Mis 8 % and Mrom 10 %:
+
+- Base is 169,112,828.499 t in situ against 169,304,790.747 t air dried.
+- Both match their blocks to 0 t, with coal by Preston-Sanders on each block's interrogated RD.
+- 50m is 0.107 t different in situ, as Preston-Sanders isn't linear in RD and the blocks average it differently. Its
+  air-dried tonnes are the same.
