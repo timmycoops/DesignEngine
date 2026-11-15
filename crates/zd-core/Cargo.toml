@@ -9,3 +9,5 @@ publish.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+# A dataflow's fields are the column engine's (decision 0072).
+zd-reserves.workspace = true

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Crossings, FaceDesign, Grid, LayerId, MeshValidity, ObjectId, RunId, SeamModel, TriMesh, Workflow};
+use crate::{Crossings, Dataflow, FaceDesign, Grid, LayerId, MeshValidity, ObjectId, ParameterTable, RunId, SeamModel, Table, TriMesh, Workflow};
 
 /// What kind of thing an object is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -15,6 +15,9 @@ pub enum ObjectKind {
     SeamModel,
     FaceDesign,
     Workflow,
+    ParameterTable,
+    Dataflow,
+    Table,
 }
 
 /// A string: ordered f64 vertices, open or closed.
@@ -194,6 +197,12 @@ pub enum Body {
     FaceDesign(Arc<FaceDesign>),
     /// Steps run again in one go, with what each did last (decision 0065).
     Workflow(Arc<Workflow>),
+    /// Assumptions any tool reads, rows read top down (decision 0072).
+    ParameterTable(Arc<ParameterTable>),
+    /// The reserves dataflow: fields, steps and the parameter tables it reads (decisions 0070, 0072).
+    Dataflow(Arc<Dataflow>),
+    /// A table of results: what a dataflow run makes, a table a case (decision 0072).
+    Table(Arc<Table>),
 }
 
 impl Body {
@@ -206,6 +215,9 @@ impl Body {
             Body::SeamModel(_) => ObjectKind::SeamModel,
             Body::FaceDesign(_) => ObjectKind::FaceDesign,
             Body::Workflow(_) => ObjectKind::Workflow,
+            Body::ParameterTable(_) => ObjectKind::ParameterTable,
+            Body::Dataflow(_) => ObjectKind::Dataflow,
+            Body::Table(_) => ObjectKind::Table,
         }
     }
 }

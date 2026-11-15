@@ -41,7 +41,7 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use serde::{Deserialize, Serialize};
 use zd_core::{
-    Attributes, Body, Crossings, Display, FaceDesign, Workflow, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, ProjectError, RunId, SeamModel, Solid,
+    Attributes, Body, Crossings, Dataflow, Display, FaceDesign, ParameterTable, Table, Workflow, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, ProjectError, RunId, SeamModel, Solid,
     Surface, TriMesh,
 };
 
@@ -153,6 +153,9 @@ enum StoredBody {
     SeamModel { model: SeamModel },
     FaceDesign { design: FaceDesign },
     Workflow { workflow: Workflow },
+    ParameterTable { table: ParameterTable },
+    Dataflow { dataflow: Dataflow },
+    Table { table: Table },
 }
 
 /// Files already on disk for a shared mesh or grid, so a later save can point at them again.
@@ -263,6 +266,9 @@ impl ProjectStore {
                 StoredBody::SeamModel { model } => Body::SeamModel(Arc::new(model)),
                 StoredBody::FaceDesign { design } => Body::FaceDesign(Arc::new(design)),
                 StoredBody::Workflow { workflow } => Body::Workflow(Arc::new(workflow)),
+                StoredBody::ParameterTable { table } => Body::ParameterTable(Arc::new(table)),
+                StoredBody::Dataflow { dataflow } => Body::Dataflow(Arc::new(dataflow)),
+                StoredBody::Table { table } => Body::Table(Arc::new(table)),
             };
             objects.push(Object {
                 id: stored.id,
@@ -316,6 +322,9 @@ impl ProjectStore {
                 Body::SeamModel(model) => StoredBody::SeamModel { model: (**model).clone() },
                 Body::FaceDesign(design) => StoredBody::FaceDesign { design: (**design).clone() },
                 Body::Workflow(workflow) => StoredBody::Workflow { workflow: (**workflow).clone() },
+                Body::ParameterTable(table) => StoredBody::ParameterTable { table: (**table).clone() },
+                Body::Dataflow(dataflow) => StoredBody::Dataflow { dataflow: (**dataflow).clone() },
+                Body::Table(table) => StoredBody::Table { table: (**table).clone() },
             };
             stored.push(StoredObject {
                 id: object.id,

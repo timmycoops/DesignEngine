@@ -6,26 +6,34 @@
 
 mod attributes;
 mod bounds;
+mod dataflow;
 mod display;
 mod face;
+mod filters;
 mod grid;
 mod id;
 mod mesh;
 mod object;
+mod parameters;
 mod project;
 mod seam;
+mod table;
 mod validity;
 mod workflow;
 
 pub use attributes::intern;
 pub use bounds::Aabb;
+pub use dataflow::{Dataflow, DataflowField, DataflowStep, FieldSource};
 pub use display::{Colouring, Contours, Display, Look};
 pub use face::{AzimuthSector, FaceDesign, FaceDirection, FaceLine, FaceProfile, HorizonValue, LineEdit, LineOn, MOST_TOLERANCE, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, USUAL_TURN_JOIN, WallRule, WallSide};
+pub use filters::{attribute_ci, attribute_word, filter_fits, filter_words, list_fits};
 pub use grid::Grid;
 pub use id::{LayerId, ObjectId, RunId};
 pub use mesh::TriMesh;
 pub use object::{AttrValue, Attributes, Body, Layer, Object, ObjectKind, ObjectRef, Pieces, Polyline, Solid, Surface};
+pub use parameters::{Found, ParamValue, ParameterRow, ParameterTable, ValueColumn};
 pub use project::{Applied, AppliedChange, Change, ChangeKind, Project, ProjectError};
 pub use seam::{Fingerprint, GridLink, Horizon, IssueKind, Lattice, SeamModel, StackIssue, blank_no_seam, blank_no_thickness, grid_holes, moved_path, relative_path, same_path};
+pub use table::{ColumnHeader, ColumnValues, Table, TableColumn};
 pub use validity::{CrossingCheck, Crossings, MeshValidity, is_zero_area};
 pub use workflow::{BASE_CASE, Case, InputRule, LastRun, Source, StepAction, Workflow, WorkflowStep};

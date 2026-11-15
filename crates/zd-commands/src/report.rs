@@ -666,6 +666,9 @@ fn kind_words(kind: ObjectKind) -> &'static str {
         ObjectKind::SeamModel => "seam model",
         ObjectKind::FaceDesign => "face design",
         ObjectKind::Workflow => "workflow",
+        ObjectKind::ParameterTable => "parameter table",
+        ObjectKind::Dataflow => "dataflow",
+        ObjectKind::Table => "table",
     }
 }
 

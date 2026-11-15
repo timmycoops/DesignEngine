@@ -26,3 +26,4 @@ spry-fixtures = []
 
 [dev-dependencies]
 zd-geom.workspace = true
+zd-reserves.workspace = true

@@ -12,11 +12,13 @@
 //! meshes/g00001-triangles.parquet  a, b, c (u32), counted from each mesh's own first vertex
 //! meshes/<id>-r<rev>-....parquet   a mesh over a million triangles, on its own
 //! grids/<id>-r<rev>.parquet        z (f64, NaN = null), row-major; the lattice is in objects
+//! tables/<id>-r<rev>.parquet       a results table's columns as they are (f64 or text, null = not there); their
+//!                                  names, units and kinds, and this entry's name, are the object's body
 //! strings.parquet                  object (its row in objects), x, y, z (f64), in vertex order
 //! runlog.json                      the session's run log, as the caller passes it
 //! ```
 //!
-//! Seam models and face designs are JSON in their object's row. Geology stays outside the file: a seam model
+//! Seam models, face designs, workflows, parameter tables and dataflows are JSON in their object's row. Geology stays outside the file: a seam model
 //! holds links to its grid files, never the grids. The same project always encodes to the same bytes, and only
 //! each object's current revision is saved.
 
@@ -34,7 +36,10 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Crossings, Display, FaceDesign, Grid, Layer, LayerId, Object, ObjectId, Polyline, Project, RunId, SeamModel, Solid, Surface, TriMesh, Workflow};
+use zd_core::{
+    AttrValue, Attributes, Body, ColumnHeader, ColumnValues, Crossings, Dataflow, Display, FaceDesign, Grid, Layer, LayerId, Object, ObjectId, ParameterTable, Polyline, Project, RunId,
+    SeamModel, Solid, Surface, Table as ResultsTable, TableColumn, TriMesh, Workflow,
+};
 
 use crate::seam::fnv1a;
 use crate::store::{StoreError, saved_display};
@@ -51,7 +56,7 @@ const GROUP: usize = 1000;
 const LARGE_MESH: usize = 1_000_000;
 /// Each table's version. A table changes only by columns that may be empty, or by a new version that this
 /// build's readers know; a file naming a newer one is refused.
-const TABLES: [(&str, u32); 6] = [("objects", 1), ("attributes", 1), ("meshes", 1), ("grids", 1), ("strings", 1), ("runlog", 1)];
+const TABLES: [(&str, u32); 7] = [("objects", 1), ("attributes", 1), ("meshes", 1), ("grids", 1), ("strings", 1), ("runlog", 1), ("tables", 1)];
 
 /// Where a project's entries are kept: a folder for tests, one zip file from stage 2.
 pub trait Container {
@@ -277,6 +282,13 @@ enum Placed {
     Json(String),
 }
 
+/// Where a results table's values are, and its columns' names, units and kinds: its object's body.
+#[derive(Serialize, Deserialize)]
+struct TableAt {
+    entry: String,
+    columns: Vec<ColumnHeader>,
+}
+
 #[derive(Clone)]
 struct MeshAt {
     stem: String,
@@ -300,6 +312,7 @@ enum Work<'a> {
     Attributes { objects: &'a [Arc<Object>], first: usize },
     Meshes { stem: String, meshes: Vec<Arc<TriMesh>> },
     Grid { grid: Arc<Grid> },
+    Table { table: Arc<ResultsTable> },
 }
 
 impl Job<'_> {
@@ -354,6 +367,7 @@ pub(crate) fn encode_tables(snapshot: &Snapshot, cache: &mut EncodeCache) -> Res
                 vec![Encoded::new(format!("{stem}-vertices.parquet"), vertices), Encoded::new(format!("{stem}-triangles.parquet"), triangles)]
             }
             Work::Grid { grid } => vec![Encoded::new(job.name.clone(), encode(vec![column("z", f64s(grid.z.clone()), false)])?)],
+            Work::Table { table } => vec![Encoded::new(job.name.clone(), results_table(table)?)],
         };
         Ok((i, entries))
     });
@@ -514,6 +528,17 @@ fn place_bodies(objects: &[Arc<Object>]) -> Result<Placement, StoreError> {
             Body::SeamModel(model) => Placed::Json(serde_json::to_string(&**model).map_err(|e| StoreError::Format(e.to_string()))?),
             Body::FaceDesign(design) => Placed::Json(serde_json::to_string(&**design).map_err(|e| StoreError::Format(e.to_string()))?),
             Body::Workflow(workflow) => Placed::Json(serde_json::to_string(&**workflow).map_err(|e| StoreError::Format(e.to_string()))?),
+            Body::ParameterTable(table) => Placed::Json(serde_json::to_string(&**table).map_err(|e| StoreError::Format(e.to_string()))?),
+            Body::Dataflow(dataflow) => Placed::Json(serde_json::to_string(&**dataflow).map_err(|e| StoreError::Format(e.to_string()))?),
+            Body::Table(table) => {
+                // A table with no columns has no values to keep, and Parquet holds none.
+                let entry = if table.columns.is_empty() { String::new() } else { format!("tables/{}-r{}.parquet", object.id, object.revision) };
+                if !entry.is_empty() {
+                    grid_jobs.push(Job { name: entry.clone(), key: None, work: Work::Table { table: table.clone() } });
+                }
+                let at = TableAt { entry, columns: table.headers() };
+                Placed::Json(serde_json::to_string(&at).map_err(|e| StoreError::Format(e.to_string()))?)
+            }
         };
         placed.push(entry);
     }
@@ -530,6 +555,9 @@ fn kind_name(body: &Body) -> &'static str {
         Body::SeamModel(_) => "seam_model",
         Body::FaceDesign(_) => "face_design",
         Body::Workflow(_) => "workflow",
+        Body::ParameterTable(_) => "parameter_table",
+        Body::Dataflow(_) => "dataflow",
+        Body::Table(_) => "table",
     }
 }
 
@@ -573,6 +601,20 @@ fn objects_table(objects: &[Arc<Object>], placed: &[Placed]) -> Result<Vec<u8>, 
         column("rows", grid_size(&|g| g.rows), true),
         column("body", strs(placed.iter().map(|p| if let Placed::Json(json) = p { Some(json.clone()) } else { None }).collect()), true),
     ])
+}
+
+/// A results table's values, a Parquet column each, nulls where a value isn't there.
+fn results_table(table: &ResultsTable) -> Result<Vec<u8>, StoreError> {
+    encode(
+        table
+            .columns
+            .iter()
+            .map(|c| match &c.values {
+                ColumnValues::Number(v) => column(&c.name, f64s_opt(v.clone()), true),
+                ColumnValues::Text(v) => column(&c.name, strs(v.clone()), true),
+            })
+            .collect(),
+    )
 }
 
 fn strings_table(objects: &[Arc<Object>]) -> Result<Vec<u8>, StoreError> {
@@ -888,12 +930,35 @@ pub fn read_project(input: &(impl Container + Sync)) -> Result<ReadProject, Stor
                 };
                 Body::Grid(grid)
             }
-            kind @ ("seam_model" | "face_design" | "workflow") => {
+            kind @ ("seam_model" | "face_design" | "workflow" | "parameter_table" | "dataflow" | "table") => {
                 let json = body[row].as_deref().ok_or_else(|| needs(row, "body"))?;
                 let bad = |e: serde_json::Error| StoreError::Format(format!("{OBJECTS}: {kind} '{}': {e}", names[row]));
                 match kind {
                     "seam_model" => Body::SeamModel(Arc::new(serde_json::from_str::<SeamModel>(json).map_err(bad)?)),
                     "face_design" => Body::FaceDesign(Arc::new(serde_json::from_str::<FaceDesign>(json).map_err(bad)?)),
+                    "parameter_table" => Body::ParameterTable(Arc::new(serde_json::from_str::<ParameterTable>(json).map_err(bad)?)),
+                    "dataflow" => Body::Dataflow(Arc::new(serde_json::from_str::<Dataflow>(json).map_err(bad)?)),
+                    "table" => {
+                        let at: TableAt = serde_json::from_str(json).map_err(bad)?;
+                        let columns = if at.columns.is_empty() {
+                            Vec::new()
+                        } else {
+                        let values = tables.get(&at.entry).ok_or_else(|| StoreError::Format(format!("{} is not in the manifest", at.entry)))?;
+                        let columns = at
+                            .columns
+                            .iter()
+                            .map(|h| {
+                                let values = if h.text { ColumnValues::Text(values.strs_opt(&h.name)?) } else { ColumnValues::Number(values.f64s_opt(&h.name)?) };
+                                Ok(TableColumn { name: h.name.clone(), unit: h.unit.clone(), values })
+                            })
+                            .collect::<Result<Vec<_>, StoreError>>()?;
+                        if columns.first().is_some_and(|c: &TableColumn| c.values.len() != values.rows()) {
+                            return Err(StoreError::Format(format!("{}: its columns don't hold its {} rows", at.entry, values.rows())));
+                        }
+                        columns
+                        };
+                        Body::Table(Arc::new(ResultsTable { columns }))
+                    }
                     _ => Body::Workflow(Arc::new(serde_json::from_str::<Workflow>(json).map_err(bad)?)),
                 }
             }
@@ -965,6 +1030,17 @@ fn attribute_group(name: &str, table: &Table, rows: usize) -> Result<Vec<(usize,
 
 /// Where two projects differ in anything a save keeps, one line each; empty when they're the same. Coordinates,
 /// numbers and grid nodes are compared bit for bit, nulls included.
+/// Whether two results columns are the same, bit for bit.
+fn same_column(a: &TableColumn, b: &TableColumn) -> bool {
+    a.name == b.name
+        && a.unit == b.unit
+        && match (&a.values, &b.values) {
+            (ColumnValues::Number(p), ColumnValues::Number(q)) => p.iter().map(|v| v.map(f64::to_bits)).eq(q.iter().map(|v| v.map(f64::to_bits))),
+            (ColumnValues::Text(p), ColumnValues::Text(q)) => p == q,
+            _ => false,
+        }
+}
+
 pub fn project_differences(a: &Project, b: &Project) -> Vec<String> {
     let mut out = Vec::new();
     if a.layers() != b.layers() {
@@ -1008,6 +1084,9 @@ pub fn project_differences(a: &Project, b: &Project) -> Vec<String> {
             (Body::SeamModel(p), Body::SeamModel(q)) => p == q,
             (Body::FaceDesign(p), Body::FaceDesign(q)) => p == q,
             (Body::Workflow(p), Body::Workflow(q)) => p == q,
+            (Body::ParameterTable(p), Body::ParameterTable(q)) => p == q,
+            (Body::Dataflow(p), Body::Dataflow(q)) => p == q,
+            (Body::Table(p), Body::Table(q)) => p.columns.len() == q.columns.len() && p.columns.iter().zip(&q.columns).all(|(a, b)| same_column(a, b)),
             _ => false,
         };
         if !same {

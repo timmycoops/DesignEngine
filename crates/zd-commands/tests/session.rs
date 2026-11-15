@@ -50,6 +50,7 @@ fn registry_lists_every_builtin_with_a_spec() {
     assert_eq!(
         names,
         [
+            "dataflow.save",
             "deswik.import",
             "export.csv",
             "export.dxf",
@@ -69,6 +70,8 @@ fn registry_lists_every_builtin_with_a_spec() {
             "object.delete_many",
             "object.move",
             "object.rename",
+            "parameters.export_csv",
+            "parameters.save",
             "seam.build_model",
             "seam.relink",
             "seam.suggest_definition",
@@ -112,8 +115,8 @@ fn registry_lists_every_builtin_with_a_spec() {
     let specs = serde_json::to_value(session.registry().specs()).unwrap();
     let named = |name: &str| specs.as_array().unwrap().iter().find(|s| s["name"] == name).unwrap().clone();
     assert_eq!(named("solid.cut_by_surface")["inputs"][0]["type"], json!({ "kind": "object", "object_kind": "solid" }));
-    assert_eq!(specs[2]["inputs"][0]["type"], json!({ "kind": "objects" }));
-    assert_eq!(specs[0]["params"][1]["type"], json!({ "kind": "texts" }));
+    assert_eq!(named("export.dxf")["inputs"][0]["type"], json!({ "kind": "objects" }));
+    assert_eq!(named("deswik.import")["params"][1]["type"], json!({ "kind": "texts" }));
 }
 
 #[test]
