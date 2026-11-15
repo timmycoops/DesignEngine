@@ -95,10 +95,11 @@ def reserves_dataflow(s, model):
     made_ = s.dataflow_starter(model, "Reserves")
     table = s.object(made_["parameters"])["parameters"]
     waste = next(r for r in table["rows"] if r.get("when", {}).get("material") == "waste")
-    waste["values"]["rd_default"] = 2.3
+    waste["values"].update({"rd_default": 2.3, "as_default": 85.0, "ts_default": 0.3})
     coal = next(r for r in table["rows"] if r.get("when", {}).get("material") == "coal")
     coal["values"].update({"mad": 3.5, "mis": 8.0, "mrom": 10.0, "min_parting": 0.5, "ws_strip_ratio": 1.0, "min_coal_thickness": 0.3, "insitu_ash_cutoff": 35.0,
-                          "roof_loss": 0.1, "floor_loss": 0.1, "edge_loss": 0.05, "other_loss": 1.0})
+                          "roof_loss": 0.1, "floor_loss": 0.1, "edge_loss": 0.05, "other_loss": 1.0,
+                          "roof_dilution": 0.05, "floor_dilution": 0.05, "edge_dilution": 0.02, "other_dilution": 0.5, "rom_ash_cutoff": 30.0})
     s.run("parameters.save", table=made_["parameters"], name="Reserves assumptions", content=table)
     return made_["dataflow"]
 
@@ -258,8 +259,11 @@ def main():
         benched = sum(1 for b in cols["bench"] if b)
         print(f"   {case}: '{tables[0]['name']}', {table['rows']} leaves ({benched} benched) from {len(blocks)} blocks, {sections} working sections; "
               f"{written:,.3f} m3, {written_t:,.3f} t in situ and {written_ad:,.3f} t air dried, against the blocks by {abs(written - volume):.3g} m3, {abs(written_t - tonnes):.3g} t and {abs(written_ad - tonnes_ad):.3g} t")
-        losses = {kind: total("Loss", "volume") and sum(v for v in cols.get("Loss" + chr(92) + kind + chr(92) + "volume", []) if v is not None) for kind in ("Roof", "Floor", "Edge", "Other", "Thin")}
+        under = lambda *parts: sum(v for v in cols.get(chr(92).join(parts), []) if v is not None)
+        losses = {kind: under("Loss", kind, "volume") for kind in ("Roof", "Floor", "Edge", "Other", "Thin", "High ROM ash")}
+        dilution = {kind: under("Dilution", kind, "volume") for kind in ("Roof", "Floor", "Edge", "Other")}
         print("      losses, m3: " + ", ".join(f"{k.lower()} {v:,.1f}" for k, v in losses.items()))
+        print("      dilution, m3: " + ", ".join(f"{k.lower()} {v:,.1f}" for k, v in dilution.items()))
         assert abs(imported - volume) <= 1e-9 * volume, (imported, volume)
         assert abs(written_ad - tonnes_ad) <= 1e-9 * tonnes_ad, (written_ad, tonnes_ad)
         assert abs(written - volume) <= 1e-9 * volume and abs(written_t - tonnes) <= 1e-9 * tonnes, case

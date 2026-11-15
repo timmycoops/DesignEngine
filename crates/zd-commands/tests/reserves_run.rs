@@ -282,9 +282,9 @@ fn a_block_that_can_t_run_is_left_out_with_why_and_the_rest_go_on() {
 fn a_step_this_build_doesn_t_have_or_no_stack_is_refused() {
     let mut s = session();
     let ids = blocks(&mut s, None);
-    let flow = dataflow(&mut s, &["initialise", "rom_dilution"]);
+    let flow = dataflow(&mut s, &["initialise", "rom_final"]);
     let err = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap_err();
-    assert!(err.to_string().contains("names a step rom_dilution, which this build doesn't have; it has small_volumes, initialise, in_situ, join_benches, working_sections, rom_loss"), "{err}");
+    assert!(err.to_string().contains("names a step rom_final, which this build doesn't have; it has small_volumes, initialise, in_situ, join_benches, working_sections, rom_loss, rom_dilution, rom_ash_cutoff"), "{err}");
     let flow = dataflow(&mut s, &["initialise"]);
     let err = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "layer": "reserves" })).unwrap_err();
     assert!(err.to_string().contains("no stack order"), "{err}");
@@ -743,4 +743,120 @@ fn no_loss_across_a_coal_boundary_unless_asked() {
     assert_eq!(into_b[0].0, "loss (floor)");
     assert!(close(into_b[0].1, 500.0));
     assert!(views.last().unwrap().units.iter().all(|u| u.rom.as_deref() != Some("2 coal A")), "nothing from B into A");
+}
+
+// Decision 0074, workstream 4c: ROM dilution and the ROM ash cut-off, on the loss column.
+
+/// The loss column's parameters with dilution and a ROM ash cut-off: losses `l` (roof, floor, edge, other), dilution `d`
+/// (roof, floor, edge m, other %), waste ash 80 by default, and B's cut-off.
+fn dilution_csv(l: [f64; 4], d: [f64; 4], b_cutoff: &str) -> String {
+    format!(
+        "when material,when seam,rd (t/m3),ash_default (%),min_parting (m),ws_strip_ratio,min_coal_thickness (m),roof_loss (m),floor_loss (m),edge_loss (m),other_loss (%),roof_dilution (m),floor_dilution (m),edge_dilution (m),other_dilution (%),rom_ash_cutoff (%)\nwaste,,2.3,80,,,,,,,,,,,,\ncoal,B,,,1,0.5,0.5,{},{},{},{},{},{},{},{},{b_cutoff}\ncoal,,,,1,0.5,0.5,{},{},{},{},{},{},{},{},\n",
+        l[0], l[1], l[2], l[3], d[0], d[1], d[2], d[3], l[0], l[1], l[2], l[3], d[0], d[1], d[2], d[3]
+    )
+}
+
+fn dilution_steps() -> serde_json::Value {
+    json!([{ "step": "initialise" }, { "step": "join_benches" }, { "step": "working_sections" }, { "step": "rom_loss" }, { "step": "rom_dilution" }, { "step": "rom_ash_cutoff" }])
+}
+
+fn preview_of(s: &Session, flow: ObjectId, ids: &[ObjectId], stack: &[&str]) -> Vec<zd_commands::builtin::StepView> {
+    let p: RunReservesParams = serde_json::from_value(json!({ "dataflow": flow, "blocks": ids, "stack": stack, "layer": "reserves" })).unwrap();
+    let project = s.project();
+    let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+    reserves_preview(&get, &p, "Base", &["Pit".to_string(), "1".to_string(), "B1".to_string()]).unwrap()
+}
+
+/// A ROM section's volume from the preview: what was sent to it, and its own units not sent away or set aside.
+fn rom_volume(view: &zd_commands::builtin::StepView, section: &str) -> f64 {
+    view.units
+        .iter()
+        .filter(|u| match &u.rom {
+            Some(r) => r == section,
+            None => u.section.as_deref() == Some(section) && u.became.as_deref().is_none_or(|b| b.starts_with("dilution (parting)")),
+        })
+        .map(|u| u.values["volume"])
+        .sum()
+}
+
+/// No loss; dilution roof 0.05 m, floor 0.1 m, edge 0.02 m, other 1 %. OB gives A its roof dilution 250 m³, edge
+/// 0.02 × 100 m × 2 m = 4 m³ and other 100 m³; A-B gives A its floor dilution 500 m³ off its top and B its roof 250 m³,
+/// edge 6 m³ and other 150 m³ off its bottom; the waste below gives B its floor 500 m³. ROM A 10,854 m³, ROM B 15,906 m³.
+#[test]
+fn rom_dilution_cuts_each_waste_interval_for_the_coal_either_side() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, dilution_steps(), &dilution_csv([0.0; 4], [0.05, 0.1, 0.02, 1.0], ""));
+    let views = preview_of(&s, flow, &ids, &LOSS_STACK);
+    let last = views.last().unwrap();
+    assert!(close(rom_volume(last, "2 coal A"), 10_854.0), "{}", rom_volume(last, "2 coal A"));
+    assert!(close(rom_volume(last, "4 coal B"), 15_906.0), "{}", rom_volume(last, "4 coal B"));
+    let pieces: Vec<(String, String, f64)> =
+        last.units.iter().filter(|u| u.became.as_deref().is_some_and(|b| b.starts_with("dilution"))).map(|u| (u.horizon.clone(), u.became.clone().unwrap(), u.values["volume"])).collect();
+    let want = [
+        ("OB", "dilution (roof)", 250.0),
+        ("OB", "dilution (edge)", 4.0),
+        ("OB", "dilution (other)", 100.0),
+        ("A-B", "dilution (floor)", 500.0),
+        ("A-B", "dilution (roof)", 250.0),
+        ("A-B", "dilution (edge)", 6.0),
+        ("A-B", "dilution (other)", 150.0),
+        ("below B", "dilution (floor)", 500.0),
+    ];
+    let mut got = pieces.clone();
+    got.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    let mut want: Vec<(String, String, f64)> = want.iter().map(|(h, b, v)| (h.to_string(), b.to_string(), *v)).collect();
+    want.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    assert_eq!(got.len(), want.len(), "{pieces:?}");
+    for (g, w) in got.iter().zip(&want) {
+        assert_eq!((&g.0, &g.1), (&w.0, &w.1));
+        assert!(close(g.2, w.2), "{g:?} against {w:?}");
+    }
+
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert!(record.messages[0].contains("every column balanced to 0.0e0"), "{}", record.messages[0]);
+    let t = table(&s, created(&record)[0]);
+    // Each dilution on the leaf of the waste it was taken from: OB on A's, A-B on B's.
+    let d = |seam: &str, kind: &str| value(&t, leaf(&t, "B1", seam, None), &format!("Dilution\\{kind}\\Waste\\volume")).or_else(|| value(&t, leaf(&t, "B1", seam, None), &format!("Dilution\\{kind}\\volume"))).unwrap_or(0.0);
+    assert!(close(d("A", "Roof"), 250.0) && close(d("A", "Edge"), 4.0) && close(d("A", "Other"), 100.0));
+    assert!(close(d("B", "Floor"), 500.0) && close(d("B", "Roof"), 250.0) && close(d("B", "Edge"), 6.0) && close(d("B", "Other"), 150.0));
+}
+
+/// A-B (25,000 m³) asked for A's floor dilution 3 m (15,000 m³) and B's roof 2.5 m (12,500 m³): 27,500 m³. Each is
+/// shared out by 25,000 ÷ 27,500, and the losses sent into A-B (A's floor loss and B's roof loss, 500 m³ each) go back to
+/// their coal; said.
+#[test]
+fn a_waste_too_thin_for_its_dilution_shares_it_out_and_returns_its_losses() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, dilution_steps(), &dilution_csv([0.1, 0.1, 0.0, 0.0], [2.5, 3.0, 0.0, 0.0], ""));
+    let views = preview_of(&s, flow, &ids, &LOSS_STACK);
+    let last = views.last().unwrap();
+    let into = |section: &str, kind: &str| last.units.iter().filter(|u| u.rom.as_deref() == Some(section) && u.became.as_deref() == Some(kind)).map(|u| u.values["volume"]).sum::<f64>();
+    assert!(close(into("2 coal A", "dilution (floor)"), 15_000.0 * 25_000.0 / 27_500.0));
+    assert!(close(into("4 coal B", "dilution (roof)"), 12_500.0 * 25_000.0 / 27_500.0));
+    assert!(close(into("3 waste B", "loss (floor)") + into("3 waste B", "loss (roof)"), 0.0), "the losses sent into A-B are back");
+    assert!(close(into("1 waste A", "loss (roof)"), 500.0), "A's roof loss into OB stays");
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 short of their dilution (dilution shared out, losses sent there returned): 1_B1_A-B (25000.0 of 27500.0 m3 asked)"]);
+    assert!(notes_of(&record, Code::ReservesDefaulted).iter().any(|n| n == "1 unit loss sent into waste short of its dilution, returned to its coal, 1000.0 m3"), "{:?}", notes_of(&record, Code::ReservesDefaulted));
+}
+
+/// B's ROM ash with its dilution (906 m³ of waste at RD 2.3 and 80 % ash with 15,000 m³ of coal at 1.4 and 10 %) is
+/// 376,704 ÷ 23,083.8 = 16.32 %, over its 15 % cut-off: B is rejected, its coal high ROM ash loss and its dilution back
+/// to waste. A, with no cut-off, keeps its ROM.
+#[test]
+fn the_rom_ash_cut_off_rejects_a_section_once() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, dilution_steps(), &dilution_csv([0.0; 4], [0.05, 0.1, 0.02, 1.0], "15"));
+    let views = preview_of(&s, flow, &ids, &LOSS_STACK);
+    let last = views.last().unwrap();
+    assert!(close(rom_volume(last, "4 coal B"), 0.0), "B rejected");
+    assert!(last.units.iter().all(|u| u.rom.as_deref() != Some("4 coal B")), "its dilution back to waste");
+    assert!(close(rom_volume(last, "2 coal A"), 10_854.0), "A as it was");
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 ROM section over its ash cut-off, rejected: 1_B1_B section B (16.32 over 15.00)"]);
+    let t = table(&s, created(&record)[0]);
+    assert!(close(value(&t, leaf(&t, "B1", "B", None), "Loss\\High ROM ash\\volume").unwrap(), 15_000.0));
 }

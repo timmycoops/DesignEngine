@@ -164,3 +164,61 @@ On the demo pit the coal rules are roof 0.1 m, floor 0.1 m, edge 0.05 m and othe
 - **Edge loss is higher in 50m.** Its blocks are 50 m along the strip and 60 m across it, so the longer side of the
   smallest rectangle is the strip's width, not the block's length along the strip. Where edge loss must follow the
   strip, the blocks need a `length` attribute. Tim to say whether the rule should be the length along the strip.
+
+## Built: 4c, dilution and the ROM ash cut-off
+
+**`rom_dilution`** comes after `rom_loss`, Spry's way (decision 6). Each waste interval, top down, gives dilution to
+the coal either side of it:
+
+- **Floor dilution** for the coal section above comes off its top: `floor_dilution` m, the largest of that section's
+  plies', over its area.
+- **Roof dilution** for the coal section below comes off its bottom: `roof_dilution` m.
+- **Edge and other dilution** come off its bottom for every coal section below it, down to the next waste. Edge is
+  `edge_dilution` m × the block's length × each ply's thickness; other is `other_dilution` % of each ply's volume.
+- **A waste too thin to give it all** shares each out in proportion to what it holds. The losses sent into it go back to
+  their coal, as Spry's. Ours says so: the waste and the losses returned are counted, and each interval is named with
+  what it held against what was asked.
+- **Labels and writes.** Pieces are labelled dilution of their kind, their ROM label the coal section they go to, and
+  written on the leaf they were taken from under `Dilution\Roof`, `\Floor`, `\Edge` and `\Other`. Spry writes dilution
+  on the ROM node; that comes with 4d.
+
+**`rom_ash_cutoff`** comes after it (decision 7), once.
+
+- Each ROM coal section's ash is its members' ash averaged by the field's rule. The members are its coal, its partings
+  and the dilution sent to it; the step's `ash` setting names the field, and the starter sets it to the model's ash.
+- The ash is tested against `rom_ash_cutoff`, the smallest of the section's plies'. A section with none isn't tested.
+- **A section over its cut-off is rejected.** Its coal, and the losses it sent away, become high ROM ash loss. Its
+  dilution goes back to its waste and its partings back to waste.
+- Each rejection is named with its ash and cut-off. The coal is written under `Loss\High ROM ash`.
+- A section with no ash to test is named.
+
+The starter adds the four dilution columns and `rom_ash_cutoff`.
+
+Known answers (`crates/zd-commands/tests/reserves_run.rs`, the loss column):
+
+- **No loss; dilution roof 0.05 m, floor 0.1 m, edge 0.02 m, other 1 %.**
+  - OB gives A 250 m³ roof, 4 m³ edge and 100 m³ other dilution.
+  - A-B gives A 500 m³ floor off its top, and B 250 m³ roof, 6 m³ edge and 150 m³ other off its bottom.
+  - The waste below gives B 500 m³ floor.
+  - ROM A is 10,854 m³ and ROM B 15,906 m³; every piece and write checked, and the column balances to 0.
+- **A waste too thin.** A-B (25,000 m³) is asked for 15,000 + 12,500 m³, so each is shared by 25,000 ÷ 27,500. The
+  500 m³ losses A and B sent into it go back; A's roof loss into OB stays. Both are said.
+- **The ROM ash cut-off.** B's diluted ash, 376,704 ÷ 23,083.8 = 16.32 %, is over its 15 % cut-off.
+  - B is rejected: 15,000 m³ under `Loss\High ROM ash`, its dilution back to waste.
+  - A, with no cut-off, is unchanged at 10,854 m³.
+
+The demo pit's waste row adds ash 85 % and sulphur 0.3 %. Its coal row adds dilution roof 0.05 m, floor 0.05 m, edge
+0.02 m and other 0.5 %, and a ROM ash cut-off of 30 %.
+
+| | Base | 50m |
+|---|---|---|
+| roof dilution | 83,084.5 m³ | 83,051.0 m³ |
+| floor dilution | 52,714.7 m³ | 52,671.3 m³ |
+| edge dilution | 1,886.8 m³ | 2,378.4 m³ |
+| other dilution | 30,287.7 m³ | 30,279.5 m³ |
+| high ROM ash loss | 10,035.4 m³ | 9,586.3 m³ |
+
+- Floor dilution is less than roof at the same thickness. L's floor dilution comes from the underburden, outside the
+  model and never written; 4d reports it as out-of-model volume.
+- In situ is unchanged, 0 from the blocks.
+- The run takes 25 ms for 90 columns.
