@@ -109,3 +109,58 @@ The demo pit, Base and 50m:
 - Base's 169,112,828.499 t in situ and 169,304,790.747 t air dried are both 0 from its blocks.
 - `reserves.run` takes 12 to 15 ms for 90 columns.
 - `zd-app --bench --dataflow` reads Properties back on it and passes all four checks.
+
+## Built: 4b, ROM loss
+
+`rom_loss` comes after `working_sections`, Spry's way (decisions 4 and 5).
+
+- **Sections.** It reads the working sections and the waste between them, top down, from the labels
+  `working_sections` gave.
+- **Roof and floor loss.** For each coal section:
+  - roof loss is `roof_loss` m and floor loss `floor_loss` m, the largest of the section's plies', over the section's
+    area (the largest of its units');
+  - the roof loss comes off its top into the section above, and the floor loss off its bottom into the section below
+    (the underburden where it's the last coal);
+  - a column that ends in coal with nothing below stops its block, said.
+- **Coal boundaries.** Across a boundary with another coal section nothing is taken, unless the section's first ply's
+  row says `loss_between_coal` yes. Then the loss goes into that coal section.
+- **Edge and other loss** come off each coal ply's top into the nearest waste above. Edge loss is `edge_loss` m × the
+  block's length × the ply's thickness, and other loss is `other_loss` % of the ply's volume, both as the ply stood
+  before roof and floor loss, as Spry's are. With no waste above, there's none.
+- **A section short of its loss.** A section that can't give its roof and floor loss, or then its edge and other loss,
+  is thin loss, all of it. Its partings go back to waste, in the nearest waste section, as Spry's are. Said.
+- **Labels.** Each piece taken is labelled loss of its kind, and its ROM label names the section it went to. The
+  preview shows both.
+- **The writes.** Each loss goes on the leaf it came from, coal alone as Spry writes it: `Loss\Roof`, `Loss\Floor`,
+  `Loss\Edge`, `Loss\Other`, and `Loss\Thin` for a section short of its loss.
+- **The block's length** (`block_length`) is the longer side of the smallest rectangle round its footprint, from the
+  convex hull of its vertices. A block's `length` attribute (the step's setting names it) is used before it.
+- **The starter** adds `roof_loss`, `floor_loss`, `edge_loss`, `other_loss` and `loss_between_coal`.
+
+Known answers (`crates/zd-commands/tests/reserves_run.rs`):
+
+- **Length.** An 80 m by 20 m footprint turned 30° at mine coordinates is 80 m long.
+- **One 5,000 m², 100 m block.** Roof 0.1 m, floor 0.2 m, edge 0.05 m, other 2 %.
+  - A, 10,000 m³: roof 500 m³, edge 10 m³ and other 200 m³ go into OB, and floor 1,000 m³ into A-B. 8,290 m³ is left.
+  - B, 15,000 m³: roof 500 m³, edge 15 m³ and other 300 m³ go into A-B, and floor 1,000 m³ into the waste below.
+    13,185 m³ is left.
+  - Every piece is in place and labelled, each loss is on its leaf, and the column balances to 0.
+- **Roof 1 m, floor 1.5 m.** A can't give 12,500 m³, so all 10,000 m³ is thin loss. B gives 5,000 m³ and 7,500 m³.
+- **Two coal sections touching.** Nothing crosses the boundary. Asked on A's row, A's floor loss (500 m³, off its
+  parting) goes into section B.
+
+On the demo pit the coal rules are roof 0.1 m, floor 0.1 m, edge 0.05 m and other 1 %.
+
+| | Base | 50m |
+|---|---|---|
+| roof loss | 166,168.9 m³ | 166,101.9 m³ |
+| floor loss | 166,168.9 m³ | 166,101.9 m³ |
+| edge loss | 5,039.9 m³ | 6,352.9 m³ |
+| other loss | 64,595.1 m³ | 64,590.6 m³ |
+| thin loss | 1,802.5 m³ | 2,251.6 m³ |
+
+- In situ is unchanged, 0 from the blocks.
+- The run took 19 ms.
+- **Edge loss is higher in 50m.** Its blocks are 50 m along the strip and 60 m across it, so the longer side of the
+  smallest rectangle is the strip's width, not the block's length along the strip. Where edge loss must follow the
+  strip, the blocks need a `length` attribute. Tim to say whether the rule should be the length along the strip.
