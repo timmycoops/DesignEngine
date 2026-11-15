@@ -675,11 +675,12 @@ pub async fn reserves_tree(object: ObjectId, state: State<'_, AppState>) -> Resu
 /// A reserves table's node broken down (decision 0075): its fields down the side, its total and children across, each
 /// child in `open` followed by its own.
 #[tauri::command]
-pub async fn reserves_breakdown(object: ObjectId, node: Vec<String>, open: Vec<Vec<String>>, state: State<'_, AppState>) -> Result<zd_commands::reserves_view::Breakdown, String> {
+pub async fn reserves_breakdown(object: ObjectId, node: Vec<String>, open: Vec<Vec<String>>, leaves: Option<bool>, state: State<'_, AppState>) -> Result<zd_commands::reserves_view::Breakdown, String> {
     let app = state.app.clone();
     blocking(move || {
         let app = app.lock().unwrap();
         match &app.session.project().object(object).ok_or("no such object")?.body {
+            zd_core::Body::Table(t) if leaves == Some(true) => zd_commands::reserves_view::breakdown_leaves(t, &node),
             zd_core::Body::Table(t) => zd_commands::reserves_view::breakdown(t, &node, &open),
             _ => Err("not a table".to_string()),
         }

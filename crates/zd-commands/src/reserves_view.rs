@@ -190,12 +190,62 @@ pub struct Breakdown {
     pub node: Vec<String>,
     pub columns: Vec<BreakdownColumn>,
     pub fields: Vec<BreakdownField>,
+    /// Leaves not shown, past the first `LEAVES_SHOWN`, when the node is broken down to its leaves.
+    pub hidden: usize,
 }
+
+/// The most leaves a node's leaves breakdown shows across; past that, a lower node is picked to see the rest.
+pub const LEAVES_SHOWN: usize = 500;
 
 /// The node at `node` (its level values, top down) broken down: the fields down the side, in the table's order, and across
 /// the node's total then its children, each child in `open` followed by its own children. A field with no value in any
 /// column is left out.
 pub fn breakdown(table: &Table, node: &[String], open: &[Vec<String>]) -> Result<Breakdown, String> {
+    let (levels, words, mut columns, mut sets) = node_column(table, node)?;
+    let under = sets[0].clone();
+    add_children(&levels, &words, node, &under, 1, open, &mut columns, &mut sets);
+    let fields = fields_of(table, &sets);
+    Ok(Breakdown { levels, node: node.to_vec(), columns, fields, hidden: 0 })
+}
+
+/// The node at `node` broken down to its leaves (Tim, 16 November 2026: "just the leaves ... from left to right (top to
+/// bottom of the stack)"): its total, then every leaf under it in the tree's order, a seam's benches top down before the
+/// next seam's, with no subtotals between. A leaf is labelled by its words below the node ("U 130" under a block). Past
+/// `LEAVES_SHOWN` leaves the rest are counted in `hidden`, not shown.
+pub fn breakdown_leaves(table: &Table, node: &[String]) -> Result<Breakdown, String> {
+    let (levels, words, mut columns, mut sets) = node_column(table, node)?;
+    let under = sets[0].clone();
+    let mut leaves = Vec::new();
+    leaves_in_order(&levels, &words, node, &under, &mut leaves);
+    let hidden = leaves.len().saturating_sub(LEAVES_SHOWN);
+    for (path, rows) in leaves.into_iter().take(LEAVES_SHOWN) {
+        let below: Vec<&str> = path[node.len()..].iter().map(String::as_str).filter(|w| !w.is_empty()).collect();
+        let label = if below.is_empty() { "(none)".to_string() } else { below.join(" ") };
+        columns.push(BreakdownColumn { label, path, depth: 1, leaves: rows.len(), opens: false, open: false });
+        sets.push(rows);
+    }
+    let fields = fields_of(table, &sets);
+    Ok(Breakdown { levels, node: node.to_vec(), columns, fields, hidden })
+}
+
+/// Every leaf under `path`, with its rows, in the tree's order.
+fn leaves_in_order(levels: &[String], words: &[Vec<String>], path: &[String], rows: &[usize], out: &mut Vec<(Vec<String>, Vec<usize>)>) {
+    let at = path.len();
+    if at >= levels.len() {
+        out.push((path.to_vec(), rows.to_vec()));
+        return;
+    }
+    for (value, under) in children_of(&levels[at], &words[at], rows) {
+        let mut p = path.to_vec();
+        p.push(value);
+        leaves_in_order(levels, words, &p, &under, out);
+    }
+}
+
+type NodeColumn = (Vec<String>, Vec<Vec<String>>, Vec<BreakdownColumn>, Vec<Vec<usize>>);
+
+/// The table's levels and words, and the node's own column (its total) with its rows.
+fn node_column(table: &Table, node: &[String]) -> Result<NodeColumn, String> {
     let levels = levels(table);
     if node.len() > levels.len() {
         return Err(format!("the table has {} levels, not {}", levels.len(), node.len()));
@@ -205,7 +255,7 @@ pub fn breakdown(table: &Table, node: &[String], open: &[Vec<String>]) -> Result
     if under.is_empty() && table.rows() > 0 {
         return Err(format!("no leaves under {}", node.join(" > ")));
     }
-    let mut columns = vec![BreakdownColumn {
+    let columns = vec![BreakdownColumn {
         label: node.last().map_or("All".into(), |w| label_of(w)),
         path: node.to_vec(),
         depth: 0,
@@ -213,9 +263,12 @@ pub fn breakdown(table: &Table, node: &[String], open: &[Vec<String>]) -> Result
         opens: node.len() < levels.len(),
         open: true,
     }];
-    let mut sets = vec![under.clone()];
-    add_children(&levels, &words, node, &under, 1, open, &mut columns, &mut sets);
-    let fields = table
+    Ok((levels, words, columns, vec![under]))
+}
+
+/// Each folder field added up over each column's rows; a field with no value in any column is left out.
+fn fields_of(table: &Table, sets: &[Vec<usize>]) -> Vec<BreakdownField> {
+    table
         .columns
         .iter()
         .filter(|c| c.name.contains('\\'))
@@ -229,8 +282,7 @@ pub fn breakdown(table: &Table, node: &[String], open: &[Vec<String>]) -> Result
             let held = values.iter().any(Option::is_some) || words.as_ref().is_some_and(|w| w.iter().any(Option::is_some));
             held.then(|| BreakdownField { column: c.name.clone(), folders: folders.iter().map(|f| f.to_string()).collect(), name: name.to_string(), unit: c.unit.clone(), values, words })
         })
-        .collect();
-    Ok(Breakdown { levels, node: node.to_vec(), columns, fields })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -377,6 +429,27 @@ mod tests {
         assert_eq!(f("ROM\\Coal\\volume").folders, ["ROM", "Coal"]);
         let (total, children) = children_sum(&b, "ROM\\Coal\\volume").unwrap();
         assert!((total - children).abs() < 1e-9);
+    }
+
+    /// Strip 1 to its leaves, top of the stack to the bottom with no subtotals: B2's U (no bench), then B10's U on 110
+    /// and 100, then B10's L. The leaves add up to the strip (10,000 m³).
+    #[test]
+    fn a_node_breaks_down_to_its_leaves_in_stack_order() {
+        let b = breakdown_leaves(&table(), &["1".into()]).unwrap();
+        let labels: Vec<(&str, usize)> = b.columns.iter().map(|c| (c.label.as_str(), c.depth)).collect();
+        assert_eq!(labels, [("1", 0), ("B2 U", 1), ("B10 U 110", 1), ("B10 U 100", 1), ("B10 L", 1)]);
+        assert_eq!(b.hidden, 0);
+        assert!(b.columns[1..].iter().all(|c| !c.opens && c.leaves == 1));
+        assert_eq!(b.columns[4].path, ["1", "B10", "L", ""]);
+        let f = |name: &str| b.fields.iter().find(|f| f.column == name).unwrap();
+        assert_eq!(f("ROM\\Coal\\volume").values, [Some(10_000.0), Some(4_000.0), Some(3_000.0), Some(1_000.0), Some(2_000.0)]);
+        let (total, children) = children_sum(&b, "ROM\\Coal\\volume").unwrap();
+        assert!((total - children).abs() < 1e-9);
+        // Under a block, a leaf is labelled from the block down; under a leaf, the leaf alone.
+        let b10 = breakdown_leaves(&table(), &["1".into(), "B10".into()]).unwrap();
+        assert_eq!(b10.columns.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["B10", "U 110", "U 100", "L"]);
+        let leaf = breakdown_leaves(&table(), &["1".into(), "B10".into(), "L".into(), "".into()]).unwrap();
+        assert_eq!(leaf.columns.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["(none)", "(none)"]);
     }
 
     #[test]
