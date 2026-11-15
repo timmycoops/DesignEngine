@@ -17,6 +17,8 @@ pub enum FieldKind {
     Area,
     Density,
     Quality,
+    /// A moisture (%): air dried, in situ or ROM, each averaged by the tonnes on its own basis.
+    Moisture,
     MoistureFactor,
     /// A setting copied onto the units (a threshold, the ash cut-off), so a group's rule is its parts' aggregate.
     Setting,

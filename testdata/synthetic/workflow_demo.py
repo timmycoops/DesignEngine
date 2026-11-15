@@ -90,11 +90,14 @@ def drawn_by_hand(s):
 def reserves_dataflow(s, model):
     """The reserves dataflow and its assumptions (decisions 0072, 0073), from the starter: volume, thickness and area
     from each block, RD, ash and sulphur from the interrogation, every step; then the waste row of its parameter table
-    given an RD of 2.3, as a planner would fill it in."""
+    given an RD of 2.3 and its coal row moistures of 3.5 % air dried, 8 % in situ and 10 % ROM, as a planner would fill
+    them in."""
     made_ = s.dataflow_starter(model, "Reserves")
     table = s.object(made_["parameters"])["parameters"]
     waste = next(r for r in table["rows"] if r.get("when", {}).get("material") == "waste")
     waste["values"]["rd_default"] = 2.3
+    coal = next(r for r in table["rows"] if r.get("when", {}).get("material") == "coal")
+    coal["values"].update({"mad": 3.5, "mis": 8.0, "mrom": 10.0})
     s.run("parameters.save", table=made_["parameters"], name="Reserves assumptions", content=table)
     return made_["dataflow"]
 
@@ -231,8 +234,9 @@ def main():
     assert abs(totals["Base"] - totals["50m"]) <= tolerance(totals["Base"]), totals
     print(f"   the two cases' totals differ by {abs(totals['Base'] - totals['50m']):.3g} m3")
 
-    # The reserves run (decision 0072): each case's in situ table adds up to its blocks' volumes and tonnes (volume x
-    # the interrogated RD for coal, the parameter table's 2.3 for waste) to 1e-9.
+    # The reserves run (decisions 0072, 0073): each case's in situ table adds up to its blocks' volumes and tonnes to
+    # 1e-9: air dried, volume x the interrogated RD for coal and the parameter table's 2.3 for waste; in situ, coal's
+    # by Preston-Sanders at Mad 3.5 % and Mis 8 %, waste's as given.
     for case, suffix in (("Base", ""), ("50m", " 50m")):
         tables = s.objects(layer=f"10 reserves{suffix}", kind="table")
         assert len(tables) == 1, tables
@@ -240,11 +244,16 @@ def main():
         cols = table["columns"]
         blocks = [s.object(b["id"]) for b in s.objects(layer=f"9 blocks{suffix}", kind="solid")]
         volume = sum(b["volume"] for b in blocks)
-        tonnes = sum(b["volume"] * (b["attributes"].get("rd") if b["attributes"].get("material") == "coal" else 2.3) for b in blocks)
+        ps = lambda rd: rd * 0.965 / (1 + rd * (0.08 - 0.035) - 0.08)
+        coal_ = lambda b: b["attributes"].get("material") == "coal"
+        tonnes_ad = sum(b["volume"] * (b["attributes"]["rd"] if coal_(b) else 2.3) for b in blocks)
+        tonnes = sum(b["volume"] * (ps(b["attributes"]["rd"]) if coal_(b) else 2.3) for b in blocks)
         written, written_t = sum(v for v in cols["volume"] if v is not None), sum(v for v in cols["tonnes"] if v is not None)
+        written_ad = sum(v for v in cols["tonnes_ad"] if v is not None)
+        assert abs(written_ad - tonnes_ad) <= 1e-9 * tonnes_ad, (written_ad, tonnes_ad)
         benched = sum(1 for b in cols["bench"] if b)
         print(f"   {case}: '{tables[0]['name']}', {table['rows']} in situ rows ({benched} by bench) from {len(blocks)} blocks; "
-              f"{written:,.3f} m3 and {written_t:,.3f} t, against the blocks by {abs(written - volume):.3g} m3 and {abs(written_t - tonnes):.3g} t")
+              f"{written:,.3f} m3, {written_t:,.3f} t in situ and {written_ad:,.3f} t air dried, against the blocks by {abs(written - volume):.3g} m3, {abs(written_t - tonnes):.3g} t and {abs(written_ad - tonnes_ad):.3g} t")
         assert table["rows"] == len(blocks), (table["rows"], len(blocks))
         assert abs(written - volume) <= 1e-9 * volume and abs(written_t - tonnes) <= 1e-9 * tonnes, case
     blocks = [b["id"] for b in s.objects(layer="9 blocks", kind="solid")]

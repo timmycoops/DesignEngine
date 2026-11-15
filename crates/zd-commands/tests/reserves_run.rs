@@ -328,3 +328,71 @@ coal,,5,10,12,3.5
     assert_eq!(said, ["2 units ash: coal outside its limits given its default, 30000.0 m3", "6 units ash: waste given its default, 210000.0 m3"], "the underburden too, as Spry");
     assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 block thicker than max_thickness: 3_B1_U"]);
 }
+
+// Decision 0073, workstream 3b: moisture, Preston-Sanders and the in situ basis.
+
+/// The plan's hand check: RD 1.45, Mad 3 %, Mis 8 % gives 1.45 × 0.97 ÷ (1 + 1.45 × 0.05 − 0.08) = 1.4065 ÷ 0.9925.
+#[test]
+fn preston_sanders_by_hand() {
+    let dis = zd_commands::builtin::preston_sanders(1.45, 0.03, 0.08);
+    assert!(close(dis, 1.4065 / 0.9925) && (dis - 1.4171).abs() < 5e-5, "{dis}");
+}
+
+/// The usual fields, the moistures and the worked densities, every step to in situ, and a table from this CSV.
+fn moist_flow(s: &mut Session, csv: &str) -> ObjectId {
+    let table = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": csv })).unwrap())[0];
+    let content = json!({
+        "fields": [
+            { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
+            { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
+            { "name": "area", "kind": "area", "add_up": { "by": "max" }, "from": "plan_area" },
+            { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
+            { "name": "ash", "kind": "quality", "add_up": { "by": "mass", "density": "rd" }, "from": "attribute", "attribute": "ash" },
+            { "name": "mad", "kind": "moisture", "add_up": { "by": "mass", "density": "rd" }, "from": "attribute", "attribute": "mad" },
+            { "name": "rd_is", "kind": "density", "add_up": { "by": "volume" }, "from": "worked" },
+            { "name": "rd_rom", "kind": "density", "add_up": { "by": "volume" }, "from": "worked" },
+            { "name": "mis", "kind": "moisture", "add_up": { "by": "mass", "density": "rd_is" }, "from": "attribute", "attribute": "mis" },
+            { "name": "mrom", "kind": "moisture", "add_up": { "by": "mass", "density": "rd_rom" }, "from": "parameter", "column": "mrom" },
+        ],
+        "steps": [{ "step": "initialise" }, { "step": "in_situ" }],
+        "parameters": [table],
+    });
+    created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0]
+}
+
+/// Coal at Mad 3 %, Mis 8 %, Mrom 10 %; waste RD 2.3 in situ as given. B1's U, RD 1.4: in situ density
+/// 1.4 × 0.97 ÷ (1 + 1.4 × 0.05 − 0.08) = 1.358 ÷ 0.99, so 20,000 m³ is 27,434.3 t in situ against 28,000 t air dried;
+/// its ash of 10 % air dried is 10 × 0.92 ÷ 0.97 in situ; its ROM density the in situ × 0.92 ÷ 0.90. B2's U benches each
+/// on their own RD. OB 50,000 m³ at 2.3 is 115,000 t either way.
+#[test]
+fn coal_is_written_on_the_in_situ_basis_by_preston_sanders() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = moist_flow(&mut s, "when material,rd (t/m3),mad (%),mis (%),mrom (%),underburden_thickness (m)\nwaste,2.3,,,,0\ncoal,,3,8,10,\n");
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let (tonnes, tonnes_ad, rd_is, rd_rom, ash_is) = (numbers(&t, "tonnes"), numbers(&t, "tonnes_ad"), numbers(&t, "rd_is"), numbers(&t, "rd_rom"), numbers(&t, "ash_is"));
+    let dis = |rd: f64| rd * 0.97 / (1.0 + rd * 0.05 - 0.08);
+    let u = row(&t, "B1", "U", None);
+    assert!(close(rd_is[u].unwrap(), 1.358 / 0.99) && close(tonnes[u].unwrap(), 20_000.0 * 1.358 / 0.99) && close(tonnes_ad[u].unwrap(), 28_000.0));
+    assert!(close(ash_is[u].unwrap(), 10.0 * 0.92 / 0.97) && close(rd_rom[u].unwrap(), dis(1.4) * 0.92 / 0.90));
+    for (bench, rd) in [("18", 1.4), ("16", 1.6)] {
+        let b = row(&t, "B2", "U", Some(bench));
+        assert!(close(tonnes[b].unwrap(), 10_000.0 * dis(rd)), "bench {bench}");
+    }
+    let ob = row(&t, "B1", "OB", None);
+    assert!(close(tonnes[ob].unwrap(), 115_000.0) && close(rd_rom[ob].unwrap(), 2.3));
+    assert_eq!(t.column("ash_is").unwrap().add_up, Some(zd_reserves::AddUp::Mass { density: "rd_is".into() }));
+}
+
+/// Coal with no in situ moisture can't be put on the in situ basis: its block stops, said with what's missing.
+#[test]
+fn coal_with_no_in_situ_moisture_stops_its_block() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = moist_flow(&mut s, "when material,when seam,rd (t/m3),mad (%),mis (%),underburden_thickness (m)\nwaste,,2.3,,,0\ncoal,L,,3,8,\ncoal,U,,3,,\n");
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    assert!(record.messages[0].starts_with("0 of 2 blocks ran"), "{}", record.messages[0]);
+    let stopped = record.notes.iter().find(|n| n.code == Some(Code::ReservesBlockStopped)).unwrap();
+    assert!(stopped.text.contains("3/B1 at in_situ: 3_B1_U is coal with no mis"), "{}", stopped.text);
+}

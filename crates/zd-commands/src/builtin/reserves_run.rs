@@ -48,7 +48,10 @@ pub const STEPS: [(&str, &str); 4] = [
         "initialise",
         "puts the column in the seam model's stack order, a horizon's benches top down; checks thickness and area against max_thickness and max_area; adds underburden below the last coal where there's no waste; gives qualities their limits and defaults",
     ),
-    ("in_situ", "writes each horizon's benches as they are, before anything is joined"),
+    (
+        "in_situ",
+        "works each unit's in situ density by Preston-Sanders from its RD, air-dried and in situ moisture, and its ROM density, then writes each horizon's benches as they are, before anything is joined",
+    ),
     ("join_benches", "joins each horizon's benches into one unit with their in situ shares, so later writes put pieces back by share"),
 ];
 
@@ -574,7 +577,7 @@ fn add_underburden(run: &mut ColumnRun<'_>, step: &DataflowStep) {
 /// default outright, as it has no grids. Each replacement counted by field and material.
 fn quality_defaults(run: &mut ColumnRun<'_>) {
     let fields: Vec<(usize, String)> =
-        run.column.fields().list().iter().enumerate().filter(|(_, f)| matches!(f.kind, FieldKind::Quality | FieldKind::Density)).map(|(i, f)| (i, f.name.clone())).collect();
+        run.column.fields().list().iter().enumerate().filter(|(_, f)| matches!(f.kind, FieldKind::Quality | FieldKind::Density | FieldKind::Moisture)).map(|(i, f)| (i, f.name.clone())).collect();
     let volume = run.column.fields().volume();
     for at in 0..run.column.len() {
         if run.column.units()[at].is_set_aside() {
@@ -606,9 +609,53 @@ fn join_benches(run: &mut ColumnRun<'_>, _: &DataflowStep) -> Result<(), String>
     Ok(())
 }
 
-/// `in_situ`: each horizon's units put back on their benches and written, a row a horizon and bench; units set aside
-/// and the underburden, outside the model, left out.
-fn in_situ(run: &mut ColumnRun<'_>, _: &DataflowStep) -> Result<(), String> {
+/// The in situ density from an air-dried RD and the air-dried and in situ moistures (fractions), by Preston and
+/// Sanders: RD × (1 − Mad) ÷ (1 + RD × (Mis − Mad) − Mis).
+pub fn preston_sanders(rd: f64, mad: f64, mis: f64) -> f64 {
+    rd * (1.0 - mad) / (1.0 + rd * (mis - mad) - mis)
+}
+
+/// `in_situ` (decision 0073, point 5): each unit's in situ and ROM densities worked, then each horizon's units put back on
+/// their benches and written, a row a horizon and bench; units set aside and the underburden, outside the model, left
+/// out of the write. Coal: in situ density by Preston-Sanders from its RD, Mad and Mis (%), which it must have; ROM
+/// density that × (1 − Mis) ÷ (1 − Mrom) where it has an Mrom. Waste: its RD is in situ as given, and ROM the same unless
+/// it has moistures. A dataflow with no moisture fields is written on its RD's own basis, as before.
+fn in_situ(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String> {
+    let fields = run.column.fields();
+    let at = |key: &str| fields.at(step.setting(key)).ok();
+    let (rd, mad, mis, mrom, rd_is, rd_rom) = (at("rd"), at("mad"), at("mis"), at("mrom"), at("rd_is"), at("rd_rom"));
+    if let (Some(rd), Some(rd_is)) = (rd, rd_is) {
+        for i in 0..run.column.len() {
+            let u = &run.column.units()[i];
+            if u.is_set_aside() {
+                continue;
+            }
+            let fraction = |f: Option<usize>| f.map(|f| u.value(f) / 100.0).filter(|v| v.is_finite());
+            let (d, ad, is, rom) = (u.value(rd), fraction(mad), fraction(mis), fraction(mrom));
+            let dis = if is_coal(u) {
+                let name = run.name_of(i);
+                if !d.is_finite() {
+                    return Err(format!("{name} is coal with no {}", step.setting("rd")));
+                }
+                let (Some(ad), Some(is)) = (ad, is) else {
+                    let missing: Vec<&str> = [(ad, "mad"), (is, "mis")].iter().filter(|(v, _)| v.is_none()).map(|(_, k)| step.setting(k)).collect();
+                    return Err(format!("{name} is coal with no {}", missing.join(" or ")));
+                };
+                preston_sanders(d, ad, is)
+            } else {
+                d
+            };
+            let drom = match (is, rom) {
+                (Some(is), Some(rom)) => dis * (1.0 - is) / (1.0 - rom),
+                _ if is_coal(u) => f64::NAN,
+                _ => dis,
+            };
+            run.column.unit_mut(i).set(rd_is, dis);
+            if let Some(rd_rom) = rd_rom {
+                run.column.unit_mut(i).set(rd_rom, drom);
+            }
+        }
+    }
     write_groups(run, "in_situ", |u| !u.is_set_aside(), None);
     Ok(())
 }
@@ -674,6 +721,7 @@ fn unit_of_kind(kind: FieldKind) -> &'static str {
         FieldKind::Thickness => "m",
         FieldKind::Area => "m2",
         FieldKind::Density => "t/m3",
+        FieldKind::Moisture => "%",
         _ => "",
     }
 }
@@ -708,10 +756,28 @@ fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
         let across = if matches!(f.kind, FieldKind::Thickness | FieldKind::Area) { None } else { Some(f.add_up.clone()) };
         columns.push(TableColumn { name: f.name.clone(), unit: unit_of_kind(f.kind).to_string(), add_up: across, values: zd_core::ColumnValues::Number(values) });
     }
-    if let Some(d) = fields.iter().position(|f| f.kind == FieldKind::Density) {
-        let v = prepared.fields.volume();
-        let values = rows.iter().map(|(_, r)| Some(r.values[v] * r.values[d]).filter(|t| !t.is_nan())).collect();
-        columns.push(TableColumn::adding("tonnes", "t", AddUp::Sum, values));
+    // Tonnes on the in situ basis where the in situ step works an in situ density (JORC's basis), with air-dried tonnes
+    // and each quality on the in situ basis beside them; otherwise on the density's own basis, as before.
+    let v = prepared.fields.volume();
+    let setting = |key: &str| prepared.steps.iter().find(|(n, _, _)| *n == "in_situ").map_or(key.to_string(), |(_, _, s)| s.setting(key).to_string());
+    let field = |key: &str| fields.iter().position(|f| f.name == setting(key));
+    let tonnes = |d: usize| rows.iter().map(|(_, r)| Some(r.values[v] * r.values[d]).filter(|t| !t.is_nan())).collect::<Vec<_>>();
+    match (field("rd"), field("rd_is")) {
+        (Some(rd), Some(rd_is)) => {
+            columns.push(TableColumn::adding("tonnes", "t", AddUp::Sum, tonnes(rd_is)));
+            columns.push(TableColumn::adding("tonnes_ad", "t", AddUp::Sum, tonnes(rd)));
+            if let (Some(mad), Some(mis)) = (field("mad"), field("mis")) {
+                for (q, f) in fields.iter().enumerate().filter(|(_, f)| f.kind == FieldKind::Quality) {
+                    let values = rows.iter().map(|(_, r)| Some(r.values[q] * (1.0 - r.values[mis] / 100.0) / (1.0 - r.values[mad] / 100.0)).filter(|x| x.is_finite())).collect();
+                    columns.push(TableColumn::adding(&format!("{}_is", f.name), "", AddUp::Mass { density: setting("rd_is") }, values));
+                }
+            }
+        }
+        _ => {
+            if let Some(d) = fields.iter().position(|f| f.kind == FieldKind::Density) {
+                columns.push(TableColumn::adding("tonnes", "t", AddUp::Sum, tonnes(d)));
+            }
+        }
     }
     Table { columns }
 }
@@ -824,17 +890,32 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
         field(&density, FieldKind::Density, AddUp::Volume, FieldSource::Attribute { attribute: density.clone() }),
     ];
     for q in &qualities {
+        if ["mad", "mis", "mrom"].contains(&q.as_str()) {
+            continue;
+        }
         fields.push(field(q, FieldKind::Quality, AddUp::Mass { density: density.clone() }, FieldSource::Attribute { attribute: q.clone() }));
     }
+    // Moistures (%): air dried and in situ from a grid where the model has one, else a parameter row; ROM from a row. The
+    // densities on the in situ and ROM bases the in situ step works, each moisture averaged by the tonnes on its basis.
+    fields.push(field("mad", FieldKind::Moisture, AddUp::Mass { density: density.clone() }, FieldSource::Attribute { attribute: "mad".into() }));
+    fields.push(field("rd_is", FieldKind::Density, AddUp::Volume, FieldSource::Worked));
+    fields.push(field("rd_rom", FieldKind::Density, AddUp::Volume, FieldSource::Worked));
+    fields.push(field("mis", FieldKind::Moisture, AddUp::Mass { density: "rd_is".into() }, FieldSource::Attribute { attribute: "mis".into() }));
+    fields.push(field("mrom", FieldKind::Moisture, AddUp::Mass { density: "rd_rom".into() }, FieldSource::Parameter { column: "mrom".into() }));
     let steps = STEPS.iter().map(|(name, _)| DataflowStep::on(name)).collect();
     let mut columns = vec![
         ValueColumn::number("min_volume", "m3"),
         ValueColumn::number("max_thickness", "m"),
         ValueColumn::number("max_area", "m2"),
         ValueColumn::number("underburden_thickness", "m"),
+        ValueColumn::number("mad", "%"),
+        ValueColumn::number("mis", "%"),
+        ValueColumn::number("mrom", "%"),
     ];
-    for q in std::iter::once(&density).chain(&qualities) {
-        let unit = if *q == density { "t/m3" } else { "" };
+    let moistures = ["mad".to_string(), "mis".to_string(), "mrom".to_string()];
+    let qualities: Vec<String> = qualities.into_iter().filter(|q| !moistures.contains(q)).collect();
+    for q in std::iter::once(&density).chain(&qualities).chain(&moistures) {
+        let unit = if *q == density { "t/m3" } else if moistures.contains(q) { "%" } else { "" };
         for end in ["min", "max", "default"] {
             columns.push(ValueColumn::number(&format!("{q}_{end}"), unit));
         }
