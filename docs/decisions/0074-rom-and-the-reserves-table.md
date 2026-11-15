@@ -222,3 +222,55 @@ The demo pit's waste row adds ash 85 % and sulphur 0.3 %. Its coal row adds dilu
   model and never written; 4d reports it as out-of-model volume.
 - In situ is unchanged, 0 from the blocks.
 - The run takes 25 ms for 90 columns.
+
+## Built: block geometry measured onto the blocks
+
+Tim, 15 November, on the block length 4b worked out inside the run: "The dataflow - will just utilize what is inside the
+data table ( the block length would come from an interrogation step essentially )", and "block geometry will be in the
+interrogation - that way we can check it and even alter it with parameters in the dataflow if it looks funny because if
+weird solid outputs." So the dataflow reads only what the blocks carry, as Spry's dataflow reads its Imported fields.
+
+- **`solid.measure`** writes each block's geometry onto it, coal and waste, as attributes (with any prefix):
+  - `volume`;
+  - `plan_area`, its footprint in plan;
+  - `thickness`, volume over plan area;
+  - `length` and `width`, the sides of the smallest rectangle round its footprint, the longer first;
+  - `centroid_x`, `centroid_y` and `centroid_z`.
+  It's a command like any other, so a workflow step. The demo pit measures its blocks as step 20, before the
+  interrogation.
+- **The dataflow reads the measures.**
+  - A new field kind, `length` (m, the largest of a column's units), is read like any field.
+  - Edge loss and dilution read a coal unit's `length` field; the step's setting names it. Where it's asked for and a
+    unit has none, the block stops: "measure the blocks (solid.measure) or give one in a parameter row".
+  - No block length is worked out inside the run any more.
+- **The starter** reads `volume`, `thickness`, `plan_area` and `length` from the blocks. A block with no volume of record
+  stops, said. The parameter table gains the `_min`, `_max` and `_default` of `thickness`, `area` and `length`.
+- **A measure that looks wrong is corrected in the parameters.** Limits and defaults (decision 3 of 0073) now cover every
+  field but the volume, for coal and waste alike:
+  - a value outside its limits, or with none, takes the default;
+  - a minimum equal to the maximum forces it, as Spry's do;
+  - waste still takes its quality, density and moisture defaults outright.
+- **The solids are still the check.**
+  - The run compares each block's volume field with its solid's, and names any that differ by more than a millionth
+    (measured before it was cut again).
+  - The run uses the solid only for this check, the column's largest area for the underburden, and the old `volume`,
+    `plan_area` and `thickness` field sources, kept for dataflows saved with them.
+
+Known answers (`crates/zd-commands/tests/reserves_run.rs`):
+
+- **Measure.** A 100 m by 50 m block from RL 38 to 40 measures 10,000 m³ over 5,000 m², 2 m thick, 100 m long and 50 m
+  wide, its centroid in its middle. It keeps its other attributes.
+- **No length.** Edge loss on blocks never measured stops the block, said.
+- **A forced length.** `length_min` = `length_max` = `length_default` = 120 m forces A's length, so its edge loss is
+  0.05 × 120 × 2 = 12 m³. Both coal units are said, as forced to their default.
+- **A volume that isn't the solid's.** A block whose volume attribute (9,000 m³) isn't its solid's (10,000 m³) is named.
+  The run writes the 9,000 it carries.
+
+On the demo pit:
+
+- In situ is unchanged, 0 from the blocks.
+- Edge loss is now 5,291.8 m³ in Base and 7,149.1 m³ in 50m, and edge dilution 1,981.1 and 2,678.4 m³. A joined seam's
+  length is the longest of its benches' measured lengths; it was the top bench's own footprint.
+- The run takes 29 ms.
+- The 50m case's longer side is still the strip's width where its blocks are shorter than the strip is wide. Its edge
+  loss can be corrected in the parameters, or with a `length` attribute on the blocks.

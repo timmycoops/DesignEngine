@@ -105,6 +105,7 @@ fn flow(s: &mut Session, steps: serde_json::Value, csv: &str) -> ObjectId {
             { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
             { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
             { "name": "area", "kind": "area", "add_up": { "by": "max" }, "from": "plan_area" },
+            { "name": "length", "kind": "length", "add_up": { "by": "max" }, "from": "attribute", "attribute": "length" },
             { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
             { "name": "ash", "kind": "quality", "add_up": { "by": "mass", "density": "rd" }, "from": "attribute", "attribute": "ash" },
             { "name": "ash_cutoff", "kind": "setting", "add_up": { "by": "min" }, "from": "parameter", "column": "ash_cutoff" },
@@ -207,7 +208,7 @@ fn each_block_s_horizons_and_benches_are_written_in_situ_with_their_own_values()
     assert!(close(total(&t, "Imported\\Coal\\volume"), 70_000.0) && close(total(&t, "Imported\\Waste\\volume"), 110_000.0));
     assert!(close(total(&t, &at(COAL, "volume")) + total(&t, &at(WASTE, "volume")), 180_000.0));
     let missing: Vec<&str> = record.notes.iter().filter(|n| n.code == Some(Code::ReservesValueMissing)).map(|n| n.text.as_str()).collect();
-    assert_eq!(missing, ["4 in situ pieces with no ash: no block attribute or parameter row gave it"]);
+    assert_eq!(missing, ["9 in situ pieces with no length: no block attribute or parameter row gave it", "4 in situ pieces with no ash: no block attribute or parameter row gave it"], "these blocks were never measured");
     assert!(record.notes.iter().all(|n| n.severity < Severity::Warning), "{:?}", record.notes);
     // How each column adds up goes with it, for any summary.
     assert_eq!(t.column(&at(COAL, "ash")).unwrap().add_up, Some(zd_reserves::AddUp::Mass { density: "rd".into() }));
@@ -624,7 +625,8 @@ const LOSS_STACK: [&str; 5] = ["OB", "A", "A-B", "B", "below B"];
 fn loss_column(s: &mut Session) -> Vec<ObjectId> {
     let rows: [(&str, f64, f64, &str, &str); 5] =
         [("OB", 40.0, 50.0, "waste", "A"), ("A", 38.0, 40.0, "coal", "A"), ("A-B", 33.0, 38.0, "waste", "B"), ("B", 30.0, 33.0, "coal", "B"), ("below B", 26.0, 30.0, "waste", "")];
-    rows.iter()
+    let ids = rows
+        .iter()
         .map(|&(h, z0, z1, material, seam)| {
             let mut a = json!({ "strip": 1.0, "block": "B1", "horizon": h, "material": material, "seam": seam });
             if material == "coal" {
@@ -633,7 +635,10 @@ fn loss_column(s: &mut Session) -> Vec<ObjectId> {
             }
             box_solid(s, &format!("1_B1_{h}"), 0.0, (z0, z1), a)
         })
-        .collect()
+        .collect::<Vec<_>>();
+    // The block's geometry measured onto it, as the dataflow reads it (decision 0074).
+    s.run("solid.measure", json!({ "solids": ids })).unwrap();
+    ids
 }
 
 fn loss_csv(roof: f64, floor: f64) -> String {
@@ -859,4 +864,85 @@ fn the_rom_ash_cut_off_rejects_a_section_once() {
     assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 ROM section over its ash cut-off, rejected: 1_B1_B section B (16.32 over 15.00)"]);
     let t = table(&s, created(&record)[0]);
     assert!(close(value(&t, leaf(&t, "B1", "B", None), "Loss\\High ROM ash\\volume").unwrap(), 15_000.0));
+}
+
+// Decision 0074: block geometry measured onto the blocks; the dataflow reads it.
+
+/// A 100 m by 50 m block from RL 38 to 40 at mine coordinates: 10,000 m³ over 5,000 m², 2 m thick, 100 m long and 50 m
+/// wide, its centroid in its middle.
+#[test]
+fn solid_measure_writes_each_block_s_geometry_onto_it() {
+    let mut s = session();
+    let id = box_solid(&mut s, "block", 0.0, (38.0, 40.0), json!({ "strip": 1.0 }));
+    let record = s.run("solid.measure", json!({ "solids": [id] })).unwrap();
+    assert!(record.messages[0].starts_with("measured 1 block: 10000.0 m3 over 5000.0 m2 in plan"), "{}", record.messages[0]);
+    let a = &s.project().object(id).unwrap().attributes;
+    let n = |k: &str| match a.get(k) {
+        Some(zd_core::AttrValue::Number(v)) => *v,
+        other => panic!("{k}: {other:?}"),
+    };
+    assert!(close(n("volume"), 10_000.0) && close(n("plan_area"), 5_000.0) && close(n("thickness"), 2.0));
+    assert!(close(n("length"), 100.0) && close(n("width"), 50.0));
+    assert!(close(n("centroid_x"), E + 50.0) && close(n("centroid_y"), N + 25.0) && close(n("centroid_z"), 39.0));
+    assert!(a.get("strip").is_some(), "the block keeps what it had");
+}
+
+/// The loss column with edge loss but no measure: edge loss has no length to run along, so the block stops, said.
+#[test]
+fn edge_loss_on_an_unmeasured_block_stops_it() {
+    let mut s = session();
+    let rows: [(&str, f64, f64, &str, &str); 5] =
+        [("OB", 40.0, 50.0, "waste", "A"), ("A", 38.0, 40.0, "coal", "A"), ("A-B", 33.0, 38.0, "waste", "B"), ("B", 30.0, 33.0, "coal", "B"), ("below B", 26.0, 30.0, "waste", "")];
+    let ids: Vec<ObjectId> = rows
+        .iter()
+        .map(|&(h, z0, z1, material, seam)| {
+            let mut a = json!({ "strip": 1.0, "block": "B1", "horizon": h, "material": material, "seam": seam });
+            if material == "coal" {
+                a["rd"] = json!(1.4);
+            }
+            box_solid(&mut s, &format!("1_B1_{h}"), 0.0, (z0, z1), a)
+        })
+        .collect();
+    let flow = flow(&mut s, loss_steps(), &loss_csv(0.1, 0.2));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let stopped = record.notes.iter().find(|n| n.code == Some(Code::ReservesBlockStopped)).unwrap();
+    assert!(stopped.text.contains("1_B1_A has no length: measure the blocks (solid.measure) or give one in a parameter row"), "{}", stopped.text);
+}
+
+/// A length that looks wrong, from an odd solid, corrected in the parameters: a minimum equal to the maximum forces the
+/// default, so A's edge loss runs along 120 m, not its measured 100: 0.05 × 120 × 2 = 12 m³.
+#[test]
+fn a_parameter_row_corrects_a_measured_length() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let csv = loss_csv(0.1, 0.2).replace("other_loss (%)\n", "other_loss (%),length_min (m),length_max (m),length_default (m)\n").replace(",2\n", ",2,120,120,120\n").replace("waste,2.3,,,,,,,\n", "waste,2.3,,,,,,,,,,\n");
+    let flow = flow(&mut s, loss_steps(), &csv);
+    let views = preview_of(&s, flow, &ids, &LOSS_STACK);
+    let edge: f64 = views.last().unwrap().units.iter().filter(|u| u.horizon == "A" && u.became.as_deref() == Some("loss (edge)")).map(|u| u.values["volume"]).sum();
+    assert!(close(edge, 12.0), "{edge}");
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert!(notes_of(&record, Code::ReservesDefaulted).iter().any(|n| n == "2 units length: coal forced to its default, 25000.0 m3"), "{:?}", notes_of(&record, Code::ReservesDefaulted));
+}
+
+/// A block whose volume attribute isn't its solid's (measured, then cut again) is named; the run reads what it carries.
+#[test]
+fn a_block_whose_measured_volume_isn_t_its_solid_s_is_named() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    s.run("test.tag", json!({ "object": ids[1], "attributes": { "volume": 9_000.0 } })).unwrap();
+    let table_id = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": "when material,rd (t/m3),underburden_thickness (m)\nwaste,2.3,\n,,0\n" })).unwrap())[0];
+    let content = json!({
+        "fields": [
+            { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "attribute", "attribute": "volume" },
+            { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "attribute", "attribute": "thickness" },
+            { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
+        ],
+        "steps": [{ "step": "initialise" }, { "step": "in_situ" }],
+        "parameters": [table_id],
+    });
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0];
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 block whose volume isn't its solid's (measured before it was cut again?): 1_B1_A"]);
+    let t = table(&s, created(&record)[0]);
+    assert!(close(value(&t, leaf(&t, "B1", "A", None), "Insitu\\Coal\\volume").unwrap(), 9_000.0), "the data table's volume");
 }

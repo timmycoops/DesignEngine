@@ -51,6 +51,7 @@ NOTES = {
     "string.offset Block line": "The first block line offset east every 100 m to the pit's east end: the block length is this distance.",
     "string.polygons_from_lines": "The block lines and the two closing lines made into block polygons B1 to B15, west to east, on '8 block polygons'.",
     "solid.cut_by_polygons": "Every bench cut vertically by the block polygons, each block named strip_block_horizon_bench, on '9 blocks'. Checked first: the polygons must cover every piece.",
+    "solid.measure": "Each block's volume, plan area, thickness, length, width and centroid written onto it, for the reserves dataflow to read.",
     "solid.interrogate": "Each coal block's qualities (ash, sulphur, RD) averaged from the seam grids over it, written onto it.",
 }
 
@@ -149,6 +150,8 @@ def the_steps(s, g, model, toe, limit, first, ramps, flow=None):
     block_lines = [o["id"] for o in s.objects(layer="7 block lines", kind="string")]
     polygons = made(run("string.polygons_from_lines", strings=block_lines, layer="8 block polygons", name="B#"))
     blocks = made(run("solid.cut_by_polygons", solids=benches, polygons=polygons, layer="9 blocks"))
+    # Every block's geometry onto it (decision 0074): what the dataflow reads, to check and correct in its parameters.
+    run("solid.measure", solids=blocks)
     coal = [b for b in blocks if s.object(b)["attributes"].get("material") == "coal"]
     run("solid.interrogate", solids=coal, model=model)
     if flow is not None:

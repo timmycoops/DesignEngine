@@ -15,6 +15,8 @@ pub enum FieldKind {
     /// The unit's true thickness (m). Exactly one, adding up by sum down the column.
     Thickness,
     Area,
+    /// A block's length in plan (m), as the interrogation measured it: what edge loss and dilution run along.
+    Length,
     Density,
     Quality,
     /// A moisture (%): air dried, in situ or ROM, each averaged by the tonnes on its own basis.

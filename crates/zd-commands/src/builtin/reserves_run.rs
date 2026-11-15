@@ -17,12 +17,13 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use zd_core::{
-    AttrValue, Attributes, Body, Change, Dataflow, DataflowStep, FieldSource, Object, ObjectId, ObjectKind, ParamValue, ParameterTable, Table, TableColumn, TriMesh, attribute_ci,
+    AttrValue, Attributes, Body, Change, Dataflow, DataflowStep, FieldSource, Object, ObjectId, ObjectKind, ParamValue, ParameterTable, Table, TableColumn, attribute_ci,
     attribute_word,
 };
 use zd_reserves::{AddUp, Amount, Became, BecameKind, Bench, Column, ColumnKey, End, FieldKind, Fields, Labels, Origin, Unit, UnitId};
 
 use super::blocks::horizon_order;
+use super::measure::plan_area;
 use super::in_parallel_watched;
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Severity};
 
@@ -139,8 +140,6 @@ pub struct ColumnRun<'a> {
     added_volume: f64,
     /// The largest plan area of the column's blocks.
     block_area: f64,
-    /// Each input unit's block length in plan (decision 0074, point 5), by origin.
-    lengths: Vec<f64>,
 }
 
 /// What a column's steps changed, counted by what and how much, and the blocks out of range by check.
@@ -324,78 +323,6 @@ pub(crate) fn prepare(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError
     Ok(Prepared { name: flow.name.clone(), dataflow: dataflow.clone(), fields, tables, horizons, steps, upper, lower, columns, unplaced })
 }
 
-/// The plan area of a solid: its upward-facing triangles in plan, about its first vertex so mine coordinates keep their
-/// precision. For a block, whose walls are vertical, its footprint.
-fn plan_area(mesh: &TriMesh) -> f64 {
-    let Some(&o) = mesh.vertices.first() else { return 0.0 };
-    let twice: f64 = mesh
-        .triangles
-        .iter()
-        .map(|t| {
-            let [a, b, c] = t.map(|i| {
-                let v = mesh.vertices[i as usize];
-                [v[0] - o[0], v[1] - o[1]]
-            });
-            ((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])).max(0.0)
-        })
-        .sum();
-    twice / 2.0
-}
-
-/// A block's length in plan (decision 0074, point 5): the longer side of the smallest rectangle round its footprint,
-/// from the convex hull of its vertices about the first so mine coordinates keep their precision. Spry imports a length;
-/// this is ours where a block carries none.
-pub fn block_length(mesh: &TriMesh) -> f64 {
-    let Some(&o) = mesh.vertices.first() else { return 0.0 };
-    let mut points: Vec<[f64; 2]> = mesh.vertices.iter().map(|v| [v[0] - o[0], v[1] - o[1]]).collect();
-    points.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
-    points.dedup();
-    if points.len() < 2 {
-        return 0.0;
-    }
-    // Andrew's monotone chain.
-    let cross = |o: [f64; 2], a: [f64; 2], b: [f64; 2]| (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-    let mut hull: Vec<[f64; 2]> = Vec::new();
-    for pass in 0..2 {
-        let start = hull.len();
-        let ordered: Box<dyn Iterator<Item = &[f64; 2]>> = if pass == 0 { Box::new(points.iter()) } else { Box::new(points.iter().rev()) };
-        for &p in ordered {
-            while hull.len() >= start + 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], p) <= 0.0 {
-                hull.pop();
-            }
-            hull.push(p);
-        }
-        hull.pop();
-    }
-    if hull.len() < 2 {
-        return 0.0;
-    }
-    // The smallest rectangle has a side along a hull edge.
-    let mut best = (f64::INFINITY, 0.0);
-    for i in 0..hull.len() {
-        let (a, b) = (hull[i], hull[(i + 1) % hull.len()]);
-        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
-        let len = dx.hypot(dy);
-        if len == 0.0 {
-            continue;
-        }
-        let (ux, uy) = (dx / len, dy / len);
-        let (mut lo_u, mut hi_u, mut lo_v, mut hi_v) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
-        for p in &hull {
-            let (u, v) = (p[0] * ux + p[1] * uy, -p[0] * uy + p[1] * ux);
-            lo_u = lo_u.min(u);
-            hi_u = hi_u.max(u);
-            lo_v = lo_v.min(v);
-            hi_v = hi_v.max(v);
-        }
-        let (w, h) = (hi_u - lo_u, hi_v - lo_v);
-        if w * h < best.0 {
-            best = (w * h, w.max(h));
-        }
-    }
-    best.1
-}
-
 /// A word from the parameter tables, read in order.
 fn parameter_text(tables: &[Arc<ParameterTable>], attributes: &Attributes, column: &str) -> Option<String> {
     let refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
@@ -472,6 +399,12 @@ fn unit_of(prepared: &Prepared, object: &Object) -> Result<(u32, Labels, Option<
         };
         values.push(value);
     }
+    // The volume of record, as the blocks carry it: none stops the block.
+    if let Some(v) = prepared.dataflow.fields.iter().position(|f| f.field.kind == FieldKind::Volume)
+        && !values[v].is_finite()
+    {
+        return Err(format!("{} has no {}: measure the blocks (solid.measure) or read the volume from the solid", object.name, prepared.dataflow.fields[v].field.name));
+    }
     Ok((stack as u32, Labels::new(&material, &word("seam")), bench_of(object)?, values))
 }
 
@@ -529,16 +462,22 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
     let stop = |why: String| Stopped { why };
     let mut column = Column::new(key.clone(), prepared.fields.clone());
     let mut attributes = Vec::with_capacity(blocks.len());
-    let mut lengths = Vec::with_capacity(blocks.len());
+    let mut mismatched: Vec<String> = Vec::new();
     let mut block_area: f64 = 0.0;
     for object in blocks {
         let (stack, labels, bench, values) = unit_of(prepared, object).map_err(stop)?;
+        // The volume the block carries against its solid's: a block measured before it was last cut is said.
+        if let (Body::Solid(solid), Some(v)) = (&object.body, prepared.dataflow.fields.iter().position(|f| f.field.kind == FieldKind::Volume)) {
+            let (carried, own) = (values[v], solid.volume());
+            if (carried - own).abs() > 1e-6 * own.abs().max(1.0) {
+                mismatched.push(object.name.clone());
+            }
+        }
         let origin = Origin { object: object.id.to_string(), name: object.name.clone() };
         column.push_bench_input(origin, stack, labels, bench, values).map_err(|e| stop(e.to_string()))?;
         attributes.push(object.attributes.clone());
         if let Body::Solid(solid) = &object.body {
             block_area = block_area.max(plan_area(solid.mesh()));
-            lengths.push(block_length(solid.mesh()));
         }
     }
     let volume = prepared.fields.volume();
@@ -554,8 +493,10 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
         said: Said::default(),
         added_volume: 0.0,
         block_area,
-        lengths,
     };
+    for name in &mismatched {
+        run.said.name("whose volume isn't its solid's (measured before it was cut again?)", name);
+    }
     // Imported: each block as read, before any step.
     write_pieces(&mut run, |_| Some("Imported".into()), |_| Vec::new());
     if let Some(p) = preview.as_deref_mut() {
@@ -673,7 +614,6 @@ fn add_underburden(run: &mut ColumnRun<'_>, step: &DataflowStep) {
         })
         .collect();
     run.attributes.push(attributes);
-    run.lengths.push(0.0);
     run.horizons.push("underburden".into());
     let stack = (run.horizons.len() - 1) as u32;
     let origin = Origin { object: OUT_OF_MODEL.into(), name: "underburden".into() };
@@ -683,31 +623,46 @@ fn add_underburden(run: &mut ColumnRun<'_>, step: &DataflowStep) {
     run.said.count("underburden added below the last coal, out of model".into(), volume);
 }
 
-/// Each quality and density field given its limits and defaults (decision 0073, point 3): `<field>_min`, `<field>_max`
-/// and `<field>_default`. Coal outside its limits, inclusive, or with no value, takes the default; waste takes its
-/// default outright, as it has no grids. Each replacement counted by field and material.
+/// Each field but the volume given its limits and defaults (decisions 0073, point 3, and 0074): `<field>_min`,
+/// `<field>_max` and `<field>_default`. A value outside its limits, inclusive, or with none, takes the default; a minimum
+/// equal to the maximum forces it, as Spry's do. So a block's measured thickness, area or length that looks wrong, from an
+/// odd solid, is corrected in the parameters without touching the block. Waste takes its quality, density and moisture
+/// defaults outright, as it has no grids. Each replacement counted by field and material.
 fn quality_defaults(run: &mut ColumnRun<'_>) {
-    let fields: Vec<(usize, String)> =
-        run.column.fields().list().iter().enumerate().filter(|(_, f)| matches!(f.kind, FieldKind::Quality | FieldKind::Density | FieldKind::Moisture)).map(|(i, f)| (i, f.name.clone())).collect();
+    let fields: Vec<(usize, String, bool)> = run
+        .column
+        .fields()
+        .list()
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| !matches!(f.kind, FieldKind::Volume | FieldKind::Setting))
+        .map(|(i, f)| (i, f.name.clone(), matches!(f.kind, FieldKind::Quality | FieldKind::Density | FieldKind::Moisture)))
+        .collect();
     let volume = run.column.fields().volume();
     for at in 0..run.column.len() {
         if run.column.units()[at].is_set_aside() {
             continue;
         }
         let coal = is_coal(&run.column.units()[at]);
-        for (i, name) in &fields {
+        for (i, name, grade) in &fields {
             let Some(default) = run.parameter(at, &format!("{name}_default")) else { continue };
             let value = run.column.units()[at].value(*i);
-            let replace = if coal {
-                let (min, max) = (run.parameter(at, &format!("{name}_min")), run.parameter(at, &format!("{name}_max")));
-                value.is_nan() || min.is_some_and(|m| value < m) || max.is_some_and(|m| value > m)
-            } else {
-                true
-            };
+            let (min, max) = (run.parameter(at, &format!("{name}_min")), run.parameter(at, &format!("{name}_max")));
+            let forced = min.is_some() && min == max;
+            let replace = if coal || !grade { forced || value.is_nan() || min.is_some_and(|m| value < m) || max.is_some_and(|m| value > m) } else { true };
             if replace {
                 let v = run.column.units()[at].value(volume);
                 run.column.unit_mut(at).set(*i, default);
-                let why = if !coal { "waste given its default" } else if value.is_nan() { "coal with none given its default" } else { "coal outside its limits given its default" };
+                let material = if coal { "coal" } else { "waste" };
+                let why = if !coal && *grade {
+                    "waste given its default".to_string()
+                } else if forced {
+                    format!("{material} forced to its default")
+                } else if value.is_nan() {
+                    format!("{material} with none given its default")
+                } else {
+                    format!("{material} outside its limits given its default")
+                };
                 run.said.count(format!("{name}: {why}"), v);
             }
         }
@@ -1039,7 +994,7 @@ fn rom_loss(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String> 
         // Edge and other loss come from each ply as it stood before roof and floor loss, as Spry's do.
         let mut asked = Vec::new();
         for &at in &plies {
-            let length = length_of(run, at, step);
+            let length = if edge > 0.0 { length_of(run, at, step)? } else { 0.0 };
             let u = &run.column.units()[at];
             asked.push((u.id, edge * length * u.value(thickness), other / 100.0 * u.value(v)));
         }
@@ -1153,13 +1108,13 @@ fn section_area(run: &ColumnRun<'_>, s: &Section) -> f64 {
     }
 }
 
-/// A coal unit's length in plan: its block's `length` attribute, else its block's footprint.
-fn length_of(run: &ColumnRun<'_>, at: usize, step: &DataflowStep) -> f64 {
-    let origin = run.column.units()[at].origin as usize;
-    match attribute_ci(&run.attributes[origin], step.setting("length")) {
-        Some(AttrValue::Number(n)) => *n,
-        _ => run.lengths.get(origin).copied().unwrap_or(0.0),
-    }
+/// A coal unit's length in plan, the dataflow's `length` field (the step's setting names it): what the interrogation
+/// measured on its block (decision 0074), or what the parameter rows correct it to. Asked for edge loss or dilution
+/// where there's none, the block stops.
+fn length_of(run: &ColumnRun<'_>, at: usize, step: &DataflowStep) -> Result<f64, String> {
+    let field = run.column.fields().at(step.setting("length")).map_err(|_| format!("the dataflow has no {} field for edge loss and dilution: add one, read from the blocks' measured length", step.setting("length")))?;
+    let length = run.column.units()[at].value(field);
+    if length.is_finite() { Ok(length) } else { Err(format!("{} has no {}: measure the blocks (solid.measure) or give one in a parameter row", run.name_of(at), step.setting("length"))) }
 }
 
 /// `rom_dilution` (decision 0074, point 6), Spry's way. Each waste interval, top down, gives dilution to the coal either
@@ -1199,7 +1154,9 @@ fn rom_dilution(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), Stri
                 if !is_coal(u) || u.became.is_some() {
                     continue;
                 }
-                e += edge * length_of(run, at, step) * u.value(thickness);
+                if edge > 0.0 {
+                    e += edge * length_of(run, at, step)? * u.value(thickness);
+                }
                 o += other / 100.0 * u.value(v);
             }
             asks.push(("edge", e, b.clone()));
@@ -1455,6 +1412,7 @@ fn unit_of_kind(kind: FieldKind) -> &'static str {
         FieldKind::Volume => "m3",
         FieldKind::Thickness => "m",
         FieldKind::Area => "m2",
+        FieldKind::Length => "m",
         FieldKind::Density => "t/m3",
         FieldKind::Moisture => "%",
         _ => "",
@@ -1535,7 +1493,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
         for (i, f) in fields.iter().enumerate() {
             // A thickness adds down a column and an area is a column's largest; across leaves neither adds up, so a
             // summary shows neither.
-            let across = if matches!(f.kind, FieldKind::Thickness | FieldKind::Area) { None } else { Some(f.add_up.clone()) };
+            let across = if matches!(f.kind, FieldKind::Thickness | FieldKind::Area | FieldKind::Length) { None } else { Some(f.add_up.clone()) };
             push(TableColumn { name: format!("{folder}\\{}", f.name), unit: unit_of_kind(f.kind).to_string(), add_up: across, values: zd_core::ColumnValues::Number(value(i)) });
         }
         let tonnes = |d: usize| added.iter().map(|a| a.as_ref().map(|a| a[v] * a[d]).filter(|x| x.is_finite())).collect::<Vec<_>>();
@@ -1672,10 +1630,13 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
         }
     }
     let field = |name: &str, kind, add_up, source| DataflowField { field: EngineField::new(name, kind, add_up), source };
+    // Geometry as solid.measure wrote it onto the blocks (decision 0074): the dataflow reads the data table.
+    let measured = |name: &str| FieldSource::Attribute { attribute: name.to_string() };
     let mut fields = vec![
-        field("volume", FieldKind::Volume, AddUp::Sum, FieldSource::Volume),
-        field("thickness", FieldKind::Thickness, AddUp::Sum, FieldSource::Thickness),
-        field("area", FieldKind::Area, AddUp::Max, FieldSource::PlanArea),
+        field("volume", FieldKind::Volume, AddUp::Sum, measured("volume")),
+        field("thickness", FieldKind::Thickness, AddUp::Sum, measured("thickness")),
+        field("area", FieldKind::Area, AddUp::Max, measured("plan_area")),
+        field("length", FieldKind::Length, AddUp::Max, measured("length")),
         field(&density, FieldKind::Density, AddUp::Volume, FieldSource::Attribute { attribute: density.clone() }),
     ];
     for q in &qualities {
@@ -1730,8 +1691,15 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
     ];
     let moistures = ["mad".to_string(), "mis".to_string(), "mrom".to_string()];
     let qualities: Vec<String> = qualities.into_iter().filter(|q| !moistures.contains(q)).collect();
-    for q in std::iter::once(&density).chain(&qualities).chain(&moistures) {
-        let unit = if *q == density { "t/m3" } else if moistures.contains(q) { "%" } else { "" };
+    let geometry = ["thickness".to_string(), "area".to_string(), "length".to_string()];
+    for q in geometry.iter().chain(std::iter::once(&density)).chain(&qualities).chain(&moistures) {
+        let unit = match q.as_str() {
+            "thickness" | "length" => "m",
+            "area" => "m2",
+            _ if *q == density => "t/m3",
+            _ if moistures.contains(q) => "%",
+            _ => "",
+        };
         for end in ["min", "max", "default"] {
             columns.push(ValueColumn::number(&format!("{q}_{end}"), unit));
         }
