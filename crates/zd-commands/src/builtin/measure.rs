@@ -11,8 +11,8 @@ use zd_core::{AttrValue, Body, Change, ObjectId, TriMesh, attribute_ci, attribut
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
 /// What a measure writes, after any prefix: the solid's volume (m³), its footprint in plan (m²), its vertical thickness
-/// (volume ÷ footprint, m), its length and width (the sides of the smallest rectangle round its footprint, m, the longer
-/// first), its centroid, its dip (degrees, as its seam's floor and roof lean, a block's benches of a seam sharing one)
+/// (volume ÷ footprint, m), its length and width (the sides of the smallest rectangle round its footprint, m: the length
+/// along its strip and the width across it, Tim's default; a block with no strip, the longer first), its centroid, its dip (degrees, as its seam's floor and roof lean, a block's benches of a seam sharing one)
 /// and its true thickness (the vertical × cos dip, m: what seam rules and loss and dilution thicknesses are about; Tim:
 /// "true thickness very important").
 pub const MEASURES: [&str; 10] = ["volume", "plan_area", "thickness", "length", "width", "centroid_x", "centroid_y", "centroid_z", "dip", "true_thickness"];
@@ -49,6 +49,7 @@ impl Command for Measure {
         // seam's, read from all their faces, so a bench between two levels, flat top and bottom, dips as its seam does.
         let mut measured = Vec::with_capacity(p.solids.len());
         let mut leaning: BTreeMap<(String, String), [[f64; 3]; 2]> = BTreeMap::new();
+        let mut footprints = Vec::with_capacity(p.solids.len());
         for &id in &p.solids {
             let object = inputs.object(id)?;
             let Body::Solid(solid) = &object.body else {
@@ -66,10 +67,15 @@ impl Command for Measure {
                     sum[k] += part[k];
                 }
             }
+            let strip = word("strip").map(|strip| (word("pit").unwrap_or_default(), strip));
+            footprints.push((solid.mesh(), strip));
             measured.push((object, measure(solid.mesh()), group));
         }
-        for (object, mut m, group) in measured {
+        // Length along each strip and width across it (Tim, 15 November 2026: "Length is along the strip by default").
+        let (sides, strips, alone) = lengths_along_strips(&footprints);
+        for ((object, mut m, group), (length, width)) in measured.into_iter().zip(sides) {
             let id = object.id;
+            (m[3], m[4]) = (length, width);
             let [seam, level] = leaning[&group];
             let dip = dip_of(if seam[2] != 0.0 { seam } else { level });
             m[8] = dip;
@@ -83,10 +89,13 @@ impl Command for Measure {
             changes.push(Change::Revise { id, base: object.revision, name: None, layer: None, attributes: Some(attributes), body: None });
         }
         let n = changes.len();
+        let plural = |k: usize| if k == 1 { "" } else { "s" };
+        let alone = if alone == 0 { String::new() } else { format!("; {alone} block{} with no strip measured on {}, the longer side its length", plural(alone), if alone == 1 { "its own" } else { "their own" }) };
         Ok(Outcome::new(changes).message(format!(
-            "measured {n} block{}: {volume:.1} m3 over {area:.1} m2 in plan; {} written onto each",
-            if n == 1 { "" } else { "s" },
-            MEASURES.iter().map(|m| format!("{}{m}", p.prefix)).collect::<Vec<_>>().join(", ")
+            "measured {n} block{}: {volume:.1} m3 over {area:.1} m2 in plan; {} written onto each; length along each of {strips} strip{} and width across{alone}",
+            plural(n),
+            MEASURES.iter().map(|m| format!("{}{m}", p.prefix)).collect::<Vec<_>>().join(", "),
+            plural(strips)
         )))
     }
 }
@@ -159,22 +168,33 @@ pub fn plan_area(mesh: &TriMesh) -> f64 {
     twice / 2.0
 }
 
-/// A block's length in plan: the longer side of the smallest rectangle round its footprint.
+/// A block's length in plan on its own, with no strip to go by: the longer side of the smallest rectangle round its
+/// footprint.
 pub fn block_length(mesh: &TriMesh) -> f64 {
     footprint_sides(mesh).0
 }
 
-/// The sides of the smallest rectangle round a footprint, the longer first, from the convex hull of its vertices about
-/// the first so mine coordinates keep their precision.
+/// The sides of the smallest rectangle round a footprint, the longer first.
 fn footprint_sides(mesh: &TriMesh) -> (f64, f64) {
     let Some(&o) = mesh.vertices.first() else { return (0.0, 0.0) };
-    let mut points: Vec<[f64; 2]> = mesh.vertices.iter().map(|v| [v[0] - o[0], v[1] - o[1]]).collect();
+    match smallest_rectangle(&footprint_hull(mesh, o)) {
+        Some(r) => (r.sides[0].max(r.sides[1]), r.sides[0].min(r.sides[1])),
+        None => (0.0, 0.0),
+    }
+}
+
+/// The convex hull of a solid's vertices in plan, about `o` so mine coordinates keep their precision.
+fn footprint_hull(mesh: &TriMesh, o: [f64; 3]) -> Vec<[f64; 2]> {
+    hull(mesh.vertices.iter().map(|v| [v[0] - o[0], v[1] - o[1]]).collect())
+}
+
+/// The convex hull of points in plan, anticlockwise (Andrew's monotone chain).
+fn hull(mut points: Vec<[f64; 2]>) -> Vec<[f64; 2]> {
     points.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
     points.dedup();
-    if points.len() < 2 {
-        return (0.0, 0.0);
+    if points.len() < 3 {
+        return points;
     }
-    // Andrew's monotone chain.
     let cross = |o: [f64; 2], a: [f64; 2], b: [f64; 2]| (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
     let mut hull: Vec<[f64; 2]> = Vec::new();
     for pass in 0..2 {
@@ -188,11 +208,31 @@ fn footprint_sides(mesh: &TriMesh) -> (f64, f64) {
         }
         hull.pop();
     }
-    if hull.len() < 2 {
-        return (0.0, 0.0);
+    hull
+}
+
+/// The smallest rectangle round a hull: the unit direction of one side, and its sides along that direction and across.
+struct Rectangle {
+    along: [f64; 2],
+    sides: [f64; 2],
+}
+
+impl Rectangle {
+    /// The direction of its longer side.
+    fn long_way(&self) -> [f64; 2] {
+        if self.sides[0] >= self.sides[1] { self.along } else { [-self.along[1], self.along[0]] }
     }
-    // The smallest rectangle has a side along a hull edge.
-    let mut best = (f64::INFINITY, 0.0, 0.0);
+
+    /// Its length and width with the length the side nearer a direction: along a strip and across it.
+    fn along_and_across(&self, d: [f64; 2]) -> (f64, f64) {
+        let (u, v) = (self.along, [-self.along[1], self.along[0]]);
+        if (u[0] * d[0] + u[1] * d[1]).abs() >= (v[0] * d[0] + v[1] * d[1]).abs() { (self.sides[0], self.sides[1]) } else { (self.sides[1], self.sides[0]) }
+    }
+}
+
+/// The smallest rectangle round a hull, which has a side along one of its edges; none for fewer than two points.
+fn smallest_rectangle(hull: &[[f64; 2]]) -> Option<Rectangle> {
+    let mut best: Option<(f64, Rectangle)> = None;
     for i in 0..hull.len() {
         let (a, b) = (hull[i], hull[(i + 1) % hull.len()]);
         let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
@@ -202,7 +242,7 @@ fn footprint_sides(mesh: &TriMesh) -> (f64, f64) {
         }
         let (ux, uy) = (dx / len, dy / len);
         let (mut lo_u, mut hi_u, mut lo_v, mut hi_v) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
-        for p in &hull {
+        for p in hull {
             let (u, v) = (p[0] * ux + p[1] * uy, -p[0] * uy + p[1] * ux);
             lo_u = lo_u.min(u);
             hi_u = hi_u.max(u);
@@ -210,11 +250,45 @@ fn footprint_sides(mesh: &TriMesh) -> (f64, f64) {
             hi_v = hi_v.max(v);
         }
         let (w, h) = (hi_u - lo_u, hi_v - lo_v);
-        if w * h < best.0 {
-            best = (w * h, w.max(h), w.min(h));
+        if best.as_ref().is_none_or(|(area, _)| w * h < *area) {
+            best = Some((w * h, Rectangle { along: [ux, uy], sides: [w, h] }));
         }
     }
-    (best.1, best.2)
+    best.map(|(_, r)| r)
+}
+
+/// Each solid's length and width in plan: along its strip and across it. A strip's way is the longer side of the smallest
+/// rectangle round all its blocks (the same `pit` and `strip`), and a block's length is the side of its own smallest
+/// rectangle nearer that way, so a block shorter than the strip is wide still has its length along the strip, and a
+/// block on a curving strip is measured square to its own sides. A block with no `strip` is measured on its own, the
+/// longer side its length. Also the number of strips and of blocks measured on their own.
+fn lengths_along_strips(meshes: &[(&TriMesh, Option<(String, String)>)]) -> (Vec<(f64, f64)>, usize, usize) {
+    let Some(o) = meshes.iter().find_map(|(m, _)| m.vertices.first().copied()) else { return (vec![(0.0, 0.0); meshes.len()], 0, 0) };
+    let hulls: Vec<Vec<[f64; 2]>> = meshes.iter().map(|(m, _)| footprint_hull(m, o)).collect();
+    let mut strips: BTreeMap<&(String, String), Vec<[f64; 2]>> = BTreeMap::new();
+    for ((_, strip), h) in meshes.iter().zip(&hulls) {
+        if let Some(strip) = strip {
+            strips.entry(strip).or_default().extend_from_slice(h);
+        }
+    }
+    let ways: BTreeMap<&(String, String), [f64; 2]> =
+        strips.into_iter().filter_map(|(k, points)| smallest_rectangle(&hull(points)).map(|r| (k, r.long_way()))).collect();
+    let mut alone = 0;
+    let sides = meshes
+        .iter()
+        .zip(&hulls)
+        .map(|((_, strip), h)| {
+            let Some(r) = smallest_rectangle(h) else { return (0.0, 0.0) };
+            match strip.as_ref().and_then(|k| ways.get(k)) {
+                Some(&d) => r.along_and_across(d),
+                None => {
+                    alone += 1;
+                    (r.sides[0].max(r.sides[1]), r.sides[0].min(r.sides[1]))
+                }
+            }
+        })
+        .collect();
+    (sides, ways.len(), alone)
 }
 
 /// A closed solid's centroid: its tetrahedra to the bounding box's centre, weighted by their volumes.

@@ -607,7 +607,7 @@ fn a_section_rule_no_row_gives_stops_the_block() {
 
 // Decision 0074, workstream 4b: ROM loss, a hand-worked column.
 
-/// A block's length is the longer side of the smallest rectangle round it in plan: 80 m for an 80 m by 20 m footprint
+/// A block's length on its own (no strip) is the longer side of the smallest rectangle round it in plan: 80 m for an 80 m by 20 m footprint
 /// turned 30° at mine coordinates, whatever its corners.
 #[test]
 fn a_block_s_length_is_the_long_side_of_its_smallest_rectangle() {
@@ -1134,4 +1134,47 @@ fn rom_gives_dilution_its_coal_s_moisture_and_works_rom_tonnes() {
         assert!(said.iter().any(|n| n.ends_with(&format!("dilution and partings given their coal's {m}, 1000.0 m3")) || n.contains(&format!("given their coal's {m}"))), "{m}: {said:?}");
     }
     assert!(at_seam(&t, Some("A"), "ROM\\Coal\\ash_rom").is_finite() && at_seam(&t, Some("A"), "ROM\\Coal\\ash_rom") > 0.0);
+}
+
+/// A box in plan `u0..u1` along and `v0..v1` across, turned `deg` at mine coordinates, from RL 30 to 32.
+fn turned_box(s: &mut Session, name: &str, deg: f64, (u0, u1): (f64, f64), (v0, v1): (f64, f64), attributes: serde_json::Value) -> ObjectId {
+    let (c, sn) = (deg.to_radians().cos(), deg.to_radians().sin());
+    let vertices: Vec<[f64; 3]> = (0..8)
+        .map(|i| {
+            let u = if i & 1 == 1 { u1 } else { u0 };
+            let v = if i >> 1 & 1 == 1 { v1 } else { v0 };
+            [E + u * c - v * sn, N + u * sn + v * c, if i >> 2 & 1 == 1 { 32.0 } else { 30.0 }]
+        })
+        .collect();
+    let triangles = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+    let id = created(&s.run("solid.from_mesh", json!({ "name": name, "layer": "blocks", "vertices": vertices, "triangles": triangles })).unwrap())[0];
+    s.run("test.tag", json!({ "object": id, "attributes": attributes })).unwrap();
+    id
+}
+
+/// Length is along the strip, width across it (Tim, 15 November 2026). Strip 1 is three blocks 50 m along and 80 m across,
+/// turned 30°: each is 50 m long and 80 m wide, though 80 m is its longer side. A fourth block in another pit's strip 1,
+/// 200 m away, isn't part of that strip: on its own, as is a block with no strip, its longer side is its length.
+#[test]
+fn length_is_along_the_strip_and_width_across_it() {
+    let mut s = session();
+    let strip: Vec<ObjectId> = (0..3)
+        .map(|k| turned_box(&mut s, &format!("B{k}"), 30.0, (50.0 * k as f64, 50.0 * (k + 1) as f64), (0.0, 80.0), json!({ "strip": 1.0, "block": format!("B{k}") })))
+        .collect();
+    let other_pit = turned_box(&mut s, "other", 30.0, (0.0, 50.0), (200.0, 280.0), json!({ "pit": "North", "strip": 1.0 }));
+    let loose = turned_box(&mut s, "loose", 30.0, (0.0, 50.0), (400.0, 480.0), json!({}));
+    let mut ids = strip.clone();
+    ids.extend([other_pit, loose]);
+    let record = s.run("solid.measure", json!({ "solids": ids })).unwrap();
+    assert!(record.messages[0].contains("length along each of 2 strips and width across; 1 block with no strip measured on its own"), "{}", record.messages[0]);
+    let n = |id: ObjectId, k: &str| match s.project().object(id).unwrap().attributes.get(k) {
+        Some(zd_core::AttrValue::Number(v)) => *v,
+        other => panic!("{k}: {other:?}"),
+    };
+    for id in strip {
+        assert!((n(id, "length") - 50.0).abs() < 1e-9 && (n(id, "width") - 80.0).abs() < 1e-9, "{} {}", n(id, "length"), n(id, "width"));
+    }
+    for id in [other_pit, loose] {
+        assert!((n(id, "length") - 80.0).abs() < 1e-9 && (n(id, "width") - 50.0).abs() < 1e-9, "{} {}", n(id, "length"), n(id, "width"));
+    }
 }
