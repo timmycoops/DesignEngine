@@ -884,7 +884,65 @@ fn solid_measure_writes_each_block_s_geometry_onto_it() {
     assert!(close(n("volume"), 10_000.0) && close(n("plan_area"), 5_000.0) && close(n("thickness"), 2.0));
     assert!(close(n("length"), 100.0) && close(n("width"), 50.0));
     assert!(close(n("centroid_x"), E + 50.0) && close(n("centroid_y"), N + 25.0) && close(n("centroid_z"), 39.0));
+    assert!(close(n("dip"), 0.0) && close(n("true_thickness"), 2.0), "flat: true thickness is the vertical");
     assert!(a.get("strip").is_some(), "the block keeps what it had");
+}
+
+/// A block 100 m by 50 m in plan, 2 m thick vertically, its floor and roof dipping 10° to the east: 10,000 m³ over
+/// 5,000 m², dip 10°, true thickness 2 × cos 10° = 1.96962 m, the vertical kept beside it.
+#[test]
+fn solid_measure_gives_dip_and_true_thickness() {
+    let mut s = session();
+    let slope = 10f64.to_radians().tan();
+    let vertices: Vec<[f64; 3]> = (0..8)
+        .map(|i| {
+            let x = if i & 1 == 1 { 100.0 } else { 0.0 };
+            let y = if i >> 1 & 1 == 1 { 50.0 } else { 0.0 };
+            let floor = 30.0 - x * slope;
+            [E + x, N + y, if i >> 2 & 1 == 1 { floor + 2.0 } else { floor }]
+        })
+        .collect();
+    let triangles = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+    let id = created(&s.run("solid.from_mesh", json!({ "name": "dipping", "layer": "blocks", "vertices": vertices, "triangles": triangles })).unwrap())[0];
+    s.run("solid.measure", json!({ "solids": [id] })).unwrap();
+    let a = &s.project().object(id).unwrap().attributes;
+    let n = |k: &str| match a.get(k) {
+        Some(zd_core::AttrValue::Number(v)) => *v,
+        other => panic!("{k}: {other:?}"),
+    };
+    assert!(close(n("volume"), 10_000.0) && close(n("plan_area"), 5_000.0) && close(n("thickness"), 2.0));
+    assert!(close(n("dip"), 10.0), "{}", n("dip"));
+    assert!(close(n("true_thickness"), 2.0 * 10f64.to_radians().cos()) && (n("true_thickness") - 1.96962).abs() < 1e-5);
+}
+
+/// A bench between two levels, flat top and bottom, takes its seam's dip from the block's other benches of that seam (the
+/// same `benched_from` and `block`): beside the 10° bench above, the flat 2 m box measures 10° and 2 × cos 10° true. On
+/// its own, with only level faces, it dips 0.
+#[test]
+fn a_bench_between_two_levels_dips_as_its_seam() {
+    let mut s = session();
+    let slope = 10f64.to_radians().tan();
+    let vertices: Vec<[f64; 3]> = (0..8)
+        .map(|i| {
+            let x = if i & 1 == 1 { 100.0 } else { 0.0 };
+            let y = if i >> 1 & 1 == 1 { 50.0 } else { 0.0 };
+            let floor = 30.0 - x * slope;
+            [E + x, N + y, if i >> 2 & 1 == 1 { floor + 2.0 } else { floor }]
+        })
+        .collect();
+    let triangles = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+    let dipping = created(&s.run("solid.from_mesh", json!({ "name": "bench 30", "layer": "blocks", "vertices": vertices, "triangles": triangles })).unwrap())[0];
+    s.run("test.tag", json!({ "object": dipping, "attributes": { "benched_from": "seam U", "block": "B1" } })).unwrap();
+    let flat = box_solid(&mut s, "bench 20", 0.0, (20.0, 22.0), json!({ "benched_from": "seam U", "block": "B1" }));
+    let alone = box_solid(&mut s, "alone", 200.0, (20.0, 22.0), json!({ "block": "B2" }));
+    s.run("solid.measure", json!({ "solids": [dipping, flat, alone] })).unwrap();
+    let n = |id: ObjectId, k: &str| match s.project().object(id).unwrap().attributes.get(k) {
+        Some(zd_core::AttrValue::Number(v)) => *v,
+        other => panic!("{k}: {other:?}"),
+    };
+    assert!(close(n(flat, "dip"), 10.0) && close(n(flat, "true_thickness"), 2.0 * 10f64.to_radians().cos()), "{}", n(flat, "dip"));
+    assert!(close(n(dipping, "dip"), 10.0));
+    assert!(close(n(alone, "dip"), 0.0) && close(n(alone, "true_thickness"), 2.0));
 }
 
 /// The loss column with edge loss but no measure: edge loss has no length to run along, so the block stops, said.

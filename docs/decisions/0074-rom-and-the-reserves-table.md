@@ -274,3 +274,31 @@ On the demo pit:
 - The run takes 29 ms.
 - The 50m case's longer side is still the strip's width where its blocks are shorter than the strip is wide. Its edge
   loss can be corrected in the parameters, or with a `length` attribute on the blocks.
+
+### Dip and true thickness
+
+Tim, 15 November: "Thickness will be equally important", then "Yep let's ensure we have both true thickness very
+important".
+
+- **`solid.measure` also writes `dip` and `true_thickness`.**
+  - `dip` is in degrees. It's read from the faces of the seam's floor and roof: faces within 60° of level, each weighted
+    by its area. Walls are left out.
+  - `true_thickness` is the vertical `thickness` × cos dip. The vertical stays beside it.
+  - A face exactly level is a bench or RL cut, not the seam. It's left out where there are others.
+  - A block's benches of one seam (the same `benched_from` and `block`) share the dip read from all their faces. So a
+    bench between two levels, flat top and bottom, dips as its seam does. A solid with only level faces dips 0.
+- **The starter's `thickness` field reads `true_thickness`**, so the seam rules (minimum parting, minimum coal
+  thickness) and the loss and dilution thicknesses work in true thickness.
+
+Known answers:
+
+- A block 100 m by 50 m, 2 m thick vertically and dipping 10°: dip 10°, true thickness 2 × cos 10° = 1.96962 m, the 2 m
+  vertical kept beside it.
+- A flat 2 m bench beside it, from the same seam piece and block: also 10° and 1.96962 m. The same box on its own dips
+  0.
+- A flat block: dip 0, true thickness equal to the vertical.
+
+On the demo pit, whose seams are built to dip about 3° north, the 475 coal blocks average 3.24° (0.10° to 4.57°), with
+two under 0.5°. Before the benches shared their seam's dip, they averaged 2.27°, the benches between levels reading
+flat. True thickness averages 0.17 % less than the vertical. In situ is unchanged, 0 from the blocks, and the run takes
+26 ms.

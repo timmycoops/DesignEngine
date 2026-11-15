@@ -1634,7 +1634,8 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
     let measured = |name: &str| FieldSource::Attribute { attribute: name.to_string() };
     let mut fields = vec![
         field("volume", FieldKind::Volume, AddUp::Sum, measured("volume")),
-        field("thickness", FieldKind::Thickness, AddUp::Sum, measured("thickness")),
+        // True thickness: what the seam rules and loss and dilution thicknesses are about (Tim, 15 November 2026).
+        field("thickness", FieldKind::Thickness, AddUp::Sum, measured("true_thickness")),
         field("area", FieldKind::Area, AddUp::Max, measured("plan_area")),
         field("length", FieldKind::Length, AddUp::Max, measured("length")),
         field(&density, FieldKind::Density, AddUp::Volume, FieldSource::Attribute { attribute: density.clone() }),

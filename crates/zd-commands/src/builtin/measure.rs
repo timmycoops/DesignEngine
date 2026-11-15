@@ -3,15 +3,19 @@
 //! would come from an interrogation step essentially)", so it can be checked, and corrected in the dataflow's
 //! parameters where a solid gives something odd. As Spry's Imported fields, every block, coal and waste.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Body, Change, ObjectId, TriMesh};
+use zd_core::{AttrValue, Body, Change, ObjectId, TriMesh, attribute_ci, attribute_word};
 
 use crate::{Command, CommandError, CommandSpec, Field, FieldType, Inputs, Outcome};
 
 /// What a measure writes, after any prefix: the solid's volume (m³), its footprint in plan (m²), its vertical thickness
 /// (volume ÷ footprint, m), its length and width (the sides of the smallest rectangle round its footprint, m, the longer
-/// first) and its centroid.
-pub const MEASURES: [&str; 8] = ["volume", "plan_area", "thickness", "length", "width", "centroid_x", "centroid_y", "centroid_z"];
+/// first), its centroid, its dip (degrees, as its seam's floor and roof lean, a block's benches of a seam sharing one)
+/// and its true thickness (the vertical × cos dip, m: what seam rules and loss and dilution thicknesses are about; Tim:
+/// "true thickness very important").
+pub const MEASURES: [&str; 10] = ["volume", "plan_area", "thickness", "length", "width", "centroid_x", "centroid_y", "centroid_z", "dip", "true_thickness"];
 
 pub struct Measure;
 
@@ -31,7 +35,7 @@ impl Command for Measure {
     fn spec(&self) -> CommandSpec {
         CommandSpec {
             name: Self::NAME,
-            summary: "Write each block's geometry onto it: volume, plan area, thickness, length, width and centroid",
+            summary: "Write each block's geometry onto it: volume, plan area, vertical and true thickness, length, width, dip and centroid",
             inputs: vec![Field::new("solids", FieldType::Objects, "The blocks")],
             params: vec![Field::new("prefix", FieldType::Text, "Put in front of each attribute's name")],
             outputs: vec![],
@@ -41,12 +45,35 @@ impl Command for Measure {
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let mut changes = Vec::with_capacity(p.solids.len());
         let (mut volume, mut area) = (0.0, 0.0);
+        // Each solid's measures and the leaning of its seam faces, then a block's benches of a seam given one dip: the
+        // seam's, read from all their faces, so a bench between two levels, flat top and bottom, dips as its seam does.
+        let mut measured = Vec::with_capacity(p.solids.len());
+        let mut leaning: BTreeMap<(String, String), [[f64; 3]; 2]> = BTreeMap::new();
         for &id in &p.solids {
             let object = inputs.object(id)?;
             let Body::Solid(solid) = &object.body else {
                 return Err(CommandError::WrongKind { id, expected: zd_core::ObjectKind::Solid, found: object.kind() });
             };
-            let m = measure(solid.mesh());
+            let word = |k: &str| attribute_ci(&object.attributes, k).map(attribute_word);
+            let group = match (word("benched_from"), word("block")) {
+                (Some(from), Some(block)) => (from, block),
+                _ => (id.to_string(), String::new()),
+            };
+            let lean = leanings(solid.mesh());
+            let g = leaning.entry(group.clone()).or_default();
+            for (sum, part) in g.iter_mut().zip(lean) {
+                for k in 0..3 {
+                    sum[k] += part[k];
+                }
+            }
+            measured.push((object, measure(solid.mesh()), group));
+        }
+        for (object, mut m, group) in measured {
+            let id = object.id;
+            let [seam, level] = leaning[&group];
+            let dip = dip_of(if seam[2] != 0.0 { seam } else { level });
+            m[8] = dip;
+            m[9] = m[2] * dip.to_radians().cos();
             volume += m[0];
             area += m[1];
             let mut attributes = object.attributes.clone();
@@ -65,13 +92,53 @@ impl Command for Measure {
 }
 
 /// A solid's measures, in `MEASURES` order.
-pub fn measure(mesh: &TriMesh) -> [f64; 8] {
+pub fn measure(mesh: &TriMesh) -> [f64; 10] {
     let volume = mesh.signed_volume();
     let area = plan_area(mesh);
     let thickness = if area > 0.0 { volume / area } else { 0.0 };
     let (length, width) = footprint_sides(mesh);
     let c = centroid(mesh);
-    [volume, area, thickness, length, width, c[0], c[1], c[2]]
+    let dip = floor_dip(mesh);
+    [volume, area, thickness, length, width, c[0], c[1], c[2], dip, thickness * dip.to_radians().cos()]
+}
+
+/// A solid's dip (degrees) on its own, as its seam faces lean.
+pub fn floor_dip(mesh: &TriMesh) -> f64 {
+    let [seam, level] = leanings(mesh);
+    dip_of(if seam[2] != 0.0 { seam } else { level })
+}
+
+/// How a solid's floor and roof faces lean: the sums of their normals, each as long as twice its area, all turned to
+/// face down, the seam's apart from those exactly level. A floor or roof is a face within 60° of level; walls are left
+/// out, so a block's own sides and a strip's face don't count, and v1 seams dip under 30°. A face exactly level is a bench
+/// or RL cut, not the seam: a dip is read from the seam's faces where there are any, else from the level ones, flat.
+fn leanings(mesh: &TriMesh) -> [[f64; 3]; 2] {
+    let (mut seam, mut level) = ([0.0f64; 3], [0.0f64; 3]);
+    for t in &mesh.triangles {
+        let [a, b, c] = t.map(|i| mesh.vertices[i as usize]);
+        let (u, v) = ([b[0] - a[0], b[1] - a[1], b[2] - a[2]], [c[0] - a[0], c[1] - a[1], c[2] - a[2]]);
+        let mut n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        if len == 0.0 || n[2].abs() < 0.5 * len {
+            continue;
+        }
+        if n[2] > 0.0 {
+            n = [-n[0], -n[1], -n[2]];
+        }
+        let target = if n[0].hypot(n[1]) <= 1e-9 * len { &mut level } else { &mut seam };
+        for k in 0..3 {
+            target[k] += n[k];
+        }
+    }
+    [seam, level]
+}
+
+/// The dip (degrees) of a downward leaning; none, 0.
+fn dip_of(n: [f64; 3]) -> f64 {
+    if n[2] == 0.0 {
+        return 0.0;
+    }
+    n[0].hypot(n[1]).atan2(-n[2]).to_degrees()
 }
 
 /// The plan area of a solid: its upward-facing triangles in plan, about its first vertex so mine coordinates keep their

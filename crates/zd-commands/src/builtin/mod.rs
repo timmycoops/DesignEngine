@@ -49,7 +49,7 @@ pub use string::{
 pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, SolidBetween, SolidBetweenParams, check_slice};
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
 pub use workflow::{SaveWorkflow, SaveWorkflowParams, WORKFLOW_LAYER};
-pub use measure::{MEASURES, Measure, MeasureParams, block_length, measure, plan_area};
+pub use measure::{MEASURES, Measure, MeasureParams, block_length, floor_dip, measure, plan_area};
 pub use reserves_run::{OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, UNDERBURDEN_THICKNESS, UnitView, dataflow_starter, preston_sanders, reserves_preview};
 pub use dataflow::{DATAFLOW_LAYER, ExportParameters, PARAMETERS_LAYER, SaveDataflow, SaveParameters};
 
