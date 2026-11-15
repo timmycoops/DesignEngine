@@ -182,8 +182,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 - JORC Coal Guidelines 2014: tonnes on an in situ moisture and in situ density basis (store air-dried RD,
   convert with Preston–Sanders at reporting). RD is composited by thickness, raw qualities by mass
   (thickness × RD), clean-coal qualities by mass × yield.
-- Mining factors in this order: roof and floor loss and gain, then recovery. Seam rules in this order:
-  minimum separable parting, minimum mining thickness, minimum product-to-waste ratio, quality limits.
+- Mining factors in this order: roof and floor loss and gain, then recovery. Seam rules in Spry's order (Tim,
+  15 November 2026, so PIT B's working sections can be matched): in situ quality limits per ply first (coal set aside
+  by its in situ ash), then minimum separable parting, minimum product-to-waste ratio as a section builds, and minimum
+  mining thickness (partings in) last; the ROM ash cut-off after dilution (`docs/decisions/0073-working-sections.md`).
   Loss and dilution material carries its own density and quality. Edge loss is supported.
 - Overburden and interburden attach to the next seam below, with explicit rules for masked or missing seams.
 - Output one record per pit / strip / block / bench / seam / material with volume, tonnes, qualities,

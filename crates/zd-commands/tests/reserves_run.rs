@@ -89,7 +89,13 @@ fn blocks(s: &mut Session, case: Option<&str>) -> Vec<ObjectId> {
 }
 
 fn dataflow(s: &mut Session, steps: &[&str]) -> ObjectId {
-    let table = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": "when material,when seam,rd (t/m3),ash_cutoff (%)\nwaste,,2.3,\n,,,35\n" })).unwrap())[0];
+    let steps: Vec<serde_json::Value> = steps.iter().map(|s| json!({ "step": s })).collect();
+    flow(s, json!(steps), "when material,when seam,rd (t/m3),ash_cutoff (%)\nwaste,,2.3,\n,,,35\n")
+}
+
+/// A dataflow of the usual fields, these steps (with any settings) and a parameter table from this CSV.
+fn flow(s: &mut Session, steps: serde_json::Value, csv: &str) -> ObjectId {
+    let table = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": csv })).unwrap())[0];
     let content = json!({
         "fields": [
             { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
@@ -99,7 +105,7 @@ fn dataflow(s: &mut Session, steps: &[&str]) -> ObjectId {
             { "name": "ash", "kind": "quality", "add_up": { "by": "mass", "density": "rd" }, "from": "attribute", "attribute": "ash" },
             { "name": "ash_cutoff", "kind": "setting", "add_up": { "by": "min" }, "from": "parameter", "column": "ash_cutoff" },
         ],
-        "steps": steps.iter().map(|s| json!({ "step": s })).collect::<Vec<_>>(),
+        "steps": steps,
         "parameters": [table],
     });
     created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0]
@@ -218,7 +224,7 @@ fn a_step_this_build_doesn_t_have_or_no_stack_is_refused() {
     let ids = blocks(&mut s, None);
     let flow = dataflow(&mut s, &["initialise", "working_sections"]);
     let err = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap_err();
-    assert!(err.to_string().contains("names a step working_sections, which this build doesn't have; it has initialise, in_situ, join_benches"), "{err}");
+    assert!(err.to_string().contains("names a step working_sections, which this build doesn't have; it has small_volumes, initialise, in_situ, join_benches"), "{err}");
     let flow = dataflow(&mut s, &["initialise"]);
     let err = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "layer": "reserves" })).unwrap_err();
     assert!(err.to_string().contains("no stack order"), "{err}");
@@ -236,9 +242,89 @@ fn the_preview_shows_a_block_s_column_after_each_step() {
     let steps: Vec<&str> = views.iter().map(|v| v.step.as_str()).collect();
     assert_eq!(steps, ["as input", "initialise", "in_situ", "join_benches"]);
     let horizons = |i: usize| views[i].units.iter().map(|u| u.horizon.clone()).collect::<Vec<_>>();
-    assert_eq!(horizons(1), ["OB", "U", "U", "U-L", "L"], "sorted, U's benches together");
-    assert_eq!(horizons(3), ["OB", "U", "U-L", "L"], "U's benches joined");
+    assert_eq!(horizons(1), ["OB", "U", "U", "U-L", "L", "underburden"], "sorted, U's benches together, underburden below L");
+    assert_eq!(horizons(3), ["OB", "U", "U-L", "L", "underburden"], "U's benches joined");
     let u = &views[3].units[1];
     assert_eq!(u.joined, [("18".to_string(), 0.5), ("16".to_string(), 0.5)]);
     assert!(close(u.values["rd"], 1.5) && close(u.values["volume"], 20_000.0));
+}
+
+// Decision 0073, workstream 3a: small volumes, initialise's checks, underburden and quality defaults.
+
+const STEPS_3A: [&str; 3] = ["small_volumes", "initialise", "in_situ"];
+
+fn notes_of(record: &RunRecord, code: Code) -> Vec<String> {
+    record.notes.iter().filter(|n| n.code == Some(code)).map(|n| n.text.clone()).collect()
+}
+
+/// Waste under 6,000 m³ is a small volume: each block's U-L (5,000 m³) is set aside and written as such, never in situ.
+/// The step's setting names the parameter column: here `smallest`, a site's own name.
+#[test]
+fn small_volumes_are_set_aside_and_written_never_dropped() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let steps = json!([{ "step": "small_volumes", "settings": { "min_volume": "smallest" } }, { "step": "initialise" }, { "step": "in_situ" }]);
+    let flow = flow(&mut s, steps, "when material,rd (t/m3),smallest (m3),underburden_thickness (m)
+waste,2.3,6000,
+,,,0
+");
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let (write, horizon, became, volume) = (texts(&t, "write"), texts(&t, "horizon"), texts(&t, "became"), numbers(&t, "volume"));
+    let small: Vec<usize> = (0..t.rows()).filter(|&i| write[i].as_deref() == Some("small_volume")).collect();
+    assert_eq!(small.len(), 2);
+    assert!(small.iter().all(|&i| horizon[i].as_deref() == Some("U-L") && became[i].as_deref() == Some("small volume") && close(volume[i].unwrap(), 5_000.0)));
+    assert!((0..t.rows()).all(|i| write[i].as_deref() != Some("in_situ") || horizon[i].as_deref() != Some("U-L")), "not in situ");
+    let total: f64 = volume.iter().map(|v| v.unwrap()).sum();
+    assert!(close(total, 180_000.0), "every block written once, at one write point or the other");
+    assert_eq!(notes_of(&record, Code::ReservesSmallVolume), ["2 units set aside as small volumes, 10000.0 m3"]);
+}
+
+/// Each column's last unit is L coal, so 10 m of underburden goes under it, 5,000 m² x 10 m = 50,000 m³ a block, out of
+/// the model: never written, not in the balance. 0 m turns it off; real waste below L means none is added.
+#[test]
+fn underburden_goes_below_the_last_coal_out_of_the_model() {
+    let mut s = session();
+    let mut ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &STEPS_3A);
+    let p: RunReservesParams = serde_json::from_value(json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let project = s.project();
+    let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+    let views = reserves_preview(&get, &p, "Base", "3", "B1").unwrap();
+    let ub = views[2].units.last().unwrap();
+    assert_eq!((ub.horizon.as_str(), ub.material.as_str()), ("underburden", "waste"));
+    assert!(close(ub.values["volume"], 50_000.0) && close(ub.values["thickness"], 10.0) && close(ub.values["rd"], 2.3), "{:?}", ub.values);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    assert_eq!(notes_of(&record, Code::ReservesUnderburden), ["2 units underburden added below the last coal, out of model, 100000.0 m3"]);
+    assert!(record.messages[0].contains("180000.0 m3 in, every column balanced to 0.0e0"), "{}", record.messages[0]);
+    let t = table(&s, created(&record)[0]);
+    assert!(texts(&t, "horizon").iter().all(|h| h.as_deref() != Some("underburden")), "never written");
+
+    // Real waste below L in B1: none added there.
+    ids.push(box_solid(&mut s, "3_B1_below L", 0.0, (5.0, 12.0), json!({ "strip": 3.0, "block": "B1", "horizon": "below L", "material": "waste" })));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    assert_eq!(notes_of(&record, Code::ReservesUnderburden), ["1 unit underburden added below the last coal, out of model, 50000.0 m3"]);
+}
+
+/// Ash limits 5 to 10 % and a default of 12 % for coal, 60 % for waste: L's 20 % is outside and takes 12; U's 10 % is
+/// on the limit and stays, limits being inclusive; waste takes 60 outright. Coal thicker than 3.5 m is named.
+#[test]
+fn qualities_take_their_limits_and_defaults_and_sizes_are_checked() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let csv = "when material,rd (t/m3),ash_min (%),ash_max (%),ash_default (%),max_thickness (m)
+waste,2.3,,,60,
+coal,,5,10,12,3.5
+";
+    let flow = flow(&mut s, json!(STEPS_3A.map(|s| json!({ "step": s }))), csv);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let ash = numbers(&t, "ash");
+    assert!(close(ash[row(&t, "B1", "L", None)].unwrap(), 12.0), "outside its limits");
+    assert!(close(ash[row(&t, "B1", "U", None)].unwrap(), 10.0), "on its limit, kept");
+    assert!(close(ash[row(&t, "B1", "OB", None)].unwrap(), 60.0), "waste takes its default");
+    let mut said = notes_of(&record, Code::ReservesDefaulted);
+    said.sort();
+    assert_eq!(said, ["2 units ash: coal outside its limits given its default, 30000.0 m3", "6 units ash: waste given its default, 210000.0 m3"], "the underburden too, as Spry");
+    assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 block thicker than max_thickness: 3_B1_U"]);
 }

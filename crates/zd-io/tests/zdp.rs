@@ -258,7 +258,7 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
             field("rd", FieldKind::Density, AddUp::Volume, FieldSource::Attribute { attribute: "rd".into() }),
             field("ash_cutoff", FieldKind::Setting, AddUp::Min, FieldSource::Parameter { column: "ash_cutoff".into() }),
         ],
-        steps: vec![DataflowStep::on("initialise"), DataflowStep { step: "in_situ".into(), on: false }],
+        steps: vec![DataflowStep::on("initialise"), DataflowStep { step: "in_situ".into(), on: false, settings: Default::default() }],
         parameters: vec![table_id],
     };
     p.apply(
