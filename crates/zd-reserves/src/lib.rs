@@ -4,7 +4,8 @@
 //! Each unit carries every layer of labels at once (in situ, working section, ROM and what it became) and the input unit
 //! it came from. A step changes a column only by sorting it, splitting a unit from its top or bottom, relabelling, and
 //! grouping units to add them up by each field's declared rule. Nothing is taken out: a piece is set aside by a label,
-//! so the column always balances to its inputs. The steps (small volumes to clean coal), the dataflow object and its
+//! so the column always balances to its inputs. A horizon cut into benches (0071) is joined into one unit with each
+//! bench's in situ share noted, and put back on its benches by those shares at a write. The steps (small volumes to clean coal), the dataflow object and its
 //! runner come in later workstreams.
 
 mod column;
@@ -12,7 +13,9 @@ mod fields;
 
 use std::fmt;
 
-pub use column::{Amount, Became, BecameKind, Column, ColumnKey, End, Labels, Origin, Split, Unit, UnitId};
+pub use column::{
+    Amount, Became, BecameKind, Bench, BenchRow, Column, ColumnKey, End, Join, JoinedBench, Labels, Origin, Split, Unit, UnitId,
+};
 pub use fields::{AddUp, Field, FieldKind, Fields};
 
 /// Why a column refused a change, said in full.
@@ -34,6 +37,8 @@ pub enum ColumnError {
     BadAmount { unit: UnitId, asked: f64 },
     /// A split asked for more than the unit holds.
     ShortOf { unit: UnitId, asked: f64, had: f64 },
+    /// An input bench with no RL to put it in order.
+    BadBench { unit: String, bench: String },
 }
 
 impl fmt::Display for ColumnError {
@@ -50,6 +55,7 @@ impl fmt::Display for ColumnError {
             Self::BadSize { unit, field, value } => write!(f, "{unit} has a {field} of {value}"),
             Self::BadAmount { unit, asked } => write!(f, "unit {unit}: a split of {asked} isn't a piece"),
             Self::ShortOf { unit, asked, had } => write!(f, "unit {unit} is short: {asked} asked of {had}"),
+            Self::BadBench { unit, bench } => write!(f, "{unit}'s bench {bench} has no RL to put it in order"),
         }
     }
 }

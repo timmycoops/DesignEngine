@@ -2,6 +2,11 @@
 //! unit from its top or bottom, relabel, group runs of units and add a group up by the fields' rules. There is no way to
 //! take a unit out: a piece is set aside by saying what it became, so every summed field balances to the column's
 //! inputs at every step.
+//!
+//! Benches (decision 0071, point 8): an input unit may be one bench of its horizon. The sort puts a horizon's benches top
+//! down; `join_benches` joins each horizon's benches into one unit, noting each bench's in situ share of its volume, so
+//! working sections, loss and dilution see the whole seam; `by_bench` puts any units back on the benches by those shares
+//! at a write, as Spry's Import to ROM does.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -76,14 +81,52 @@ pub struct Became {
     pub detail: String,
 }
 
+/// Which bench an input unit is (decision 0071): its label as the cut wrote it (`170`, `below 0`, `above 500`) and the RL
+/// that puts it in order, its floor (minus infinity for the ground below the levels).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Bench {
+    pub label: String,
+    pub floor: f64,
+}
+
+impl Bench {
+    pub fn new(label: &str, floor: f64) -> Self {
+        Self { label: label.to_string(), floor }
+    }
+}
+
+/// One bench of a joined horizon: the input unit it was, its in situ values and its share of the horizon's volume.
+#[derive(Clone, Debug, PartialEq)]
+pub struct JoinedBench {
+    pub bench: Bench,
+    /// The input unit it was, an index into the column's origins.
+    pub origin: u32,
+    /// Its in situ values, as input, for the in situ rows written by bench.
+    pub values: Vec<f64>,
+    /// Its share of the joined unit's volume; a joined horizon's shares add up to 1.
+    pub share: f64,
+}
+
+/// A horizon's benches joined into one unit, top down.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Join {
+    pub stack: u32,
+    pub in_situ: Labels,
+    pub benches: Vec<JoinedBench>,
+}
+
 /// A piece of the column: where it sits, its four layers of labels, the input unit it came from and its values.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Unit {
     pub id: UnitId,
-    /// The input unit it came from, an index into the column's origins.
+    /// The input unit it came from, an index into the column's origins; for a joined unit, its top bench's.
     pub origin: u32,
     /// Its place in the seam model's stack order, top down (decision 0070, point 2).
     pub stack: u32,
+    /// The bench it is, for an input unit cut into benches; a joined unit's bench is `None` and its `joined` says.
+    pub bench: Option<Bench>,
+    /// The join it was made by, an index into the column's joins: its pieces go back on those benches by their shares.
+    pub joined: Option<u32>,
     pub in_situ: Labels,
     pub section: Option<Labels>,
     pub rom: Option<Labels>,
@@ -108,6 +151,27 @@ impl Unit {
     pub fn is_set_aside(&self) -> bool {
         self.became.as_ref().is_some_and(|b| b.kind.is_set_aside())
     }
+
+    /// Its place among its horizon's benches, top down: a bench's floor, an unbenched unit above any bench.
+    fn bench_floor(&self) -> f64 {
+        self.bench.as_ref().map_or(f64::INFINITY, |b| b.floor)
+    }
+
+    /// Whether it's an input bench as cut, nothing done to it yet, so it can join its neighbours.
+    fn is_fresh_bench(&self) -> bool {
+        self.bench.is_some() && self.joined.is_none() && self.section.is_none() && self.rom.is_none() && self.became.is_none()
+    }
+}
+
+/// The units at a write put back on their benches, added up a bench (decision 0071, point 8).
+#[derive(Clone, Debug, PartialEq)]
+pub struct BenchRow {
+    /// The bench, `None` for units never benched.
+    pub bench: Option<Bench>,
+    /// The units with a share in this bench.
+    pub units: Vec<UnitId>,
+    /// Their shares added up by each field's rule.
+    pub values: Vec<f64>,
 }
 
 /// How much a split takes.
@@ -142,12 +206,13 @@ pub struct Column {
     fields: Arc<Fields>,
     units: Vec<Unit>,
     origins: Vec<Origin>,
+    joins: Vec<Join>,
     next_id: UnitId,
 }
 
 impl Column {
     pub fn new(key: ColumnKey, fields: Arc<Fields>) -> Self {
-        Self { key, fields, units: Vec::new(), origins: Vec::new(), next_id: 0 }
+        Self { key, fields, units: Vec::new(), origins: Vec::new(), joins: Vec::new(), next_id: 0 }
     }
 
     pub fn fields(&self) -> &Fields {
@@ -174,6 +239,11 @@ impl Column {
         &self.origins
     }
 
+    /// The horizons whose benches were joined, each with its benches' in situ values and shares, top down.
+    pub fn joins(&self) -> &[Join] {
+        &self.joins
+    }
+
     /// Where the unit with this id sits now.
     pub fn position(&self, id: UnitId) -> Option<usize> {
         self.units.iter().position(|u| u.id == id)
@@ -181,6 +251,24 @@ impl Column {
 
     /// Adds an input unit at the foot of the column: one value a field, its volume and thickness not negative.
     pub fn push_input(&mut self, origin: Origin, stack: u32, in_situ: Labels, values: Vec<f64>) -> Result<UnitId, ColumnError> {
+        self.push_bench_input(origin, stack, in_situ, None, values)
+    }
+
+    /// Adds an input unit that is one bench of its horizon (or `None`, a horizon not benched). A bench needs an RL to
+    /// put it in order: its floor, minus infinity for the ground below the levels.
+    pub fn push_bench_input(
+        &mut self,
+        origin: Origin,
+        stack: u32,
+        in_situ: Labels,
+        bench: Option<Bench>,
+        values: Vec<f64>,
+    ) -> Result<UnitId, ColumnError> {
+        if let Some(b) = &bench
+            && (b.floor.is_nan() || b.floor == f64::INFINITY)
+        {
+            return Err(ColumnError::BadBench { unit: origin.name, bench: b.label.clone() });
+        }
         if values.len() != self.fields.len() {
             return Err(ColumnError::Values { name: origin.name, expected: self.fields.len(), got: values.len() });
         }
@@ -194,7 +282,7 @@ impl Column {
         let id = self.take_id();
         self.origins.push(origin);
         let origin = (self.origins.len() - 1) as u32;
-        self.units.push(Unit { id, origin, stack, in_situ, section: None, rom: None, became: None, values });
+        self.units.push(Unit { id, origin, stack, bench, joined: None, in_situ, section: None, rom: None, became: None, values });
         Ok(id)
     }
 
@@ -204,9 +292,110 @@ impl Column {
         id
     }
 
-    /// Puts the units in the seam model's stack order, top down. Stable: the pieces of one place keep their order.
+    /// Puts the units in the seam model's stack order, top down, and a horizon's benches top down by their floors, as
+    /// Spry sorts by seam, material and bench. Stable: the pieces of one place and bench keep their order.
     pub fn sort(&mut self) {
-        self.units.sort_by_key(|u| u.stack);
+        self.units.sort_by(|a, b| a.stack.cmp(&b.stack).then_with(|| b.bench_floor().total_cmp(&a.bench_floor())));
+    }
+
+    /// Joins each horizon's benches into one unit (decision 0071, point 8, Spry's way): every run of two or more
+    /// neighbouring input benches of one stack place and in situ labels, nothing done to them yet, becomes one unit, its
+    /// fields added up by their rules, so the summed fields balance as before. The join keeps each bench's in situ values
+    /// and its share of the volume (by thickness where the horizon has no volume, equal where it has neither), and a
+    /// piece split from the joined unit keeps the join, so a write puts it back on the benches. Sort first. Says how many
+    /// horizons were joined.
+    pub fn join_benches(&mut self) -> usize {
+        let same = |a: &Unit, b: &Unit| a.is_fresh_bench() && b.is_fresh_bench() && a.stack == b.stack && a.in_situ == b.in_situ;
+        let runs = self.runs(same);
+        let units = std::mem::take(&mut self.units);
+        let mut joined = 0;
+        for run in runs {
+            let parts = &units[run];
+            if parts.len() < 2 || !parts[0].is_fresh_bench() {
+                self.units.extend(parts.iter().cloned());
+                continue;
+            }
+            let values: Vec<&[f64]> = parts.iter().map(|u| u.values.as_slice()).collect();
+            let values = add_up_values(&self.fields, &values);
+            let benches = parts
+                .iter()
+                .zip(shares(&self.fields, parts))
+                .map(|(u, share)| JoinedBench {
+                    bench: u.bench.clone().expect("a fresh bench"),
+                    origin: u.origin,
+                    values: u.values.clone(),
+                    share,
+                })
+                .collect();
+            let top = &parts[0];
+            self.joins.push(Join { stack: top.stack, in_situ: top.in_situ.clone(), benches });
+            let id = self.take_id();
+            self.units.push(Unit {
+                id,
+                origin: top.origin,
+                stack: top.stack,
+                bench: None,
+                joined: Some((self.joins.len() - 1) as u32),
+                in_situ: top.in_situ.clone(),
+                section: None,
+                rom: None,
+                became: None,
+                values,
+            });
+            joined += 1;
+        }
+        joined
+    }
+
+    /// The units at these places put back on their benches and added up a bench, top down (decision 0071, point 8): a
+    /// unit of a join shared out by its benches' in situ shares, its summed fields in proportion and every other value as
+    /// it is; a bench as input on its own bench; units never benched in a row of their own, last. The rows' summed fields
+    /// add up to the units'.
+    pub fn by_bench(&self, at: impl IntoIterator<Item = usize>) -> Vec<BenchRow> {
+        // A bench, the units with a share in it and their shares' values.
+        type Gathered = (Option<Bench>, Vec<UnitId>, Vec<Vec<f64>>);
+        let mut rows: Vec<Gathered> = Vec::new();
+        let mut put = |bench: Option<&Bench>, id: UnitId, values: Vec<f64>| {
+            let at = match rows.iter().position(|(b, _, _)| b.as_ref() == bench) {
+                Some(at) => at,
+                None => {
+                    rows.push((bench.cloned(), Vec::new(), Vec::new()));
+                    rows.len() - 1
+                }
+            };
+            if !rows[at].1.contains(&id) {
+                rows[at].1.push(id);
+            }
+            rows[at].2.push(values);
+        };
+        for i in at {
+            let u = &self.units[i];
+            match u.joined {
+                Some(j) => {
+                    for b in &self.joins[j as usize].benches {
+                        let values = (0..self.fields.len())
+                            .map(|f| if self.fields.is_summed(f) { u.values[f] * b.share } else { u.values[f] })
+                            .collect();
+                        put(Some(&b.bench), u.id, values);
+                    }
+                }
+                None => put(u.bench.as_ref(), u.id, u.values.clone()),
+            }
+        }
+        // Top down by floor; a bench of the same floor and another label (by top on one rule, bottom on another) by
+        // label; units never benched last.
+        rows.sort_by(|(a, _, _), (b, _, _)| match (a, b) {
+            (Some(a), Some(b)) => b.floor.total_cmp(&a.floor).then_with(|| a.label.cmp(&b.label)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
+        rows.into_iter()
+            .map(|(bench, units, values)| {
+                let values: Vec<&[f64]> = values.iter().map(Vec::as_slice).collect();
+                BenchRow { bench, units, values: add_up_values(&self.fields, &values) }
+            })
+            .collect()
     }
 
     /// Splits a piece off the top or bottom of the unit at `at`. The piece is a new unit with the unit's labels and
@@ -276,8 +465,8 @@ impl Column {
 
     /// The units at these places added up by each field's rule.
     pub fn add_up(&self, at: impl IntoIterator<Item = usize>) -> Vec<f64> {
-        let units: Vec<&Unit> = at.into_iter().map(|i| &self.units[i]).collect();
-        add_up(&self.fields, &units)
+        let values: Vec<&[f64]> = at.into_iter().map(|i| self.units[i].values.as_slice()).collect();
+        add_up_values(&self.fields, &values)
     }
 
     /// Every unit, set aside or not, added up: its summed fields are the inputs' at every step.
@@ -286,36 +475,48 @@ impl Column {
     }
 }
 
-/// Units added up by each field's rule. A sum adds; a volume or mass average weighs by volume or volume × density,
-/// leaving out units of no weight; the largest and smallest are of all. Nothing missing is hidden: a missing value
-/// (NaN) among units that weigh gives a missing answer. No units, or no weight, gives NaN for an average.
-pub(crate) fn add_up(fields: &Fields, units: &[&Unit]) -> Vec<f64> {
+/// Each bench's share of its joined horizon: by volume; by thickness where the horizon has no volume; equal where it has
+/// neither. The shares add up to 1.
+fn shares(fields: &Fields, benches: &[Unit]) -> Vec<f64> {
+    for field in [fields.volume(), fields.thickness()] {
+        let total: f64 = benches.iter().map(|u| u.values[field]).sum();
+        if total > 0.0 {
+            return benches.iter().map(|u| u.values[field] / total).collect();
+        }
+    }
+    vec![1.0 / benches.len() as f64; benches.len()]
+}
+
+/// Values added up by each field's rule. A sum adds; a volume or mass average weighs by volume or volume × density,
+/// leaving out values of no weight; the largest and smallest are of all. Nothing missing is hidden: a missing value
+/// (NaN) among values that weigh gives a missing answer. No values, or no weight, gives NaN for an average.
+pub(crate) fn add_up_values(fields: &Fields, units: &[&[f64]]) -> Vec<f64> {
     let volume = fields.volume();
     (0..fields.len())
         .map(|i| match fields.weight(i) {
-            Weight::Sum => units.iter().map(|u| u.values[i]).sum(),
-            Weight::Volume => weighted(units, i, |u| u.values[volume]),
-            Weight::Mass(d) => weighted(units, i, |u| u.values[volume] * u.values[d]),
+            Weight::Sum => units.iter().map(|u| u[i]).sum(),
+            Weight::Volume => weighted(units, i, |u| u[volume]),
+            Weight::Mass(d) => weighted(units, i, |u| u[volume] * u[d]),
             Weight::Max => extreme(units, i, f64::max),
             Weight::Min => extreme(units, i, f64::min),
         })
         .collect()
 }
 
-fn weighted(units: &[&Unit], i: usize, weight: impl Fn(&Unit) -> f64) -> f64 {
+fn weighted(units: &[&[f64]], i: usize, weight: impl Fn(&[f64]) -> f64) -> f64 {
     let (mut sum, mut total) = (0.0, 0.0);
     for u in units {
         let w = weight(u);
         if w != 0.0 {
-            sum += w * u.values[i];
+            sum += w * u[i];
             total += w;
         }
     }
     if total == 0.0 { f64::NAN } else { sum / total }
 }
 
-fn extreme(units: &[&Unit], i: usize, pick: fn(f64, f64) -> f64) -> f64 {
-    let mut values = units.iter().map(|u| u.values[i]);
+fn extreme(units: &[&[f64]], i: usize, pick: fn(f64, f64) -> f64) -> f64 {
+    let mut values = units.iter().map(|u| u[i]);
     let Some(first) = values.next() else { return f64::NAN };
     values.fold(first, |a, b| if a.is_nan() || b.is_nan() { f64::NAN } else { pick(a, b) })
 }
