@@ -100,7 +100,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   (with where each value comes from), steps by name and the parameter tables it reads. `Table`: results, a table a case,
   values as Parquet in the `.zdp`, read by the HTML report. `reserves.run` runs a dataflow a column a pit, strip
   and block (the dataflow's levels above the seam), its steps registered by name, and writes a reserves table: a row a
-  leaf of the levels, a column a field under its folders (`Insitu\Coalolume`), coal and waste on one leaf as Spry's
+  leaf of the levels, a column a field under its folders (`Insitu\Coal\volume`), coal and waste on one leaf as Spry's
   node (`docs/decisions/0072-dataflow-parameters-tables.md`, `0074-rom-and-the-reserves-table.md`).
 - `Rule`: a function from a string to one value per edge. Types: fixed, fixed list, inside polygon,
   inside solid, segment azimuth, by horizon. Later: block model, geotech solid with transition distance.
