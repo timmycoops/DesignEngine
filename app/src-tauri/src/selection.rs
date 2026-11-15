@@ -63,7 +63,7 @@ impl ScreenBox {
                 let [x, y] = g.node_xy(c, r);
                 [x, y, g.z_at(c, r)]
             }))),
-            Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) => false,
+            Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) | Body::ParameterTable(_) | Body::Dataflow(_) | Body::Table(_) => false,
         }
     }
 }

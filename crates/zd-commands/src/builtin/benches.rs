@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Change, Object, ObjectId, Solid};
+use zd_core::{AttrValue, Attributes, Body, Change, Object, ObjectId, Solid, attribute_ci, filter_fits, filter_words};
 use zd_geom::{BenchCut, bench_levels, cut_solid_by_levels, find_solid_crossings};
 
 use super::blocks::{ADDS_UP, block_name, named, word};
@@ -132,54 +132,10 @@ pub struct CutByBenchesParams {
     pub attribute: String,
 }
 
-/// An attribute's value by name, the name's case aside.
-fn attribute<'a>(attributes: &'a Attributes, key: &str) -> Option<&'a AttrValue> {
-    attributes.get(key).or_else(|| attributes.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v))
-}
-
-/// A range such as `1-5` or `-20--5`: two numbers either side of a dash, lowest first. `U-M` is no range.
-fn range(item: &str) -> Option<(f64, f64)> {
-    item.char_indices().skip(1).filter(|&(_, c)| c == '-').find_map(|(i, _)| {
-        let (a, b) = (item[..i].trim().parse::<f64>().ok()?, item[i + 1..].trim().parse::<f64>().ok()?);
-        Some((a.min(b), a.max(b)))
-    })
-}
-
-/// Whether one item of a filter's list fits a value: `*`, a range or a number for a value that's a number (or text that
-/// reads as one), or the same word, case aside.
-fn item_fits(item: &str, value: &AttrValue) -> bool {
-    if item == "*" {
-        return true;
-    }
-    let number = match value {
-        AttrValue::Number(n) => Some(*n),
-        AttrValue::Text(t) => t.trim().parse::<f64>().ok(),
-        AttrValue::Bool(_) => None,
-    };
-    if let Some(n) = number {
-        if let Some((a, b)) = range(item) {
-            return a <= n && n <= b;
-        }
-        if let Ok(x) = item.parse::<f64>() {
-            return (x - n).abs() <= 1e-9 * x.abs().max(1.0);
-        }
-    }
-    word(value).eq_ignore_ascii_case(item)
-}
-
-/// Whether a filter's comma list fits a value; a blank list fits anything.
-fn list_fits(list: &str, value: Option<&AttrValue>) -> bool {
-    let items: Vec<&str> = list.split(',').map(str::trim).filter(|i| !i.is_empty()).collect();
-    if items.is_empty() || items.contains(&"*") {
-        return true;
-    }
-    value.is_some_and(|v| items.iter().any(|item| item_fits(item, v)))
-}
-
 impl BenchRule {
     /// Whether a solid carrying these attributes takes this rule.
     pub fn fits(&self, attributes: &Attributes) -> bool {
-        self.when.iter().all(|(key, list)| list_fits(list, attribute(attributes, key)))
+        filter_fits(&self.when, attributes)
     }
 
     /// The layer for what this rule takes: its own, or the run's where it names none.
@@ -189,8 +145,7 @@ impl BenchRule {
 
     /// The rule in a few words, for what a run says.
     fn words(&self) -> String {
-        let when: Vec<String> = self.when.iter().filter(|(_, l)| !l.trim().is_empty()).map(|(k, l)| format!("{k} {}", l.trim())).collect();
-        let which = if when.is_empty() { "everything".to_string() } else { when.join(", ") };
+        let which = filter_words(&self.when);
         let onto = self.layer.as_deref().map(str::trim).filter(|l| !l.is_empty()).map(|l| format!(", onto '{l}'")).unwrap_or_default();
         if self.benched {
             let by = if self.named_by == BenchEnd::Top { ", named by the top" } else { "" };
@@ -278,7 +233,7 @@ impl Command for CutByBenches {
 
         // Rules no solid takes, and attributes no solid carries: likely a word mistyped.
         for (k, rule) in p.rules.iter().enumerate() {
-            let missing: Vec<&str> = rule.when.iter().filter(|(_, l)| !l.trim().is_empty()).map(|(key, _)| key.as_str()).filter(|key| solids.iter().all(|(o, _, _)| attribute(&o.attributes, key).is_none())).collect();
+            let missing: Vec<&str> = rule.when.iter().filter(|(_, l)| !l.trim().is_empty()).map(|(key, _)| key.as_str()).filter(|key| solids.iter().all(|(o, _, _)| attribute_ci(&o.attributes, key).is_none())).collect();
             if !missing.is_empty() {
                 let text = format!("bench rule {} ({}) asks for {}, which none of the solids carries", k + 1, rule.words(), missing.join(", "));
                 notes.push(Note::warning(Code::BenchRuleUnused, text));
@@ -434,8 +389,6 @@ mod tests {
         assert!(!rule(&[("material", "coal"), ("strip", "3")], false).fits(&ob));
         let text_strip = attributes(&[("strip", AttrValue::Text("12".into()))]);
         assert!(rule(&[("strip", "10-15")], false).fits(&text_strip), "text that reads as a number");
-        assert_eq!(range("-20--5"), Some((-20.0, -5.0)));
-        assert_eq!(range("U-M"), None);
     }
 
     #[test]

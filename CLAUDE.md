@@ -94,6 +94,11 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   seam, for models that mark absence that way (`docs/decisions/0020-no-seam-rl.md`). Existence polygons and a crop surface
   (topography or base of weathering) come later. Faulting applies to structure, never to thickness.
   See `docs/decisions/0007-seam-model.md`.
+- `ParameterTable`: assumptions any tool reads (reserves settings now; dragline, haulage, equipment later): filter
+  columns (the bench rules' syntax) and value columns with units, read top down, each value from the first row that fits
+  and holds it, tables read in order so a case's rows go first; CSV in and out. `Dataflow`: a reserves dataflow's fields
+  (with where each value comes from), steps by name and the parameter tables it reads. `Table`: results, a table a case,
+  values as Parquet in the `.zdp`, read by the HTML report (`docs/decisions/0072-dataflow-parameters-tables.md`).
 - `Rule`: a function from a string to one value per edge. Types: fixed, fixed list, inside polygon,
   inside solid, segment azimuth, by horizon. Later: block model, geotech solid with transition distance.
   Blending between rules may only widen berms and flatten slopes: where a value changes along a straight run, a

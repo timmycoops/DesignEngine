@@ -285,7 +285,7 @@ export interface Layer {
   visible: boolean;
 }
 
-export type ObjectKind = 'string' | 'surface' | 'solid' | 'grid' | 'seam_model' | 'face_design' | 'workflow';
+export type ObjectKind = 'string' | 'surface' | 'solid' | 'grid' | 'seam_model' | 'face_design' | 'workflow' | 'parameter_table' | 'dataflow' | 'table';
 
 export interface ObjectSummary {
   id: string;
@@ -917,7 +917,17 @@ export type Measures =
     }
   | { kind: 'seam_model'; model: SeamModel }
   | { kind: 'face_design'; design: FaceDesign }
-  | { kind: 'workflow'; workflow: Workflow };
+  | { kind: 'workflow'; workflow: Workflow }
+  | { kind: 'parameter_table'; parameters: ParameterTable; csv: string }
+  | { kind: 'dataflow'; dataflow: unknown }
+  | { kind: 'table'; rows: number; columns: { name: string; unit?: string; text?: boolean }[] };
+
+/** Assumptions any tool reads, rows read top down, the first that fits and holds a value giving it (decision 0072). */
+export interface ParameterTable {
+  filters: string[];
+  columns: { name: string; unit?: string; text?: boolean; note?: string }[];
+  rows: { when?: Record<string, string>; values: Record<string, number | string> }[];
+}
 
 /** Saved steps run again in one go (decision 0065), and its cases (decision 0066). */
 export interface Workflow {

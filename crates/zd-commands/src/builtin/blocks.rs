@@ -210,12 +210,7 @@ fn separator(c: char) -> bool {
 
 /// A value as it goes in a name: whole numbers without a decimal point.
 pub(super) fn word(value: &AttrValue) -> String {
-    match value {
-        AttrValue::Number(n) if n.fract() == 0.0 && n.abs() < 1e15 => format!("{}", *n as i64),
-        AttrValue::Number(n) => n.to_string(),
-        AttrValue::Text(t) => t.trim().to_string(),
-        AttrValue::Bool(b) => b.to_string(),
-    }
+    zd_core::attribute_word(value)
 }
 
 /// The name from the pattern: each `{key}` its value; one with no value is left out with the separator before it.

@@ -4895,6 +4895,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "zd-reserves",
 ]
 
 [[package]]
@@ -4923,6 +4924,7 @@ dependencies = [
  "serde_json",
  "zd-core",
  "zd-geom",
+ "zd-reserves",
  "zip",
 ]
 

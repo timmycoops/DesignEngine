@@ -230,3 +230,57 @@ fn find_projects(dir: &Path, out: &mut Vec<PathBuf>) {
         }
     }
 }
+
+/// Decision 0072: a parameter table and a dataflow as JSON in their rows, a results table's values in a Parquet entry of
+/// its own, nulls, a NaN, minus zero and words kept, and a table with no columns.
+#[test]
+fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
+    use zd_core::{Dataflow, DataflowField, DataflowStep, FieldSource, ParameterTable, Table, TableColumn};
+    use zd_reserves::{AddUp, Field, FieldKind};
+
+    let mut p = sample_project();
+    let parameters = ParameterTable::from_csv("when seam,when strip,ash_cutoff (%),waste_rd (t/m3),loader\nU,1-5,30,,\n,,35,2.3,EX3600\n").unwrap();
+    let field = |name: &str, kind, add_up, source| DataflowField { field: Field::new(name, kind, add_up), source };
+    let results = Table {
+        columns: vec![
+            TableColumn::text("seam", vec![Some("U".into()), None, Some(String::new())]),
+            TableColumn::number("volume", "m3", vec![Some(1234.5), None, Some(-0.0)]),
+            TableColumn::number("ash", "%", vec![Some(f64::NAN), Some(12.25), None]),
+        ],
+    };
+    p.apply(RunId::new(), vec![Change::Create { name: "assumptions".into(), layer: "parameters".into(), attributes: Attributes::new(), body: Body::ParameterTable(Arc::new(parameters)) }])
+        .unwrap();
+    let table_id = named(&p, "assumptions").id;
+    let dataflow = Dataflow {
+        fields: vec![
+            field("volume", FieldKind::Volume, AddUp::Sum, FieldSource::Volume),
+            field("thickness", FieldKind::Thickness, AddUp::Sum, FieldSource::Thickness),
+            field("rd", FieldKind::Density, AddUp::Volume, FieldSource::Attribute { attribute: "rd".into() }),
+            field("ash_cutoff", FieldKind::Setting, AddUp::Min, FieldSource::Parameter { column: "ash_cutoff".into() }),
+        ],
+        steps: vec![DataflowStep::on("initialise"), DataflowStep { step: "in_situ".into(), on: false }],
+        parameters: vec![table_id],
+    };
+    p.apply(
+        RunId::new(),
+        vec![
+            Change::Create { name: "reserves".into(), layer: "dataflows".into(), attributes: Attributes::new(), body: Body::Dataflow(Arc::new(dataflow)) },
+            Change::Create { name: "Base in situ".into(), layer: "reserves".into(), attributes: Attributes::new(), body: Body::Table(Arc::new(results)) },
+            Change::Create { name: "empty".into(), layer: "reserves".into(), attributes: Attributes::new(), body: Body::Table(Arc::new(Table::default())) },
+        ],
+    )
+    .unwrap();
+
+    let dir = TempDir::new("zdp-tables");
+    let back = round_trip(&p, &dir.0);
+    assert_eq!(project_differences(&p, &back), Vec::<String>::new());
+    let Body::Table(t) = &named(&back, "Base in situ").body else { panic!("a table") };
+    let zd_core::ColumnValues::Number(volume) = &t.column("volume").unwrap().values else { panic!("numbers") };
+    assert!(volume[2].unwrap().is_sign_negative(), "minus zero kept");
+    let Body::Dataflow(d) = &named(&back, "reserves").body else { panic!("a dataflow") };
+    assert_eq!(d.parameters, [table_id]);
+    let id = named(&p, "Base in situ").id;
+    let entries = entry_names(&p);
+    assert!(entries.contains(&format!("tables/{id}-r1.parquet")), "{entries:?}");
+    assert_eq!(entries.iter().filter(|e| e.starts_with("tables/")).count(), 1, "a table with no columns has no entry");
+}

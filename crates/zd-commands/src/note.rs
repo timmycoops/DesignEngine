@@ -146,6 +146,7 @@ codes! {
     BenchFlapsLeftOut = "bench.flaps_left_out", "Volume taken off a bench cut's pieces as flaps thinner than the flap thickness";
     BenchCutDiffers = "bench.cut_differs", "A solid whose benches don't add back to its volume";
     BenchRuleUnused = "bench.rule_unused", "A bench rule no solid takes, or one asking for an attribute no solid carries";
+    DataflowNoColumn = "dataflow.no_column", "A dataflow setting that none of its parameter tables has a column for";
     WorkflowPicked = "workflow.picked", "A workflow step's input that is the objects as picked, as no rule finds them";
     ObjectSolidsDeleted = "object.solids_deleted", "Solids deleted, with their volume, so a report can account for it";
 }
