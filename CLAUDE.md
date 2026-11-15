@@ -98,7 +98,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   columns (the bench rules' syntax) and value columns with units, read top down, each value from the first row that fits
   and holds it, tables read in order so a case's rows go first; CSV in and out. `Dataflow`: a reserves dataflow's fields
   (with where each value comes from), steps by name and the parameter tables it reads. `Table`: results, a table a case,
-  values as Parquet in the `.zdp`, read by the HTML report. `reserves.run` runs a dataflow a column a pit, strip
+  values as Parquet in the `.zdp`, read by the HTML report and the app's Reserves table tab, fields as rows and a
+  node's children across, its solids matched by the levels the table records (`docs/decisions/0075-reserves-in-the-app.md`). `reserves.run` runs a dataflow a column a pit, strip
   and block (the dataflow's levels above the seam), its steps registered by name, and writes a reserves table: a row a
   leaf of the levels, a column a field under its folders (`Insitu\Coal\volume`), coal and waste on one leaf as Spry's
   node (`docs/decisions/0072-dataflow-parameters-tables.md`, `0074-rom-and-the-reserves-table.md`).

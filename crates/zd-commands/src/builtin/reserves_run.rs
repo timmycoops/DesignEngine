@@ -1430,7 +1430,7 @@ fn place(run: &ColumnRun<'_>, values: &[f64], onto: usize, folder: &str, texts: 
 ///   section above on its first ply's, from below on its last's. A joined ply's benches take their pieces by their in situ
 ///   shares. Where the first ply's row says `aggregate_sections` yes, each piece carries the section's qualities.
 /// - **ROM waste**: waste, discarded, thin and high ROM ash coal on their own leaves; roof, edge and other loss on the last
-///   unit of the waste it went into, floor loss on its first.
+///   unit of the waste it went into, floor loss on its first; a loss into the underburden, which has no leaf, on its own.
 /// - **Scheduled**, beside them: what a schedule takes, a copy of ROM until factors come between them.
 /// - **Clean coal**: what's coal in situ and in ROM, each section's coal alone, its qualities the section's coal's where
 ///   aggregated.
@@ -1506,7 +1506,8 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
             (Some(b), Some(r)) if b.kind == BecameKind::Loss => {
                 let target = sections.iter().find(|s| Some(s.id) == r.id && !s.coal);
                 let at = target.and_then(|t| if b.detail == "floor" { t.units.first() } else { t.units.last() }).and_then(|&id| run.column.position(id));
-                at.unwrap_or(i)
+                // A loss into the underburden, outside the model, has no leaf there: it's written on its own.
+                at.filter(|&at| !run.is_out_of_model(&run.column.units()[at])).unwrap_or(i)
             }
             _ => i,
         };
@@ -1755,7 +1756,13 @@ fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: V
         let table = table_of(prepared, of);
         let rows = table.rows();
         let name = p.name.replace("{dataflow}", &prepared.name).replace("{case}", case);
-        changes.push(Change::Create { name: name.clone(), layer: p.layer.clone(), attributes: Attributes::new(), body: Body::Table(Arc::new(table)) });
+        // Its levels and their defaults, so a leaf can be matched to its solids as the run placed them (decision 0075).
+        let levels = prepared.dataflow.levels.iter().map(|l| match &l.default {
+            Some(d) => format!("{}={d}", l.attribute),
+            None => l.attribute.clone(),
+        });
+        let attributes: Attributes = [("levels".to_string(), AttrValue::Text(levels.collect::<Vec<_>>().join(";")))].into_iter().collect();
+        changes.push(Change::Create { name: name.clone(), layer: p.layer.clone(), attributes, body: Body::Table(Arc::new(table)) });
         messages.push(format!("{name}: {} block{}, {rows} lea{}", of.len(), plural(of.len()), if rows == 1 { "f" } else { "ves" }));
     }
     let steps: Vec<&str> = prepared.steps.iter().map(|(n, _, _)| *n).collect();

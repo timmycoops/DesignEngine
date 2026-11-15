@@ -15,7 +15,6 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::Value;
 use zd_core::{AttrValue, BASE_CASE, Body, ChangeKind, ColumnValues, InputRule, Object, ObjectId, ObjectKind, RunId, SeamModel, Source, StepAction, Table, Workflow};
-use zd_reserves::AddUp;
 
 use crate::builtin::horizon_order;
 use crate::{Code, CommandError, LogEntry, RunRecord, Session, Severity};
@@ -640,7 +639,7 @@ fn block_row(o: &Object, density: Option<&str>, qualities: &[String], column: &s
 /// The blocks by bench (decision 0071): a row a bench, top down by its RL, `above` before the numbers and `below` after,
 /// and the blocks with no bench last; none at all where no block has one.
 /// Where a bench sorts, top down: above the levels first, then the numbers highest first, then below them, then none.
-fn bench_place(n: &str) -> (u8, f64) {
+pub(crate) fn bench_place(n: &str) -> (u8, f64) {
     if n.is_empty() {
         (3, 0.0)
     } else if let Ok(rl) = n.parse::<f64>() {
@@ -708,37 +707,7 @@ pub fn reserves_figures(name: &str, table: &Table) -> ReservesFigures {
     let add = |stage: &str, below: &str, fields: &[(String, String)], leaves: &[usize]| -> Vec<Option<f64>> {
         fields
             .iter()
-            .map(|(field, _)| {
-                let name = path(stage, below, field);
-                let column = table.column(&name)?;
-                let (Some(rule), ColumnValues::Number(v)) = (&column.add_up, &column.values) else { return None };
-                let volume = numbers.get(path(stage, below, "volume").as_str()).copied();
-                let weighted = |w: &dyn Fn(usize) -> Option<f64>| {
-                    let (mut sum, mut total) = (0.0, 0.0);
-                    for &i in leaves {
-                        let (Some(x), Some(w)) = (v[i], w(i)) else { continue };
-                        if w != 0.0 {
-                            sum += w * x;
-                            total += w;
-                        }
-                    }
-                    (total != 0.0).then(|| sum / total)
-                };
-                match rule {
-                    AddUp::Sum => {
-                        let values: Vec<f64> = leaves.iter().filter_map(|&i| v[i]).collect();
-                        (!values.is_empty()).then(|| values.iter().sum())
-                    }
-                    AddUp::Volume => weighted(&|i| volume.and_then(|vol| vol[i])),
-                    AddUp::Mass { density } => {
-                        let d = if density.contains('\\') { density.clone() } else { path(stage, below, density) };
-                        let d = numbers.get(d.as_str()).copied();
-                        weighted(&|i| Some(volume?[i]? * d?[i]?))
-                    }
-                    AddUp::Max => leaves.iter().filter_map(|&i| v[i]).reduce(f64::max),
-                    AddUp::Min => leaves.iter().filter_map(|&i| v[i]).reduce(f64::min),
-                }
-            })
+            .map(|(field, _)| crate::reserves_view::add_up_column(table, &path(stage, below, field), leaves))
             .collect()
     };
     let writes = stages
@@ -901,6 +870,8 @@ fn now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use zd_reserves::AddUp;
+
     use super::*;
 
     #[test]

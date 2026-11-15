@@ -27,6 +27,7 @@ import {
   Slice,
   StepBack,
   StepForward,
+  Sheet,
   Table2,
   Undo2,
   Workflow as WorkflowIcon,
@@ -1340,6 +1341,9 @@ export default function App() {
           </ToolButton>
           <ToolButton tip="Block table: solids and their attributes to sort, filter, add up, select or delete" onClick={() => dockRef.current && showPanel(dockRef.current, 'blocks')}>
             <Table2 /> Blocks
+          </ToolButton>
+          <ToolButton tip="Reserves table: a node's fields down the side, broken down by its children across, from Imported to Scheduled" onClick={() => dockRef.current && showPanel(dockRef.current, 'restable')}>
+            <Sheet /> Reserves table
           </ToolButton>
           <ToolButton tip="Workflow: saved steps run again in one go, captured from the Run log or added from the tools" onClick={() => dockRef.current && showPanel(dockRef.current, 'workflow')}>
             <WorkflowIcon /> Workflow

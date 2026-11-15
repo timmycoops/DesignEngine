@@ -12,6 +12,7 @@ mod note;
 mod error;
 mod registry;
 pub mod report;
+pub mod reserves_view;
 mod report_html;
 mod session;
 mod spec;
