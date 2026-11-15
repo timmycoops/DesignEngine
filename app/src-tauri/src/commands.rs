@@ -100,8 +100,8 @@ pub enum Measures {
     /// A parameter table and the same as CSV (decision 0072).
     ParameterTable { parameters: zd_core::ParameterTable, csv: String },
     Dataflow { dataflow: zd_core::Dataflow },
-    /// A results table's size and columns; its values are read on their own.
-    Table { rows: usize, columns: Vec<zd_core::ColumnHeader> },
+    /// A results table's size, its columns, and its rows added up by write point, horizon and bench (decision 0072).
+    Table { rows: usize, columns: Vec<zd_core::ColumnHeader>, figures: zd_commands::report::ReservesFigures },
 }
 
 fn measure(body: &Body) -> Measures {
@@ -142,7 +142,7 @@ fn measure(body: &Body) -> Measures {
         Body::Workflow(w) => Measures::Workflow { workflow: (**w).clone() },
         Body::ParameterTable(t) => Measures::ParameterTable { parameters: (**t).clone(), csv: t.to_csv() },
         Body::Dataflow(d) => Measures::Dataflow { dataflow: (**d).clone() },
-        Body::Table(t) => Measures::Table { rows: t.rows(), columns: t.headers() },
+        Body::Table(t) => Measures::Table { rows: t.rows(), columns: t.headers(), figures: zd_commands::report::reserves_figures("", t) },
     }
 }
 
@@ -1244,6 +1244,9 @@ pub struct BenchConfig {
     /// With `--workflow`, the Run log's Capture and the Workflow panel driven as Tim would: two runs captured, run again,
     /// a step's Add to workflow, a pause, one undo (decision 0065).
     workflow: bool,
+    /// With `--dataflow <project.zdp>`, a project holding a parameter table, a dataflow and a results table opened, each
+    /// clicked in the Layers panel and what Properties shows read back (decision 0072).
+    dataflow: Option<String>,
 }
 
 /// Present when the app was started with `--bench`: the viewport then runs Checks 1, 3 and 4
@@ -1292,6 +1295,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         shell: args.iter().any(|a| a == "--shell"),
         section_guide: args.iter().any(|a| a == "--section-guide"),
         workflow: args.iter().any(|a| a == "--workflow"),
+        dataflow: args.iter().position(|a| a == "--dataflow").and_then(|i| args.get(i + 1)).cloned(),
     })
 }
 

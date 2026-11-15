@@ -28,6 +28,7 @@ import {
 } from '../bridge';
 import { loadStaged } from '../viewport/load';
 import { takePalettePictures, takePictures } from './pictures';
+import { checkDataflow } from './dataflowCheck';
 import { checkSectionGuide } from './sectionGuideCheck';
 import { checkSelect } from './selectCheck';
 import { checkShell } from './shellCheck';
@@ -95,6 +96,8 @@ export async function runChecks(
       results.select = await checkSelect(viewport, log, show, selection);
     } else if (config.shell) {
       results.shell = await checkShell(viewport, log, dock);
+    } else if (config.dataflow) {
+      results.dataflow = await checkDataflow(config.dataflow, log, show, dock);
     } else if (config.workflow) {
       results.workflow = await checkWorkflow(viewport, log, show, dock, selection);
     } else if (config.solids) {

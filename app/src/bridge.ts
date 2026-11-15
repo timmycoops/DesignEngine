@@ -919,8 +919,35 @@ export type Measures =
   | { kind: 'face_design'; design: FaceDesign }
   | { kind: 'workflow'; workflow: Workflow }
   | { kind: 'parameter_table'; parameters: ParameterTable; csv: string }
-  | { kind: 'dataflow'; dataflow: unknown }
-  | { kind: 'table'; rows: number; columns: { name: string; unit?: string; text?: boolean }[] };
+  | { kind: 'dataflow'; dataflow: Dataflow }
+  | { kind: 'table'; rows: number; columns: { name: string; unit?: string; text?: boolean; add_up?: AddUp }[]; figures: { writes: WriteFigures[] } };
+
+/** How a field adds up over units or rows (decision 0070, point 4). */
+export type AddUp = { by: 'sum' | 'volume' | 'max' | 'min' } | { by: 'mass'; density: string };
+
+/** A reserves dataflow (decisions 0070, 0072): its fields, where each value comes from, its steps and its tables. */
+export interface Dataflow {
+  fields: { name: string; kind: string; add_up: AddUp; from: string; attribute?: string; column?: string }[];
+  steps: { step: string; on?: boolean }[];
+  parameters: string[];
+}
+
+/** Rows of a results table added up by each column's rule. */
+export interface ResRow {
+  label: string;
+  material: string;
+  rows: number;
+  values: (number | null)[];
+}
+
+export interface WriteFigures {
+  write: string;
+  columns: [string, string][];
+  horizons: ResRow[];
+  coal: ResRow | null;
+  waste: ResRow | null;
+  benches: ResRow[];
+}
 
 /** Assumptions any tool reads, rows read top down, the first that fits and holds a value giving it (decision 0072). */
 export interface ParameterTable {
@@ -1090,6 +1117,8 @@ export interface BenchConfig {
   shell: boolean;
   /** With `--workflow`, the Run log's Capture and the Workflow panel driven as Tim would (decision 0065). */
   workflow: boolean;
+  /** A project with a parameter table, a dataflow and a results table, for Properties' views of them (decision 0072). */
+  dataflow: string | null;
   /** With `--builder`, the Builder panel driven as Tim would, from a toe up, with an edit between steps (decision 0048). */
   builder: boolean;
   /** With `--cut`, the Cut solids panel driven as Tim would: a pit between two surfaces, sliced into strips, cut at an RL (decision 0049). */

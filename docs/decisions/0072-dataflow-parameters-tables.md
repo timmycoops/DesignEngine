@@ -107,3 +107,17 @@ The demo pit (`testdata/synthetic/workflow_demo.py`, step 21) runs `reserves.run
   0 t.
 - Every column balances to 3.3e-16 of its volume.
 - `reserves.run` alone on Base's 90 block columns takes 8 ms.
+
+## Built: Properties' views
+
+Tim asked where the dataflows were: nothing in the app showed them. Properties now shows each new object:
+
+- **A parameter table:** its filters, values and rows as a table, with Save as CSV.
+- **A dataflow:** its steps (any that are off say so), its parameter tables by name, and its fields with how each adds
+  up and where its value comes from.
+- **A results table:** its rows and columns, and each write point by horizon (coal and waste totalled) and by bench,
+  added up by each column's rule as the report does.
+
+`zd-app --bench --dataflow <project.zdp>` opens a project, clicks each object in the Layers panel and reads Properties
+back. On the demo pit it passes all four checks, Base's coal at 6,461,308 m³. The views edit nothing: making and
+changing them in the app is the canvas workstream (0070, 5).
