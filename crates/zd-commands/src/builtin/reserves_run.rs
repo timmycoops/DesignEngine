@@ -43,7 +43,7 @@ pub const OUT_OF_MODEL: &str = "out of model";
 pub const UNDERBURDEN_THICKNESS: f64 = 10.0;
 
 /// The steps a dataflow can name, in Spry's order, with what each does.
-pub const STEPS: [(&str, &str); 8] = [
+pub const STEPS: [(&str, &str); 10] = [
     ("small_volumes", "sets aside and writes each unit under its min_volume, never dropping it"),
     (
         "initialise",
@@ -67,6 +67,14 @@ pub const STEPS: [(&str, &str); 8] = [
         "cuts each waste interval into floor dilution for the coal above, roof dilution for the coal below (floor_dilution, roof_dilution m), and edge and other dilution (edge_dilution m, other_dilution %) for the coal below; a waste too thin for them all is shared out and its losses go back, said",
     ),
     ("rom_ash_cutoff", "tests each ROM coal section's diluted air-dried ash once against rom_ash_cutoff; a section over it becomes high ROM ash loss, its dilution goes back to waste and its losses come back"),
+    (
+        "rom",
+        "gives dilution its coal's moisture where it has none, aligns its air-dried moisture with the coal's where align_dilution_mad is yes, gives a negative dilution quality the coal's, and works every unit's ROM density",
+    ),
+    (
+        "final",
+        "writes ROM coal and waste on the leaves they end on, benches back by their in situ shares, and Scheduled beside them; clean coal; the underburden taken as out-of-model volume; each section's quality on its coal where aggregate_sections is yes",
+    ),
 ];
 
 fn step_fn(name: &str) -> Option<StepFn> {
@@ -79,6 +87,8 @@ fn step_fn(name: &str) -> Option<StepFn> {
         "rom_loss" => Some(rom_loss),
         "rom_dilution" => Some(rom_dilution),
         "rom_ash_cutoff" => Some(rom_ash_cutoff),
+        "rom" => Some(rom),
+        "final" => Some(final_step),
         _ => None,
     }
 }
@@ -1294,6 +1304,9 @@ fn rom_ash_cutoff(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), St
                 if unit.became.as_ref().is_some_and(|b| b.detail == "parting") {
                     unit.became = None;
                 }
+                if let Some(section) = unit.section.as_mut() {
+                    section.material = "waste".into();
+                }
             }
         }
         run.said.count("coal in a ROM section over its ash cut-off, high ROM ash loss".into(), volume);
@@ -1308,6 +1321,200 @@ fn rom_ash_cutoff(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), St
         },
         |_| Vec::new(),
     );
+    Ok(())
+}
+
+/// The coal plies of a ROM coal section, top down: its coal in situ, nothing done to it.
+fn plies_of(run: &ColumnRun<'_>, s: &Section) -> Vec<usize> {
+    s.units.iter().filter_map(|&id| run.column.position(id)).filter(|&at| {
+        let u = &run.column.units()[at];
+        is_coal(u) && u.became.is_none()
+    }).collect()
+}
+
+fn says_yes(run: &ColumnRun<'_>, at: usize, column: &str) -> bool {
+    parameter_text(run.tables, &run.attributes[run.column.units()[at].origin as usize], column).is_some_and(|t| matches!(t.to_lowercase().as_str(), "yes" | "y" | "true" | "1"))
+}
+
+/// `rom` (decision 0074, point 8), Spry's ROM calculations. In each ROM coal section, what came in that isn't its coal
+/// (dilution, partings, coal from a neighbour):
+///
+/// - takes the section's coal moisture (air dried, in situ, ROM, averaged by the fields' rules) where it has none, said;
+/// - where the section's first ply's row says `align_dilution_mad` yes, takes the coal's air-dried moisture, each of its
+///   qualities scaled by (1 − Mad coal) ÷ (1 − Mad own), as Spry's;
+/// - a quality given as negative takes the section's coal quality (Spry's convention).
+///
+/// Then every unit's ROM density is its in situ density × (1 − Mis) ÷ (1 − Mrom), where it has both. The step's
+/// settings name the fields, as `in_situ`'s.
+fn rom(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String> {
+    let fields = run.column.fields();
+    let at = |key: &str| fields.at(step.setting(key)).ok();
+    let (mad, mis, mrom, rd_is, rd_rom) = (at("mad"), at("mis"), at("mrom"), at("rd_is"), at("rd_rom"));
+    let qualities: Vec<usize> = fields.list().iter().enumerate().filter(|(_, f)| f.kind == FieldKind::Quality).map(|(i, _)| i).collect();
+    let names: Vec<String> = fields.list().iter().map(|f| f.name.clone()).collect();
+    let v = fields.volume();
+    for s in sections_of(run).into_iter().filter(|s| s.coal) {
+        let plies = plies_of(run, &s);
+        if plies.is_empty() {
+            continue;
+        }
+        let coal = run.column.add_up(plies.iter().copied());
+        let align = says_yes(run, plies[0], step.setting("align_dilution_mad"));
+        for i in rom_members(run, s.id) {
+            if plies.contains(&i) {
+                continue;
+            }
+            let volume = run.column.units()[i].value(v);
+            for f in [mad, mis, mrom].into_iter().flatten() {
+                if !run.column.units()[i].value(f).is_finite() && coal[f].is_finite() {
+                    run.column.unit_mut(i).set(f, coal[f]);
+                    run.said.count(format!("dilution and partings given their coal's {}", names[f]), volume);
+                }
+            }
+            if let (true, Some(mad)) = (align, mad) {
+                let own = run.column.units()[i].value(mad);
+                if own.is_finite() && coal[mad].is_finite() && own != coal[mad] {
+                    let factor = (1.0 - coal[mad] / 100.0) / (1.0 - own / 100.0);
+                    for &q in &qualities {
+                        let x = run.column.units()[i].value(q);
+                        run.column.unit_mut(i).set(q, x * factor);
+                    }
+                    run.column.unit_mut(i).set(mad, coal[mad]);
+                    run.said.count("dilution's air-dried moisture aligned with its coal's".into(), volume);
+                }
+            }
+            for &q in &qualities {
+                if run.column.units()[i].value(q) < 0.0 && coal[q].is_finite() {
+                    run.column.unit_mut(i).set(q, coal[q]);
+                    run.said.count(format!("dilution's negative {} given its coal's", names[q]), volume);
+                }
+            }
+        }
+    }
+    if let (Some(mis), Some(mrom), Some(rd_is), Some(rd_rom)) = (mis, mrom, rd_is, rd_rom) {
+        for i in 0..run.column.len() {
+            let u = &run.column.units()[i];
+            let (d, is, rom) = (u.value(rd_is), u.value(mis) / 100.0, u.value(mrom) / 100.0);
+            if d.is_finite() && is.is_finite() && rom.is_finite() {
+                run.column.unit_mut(i).set(rd_rom, d * (1.0 - is) / (1.0 - rom));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Where a piece goes in the reserves table: onto the leaves of `onto`, a joined unit's benches by their in situ shares
+/// (Spry's reinstated benches), its summed fields shared out, under `folder`.
+fn place(run: &ColumnRun<'_>, values: &[f64], onto: usize, folder: &str, texts: &[(String, String)]) -> Vec<Piece> {
+    let fields = run.column.fields();
+    let u = &run.column.units()[onto];
+    let shares: Vec<(u32, f64)> = match u.joined {
+        Some(j) => run.column.joins()[j as usize].benches.iter().map(|b| (b.origin, b.share)).collect(),
+        None => vec![(u.origin, 1.0)],
+    };
+    shares
+        .into_iter()
+        .map(|(origin, share)| {
+            let attributes = &run.attributes[origin as usize];
+            let leaf = run.lower.iter().map(|l| attribute_ci(attributes, l).map(attribute_word).unwrap_or_default()).collect();
+            let values = values.iter().enumerate().map(|(f, x)| if fields.is_summed(f) { x * share } else { *x }).collect();
+            Piece { folder: folder.to_string(), leaf, values, texts: texts.to_vec() }
+        })
+        .collect()
+}
+
+/// `final` (decision 0074, point 9). Every unit written where it ends, Spry's way:
+///
+/// - **ROM coal**, each section's: its coal and partings on their own leaves; roof dilution on its first ply's leaves and
+///   floor dilution on its last's; edge and other dilution over its plies by their volumes; coal lost into it from the
+///   section above on its first ply's, from below on its last's. A joined ply's benches take their pieces by their in situ
+///   shares. Where the first ply's row says `aggregate_sections` yes, each piece carries the section's qualities.
+/// - **ROM waste**: waste, discarded, thin and high ROM ash coal on their own leaves; roof, edge and other loss on the last
+///   unit of the waste it went into, floor loss on its first.
+/// - **Scheduled**, beside them: what a schedule takes, a copy of ROM until factors come between them.
+/// - **Clean coal**: what's coal in situ and in ROM, each section's coal alone, its qualities the section's coal's where
+///   aggregated.
+/// - **Out of model**: underburden taken into ROM coal as dilution, under `Summary\Out of model`, on the leaves it's
+///   written on; the underburden left is never written. Small volumes are never in ROM.
+fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String> {
+    let v = run.column.fields().volume();
+    let qualities: Vec<usize> = run.column.fields().list().iter().enumerate().filter(|(_, f)| f.kind == FieldKind::Quality).map(|(i, _)| i).collect();
+    let sections = sections_of(run);
+    let mut pieces: Vec<Piece> = Vec::new();
+    let mut in_rom_coal = vec![false; run.column.len()];
+    for s in sections.iter().filter(|s| s.coal) {
+        let plies = plies_of(run, s);
+        if plies.is_empty() {
+            continue;
+        }
+        let members = rom_members(run, s.id);
+        let aggregate = says_yes(run, plies[0], step.setting("aggregate_sections"));
+        let section_values = run.column.add_up(members.iter().copied());
+        let clean_values = run.column.add_up(plies.iter().copied());
+        let texts = vec![("ROM\\section".to_string(), s.name.clone())];
+        let ply_volume: f64 = plies.iter().map(|&p| run.column.units()[p].value(v)).sum();
+        for &m in &members {
+            in_rom_coal[m] = true;
+            let u = &run.column.units()[m];
+            let mut values = u.values().to_vec();
+            if aggregate {
+                for &q in &qualities {
+                    values[q] = section_values[q];
+                }
+            }
+            let kind = u.became.as_ref().map(|b| (b.kind, b.detail.clone()));
+            // Which plies it goes on, and in what shares.
+            let onto: Vec<(usize, f64)> = match &kind {
+                None => vec![(m, 1.0)],
+                Some((BecameKind::Dilution, d)) if d == "parting" => vec![(m, 1.0)],
+                Some((BecameKind::Dilution, d)) if d == "roof" => vec![(plies[0], 1.0)],
+                Some((BecameKind::Dilution, d)) if d == "floor" => vec![(*plies.last().expect("plies"), 1.0)],
+                Some((BecameKind::Loss, d)) if d == "floor" => vec![(plies[0], 1.0)],
+                Some((BecameKind::Loss, _)) => vec![(*plies.last().expect("plies"), 1.0)],
+                _ => plies.iter().map(|&p| (p, if ply_volume > 0.0 { run.column.units()[p].value(v) / ply_volume } else { 1.0 / plies.len() as f64 })).collect(),
+            };
+            let out_of_model = run.is_out_of_model(u);
+            for (p, share) in onto {
+                let scaled: Vec<f64> = values.iter().enumerate().map(|(f, x)| if run.column.fields().is_summed(f) { x * share } else { *x }).collect();
+                pieces.extend(place(run, &scaled, p, "ROM\\Coal", &texts));
+                pieces.extend(place(run, &scaled, p, "Scheduled\\Coal", &texts));
+                if out_of_model {
+                    pieces.extend(place(run, &scaled, p, "Summary\\Out of model", &[]));
+                }
+            }
+            if out_of_model {
+                run.said.count("underburden taken into ROM coal, out of model".into(), u.value(v));
+            }
+            if plies.contains(&m) {
+                let mut clean = values.clone();
+                if aggregate {
+                    for &q in &qualities {
+                        clean[q] = clean_values[q];
+                    }
+                }
+                pieces.extend(place(run, &clean, m, "Clean coal\\Coal", &texts));
+            }
+        }
+    }
+    // ROM waste: everything else in the model but small volumes.
+    for (i, &taken) in in_rom_coal.iter().enumerate() {
+        let u = &run.column.units()[i];
+        if taken || run.is_out_of_model(u) || u.became.as_ref().is_some_and(|b| b.kind == BecameKind::SmallVolume) {
+            continue;
+        }
+        let onto = match (&u.became, &u.rom) {
+            (Some(b), Some(r)) if b.kind == BecameKind::Loss => {
+                let target = sections.iter().find(|s| Some(s.id) == r.id && !s.coal);
+                let at = target.and_then(|t| if b.detail == "floor" { t.units.first() } else { t.units.last() }).and_then(|&id| run.column.position(id));
+                at.unwrap_or(i)
+            }
+            _ => i,
+        };
+        let values = u.values().to_vec();
+        pieces.extend(place(run, &values, onto, "ROM\\Waste", &[]));
+        pieces.extend(place(run, &values, onto, "Scheduled\\Waste", &[]));
+    }
+    run.rows.extend(pieces);
     Ok(())
 }
 
@@ -1498,6 +1705,21 @@ fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
         }
         let tonnes = |d: usize| added.iter().map(|a| a.as_ref().map(|a| a[v] * a[d]).filter(|x| x.is_finite())).collect::<Vec<_>>();
         let named = |n: &str| format!("{folder}\\{n}");
+        // ROM, Scheduled and clean coal on the ROM basis: tonnes by the ROM density, qualities × (1 − Mrom) ÷ (1 − Mad).
+        let rom_basis = ["ROM", "Scheduled", "Clean coal"].iter().any(|top| folder.starts_with(&format!("{top}\\")));
+        if let (true, Some(rd), Some(rd_rom)) = (rom_basis, field("rd"), field("rd_rom"))
+            && added.iter().flatten().any(|a| a[rd_rom].is_finite())
+        {
+            push(TableColumn::adding(&named("tonnes"), "t", AddUp::Sum, tonnes(rd_rom)));
+            push(TableColumn::adding(&named("tonnes_ad"), "t", AddUp::Sum, tonnes(rd)));
+            if let (Some(mad), Some(mrom)) = (field("mad"), field("mrom")) {
+                for (q, f) in fields.iter().enumerate().filter(|(_, f)| f.kind == FieldKind::Quality) {
+                    let values = added.iter().map(|a| a.as_ref().map(|a| a[q] * (1.0 - a[mrom] / 100.0) / (1.0 - a[mad] / 100.0)).filter(|x| x.is_finite())).collect();
+                    push(TableColumn::adding(&named(&format!("{}_rom", f.name)), "", AddUp::Mass { density: named(&setting("rd_rom")) }, values));
+                }
+            }
+            continue;
+        }
         match (field("rd"), field("rd_is")) {
             (Some(rd), Some(rd_is)) if added.iter().flatten().any(|a| a[rd_is].is_finite()) => {
                 push(TableColumn::adding(&named("tonnes"), "t", AddUp::Sum, tonnes(rd_is)));
@@ -1689,6 +1911,8 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
         ValueColumn::number("edge_dilution", "m"),
         ValueColumn::number("other_dilution", "%"),
         ValueColumn::number("rom_ash_cutoff", "%"),
+        ValueColumn::text("align_dilution_mad"),
+        ValueColumn::text("aggregate_sections"),
     ];
     let moistures = ["mad".to_string(), "mis".to_string(), "mrom".to_string()];
     let qualities: Vec<String> = qualities.into_iter().filter(|q| !moistures.contains(q)).collect();

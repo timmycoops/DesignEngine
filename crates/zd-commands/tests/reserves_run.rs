@@ -283,9 +283,9 @@ fn a_block_that_can_t_run_is_left_out_with_why_and_the_rest_go_on() {
 fn a_step_this_build_doesn_t_have_or_no_stack_is_refused() {
     let mut s = session();
     let ids = blocks(&mut s, None);
-    let flow = dataflow(&mut s, &["initialise", "rom_final"]);
+    let flow = dataflow(&mut s, &["initialise", "product"]);
     let err = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap_err();
-    assert!(err.to_string().contains("names a step rom_final, which this build doesn't have; it has small_volumes, initialise, in_situ, join_benches, working_sections, rom_loss, rom_dilution, rom_ash_cutoff"), "{err}");
+    assert!(err.to_string().contains("names a step product, which this build doesn't have; it has small_volumes, initialise, in_situ, join_benches, working_sections, rom_loss, rom_dilution, rom_ash_cutoff, rom, final"), "{err}");
     let flow = dataflow(&mut s, &["initialise"]);
     let err = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "layer": "reserves" })).unwrap_err();
     assert!(err.to_string().contains("no stack order"), "{err}");
@@ -1003,4 +1003,135 @@ fn a_block_whose_measured_volume_isn_t_its_solid_s_is_named() {
     assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 block whose volume isn't its solid's (measured before it was cut again?): 1_B1_A"]);
     let t = table(&s, created(&record)[0]);
     assert!(close(value(&t, leaf(&t, "B1", "A", None), "Insitu\\Coal\\volume").unwrap(), 9_000.0), "the data table's volume");
+}
+
+// Decision 0074, workstream 4d: ROM calculations, final, Scheduled, clean coal and out-of-model volume.
+
+fn final_steps() -> serde_json::Value {
+    json!([
+        { "step": "initialise" }, { "step": "join_benches" }, { "step": "working_sections" }, { "step": "rom_loss" },
+        { "step": "rom_dilution" }, { "step": "rom_ash_cutoff" }, { "step": "rom" }, { "step": "final" }
+    ])
+}
+
+/// The reserves table's value on a seam's leaf of the loss column (B1, unbenched): a folder path, else 0.
+fn at_seam(t: &Table, seam: Option<&str>, path: &str) -> f64 {
+    let seams = texts(t, "seam");
+    (0..t.rows()).find(|&i| seams[i].as_deref() == seam).and_then(|i| value(t, i, path)).unwrap_or(0.0)
+}
+
+/// Dilution only, as the 4c column: ROM coal A 10,854 m³ on A's leaf (its coal, OB's 250 + 4 + 100 m³ and A-B's 500 m³),
+/// B 15,906 m³ on B's; ROM waste what's left of each waste on its own leaf, OB 49,646 m³ on A's, A-B 24,094 m³ on B's, the
+/// waste below 19,500 m³ on its own; ROM coal and waste the 120,000 m³ of the blocks. Scheduled the same; clean coal the
+/// coal alone, 10,000 and 15,000 m³. ROM tonnes on the density's basis here, no ROM density in this dataflow: A's
+/// 10,000 × 1.4 + 854 × 2.3 = 15,964.2 t.
+#[test]
+fn final_writes_rom_coal_and_waste_where_they_end_and_scheduled_beside_them() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, final_steps(), &dilution_csv([0.0; 4], [0.05, 0.1, 0.02, 1.0], ""));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert!(record.messages[0].contains("every column balanced to 0.0e0"), "{}", record.messages[0]);
+    let t = table(&s, created(&record)[0]);
+    let rom = |seam: Option<&str>, m: &str| at_seam(&t, seam, &format!("ROM\\{m}\\volume"));
+    assert!(close(rom(Some("A"), "Coal"), 10_854.0) && close(rom(Some("B"), "Coal"), 15_906.0), "{} {}", rom(Some("A"), "Coal"), rom(Some("B"), "Coal"));
+    assert!(close(rom(Some("A"), "Waste"), 49_646.0) && close(rom(Some("B"), "Waste"), 24_094.0) && close(rom(None, "Waste"), 19_500.0));
+    assert!(close(total(&t, "ROM\\Coal\\volume") + total(&t, "ROM\\Waste\\volume"), 120_000.0), "ROM is all of the blocks");
+    assert!(close(total(&t, "Scheduled\\Coal\\volume"), total(&t, "ROM\\Coal\\volume")) && close(total(&t, "Scheduled\\Waste\\volume"), total(&t, "ROM\\Waste\\volume")));
+    assert!(close(at_seam(&t, Some("A"), "Clean coal\\Coal\\volume"), 10_000.0) && close(at_seam(&t, Some("B"), "Clean coal\\Coal\\volume"), 15_000.0));
+    assert!(close(at_seam(&t, Some("A"), "ROM\\Coal\\tonnes"), 10_000.0 * 1.4 + 854.0 * 2.3));
+    assert_eq!(texts(&t, "ROM\\section")[(0..t.rows()).find(|&i| texts(&t, "seam")[i].as_deref() == Some("B")).unwrap()].as_deref(), Some("B"));
+}
+
+/// Floor loss 0.2 m alone: A's 1,000 m³ goes into A-B, written in ROM waste on A-B's leaf (B's), its first unit; B's goes
+/// into the waste below. ROM coal A 9,000 m³ and B 14,000 m³; ROM waste on B's leaf A-B's 25,000 + A's 1,000 m³.
+#[test]
+fn a_loss_is_rom_waste_where_it_went() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, final_steps(), &dilution_csv([0.0, 0.2, 0.0, 0.0], [0.0; 4], ""));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    assert!(close(at_seam(&t, Some("A"), "ROM\\Coal\\volume"), 9_000.0) && close(at_seam(&t, Some("B"), "ROM\\Coal\\volume"), 14_000.0));
+    assert!(close(at_seam(&t, Some("B"), "ROM\\Waste\\volume"), 26_000.0) && close(at_seam(&t, None, "ROM\\Waste\\volume"), 21_000.0));
+    assert!(close(total(&t, "ROM\\Coal\\volume") + total(&t, "ROM\\Waste\\volume"), 120_000.0));
+}
+
+/// No waste below B: 10 m of underburden goes under it, and B's floor dilution of 0.1 m (500 m³) comes from it. ROM coal B
+/// takes it, 15,500 m³, and it's reported as out-of-model volume on B's leaf; the rest of the underburden is never
+/// written.
+#[test]
+fn underburden_taken_into_rom_is_out_of_model_volume() {
+    let mut s = session();
+    let ids: Vec<ObjectId> = loss_column(&mut s).into_iter().take(4).collect();
+    let flow = flow(&mut s, final_steps(), &dilution_csv([0.0; 4], [0.0, 0.1, 0.0, 0.0], ""));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    assert!(close(at_seam(&t, Some("B"), "ROM\\Coal\\volume"), 15_500.0));
+    assert!(close(at_seam(&t, Some("B"), "Summary\\Out of model\\volume"), 500.0));
+    assert!(close(total(&t, "ROM\\Coal\\volume") + total(&t, "ROM\\Waste\\volume"), 100_000.0 + 500.0), "the blocks and the underburden taken");
+    assert!(notes_of(&record, Code::ReservesUnderburden).iter().any(|n| n == "1 unit underburden taken into ROM coal, out of model, 500.0 m3"), "{:?}", notes_of(&record, Code::ReservesUnderburden));
+}
+
+/// Section A-B (A ash 10 %, B ash 12 %, the parting between): with aggregate_sections yes, A's and B's ROM coal carry the
+/// section's ash; without, their own.
+#[test]
+fn aggregate_sections_puts_the_section_s_quality_on_its_coal() {
+    let mut s = session();
+    let ids = section_column(&mut s);
+    let csv = |yes: &str| format!("when material,rd (t/m3),ash_default (%),min_parting (m),ws_strip_ratio,min_coal_thickness (m),insitu_ash_cutoff (%),roof_loss (m),floor_loss (m),edge_loss (m),other_loss (%),roof_dilution (m),floor_dilution (m),edge_dilution (m),other_dilution (%),aggregate_sections\nwaste,2.3,80,,,,,,,,,,,,,\ncoal,,,1,0.5,0.45,30,0,0,0,0,0,0,0,0,{yes}\n");
+    let flow_own = flow(&mut s, final_steps(), &csv(""));
+    let record = s.run("reserves.run", json!({ "dataflow": flow_own, "blocks": ids, "stack": SECTION_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let (a, b) = (at_seam(&t, Some("A"), "ROM\\Coal\\ash"), at_seam(&t, Some("B"), "ROM\\Coal\\ash"));
+    assert!(close(a, 10.0), "{a}");
+    let flow_agg = flow(&mut s, final_steps(), &csv("yes"));
+    let record = s.run("reserves.run", json!({ "dataflow": flow_agg, "blocks": ids, "stack": SECTION_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let (a2, b2) = (at_seam(&t, Some("A"), "ROM\\Coal\\ash"), at_seam(&t, Some("B"), "ROM\\Coal\\ash"));
+    assert!(close(a2, b2) && a2 > 10.0 && a2 < 80.0, "{a2} {b2}, own {a} {b}");
+    assert!(close(at_seam(&t, Some("A"), "Clean coal\\Coal\\ash"), at_seam(&t, Some("B"), "Clean coal\\Coal\\ash")) && at_seam(&t, Some("A"), "Clean coal\\Coal\\ash") < 12.0, "clean coal its coal's own average");
+}
+
+/// Coal at Mad 3 %, Mis 8 %, Mrom 10 %; A-B gives A 500 m³ of floor dilution. The dilution, with no moisture of its own,
+/// takes A's (said), so its ROM density is 2.3 × 0.92 ÷ 0.90; A's ROM tonnes are its coal's 10,000 m³ at its in situ
+/// density × 0.92 ÷ 0.90 and the dilution's 500 m³ at that, and A's ash on the ROM basis is its air-dried ash
+/// × 0.90 ÷ 0.97.
+#[test]
+fn rom_gives_dilution_its_coal_s_moisture_and_works_rom_tonnes() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let csv = "when material,rd (t/m3),ash_default (%),mad (%),mis (%),mrom (%),min_parting (m),ws_strip_ratio,min_coal_thickness (m),roof_loss (m),floor_loss (m),edge_loss (m),other_loss (%),roof_dilution (m),floor_dilution (m),edge_dilution (m),other_dilution (%)\nwaste,2.3,80,,,,,,,,,,,,,,\ncoal,,,3,8,10,1,0.5,0.5,0,0,0,0,0,0.1,0,0\n";
+    let table_id = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": csv })).unwrap())[0];
+    let content = json!({
+        "fields": [
+            { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
+            { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
+            { "name": "area", "kind": "area", "add_up": { "by": "max" }, "from": "plan_area" },
+            { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
+            { "name": "ash", "kind": "quality", "add_up": { "by": "mass", "density": "rd" }, "from": "attribute", "attribute": "ash" },
+            { "name": "mad", "kind": "moisture", "add_up": { "by": "mass", "density": "rd" }, "from": "attribute", "attribute": "mad" },
+            { "name": "rd_is", "kind": "density", "add_up": { "by": "volume" }, "from": "worked" },
+            { "name": "rd_rom", "kind": "density", "add_up": { "by": "volume" }, "from": "worked" },
+            { "name": "mis", "kind": "moisture", "add_up": { "by": "mass", "density": "rd_is" }, "from": "attribute", "attribute": "mis" },
+            { "name": "mrom", "kind": "moisture", "add_up": { "by": "mass", "density": "rd_rom" }, "from": "parameter", "column": "mrom" },
+        ],
+        "steps": [
+            { "step": "initialise" }, { "step": "in_situ" }, { "step": "join_benches" }, { "step": "working_sections" }, { "step": "rom_loss" },
+            { "step": "rom_dilution" }, { "step": "rom_ash_cutoff" }, { "step": "rom" }, { "step": "final" }
+        ],
+        "parameters": [table_id],
+    });
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0];
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let dis = 1.4 * 0.97 / (1.0 + 1.4 * 0.05 - 0.08);
+    let tonnes = 10_000.0 * dis * 0.92 / 0.90 + 500.0 * 2.3 * 0.92 / 0.90;
+    let got = at_seam(&t, Some("A"), "ROM\\Coal\\tonnes");
+    assert!(close(got, tonnes), "{got} against {tonnes}");
+    let said = notes_of(&record, Code::ReservesDefaulted);
+    for m in ["mad", "mis", "mrom"] {
+        assert!(said.iter().any(|n| n.ends_with(&format!("dilution and partings given their coal's {m}, 1000.0 m3")) || n.contains(&format!("given their coal's {m}"))), "{m}: {said:?}");
+    }
+    assert!(at_seam(&t, Some("A"), "ROM\\Coal\\ash_rom").is_finite() && at_seam(&t, Some("A"), "ROM\\Coal\\ash_rom") > 0.0);
 }
