@@ -194,7 +194,7 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     const undoneAll = await projectSummary();
     expect('one undo takes both cases back', !undoneAll.objects.some((o) => o.layer === layerId('cut 60')) && undoneAll.objects.length === beforeCases.objects.length, { before: beforeCases.objects.length, undoneAll: undoneAll.objects.length });
 
-    // The canvas (decision 0067): step 1 clicked, then a tool, opens Cut solids on By a surface adding after step 1, with
+    // The canvas (decision 0067): step 1 clicked, then a tool, opens Cut solids on By surface or RL adding after step 1, with
     // what step 1 made picked; Add puts the step in as step 2, the cut that was step 2 now step 3, its solids found as
     // what step 1 makes.
     const choose = (label: string, value: string) => {
@@ -209,10 +209,10 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     choose('Case', 'Base');
     showPanel(api, 'canvas');
     await wait(1000);
-    expect('the canvas lists the tools to add', labelled('Add Cut solids: By a surface') !== null);
+    expect('the canvas lists the tools to add', labelled('Add Cut solids: By surface or RL') !== null);
     document.querySelector<HTMLElement>('.react-flow__node[data-id="step:1"]')?.click();
     await wait(300);
-    await press(labelled('Add Cut solids: By a surface'));
+    await press(labelled('Add Cut solids: By surface or RL'));
     expect('a tool after step 1 picks what step 1 made', JSON.stringify(selection()) === JSON.stringify([pit]), selection());
     const cutPanel = panelText('cut');
     expect('its panel opens on it, adding as step 2', button('Add to Box pit') !== undefined && cutPanel.includes('Adds step 2'), cutPanel.slice(-160));

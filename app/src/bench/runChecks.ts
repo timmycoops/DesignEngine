@@ -374,8 +374,8 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
   const pit = (await projectSummary()).objects.find((o) => o.name === 'PIT');
   if (!pit) return { error: 'no PIT made', between, panel: panelText().slice(0, 400) };
 
-  // Into strips: the pit the panel just made is picked, the faces' layer offered first, sliced in one run.
-  button('Into strips')?.click();
+  // Strips by faces: the pit the panel just made is picked, the faces' layer offered first, sliced in one run.
+  button('Strips by faces')?.click();
   await wait(500);
   const pickedAfterMaking = panelText();
   // The faces checked against the pit before the cut: they run 50 m past its top and floor and 60 m past its ends.
@@ -406,8 +406,8 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
   const joinedLayer = joinedSummary.layers.find((l) => l.name === 'faces joined')?.id;
   const joined = { ms: joinedMs, faces: joinedSummary.objects.filter((o) => o.layer === joinedLayer).length, said: resultLines().slice(-1) };
 
-  // By a surface: the pit, still picked, cut at RL 50, both sides kept.
-  button('By a surface')?.click();
+  // By surface or RL: the pit, still picked, cut at RL 50, both sides kept.
+  button('By surface or RL')?.click();
   await wait(300);
   choose('Surface, grid or RL to cut by', 'rl');
   await wait(200);
@@ -435,7 +435,7 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
     seams = { button: seamLabel, grids, ms: seamMs, said: resultLines().slice(0, 3), pieces: made.length, names: made.map((o) => o.name) };
   }
 
-  // By polygons (decision 0062): lines across the pit every 100 m, from 50 m before it to 50 m past it, and two past its
+  // By blocks (decision 0062): lines across the pit every 100 m, from 50 m before it to 50 m past it, and two past its
   // sides closed into block polygons covering it, then the solids on show (the benches made below) cut into blocks from
   // the panel.
   const across = [];
@@ -477,7 +477,7 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
   summary = afterBenches;
   for (const l of summary.layers) if (l.name !== keep && l.name !== 'block polygons') summary = await setLayerVisible(l.id, false);
   await show(summary);
-  button('By polygons')?.click();
+  button('By blocks')?.click();
   await wait(400);
   buttons().find((b) => b.textContent?.trim().startsWith('On show'))?.click();
   await wait(300);

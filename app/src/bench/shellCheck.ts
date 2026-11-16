@@ -10,7 +10,9 @@
 // section's overview, in a tall view or a short one. The ribbon (workstream 5): a tab a stage over a row of its tools,
 // each row holding its tools in order at 1,600, 1,280 and 900 px with what doesn't fit folded into More and nothing
 // clipped; the menus reading as they did; the tool in use lit; the stage remembered; a Strings tool bringing its row in
-// Properties into view. Then the panels' heads (workstream 3): a tool panel says what it
+// Properties into view. Find a command (workstream 6): Ctrl+K from anywhere, a box being typed in included, lists every
+// tool; typing part of a name, what a tool does, its command or its stage finds it, and Enter carries it out. Then the
+// panels' heads (workstream 3): a tool panel says what it
 // does in one line that fits its dock, the rest in a tip, and its name only on its tab; Cut solids' line follows what
 // it's set to do and its six choices show whole; and every panel's first control, or its first line where it has none,
 // is within 40 px of its tab. With `--pictures <folder>` the window is then drawn in its states
@@ -23,7 +25,7 @@ import type { SectionView } from '../viewport/section';
 import { BAR_CLEAR } from '../viewport/sectionGrid';
 import type { Viewport } from '../viewport/Viewport';
 import { windowPicture } from './windowPicture';
-import { rowName, ROWS, STAGES, toolByKey } from '../tools';
+import { rowName, ROWS, STAGES, toolByKey, TOOLS } from '../tools';
 import type { StageId } from '../workspace/Ribbon';
 import { LAYOUT_KEYS, type PanelId, resetLayout, showPanel, TOOL_DOCK_WIDTH } from '../workspace/Workspace';
 
@@ -380,6 +382,98 @@ export async function checkShell(
       its_dock_minimised: litMinimised,
     });
 
+    // Find a command (workstream 6): Ctrl+K from anywhere, type, Enter.
+    resetLayout(api);
+    await settle();
+    await goStage('project');
+    const palette = () => document.querySelector<HTMLElement>('[cmdk-root]');
+    const findInput = () => document.querySelector<HTMLInputElement>('[cmdk-input]');
+    const found = () => [...document.querySelectorAll<HTMLElement>('[cmdk-item]')].map((i) => ({ tool: i.dataset.tool ?? '', off: i.getAttribute('aria-disabled') === 'true', picked: i.getAttribute('aria-selected') === 'true' }));
+    const ctrlK = async (from: EventTarget = window) => {
+      from.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+      await settle();
+    };
+    const typeFind = async (text: string) => {
+      const input = findInput();
+      if (!input) return;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, text);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await settle();
+    };
+    const enter = async () => {
+      findInput()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await settle();
+    };
+    const litNow = () => [...document.querySelectorAll<HTMLElement>('[data-slot="ribbon"] [data-tool][aria-pressed="true"]')].map((b) => b.dataset.tool ?? '');
+
+    await ctrlK();
+    const listed = found();
+    const typingThere = document.activeElement === findInput();
+    await closeMenu();
+    const closedByEsc = palette() === null;
+    document.querySelector<HTMLButtonElement>('[data-slot="find-button"]')?.click();
+    await settle();
+    const openedByButton = palette() !== null;
+    await closeMenu();
+    expect('Ctrl+K, or its box on the ribbon, opens Find a command on every tool in the list; Esc closes it', listed.length === TOOLS.length && new Set(listed.map((f) => f.tool)).size === TOOLS.length && typingThere && closedByEsc && openedByButton && palette() === null, {
+      listed: listed.length,
+      in_the_list: TOOLS.length,
+      typingThere,
+      closedByEsc,
+      openedByButton,
+    });
+
+    await ctrlK();
+    await typeFind('seams');
+    const forSeams = found();
+    await enter();
+    const afterSeams = { open: palette() !== null, lit: litNow(), front: front('cut'), stage: stageNow() };
+    expect('typing part of a name and Enter carries the tool out, from another stage, which stays', forSeams.find((f) => f.picked)?.tool === 'cut:seams' && !afterSeams.open && afterSeams.front === 'cut' && afterSeams.stage === 'project', {
+      found: forSeams.map((f) => f.tool),
+      after: afterSeams,
+    });
+    await goStage('solids');
+    const litOnItsRow = litNow();
+    await goStage('project');
+
+    await ctrlK();
+    await typeFind('polygons');
+    const forPolygons = found().map((f) => f.tool);
+    await typeFind('solid.cut_by_benches');
+    const forCommand = found();
+    await typeFind('geology');
+    const forStage = found().map((f) => f.tool);
+    await typeFind('selected solids');
+    const forSelected = found();
+    await typeFind('no such tool anywhere');
+    const forNothing = { found: found().length, says: document.querySelector('[cmdk-empty]')?.textContent ?? '' };
+    await closeMenu();
+    expect(
+      'a tool is found by what it does, its engine command or its stage; one that needs a selection is listed but off',
+      forPolygons.includes('cut:polygons') &&
+        forPolygons.includes('string.polygons_from_lines') &&
+        forCommand.find((f) => f.picked)?.tool === 'cut:benches' &&
+        ['import.vulcan_grid', 'seam.suggest', 'seam.build', 'seam.relink'].every((key) => forStage.includes(key)) &&
+        forSelected.find((f) => f.tool === 'export.selected_solids')?.off === true &&
+        forNothing.found === 0 &&
+        forNothing.says !== '' &&
+        litOnItsRow.join() === 'cut:seams',
+      { polygons: forPolygons, by_command: forCommand.find((f) => f.picked)?.tool, geology: forStage.length, selected_solids_off: forSelected.find((f) => f.tool === 'export.selected_solids')?.off, nothing: forNothing, lit_on_its_row: litOnItsRow },
+    );
+
+    // From a box being typed in, and a view tool.
+    const box = document.querySelector<HTMLInputElement>('.dv-content-container input');
+    box?.focus();
+    await ctrlK(box ?? window);
+    const fromABox = palette() !== null && !!box;
+    await typeFind('plan or 3d');
+    await enter();
+    const inPlan = viewport.planView;
+    await ctrlK();
+    await typeFind('plan or 3d');
+    await enter();
+    expect('Ctrl+K opens it from a box being typed in, and it reaches the tools on the view: Plan, and back to 3D', fromABox && inPlan && !viewport.planView && palette() === null, { fromABox, inPlan, back: !viewport.planView });
+
     // The view bar, from the default layout, over a made-up topography and a block.
     resetLayout(api);
     await settle();
@@ -653,6 +747,17 @@ export async function checkShell(
       await picture('docks-reserves', 'reserves', ['cut', 'params'], ['reserves', 'restable']);
       await picture('ribbon-strings', 'strings', []);
       await picture('ribbon-geology', 'geology', []);
+      // Find a command, open on what "seam" finds.
+      resetLayout(api);
+      await settle();
+      await goStage('solids');
+      await ctrlK();
+      await typeFind('seam');
+      await wait(600);
+      const findPicture = await writePicture('find-command', await windowPicture(viewport));
+      log(`shell: ${findPicture}`);
+      saved.push(findPicture);
+      await closeMenu();
       // A section across the middle of what's on show, from plan, with its step and fill on the bar.
       resetLayout(api);
       viewport.setPlanView(true);

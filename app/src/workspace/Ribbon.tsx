@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Search } from 'lucide-react';
 import { cn } from 'cn';
 import { Button } from '@/design-system/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
@@ -127,10 +127,10 @@ function ToolRow({ items, use }: { items: readonly RowItem[]; use: ToolUse }) {
 
 /**
  * The ribbon (decision 0076): a tab a stage, in the order the work is done, and under it the row of that stage's
- * tools, named in words. The project's menu, Save, Undo and Redo sit before the tabs; Workflow and the Panels menu at
- * the end of the row. Switching stage changes the row only: the panels stay where they were left.
+ * tools, named in words. The project's menu, Save, Undo and Redo sit before the tabs and Find a command after them;
+ * Workflow and the Panels menu at the end of the row. Switching stage changes the row only: the panels stay where they were left.
  */
-export function Ribbon({ projectName, projectPath, stage, onStage, use }: { projectName: string; projectPath: string | null; stage: StageId; onStage: (stage: StageId) => void; use: ToolUse }) {
+export function Ribbon({ projectName, projectPath, stage, onStage, onFind, use }: { projectName: string; projectPath: string | null; stage: StageId; onStage: (stage: StageId) => void; onFind: () => void; use: ToolUse }) {
   return (
     <header data-slot="ribbon" className="shrink-0 border-b bg-card">
       <div data-slot="tab-row" className="flex h-[31px] items-center gap-0.5 px-2">
@@ -166,6 +166,17 @@ export function Ribbon({ projectName, projectPath, stage, onStage, use }: { proj
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          data-slot="find-button"
+          title="Find a command (Ctrl+K): any tool, from any stage, by typing part of its name"
+          className="ml-auto flex h-6 w-60 min-w-0 shrink items-center gap-2 overflow-hidden rounded-md border border-input bg-background px-2 text-xs whitespace-nowrap text-muted-foreground hover:text-foreground"
+          onClick={onFind}
+        >
+          <Search className="size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 truncate text-left">Find a command…</span>
+          <kbd className="shrink-0 rounded border px-1 text-[10px]">Ctrl K</kbd>
+        </button>
       </div>
       <div data-slot="tool-row" className="flex h-9 items-center gap-0.5 border-t bg-background px-2">
         <ToolRow key={stage} items={ROWS[stage]} use={use} />

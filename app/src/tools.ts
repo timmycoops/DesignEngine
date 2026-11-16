@@ -1,7 +1,7 @@
 /**
  * The one list of tools (decision 0076, workstream 4): everything the app can be asked to do from its toolbar, its
  * menus, the Panels menu and the workflow canvas, each tool once, in the stage of the work it belongs to, and the row
- * of tools under each stage's tab. The toolbar, the menus and the canvas are drawn from it, and Find a command will search it, so a new tool is added here and
+ * of tools under each stage's tab. The toolbar, the menus and the canvas are drawn from it, and Find a command searches it, so a new tool is added here and
  * nowhere else. Kept free of React, so the tests can read it: an icon is a name (`toolIcons.tsx` holds the pictures) and
  * what a tool does is a panel to open, or an action App carries out. Nothing is imported at run time, for the same reason.
  */
@@ -66,7 +66,14 @@ export type ToolIcon =
   | 'report'
   | 'workflow'
   | 'panels'
-  | 'more';
+  | 'more'
+  | 'select'
+  | 'draw'
+  | 'snap'
+  | 'plan'
+  | 'zoom-selection'
+  | 'zoom-all'
+  | 'section';
 
 /** What App carries out itself: files, undo, the seam model, the layout. */
 export type ToolAction =
@@ -97,7 +104,14 @@ export type ToolAction =
   | 'export.visible_solids'
   | 'solids.repair'
   | 'panels.hide'
-  | 'panels.reset';
+  | 'panels.reset'
+  | 'view.select'
+  | 'view.draw'
+  | 'view.snap'
+  | 'view.plan'
+  | 'view.zoom_selection'
+  | 'view.zoom_all'
+  | 'view.section';
 
 /** What a tool needs before it can be used: something to undo, or something of a kind selected. It's off without it. */
 export type ToolNeeds = 'undo' | 'redo' | 'selected-dxf' | 'selected-strings' | 'selected-solids';
@@ -190,11 +204,11 @@ export const TOOLS: readonly Tool[] = [
   // Solids. Cut solids' six, in the order the work is done; the panel's own choice keeps its order.
   { key: 'cut', stage: 'solids', label: 'Cut solids', tip: 'into strips by faces, by a surface, grid or RL, or one between two surfaces', icon: 'cut', panel: 'cut' },
   { key: 'cut:between', stage: 'solids', label: 'Between surfaces', tip: 'Makes one solid inside a closed string, between two surfaces.', icon: 'between', panel: 'cut', mode: 'between', command: 'solid.between_surfaces', step: { takes: 'a closed string, top and bottom' } },
-  { key: 'cut:strips', stage: 'solids', label: 'Strips by faces', tip: 'Slices solids into strips by faces, from the pit out.', choice: 'Into strips', icon: 'strips', panel: 'cut', mode: 'strips', command: 'solid.slice_by_faces', step: { takes: 'solids and a face a strip' } },
-  { key: 'cut:cut', stage: 'solids', label: 'By surface or RL', tip: 'Cuts solids by a surface, a grid or an RL.', choice: 'By a surface', icon: 'cut', panel: 'cut', mode: 'cut', command: 'solid.cut_by_surface', step: { takes: 'solids and a surface, grid or RL' } },
+  { key: 'cut:strips', stage: 'solids', label: 'Strips by faces', tip: 'Slices solids into strips by faces, from the pit out.', icon: 'strips', panel: 'cut', mode: 'strips', command: 'solid.slice_by_faces', step: { takes: 'solids and a face a strip' } },
+  { key: 'cut:cut', stage: 'solids', label: 'By surface or RL', tip: 'Cuts solids by a surface, a grid or an RL.', icon: 'cut', panel: 'cut', mode: 'cut', command: 'solid.cut_by_surface', step: { takes: 'solids and a surface, grid or RL' } },
   { key: 'cut:seams', stage: 'solids', label: 'By seams', tip: "Cuts solids by the seam model's horizons, in one run.", icon: 'seams', panel: 'cut', mode: 'seams', command: 'solid.cut_by_seams', step: { takes: 'solids and a seam model' } },
   { key: 'cut:benches', stage: 'solids', label: 'By benches', tip: 'Cuts pieces at bench levels, by the bench rules.', icon: 'benches', panel: 'cut', mode: 'benches', command: 'solid.cut_by_benches', step: { takes: 'solids and bench rules' } },
-  { key: 'cut:polygons', stage: 'solids', label: 'By blocks', tip: 'Cuts solids vertically into blocks, by named polygons.', choice: 'By polygons', icon: 'by-blocks', panel: 'cut', mode: 'polygons', command: 'solid.cut_by_polygons', step: { takes: 'solids and block polygons' } },
+  { key: 'cut:polygons', stage: 'solids', label: 'By blocks', tip: 'Cuts solids vertically into blocks, by named polygons.', icon: 'by-blocks', panel: 'cut', mode: 'polygons', command: 'solid.cut_by_polygons', step: { takes: 'solids and block polygons' } },
   { key: 'blocks', stage: 'solids', label: 'Block table', tip: 'solids and their attributes to sort, filter, add up, select or delete', icon: 'blocks', panel: 'blocks' },
   { key: 'solids.repair', stage: 'solids', label: 'Repair', tip: 'Fixes closed meshes kept as surfaces because they could not be solids', icon: 'repair', command: 'solid.repair', action: 'solids.repair' },
   { key: 'import.solids', stage: 'solids', label: 'Import solids', tip: 'A zip of solids, or files of them', command: 'solid.import_many', action: 'import.solids', menu: { in: 'import', at: 4, name: 'A zip or files…', under: SOLIDS_MENU } },
@@ -229,6 +243,15 @@ export const TOOLS: readonly Tool[] = [
   { key: 'runlog', stage: 'always', label: 'Run log', tip: 'every run, what it made and what it said', panel: 'runlog' },
   { key: 'panels.hide', stage: 'always', label: 'Hide every panel, or bring them back', tip: 'The view fills the window', shortcut: '`', action: 'panels.hide' },
   { key: 'panels.reset', stage: 'always', label: 'Reset layout', tip: 'Puts the panels back where they start', action: 'panels.reset' },
+
+  // The view's own tools, which the view bar draws itself (workstream 2); listed so Find a command reaches them.
+  { key: 'view.select', stage: 'always', label: 'Select', tip: 'Select and edit strings', icon: 'select', action: 'view.select' },
+  { key: 'view.draw', stage: 'always', label: 'Draw string', tip: 'Draw a string: snaps to string vertices and segments, then surfaces', icon: 'draw', action: 'view.draw' },
+  { key: 'view.snap', stage: 'always', label: 'Snap', tip: 'Turns snap on, or off', icon: 'snap', shortcut: 'S', action: 'view.snap' },
+  { key: 'view.plan', stage: 'always', label: 'Plan or 3D', tip: 'Plan view, straight down and north up, or back to 3D', icon: 'plan', shortcut: 'T', action: 'view.plan' },
+  { key: 'view.zoom_selection', stage: 'always', label: "Zoom to what's selected", tip: "From the way you're looking", icon: 'zoom-selection', shortcut: 'F', action: 'view.zoom_selection' },
+  { key: 'view.zoom_all', stage: 'always', label: 'Zoom to everything', tip: 'The whole project in the view', icon: 'zoom-all', shortcut: 'E', action: 'view.zoom_all' },
+  { key: 'view.section', stage: 'always', label: 'Section', tip: 'Pick two points for a true vertical slice, or close the one open', icon: 'section', shortcut: '2', action: 'view.section' },
 ];
 
 export const toolByKey = (key: string): Tool | undefined => TOOLS.find((t) => t.key === key);
@@ -354,6 +377,42 @@ export function menuWords(tool: Tool, count: number | null): string {
   if (count === null || count <= 1) return name;
   return name.endsWith('…') ? `${name.slice(0, -1)} (${count})…` : `${name} (${count})`;
 }
+
+/** A stage's name, and Always there for what isn't in one. */
+export const stageTitle = (stage: Stage): string => STAGES.find((s) => s.id === stage)?.title ?? 'Always there';
+
+/** What Find a command matches a tool by, besides its name: its other names, its stage, what it does and its command. */
+export const findWords = (tool: Tool): string[] =>
+  [tool.short, tool.choice, tool.menu?.name, tool.menu?.under?.name, stageTitle(tool.stage), tool.tip, tool.command, tool.shortcut].filter((w): w is string => !!w);
+
+/**
+ * How well a tool answers what's typed into Find a command, from 0 (not at all) to 1. Every word typed must be in the
+ * tool's name, its other names, its stage, its command or what it does, as typed: nothing is guessed from scattered
+ * letters. A name that starts with a word comes before one that holds it, a name before a stage or a command, and those
+ * before what the tool does.
+ */
+export function findScore(tool: Tool, typed: string): number {
+  const whole = typed.trim().toLowerCase();
+  const words = whole.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return 1;
+  const name = tool.label.toLowerCase();
+  if (name.startsWith(whole)) return 1;
+  const nameWords = name.split(/[^a-z0-9]+/);
+  const [does, ...others] = findWords(tool)
+    .map((w) => w.toLowerCase())
+    .sort((a, b) => Number(b === tool.tip.toLowerCase()) - Number(a === tool.tip.toLowerCase()));
+  const other = others.join(' | ');
+  let score = 0.95;
+  for (const word of words) {
+    const here = nameWords.some((w) => w.startsWith(word)) ? 0.9 : name.includes(word) ? 0.8 : other.includes(word) ? 0.6 : does.includes(word) ? 0.4 : 0;
+    if (here === 0) return 0;
+    score = Math.min(score, here);
+  }
+  return score;
+}
+
+/** Every tool for Find a command, a stage at a time in the order the work is done, then what's always there. */
+export const findGroups = (): { title: string; tools: Tool[] }[] => [...STAGES.map((s) => s.id), 'always' as const].map((stage) => ({ title: stageTitle(stage), tools: stageTools(stage) }));
 
 /** The tools that can add a step to a workflow, for the canvas. */
 export const stepTools = (): (Tool & { panel: PanelId; command: string; step: { takes: string } })[] =>

@@ -62,6 +62,7 @@ import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Vie
 import { type AddingTo, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
 import { ALL_PANELS_KEY, type PanelId, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
 import { inUse, type Tool, type ToolAction, type ToolNeeds } from './tools';
+import { FindCommand } from './workspace/FindCommand';
 import { Ribbon, type StageId } from './workspace/Ribbon';
 import { rememberStage, stageOf } from './workspace/stage';
 import type { ToolUse } from './workspace/ToolMenu';
@@ -396,6 +397,8 @@ export default function App() {
       return mode === null ? rest : { ...rest, [panel]: mode };
     });
   }, []);
+  // Find a command, open or not.
+  const [finding, setFinding] = useState(false);
   // The stage whose tools the ribbon shows, remembered for each project on this machine.
   const [stage, setStageState] = useState<StageId>(() => stageOf(null));
   const setStage = useCallback((next: StageId) => {
@@ -916,6 +919,11 @@ export default function App() {
   // Shortcuts: undo, redo, save, zoom, and stepping a section.
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      // Find a command, from anywhere, typing in a box included.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        return setFinding((was) => !was);
+      }
       if (e.target instanceof HTMLInputElement) return;
       if (sectionOpen && (e.key === '[' || e.key === ']')) return stepSection(e.key === ']' ? 1 : -1);
       const plain = !(e.ctrlKey || e.metaKey || e.altKey) && !typing(e.target);
@@ -1151,6 +1159,13 @@ export default function App() {
     },
     'panels.hide': () => dockRef.current && toggleAllPanels(dockRef.current),
     'panels.reset': () => dockRef.current && resetLayout(dockRef.current),
+    'view.select': () => setMode('select'),
+    'view.draw': () => setMode('draw'),
+    'view.snap': () => stringsRef.current?.toggleSnapping(),
+    'view.plan': togglePlan,
+    'view.zoom_selection': zoomToSelection,
+    'view.zoom_all': zoomToExtents,
+    'view.section': toggleSection,
   };
   const toolCounts: Record<ToolNeeds, number> = {
     undo: summary?.can_undo ? 1 : 0,
@@ -1176,7 +1191,8 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={400}>
       <div className="flex h-full flex-col">
-        <Ribbon projectName={projectName} projectPath={summary?.path ?? null} stage={stage} onStage={setStage} use={toolUse} />
+        <Ribbon projectName={projectName} projectPath={summary?.path ?? null} stage={stage} onStage={setStage} onFind={() => setFinding(true)} use={toolUse} />
+        <FindCommand open={finding} onOpenChange={setFinding} use={toolUse} />
 
         <main className="min-h-0 flex-1">
           <WorkspaceContext.Provider value={workspace}>

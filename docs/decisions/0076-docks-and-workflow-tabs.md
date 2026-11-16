@@ -4,7 +4,7 @@ Status: agreed 16 November 2026. Tim picked "panel and then b" of the options pu
 then the workflow tabs), and agreed the six decisions on the Build Plan's "UI improvements plan" tab as recommended
 ("Agree all 6"). It takes over the open parts of the UI plan tab and replaces 0051's one toolbar row. 0051's minimised
 strips and the ` key stay. Built as seven workstreams, a PR each. Workstreams 1, the docks, 2, the view bar, 3,
-compact heads, 4, the one tool list, and 5, the workflow tabs, are built.
+compact heads, 4, the one tool list, 5, the workflow tabs, and 6, Find a command, are built.
 
 ## Why
 
@@ -243,8 +243,9 @@ choices (Block table's Select shown, the Layers tree's commands).
   status line says to pick one. They run in Properties until workstream 7 gives them panels of their own.
 - **Repair** has its button: every closed mesh kept as a surface for not being a solid goes to the repair dialog, or
   the status line says there is nothing to repair.
-- The names on a row are the plan's (Strips by faces, By surface or RL, By blocks); the Cut solids panel's own choice
-  and the workflow canvas keep theirs (Into strips, By a surface, By polygons) until they're brought into line.
+- The names on a row are the plan's (Strips by faces, By surface or RL, By blocks). The Cut solids panel's own choice
+  and the workflow canvas kept theirs (Into strips, By a surface, By polygons) until workstream 6 gave all three the
+  row's names (Tim, 16 November: "I'm happy with those names for now").
 
 `pnpm test` passes 80: every stage has a row of tools that exist, each with a picture and a name of 22 letters or
 fewer; a stage's tools are on its row but for four reached another way (the older project folder in the project's
@@ -273,6 +274,44 @@ The narrower widths are the app laid out in 1,280 px and 900 px of the 1,600 px 
 `--select` (29 of 29), `--section-guide` (11 of 11), `--workflow` (43 of 43) and `--dataflow` (21 of 21) still pass;
 `--builder` and `--cut`, which now open their panels from the ribbon, run with no failed check.
 
+## Built: workstream 6, Find a command
+
+- **Ctrl+K opens Find a command** from anywhere, a box being typed in included, as does its box at the end of the tab
+  row (`app/src/workspace/FindCommand.tsx`). It lists every tool in the tool list, a stage at a time, each with its
+  picture, its name, what it does and its keys. Type, and Enter or a click carries the tool out as its button would:
+  its panel opens set to it, or its action runs. Esc closes it. The stage on the ribbon stays where it was.
+- **A tool is found by whole words typed**, in its name, its other names (its menu's wording), its stage, its engine
+  command or what it does (`findScore` in the tool list). Every word typed must be found; a name that starts with a
+  word comes first, then a name holding it, then a stage or command, then what the tool does. Nothing is guessed from
+  scattered letters: cmdk's own matching found 26 tools for "seams", this finds one.
+- **A tool that needs something it hasn't got** (a selection, something to undo) is listed but off.
+- **The view's tools are in the list** (Select, Draw string, Snap, Plan or 3D, the two zooms, Section), so Find reaches
+  them; the view bar still draws its own buttons. The list is 71 tools.
+- **`cmdk`** (1.1.1) is the one new dependency, agreed in decision 4. It gives the list, the keys and the dialog; the
+  matching is ours.
+- **One set of names for Cut solids' tools**: Strips by faces, By surface or RL and By blocks on the row, in the panel's
+  choice and on the canvas.
+
+`pnpm test` passes 83, two new: Find lists every tool once under its own name, no two tools sharing one; and what is
+found, in order, for a name, part of a name, a command, a stage, a key, two words, and nothing.
+
+Release app, 16 November 2026. `--shell` passes 50 of 50, four of them for Find a command.
+
+| Check | Result |
+|---|---|
+| Ctrl+K, and the box on the ribbon | open it on all 71 tools, the typing in its box; Esc closes it |
+| "seams", then Enter, from the Project stage | By seams alone found; Cut solids opens set to it; the stage stays Project, and By seams is lit on the Solids row |
+| "polygons" | Polygons from lines, then By blocks (by what it does) |
+| "solid.cut_by_benches" | By benches |
+| "geology" | the four Geology tools |
+| "selected solids" | Export selected solids, off with no solid selected |
+| Something no tool has | nothing, and it says so |
+| Ctrl+K from a box being typed in | opens |
+| "plan or 3d", Enter, twice | the view into plan, and back |
+
+`--select` (29 of 29), `--section-guide` (11 of 11), `--workflow` (43 of 43) and `--dataflow` (21 of 21) still pass;
+`--builder` and `--cut` run with no failed check, under the new names.
+
 ## Known limits
 
 - **A layout opened in a window of another size** is scaled by dockview as it's read, docks and all. They hold from
@@ -284,6 +323,8 @@ The narrower widths are the app laid out in 1,280 px and 900 px of the 1,600 px 
   width.
 - **A Strings tool with several strings picked** finds its row only if it's Number across or Polygons from lines, which
   are the two Properties shows for several; the others need one string picked.
+- **Find a command reaches a tool, not what's inside a panel**: the Block table's Select shown or the Layers tree's
+  commands aren't tools yet. The view bar draws its own buttons, so its names are written twice.
 - **Repair's dialog** was not opened by a check: the bench has no closed mesh that isn't a solid.
 - **The view bar wraps to a second row** in a view narrower than its tools (about 540 px with a section open), and then
   covers the section's distances.
