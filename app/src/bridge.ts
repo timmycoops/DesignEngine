@@ -993,7 +993,10 @@ export interface FormulaTest {
   block?: Record<string, ParamCell>;
   parameters?: Record<string, ParamCell>;
   rom_coal?: Record<string, ParamCell>;
-  expect: Record<string, number>;
+  /** The fields it must leave the unit with; `null`, with no value. */
+  expect?: Record<string, number | null>;
+  /** Words it must stop the block with. */
+  stops?: string;
 }
 
 /** A dataflow step: a built-in by name, or a formula step with its filter, Starlark and worked examples (0077). */

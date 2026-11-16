@@ -78,7 +78,8 @@ pub struct FormulaStep {
 }
 
 /// A worked example a formula must give, run whenever the dataflow is saved: a unit's fields and labels, its block's
-/// attributes and its parameters, and the fields the formula must leave it with.
+/// attributes and its parameters, and the fields the formula must leave it with (`null`: with no value), or, with
+/// `stops`, words the formula must stop the block with.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FormulaTest {
@@ -92,7 +93,11 @@ pub struct FormulaTest {
     /// The ROM coal section's coal added up, for a unit in one (`unit.rom_coal`); none, it's in none.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub rom_coal: BTreeMap<String, ParamValue>,
-    pub expect: BTreeMap<String, f64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub expect: BTreeMap<String, Option<f64>>,
+    /// Words the formula must stop the block with (`fail("…")`, or a parameter no row gives): it mustn't run on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stops: Option<String>,
 }
 
 impl DataflowStep {

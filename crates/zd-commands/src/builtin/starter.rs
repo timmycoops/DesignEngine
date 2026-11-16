@@ -26,7 +26,7 @@ fn t(s: &str) -> ParamValue {
 
 fn test(name: &str, unit: &[(&str, ParamValue)], parameters: &[(&str, ParamValue)], expect: &[(&str, f64)]) -> FormulaTest {
     let map = |pairs: &[(&str, ParamValue)]| pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect::<BTreeMap<_, _>>();
-    FormulaTest { name: name.to_string(), unit: map(unit), block: BTreeMap::new(), parameters: map(parameters), rom_coal: BTreeMap::new(), expect: expect.iter().map(|(k, v)| (k.to_string(), *v)).collect() }
+    FormulaTest { name: name.to_string(), unit: map(unit), block: BTreeMap::new(), parameters: map(parameters), rom_coal: BTreeMap::new(), expect: expect.iter().map(|(k, v)| (k.to_string(), Some(*v))).collect(), stops: None }
 }
 
 /// Starlark's reserved words: a field named one (Vulcan's ash is `as`) can't be written `unit.as`.
@@ -218,7 +218,15 @@ def formula(unit):
         coal_unit.push((mrom.as_str(), n(10.0)));
         coal_expect.push((rd_rom.as_str(), rd_is_coal * 92.0 / 90.0));
     }
+    let mut no_mis = test("coal with no Mis stops its block", &[("material", t("coal")), (rd.as_str(), n(1.4)), (mad.as_str(), n(3.0))], &[], &[]);
+    no_mis.stops = Some(format!("coal with no {mis}"));
+    let mut no_rom = test("coal with no Mrom has no ROM density", &[("material", t("coal")), (rd.as_str(), n(1.4)), (mad.as_str(), n(3.0)), (mis.as_str(), n(8.0))], &[], &[(rd_is.as_str(), rd_is_coal)]);
+    if let Some(rd_rom) = rd_rom {
+        no_rom.expect.insert(rd_rom.clone(), None);
+    }
     let tests = vec![
+        no_mis,
+        no_rom,
         test("coal by Preston and Sanders", &coal_unit, &[], &coal_expect),
         test(
             "waste over its moisture factor",

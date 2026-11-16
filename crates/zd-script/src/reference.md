@@ -1,49 +1,238 @@
 # Writing a reserves formula
 
-A formula is a step of a reserves dataflow written in Starlark, a small dialect of Python. It works out values for the
-units of a block column (a seam's bench, a piece of dilution, a ply in a working section) between the engine's built-in
-steps. It reads and sets field values; it never moves material between units, which the built-in steps do.
+A formula is one step of a reserves dataflow, written in Starlark: Python's syntax, run inside the engine. It works out
+values on the units of a block column between the engine's built-in steps: a seam's bench, a joined seam, a ply of a
+working section, a piece of dilution or loss. It reads and sets field values. It never moves material between units:
+splitting, joining and cutting loss and dilution are the built-in steps' work.
+
+Answer with the whole formula and its worked examples (below). Use only the field, label and parameter names you're
+given; the engine refuses any other before the formula is saved. Make up numbers for the worked examples: never use a
+client's.
 
 ## Its shape
 
 ```python
+# What it does, in a line or two: a planner reads this first.
 def formula(unit, p):
     if unit.material.lower() != "coal":
         return
     unit.rd_is = in_situ_rd(unit.rd, unit.mad, unit.mis)
 ```
 
-`formula` is called once for each unit the step's filter fits, top down. Leave `p` out if it reads no parameters.
+- `formula` is called once for each unit the step's filter fits, top down the column. Leave `p` out (`def
+  formula(unit):`) when it reads no parameters.
+- It returns nothing: it sets fields on `unit`. A `return` ends it for that unit.
+- Helper functions and constants may sit above it (`SIZE = ["thickness", "area"]`, `def basis(v, a, b): …`).
+- The step's filter, set beside the formula in the bench rules' words (`material: coal; seam: U, M`), decides which
+  units it's called for. A formula can test the same things itself.
+
+## When it runs
+
+A formula step sits right after one of these built-in steps, in this order:
+
+| After | What's true of the units | Typical work |
+|---|---|---|
+| `initialise` | each block (a seam's bench) is a unit, top down; underburden added below the last coal; the in situ rows not yet written | sizes filled in, limits and defaults, densities |
+| `join_benches` | each seam's benches joined into one unit (`unit.bench` is `None`) | tests on a seam whole, such as discarding coal |
+| `working_sections` | coal formed into working sections (`unit.section`); partings are dilution | per-section values |
+| `rom_dilution` | loss and dilution cut and placed | before the ROM ash cut-off |
+| `rom` | the ROM ash cut-off done; ROM sections final (`unit.rom_coal`) | ROM moistures and qualities, ROM densities |
+
+What a formula sets after `initialise` is in the in situ rows; anything set later shows from the stage after.
 
 ## What it reads and sets
 
-- `unit.<field>`: a field of the dataflow (a number, or `None` where the unit has none). Set it with `unit.<field> = …`.
-  Only fields the dataflow declares can be set, and never the volume.
-- `unit["<field>"]`: the same, for a name worked out as it runs, or one that isn't a plain name (`unit["as"]`).
-- Labels, read only: `unit.seam`, `unit.material`, `unit.bench` (none once a seam's benches are joined), `unit.became`
-  (`None`, or what the unit became: `loss`, `dilution`, `thin_loss`, `high_ash_loss`, `small_volume`, `discarded`).
-- `unit.block.<attribute>`: the block solid's attributes (`unit.block.strip`); `None` where it has none.
-- `unit.above.<field>`: the unit above in the column; `unit.above` is `None` for the top unit.
-- `unit.section.<field>`: the unit's working section added up, each field by its rule (qualities by tonnes).
-- `unit.rom_coal.<field>`: for a unit in a ROM coal section, the section's coal (its plies) added up by tonnes;
-  `unit.rom_coal` is `None` outside one.
+- `unit.<field>`: a field of the dataflow: a number, or `None` where the unit has none. Set it with `unit.<field> =
+  …`. Only fields the dataflow declares can be set, and never the volume (the volume of record). Setting `None` clears
+  a value.
+- `unit["<field>"]`: the same, for a name worked out as the formula runs (`unit[name]`), or one that isn't a plain name:
+  Vulcan's ash is `as`, a reserved word, so it's `unit["as"]`.
+- Labels, read only:
+  - `unit.seam`: the horizon the unit was cut as;
+  - `unit.material`: `coal` or `waste` (compare with `.lower()`);
+  - `unit.bench`: its bench label, `None` once a seam's benches are joined;
+  - `unit.became`: `None`, or what it became: `loss`, `dilution`, `thin_loss`, `high_ash_loss`, `small_volume`,
+    `discarded`.
+- `unit.block.<attribute>`: the block solid's attributes (`unit.block.strip`, `unit.block.block`); `None` where it has
+  none.
+- `unit.above.<field>`: the unit above it in the column; `unit.above` is `None` for the top unit.
+- `unit.section.<field>`: its working section, added up (from `working_sections` on).
+- `unit.rom_coal.<field>`: for a unit in a ROM coal section (its coal, partings, dilution, coal lost into it), the
+  section's coal plies added up; `unit.rom_coal` is `None` outside one. This is what dilution takes its coal's values
+  from.
 - `unit.column.<field>`: the whole column added up.
-- `p.<column>`: the parameters for the unit's block, each from the first row of the dataflow's tables that fits it.
-  Reading one no row gives stops the block; `getattr(p, "column", default)` reads one that may be missing.
+- Each of these reads by a name worked out as it runs too: `unit.rom_coal[m]`, `unit.above["area"]`.
+- `p.<column>`: the parameters for the unit's block: each value from the first row of the dataflow's parameter tables
+  that fits the block, tables read in order. A number column gives a number, a words column words (`"yes"`).
+  - Reading one no row gives stops the block. Read one that may be missing with `getattr(p, "column", default)`.
+  - `dir(p)` lists the columns that have a value for this block.
+
+Added up means each field by its own rule: volumes summed, densities averaged by volume, **qualities averaged by tonnes
+on their own basis**, settings by their largest or smallest.
+
+## Bases and units
+
+- Moistures are percentages: `mad` air dried, `mis` in situ, `mrom` ROM.
+- `rd` is the air-dried relative density (t/m³) from the lab and the seam grids; `rd_is` the in situ density;
+  `rd_rom` the ROM density; `rd_adt` the air-dried tonnes a cubic metre in situ (in situ density × (100 − Mis) ÷ (100 −
+  Mad)), what qualities and Mad are weighed by.
+- Qualities (ash, sulphur, …) are stored air dried. A quality on another basis is `to_basis(value, mad, mis)` (in
+  situ) or `to_basis(value, mad, mrom)` (ROM).
+- Tonnes are volume × density on the basis wanted: `unit.volume * unit.rd_is` in situ.
+- Qualities are always averaged by tonnes, never by volume. Where a formula averages them itself, use `weighted(values,
+  tonnes)`.
 
 ## Functions
 
-- `in_situ_rd(rd, mad, mis)`: in situ density by Preston and Sanders; moistures in %.
+- `in_situ_rd(rd, mad, mis)`: in situ density by Preston and Sanders: RD × (100 − Mad) ÷ (100 + RD × (Mis − Mad) −
+  Mis).
 - `air_dried_rd(rd_is, mad, mis)`: the air-dried RD back from an in situ density.
-- `moisture_factor(from, to)`: (100 − to) ÷ (100 − from), a moisture basis to another.
+- `moisture_factor(from, to)`: (100 − to) ÷ (100 − from), from one moisture basis to another.
 - `to_basis(value, from, to)`: a value on one moisture basis put on another.
 - `weighted(values, weights)`: an average weighted by the weights; `None` where they add to nothing.
-- `abs`, `round(x, digits)`, `sqrt`, `clamp(x, low, high)`, `min`, `max`, `len`, `str`, `float`, `int`, `range`.
-- `print(…)`: said with the step's name after a run.
-- `fail("why")`: stops the block, said with the line.
+- `abs(x)`, `round(x, digits)`, `sqrt(x)`, `clamp(x, low, high)`, `min`, `max`, `len`, `str`, `float`, `int`, `range`,
+  `sorted`, `enumerate`, `zip`, `any`, `all`.
+- `print(…)`: said after a run with the step's name, counted over the units that printed it.
+- `fail("why")`: stops the block, said with the line. Use it for data that can't be reserved.
 
-## Rules
+Starlark is Python with no `while`, no recursion, no `import`, no `try`, no classes, no files and no network, so every
+formula ends and gives the same answer every run. Strings, lists, dicts, `for`, `if`, comprehensions and functions work
+as in Python.
 
-- Qualities are always averaged by tonnes on their own basis, never by volume.
-- Python's syntax; no `while`, no recursion, no `import`, no files, no network: the same answer every run.
-- Each formula keeps worked examples (tests): a unit's fields and parameters, and the fields it must leave it with.
+## What's checked
+
+Before it's saved, a formula is refused, said with the line, if:
+
+- it doesn't parse;
+- it uses a name it never gave a value;
+- it has no `def formula(unit, p):`;
+- `unit.<x>` isn't a field or label of the dataflow (with "did you mean");
+- it sets a label;
+- `p.<x>` isn't a parameter column;
+- it sets a parameter;
+- it adds up (`unit.section.<x>`, `unit.column.<x>`, `unit.rom_coal.<x>`) a field that isn't a number;
+- any of its worked examples doesn't give its answer.
+
+As it runs, a block stops, said with the line, where:
+
+- a field is set to words, or to something that isn't a number, such as after a division by zero;
+- `unit["x"]` names no field;
+- a parameter no row gives is read;
+- `fail` is called.
+
+## Worked examples
+
+Each formula keeps a few worked examples, run every time the dataflow is saved. Each is a unit on its own: its fields
+and labels, its block's attributes, its parameters, the ROM section's coal where it matters, and the fields the formula
+must leave it with, to 1e-9 relative. A field it should leave alone is expected at its own value; one it should leave
+with no value is expected `null`. An example where the formula must stop the block gives `stops`: words its message
+must hold.
+
+```json
+[
+  {
+    "name": "coal by Preston and Sanders",
+    "unit": { "material": "coal", "rd": 1.4, "mad": 3, "mis": 8 },
+    "parameters": {},
+    "expect": { "rd_is": 1.371717171717 }
+  },
+  {
+    "name": "dilution takes its coal's Mad",
+    "unit": { "material": "waste", "became": "dilution", "ash": 80 },
+    "rom_coal": { "mad": 3, "ash": 12 },
+    "expect": { "mad": 3 }
+  },
+  {
+    "name": "coal with no Mrom has no ROM density",
+    "unit": { "material": "coal", "rd": 1.4, "mad": 3, "mis": 8 },
+    "expect": { "rd_rom": null }
+  },
+  {
+    "name": "coal with no Mis stops its block",
+    "unit": { "material": "coal", "rd": 1.4, "mad": 3 },
+    "stops": "coal with no mis"
+  }
+]
+```
+
+Keys: `name`, `unit`, and `expect` or `stops`, with `block`, `parameters` and `rom_coal` where used. Values are
+numbers or words; `expect` is numbers, or `null` for no value. Work each answer by hand and say how in the name or a
+comment beside the formula.
+
+## Examples
+
+**Densities, coal and waste** (after `initialise`):
+
+```python
+# In situ density: coal by Preston and Sanders, which must have RD, Mad and Mis; waste its RD as given.
+def formula(unit):
+    if unit.material.lower() == "coal":
+        missing = [n for n in ["rd", "mad", "mis"] if unit[n] == None]
+        if missing:
+            fail("coal with no " + " or ".join(missing))
+        unit.rd_is = in_situ_rd(unit.rd, unit.mad, unit.mis)
+    elif unit.rd != None:
+        unit.rd_is = unit.rd
+```
+
+**A cut-off from the parameters** (after `join_benches`, each seam whole):
+
+```python
+# Coal over its in situ ash cut-off is marked for the working sections to set aside: 2. Kept: 0.
+def formula(unit, p):
+    if unit.material.lower() != "coal" or unit.became != None:
+        return
+    cutoff = getattr(p, "insitu_ash_cutoff", None)
+    unit.discarded = 2 if cutoff != None and unit.ash != None and unit.ash > cutoff else 0
+```
+
+**A quality on the in situ basis, into a field of its own** (after `initialise`):
+
+```python
+# Ash on the in situ basis: air-dried ash x (100 - Mis) / (100 - Mad).
+def formula(unit):
+    if unit.ash != None and unit.mad != None and unit.mis != None:
+        unit.ash_is = to_basis(unit.ash, unit.mad, unit.mis)
+```
+
+**From the unit above** (after `initialise`):
+
+```python
+# A unit with no area takes the one above's, the column's blocks being one footprint.
+def formula(unit):
+    if unit.area == None and unit.above != None:
+        unit.area = unit.above.area
+```
+
+**Dilution against its coal** (after `rom`):
+
+```python
+# Dilution and partings with no moisture take their coal's; a negative ash (a site's way of saying "as the coal") too.
+def formula(unit):
+    coal = unit.rom_coal
+    if coal == None or (unit.material.lower() == "coal" and unit.became == None):
+        return
+    for m in ["mad", "mis", "mrom"]:
+        if unit[m] == None:
+            unit[m] = getattr(coal, m)
+    if unit.ash != None and unit.ash < 0:
+        unit.ash = coal.ash
+```
+
+**Limits and defaults for any field** (after `initialise`), names worked out as it runs:
+
+```python
+# Each field with a `<field>_default` parameter takes it where it has no value or is outside `<field>_min` to `_max`.
+def formula(unit, p):
+    for name in dir(p):
+        if not name.endswith("_default"):
+            continue
+        field = name[:-len("_default")]
+        if not hasattr(unit, field) or field == "volume":
+            continue
+        low, high = getattr(p, field + "_min", None), getattr(p, field + "_max", None)
+        value = unit[field]
+        if value == None or (low != None and value < low) or (high != None and value > high):
+            unit[field] = getattr(p, name)
+            print(field + " given its default")
+```

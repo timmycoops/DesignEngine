@@ -131,12 +131,23 @@ fn test_result(t: &zd_core::FormulaTest, formula: &Formula) -> Result<(), String
             rom_coals: if rom_coal.is_some() { vec![map(&t.rom_coal)] } else { Vec::new() },
             column: map(&t.unit),
         };
-        let out = formula.run(&input, &[0]).map_err(|p| p.to_string())?;
+        let out = match (formula.run(&input, &[0]), &t.stops) {
+            (Err(p), Some(words)) if p.message.to_lowercase().contains(&words.to_lowercase()) => return Ok(()),
+            (Err(p), Some(words)) => return Err(format!("it stopped with \"{}\", not \"{words}\"", p.message)),
+            (Err(p), None) => return Err(p.to_string()),
+            (Ok(_), Some(words)) => return Err(format!("it ran on; it should stop with \"{words}\"")),
+            (Ok(out), None) => out,
+        };
         for (field, want) in &t.expect {
             let got = out[0].get(field).cloned().or_else(|| t.unit.get(field).map(param_value));
-            let ok = matches!(got, Some(ScriptValue::Number(x)) if (x - want).abs() <= TEST_TOLERANCE * want.abs().max(1.0));
+            let ok = match (want, &got) {
+                (Some(want), Some(ScriptValue::Number(x))) => (x - want).abs() <= TEST_TOLERANCE * want.abs().max(1.0),
+                (None, None | Some(ScriptValue::None)) => true,
+                _ => false,
+            };
             if !ok {
                 let got = got.map_or("nothing".to_string(), |g| g.to_string());
+                let want = want.map_or("nothing".to_string(), |w| w.to_string());
                 return Err(format!("{field} is {got}, not {want}"));
             }
         }

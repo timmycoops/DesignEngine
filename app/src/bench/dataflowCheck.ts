@@ -245,7 +245,7 @@ async function checkFormulas(expect: Expect, picture: Picture) {
   panel()?.querySelector<HTMLButtonElement>('[data-formula="yes"][data-step="densities"] button[title="Open this formula"]')?.click();
   for (let k = 0; k < 50 && !panel()?.querySelector('[data-slot="formula-ok"]'); k++) await wait(100);
   const ok = panel()?.querySelector('[data-slot="formula-ok"]')?.textContent ?? '';
-  expect('a formula opens checked, its worked examples holding', ok.includes('3 worked examples hold'), ok);
+  expect('a formula opens checked, its worked examples holding', /\d+ worked examples hold/.test(ok), ok);
   const button = (label: string) => [...(panel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent?.trim() === label) ?? null;
   button('Check')?.click();
   for (let k = 0; k < 100 && !panel()?.querySelector('[data-slot="formula-trace"]'); k++) await wait(100);
