@@ -273,6 +273,22 @@ fn a_formula_as_edited_is_checked_problem_by_problem() {
     assert!(report.problems.is_empty(), "{:?}", report.problems);
     assert_eq!(report.tests.iter().map(|t| (t.name.as_str(), t.ok)).collect::<Vec<_>>(), [("U at 10 %", true), ("wrong on purpose", false)]);
     assert_eq!(report.tests[1].why.as_deref(), Some("ash2 is 55, not 56"));
+    // A worked example can expect no value, or a stop.
+    let mut d2 = d.clone();
+    let f2 = d2.steps[1].formula.as_mut().unwrap();
+    f2.script = "def formula(unit, p):\n    if unit.ash == None:\n        fail(\"no ash on this coal\")\n    unit.ash2 = None if unit.ash > 50 else unit.ash * 2\n".into();
+    f2.tests = serde_json::from_value(json!([
+        { "name": "dirty: none", "unit": { "ash": 60.0 }, "expect": { "ash2": null } },
+        { "name": "no ash: stops", "unit": {}, "stops": "no ash" },
+        { "name": "stops, said wrong", "unit": {}, "stops": "no rd" },
+        { "name": "runs on, said to stop", "unit": { "ash": 10.0 }, "stops": "no ash" },
+    ]))
+    .unwrap();
+    let report = check_formula(&d2, &[&**t], 1, &built_in).unwrap();
+    let held: Vec<(bool, Option<&str>)> = report.tests.iter().map(|t| (t.ok, t.why.as_deref())).collect();
+    assert_eq!(held[..2], [(true, None), (true, None)]);
+    assert_eq!(held[2], (false, Some("it stopped with \"no ash on this coal\", not \"no rd\"")));
+    assert_eq!(held[3], (false, Some("it ran on; it should stop with \"no ash\"")));
     assert!(report.names.fields.contains(&("rd".to_string(), "t/m3".to_string())) && report.names.parameters.iter().any(|p| p.0 == "ash_cutoff" && p.1 == "%"));
     // Two problems at once, each with its line.
     let mut broken = d.clone();

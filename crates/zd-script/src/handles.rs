@@ -224,6 +224,15 @@ impl<'v> StarlarkValue<'v> for Parts {
         Some(to_starlark(&value, heap))
     }
 
+    /// `unit.rom_coal["mad"]`: a value by a name worked out as the formula runs, as `unit["mad"]` reads the unit's. An AI
+    /// writing from the reference reached for it (decision 0077, 7e), so it works the same on every part.
+    fn at(&self, index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        match index.unpack_str() {
+            Some(name) => Ok(self.get_attr(name, heap).unwrap_or_else(Value::new_none)),
+            None => Err(starlark::Error::new_other(anyhow::anyhow!("a value of the {} is named in words, not {}", self.kind, index.to_repr()))),
+        }
+    }
+
     fn has_attr(&self, attribute: &str, _heap: Heap<'v>) -> bool {
         self.values.as_ref().is_some_and(|v| find(v, attribute).is_some())
     }

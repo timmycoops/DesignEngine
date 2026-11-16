@@ -337,4 +337,41 @@ Known answers:
 
   With `--pictures` it saves `formula-panel.png`.
 
-Not yet: the reference for AI written up with worked examples and tried on two starter formulas (7e).
+## Built: 7e, the reference for AI
+
+`crates/zd-script/src/reference.md` is shipped with the app. It's under "How formulas are written" in the formula panel
+and is the first part of what Copy for AI and Explain hand over. It covers:
+
+- a formula's shape;
+- when each stage runs and what's true of the units then;
+- every handle (`unit`, its labels, `.block`, `.above`, `.section`, `.rom_coal`, `.column`, `p`);
+- the moisture bases, densities and units, and that qualities are always averaged by tonnes;
+- the functions, and what's checked before saving and as it runs;
+- the worked examples' format;
+- six complete examples.
+
+A test compiles every Python example in it against a dataflow's names, reads its JSON, and runs the densities example to
+Preston-Sanders' 135.8 ÷ 99, so the reference can't teach what the engine refuses.
+
+**Tried on two starter formulas.** Two fresh AI sessions (Sonnet, not the model that wrote the reference) were each
+given only what Copy for AI produces: the reference, a dataflow's field and parameter names, and a starter formula
+described in plain words. One wrote `densities`, the other `rom_qualities`, the hardest, which needs the ROM section's
+coal. Neither saw the engine, the starter's code or its worked examples.
+
+- **`densities`** compiled and gave all of the starter's worked examples first time, and its own six.
+- **`rom_qualities`** read the ROM section's coal by a name worked out as it runs, `coal[m]`, as `unit[m]` works. The
+  engine allowed `[]` only on the unit. That was the engine's gap, not the AI's: every read-only part (`unit.rom_coal`,
+  `.section`, `.above`, `.block`, `.column`) now reads by `["name"]` too, and the reference says so. With that, it gives
+  all four of the starter's worked examples and its own four.
+- **Both** said that a worked example could only expect numbers: no way to say a field stays empty, or that the formula
+  must stop. Now `expect` takes `null` for no value, and `stops` gives words the formula must stop the block with. The
+  starter's `densities` has two more examples using them: coal with no Mis stops its block, and coal with no Mrom has no
+  ROM density.
+
+What they wrote is kept as it came (`crates/zd-commands/tests/ai_written/`). `tests/ai_written.rs` puts each in place of
+the starter's formula and requires it to compile, give the starter's worked examples and give its own, so a change to
+the reference or the engine that breaks what an AI writes from it shows. One difference stays as written: the AI's
+`rom_qualities` takes only `yes` for `align_dilution_mad`, where the starter also takes `y`, `true` and `1`.
+
+The app check passes 26 of 26 on the regenerated demo. Workstream 7 is done: formulas in Starlark, in the dataflow,
+the starter's Spry arithmetic as formulas, the formula panel, and a reference an AI writes them from.

@@ -151,6 +151,48 @@ fn a_unit_reads_its_rom_section_s_coal() {
     assert!(m.contains("adds up number fields"), "{m}");
 }
 
+/// The reference an AI is handed (decision 0077, 7e) teaches only what the engine takes: every Python example in it
+/// compiles against a dataflow with the names it uses, and its worked examples read as JSON with the keys it says.
+#[test]
+fn every_example_in_the_reference_compiles() {
+    let names = Declared {
+        fields: ["volume", "thickness", "area", "rd", "rd_is", "rd_rom", "rd_adt", "mad", "mis", "mrom", "ash", "ash_is", "discarded"]
+            .iter()
+            .map(|n| FieldDecl::number(n, ""))
+            .collect(),
+        labels: vec!["seam".into(), "material".into(), "bench".into(), "became".into()],
+        parameters: vec![FieldDecl::number("insitu_ash_cutoff", "%")],
+    };
+    let blocks: Vec<&str> = REFERENCE.split("```python").skip(1).map(|b| b.split("```").next().unwrap_or("")).collect();
+    assert!(blocks.len() >= 7, "{} examples", blocks.len());
+    for b in &blocks {
+        if let Err(problems) = Formula::compile(b, names.clone()) {
+            panic!("a reference example doesn't compile: {problems:?}\n{b}");
+        }
+    }
+    let json = REFERENCE.split("```json").nth(1).and_then(|b| b.split("```").next()).expect("a JSON example");
+    let tests: serde_json::Value = serde_json::from_str(json).expect("the worked examples read as JSON");
+    for t in tests.as_array().expect("a list") {
+        let keys: Vec<&str> = t.as_object().unwrap().keys().map(String::as_str).collect();
+        assert!(keys.iter().all(|k| ["name", "unit", "block", "parameters", "rom_coal", "expect", "stops"].contains(k)), "{keys:?}");
+    }
+    // The first runs: Preston and Sanders at RD 1.4, Mad 3, Mis 8 is 135.8 ÷ 99, as its worked example says.
+    let f = Formula::compile(blocks[1], names.clone()).expect("densities");
+    let col = ColumnInput {
+        units: vec![UnitInput { fields: values([("material", t("coal")), ("rd", n(1.4)), ("mad", n(3.0)), ("mis", n(8.0))]), block: values([]), parameters: values([]), section: None, rom_coal: None }],
+        ..ColumnInput::default()
+    };
+    let out = f.run(&col, &[0]).expect("it runs");
+    assert!(close(match out[0].get("rd_is") { Some(ScriptValue::Number(x)) => *x, _ => f64::NAN }, 135.8 / 99.0));
+}
+
+/// A script with Windows line endings (pasted, or checked out so) reads as one with plain new lines.
+#[test]
+fn windows_line_endings_are_new_lines() {
+    let f = Formula::compile("def formula(unit):\r\n    unit.rd_is = unit.rd * 2\r\n", declared()).expect("it compiles");
+    assert_eq!(f.run(&column(), &[0]).expect("it runs")[0].get("rd_is"), Some(&n(2.9)));
+}
+
 /// A field named as the formula runs, read and set by `unit["name"]`; a name the dataflow lacks is refused.
 #[test]
 fn a_field_can_be_named_as_the_formula_runs() {
