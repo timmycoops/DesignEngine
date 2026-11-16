@@ -35,6 +35,11 @@ function copyOf(node: Element, pictures: Map<HTMLCanvasElement, string>): Elemen
     if (node.checked) copy.setAttribute('checked', '');
   }
   if (node instanceof HTMLTextAreaElement) copy.textContent = node.value;
+  // A select shows the option it holds, not the first: the copy only knows by the attribute.
+  if (node instanceof HTMLOptionElement) {
+    if (node.selected) copy.setAttribute('selected', '');
+    else copy.removeAttribute('selected');
+  }
   for (const child of node.childNodes) {
     if (child instanceof HTMLScriptElement) continue;
     if (child instanceof Element) copy.appendChild(copyOf(child, pictures));
