@@ -360,7 +360,8 @@ function Strip({ edge, groups, api }: { edge: Edge; groups: Minimised[]; api: Do
  * The dockable workspace: drag tabs to rearrange; the layout is remembered between sessions. A group can be minimised
  * to a strip at the edge of the window, and every panel hidden at once so the viewport fills it.
  */
-export function Workspace({ onReady }: { onReady: (api: DockviewApi) => void }) {
+export function Workspace({ onReady, onShown }: { onReady: (api: DockviewApi) => void; onShown?: (panels: PanelId[]) => void }) {
+  const told = useRef('');
   const [api, setApi] = useState<DockviewApi | null>(null);
   const [minimised, setMinimised] = useState<Minimised[]>([]);
   const [allHidden, setAllHidden] = useState(false);
@@ -376,6 +377,18 @@ export function Workspace({ onReady }: { onReady: (api: DockviewApi) => void }) 
           .map((g) => ({ groupId: g.id, edge: edges[g.id] ?? 'right', panels: g.panels.map((p) => ({ id: p.id, title: p.title ?? p.id })) })),
       );
       setAllHidden(api.hasMaximizedGroup());
+      // The panels in front in their docks, for the ribbon to light their tools: not one minimised, nor one behind a
+      // group that fills the window.
+      const filling = api.hasMaximizedGroup();
+      const shown = api.groups
+        .filter((g) => g.api.isVisible && (!filling || g.api.isMaximized()))
+        .map((g) => g.activePanel?.id)
+        .filter((id): id is PanelId => !!id && id !== 'viewport')
+        .sort();
+      if (shown.join() !== told.current) {
+        told.current = shown.join();
+        onShown?.(shown);
+      }
     };
     onMinimisedChange = refresh;
     refresh();
@@ -390,6 +403,7 @@ export function Workspace({ onReady }: { onReady: (api: DockviewApi) => void }) 
       refresh();
     });
     const closed = api.onDidRemoveGroup(() => holdDocks(api, held));
+    const fronted = api.onDidActivePanelChange(() => refresh());
     // The window resized, or the strips came or went: dockview scales every panel, so once it has, the docks are put
     // back at their sizes and the view takes the difference.
     let frame = 0;
@@ -401,11 +415,12 @@ export function Workspace({ onReady }: { onReady: (api: DockviewApi) => void }) 
     return () => {
       layout.dispose();
       closed.dispose();
+      fronted.dispose();
       resized.disconnect();
       cancelAnimationFrame(frame);
       if (onMinimisedChange === refresh) onMinimisedChange = null;
     };
-  }, [api]);
+  }, [api, onShown]);
 
   const ready = ({ api: dock }: DockviewReadyEvent) => {
     restoreLayout(dock);

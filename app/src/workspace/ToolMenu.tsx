@@ -1,25 +1,25 @@
 import { Fragment, type ReactNode } from 'react';
 import { ToolButton } from '@/design-system/kit';
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from '@/design-system/ui/dropdown-menu';
-import { type MenuId, type MenuPlace, menuTools, menuWords, tipOf, type Tool, type ToolNeeds } from '@/tools';
+import { type MenuId, menuTools, menuWords, type RowMenu, rowName, tipOf, type Tool, toolByKey, type ToolNeeds } from '@/tools';
 import { ToolPicture } from './toolIcons';
 
-/** How the toolbar uses a tool: carries it out, and says how many of what it needs there are (none: it's off). */
+/** How the toolbar uses a tool: carries it out, says how many of what it needs there are (none: it's off), and whether it's the one in use. */
 export interface ToolUse {
   run: (tool: Tool) => void;
   count: (needs: ToolNeeds) => number;
+  lit: (tool: Tool) => boolean;
 }
 
-type Placed = Tool & { menu: MenuPlace };
-
-function Item({ tool, use }: { tool: Placed; use: ToolUse }) {
+/** A tool as a menu's item: its rule and heading above it, its words as the menu has them, its keys at the end. */
+function Item({ tool, use, words }: { tool: Tool; use: ToolUse; words?: string }) {
   const count = tool.needs ? use.count(tool.needs) : null;
   return (
     <>
-      {tool.menu.rule && <DropdownMenuSeparator />}
-      {tool.menu.heading && <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">{tool.menu.heading}</DropdownMenuLabel>}
+      {tool.menu?.rule && <DropdownMenuSeparator />}
+      {tool.menu?.heading && <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">{tool.menu.heading}</DropdownMenuLabel>}
       <DropdownMenuItem title={tool.tip} disabled={count === 0} data-tool={tool.key} onSelect={() => use.run(tool)}>
-        <ToolPicture tool={tool} /> {menuWords(tool, count)}
+        <ToolPicture tool={tool} /> {words ?? menuWords(tool, count)}
         {tool.shortcut && <DropdownMenuShortcut>{tool.shortcut}</DropdownMenuShortcut>}
       </DropdownMenuItem>
     </>
@@ -38,7 +38,7 @@ export function ToolMenuItems({ menu, use }: { menu: MenuId; use: ToolUse }) {
       continue;
     }
     // Every tool in a row under the same name makes one menu within the menu.
-    const within: Placed[] = [];
+    const within: Tool[] = [];
     while (k < tools.length && tools[k].menu.under?.name === under.name) within.push(tools[k++]);
     k--;
     parts.push(
@@ -57,12 +57,38 @@ export function ToolMenuItems({ menu, use }: { menu: MenuId; use: ToolUse }) {
   return <>{parts}</>;
 }
 
-/** A tool as a button on the toolbar: its icon, with its short name where the row shows one. */
+/** What a row's menu holds: one of the toolbar's menus whole, or its few tools as their menu words them. */
+export function RowMenuItems({ menu, use }: { menu: RowMenu; use: ToolUse }) {
+  if (menu.menu) return <ToolMenuItems menu={menu.menu} use={use} />;
+  return (
+    <>
+      {(menu.keys ?? []).map((key) => {
+        const tool = toolByKey(key);
+        return tool ? <Item key={key} tool={tool} use={use} /> : null;
+      })}
+    </>
+  );
+}
+
+/** A tool as a menu's item under its row name: what More holds for a tool that didn't fit its row. */
+export function RowToolItem({ tool, use }: { tool: Tool; use: ToolUse }) {
+  return <Item tool={{ ...tool, menu: undefined }} use={use} words={rowName(tool)} />;
+}
+
+/** A tool as a button on the toolbar: its icon, with its name in words where the row shows one, lit while it's the one in use. */
 export function BarTool({ tool, use, named }: { tool: Tool; use: ToolUse; named?: boolean }) {
   return (
-    <ToolButton tip={tipOf(tool)} disabled={tool.needs ? use.count(tool.needs) === 0 : false} data-tool={tool.key} aria-label={named ? undefined : tool.label} onClick={() => use.run(tool)}>
+    <ToolButton
+      tip={tipOf(tool)}
+      active={use.lit(tool) || undefined}
+      disabled={tool.needs ? use.count(tool.needs) === 0 : false}
+      data-tool={tool.key}
+      aria-label={named ? undefined : tool.label}
+      className={named ? 'px-2' : undefined}
+      onClick={() => use.run(tool)}
+    >
       <ToolPicture tool={tool} />
-      {named && ` ${tool.short ?? tool.label}`}
+      {named && ` ${rowName(tool)}`}
     </ToolButton>
   );
 }

@@ -151,8 +151,10 @@ async function checkBuilder(viewport: Viewport, log: (line: string) => void, sho
   log('builder: a toe at RL 100');
   const toe = await runCommand('string.create', { name: 'Toe B', layer: 'toes', closed: false, points: [[650000, 7451000, 100], [650300, 7451040, 100], [650600, 7451000, 100]] });
   await show(toe.summary);
-  const open = button('Builder');
-  open?.click();
+  // From the ribbon: the Walls tab, then Builder on its row.
+  document.querySelector<HTMLButtonElement>('[role="tab"][data-stage="walls"]')?.click();
+  await wait(200);
+  document.querySelector<HTMLButtonElement>('[data-slot="ribbon"] [data-tool="builder"]')?.click();
   await wait(500);
   layer.select(toe.record.outputs[0].id);
   await wait(500);
@@ -356,8 +358,10 @@ async function checkCut(viewport: Viewport, log: (line: string) => void, show: S
   await show((await runCommand('face.project', { design })).summary);
   viewport.fitView();
 
-  const open = button('Cut');
-  open?.click();
+  // From the ribbon: the Solids tab, then Between surfaces on its row, which opens Cut solids set to it.
+  document.querySelector<HTMLButtonElement>('[role="tab"][data-stage="solids"]')?.click();
+  await wait(200);
+  document.querySelector<HTMLButtonElement>('[data-slot="ribbon"] [data-tool="cut:between"]')?.click();
   await wait(600);
   // The pit, between the two surfaces inside its limit: the only closed string, so the panel offers it first.
   button('Between surfaces')?.click();

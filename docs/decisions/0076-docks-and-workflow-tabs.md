@@ -4,7 +4,7 @@ Status: agreed 16 November 2026. Tim picked "panel and then b" of the options pu
 then the workflow tabs), and agreed the six decisions on the Build Plan's "UI improvements plan" tab as recommended
 ("Agree all 6"). It takes over the open parts of the UI plan tab and replaces 0051's one toolbar row. 0051's minimised
 strips and the ` key stay. Built as seven workstreams, a PR each. Workstreams 1, the docks, 2, the view bar, 3,
-compact heads, and 4, the one tool list, are built.
+compact heads, 4, the one tool list, and 5, the workflow tabs, are built.
 
 ## Why
 
@@ -211,6 +211,68 @@ from the list; the Export menu, with what needs a selection off without one; the
 Not in the list yet: the view bar's tools, which Find a command will want, and the tools inside panels that aren't
 choices (Block table's Select shown, the Layers tree's commands).
 
+## Built: workstream 5, the workflow tabs
+
+- **The ribbon** (`app/src/workspace/Ribbon.tsx`) replaces the one row: a tab a stage (Project · Strings · Walls ·
+  Solids · Geology · Reserves) and under it the row of that stage's tools, each named in words with its picture. It is
+  68 px high against 37 px; the view's tab strip going paid 30 px of that, so the view is 708 px high in the default
+  layout against 709 px with the old row and the view's own tab strip.
+- **Before the tabs**: the project's menu on its name, Save, Undo, Redo. **At the end of every row**: Workflow and the
+  Panels menu.
+- **The rows are in the tool list** (`ROWS` in `app/src/tools.ts`), as agreed (decision 1):
+
+  | Stage | Its row |
+  |---|---|
+  | Project | New, Open, Save as · Import ▾, Export ▾ · Relink geology |
+  | Strings | Offset, Number across, Polygons from lines · Set grade, Set elevation, Drape · Split, Join, Smooth, Filter, Reverse, Close |
+  | Walls | Face design, Builder, Rebuild from here, Join faces |
+  | Solids | Between surfaces, Strips by faces, By surface or RL, By seams, By benches, By blocks · Block table, Repair · Import solids ▾, Export solids ▾ |
+  | Geology | Import seam grids, Suggest definition, Build seam model, Relink geology |
+  | Reserves | Reserves, Parameters, Reserves table, Compare, Report |
+
+- **A tool opens its panel set to it**: By seams opens Cut solids set to By seams, Compare opens Reserves set to
+  Compare. Join faces opens Cut solids at Into strips, where its button is; Rebuild from here opens the Builder; Report
+  opens the Workflow panel, where Write report is.
+- **The tool in use is lit** in the picked gold: its panel in front in its dock, set to it. A panel that does several
+  things says which it's set to (`toolMode`), so the light follows the panel's own choice.
+- **More ▾**: a row too long for the window folds what doesn't fit into a menu at its end, in order, a row's menu as a
+  menu within. Each tool is measured once and the fold follows the window, so nothing is clipped at any width.
+- **Switching stage changes the row only** (decision 3). The stage is remembered for each project on this machine, by
+  its path, beside the layout; it's how the window looks, so it stays out of the project file.
+- **The Strings tools open Properties at their row**, lit for a moment, on the string picked; with none picked the
+  status line says to pick one. They run in Properties until workstream 7 gives them panels of their own.
+- **Repair** has its button: every closed mesh kept as a surface for not being a solid goes to the repair dialog, or
+  the status line says there is nothing to repair.
+- The names on a row are the plan's (Strips by faces, By surface or RL, By blocks); the Cut solids panel's own choice
+  and the workflow canvas keep theirs (Into strips, By a surface, By polygons) until they're brought into line.
+
+`pnpm test` passes 80: every stage has a row of tools that exist, each with a picture and a name of 22 letters or
+fewer; a stage's tools are on its row but for four reached another way (the older project folder in the project's
+menu, Cut solids as it stands in the Panels menu, and the two the canvas lists that Builder and Reserves open on);
+every tool on the old one row is one click from its stage, and every import and export from Project; which tool is in
+use; the stage remembered.
+
+Release app, 16 November 2026, a 1,600 × 1,000 window. `--shell` passes 46 of 46, eight of them for the ribbon; the
+checks on the docks now ask for their tools from the ribbon (a stage's tab, then the tool).
+
+| Check | Result |
+|---|---|
+| The ribbon | six tabs over a row, 68 px high |
+| Every stage's row at 1,600 px | its tools in order, none in More, nothing clipped or off the screen |
+| At 1,280 px | the same; Strings shows 10 and folds 2, Solids shows 8 and folds 2 |
+| At 900 px | the same; Strings shows 5 and folds 7, Solids shows 5 and folds 5 |
+| A tool folded into More | does what it does on the row |
+| Switching through every stage | the layout and the view's size unchanged; the stage remembered |
+| The project, Import, Export and Panels menus | read as they did; what needs a selection is off without one |
+| The Solids row's own menus | the four imports of solids, the two exports |
+| The tool in use | By seams lit; By benches once picked in the panel; Block table lit until its dock is minimised |
+| A Strings tool | with no string picked says so; with one picked, its row in Properties is brought into view and lit |
+| Repair, with nothing to repair | says so |
+
+The narrower widths are the app laid out in 1,280 px and 900 px of the 1,600 px window, not the window resized.
+`--select` (29 of 29), `--section-guide` (11 of 11), `--workflow` (43 of 43) and `--dataflow` (21 of 21) still pass;
+`--builder` and `--cut`, which now open their panels from the ribbon, run with no failed check.
+
 ## Known limits
 
 - **A layout opened in a window of another size** is scaled by dockview as it's read, docks and all. They hold from
@@ -218,7 +280,11 @@ choices (Block table's Select shown, the Layers tree's commands).
 - **The window resized while a table fills it**: the docks come back scaled, as dockview leaves them.
 - **A dock is told by what's in it.** A table dragged into the tool dock stays there, and the next table still opens
   under the view. With a dock's panels split across two groups, the next one opens in the group holding the most.
-- **The toolbar needs 1,280 px**, so it clips in a window narrower than that. Workstream 5 replaces it.
+- **The tab row doesn't fold**: in a window too narrow for the six tabs they are clipped. The tool row folds at any
+  width.
+- **A Strings tool with several strings picked** finds its row only if it's Number across or Polygons from lines, which
+  are the two Properties shows for several; the others need one string picked.
+- **Repair's dialog** was not opened by a check: the bench has no closed mesh that isn't a solid.
 - **The view bar wraps to a second row** in a view narrower than its tools (about 540 px with a section open), and then
   covers the section's distances.
 - **The view stays where it is.** With no tab there's nothing to drag it by; the docks move round it.

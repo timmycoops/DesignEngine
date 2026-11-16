@@ -22,12 +22,17 @@ const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('reserves', MODES
 const SCOPES: readonly Scope[] = ['picked', 'layer', 'visible'];
 
 export function ReservesPanel() {
-  const { summary, selection, runRecord, clearRefusal, toolAsk } = useWorkspace();
+  const { summary, selection, runRecord, clearRefusal, toolAsk, toolMode } = useWorkspace();
   const [mode, setMode] = useState<Mode>('interrogate');
   // A tool dropped on the workflow canvas asks for one of what this does (decision 0067).
   useEffect(() => {
     if (toolAsk?.panel === 'reserves' && MODES.includes(toolAsk.mode as Mode)) setMode(toolAsk.mode as Mode);
   }, [toolAsk]);
+  // The ribbon lights the tool the panel is set to.
+  useEffect(() => {
+    toolMode('reserves', mode);
+    return () => toolMode('reserves', null);
+  }, [toolMode, mode]);
   const [scope, setScope] = useState<Scope>('picked');
   const [model, setModel] = useState<string | null>(null);
   const [seamAttribute, setSeamAttribute] = useState('seam');
