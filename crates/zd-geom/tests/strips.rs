@@ -104,6 +104,23 @@ fn a_face_with_a_berm_has_its_known_volume_in_front() {
     assert_volume(slice.strips[1].volume, 50_000_000.0 - front, "behind it");
 }
 
+#[test]
+fn a_face_covering_the_whole_solid_in_plan_slices_it() {
+    // A strip 40 m wide, 520 to 560 m east, under a 45° face from its toe at 500 m east (450 to 650 m in plan, past
+    // the strip's outline and its margin all round): nothing of the outline is left past the face in plan. It crosses
+    // the strip from RL 20 on its west side to RL 60 on its east side.
+    let ([x0, y0, z0], [x1, y1, z1]) = ([E + 520.0, N, 0.0], [E + 560.0, N + 500.0, 100.0]);
+    let vertices = vec![[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]];
+    let triangles = vec![[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]];
+    let strip = TriMesh::new(vertices, triangles);
+    let over = batter_45(500.0);
+    assert!(faces_through_solid(&strip, &[&over]).unwrap().is_empty(), "it passes right through the strip");
+    let slice = slice_solid_by_faces(&strip, &[&over]).unwrap();
+    // In front, over the face: 40 x 500 x (100 - its mean RL of 40). Behind, under it: 40 x 500 x 40.
+    assert_volume(slice.strips[0].volume, 1_200_000.0, "in front of the face");
+    assert_volume(slice.strips[1].volume, 800_000.0, "behind it");
+}
+
 /// The shortfalls a slice refuses, which [`faces_through_solid`] finds the same without cutting.
 fn refused(faces: &[&TriMesh]) -> Vec<FaceShort> {
     let found = faces_through_solid(&pit(), faces).unwrap();
