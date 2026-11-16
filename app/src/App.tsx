@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { confirm, message, open, save } from '@tauri-apps/plugin-dialog';
 import type { DockviewApi } from 'dockview-react';
-import { ChevronDown } from 'lucide-react';
 import { cn } from 'cn';
 import {
   benchConfig,
@@ -48,16 +47,6 @@ import {
 import { runChecks } from './bench/runChecks';
 import { valueBands } from './viewport/bands';
 import { lookAt, RunGoing, ShowNote } from './design-system/kit';
-import { Button } from './design-system/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-  DropdownMenuTrigger,
-} from './design-system/ui/dropdown-menu';
-import { Separator } from './design-system/ui/separator';
 import { TooltipProvider } from './design-system/ui/tooltip';
 import { type DeswikChoice, DeswikImportDialog, type ImportSource, type PickableLayer } from './panels/DeswikImportDialog';
 import { ExportSolidsDialog, type SolidExportOptions } from './panels/ExportSolidsDialog';
@@ -71,10 +60,11 @@ import { type Mode, StringLayer } from './viewport/strings';
 import { typing } from './viewport/camera';
 import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Viewport';
 import { type AddingTo, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
-import { ALL_PANELS_KEY, PANELS, type PanelId, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
-import { ONE_ROW, panelTool, type Tool, type ToolAction, toolByKey, type ToolNeeds } from './tools';
-import { BarTool, ToolMenuItems, type ToolUse } from './workspace/ToolMenu';
-import { IconNamed } from './workspace/toolIcons';
+import { ALL_PANELS_KEY, type PanelId, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
+import { inUse, type Tool, type ToolAction, type ToolNeeds } from './tools';
+import { Ribbon, type StageId } from './workspace/Ribbon';
+import { rememberStage, stageOf } from './workspace/stage';
+import type { ToolUse } from './workspace/ToolMenu';
 
 interface Status {
   text: string;
@@ -396,6 +386,23 @@ export default function App() {
     setToolAsk((was) => ({ panel, mode, n: (was?.n ?? 0) + 1 }));
   }, []);
   const [workflowPick, setWorkflowPick] = useState<{ id: string | null; case: string }>({ id: null, case: 'Base' });
+  // What the ribbon lights: the panels in front in their docks, and what each is set to do, as the panels say.
+  const [panelsShown, setPanelsShown] = useState<PanelId[]>([]);
+  const [panelModes, setPanelModes] = useState<Partial<Record<PanelId, string>>>({});
+  const toolMode = useCallback((panel: PanelId, mode: string | null) => {
+    setPanelModes((was) => {
+      if ((was[panel] ?? null) === mode) return was;
+      const { [panel]: _gone, ...rest } = was;
+      return mode === null ? rest : { ...rest, [panel]: mode };
+    });
+  }, []);
+  // The stage whose tools the ribbon shows, remembered for each project on this machine.
+  const [stage, setStageState] = useState<StageId>(() => stageOf(null));
+  const setStage = useCallback((next: StageId) => {
+    setStageState(next);
+    rememberStage(summaryRef.current?.path ?? null, next);
+  }, []);
+
   const addStep = useCallback(
     async (command: string, params: Record<string, unknown>) => {
       if (!addingTo) return { error: 'Pick a workflow to add to first' };
@@ -1037,6 +1044,7 @@ export default function App() {
       openPanel: (id) => dockRef.current && showPanel(dockRef.current, id),
       openTool,
       toolAsk,
+      toolMode,
       run,
       runRecord,
       seamViews,
@@ -1066,7 +1074,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk],
+    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode],
   );
 
   /** The view's own tools, for the bar on the view (decision 0076). The keys below do the same. */
@@ -1100,6 +1108,9 @@ export default function App() {
       if (sectionRef.current) sectionRef.current.filled = on;
     },
   };
+
+  const projectPath = summary?.path ?? null;
+  useEffect(() => setStageState(stageOf(projectPath)), [projectPath]);
 
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';
   /** A file name for what's selected: its name if it's one, else the project's. */
@@ -1148,87 +1159,30 @@ export default function App() {
     'selected-strings': selectedStrings.length,
     'selected-solids': selectedSolids.length,
   };
-  /** Carries a tool out: its action, or its panel opened and set to it. */
+  /** Carries a tool out: its action, or its panel opened and set to it. A string tool with no string picked says so. */
   const runTool = (tool: Tool) => {
     if (tool.action) return void toolActions[tool.action]();
-    if (tool.panel) openTool(tool.panel, tool.mode);
+    if (!tool.panel) return;
+    openTool(tool.panel, tool.mode);
+    if (tool.stage === 'strings' && selectedStrings.length === 0) setStatus({ text: `${tool.label}: pick a string in the view or the tree first. It works on the string picked, in Properties.` });
   };
-  const toolUse: ToolUse = { run: runTool, count: (needs) => toolCounts[needs] };
+  const toolUse: ToolUse = {
+    run: runTool,
+    count: (needs) => toolCounts[needs],
+    // The tool in use: its panel in front in its dock, set to it.
+    lit: (tool) => !!tool.panel && panelsShown.includes(tool.panel) && inUse(tool, panelModes[tool.panel]),
+  };
 
   return (
     <TooltipProvider delayDuration={400}>
       <div className="flex h-full flex-col">
-        {/* In groups, left to right: the project, getting data in and out, the design panels. The view's tools are on the view. */}
-        <header className="flex shrink-0 items-center gap-0.5 border-b bg-card px-2 py-1">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="max-w-60 font-semibold" title={summary?.path ?? 'Not saved yet'}>
-                <span className="truncate">{projectName}</span>
-                <ChevronDown className="text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <ToolMenuItems menu="project" use={toolUse} />
-            </DropdownMenuContent>
-          </DropdownMenu>
-          {['project.save', 'edit.undo', 'edit.redo'].map((key) => (
-            <BarTool key={key} tool={toolByKey(key)!} use={toolUse} />
-          ))}
-          <Separator orientation="vertical" className="mx-1 h-5" />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" title="Bring in surfaces, grids, strings, solids, Deswik and Spry, and build a seam model">
-                <IconNamed name="import" /> Import <ChevronDown className="text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <ToolMenuItems menu="import" use={toolUse} />
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm">
-                <IconNamed name="export" /> Export <ChevronDown className="text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <ToolMenuItems menu="export" use={toolUse} />
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Separator orientation="vertical" className="mx-1 h-5" />
-          {ONE_ROW.map((key) => (
-            <BarTool key={key} tool={toolByKey(key)!} use={toolUse} named />
-          ))}
-          <div className="ml-auto">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm">
-                  <IconNamed name="panels" /> Panels <ChevronDown className="text-muted-foreground" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {PANELS.map((p) => (
-                  <DropdownMenuItem key={p.id} data-tool={p.id} onSelect={() => runTool(panelTool(p.id))}>
-                    {panelTool(p.id).label}
-                  </DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator />
-                {['panels.hide', 'panels.reset'].map((key) => (
-                  <DropdownMenuItem key={key} data-tool={key} onSelect={() => runTool(toolByKey(key)!)}>
-                    {toolByKey(key)!.label}
-                    {toolByKey(key)!.shortcut && <DropdownMenuShortcut>{toolByKey(key)!.shortcut}</DropdownMenuShortcut>}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </header>
+        <Ribbon projectName={projectName} projectPath={summary?.path ?? null} stage={stage} onStage={setStage} use={toolUse} />
 
         <main className="min-h-0 flex-1">
           <WorkspaceContext.Provider value={workspace}>
             <ViewToolsContext.Provider value={viewTools}>
               <ShowNote.Provider value={showNote}>
-                <Workspace onReady={(api) => (dockRef.current = api)} />
+                <Workspace onReady={(api) => (dockRef.current = api)} onShown={setPanelsShown} />
               </ShowNote.Provider>
             </ViewToolsContext.Provider>
           </WorkspaceContext.Provider>

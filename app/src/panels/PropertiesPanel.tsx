@@ -177,15 +177,18 @@ function ToolRow({
   onApply,
   apply = 'Apply',
   disabled,
+  tool,
 }: {
   label: string;
   children?: ReactNode;
   onApply?: () => void;
   apply?: string;
   disabled?: boolean;
+  /** The tool in the tool list this row is, so the Strings tab can bring it into view. */
+  tool?: string;
 }) {
   return (
-    <div className="flex items-center gap-1 px-3 py-0.5 text-xs">
+    <div className="flex items-center gap-1 px-3 py-0.5 text-xs" data-string-tool={tool}>
       <span className="w-14 shrink-0 text-muted-foreground">{label}</span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{children}</div>
       {onApply && (
@@ -342,7 +345,7 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
 
   return (
     <>
-      <ToolRow label="Grade" disabled={!ok(num(grade)) || !ok(num(from)) || !optional(num(to)) || !optional(num(startRl))} onApply={() => void run('string.set_grade', gradeParams())}>
+      <ToolRow label="Grade" tool="string.set_grade" disabled={!ok(num(grade)) || !ok(num(from)) || !optional(num(to)) || !optional(num(startRl))} onApply={() => void run('string.set_grade', gradeParams())}>
         <SmallInput value={grade} onChange={setGrade} placeholder="%" title="Grade in %, positive uphill along the string" />
         <span className="text-muted-foreground">from</span>
         <SmallInput value={from} onChange={setFrom} placeholder="#" title="Start vertex" />
@@ -353,6 +356,7 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
       </ToolRow>
       <ToolRow
         label="Offset"
+        tool="string.offset"
         disabled={!(ok(num(distance)) && num(distance)! > 0 && (num(times) === null || (Number.isInteger(num(times)) && num(times)! >= 1)))}
         onApply={() => void run('string.offset', { string: id, distance: num(distance), side, corners, times: num(times) ?? 1 })}
       >
@@ -362,10 +366,10 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
         <Choice value={corners} onChange={setCorners} options={[['mitre', 'Mitre'], ['round', 'Round']]} />
       </ToolRow>
       <NumberAcross strings={toNumber} which="what's on this layer that a face run didn't make; select several strings to number those alone" />
-      <ToolRow label="Set RL" disabled={!ok(num(level))} onApply={() => void run('string.set_elevation', { string: id, rl: num(level) })}>
+      <ToolRow label="Set RL" tool="string.set_elevation" disabled={!ok(num(level))} onApply={() => void run('string.set_elevation', { string: id, rl: num(level) })}>
         <SmallInput value={level} onChange={setLevel} placeholder="RL" title="Every vertex to this RL" />
       </ToolRow>
-      <ToolRow label="Drape" disabled={!target} onApply={() => target && void run('string.drape', { string: id, surface: target.id, crossings })}>
+      <ToolRow label="Drape" tool="string.drape" disabled={!target} onApply={() => target && void run('string.drape', { string: id, surface: target.id, crossings })}>
         {surfaces.length === 0 ? (
           <span className="text-muted-foreground">no surface loaded</span>
         ) : (
@@ -417,11 +421,11 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
         <span className="text-muted-foreground">tolerance</span>
         <SmallInput value={conditioning} onChange={setConditioning} placeholder="m" title="How far the next toe may leave the crest (m): 0.1 is usual, 2 at most. This isn't the berm." />
       </ToolRow>
-      <ToolRow label="Split" disabled={!ok(num(splitAt))} onApply={() => void run('string.split', { string: id, at: Math.round(num(splitAt)!) - 1 })}>
+      <ToolRow label="Split" tool="string.split" disabled={!ok(num(splitAt))} onApply={() => void run('string.split', { string: id, at: Math.round(num(splitAt)!) - 1 })}>
         <span className="text-muted-foreground">at vertex</span>
         <SmallInput value={splitAt} onChange={setSplitAt} placeholder="#" title="Split here; a closed string opens here" />
       </ToolRow>
-      <ToolRow label="Join" disabled={closed || !partner} onApply={() => partner && void run('string.join', { string: id, other: partner.id })}>
+      <ToolRow label="Join" tool="string.join" disabled={closed || !partner} onApply={() => partner && void run('string.join', { string: id, other: partner.id })}>
         {closed ? (
           <span className="text-muted-foreground">open the string first</span>
         ) : others.length === 0 ? (
@@ -442,21 +446,21 @@ function StringTools({ id, closed }: { id: string; closed: boolean }) {
           </select>
         )}
       </ToolRow>
-      <ToolRow label="Smooth" disabled={!(ok(num(spacing)) && num(spacing)! > 0)} onApply={() => void run('string.smooth', { string: id, spacing: num(spacing) })}>
+      <ToolRow label="Smooth" tool="string.smooth" disabled={!(ok(num(spacing)) && num(spacing)! > 0)} onApply={() => void run('string.smooth', { string: id, spacing: num(spacing) })}>
         <span className="text-muted-foreground">every</span>
         <SmallInput value={spacing} onChange={setSpacing} placeholder="m" title="Longest step along the curve in plan (m)" />
         <span className="text-muted-foreground">m</span>
       </ToolRow>
-      <ToolRow label="Filter" disabled={!(ok(num(tolerance)) && num(tolerance)! >= 0)} onApply={() => void run('string.filter', { string: id, tolerance: num(tolerance) })}>
+      <ToolRow label="Filter" tool="string.filter" disabled={!(ok(num(tolerance)) && num(tolerance)! >= 0)} onApply={() => void run('string.filter', { string: id, tolerance: num(tolerance) })}>
         <span className="text-muted-foreground">within</span>
         <SmallInput value={tolerance} onChange={setTolerance} placeholder="m" title="Remove vertices within this 3D distance of the line (m)" />
         <span className="text-muted-foreground">m</span>
       </ToolRow>
       <div className="flex gap-1 px-3 py-1">
-        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => void run('string.reverse', { string: id })}>
+        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" data-string-tool="string.reverse" onClick={() => void run('string.reverse', { string: id })}>
           Reverse
         </Button>
-        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => void run('string.set_closed', { string: id, closed: !closed })}>
+        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" data-string-tool="string.set_closed" onClick={() => void run('string.set_closed', { string: id, closed: !closed })}>
           {closed ? 'Open' : 'Close'}
         </Button>
       </div>
@@ -820,7 +824,7 @@ function NumberAcross({ strings, which }: { strings: ObjectSummary[]; which: str
     if (line) void run('string.number_across', { strings: strings.map((o) => o.id), from: line[0], to: line[1], start: num(start), step: num(step), name });
   };
   return (
-    <ToolRow label="Number" apply={`Draw across (${strings.length})`} disabled={!ok(num(start)) || !ok(num(step)) || num(step) === 0 || !name.trim() || strings.length === 0} onApply={() => void numberAcross()}>
+    <ToolRow label="Number" tool="string.number_across" apply={`Draw across (${strings.length})`} disabled={!ok(num(start)) || !ok(num(step)) || num(step) === 0 || !name.trim() || strings.length === 0} onApply={() => void numberAcross()}>
       <SmallInput value={name} onChange={setName} placeholder="name" title={`Each string's name, with its number in place of #. Numbers ${which}`} />
       <SmallInput value={start} onChange={setStart} placeholder="from" title="The first number" />
       <SmallInput value={step} onChange={setStep} placeholder="step" title="Added each time, negative to count down" />
@@ -844,7 +848,7 @@ function PolygonsFromLines({ strings }: { strings: ObjectSummary[] }) {
     if (made.length > 0) setSelection(made);
   };
   return (
-    <ToolRow label="Polygons" apply={`Close (${strings.length})`} disabled={!name.trim() || !layer.trim() || mm === null || !Number.isFinite(mm) || mm < 0} onApply={() => void make()}>
+    <ToolRow label="Polygons" tool="string.polygons_from_lines" apply={`Close (${strings.length})`} disabled={!name.trim() || !layer.trim() || mm === null || !Number.isFinite(mm) || mm < 0} onApply={() => void make()}>
       <SmallInput value={name} onChange={setName} placeholder="name" title="Each polygon's name, numbered west to east in place of #" />
       <SmallInput value={layer} onChange={setLayer} placeholder="layer" title="The layer the polygons go on" />
       <SmallInput value={tolerance} onChange={setTolerance} placeholder="mm" title="An end this close to another line (mm) is joined to it and said" />
@@ -1020,7 +1024,26 @@ function SelectionProperties({ objects }: { objects: ObjectSummary[] }) {
 
 /** The selected object: name (editable), layer, measurements, validity, attributes and history. Several selected show together. */
 export function PropertiesPanel() {
-  const { summary, selected, selection, run, select } = useWorkspace();
+  const { summary, selected, selection, run, select, toolAsk } = useWorkspace();
+  // A string tool asked for from the Strings tab: its row brought into view and lit for a moment. It may not be drawn
+  // yet, while the string's details come.
+  useEffect(() => {
+    if (toolAsk?.panel !== 'properties' || !toolAsk.mode) return;
+    let timer = 0;
+    let tries = 0;
+    const show = () => {
+      const row = document.querySelector<HTMLElement>(`[data-string-tool="${toolAsk.mode}"]`);
+      if (!row) {
+        if (tries++ < 10) timer = window.setTimeout(show, 100);
+        return;
+      }
+      row.scrollIntoView({ block: 'center' });
+      row.classList.add('tool-asked');
+      timer = window.setTimeout(() => row.classList.remove('tool-asked'), 1600);
+    };
+    show();
+    return () => window.clearTimeout(timer);
+  }, [toolAsk]);
   const several = useMemo(() => {
     if (selection.length < 2) return null;
     const ids = new Set(selection);

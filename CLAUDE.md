@@ -270,8 +270,11 @@ toolbar, and nothing drawn over the view may sit behind the bar. A panel never s
 one line of what it does (`PanelHead`), and its first control is within 40 px of the tab. Every tool is listed once in
 `app/src/tools.ts`, in its stage, with its name, what it does, and the panel it opens or the action App carries out;
 the toolbar, its menus, the Panels menu and the workflow canvas are drawn from the list, so a new tool is added there
-(and its action to App's table), never as a button of its own. Still to build from 0076: a tab a stage (Project · Strings · Walls · Solids · Geology · Reserves), Find a command (`cmdk`, agreed
-there) and the string tools out of Properties.
+(and its action to App's table), never as a button of its own. The ribbon (`app/src/workspace/Ribbon.tsx`) is a tab a
+stage (Project · Strings · Walls · Solids · Geology · Reserves) over the row of that stage's tools, named in words;
+the rows are `ROWS` in the tool list, a row too long folds into More, the tool in use is lit, and switching stage
+changes the row only. A new tool goes on its stage's row there. Still to build from 0076: Find a command (`cmdk`,
+agreed there) and the string tools out of Properties.
 
 The UI plan (the Build Plan's "UI plan" tab) keeps the app one way of working as it grows. A tool panel is made from the
 kit in `app/src/design-system/kit/`: `ToolPanel` (what it does in one line that fits the 400 px dock, with more in a tip, its sections, one button at the

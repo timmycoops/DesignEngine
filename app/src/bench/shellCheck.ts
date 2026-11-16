@@ -7,7 +7,10 @@
 // view and takes it back, the other docks staying put. Then the view bar (workstream 2): the view has no tab strip and
 // takes no panel dropped on its middle; its tools are on a bar over it and off the toolbar, and their buttons and keys
 // (T, 2, [, ], E) do their jobs over a made-up topography and block; with a section open the bar never covers the
-// section's overview, in a tall view or a short one. Then the panels' heads (workstream 3): a tool panel says what it
+// section's overview, in a tall view or a short one. The ribbon (workstream 5): a tab a stage over a row of its tools,
+// each row holding its tools in order at 1,600, 1,280 and 900 px with what doesn't fit folded into More and nothing
+// clipped; the menus reading as they did; the tool in use lit; the stage remembered; a Strings tool bringing its row in
+// Properties into view. Then the panels' heads (workstream 3): a tool panel says what it
 // does in one line that fits its dock, the rest in a tip, and its name only on its tab; Cut solids' line follows what
 // it's set to do and its six choices show whole; and every panel's first control, or its first line where it has none,
 // is within 40 px of its tab. With `--pictures <folder>` the window is then drawn in its states
@@ -20,6 +23,8 @@ import type { SectionView } from '../viewport/section';
 import { BAR_CLEAR } from '../viewport/sectionGrid';
 import type { Viewport } from '../viewport/Viewport';
 import { windowPicture } from './windowPicture';
+import { rowName, ROWS, STAGES, toolByKey } from '../tools';
+import type { StageId } from '../workspace/Ribbon';
 import { LAYOUT_KEYS, type PanelId, resetLayout, showPanel, TOOL_DOCK_WIDTH } from '../workspace/Workspace';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -58,7 +63,8 @@ export async function checkShell(
     if (!ok) failures.push(what);
     log(`shell: ${what}: ${ok ? 'yes' : 'NO'}${detail === undefined ? '' : ` (${JSON.stringify(detail)})`}`);
   };
-  const saved = LAYOUT_KEYS.map((key) => [key, localStorage.getItem(key)] as const);
+  const STAGE_KEY = 'zd.ribbon.stage.v1';
+  const saved = [...LAYOUT_KEYS, STAGE_KEY].map((key) => [key, localStorage.getItem(key)] as const);
   const canvas = viewport.renderer.domElement;
   const settle = async () => {
     await wait(300);
@@ -123,9 +129,45 @@ export async function checkShell(
     // The docks, from the default layout again.
     resetLayout(api);
     await settle();
-    const tool = async (name: string) => {
-      [...document.querySelectorAll<HTMLButtonElement>('header button')].find((b) => b.textContent?.trim() === name)?.click();
+    const goStage = async (id: string) => {
+      document.querySelector<HTMLButtonElement>(`[role="tab"][data-stage="${id}"]`)?.click();
       await settle();
+    };
+    const openMenu = async (button: HTMLElement | null | undefined) => {
+      button?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', ctrlKey: false }));
+      await settle();
+    };
+    const closeMenu = async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await settle();
+    };
+    const menuItems = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((m) => ({ words: m.textContent?.trim() ?? '', off: m.hasAttribute('data-disabled'), tool: m.dataset.tool ?? '' }));
+    const moreButton = () => document.querySelector<HTMLButtonElement>('[data-slot="row-more"]');
+    /** A click on a tool on the row, or in More where it didn't fit. */
+    const clickTool = async (key: string) => {
+      const onRow = document.querySelector<HTMLButtonElement>(`[data-slot="ribbon"] [data-tool="${key}"]`);
+      if (onRow) onRow.click();
+      else {
+        await openMenu(moreButton());
+        document.querySelector<HTMLElement>(`[role="menuitem"][data-tool="${key}"]`)?.click();
+      }
+      await settle();
+    };
+    /** The tools the old one row named, where they are now: a stage's tab, and the tool on its row. */
+    const AT: Record<string, [string, string]> = {
+      Cut: ['solids', 'cut:strips'],
+      Builder: ['walls', 'builder'],
+      Face: ['walls', 'face'],
+      Reserves: ['reserves', 'reserves'],
+      Blocks: ['solids', 'blocks'],
+      'Reserves table': ['reserves', 'restable'],
+      Parameters: ['reserves', 'params'],
+      Workflow: ['', 'workflow'],
+    };
+    const tool = async (name: string) => {
+      const [stage, key] = AT[name];
+      if (stage) await goStage(stage);
+      await clickTool(key);
     };
     const tabs = (id: PanelId) => api.getPanel(id)?.group.panels.map((p) => p.id) ?? [];
     const front = (id: PanelId) => api.getPanel(id)?.group.activePanel?.id;
@@ -207,39 +249,136 @@ export async function checkShell(
       tool_dock: width('cut'),
     });
 
-    // The toolbar: groups, with the imports in one menu.
-    const header = [...document.querySelectorAll('header button')].map((b) => b.textContent?.trim() ?? '');
-    const gone = ['Surface', 'Solids', 'Strings', 'Deswik', 'Spry', 'Vulcan grid', 'Seam model'].filter((word) => header.includes(word));
-    expect('the toolbar has Import, Export and Panels menus, and no import buttons of its own', ['Import', 'Export', 'Panels'].every((word) => header.includes(word)) && gone.length === 0, { still_there: gone });
-    const trigger = [...document.querySelectorAll<HTMLButtonElement>('header button')].find((b) => b.textContent?.trim() === 'Import');
-    trigger?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', ctrlKey: false }));
+    // The ribbon (workstream 5): a tab a stage, and under it the row of that stage's tools, named in words.
+    resetLayout(api);
     await settle();
-    const items = [...document.querySelectorAll('[role="menuitem"]')].map((m) => m.textContent?.trim() ?? '');
-    const wanted = ['Surfaces…', 'Vulcan grid…', 'Strings…', 'Solids', 'Deswik drawing (.dcf)…', 'Spry project (.spry)…', 'Suggest a stack definition (CSV)…', 'Build and check from a definition…'];
-    expect('the Import menu holds every import and the seam model', wanted.every((w) => items.includes(w)), { missing: wanted.filter((w) => !items.includes(w)) });
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    await settle();
+    const ribbon = document.querySelector<HTMLElement>('[data-slot="ribbon"]');
+    const stageTabs = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"][data-stage]')];
+    const stageNow = () => document.querySelector<HTMLElement>('[role="tab"][data-stage][aria-selected="true"]')?.dataset.stage ?? '';
+    const ribbonHeight = Math.round(ribbon?.getBoundingClientRect().height ?? 0);
+    expect('the ribbon is a tab a stage over a row of tools, 68 px high', stageTabs.map((t) => t.textContent?.trim()).join(' · ') === STAGES.map((st) => st.title).join(' · ') && ribbonHeight === 68, {
+      tabs: stageTabs.map((t) => t.textContent?.trim()),
+      height: ribbonHeight,
+    });
 
-    // The one tool list (workstream 4): the toolbar and its menus are drawn from it, and read as they did.
-    const openMenu = async (name: string) => {
-      const button = [...document.querySelectorAll<HTMLButtonElement>('header button')].find((b) => b.textContent?.trim() === name);
-      button?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', ctrlKey: false }));
+    const rowBox = () => document.querySelector<HTMLElement>('[data-slot="tool-row-tools"]');
+    const rowParts = () => [...(rowBox()?.querySelectorAll<HTMLElement>(':scope > [data-row-part]') ?? [])];
+    const wordsOf = (part: HTMLElement) => part.querySelector('button')?.textContent?.trim() ?? '';
+    const rowWords = (id: StageId) => ROWS[id].filter((item) => item !== '|').map((item) => (typeof item === 'string' ? rowName(toolByKey(item)!) : item.label));
+    const appRoot = document.getElementById('root');
+    /** Every stage's row at a window width: what shows, what folds into More, and whether anything is clipped. */
+    const rowsAt = async (width: number | null) => {
+      if (appRoot) appRoot.style.width = width === null ? '' : `${width}px`;
       await settle();
-      const menu = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((m) => ({ words: m.textContent?.trim() ?? '', off: m.hasAttribute('data-disabled'), tool: m.dataset.tool ?? '' }));
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      await settle();
-      return menu;
+      const rows: Record<string, { shown: number; more: number }> = {};
+      const wrong: string[] = [];
+      for (const { id } of STAGES) {
+        await goStage(id);
+        const shown = rowParts().map(wordsOf).filter((w) => w !== '');
+        let folded: string[] = [];
+        if (moreButton()) {
+          await openMenu(moreButton());
+          // The first menu is More's; a menu within it shows its name only.
+          folded = [...(document.querySelector('[role="menu"]')?.querySelectorAll<HTMLElement>(':scope > [role="menuitem"]') ?? [])].map((m) => m.textContent?.trim() ?? '');
+          await closeMenu();
+        }
+        rows[id] = { shown: shown.length, more: folded.length };
+        const edge = (ribbon?.getBoundingClientRect().right ?? 0) + 0.5;
+        const rowEdge = (rowBox()?.getBoundingClientRect().right ?? 0) + 0.5;
+        const clipped = rowParts().some((part) => part.getBoundingClientRect().right > rowEdge) || (moreButton()?.getBoundingClientRect().right ?? 0) > rowEdge;
+        const offScreen = (document.querySelector('[data-slot="panels-menu"]')?.getBoundingClientRect().right ?? Infinity) > edge || (ribbon ? ribbon.scrollWidth > ribbon.clientWidth : true);
+        if ([...shown, ...folded].join('|') !== rowWords(id).join('|')) wrong.push(`${id}: the row and More don't hold its tools in order`);
+        if (clipped) wrong.push(`${id}: a tool is clipped`);
+        if (offScreen) wrong.push(`${id}: off the screen`);
+        if (stageNow() !== id) wrong.push(`${id}: its tab is not the one picked`);
+      }
+      return { rows, wrong, width: Math.round(ribbon?.getBoundingClientRect().width ?? 0) };
     };
-    const rowNow = [...document.querySelectorAll<HTMLButtonElement>('header button')].slice(1).map((b) => b.textContent?.trim() || b.getAttribute('aria-label') || '');
-    const rowWas = ['Save', 'Undo', 'Redo', 'Import', 'Export', 'Face', 'Builder', 'Cut', 'Reserves', 'Blocks', 'Reserves table', 'Parameters', 'Workflow', 'Panels'];
-    const fromList = [...document.querySelectorAll<HTMLElement>('header [data-tool]')].map((b) => b.dataset.tool);
-    expect('the toolbar, drawn from the tool list, reads as it did', rowNow.join() === rowWas.join() && fromList.length === 11, { row: rowNow, from_the_list: fromList });
-    const exportMenu = await openMenu('Export');
+    const wide = await rowsAt(null);
+    expect("at 1,600 px every stage's row holds its tools in order, nothing clipped or off the screen", wide.wrong.length === 0 && wide.width === 1600, wide);
+    const laptop = await rowsAt(1280);
+    expect('at 1,280 px the same, what does not fit folded into More', laptop.wrong.length === 0 && laptop.width === 1280, laptop);
+    const narrow = await rowsAt(900);
+    expect('at 900 px the same, with More on the rows that need it', narrow.wrong.length === 0 && narrow.width === 900 && Object.values(narrow.rows).some((r) => r.more > 0), narrow);
+    // A tool in More does what it does on the row.
+    await goStage('strings');
+    const foldedTools = (await (async () => {
+      await openMenu(moreButton());
+      const found = menuItems();
+      await closeMenu();
+      return found;
+    })()).filter((m) => m.tool);
+    await clickTool('string.set_closed');
+    const footerWords = () => document.querySelector('footer')?.textContent ?? '';
+    expect('a tool folded into More does what it does on the row', foldedTools.some((m) => m.tool === 'string.set_closed') && footerWords().startsWith('Close: pick a string') && front('properties') === 'properties', {
+      in_more: foldedTools.map((m) => m.words),
+      said: footerWords().slice(0, 70),
+    });
+    await rowsAt(null);
+
+    // Switching stage changes the row only: the panels stay where they are.
+    const laidOut = JSON.stringify(api.toJSON());
+    const viewWas = size();
+    for (const { id } of STAGES) await goStage(id);
+    await goStage('walls');
+    const kept = JSON.parse(localStorage.getItem(STAGE_KEY) ?? '[]') as [string, string][];
+    expect('switching stage changes the row only, and the stage is remembered for the project', JSON.stringify(api.toJSON()) === laidOut && size().width === viewWas.width && size().height === viewWas.height && kept.some(([path, stage]) => path === '' && stage === 'walls'), {
+      view: [viewWas, size()],
+      remembered: kept.filter(([path]) => path === ''),
+    });
+
+    // The menus: the project's on its name, Import and Export on the Project row, Panels at the row's end.
+    await goStage('project');
+    const menuOf = async (button: HTMLElement | null | undefined) => {
+      await openMenu(button);
+      const found = menuItems();
+      await closeMenu();
+      return found;
+    };
+    const rowMenu = (name: string) => document.querySelector<HTMLElement>(`[data-row-menu="${name}"]`);
+    const projectMenu = await menuOf(document.querySelector<HTMLElement>('[data-slot="project-menu"]'));
+    const importMenu = await menuOf(rowMenu('Import'));
+    const exportMenu = await menuOf(rowMenu('Export'));
+    const panelsMenu = await menuOf(document.querySelector<HTMLElement>('[data-slot="panels-menu"]'));
+    const projectWas = ['New project', 'Open a project (.zdp)…', 'Open an older project folder (.zdproj)…', 'SaveCtrl+S', 'Save as…'];
+    const importWas = ['Surfaces…', 'Vulcan grid…', 'Strings…', 'Solids', 'Deswik drawing (.dcf)…', 'Spry project (.spry)…', 'Suggest a stack definition (CSV)…', 'Build and check from a definition…', 'Relink geology…'];
     const exportWas = ['Selected to DXF…', 'Selected strings to CSV…', 'Selected solids to a zip…', 'Everything visible to DXF…', 'Visible strings to CSV…', 'Visible solids to a zip…'];
-    expect('the Export menu reads as it did, what needs a selection off without one', exportMenu.map((m) => m.words).join() === exportWas.join() && exportMenu.map((m) => m.off).join() === 'true,true,true,false,false,false' && exportMenu.every((m) => m.tool), exportMenu);
-    const panelsMenu = await openMenu('Panels');
     const panelsWas = ['Layers', 'Properties', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Run log', 'Block table', 'Reserves table', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
-    expect('the Panels menu lists every panel, then hide and reset', panelsMenu.map((m) => m.words).join() === panelsWas.join(), panelsMenu.map((m) => m.words));
+    const reads = (menu: { words: string }[], was: string[]) => menu.map((m) => m.words).join('|') === was.join('|');
+    expect('the project, Import, Export and Panels menus read as they did, what needs a selection off without one', reads(projectMenu, projectWas) && reads(importMenu, importWas) && reads(exportMenu, exportWas) && reads(panelsMenu, panelsWas) && exportMenu.map((m) => m.off).join() === 'true,true,true,false,false,false', {
+      project: projectMenu.map((m) => m.words),
+      import: importMenu.map((m) => m.words),
+      export: exportMenu.map((m) => `${m.words}${m.off ? ' (off)' : ''}`),
+      panels: panelsMenu.length,
+    });
+    await goStage('solids');
+    const solidsIn = await menuOf(rowMenu('Import solids'));
+    const solidsOut = await menuOf(rowMenu('Export solids'));
+    expect("the Solids row's own menus hold the solids' imports and exports", reads(solidsIn, ['A zip or files…', 'A folder…', 'A zip or files…', 'A folder…']) && reads(solidsOut, ['Selected solids to a zip…', 'Visible solids to a zip…']) && solidsOut[0]?.off === true, {
+      import: solidsIn.map((m) => m.words),
+      export: solidsOut.map((m) => m.words),
+    });
+
+    // The tool in use is lit: its panel in front in its dock, set to it.
+    const lit = () => [...document.querySelectorAll<HTMLElement>('[data-slot="ribbon"] [data-tool][aria-pressed="true"]')].map((b) => b.dataset.tool ?? '');
+    const litAtStart = lit();
+    await clickTool('cut:seams');
+    const litSeams = lit();
+    [...(api.getPanel('cut')?.group.element.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="What to do"] button') ?? [])].find((b) => b.textContent?.trim() === 'By benches')?.click();
+    await settle();
+    const litBenches = lit();
+    await clickTool('blocks');
+    const litBlocks = lit();
+    document.querySelector<HTMLButtonElement>('button[aria-label^="Minimise Run log"]')?.click();
+    await settle();
+    const litMinimised = lit();
+    expect("the tool in use is lit: Cut solids' as its choice changes, the Block table's until its dock is minimised", litAtStart.length === 0 && litSeams.join() === 'cut:seams' && litBenches.join() === 'cut:benches' && litBlocks.join() === 'cut:benches,blocks' && litMinimised.join() === 'cut:benches', {
+      at_start: litAtStart,
+      by_seams: litSeams,
+      by_benches_picked_in_the_panel: litBenches,
+      block_table_open: litBlocks,
+      its_dock_minimised: litMinimised,
+    });
 
     // The view bar, from the default layout, over a made-up topography and a block.
     resetLayout(api);
@@ -288,12 +427,6 @@ export async function checkShell(
     const viewTools = ['Select', 'Draw string', 'Snap', '3D', "Zoom to what's selected", 'Zoom to everything', 'Field of view', 'Section'];
     const stillUp = ['Select', 'Draw string', 'Snap', '3D', 'Plan', 'Section'].filter((word) => onToolbar().includes(word));
     expect('the view tools are on the view, and off the toolbar', viewTools.every((name) => onBar().includes(name)) && stillUp.length === 0, { on_the_bar: onBar(), still_on_the_toolbar: stillUp });
-    // The row the view tools came off: what it needs, against the window.
-    const row = document.querySelector<HTMLElement>('header');
-    const parts = [...(row?.children ?? [])].map((c) => c.getBoundingClientRect());
-    const tools = parts.slice(0, -1);
-    const needs = Math.ceil((tools.at(-1)?.right ?? 0) - (parts[0]?.left ?? 0) + (parts.at(-1)?.width ?? 0) + 16);
-    expect('with the view tools off it, the toolbar fits the window: nothing clipped', !!row && row.scrollWidth <= row.clientWidth && needs < window.innerWidth, { needs_px: needs, window_px: window.innerWidth });
     const barBox = boxOf(bar());
     const viewBox = boxOf(canvas);
     expect('the bar is in the top left corner of the view', !!barBox && !!viewBox && barBox.left - viewBox.left === 8 && barBox.top - viewBox.top === 8 && barBox.right < viewBox.right, { bar: barBox, view: viewBox });
@@ -381,7 +514,36 @@ export async function checkShell(
     viewport.setPlanView(false);
     await settle();
 
-    // The panels' heads, every panel open in its dock.
+    // The Strings tab: its tools open Properties at their rows, on the string picked. And Repair, with nothing to repair.
+    resetLayout(api);
+    await settle();
+    await goStage('strings');
+    await clickTool('string.offset');
+    const noString = footer();
+    await runCommand('string.create', { name: 'Bench toe', layer: 'toes', closed: false, points: [[E + 100, N + 50, 100], [E + 900, N + 50, 100]] });
+    await show(await projectSummary());
+    await wait(1000);
+    viewport.setPlanView(true);
+    viewport.fitView();
+    await settle();
+    await click(screen([E + 500, N + 50, 100]));
+    await wait(800);
+    const stringPicked = !!document.querySelector('[data-string-tool="string.offset"]');
+    await clickTool('string.smooth');
+    await wait(300);
+    const rowLit = document.querySelector('[data-string-tool="string.smooth"]')?.classList.contains('tool-asked') ?? false;
+    expect('a Strings tool with no string picked says so; with one picked it brings its row in Properties into view, lit', noString.startsWith('Offset: pick a string') && stringPicked && rowLit && !footer().startsWith('Smooth: pick a string'), {
+      with_none: noString.slice(0, 60),
+      string_picked: stringPicked,
+      row_lit: rowLit,
+    });
+    viewport.setPlanView(false);
+    await goStage('solids');
+    await clickTool('solids.repair');
+    expect('Repair, with no closed mesh kept as a surface, says there is nothing to repair', footer().startsWith('Nothing to repair'), footer().slice(0, 70));
+
+    // The panels' heads, every panel open in its dock, with nothing picked.
+    await key('Escape');
     resetLayout(api);
     await settle();
     const everyPanel = ['builder', 'cut', 'reserves', 'workflow', 'blocks', 'restable', 'params', 'canvas', 'face'] as const;
@@ -474,19 +636,23 @@ export async function checkShell(
         viewport.fitView();
       }
       const saved: string[] = [];
-      const picture = async (name: string, panels: PanelId[]) => {
+      const picture = async (name: string, stage: StageId, panels: PanelId[], tools: string[] = []) => {
         resetLayout(api);
         await settle();
+        await goStage(stage);
         for (const id of panels) showPanel(api, id);
+        for (const key of tools) await clickTool(key);
         await wait(1200);
         const path = await writePicture(name, await windowPicture(viewport));
         log(`shell: ${path}`);
         saved.push(path);
       };
-      await picture('docks-default', []);
-      await picture('docks-solids', ['builder', 'reserves', 'cut', 'blocks']);
-      await picture('docks-walls', ['cut', 'builder', 'face']);
-      await picture('docks-reserves', ['cut', 'reserves', 'params', 'restable']);
+      await picture('docks-default', 'project', []);
+      await picture('docks-solids', 'solids', ['builder', 'reserves'], ['cut:seams', 'blocks']);
+      await picture('docks-walls', 'walls', ['cut'], ['builder', 'face']);
+      await picture('docks-reserves', 'reserves', ['cut', 'params'], ['reserves', 'restable']);
+      await picture('ribbon-strings', 'strings', []);
+      await picture('ribbon-geology', 'geology', []);
       // A section across the middle of what's on show, from plan, with its step and fill on the bar.
       resetLayout(api);
       viewport.setPlanView(true);

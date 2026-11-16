@@ -55,6 +55,8 @@ export interface Workspace {
   openTool: (id: PanelId, mode?: string) => void;
   /** The last ask to a panel to show one of what it does; `n` counts asks, so asking the same again shows it again. */
   toolAsk: { panel: PanelId; mode?: string; n: number } | null;
+  /** A panel that does several things says which it's set to, so the ribbon lights that tool; null as it closes. */
+  toolMode: (panel: PanelId, mode: string | null) => void;
   /** Runs an engine command; reports the outcome on the status line. False if it failed. */
   run: (name: string, params: Record<string, unknown>) => Promise<boolean>;
   /** The same, handing back the run's record, or why it failed, for a panel to show. */

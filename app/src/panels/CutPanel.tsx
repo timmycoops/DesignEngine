@@ -29,12 +29,17 @@ const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('cut', MODES);
 const SCOPES: readonly Scope[] = ['picked', 'layer', 'visible'];
 
 export function CutPanel() {
-  const { summary, selected, selection, runRecord, clearRefusal, select, toolAsk } = useWorkspace();
+  const { summary, selected, selection, runRecord, clearRefusal, select, toolAsk, toolMode } = useWorkspace();
   const [mode, setMode] = useState<Mode>('strips');
   // A tool dropped on the workflow canvas asks for one of what this does (decision 0067).
   useEffect(() => {
     if (toolAsk?.panel === 'cut' && MODES.includes(toolAsk.mode as Mode)) setMode(toolAsk.mode as Mode);
   }, [toolAsk]);
+  // The ribbon lights the tool the panel is set to.
+  useEffect(() => {
+    toolMode('cut', mode);
+    return () => toolMode('cut', null);
+  }, [toolMode, mode]);
   const [scope, setScope] = useState<Scope>('picked');
   const [by, setBy] = useState<StepTarget | null>(null);
   const [keep, setKeep] = useState<'below' | 'above' | 'both'>('both');

@@ -1,7 +1,7 @@
 /**
  * The one list of tools (decision 0076, workstream 4): everything the app can be asked to do from its toolbar, its
- * menus, the Panels menu and the workflow canvas, each tool once, in the stage of the work it belongs to. The toolbar,
- * the menus and the canvas are drawn from it, and Find a command will search it, so a new tool is added here and
+ * menus, the Panels menu and the workflow canvas, each tool once, in the stage of the work it belongs to, and the row
+ * of tools under each stage's tab. The toolbar, the menus and the canvas are drawn from it, and Find a command will search it, so a new tool is added here and
  * nowhere else. Kept free of React, so the tests can read it: an icon is a name (`toolIcons.tsx` holds the pictures) and
  * what a tool does is a panel to open, or an action App carries out. Nothing is imported at run time, for the same reason.
  */
@@ -29,15 +29,44 @@ export type ToolIcon =
   | 'redo'
   | 'import'
   | 'export'
+  | 'relink'
+  | 'offset'
+  | 'number'
+  | 'polygons'
+  | 'grade'
+  | 'elevation'
+  | 'drape'
+  | 'split'
+  | 'join'
+  | 'smooth'
+  | 'filter'
+  | 'reverse'
+  | 'close'
   | 'face'
   | 'builder'
+  | 'rebuild'
+  | 'join-faces'
   | 'cut'
-  | 'reserves'
+  | 'between'
+  | 'strips'
+  | 'seams'
+  | 'benches'
+  | 'by-blocks'
   | 'blocks'
+  | 'repair'
+  | 'solids-in'
+  | 'solids-out'
+  | 'grids'
+  | 'suggest'
+  | 'seam-model'
+  | 'reserves'
+  | 'compare'
   | 'reserves-table'
   | 'parameters'
+  | 'report'
   | 'workflow'
-  | 'panels';
+  | 'panels'
+  | 'more';
 
 /** What App carries out itself: files, undo, the seam model, the layout. */
 export type ToolAction =
@@ -115,7 +144,7 @@ export interface Tool {
   menu?: MenuPlace;
   /** It can add its step to a workflow (decision 0065): what the step works on, in a few words. */
   step?: { takes: string };
-  /** Its name on today's one row of the toolbar, until the row becomes a tab a stage (workstream 5). */
+  /** Its name in a row of tools, where that's shorter than its label. */
   short?: string;
 }
 
@@ -124,10 +153,10 @@ const SOLIDS_MENU = { name: 'Solids', tip: 'Closed triangulations in Vulcan .00t
 
 export const TOOLS: readonly Tool[] = [
   // Project: the file, and getting data in and out.
-  { key: 'project.new', stage: 'project', label: 'New project', tip: 'Starts an empty project', icon: 'new', action: 'project.new', menu: { in: 'project', at: 1 } },
-  { key: 'project.open', stage: 'project', label: 'Open a project', tip: 'Opens a .zdp project file', icon: 'open', action: 'project.open', menu: { in: 'project', at: 2, name: 'Open a project (.zdp)…' } },
+  { key: 'project.new', stage: 'project', label: 'New project', tip: 'Starts an empty project', short: 'New', icon: 'new', action: 'project.new', menu: { in: 'project', at: 1 } },
+  { key: 'project.open', stage: 'project', label: 'Open a project', tip: 'Opens a .zdp project file', short: 'Open', icon: 'open', action: 'project.open', menu: { in: 'project', at: 2, name: 'Open a project (.zdp)…' } },
   { key: 'project.open_folder', stage: 'project', label: 'Open an older project folder', tip: 'Opens a .zdproj folder, which saves as a .zdp beside it', icon: 'open', action: 'project.open_folder', menu: { in: 'project', at: 3, name: 'Open an older project folder (.zdproj)…' } },
-  { key: 'project.save_as', stage: 'project', label: 'Save as', tip: 'Saves the project as another .zdp file', icon: 'save-as', action: 'project.save_as', menu: { in: 'project', at: 5, name: 'Save as…' } },
+  { key: 'project.save_as', stage: 'project', label: 'Save as', tip: 'Saves the project as another .zdp file', short: 'Save as', icon: 'save-as', action: 'project.save_as', menu: { in: 'project', at: 5, name: 'Save as…' } },
   { key: 'import.surfaces', stage: 'project', label: 'Import surfaces', tip: 'Vulcan .00t, DXF 3DFACE or polyface, or an XYZ or CSV grid', command: 'surface.import', action: 'import.surfaces', menu: { in: 'import', at: 1, name: 'Surfaces…' } },
   { key: 'import.strings', stage: 'project', label: 'Import strings', tip: 'DXF polylines and lines, or CSV with x, y and z columns', command: 'string.import', action: 'import.strings', menu: { in: 'import', at: 3, name: 'Strings…' } },
   { key: 'import.deswik', stage: 'project', label: 'Import a Deswik drawing', tip: 'Layers of a Deswik drawing: strings with their projection details, surfaces and solids', command: 'deswik.import', action: 'import.deswik', menu: { in: 'import', at: 8, name: 'Deswik drawing (.dcf)…', rule: true } },
@@ -137,37 +166,37 @@ export const TOOLS: readonly Tool[] = [
   { key: 'export.visible_dxf', stage: 'project', label: 'Export everything visible to DXF', tip: 'Every string, surface and solid on show as one DXF', action: 'export.visible_dxf', menu: { in: 'export', at: 4, name: 'Everything visible to DXF…' } },
   { key: 'export.visible_strings', stage: 'project', label: 'Export visible strings to CSV', tip: 'Every string on show as x, y and z rows', action: 'export.visible_strings', menu: { in: 'export', at: 5, name: 'Visible strings to CSV…' } },
 
-  // Strings: what Properties runs on a picked string, until they come out of it (workstream 7).
-  { key: 'string.offset', stage: 'strings', label: 'Offset', tip: 'Offsets a string to one side, once or several times', panel: 'properties', command: 'string.offset' },
-  { key: 'string.number_across', stage: 'strings', label: 'Number across', tip: 'Numbers strips by a line drawn across the strings', panel: 'properties', command: 'string.number_across' },
-  { key: 'string.polygons_from_lines', stage: 'strings', label: 'Polygons from lines', tip: 'Makes named block polygons from lines across the strips and lines closing them', panel: 'properties', command: 'string.polygons_from_lines' },
-  { key: 'string.set_grade', stage: 'strings', label: 'Set grade', tip: 'Sets a string to a grade from one end', panel: 'properties', command: 'string.set_grade' },
-  { key: 'string.set_elevation', stage: 'strings', label: 'Set elevation', tip: 'Sets a string to one RL', panel: 'properties', command: 'string.set_elevation' },
-  { key: 'string.drape', stage: 'strings', label: 'Drape', tip: 'Drapes a string onto a grid or surface', panel: 'properties', command: 'string.drape' },
-  { key: 'string.split', stage: 'strings', label: 'Split', tip: 'Splits a string at a vertex', panel: 'properties', command: 'string.split' },
-  { key: 'string.join', stage: 'strings', label: 'Join', tip: 'Joins strings end to end', panel: 'properties', command: 'string.join' },
-  { key: 'string.smooth', stage: 'strings', label: 'Smooth', tip: 'Smooths a string', panel: 'properties', command: 'string.smooth' },
-  { key: 'string.filter', stage: 'strings', label: 'Filter', tip: 'Takes out vertices a string does not need', panel: 'properties', command: 'string.filter' },
-  { key: 'string.reverse', stage: 'strings', label: 'Reverse', tip: 'Turns a string to run the other way', panel: 'properties', command: 'string.reverse' },
-  { key: 'string.set_closed', stage: 'strings', label: 'Close', tip: 'Closes a string, or opens it', panel: 'properties', command: 'string.set_closed' },
+  // Strings: what Properties runs on a picked string, until they come out of it (workstream 7). Each opens Properties at its row.
+  { key: 'string.offset', stage: 'strings', label: 'Offset', tip: 'Offsets a string to one side, once or several times', mode: 'string.offset', icon: 'offset', panel: 'properties', command: 'string.offset' },
+  { key: 'string.number_across', stage: 'strings', label: 'Number across', tip: 'Numbers strips by a line drawn across the strings', mode: 'string.number_across', icon: 'number', panel: 'properties', command: 'string.number_across' },
+  { key: 'string.polygons_from_lines', stage: 'strings', label: 'Polygons from lines', tip: 'Makes named block polygons from lines across the strips and lines closing them', mode: 'string.polygons_from_lines', icon: 'polygons', panel: 'properties', command: 'string.polygons_from_lines' },
+  { key: 'string.set_grade', stage: 'strings', label: 'Set grade', tip: 'Sets a string to a grade from one end', mode: 'string.set_grade', icon: 'grade', panel: 'properties', command: 'string.set_grade' },
+  { key: 'string.set_elevation', stage: 'strings', label: 'Set elevation', tip: 'Sets a string to one RL', mode: 'string.set_elevation', icon: 'elevation', panel: 'properties', command: 'string.set_elevation' },
+  { key: 'string.drape', stage: 'strings', label: 'Drape', tip: 'Drapes a string onto a grid or surface', mode: 'string.drape', icon: 'drape', panel: 'properties', command: 'string.drape' },
+  { key: 'string.split', stage: 'strings', label: 'Split', tip: 'Splits a string at a vertex', mode: 'string.split', icon: 'split', panel: 'properties', command: 'string.split' },
+  { key: 'string.join', stage: 'strings', label: 'Join', tip: 'Joins strings end to end', mode: 'string.join', icon: 'join', panel: 'properties', command: 'string.join' },
+  { key: 'string.smooth', stage: 'strings', label: 'Smooth', tip: 'Smooths a string', mode: 'string.smooth', icon: 'smooth', panel: 'properties', command: 'string.smooth' },
+  { key: 'string.filter', stage: 'strings', label: 'Filter', tip: 'Takes out vertices a string does not need', mode: 'string.filter', icon: 'filter', panel: 'properties', command: 'string.filter' },
+  { key: 'string.reverse', stage: 'strings', label: 'Reverse', tip: 'Turns a string to run the other way', mode: 'string.reverse', icon: 'reverse', panel: 'properties', command: 'string.reverse' },
+  { key: 'string.set_closed', stage: 'strings', label: 'Close', tip: 'Closes a string, or opens it', mode: 'string.set_closed', icon: 'close', panel: 'properties', command: 'string.set_closed' },
 
   // Walls.
-  { key: 'face', stage: 'walls', label: 'Face design', tip: 'lines, profiles and rules, run as one', icon: 'face', panel: 'face', short: 'Face' },
-  { key: 'builder', stage: 'walls', label: 'Builder', tip: 'pick a line, build one wall or berm from it, edit between steps', icon: 'builder', panel: 'builder', short: 'Builder' },
+  { key: 'face', stage: 'walls', label: 'Face design', tip: 'lines, profiles and rules, run as one', icon: 'face', panel: 'face' },
+  { key: 'builder', stage: 'walls', label: 'Builder', tip: 'pick a line, build one wall or berm from it, edit between steps', icon: 'builder', panel: 'builder' },
   { key: 'builder:step', stage: 'walls', label: 'Build a step', tip: 'Builds one wall or berm from the line you pick.', panel: 'builder', command: 'face.build_step', step: { takes: 'the line picked' } },
-  { key: 'builder:rebuild', stage: 'walls', label: 'Rebuild from here', tip: 'Builds the steps above an edited line again, each with its settings', panel: 'builder', command: 'face.rebuild' },
-  { key: 'cut:join_faces', stage: 'walls', label: 'Join faces', tip: 'Makes one face a strip from up and down faces, several runs or a build’s steps', panel: 'cut', mode: 'strips', command: 'face.join' },
+  { key: 'builder:rebuild', stage: 'walls', label: 'Rebuild from here', tip: 'Builds the steps above an edited line again, each with its settings', icon: 'rebuild', panel: 'builder', command: 'face.rebuild' },
+  { key: 'cut:join_faces', stage: 'walls', label: 'Join faces', tip: 'Makes one face a strip from up and down faces, several runs or a build’s steps', icon: 'join-faces', panel: 'cut', mode: 'strips', command: 'face.join' },
 
   // Solids. Cut solids' six, in the order the work is done; the panel's own choice keeps its order.
-  { key: 'cut', stage: 'solids', label: 'Cut solids', tip: 'into strips by faces, by a surface, grid or RL, or one between two surfaces', icon: 'cut', panel: 'cut', short: 'Cut' },
-  { key: 'cut:between', stage: 'solids', label: 'Between surfaces', tip: 'Makes one solid inside a closed string, between two surfaces.', panel: 'cut', mode: 'between', command: 'solid.between_surfaces', step: { takes: 'a closed string, top and bottom' } },
-  { key: 'cut:strips', stage: 'solids', label: 'Into strips', tip: 'Slices solids into strips by faces, from the pit out.', panel: 'cut', mode: 'strips', command: 'solid.slice_by_faces', step: { takes: 'solids and a face a strip' } },
-  { key: 'cut:cut', stage: 'solids', label: 'By a surface', tip: 'Cuts solids by a surface, a grid or an RL.', panel: 'cut', mode: 'cut', command: 'solid.cut_by_surface', step: { takes: 'solids and a surface, grid or RL' } },
-  { key: 'cut:seams', stage: 'solids', label: 'By seams', tip: "Cuts solids by the seam model's horizons, in one run.", panel: 'cut', mode: 'seams', command: 'solid.cut_by_seams', step: { takes: 'solids and a seam model' } },
-  { key: 'cut:benches', stage: 'solids', label: 'By benches', tip: 'Cuts pieces at bench levels, by the bench rules.', panel: 'cut', mode: 'benches', command: 'solid.cut_by_benches', step: { takes: 'solids and bench rules' } },
-  { key: 'cut:polygons', stage: 'solids', label: 'By polygons', tip: 'Cuts solids vertically into blocks, by named polygons.', panel: 'cut', mode: 'polygons', command: 'solid.cut_by_polygons', step: { takes: 'solids and block polygons' } },
-  { key: 'blocks', stage: 'solids', label: 'Block table', tip: 'solids and their attributes to sort, filter, add up, select or delete', icon: 'blocks', panel: 'blocks', short: 'Blocks' },
-  { key: 'solids.repair', stage: 'solids', label: 'Repair', tip: 'Fixes closed meshes kept as surfaces because they could not be solids', command: 'solid.repair', action: 'solids.repair' },
+  { key: 'cut', stage: 'solids', label: 'Cut solids', tip: 'into strips by faces, by a surface, grid or RL, or one between two surfaces', icon: 'cut', panel: 'cut' },
+  { key: 'cut:between', stage: 'solids', label: 'Between surfaces', tip: 'Makes one solid inside a closed string, between two surfaces.', icon: 'between', panel: 'cut', mode: 'between', command: 'solid.between_surfaces', step: { takes: 'a closed string, top and bottom' } },
+  { key: 'cut:strips', stage: 'solids', label: 'Strips by faces', tip: 'Slices solids into strips by faces, from the pit out.', choice: 'Into strips', icon: 'strips', panel: 'cut', mode: 'strips', command: 'solid.slice_by_faces', step: { takes: 'solids and a face a strip' } },
+  { key: 'cut:cut', stage: 'solids', label: 'By surface or RL', tip: 'Cuts solids by a surface, a grid or an RL.', choice: 'By a surface', icon: 'cut', panel: 'cut', mode: 'cut', command: 'solid.cut_by_surface', step: { takes: 'solids and a surface, grid or RL' } },
+  { key: 'cut:seams', stage: 'solids', label: 'By seams', tip: "Cuts solids by the seam model's horizons, in one run.", icon: 'seams', panel: 'cut', mode: 'seams', command: 'solid.cut_by_seams', step: { takes: 'solids and a seam model' } },
+  { key: 'cut:benches', stage: 'solids', label: 'By benches', tip: 'Cuts pieces at bench levels, by the bench rules.', icon: 'benches', panel: 'cut', mode: 'benches', command: 'solid.cut_by_benches', step: { takes: 'solids and bench rules' } },
+  { key: 'cut:polygons', stage: 'solids', label: 'By blocks', tip: 'Cuts solids vertically into blocks, by named polygons.', choice: 'By polygons', icon: 'by-blocks', panel: 'cut', mode: 'polygons', command: 'solid.cut_by_polygons', step: { takes: 'solids and block polygons' } },
+  { key: 'blocks', stage: 'solids', label: 'Block table', tip: 'solids and their attributes to sort, filter, add up, select or delete', icon: 'blocks', panel: 'blocks' },
+  { key: 'solids.repair', stage: 'solids', label: 'Repair', tip: 'Fixes closed meshes kept as surfaces because they could not be solids', icon: 'repair', command: 'solid.repair', action: 'solids.repair' },
   { key: 'import.solids', stage: 'solids', label: 'Import solids', tip: 'A zip of solids, or files of them', command: 'solid.import_many', action: 'import.solids', menu: { in: 'import', at: 4, name: 'A zip or files…', under: SOLIDS_MENU } },
   { key: 'import.solids_folder', stage: 'solids', label: 'Import a folder of solids', tip: 'Every solid in a folder', command: 'solid.import_many', action: 'import.solids_folder', menu: { in: 'import', at: 5, name: 'A folder…', under: SOLIDS_MENU } },
   { key: 'import.solids_repaired', stage: 'solids', label: 'Import solids, repaired', tip: REPAIRED, command: 'solid.import_many', action: 'import.solids_repaired', menu: { in: 'import', at: 6, name: 'A zip or files…', under: SOLIDS_MENU, rule: true, heading: 'Repaired as they come in' } },
@@ -176,24 +205,24 @@ export const TOOLS: readonly Tool[] = [
   { key: 'export.visible_solids', stage: 'solids', label: 'Export visible solids', tip: 'Every solid on show as a zip or a folder, a DXF each', command: 'solid.export_many', action: 'export.visible_solids', menu: { in: 'export', at: 6, name: 'Visible solids to a zip…' } },
 
   // Geology.
-  { key: 'import.vulcan_grid', stage: 'geology', label: 'Import seam grids', tip: 'Pick a roof, floor or topography, and the grids of that name come with it', command: 'grid.import_vulcan_seam', action: 'import.vulcan_grid', menu: { in: 'import', at: 2, name: 'Vulcan grid…' } },
-  { key: 'seam.suggest', stage: 'geology', label: 'Suggest a stack definition', tip: "Writes a starting definition from the grids' geometry, as a CSV to edit", command: 'seam.suggest_definition', action: 'seam.suggest', menu: { in: 'import', at: 10, name: 'Suggest a stack definition (CSV)…', rule: true, heading: 'Seam model' } },
-  { key: 'seam.build', stage: 'geology', label: 'Build a seam model', tip: 'Builds and checks a seam model from a definition', command: 'seam.build_model', action: 'seam.build', menu: { in: 'import', at: 11, name: 'Build and check from a definition…' } },
-  { key: 'seam.relink', stage: 'geology', label: 'Relink geology', tip: 'Points a grid folder at its new place', command: 'seam.relink', action: 'seam.relink', menu: { in: 'import', at: 12, name: 'Relink geology…' } },
+  { key: 'import.vulcan_grid', stage: 'geology', label: 'Import seam grids', tip: 'Pick a roof, floor or topography, and the grids of that name come with it', icon: 'grids', command: 'grid.import_vulcan_seam', action: 'import.vulcan_grid', menu: { in: 'import', at: 2, name: 'Vulcan grid…' } },
+  { key: 'seam.suggest', stage: 'geology', label: 'Suggest a stack definition', tip: "Writes a starting definition from the grids' geometry, as a CSV to edit", short: 'Suggest definition', icon: 'suggest', command: 'seam.suggest_definition', action: 'seam.suggest', menu: { in: 'import', at: 10, name: 'Suggest a stack definition (CSV)…', rule: true, heading: 'Seam model' } },
+  { key: 'seam.build', stage: 'geology', label: 'Build a seam model', tip: 'Builds and checks a seam model from a definition', short: 'Build seam model', icon: 'seam-model', command: 'seam.build_model', action: 'seam.build', menu: { in: 'import', at: 11, name: 'Build and check from a definition…' } },
+  { key: 'seam.relink', stage: 'geology', label: 'Relink geology', tip: 'Points a grid folder at its new place', icon: 'relink', command: 'seam.relink', action: 'seam.relink', menu: { in: 'import', at: 12, name: 'Relink geology…' } },
 
   // Reserves.
-  { key: 'reserves', stage: 'reserves', label: 'Reserves', tip: "interrogate blocks against a seam model, or set them beside Spry's or Deswik's numbers", icon: 'reserves', panel: 'reserves', short: 'Reserves' },
+  { key: 'reserves', stage: 'reserves', label: 'Reserves', tip: "interrogate blocks against a seam model, or set them beside Spry's or Deswik's numbers", icon: 'reserves', panel: 'reserves' },
   { key: 'reserves:interrogate', stage: 'reserves', label: 'Interrogate', tip: "Writes each seam grid's value onto blocks, from a seam model.", panel: 'reserves', mode: 'interrogate', command: 'solid.interrogate', step: { takes: 'blocks and a seam model' } },
-  { key: 'reserves:compare', stage: 'reserves', label: 'Compare', tip: "Sets blocks beside Spry's or Deswik's numbers.", panel: 'reserves', mode: 'compare', command: 'solid.compare' },
-  { key: 'params', stage: 'reserves', label: 'Parameters', tip: 'parameter tables and dataflows edited as grids, a picked solid\'s values marked where they come from', icon: 'parameters', panel: 'params', short: 'Parameters' },
-  { key: 'restable', stage: 'reserves', label: 'Reserves table', tip: "a node's fields down the side, broken down by its children across, from Imported to Scheduled", icon: 'reserves-table', panel: 'restable', short: 'Reserves table' },
-  { key: 'workflow:report', stage: 'reserves', label: 'Report', tip: "Writes a workflow's report, every case from its latest run", panel: 'workflow' },
+  { key: 'reserves:compare', stage: 'reserves', label: 'Compare', tip: "Sets blocks beside Spry's or Deswik's numbers.", icon: 'compare', panel: 'reserves', mode: 'compare', command: 'solid.compare' },
+  { key: 'params', stage: 'reserves', label: 'Parameters', tip: 'parameter tables and dataflows edited as grids, a picked solid\'s values marked where they come from', icon: 'parameters', panel: 'params' },
+  { key: 'restable', stage: 'reserves', label: 'Reserves table', tip: "a node's fields down the side, broken down by its children across, from Imported to Scheduled", icon: 'reserves-table', panel: 'restable' },
+  { key: 'workflow:report', stage: 'reserves', label: 'Report', tip: "Writes a workflow's report, every case from its latest run", icon: 'report', panel: 'workflow' },
 
   // Always there, whatever the stage.
   { key: 'project.save', stage: 'always', label: 'Save', tip: 'Saves the project', icon: 'save', shortcut: 'Ctrl+S', action: 'project.save', menu: { in: 'project', at: 4, rule: true } },
   { key: 'edit.undo', stage: 'always', label: 'Undo', tip: 'Takes back the last change', icon: 'undo', shortcut: 'Ctrl+Z', action: 'edit.undo', needs: 'undo' },
   { key: 'edit.redo', stage: 'always', label: 'Redo', tip: 'Puts back the change just undone', icon: 'redo', shortcut: 'Ctrl+Y', action: 'edit.redo', needs: 'redo' },
-  { key: 'workflow', stage: 'always', label: 'Workflow', tip: 'saved steps run again in one go, captured from the Run log or added from the tool panels', icon: 'workflow', panel: 'workflow', short: 'Workflow' },
+  { key: 'workflow', stage: 'always', label: 'Workflow', tip: 'saved steps run again in one go, captured from the Run log or added from the tool panels', icon: 'workflow', panel: 'workflow' },
   { key: 'canvas', stage: 'always', label: 'Workflow canvas', tip: 'a workflow as nodes and wires: what each step reads', panel: 'canvas' },
   { key: 'layers', stage: 'always', label: 'Layers', tip: 'the layer tree: show, hide, select and arrange', panel: 'layers' },
   { key: 'properties', stage: 'always', label: 'Properties', tip: "what's picked: its name, layer, attributes and measures", panel: 'properties' },
@@ -237,11 +266,87 @@ export const stageTools = (stage: Stage): Tool[] => TOOLS.filter((t) => t.stage 
 export const menuTools = (menu: MenuId): (Tool & { menu: MenuPlace })[] =>
   TOOLS.filter((t): t is Tool & { menu: MenuPlace } => t.menu?.in === menu).sort((a, b) => a.menu.at - b.menu.at);
 
-/** Today's one row of the toolbar, until it becomes a tab a stage (workstream 5): the panels it opens, left to right. */
-export const ONE_ROW: readonly string[] = ['face', 'builder', 'cut', 'reserves', 'blocks', 'restable', 'params', 'workflow'];
+/** A menu on a row of tools: one of the toolbar's menus whole, or a few tools under a name. */
+export interface RowMenu {
+  label: string;
+  icon: ToolIcon;
+  tip: string;
+  /** One of the toolbar's menus, top to bottom. */
+  menu?: MenuId;
+  /** Or these tools, as their menu words them. */
+  keys?: readonly string[];
+}
 
-/** What a toolbar button's tip says: a panel's name then what it's for, or a tool's name and its keys. */
+/** What sits on a row: a tool by its key, a rule between groups, or a menu. */
+export type RowItem = string | '|' | RowMenu;
+
+const IMPORT_MENU: RowMenu = { label: 'Import', icon: 'import', tip: 'Bring in surfaces, grids, strings, solids, Deswik and Spry, and build a seam model', menu: 'import' };
+const EXPORT_MENU: RowMenu = { label: 'Export', icon: 'export', tip: 'Strings, surfaces and solids out to DXF, CSV or a zip', menu: 'export' };
+
+/**
+ * The row of tools under each stage's tab, left to right, in the order the work is done (decision 0076). A tool is in
+ * one stage, but a row may show one from another where the work wants it there too: Relink geology on Project.
+ */
+export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
+  project: ['project.new', 'project.open', 'project.save_as', '|', IMPORT_MENU, EXPORT_MENU, '|', 'seam.relink'],
+  strings: [
+    'string.offset',
+    'string.number_across',
+    'string.polygons_from_lines',
+    '|',
+    'string.set_grade',
+    'string.set_elevation',
+    'string.drape',
+    '|',
+    'string.split',
+    'string.join',
+    'string.smooth',
+    'string.filter',
+    'string.reverse',
+    'string.set_closed',
+  ],
+  walls: ['face', 'builder', 'builder:rebuild', 'cut:join_faces'],
+  solids: [
+    'cut:between',
+    'cut:strips',
+    'cut:cut',
+    'cut:seams',
+    'cut:benches',
+    'cut:polygons',
+    '|',
+    'blocks',
+    'solids.repair',
+    '|',
+    { label: 'Import solids', icon: 'solids-in', tip: 'Closed triangulations in Vulcan .00t or DXF files, or a zip or folder of them', keys: ['import.solids', 'import.solids_folder', 'import.solids_repaired', 'import.solids_folder_repaired'] },
+    { label: 'Export solids', icon: 'solids-out', tip: 'Solids out as a zip or a folder, a DXF each', keys: ['export.selected_solids', 'export.visible_solids'] },
+  ],
+  geology: ['import.vulcan_grid', 'seam.suggest', 'seam.build', 'seam.relink'],
+  reserves: ['reserves', 'params', 'restable', 'reserves:compare', 'workflow:report'],
+};
+
+/** At the right of every row, whatever the stage. */
+export const ALWAYS_ROW: readonly string[] = ['workflow'];
+
+/** The tools a row holds, its menus' tools among them: what's one click, or two through a menu, from its tab. */
+export function rowTools(stage: Exclude<Stage, 'always'>): Tool[] {
+  return ROWS[stage].flatMap((item) => {
+    if (item === '|') return [];
+    if (typeof item === 'string') return [toolByKey(item)!];
+    return item.menu ? menuTools(item.menu) : (item.keys ?? []).map((key) => toolByKey(key)!);
+  });
+}
+
+/**
+ * Whether a tool is the one in use when its panel is in front, set to `mode`: a panel's own tool, or the tool for the
+ * choice the panel is set to. A tool that only opens a panel at something (Rebuild from here) never is.
+ */
+export const inUse = (tool: Tool, mode: string | undefined): boolean => !!tool.panel && (tool.key === tool.panel || (!!tool.mode && tool.key === `${tool.panel}:${tool.mode}` && tool.mode === mode));
+
+/** What a toolbar button's tip says: a panel's name then what it's for, a tool's name and its keys, or what it does. */
 export const tipOf = (tool: Tool): string => (tool.panel && tool.key === tool.panel ? `${tool.label}: ${tool.tip}` : tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.tip);
+
+/** A tool's name on a row. */
+export const rowName = (tool: Tool): string => tool.short ?? tool.label;
 
 /** A menu item's words, with how many it would take where that's more than one ("Selected to DXF (3)…"). */
 export function menuWords(tool: Tool, count: number | null): string {
