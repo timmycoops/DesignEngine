@@ -3,8 +3,8 @@
 Status: agreed 16 November 2026. Tim picked "panel and then b" of the options put to him (fix how panels open first,
 then the workflow tabs), and agreed the six decisions on the Build Plan's "UI improvements plan" tab as recommended
 ("Agree all 6"). It takes over the open parts of the UI plan tab and replaces 0051's one toolbar row. 0051's minimised
-strips and the ` key stay. Built as seven workstreams, a PR each. Workstreams 1, the docks, 2, the view bar, 3,
-compact heads, 4, the one tool list, 5, the workflow tabs, and 6, Find a command, are built.
+strips and the ` key stay. Built as seven workstreams, a PR each, all seven built on 16 November 2026: the docks, the
+view bar, compact heads, the one tool list, the workflow tabs, Find a command, and the string tools out of Properties.
 
 ## Why
 
@@ -312,6 +312,45 @@ Release app, 16 November 2026. `--shell` passes 50 of 50, four of them for Find 
 `--select` (29 of 29), `--section-guide` (11 of 11), `--workflow` (43 of 43) and `--dataflow` (21 of 21) still pass;
 `--builder` and `--cut` run with no failed check, under the new names.
 
+## Built: workstream 7, the string tools out of Properties
+
+- **The Strings panel** (`app/src/panels/StringsPanel.tsx`) holds the twelve string tools, on the kit, in the tool
+  dock: Offset, Number across, Polygons from lines, Set grade, Set elevation, Drape, Split, Join, Smooth, Filter,
+  Reverse and Close. A tool on the Strings tab opens it set to that tool, lit on the row; its own choice changes the
+  tool too. It has the one-line head, the string it works on, the tool's settings, and one button at its foot named for
+  what it does ("Offset S04 toe 3 times"), with Ctrl+Enter and what the run said above it.
+- **A tool works on the string picked**, the last picked where several are. Number across numbers the strings picked
+  where several are, else what's on the picked string's layer that a face run didn't make, as before; Polygons from
+  lines takes the lines picked. With no string picked the panel says so and its button is off.
+- **Properties shows only** (decision 5): a string's measures and vertices, no commands. Its String tools section, the
+  Number and Polygons rows for several strings, and the row brought into view from the Strings tab are gone. Still in
+  Properties, as they are the object's own: its name, which is edited there, its look, Delete, and for several solids
+  the box that keeps those under a volume selected.
+- **The Wall row is not carried over.** Properties ran `face.project_step` from it: one wall and berm from the string
+  to a surface. The Builder does that and more from the line picked, and is on the Walls tab; the command stays in the
+  engine.
+- **`NumberOrBlank`** joins the kit: a number that may be left blank, the box saying what blank means (To vertex: end;
+  At RL: its own), or empty where a number is still to come and the button waits for it.
+- The tool list has 72 tools; the string tools are keyed `strings:offset` and so on, each naming its engine command.
+
+Release app, 16 November 2026. `pnpm test` passes 83. `--shell` passes 53 of 53, four of them for the Strings panel,
+over a made-up toe.
+
+| Check | Result |
+|---|---|
+| Offset from the Strings tab, no string picked | the Strings panel in front, set to Offset and lit on the row; "No string picked"; its button off |
+| A string picked, a distance of 40 m, 3 times | the button reads "Offset Bench toe 3 times", off until the distance is typed; 1 string becomes 4 |
+| Set elevation from the row, RL 120 | lit on the row; "Set Bench toe to RL 120"; both vertices at RL 120 |
+| Reverse chosen in the panel | Reverse lit on the row |
+| Properties, the string picked | its measures shown; no button that runs a string command |
+| The panel's head | one line, whole at 400 px; first control 36 px under the tab |
+
+`--select` (29 of 29), `--section-guide` (11 of 11), `--workflow` (43 of 43) and `--dataflow` (21 of 21) still pass;
+`--builder` and `--cut` run with no failed check.
+
+Offset and Set elevation are run by a check. The other ten send the commands and settings Properties sent, moved across
+as they were, and were not run by a check.
+
 ## Known limits
 
 - **A layout opened in a window of another size** is scaled by dockview as it's read, docks and all. They hold from
@@ -321,8 +360,10 @@ Release app, 16 November 2026. `--shell` passes 50 of 50, four of them for Find 
   under the view. With a dock's panels split across two groups, the next one opens in the group holding the most.
 - **The tab row doesn't fold**: in a window too narrow for the six tabs they are clipped. The tool row folds at any
   width.
-- **A Strings tool with several strings picked** finds its row only if it's Number across or Polygons from lines, which
-  are the two Properties shows for several; the others need one string picked.
+- **A string tool works on one string**, the last picked, but for Number across and Polygons from lines. Offsetting
+  several toes at once is several runs.
+- **The Strings panel's tools can't be added to a workflow from the panel** or the canvas yet: its button runs, and a
+  run is captured from the Run log as before.
 - **Find a command reaches a tool, not what's inside a panel**: the Block table's Select shown or the Layers tree's
   commands aren't tools yet. The view bar draws its own buttons, so its names are written twice.
 - **Repair's dialog** was not opened by a check: the bench has no closed mesh that isn't a solid.

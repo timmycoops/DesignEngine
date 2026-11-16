@@ -177,18 +177,15 @@ function ToolRow({
   onApply,
   apply = 'Apply',
   disabled,
-  tool,
 }: {
   label: string;
   children?: ReactNode;
   onApply?: () => void;
   apply?: string;
   disabled?: boolean;
-  /** The tool in the tool list this row is, so the Strings tab can bring it into view. */
-  tool?: string;
 }) {
   return (
-    <div className="flex items-center gap-1 px-3 py-0.5 text-xs" data-string-tool={tool}>
+    <div className="flex items-center gap-1 px-3 py-0.5 text-xs">
       <span className="w-14 shrink-0 text-muted-foreground">{label}</span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{children}</div>
       {onApply && (
@@ -296,177 +293,6 @@ function Look({ object }: { object: ObjectSummary }) {
   );
 }
 
-/**
- * Commands on the selected string. Vertex numbers are as listed below (from 1). Grade, RL, drape,
- * reverse and close write a new revision; offset and wall make new objects. All undo.
- */
-function StringTools({ id, closed }: { id: string; closed: boolean }) {
-  const { run, summary } = useWorkspace();
-  const [from, setFrom] = useState('1');
-  const [to, setTo] = useState('');
-  const [grade, setGrade] = useState('');
-  const [startRl, setStartRl] = useState('');
-  const [distance, setDistance] = useState('');
-  const [times, setTimes] = useState('');
-  const [side, setSide] = useState<'left' | 'right'>('right');
-  const [corners, setCorners] = useState<'mitre' | 'round'>('mitre');
-  const [level, setLevel] = useState('');
-  const [surface, setSurface] = useState<string | null>(null);
-  const [crossings, setCrossings] = useState(true);
-  const [splitAt, setSplitAt] = useState('');
-  const [joinWith, setJoinWith] = useState<string | null>(null);
-  const [spacing, setSpacing] = useState('5');
-  const [tolerance, setTolerance] = useState('');
-  const [wallTarget, setWallTarget] = useState<string | null>(null);
-  const [batter, setBatter] = useState('70');
-  const [berm, setBerm] = useState('');
-  const [conditioning, setConditioning] = useState('0.1');
-  const others = (summary?.objects ?? []).filter((o) => o.kind === 'string' && o.id !== id && !o.closed);
-  const partner = others.find((o) => o.id === joinWith) ?? others[0];
-
-  const num = (s: string) => (s.trim() === '' ? null : Number(s));
-  const ok = (v: number | null) => v !== null && Number.isFinite(v);
-  const optional = (v: number | null) => v === null || Number.isFinite(v);
-  const surfaces = (summary?.objects ?? []).filter((o) => o.drawn && (o.kind === 'surface' || o.kind === 'grid'));
-  const target = surfaces.find((s) => s.id === surface) ?? surfaces[0];
-  const riseTo = surfaces.find((s) => s.id === wallTarget) ?? surfaces[0];
-
-  const strings = (summary?.objects ?? []).filter((o) => o.kind === 'string' && !o.hidden);
-  const layer = summary?.objects.find((o) => o.id === id)?.layer;
-  /** What's on this string's layer and wasn't made by a face run. Select several to number those. */
-  const toNumber = strings.filter((o) => o.layer === layer && o.attributes.face_design === undefined);
-
-  const gradeParams = () => {
-    const params: Record<string, unknown> = { string: id, from: Math.round(num(from) ?? 1) - 1, grade: num(grade) };
-    if (num(to) !== null) params.to = Math.round(num(to)!) - 1;
-    if (num(startRl) !== null) params.rl = num(startRl);
-    return params;
-  };
-
-  return (
-    <>
-      <ToolRow label="Grade" tool="string.set_grade" disabled={!ok(num(grade)) || !ok(num(from)) || !optional(num(to)) || !optional(num(startRl))} onApply={() => void run('string.set_grade', gradeParams())}>
-        <SmallInput value={grade} onChange={setGrade} placeholder="%" title="Grade in %, positive uphill along the string" />
-        <span className="text-muted-foreground">from</span>
-        <SmallInput value={from} onChange={setFrom} placeholder="#" title="Start vertex" />
-        <span className="text-muted-foreground">to</span>
-        <SmallInput value={to} onChange={setTo} placeholder="end" title="End vertex (the last by default)" />
-        <span className="text-muted-foreground">at RL</span>
-        <SmallInput value={startRl} onChange={setStartRl} placeholder="own" title="RL at the start vertex (its own by default)" />
-      </ToolRow>
-      <ToolRow
-        label="Offset"
-        tool="string.offset"
-        disabled={!(ok(num(distance)) && num(distance)! > 0 && (num(times) === null || (Number.isInteger(num(times)) && num(times)! >= 1)))}
-        onApply={() => void run('string.offset', { string: id, distance: num(distance), side, corners, times: num(times) ?? 1 })}
-      >
-        <SmallInput value={distance} onChange={setDistance} placeholder="m" title="Horizontal distance (m)" />
-        <SmallInput value={times} onChange={setTimes} placeholder="times" title="How many strings, each the distance further out" />
-        <Choice value={side} onChange={setSide} options={[['left', 'Left'], ['right', 'Right']]} />
-        <Choice value={corners} onChange={setCorners} options={[['mitre', 'Mitre'], ['round', 'Round']]} />
-      </ToolRow>
-      <NumberAcross strings={toNumber} which="what's on this layer that a face run didn't make; select several strings to number those alone" />
-      <ToolRow label="Set RL" tool="string.set_elevation" disabled={!ok(num(level))} onApply={() => void run('string.set_elevation', { string: id, rl: num(level) })}>
-        <SmallInput value={level} onChange={setLevel} placeholder="RL" title="Every vertex to this RL" />
-      </ToolRow>
-      <ToolRow label="Drape" tool="string.drape" disabled={!target} onApply={() => target && void run('string.drape', { string: id, surface: target.id, crossings })}>
-        {surfaces.length === 0 ? (
-          <span className="text-muted-foreground">no surface loaded</span>
-        ) : (
-          <select
-            className="h-6 max-w-40 rounded border bg-background px-1 text-xs"
-            value={target?.id}
-            onChange={(e) => setSurface(e.target.value)}
-            aria-label="Surface to drape onto"
-          >
-            {surfaces.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        )}
-        <label className="flex items-center gap-1 text-muted-foreground" title="Add vertices where the string crosses the surface's triangle edges">
-          <input type="checkbox" checked={crossings} onChange={(e) => setCrossings(e.target.checked)} /> follow
-        </label>
-      </ToolRow>
-      <ToolRow
-        label="Wall"
-        disabled={!riseTo || !ok(num(batter)) || !optional(num(berm)) || !ok(num(conditioning))}
-        onApply={() =>
-          riseTo && void run('face.project_step', { string: id, target: riseTo.id, batter: num(batter), side, berm: num(berm) ?? 0, tolerance: num(conditioning) })
-        }
-      >
-        {surfaces.length === 0 ? (
-          <span className="text-muted-foreground">no surface loaded</span>
-        ) : (
-          <select
-            className="h-6 max-w-40 rounded border bg-background px-1 text-xs"
-            value={riseTo?.id}
-            onChange={(e) => setWallTarget(e.target.value)}
-            aria-label="Surface or grid the wall rises to"
-          >
-            {surfaces.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        )}
-        <SmallInput value={batter} onChange={setBatter} placeholder="deg" title="Batter in degrees from horizontal, square to the string" />
-        <span className="text-muted-foreground">deg</span>
-        <Choice value={side} onChange={setSide} options={[['left', 'Left'], ['right', 'Right']]} />
-        <span className="text-muted-foreground">berm</span>
-        <SmallInput value={berm} onChange={setBerm} placeholder="m" title="Width of the berm at the crest, for the next toe (m)" />
-        <span className="text-muted-foreground">tolerance</span>
-        <SmallInput value={conditioning} onChange={setConditioning} placeholder="m" title="How far the next toe may leave the crest (m): 0.1 is usual, 2 at most. This isn't the berm." />
-      </ToolRow>
-      <ToolRow label="Split" tool="string.split" disabled={!ok(num(splitAt))} onApply={() => void run('string.split', { string: id, at: Math.round(num(splitAt)!) - 1 })}>
-        <span className="text-muted-foreground">at vertex</span>
-        <SmallInput value={splitAt} onChange={setSplitAt} placeholder="#" title="Split here; a closed string opens here" />
-      </ToolRow>
-      <ToolRow label="Join" tool="string.join" disabled={closed || !partner} onApply={() => partner && void run('string.join', { string: id, other: partner.id })}>
-        {closed ? (
-          <span className="text-muted-foreground">open the string first</span>
-        ) : others.length === 0 ? (
-          <span className="text-muted-foreground">no other open string</span>
-        ) : (
-          <select
-            className="h-6 max-w-40 rounded border bg-background px-1 text-xs"
-            value={partner?.id}
-            onChange={(e) => setJoinWith(e.target.value)}
-            aria-label="String to join on"
-            title="Joined at the nearest ends; that string is deleted (undo brings it back)"
-          >
-            {others.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-        )}
-      </ToolRow>
-      <ToolRow label="Smooth" tool="string.smooth" disabled={!(ok(num(spacing)) && num(spacing)! > 0)} onApply={() => void run('string.smooth', { string: id, spacing: num(spacing) })}>
-        <span className="text-muted-foreground">every</span>
-        <SmallInput value={spacing} onChange={setSpacing} placeholder="m" title="Longest step along the curve in plan (m)" />
-        <span className="text-muted-foreground">m</span>
-      </ToolRow>
-      <ToolRow label="Filter" tool="string.filter" disabled={!(ok(num(tolerance)) && num(tolerance)! >= 0)} onApply={() => void run('string.filter', { string: id, tolerance: num(tolerance) })}>
-        <span className="text-muted-foreground">within</span>
-        <SmallInput value={tolerance} onChange={setTolerance} placeholder="m" title="Remove vertices within this 3D distance of the line (m)" />
-        <span className="text-muted-foreground">m</span>
-      </ToolRow>
-      <div className="flex gap-1 px-3 py-1">
-        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" data-string-tool="string.reverse" onClick={() => void run('string.reverse', { string: id })}>
-          Reverse
-        </Button>
-        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" data-string-tool="string.set_closed" onClick={() => void run('string.set_closed', { string: id, closed: !closed })}>
-          {closed ? 'Open' : 'Close'}
-        </Button>
-      </div>
-    </>
-  );
-}
 
 /** Cutting lives in its own panel (decision 0049): Properties shows what's picked, and points the way. */
 function OpenCut() {
@@ -668,9 +494,6 @@ function Measurements({ d }: { d: ObjectDetails }) {
             <Field label="Length (plan)">{fmt(m.plan_length, 2)} m</Field>
             {m.plan_area !== null && <Field label="Area (plan)">{fmt(m.plan_area, 1)} m²</Field>}
           </Section>
-          <Section title="String tools">
-            <StringTools id={d.id} closed={m.closed} />
-          </Section>
           <Section title="Vertices">
             <Vertices points={m.points} closed={m.closed} />
           </Section>
@@ -812,50 +635,6 @@ function Measurements({ d }: { d: ObjectDetails }) {
  * Numbers strings by a line drawn across them (`string.number_across`), each named with its number in place of #.
  * `which` says what it numbers, for the tip.
  */
-function NumberAcross({ strings, which }: { strings: ObjectSummary[]; which: string }) {
-  const { run, pickLine } = useWorkspace();
-  const [name, setName] = useState('Strip #');
-  const [start, setStart] = useState('');
-  const [step, setStep] = useState('1');
-  const num = (s: string) => (s.trim() === '' ? null : Number(s));
-  const ok = (v: number | null) => v !== null && Number.isFinite(v);
-  const numberAcross = async () => {
-    const line = await pickLine('Click where the numbering starts. Esc cancels', 'Click across the strings to where it ends. Esc cancels');
-    if (line) void run('string.number_across', { strings: strings.map((o) => o.id), from: line[0], to: line[1], start: num(start), step: num(step), name });
-  };
-  return (
-    <ToolRow label="Number" tool="string.number_across" apply={`Draw across (${strings.length})`} disabled={!ok(num(start)) || !ok(num(step)) || num(step) === 0 || !name.trim() || strings.length === 0} onApply={() => void numberAcross()}>
-      <SmallInput value={name} onChange={setName} placeholder="name" title={`Each string's name, with its number in place of #. Numbers ${which}`} />
-      <SmallInput value={start} onChange={setStart} placeholder="from" title="The first number" />
-      <SmallInput value={step} onChange={setStep} placeholder="step" title="Added each time, negative to count down" />
-    </ToolRow>
-  );
-}
-
-/**
- * A polygon of every area the strings close in plan (`string.polygons_from_lines`, decision 0062): lines across the
- * strips every 100 m and lines past the pit closing them make the block polygons, named west to east.
- */
-function PolygonsFromLines({ strings }: { strings: ObjectSummary[] }) {
-  const { runRecord, setSelection } = useWorkspace();
-  const [name, setName] = useState('B#');
-  const [layer, setLayer] = useState('block polygons');
-  const [tolerance, setTolerance] = useState('1');
-  const mm = tolerance.trim() === '' ? null : Number(tolerance);
-  const make = async () => {
-    const outcome = await runRecord('string.polygons_from_lines', { strings: strings.map((o) => o.id), layer: layer.trim(), name, tolerance: (mm ?? 1) / 1000 });
-    const made = outcome.record?.outputs.filter((o) => o.change === 'created').map((o) => o.id) ?? [];
-    if (made.length > 0) setSelection(made);
-  };
-  return (
-    <ToolRow label="Polygons" tool="string.polygons_from_lines" apply={`Close (${strings.length})`} disabled={!name.trim() || !layer.trim() || mm === null || !Number.isFinite(mm) || mm < 0} onApply={() => void make()}>
-      <SmallInput value={name} onChange={setName} placeholder="name" title="Each polygon's name, numbered west to east in place of #" />
-      <SmallInput value={layer} onChange={setLayer} placeholder="layer" title="The layer the polygons go on" />
-      <SmallInput value={tolerance} onChange={setTolerance} placeholder="mm" title="An end this close to another line (mm) is joined to it and said" />
-    </ToolRow>
-  );
-}
-
 /**
  * Keeps selected only the solids holding less than a volume: small pieces to look at and delete by hand (decision 0062;
  * no automatic limit). Select a layer's solids from the tree first.
@@ -926,7 +705,6 @@ function SelectionProperties({ objects }: { objects: ObjectSummary[] }) {
   const coloured = objects.filter(canColour);
   const seeThrough = objects.filter(canSeeThrough);
   const colourings = new Set(coloured.map((o) => lookOf(summary?.display, o.id).colouring));
-  const strings = objects.filter((o) => o.kind === 'string');
   const solids = objects.filter((o) => o.kind === 'solid');
 
   return (
@@ -992,12 +770,6 @@ function SelectionProperties({ objects }: { objects: ObjectSummary[] }) {
           {seeThrough.length < objects.length && <p className="px-3 pt-0.5 text-xs text-muted-foreground">Solids and strings are seen through by their layers: right-click a layer in the tree.</p>}
         </Section>
       )}
-      {strings.length > 0 && (
-        <Section title="Strings">
-          <NumberAcross strings={strings} which="the strings selected" />
-          <PolygonsFromLines strings={strings} />
-        </Section>
-      )}
       {solids.length > 0 && (
         <Section title="Solids">
           <SolidsUnder solids={solids} />
@@ -1024,26 +796,7 @@ function SelectionProperties({ objects }: { objects: ObjectSummary[] }) {
 
 /** The selected object: name (editable), layer, measurements, validity, attributes and history. Several selected show together. */
 export function PropertiesPanel() {
-  const { summary, selected, selection, run, select, toolAsk } = useWorkspace();
-  // A string tool asked for from the Strings tab: its row brought into view and lit for a moment. It may not be drawn
-  // yet, while the string's details come.
-  useEffect(() => {
-    if (toolAsk?.panel !== 'properties' || !toolAsk.mode) return;
-    let timer = 0;
-    let tries = 0;
-    const show = () => {
-      const row = document.querySelector<HTMLElement>(`[data-string-tool="${toolAsk.mode}"]`);
-      if (!row) {
-        if (tries++ < 10) timer = window.setTimeout(show, 100);
-        return;
-      }
-      row.scrollIntoView({ block: 'center' });
-      row.classList.add('tool-asked');
-      timer = window.setTimeout(() => row.classList.remove('tool-asked'), 1600);
-    };
-    show();
-    return () => window.clearTimeout(timer);
-  }, [toolAsk]);
+  const { summary, selected, selection, run, select } = useWorkspace();
   const several = useMemo(() => {
     if (selection.length < 2) return null;
     const ids = new Set(selection);

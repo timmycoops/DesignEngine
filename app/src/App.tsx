@@ -1174,12 +1174,10 @@ export default function App() {
     'selected-strings': selectedStrings.length,
     'selected-solids': selectedSolids.length,
   };
-  /** Carries a tool out: its action, or its panel opened and set to it. A string tool with no string picked says so. */
+  /** Carries a tool out: its action, or its panel opened and set to it. */
   const runTool = (tool: Tool) => {
     if (tool.action) return void toolActions[tool.action]();
-    if (!tool.panel) return;
-    openTool(tool.panel, tool.mode);
-    if (tool.stage === 'strings' && selectedStrings.length === 0) setStatus({ text: `${tool.label}: pick a string in the view or the tree first. It works on the string picked, in Properties.` });
+    if (tool.panel) openTool(tool.panel, tool.mode);
   };
   const toolUse: ToolUse = {
     run: runTool,

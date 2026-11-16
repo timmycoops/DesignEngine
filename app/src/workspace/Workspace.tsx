@@ -18,6 +18,7 @@ import { LayersPanel } from '@/panels/LayersPanel';
 import { PropertiesPanel } from '@/panels/PropertiesPanel';
 import { ReservesPanel } from '@/panels/ReservesPanel';
 import { RunLogPanel } from '@/panels/RunLogPanel';
+import { StringsPanel } from '@/panels/StringsPanel';
 import { ViewportPanel } from '@/panels/ViewportPanel';
 import { WorkflowCanvas } from '@/panels/WorkflowCanvas';
 import { BlockTable } from '@/panels/BlockTablePanel';
@@ -31,6 +32,7 @@ const components: Record<PanelId | 'viewport', () => ReactNode> = {
   viewport: ViewportPanel,
   layers: LayersPanel,
   properties: PropertiesPanel,
+  strings: StringsPanel,
   runlog: RunLogPanel,
   face: FaceDesignPanel,
   builder: BuilderPanel,

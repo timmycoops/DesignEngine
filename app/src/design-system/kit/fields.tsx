@@ -53,6 +53,55 @@ export function NumberInput({ value, onChange, label, unit, range, width = 'w-20
   );
 }
 
+/**
+ * A number that may be left blank, the box saying what blank means ("end", "its own"), or nothing where a number is
+ * still to come. Blank gives null; otherwise it reads as `NumberInput` does, holding what won't parse outlined, with why.
+ */
+export function NumberOrBlank({ value, onChange, label, unit, range, blank, width = 'w-20' }: { value: number | null; onChange: (value: number | null) => void; label: string; unit?: string; range?: Range; blank: string; width?: string }) {
+  const show = (v: number | null) => (v === null ? '' : showNumber(v));
+  const [text, setText] = useState(show(value));
+  const [why, setWhy] = useState<string | null>(null);
+  useEffect(() => {
+    setText((typed) => {
+      if (typed.trim() === '') return value === null ? typed : show(value);
+      const read = readNumber(typed, range);
+      return 'value' in read && read.value === value ? typed : show(value);
+    });
+  }, [value]);
+  return (
+    <span className={cn('relative inline-flex shrink-0 items-center', width)}>
+      <input
+        className={cn(boxClass, 'w-full px-1.5 tabular-nums', unit && 'pr-7', why && 'border-warning ring-1 ring-warning/40')}
+        value={text}
+        inputMode="decimal"
+        placeholder={blank}
+        aria-label={label}
+        aria-invalid={why !== null}
+        title={why ?? (blank ? `${label}: ${blank} if left blank` : label)}
+        onChange={(e) => {
+          setText(e.target.value);
+          if (e.target.value.trim() === '') {
+            setWhy(null);
+            return onChange(null);
+          }
+          const read = readNumber(e.target.value, range);
+          if ('value' in read) {
+            setWhy(null);
+            onChange(read.value);
+          } else {
+            setWhy(read.why);
+          }
+        }}
+        onBlur={() => {
+          setText(show(value));
+          setWhy(null);
+        }}
+      />
+      {unit && <span className="pointer-events-none absolute right-1.5 text-muted-foreground">{unit}</span>}
+    </span>
+  );
+}
+
 /** A choice of a few, as a row of buttons, the one chosen lit. */
 export function Choice<T extends string>({ value, options, labels, onChange, label, columns }: { value: T; options: readonly T[]; labels?: Partial<Record<T, string>>; onChange: (value: T) => void; label: string; columns?: number }) {
   return (
