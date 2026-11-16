@@ -1366,6 +1366,9 @@ pub struct BenchConfig {
     /// With `--project`, Project on the Strings tab driven as Tim would: the side set by a click in the view, three toes
     /// picked by a box and projected in one run, on to a surface with walls kept, a refusal, and one undo (decision 0079).
     project: bool,
+    /// With `--measure`, the distance measure on the view bar driven as Tim would: M, two clicks on a string's ends for a
+    /// known leg, a click on for a total, Backspace, Esc, and nothing made (decision 0079).
+    measure: bool,
     /// With `--cut`, the Cut solids panel driven as Tim would: a pit made between two surfaces inside its limit, sliced
     /// into strips by fifteen numbered faces, the faces joined a face a strip, and the pit cut at an RL (decision 0049).
     cut: bool,
@@ -1428,6 +1431,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         design_lines: args.iter().any(|a| a == "--design-lines"),
         builder: args.iter().any(|a| a == "--builder"),
         project: args.iter().any(|a| a == "--project"),
+        measure: args.iter().any(|a| a == "--measure"),
         cut: args.iter().any(|a| a == "--cut"),
         select: args.iter().any(|a| a == "--select"),
         shell: args.iter().any(|a| a == "--shell"),

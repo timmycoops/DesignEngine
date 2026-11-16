@@ -30,6 +30,7 @@ import { loadStaged } from '../viewport/load';
 import { takePalettePictures, takePictures } from './pictures';
 import { checkDataflow } from './dataflowCheck';
 import { checkSectionGuide } from './sectionGuideCheck';
+import { checkMeasure } from './measureCheck';
 import { checkProject } from './projectCheck';
 import { checkSelect } from './selectCheck';
 import { checkShell } from './shellCheck';
@@ -93,6 +94,8 @@ export async function runChecks(
       results.builder = await checkBuilder(viewport, log, show, strings);
     } else if (config.project) {
       results.project = await checkProject(viewport, log, show, strings, selection);
+    } else if (config.measure) {
+      results.measure = await checkMeasure(viewport, log, show, strings);
     } else if (config.cut) {
       results.cut = await checkCut(viewport, log, show, strings, config.seam);
     } else if (config.select) {

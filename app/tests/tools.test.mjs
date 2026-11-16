@@ -227,7 +227,7 @@ test('Find a command lists every tool once, under its own name, a stage at a tim
   assert.ok(findWords(toolByKey('import.solids')).includes('A zip or files…'));
   assert.ok(findWords(toolByKey('workflow')).includes('Always there'));
   // The view's tools are in the list for it, each with its key.
-  assert.deepEqual(TOOLS.filter((t) => t.key.startsWith('view.')).map((t) => `${t.label} ${t.shortcut ?? ''}`.trim()), ['Select', 'Draw string', 'Snap S', 'Plan or 3D T', "Zoom to what's selected F", 'Zoom to everything E', 'Section 2']);
+  assert.deepEqual(TOOLS.filter((t) => t.key.startsWith('view.')).map((t) => `${t.label} ${t.shortcut ?? ''}`.trim()), ['Select', 'Draw string', 'Snap S', 'Plan or 3D T', "Zoom to what's selected F", 'Zoom to everything E', 'Section 2', 'Measure distance M']);
 });
 
 test('Find a command matches whole words typed, a name first, then a stage or command, then what a tool does', () => {
@@ -241,6 +241,8 @@ test('Find a command matches whole words typed, a name first, then a stage or co
   assert.ok(['import.vulcan_grid', 'seam.build', 'reserves:interrogate'].every((key) => found('seam').includes(key)));
   assert.deepEqual(found('polygons'), ['strings:polygons_from_lines', 'cut:polygons']);
   assert.deepEqual(found('solid.cut_by_benches'), ['cut:benches']);
+  assert.equal(found('distance')[0], 'view.measure', 'found by what a planner would type');
+  assert.equal(found('measure')[0], 'view.measure');
   // Both take the solids selected: to a zip, a DXF each, and with everything else selected into one DXF.
   assert.deepEqual(found('selected solids'), ['export.selected_solids', 'export.selected_dxf']);
   assert.equal(found('plan or 3d')[0], 'view.plan');

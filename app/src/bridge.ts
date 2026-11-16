@@ -1193,6 +1193,8 @@ export interface BenchConfig {
   builder: boolean;
   /** With `--project`, Project on the Strings tab driven as Tim would, through the panel and clicks in the view (decision 0079). */
   project: boolean;
+  /** With `--measure`, the distance measure on the view bar driven as Tim would, by its key, its button and clicks (decision 0079). */
+  measure: boolean;
   /** With `--cut`, the Cut solids panel driven as Tim would: a pit between two surfaces, sliced into strips, cut at an RL (decision 0049). */
   cut: boolean;
   /** With `--section-guide`, the dashed line from a section's first point to the cursor, on a made-up topography. */

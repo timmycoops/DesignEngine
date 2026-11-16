@@ -41,6 +41,7 @@ import {
   Rows4,
   Save,
   SaveAll,
+  Ruler,
   Scissors,
   Sheet,
   Sigma,
@@ -113,6 +114,7 @@ const ICONS: Record<ToolIcon, LucideIcon> = {
   'zoom-selection': Focus,
   'zoom-all': Expand,
   section: Scissors,
+  measure: Ruler,
 };
 
 /** A tool's icon, or nothing where it has none. */
