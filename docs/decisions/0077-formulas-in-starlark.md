@@ -279,4 +279,62 @@ Dilution now takes its coal's moistures before its air-dried tonnes are worked a
 92 ÷ 96.5, so it weighs less in the coal's ash. The demo has no waste below its last coal and no Mad alignment, so
 neither moves it. `reserves.run` on Base takes 64 ms. The app check passes 21 of 21 on the regenerated demo.
 
-Not yet: the panel (7d) and the reference for AI (7e).
+## Built: 7d, the formula panel
+
+In the Parameters tab's dataflow view, until the dataflow canvas (5c) gives steps a panel of their own:
+
+- **The steps list** marks formula steps (`{}`). A click opens one in the formula panel on the right, in place of the
+  fields. **Add a formula after…** puts a new one after a stage (after any already there), starting from a few lines
+  of template.
+- **The formula panel**:
+  - its name and its filter, typed in the bench rules' words (`material: coal; seam: U, M`);
+  - its Starlark in **a script box**: CodeMirror 6, a kit part (`ScriptEditor`), with Python's syntax, line numbers and
+    undo, its colours from the theme's tokens.
+- **Checked as it's typed** (`formula_check`): every problem underlined on its line, and listed below with the line
+  number. Each worked example is held (green) or not (red, with why). The dataflow's own check (`dataflow_check`) now
+  compiles every formula and runs its examples, as `dataflow.save` does, so Save stays off while a formula is wrong.
+- **Check on the picked block** (`formula_trace`):
+  - the picked solid's block column is run through the dataflow as edited, unsaved, up to the formula, with the blocks
+    on its layer and the project's seam model;
+  - the formula is then traced on the solid's unit. The lines that ran are tinted in the script box and listed with
+    the values each gave, with what it read, what it set, what it printed, and where it stopped, if it did;
+  - a unit outside the filter is said;
+  - the unit's values before the formula are a click away;
+  - nothing is kept.
+- **Worked examples** are shown as JSON and edited there, each run on every save.
+- **Copy for AI** puts on the clipboard: how formulas are written (`zd-script`'s reference, also under "How formulas
+  are written" in the panel), the dataflow's field, label and parameter names with their units, this formula, and a
+  request to fill in. **Explain** puts the same with a request to explain it in plain words. Both carry names only,
+  never a value: not a block's, not a parameter's, not a worked example's.
+- **Saved** with the dataflow (Save, Ctrl+Enter), as its next revision; Discard puts it back.
+
+In the engine:
+
+- `check_formula` and `formula_trace` (`zd-commands`);
+- `prepare_flow`, which runs a dataflow given as a value, saved or not;
+- `begin_column` and `formula_input`, which the run and the trace share;
+- the trace notes a line resumed after a call it made only once.
+
+CodeMirror's packages are pinned exactly, each released at least two weeks before: `@codemirror/lint` at 6.9.7, as
+6.9.8 was three days old.
+
+Known answers:
+
+- **The engine.** A formula as edited is reported problem by problem: a misspelt field (line 2), a label set and a
+  misspelt parameter (both line 3), with no tests run until it compiles. A worked example expecting 56 fails with
+  "ash2 is 55, not 56". Traced on 3_B1_U: line 2 ran, it read `unit.ash` 10 and `p.ash_cutoff` 35, and it set
+  `ash2 = 55`; 3_B1_L is outside the filter.
+- **The app's text helpers** (`app/tests/formulaText.test.mjs`): a filter typed and read back. Copy for AI carries the
+  fields with their units, the parameter columns, the stage and the script, and never a worked example's values.
+- **The app check** (`--dataflow`, on the regenerated demo, 26 of 26):
+  - the dataflow lists its five starter formulas;
+  - `densities` opens checked with its three worked examples holding;
+  - Check on a solid of 3_B1 tints the 11 lines that ran, matching those listed, and sets `rd_is`, `rd_rom` and
+    `rd_adt`;
+  - `unit.rd_si` typed for `unit.rd_is` is shown as "line 21: `unit.rd_si` isn't a field of this dataflow (did you mean
+    `rd_is`?)", underlined, with Save off;
+  - Discard puts the formula back.
+
+  With `--pictures` it saves `formula-panel.png`.
+
+Not yet: the reference for AI written up with worked examples and tried on two starter formulas (7e).

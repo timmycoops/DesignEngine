@@ -252,3 +252,58 @@ fn a_formula_that_stops_on_a_unit_stops_its_block_and_the_rest_go_on() {
     };
     assert!(said.contains("the volume is of record"), "{said}");
 }
+
+/// The formula panel's check (decision 0077, 7d): a formula as edited, never saved, said problem by problem with its
+/// line, and each known answer held or not; the names it may use with their units.
+#[test]
+fn a_formula_as_edited_is_checked_problem_by_problem() {
+    use zd_commands::builtin::{STEPS, check_formula};
+    let mut s = session();
+    let table = table_id(&mut s);
+    let tests = json!([
+        { "name": "U at 10 %", "unit": { "ash": 10.0 }, "parameters": { "ash_cutoff": 35.0 }, "expect": { "ash2": 55.0 } },
+        { "name": "wrong on purpose", "unit": { "ash": 10.0 }, "parameters": { "ash_cutoff": 35.0 }, "expect": { "ash2": 56.0 } },
+    ]);
+    let content = content(table, json!([{ "step": "initialise" }, { "step": "x", "formula": { "script": DOUBLE_ASH, "tests": tests } }]));
+    let d: zd_core::Dataflow = serde_json::from_value(content.clone()).unwrap();
+    let Body::ParameterTable(t) = &s.project().object(table).unwrap().body else { panic!("a table") };
+    let built_in: Vec<&str> = STEPS.iter().map(|(n, _)| *n).collect();
+    let report = check_formula(&d, &[&**t], 1, &built_in).unwrap();
+    assert_eq!(report.stage.as_deref(), Some("initialise"));
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
+    assert_eq!(report.tests.iter().map(|t| (t.name.as_str(), t.ok)).collect::<Vec<_>>(), [("U at 10 %", true), ("wrong on purpose", false)]);
+    assert_eq!(report.tests[1].why.as_deref(), Some("ash2 is 55, not 56"));
+    assert!(report.names.fields.contains(&("rd".to_string(), "t/m3".to_string())) && report.names.parameters.iter().any(|p| p.0 == "ash_cutoff" && p.1 == "%"));
+    // Two problems at once, each with its line.
+    let mut broken = d.clone();
+    broken.steps[1].formula.as_mut().unwrap().script = "def formula(unit, p):\n    unit.ash2 = unit.ahs\n    unit.seam = p.ash_cutof\n".into();
+    let report = check_formula(&broken, &[&**t], 1, &built_in).unwrap();
+    let lines: Vec<Option<usize>> = report.problems.iter().map(|p| p.line).collect();
+    assert_eq!(lines, [Some(2), Some(3), Some(3)], "{:?}", report.problems);
+    assert!(report.tests.is_empty(), "a formula that doesn't compile runs no tests");
+}
+
+/// The formula panel's trace on a picked solid: B1's U column run up to the formula as edited, the formula traced on
+/// its coal: ash2 = 10 × 2 + 35, line 2, its reads and its set. L, outside the filter, is said so.
+#[test]
+fn a_formula_is_traced_on_a_picked_solid_s_unit() {
+    use zd_commands::builtin::formula_trace;
+    let mut s = session();
+    let ids = blocks(&mut s);
+    let table = table_id(&mut s);
+    let steps = json!([{ "step": "initialise" }, { "step": "double_ash", "formula": { "when": { "seam": "U" }, "script": DOUBLE_ASH } }, { "step": "in_situ" }]);
+    let d: std::sync::Arc<zd_core::Dataflow> = std::sync::Arc::new(serde_json::from_value(content(table, steps)).unwrap());
+    let p: RunReservesParams = serde_json::from_value(json!({ "dataflow": ObjectId::new(), "blocks": ids, "stack": STACK, "layer": "trace" })).unwrap();
+    let project = s.project();
+    let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+    let u = ids.iter().copied().find(|&id| project.object(id).unwrap().name == "3_B1_U").unwrap();
+    let tr = formula_trace(&get, &d, &p, "double_ash", u).unwrap();
+    assert_eq!(tr.block, "3_B1_U");
+    assert!(tr.fits && tr.stopped.is_none());
+    assert_eq!(tr.lines.iter().map(|l| l.line).collect::<Vec<_>>(), [2]);
+    assert_eq!(tr.sets, [("ash2".to_string(), "55".to_string())]);
+    assert!(tr.reads.contains(&("p.ash_cutoff".to_string(), "35".to_string())) && tr.reads.contains(&("unit.ash".to_string(), "10".to_string())));
+    assert!(tr.before.iter().any(|(k, v)| k == "ash" && *v == Some(10.0)));
+    let l = ids.iter().copied().find(|&id| project.object(id).unwrap().name == "3_B1_L").unwrap();
+    assert!(!formula_trace(&get, &d, &p, "double_ash", l).unwrap().fits, "L is outside the filter");
+}

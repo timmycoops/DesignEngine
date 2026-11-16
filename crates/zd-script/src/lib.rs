@@ -27,6 +27,9 @@ use starlark::values::{OwnedFrozenValue, Value, ValueLike};
 use starlark::PrintHandler;
 
 pub use handles::Event;
+
+/// How to write a formula, for the formula panel and for an AI asked to write one (decision 0077, 7d and 7e).
+pub const REFERENCE: &str = include_str!("reference.md");
 use handles::{Params, Parts, Unit};
 
 /// A value a formula reads or sets: a number, words, or nothing.
@@ -409,7 +412,11 @@ struct Snapshot {
 struct Watch(Arc<Mutex<Vec<Snapshot>>>);
 
 impl<'e> BeforeStmtFuncDyn<'e> for Watch {
-    fn call<'v>(&mut self, span: FileSpanRef, _continued: bool, eval: &mut Evaluator<'v, '_, 'e>) -> starlark::Result<()> {
+    fn call<'v>(&mut self, span: FileSpanRef, continued: bool, eval: &mut Evaluator<'v, '_, 'e>) -> starlark::Result<()> {
+        // A statement resumed after a call it made is the same line running on: noted once.
+        if continued {
+            return Ok(());
+        }
         let line = span.resolve_span().begin.line + 1;
         let locals = eval.local_variables().into_iter().map(|(k, v)| (k, show(v))).collect();
         self.0.lock().expect("snapshots").push(Snapshot { line, depth: eval.call_stack_count(), locals });

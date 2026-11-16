@@ -978,8 +978,51 @@ export interface Dataflow {
   /** The reserves table's levels top down (decision 0074): those above `seam` make a column. */
   levels?: { attribute: string; default?: string }[];
   fields: { name: string; kind: string; add_up: AddUp; from: string; attribute?: string; column?: string }[];
-  steps: { step: string; on?: boolean; settings?: Record<string, string> }[];
+  steps: DataflowStep[];
   parameters: string[];
+}
+
+/** A value a formula's worked example gives or expects. */
+export type ParamCell = number | string;
+
+/** A formula's worked example (decision 0077): a unit's fields and labels, its block and parameters, the ROM section's
+ * coal where it's in one, and the fields the formula must leave it with. */
+export interface FormulaTest {
+  name: string;
+  unit?: Record<string, ParamCell>;
+  block?: Record<string, ParamCell>;
+  parameters?: Record<string, ParamCell>;
+  rom_coal?: Record<string, ParamCell>;
+  expect: Record<string, number>;
+}
+
+/** A dataflow step: a built-in by name, or a formula step with its filter, Starlark and worked examples (0077). */
+export interface DataflowStep {
+  step: string;
+  on?: boolean;
+  settings?: Record<string, string>;
+  formula?: { when?: Record<string, string>; script: string; tests?: FormulaTest[] };
+}
+
+/** A formula as edited, checked (decision 0077, 7d). */
+export interface FormulaReport {
+  stage: string | null;
+  problems: { message: string; line: number | null }[];
+  tests: { name: string; ok: boolean; why: string | null }[];
+  names: { fields: [string, string][]; labels: string[]; parameters: [string, string, boolean][] };
+}
+
+/** A formula traced on a picked solid's unit (decision 0077, 7d). */
+export interface FormulaTrace {
+  block: string;
+  unit: string;
+  fits: boolean;
+  before: [string, number | null][];
+  lines: { line: number; text: string; values: [string, string][] }[];
+  reads: [string, string][];
+  sets: [string, string][];
+  said: string[];
+  stopped: { message: string; line: number | null } | null;
 }
 
 /** Rows of a results table added up by each column's rule. */
@@ -1025,6 +1068,12 @@ export const parametersPicked = (table: string, solid: string | null) => invoke<
 export const parametersCheck = (content: ParameterTable) => invoke<null>('parameters_check', { content });
 /** The engine's check of a dataflow as edited, before it's saved. */
 export const dataflowCheck = (content: Dataflow) => invoke<null>('dataflow_check', { content });
+/** A formula step of a dataflow as edited, checked: where it sits, every problem with its line, its worked examples. */
+export const formulaCheck = (content: Dataflow, index: number) => invoke<FormulaReport>('formula_check', { content, index });
+/** A formula step of a dataflow as edited, traced on a picked solid's unit; nothing kept. */
+export const formulaTrace = (content: Dataflow, step: string, solid: string) => invoke<FormulaTrace>('formula_trace', { content, step, solid });
+/** How to write a formula: the panel's help and what Copy for AI hands over. */
+export const formulaReference = () => invoke<string>('formula_reference');
 
 /** Saved steps run again in one go (decision 0065), and its cases (decision 0066). */
 export interface Workflow {

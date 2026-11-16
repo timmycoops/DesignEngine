@@ -106,7 +106,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   columns (the bench rules' syntax) and value columns with units, read top down, each value from the first row that fits
   and holds it, tables read in order so a case's rows go first; CSV in and out; edited as grids, with the dataflow, in the Parameters tab, a picked solid's
   values traced to their row (`docs/decisions/0075-reserves-in-the-app.md`). `Dataflow`: a reserves dataflow's fields
-  (with where each value comes from), steps by name and the parameter tables it reads; a step may be a formula step, Starlark run on the units its filter fits after `initialise`, `join_benches`, `working_sections`, `rom_dilution` or `rom`, checked and its known answers run when saved (`docs/decisions/0077-formulas-in-starlark.md`). `Table`: results, a table a case,
+  (with where each value comes from), steps by name and the parameter tables it reads; a step may be a formula step, Starlark run on the units its filter fits after `initialise`, `join_benches`, `working_sections`, `rom_dilution` or `rom`, checked and its known answers run when saved, edited in the Parameters tab's formula panel and run there on a picked block line by line (`docs/decisions/0077-formulas-in-starlark.md`). `Table`: results, a table a case,
   values as Parquet in the `.zdp`, read by the HTML report and the app's Reserves table tab, fields as rows and a
   node's children across, its solids matched by the levels the table records (`docs/decisions/0075-reserves-in-the-app.md`). `reserves.run` runs a dataflow a column a pit, strip
   and block (the dataflow's levels above the seam), its steps registered by name, and writes a reserves table: a row a

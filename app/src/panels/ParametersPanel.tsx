@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Copy, CopyPlus, Plus, Save, Trash2, Undo2, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Braces, Copy, CopyPlus, Plus, Save, Trash2, Undo2, X } from 'lucide-react';
 import { type ClipboardEvent, type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import { type Dataflow, dataflowCheck, objectDetails, type ObjectSummary, type ParameterTable, type ParametersPicked, parametersCheck, parametersPicked } from '@/bridge';
 import { CellInput, Choice, IconButton, Select, StatusBadge } from '@/design-system/kit';
@@ -33,6 +33,11 @@ import {
   withAddUp,
   withFrom,
 } from './parametersGrid';
+import { FormulaEditor } from './FormulaEditor';
+import { FORMULA_TEMPLATE } from './formulaText';
+
+/** The built-in steps a formula step may follow (decision 0077): as the engine's FORMULA_STAGES. */
+const FORMULA_STAGES = ['initialise', 'join_benches', 'working_sections', 'rom_dilution', 'rom'];
 
 /**
  * The Parameters tab (decision 0075, workstream 5d of 0070): the project's parameter tables and dataflows edited as grids.
@@ -389,6 +394,7 @@ function DataflowEditor({ object, tables }: { object: ObjectSummary; tables: Obj
   const [flow, setFlow] = useState<Dataflow | null>(null);
   const [engineWhy, setEngineWhy] = useState<string | null>(null);
   const [said, setSaid] = useState<{ text: string; tone: 'ok' | 'refused' } | null>(null);
+  const [formulaAt, setFormulaAt] = useState<number | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -434,6 +440,16 @@ function DataflowEditor({ object, tables }: { object: ObjectSummary; tables: Obj
     const reply = await runRecord('dataflow.save', { dataflow: object.id, name: object.name, content: flow });
     if (reply.error) return setSaid({ text: reply.error, tone: 'refused' });
     setSaid({ text: 'Saved. Reserves tables made before this used the last revision: run reserves again to see it.', tone: 'ok' });
+  };
+  // A new formula step after a stage, after any formula already there, opened.
+  const addFormula = (anchor: string) => {
+    let at = flow.steps.findIndex((s) => s.step === anchor && !s.formula);
+    if (at < 0) return;
+    while (flow.steps[at + 1]?.formula) at++;
+    let name = 'formula';
+    for (let n = 2; flow.steps.some((s) => s.step === name); n++) name = `formula_${n}`;
+    set({ steps: [...flow.steps.slice(0, at + 1), { step: name, formula: { script: FORMULA_TEMPLATE } }, ...flow.steps.slice(at + 1)] });
+    setFormulaAt(at + 1);
   };
   const head = 'border-b border-border px-1 py-0.5 text-left font-medium text-muted-foreground';
 
@@ -526,6 +542,23 @@ function DataflowEditor({ object, tables }: { object: ObjectSummary; tables: Obj
               const settings = Object.entries(s.settings ?? {});
               const setStep = (change: Partial<typeof s>) => set({ steps: flow.steps.map((t, j) => (j === i ? { ...t, ...change } : t)) });
               const setSettings = (pairs: [string, string][]) => setStep({ settings: Object.fromEntries(pairs) });
+              if (s.formula) {
+                // A formula step (decision 0077): opened in the formula editor on the right.
+                return (
+                  <div key={i} className={cn('mb-1 flex items-center gap-1 rounded-sm', formulaAt === i && 'bg-selection')} data-step={s.step} data-formula="yes">
+                    <Choice value={s.on === false ? 'off' : 'on'} options={['on', 'off'] as const} label={`${s.step} on or off`} onChange={(v) => setStep({ on: v === 'on' ? undefined : false })} />
+                    <button
+                      type="button"
+                      className={cn('flex min-w-0 flex-1 items-center gap-1 truncate text-left hover:underline', s.on === false && 'text-muted-foreground line-through', !same(saved.steps[i], s) && 'text-edited')}
+                      onClick={() => setFormulaAt(i)}
+                      title="Open this formula"
+                    >
+                      <Braces className="size-3.5 shrink-0 text-muted-foreground" />
+                      {s.step.replaceAll('_', ' ')}
+                    </button>
+                  </div>
+                );
+              }
               return (
                 <div key={s.step} className="mb-1" data-step={s.step}>
                   <div className="flex items-center gap-1">
@@ -547,8 +580,30 @@ function DataflowEditor({ object, tables }: { object: ObjectSummary; tables: Obj
                 </div>
               );
             })}
+            {FORMULA_STAGES.some((a) => flow.steps.some((s) => s.step === a && !s.formula)) && (
+              <Select className="mt-1 w-full" value="" aria-label="Add a formula step" onChange={(e) => e.target.value && addFormula(e.target.value)}>
+                <option value="">Add a formula after…</option>
+                {FORMULA_STAGES.filter((a) => flow.steps.some((s) => s.step === a && !s.formula)).map((a) => (
+                  <option key={a} value={a}>
+                    {a.replaceAll('_', ' ')}
+                  </option>
+                ))}
+              </Select>
+            )}
           </section>
         </div>
+        {formulaAt !== null && flow.steps[formulaAt]?.formula ? (
+          <section className="min-w-0 flex-1">
+            <FormulaEditor
+              flow={flow}
+              index={formulaAt}
+              saved={saved.steps.find((s) => s.step === flow.steps[formulaAt].step)}
+              onStep={(s) => set({ steps: flow.steps.map((t, j) => (j === formulaAt ? s : t)) })}
+              onRemove={() => (set({ steps: flow.steps.filter((_, j) => j !== formulaAt) }), setFormulaAt(null))}
+              onClose={() => setFormulaAt(null)}
+            />
+          </section>
+        ) : (
         <section className="min-w-0 flex-1">
           <div className="mb-0.5 font-semibold">Fields</div>
           <p className="mb-1 text-muted-foreground">What each unit carries, how it adds up, and where its value comes from when a block becomes a unit.</p>
@@ -627,6 +682,7 @@ function DataflowEditor({ object, tables }: { object: ObjectSummary; tables: Obj
             <Plus className="size-3.5" /> Field
           </Button>
         </section>
+        )}
       </div>
     </div>
   );

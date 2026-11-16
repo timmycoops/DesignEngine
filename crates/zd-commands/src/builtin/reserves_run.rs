@@ -280,6 +280,11 @@ pub(crate) fn prepare(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError
     let Body::Dataflow(dataflow) = &flow.body else {
         return Err(CommandError::WrongKind { id: p.dataflow, expected: ObjectKind::Dataflow, found: flow.kind() });
     };
+    prepare_flow(&flow.name, dataflow, get, p)
+}
+
+/// As `prepare`, for a dataflow as given: one being edited, not yet saved (decision 0077, 7d).
+pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>, p: &RunReservesParams) -> Result<Prepared, CommandError> {
     dataflow.check().map_err(CommandError::Invalid)?;
     let fields = Arc::new(dataflow.engine_fields().map_err(CommandError::Invalid)?);
     let mut tables = Vec::new();
@@ -347,7 +352,7 @@ pub(crate) fn prepare(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError
         let case = word("case").unwrap_or_else(|| BASE.to_string());
         columns.entry(ColumnKey { case, path }).or_default().push(object);
     }
-    Ok(Prepared { name: flow.name.clone(), dataflow: dataflow.clone(), fields, tables, horizons, steps, declared, upper, lower, columns, unplaced })
+    Ok(Prepared { name: name.to_string(), dataflow: dataflow.clone(), fields, tables, horizons, steps, declared, upper, lower, columns, unplaced })
 }
 
 /// A word from the parameter tables, read in order.
@@ -487,6 +492,28 @@ fn view(run: &ColumnRun<'_>, step: &str) -> StepView {
 /// One column: its blocks made units, then each step in turn. With `preview`, the column after each step.
 fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut preview: Option<&mut Vec<StepView>>) -> Result<Ran, Stopped> {
     let stop = |why: String| Stopped { why };
+    let (mut run, input_volume) = begin_column(prepared, key, blocks)?;
+    if let Some(p) = preview.as_deref_mut() {
+        p.push(view(&run, "as input"));
+    }
+    for (name, step, settings) in &prepared.steps {
+        let done = match step {
+            StepRun::BuiltIn(f) => f(&mut run, settings),
+            StepRun::Formula(f) => run_formula(&mut run, f, settings, &prepared.declared),
+        };
+        done.map_err(|why| stop(format!("{} at {name}: {why}", key.words())))?;
+        if let Some(p) = preview.as_deref_mut() {
+            p.push(view(&run, name));
+        }
+    }
+    let volume = prepared.fields.volume();
+    let imbalance = input_volume - (run.column.balance()[volume] - run.added_volume);
+    Ok(Ran { key: key.clone(), rows: run.rows, said: run.said, imbalance, input_volume })
+}
+
+/// A column's blocks made units, its imported rows written: ready for its steps. Gives back its input volume too.
+fn begin_column<'a>(prepared: &'a Prepared, key: &ColumnKey, blocks: &[Arc<Object>]) -> Result<(ColumnRun<'a>, f64), Stopped> {
+    let stop = |why: String| Stopped { why };
     let mut column = Column::new(key.clone(), prepared.fields.clone());
     let mut attributes = Vec::with_capacity(blocks.len());
     let mut mismatched: Vec<String> = Vec::new();
@@ -526,21 +553,7 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
     }
     // Imported: each block as read, before any step.
     write_pieces(&mut run, |_| Some("Imported".into()), |_| Vec::new());
-    if let Some(p) = preview.as_deref_mut() {
-        p.push(view(&run, "as input"));
-    }
-    for (name, step, settings) in &prepared.steps {
-        let done = match step {
-            StepRun::BuiltIn(f) => f(&mut run, settings),
-            StepRun::Formula(f) => run_formula(&mut run, f, settings, &prepared.declared),
-        };
-        done.map_err(|why| stop(format!("{} at {name}: {why}", key.words())))?;
-        if let Some(p) = preview.as_deref_mut() {
-            p.push(view(&run, name));
-        }
-    }
-    let imbalance = input_volume - (run.column.balance()[volume] - run.added_volume);
-    Ok(Ran { key: key.clone(), rows: run.rows, said: run.said, imbalance, input_volume })
+    Ok((run, input_volume))
 }
 
 /// A unit's labels as a formula reads them and a formula step's filter matches them.
@@ -553,6 +566,38 @@ fn unit_labels(u: &Unit) -> [(&'static str, Option<String>); 4] {
 /// parameters and working section added up; what it sets written back. It may not set the volume, the volume of record:
 /// moving material is a built-in step's work. What it prints is said with the step's name.
 fn run_formula(run: &mut ColumnRun<'_>, formula: &zd_script::Formula, step: &DataflowStep, declared: &zd_script::Declared) -> Result<(), String> {
+    use zd_script::ScriptValue;
+    let (input, which) = formula_input(run, step, declared);
+    let fields = run.column.fields().clone();
+    let out = formula.run(&input, &which).map_err(|p| {
+        let unit = p.unit.map(|u| format!(" on {}", run.name_of(u))).unwrap_or_default();
+        format!("{}{unit}", Problem { unit: None, ..p })
+    })?;
+    let volume = fields.volume();
+    for done in out {
+        for (field, value) in done.sets {
+            let i = fields.at(&field).map_err(|e| e.to_string())?;
+            if i == volume {
+                return Err(format!("it sets {field} on {}: the volume is of record, and moving material is a built-in step's work", run.name_of(done.unit)));
+            }
+            let x = match value {
+                ScriptValue::Number(x) => x,
+                ScriptValue::None => f64::NAN,
+                ScriptValue::Text(t) => return Err(format!("it sets {field} to words ({t:?}) on {}", run.name_of(done.unit))),
+            };
+            run.column.unit_mut(done.unit).set(i, x);
+        }
+        let v = run.column.units()[done.unit].value(volume);
+        for text in done.said {
+            run.said.count(format!("printed by {}: {text}", step.step), v);
+        }
+    }
+    Ok(())
+}
+
+/// What a formula step is handed for a column: every unit top down, with its fields, labels, block, parameters, working
+/// section and ROM section's coal added up, and the column's; and the units its filter fits.
+fn formula_input(run: &ColumnRun<'_>, step: &DataflowStep, declared: &zd_script::Declared) -> (zd_script::ColumnInput, Vec<usize>) {
     use zd_script::{ColumnInput, ScriptValue, UnitInput, Values};
     let fields = run.column.fields().clone();
     let names: Vec<&str> = fields.list().iter().map(|f| f.name.as_str()).collect();
@@ -617,31 +662,76 @@ fn run_formula(run: &mut ColumnRun<'_>, formula: &zd_script::Formula, step: &Dat
             zd_core::filter_fits(&when, &attributes)
         })
         .collect();
-    let input = ColumnInput { units, sections, rom_coals, column: Arc::new(numbers(&run.column.balance())) };
-    let out = formula.run(&input, &which).map_err(|p| {
-        let unit = p.unit.map(|u| format!(" on {}", run.name_of(u))).unwrap_or_default();
-        format!("{}{unit}", Problem { unit: None, ..p })
-    })?;
-    let volume = fields.volume();
-    for done in out {
-        for (field, value) in done.sets {
-            let i = fields.at(&field).map_err(|e| e.to_string())?;
-            if i == volume {
-                return Err(format!("it sets {field} on {}: the volume is of record, and moving material is a built-in step's work", run.name_of(done.unit)));
-            }
-            let x = match value {
-                ScriptValue::Number(x) => x,
-                ScriptValue::None => f64::NAN,
-                ScriptValue::Text(t) => return Err(format!("it sets {field} to words ({t:?}) on {}", run.name_of(done.unit))),
-            };
-            run.column.unit_mut(done.unit).set(i, x);
+    (ColumnInput { units, sections, rom_coals, column: Arc::new(numbers(&run.column.balance())) }, which)
+}
+
+/// A line of a traced formula: its number, its text and the values it gave its names.
+#[derive(Debug, Clone, Serialize)]
+pub struct TraceLineView {
+    pub line: usize,
+    pub text: String,
+    pub values: Vec<(String, String)>,
+}
+
+/// A formula step traced on one solid's unit (decision 0077, 7d): the unit as the formula found it, whether its filter
+/// takes it, the lines that ran with their values, what it read and set, what it printed, and where it stopped.
+#[derive(Debug, Clone, Serialize)]
+pub struct FormulaTraceView {
+    pub block: String,
+    pub unit: String,
+    pub fits: bool,
+    pub before: Vec<(String, Option<f64>)>,
+    pub lines: Vec<TraceLineView>,
+    pub reads: Vec<(String, String)>,
+    pub sets: Vec<(String, String)>,
+    pub said: Vec<String>,
+    pub stopped: Option<super::formulas::FormulaProblem>,
+}
+
+/// Runs a solid's block column through a dataflow (as given, saved or not) up to its formula step `step`, then traces the
+/// formula on the unit the solid is part of. Nothing is kept.
+pub fn formula_trace(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>, dataflow: &Arc<Dataflow>, p: &RunReservesParams, step: &str, solid: ObjectId) -> Result<FormulaTraceView, CommandError> {
+    let prepared = prepare_flow("dataflow", dataflow, get, p)?;
+    let (key, blocks) = prepared.columns.iter().find(|(_, blocks)| blocks.iter().any(|b| b.id == solid)).ok_or_else(|| CommandError::Invalid("the picked solid isn't one of the blocks run".into()))?;
+    let (mut run, _) = begin_column(&prepared, key, blocks).map_err(|s| CommandError::Invalid(s.why))?;
+    let mut traced = None;
+    for (name, s, settings) in &prepared.steps {
+        if name == step {
+            let StepRun::Formula(f) = s else { return Err(CommandError::Invalid(format!("{step} isn't a formula step"))) };
+            traced = Some((f.clone(), settings.clone()));
+            break;
         }
-        let v = run.column.units()[done.unit].value(volume);
-        for text in done.said {
-            run.said.count(format!("printed by {}: {text}", step.step), v);
-        }
+        let done = match s {
+            StepRun::BuiltIn(f) => f(&mut run, settings),
+            StepRun::Formula(f) => run_formula(&mut run, f, settings, &prepared.declared),
+        };
+        done.map_err(|why| CommandError::Invalid(format!("{} at {name}: {why}", key.words())))?;
     }
-    Ok(())
+    let (formula, settings) = traced.ok_or_else(|| CommandError::Invalid(format!("{step} isn't a step the dataflow runs (is it off?)")))?;
+    let id = solid.to_string();
+    let origins = run.column.origins();
+    let of_solid = |u: &Unit| {
+        origins[u.origin as usize].object == id || u.joined.is_some_and(|j| run.column.joins()[j as usize].benches.iter().any(|b| origins[b.origin as usize].object == id))
+    };
+    let at = (0..run.column.len()).find(|&i| of_solid(&run.column.units()[i]) && run.column.units()[i].became.is_none()).or_else(|| (0..run.column.len()).find(|&i| of_solid(&run.column.units()[i])));
+    let at = at.ok_or_else(|| CommandError::Invalid("the picked solid has no unit at this step".into()))?;
+    let (input, which) = formula_input(&run, &settings, &prepared.declared);
+    let u = &run.column.units()[at];
+    let unit = format!("{} {}{}", u.in_situ.seam, u.in_situ.material, u.bench.as_ref().map_or(String::new(), |b| format!(", bench {}", b.label)));
+    let before = run.column.fields().list().iter().zip(u.values()).map(|(f, v)| (f.name.clone(), v.is_finite().then_some(*v))).collect();
+    let trace = formula.trace(&input, at);
+    let show = |v: &zd_script::ScriptValue| v.to_string();
+    Ok(FormulaTraceView {
+        block: run.name_of(at),
+        unit,
+        fits: which.contains(&at),
+        before,
+        lines: trace.lines.into_iter().map(|l| TraceLineView { line: l.line, text: l.text, values: l.values }).collect(),
+        reads: trace.events.iter().filter_map(|e| match e { zd_script::Event::Read { what, value } => Some((what.clone(), show(value))), _ => None }).collect(),
+        sets: trace.sets.iter().map(|(k, v)| (k.clone(), show(v))).collect(),
+        said: trace.said,
+        stopped: trace.stopped.map(|p| super::formulas::FormulaProblem { message: p.message, line: p.line }),
+    })
 }
 
 /// The column after each of the dataflow's steps, for one block: the canvas's before and after (decision 0072, point 7).
