@@ -66,7 +66,7 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
   expect(
     'a dataflow shows its steps, its parameter table by name and its fields',
     // The starter's formulas after initialise, qualities weighed by air-dried tonnes Spry's way (decision 0077, 7c).
-    !!flow && flow.includes('small_volumes, initialise, fill_size, limits, densities, in_situ, join_benches, working_sections') && flow.includes('Reserves assumptions') && flow.includes('by tonnes (rd_adt)') && flow.includes('attribute mis'),
+    !!flow && flow.includes('small_volumes, initialise, fill_size, limits, densities, in_situ, join_benches, discard, working_sections') && flow.includes('rom, rom_qualities, final') && flow.includes('Reserves assumptions') && flow.includes('by tonnes (rd_adt)') && flow.includes('attribute mis'),
   );
   // The Layers list draws only the rows in view: the other layers closed, as Tim would, so the results layer's rows show.
   for (let k = 0; k < 100; k++) {

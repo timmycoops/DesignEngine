@@ -1,7 +1,8 @@
 //! Formulas a planner edits (decision 0077, workstream 7a of 0070): Starlark run on the reserves dataflow's units.
 //!
 //! A formula is a Starlark file defining `def formula(unit, p):`. It reads the unit's fields and labels
-//! (`unit.ash_ad`, `unit.seam`), its working section and column added up (`unit.section.volume`), its block's
+//! (`unit.ash_ad`, `unit.seam`), its working section, its ROM section's coal and its column added up
+//! (`unit.section.volume`, `unit.rom_coal.mad`), its block's
 //! attributes (`unit.block.strip`), the unit above (`unit.above.area`) and the parameters (`p.rom_ash_cutoff`), and
 //! sets fields the dataflow declares (`unit.rd_is = in_situ_rd(unit.rd, unit.mad, unit.mis)`). It never moves material
 //! between units: that's a built-in step's work.
@@ -104,13 +105,17 @@ pub struct UnitInput {
     pub block: Values,
     pub parameters: Values,
     pub section: Option<usize>,
+    /// The ROM coal section it's in (coal, partings, dilution or coal from a neighbour), an index into `rom_coals`.
+    pub rom_coal: Option<usize>,
 }
 
-/// A block column, its units top down, each working section's fields added up by their rules, and the column's.
+/// A block column, its units top down, each working section's fields added up by their rules, each ROM coal section's
+/// coal (its plies, nothing done to them) added up, and the column's.
 #[derive(Debug, Clone, Default)]
 pub struct ColumnInput {
     pub units: Vec<UnitInput>,
     pub sections: Vec<Values>,
+    pub rom_coals: Vec<Values>,
     pub column: Values,
 }
 
@@ -291,6 +296,7 @@ impl Formula {
             fields: unit.fields.clone(),
             section: unit.section.and_then(|s| column.sections.get(s).cloned()),
             column: column.column.clone(),
+            rom_coal: unit.rom_coal.and_then(|r| column.rom_coals.get(r).cloned()),
             block: unit.block.clone(),
             above: u.checked_sub(1).map(|a| column.units[a].fields.clone()),
             declared: self.declared.clone(),

@@ -54,6 +54,8 @@ pub(crate) struct Unit {
     #[allocative(skip)]
     pub column: Values,
     #[allocative(skip)]
+    pub rom_coal: Option<Values>,
+    #[allocative(skip)]
     pub block: Values,
     #[allocative(skip)]
     pub above: Option<Values>,
@@ -102,6 +104,12 @@ impl<'v> StarlarkValue<'v> for Unit {
         let part = match attribute {
             "section" => Some(self.part("section", self.section.as_ref())),
             "column" => Some(self.part("column", Some(&self.column))),
+            "rom_coal" => {
+                return match &self.rom_coal {
+                    Some(v) => Some(heap.alloc(Parts { kind: "rom_coal", values: Some(v.clone()), log: self.log.clone() })),
+                    None => Some(Value::new_none()),
+                };
+            }
             "block" => Some(self.part("block", Some(&self.block))),
             "above" => {
                 return match &self.above {
@@ -120,13 +128,13 @@ impl<'v> StarlarkValue<'v> for Unit {
     }
 
     fn has_attr(&self, attribute: &str, _heap: Heap<'v>) -> bool {
-        matches!(attribute, "section" | "column" | "block" | "above") || self.read(attribute).is_some()
+        matches!(attribute, "section" | "column" | "block" | "above" | "rom_coal") || self.read(attribute).is_some()
     }
 
     fn dir_attr(&self) -> Vec<String> {
         let mut names: Vec<String> = self.declared.fields.iter().map(|f| f.name.clone()).collect();
         names.extend(self.declared.labels.iter().cloned());
-        names.extend(["section", "column", "block", "above"].map(String::from));
+        names.extend(["section", "column", "block", "above", "rom_coal"].map(String::from));
         names
     }
 
@@ -137,7 +145,7 @@ impl<'v> StarlarkValue<'v> for Unit {
             return Err(starlark::Error::new_other(anyhow::anyhow!("a unit's field is named in words, not {}", index.to_repr())));
         };
         match self.get_attr(name, heap) {
-            Some(v) if !matches!(name, "section" | "column" | "block" | "above") => Ok(v),
+            Some(v) if !matches!(name, "section" | "column" | "block" | "above" | "rom_coal") => Ok(v),
             _ => Err(starlark::Error::new_other(anyhow::anyhow!("`{name}` isn't a field of this dataflow{}", crate::check::did_you_mean(name, self.declared.fields.iter().map(|f| f.name.as_str()))))),
         }
     }

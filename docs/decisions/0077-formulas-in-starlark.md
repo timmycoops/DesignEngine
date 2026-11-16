@@ -219,6 +219,64 @@ aren't added twice). The reserves-run tests are updated where the method changed
 
 The app check (`--dataflow`) passes 21 of 21 on the regenerated demo.
 
-Not yet: 7c part 2 (the discard test, dilution's moisture alignment with density and tonnes reworked, negative
-qualities, ROM moisture, a section's geometry, clean coal at its section's average, underburden under the last coal),
-the panel (7d) and the reference for AI (7e).
+## Built: 7c, part 2, the ROM side
+
+The rest of Spry's formula pieces, and what decision 7 added. Tim, approving it: "we will expect weight averaging based
+on the tonnes for qualities as well". Every quality composite here is by tonnes on the quality's own basis, as before.
+
+- **`discard`**, a new stage after `join_benches`, so each seam is tested whole, as the Rust did. It marks coal in a
+  `discarded` field the starter adds: 1 by hand (`discard` yes), 2 by its ash over `insitu_ash_cutoff`, 0 kept.
+  `working_sections` sets aside what's marked and no longer tests anything itself. Any other mark a site's own formula
+  sets is discarded "by formula".
+- **`rom_qualities`**, after `rom`, which builds nothing in now and stays as the stage. On what came into a ROM coal
+  section that isn't its coal, against the section's coal added up by tonnes (`unit.rom_coal`, new to the script
+  engine):
+  - each moisture it has none of takes the coal's;
+  - where its own row says `align_dilution_mad` yes, its Mad takes the coal's, Spry's way: qualities × (100 − Mad coal)
+    ÷ (100 − Mad own), its RD ÷ the same, so its in situ density holds. The Rust read the section's first ply's row and
+    left the RD alone;
+  - a negative quality takes the coal's.
+
+  Then each unit in a ROM coal section takes the section's length (its coal's largest: Spry's section geometry), and
+  every unit's ROM density and air-dried tonnes a cubic metre are worked again. A dataflow with dip or width fields can
+  add them the same way; the starter has neither.
+- **Clean coal at its section's average**: where the first ply's row says `clean_coal_average` yes (a new starter
+  column), each ply's clean coal carries its section's coal average, by tonnes (Spry's Aggregate WS Clean Coal). It
+  still does where `aggregate_sections` is yes.
+- **Waste below the last coal isn't mined** (built in, `final`): model waste under a column's last coal isn't ROM waste.
+  It's underburden, netted off `Summary\Out of model` (Spry's Final Calculations): the underburden taken into ROM coal
+  less this waste. Coal lost into it stays ROM waste, coal lost. It's said as underburden.
+- **Reserved words**: a field named one (Vulcan's ash, `as`) is written `unit["as"]` in the starter formulas. The demo
+  found this.
+
+Known answers:
+
+- The starter's worked examples:
+  - discard: by hand 1; 40 % over 30 % is 2; 12 % is 0;
+  - dilution of in situ density 2.3 takes its coal's 3, 8 and 10 %: ROM density 2.3 × 92 ÷ 90, air dried 2.3 × 92 ÷ 97;
+  - Mad 2 aligned to 3: 80 % ash × 97 ÷ 98;
+  - a negative ash takes the coal's 12 %.
+- A new test, clean coal by tonnes: A (RD 1.3, 10 %) and B (RD 1.6, 20 %) carry 14.8 %, not the 14.29 % of a volume
+  average.
+- The loss column's 20,000 m³ below its last coal:
+  - with dilution, ROM waste drops 19,500 m³ and `Summary\Out of model` is −19,500 m³;
+  - with floor loss, B's 1,000 m³ stays ROM waste on that leaf.
+
+  ROM coal and waste less the netting are the blocks' 120,000 m³ either way.
+- Reserved words written in brackets compile and give their answers.
+
+On the demo pit, against part 1, by leaf:
+
+| | Base | 50m |
+|---|---|---|
+| ROM coal volume and tonnes | unchanged | unchanged |
+| ROM coal ash, sulphur | up to −1.5 %, −0.3 % a leaf | the same |
+| ROM coal air-dried tonnes | −0.244 % | −0.244 % |
+| Out of model air-dried tonnes | −4.663 % (92 ÷ 96.5) | the same |
+| ROM coal length | the section's, 100 m | the same |
+
+Dilution now takes its coal's moistures before its air-dried tonnes are worked again: its air-dried tonnes fall by
+92 ÷ 96.5, so it weighs less in the coal's ash. The demo has no waste below its last coal and no Mad alignment, so
+neither moves it. `reserves.run` on Base takes 64 ms. The app check passes 21 of 21 on the regenerated demo.
+
+Not yet: the panel (7d) and the reference for AI (7e).
