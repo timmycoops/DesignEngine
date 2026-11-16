@@ -3,7 +3,7 @@
  * takes its inputs, choices, sections, run result and button from here, and its colours from the theme's tokens.
  */
 export { IconButton, RoadBadge, StatusBadge } from './badges';
-export { CellInput, Choice, Field, NumberInput, Select, TargetInput, TargetOptions } from './fields';
+export { CellInput, Choice, Field, NumberInput, NumberOrBlank, Select, TargetInput, TargetOptions } from './fields';
 export { type Range, readNumber, showNumber } from './number';
 export { type RunReport, RunResult, type ToolAction, ToolPanel, ToolSection } from './ToolPanel';
 export { NoteLine, ShowNote } from './NoteLine';

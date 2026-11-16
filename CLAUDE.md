@@ -275,11 +275,13 @@ stage (Project · Strings · Walls · Solids · Geology · Reserves) over the ro
 the rows are `ROWS` in the tool list, a row too long folds into More, the tool in use is lit, and switching stage
 changes the row only. A new tool goes on its stage's row there. Find a command (Ctrl+K, `FindCommand.tsx`) searches
 the list by whole words, so a tool's name and its line are what it's found by: write them in the words a planner would
-type. Still to build from 0076: the string tools out of Properties.
+type. Properties shows only: an object's name, look, attributes, measures and history. A command on an object is a tool
+in a panel on the kit, never a row in Properties (the string tools are the Strings panel). All seven workstreams of 0076
+are built.
 
 The UI plan (the Build Plan's "UI plan" tab) keeps the app one way of working as it grows. A tool panel is made from the
 kit in `app/src/design-system/kit/`: `ToolPanel` (what it does in one line that fits the 400 px dock, with more in a tip, its sections, one button at the
-foot named for what it does, Ctrl+Enter), `PanelHead` for a panel that isn't a tool, `NumberInput` with its unit, `TargetInput` for an RL, grid or surface, `Choice` (in `columns` where its options don't fit one row), `Field`, the badges,
+foot named for what it does, Ctrl+Enter), `PanelHead` for a panel that isn't a tool, `NumberInput` with its unit, `NumberOrBlank` for a number that may be left blank, `TargetInput` for an RL, grid or surface, `Choice` (in `columns` where its options don't fit one row), `Field`, the badges,
 `RunResult`, and `ToolButton` for a button on a bar of tools. Colours come from the theme's tokens, one meaning each: gold picked, orange `warning`, blue `edited`,
 red refused, green valid. Don't hand-roll an input, select, badge or colour a kit part covers; add to the kit instead.
 

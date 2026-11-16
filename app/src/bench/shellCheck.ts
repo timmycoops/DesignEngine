@@ -10,7 +10,8 @@
 // section's overview, in a tall view or a short one. The ribbon (workstream 5): a tab a stage over a row of its tools,
 // each row holding its tools in order at 1,600, 1,280 and 900 px with what doesn't fit folded into More and nothing
 // clipped; the menus reading as they did; the tool in use lit; the stage remembered; a Strings tool bringing its row in
-// Properties into view. Find a command (workstream 6): Ctrl+K from anywhere, a box being typed in included, lists every
+// Properties into view (until workstream 7: now the Strings panel, set to the tool, run from its one button on the
+// string picked, with Properties showing only). Find a command (workstream 6): Ctrl+K from anywhere, a box being typed in included, lists every
 // tool; typing part of a name, what a tool does, its command or its stage finds it, and Enter carries it out. Then the
 // panels' heads (workstream 3): a tool panel says what it
 // does in one line that fits its dock, the rest in a tip, and its name only on its tab; Cut solids' line follows what
@@ -20,7 +21,7 @@
 // `--dataflow` if there is one. The layout saved on this machine is put back as it was at the end.
 import * as THREE from 'three/webgpu';
 import type { DockviewApi } from 'dockview-react';
-import { openProject, projectSummary, type ProjectSummary, runCommand, type Vec3, writePicture } from '../bridge';
+import { objectDetails, openProject, projectSummary, type ProjectSummary, runCommand, type Vec3, writePicture } from '../bridge';
 import type { SectionView } from '../viewport/section';
 import { BAR_CLEAR } from '../viewport/sectionGrid';
 import type { Viewport } from '../viewport/Viewport';
@@ -310,11 +311,12 @@ export async function checkShell(
       await closeMenu();
       return found;
     })()).filter((m) => m.tool);
-    await clickTool('string.set_closed');
-    const footerWords = () => document.querySelector('footer')?.textContent ?? '';
-    expect('a tool folded into More does what it does on the row', foldedTools.some((m) => m.tool === 'string.set_closed') && footerWords().startsWith('Close: pick a string') && front('properties') === 'properties', {
+    await clickTool('strings:set_closed');
+    const stringsPanel = () => api.getPanel('strings')?.group.element.querySelector<HTMLElement>('[data-tool-panel="strings"]') ?? null;
+    const stringTool = () => stringsPanel()?.querySelector<HTMLSelectElement>('select[aria-label="String tool"]')?.value ?? '';
+    expect('a tool folded into More does what it does on the row', foldedTools.some((m) => m.tool === 'strings:set_closed') && front('strings') === 'strings' && stringTool() === 'set_closed', {
       in_more: foldedTools.map((m) => m.words),
-      said: footerWords().slice(0, 70),
+      strings_panel_set_to: stringTool(),
     });
     await rowsAt(null);
 
@@ -345,7 +347,7 @@ export async function checkShell(
     const projectWas = ['New project', 'Open a project (.zdp)…', 'Open an older project folder (.zdproj)…', 'SaveCtrl+S', 'Save as…'];
     const importWas = ['Surfaces…', 'Vulcan grid…', 'Strings…', 'Solids', 'Deswik drawing (.dcf)…', 'Spry project (.spry)…', 'Suggest a stack definition (CSV)…', 'Build and check from a definition…', 'Relink geology…'];
     const exportWas = ['Selected to DXF…', 'Selected strings to CSV…', 'Selected solids to a zip…', 'Everything visible to DXF…', 'Visible strings to CSV…', 'Visible solids to a zip…'];
-    const panelsWas = ['Layers', 'Properties', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Run log', 'Block table', 'Reserves table', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
+    const panelsWas = ['Layers', 'Properties', 'Strings', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Run log', 'Block table', 'Reserves table', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
     const reads = (menu: { words: string }[], was: string[]) => menu.map((m) => m.words).join('|') === was.join('|');
     expect('the project, Import, Export and Panels menus read as they did, what needs a selection off without one', reads(projectMenu, projectWas) && reads(importMenu, importWas) && reads(exportMenu, exportWas) && reads(panelsMenu, panelsWas) && exportMenu.map((m) => m.off).join() === 'true,true,true,false,false,false', {
       project: projectMenu.map((m) => m.words),
@@ -451,7 +453,7 @@ export async function checkShell(
     expect(
       'a tool is found by what it does, its engine command or its stage; one that needs a selection is listed but off',
       forPolygons.includes('cut:polygons') &&
-        forPolygons.includes('string.polygons_from_lines') &&
+        forPolygons.includes('strings:polygons_from_lines') &&
         forCommand.find((f) => f.picked)?.tool === 'cut:benches' &&
         ['import.vulcan_grid', 'seam.suggest', 'seam.build', 'seam.relink'].every((key) => forStage.includes(key)) &&
         forSelected.find((f) => f.tool === 'export.selected_solids')?.off === true &&
@@ -608,12 +610,28 @@ export async function checkShell(
     viewport.setPlanView(false);
     await settle();
 
-    // The Strings tab: its tools open Properties at their rows, on the string picked. And Repair, with nothing to repair.
+    // The Strings tab (workstream 7): its tools open the Strings panel set to them, on the string picked, and run from
+    // its one button. Properties shows only.
     resetLayout(api);
     await settle();
     await goStage('strings');
-    await clickTool('string.offset');
-    const noString = footer();
+    await clickTool('strings:offset');
+    const stringsNow = () => api.getPanel('strings')?.group.element.querySelector<HTMLElement>('[data-tool-panel="strings"]') ?? null;
+    const setTo = () => stringsNow()?.querySelector<HTMLSelectElement>('select[aria-label="String tool"]')?.value ?? '';
+    const stringsOn = () => stringsNow()?.querySelector('[data-slot="strings-on"]')?.textContent?.trim() ?? '';
+    const goButton = () => [...(stringsNow()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].at(-1) ?? null;
+    const typeNumber = async (label: string, value: string) => {
+      const input = stringsNow()?.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
+      if (!input) return false;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await settle();
+      return true;
+    };
+    const stringsNamed = async (start: string) => (await projectSummary()).objects.filter((o) => o.kind === 'string' && o.name.startsWith(start));
+    const noneYet = { front: front('strings'), set_to: setTo(), on: stringsOn(), off: goButton()?.disabled ?? null, lit: lit() };
+    expect('a Strings tool opens the Strings panel set to it, lit on the row; with no string picked the panel says so and its button is off', noneYet.front === 'strings' && noneYet.set_to === 'offset' && noneYet.on === 'No string picked' && noneYet.off === true && noneYet.lit.join() === 'strings:offset', noneYet);
+
     await runCommand('string.create', { name: 'Bench toe', layer: 'toes', closed: false, points: [[E + 100, N + 50, 100], [E + 900, N + 50, 100]] });
     await show(await projectSummary());
     await wait(1000);
@@ -622,14 +640,57 @@ export async function checkShell(
     await settle();
     await click(screen([E + 500, N + 50, 100]));
     await wait(800);
-    const stringPicked = !!document.querySelector('[data-string-tool="string.offset"]');
-    await clickTool('string.smooth');
-    await wait(300);
-    const rowLit = document.querySelector('[data-string-tool="string.smooth"]')?.classList.contains('tool-asked') ?? false;
-    expect('a Strings tool with no string picked says so; with one picked it brings its row in Properties into view, lit', noString.startsWith('Offset: pick a string') && stringPicked && rowLit && !footer().startsWith('Smooth: pick a string'), {
-      with_none: noString.slice(0, 60),
-      string_picked: stringPicked,
-      row_lit: rowLit,
+    const onString = stringsOn();
+    const offBeforeDistance = goButton()?.disabled ?? null;
+    const typed = (await typeNumber('Offset distance', '40')) && (await typeNumber('How many offsets', '3'));
+    const offsetSays = goButton()?.textContent?.trim() ?? '';
+    const before = (await stringsNamed('Bench toe')).length;
+    goButton()?.click();
+    await wait(1500);
+    const after = (await stringsNamed('Bench toe')).length;
+    expect('with a string picked, Offset takes a distance and a number of times and makes that many strings from its one button', onString === 'Bench toe' && offBeforeDistance === true && typed && offsetSays === 'Offset Bench toe 3 times' && before === 1 && after === 4, {
+      on: onString,
+      off_before_a_distance: offBeforeDistance,
+      button: offsetSays,
+      strings_before: before,
+      strings_after: after,
+    });
+
+    // Another tool from the row: the panel changes to it, the row's light follows, and it runs on the same string.
+    await click(screen([E + 500, N + 50, 100]));
+    await wait(600);
+    await clickTool('strings:set_elevation');
+    const litForRl = lit();
+    await typeNumber('RL for every vertex', '120');
+    const rlSays = goButton()?.textContent?.trim() ?? '';
+    goButton()?.click();
+    await wait(1200);
+    const toe = (await stringsNamed('Bench toe')).find((o) => o.name === 'Bench toe');
+    const measures = toe ? (await objectDetails(toe.id)).measures : null;
+    const rls = measures?.kind === 'string' ? measures.points.map((p) => p[2]) : [];
+    // The panel's own choice changes the tool too, and the row's light follows it.
+    const chooser = stringsNow()?.querySelector<HTMLSelectElement>('select[aria-label="String tool"]');
+    if (chooser) {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(chooser, 'reverse');
+      chooser.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    await settle();
+    const litForReverse = lit();
+    expect("Set elevation sets the string's RLs, and the row's light follows the panel's choice", litForRl.join() === 'strings:set_elevation' && rlSays === 'Set Bench toe to RL 120' && rls.length === 2 && rls.every((z) => z === 120) && litForReverse.join() === 'strings:reverse', {
+      lit: litForRl,
+      button: rlSays,
+      rls,
+      lit_after_choosing_reverse: litForReverse,
+    });
+
+    // Properties shows only: no string command is run from it.
+    showPanel(api, 'properties');
+    await settle();
+    const properties = api.getPanel('properties')?.group.element ?? null;
+    const propertyButtons = [...(properties?.querySelectorAll<HTMLButtonElement>('.dv-content-container button') ?? [])].map((b) => b.textContent?.trim() ?? '');
+    const commandWords = ['Apply', 'Reverse', 'Close', 'Open', 'Draw across', 'Offset'];
+    expect('Properties shows the string and runs no string command', (properties?.textContent ?? '').includes('Length (plan)') && !(properties?.textContent ?? '').includes('String tools') && propertyButtons.every((b) => !commandWords.some((w) => b.startsWith(w))), {
+      buttons: propertyButtons,
     });
     viewport.setPlanView(false);
     await goStage('solids');
@@ -640,7 +701,7 @@ export async function checkShell(
     await key('Escape');
     resetLayout(api);
     await settle();
-    const everyPanel = ['builder', 'cut', 'reserves', 'workflow', 'blocks', 'restable', 'params', 'canvas', 'face'] as const;
+    const everyPanel = ['strings', 'builder', 'cut', 'reserves', 'workflow', 'blocks', 'restable', 'params', 'canvas', 'face'] as const;
     for (const id of everyPanel) showPanel(api, id);
     await settle();
     const toFront = async (id: PanelId) => {
@@ -662,8 +723,8 @@ export async function checkShell(
       const first = control ?? words;
       return first ? Math.round(first.getBoundingClientRect().top - top) : null;
     };
-    const toolPanels = ['builder', 'cut', 'reserves', 'workflow'] as const;
-    const titles: Record<(typeof toolPanels)[number], string> = { builder: 'Builder', cut: 'Cut solids', reserves: 'Reserves', workflow: 'Workflow' };
+    const toolPanels = ['strings', 'builder', 'cut', 'reserves', 'workflow'] as const;
+    const titles: Record<(typeof toolPanels)[number], string> = { strings: 'Strings', builder: 'Builder', cut: 'Cut solids', reserves: 'Reserves', workflow: 'Workflow' };
     const heads: Record<string, unknown> = {};
     let headsOk = true;
     for (const id of toolPanels) {
@@ -745,7 +806,7 @@ export async function checkShell(
       await picture('docks-solids', 'solids', ['builder', 'reserves'], ['cut:seams', 'blocks']);
       await picture('docks-walls', 'walls', ['cut'], ['builder', 'face']);
       await picture('docks-reserves', 'reserves', ['cut', 'params'], ['reserves', 'restable']);
-      await picture('ribbon-strings', 'strings', []);
+      await picture('ribbon-strings', 'strings', [], ['strings:offset']);
       await picture('ribbon-geology', 'geology', []);
       // Find a command, open on what "seam" finds.
       resetLayout(api);

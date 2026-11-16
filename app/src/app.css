@@ -174,13 +174,6 @@
   pointer-events: none;
 }
 
-/* A string tool asked for from the Strings tab, lit in Properties for a moment in the gold of what's picked. */
-.tool-asked {
-  border-radius: 4px;
-  outline: 1px solid var(--primary);
-  background: var(--selection);
-}
-
 /*
  * The view's tools, on a bar in its top left corner. With a section open in a view too short for both, the bar sits
  * beside the section's overview, never over it.
