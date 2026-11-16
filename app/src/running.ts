@@ -56,6 +56,7 @@ const WORDS: Record<string, string> = {
   'face.build_step': 'building the step',
   'face.rebuild': 'rebuilding',
   'face.join': 'joining faces',
+  'string.project': 'projecting strings',
   'seam.build_model': 'building the seam model',
   'seam.relink': 'relinking grids',
   'face.step': 'adding the step',

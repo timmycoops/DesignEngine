@@ -732,7 +732,7 @@ fn split_at(mut mesh: TriMesh, points: &[[f64; 3]], tolerance: f64) -> TriMesh {
 }
 
 /// How far past a string a level sheet reaches, in plan: well past any wall to it.
-fn sheet_reach(line: &Polyline, rl: f64, batter: f64) -> f64 {
+pub(crate) fn sheet_reach(line: &Polyline, rl: f64, batter: f64) -> f64 {
     let lowest = line.vertices.iter().map(|p| p[2]).fold(f64::INFINITY, f64::min);
     100.0 + 8.0 * (rl - lowest).abs() / batter.to_radians().tan()
 }
@@ -2019,11 +2019,11 @@ fn crossing_point(a: [f64; 3], b: [f64; 3], p: [f64; 3], q: [f64; 3]) -> Option<
     (t > 1e-9 && t < 1.0 - 1e-9 && u > 1e-9 && u < 1.0 - 1e-9).then(|| [a[0] + t * r[0], a[1] + t * r[1]])
 }
 
-fn mirrored_line(line: &Polyline) -> Polyline {
+pub(crate) fn mirrored_line(line: &Polyline) -> Polyline {
     Polyline { vertices: line.vertices.iter().map(|p| [p[0], p[1], -p[2]]).collect(), closed: line.closed }
 }
 
-fn mirrored_mesh(mesh: &TriMesh) -> TriMesh {
+pub(crate) fn mirrored_mesh(mesh: &TriMesh) -> TriMesh {
     TriMesh::new(mesh.vertices.iter().map(|p| [p[0], p[1], -p[2]]).collect(), mesh.triangles.clone())
 }
 

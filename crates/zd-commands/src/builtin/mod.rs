@@ -14,6 +14,7 @@ mod grid;
 mod interrogate;
 mod layer;
 mod object;
+mod project;
 mod seam;
 mod solid;
 mod spry;
@@ -37,6 +38,7 @@ pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParam
 pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
 pub use interrogate::{COLUMN_DELTA, COLUMN_VOLUME, INTERROGATED, Interrogate, InterrogateParams, names_seam};
 pub use layer::{CreateLayer, CreateLayerParams, DeleteLayer, DeleteLayerParams, RecolourLayer, RecolourLayerParams, RenameLayer, RenameLayerParams};
+pub use project::{ProjectString, ProjectStringParams, ProjectToParam};
 pub use object::{DeleteObject, DeleteObjects, MoveObjects, MoveObjectsParams, ObjectParams, ObjectsParams, RenameObject, RenameParams};
 pub use seam::{BuildSeamModel, BuildSeamModelParams, ModelLinks, RelinkParams, RelinkSeamModels, SuggestSeamDefinition, SuggestSeamDefinitionParams, seam_links};
 pub(crate) use solid::check_solids_made;
@@ -93,6 +95,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(JoinStrings);
     registry.register(SmoothString);
     registry.register(FilterString);
+    registry.register(ProjectString);
     registry.register(ImportStrings);
     registry.register(ImportSurface);
     registry.register(SurfaceFromMesh);

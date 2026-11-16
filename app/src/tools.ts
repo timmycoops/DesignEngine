@@ -36,6 +36,7 @@ export type ToolIcon =
   | 'grade'
   | 'elevation'
   | 'drape'
+  | 'project'
   | 'split'
   | 'join'
   | 'smooth'
@@ -180,7 +181,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'export.visible_dxf', stage: 'project', label: 'Export everything visible to DXF', tip: 'Every string, surface and solid on show as one DXF', action: 'export.visible_dxf', menu: { in: 'export', at: 4, name: 'Everything visible to DXF…' } },
   { key: 'export.visible_strings', stage: 'project', label: 'Export visible strings to CSV', tip: 'Every string on show as x, y and z rows', action: 'export.visible_strings', menu: { in: 'export', at: 5, name: 'Visible strings to CSV…' } },
 
-  // Strings: the Strings panel's twelve, each opening it set to that tool, on the string picked.
+  // Strings: the Strings panel's thirteen, each opening it set to that tool, on the string picked.
   { key: 'strings', stage: 'strings', label: 'Strings', tip: 'offset, number, grade, drape, split, join and tidy the string picked', panel: 'strings' },
   { key: 'strings:offset', stage: 'strings', label: 'Offset', tip: 'Offsets the string to one side, once or several times.', icon: 'offset', panel: 'strings', mode: 'offset', command: 'string.offset' },
   { key: 'strings:number_across', stage: 'strings', label: 'Number across', tip: 'Numbers the strips by a line drawn across the strings.', icon: 'number', panel: 'strings', mode: 'number_across', command: 'string.number_across' },
@@ -188,6 +189,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'strings:set_grade', stage: 'strings', label: 'Set grade', tip: 'Sets the string to a grade from a vertex.', icon: 'grade', panel: 'strings', mode: 'set_grade', command: 'string.set_grade' },
   { key: 'strings:set_elevation', stage: 'strings', label: 'Set elevation', tip: 'Sets every vertex of the string to one RL.', icon: 'elevation', panel: 'strings', mode: 'set_elevation', command: 'string.set_elevation' },
   { key: 'strings:drape', stage: 'strings', label: 'Drape', tip: 'Drapes the string onto a grid or surface.', icon: 'drape', panel: 'strings', mode: 'drape', command: 'string.drape' },
+  { key: 'strings:project', stage: 'strings', label: 'Project', tip: 'Projects strings at a batter, up or down, to a target.', icon: 'project', panel: 'strings', mode: 'project', command: 'string.project' },
   { key: 'strings:split', stage: 'strings', label: 'Split', tip: 'Splits the string at a vertex.', icon: 'split', panel: 'strings', mode: 'split', command: 'string.split' },
   { key: 'strings:join', stage: 'strings', label: 'Join', tip: 'Joins another open string onto this one.', icon: 'join', panel: 'strings', mode: 'join', command: 'string.join' },
   { key: 'strings:smooth', stage: 'strings', label: 'Smooth', tip: 'Smooths the string, a vertex every so many metres.', icon: 'smooth', panel: 'strings', mode: 'smooth', command: 'string.smooth' },
@@ -321,6 +323,7 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     'strings:set_grade',
     'strings:set_elevation',
     'strings:drape',
+    'strings:project',
     '|',
     'strings:split',
     'strings:join',
