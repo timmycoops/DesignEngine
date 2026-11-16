@@ -11,8 +11,7 @@ import {
   type AddUpChoice,
   addColumn,
   cellEdited,
-  columnEdited,
-  copyText,
+  copyTextTurned,
   deleteColumn,
   deleteRows,
   editColumn,
@@ -27,7 +26,7 @@ import {
   moveColumn,
   moved,
   moveRow,
-  paste,
+  pasteTurned,
   parseClipboard,
   setCell,
   toGrid,
@@ -37,7 +36,8 @@ import {
 
 /**
  * The Parameters tab (decision 0075, workstream 5d of 0070): the project's parameter tables and dataflows edited as grids.
- * A parameter table's filters then its values, rows read top down; cells typed or pasted from Excel; edits held, in blue,
+ * A parameter table turned (Tim, 16 November): its filters then its parameters down the side, its rows across as numbered
+ * columns read left to right; cells typed or pasted from Excel; edits held, in blue,
  * until Save writes the next revision (`parameters.save`, `dataflow.save`), one undo. A solid picked in the view marks the
  * rows it fits and, in gold, the cell each value comes from. Saving never reruns the reserves: a new answer is a new run.
  */
@@ -164,7 +164,7 @@ function TableEditor({ object, onMade }: { object: ObjectSummary; onMade: (id: s
   };
   const fromElsewhere = (column: string) => {
     const g = picked?.picked?.gives[column];
-    return g && g.table !== here ? `${picked?.tables[g.table]?.[1] ?? 'another table'}, row ${g.row + 1}` : null;
+    return g && g.table !== here ? `${picked?.tables[g.table]?.[1] ?? 'another table'}, column ${g.row + 1}` : null;
   };
 
   const update = (g: Grid) => {
@@ -189,19 +189,20 @@ function TableEditor({ object, onMade }: { object: ObjectSummary; onMade: (id: s
     setRowsPicked(new Set());
     setSaid(null);
   };
+  // Pasted as the grid shows it: a line of the block along a parameter, across the table's rows.
   const onPaste = (row: string, column: string) => (e: ClipboardEvent<HTMLInputElement>) => {
     const text = e.clipboardData.getData('text/plain');
     if (!/[\t\n]/.test(text.replace(/\r?\n$/, ''))) return;
     e.preventDefault();
-    const { grid: g, cut } = paste(grid, row, column, parseClipboard(text));
+    const { grid: g, cut } = pasteTurned(grid, row, column, parseClipboard(text));
     update(g);
-    if (cut) setSaid({ text: `${cut} pasted cell${cut === 1 ? '' : 's'} past the last column left out`, tone: 'warning' });
+    if (cut) setSaid({ text: `${cut} pasted cell${cut === 1 ? '' : 's'} past the last parameter left out`, tone: 'warning' });
   };
-  // Enter goes down a row, Shift+Enter up, as in a sheet.
-  const onCellKey = (r: number, c: number) => (e: KeyboardEvent<HTMLInputElement>) => {
+  // Enter goes down to the next parameter, Shift+Enter up, as in a sheet; Tab goes across.
+  const onCellKey = (p: number, r: number) => (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter' || e.ctrlKey || e.metaKey) return;
     e.preventDefault();
-    const next = document.querySelector<HTMLInputElement>(`[data-tool-panel="parameters"] [data-cell="${r + (e.shiftKey ? -1 : 1)}:${c}"]`);
+    const next = document.querySelector<HTMLInputElement>(`[data-tool-panel="parameters"] [data-cell="${p + (e.shiftKey ? -1 : 1)}:${r}"]`);
     next?.focus();
     next?.select();
   };
@@ -212,7 +213,13 @@ function TableEditor({ object, onMade }: { object: ObjectSummary; onMade: (id: s
       else next.add(key);
       return next;
     });
-  const copyRows = () => void navigator.clipboard.writeText(copyText(grid, rowsPicked.size ? rowsPicked : null)).then(() => setSaid({ text: `${rowsPicked.size || grid.rows.length} rows copied, with their headings, to paste into Excel`, tone: 'ok' }));
+  const copyRows = () =>
+    void navigator.clipboard.writeText(copyTextTurned(grid, rowsPicked.size ? rowsPicked : null)).then(() => {
+      const n = rowsPicked.size || grid.rows.length;
+      setSaid({ text: `${n} column${n === 1 ? '' : 's'} copied, a parameter a line with its heading, to paste into Excel`, tone: 'ok' });
+    });
+  const firstValue = grid.columns.findIndex((c) => c.kind === 'value');
+  const tool = 'h-6 px-2 text-xs';
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" onKeyDown={saveKey(() => void save())}>
@@ -221,19 +228,19 @@ function TableEditor({ object, onMade }: { object: ObjectSummary; onMade: (id: s
         {picked?.dataflow && <span className="text-muted-foreground">read by {picked.dataflow}{picked.tables.length > 1 ? `, table ${here + 1} of ${picked.tables.length}` : ''}</span>}
         {edited && <StatusBadge tone="edited">edited</StatusBadge>}
         <span className="ml-2 flex items-center gap-1">
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => update(insertRow(grid))} title="A blank row at the bottom; move it up to where it's read">
-            <Plus className="size-3.5" /> Row
+          <Button variant="outline" size="sm" className={tool} onClick={() => update(insertRow(grid))} title="A blank column at the right, read last; move it left to where it's read">
+            <Plus className="size-3.5" /> Column
           </Button>
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => update(addColumn(grid, 'filter'))} title="A filter column: the attribute a row is chosen by">
+          <Button variant="outline" size="sm" className={tool} onClick={() => update(addColumn(grid, 'filter'))} title="A filter: the attribute a column is chosen by">
             <Plus className="size-3.5" /> Filter
           </Button>
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => update(addColumn(grid, 'value'))} title="A value column: an assumption the rows give">
-            <Plus className="size-3.5" /> Value
+          <Button variant="outline" size="sm" className={tool} onClick={() => update(addColumn(grid, 'value'))} title="A parameter: an assumption the columns give">
+            <Plus className="size-3.5" /> Parameter
           </Button>
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={!rowsPicked.size} onClick={() => (update(deleteRows(grid, rowsPicked)), setRowsPicked(new Set()))} title="Take the picked rows out (pick a row by its number)">
-            <Trash2 className="size-3.5" /> Rows
+          <Button variant="outline" size="sm" className={tool} disabled={!rowsPicked.size} onClick={() => (update(deleteRows(grid, rowsPicked)), setRowsPicked(new Set()))} title="Take the picked columns out (pick a column by its number)">
+            <Trash2 className="size-3.5" /> Columns
           </Button>
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={copyRows} title="Copy the picked rows, or all of them, with their headings, to paste into Excel">
+          <Button variant="outline" size="sm" className={tool} onClick={copyRows} title="Copy the picked columns, or all of them, a parameter a line with its heading, to paste into Excel">
             <Copy className="size-3.5" /> Copy
           </Button>
           <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={refused} onClick={() => void copyAsNew()} title="Save this table as a new one, as it stands: a case's own table to read before this one">
@@ -256,90 +263,118 @@ function TableEditor({ object, onMade }: { object: ObjectSummary; onMade: (id: s
           {said && <div className={cn(said.tone === 'ok' && 'text-ok', said.tone === 'warning' && 'text-warning', said.tone === 'refused' && 'text-destructive')}>{said.text}</div>}
           {picked?.picked && solid && (
             <div className="text-muted-foreground" data-slot="parameters-picked">
-              <span className="text-primary">{solids.get(solid)}</span> fits {fits.size ? `row${fits.size === 1 ? '' : 's'} ${[...fits].map((r) => r + 1).join(', ')}` : 'no row'} of this table; its values in gold{edited ? ', as saved' : ''}.
+              <span className="text-primary">{solids.get(solid)}</span> fits {fits.size ? `column${fits.size === 1 ? '' : 's'} ${[...fits].map((r) => r + 1).join(', ')}` : 'no column'} of this table; its values in gold{edited ? ', as saved' : ''}.
             </div>
           )}
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-auto">
+        {/* Turned (Tim, 16 November): a filter or parameter a row, the table's rows across as numbered columns, read left to right. */}
         <table className="border-separate border-spacing-0" data-slot="parameters-grid">
           <thead className="sticky top-0 z-10 bg-card">
             <tr>
-              <th className="sticky left-0 z-20 w-16 border-b border-border bg-card" />
-              {grid.columns.map((c, ci) => (
-                <th key={c.key} className={cn('min-w-28 border-b border-border px-0.5 pt-1 align-bottom font-normal', c.kind === 'value' && ci > 0 && grid.columns[ci - 1].kind === 'filter' && 'border-l')} data-col={c.name}>
-                  <div className="flex items-center gap-0.5">
-                    <span className="shrink-0 text-muted-foreground">{c.kind === 'filter' ? 'when' : ''}</span>
-                    <CellInput value={c.name} label={`Name of the ${c.kind === 'filter' ? 'filter' : 'value'} column`} edited={c.was === null || c.was.name !== c.name} why={why(null, c.key)} className="font-semibold" onChange={(name) => update(editColumn(grid, c.key, { name }))} />
-                    <IconButton label="Move left" className="size-5" onClick={() => update(moveColumn(grid, c.key, -1))}>
-                      <ArrowLeft />
-                    </IconButton>
-                    <IconButton label="Move right" className="size-5" onClick={() => update(moveColumn(grid, c.key, 1))}>
-                      <ArrowRight />
-                    </IconButton>
-                    <IconButton label="Take this column out" className="size-5" onClick={() => update(deleteColumn(grid, c.key))}>
-                      <X />
-                    </IconButton>
-                  </div>
-                  <div className="flex items-center gap-1 pb-1" title={fromElsewhere(c.name) ? `The picked solid takes ${c.name} from ${fromElsewhere(c.name)}` : undefined}>
-                    {c.kind === 'value' ? (
-                      <>
-                        <CellInput value={c.unit} label={`Unit of ${c.name}`} placeholder="unit" edited={c.was === null || c.was.unit !== c.unit} className="w-14 flex-none text-muted-foreground" onChange={(unit) => update(editColumn(grid, c.key, { unit }))} />
-                        <Choice value={c.text ? 'words' : 'numbers'} options={['numbers', 'words'] as const} labels={{ numbers: '123', words: 'abc' }} label={`${c.name} holds numbers or words`} onChange={(v) => update(editColumn(grid, c.key, { text: v === 'words' }))} />
-                        {fromElsewhere(c.name) && <span className="truncate text-primary">from {fromElsewhere(c.name)}</span>}
-                      </>
-                    ) : (
-                      <span className="px-1 text-muted-foreground">filter{columnEdited(c) && c.was === null ? ', new' : ''}</span>
-                    )}
-                  </div>
-                </th>
-              ))}
+              <th className="sticky left-0 z-20 border-b border-r border-border bg-card px-2 py-1 text-left font-normal text-muted-foreground">Parameter, unit, numbers or words</th>
+              {grid.rows.map((r, ri) => {
+                const fit = r.saved !== null && fits.has(r.saved);
+                return (
+                  <th key={r.key} data-row={ri + 1} className={cn('min-w-24 border-b border-border px-0.5 py-0.5 font-normal', rowsPicked.has(r.key) && 'bg-accent/60')}>
+                    <span className="flex items-center justify-center">
+                      <IconButton label="Move left (read earlier)" className="size-5" onClick={() => update(moveRow(grid, r.key, -1))}>
+                        <ArrowLeft />
+                      </IconButton>
+                      <button
+                        type="button"
+                        className={cn('min-w-6 tabular-nums text-muted-foreground hover:text-foreground', fit && 'font-semibold text-primary', rowsPicked.has(r.key) && 'text-foreground', r.saved === null && 'text-edited')}
+                        title={`Column ${ri + 1}, read ${ri === 0 ? 'first' : `after column ${ri}`}${fit ? '; the picked solid fits it' : ''}. Click to pick, Ctrl+click to add`}
+                        onClick={(e) => toggleRow(r.key, e.ctrlKey || e.metaKey)}
+                      >
+                        {ri + 1}
+                      </button>
+                      <IconButton label="Move right (read later)" className="size-5" onClick={() => update(moveRow(grid, r.key, 1))}>
+                        <ArrowRight />
+                      </IconButton>
+                    </span>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
-            {grid.rows.map((r, ri) => (
-              <tr key={r.key} data-row={ri + 1} className={cn(rowsPicked.has(r.key) && 'bg-accent/60')}>
-                <td className="sticky left-0 z-[1] border-b border-border bg-card px-1 whitespace-nowrap">
-                  <span className="flex items-center">
-                    <button
-                      type="button"
-                      className={cn('w-6 text-right tabular-nums text-muted-foreground hover:text-foreground', r.saved !== null && fits.has(r.saved) && 'font-semibold text-primary', rowsPicked.has(r.key) && 'text-foreground')}
-                      title={`Row ${ri + 1}, read ${ri === 0 ? 'first' : `after row ${ri}`}${r.saved !== null && fits.has(r.saved) ? '; the picked solid fits it' : ''}. Click to pick, Ctrl+click to add`}
-                      onClick={(e) => toggleRow(r.key, e.ctrlKey || e.metaKey)}
-                    >
-                      {ri + 1}
-                    </button>
-                    <IconButton label="Move up (read earlier)" className="size-5" onClick={() => update(moveRow(grid, r.key, -1))}>
-                      <ArrowUp />
-                    </IconButton>
-                    <IconButton label="Move down (read later)" className="size-5" onClick={() => update(moveRow(grid, r.key, 1))}>
-                      <ArrowDown />
-                    </IconButton>
-                  </span>
-                </td>
-                {grid.columns.map((c, ci) => (
-                  <td key={c.key} className={cn('border-b border-border px-0.5', c.kind === 'value' && ci > 0 && grid.columns[ci - 1].kind === 'filter' && 'border-l')}>
-                    <CellInput
-                      value={r.cells[c.key] ?? ''}
-                      label={`Row ${ri + 1}, ${c.kind === 'filter' ? `when ${c.name}` : c.name}`}
-                      data-cell={`${ri}:${ci}`}
-                      numeric={c.kind === 'value' && !c.text}
-                      placeholder={c.kind === 'filter' ? 'any' : ''}
-                      edited={cellEdited(r, c)}
-                      why={why(r.key, c.key)}
-                      picked={givenHere(c.name, r.saved)}
-                      onChange={(text) => update(setCell(grid, r.key, c.key, text))}
-                      onPaste={onPaste(r.key, c.key)}
-                      onKeyDown={onCellKey(ri, ci)}
-                    />
+            {grid.columns.map((c, pi) => {
+              const filter = c.kind === 'filter';
+              const lastFilter = filter && pi === firstValue - 1;
+              const elsewhere = filter ? null : fromElsewhere(c.name);
+              const line = cn('border-b border-border', lastFilter && 'border-b-2 border-b-muted-foreground/40', filter && 'bg-muted/30');
+              return (
+                <tr key={c.key} data-param={c.name} data-kind={c.kind}>
+                  <td className={cn('sticky left-0 z-[1] border-r bg-card px-1 whitespace-nowrap', line)} title={c.note || undefined}>
+                    <span className="flex items-center gap-0.5">
+                      <span className="w-9 shrink-0 text-muted-foreground">{filter ? 'when' : ''}</span>
+                      <CellInput
+                        value={c.name}
+                        label={filter ? 'Name of the filter' : 'Name of the parameter'}
+                        edited={c.was === null || c.was.name !== c.name}
+                        why={why(null, c.key)}
+                        className="w-44 flex-none font-semibold"
+                        onChange={(name) => update(editColumn(grid, c.key, { name }))}
+                      />
+                      {filter ? (
+                        <span className="w-[5.75rem] shrink-0 px-1 text-muted-foreground">filter{c.was === null ? ', new' : ''}</span>
+                      ) : (
+                        <>
+                          <CellInput value={c.unit} label={`Unit of ${c.name}`} placeholder="unit" edited={c.was === null || c.was.unit !== c.unit} className="w-14 flex-none text-muted-foreground" onChange={(unit) => update(editColumn(grid, c.key, { unit }))} />
+                          {/* Gold is kept for what the picked solid takes, so numbers or words is a plain toggle here. */}
+                          <button
+                            type="button"
+                            className={cn('h-6 w-9 shrink-0 rounded-sm border border-transparent text-muted-foreground hover:border-input hover:text-foreground', c.was !== null && c.was.text !== c.text && 'text-edited')}
+                            aria-label={`${c.name} holds ${c.text ? 'words' : 'numbers'}`}
+                            title={`${c.name} holds ${c.text ? 'words' : 'numbers'}; click for ${c.text ? 'numbers' : 'words'}`}
+                            onClick={() => update(editColumn(grid, c.key, { text: !c.text }))}
+                          >
+                            {c.text ? 'abc' : '123'}
+                          </button>
+                        </>
+                      )}
+                      <IconButton label="Move up" className="size-5" onClick={() => update(moveColumn(grid, c.key, -1))}>
+                        <ArrowUp />
+                      </IconButton>
+                      <IconButton label="Move down" className="size-5" onClick={() => update(moveColumn(grid, c.key, 1))}>
+                        <ArrowDown />
+                      </IconButton>
+                      <IconButton label={filter ? 'Take this filter out' : 'Take this parameter out'} className="size-5" onClick={() => update(deleteColumn(grid, c.key))}>
+                        <X />
+                      </IconButton>
+                    </span>
+                    {elsewhere && (
+                      <div className="truncate pl-10 text-primary" title={`The picked solid takes ${c.name} from ${elsewhere}`}>
+                        from {elsewhere}
+                      </div>
+                    )}
                   </td>
-                ))}
-              </tr>
-            ))}
+                  {grid.rows.map((r, ri) => (
+                    <td key={r.key} className={cn('px-0.5', line, rowsPicked.has(r.key) && 'bg-accent/60')}>
+                      <CellInput
+                        value={r.cells[c.key] ?? ''}
+                        label={`Column ${ri + 1}, ${filter ? `when ${c.name}` : c.name}`}
+                        data-cell={`${pi}:${ri}`}
+                        numeric={!filter && !c.text}
+                        placeholder={filter ? 'any' : ''}
+                        edited={cellEdited(r, c)}
+                        why={why(r.key, c.key)}
+                        picked={givenHere(c.name, r.saved)}
+                        onChange={(text) => update(setCell(grid, r.key, c.key, text))}
+                        onPaste={onPaste(r.key, c.key)}
+                        onKeyDown={onCellKey(pi, ri)}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         <p className="px-3 py-2 text-muted-foreground">
-          Read top down: each value comes from the first row that fits and holds it; a blank filter fits anything. A filter cell takes words, numbers and ranges as the bench rules do (U, 1-5, "U, M"). Paste cells from Excel into any cell.
+          Read left to right: each value comes from the first column that fits and holds it; a blank filter fits anything. A filter cell takes words, numbers and ranges as the bench rules do (U, 1-5, "U, M"). Paste cells from Excel into any cell: a line along a parameter, across the columns.
         </p>
       </div>
     </div>

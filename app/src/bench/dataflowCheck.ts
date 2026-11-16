@@ -2,14 +2,25 @@
 // 0073), read as Tim would see them. The project (the demo pit saved by testdata/synthetic/workflow_demo.py, its
 // dataflow the starter's) is opened, each object clicked in the Layers panel, and what Properties shows read back.
 import type { DockviewApi } from 'dockview-react';
-import { objectDetails, openProject, type ProjectSummary, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, undo } from '../bridge';
+import { objectDetails, openProject, type ProjectSummary, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, undo, writePicture } from '../bridge';
+import type { Viewport } from '../viewport/Viewport';
+import { windowPicture } from './windowPicture';
 import { showPanel } from '../workspace/Workspace';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type Show = (summary: ProjectSummary) => Promise<void> | undefined;
 
-export async function checkDataflow(path: string, log: (line: string) => void, show: Show, dock: () => DockviewApi | null) {
+/** With `--pictures <folder>`, the window as it stands, saved there as `<name>.png`. */
+type Picture = ((name: string) => Promise<void>) | null;
+
+export async function checkDataflow(path: string, log: (line: string) => void, show: Show, dock: () => DockviewApi | null, viewport: Viewport | null = null) {
+  const picture: Picture = viewport
+    ? async (name) => {
+        await wait(600);
+        log(`dataflow: ${await writePicture(name, await windowPicture(viewport))}`);
+      }
+    : null;
   const api = dock();
   if (!api) return { error: 'no dock' };
   showPanel(api, 'layers');
@@ -142,7 +153,7 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     expect('the pit equals its strips added up', !!vol && Math.abs((vol.values[0] ?? 0) - sum) <= 1e-9 * Math.abs(sum), { pit: vol?.values[0], strips: sum });
     expect('the 50m table opens in under 200 ms and a block in under 100 ms', treeMs + pitMs < 200 && blockMs < 100, { leaves: tree.leaves, treeMs: Math.round(treeMs), pitMs: Math.round(pitMs), blockMs: Math.round(blockMs) });
   }
-  await checkParameters(summary, api, expect, show);
+  await checkParameters(summary, api, expect, show, picture);
   return { ...results, failures };
 }
 
@@ -153,7 +164,7 @@ type Expect = (what: string, ok: boolean, detail?: unknown) => void;
  * their values come from, as the engine traces them; a word in a number column stops the save; an edit saves as the next
  * revision and an undo puts it back.
  */
-async function checkParameters(summary: ProjectSummary, api: DockviewApi, expect: Expect, show: Show) {
+async function checkParameters(summary: ProjectSummary, api: DockviewApi, expect: Expect, show: Show, picture: Picture) {
   const assumptions = summary.objects.find((o) => o.name === 'Reserves assumptions');
   if (!assumptions) return expect('the demo has its assumptions table', false);
   showPanel(api, 'params');
@@ -164,22 +175,31 @@ async function checkParameters(summary: ProjectSummary, api: DockviewApi, expect
   const details = await objectDetails(assumptions.id);
   if (details.measures.kind !== 'parameter_table') return expect('the assumptions open as a parameter table', false);
   const t = details.measures.parameters;
-  const heads = [...(panel()?.querySelectorAll<HTMLElement>('[data-slot="parameters-grid"] th[data-col]') ?? [])].map((h) => h.dataset.col);
-  expect("the grid shows the table's filters then its values", JSON.stringify(heads) === JSON.stringify([...t.filters, ...t.columns.map((c) => c.name)]), heads);
-  expect('a row a row of the table', panel()?.querySelectorAll('[data-slot="parameters-grid"] tbody tr').length === t.rows.length, t.rows.length);
+  // Turned: the filters then the parameters down the side, the table's rows across.
+  const sides = [...(panel()?.querySelectorAll<HTMLElement>('[data-slot="parameters-grid"] tbody tr[data-param]') ?? [])].map((h) => h.dataset.param);
+  expect("the grid shows the table's filters then its parameters down the side", JSON.stringify(sides) === JSON.stringify([...t.filters, ...t.columns.map((c) => c.name)]), sides.length);
+  expect("a column across a row of the table", panel()?.querySelectorAll('[data-slot="parameters-grid"] thead th[data-row]').length === t.rows.length, t.rows.length);
 
   // The picked solid's values, in gold, where the engine says they come from.
   for (let k = 0; k < 50 && !panel()?.querySelector('[data-slot="parameters-picked"]'); k++) await wait(100);
   const gold = [...(panel()?.querySelectorAll<HTMLInputElement>('[data-slot="parameters-grid"] input[title$="where the picked solid takes its value"]') ?? [])].map((i) => i.getAttribute('aria-label'));
   const pickedLine = panel()?.querySelector('[data-slot="parameters-picked"]')?.textContent ?? '';
-  expect('a picked solid marks the cell each value comes from, as the engine traces it', gold.length > 0 && pickedLine.includes('fits row'), { gold: gold.length, line: pickedLine.replace(/^\S+/, '…') });
+  expect('a picked solid marks the cell each value comes from, as the engine traces it', gold.length > 0 && pickedLine.includes('fits column'), { gold: gold.length, line: pickedLine.replace(/^\S+/, '…') });
+  if (picture) {
+    // The tab filling the window, as Tim would look along the parameters.
+    const press = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)?.click();
+    press('Fill the window');
+    await picture('parameters-turned');
+    press('Put the tables back under the view');
+    await wait(300);
+  }
 
   // An edit: a word refused, then a number saved as the next revision, then undone.
   const ri = t.rows.findIndex((r) => t.columns.some((c) => !c.text && typeof r.values[c.name] === 'number'));
   const column = t.columns.find((c) => !c.text && typeof t.rows[ri]?.values[c.name] === 'number');
   if (ri < 0 || !column) return expect('the table has a number to edit', false);
   const before = t.rows[ri].values[column.name] as number;
-  const cell = () => panel()?.querySelector<HTMLInputElement>(`input[aria-label="Row ${ri + 1}, ${column.name}"]`) ?? null;
+  const cell = () => panel()?.querySelector<HTMLInputElement>(`input[aria-label="Column ${ri + 1}, ${column.name}"]`) ?? null;
   const type = (text: string) => {
     const input = cell();
     if (!input) return;

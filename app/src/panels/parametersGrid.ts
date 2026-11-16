@@ -243,12 +243,35 @@ export function paste(g: Grid, row: string, column: string, block: string[][]): 
   return { grid: { ...grid, rows }, cut };
 }
 
+/**
+ * A block of cells pasted into the grid as the tab shows it, turned (Tim, 16 November: parameters down the side): a line
+ * of the block runs across the table's rows for one parameter, the next line the next parameter down. Columns are added
+ * to the right as needed; cells past the last parameter are left out and counted.
+ */
+export function pasteTurned(g: Grid, row: string, column: string, block: string[][]): { grid: Grid; cut: number } {
+  const turned: string[][] = [];
+  block.forEach((line, i) =>
+    line.forEach((text, j) => {
+      turned[j] ??= [];
+      turned[j][i] = text; // a cell the block doesn't give stays a hole, and leaves the grid's cell as it was
+    }),
+  );
+  return paste(g, row, column, turned);
+}
+
+const quoteCell = (s: string) => (/[\t\n\r"]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s);
+const heading = (c: GridColumn) => (c.kind === 'filter' ? `when ${c.name}` : c.unit ? `${c.name} (${c.unit})` : c.name);
+
 /** Rows as Excel takes them: a header line of the columns as CSV heads them, then a line a row, tabs between. */
 export function copyText(g: Grid, rows: Set<string> | null): string {
-  const quote = (s: string) => (/[\t\n\r"]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s);
-  const head = g.columns.map((c) => (c.kind === 'filter' ? `when ${c.name}` : c.unit ? `${c.name} (${c.unit})` : c.name));
-  const lines = g.rows.filter((r) => !rows || rows.has(r.key)).map((r) => g.columns.map((c) => quote(r.cells[c.key] ?? '')).join('\t'));
-  return [head.map(quote).join('\t'), ...lines].join('\n');
+  const lines = g.rows.filter((r) => !rows || rows.has(r.key)).map((r) => g.columns.map((c) => quoteCell(r.cells[c.key] ?? '')).join('\t'));
+  return [g.columns.map((c) => quoteCell(heading(c))).join('\t'), ...lines].join('\n');
+}
+
+/** As the tab shows it, turned: a line a filter or parameter, its heading first, then its cells across the rows. */
+export function copyTextTurned(g: Grid, rows: Set<string> | null): string {
+  const picked = g.rows.filter((r) => !rows || rows.has(r.key));
+  return g.columns.map((c) => [heading(c), ...picked.map((r) => r.cells[c.key] ?? '')].map(quoteCell).join('\t')).join('\n');
 }
 
 /** How a dataflow field adds up, as a choice, and back. */
