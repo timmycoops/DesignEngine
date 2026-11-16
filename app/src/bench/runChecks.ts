@@ -30,6 +30,10 @@ import { loadStaged } from '../viewport/load';
 import { takePalettePictures, takePictures } from './pictures';
 import { checkDataflow } from './dataflowCheck';
 import { checkSectionGuide } from './sectionGuideCheck';
+import { checkMeasure } from './measureCheck';
+import { checkProject } from './projectCheck';
+import { checkRamp } from './rampCheck';
+import { checkRampStart } from './rampStartCheck';
 import { checkSelect } from './selectCheck';
 import { checkShell } from './shellCheck';
 import { checkWorkflow } from './workflowCheck';
@@ -90,6 +94,14 @@ export async function runChecks(
       results.design_lines = await checkDesignLines(viewport, log, show, strings);
     } else if (config.builder) {
       results.builder = await checkBuilder(viewport, log, show, strings);
+    } else if (config.project) {
+      results.project = await checkProject(viewport, log, show, strings, selection);
+    } else if (config.measure) {
+      results.measure = await checkMeasure(viewport, log, show, strings);
+    } else if (config.ramp) {
+      results.ramp = await checkRamp(viewport, log, show, strings, selection);
+    } else if (config.ramp_start) {
+      results.ramp_start = await checkRampStart(viewport, log, show, strings, selection);
     } else if (config.cut) {
       results.cut = await checkCut(viewport, log, show, strings, config.seam);
     } else if (config.select) {

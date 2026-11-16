@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { Aperture, Box, Expand, Focus, Magnet, Map as MapIcon, MousePointer2, PaintBucket, PenLine, Scissors, StepBack, StepForward } from 'lucide-react';
+import { Aperture, Box, Expand, Focus, Magnet, Map as MapIcon, MousePointer2, PaintBucket, PenLine, Ruler, Scissors, StepBack, StepForward } from 'lucide-react';
 import { ToolButton } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
@@ -43,8 +43,8 @@ export interface ViewTools {
 export const ViewToolsContext = createContext<ViewTools | null>(null);
 
 /**
- * The view's own tools, on the view (decision 0076): Select, Draw and Snap, 3D or Plan, the zooms, the field of view and
- * Section, with the section's step and fill beside it while one is open. Every one has a key, said in its tip.
+ * The view's own tools, on the view (decision 0076): Select, Draw, Measure and Snap, 3D or Plan, the zooms, the field of
+ * view and Section, with the section's step and fill beside it while one is open. Every one has a key, said in its tip.
  */
 export function ViewBar() {
   const view = useContext(ViewToolsContext);
@@ -69,6 +69,15 @@ export function ViewBar() {
         onClick={() => view.setMode('draw')}
       >
         <PenLine />
+      </ToolButton>
+      <ToolButton
+        size="icon-sm"
+        tip={mode === 'measure' ? 'Stop measuring (M)' : 'Measure (M): the distance, RL difference, grade and bearing between clicks; click on for a running total'}
+        aria-label="Measure distance"
+        active={mode === 'measure'}
+        onClick={() => view.setMode(mode === 'measure' ? 'select' : 'measure')}
+      >
+        <Ruler />
       </ToolButton>
       <ToolButton
         size="icon-sm"

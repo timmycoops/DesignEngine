@@ -63,8 +63,15 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   by a line drawn across the strings, and what a run makes keeps it (`docs/decisions/0029-strip-numbers.md`). The string
   commands that offset or edit a string take one (`string`) or several as one run (`strings`): one undo, one record, a
   string that can't be done refusing the run with each listed, one that comes out as it was left and said
-  (`docs/decisions/0078-strings-as-one-run.md`).
-- `Surface`: triangulated mesh (vertices f64, triangles u32), name, layer.
+  (`docs/decisions/0078-strings-as-one-run.md`). A string
+  is projected at a batter by `string.project`: up or down, on the side the new string comes out on, to an RL, a height
+  above or below it, a grid or a surface, every string picked in one run, each as it's drawn and left as it is, with
+  the wall kept as a surface if asked; to an RL or a surface it's a face's one wall, by a height its plan offset lifted
+  (`docs/decisions/0079-project-ramps-by-hand-and-measure.md`).
+- `Surface`: triangulated mesh (vertices f64, triangles u32), name, layer. One is made between strings by
+  `surface.between_strings`: a road between its two edges, or one sheet across several put in order across (a fill's
+  toe, the road's edges, a cut's crest), every corner a string's vertex, so a ramp can be made by hand from polylines:
+  Set grade, Offset, Project and a surface between, all on the Walls row (0079).
 - `Solid`: closed manifold mesh; must always be watertight. The large one strips are cut from is made inside a closed
   string between two surfaces or grids (`solid.between_surfaces`), and every cut is one Cut solids panel: into strips by
   faces, by a surface, grid or RL, or between surfaces (`docs/decisions/0049-strip-solids.md`). A block is a named
@@ -102,7 +109,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   columns (the bench rules' syntax) and value columns with units, read top down, each value from the first row that fits
   and holds it, tables read in order so a case's rows go first; CSV in and out; edited as grids, with the dataflow, in the Parameters tab, a picked solid's
   values traced to their row (`docs/decisions/0075-reserves-in-the-app.md`). `Dataflow`: a reserves dataflow's fields
-  (with where each value comes from), steps by name and the parameter tables it reads; a step may be a formula step, Starlark run on the units its filter fits after `initialise`, `working_sections`, `rom_dilution` or `rom`, checked and its known answers run when saved (`docs/decisions/0077-formulas-in-starlark.md`). `Table`: results, a table a case,
+  (with where each value comes from), steps by name and the parameter tables it reads; a step may be a formula step, Starlark run on the units its filter fits after `initialise`, `join_benches`, `working_sections`, `rom_dilution` or `rom`, checked and its known answers run when saved, edited in the Parameters tab's formula panel and run there on a picked block line by line (`docs/decisions/0077-formulas-in-starlark.md`). `Table`: results, a table a case,
   values as Parquet in the `.zdp`, read by the HTML report and the app's Reserves table tab, fields as rows and a
   node's children across, its solids matched by the levels the table records (`docs/decisions/0075-reserves-in-the-app.md`). `reserves.run` runs a dataflow a column a pit, strip
   and block (the dataflow's levels above the seam), its steps registered by name, and writes a reserves table: a row a
@@ -170,6 +177,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   from there in a design run from that crest, with no entrance; a crest a run made keeps its heights as a line, so two
   designs give one design's face (`docs/decisions/0041-roads-carry-on.md`). It reports
   the bench where the grade can't be met instead of drifting (`docs/decisions/0028-ramps.md`, `0030-ramp-strings.md`).
+  By hand, a ramp is placed from a start as its polygon (`string.ramp_polygon`, Ramp on the Walls row): its inside edge
+  along a line picked or straight the way clicked, at a width and grade, to an RL, a grid or a surface, which says
+  whether it climbs or falls; the polygon and nothing else, and placed again it has moved
+  (`docs/decisions/0079-project-ramps-by-hand-and-measure.md`).
 - Every object has a stable id (128-bit, generated in-house), a name, a layer, and provenance (the command
   run that made it). Edits write a new revision of the same object; earlier revisions stay for undo
   (see `docs/decisions/0004-phase1-foundations.md`). A project is one `<name>.zdp` file; older `<name>.zdproj/` folders still open and save as a `.zdp` beside them (`docs/decisions/0058-one-file-a-project.md`).
@@ -269,9 +280,11 @@ plan" tab): the layer tree on the left, one tool dock on the right where every t
 and one results dock under the view where every table opens as a tab (Run log, Block table, Reserves table, Parameters,
 Workflow canvas, Face design). A new panel names its dock in `PANELS` (`app/src/workspace/Workspace.tsx`) and opens
 through `showPanel`; it never adds a column or a row of its own, and the view keeps its room. The view has no tab strip,
-and its own tools (Select, Draw, Snap, 3D or Plan, the zooms, the field of view, Section and its step and fill) are on
-the view bar over it (`app/src/panels/ViewBar.tsx`): a new view tool goes there, through `ViewTools`, never on the
-toolbar, and nothing drawn over the view may sit behind the bar. A panel never says its name under its tab: its head is
+and its own tools (Select, Draw, Measure, Snap, 3D or Plan, the zooms, the field of view, Section and its step and fill)
+are on the view bar over it (`app/src/panels/ViewBar.tsx`): a new view tool goes there, through `ViewTools`, never on the
+toolbar, and nothing drawn over the view may sit behind the bar. Measure (M) reads the distance, RL difference, grade and
+bearing between clicks from the points' world coordinates, and makes nothing
+(`docs/decisions/0079-project-ramps-by-hand-and-measure.md`). A panel never says its name under its tab: its head is
 one line of what it does (`PanelHead`), and its first control is within 40 px of the tab. Every tool is listed once in
 `app/src/tools.ts`, in its stage, with its name, what it does, and the panel it opens or the action App carries out;
 the toolbar, its menus, the Panels menu and the workflow canvas are drawn from the list, so a new tool is added there

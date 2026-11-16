@@ -113,7 +113,15 @@ fn flow(s: &mut Session, steps: serde_json::Value, csv: &str) -> ObjectId {
         "steps": steps,
         "parameters": [table],
     });
-    created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0]
+    created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0]
+}
+
+/// A dataflow's content given the starter formulas after `initialise`, as `dataflow_starter` gives them (decision 0077,
+/// 7c): limits and defaults, size filled in, and the densities where it has moistures.
+fn starter(content: serde_json::Value) -> serde_json::Value {
+    let mut d: zd_core::Dataflow = serde_json::from_value(content).unwrap();
+    zd_commands::builtin::with_starter_formulas(&mut d);
+    serde_json::to_value(d).unwrap()
 }
 
 fn session() -> Session {
@@ -182,7 +190,7 @@ fn each_block_s_horizons_and_benches_are_written_in_situ_with_their_own_values()
     assert_eq!(s.project().object(made[0]).unwrap().name, "Reserves Base");
     let t = table(&s, made[0]);
     assert_eq!(t.rows(), 6, "B1's U and L; B2's U, its benches 18 and 16, and L");
-    assert!(record.messages[0].starts_with("2 of 2 blocks ran through initialise, in_situ, join_benches; 180000.0 m3 in"), "{}", record.messages[0]);
+    assert!(record.messages[0].starts_with("2 of 2 blocks ran through initialise, fill_size, limits, in_situ, join_benches; 180000.0 m3 in"), "{}", record.messages[0]);
     assert_eq!(record.messages[1], "Reserves Base: 2 blocks, 6 leaves");
     let levels: Vec<&str> = t.columns.iter().take(6).map(|c| c.name.as_str()).collect();
     assert_eq!(levels, ["case", "pit", "strip", "block", "seam", "bench"], "the default levels");
@@ -233,7 +241,7 @@ fn the_levels_set_the_columns_and_the_leaves() {
         "steps": [{ "step": "initialise" }, { "step": "in_situ" }],
         "parameters": [table_id],
     });
-    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0];
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0];
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
     let t = table(&s, created(&record)[0]);
     let levels: Vec<&str> = t.columns.iter().take(5).map(|c| c.name.as_str()).collect();
@@ -302,11 +310,11 @@ fn the_preview_shows_a_block_s_column_after_each_step() {
     let path = ["Pit".to_string(), "3".to_string(), "B2".to_string()];
     let views = reserves_preview(&get, &p, "Base", &path).unwrap();
     let steps: Vec<&str> = views.iter().map(|v| v.step.as_str()).collect();
-    assert_eq!(steps, ["as input", "initialise", "in_situ", "join_benches"]);
+    assert_eq!(steps, ["as input", "initialise", "fill_size", "limits", "in_situ", "join_benches"], "the starter formulas after initialise");
     let horizons = |i: usize| views[i].units.iter().map(|u| u.horizon.clone()).collect::<Vec<_>>();
     assert_eq!(horizons(1), ["OB", "U", "U", "U-L", "L", "underburden"], "sorted, U's benches together, underburden below L");
-    assert_eq!(horizons(3), ["OB", "U", "U-L", "L", "underburden"], "U's benches joined");
-    let u = &views[3].units[1];
+    assert_eq!(horizons(5), ["OB", "U", "U-L", "L", "underburden"], "U's benches joined");
+    let u = &views[5].units[1];
     assert_eq!(u.joined, [("18".to_string(), 0.5), ("16".to_string(), 0.5)]);
     assert!(close(u.values["rd"], 1.5) && close(u.values["volume"], 20_000.0));
 }
@@ -385,9 +393,10 @@ coal,,5,10,12,3.5
     assert!(close(value(&t, leaf(&t, "B1", "L", None), &at(COAL, "ash")).unwrap(), 12.0), "outside its limits");
     assert!(close(value(&t, leaf(&t, "B1", "U", None), &at(COAL, "ash")).unwrap(), 10.0), "on its limit, kept");
     assert!(close(value(&t, leaf(&t, "B1", "U", None), &at(WASTE, "ash")).unwrap(), 60.0), "waste takes its default");
-    let mut said = notes_of(&record, Code::ReservesDefaulted);
+    // Said by the starter's limits formula (decision 0077, 7c), as the Rust said it before.
+    let mut said = notes_of(&record, Code::ReservesFormulaSaid);
     said.sort();
-    assert_eq!(said, ["2 units ash: coal outside its limits given its default, 30000.0 m3", "6 units ash: waste given its default, 210000.0 m3"], "the underburden too, as Spry");
+    assert_eq!(said, ["2 units printed by limits: ash: coal outside its limits given its default, 30000.0 m3", "6 units printed by limits: ash: waste given its default, 210000.0 m3"], "the underburden too, as Spry");
     assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 block thicker than max_thickness: 3_B1_U"]);
 }
 
@@ -419,7 +428,7 @@ fn moist_flow(s: &mut Session, csv: &str) -> ObjectId {
         "steps": [{ "step": "initialise" }, { "step": "in_situ" }],
         "parameters": [table],
     });
-    created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0]
+    created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0]
 }
 
 /// Coal at Mad 3 %, Mis 8 %, Mrom 10 %; waste RD 2.3 in situ as given. B1's U, RD 1.4: in situ density
@@ -436,7 +445,8 @@ fn coal_is_written_on_the_in_situ_basis_by_preston_sanders() {
     let dis = |rd: f64| rd * 0.97 / (1.0 + rd * 0.05 - 0.08);
     let u = leaf(&t, "B1", "U", None);
     let coal = |f: &str| value(&t, u, &at(COAL, f)).unwrap();
-    assert!(close(coal("rd_is"), 1.358 / 0.99) && close(coal("tonnes"), 20_000.0 * 1.358 / 0.99) && close(coal("tonnes_ad"), 28_000.0));
+    // Air-dried tonnes Spry's way (decision 0077, point 5): the in situ tonnes × (100 − Mis) ÷ (100 − Mad), not volume × RD.
+    assert!(close(coal("rd_is"), 1.358 / 0.99) && close(coal("tonnes"), 20_000.0 * 1.358 / 0.99) && close(coal("tonnes_ad"), 20_000.0 * 1.358 / 0.99 * 92.0 / 97.0));
     assert!(close(coal("ash_is"), 10.0 * 0.92 / 0.97) && close(coal("rd_rom"), dis(1.4) * 0.92 / 0.90));
     for (bench, rd) in [("18", 1.4), ("16", 1.6)] {
         let b = leaf(&t, "B2", "U", Some(bench));
@@ -455,7 +465,8 @@ fn coal_with_no_in_situ_moisture_stops_its_block() {
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
     assert!(record.messages[0].starts_with("0 of 2 blocks ran"), "{}", record.messages[0]);
     let stopped = record.notes.iter().find(|n| n.code == Some(Code::ReservesBlockStopped)).unwrap();
-    assert!(stopped.text.contains("Pit/3/B1 at in_situ: 3_B1_U is coal with no mis"), "{}", stopped.text);
+    // The starter's densities formula stops it (decision 0077, 7c), with its line.
+    assert!(stopped.text.contains("Pit/3/B1 at densities: line 13: coal with no mis on 3_B1_U"), "{}", stopped.text);
 }
 
 // Decision 0073, workstream 3c: working sections, a hand-worked column.
@@ -979,7 +990,8 @@ fn a_parameter_row_corrects_a_measured_length() {
     let edge: f64 = views.last().unwrap().units.iter().filter(|u| u.horizon == "A" && u.became.as_deref() == Some("loss (edge)")).map(|u| u.values["volume"]).sum();
     assert!(close(edge, 12.0), "{edge}");
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
-    assert!(notes_of(&record, Code::ReservesDefaulted).iter().any(|n| n == "2 units length: coal forced to its default, 25000.0 m3"), "{:?}", notes_of(&record, Code::ReservesDefaulted));
+    let said = notes_of(&record, Code::ReservesFormulaSaid);
+    assert!(said.iter().any(|n| n == "2 units printed by limits: length: coal forced to its default, 25000.0 m3"), "{said:?}");
 }
 
 /// A block whose volume attribute isn't its solid's (measured, then cut again) is named; the run reads what it carries.
@@ -998,7 +1010,7 @@ fn a_block_whose_measured_volume_isn_t_its_solid_s_is_named() {
         "steps": [{ "step": "initialise" }, { "step": "in_situ" }],
         "parameters": [table_id],
     });
-    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0];
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0];
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
     assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 block whose volume isn't its solid's (measured before it was cut again?): 1_B1_A"]);
     let t = table(&s, created(&record)[0]);
@@ -1021,8 +1033,10 @@ fn at_seam(t: &Table, seam: Option<&str>, path: &str) -> f64 {
 }
 
 /// Dilution only, as the 4c column: ROM coal A 10,854 m³ on A's leaf (its coal, OB's 250 + 4 + 100 m³ and A-B's 500 m³),
-/// B 15,906 m³ on B's; ROM waste what's left of each waste on its own leaf, OB 49,646 m³ on A's, A-B 24,094 m³ on B's, the
-/// waste below 19,500 m³ on its own; ROM coal and waste the 120,000 m³ of the blocks. Scheduled the same; clean coal the
+/// B 15,906 m³ on B's; ROM waste what's left of each waste on its own leaf, OB 49,646 m³ on A's, A-B 24,094 m³ on B's. The
+/// waste below B, the last coal, isn't mined (decision 0077, point 7, Spry's way): B's 500 m³ of floor dilution comes from
+/// it and the 19,500 m³ left is underburden, netted off `Summary\Out of model`. ROM coal and waste are the blocks'
+/// 120,000 m³ less it. Scheduled the same; clean coal the
 /// coal alone, 10,000 and 15,000 m³. ROM tonnes on the density's basis here, no ROM density in this dataflow: A's
 /// 10,000 × 1.4 + 854 × 2.3 = 15,964.2 t.
 #[test]
@@ -1035,8 +1049,10 @@ fn final_writes_rom_coal_and_waste_where_they_end_and_scheduled_beside_them() {
     let t = table(&s, created(&record)[0]);
     let rom = |seam: Option<&str>, m: &str| at_seam(&t, seam, &format!("ROM\\{m}\\volume"));
     assert!(close(rom(Some("A"), "Coal"), 10_854.0) && close(rom(Some("B"), "Coal"), 15_906.0), "{} {}", rom(Some("A"), "Coal"), rom(Some("B"), "Coal"));
-    assert!(close(rom(Some("A"), "Waste"), 49_646.0) && close(rom(Some("B"), "Waste"), 24_094.0) && close(rom(None, "Waste"), 19_500.0));
-    assert!(close(total(&t, "ROM\\Coal\\volume") + total(&t, "ROM\\Waste\\volume"), 120_000.0), "ROM is all of the blocks");
+    assert!(close(rom(Some("A"), "Waste"), 49_646.0) && close(rom(Some("B"), "Waste"), 24_094.0) && close(rom(None, "Waste"), 0.0));
+    assert!(close(total(&t, "Summary\\Out of model\\volume"), -19_500.0), "the waste below the last coal, netted");
+    assert!(close(total(&t, "ROM\\Coal\\volume") + total(&t, "ROM\\Waste\\volume"), 120_000.0 - 19_500.0), "ROM is the blocks but the waste below the last coal");
+    assert_eq!(notes_of(&record, Code::ReservesUnderburden).iter().filter(|n| n.contains("below the last coal")).count(), 1, "said as underburden");
     assert!(close(total(&t, "Scheduled\\Coal\\volume"), total(&t, "ROM\\Coal\\volume")) && close(total(&t, "Scheduled\\Waste\\volume"), total(&t, "ROM\\Waste\\volume")));
     assert!(close(at_seam(&t, Some("A"), "Clean coal\\Coal\\volume"), 10_000.0) && close(at_seam(&t, Some("B"), "Clean coal\\Coal\\volume"), 15_000.0));
     assert!(close(at_seam(&t, Some("A"), "ROM\\Coal\\tonnes"), 10_000.0 * 1.4 + 854.0 * 2.3));
@@ -1044,7 +1060,8 @@ fn final_writes_rom_coal_and_waste_where_they_end_and_scheduled_beside_them() {
 }
 
 /// Floor loss 0.2 m alone: A's 1,000 m³ goes into A-B, written in ROM waste on A-B's leaf (B's), its first unit; B's goes
-/// into the waste below. ROM coal A 9,000 m³ and B 14,000 m³; ROM waste on B's leaf A-B's 25,000 + A's 1,000 m³.
+/// into the waste below, and is ROM waste on its leaf, coal lost. ROM coal A 9,000 m³ and B 14,000 m³; ROM waste on B's
+/// leaf A-B's 25,000 + A's 1,000 m³. The 20,000 m³ of waste below B, the last coal, is underburden, not mined.
 #[test]
 fn a_loss_is_rom_waste_where_it_went() {
     let mut s = session();
@@ -1053,8 +1070,8 @@ fn a_loss_is_rom_waste_where_it_went() {
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
     let t = table(&s, created(&record)[0]);
     assert!(close(at_seam(&t, Some("A"), "ROM\\Coal\\volume"), 9_000.0) && close(at_seam(&t, Some("B"), "ROM\\Coal\\volume"), 14_000.0));
-    assert!(close(at_seam(&t, Some("B"), "ROM\\Waste\\volume"), 26_000.0) && close(at_seam(&t, None, "ROM\\Waste\\volume"), 21_000.0));
-    assert!(close(total(&t, "ROM\\Coal\\volume") + total(&t, "ROM\\Waste\\volume"), 120_000.0));
+    assert!(close(at_seam(&t, Some("B"), "ROM\\Waste\\volume"), 26_000.0) && close(at_seam(&t, None, "ROM\\Waste\\volume"), 1_000.0));
+    assert!(close(total(&t, "ROM\\Coal\\volume") + total(&t, "ROM\\Waste\\volume"), 120_000.0 - 20_000.0));
 }
 
 /// No waste below B: 10 m of underburden goes under it, and B's floor dilution of 0.1 m (500 m³) comes from it. ROM coal B
@@ -1093,6 +1110,42 @@ fn aggregate_sections_puts_the_section_s_quality_on_its_coal() {
     assert!(close(at_seam(&t, Some("A"), "Clean coal\\Coal\\ash"), at_seam(&t, Some("B"), "Clean coal\\Coal\\ash")) && at_seam(&t, Some("A"), "Clean coal\\Coal\\ash") < 12.0, "clean coal its coal's own average");
 }
 
+/// Clean coal at its section's average, by tonnes (decision 0077, 7c part 2; Tim: qualities are weighed by tonnes). One
+/// section of A (2 m, 10,000 m³, RD 1.3, ash 10 %) and B (1.5 m, 7,500 m³, RD 1.6, ash 20 %) joined over a 0.3 m parting:
+/// with `clean_coal_average` yes, each ply's clean coal carries (10 × 13,000 + 20 × 12,000) ÷ 25,000 = 14.8 %, not the
+/// 14.29 % a volume average would give; without, its own.
+#[test]
+fn clean_coal_takes_its_section_s_average_by_tonnes() {
+    let mut s = session();
+    let rows: [(&str, f64, f64, &str, &str, f64, f64); 5] =
+        [("OB", 40.0, 50.0, "waste", "A", 0.0, 0.0), ("A", 38.0, 40.0, "coal", "A", 1.3, 10.0), ("A-B", 37.7, 38.0, "waste", "B", 0.0, 0.0), ("B", 36.2, 37.7, "coal", "B", 1.6, 20.0), ("below B", 30.0, 36.2, "waste", "", 0.0, 0.0)];
+    let ids: Vec<ObjectId> = rows
+        .iter()
+        .map(|&(h, z0, z1, material, seam, rd, ash)| {
+            let mut a = json!({ "strip": 1.0, "block": "B1", "horizon": h, "material": material, "seam": seam });
+            if material == "coal" {
+                a["rd"] = json!(rd);
+                a["ash"] = json!(ash);
+            }
+            box_solid(&mut s, &format!("1_B1_{h}"), 0.0, (z0, z1), a)
+        })
+        .collect();
+    s.run("solid.measure", json!({ "solids": ids })).unwrap();
+    let stack = ["OB", "A", "A-B", "B", "below B"];
+    let csv = |yes: &str| format!("when material,rd (t/m3),ash_default (%),min_parting (m),ws_strip_ratio,min_coal_thickness (m),roof_loss (m),floor_loss (m),edge_loss (m),other_loss (%),roof_dilution (m),floor_dilution (m),edge_dilution (m),other_dilution (%),clean_coal_average\nwaste,2.3,80,,,,,,,,,,,,\ncoal,,,1,0.5,0.45,0,0,0,0,0,0,0,0,{yes}\n");
+    let clean = |s: &mut Session, yes: &str| {
+        let flow = flow(s, final_steps(), &csv(yes));
+        let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": stack, "layer": "reserves" })).unwrap();
+        let t = table(s, created(&record)[0]);
+        (at_seam(&t, Some("A"), "Clean coal\\Coal\\ash"), at_seam(&t, Some("B"), "Clean coal\\Coal\\ash"))
+    };
+    let (a, b) = clean(&mut s, "");
+    assert!(close(a, 10.0) && close(b, 20.0), "each its own: {a} {b}");
+    let (a, b) = clean(&mut s, "yes");
+    let by_tonnes = (10.0 * 13_000.0 + 20.0 * 12_000.0) / 25_000.0;
+    assert!(close(a, by_tonnes) && close(b, by_tonnes), "{a} {b} against {by_tonnes}");
+}
+
 /// Coal at Mad 3 %, Mis 8 %, Mrom 10 %; A-B gives A 500 m³ of floor dilution. The dilution, with no moisture of its own,
 /// takes A's (said), so its ROM density is 2.3 × 0.92 ÷ 0.90; A's ROM tonnes are its coal's 10,000 m³ at its in situ
 /// density × 0.92 ÷ 0.90 and the dilution's 500 m³ at that, and A's ash on the ROM basis is its air-dried ash
@@ -1122,14 +1175,15 @@ fn rom_gives_dilution_its_coal_s_moisture_and_works_rom_tonnes() {
         ],
         "parameters": [table_id],
     });
-    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0];
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0];
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
     let t = table(&s, created(&record)[0]);
     let dis = 1.4 * 0.97 / (1.0 + 1.4 * 0.05 - 0.08);
     let tonnes = 10_000.0 * dis * 0.92 / 0.90 + 500.0 * 2.3 * 0.92 / 0.90;
     let got = at_seam(&t, Some("A"), "ROM\\Coal\\tonnes");
     assert!(close(got, tonnes), "{got} against {tonnes}");
-    let said = notes_of(&record, Code::ReservesDefaulted);
+    // Said by the starter's rom_qualities formula (decision 0077, 7c part 2).
+    let said = notes_of(&record, Code::ReservesFormulaSaid);
     for m in ["mad", "mis", "mrom"] {
         assert!(said.iter().any(|n| n.ends_with(&format!("dilution and partings given their coal's {m}, 1000.0 m3")) || n.contains(&format!("given their coal's {m}"))), "{m}: {said:?}");
     }
@@ -1216,8 +1270,10 @@ fn a_table_s_leaves_are_matched_to_their_solids() {
         assert_eq!(case_of(&solid.attributes), "Base");
         assert!(breakdown(&t, &leaf, &[]).is_ok(), "{leaf:?} is a leaf of the table");
     }
-    // The block's breakdown: its seams across, its ROM coal and waste the blocks' 120,000 m³.
+    // The block's breakdown: its seams across, its ROM coal and waste the blocks' 120,000 m³ less the 20,000 m³ of waste
+    // below the last coal, which is netted off the out-of-model volume.
     let b = breakdown(&t, &["Pit".into(), "1".into(), "B1".into()], &[]).unwrap();
     let total = |f: &str| b.fields.iter().find(|x| x.column == f).and_then(|x| x.values[0]).unwrap_or(0.0);
-    assert!(close(total("ROM\\Coal\\volume") + total("ROM\\Waste\\volume"), 120_000.0));
+    assert!(close(total("ROM\\Coal\\volume") + total("ROM\\Waste\\volume"), 100_000.0));
+    assert!(close(total("Summary\\Out of model\\volume"), -20_000.0));
 }

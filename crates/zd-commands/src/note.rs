@@ -88,6 +88,7 @@ codes! {
     RampTopOffLine = "ramp.top_off_line", "A road's top away from the line it carries on from";
     RampStartsAfresh = "ramp.starts_afresh", "A road carried on that isn't on the first wall, starting afresh";
     RampEnds = "ramp.ends", "A road ended on a line, as asked";
+    RampShortOfTarget = "ramp.short_of_target", "A ramp placed from a start that ended before the RL or surface it runs to";
     JoinOnePad = "join.one_pad", "Switchbacks whose boxes are made one pad";
     JoinNothing = "join.nothing", "Join set on a berm with nothing to join";
     LineEdited = "line.edited", "A line redrawn by hand, and what stands on it";
@@ -136,6 +137,7 @@ codes! {
     StringEndShort = "string.end_short", "A line ending inside a polygon it was meant to split, short of the line it should meet";
     StringClosesNothing = "string.closes_nothing", "A line that closes no area, left out of the polygons";
     StringIsland = "string.island", "Lines inside a polygon that don't touch its sides, so they don't split it";
+    StringProjectedInPieces = "string.projected_in_pieces", "A string projected by a height whose new string pinched off into pieces";
     SolidOutsidePolygons = "solid.outside_polygons", "Part of a solid outside every block polygon, found before a cut by polygons, which it holds";
     BlockNameRepeated = "block.name_repeated", "Blocks given the same name, which should be unique";
     BlockVolumeDiffers = "block.volume_differs", "A solid whose blocks and remainder don't add back to its volume";

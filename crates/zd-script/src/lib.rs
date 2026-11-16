@@ -1,7 +1,8 @@
 //! Formulas a planner edits (decision 0077, workstream 7a of 0070): Starlark run on the reserves dataflow's units.
 //!
 //! A formula is a Starlark file defining `def formula(unit, p):`. It reads the unit's fields and labels
-//! (`unit.ash_ad`, `unit.seam`), its working section and column added up (`unit.section.volume`), its block's
+//! (`unit.ash_ad`, `unit.seam`), its working section, its ROM section's coal and its column added up
+//! (`unit.section.volume`, `unit.rom_coal.mad`), its block's
 //! attributes (`unit.block.strip`), the unit above (`unit.above.area`) and the parameters (`p.rom_ash_cutoff`), and
 //! sets fields the dataflow declares (`unit.rd_is = in_situ_rd(unit.rd, unit.mad, unit.mis)`). It never moves material
 //! between units: that's a built-in step's work.
@@ -26,6 +27,9 @@ use starlark::values::{OwnedFrozenValue, Value, ValueLike};
 use starlark::PrintHandler;
 
 pub use handles::Event;
+
+/// How to write a formula, for the formula panel and for an AI asked to write one (decision 0077, 7d and 7e).
+pub const REFERENCE: &str = include_str!("reference.md");
 use handles::{Params, Parts, Unit};
 
 /// A value a formula reads or sets: a number, words, or nothing.
@@ -104,13 +108,17 @@ pub struct UnitInput {
     pub block: Values,
     pub parameters: Values,
     pub section: Option<usize>,
+    /// The ROM coal section it's in (coal, partings, dilution or coal from a neighbour), an index into `rom_coals`.
+    pub rom_coal: Option<usize>,
 }
 
-/// A block column, its units top down, each working section's fields added up by their rules, and the column's.
+/// A block column, its units top down, each working section's fields added up by their rules, each ROM coal section's
+/// coal (its plies, nothing done to them) added up, and the column's.
 #[derive(Debug, Clone, Default)]
 pub struct ColumnInput {
     pub units: Vec<UnitInput>,
     pub sections: Vec<Values>,
+    pub rom_coals: Vec<Values>,
     pub column: Values,
 }
 
@@ -183,7 +191,8 @@ fn problem(e: &starlark::Error, unit: Option<usize>) -> Problem {
     let full = format!("{e}");
     // A runtime error comes after its traceback, on the line that starts "error:".
     let headline = full.lines().find(|l| l.starts_with("error:")).or_else(|| full.lines().find(|l| !l.trim().is_empty())).unwrap_or("");
-    let mut message = headline.trim_start_matches("error:").trim().to_string();
+    // `fail("…")` is the formula saying why it stopped: its words alone.
+    let mut message = headline.trim_start_matches("error:").trim().trim_start_matches("fail:").trim().to_string();
     let line = full.lines().filter_map(|l| l.split_once(&format!("{FILE}:"))).filter_map(|(_, rest)| rest.split(':').next()?.trim().parse::<usize>().ok()).next_back();
     if let Some(name) = message.strip_prefix("Object of type `parameters` has no attribute `").and_then(|r| r.split('`').next()) {
         message = format!("no parameter row gives `{name}` for this unit; read it with getattr(p, \"{name}\", default) where it may be missing");
@@ -290,6 +299,7 @@ impl Formula {
             fields: unit.fields.clone(),
             section: unit.section.and_then(|s| column.sections.get(s).cloned()),
             column: column.column.clone(),
+            rom_coal: unit.rom_coal.and_then(|r| column.rom_coals.get(r).cloned()),
             block: unit.block.clone(),
             above: u.checked_sub(1).map(|a| column.units[a].fields.clone()),
             declared: self.declared.clone(),
@@ -402,7 +412,11 @@ struct Snapshot {
 struct Watch(Arc<Mutex<Vec<Snapshot>>>);
 
 impl<'e> BeforeStmtFuncDyn<'e> for Watch {
-    fn call<'v>(&mut self, span: FileSpanRef, _continued: bool, eval: &mut Evaluator<'v, '_, 'e>) -> starlark::Result<()> {
+    fn call<'v>(&mut self, span: FileSpanRef, continued: bool, eval: &mut Evaluator<'v, '_, 'e>) -> starlark::Result<()> {
+        // A statement resumed after a call it made is the same line running on: noted once.
+        if continued {
+            return Ok(());
+        }
         let line = span.resolve_span().begin.line + 1;
         let locals = eval.local_variables().into_iter().map(|(k, v)| (k, show(v))).collect();
         self.0.lock().expect("snapshots").push(Snapshot { line, depth: eval.call_stack_count(), locals });
