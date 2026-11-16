@@ -762,6 +762,11 @@ fn face_plan(face: &TriMesh, outline: &CrossSection) -> Result<FacePlan, GeomErr
     let mut behind = Vec::new();
     let mut short = Vec::new();
     for piece in outline.difference(&footprint).decompose() {
+        // A face that covers the whole outline in plan leaves nothing past it, which comes back as one empty piece:
+        // nothing behind it and no end short.
+        if piece.is_empty() {
+            continue;
+        }
         let polygons = piece.to_polygons();
         let (mut front, mut back, mut along) = (0, 0, Vec::new());
         for &p in polygons.iter().flatten() {
