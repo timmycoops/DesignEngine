@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { Colouring, Contours, LogEntry, ProjectSummary, RunRecord, Vec3, WorkflowRecord } from '@/bridge';
 import type { RlShown, SeamShown } from '@/viewport/sceneSync';
-import type { PanelId } from './Workspace';
+import type { PanelId } from './panels';
 
 /** The workflow steps are being added to, and where the next goes (from 0; the end when left out). */
 export interface AddingTo {

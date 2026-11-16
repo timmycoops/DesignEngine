@@ -220,6 +220,27 @@ export async function checkShell(
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await settle();
 
+    // The one tool list (workstream 4): the toolbar and its menus are drawn from it, and read as they did.
+    const openMenu = async (name: string) => {
+      const button = [...document.querySelectorAll<HTMLButtonElement>('header button')].find((b) => b.textContent?.trim() === name);
+      button?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', ctrlKey: false }));
+      await settle();
+      const menu = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((m) => ({ words: m.textContent?.trim() ?? '', off: m.hasAttribute('data-disabled'), tool: m.dataset.tool ?? '' }));
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await settle();
+      return menu;
+    };
+    const rowNow = [...document.querySelectorAll<HTMLButtonElement>('header button')].slice(1).map((b) => b.textContent?.trim() || b.getAttribute('aria-label') || '');
+    const rowWas = ['Save', 'Undo', 'Redo', 'Import', 'Export', 'Face', 'Builder', 'Cut', 'Reserves', 'Blocks', 'Reserves table', 'Parameters', 'Workflow', 'Panels'];
+    const fromList = [...document.querySelectorAll<HTMLElement>('header [data-tool]')].map((b) => b.dataset.tool);
+    expect('the toolbar, drawn from the tool list, reads as it did', rowNow.join() === rowWas.join() && fromList.length === 11, { row: rowNow, from_the_list: fromList });
+    const exportMenu = await openMenu('Export');
+    const exportWas = ['Selected to DXF…', 'Selected strings to CSV…', 'Selected solids to a zip…', 'Everything visible to DXF…', 'Visible strings to CSV…', 'Visible solids to a zip…'];
+    expect('the Export menu reads as it did, what needs a selection off without one', exportMenu.map((m) => m.words).join() === exportWas.join() && exportMenu.map((m) => m.off).join() === 'true,true,true,false,false,false' && exportMenu.every((m) => m.tool), exportMenu);
+    const panelsMenu = await openMenu('Panels');
+    const panelsWas = ['Layers', 'Properties', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Run log', 'Block table', 'Reserves table', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
+    expect('the Panels menu lists every panel, then hide and reset', panelsMenu.map((m) => m.words).join() === panelsWas.join(), panelsMenu.map((m) => m.words));
+
     // The view bar, from the default layout, over a made-up topography and a block.
     resetLayout(api);
     await settle();

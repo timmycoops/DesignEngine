@@ -4,6 +4,7 @@ import { checkCutByPolygons, checkCutBySeams, checkSlice, type Note, type Object
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { Choice, Field, NoteLine, NumberInput, type RunReport, Select, TargetInput, TargetOptions, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
 import { BenchRulesSection } from './BenchRulesSection';
 import { type Attributes, type BenchRule, everything, rulesParam } from './benchRules';
@@ -23,16 +24,8 @@ type Mode = 'strips' | 'seams' | 'benches' | 'polygons' | 'cut' | 'between';
 type Scope = 'picked' | 'layer' | 'visible';
 
 const MODES: readonly Mode[] = ['strips', 'seams', 'benches', 'polygons', 'cut', 'between'];
-const MODE_LABELS: Record<Mode, string> = { strips: 'Into strips', seams: 'By seams', benches: 'By benches', polygons: 'By polygons', cut: 'By a surface', between: 'Between surfaces' };
-/** What each does, in the panel's one line. */
-const MODE_LINES: Record<Mode, string> = {
-  strips: 'Slices solids into strips by faces, from the pit out.',
-  seams: "Cuts solids by the seam model's horizons, in one run.",
-  benches: 'Cuts pieces at bench levels, by the bench rules.',
-  polygons: 'Cuts solids vertically into blocks, by named polygons.',
-  cut: 'Cuts solids by a surface, a grid or an RL.',
-  between: 'Makes one solid inside a closed string, between two surfaces.',
-};
+/** Each choice's name, and the line it puts at the panel's head, from the one tool list. */
+const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('cut', MODES);
 const SCOPES: readonly Scope[] = ['picked', 'layer', 'visible'];
 
 export function CutPanel() {

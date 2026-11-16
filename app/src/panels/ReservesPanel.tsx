@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { Choice, Field, type RunReport, Select, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
 
 /**
@@ -16,12 +17,8 @@ type Mode = 'interrogate' | 'compare';
 type Scope = 'picked' | 'layer' | 'visible';
 
 const MODES: readonly Mode[] = ['interrogate', 'compare'];
-const MODE_LABELS: Record<Mode, string> = { interrogate: 'Interrogate', compare: 'Compare' };
-/** What each does, in the panel's one line. */
-const MODE_LINES: Record<Mode, string> = {
-  interrogate: "Writes each seam grid's value onto blocks, from a seam model.",
-  compare: "Sets blocks beside Spry's or Deswik's numbers.",
-};
+/** Each choice's name, and the line it puts at the panel's head, from the one tool list. */
+const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('reserves', MODES);
 const SCOPES: readonly Scope[] = ['picked', 'layer', 'visible'];
 
 export function ReservesPanel() {

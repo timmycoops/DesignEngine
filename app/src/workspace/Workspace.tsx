@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from 'react';
 import {
   type DockviewApi,
   DockviewDefaultTab,
@@ -24,8 +24,10 @@ import { BlockTable } from '@/panels/BlockTablePanel';
 import { ReservesTable } from '@/panels/ReservesTablePanel';
 import { Parameters } from '@/panels/ParametersPanel';
 import { WorkflowPanel } from '@/panels/WorkflowPanel';
+import { type Dock, type PanelId, PANELS, TOOL_DOCK_WIDTH } from './panels';
 
-const components = {
+/** What each panel draws. A panel in the list with nothing to draw doesn't compile. */
+const components: Record<PanelId | 'viewport', () => ReactNode> = {
   viewport: ViewportPanel,
   layers: LayersPanel,
   properties: PropertiesPanel,
@@ -50,35 +52,7 @@ const tabComponents = {
   fixed: (props: IDockviewPanelHeaderProps) => <DockviewDefaultTab {...props} hideClose />,
 };
 
-export type PanelId = Exclude<keyof typeof components, 'viewport'>;
-
-/**
- * Where a panel opens (decision 0076): the tree on the left, a tool as a tab in the tool dock on the right, beside
- * Properties, and a table as a tab in the results dock under the view. The view keeps its room whatever is open.
- */
-export type Dock = 'left' | 'tools' | 'results';
-
-/** The tool dock's width: one width, so the view is as wide with every tool open as with one. */
-export const TOOL_DOCK_WIDTH = 400;
-
-/**
- * The panels that can be closed and reopened, a dock at a time, with the room each asks for there: a width on the left
- * and in the tool dock, and in the results dock the height a table needs, which the dock grows to when it opens.
- */
-export const PANELS: { id: PanelId; title: string; dock: Dock; size: number }[] = [
-  { id: 'layers', title: 'Layers', dock: 'left', size: 280 },
-  { id: 'properties', title: 'Properties', dock: 'tools', size: TOOL_DOCK_WIDTH },
-  { id: 'builder', title: 'Builder', dock: 'tools', size: TOOL_DOCK_WIDTH },
-  { id: 'cut', title: 'Cut solids', dock: 'tools', size: TOOL_DOCK_WIDTH },
-  { id: 'reserves', title: 'Reserves', dock: 'tools', size: TOOL_DOCK_WIDTH },
-  { id: 'workflow', title: 'Workflow', dock: 'tools', size: TOOL_DOCK_WIDTH },
-  { id: 'runlog', title: 'Run log', dock: 'results', size: 200 },
-  { id: 'blocks', title: 'Block table', dock: 'results', size: 320 },
-  { id: 'restable', title: 'Reserves table', dock: 'results', size: 400 },
-  { id: 'params', title: 'Parameters', dock: 'results', size: 400 },
-  { id: 'canvas', title: 'Workflow canvas', dock: 'results', size: 400 },
-  { id: 'face', title: 'Face design', dock: 'results', size: 400 },
-];
+export { type Dock, type PanelId, PANELS, TOOL_DOCK_WIDTH };
 
 const dockOf = (id: string): Dock | undefined => PANELS.find((p) => p.id === id)?.dock;
 

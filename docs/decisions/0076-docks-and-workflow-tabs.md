@@ -3,8 +3,8 @@
 Status: agreed 16 November 2026. Tim picked "panel and then b" of the options put to him (fix how panels open first,
 then the workflow tabs), and agreed the six decisions on the Build Plan's "UI improvements plan" tab as recommended
 ("Agree all 6"). It takes over the open parts of the UI plan tab and replaces 0051's one toolbar row. 0051's minimised
-strips and the ` key stay. Built as seven workstreams, a PR each. Workstreams 1, the docks, 2, the view bar, and 3,
-compact heads, are built.
+strips and the ` key stay. Built as seven workstreams, a PR each. Workstreams 1, the docks, 2, the view bar, 3,
+compact heads, and 4, the one tool list, are built.
 
 ## Why
 
@@ -174,6 +174,42 @@ above and five for the heads.
 
 `--select` (29 of 29), `--section-guide` (11 of 11), `--workflow` (43 of 43) and `--dataflow` (21 of 21) still pass;
 `--builder` and `--cut` run with no failed check.
+
+## Built: workstream 4, one tool list
+
+- **Every tool is listed once**, in `app/src/tools.ts`: 64 tools, each in one stage (Project 12, Strings 12, Walls 5,
+  Solids 15, Geology 4, Reserves 6, and 10 that are always there). A tool has a name, a line saying what it does, and
+  what it does: a panel it opens (set to one of what the panel does, where it does several) or an action App carries
+  out. It may name its engine command, its keys, its icon, what it needs before it can be used (something to undo,
+  something selected), its place in a menu, and that it can add a step to a workflow.
+- **The toolbar is drawn from it.** The project menu, Save, Undo and Redo, the Import and Export menus with their
+  rules, headings and the Solids menu within, the row of panels, and the Panels menu all read the list
+  (`app/src/workspace/ToolMenu.tsx`). App holds one table of actions, a line a tool; an action in the list with nothing
+  in the table doesn't compile, nor does an icon with no picture or a panel with nothing to draw.
+- **The canvas's tools come from it**: the tools that add a step, as the list has them.
+- **Cut solids' and Reserves' choices take their names and their head lines from it**, so a row of tools, a panel's
+  choice and the line at its head say the same thing.
+- **The panel list is on its own** (`app/src/workspace/panels.ts`), free of React, for the list and the tests.
+- **No change to the look.** The toolbar needs the same 1,280 px and reads the same, button for button and item for
+  item. Every menu item now has a tip; some had none.
+- The stages are as agreed (decision 1), with each tool in one: Relink geology is in Geology, and the Import and Export
+  menus gather their tools from every stage. Today's one row is named in the list (`ONE_ROW`) until workstream 5 draws
+  a row a stage.
+- **Repair** is in the list, and App can carry it out (every closed mesh kept as a surface for not being a solid, into
+  the repair dialog), but nothing on screen asks for it until the Solids row does.
+
+`pnpm test` passes 76, nine of them new (`app/tests/tools.test.mjs`): every tool once and in one stage; every tool
+opens a panel in the panel list or names an action; every command a tool names is one the engine has, read from
+`const NAME` in `crates/zd-commands`; every panel has one tool that opens it, under its own name; the menus top to
+bottom as they were; the canvas's tools as the list has them.
+
+Release app, 16 November 2026: `--shell` passes 41 of 41, three new (the toolbar's buttons in order, eleven of them
+from the list; the Export menu, with what needs a selection off without one; the Panels menu). `--select` (29 of 29),
+`--section-guide` (11 of 11), `--workflow` (43 of 43, which adds steps from the canvas's tools) and `--dataflow`
+(21 of 21) still pass; `--builder` and `--cut` run with no failed check.
+
+Not in the list yet: the view bar's tools, which Find a command will want, and the tools inside panels that aren't
+choices (Block table's Select shown, the Layers tree's commands).
 
 ## Known limits
 
