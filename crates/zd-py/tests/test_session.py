@@ -165,12 +165,26 @@ def several_strings_are_one_run():
     assert [s.object(toe)["points"][0][2] for toe in toes] == [100.0, 101.0, 102.0], "one undo for the three"
 
 
+def pieces_are_joined_into_one():
+    """Decision 0078, workstream 3: three pieces of a toe given as `strings` are joined end to end into the first, a
+    3-4-5 gap bridged and said as 5 m, in one run."""
+    s = zd.Session()
+    e, n = 650_000.0, 7_450_000.0
+    pieces = [[[e + 10, n, 50.0], [e + 20, n, 50.0]], [[e + 10, n, 50.0], [e, n, 50.0]], [[e + 23, n + 4, 50.0], [e + 40, n + 4, 50.0]]]
+    ids = [s.run("string.create", name=f"Piece {k + 1}", layer="pieces", points=points)["outputs"][0]["id"] for k, points in enumerate(pieces)]
+    record = s.run("string.join", strings=ids)
+    assert record["messages"][0] == "joined 3 strings into 'Piece 1': 5 vertices; 1 join met, 1 gap bridged, 5.000 m in all", record["messages"]
+    assert [p[0] - e for p in s.object(ids[0])["points"]] == [0.0, 10.0, 20.0, 23.0, 40.0]
+    assert sum(1 for o in record["outputs"] if o["change"] == "deleted") == 2
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         original = a_project_is_made_saved_and_opened(tmp)
         the_gate_open_list_run_read(tmp, original)
     a_workflow_is_captured_and_run_again()
     several_strings_are_one_run()
+    pieces_are_joined_into_one()
     print(f"zd {zd.__version__}: open, list, run and read the log all pass")
 
 

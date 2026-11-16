@@ -12,11 +12,11 @@ import { useWorkspace } from '@/workspace/context';
 /**
  * Strings (decision 0076, workstream 7): the commands on a string, out of Properties and onto the kit. Each tool on the
  * Strings tab opens this panel set to it. A tool works on every string picked, as one run and one undo (decision 0078):
- * offset, grade, RL, drape, smooth, filter, reverse and close. Split and Join work on one string, the last picked, and
- * Number across, Polygons from lines, Project and Surface between strings on several as they did. Vertex numbers are as
- * Properties lists them, from 1, and are for one string. Grade, RL, drape, split, smooth, filter, reverse and close
- * write a new revision of each string; offset, polygons and project make new objects; join takes the other string into
- * this one. Ramp from a start places a ramp's polygon by two clicks in the view, along the string picked last or
+ * offset, grade, RL, drape, smooth, filter, reverse and close. Split works on one string, the last picked. Join joins
+ * the open strings picked end to end into the one picked last, which keeps its name and the way it runs; the others
+ * are deleted. Number across, Polygons from lines, Project and Surface between strings work on several as they did.
+ * Vertex numbers are as Properties lists them, from 1, and are for one string. Grade, RL, drape, split, smooth, filter,
+ * reverse and close write a new revision of each string; offset, polygons and project make new objects. Ramp from a start places a ramp's polygon by two clicks in the view, along the string picked last or
  * straight, and Move it places the last one again.
  */
 
@@ -27,8 +27,8 @@ const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines'
 /** Each tool's name, and the line it puts at the panel's head, from the one tool list. */
 const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('strings', MODES);
 
-/** The tools that work on one string, the last picked: they work at a vertex, or on a string and one other. */
-const ONE_STRING: readonly Mode[] = ['split', 'join'];
+/** The tools that work on one string, the last picked: they work at a vertex. */
+const ONE_STRING: readonly Mode[] = ['split'];
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 /** The first three names and how many more, for under a count. */
@@ -83,7 +83,6 @@ export function StringsPanel() {
   /** What the last Project made, until the project's summary has it. */
   const [made, setMade] = useState<string[]>([]);
   const [splitAt, setSplitAt] = useState<number | null>(null);
-  const [joinWith, setJoinWith] = useState<string | null>(null);
   const [spacing, setSpacing] = useState(5);
   const [closeOrOpen, setCloseOrOpen] = useState<'close' | 'open'>('close');
   const [tolerance, setTolerance] = useState<number | null>(null);
@@ -121,8 +120,13 @@ export function StringsPanel() {
   }, [made, summary, setSelection]);
   /** What Project projects: every string picked. */
   const toProject = picked.length > 0 ? picked : string ? [string] : [];
-  const others = string ? strings.filter((o) => o.id !== string.id && !o.closed) : [];
-  const partner = others.find((o) => o.id === joinWith) ?? others[0] ?? null;
+  /** What Join joins end to end: the strings picked, the one picked last first, since it keeps the result. */
+  const toJoin = string && on.some((o) => o.id === string.id) ? [string, ...on.filter((o) => o.id !== string.id)] : on;
+  const closedToJoin = toJoin.filter((o) => o.closed).length;
+  const joinPieces = async () => {
+    const outcome = await runIt('string.join', { strings: toJoin.map((o) => o.id) });
+    if (outcome.record) setSelection([toJoin[0].id]);
+  };
 
   const runIt = async (command: string, params: Record<string, unknown>) => {
     setBusy(true);
@@ -220,7 +224,12 @@ export function StringsPanel() {
       case 'split':
         return { label: `Split ${one}`, run: () => runIt('string.split', { string: id, at: Math.round(splitAt ?? 1) - 1 }), ready: !!string && splitAt !== null && Number.isInteger(splitAt) };
       case 'join':
-        return { label: `Join ${partner?.name ?? 'a string'} onto ${one}`, run: () => runIt('string.join', { string: id, other: partner?.id }), ready: !!string && !string.closed && !!partner };
+        return {
+          label: toJoin.length > 1 ? `Join ${toJoin.length} strings into one` : 'Join the strings picked',
+          run: joinPieces,
+          ready: toJoin.length > 1 && closedToJoin === 0,
+          title: 'The nearest ends are joined first, then the next nearest. Ends that meet share a vertex; a gap is bridged by a segment and said with its size',
+        };
       case 'smooth':
         return { label: `Smooth ${what}`, run: () => runIt('string.smooth', { strings: ids, spacing }), ready: some };
       case 'filter':
@@ -254,7 +263,7 @@ export function StringsPanel() {
     run: does.run,
   };
 
-  const several = mode === 'number_across' || mode === 'polygons_from_lines' || mode === 'project' || mode === 'surface_between';
+  const several = mode === 'number_across' || mode === 'polygons_from_lines' || mode === 'project' || mode === 'surface_between' || mode === 'join';
   return (
     <ToolPanel title="Strings" panel="strings" summary={MODE_LINES[mode]} result={report} action={action}>
       <ToolSection>
@@ -301,6 +310,28 @@ export function StringsPanel() {
           <Field label="Project" hint={toProject.length > 0 ? 'Every string picked, each on its own, in one run' : 'Pick the strings in the view or the tree: by a box, or with Ctrl held'}>
             <span data-slot="strings-on" className={toProject.length > 0 ? undefined : 'text-muted-foreground'}>
               {toProject.length === 1 ? toProject[0].name : toProject.length > 0 ? plural(toProject.length, 'string') : 'No string picked'}
+            </span>
+          </Field>
+        ) : mode === 'join' ? (
+          <Field
+            label="Join"
+            hint={
+              toJoin.length < 2
+                ? 'Pick two open strings or more, by a box or with Ctrl held: the pieces of a toe, say'
+                : closedToJoin > 0
+                  ? `${closedToJoin} of them ${closedToJoin === 1 ? 'is' : 'are'} closed, with no ends to join: open ${closedToJoin === 1 ? 'it' : 'them'} first, or leave ${closedToJoin === 1 ? 'it' : 'them'} out`
+                  : `End to end into ${toJoin[0].name}, the one picked last: it keeps its name and the way it runs, and the others are deleted`
+            }
+          >
+            <span className="flex min-w-0 flex-col">
+              <span data-slot="strings-on" className={toJoin.length > 1 ? undefined : 'text-muted-foreground'}>
+                {toJoin.length > 1 ? plural(toJoin.length, 'string') : toJoin.length === 1 ? `${toJoin[0].name}, and one more to pick` : 'No string picked'}
+              </span>
+              {toJoin.length > 1 && (
+                <span data-slot="strings-on-names" className="truncate text-muted-foreground" title={toJoin.map((o) => o.name).join(', ')}>
+                  {firstNames(toJoin.map((o) => o.name))}
+                </span>
+              )}
             </span>
           </Field>
         ) : ONE_STRING.includes(mode) ? (
@@ -495,26 +526,6 @@ export function StringsPanel() {
         <ToolSection title="Settings">
           <Field label="At vertex" hint="Split here; a closed string opens here">
             <NumberOrBlank value={splitAt} onChange={setSplitAt} label="Vertex to split at" range={{ min: 1 }} blank="" />
-          </Field>
-        </ToolSection>
-      )}
-
-      {mode === 'join' && (
-        <ToolSection title="Settings">
-          <Field label="Join on" hint="Joined at the nearest ends; that string is deleted, and undo brings it back">
-            {string?.closed ? (
-              <span className="text-muted-foreground">Open the string first</span>
-            ) : others.length === 0 ? (
-              <span className="text-muted-foreground">No other open string</span>
-            ) : (
-              <Select value={partner?.id ?? ''} aria-label="String to join on" onChange={(e) => setJoinWith(e.target.value)}>
-                {others.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.name}
-                  </option>
-                ))}
-              </Select>
-            )}
           </Field>
         </ToolSection>
       )}

@@ -80,7 +80,7 @@ the vertex table shows the grade to the next vertex.
 | Command | What it does |
 |---|---|
 | `string.split` | an open string split at an inner vertex: it keeps the first part, the second becomes a new string on its layer; a closed string opens at that vertex instead |
-| `string.join` | another open string joined on at the nearest ends (in plan), in this string's direction; this string keeps the result and the other is deleted (undo restores it); ends that do not meet are bridged by a segment and the gap is reported |
+| `string.join` | another open string joined on at the nearest ends (in plan), in this string's direction; this string keeps the result and the other is deleted (undo restores it); ends that do not meet are bridged by a segment and the gap is reported. Given several as `strings`, they are joined end to end into the first (decision 0078) |
 | `string.smooth` | a centripetal Catmull-Rom curve through every vertex, which neither loops nor cusps, resampled so no plan step exceeds a spacing (5 m by default); the original vertices stay exactly and elevations follow the curve |
 | `string.filter` | Douglas-Peucker in 3D: vertices within a tolerance of the line through their kept neighbours go, so a filtered grade stays a grade; the ends of an open string stay, a closed string keeps its first vertex and the one farthest from it |
 
