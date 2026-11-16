@@ -19,6 +19,7 @@ mod halfspace;
 mod orient;
 mod polygons;
 mod project;
+mod ramp;
 mod ray;
 mod repair;
 mod reserves;
@@ -60,6 +61,7 @@ pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_no
 pub use face::{EditReport, Face, FaceBench, FaceEdit, FaceStep, FaceTarget, JoinBoxes, JoinNote, MetBoxes, RegisterLog, TooClose, StepReport, WallToCome, at_line_heights, conditioned_toe, level_floor, project_edited_face, project_face, register_toe, run_on};
 pub use reserves::{Composite, EVERY_RL, NodeColumn, Sample, Variable, cells_in_solid, column_volume, column_volume_within, columns_in_solid, composite, horizon_samples, in_situ_rd, mid_seam_cells, mid_seam_cells_within, thickness_between};
 pub use project::{ProjectTo, ProjectedString, project_string};
+pub use ramp::{RampPolygon, RampShort, RampTo, ramp_polygon};
 pub use road::{FaceRamp, FaceRoad, NoRoad, RoadTop};
 pub use sheet::{Across, sheet_between, sheets_as_one, strings_across};
 pub use wall::{ConditionLog, Stretch, WallLog, WallStep, next_toe, project_wall, project_wall_by_edge};

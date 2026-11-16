@@ -88,6 +88,7 @@ codes! {
     RampTopOffLine = "ramp.top_off_line", "A road's top away from the line it carries on from";
     RampStartsAfresh = "ramp.starts_afresh", "A road carried on that isn't on the first wall, starting afresh";
     RampEnds = "ramp.ends", "A road ended on a line, as asked";
+    RampShortOfTarget = "ramp.short_of_target", "A ramp placed from a start that ended before the RL or surface it runs to";
     JoinOnePad = "join.one_pad", "Switchbacks whose boxes are made one pad";
     JoinNothing = "join.nothing", "Join set on a berm with nothing to join";
     LineEdited = "line.edited", "A line redrawn by hand, and what stands on it";

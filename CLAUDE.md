@@ -174,6 +174,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   from there in a design run from that crest, with no entrance; a crest a run made keeps its heights as a line, so two
   designs give one design's face (`docs/decisions/0041-roads-carry-on.md`). It reports
   the bench where the grade can't be met instead of drifting (`docs/decisions/0028-ramps.md`, `0030-ramp-strings.md`).
+  By hand, a ramp is placed from a start as its polygon (`string.ramp_polygon`, Ramp on the Walls row): its inside edge
+  along a line picked or straight the way clicked, at a width and grade, to an RL, a grid or a surface, which says
+  whether it climbs or falls; the polygon and nothing else, and placed again it has moved
+  (`docs/decisions/0079-project-ramps-by-hand-and-measure.md`).
 - Every object has a stable id (128-bit, generated in-house), a name, a layer, and provenance (the command
   run that made it). Edits write a new revision of the same object; earlier revisions stay for undo
   (see `docs/decisions/0004-phase1-foundations.md`). A project is one `<name>.zdp` file; older `<name>.zdproj/` folders still open and save as a `.zdp` beside them (`docs/decisions/0058-one-file-a-project.md`).

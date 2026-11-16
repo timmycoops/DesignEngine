@@ -1197,6 +1197,8 @@ export interface BenchConfig {
   measure: boolean;
   /** With `--ramp`, a ramp made by hand from the Walls row: Set grade, Offset, Project and a surface between the strings (decision 0079). */
   ramp: boolean;
+  /** With `--ramp-start`, Ramp from a start driven as Tim would: placed, moved, undone, and to a surface (decision 0079). */
+  ramp_start: boolean;
   /** With `--cut`, the Cut solids panel driven as Tim would: a pit between two surfaces, sliced into strips, cut at an RL (decision 0049). */
   cut: boolean;
   /** With `--section-guide`, the dashed line from a section's first point to the cursor, on a made-up topography. */
