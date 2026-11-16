@@ -74,7 +74,8 @@ export type ToolIcon =
   | 'plan'
   | 'zoom-selection'
   | 'zoom-all'
-  | 'section';
+  | 'section'
+  | 'measure';
 
 /** What App carries out itself: files, undo, the seam model, the layout. */
 export type ToolAction =
@@ -112,7 +113,8 @@ export type ToolAction =
   | 'view.plan'
   | 'view.zoom_selection'
   | 'view.zoom_all'
-  | 'view.section';
+  | 'view.section'
+  | 'view.measure';
 
 /** What a tool needs before it can be used: something to undo, or something of a kind selected. It's off without it. */
 export type ToolNeeds = 'undo' | 'redo' | 'selected-dxf' | 'selected-strings' | 'selected-solids';
@@ -255,6 +257,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'view.zoom_selection', stage: 'always', label: "Zoom to what's selected", tip: "From the way you're looking", icon: 'zoom-selection', shortcut: 'F', action: 'view.zoom_selection' },
   { key: 'view.zoom_all', stage: 'always', label: 'Zoom to everything', tip: 'The whole project in the view', icon: 'zoom-all', shortcut: 'E', action: 'view.zoom_all' },
   { key: 'view.section', stage: 'always', label: 'Section', tip: 'Pick two points for a true vertical slice, or close the one open', icon: 'section', shortcut: '2', action: 'view.section' },
+  { key: 'view.measure', stage: 'always', label: 'Measure distance', tip: 'The distance, RL difference, grade and bearing between clicks; click on for a running total', icon: 'measure', shortcut: 'M', action: 'view.measure' },
 ];
 
 export const toolByKey = (key: string): Tool | undefined => TOOLS.find((t) => t.key === key);

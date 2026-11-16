@@ -1,7 +1,7 @@
 # 0079 — Project a string, ramps from polylines, and a distance measure
 
 Status: agreed 16 November 2026 (Tim, on the plan and its seven decisions as picked: "Yes, go ahead"). Three pieces,
-a PR each. Project is built here; Measure and the surface between strings follow, and are written up here as they land.
+a PR each. Project and Measure are built here; the surface between strings follows, and is written up here as it lands.
 
 ## Why
 
@@ -109,6 +109,39 @@ of 18:
 - **A refusal:** up to RL 90 from RL 140 is refused, naming all three, and makes nothing; going down it runs, 50 m
   further out at RL 90. One undo takes that run back.
 
+## Built: Measure
+
+A view tool, so it's on the view bar (0076) beside Draw, with the M key, and in Find a command as Measure distance. It
+is a mode of the view like Draw and Section, and makes no object and runs no command: there's nothing to undo or log.
+
+- **Clicks snap as Draw's do:** to string vertices and segments, then surfaces, then the working plane; on an open
+  section, to the cut. The points show as handles with a line through them.
+- **The leg to the cursor reads out beside it** as the cursor moves: plan distance, slope distance, RL difference, grade
+  and bearing.
+- **Each click writes the leg to the status line** in full: `plan 500.00 m · slope 502.49 m · RL +50.00 m · 10.0 % up
+  (1 in 10.0, 5.7°) · bearing 036.9°`. From the third point on it adds the total over the legs, in plan and on the
+  slope, and the RL difference from the first point to the last.
+- **Backspace takes the last point off, Esc clears, M or the button ends.**
+- **The numbers come from the points' world coordinates as the engine gave them** (f64 eastings, northings and RLs),
+  never from what the screen draws (engine rule 2). Grade is rise over plan distance, up positive; a leg straight up or
+  down is `vertical`, and one within a hundredth of a per cent is `level`. Bearing is the grid bearing, clockwise from
+  north, three figures and a tenth.
+
+Known answers (`app/tests/measure.test.mjs`): a 3-4-5 leg of 500 m in plan rising 50 m is 502.494 m on the slope at
+10 %, 1 in 10, on a bearing of atan(3/4), to 1e-9; a millimetre apart at mine grid eastings and northings reads a
+millimetre; bearings north, east, south, west and north-west read 0, 90, 180, 270 and 315; just west of north rounds to
+000.0° and not 360.0°; three legs along a bench, up a ramp and back add to 500 m in plan and RL +10.
+
+The app's own check (`zd-app --bench --measure`), by the M key, the bar's button and clicks in the view, 13 of 13: a
+string from one corner of a 3-4-5 triangle to the other, 50 m higher, its two ends clicked, reads the leg above exactly,
+from the points as the engine has them; moving on reads a leg out beside the cursor; a click on gives the total over two
+legs; Backspace, Esc and M do what they say; and no object is made. The select (29) and Project (18) checks pass on the
+same build.
+
+The shell check (`--shell`) doesn't pass every run on this machine, with or without this work: 53 of 53 and 52 of 53 on
+two runs of this branch, 51 of 53 on main at bf6ddb3, a different check failing each time (the panels' sizes after the
+` key, a tool's tip). It needs looking at on its own.
+
 ## What this leaves
 
 - **Rules** for the batter (by azimuth, inside a polygon or solid, by horizon): a number for now, as the Builder's.
@@ -116,4 +149,5 @@ of 18:
   solid.
 - **Cleaning the line first.** A string goes as it's drawn. One with a vertex at every triangle it was draped across is
   fine where those lie on straight runs in plan; one that wanders needs Filter first, as a profile's condition does.
-- **Measure, and the surface between strings:** the next two PRs.
+- **Measure:** a dimension left in the view, angles between legs, and areas.
+- **The surface between strings:** the next PR.

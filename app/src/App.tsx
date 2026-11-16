@@ -891,6 +891,8 @@ export default function App() {
       text:
         next === 'section'
           ? 'Section: pick the first point'
+          : next === 'measure'
+            ? 'Measure: click two points for the distance, RL difference, grade and bearing between them; click on for a running total. Backspace takes a point off, Esc clears, M ends'
           : next === 'draw'
             ? 'Draw: click on a surface to add vertices; Enter or double-click finishes, Backspace removes the last, Esc abandons'
             : 'Select: click a string, drag its handles; Alt+click inserts a vertex, Delete removes the one under the cursor',
@@ -910,6 +912,9 @@ export default function App() {
     if (sectionOpen) return closeSection();
     setMode(mode === 'section' ? 'select' : 'section');
   };
+
+  /** Measure (M, or the view bar): starts measuring between clicks, or ends it. */
+  const toggleMeasure = () => setMode(mode === 'measure' ? 'select' : 'measure');
 
   const stepSection = (direction: number) => {
     const distance = Number(sectionStep);
@@ -942,6 +947,10 @@ export default function App() {
       if (e.key === '2' && plain) {
         e.preventDefault();
         return toggleSection();
+      }
+      if (e.key.toLowerCase() === 'm' && plain && !e.shiftKey) {
+        e.preventDefault();
+        return toggleMeasure();
       }
       if (e.key.toLowerCase() === 'e' && plain && !e.shiftKey) {
         e.preventDefault();
@@ -1166,6 +1175,7 @@ export default function App() {
     'view.zoom_selection': zoomToSelection,
     'view.zoom_all': zoomToExtents,
     'view.section': toggleSection,
+    'view.measure': toggleMeasure,
   };
   const toolCounts: Record<ToolNeeds, number> = {
     undo: summary?.can_undo ? 1 : 0,

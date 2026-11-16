@@ -26,9 +26,10 @@ import type { Layer, ProjectSummary, SnapHit, Vec3 } from '../bridge';
 import { type DesignLine, designLineMessage, lineToPick, type NearLine } from './designLines';
 import { colourOf, SELECTED } from './load';
 import { PointMark } from './markers';
+import { legBetween, legLabel, measureWords } from './measure';
 import type { Viewport } from './Viewport';
 
-export type Mode = 'select' | 'draw' | 'section';
+export type Mode = 'select' | 'draw' | 'section' | 'measure';
 
 export interface StringActions {
   /** Runs an engine command; resolves true if it succeeded. */
@@ -553,6 +554,7 @@ export class StringLayer {
     const hit = await this.snapAt(at.x, at.y);
     this.hoverInFlight = false;
     if (this.mode !== 'select' || this.wanted) this.showSnap(hit, at);
+    if (!this.wanted && this.mode === 'measure' && this.pending.length > 0 && hit) this.showMeasure(hit, at);
     if (this.wanted && this.trail.length > 0 && hit) this.showPreview([...this.trail, new THREE.Vector3(...hit.local)]);
     if (!this.wanted && this.mode === 'section' && this.pending.length === 1 && hit) this.aimSectionGuide(this.pending[0].local, hit.local);
     void this.pumpHover();
@@ -600,6 +602,29 @@ export class StringLayer {
     const material = this.sectionGuide.material as THREE.LineDashedMaterial;
     material.dashSize = pixel * SECTION_DASH_PX;
     material.gapSize = pixel * SECTION_GAP_PX;
+  }
+
+  /**
+   * Measuring, with a point down: the line through the points to where the cursor lands, and that last leg read out
+   * beside the cursor, from the points' world coordinates.
+   */
+  private showMeasure(hit: SnapHit, at: { x: number; y: number }): void {
+    const last = this.pending[this.pending.length - 1];
+    this.showPreview([...this.pending.map((h) => new THREE.Vector3(...h.local)), new THREE.Vector3(...hit.local)]);
+    const box = this.viewport.renderer.domElement.getBoundingClientRect();
+    this.snapLabel.textContent = legLabel(legBetween(last.world, hit.world));
+    this.snapLabel.style.transform = `translate(${at.x - box.left + 14}px, ${at.y - box.top + 14}px)`;
+    this.snapLabel.hidden = false;
+  }
+
+  /** The points measured between so far, in world coordinates. For the bench. */
+  get measured(): Vec3[] {
+    return this.mode === 'measure' ? this.pending.map((h) => h.world) : [];
+  }
+
+  /** What the label beside the cursor says, or null while it's hidden. For the bench. */
+  get cursorLabel(): string | null {
+    return this.snapLabel.hidden ? null : this.snapLabel.textContent;
   }
 
   private showSnap(hit: SnapHit | null, at: { x: number; y: number }): void {
@@ -684,6 +709,16 @@ export class StringLayer {
       if (a.world[0] === b.world[0] && a.world[1] === b.world[1]) return this.actions.status('Section: those are the same point in plan; pick the first point again');
       return this.actions.section(a.world, b.world);
     }
+    if (this.mode === 'measure') {
+      const hit = await this.snapAt(e.clientX, e.clientY);
+      if (!hit) return this.actions.status('No point there: tilt the view down or use plan view');
+      // A double-click lands two clicks on one spot: the second adds nothing.
+      const last = this.pending[this.pending.length - 1];
+      if (!last || last.world.some((c, i) => c !== hit.world[i])) this.pending.push(hit);
+      this.refreshPreview();
+      this.placeHandles();
+      return this.actions.status(measureWords(this.pending.map((h) => h.world)));
+    }
     if (this.mode === 'draw') {
       const hit = await this.snapAt(e.clientX, e.clientY);
       if (!hit) return this.actions.status('No point there: the view looks along the working plane; tilt it down or use plan view');
@@ -726,12 +761,13 @@ export class StringLayer {
         this.pending = [];
         this.refreshPreview();
         this.placeHandles();
-        this.actions.status(this.mode === 'section' ? 'Section: pick the first point' : 'String abandoned');
+        this.actions.status(this.mode === 'section' ? 'Section: pick the first point' : this.mode === 'measure' ? measureWords([]) : 'String abandoned');
       }
       if (e.key === 'Backspace' && this.pending.length > 0) {
         this.pending.pop();
         this.refreshPreview();
         this.placeHandles();
+        if (this.mode === 'measure') this.actions.status(measureWords(this.pending.map((h) => h.world)));
       }
       return;
     }
