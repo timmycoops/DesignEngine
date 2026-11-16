@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
-import { ALWAYS_ROW, choiceTool, choiceWords, inUse, menuTools, menuWords, panelTool, rowName, ROWS, rowTools, STAGES, stageTools, stepTools, tipOf, toolByKey, TOOLS } from '../src/tools.ts';
+import { ALWAYS_ROW, choiceTool, choiceWords, findGroups, findScore, findWords, inUse, menuTools, menuWords, panelTool, rowName, ROWS, rowTools, STAGES, stageTools, stepTools, tipOf, toolByKey, TOOLS } from '../src/tools.ts';
 import { rememberStage, stageOf } from '../src/workspace/stage.ts';
 import { PANELS } from '../src/workspace/panels.ts';
 import { CANVAS_TOOLS } from '../src/panels/workflowTools.ts';
@@ -198,7 +198,7 @@ test('a menu item says how many it would take, past one', () => {
 
 test("a panel's choices take their names and their lines from the list", () => {
   const cut = choiceWords('cut', ['strips', 'seams', 'benches', 'polygons', 'cut', 'between']);
-  assert.deepEqual(Object.values(cut.labels), ['Into strips', 'By seams', 'By benches', 'By polygons', 'By a surface', 'Between surfaces']);
+  assert.deepEqual(Object.values(cut.labels), ['Strips by faces', 'By seams', 'By benches', 'By blocks', 'By surface or RL', 'Between surfaces']);
   assert.equal(cut.lines.seams, "Cuts solids by the seam model's horizons, in one run.");
   const reserves = choiceWords('reserves', ['interrogate', 'compare']);
   assert.deepEqual(Object.values(reserves.labels), ['Interrogate', 'Compare']);
@@ -208,16 +208,56 @@ test("a panel's choices take their names and their lines from the list", () => {
   assert.throws(() => choiceTool('cut', 'nothing'));
 });
 
+test('Find a command lists every tool once, under its own name, a stage at a time', () => {
+  const groups = findGroups();
+  assert.deepEqual(groups.map((g) => g.title), ['Project', 'Strings', 'Walls', 'Solids', 'Geology', 'Reserves', 'Always there']);
+  const keys = groups.flatMap((g) => g.tools.map((t) => t.key));
+  assert.deepEqual([...keys].sort(), TOOLS.map((t) => t.key).sort());
+  // A tool is found and picked by its name, so no two tools share one.
+  const names = TOOLS.map((t) => t.label.toLowerCase());
+  assert.deepEqual(names.filter((n, k) => names.indexOf(n) !== k), []);
+  const words = findWords(toolByKey('cut:polygons'));
+  assert.ok(words.includes('Solids') && words.includes('solid.cut_by_polygons') && words.some((w) => w.includes('polygons')));
+  assert.ok(findWords(toolByKey('import.solids')).includes('A zip or files…'));
+  assert.ok(findWords(toolByKey('workflow')).includes('Always there'));
+  // The view's tools are in the list for it, each with its key.
+  assert.deepEqual(TOOLS.filter((t) => t.key.startsWith('view.')).map((t) => `${t.label} ${t.shortcut ?? ''}`.trim()), ['Select', 'Draw string', 'Snap S', 'Plan or 3D T', "Zoom to what's selected F", 'Zoom to everything E', 'Section 2']);
+});
+
+test('Find a command matches whole words typed, a name first, then a stage or command, then what a tool does', () => {
+  const found = (typed) =>
+    TOOLS.map((t) => [t.key, findScore(t, typed)])
+      .filter(([, score]) => score > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([key]) => key);
+  assert.deepEqual(found('seams'), ['cut:seams']);
+  assert.equal(found('seam')[0], 'cut:seams');
+  assert.ok(['import.vulcan_grid', 'seam.build', 'reserves:interrogate'].every((key) => found('seam').includes(key)));
+  assert.deepEqual(found('polygons'), ['string.polygons_from_lines', 'cut:polygons']);
+  assert.deepEqual(found('solid.cut_by_benches'), ['cut:benches']);
+  // Both take the solids selected: to a zip, a DXF each, and with everything else selected into one DXF.
+  assert.deepEqual(found('selected solids'), ['export.selected_solids', 'export.selected_dxf']);
+  assert.equal(found('plan or 3d')[0], 'view.plan');
+  assert.equal(found('PLAN')[0], 'view.plan', 'capitals or not');
+  assert.ok(['import.vulcan_grid', 'seam.suggest', 'seam.build', 'seam.relink'].every((key) => found('geology').includes(key)));
+  assert.equal(found('geology')[0], 'seam.relink', 'a name before a stage');
+  assert.deepEqual(found('ctrl+s'), ['project.save']);
+  assert.deepEqual(found('no such tool'), []);
+  assert.equal(found('').length, TOOLS.length, 'nothing typed: every tool');
+  // Nothing from scattered letters: "spry" is Spry, not strip or every tool with those letters somewhere.
+  assert.ok(found('spry').every((key) => ['import.spry', 'reserves', 'reserves:compare'].includes(key)), found('spry').join());
+});
+
 test('the canvas lists the tools that add a step, as the list has them', () => {
   assert.deepEqual(CANVAS_TOOLS.map((t) => t.key), stepTools().map((t) => t.key));
   assert.deepEqual(CANVAS_TOOLS.map((t) => `${t.group}: ${t.label}`), [
     'Builder: Build a step',
     'Cut solids: Between surfaces',
-    'Cut solids: Into strips',
-    'Cut solids: By a surface',
+    'Cut solids: Strips by faces',
+    'Cut solids: By surface or RL',
     'Cut solids: By seams',
     'Cut solids: By benches',
-    'Cut solids: By polygons',
+    'Cut solids: By blocks',
     'Reserves: Interrogate',
   ]);
   for (const tool of stepTools()) assert.ok(tool.command && tool.panel && tool.step.takes, tool.key);

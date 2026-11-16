@@ -51,7 +51,7 @@ export interface Workspace {
   rlShown: RlShown;
   /** Brings a tool panel to the front, opening it where it belongs if it's closed. */
   openPanel: (id: PanelId) => void;
-  /** The same, and asks the panel to show one of what it does (Cut solids' By polygons, say), as a tool dropped on the canvas does. */
+  /** The same, and asks the panel to show one of what it does (Cut solids' By blocks, say), as a tool dropped on the canvas does. */
   openTool: (id: PanelId, mode?: string) => void;
   /** The last ask to a panel to show one of what it does; `n` counts asks, so asking the same again shows it again. */
   toolAsk: { panel: PanelId; mode?: string; n: number } | null;

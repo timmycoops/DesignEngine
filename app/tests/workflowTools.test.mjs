@@ -34,8 +34,8 @@ test('the canvas says where the step goes and what is picked', () => {
   const cut = toolByKey('cut:polygons');
   assert.equal(cut.panel, 'cut');
   assert.equal(cut.mode, 'polygons');
-  assert.equal(dropWords(flow, 'Toe to blocks', cut, 1, 2), "Set up By polygons in Cut solids, then Add to Toe to blocks: it goes in as step 2; what step 1 made is picked (2)");
-  assert.equal(dropWords(flow, 'Toe to blocks', cut, 3, 0), 'Set up By polygons in Cut solids, then Add to Toe to blocks: it goes in as step 4, at the end');
+  assert.equal(dropWords(flow, 'Toe to blocks', cut, 1, 2), "Set up By blocks in Cut solids, then Add to Toe to blocks: it goes in as step 2; what step 1 made is picked (2)");
+  assert.equal(dropWords(flow, 'Toe to blocks', cut, 3, 0), 'Set up By blocks in Cut solids, then Add to Toe to blocks: it goes in as step 4, at the end');
 });
 
 test('every tool is one of what a panel that adds steps does, each key once', () => {

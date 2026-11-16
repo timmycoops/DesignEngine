@@ -24,7 +24,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 | Wall offsets | Straight skeleton on wall planes in `zd-geom` (each segment's plane set by its batter, hips where planes meet); a berm is the conditioned crest moved out and registered back on the grid; no offset-then-repair (`docs/decisions/0023-wall-step.md`) |
 | Planar offsets | Clipper2 or Manifold `CrossSection` for plain 2D offsets |
 | Viewport | three.js with `WebGPURenderer` (auto WebGL2 fallback) |
-| Interface | React + TypeScript, shadcn/ui, Tailwind, dockview, TanStack Table, React Flow (`@xyflow/react`) for node graphs (`docs/decisions/0067-workflow-canvas.md`) |
+| Interface | React + TypeScript, shadcn/ui, Tailwind, dockview, TanStack Table, React Flow (`@xyflow/react`) for node graphs (`docs/decisions/0067-workflow-canvas.md`), `cmdk` for Find a command (`docs/decisions/0076-docks-and-workflow-tabs.md`) |
 | Data at rest | One `.zdp` file a project: a zip of Parquet/Arrow tables with a JSON manifest, meshes in the OMF2 layout (vertices `x, y, z` f64; triangles `a, b, c` u32, counter-clockwise about an outward normal), saved beside then swapped in (`docs/decisions/0058-one-file-a-project.md`); geology (seam grids, block models) referenced by location, never packed in; DXF/CSV/OMF only for exchange. Evaluate the `omf` Rust crate before writing our own |
 | Python | PyO3 bindings in `crates/zd-py` from Phase 1, built with maturin (reconciliation and test scripts run from Python) |
 | Package manager (JS) | pnpm |
@@ -273,8 +273,9 @@ the toolbar, its menus, the Panels menu and the workflow canvas are drawn from t
 (and its action to App's table), never as a button of its own. The ribbon (`app/src/workspace/Ribbon.tsx`) is a tab a
 stage (Project · Strings · Walls · Solids · Geology · Reserves) over the row of that stage's tools, named in words;
 the rows are `ROWS` in the tool list, a row too long folds into More, the tool in use is lit, and switching stage
-changes the row only. A new tool goes on its stage's row there. Still to build from 0076: Find a command (`cmdk`,
-agreed there) and the string tools out of Properties.
+changes the row only. A new tool goes on its stage's row there. Find a command (Ctrl+K, `FindCommand.tsx`) searches
+the list by whole words, so a tool's name and its line are what it's found by: write them in the words a planner would
+type. Still to build from 0076: the string tools out of Properties.
 
 The UI plan (the Build Plan's "UI plan" tab) keeps the app one way of working as it grows. A tool panel is made from the
 kit in `app/src/design-system/kit/`: `ToolPanel` (what it does in one line that fits the 400 px dock, with more in a tip, its sections, one button at the
