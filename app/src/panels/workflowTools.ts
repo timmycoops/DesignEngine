@@ -6,7 +6,8 @@
  * step N made". Kept free of React, so the tests can run it.
  */
 import type { Workflow, WorkflowStep } from '../bridge';
-import type { PanelId } from '../workspace/Workspace';
+import { stepTools } from '../tools.ts';
+import { type PanelId, PANELS } from '../workspace/panels.ts';
 
 export interface CanvasTool {
   /** Unique; the drag carries it. */
@@ -24,17 +25,16 @@ export interface CanvasTool {
   takes: string;
 }
 
-/** Every tool whose panel can add a step, in the order the panels show them. */
-export const CANVAS_TOOLS: readonly CanvasTool[] = [
-  { key: 'builder', group: 'Builder', label: 'Build a step', command: 'face.build_step', panel: 'builder', takes: 'the line picked' },
-  { key: 'cut:between', group: 'Cut solids', label: 'Between surfaces', command: 'solid.between_surfaces', panel: 'cut', mode: 'between', takes: 'a closed string, top and bottom' },
-  { key: 'cut:strips', group: 'Cut solids', label: 'Into strips', command: 'solid.slice_by_faces', panel: 'cut', mode: 'strips', takes: 'solids and a face a strip' },
-  { key: 'cut:cut', group: 'Cut solids', label: 'By a surface', command: 'solid.cut_by_surface', panel: 'cut', mode: 'cut', takes: 'solids and a surface, grid or RL' },
-  { key: 'cut:seams', group: 'Cut solids', label: 'By seams', command: 'solid.cut_by_seams', panel: 'cut', mode: 'seams', takes: 'solids and a seam model' },
-  { key: 'cut:benches', group: 'Cut solids', label: 'By benches', command: 'solid.cut_by_benches', panel: 'cut', mode: 'benches', takes: 'solids and bench rules' },
-  { key: 'cut:polygons', group: 'Cut solids', label: 'By polygons', command: 'solid.cut_by_polygons', panel: 'cut', mode: 'polygons', takes: 'solids and block polygons' },
-  { key: 'reserves:interrogate', group: 'Reserves', label: 'Interrogate', command: 'solid.interrogate', panel: 'reserves', mode: 'interrogate', takes: 'blocks and a seam model' },
-];
+/** Every tool whose panel can add a step, from the one tool list (decision 0076), in the order it lists them. */
+export const CANVAS_TOOLS: readonly CanvasTool[] = stepTools().map((t) => ({
+  key: t.key,
+  group: PANELS.find((p) => p.id === t.panel)?.title ?? t.panel,
+  label: t.choice ?? t.label,
+  command: t.command,
+  panel: t.panel,
+  mode: t.mode,
+  takes: t.step.takes,
+}));
 
 export const toolByKey = (key: string): CanvasTool | undefined => CANVAS_TOOLS.find((t) => t.key === key);
 

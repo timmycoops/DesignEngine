@@ -1,26 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { confirm, message, open, save } from '@tauri-apps/plugin-dialog';
 import type { DockviewApi } from 'dockview-react';
-import {
-  ChevronDown,
-  FileInput,
-  FileOutput,
-  FilePlus,
-  FolderOpen,
-  Hammer,
-  MountainSnow,
-  PanelsTopLeft,
-  Redo2,
-  Save,
-  SaveAll,
-  Sigma,
-  Slice,
-  Sheet,
-  SlidersHorizontal,
-  Table2,
-  Undo2,
-  Workflow as WorkflowIcon,
-} from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { cn } from 'cn';
 import {
   benchConfig,
@@ -66,18 +47,14 @@ import {
 } from './bridge';
 import { runChecks } from './bench/runChecks';
 import { valueBands } from './viewport/bands';
-import { lookAt, RunGoing, ShowNote, ToolButton } from './design-system/kit';
+import { lookAt, RunGoing, ShowNote } from './design-system/kit';
 import { Button } from './design-system/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from './design-system/ui/dropdown-menu';
 import { Separator } from './design-system/ui/separator';
@@ -95,6 +72,9 @@ import { typing } from './viewport/camera';
 import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Viewport';
 import { type AddingTo, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
 import { ALL_PANELS_KEY, PANELS, type PanelId, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
+import { ONE_ROW, panelTool, type Tool, type ToolAction, toolByKey, type ToolNeeds } from './tools';
+import { BarTool, ToolMenuItems, type ToolUse } from './workspace/ToolMenu';
+import { IconNamed } from './workspace/toolIcons';
 
 interface Status {
   text: string;
@@ -1125,6 +1105,56 @@ export default function App() {
   /** A file name for what's selected: its name if it's one, else the project's. */
   const selectionName = (objects: ObjectSummary[]) => (objects.length === 1 ? objects[0].name : `${projectName} selection`);
 
+  /** What App does for each tool that opens no panel (the tool list, decision 0076). One with nothing here doesn't compile. */
+  const toolActions: Record<ToolAction, () => unknown> = {
+    'project.new': onNew,
+    'project.open': () => onOpen(false),
+    'project.open_folder': () => onOpen(true),
+    'project.save': () => onSave(false),
+    'project.save_as': () => onSave(true),
+    'edit.undo': onUndo,
+    'edit.redo': onRedo,
+    'import.surfaces': onImportSurface,
+    'import.vulcan_grid': onImportVulcan,
+    'import.strings': onImportStrings,
+    'import.solids': () => onImportSolids('files', false),
+    'import.solids_folder': () => onImportSolids('folder', false),
+    'import.solids_repaired': () => onImportSolids('files', true),
+    'import.solids_folder_repaired': () => onImportSolids('folder', true),
+    'import.deswik': onImportDeswik,
+    'import.spry': onImportSpry,
+    'seam.suggest': onSuggestSeamDefinition,
+    'seam.build': onBuildSeamModel,
+    'seam.relink': () => attempt(() => relinkGeology(true)),
+    'export.selected_dxf': () => exportObjects(selectedDxf, 'dxf', selectionName(selectedDxf)),
+    'export.selected_strings': () => exportObjects(selectedStrings, 'csv', selectionName(selectedStrings)),
+    'export.selected_solids': () => askSolidsOut(selectedSolids, selectionName(selectedSolids)),
+    'export.visible_dxf': () => exportObjects(visibleObjects(DXF_KINDS), 'dxf', projectName),
+    'export.visible_strings': () => exportObjects(visibleObjects(new Set(['string'])), 'csv', projectName),
+    'export.visible_solids': () => askSolidsOut(visibleObjects(new Set(['solid'])), projectName),
+    'solids.repair': () => {
+      // Every closed mesh kept as a surface because it couldn't be a solid (decision 0040), wherever it came from.
+      const flagged = (summary?.objects ?? []).flatMap((o) => (typeof o.attributes.not_a_solid === 'string' ? [{ id: o.id, name: o.name, why: o.attributes.not_a_solid }] : []));
+      if (flagged.length > 0) setNotSolids(flagged);
+      else setStatus({ text: 'Nothing to repair: no closed mesh is kept as a surface for not being a solid.' });
+    },
+    'panels.hide': () => dockRef.current && toggleAllPanels(dockRef.current),
+    'panels.reset': () => dockRef.current && resetLayout(dockRef.current),
+  };
+  const toolCounts: Record<ToolNeeds, number> = {
+    undo: summary?.can_undo ? 1 : 0,
+    redo: summary?.can_redo ? 1 : 0,
+    'selected-dxf': selectedDxf.length,
+    'selected-strings': selectedStrings.length,
+    'selected-solids': selectedSolids.length,
+  };
+  /** Carries a tool out: its action, or its panel opened and set to it. */
+  const runTool = (tool: Tool) => {
+    if (tool.action) return void toolActions[tool.action]();
+    if (tool.panel) openTool(tool.panel, tool.mode);
+  };
+  const toolUse: ToolUse = { run: runTool, count: (needs) => toolCounts[needs] };
+
   return (
     <TooltipProvider delayDuration={400}>
       <div className="flex h-full flex-col">
@@ -1138,149 +1168,57 @@ export default function App() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              <DropdownMenuItem onSelect={onNew}>
-                <FilePlus /> New project
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onOpen(false)}>
-                <FolderOpen /> Open a project (.zdp)…
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onOpen(true)}>
-                <FolderOpen /> Open an older project folder (.zdproj)…
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => onSave(false)}>
-                <Save /> Save <DropdownMenuShortcut>Ctrl+S</DropdownMenuShortcut>
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onSave(true)}>
-                <SaveAll /> Save as…
-              </DropdownMenuItem>
+              <ToolMenuItems menu="project" use={toolUse} />
             </DropdownMenuContent>
           </DropdownMenu>
-          <ToolButton tip="Save (Ctrl+S)" onClick={() => onSave(false)}>
-            <Save />
-          </ToolButton>
-          <ToolButton tip="Undo (Ctrl+Z)" disabled={!summary?.can_undo} onClick={onUndo}>
-            <Undo2 />
-          </ToolButton>
-          <ToolButton tip="Redo (Ctrl+Y)" disabled={!summary?.can_redo} onClick={onRedo}>
-            <Redo2 />
-          </ToolButton>
+          {['project.save', 'edit.undo', 'edit.redo'].map((key) => (
+            <BarTool key={key} tool={toolByKey(key)!} use={toolUse} />
+          ))}
           <Separator orientation="vertical" className="mx-1 h-5" />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" title="Bring in surfaces, grids, strings, solids, Deswik and Spry, and build a seam model">
-                <FileInput /> Import <ChevronDown className="text-muted-foreground" />
+                <IconNamed name="import" /> Import <ChevronDown className="text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              <DropdownMenuItem title="Vulcan .00t, DXF 3DFACE or polyface, or an XYZ or CSV grid" onSelect={onImportSurface}>
-                Surfaces…
-              </DropdownMenuItem>
-              <DropdownMenuItem title="Pick a roof, floor or topography, and the grids of that name come with it" onSelect={onImportVulcan}>
-                Vulcan grid…
-              </DropdownMenuItem>
-              <DropdownMenuItem title="DXF polylines and lines, or CSV with x, y and z columns" onSelect={onImportStrings}>
-                Strings…
-              </DropdownMenuItem>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger title="Closed triangulations in Vulcan .00t or DXF files, or a zip or folder of them">Solids</DropdownMenuSubTrigger>
-                <DropdownMenuSubContent>
-                  <DropdownMenuItem onSelect={() => onImportSolids('files', false)}>A zip or files…</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => onImportSolids('folder', false)}>A folder…</DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Repaired as they come in</DropdownMenuLabel>
-                  <DropdownMenuItem title="Sheets and fins off, cracks joined, holes up to 10 % filled" onSelect={() => onImportSolids('files', true)}>
-                    A zip or files…
-                  </DropdownMenuItem>
-                  <DropdownMenuItem title="Sheets and fins off, cracks joined, holes up to 10 % filled" onSelect={() => onImportSolids('folder', true)}>
-                    A folder…
-                  </DropdownMenuItem>
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem title="Layers of a Deswik drawing: strings with their projection details, surfaces and solids" onSelect={onImportDeswik}>
-                Deswik drawing (.dcf)…
-              </DropdownMenuItem>
-              <DropdownMenuItem title="Block solids named by their node paths with Spry's values, and design-layer strings and solids" onSelect={onImportSpry}>
-                Spry project (.spry)…
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Seam model</DropdownMenuLabel>
-              <DropdownMenuItem onSelect={onSuggestSeamDefinition}>Suggest a stack definition (CSV)…</DropdownMenuItem>
-              <DropdownMenuItem onSelect={onBuildSeamModel}>Build and check from a definition…</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => attempt(() => relinkGeology(true))}>Relink geology…</DropdownMenuItem>
+              <ToolMenuItems menu="import" use={toolUse} />
             </DropdownMenuContent>
           </DropdownMenu>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm">
-                <FileOutput /> Export <ChevronDown className="text-muted-foreground" />
+                <IconNamed name="export" /> Export <ChevronDown className="text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              <DropdownMenuItem disabled={selectedDxf.length === 0} onSelect={() => exportObjects(selectedDxf, 'dxf', selectionName(selectedDxf))}>
-                Selected to DXF{selectedDxf.length > 1 ? ` (${selectedDxf.length})` : ''}…
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled={selectedStrings.length === 0} onSelect={() => exportObjects(selectedStrings, 'csv', selectionName(selectedStrings))}>
-                Selected strings to CSV{selectedStrings.length > 1 ? ` (${selectedStrings.length})` : ''}…
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled={selectedSolids.length === 0} onSelect={() => askSolidsOut(selectedSolids, selectionName(selectedSolids))}>
-                Selected solids to a zip{selectedSolids.length > 1 ? ` (${selectedSolids.length})` : ''}…
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => exportObjects(visibleObjects(DXF_KINDS), 'dxf', projectName)}>
-                Everything visible to DXF…
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => exportObjects(visibleObjects(new Set(['string'])), 'csv', projectName)}>
-                Visible strings to CSV…
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => askSolidsOut(visibleObjects(new Set(['solid'])), projectName)}>
-                Visible solids to a zip…
-              </DropdownMenuItem>
+              <ToolMenuItems menu="export" use={toolUse} />
             </DropdownMenuContent>
           </DropdownMenu>
           <Separator orientation="vertical" className="mx-1 h-5" />
-          <ToolButton tip="Face design: lines, profiles and rules, run as one" onClick={() => dockRef.current && showPanel(dockRef.current, 'face')}>
-            <MountainSnow /> Face
-          </ToolButton>
-          <ToolButton tip="Builder: pick a line, build one wall or berm from it, edit between steps" onClick={() => dockRef.current && showPanel(dockRef.current, 'builder')}>
-            <Hammer /> Builder
-          </ToolButton>
-          <ToolButton tip="Cut solids: into strips by faces, by a surface, grid or RL, or one between two surfaces" onClick={() => dockRef.current && showPanel(dockRef.current, 'cut')}>
-            <Slice /> Cut
-          </ToolButton>
-          <ToolButton tip="Reserves: interrogate blocks against a seam model, or set them beside Spry's or Deswik's numbers" onClick={() => dockRef.current && showPanel(dockRef.current, 'reserves')}>
-            <Sigma /> Reserves
-          </ToolButton>
-          <ToolButton tip="Block table: solids and their attributes to sort, filter, add up, select or delete" onClick={() => dockRef.current && showPanel(dockRef.current, 'blocks')}>
-            <Table2 /> Blocks
-          </ToolButton>
-          <ToolButton tip="Reserves table: a node's fields down the side, broken down by its children across, from Imported to Scheduled" onClick={() => dockRef.current && showPanel(dockRef.current, 'restable')}>
-            <Sheet /> Reserves table
-          </ToolButton>
-          <ToolButton tip="Parameters: parameter tables and dataflows edited as grids, a picked solid's values marked where they come from" onClick={() => dockRef.current && showPanel(dockRef.current, 'params')}>
-            <SlidersHorizontal /> Parameters
-          </ToolButton>
-          <ToolButton tip="Workflow: saved steps run again in one go, captured from the Run log or added from the tools" onClick={() => dockRef.current && showPanel(dockRef.current, 'workflow')}>
-            <WorkflowIcon /> Workflow
-          </ToolButton>
+          {ONE_ROW.map((key) => (
+            <BarTool key={key} tool={toolByKey(key)!} use={toolUse} named />
+          ))}
           <div className="ml-auto">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm">
-                  <PanelsTopLeft /> Panels <ChevronDown className="text-muted-foreground" />
+                  <IconNamed name="panels" /> Panels <ChevronDown className="text-muted-foreground" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 {PANELS.map((p) => (
-                  <DropdownMenuItem key={p.id} onSelect={() => dockRef.current && showPanel(dockRef.current, p.id)}>
-                    {p.title}
+                  <DropdownMenuItem key={p.id} data-tool={p.id} onSelect={() => runTool(panelTool(p.id))}>
+                    {panelTool(p.id).label}
                   </DropdownMenuItem>
                 ))}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => dockRef.current && toggleAllPanels(dockRef.current)}>
-                  Hide every panel, or bring them back <DropdownMenuShortcut>{ALL_PANELS_KEY}</DropdownMenuShortcut>
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => dockRef.current && resetLayout(dockRef.current)}>Reset layout</DropdownMenuItem>
+                {['panels.hide', 'panels.reset'].map((key) => (
+                  <DropdownMenuItem key={key} data-tool={key} onSelect={() => runTool(toolByKey(key)!)}>
+                    {toolByKey(key)!.label}
+                    {toolByKey(key)!.shortcut && <DropdownMenuShortcut>{toolByKey(key)!.shortcut}</DropdownMenuShortcut>}
+                  </DropdownMenuItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
