@@ -14,13 +14,14 @@ import { useWorkspace } from '@/workspace/context';
  * Strings tab opens this panel set to it. A tool works on the string picked, the last one picked where several are;
  * Number across, Polygons from lines, Project and Surface between strings work on several. Vertex numbers are as Properties lists them, from 1.
  * Grade, RL, drape, split, smooth, filter, reverse and close write a new revision of the string; offset, polygons and
- * project make new objects; join takes the other string into this one. One undo each.
+ * project make new objects; join takes the other string into this one. One undo each. Ramp from a start places a ramp's
+ * polygon by two clicks in the view, along the string picked or straight, and Move it places the last one again.
  */
 
-type Mode = 'offset' | 'number_across' | 'polygons_from_lines' | 'set_grade' | 'set_elevation' | 'drape' | 'project' | 'split' | 'join' | 'smooth' | 'filter' | 'reverse' | 'set_closed' | 'surface_between';
+type Mode = 'offset' | 'number_across' | 'polygons_from_lines' | 'set_grade' | 'set_elevation' | 'drape' | 'project' | 'split' | 'join' | 'smooth' | 'filter' | 'reverse' | 'set_closed' | 'surface_between' | 'ramp_polygon';
 
 /** In the order the Strings tab has them. */
-const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'join', 'smooth', 'filter', 'reverse', 'set_closed', 'surface_between'];
+const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'join', 'smooth', 'filter', 'reverse', 'set_closed', 'surface_between', 'ramp_polygon'];
 /** Each tool's name, and the line it puts at the panel's head, from the one tool list. */
 const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('strings', MODES);
 
@@ -63,6 +64,14 @@ export function StringsPanel() {
   const [direction, setDirection] = useState<'up' | 'down'>('up');
   const [keepWall, setKeepWall] = useState(false);
   const [surfaceName, setSurfaceName] = useState('');
+  /** Ramp from a start: what it follows, its road, the RL it starts at (blank: where it's clicked) and what it runs to. */
+  const [rampFollows, setRampFollows] = useState<'line' | 'direction'>('line');
+  const [rampWidth, setRampWidth] = useState(50);
+  const [rampGrade, setRampGrade] = useState(10);
+  const [rampStartRl, setRampStartRl] = useState<number | null>(null);
+  const [rampTo, setRampTo] = useState<StepTarget | null>(null);
+  /** The ramp placed last, and the line it runs along, for Move it. */
+  const [lastRamp, setLastRamp] = useState<{ id: string; line: string | null } | null>(null);
   const [surfaceLayer, setSurfaceLayer] = useState('');
   /** What the last Project made, until the project's summary has it. */
   const [made, setMade] = useState<string[]>([]);
@@ -136,6 +145,18 @@ export function StringsPanel() {
     );
     if (found) setSide(found);
   };
+  /** Two clicks in the view place a ramp: where it starts and the way it runs. With `moved`, that ramp is placed again. */
+  const placeRamp = async (moved?: { id: string; line: string | null }) => {
+    const along = moved ? moved.line : rampFollows === 'line' ? (string?.id ?? null) : null;
+    const clicks = await pickLine(along ? 'Click on the line where the ramp starts. Esc cancels' : 'Click where the ramp starts. Esc cancels', 'Click the way the ramp runs. Esc cancels');
+    if (!clicks) return;
+    const start = rampStartRl === null ? clicks[0] : [clicks[0][0], clicks[0][1], rampStartRl];
+    const outcome = await runIt('string.ramp_polygon', { start, towards: clicks[1], ...(along ? { line: along } : {}), width: rampWidth, grade: rampGrade, side, to: rampTo, ...(moved ? { replaces: moved.id } : {}) });
+    const placed = outcome.record?.outputs.find((o) => o.change === 'created' || o.change === 'revised');
+    if (placed) setLastRamp({ id: placed.id, line: along });
+  };
+  const rampReady = rampWidth > 0 && rampGrade > 0 && rampTo !== null && (rampTo.kind === 'rl' || surfaces.some((s) => s.id === rampTo.id));
+  const placedRamp = lastRamp ? (objects.find((o) => o.id === lastRamp.id && o.kind === 'string') ?? null) : null;
   const makeSurface = async () => {
     const outcome = await runIt('surface.between_strings', { strings: toProject.map((o) => o.id), ...(surfaceName.trim() ? { name: surfaceName.trim() } : {}), ...(surfaceLayer.trim() ? { layer: surfaceLayer.trim() } : {}) });
     const surface = outcome.record?.outputs.filter((o) => o.change === 'created').map((o) => o.id) ?? [];
@@ -189,6 +210,13 @@ export function StringsPanel() {
         return { label: `Reverse ${on}`, run: () => runIt('string.reverse', { string: id }), ready: !!string };
       case 'set_closed':
         return { label: `${string?.closed ? 'Open' : 'Close'} ${on}`, run: () => runIt('string.set_closed', { string: id, closed: !string?.closed }), ready: !!string };
+      case 'ramp_polygon':
+        return {
+          label: rampFollows === 'line' ? `Place a ramp along ${string?.name ?? 'a line'}` : 'Place a ramp from a start',
+          run: () => placeRamp(),
+          ready: rampReady && (rampFollows === 'direction' || !!string),
+          title: 'Two clicks in the view: where the ramp starts, and the way it runs',
+        };
       case 'surface_between':
         return {
           label: `Make a surface between ${plural(toProject.length, 'string')}`,
@@ -231,6 +259,19 @@ export function StringsPanel() {
           <Field label="Lines" hint="The lines across the strips and the lines closing them: pick them all, by a box or from the tree">
             <span data-slot="strings-on">{plural(picked.length, 'line')} picked</span>
           </Field>
+        ) : mode === 'ramp_polygon' ? (
+          <>
+            <Field label="Follows" hint="Its inside edge runs along the line picked, from where you click on it, or straight from the start the way you click">
+              <Choice value={rampFollows} options={['line', 'direction'] as const} labels={{ line: 'A line', direction: 'A direction' }} onChange={setRampFollows} label="What the ramp follows" />
+            </Field>
+            {rampFollows === 'line' && (
+              <Field label="Along" hint={string ? undefined : 'Pick the line in the view or the tree: a toe or a crest'}>
+                <span data-slot="strings-on" className={string ? undefined : 'text-muted-foreground'}>
+                  {string ? string.name : 'No line picked'}
+                </span>
+              </Field>
+            )}
+          </>
         ) : mode === 'surface_between' ? (
           <Field label="Between" hint={toProject.length >= 2 ? 'In order across, whatever order they were picked in' : "Pick two strings or more: a road's two edges, with the crest and toe of its batters if it has them"}>
             <span data-slot="strings-on" className={toProject.length >= 2 ? undefined : 'text-muted-foreground'}>
@@ -363,6 +404,36 @@ export function StringsPanel() {
           </Field>
           <Field label="Wall" hint="Keeps the wall between each string and its new one, as a surface">
             <Checkbox checked={keepWall} aria-label="Keep the wall as a surface" onCheckedChange={(c) => setKeepWall(c === true)} />
+          </Field>
+        </ToolSection>
+      )}
+
+      {mode === 'ramp_polygon' && (
+        <ToolSection title="Settings">
+          <Field label="Width">
+            <NumberInput value={rampWidth} onChange={setRampWidth} label="Road width" unit="m" range={{ min: 0, minIncluded: false }} />
+          </Field>
+          <Field label="Grade" hint="Along its inside edge. What it runs to says whether it climbs or falls">
+            <NumberInput value={rampGrade} onChange={setRampGrade} label="Ramp grade" unit="%" range={{ min: 0, minIncluded: false }} />
+          </Field>
+          <Field label="Side" hint="The side of its inside edge the road lies on, looking the way it runs">
+            <Choice value={side} options={['left', 'right'] as const} labels={{ left: 'Left', right: 'Right' }} onChange={setSide} label="The side the road lies on, looking the way it runs" />
+          </Field>
+          <Field label="From RL" hint="The RL it starts at. Left blank, the RL of where you click: on the line, or on a surface">
+            <NumberOrBlank value={rampStartRl} onChange={setRampStartRl} label="RL the ramp starts at" blank="clicked" />
+          </Field>
+          <Field label="To" hint="It ends where its inside edge reaches the RL, or meets the grid or surface">
+            <TargetInput value={rampTo} surfaces={surfaces} onChange={setRampTo} label="What the ramp runs to" none="Choose…" />
+          </Field>
+        </ToolSection>
+      )}
+
+      {mode === 'ramp_polygon' && placedRamp && lastRamp && (
+        <ToolSection title="Placed">
+          <Field label={placedRamp.name} hint="Move it places it again from a new start with the settings above: the same polygon, moved. One undo puts it back">
+            <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs" disabled={!rampReady || busy} title="Two clicks in the view: its new start, and the way it runs" onClick={() => void placeRamp(lastRamp)}>
+              <MousePointerClick className="size-3.5" /> Move it
+            </Button>
           </Field>
         </ToolSection>
       )}

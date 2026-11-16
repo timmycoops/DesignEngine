@@ -15,6 +15,7 @@ mod interrogate;
 mod layer;
 mod object;
 mod project;
+mod ramp;
 mod seam;
 mod sheet;
 mod solid;
@@ -38,6 +39,7 @@ pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParam
 pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
 pub use interrogate::{COLUMN_DELTA, COLUMN_VOLUME, INTERROGATED, Interrogate, InterrogateParams, names_seam};
 pub use layer::{CreateLayer, CreateLayerParams, DeleteLayer, DeleteLayerParams, RecolourLayer, RecolourLayerParams, RenameLayer, RenameLayerParams};
+pub use ramp::{RampFromStart, RampFromStartParams};
 pub use project::{ProjectString, ProjectStringParams, ProjectToParam};
 pub use object::{DeleteObject, DeleteObjects, MoveObjects, MoveObjectsParams, ObjectParams, ObjectsParams, RenameObject, RenameParams};
 pub use sheet::{SurfaceBetweenStrings, SurfaceBetweenStringsParams};
@@ -97,6 +99,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(FilterString);
     registry.register(ProjectString);
     registry.register(SurfaceBetweenStrings);
+    registry.register(RampFromStart);
     registry.register(ImportStrings);
     registry.register(ImportSurface);
     registry.register(SurfaceFromMesh);

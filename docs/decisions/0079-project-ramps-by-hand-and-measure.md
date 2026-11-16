@@ -1,7 +1,8 @@
-# 0079 — Project a string, ramps from polylines, and a distance measure
+# 0079 — Project a string, ramps by hand, and a distance measure
 
 Status: agreed 16 November 2026 (Tim, on the plan and its seven decisions as picked: "Yes, go ahead"). Three pieces,
-a PR each, all three built here.
+a PR each, all three built here. A fourth, Ramp from a start, followed the same day once Tim had seen the first three
+(decision 8).
 
 ## Why
 
@@ -35,6 +36,11 @@ if asked.
 6. **Measure reads out and keeps nothing:** plan distance, slope distance, RL difference, grade and bearing between
    clicks, on the view bar. It makes no object.
 7. **Order:** Project, then Measure, then the surface between strings.
+8. **A ramp is placed from a start, as its polygon** (Tim, 16 November, on seeing the kit of parts: "I expected to draw a
+   ramp from a start position - you place a start, set the width and grade and draws the ramp polygon essentially").
+   Decision 5 had read "ramps manually with just polylines" as the parts alone; this is the tool he meant, and the parts
+   stay for what's made from it. His answers to what it does: it follows "a line you pick or a direction", it ends at
+   "a rl or a surface", and "it would only make the polygon". Moving the ramp is placing it again.
 
 ## Built: Project
 
@@ -193,6 +199,59 @@ above by Set grade, Offset, Project twice and Surface between strings on four st
 where it should be to the millimetre and the surface's area to 1e-6 m². The Project (18) and Measure (13) checks pass on
 the same build, and `cargo test -p zd-geom -p zd-commands` (664).
 
+## Built: a ramp from a start
+
+**`string.ramp_polygon`** (`crates/zd-commands/src/builtin/ramp.rs`, `crates/zd-geom/src/ramp.rs`): `start`,
+`towards`, `line`, `width`, `grade`, `side`, `to` (an RL, or a surface or grid), `replaces`, `layer`, `name`. It makes
+the ramp's polygon, a closed string, and nothing else.
+
+- **The inside edge is the ramp's own line.** Along a string picked, it runs from the place on the string nearest the
+  start, the way the second click says (round a closed string, the shorter way to it). With no string it runs straight
+  from the start towards that click. It takes its plan shape from there and its heights from the grade alone, measured
+  along the inside edge in plan, from the RL of the start: the string's own heights don't come into it.
+- **What it runs to says whether it climbs or falls.** To an RL above the start it climbs, to one below it falls; to a
+  surface it heads for the surface from the side of it the start is on. The grade is its size.
+- **It ends where the inside edge reaches the RL or meets the surface,** squared off. The surface is read along the
+  edge with a vertex wherever it crosses one of its triangles, so where the two meet is exact.
+- **The grade is never eased to get there.** A string that ends first, or a surface never met, ends the ramp there at
+  its grade, and it says how far short it is (`ramp.short_of_target`), as a ramp reports where a grade can't be met
+  instead of drifting (0028).
+- **The outside edge is the width out, square across:** each vertex along its plan bisector at its own height, so the
+  road has no crossfall and a bend's corner is at one RL from edge to edge. A bend too sharp for the width on that
+  side, where the edge would turn back on itself, is refused.
+- **`replaces` moves a ramp:** the polygon named takes its next revision where the new one is placed, keeping its id
+  and its name, and one undo puts it back. Only a ramp's polygon can be replaced.
+- The polygon carries `ramp_width`, `ramp_grade` (signed, the way it runs), `ramp_length`, `ramp_from_rl` and
+  `ramp_to_rl`, and the `strip` and `pit` of the string it runs along. It's named `Ramp RL 100 to 120` unless the run
+  names it, and goes on its string's layer, or `ramps` with no string. A start more than a millimetre off its string is
+  put on it, and said.
+
+**In the app:** Ramp is first of the hand tools on the Walls row, in the Strings panel. Follows: a line (the string
+picked) or a direction. Width (50 m to start with), grade, the side the road lies on looking the way it runs, the RL it
+starts at (blank: the RL of where you click, on the line or a surface), and what it runs to. Its button asks for two
+clicks in the view: where it starts, and the way it runs. The line stays picked for the next one. The ramp placed last is
+named on the panel with **Move it**, which places it again from two new clicks with the settings as they now are.
+
+Known answers, at mine grid coordinates, to 1 µm:
+
+- straight east from RL 100 at 10 %, 30 m wide on the right: to RL 120 it's 200 m long, its four corners where they
+  should be; to RL 90 it falls, 100 m long;
+- along a toe 150 m east then north, from 50 m along it: 100 m to the corner and 100 m on, the corner at RL 110 from
+  edge to edge, the outside edge 30 m short each way on the inside of the bend and 30 m long each way on the outside,
+  whatever the toe's own heights; the other way along it, from the north leg back, the same going back;
+- under a surface falling 1 in 20 from RL 130, 100 + x / 10 meets 130 - x / 20 at 200 m, RL 120; down to a floor rising
+  1 in 20 from RL 80 it meets at 133.333 m, RL 86.667; round the toe's corner to the first, 225 m along at RL 122.5; to
+  a level Vulcan grid at RL 115, 150 m out;
+- a toe 150 m long to RL 120 at 10 % ends at RL 115 and says 50 m short; a hairpin 20 m across has no room for a road
+  30 m wide on its inside, and is refused;
+- placed along a toe, then placed again 50 m on with `replaces`: the same object at its next revision, and one undo puts
+  it back.
+
+The app's own check (`zd-app --bench --ramp-start`), from the Walls row through the panel and clicks in the view, 12
+of 12: a ramp placed along a toe by two clicks with its polygon to the millimetre, Move it placing the same polygon 50 m
+on, one undo putting it back, and one straight from a typed RL to a sloping topography. The `--ramp` (11) and
+`--project` (18) checks pass on the same build, and `cargo test -p zd-geom -p zd-commands` (673).
+
 ## What this leaves
 
 - **Rules** for the batter (by azimuth, inside a polygon or solid, by horizon): a number for now, as the Builder's.
@@ -201,6 +260,8 @@ the same build, and `cargo test -p zd-geom -p zd-commands` (664).
 - **Cleaning the line first.** A string goes as it's drawn. One with a vertex at every triangle it was draped across is
   fine where those lie on straight runs in plan; one that wanders needs Filter first, as a profile's condition does.
 - **Measure:** a dimension left in the view, angles between legs, and areas.
-- **Ramps by hand:** a one-run "road from a string" on these parts, a sheet from strings with breaklines inside it, and
-  a vertical face. Moving a whole string, or a ramp's strings together, by a distance: today a string moves a vertex at
-  a time.
+- **Ramps by hand:** the ramp's batters and road made with it (Project and Surface between do them from its polygon
+  now), a ramp through several benches with flats or switchbacks, a ramp dragged in the view rather than placed again,
+  crossfall, and a ramp that meets its target on its outside edge too where the ground is skew to it. A sheet from
+  strings with breaklines inside it, and a vertical face. Moving a whole string by a distance: today a string moves a
+  vertex at a time.

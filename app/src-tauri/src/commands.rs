@@ -1372,6 +1372,9 @@ pub struct BenchConfig {
     /// With `--ramp`, a ramp made by hand from the Walls row as Tim would: an edge graded, offset, projected up and down,
     /// and one surface between the four strings, its area known (decision 0079).
     ramp: bool,
+    /// With `--ramp-start`, Ramp from a start driven as Tim would: placed along a toe by two clicks, moved, undone, and
+    /// one straight from a start to a surface (decision 0079).
+    ramp_start: bool,
     /// With `--cut`, the Cut solids panel driven as Tim would: a pit made between two surfaces inside its limit, sliced
     /// into strips by fifteen numbered faces, the faces joined a face a strip, and the pit cut at an RL (decision 0049).
     cut: bool,
@@ -1436,6 +1439,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         project: args.iter().any(|a| a == "--project"),
         measure: args.iter().any(|a| a == "--measure"),
         ramp: args.iter().any(|a| a == "--ramp"),
+        ramp_start: args.iter().any(|a| a == "--ramp-start"),
         cut: args.iter().any(|a| a == "--cut"),
         select: args.iter().any(|a| a == "--select"),
         shell: args.iter().any(|a| a == "--shell"),
