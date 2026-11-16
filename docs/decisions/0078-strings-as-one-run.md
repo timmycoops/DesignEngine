@@ -1,7 +1,7 @@
 # 0078 — String tools on several strings, as one run
 
 Status: agreed 16 November 2026 (Tim: "Agree all 7", the Build Plan's "Strings on many strips plan" tab). Workstreams 1,
-the commands, and 2, the panel, are built here. Workstreams 3 and 4 (Join on the pieces picked, Add to workflow) are to
+the commands, 2, the panel, and 3, Join on the pieces picked, are built here. Workstream 4 (Add to workflow) is to
 build.
 
 ## Why
@@ -119,7 +119,63 @@ into here.
 
 A picture drew a select as its first option, whatever it held: `windowPicture.ts` copies the option chosen now.
 
+## Built: workstream 3, Join takes the pieces picked
+
+`string.join` takes `strings`, two open strings or more, beside `string` and `other`, which still run as they did in
+the same words. The pieces are joined end to end into one, as a toe that came in from a DXF as pieces is put back
+together (`join_pieces` in `crates/zd-geom/src/string.rs`):
+
+- **The nearest ends join first**, in plan, then the next nearest left, until one string is left. Ends that meet in
+  plan are the nearest there are and are joined by place, without measuring every pair.
+- **Ends that meet exactly share a vertex.** Any other is bridged by a segment and warned of with its size
+  (`string.gap_bridged`), the biggest first, with the two strings either side and the place: "bridged a 5.000 m gap
+  between 'a' and 'b' at 650010.000, 7450000.000, 5.000 m in plan". Two ends over each other in plan at different RLs
+  are bridged straight up, and that's said. A gap under half a millimetre is said in full, not as 0.000 m.
+- **The first string keeps the result**: its name, layer, attributes and the way it runs. The others are deleted, and
+  one undo brings them all back.
+- **Refused, with nothing changed:** a closed string among them (each listed), fewer than two, a string twice, both
+  ways of giving the strings, and three or more ends meeting at one place, where which two join isn't known (the
+  place and the strings are named). More than 2,000 pieces that don't meet another end to end are refused too, since
+  every pair of loose ends is measured.
+
+Tests, `crates/zd-commands/tests/strings_join.rs` and one in `crates/zd-geom/src/string.rs`, with their known answers:
+
+| Case | Known answer | Tolerance |
+|---|---|---|
+| A bent, graded toe of nine vertices on mine grid coordinates, cut in four at its vertices, given out of order with two pieces turned round | The same nine vertices; 1 revised, 3 deleted; one undo brings back four | Exact |
+| The same, a turned piece given first | The nine vertices the other way round | Exact |
+| Three pieces, one 3-4-5 from the next | A 5 m gap, 5 m in plan, warned of on the kept string; the meeting pair share a vertex | Exact |
+| A piece half a metre on and one nearer its far end than the first's start | Joined in that order; gaps of 8.544 m (the root of 73) and 0.5 m, biggest first | 1e-9 m |
+| Two ends over each other in plan, 5 m apart in RL | Bridged, said as straight up | Exact |
+| A gap of 0.1 mm | Said as 0.000100 m | Words |
+| A closed string among three; one string; one twice; both forms; three ends at a place | Each refused in its own words; every string at revision 1 | Exact |
+| One onto another, as `string` and `other` | "joined 'b' on: 3 vertices", as before | Words |
+
+`crates/zd-py/tests/test_session.py` joins three pieces as `strings` from Python.
+
+Timings, release build, 16 November 2026, pieces of 40 vertices, every other one drawn the other way, one run:
+
+| Pieces | Meeting end to end | Vertices in, out | A metre apart | Vertices in, out |
+|---|---|---|---|---|
+| 15 | 0.1 ms | 600, 586 | 0.2 ms | 600, 600 |
+| 150 | 0.2 ms | 6,000, 5,851 | 2.9 ms | 6,000, 6,000 |
+| 1,500 | 2.2 ms | 60,000, 58,501 | 322.4 ms | 60,000, 60,000 |
+
+The timing test is `timings_for_joining_pieces`
+(`cargo test --release -p zd-commands --test strings_join -- --ignored --nocapture`).
+
+**In the panel**, Join has no string to choose. It joins the open strings picked, two or more, into the one picked
+last, and says so: "Join 4 strings into one", with how many and their names on its Join row. With a closed string among
+them the button is off and the row says to open it or leave it out. After the run the joined string is the one picked.
+
 ## Known limits
+
+- **Join has no tolerance.** Ends a hair apart are bridged by a segment that long, and said; Filter takes such a
+  vertex out. Ends within a tolerance joined as one vertex, as Polygons from lines has, is not built.
+- **A ring of pieces comes out open**, its two ends meeting; Join doesn't close it.
+- **Join's nearest-ends-first is a rule, not a search.** Where gaps are as long as the pieces it can join an end to
+  the wrong neighbour; the gaps it bridged are listed, biggest first, to be looked at.
+- **The pieces' attributes** other than the kept string's are dropped with them, a strip number among them.
 
 - **Close's Close-or-Open choice** for a mix of open and closed strings is not run by a check, nor is a refusal that
   lists several strings read in the panel.

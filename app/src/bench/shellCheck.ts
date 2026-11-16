@@ -797,22 +797,55 @@ export async function checkShell(
       opened,
     });
 
-    // Split and Join work at a vertex or on a string and one other: one string, the last picked.
+    // Split works at a vertex, on one string, the last picked. Join puts the pieces picked back into one (decision
+    // 0078, workstream 3): no string to choose, and the one picked last keeps the result.
     await useTool('split');
     const last = stringsOn();
+    const lastId = (await stringsNamed(last)).find((o) => o.name === last)?.id;
+    const pointsOf = async (id: string | undefined) => {
+      const measures = id ? (await objectDetails(id)).measures : null;
+      return measures?.kind === 'string' ? measures.points : [];
+    };
+    /** The middle of a string's longest leg, on the screen: a place to click that's on it and nothing else. */
+    const onIt = (points: number[][]) => {
+      let longest = 0;
+      for (let k = 1; k + 1 < points.length; k++) {
+        const leg = (j: number) => Math.hypot(points[j + 1][0] - points[j][0], points[j + 1][1] - points[j][1]);
+        if (leg(k) > leg(longest)) longest = k;
+      }
+      const [a, b] = [points[longest], points[longest + 1]];
+      return screen([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]);
+    };
+    const whole = (await pointsOf(lastId)).length;
     await typeNumber('Vertex to split at', '2');
     const splitSays = await go();
     const part = (await stringsNamed(`${last} part 2`))[0];
+    const [partPoints, toePoints] = [await pointsOf(part?.id), await pointsOf(lastId)];
+    if (partPoints.length > 1 && toePoints.length > 1) {
+      await click(onIt(partPoints));
+      await ctrlClick(onIt(toePoints));
+      await wait(500);
+    }
     await useTool('join');
-    const chosen = part ? await choose('String to join on', part.id) : false;
+    const joinOn = stringsOn();
+    const noChooser = !stringsNow()?.querySelector('select[aria-label="String to join on"]');
     const joinSays = await go();
     const partsLeft = (await stringsNamed(`${last} part 2`)).length;
-    expect('Split and Join work on one string, the last of the three picked: it splits at a vertex, and its second part joins back on', last.startsWith('Many ') && splitSays === `Split ${last}` && !!part && chosen && joinSays === `Join ${last} part 2 onto ${last}` && partsLeft === 0, {
-      on: last,
-      buttons: [splitSays, joinSays],
-      second_part_made: !!part,
-      second_parts_left: partsLeft,
-    });
+    const joined = (await pointsOf(lastId)).length;
+    const joinSaid = (stringsNow()?.textContent ?? '').includes(`joined 2 strings into '${last}'`);
+    expect(
+      'Split works on one string, the last of the three picked, at a vertex; Join then joins the two pieces picked back into one with no string to choose, the one picked last keeping the result',
+      last.startsWith('Many ') && splitSays === `Split ${last}` && !!part && toePoints.length === 2 && joinOn === '2 strings' && noChooser && joinSays === 'Join 2 strings into one' && partsLeft === 0 && whole > 2 && joined === whole && joinSaid,
+      { on: last, buttons: [splitSays, joinSays], second_part_made: !!part, join_on: joinOn, no_string_to_choose: noChooser, second_parts_left: partsLeft, vertices: { whole, split: toePoints.length, joined }, says_joined: joinSaid },
+    );
+    // The three toes picked again, each where it lies now.
+    for (const [k, id] of manyIds.entries()) {
+      const points = await pointsOf(id);
+      if (points.length < 2) continue;
+      if (k === 0) await click(onIt(points));
+      else await ctrlClick(onIt(points));
+    }
+    await wait(500);
 
     // Number across: the three picked, by two clicks across them.
     await useTool('number_across');

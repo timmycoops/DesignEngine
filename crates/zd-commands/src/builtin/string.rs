@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, Object, ObjectId, ObjectKind, Polyline};
 use zd_geom::{
-    Corner, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, plan_crossings, redraw_stretch, smooth_string, split_string, triangulate_grid,
+    Corner, OffsetSide, branching_ends, drape_string, filter_string, grade_string, join_pieces, join_strings, offset_string, plan_crossings, redraw_stretch, smooth_string, split_string, triangulate_grid,
 };
 
 use super::finite;
@@ -937,13 +937,78 @@ impl Command for SplitString {
 /// `string.join`: another open string joined onto this one at their nearest ends, in this one's
 /// direction. This string keeps the result and the other is deleted (undo brings it back). Ends
 /// that do not meet are bridged by a segment, and the gap is reported.
+///
+/// Or several open strings, given as `strings`, joined end to end into one (decision 0078), as a toe that came in as
+/// pieces is put back together: the two nearest ends in plan first, then the next nearest left. The first string
+/// keeps the result, its name, its attributes and the way it runs, and the others are deleted, in one run and one undo.
 pub struct JoinStrings;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JoinStringsParams {
-    pub string: ObjectId,
-    pub other: ObjectId,
+    /// The string another is joined onto, with `other`.
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub other: Option<ObjectId>,
+    /// Or the pieces to join end to end into one, the first keeping the result (decision 0078).
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
+}
+
+/// A length for a sentence: metres to the millimetre, and finer where that would read as nothing.
+fn metres(length: f64) -> String {
+    if length > 0.0 && length < 0.0005 { format!("{length:.6} m") } else { format!("{length:.3} m") }
+}
+
+fn so_many(n: usize, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
+}
+
+/// Several open strings joined end to end into the first of them (decision 0078).
+fn join_the_pieces(inputs: &Inputs<'_>, ids: &[ObjectId]) -> Result<Outcome, CommandError> {
+    let picked = picked(None, ids)?;
+    if picked.ids.len() < 2 {
+        return Err(CommandError::Invalid(format!("joining takes two strings or more; {} was given", picked.ids.len())));
+    }
+    let pieces = picked.ids.iter().map(|&id| inputs.string(id)).collect::<Result<Vec<_>, _>>()?;
+    let closed: Vec<String> = pieces.iter().filter(|(_, line)| line.closed).map(|(object, _)| format!("'{}': a closed string has no ends to join; open it first", object.name)).collect();
+    if !closed.is_empty() {
+        return Err(cannot(closed, pieces.len()));
+    }
+    let lines: Vec<&Polyline> = pieces.iter().map(|&(_, line)| line).collect();
+    let branching = branching_ends(&lines);
+    if let Some((at, ending)) = branching.first() {
+        let mut there: Vec<&str> = ending.iter().map(|&i| pieces[i].0.name.as_str()).collect();
+        there.dedup();
+        let more = if branching.len() > 1 { format!(", and at {} more", so_many(branching.len() - 1, "place")) } else { String::new() };
+        return Err(CommandError::Invalid(format!(
+            "{} ends meet at {:.3}, {:.3} ({}){more}, so which two join isn't known and nothing was changed. Join two of them first, or leave one out",
+            ending.len(),
+            at[0],
+            at[1],
+            names(&there)
+        )));
+    }
+    let (joined, joins) = join_pieces(&lines).map_err(|e| CommandError::Invalid(e.to_string()))?;
+    let (kept, _) = pieces[0];
+    let gaps: Vec<_> = joins.iter().filter(|j| j.gap > 0.0).collect();
+    let mut said = format!("joined {} strings into '{}': {} vertices; {} met", pieces.len(), kept.name, joined.vertices.len(), so_many(joins.len() - gaps.len(), "join"));
+    if !gaps.is_empty() {
+        said += &format!(", {} bridged, {} in all", so_many(gaps.len(), "gap"), metres(gaps.iter().map(|j| j.gap).sum()));
+    }
+    let mut changes = vec![Change::revise_body(kept, Body::String(joined))];
+    changes.extend(pieces[1..].iter().map(|(other, _)| Change::Delete { id: other.id, base: other.revision }));
+    let mut outcome = Outcome::new(changes).message(said);
+    // Each gap, biggest first: the ones to look at.
+    let mut biggest = gaps;
+    biggest.sort_by(|a, b| b.gap.total_cmp(&a.gap));
+    outcome.notes.extend(biggest.iter().map(|j| {
+        let plan = if j.plan_gap == 0.0 { ", straight up: the two ends are over each other in plan".to_string() } else { format!(", {} in plan", metres(j.plan_gap)) };
+        let text = format!("bridged a {} gap between '{}' and '{}' at {:.3}, {:.3}{plan}", metres(j.gap), pieces[j.before].0.name, pieces[j.after].0.name, j.at[0], j.at[1]);
+        Note::warning(Code::StringGapBridged, text).on(kept.id).measured(j.gap, "m")
+    }));
+    Ok(outcome)
 }
 
 impl Command for JoinStrings {
@@ -953,19 +1018,30 @@ impl Command for JoinStrings {
     fn spec(&self) -> CommandSpec {
         CommandSpec {
             name: Self::NAME,
-            summary: "Join another string onto this one",
-            inputs: vec![string_input(), Field::object("other", ObjectKind::String, "The string to join on; it is deleted")],
+            summary: "Join another string onto this one, or several end to end into one",
+            inputs: vec![
+                Field::object("string", ObjectKind::String, "The string to join onto, with `other`"),
+                Field::object("other", ObjectKind::String, "The string to join on; it is deleted"),
+                Field::new("strings", FieldType::Objects, "Or several open strings to join end to end into the first; the others are deleted"),
+            ],
             params: vec![],
             outputs: vec![],
         }
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        if p.string == p.other {
+        let (string, other) = match (p.string, p.other, p.strings.is_empty()) {
+            (Some(string), Some(other), true) => (string, other),
+            (None, None, false) => return join_the_pieces(inputs, &p.strings),
+            (None, None, true) => return Err(CommandError::Invalid("no strings to join: give `string` and `other`, or two or more as `strings`".into())),
+            (_, _, false) => return Err(CommandError::Invalid("give `string` and `other`, or `strings`, not both".into())),
+            _ => return Err(CommandError::Invalid("joining one string onto another takes both `string` and `other`".into())),
+        };
+        if string == other {
             return Err(CommandError::Invalid("a string cannot be joined to itself; close it instead".into()));
         }
-        let (object, line) = inputs.string(p.string)?;
-        let (other, other_line) = inputs.string(p.other)?;
+        let (object, line) = inputs.string(string)?;
+        let (other, other_line) = inputs.string(other)?;
         let (joined, gap) = join_strings(line, other_line).map_err(|e| CommandError::Invalid(e.to_string()))?;
         let message = if gap == 0.0 {
             format!("joined '{}' on: {} vertices", other.name, joined.vertices.len())

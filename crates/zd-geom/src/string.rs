@@ -273,6 +273,153 @@ pub fn join_strings(a: &Polyline, b: &Polyline) -> Result<(Polyline, f64), GeomE
     Ok((Polyline { vertices, closed: false }, gap))
 }
 
+/// One join [`join_pieces`] made: the piece before it and the piece after, as the joined string runs, where the first
+/// of them ends, and the gap between them, in 3D and in plan. Both are zero where the two ends met and share a vertex.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PieceJoin {
+    pub before: usize,
+    pub after: usize,
+    pub at: [f64; 3],
+    pub gap: f64,
+    pub plan_gap: f64,
+}
+
+/// The most pieces [`join_pieces`] pairs by distance once the ends that meet are joined: every pair of loose ends is
+/// measured, which grows with their square.
+pub const MOST_LOOSE_PIECES: usize = 2_000;
+
+/// The places in plan where three or more ends of `pieces` meet, each with the pieces ending there (one twice if both
+/// its ends do): which two would join there isn't known.
+pub fn branching_ends(pieces: &[&Polyline]) -> Vec<([f64; 2], Vec<usize>)> {
+    let mut found: Vec<([f64; 2], Vec<usize>)> = Vec::new();
+    let mut seen: std::collections::HashMap<(u64, u64), usize> = std::collections::HashMap::new();
+    for (i, piece) in pieces.iter().enumerate() {
+        let (Some(first), Some(last)) = (piece.vertices.first(), piece.vertices.last()) else { continue };
+        for end in [first, last] {
+            let slot = *seen.entry(plan_key(*end)).or_insert_with(|| {
+                found.push(([end[0], end[1]], Vec::new()));
+                found.len() - 1
+            });
+            found[slot].1.push(i);
+        }
+    }
+    found.retain(|(_, ending)| ending.len() > 2);
+    found
+}
+
+/// A place in plan, as a key: the same place whichever zero it's written with.
+fn plan_key(p: [f64; 3]) -> (u64, u64) {
+    ((p[0] + 0.0).to_bits(), (p[1] + 0.0).to_bits())
+}
+
+/// Open strings joined end to end into one, as a toe that came in as pieces is put back together: the two nearest
+/// ends (in plan) of different pieces are joined first, then the next nearest left, until one string is left. It runs
+/// the way the first piece does. Ends that meet exactly share a vertex; otherwise a segment bridges the gap. Every
+/// join comes back with it, in the order the string runs. Three or more ends meeting at a place is refused: see
+/// [`branching_ends`].
+pub fn join_pieces(pieces: &[&Polyline]) -> Result<(Polyline, Vec<PieceJoin>), GeomError> {
+    let n = pieces.len();
+    if n < 2 {
+        return Err(GeomError::InvalidInput("joining takes two strings or more".into()));
+    }
+    if pieces.iter().any(|p| p.closed) {
+        return Err(GeomError::InvalidInput("only open strings can be joined".into()));
+    }
+    if pieces.iter().any(|p| p.vertices.is_empty()) {
+        return Err(GeomError::InvalidInput("a string to join has no vertices".into()));
+    }
+    if !branching_ends(pieces).is_empty() {
+        return Err(GeomError::InvalidInput("three or more ends meet at one place, so which two join isn't known".into()));
+    }
+    // An end is its piece and which end: 2 × piece, + 1 for its last vertex.
+    let end_at = |end: usize| if end.is_multiple_of(2) { pieces[end / 2].vertices[0] } else { *pieces[end / 2].vertices.last().expect("vertices") };
+    let plan = |p: [f64; 3], q: [f64; 3]| (p[0] - q[0]).hypot(p[1] - q[1]);
+    let mut joined_to: Vec<Option<usize>> = vec![None; 2 * n];
+    let mut chain: Vec<usize> = (0..n).collect();
+    fn chain_of(chain: &mut [usize], mut i: usize) -> usize {
+        while chain[i] != i {
+            chain[i] = chain[chain[i]];
+            i = chain[i];
+        }
+        i
+    }
+    let mut join = |a: usize, b: usize, joined_to: &mut Vec<Option<usize>>| -> bool {
+        let (ca, cb) = (chain_of(&mut chain, a / 2), chain_of(&mut chain, b / 2));
+        if joined_to[a].is_some() || joined_to[b].is_some() || ca == cb {
+            return false;
+        }
+        (joined_to[a], joined_to[b]) = (Some(b), Some(a));
+        chain[ca] = cb;
+        true
+    };
+    // The ends that meet in plan are the nearest there are: joined first, by place, without measuring every pair.
+    let mut made = 0;
+    let mut meeting: std::collections::HashMap<(u64, u64), usize> = std::collections::HashMap::new();
+    for end in 0..2 * n {
+        if let Some(other) = meeting.insert(plan_key(end_at(end)), end) {
+            made += usize::from(join(other, end, &mut joined_to));
+        }
+    }
+    // The rest by distance: every pair of loose ends, nearest first.
+    if made < n - 1 {
+        let loose: Vec<usize> = (0..2 * n).filter(|&end| joined_to[end].is_none()).collect();
+        if loose.len() > 2 * MOST_LOOSE_PIECES {
+            return Err(GeomError::InvalidInput(format!(
+                "{} pieces don't meet another end to end, more than the {MOST_LOOSE_PIECES} joined across gaps in one run; join them in parts",
+                loose.len() / 2
+            )));
+        }
+        let mut pairs: Vec<(f64, f64, usize, usize)> = Vec::new();
+        for (k, &a) in loose.iter().enumerate() {
+            for &b in &loose[k + 1..] {
+                if a / 2 != b / 2 {
+                    pairs.push((plan(end_at(a), end_at(b)), distance3(end_at(a), end_at(b)), a, b));
+                }
+            }
+        }
+        pairs.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.total_cmp(&y.1)).then(x.2.cmp(&y.2)).then(x.3.cmp(&y.3)));
+        for (_, _, a, b) in pairs {
+            if made == n - 1 {
+                break;
+            }
+            made += usize::from(join(a, b, &mut joined_to));
+        }
+    }
+    // Walked from one loose end to the other: each piece, and whether it's turned round.
+    let start = (0..2 * n).find(|&end| joined_to[end].is_none()).expect("a string has two loose ends");
+    let mut order: Vec<(usize, bool)> = Vec::with_capacity(n);
+    let mut end = start;
+    loop {
+        order.push((end / 2, end % 2 == 1));
+        match joined_to[end ^ 1] {
+            Some(next) => end = next,
+            None => break,
+        }
+    }
+    debug_assert_eq!(order.len(), n);
+    // The way the first piece runs.
+    if order.iter().any(|&(piece, turned)| piece == 0 && turned) {
+        order.reverse();
+        order.iter_mut().for_each(|o| o.1 = !o.1);
+    }
+    let mut vertices: Vec<[f64; 3]> = Vec::with_capacity(pieces.iter().map(|p| p.vertices.len()).sum());
+    let mut joins = Vec::with_capacity(n - 1);
+    for (k, &(piece, turned)) in order.iter().enumerate() {
+        let mut run: Vec<[f64; 3]> = pieces[piece].vertices.clone();
+        if turned {
+            run.reverse();
+        }
+        let mut skip = 0;
+        if let Some(&at) = vertices.last() {
+            let gap = distance3(at, run[0]);
+            joins.push(PieceJoin { before: order[k - 1].0, after: piece, at, gap, plan_gap: plan(at, run[0]) });
+            skip = usize::from(gap == 0.0);
+        }
+        vertices.extend(run.into_iter().skip(skip));
+    }
+    Ok((Polyline { vertices, closed: false }, joins))
+}
+
 /// How far from a string the first and last points of a stretch redrawn on it may be, in plan (m): a click that missed
 /// it by a little.
 pub const ON_THE_STRING: f64 = 1.0;
@@ -1121,6 +1268,26 @@ mod tests {
         assert_eq!(gap, 5.0);
         assert_eq!(local(&joined), [[-20.0, 0.0], [-3.0, -4.0], [0.0, 0.0], [10.0, 0.0]]);
         assert!(join_strings(&a, &square()).is_err(), "closed strings do not join");
+    }
+
+    #[test]
+    fn pieces_join_end_to_end_nearest_ends_first_the_way_the_first_runs() {
+        // Three pieces of a line from 0 to 30, the middle one drawn the other way, and a fourth 5 m (3-4-5) past it.
+        let first = line(&[[10.0, 0.0, 0.0], [20.0, 0.0, 0.0]], false);
+        let west = line(&[[10.0, 0.0, 0.0], [0.0, 0.0, 0.0]], false);
+        let east = line(&[[30.0, 0.0, 0.0], [20.0, 0.0, 0.0]], false);
+        let past = line(&[[33.0, 4.0, 0.0], [50.0, 4.0, 0.0]], false);
+        let (joined, joins) = join_pieces(&[&first, &past, &west, &east]).unwrap();
+        assert_eq!(local(&joined), [[0.0, 0.0], [10.0, 0.0], [20.0, 0.0], [30.0, 0.0], [33.0, 4.0], [50.0, 4.0]]);
+        assert_eq!(joins.iter().map(|j| (j.before, j.after, j.gap, j.plan_gap)).collect::<Vec<_>>(), [(2, 0, 0.0, 0.0), (0, 3, 0.0, 0.0), (3, 1, 5.0, 5.0)]);
+        // Given first, the piece drawn westwards turns the whole string to run west.
+        let (joined, _) = join_pieces(&[&west, &first, &east]).unwrap();
+        assert_eq!(local(&joined), [[30.0, 0.0], [20.0, 0.0], [10.0, 0.0], [0.0, 0.0]]);
+        // A third end at a place two meet at: refused, with the place and the three pieces.
+        let spur = line(&[[10.0, 0.0, 0.0], [10.0, 20.0, 0.0]], false);
+        assert_eq!(branching_ends(&[&first, &west, &spur]), [([first.vertices[0][0], first.vertices[0][1]], vec![0, 1, 2])]);
+        assert!(join_pieces(&[&first, &west, &spur]).is_err());
+        assert!(join_pieces(&[&first]).is_err() && join_pieces(&[&first, &square()]).is_err(), "two or more, all open");
     }
 
     #[test]

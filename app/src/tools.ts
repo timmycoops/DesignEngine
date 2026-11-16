@@ -195,7 +195,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'strings:drape', stage: 'strings', label: 'Drape', tip: 'Drapes each string picked onto a grid or surface.', icon: 'drape', panel: 'strings', mode: 'drape', command: 'string.drape' },
   { key: 'strings:project', stage: 'strings', label: 'Project', tip: 'Projects strings at a batter, up or down, to a target.', icon: 'project', panel: 'strings', mode: 'project', command: 'string.project' },
   { key: 'strings:split', stage: 'strings', label: 'Split', tip: 'Splits the string at a vertex.', icon: 'split', panel: 'strings', mode: 'split', command: 'string.split' },
-  { key: 'strings:join', stage: 'strings', label: 'Join', tip: 'Joins another open string onto this one.', icon: 'join', panel: 'strings', mode: 'join', command: 'string.join' },
+  { key: 'strings:join', stage: 'strings', label: 'Join', tip: 'Joins the open strings picked end to end into one.', icon: 'join', panel: 'strings', mode: 'join', command: 'string.join' },
   { key: 'strings:smooth', stage: 'strings', label: 'Smooth', tip: 'Smooths each string picked, a vertex every so many metres.', icon: 'smooth', panel: 'strings', mode: 'smooth', command: 'string.smooth' },
   { key: 'strings:filter', stage: 'strings', label: 'Filter', tip: "Takes out vertices each string picked doesn't need.", icon: 'filter', panel: 'strings', mode: 'filter', command: 'string.filter' },
   { key: 'strings:reverse', stage: 'strings', label: 'Reverse', tip: 'Turns each string picked to run the other way.', icon: 'reverse', panel: 'strings', mode: 'reverse', command: 'string.reverse' },
