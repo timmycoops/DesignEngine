@@ -82,8 +82,8 @@ test('every stage has a row of tools that exist, named in words', () => {
   assert.deepEqual(names('project'), ['New', 'Open', 'Save as', 'Relink geology']);
   assert.deepEqual(names('geology'), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology']);
   assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Reserves table', 'Compare', 'Report']);
-  assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Join faces']);
-  assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Split', 'Join', 'Smooth', 'Filter', 'Reverse', 'Close']);
+  assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Ramp', 'Set grade', 'Offset', 'Project', 'Surface between', 'Join faces']);
+  assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Join', 'Smooth', 'Filter', 'Reverse', 'Close']);
 });
 
 test("a stage's tools are on its row, but for the few reached another way", () => {
@@ -94,7 +94,7 @@ test("a stage's tools are on its row, but for the few reached another way", () =
   }
   // The older project folder is in the project's menu; Build a step and Interrogate are what Builder and Reserves open
   // on, listed for the canvas; Cut solids as it stands is in the Panels menu, its six choices on the row.
-  // Strings as it stands is in the Panels menu too, its twelve tools on the row.
+  // Strings as it stands is in the Panels menu too, its thirteen tools on the row.
   assert.deepEqual(elsewhere.sort(), ['builder:step', 'cut', 'project.open_folder', 'reserves:interrogate', 'strings']);
   // A row shows a tool from another stage only where the plan has it: Relink geology on Project, and the Import and
   // Export menus there, which gather their tools from every stage.
@@ -111,6 +111,10 @@ test("a stage's tools are on its row, but for the few reached another way", () =
     'project: seam.build',
     'project: seam.relink',
     'project: seam.suggest',
+    // The string tools a ramp is made from by hand are on Walls too (decision 0079).
+    'walls: strings:offset',
+    'walls: strings:project',
+    'walls: strings:set_grade',
   ]);
 });
 
@@ -205,10 +209,11 @@ test("a panel's choices take their names and their lines from the list", () => {
   const reserves = choiceWords('reserves', ['interrogate', 'compare']);
   assert.deepEqual(Object.values(reserves.labels), ['Interrogate', 'Compare']);
   // A line at a panel's head is a sentence short enough for the 400 px tool dock (the shell bench measures it on screen).
-  const stringModes = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'split', 'join', 'smooth', 'filter', 'reverse', 'set_closed'];
+  const stringModes = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'join', 'smooth', 'filter', 'reverse', 'set_closed', 'surface_between', 'ramp_polygon'];
   const strings = choiceWords('strings', stringModes);
-  assert.deepEqual(Object.values(strings.labels), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Split', 'Join', 'Smooth', 'Filter', 'Reverse', 'Close']);
-  for (const mode of stringModes) assert.equal(choiceTool('strings', mode).command, `string.${mode}`, 'a string tool is named for its command');
+  assert.deepEqual(Object.values(strings.labels), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Join', 'Smooth', 'Filter', 'Reverse', 'Close', 'Surface between strings', 'Ramp from a start']);
+  // The one that makes a surface is named for what it makes, as a solid between surfaces is.
+  for (const mode of stringModes) assert.equal(choiceTool('strings', mode).command, mode === 'surface_between' ? 'surface.between_strings' : `string.${mode}`, 'a string tool is named for its command');
   for (const line of [...Object.values(cut.lines), ...Object.values(reserves.lines), ...Object.values(strings.lines)]) assert.ok(line.endsWith('.') && line.length <= 62, line);
   assert.equal(choiceTool('cut', 'polygons').command, 'solid.cut_by_polygons');
   assert.throws(() => choiceTool('cut', 'nothing'));
@@ -227,7 +232,7 @@ test('Find a command lists every tool once, under its own name, a stage at a tim
   assert.ok(findWords(toolByKey('import.solids')).includes('A zip or files…'));
   assert.ok(findWords(toolByKey('workflow')).includes('Always there'));
   // The view's tools are in the list for it, each with its key.
-  assert.deepEqual(TOOLS.filter((t) => t.key.startsWith('view.')).map((t) => `${t.label} ${t.shortcut ?? ''}`.trim()), ['Select', 'Draw string', 'Snap S', 'Plan or 3D T', "Zoom to what's selected F", 'Zoom to everything E', 'Section 2']);
+  assert.deepEqual(TOOLS.filter((t) => t.key.startsWith('view.')).map((t) => `${t.label} ${t.shortcut ?? ''}`.trim()), ['Select', 'Draw string', 'Snap S', 'Plan or 3D T', "Zoom to what's selected F", 'Zoom to everything E', 'Section 2', 'Measure distance M']);
 });
 
 test('Find a command matches whole words typed, a name first, then a stage or command, then what a tool does', () => {
@@ -241,6 +246,8 @@ test('Find a command matches whole words typed, a name first, then a stage or co
   assert.ok(['import.vulcan_grid', 'seam.build', 'reserves:interrogate'].every((key) => found('seam').includes(key)));
   assert.deepEqual(found('polygons'), ['strings:polygons_from_lines', 'cut:polygons']);
   assert.deepEqual(found('solid.cut_by_benches'), ['cut:benches']);
+  assert.equal(found('distance')[0], 'view.measure', 'found by what a planner would type');
+  assert.equal(found('measure')[0], 'view.measure');
   // Both take the solids selected: to a zip, a DXF each, and with everything else selected into one DXF.
   assert.deepEqual(found('selected solids'), ['export.selected_solids', 'export.selected_dxf']);
   assert.equal(found('plan or 3d')[0], 'view.plan');

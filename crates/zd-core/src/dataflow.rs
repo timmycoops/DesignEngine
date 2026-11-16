@@ -89,6 +89,9 @@ pub struct FormulaTest {
     pub block: BTreeMap<String, ParamValue>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub parameters: BTreeMap<String, ParamValue>,
+    /// The ROM coal section's coal added up, for a unit in one (`unit.rom_coal`); none, it's in none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub rom_coal: BTreeMap<String, ParamValue>,
     pub expect: BTreeMap<String, f64>,
 }
 

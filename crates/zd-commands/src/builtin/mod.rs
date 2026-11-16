@@ -14,7 +14,10 @@ mod grid;
 mod interrogate;
 mod layer;
 mod object;
+mod project;
+mod ramp;
 mod seam;
+mod sheet;
 mod solid;
 mod spry;
 mod string;
@@ -24,6 +27,7 @@ mod workflow;
 mod dataflow;
 mod reserves_run;
 mod formulas;
+mod starter;
 mod measure;
 
 pub use benches::{BENCH_FLOOR, BENCH_TOP, BENCHED_FROM, BenchEnd, BenchRule, CutByBenches, CutByBenchesParams, rule_for};
@@ -36,7 +40,10 @@ pub use face::{ProjectDesign, ProjectDesignParams, ProjectStep, ProjectStepParam
 pub use grid::{ImportVulcanSeam, ImportVulcanSeamParams};
 pub use interrogate::{COLUMN_DELTA, COLUMN_VOLUME, INTERROGATED, Interrogate, InterrogateParams, names_seam};
 pub use layer::{CreateLayer, CreateLayerParams, DeleteLayer, DeleteLayerParams, RecolourLayer, RecolourLayerParams, RenameLayer, RenameLayerParams};
+pub use ramp::{RampFromStart, RampFromStartParams};
+pub use project::{ProjectString, ProjectStringParams, ProjectToParam};
 pub use object::{DeleteObject, DeleteObjects, MoveObjects, MoveObjectsParams, ObjectParams, ObjectsParams, RenameObject, RenameParams};
+pub use sheet::{SurfaceBetweenStrings, SurfaceBetweenStringsParams};
 pub use seam::{BuildSeamModel, BuildSeamModelParams, ModelLinks, RelinkParams, RelinkSeamModels, SuggestSeamDefinition, SuggestSeamDefinitionParams, seam_links};
 pub(crate) use solid::check_solids_made;
 pub use spry::{ImportSpry, ImportSpryParams};
@@ -51,8 +58,10 @@ pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, S
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
 pub use workflow::{SaveWorkflow, SaveWorkflowParams, WORKFLOW_LAYER};
 pub use measure::{MEASURES, Measure, MeasureParams, block_length, floor_dip, measure, plan_area};
-pub use reserves_run::{OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, UNDERBURDEN_THICKNESS, UnitView, dataflow_starter, preston_sanders, reserves_preview};
-pub use formulas::{FORMULA_STAGES, LABELS as FORMULA_LABELS, check_formula_steps, declared as formula_declared};
+pub use reserves_run::{FormulaTraceView, TraceLineView, formula_trace, OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, UNDERBURDEN_THICKNESS, UnitView, dataflow_starter, preston_sanders, reserves_preview};
+pub use starter::{DISCARDED, RD_ADT, starter_formulas, with_starter_formulas};
+pub use zd_script::REFERENCE as FORMULA_REFERENCE;
+pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_formula_steps, declared as formula_declared};
 pub use dataflow::{DATAFLOW_LAYER, ExportParameters, PARAMETERS_LAYER, SaveDataflow, SaveParameters};
 
 use crate::{CommandError, Registry};
@@ -91,6 +100,9 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(JoinStrings);
     registry.register(SmoothString);
     registry.register(FilterString);
+    registry.register(ProjectString);
+    registry.register(SurfaceBetweenStrings);
+    registry.register(RampFromStart);
     registry.register(ImportStrings);
     registry.register(ImportSurface);
     registry.register(SurfaceFromMesh);

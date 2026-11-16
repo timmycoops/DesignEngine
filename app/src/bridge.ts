@@ -978,8 +978,51 @@ export interface Dataflow {
   /** The reserves table's levels top down (decision 0074): those above `seam` make a column. */
   levels?: { attribute: string; default?: string }[];
   fields: { name: string; kind: string; add_up: AddUp; from: string; attribute?: string; column?: string }[];
-  steps: { step: string; on?: boolean; settings?: Record<string, string> }[];
+  steps: DataflowStep[];
   parameters: string[];
+}
+
+/** A value a formula's worked example gives or expects. */
+export type ParamCell = number | string;
+
+/** A formula's worked example (decision 0077): a unit's fields and labels, its block and parameters, the ROM section's
+ * coal where it's in one, and the fields the formula must leave it with. */
+export interface FormulaTest {
+  name: string;
+  unit?: Record<string, ParamCell>;
+  block?: Record<string, ParamCell>;
+  parameters?: Record<string, ParamCell>;
+  rom_coal?: Record<string, ParamCell>;
+  expect: Record<string, number>;
+}
+
+/** A dataflow step: a built-in by name, or a formula step with its filter, Starlark and worked examples (0077). */
+export interface DataflowStep {
+  step: string;
+  on?: boolean;
+  settings?: Record<string, string>;
+  formula?: { when?: Record<string, string>; script: string; tests?: FormulaTest[] };
+}
+
+/** A formula as edited, checked (decision 0077, 7d). */
+export interface FormulaReport {
+  stage: string | null;
+  problems: { message: string; line: number | null }[];
+  tests: { name: string; ok: boolean; why: string | null }[];
+  names: { fields: [string, string][]; labels: string[]; parameters: [string, string, boolean][] };
+}
+
+/** A formula traced on a picked solid's unit (decision 0077, 7d). */
+export interface FormulaTrace {
+  block: string;
+  unit: string;
+  fits: boolean;
+  before: [string, number | null][];
+  lines: { line: number; text: string; values: [string, string][] }[];
+  reads: [string, string][];
+  sets: [string, string][];
+  said: string[];
+  stopped: { message: string; line: number | null } | null;
 }
 
 /** Rows of a results table added up by each column's rule. */
@@ -1025,6 +1068,12 @@ export const parametersPicked = (table: string, solid: string | null) => invoke<
 export const parametersCheck = (content: ParameterTable) => invoke<null>('parameters_check', { content });
 /** The engine's check of a dataflow as edited, before it's saved. */
 export const dataflowCheck = (content: Dataflow) => invoke<null>('dataflow_check', { content });
+/** A formula step of a dataflow as edited, checked: where it sits, every problem with its line, its worked examples. */
+export const formulaCheck = (content: Dataflow, index: number) => invoke<FormulaReport>('formula_check', { content, index });
+/** A formula step of a dataflow as edited, traced on a picked solid's unit; nothing kept. */
+export const formulaTrace = (content: Dataflow, step: string, solid: string) => invoke<FormulaTrace>('formula_trace', { content, step, solid });
+/** How to write a formula: the panel's help and what Copy for AI hands over. */
+export const formulaReference = () => invoke<string>('formula_reference');
 
 /** Saved steps run again in one go (decision 0065), and its cases (decision 0066). */
 export interface Workflow {
@@ -1191,6 +1240,14 @@ export interface BenchConfig {
   dataflow: string | null;
   /** With `--builder`, the Builder panel driven as Tim would, from a toe up, with an edit between steps (decision 0048). */
   builder: boolean;
+  /** With `--project`, Project on the Strings tab driven as Tim would, through the panel and clicks in the view (decision 0079). */
+  project: boolean;
+  /** With `--measure`, the distance measure on the view bar driven as Tim would, by its key, its button and clicks (decision 0079). */
+  measure: boolean;
+  /** With `--ramp`, a ramp made by hand from the Walls row: Set grade, Offset, Project and a surface between the strings (decision 0079). */
+  ramp: boolean;
+  /** With `--ramp-start`, Ramp from a start driven as Tim would: placed, moved, undone, and to a surface (decision 0079). */
+  ramp_start: boolean;
   /** With `--cut`, the Cut solids panel driven as Tim would: a pit between two surfaces, sliced into strips, cut at an RL (decision 0049). */
   cut: boolean;
   /** With `--section-guide`, the dashed line from a section's first point to the cursor, on a made-up topography. */

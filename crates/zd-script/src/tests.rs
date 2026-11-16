@@ -41,7 +41,7 @@ fn t(s: &str) -> ScriptValue {
 fn column() -> ColumnInput {
     let coal_p = values([("insitu_ash_cutoff", n(35.0)), ("loader", t("EX3600"))]);
     let block = values([("strip", n(3.0)), ("block", t("B1"))]);
-    let unit = |pairs: Vec<(&str, ScriptValue)>, p: &Values, section| UnitInput { fields: values(pairs), block: block.clone(), parameters: p.clone(), section };
+    let unit = |pairs: Vec<(&str, ScriptValue)>, p: &Values, section| UnitInput { fields: values(pairs), block: block.clone(), parameters: p.clone(), section, rom_coal: section };
     ColumnInput {
         units: vec![
             unit(vec![("seam", t("U")), ("material", t("coal")), ("bench", n(110.0)), ("volume", n(1000.0)), ("thickness", n(2.0)), ("rd", n(1.45)), ("mad", n(3.5)), ("mis", n(8.0)), ("ash_ad", n(12.0))], &coal_p, Some(0)),
@@ -49,6 +49,7 @@ fn column() -> ColumnInput {
             unit(vec![("material", t("waste")), ("volume", n(300.0)), ("thickness", n(0.6)), ("rd", n(2.3))], &values([]), None),
         ],
         sections: vec![values([("volume", n(1500.0)), ("thickness", n(3.0))])],
+        rom_coals: vec![values([("volume", n(1500.0)), ("mad", n(3.2))])],
         column: values([("volume", n(1800.0))]),
     }
 }
@@ -132,6 +133,36 @@ def formula(unit):
     assert_eq!(out[1].get("thickness"), Some(&n(3.0)));
     assert_eq!(out[2].get("thickness"), Some(&n(1.6)));
     assert_eq!(out[0].get("discard"), Some(&t("B1")), "a block attribute missing reads None");
+}
+
+/// A unit in a ROM coal section reads its coal added up; one outside reads None.
+#[test]
+fn a_unit_reads_its_rom_section_s_coal() {
+    let f = Formula::compile("def formula(unit):
+    if unit.rom_coal != None:
+        unit.mad = unit.rom_coal.mad
+", declared()).expect("it compiles");
+    let out = f.run(&column(), &[0, 2]).expect("it runs");
+    assert_eq!(out[0].get("mad"), Some(&n(3.2)));
+    assert!(out[1].sets.is_empty(), "the waste is in no ROM coal section");
+    let (m, _) = refused("def formula(unit):
+    unit.mad = unit.rom_coal.discard
+");
+    assert!(m.contains("adds up number fields"), "{m}");
+}
+
+/// A field named as the formula runs, read and set by `unit["name"]`; a name the dataflow lacks is refused.
+#[test]
+fn a_field_can_be_named_as_the_formula_runs() {
+    let src = "def formula(unit, p):\n    for name in dir(p):\n        if name.endswith(\"_cutoff\"):\n            unit[\"ash_ad\"] = p.insitu_ash_cutoff + unit[\"thickness\"]\n";
+    let f = Formula::compile(src, declared()).expect("it compiles");
+    let out = f.run(&column(), &[0]).expect("it runs");
+    assert_eq!(out[0].get("ash_ad"), Some(&n(37.0)), "35 + 2 m");
+    let f = Formula::compile("def formula(unit):\n    unit[\"ahs\"] = 1\n", declared()).expect("a name in quotes is checked as it runs");
+    let p = f.run(&column(), &[0]).expect_err("no such field");
+    assert!(p.message.contains("`ahs` isn't a field of this dataflow"), "{}", p.message);
+    let f = Formula::compile("def formula(unit):\n    x = unit[\"ash_da\"]\n", declared()).expect("compiles");
+    assert!(f.run(&column(), &[0]).expect_err("no such field").message.contains("did you mean `ash_ad`"));
 }
 
 /// The first problem a formula is refused for, with its line.
@@ -259,9 +290,11 @@ fn a_million_units_through_a_formula() {
                         block: block.clone(),
                         parameters: p.clone(),
                         section: None,
+                        rom_coal: None,
                     })
                     .collect(),
                 sections: vec![],
+                rom_coals: vec![],
                 column: values([]),
             }
         })

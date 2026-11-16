@@ -240,9 +240,9 @@ def main():
     print(f"   the two cases' totals differ by {abs(totals['Base'] - totals['50m']):.3g} m3")
 
     # The reserves run (decisions 0072 to 0074): each case's reserves table, a leaf a pit, strip, block, seam and bench,
-    # adds up to its blocks' volumes and tonnes to 1e-9, in its Imported folders and its Insitu ones: air dried, volume x
-    # the interrogated RD for coal and the parameter table's 2.3 for waste; in situ, coal's by Preston-Sanders at Mad
-    # 3.5 % and Mis 8 %, waste's as given.
+    # adds up to its blocks' volumes and tonnes to 1e-9, in its Imported folders and its Insitu ones: in situ, coal's by
+    # Preston-Sanders at Mad 3.5 % and Mis 8 %, waste's the parameter table's 2.3 as given; air dried, Spry's way (decision
+    # 0077, point 5), coal's in situ tonnes x (100 - Mis) / (100 - Mad) and waste's as in situ, having no moistures.
     for case, suffix in (("Base", ""), ("50m", " 50m")):
         tables = s.objects(layer=f"10 reserves{suffix}", kind="table")
         assert len(tables) == 1, tables
@@ -256,7 +256,7 @@ def main():
         volume = sum(b["volume"] for b in blocks)
         ps = lambda rd: rd * 0.965 / (1 + rd * (0.08 - 0.035) - 0.08)
         coal_ = lambda b: b["attributes"].get("material") == "coal"
-        tonnes_ad = sum(b["volume"] * (b["attributes"]["rd"] if coal_(b) else 2.3) for b in blocks)
+        tonnes_ad = sum(b["volume"] * (ps(b["attributes"]["rd"]) * 92.0 / 96.5 if coal_(b) else 2.3) for b in blocks)
         tonnes = sum(b["volume"] * (ps(b["attributes"]["rd"]) if coal_(b) else 2.3) for b in blocks)
         imported, written, written_t, written_ad = total("Imported", "volume"), total("Insitu", "volume"), total("Insitu", "tonnes"), total("Insitu", "tonnes_ad")
         benched = sum(1 for b in cols["bench"] if b)

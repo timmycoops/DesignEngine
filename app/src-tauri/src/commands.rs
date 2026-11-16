@@ -736,10 +736,77 @@ pub fn parameters_check(content: zd_core::ParameterTable) -> Result<(), String> 
     content.check()
 }
 
-/// Whether a dataflow as edited holds together, before it's saved: the engine's own check.
+/// Whether a dataflow as edited holds together, before it's saved: the engine's own check, its formula steps compiled
+/// against its fields and parameter tables and their worked examples run (decision 0077), as `dataflow.save` will.
 #[tauri::command]
-pub fn dataflow_check(content: zd_core::Dataflow) -> Result<(), String> {
-    content.check()
+pub async fn dataflow_check(content: zd_core::Dataflow, state: State<'_, AppState>) -> Result<(), String> {
+    content.check()?;
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let tables: Vec<std::sync::Arc<zd_core::ParameterTable>> = content
+            .parameters
+            .iter()
+            .filter_map(|id| match project.object(*id).map(|o| &o.body) {
+                Some(zd_core::Body::ParameterTable(t)) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        let refs: Vec<&zd_core::ParameterTable> = tables.iter().map(|t| &**t).collect();
+        let fields = content.engine_fields()?;
+        let built_in: Vec<&str> = zd_commands::builtin::STEPS.iter().map(|(n, _)| *n).collect();
+        zd_commands::builtin::check_formula_steps(&content, &built_in, &zd_commands::builtin::formula_declared(&fields, &refs)).map(|_| ())
+    })
+    .await?
+}
+
+/// A formula step of a dataflow as edited, checked (decision 0077, 7d): where it sits, every problem with its line, its
+/// known answers, and the names it may use.
+#[tauri::command]
+pub async fn formula_check(content: zd_core::Dataflow, index: usize, state: State<'_, AppState>) -> Result<zd_commands::builtin::FormulaReport, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let tables: Vec<std::sync::Arc<zd_core::ParameterTable>> = content
+            .parameters
+            .iter()
+            .filter_map(|id| match project.object(*id).map(|o| &o.body) {
+                Some(zd_core::Body::ParameterTable(t)) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        let refs: Vec<&zd_core::ParameterTable> = tables.iter().map(|t| &**t).collect();
+        let built_in: Vec<&str> = zd_commands::builtin::STEPS.iter().map(|(n, _)| *n).collect();
+        zd_commands::builtin::check_formula(&content, &refs, index, &built_in)
+    })
+    .await?
+}
+
+/// A formula step of a dataflow as edited, traced on a picked solid (decision 0077, 7d): the solid's block column run
+/// up to the step, with the blocks on the solid's layer and the project's seam model, then the formula traced on its
+/// unit. Nothing is kept.
+#[tauri::command]
+pub async fn formula_trace(content: zd_core::Dataflow, step: String, solid: ObjectId, state: State<'_, AppState>) -> Result<zd_commands::builtin::FormulaTraceView, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let picked = project.object(solid).ok_or("the picked solid isn't in the project")?;
+        let blocks: Vec<ObjectId> = project.objects().filter(|o| o.layer == picked.layer && matches!(o.body, zd_core::Body::Solid(_))).map(|o| o.id).collect();
+        let model = project.objects().find(|o| matches!(o.body, zd_core::Body::SeamModel(_))).map(|o| o.id).ok_or("the project has no seam model to put the column in order")?;
+        let p = zd_commands::builtin::RunReservesParams { dataflow: ObjectId::new(), blocks, model: Some(model), stack: Vec::new(), layer: "trace".into(), parameters: None, name: String::new() };
+        let get = |id: ObjectId| project.object(id).cloned().ok_or(zd_commands::CommandError::MissingObject(id));
+        zd_commands::builtin::formula_trace(&get, &std::sync::Arc::new(content), &p, &step, solid).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
+/// How to write a formula: the formula panel's help and what Copy for AI hands over (decision 0077, 7d).
+#[tauri::command]
+pub fn formula_reference() -> &'static str {
+    zd_commands::builtin::FORMULA_REFERENCE
 }
 
 /// The solids a reserves table's node was made from (decision 0075): every solid of the table's case whose levels, as
@@ -1363,6 +1430,18 @@ pub struct BenchConfig {
     /// With `--builder`, the Builder panel driven as Tim would: steps built from a toe, a step picked from the list, a berm's
     /// line edited and the wall above built on it (decision 0048).
     builder: bool,
+    /// With `--project`, Project on the Strings tab driven as Tim would: the side set by a click in the view, three toes
+    /// picked by a box and projected in one run, on to a surface with walls kept, a refusal, and one undo (decision 0079).
+    project: bool,
+    /// With `--measure`, the distance measure on the view bar driven as Tim would: M, two clicks on a string's ends for a
+    /// known leg, a click on for a total, Backspace, Esc, and nothing made (decision 0079).
+    measure: bool,
+    /// With `--ramp`, a ramp made by hand from the Walls row as Tim would: an edge graded, offset, projected up and down,
+    /// and one surface between the four strings, its area known (decision 0079).
+    ramp: bool,
+    /// With `--ramp-start`, Ramp from a start driven as Tim would: placed along a toe by two clicks, moved, undone, and
+    /// one straight from a start to a surface (decision 0079).
+    ramp_start: bool,
     /// With `--cut`, the Cut solids panel driven as Tim would: a pit made between two surfaces inside its limit, sliced
     /// into strips by fifteen numbered faces, the faces joined a face a strip, and the pit cut at an RL (decision 0049).
     cut: bool,
@@ -1424,6 +1503,10 @@ pub fn bench_config() -> Option<BenchConfig> {
         palettes: args.iter().any(|a| a == "--palettes"),
         design_lines: args.iter().any(|a| a == "--design-lines"),
         builder: args.iter().any(|a| a == "--builder"),
+        project: args.iter().any(|a| a == "--project"),
+        measure: args.iter().any(|a| a == "--measure"),
+        ramp: args.iter().any(|a| a == "--ramp"),
+        ramp_start: args.iter().any(|a| a == "--ramp-start"),
         cut: args.iter().any(|a| a == "--cut"),
         select: args.iter().any(|a| a == "--select"),
         shell: args.iter().any(|a| a == "--shell"),

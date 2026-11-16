@@ -28,6 +28,7 @@ import {
   Map as MapIcon,
   Merge,
   MountainSnow,
+  MoveUpRight,
   MousePointer2,
   PackageOpen,
   PackagePlus,
@@ -40,6 +41,8 @@ import {
   Rows4,
   Save,
   SaveAll,
+  Route,
+  Ruler,
   Scissors,
   Sheet,
   Sigma,
@@ -73,6 +76,9 @@ const ICONS: Record<ToolIcon, LucideIcon> = {
   grade: TrendingUp,
   elevation: ArrowUpToLine,
   drape: Waves,
+  project: MoveUpRight,
+  'surface-between': BetweenHorizontalStart,
+  ramp: Route,
   split: Split,
   join: Merge,
   smooth: Spline,
@@ -111,6 +117,7 @@ const ICONS: Record<ToolIcon, LucideIcon> = {
   'zoom-selection': Focus,
   'zoom-all': Expand,
   section: Scissors,
+  measure: Ruler,
 };
 
 /** A tool's icon, or nothing where it has none. */
