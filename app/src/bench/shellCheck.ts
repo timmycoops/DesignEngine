@@ -4,24 +4,48 @@
 // Import menu. Then the docks (decision 0076): tools opened from the toolbar are tabs in one dock beside Properties and
 // tables are tabs in one dock under the view, so the view keeps its width; a minimised dock comes back with the tool
 // asked for in front; a table fills the window and goes back; and a dock closed and opened again gives its room to the
-// view and takes it back, the other docks staying put. With `--pictures <folder>` the window is then drawn in three
-// states (a tool and a table open for the Solids, Walls and Reserves work), over the project given by `--dataflow` if
-// there is one. The layout saved on this machine is put back as it was at the end.
+// view and takes it back, the other docks staying put. Then the view bar (workstream 2): the view has no tab strip and
+// takes no panel dropped on its middle; its tools are on a bar over it and off the toolbar, and their buttons and keys
+// (T, 2, [, ], E) do their jobs over a made-up topography and block; with a section open the bar never covers the
+// section's overview, in a tall view or a short one. With `--pictures <folder>` the window is then drawn in its states
+// (a tool and a table open for the Solids, Walls and Reserves work, and a section open), over the project given by
+// `--dataflow` if there is one. The layout saved on this machine is put back as it was at the end.
+import * as THREE from 'three/webgpu';
 import type { DockviewApi } from 'dockview-react';
-import { openProject, type ProjectSummary, writePicture } from '../bridge';
+import { openProject, projectSummary, type ProjectSummary, runCommand, type Vec3, writePicture } from '../bridge';
+import type { SectionView } from '../viewport/section';
+import { BAR_CLEAR } from '../viewport/sectionGrid';
 import type { Viewport } from '../viewport/Viewport';
 import { windowPicture } from './windowPicture';
 import { LAYOUT_KEYS, type PanelId, resetLayout, showPanel, TOOL_DOCK_WIDTH } from '../workspace/Workspace';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** A project to draw the window over, and how the app shows it. */
-interface Pictures {
-  project: string | null;
-  show: (summary: ProjectSummary) => Promise<void> | undefined;
-}
+/** Shows a summary as the app does. */
+type Show = (summary: ProjectSummary) => Promise<void> | undefined;
 
-export async function checkShell(viewport: Viewport, log: (line: string) => void, dock: () => DockviewApi | null, pictures: Pictures | null = null) {
+/** A made-up topography at RL 100 and a block standing on it, for the view's tools to work on (grid coordinates). */
+const E = 650_000;
+const N = 7_450_000;
+const BLOCK: Vec3[] = Array.from({ length: 8 }, (_, i) => [E + 400 + (i & 1) * 200, N + 100 + ((i >> 1) & 1) * 200, 100 + ((i >> 2) & 1) * 40] as Vec3);
+const BLOCK_FACES = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+
+type Box = { left: number; top: number; right: number; bottom: number };
+const boxOf = (element: Element | null | undefined): Box | null => {
+  if (!element) return null;
+  const { left, top, right, bottom } = element.getBoundingClientRect();
+  return { left: Math.round(left), top: Math.round(top), right: Math.round(right), bottom: Math.round(bottom) };
+};
+const apart = (a: Box | null, b: Box | null) => !!a && !!b && (a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
+
+export async function checkShell(
+  viewport: Viewport,
+  log: (line: string) => void,
+  dock: () => DockviewApi | null,
+  show: Show,
+  section: () => SectionView | null,
+  pictures: { project: string | null } | null = null,
+) {
   const api = dock();
   if (!api) return { error: 'no dock' };
   const results: Record<string, unknown> = {};
@@ -193,10 +217,150 @@ export async function checkShell(viewport: Viewport, log: (line: string) => void
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await settle();
 
+    // The view bar, from the default layout, over a made-up topography and a block.
+    resetLayout(api);
+    await settle();
+    await runCommand('surface.from_mesh', {
+      name: 'Topography',
+      layer: 'surfaces',
+      vertices: [[E, N, 100], [E + 1000, N, 100], [E + 1000, N + 400, 100], [E, N + 400, 100]],
+      triangles: [[0, 1, 2], [0, 2, 3]],
+    });
+    await runCommand('solid.from_mesh', { name: 'Block', layer: 'blocks', vertices: BLOCK, triangles: BLOCK_FACES });
+    const made = await projectSummary();
+    await show(made);
+    await wait(1500);
+    viewport.fitView();
+    await settle();
+    const origin = made.origin ?? [0, 0, 0];
+    const screen = (p: Vec3) => viewport.projectToClient(new THREE.Vector3(p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]));
+    const pointer = (type: string, x: number, y: number) =>
+      canvas.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, button: 0, buttons: type === 'pointerup' ? 0 : 1, pointerId: 1, pointerType: 'mouse', isPrimary: true, bubbles: true, cancelable: true }));
+    const click = async (at: [number, number]) => {
+      pointer('pointerdown', at[0], at[1]);
+      pointer('pointerup', at[0], at[1]);
+      await settle();
+    };
+    const bar = () => document.querySelector<HTMLElement>('[data-slot="view-bar"]');
+    const nameOf = (b: Element) => b.getAttribute('aria-label') ?? b.textContent?.trim() ?? '';
+    const onBar = () => [...(bar()?.querySelectorAll('button, input') ?? [])].map(nameOf);
+    const barButton = (name: string) => [...(bar()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => nameOf(b) === name);
+    const pressed = (name: string) => barButton(name)?.getAttribute('aria-pressed') === 'true';
+    const press = async (name: string) => {
+      barButton(name)?.click();
+      await settle();
+    };
+    const footer = () => document.querySelector('footer')?.textContent ?? '';
+    const onToolbar = () => [...document.querySelectorAll('header button')].map((b) => b.textContent?.trim() ?? '');
+
+    const viewGroup = api.getPanel('viewport')?.group;
+    const tabStrip = viewGroup?.element.querySelector<HTMLElement>('.dv-tabs-and-actions-container');
+    expect('the view has no tab strip: it is as tall as its group', !!viewGroup && viewGroup.header.hidden && (tabStrip?.offsetHeight ?? 0) === 0 && size().height === viewGroup.api.height, {
+      view: size().height,
+      group: viewGroup?.api.height,
+      strip: tabStrip?.offsetHeight,
+    });
+    expect('no panel can be dropped on the middle of the view', viewGroup?.locked === true && viewGroup.panels.length === 1, { locked: viewGroup?.locked });
+    const viewTools = ['Select', 'Draw string', 'Snap', '3D', "Zoom to what's selected", 'Zoom to everything', 'Field of view', 'Section'];
+    const stillUp = ['Select', 'Draw string', 'Snap', '3D', 'Plan', 'Section'].filter((word) => onToolbar().includes(word));
+    expect('the view tools are on the view, and off the toolbar', viewTools.every((name) => onBar().includes(name)) && stillUp.length === 0, { on_the_bar: onBar(), still_on_the_toolbar: stillUp });
+    // The row the view tools came off: what it needs, against the window.
+    const row = document.querySelector<HTMLElement>('header');
+    const parts = [...(row?.children ?? [])].map((c) => c.getBoundingClientRect());
+    const tools = parts.slice(0, -1);
+    const needs = Math.ceil((tools.at(-1)?.right ?? 0) - (parts[0]?.left ?? 0) + (parts.at(-1)?.width ?? 0) + 16);
+    expect('with the view tools off it, the toolbar fits the window: nothing clipped', !!row && row.scrollWidth <= row.clientWidth && needs < window.innerWidth, { needs_px: needs, window_px: window.innerWidth });
+    const barBox = boxOf(bar());
+    const viewBox = boxOf(canvas);
+    expect('the bar is in the top left corner of the view', !!barBox && !!viewBox && barBox.left - viewBox.left === 8 && barBox.top - viewBox.top === 8 && barBox.right < viewBox.right, { bar: barBox, view: viewBox });
+
+    await press('3D');
+    const planByButton = viewport.planView && onBar().includes('Plan');
+    await press('Plan');
+    const backByButton = !viewport.planView && onBar().includes('3D');
+    await key('t');
+    const planByKey = viewport.planView && pressed('Plan');
+    await key('t');
+    expect('3D or Plan: the button and T both go into plan and back', planByButton && backByButton && planByKey && !viewport.planView, { planByButton, backByButton, planByKey });
+
+    await press('Draw string');
+    const drawing = pressed('Draw string') && !pressed('Select');
+    await press('Select');
+    const snapWas = pressed('Snap');
+    await press('Snap');
+    const snapNow = pressed('Snap');
+    await press('Snap');
+    expect('Select, Draw and Snap say which is on', drawing && pressed('Select') && !pressed('Draw string') && snapWas !== snapNow && pressed('Snap') === snapWas, { drawing, snap: [snapWas, snapNow] });
+
+    const all = viewport.bounds.getCenter(new THREE.Vector3());
+    viewport.focusOn([all.x + 300, all.y - 200, all.z], 100);
+    await settle();
+    const away = viewport.controls.target.distanceTo(all);
+    await key('e');
+    const byKey = viewport.controls.target.distanceTo(all);
+    viewport.focusOn([all.x + 300, all.y - 200, all.z], 100);
+    await settle();
+    await press('Zoom to everything');
+    expect('E and its button zoom to everything', away > 100 && byKey < 1e-6 && viewport.controls.target.distanceTo(all) < 1e-6, { away_m: Number(away.toFixed(1)), by_key_m: byKey, by_button_m: viewport.controls.target.distanceTo(all) });
+
+    // A section: its button starts the picking, two points open it, and its step and fill come onto the bar.
+    viewport.setPlanView(true);
+    viewport.fitView();
+    await settle();
+    await press('Section');
+    const picking = footer().includes('Section: pick the first point') && pressed('Section');
+    await key('2');
+    const stopped = footer().startsWith('Select:') && !pressed('Section');
+    await key('2');
+    await click(screen([E + 100, N + 200, 100]));
+    await click(screen([E + 900, N + 200, 100]));
+    for (let k = 0; k < 50 && !section()?.open; k++) await wait(100);
+    await settle();
+    const sectionTools = ['Step back', 'Section step in metres', 'Step on', 'Fill'];
+    expect('Section and 2 start picking and stop it; two points open a section, and its step and fill come onto the bar', picking && stopped && !!section()?.open && sectionTools.every((name) => onBar().includes(name)), {
+      picking,
+      stopped,
+      open: !!section()?.open,
+      on_the_bar: onBar(),
+    });
+    const at = () => section()?.offset ?? NaN;
+    const from = at();
+    await key(']');
+    const on = at();
+    await key('[');
+    const steppedBack = at();
+    await press('Step on');
+    const onByButton = at();
+    await press('Step back');
+    expect('] and [ step the section on and back, as their buttons do', on - from === 25 && steppedBack === from && onByButton - from === 25 && at() === from, { from, on, back: steppedBack, by_button: onByButton, back_again: at() });
+
+    const underBar = (boxOf(bar())?.bottom ?? Infinity) - (boxOf(canvas)?.top ?? 0);
+    expect("the section's distances are under the bar, not behind it", underBar <= BAR_CLEAR, { bar_ends_px: underBar, distances_from_px: BAR_CLEAR });
+
+    const overview = () => boxOf(section()?.overviewCanvas);
+    const tall = { bar: boxOf(bar()), overview: overview(), view: size().height };
+    // A view too short for the bar above the overview: the tables given all but 300 px of it.
+    const resultsDock = api.getPanel('runlog')?.group;
+    const tablesHeight = resultsDock?.api.height ?? 0;
+    resultsDock?.api.setSize({ height: tablesHeight + size().height - 300 });
+    await settle();
+    const short = { bar: boxOf(bar()), overview: overview(), view: size().height };
+    resultsDock?.api.setSize({ height: tablesHeight });
+    await settle();
+    expect(
+      "the bar never covers the section's overview: over it in a tall view, beside it in a short one",
+      apart(tall.bar, tall.overview) && apart(short.bar, short.overview) && short.view <= 300 && (short.bar?.left ?? 0) >= (short.overview?.right ?? Infinity) && size().height === tall.view,
+      { tall, short },
+    );
+    await key('2');
+    expect('2 closes the section, and its step and fill leave the bar', !section()?.open && !onBar().includes('Fill') && !pressed('Section'), { open: !!section()?.open, on_the_bar: onBar() });
+    viewport.setPlanView(false);
+    await settle();
+
     if (pictures) {
       if (pictures.project) {
         log(`shell: opening ${pictures.project}`);
-        await pictures.show(await openProject(pictures.project));
+        await show(await openProject(pictures.project));
         await wait(1500);
         viewport.fitView();
       }
@@ -214,6 +378,27 @@ export async function checkShell(viewport: Viewport, log: (line: string) => void
       await picture('docks-solids', ['builder', 'reserves', 'cut', 'blocks']);
       await picture('docks-walls', ['cut', 'builder', 'face']);
       await picture('docks-reserves', ['cut', 'reserves', 'params', 'restable']);
+      // A section across the middle of what's on show, from plan, with its step and fill on the bar.
+      resetLayout(api);
+      viewport.setPlanView(true);
+      viewport.fitView();
+      await settle();
+      await key('2');
+      const across = boxOf(canvas)!;
+      const mid = (across.top + across.bottom) / 2;
+      await click([across.left + 0.3 * (across.right - across.left), mid]);
+      await click([across.left + 0.7 * (across.right - across.left), mid]);
+      for (let k = 0; k < 80 && !section()?.open; k++) await wait(100);
+      if (section()?.open) {
+        await wait(1500);
+        const path = await writePicture('view-bar-section', await windowPicture(viewport));
+        log(`shell: ${path}`);
+        saved.push(path);
+        await key('2');
+      } else {
+        log('shell: no section opened for its picture');
+      }
+      viewport.setPlanView(false);
       results.pictures = saved;
     }
   } finally {

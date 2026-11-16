@@ -1,13 +1,15 @@
 // The section's RL grid: RL lines, and distance along the section from A, on a canvas over the viewport.
 // Everything is read from the section camera each frame, so a line sits exactly where that RL and
 // distance are drawn. The spacing follows the zoom, the same both ways so the grid stays square on a
-// true-scale section, and the labels stay on the screen's edges.
+// true-scale section, and the labels stay on the screen's edges, the distances under the view bar.
 import { SECTION, SHADE, STEPS, TEXT } from './overview';
 
 /** The least gap between grid lines on screen (CSS px): wide enough for a distance label. */
 const LEAST_GAP = 64;
-/** The band along the top that holds the distances (CSS px). */
+/** The band that holds the distances (CSS px). */
 const TOP_BAND = 24;
+/** The room along the top the view bar takes (CSS px): the distances sit under it, never behind it. */
+export const BAR_CLEAR = 44;
 /** How close a distance label may come to the A or B tag (CSS px). */
 const TAG_CLEAR = 36;
 /** The height of the bottom left corner the plan map takes (CSS px). */
@@ -141,14 +143,14 @@ export class SectionGrid {
     const digits = Math.max(0, -Math.floor(Math.log10(spacing)));
     const reading = (value: number) => value.toLocaleString('en-AU', { minimumFractionDigits: digits, maximumFractionDigits: digits });
     for (const { value, y } of rl) {
-      if (y < TOP_BAND) continue;
+      if (y < BAR_CLEAR + TOP_BAND) continue;
       if (y < h - MAP_CORNER) label(`RL ${reading(value)}`, 8, y, 'left', TEXT);
       label(`RL ${reading(value)}`, w - 8, y, 'right', TEXT);
     }
     for (const { value, x } of along) {
-      if (tags.every((tag) => Math.abs(tag.x - x) > TAG_CLEAR)) label(`${reading(value)} m`, x, TOP_BAND / 2, 'center', TEXT);
+      if (tags.every((tag) => Math.abs(tag.x - x) > TAG_CLEAR)) label(`${reading(value)} m`, x, BAR_CLEAR + TOP_BAND / 2, 'center', TEXT);
     }
-    for (const { text, x } of tags) label(text, x, TOP_BAND / 2, 'center', SECTION);
+    for (const { text, x } of tags) label(text, x, BAR_CLEAR + TOP_BAND / 2, 'center', SECTION);
     this.lastDrawMs = performance.now() - started;
   }
 }

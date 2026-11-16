@@ -1,32 +1,20 @@
-import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { confirm, message, open, save } from '@tauri-apps/plugin-dialog';
 import type { DockviewApi } from 'dockview-react';
 import {
-  Aperture,
-  Box,
   ChevronDown,
-  Expand,
   FileInput,
   FileOutput,
   FilePlus,
-  Focus,
   FolderOpen,
   Hammer,
-  Magnet,
-  Map as MapIcon,
-  MousePointer2,
-  PaintBucket,
   MountainSnow,
   PanelsTopLeft,
-  PenLine,
   Redo2,
   Save,
   SaveAll,
-  Scissors,
   Sigma,
   Slice,
-  StepBack,
-  StepForward,
   Sheet,
   SlidersHorizontal,
   Table2,
@@ -78,7 +66,7 @@ import {
 } from './bridge';
 import { runChecks } from './bench/runChecks';
 import { valueBands } from './viewport/bands';
-import { lookAt, RunGoing, ShowNote } from './design-system/kit';
+import { lookAt, RunGoing, ShowNote, ToolButton } from './design-system/kit';
 import { Button } from './design-system/ui/button';
 import {
   DropdownMenu,
@@ -93,10 +81,11 @@ import {
   DropdownMenuTrigger,
 } from './design-system/ui/dropdown-menu';
 import { Separator } from './design-system/ui/separator';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './design-system/ui/tooltip';
+import { TooltipProvider } from './design-system/ui/tooltip';
 import { type DeswikChoice, DeswikImportDialog, type ImportSource, type PickableLayer } from './panels/DeswikImportDialog';
 import { ExportSolidsDialog, type SolidExportOptions } from './panels/ExportSolidsDialog';
 import { type NotASolid, RepairDialog } from './panels/RepairDialog';
+import { type ViewTools, ViewToolsContext } from './panels/ViewBar';
 import { IssueMarkers } from './viewport/markers';
 import { type RlShown, type SeamShown, SceneSync } from './viewport/sceneSync';
 import { planPoint, SectionView } from './viewport/section';
@@ -104,7 +93,6 @@ import { RoadLayer } from './viewport/roads';
 import { type Mode, StringLayer } from './viewport/strings';
 import { typing } from './viewport/camera';
 import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Viewport';
-import { Input } from '@/design-system/ui/input';
 import { type AddingTo, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
 import { ALL_PANELS_KEY, PANELS, type PanelId, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
 
@@ -138,28 +126,12 @@ function fileName(name: string, extension: string): string {
 }
 
 /** What goes out to DXF: strings, surfaces and solids. */
-/** Fields of view offered in the toolbar, in degrees. */
-const FIELD_OF_VIEW_CHOICES = [2, 4, 6, 10, 15, 20, 30, 45];
-
 const DXF_KINDS = new Set(['string', 'surface', 'solid']);
 
 /** Splits a file path into its folder and name, for either separator. */
 function splitPath(path: string): [string, string] {
   const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
   return [path.slice(0, cut), path.slice(cut + 1)];
-}
-
-function ToolButton({ tip, active, children, ...props }: { tip: string; active?: boolean; children: ReactNode } & ComponentProps<typeof Button>) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button variant="ghost" size="sm" className={cn(active && 'bg-selection text-primary')} {...props}>
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{tip}</TooltipContent>
-    </Tooltip>
-  );
 }
 
 /** How near a click on a section must be to a line to pick it (px). */
@@ -935,7 +907,7 @@ export default function App() {
     });
   };
 
-  /** Plan or 3D over the same spot (T, or the toolbar). A section open is closed first. */
+  /** Plan or 3D over the same spot (T, or the view bar). A section open is closed first. */
   const togglePlan = () => {
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -943,7 +915,7 @@ export default function App() {
     viewport.setPlanView(!viewport.planView);
   };
 
-  /** Section (2, or the toolbar): picking its two points starts, or stops if it had started; an open one closes. */
+  /** Section (2, or the view bar): picking its two points starts, or stops if it had started; an open one closes. */
   const toggleSection = () => {
     if (sectionOpen) return closeSection();
     setMode(mode === 'section' ? 'select' : 'section');
@@ -1117,6 +1089,38 @@ export default function App() {
     [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk],
   );
 
+  /** The view's own tools, for the bar on the view (decision 0076). The keys below do the same. */
+  const viewTools: ViewTools = {
+    mode,
+    setMode,
+    snapping,
+    toggleSnapping: () => stringsRef.current?.toggleSnapping(),
+    plan,
+    togglePlan,
+    hasSelection: selection.length > 0,
+    zoomToSelection: () => zoomTo(selection),
+    zoomToExtents,
+    fieldOfView,
+    setFieldOfView: (degrees) => {
+      viewportRef.current?.setFieldOfView(degrees);
+      setFieldOfView(viewportRef.current?.fieldOfView ?? degrees);
+    },
+    sectionOpen,
+    toggleSection,
+    stepSection,
+    sectionStep,
+    setSectionStep: (text) => {
+      setSectionStep(text);
+      const distance = Number(text);
+      if (sectionRef.current && Number.isFinite(distance) && distance > 0) sectionRef.current.stepSize = distance;
+    },
+    sectionFill,
+    setSectionFill: (on) => {
+      setSectionFill(on);
+      if (sectionRef.current) sectionRef.current.filled = on;
+    },
+  };
+
   const projectName = summary?.path ? splitPath(summary.path)[1] : 'Untitled project';
   /** A file name for what's selected: its name if it's one, else the project's. */
   const selectionName = (objects: ObjectSummary[]) => (objects.length === 1 ? objects[0].name : `${projectName} selection`);
@@ -1124,7 +1128,7 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={400}>
       <div className="flex h-full flex-col">
-        {/* In groups, left to right: the project, getting data in and out, the string tools, the view, the design panels. */}
+        {/* In groups, left to right: the project, getting data in and out, the design panels. The view's tools are on the view. */}
         <header className="flex shrink-0 items-center gap-0.5 border-b bg-card px-2 py-1">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1235,99 +1239,6 @@ export default function App() {
             </DropdownMenuContent>
           </DropdownMenu>
           <Separator orientation="vertical" className="mx-1 h-5" />
-          <ToolButton tip="Select and edit strings" active={mode === 'select'} onClick={() => setMode('select')}>
-            <MousePointer2 /> Select
-          </ToolButton>
-          <ToolButton tip={sectionOpen ? 'Digitise a string on the section: snaps to crossings, vertices and lines of the cut' : 'Digitise a string: snaps to string vertices and segments, then surfaces'} active={mode === 'draw'} onClick={() => setMode('draw')}>
-            <PenLine /> Draw string
-          </ToolButton>
-          <ToolButton
-            tip={snapping ? `Snap is on: to ${sectionOpen ? 'the cut lines' : 'strings, then surfaces'} (S turns it off)` : 'Snap is off: points go on the working plane (S turns it on)'}
-            active={snapping}
-            onClick={() => stringsRef.current?.toggleSnapping()}
-          >
-            <Magnet /> Snap
-          </ToolButton>
-          <Separator orientation="vertical" className="mx-1 h-5" />
-          <ToolButton
-            tip={plan ? 'Back to the 3D view (T). Or hold Z and drag to tilt up out of plan' : 'Plan view (T): straight down, north up; left-drag pans; the wheel zooms where the cursor is'}
-            active={plan}
-            onClick={togglePlan}
-          >
-            {plan ? <MapIcon /> : <Box />} {plan ? 'Plan' : '3D'}
-          </ToolButton>
-          <ToolButton tip="Zoom to what's selected (F), from the way you're looking" disabled={selection.length === 0 || sectionOpen} onClick={() => zoomTo(selection)}>
-            <Focus />
-          </ToolButton>
-          <ToolButton tip="Zoom to everything (E, or Shift+F)" disabled={sectionOpen} onClick={zoomToExtents}>
-            <Expand />
-          </ToolButton>
-          <DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="tabular-nums">
-                    <Aperture /> {fieldOfView}°
-                  </Button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent>3D field of view: narrower draws the far side of the pit nearer its true size. Saved on this machine</TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent align="start">
-              {FIELD_OF_VIEW_CHOICES.map((degrees) => (
-                <DropdownMenuItem
-                  key={degrees}
-                  onSelect={() => {
-                    viewportRef.current?.setFieldOfView(degrees);
-                    setFieldOfView(viewportRef.current?.fieldOfView ?? degrees);
-                  }}
-                >
-                  <span className="w-8 tabular-nums">{degrees}°</span>
-                  {degrees === FIELD_OF_VIEW_DEFAULT ? 'default' : degrees === 45 ? 'old view' : ''}
-                  {degrees === fieldOfView ? ' ✓' : ''}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <ToolButton
-            tip={sectionOpen ? 'Close the section (2)' : 'Section (2): pick two points for a true vertical slice'}
-            active={sectionOpen || mode === 'section'}
-            onClick={toggleSection}
-          >
-            <Scissors /> Section
-          </ToolButton>
-          {sectionOpen && (
-            <>
-              <ToolButton tip="Step back ([)" onClick={() => stepSection(-1)}>
-                <StepBack />
-              </ToolButton>
-              <Input
-                className="h-7 w-14 px-1.5 text-xs tabular-nums"
-                value={sectionStep}
-                onChange={(e) => {
-                  setSectionStep(e.target.value);
-                  const distance = Number(e.target.value);
-                  if (sectionRef.current && Number.isFinite(distance) && distance > 0) sectionRef.current.stepSize = distance;
-                }}
-                title="Metres to step, square to the section"
-                aria-label="Section step in metres"
-              />
-              <ToolButton tip="Step on (])" onClick={() => stepSection(1)}>
-                <StepForward />
-              </ToolButton>
-              <ToolButton
-                tip="Fill solids between their cut lines"
-                active={sectionFill}
-                onClick={() => {
-                  setSectionFill(!sectionFill);
-                  if (sectionRef.current) sectionRef.current.filled = !sectionFill;
-                }}
-              >
-                <PaintBucket /> Fill
-              </ToolButton>
-            </>
-          )}
-          <Separator orientation="vertical" className="mx-1 h-5" />
           <ToolButton tip="Face design: lines, profiles and rules, run as one" onClick={() => dockRef.current && showPanel(dockRef.current, 'face')}>
             <MountainSnow /> Face
           </ToolButton>
@@ -1377,9 +1288,11 @@ export default function App() {
 
         <main className="min-h-0 flex-1">
           <WorkspaceContext.Provider value={workspace}>
-            <ShowNote.Provider value={showNote}>
-              <Workspace onReady={(api) => (dockRef.current = api)} />
-            </ShowNote.Provider>
+            <ViewToolsContext.Provider value={viewTools}>
+              <ShowNote.Provider value={showNote}>
+                <Workspace onReady={(api) => (dockRef.current = api)} />
+              </ShowNote.Provider>
+            </ViewToolsContext.Provider>
           </WorkspaceContext.Provider>
         </main>
 

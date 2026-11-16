@@ -3,7 +3,8 @@
 Status: agreed 16 November 2026. Tim picked "panel and then b" of the options put to him (fix how panels open first,
 then the workflow tabs), and agreed the six decisions on the Build Plan's "UI improvements plan" tab as recommended
 ("Agree all 6"). It takes over the open parts of the UI plan tab and replaces 0051's one toolbar row. 0051's minimised
-strips and the ` key stay. Built as seven workstreams, a PR each. Workstream 1, the docks, is built here.
+strips and the ` key stay. Built as seven workstreams, a PR each. Workstreams 1, the docks, and 2, the view bar, are
+built.
 
 ## Why
 
@@ -101,6 +102,47 @@ With `--pictures <folder>` the shell bench draws the whole window in four states
 (`app/src/bench/windowPicture.ts`): the page's elements laid out again in an SVG with the page's own style sheets, the
 view's canvas as the picture it holds. Nothing reads the screen.
 
+## Built: workstream 2, the view bar
+
+- **The view's tools are on the view** (`app/src/panels/ViewBar.tsx`): a bar in its top left corner with Select, Draw
+  and Snap as icons, 3D or Plan, zoom to what's selected, zoom to everything, the field of view and Section. With a
+  section open its step back, step, step on and Fill come onto the bar beside Section. Each says what it does and its
+  key in a tip, and a tool that's on is lit in the picked gold. They are off the toolbar. A new view tool goes on the
+  bar, through `ViewTools`; App owns the state, as it does the keys.
+- **The view has no tab strip.** Its group's header is hidden, which gives the view 30 px, and the group takes no panel
+  dropped on its middle: a panel there would cover the view with no tab to come back by. Panels still dock against its
+  edges. A layout from before with a panel sharing the view's group shows the strip until that panel is closed or
+  dragged out. The double-click on the Viewport tab is gone; ` and the Panels menu still hide every panel.
+- **Every key works as it did**: T, F, Shift+F, E, 2, [, ], S and `.
+- **The bar never covers the section's overview.** The overview is in the bottom left corner; in a view too short for
+  both (under 340 px) the bar sits beside the overview instead of over it (a container query on the view).
+- **The section's distances sit under the bar**: the band along the top that holds them starts 44 px down
+  (`BAR_CLEAR` in `sectionGrid.ts`), so none is behind the bar. The legends stop short of the bar too.
+- `ToolButton` (a bar's button with its tip, lit while on) is in the kit, for the toolbar and the view bar.
+
+Release app, 16 November 2026, a 1,600 × 1,000 window. `--shell` passes 33 of 33: the 20 above and 13 for the view bar,
+over a made-up topography and block.
+
+| Check | Result |
+|---|---|
+| The view's height in the default layout | 739 px, its group's (709 px with the tab strip) |
+| A panel dropped on the middle of the view | not taken: the group is locked |
+| The view tools | all eight on the bar, none on the toolbar |
+| The toolbar with the view tools off it | needs 1,280 px (1,714 px before): nothing clipped at 1,600 px |
+| 3D or Plan | the button and T both go into plan and back |
+| Select, Draw, Snap | each says when it's on |
+| E and its button | the view back on everything, from 361 m away |
+| Section and 2 | start the picking and stop it; two points open a section, and step and Fill come onto the bar |
+| ] and [, and their buttons | the section 25 m on and back |
+| The bar and the overview, the view 739 px high | the bar over it, 446 px clear |
+| The same, the view 300 px high | the bar beside it, 12 px clear |
+| The section's distances | from 44 px down; the bar ends at 41 px |
+| 2 with a section open | closes it; step and Fill leave the bar |
+
+`--select` (29 of 29) covers F, Shift+F, T, hold Z, 2 and E through key events, reading the view bar where it read the
+toolbar; `--section-guide` (11 of 11), `--workflow` (43 of 43) and `--dataflow` (21 of 21) still pass. The window
+pictures gain `view-bar-section`, a section open with its step and fill on the bar.
+
 ## Known limits
 
 - **A layout opened in a window of another size** is scaled by dockview as it's read, docks and all. They hold from
@@ -108,5 +150,8 @@ view's canvas as the picture it holds. Nothing reads the screen.
 - **The window resized while a table fills it**: the docks come back scaled, as dockview leaves them.
 - **A dock is told by what's in it.** A table dragged into the tool dock stays there, and the next table still opens
   under the view. With a dock's panels split across two groups, the next one opens in the group holding the most.
-- **The toolbar still clips** at 1,600 px. Workstream 5 replaces it.
+- **The toolbar needs 1,280 px**, so it clips in a window narrower than that. Workstream 5 replaces it.
+- **The view bar wraps to a second row** in a view narrower than its tools (about 540 px with a section open), and then
+  covers the section's distances.
+- **The view stays where it is.** With no tab there's nothing to drag it by; the docks move round it.
 - **Window pictures** leave out scroll positions and web fonts, and are for the bench only.
