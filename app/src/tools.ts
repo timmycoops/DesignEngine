@@ -37,6 +37,7 @@ export type ToolIcon =
   | 'elevation'
   | 'drape'
   | 'project'
+  | 'surface-between'
   | 'split'
   | 'join'
   | 'smooth'
@@ -199,11 +200,12 @@ export const TOOLS: readonly Tool[] = [
   { key: 'strings:reverse', stage: 'strings', label: 'Reverse', tip: 'Turns the string to run the other way.', icon: 'reverse', panel: 'strings', mode: 'reverse', command: 'string.reverse' },
   { key: 'strings:set_closed', stage: 'strings', label: 'Close', tip: 'Closes the string, or opens it.', icon: 'close', panel: 'strings', mode: 'set_closed', command: 'string.set_closed' },
 
-  // Walls.
+  // Walls. Surface between strings is the Strings panel's, but it's wall work: a road or a batter drawn by hand.
   { key: 'face', stage: 'walls', label: 'Face design', tip: 'lines, profiles and rules, run as one', icon: 'face', panel: 'face' },
   { key: 'builder', stage: 'walls', label: 'Builder', tip: 'pick a line, build one wall or berm from it, edit between steps', icon: 'builder', panel: 'builder' },
   { key: 'builder:step', stage: 'walls', label: 'Build a step', tip: 'Builds one wall or berm from the line you pick.', panel: 'builder', command: 'face.build_step', step: { takes: 'the line picked' } },
   { key: 'builder:rebuild', stage: 'walls', label: 'Rebuild from here', tip: 'Builds the steps above an edited line again, each with its settings', icon: 'rebuild', panel: 'builder', command: 'face.rebuild' },
+  { key: 'strings:surface_between', stage: 'walls', label: 'Surface between strings', tip: 'Makes one surface between the strings picked.', short: 'Surface between', icon: 'surface-between', panel: 'strings', mode: 'surface_between', command: 'surface.between_strings' },
   { key: 'cut:join_faces', stage: 'walls', label: 'Join faces', tip: 'Makes one face a strip from up and down faces, several runs or a build’s steps', icon: 'join-faces', panel: 'cut', mode: 'strips', command: 'face.join' },
 
   // Solids. Cut solids' six, in the order the work is done; the panel's own choice keeps its order.
@@ -314,7 +316,8 @@ const EXPORT_MENU: RowMenu = { label: 'Export', icon: 'export', tip: 'Strings, s
 
 /**
  * The row of tools under each stage's tab, left to right, in the order the work is done (decision 0076). A tool is in
- * one stage, but a row may show one from another where the work wants it there too: Relink geology on Project.
+ * one stage, but a row may show one from another where the work wants it there too: Relink geology on Project, and on
+ * Walls the string tools a ramp is made from by hand (decision 0079): Set grade, Offset and Project.
  */
 export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
   project: ['project.new', 'project.open', 'project.save_as', '|', IMPORT_MENU, EXPORT_MENU, '|', 'seam.relink'],
@@ -335,7 +338,7 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     'strings:reverse',
     'strings:set_closed',
   ],
-  walls: ['face', 'builder', 'builder:rebuild', 'cut:join_faces'],
+  walls: ['face', 'builder', 'builder:rebuild', '|', 'strings:set_grade', 'strings:offset', 'strings:project', 'strings:surface_between', '|', 'cut:join_faces'],
   solids: [
     'cut:between',
     'cut:strips',

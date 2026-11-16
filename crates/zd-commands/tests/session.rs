@@ -110,6 +110,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "string.set_grade",
             "string.smooth",
             "string.split",
+            "surface.between_strings",
             "surface.from_mesh",
             "surface.import",
             "workflow.save",

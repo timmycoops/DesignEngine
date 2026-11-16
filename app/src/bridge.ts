@@ -1195,6 +1195,8 @@ export interface BenchConfig {
   project: boolean;
   /** With `--measure`, the distance measure on the view bar driven as Tim would, by its key, its button and clicks (decision 0079). */
   measure: boolean;
+  /** With `--ramp`, a ramp made by hand from the Walls row: Set grade, Offset, Project and a surface between the strings (decision 0079). */
+  ramp: boolean;
   /** With `--cut`, the Cut solids panel driven as Tim would: a pit between two surfaces, sliced into strips, cut at an RL (decision 0049). */
   cut: boolean;
   /** With `--section-guide`, the dashed line from a section's first point to the cursor, on a made-up topography. */

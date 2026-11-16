@@ -32,6 +32,7 @@ import { checkDataflow } from './dataflowCheck';
 import { checkSectionGuide } from './sectionGuideCheck';
 import { checkMeasure } from './measureCheck';
 import { checkProject } from './projectCheck';
+import { checkRamp } from './rampCheck';
 import { checkSelect } from './selectCheck';
 import { checkShell } from './shellCheck';
 import { checkWorkflow } from './workflowCheck';
@@ -96,6 +97,8 @@ export async function runChecks(
       results.project = await checkProject(viewport, log, show, strings, selection);
     } else if (config.measure) {
       results.measure = await checkMeasure(viewport, log, show, strings);
+    } else if (config.ramp) {
+      results.ramp = await checkRamp(viewport, log, show, strings, selection);
     } else if (config.cut) {
       results.cut = await checkCut(viewport, log, show, strings, config.seam);
     } else if (config.select) {

@@ -12,15 +12,15 @@ import { useWorkspace } from '@/workspace/context';
 /**
  * Strings (decision 0076, workstream 7): the commands on a string, out of Properties and onto the kit. Each tool on the
  * Strings tab opens this panel set to it. A tool works on the string picked, the last one picked where several are;
- * Number across, Polygons from lines and Project work on several. Vertex numbers are as Properties lists them, from 1.
+ * Number across, Polygons from lines, Project and Surface between strings work on several. Vertex numbers are as Properties lists them, from 1.
  * Grade, RL, drape, split, smooth, filter, reverse and close write a new revision of the string; offset, polygons and
  * project make new objects; join takes the other string into this one. One undo each.
  */
 
-type Mode = 'offset' | 'number_across' | 'polygons_from_lines' | 'set_grade' | 'set_elevation' | 'drape' | 'project' | 'split' | 'join' | 'smooth' | 'filter' | 'reverse' | 'set_closed';
+type Mode = 'offset' | 'number_across' | 'polygons_from_lines' | 'set_grade' | 'set_elevation' | 'drape' | 'project' | 'split' | 'join' | 'smooth' | 'filter' | 'reverse' | 'set_closed' | 'surface_between';
 
 /** In the order the Strings tab has them. */
-const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'join', 'smooth', 'filter', 'reverse', 'set_closed'];
+const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'join', 'smooth', 'filter', 'reverse', 'set_closed', 'surface_between'];
 /** Each tool's name, and the line it puts at the panel's head, from the one tool list. */
 const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('strings', MODES);
 
@@ -62,6 +62,8 @@ export function StringsPanel() {
   const [batter, setBatter] = useState(65);
   const [direction, setDirection] = useState<'up' | 'down'>('up');
   const [keepWall, setKeepWall] = useState(false);
+  const [surfaceName, setSurfaceName] = useState('');
+  const [surfaceLayer, setSurfaceLayer] = useState('');
   /** What the last Project made, until the project's summary has it. */
   const [made, setMade] = useState<string[]>([]);
   const [splitAt, setSplitAt] = useState<number | null>(null);
@@ -134,6 +136,11 @@ export function StringsPanel() {
     );
     if (found) setSide(found);
   };
+  const makeSurface = async () => {
+    const outcome = await runIt('surface.between_strings', { strings: toProject.map((o) => o.id), ...(surfaceName.trim() ? { name: surfaceName.trim() } : {}), ...(surfaceLayer.trim() ? { layer: surfaceLayer.trim() } : {}) });
+    const surface = outcome.record?.outputs.filter((o) => o.change === 'created').map((o) => o.id) ?? [];
+    if (surface.length > 0) setSelection(surface);
+  };
   const projectWords = () => {
     const where = projectTo === null ? `${direction} ${projectHeight} m` : projectTo.kind === 'rl' ? `${direction} to RL ${projectTo.rl}` : `${direction} to ${surfaces.find((s) => s.id === projectTo.id)?.name ?? 'a surface'}`;
     return `Project ${toProject.length === 1 ? toProject[0].name : plural(toProject.length, 'string')} ${where}`;
@@ -182,6 +189,13 @@ export function StringsPanel() {
         return { label: `Reverse ${on}`, run: () => runIt('string.reverse', { string: id }), ready: !!string };
       case 'set_closed':
         return { label: `${string?.closed ? 'Open' : 'Close'} ${on}`, run: () => runIt('string.set_closed', { string: id, closed: !string?.closed }), ready: !!string };
+      case 'surface_between':
+        return {
+          label: `Make a surface between ${plural(toProject.length, 'string')}`,
+          run: makeSurface,
+          ready: toProject.length >= 2,
+          title: 'One surface across the strings picked, in order across whatever order they were picked in. The strings stay as they are',
+        };
     }
   })();
   const action: ToolAction = {
@@ -193,7 +207,7 @@ export function StringsPanel() {
     run: does.run,
   };
 
-  const several = mode === 'number_across' || mode === 'polygons_from_lines' || mode === 'project';
+  const several = mode === 'number_across' || mode === 'polygons_from_lines' || mode === 'project' || mode === 'surface_between';
   return (
     <ToolPanel title="Strings" panel="strings" summary={MODE_LINES[mode]} result={report} action={action}>
       <ToolSection>
@@ -216,6 +230,12 @@ export function StringsPanel() {
         ) : mode === 'polygons_from_lines' ? (
           <Field label="Lines" hint="The lines across the strips and the lines closing them: pick them all, by a box or from the tree">
             <span data-slot="strings-on">{plural(picked.length, 'line')} picked</span>
+          </Field>
+        ) : mode === 'surface_between' ? (
+          <Field label="Between" hint={toProject.length >= 2 ? 'In order across, whatever order they were picked in' : "Pick two strings or more: a road's two edges, with the crest and toe of its batters if it has them"}>
+            <span data-slot="strings-on" className={toProject.length >= 2 ? undefined : 'text-muted-foreground'}>
+              {toProject.length >= 2 ? plural(toProject.length, 'string') : toProject.length === 1 ? `${toProject[0].name}, and one more to pick` : 'No string picked'}
+            </span>
           </Field>
         ) : mode === 'project' ? (
           <Field label="Project" hint={toProject.length > 0 ? 'Every string picked, each on its own, in one run' : 'Pick the strings in the view or the tree: by a box, or with Ctrl held'}>
@@ -343,6 +363,17 @@ export function StringsPanel() {
           </Field>
           <Field label="Wall" hint="Keeps the wall between each string and its new one, as a surface">
             <Checkbox checked={keepWall} aria-label="Keep the wall as a surface" onCheckedChange={(c) => setKeepWall(c === true)} />
+          </Field>
+        </ToolSection>
+      )}
+
+      {mode === 'surface_between' && (
+        <ToolSection title="Settings">
+          <Field label="Name" hint="Left blank, it's named for the strings at either side">
+            <Input className="h-7 w-40 px-1.5 text-xs" value={surfaceName} aria-label="Name of the surface" onChange={(e) => setSurfaceName(e.target.value)} />
+          </Field>
+          <Field label="To layer" hint="Left blank, the layer of the string picked first">
+            <Input className="h-7 w-40 px-1.5 text-xs" value={surfaceLayer} aria-label="Layer for the surface" onChange={(e) => setSurfaceLayer(e.target.value)} />
           </Field>
         </ToolSection>
       )}
