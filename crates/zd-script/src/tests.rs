@@ -186,6 +186,13 @@ fn every_example_in_the_reference_compiles() {
     assert!(close(match out[0].get("rd_is") { Some(ScriptValue::Number(x)) => *x, _ => f64::NAN }, 135.8 / 99.0));
 }
 
+/// A script with Windows line endings (pasted, or checked out so) reads as one with plain new lines.
+#[test]
+fn windows_line_endings_are_new_lines() {
+    let f = Formula::compile("def formula(unit):\r\n    unit.rd_is = unit.rd * 2\r\n", declared()).expect("it compiles");
+    assert_eq!(f.run(&column(), &[0]).expect("it runs")[0].get("rd_is"), Some(&n(2.9)));
+}
+
 /// A field named as the formula runs, read and set by `unit["name"]`; a name the dataflow lacks is refused.
 #[test]
 fn a_field_can_be_named_as_the_formula_runs() {

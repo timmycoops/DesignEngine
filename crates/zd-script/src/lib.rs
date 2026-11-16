@@ -238,6 +238,8 @@ impl fmt::Debug for Formula {
 impl Formula {
     /// Parses, loads and checks a formula. Every problem is said with its line; any one refuses it.
     pub fn compile(source: &str, declared: Declared) -> Result<Formula, Vec<Problem>> {
+        // A script pasted or checked out on Windows ends its lines with \r\n: read as plain new lines.
+        let source = &source.replace("\r\n", "\n");
         let declared = Arc::new(declared);
         let globals = globals();
         let ast = AstModule::parse(FILE, source.to_owned(), &Dialect::Standard).map_err(|e| vec![problem(&e, None)])?;
