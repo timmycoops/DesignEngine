@@ -113,7 +113,15 @@ fn flow(s: &mut Session, steps: serde_json::Value, csv: &str) -> ObjectId {
         "steps": steps,
         "parameters": [table],
     });
-    created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0]
+    created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0]
+}
+
+/// A dataflow's content given the starter formulas after `initialise`, as `dataflow_starter` gives them (decision 0077,
+/// 7c): limits and defaults, size filled in, and the densities where it has moistures.
+fn starter(content: serde_json::Value) -> serde_json::Value {
+    let mut d: zd_core::Dataflow = serde_json::from_value(content).unwrap();
+    zd_commands::builtin::with_starter_formulas(&mut d);
+    serde_json::to_value(d).unwrap()
 }
 
 fn session() -> Session {
@@ -182,7 +190,7 @@ fn each_block_s_horizons_and_benches_are_written_in_situ_with_their_own_values()
     assert_eq!(s.project().object(made[0]).unwrap().name, "Reserves Base");
     let t = table(&s, made[0]);
     assert_eq!(t.rows(), 6, "B1's U and L; B2's U, its benches 18 and 16, and L");
-    assert!(record.messages[0].starts_with("2 of 2 blocks ran through initialise, in_situ, join_benches; 180000.0 m3 in"), "{}", record.messages[0]);
+    assert!(record.messages[0].starts_with("2 of 2 blocks ran through initialise, fill_size, limits, in_situ, join_benches; 180000.0 m3 in"), "{}", record.messages[0]);
     assert_eq!(record.messages[1], "Reserves Base: 2 blocks, 6 leaves");
     let levels: Vec<&str> = t.columns.iter().take(6).map(|c| c.name.as_str()).collect();
     assert_eq!(levels, ["case", "pit", "strip", "block", "seam", "bench"], "the default levels");
@@ -233,7 +241,7 @@ fn the_levels_set_the_columns_and_the_leaves() {
         "steps": [{ "step": "initialise" }, { "step": "in_situ" }],
         "parameters": [table_id],
     });
-    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0];
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0];
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
     let t = table(&s, created(&record)[0]);
     let levels: Vec<&str> = t.columns.iter().take(5).map(|c| c.name.as_str()).collect();
@@ -302,11 +310,11 @@ fn the_preview_shows_a_block_s_column_after_each_step() {
     let path = ["Pit".to_string(), "3".to_string(), "B2".to_string()];
     let views = reserves_preview(&get, &p, "Base", &path).unwrap();
     let steps: Vec<&str> = views.iter().map(|v| v.step.as_str()).collect();
-    assert_eq!(steps, ["as input", "initialise", "in_situ", "join_benches"]);
+    assert_eq!(steps, ["as input", "initialise", "fill_size", "limits", "in_situ", "join_benches"], "the starter formulas after initialise");
     let horizons = |i: usize| views[i].units.iter().map(|u| u.horizon.clone()).collect::<Vec<_>>();
     assert_eq!(horizons(1), ["OB", "U", "U", "U-L", "L", "underburden"], "sorted, U's benches together, underburden below L");
-    assert_eq!(horizons(3), ["OB", "U", "U-L", "L", "underburden"], "U's benches joined");
-    let u = &views[3].units[1];
+    assert_eq!(horizons(5), ["OB", "U", "U-L", "L", "underburden"], "U's benches joined");
+    let u = &views[5].units[1];
     assert_eq!(u.joined, [("18".to_string(), 0.5), ("16".to_string(), 0.5)]);
     assert!(close(u.values["rd"], 1.5) && close(u.values["volume"], 20_000.0));
 }
@@ -385,9 +393,10 @@ coal,,5,10,12,3.5
     assert!(close(value(&t, leaf(&t, "B1", "L", None), &at(COAL, "ash")).unwrap(), 12.0), "outside its limits");
     assert!(close(value(&t, leaf(&t, "B1", "U", None), &at(COAL, "ash")).unwrap(), 10.0), "on its limit, kept");
     assert!(close(value(&t, leaf(&t, "B1", "U", None), &at(WASTE, "ash")).unwrap(), 60.0), "waste takes its default");
-    let mut said = notes_of(&record, Code::ReservesDefaulted);
+    // Said by the starter's limits formula (decision 0077, 7c), as the Rust said it before.
+    let mut said = notes_of(&record, Code::ReservesFormulaSaid);
     said.sort();
-    assert_eq!(said, ["2 units ash: coal outside its limits given its default, 30000.0 m3", "6 units ash: waste given its default, 210000.0 m3"], "the underburden too, as Spry");
+    assert_eq!(said, ["2 units printed by limits: ash: coal outside its limits given its default, 30000.0 m3", "6 units printed by limits: ash: waste given its default, 210000.0 m3"], "the underburden too, as Spry");
     assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 block thicker than max_thickness: 3_B1_U"]);
 }
 
@@ -419,7 +428,7 @@ fn moist_flow(s: &mut Session, csv: &str) -> ObjectId {
         "steps": [{ "step": "initialise" }, { "step": "in_situ" }],
         "parameters": [table],
     });
-    created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0]
+    created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0]
 }
 
 /// Coal at Mad 3 %, Mis 8 %, Mrom 10 %; waste RD 2.3 in situ as given. B1's U, RD 1.4: in situ density
@@ -436,7 +445,8 @@ fn coal_is_written_on_the_in_situ_basis_by_preston_sanders() {
     let dis = |rd: f64| rd * 0.97 / (1.0 + rd * 0.05 - 0.08);
     let u = leaf(&t, "B1", "U", None);
     let coal = |f: &str| value(&t, u, &at(COAL, f)).unwrap();
-    assert!(close(coal("rd_is"), 1.358 / 0.99) && close(coal("tonnes"), 20_000.0 * 1.358 / 0.99) && close(coal("tonnes_ad"), 28_000.0));
+    // Air-dried tonnes Spry's way (decision 0077, point 5): the in situ tonnes × (100 − Mis) ÷ (100 − Mad), not volume × RD.
+    assert!(close(coal("rd_is"), 1.358 / 0.99) && close(coal("tonnes"), 20_000.0 * 1.358 / 0.99) && close(coal("tonnes_ad"), 20_000.0 * 1.358 / 0.99 * 92.0 / 97.0));
     assert!(close(coal("ash_is"), 10.0 * 0.92 / 0.97) && close(coal("rd_rom"), dis(1.4) * 0.92 / 0.90));
     for (bench, rd) in [("18", 1.4), ("16", 1.6)] {
         let b = leaf(&t, "B2", "U", Some(bench));
@@ -455,7 +465,8 @@ fn coal_with_no_in_situ_moisture_stops_its_block() {
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
     assert!(record.messages[0].starts_with("0 of 2 blocks ran"), "{}", record.messages[0]);
     let stopped = record.notes.iter().find(|n| n.code == Some(Code::ReservesBlockStopped)).unwrap();
-    assert!(stopped.text.contains("Pit/3/B1 at in_situ: 3_B1_U is coal with no mis"), "{}", stopped.text);
+    // The starter's densities formula stops it (decision 0077, 7c), with its line.
+    assert!(stopped.text.contains("Pit/3/B1 at densities: line 13: coal with no mis on 3_B1_U"), "{}", stopped.text);
 }
 
 // Decision 0073, workstream 3c: working sections, a hand-worked column.
@@ -979,7 +990,8 @@ fn a_parameter_row_corrects_a_measured_length() {
     let edge: f64 = views.last().unwrap().units.iter().filter(|u| u.horizon == "A" && u.became.as_deref() == Some("loss (edge)")).map(|u| u.values["volume"]).sum();
     assert!(close(edge, 12.0), "{edge}");
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
-    assert!(notes_of(&record, Code::ReservesDefaulted).iter().any(|n| n == "2 units length: coal forced to its default, 25000.0 m3"), "{:?}", notes_of(&record, Code::ReservesDefaulted));
+    let said = notes_of(&record, Code::ReservesFormulaSaid);
+    assert!(said.iter().any(|n| n == "2 units printed by limits: length: coal forced to its default, 25000.0 m3"), "{said:?}");
 }
 
 /// A block whose volume attribute isn't its solid's (measured, then cut again) is named; the run reads what it carries.
@@ -998,7 +1010,7 @@ fn a_block_whose_measured_volume_isn_t_its_solid_s_is_named() {
         "steps": [{ "step": "initialise" }, { "step": "in_situ" }],
         "parameters": [table_id],
     });
-    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0];
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0];
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
     assert_eq!(notes_of(&record, Code::ReservesOutOfRange), ["1 block whose volume isn't its solid's (measured before it was cut again?): 1_B1_A"]);
     let t = table(&s, created(&record)[0]);
@@ -1122,7 +1134,7 @@ fn rom_gives_dilution_its_coal_s_moisture_and_works_rom_tonnes() {
         ],
         "parameters": [table_id],
     });
-    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": content })).unwrap())[0];
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0];
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
     let t = table(&s, created(&record)[0]);
     let dis = 1.4 * 0.97 / (1.0 + 1.4 * 0.05 - 0.08);

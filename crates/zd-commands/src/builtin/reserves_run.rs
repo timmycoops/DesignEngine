@@ -665,12 +665,11 @@ fn small_volumes(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), Str
 
 /// `initialise` (decision 0073, points 2 to 4): the stack order, benches top down; each unit's thickness and area
 /// checked against `max_thickness` and `max_area` (said, never changed: they're the solid's); underburden below the last
-/// coal where there's no waste there; then each quality and density field given its limits and defaults.
+/// coal where there's no waste there. Limits and defaults are the starter's `limits` formula now (decision 0077).
 fn initialise(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String> {
     run.column.sort();
     check_size(run, step);
     add_underburden(run, step);
-    quality_defaults(run);
     Ok(())
 }
 
@@ -742,52 +741,6 @@ fn add_underburden(run: &mut ColumnRun<'_>, step: &DataflowStep) {
     run.column.push_input(origin, stack, Labels::new("waste", ""), values).expect("the underburden's values are one a field");
     run.added_volume += volume;
     run.said.count("underburden added below the last coal, out of model".into(), volume);
-}
-
-/// Each field but the volume given its limits and defaults (decisions 0073, point 3, and 0074): `<field>_min`,
-/// `<field>_max` and `<field>_default`. A value outside its limits, inclusive, or with none, takes the default; a minimum
-/// equal to the maximum forces it, as Spry's do. So a block's measured thickness, area or length that looks wrong, from an
-/// odd solid, is corrected in the parameters without touching the block. Waste takes its quality, density and moisture
-/// defaults outright, as it has no grids. Each replacement counted by field and material.
-fn quality_defaults(run: &mut ColumnRun<'_>) {
-    let fields: Vec<(usize, String, bool)> = run
-        .column
-        .fields()
-        .list()
-        .iter()
-        .enumerate()
-        .filter(|(_, f)| !matches!(f.kind, FieldKind::Volume | FieldKind::Setting))
-        .map(|(i, f)| (i, f.name.clone(), matches!(f.kind, FieldKind::Quality | FieldKind::Density | FieldKind::Moisture)))
-        .collect();
-    let volume = run.column.fields().volume();
-    for at in 0..run.column.len() {
-        if run.column.units()[at].is_set_aside() {
-            continue;
-        }
-        let coal = is_coal(&run.column.units()[at]);
-        for (i, name, grade) in &fields {
-            let Some(default) = run.parameter(at, &format!("{name}_default")) else { continue };
-            let value = run.column.units()[at].value(*i);
-            let (min, max) = (run.parameter(at, &format!("{name}_min")), run.parameter(at, &format!("{name}_max")));
-            let forced = min.is_some() && min == max;
-            let replace = if coal || !grade { forced || value.is_nan() || min.is_some_and(|m| value < m) || max.is_some_and(|m| value > m) } else { true };
-            if replace {
-                let v = run.column.units()[at].value(volume);
-                run.column.unit_mut(at).set(*i, default);
-                let material = if coal { "coal" } else { "waste" };
-                let why = if !coal && *grade {
-                    "waste given its default".to_string()
-                } else if forced {
-                    format!("{material} forced to its default")
-                } else if value.is_nan() {
-                    format!("{material} with none given its default")
-                } else {
-                    format!("{material} outside its limits given its default")
-                };
-                run.said.count(format!("{name}: {why}"), v);
-            }
-        }
-    }
 }
 
 /// What the walk sees: a coal ply, or a run of waste (discarded coal with it) between plies.
@@ -1642,44 +1595,16 @@ pub fn preston_sanders(rd: f64, mad: f64, mis: f64) -> f64 {
     rd * (1.0 - mad) / (1.0 + rd * (mis - mad) - mis)
 }
 
-/// `in_situ` (decision 0073, point 5): each unit's in situ and ROM densities worked, then each horizon's units put back on
-/// their benches and written, a row a horizon and bench; units set aside and the underburden, outside the model, left
-/// out of the write. Coal: in situ density by Preston-Sanders from its RD, Mad and Mis (%), which it must have; ROM
-/// density that × (1 − Mis) ÷ (1 − Mrom) where it has an Mrom. Waste: its RD is in situ as given, and ROM the same unless
-/// it has moistures. A dataflow with no moisture fields is written on its RD's own basis, as before.
+/// `in_situ` (decision 0073, point 5): each horizon's units put back on their benches and written, a row a horizon and
+/// bench; units set aside and the underburden, outside the model, left out. The densities it writes with are the
+/// starter's `densities` formula's now (decision 0077): a coal unit that reaches it with none stops its block, said. A
+/// dataflow with no in situ density is written on its RD's own basis, as before.
 fn in_situ(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String> {
-    let fields = run.column.fields();
-    let at = |key: &str| fields.at(step.setting(key)).ok();
-    let (rd, mad, mis, mrom, rd_is, rd_rom) = (at("rd"), at("mad"), at("mis"), at("mrom"), at("rd_is"), at("rd_rom"));
-    if let (Some(rd), Some(rd_is)) = (rd, rd_is) {
+    if let Ok(rd_is) = run.column.fields().at(step.setting("rd_is")) {
         for i in 0..run.column.len() {
             let u = &run.column.units()[i];
-            if u.is_set_aside() {
-                continue;
-            }
-            let fraction = |f: Option<usize>| f.map(|f| u.value(f) / 100.0).filter(|v| v.is_finite());
-            let (d, ad, is, rom) = (u.value(rd), fraction(mad), fraction(mis), fraction(mrom));
-            let dis = if is_coal(u) {
-                let name = run.name_of(i);
-                if !d.is_finite() {
-                    return Err(format!("{name} is coal with no {}", step.setting("rd")));
-                }
-                let (Some(ad), Some(is)) = (ad, is) else {
-                    let missing: Vec<&str> = [(ad, "mad"), (is, "mis")].iter().filter(|(v, _)| v.is_none()).map(|(_, k)| step.setting(k)).collect();
-                    return Err(format!("{name} is coal with no {}", missing.join(" or ")));
-                };
-                preston_sanders(d, ad, is)
-            } else {
-                d
-            };
-            let drom = match (is, rom) {
-                (Some(is), Some(rom)) => dis * (1.0 - is) / (1.0 - rom),
-                _ if is_coal(u) => f64::NAN,
-                _ => dis,
-            };
-            run.column.unit_mut(i).set(rd_is, dis);
-            if let Some(rd_rom) = rd_rom {
-                run.column.unit_mut(i).set(rd_rom, drom);
+            if !u.is_set_aside() && is_coal(u) && !u.value(rd_is).is_finite() {
+                return Err(format!("{} is coal with no {}: no step worked it (the starter's densities formula does)", run.name_of(i), step.setting("rd_is")));
             }
         }
     }
@@ -1823,7 +1748,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
             && added.iter().flatten().any(|a| a[rd_rom].is_finite())
         {
             push(TableColumn::adding(&named("tonnes"), "t", AddUp::Sum, tonnes(rd_rom)));
-            push(TableColumn::adding(&named("tonnes_ad"), "t", AddUp::Sum, tonnes(rd)));
+            push(TableColumn::adding(&named("tonnes_ad"), "t", AddUp::Sum, tonnes(field(super::RD_ADT).unwrap_or(rd))));
             if let (Some(mad), Some(mrom)) = (field("mad"), field("mrom")) {
                 for (q, f) in fields.iter().enumerate().filter(|(_, f)| f.kind == FieldKind::Quality) {
                     let values = added.iter().map(|a| a.as_ref().map(|a| a[q] * (1.0 - a[mrom] / 100.0) / (1.0 - a[mad] / 100.0)).filter(|x| x.is_finite())).collect();
@@ -1835,7 +1760,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
         match (field("rd"), field("rd_is")) {
             (Some(rd), Some(rd_is)) if added.iter().flatten().any(|a| a[rd_is].is_finite()) => {
                 push(TableColumn::adding(&named("tonnes"), "t", AddUp::Sum, tonnes(rd_is)));
-                push(TableColumn::adding(&named("tonnes_ad"), "t", AddUp::Sum, tonnes(rd)));
+                push(TableColumn::adding(&named("tonnes_ad"), "t", AddUp::Sum, tonnes(field(super::RD_ADT).unwrap_or(rd))));
                 if let (Some(mad), Some(mis)) = (field("mad"), field("mis")) {
                     for (q, f) in fields.iter().enumerate().filter(|(_, f)| f.kind == FieldKind::Quality) {
                         let values = added.iter().map(|a| a.as_ref().map(|a| a[q] * (1.0 - a[mis] / 100.0) / (1.0 - a[mad] / 100.0)).filter(|x| x.is_finite())).collect();
@@ -2066,7 +1991,9 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
     let row = |material: &str| ParameterRow { when: [("material".to_string(), material.to_string())].into(), values: BTreeMap::new() };
     let default = ParameterRow { when: BTreeMap::new(), values: [("underburden_thickness".to_string(), ParamValue::Number(UNDERBURDEN_THICKNESS))].into() };
     let table = ParameterTable { filters: vec!["material".into(), "seam".into()], columns, rows: vec![row("waste"), row("coal"), default] };
-    (table, Dataflow { levels: zd_core::default_levels(), fields, steps, parameters: Vec::new() })
+    let mut dataflow = Dataflow { levels: zd_core::default_levels(), fields, steps, parameters: Vec::new() };
+    super::with_starter_formulas(&mut dataflow);
+    (table, dataflow)
 }
 
 impl crate::Session {

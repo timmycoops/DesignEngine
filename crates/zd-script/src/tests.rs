@@ -134,6 +134,20 @@ def formula(unit):
     assert_eq!(out[0].get("discard"), Some(&t("B1")), "a block attribute missing reads None");
 }
 
+/// A field named as the formula runs, read and set by `unit["name"]`; a name the dataflow lacks is refused.
+#[test]
+fn a_field_can_be_named_as_the_formula_runs() {
+    let src = "def formula(unit, p):\n    for name in dir(p):\n        if name.endswith(\"_cutoff\"):\n            unit[\"ash_ad\"] = p.insitu_ash_cutoff + unit[\"thickness\"]\n";
+    let f = Formula::compile(src, declared()).expect("it compiles");
+    let out = f.run(&column(), &[0]).expect("it runs");
+    assert_eq!(out[0].get("ash_ad"), Some(&n(37.0)), "35 + 2 m");
+    let f = Formula::compile("def formula(unit):\n    unit[\"ahs\"] = 1\n", declared()).expect("a name in quotes is checked as it runs");
+    let p = f.run(&column(), &[0]).expect_err("no such field");
+    assert!(p.message.contains("`ahs` isn't a field of this dataflow"), "{}", p.message);
+    let f = Formula::compile("def formula(unit):\n    x = unit[\"ash_da\"]\n", declared()).expect("compiles");
+    assert!(f.run(&column(), &[0]).expect_err("no such field").message.contains("did you mean `ash_ad`"));
+}
+
 /// The first problem a formula is refused for, with its line.
 fn refused(src: &str) -> (String, Option<usize>) {
     let problems = Formula::compile(src, declared()).expect_err("it's refused");

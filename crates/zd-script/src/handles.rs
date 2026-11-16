@@ -130,6 +130,26 @@ impl<'v> StarlarkValue<'v> for Unit {
         names
     }
 
+    /// `unit["ash"]`: a field or label by a name worked out as the formula runs (`name[:-len("_default")]`), as
+    /// `unit.ash` reads it; a name the dataflow doesn't have is refused.
+    fn at(&self, index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        let Some(name) = index.unpack_str() else {
+            return Err(starlark::Error::new_other(anyhow::anyhow!("a unit's field is named in words, not {}", index.to_repr())));
+        };
+        match self.get_attr(name, heap) {
+            Some(v) if !matches!(name, "section" | "column" | "block" | "above") => Ok(v),
+            _ => Err(starlark::Error::new_other(anyhow::anyhow!("`{name}` isn't a field of this dataflow{}", crate::check::did_you_mean(name, self.declared.fields.iter().map(|f| f.name.as_str()))))),
+        }
+    }
+
+    /// `unit["ash"] = 12`: sets a field named as the formula runs, as `unit.ash = 12` does.
+    fn set_at(&self, index: Value<'v>, new_value: Value<'v>) -> starlark::Result<()> {
+        let Some(name) = index.unpack_str() else {
+            return Err(starlark::Error::new_other(anyhow::anyhow!("a unit's field is named in words, not {}", index.to_repr())));
+        };
+        self.set_attr(name, new_value)
+    }
+
     fn set_attr(&self, attribute: &str, new_value: Value<'v>) -> starlark::Result<()> {
         let Some(field) = self.declared.fields.iter().find(|f| f.name == attribute) else {
             let why = if self.declared.is_label(attribute) {
