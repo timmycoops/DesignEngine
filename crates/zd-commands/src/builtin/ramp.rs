@@ -4,7 +4,7 @@
 //! revision somewhere else: that's how a ramp is moved.
 
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Change, ObjectId, ObjectKind, Polyline, StepTarget, TriMesh};
+use zd_core::{AttrValue, Body, Change, ObjectId, ObjectKind, Polyline, StepTarget, TriMesh};
 use zd_geom::{OffsetSide, RampShort, RampTo, ramp_polygon, triangulate_grid};
 
 use super::SideParam;
@@ -149,7 +149,7 @@ impl Command for RampFromStart {
             None => Change::Create {
                 name: p.name.clone().unwrap_or_else(|| format!("Ramp RL {} to {}", said(ramp.from_rl), said(ramp.to_rl))),
                 layer: p.layer.clone().unwrap_or_else(|| line.map_or_else(|| RAMP_LAYER.to_string(), |(object, _)| inputs.layer_name(object))),
-                attributes: Attributes::from(attributes),
+                attributes,
                 body: Body::String(ramp.polygon),
             },
         };

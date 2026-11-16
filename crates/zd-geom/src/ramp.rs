@@ -283,8 +283,7 @@ fn edge_across(inside: &[P3], width: f64, side: OffsetSide) -> Result<Vec<P3>, G
         [-dy / length * sign, dx / length * sign]
     };
     let mut out: Vec<P3> = Vec::with_capacity(n);
-    for i in 0..n {
-        let p = inside[i];
+    for (i, &p) in inside.iter().enumerate() {
         let (a, b) = (normal(i.saturating_sub(1).min(n - 2)), normal(i.min(n - 2)));
         let cos = a[0] * b[0] + a[1] * b[1];
         let reach = if 1.0 + cos > 1e-12 { (2.0 / (1.0 + cos)).sqrt() } else { f64::INFINITY };
