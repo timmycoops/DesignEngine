@@ -152,7 +152,7 @@ pub(crate) fn names(source: &str, declared: &Declared, unit: &str, p: Option<&st
         let [head, rest @ ..] = c.parts.as_slice() else { continue };
         if head == unit {
             match rest {
-                [part, name, ..] if part == "section" || part == "column" => {
+                [part, name, ..] if part == "section" || part == "column" || part == "rom_coal" => {
                     if !declared.fields.iter().any(|f| &f.name == name && f.kind == Kind::Number) {
                         say(c.line, format!("`{unit}.{part}.{name}`: a {part} adds up number fields, and `{name}` isn't one{}", did_you_mean(name, numbers())));
                     }
@@ -162,7 +162,7 @@ pub(crate) fn names(source: &str, declared: &Declared, unit: &str, p: Option<&st
                         say(c.line, format!("`{unit}.above.{name}` isn't a field of this dataflow{}", did_you_mean(name, fields())));
                     }
                 }
-                [part, ..] if part == "block" || part == "section" || part == "column" || part == "above" => {}
+                [part, ..] if part == "block" || part == "section" || part == "column" || part == "above" || part == "rom_coal" => {}
                 [name, ..] => {
                     if c.set && declared.is_label(name) {
                         say(c.line, format!("`{unit}.{name}` is a label of the unit: a formula reads it but can't set it"));

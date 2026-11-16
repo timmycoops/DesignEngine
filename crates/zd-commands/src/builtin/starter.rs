@@ -12,6 +12,10 @@ use zd_reserves::{AddUp, Field, FieldKind};
 /// (decision 0077, point 5, Spry's way).
 pub const RD_ADT: &str = "rd_adt";
 
+/// The field the starter's `discard` formula marks coal in: 1 by hand, 2 by its in situ ash, 0 kept. The working
+/// sections set aside what it marks.
+pub const DISCARDED: &str = "discarded";
+
 fn n(x: f64) -> ParamValue {
     ParamValue::Number(x)
 }
@@ -22,7 +26,42 @@ fn t(s: &str) -> ParamValue {
 
 fn test(name: &str, unit: &[(&str, ParamValue)], parameters: &[(&str, ParamValue)], expect: &[(&str, f64)]) -> FormulaTest {
     let map = |pairs: &[(&str, ParamValue)]| pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect::<BTreeMap<_, _>>();
-    FormulaTest { name: name.to_string(), unit: map(unit), block: BTreeMap::new(), parameters: map(parameters), expect: expect.iter().map(|(k, v)| (k.to_string(), *v)).collect() }
+    FormulaTest { name: name.to_string(), unit: map(unit), block: BTreeMap::new(), parameters: map(parameters), rom_coal: BTreeMap::new(), expect: expect.iter().map(|(k, v)| (k.to_string(), *v)).collect() }
+}
+
+/// Starlark's reserved words: a field named one (Vulcan's ash is `as`) can't be written `unit.as`.
+const KEYWORDS: [&str; 33] = [
+    "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "load",
+    "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield", "None", "True",
+];
+
+fn plain_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_') && !KEYWORDS.contains(&name) && name != "False"
+}
+
+/// A formula as written for these field names: one that isn't a plain name (a reserved word such as `as`, or one with a
+/// space or a dash) is read and set as `unit["as"]`, and read from the ROM section's coal as `getattr(coal, "as", None)`.
+fn for_names(script: &str, names: &[String]) -> String {
+    let mut out = script.to_string();
+    for name in names.iter().filter(|n| !plain_name(n)) {
+        for (head, write) in [("unit.", format!("unit[{name:?}]")), ("coal.", format!("getattr(coal, {name:?}, None)"))] {
+            let from = format!("{head}{name}");
+            let mut done = String::new();
+            let mut rest = out.as_str();
+            while let Some(i) = rest.find(&from) {
+                let after = rest[i + from.len()..].chars().next();
+                let before = rest[..i].chars().last();
+                let whole = !after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') && !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.');
+                done.push_str(&rest[..i]);
+                done.push_str(if whole { &write } else { &from });
+                rest = &rest[i + from.len()..];
+            }
+            done.push_str(rest);
+            out = done;
+        }
+    }
+    out
 }
 
 fn step(name: &str, script: String, tests: Vec<FormulaTest>) -> DataflowStep {
@@ -192,6 +231,114 @@ def formula(unit):
     step("densities", script, tests)
 }
 
+/// `discard`: coal set aside before the working sections form, on each seam whole (after `join_benches`), as Spry's
+/// Working Section discards it: by hand where its row says `discard` yes, or by its ash over `insitu_ash_cutoff`.
+fn discard(ash: &str) -> DataflowStep {
+    let script = format!(
+        r#"# Discarded coal (Spry's Working Section discard), each seam whole, before the working sections form. A mark the
+# working sections read: discarded coal is carried as waste, and always breaks a section.
+# - 1: by hand, where its parameter row says `discard` yes;
+# - 2: its ash over `insitu_ash_cutoff`;
+# - 0: kept.
+def formula(unit, p):
+    if unit.material.lower() != "coal" or unit.became != None:
+        return
+    by_hand = str(getattr(p, "discard", "")).strip().lower() in ["yes", "y", "true", "1"]
+    cutoff = getattr(p, "insitu_ash_cutoff", None)
+    if by_hand:
+        unit.{DISCARDED} = 1
+    elif cutoff != None and unit.{ash} != None and unit.{ash} > cutoff:
+        unit.{DISCARDED} = 2
+    else:
+        unit.{DISCARDED} = 0
+"#
+    );
+    let coal = |a: f64| vec![("material", t("coal")), (ash, n(a))];
+    let tests = vec![
+        test("by hand", &coal(12.0), &[("discard", t("Yes")), ("insitu_ash_cutoff", n(30.0))], &[(DISCARDED, 1.0)]),
+        test("ash 40 % over a 30 % cut-off", &coal(40.0), &[("insitu_ash_cutoff", n(30.0))], &[(DISCARDED, 2.0)]),
+        test("ash 12 % kept", &coal(12.0), &[("insitu_ash_cutoff", n(30.0))], &[(DISCARDED, 0.0)]),
+        test("no cut-off: kept", &coal(40.0), &[], &[(DISCARDED, 0.0)]),
+    ];
+    step("discard", script, tests)
+}
+
+/// The names `rom_qualities` is written for; any it hasn't, its part is left out.
+struct RomNames {
+    rd: Option<String>,
+    mad: Option<String>,
+    mis: Option<String>,
+    mrom: Option<String>,
+    rd_is: Option<String>,
+    rd_rom: Option<String>,
+    length: Option<String>,
+    qualities: Vec<String>,
+}
+
+/// `rom_qualities`: Spry's ROM Dilution arithmetic after the cut-off, on what came into a ROM coal section that isn't its
+/// coal, against the section's coal added up by tonnes; then every unit's ROM density and air-dried tonnes reworked.
+fn rom_qualities(r: &RomNames) -> DataflowStep {
+    let list = |names: &[&String]| names.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", ");
+    let moistures: Vec<&String> = [&r.mad, &r.mis, &r.mrom].into_iter().flatten().collect();
+    let qualities: Vec<&String> = r.qualities.iter().collect();
+    let mut body = String::from(
+        "    coal = unit.rom_coal\n    if coal != None and not (unit.material.lower() == \"coal\" and unit.became == None):\n        for m in MOISTURES:\n            if unit[m] == None and getattr(coal, m) != None:\n                unit[m] = getattr(coal, m)\n                print(\"dilution and partings given their coal's \" + m)\n",
+    );
+    if let Some(mad) = &r.mad {
+        let rd = r.rd.as_ref().map(|rd| format!("            if unit.{rd} != None:\n                unit.{rd} = unit.{rd} / factor\n")).unwrap_or_default();
+        body.push_str("        align = str(getattr(p, \"align_dilution_mad\", \"\")).strip().lower() in [\"yes\", \"y\", \"true\", \"1\"]\n");
+        body.push_str(&format!("        own, theirs = unit.{mad}, coal.{mad}\n"));
+        body.push_str("        if align and own != None and theirs != None and own != theirs:\n            factor = (100 - theirs) / (100 - own)\n            for q in QUALITIES:\n                if unit[q] != None:\n                    unit[q] = unit[q] * factor\n");
+        body.push_str(&rd);
+        body.push_str(&format!("            unit.{mad} = theirs\n"));
+        body.push_str("            print(\"dilution's air-dried moisture aligned with its coal's\")\n");
+    }
+    body.push_str("        for q in QUALITIES:\n            if unit[q] != None and unit[q] < 0 and getattr(coal, q) != None:\n                unit[q] = getattr(coal, q)\n                print(\"dilution's negative \" + q + \" given its coal's\")\n");
+    if let Some(length) = &r.length {
+        body.push_str(&format!("    if coal != None and coal.{length} != None:\n        unit.{length} = coal.{length}\n"));
+    }
+    if let (Some(rd_is), Some(mis), Some(mrom), Some(rd_rom)) = (&r.rd_is, &r.mis, &r.mrom, &r.rd_rom) {
+        body.push_str(&format!("    if unit.{rd_is} != None and unit.{mis} != None and unit.{mrom} != None:\n        unit.{rd_rom} = unit.{rd_is} * (100 - unit.{mis}) / (100 - unit.{mrom})\n"));
+    }
+    if let (Some(rd_is), Some(mis), Some(mad)) = (&r.rd_is, &r.mis, &r.mad) {
+        body.push_str(&format!("    if unit.{rd_is} != None and unit.{mis} != None and unit.{mad} != None:\n        unit.{RD_ADT} = unit.{rd_is} * (100 - unit.{mis}) / (100 - unit.{mad})\n"));
+    }
+    let head = "# ROM qualities (Spry's ROM Dilution, after the ROM ash cut-off), on what came into a ROM coal section that isn't its\n\
+# coal (dilution, partings, coal lost into it from a neighbour), against the section's coal added up by tonnes:\n\
+# - each moisture it has none of takes the coal's;\n\
+# - where its row says `align_dilution_mad` yes, its air-dried moisture takes the coal's, Spry's way: each quality\n\
+#   scaled by (100 - Mad coal) / (100 - Mad own), its RD divided by the same, so its in situ density holds;\n\
+# - a negative quality (a site's way of saying \"as the coal\") takes the coal's.\n\
+# Then each unit in a ROM coal section takes the section's length (its coal's largest), and every unit's ROM density,\n\
+# in situ x (100 - Mis) / (100 - Mrom), and its air-dried tonnes a cubic metre, in situ x (100 - Mis) / (100 - Mad), are\n\
+# worked again.\n";
+    let script = format!("{head}MOISTURES = [{}]\nQUALITIES = [{}]\n\ndef formula(unit, p):\n{body}", list(&moistures), list(&qualities));
+    let mut tests = Vec::new();
+    if let (Some(mad), Some(mis), Some(mrom), Some(rd_is), Some(rd_rom), Some(q)) = (&r.mad, &r.mis, &r.mrom, &r.rd_is, &r.rd_rom, r.qualities.first()) {
+        let coal: Vec<(&str, ParamValue)> = vec![(mad.as_str(), n(3.0)), (mis.as_str(), n(8.0)), (mrom.as_str(), n(10.0)), (q.as_str(), n(12.0))];
+        let dilution = |own_mad: Option<f64>, quality: f64| {
+            let mut u = vec![("material", t("waste")), ("became", t("dilution")), (rd_is.as_str(), n(2.3)), (q.as_str(), n(quality))];
+            if let Some(m) = own_mad {
+                u.push((mad.as_str(), n(m)));
+            }
+            u
+        };
+        let mut with_coal = |name: &str, unit: Vec<(&str, ParamValue)>, params: &[(&str, ParamValue)], expect: &[(&str, f64)]| {
+            let mut t = test(name, &unit, params, expect);
+            t.rom_coal = coal.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+            tests.push(t);
+        };
+        // Dilution of in situ density 2.3 with no moistures takes the coal's 3, 8 and 10 %: ROM density 2.3 x 92 / 90, air
+        // dried 2.3 x 92 / 97.
+        with_coal("dilution takes its coal's moistures", dilution(None, 80.0), &[], &[(mad.as_str(), 3.0), (mis.as_str(), 8.0), (mrom.as_str(), 10.0), (rd_rom.as_str(), 2.3 * 92.0 / 90.0), (RD_ADT, 2.3 * 92.0 / 97.0)]);
+        // At Mad 2 aligned with the coal's 3: its 80 % ash x 97 / 98.
+        with_coal("Mad aligned, Spry's way", dilution(Some(2.0), 80.0), &[("align_dilution_mad", t("yes"))], &[(mad.as_str(), 3.0), (q.as_str(), 80.0 * 97.0 / 98.0)]);
+        with_coal("Mad left where not asked", dilution(Some(2.0), 80.0), &[], &[(mad.as_str(), 2.0), (q.as_str(), 80.0)]);
+        with_coal("a negative quality takes its coal's", dilution(None, -1.0), &[], &[(q.as_str(), 12.0)]);
+    }
+    step("rom_qualities", script, tests)
+}
+
 struct DensityNames {
     rd: String,
     mad: String,
@@ -201,22 +348,49 @@ struct DensityNames {
     rd_rom: Option<String>,
 }
 
-/// The starter formulas for a dataflow, as it names its fields: `fill_size` where it has an area, `limits` always, and
-/// `densities` where it has the moistures and an in situ density to work.
-pub fn starter_formulas(d: &Dataflow) -> Vec<DataflowStep> {
-    let mut steps = Vec::new();
+/// The starter formulas for a dataflow, as it names its fields, each with the built-in step it follows: after
+/// `initialise`, `fill_size` where it has an area, `limits` always, and `densities` where it has the moistures and an in
+/// situ density to work; after `join_benches`, `discard` where it forms working sections from an ash; after `rom`,
+/// `rom_qualities`.
+pub fn starter_formulas(d: &Dataflow) -> Vec<(&'static str, DataflowStep)> {
+    let has_step = |name: &str| d.steps.iter().any(|s| s.step == name);
+    let mut steps: Vec<(&'static str, DataflowStep)> = Vec::new();
     let volume = named(d, FieldKind::Volume).unwrap_or_else(|| "volume".into());
     let thickness = named(d, FieldKind::Thickness).unwrap_or_else(|| "thickness".into());
     let rd = setting_field(d, "rd").or_else(|| d.fields.iter().find(|f| f.field.kind == FieldKind::Density && matches!(f.source, FieldSource::Attribute { .. })).map(|f| f.field.name.clone()));
     if let (Some(area), Some(rd)) = (named(d, FieldKind::Area), rd.clone()) {
-        steps.push(fill_size(&volume, &thickness, &area, &rd));
+        steps.push(("initialise", fill_size(&volume, &thickness, &area, &rd)));
     }
     let skip: Vec<String> = d.fields.iter().filter(|f| matches!(f.field.kind, FieldKind::Volume | FieldKind::Setting)).map(|f| f.field.name.clone()).collect();
     let geometry: Vec<String> = d.fields.iter().filter(|f| matches!(f.field.kind, FieldKind::Thickness | FieldKind::Area | FieldKind::Length)).map(|f| f.field.name.clone()).collect();
     let ash = d.fields.iter().find(|f| f.field.kind == FieldKind::Quality).map(|f| f.field.name.clone());
-    steps.push(limits(&skip, &geometry, ash.as_deref()));
-    if let (Some(rd), Some(mad), Some(mis), Some(rd_is)) = (rd, setting_field(d, "mad"), setting_field(d, "mis"), setting_field(d, "rd_is")) {
-        steps.push(densities(&DensityNames { rd, mad, mis, rd_is, mrom: setting_field(d, "mrom"), rd_rom: setting_field(d, "rd_rom") }));
+    steps.push(("initialise", limits(&skip, &geometry, ash.as_deref())));
+    if let (Some(rd), Some(mad), Some(mis), Some(rd_is)) = (rd.clone(), setting_field(d, "mad"), setting_field(d, "mis"), setting_field(d, "rd_is")) {
+        steps.push(("initialise", densities(&DensityNames { rd, mad, mis, rd_is, mrom: setting_field(d, "mrom"), rd_rom: setting_field(d, "rd_rom") })));
+    }
+    let ws_ash = d.steps.iter().find(|s| s.step == "working_sections").map(|s| s.setting("ash").to_string());
+    if let (true, Some(a)) = (has_step("join_benches"), ws_ash.filter(|a| d.fields.iter().any(|f| &f.field.name == a))) {
+        steps.push(("join_benches", discard(&a)));
+    }
+    if has_step("rom") {
+        let qualities = d.fields.iter().filter(|f| f.field.kind == FieldKind::Quality).map(|f| f.field.name.clone()).collect();
+        let r = RomNames {
+            rd,
+            mad: setting_field(d, "mad"),
+            mis: setting_field(d, "mis"),
+            mrom: setting_field(d, "mrom"),
+            rd_is: setting_field(d, "rd_is"),
+            rd_rom: setting_field(d, "rd_rom"),
+            length: named(d, FieldKind::Length),
+            qualities,
+        };
+        steps.push(("rom", rom_qualities(&r)));
+    }
+    let names: Vec<String> = d.fields.iter().map(|f| f.field.name.clone()).collect();
+    for (_, s) in steps.iter_mut() {
+        if let Some(f) = s.formula.as_mut() {
+            f.script = for_names(&f.script, &names);
+        }
     }
     steps
 }
@@ -225,9 +399,11 @@ pub fn starter_formulas(d: &Dataflow) -> Vec<DataflowStep> {
 /// it also gets the `rd_adt` field that works into, and its qualities and Mad are weighed by it, as Spry weighs them by
 /// air-dried tonnes (decision 0077, point 5).
 pub fn with_starter_formulas(d: &mut Dataflow) {
-    let Some(at) = d.steps.iter().position(|s| s.step == "initialise") else { return };
-    let new: Vec<DataflowStep> = starter_formulas(d).into_iter().filter(|s| !d.steps.iter().any(|t| t.step == s.step)).collect();
-    if new.iter().any(|s| s.step == "densities") && !d.fields.iter().any(|f| f.field.name == RD_ADT) {
+    let new: Vec<(&str, DataflowStep)> = starter_formulas(d).into_iter().filter(|(_, s)| !d.steps.iter().any(|t| t.step == s.step)).collect();
+    if new.iter().any(|(_, s)| s.step == "discard") && !d.fields.iter().any(|f| f.field.name == DISCARDED) {
+        d.fields.push(DataflowField { field: Field::new(DISCARDED, FieldKind::Other, AddUp::Max), source: FieldSource::Worked });
+    }
+    if new.iter().any(|(_, s)| s.step == "densities") && !d.fields.iter().any(|f| f.field.name == RD_ADT) {
         let rd = setting_field(d, "rd");
         for f in d.fields.iter_mut() {
             if let (AddUp::Mass { density }, Some(rd)) = (&mut f.field.add_up, &rd)
@@ -242,8 +418,13 @@ pub fn with_starter_formulas(d: &mut Dataflow) {
         let source = rd.as_ref().and_then(|rd| d.fields.iter().find(|f| &f.field.name == rd)).map(|f| f.source.clone()).unwrap_or(FieldSource::Worked);
         d.fields.insert(after, DataflowField { field: Field::new(RD_ADT, FieldKind::Density, AddUp::Volume), source });
     }
-    for (k, s) in new.into_iter().enumerate() {
-        d.steps.insert(at + 1 + k, s);
+    // Each after its stage, in order, after any formula already there.
+    for (anchor, s) in new {
+        let Some(mut at) = d.steps.iter().position(|t| t.step == anchor) else { continue };
+        while d.steps.get(at + 1).is_some_and(|t| t.formula.is_some()) {
+            at += 1;
+        }
+        d.steps.insert(at + 1, s);
     }
 }
 
@@ -292,6 +473,15 @@ mod tests {
         let steps: Vec<&str> = d.steps.iter().map(|s| s.step.as_str()).collect();
         assert_eq!(steps, ["initialise", "fill_size", "limits", "densities", "in_situ"]);
         assert_eq!(checked(&d), 3);
+        // With the rest of the steps: discard after the benches are joined, the ROM qualities after rom.
+        let mut whole = flow(true);
+        whole.steps = super::super::STEPS.iter().map(|(n, _)| DataflowStep::on(n)).collect();
+        with_starter_formulas(&mut whole);
+        let at = |name: &str| whole.steps.iter().position(|s| s.step == name).unwrap();
+        assert_eq!(at("discard"), at("join_benches") + 1);
+        assert_eq!(at("rom_qualities"), at("rom") + 1);
+        assert!(whole.fields.iter().any(|f| f.field.name == DISCARDED));
+        assert_eq!(checked(&whole), 5);
         // Air-dried tonnes Spry's way: rd_adt worked, starting as the block's RD; ash and Mad weighed by it.
         let rd_adt = d.fields.iter().find(|f| f.field.name == RD_ADT).expect("rd_adt");
         assert_eq!(rd_adt.source, attr("rd"));
@@ -303,6 +493,25 @@ mod tests {
         let before = d.clone();
         with_starter_formulas(&mut d);
         assert_eq!(d, before);
+    }
+
+    /// Vulcan's ash code is `as`, a reserved word: the starter writes it `unit["as"]`, and the formulas still compile and
+    /// give their answers.
+    #[test]
+    fn a_field_named_a_reserved_word_is_written_in_brackets() {
+        let mut d = flow(true);
+        for f in d.fields.iter_mut().filter(|f| f.field.name == "ash") {
+            f.field.name = "as".into();
+        }
+        d.steps = super::super::STEPS.iter().map(|(n, _)| DataflowStep::on(n)).collect();
+        for s in d.steps.iter_mut().filter(|s| s.step == "working_sections") {
+            s.settings.insert("ash".into(), "as".into());
+        }
+        with_starter_formulas(&mut d);
+        let discard = d.steps.iter().find(|s| s.step == "discard").and_then(|s| s.formula.as_ref()).expect("discard");
+        assert!(discard.script.contains(r#"unit["as"] > cutoff"#) && !discard.script.contains("unit.as"), "{}", discard.script);
+        assert_eq!(checked(&d), 5);
+        assert_eq!(for_names("x = unit.as_ad + unit.as + coal.as", &["as".into()]), r#"x = unit.as_ad + unit["as"] + getattr(coal, "as", None)"#);
     }
 
     #[test]

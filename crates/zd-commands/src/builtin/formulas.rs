@@ -9,8 +9,9 @@ use zd_reserves::{FieldKind, Fields};
 use zd_script::{ColumnInput, Declared, FieldDecl, Formula, Kind, ScriptValue, UnitInput, Values};
 
 /// The built-in steps a formula step may follow (decision 0077, point 4): after `initialise`, before in situ; after
-/// `working_sections`; after `rom_dilution`; after `rom`, before the final writes. Other formula steps may sit between.
-pub const FORMULA_STAGES: [&str; 4] = ["initialise", "working_sections", "rom_dilution", "rom"];
+/// `join_benches`, a horizon whole, before the working sections (as Spry's discard test); after `working_sections`; after
+/// `rom_dilution`; after `rom`, before the final writes. Other formula steps may sit between.
+pub const FORMULA_STAGES: [&str; 5] = ["initialise", "join_benches", "working_sections", "rom_dilution", "rom"];
 
 /// The labels a unit carries, read by a formula and matched by a step's filter, never set: its seam (the horizon as
 /// cut), its material, its bench (as cut, none once joined) and what it became (loss, dilution, …), none until it's set.
@@ -94,7 +95,7 @@ pub fn check_formula_steps(dataflow: &Dataflow, built_in: &[&str], declared: &De
         }
         if !last_built_in.is_some_and(|b| FORMULA_STAGES.contains(&b)) {
             return Err(format!(
-                "the formula step {} sits {}: a formula step goes after initialise (before in situ), working_sections, rom_dilution or rom (before the final writes)",
+                "the formula step {} sits {}: a formula step goes after initialise (before in situ), join_benches, working_sections, rom_dilution or rom (before the final writes)",
                 s.step,
                 last_built_in.map_or("before any built-in step".to_string(), |b| format!("after {b}"))
             ));
@@ -113,7 +114,13 @@ pub fn check_formula_steps(dataflow: &Dataflow, built_in: &[&str], declared: &De
 fn run_tests(step: &DataflowStep, f: &FormulaStep, formula: &Formula) -> Result<(), String> {
     for t in &f.tests {
         let map = |m: &BTreeMap<String, zd_core::ParamValue>| -> Values { std::sync::Arc::new(m.iter().map(|(k, v)| (k.clone(), param_value(v))).collect()) };
-        let input = ColumnInput { units: vec![UnitInput { fields: map(&t.unit), block: map(&t.block), parameters: map(&t.parameters), section: None }], sections: Vec::new(), column: map(&t.unit) };
+        let rom_coal = (!t.rom_coal.is_empty()).then_some(0);
+        let input = ColumnInput {
+            units: vec![UnitInput { fields: map(&t.unit), block: map(&t.block), parameters: map(&t.parameters), section: None, rom_coal }],
+            sections: Vec::new(),
+            rom_coals: if rom_coal.is_some() { vec![map(&t.rom_coal)] } else { Vec::new() },
+            column: map(&t.unit),
+        };
         let out = formula.run(&input, &[0]).map_err(|p| format!("the formula step {}, test {}: {p}", step.step, t.name))?;
         for (field, want) in &t.expect {
             let got = out[0].get(field).cloned().or_else(|| t.unit.get(field).map(param_value));
