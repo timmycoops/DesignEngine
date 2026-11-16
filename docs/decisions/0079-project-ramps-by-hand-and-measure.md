@@ -28,7 +28,10 @@ if asked.
 5. **Ramps from polylines are a kit of parts,** as they're made in Deswik: draw and grade the road's edge (Set grade),
    offset it by the road's width (Offset keeps the heights), project batters from both edges (Project), and make the
    road and any sheet by hand with a surface between the strings. Join faces then makes one face a strip for
-   the cut. A one-run "road from a string" tool can sit on those parts later.
+   the cut. A one-run "road from a string" tool can sit on those parts later. **The grade is set on a string once it's
+   drawn, not digitised as it's clicked** (Tim, 16 November, asked which: "I think it would be set grade as a rule like
+   you did. These are more manual tools so you would move the ramp in theory"): the edge is drawn and moved by hand, and
+   Set grade is run on it again.
 6. **Measure reads out and keeps nothing:** plan distance, slope distance, RL difference, grade and bearing between
    clicks, on the view bar. It makes no object.
 7. **Order:** Project, then Measure, then the surface between strings.
@@ -198,5 +201,6 @@ the same build, and `cargo test -p zd-geom -p zd-commands` (664).
 - **Cleaning the line first.** A string goes as it's drawn. One with a vertex at every triangle it was draped across is
   fine where those lie on straight runs in plan; one that wanders needs Filter first, as a profile's condition does.
 - **Measure:** a dimension left in the view, angles between legs, and areas.
-- **Ramps by hand:** a road edge digitised at a grade as it's clicked (Set grade does it after it's drawn), a one-run
-  "road from a string" on these parts, a sheet from strings with breaklines inside it, and a vertical face.
+- **Ramps by hand:** a one-run "road from a string" on these parts, a sheet from strings with breaklines inside it, and
+  a vertical face. Moving a whole string, or a ramp's strings together, by a distance: today a string moves a vertex at
+  a time.
