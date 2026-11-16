@@ -41,7 +41,12 @@ test('the canvas says where the step goes and what is picked', () => {
 test('every tool is one of what a panel that adds steps does, each key once', () => {
   const keys = CANVAS_TOOLS.map((t) => t.key);
   assert.equal(new Set(keys).size, keys.length);
-  for (const tool of CANVAS_TOOLS) assert.ok(['builder', 'cut', 'reserves'].includes(tool.panel), tool.key);
+  for (const tool of CANVAS_TOOLS) assert.ok(['builder', 'cut', 'reserves', 'strings'].includes(tool.panel), tool.key);
+  // Every string tool but Ramp from a start, which is placed by hand (decision 0078, workstream 4).
+  assert.deepEqual(
+    CANVAS_TOOLS.filter((t) => t.panel === 'strings').map((t) => t.mode).sort(),
+    ['filter', 'join', 'number_across', 'offset', 'polygons_from_lines', 'project', 'reverse', 'set_closed', 'set_elevation', 'set_grade', 'smooth', 'split', 'surface_between', 'drape'].sort(),
+  );
   assert.deepEqual(
     CANVAS_TOOLS.filter((t) => t.panel === 'cut').map((t) => t.mode).sort(),
     ['benches', 'between', 'cut', 'polygons', 'seams', 'strips'],

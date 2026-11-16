@@ -51,6 +51,11 @@ pub const CASE_ATTRIBUTE: &str = "case";
 /// [`resolve`] as one case sees the project.
 pub fn resolve_in(project: &Project, workflow: &Workflow, at: usize, rule: &InputRule, scope: &CaseScope) -> Result<Vec<ObjectId>, String> {
     let keep = |o: &Object| scope.sees(o) && rule.kind.is_none_or(|k| o.kind() == k) && rule.filter.iter().all(|(key, value)| o.attributes.get(key) == Some(value));
+    // What this step and the ones after it made the last time aren't there yet at this point of a run, which makes them
+    // again after it: a layer or a name sees the project as it stood here. Otherwise an offset onto its own toe's layer
+    // would offset its offsets too the next time (decision 0078, workstream 4).
+    let made_after: HashSet<ObjectId> = workflow.steps.get(at..).unwrap_or_default().iter().filter_map(|s| s.last.as_ref()).flat_map(|l| l.made.iter().copied()).collect();
+    let there_yet = |o: &Object| !made_after.contains(&o.id);
     let found: Vec<ObjectId> = match &rule.from {
         Source::Step(id) => {
             let Some(position) = workflow.position(*id).filter(|&p| p < at) else { return Err(format!("takes what step id {id} made, which isn't before it")) };
@@ -61,9 +66,9 @@ pub fn resolve_in(project: &Project, workflow: &Workflow, at: usize, rule: &Inpu
         // On the layer, and on the case's own layer of that name.
         Source::Layer(name) => {
             let layers: Vec<_> = [name.clone(), scope.layer(name)].iter().filter_map(|n| project.layer_named(n).map(|l| l.id)).collect();
-            project.objects().filter(|o| layers.contains(&o.layer) && keep(o)).map(|o| o.id).collect()
+            project.objects().filter(|o| layers.contains(&o.layer) && keep(o) && there_yet(o)).map(|o| o.id).collect()
         }
-        Source::Named(name) => project.objects().filter(|o| &o.name == name && keep(o)).map(|o| o.id).collect(),
+        Source::Named(name) => project.objects().filter(|o| &o.name == name && keep(o) && there_yet(o)).map(|o| o.id).collect(),
         Source::Picked(ids) => {
             let gone = ids.iter().filter(|&&id| project.object(id).is_none()).count();
             if gone > 0 {

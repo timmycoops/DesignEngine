@@ -18,6 +18,10 @@ import { useWorkspace } from '@/workspace/context';
  * Vertex numbers are as Properties lists them, from 1, and are for one string. Grade, RL, drape, split, smooth, filter,
  * reverse and close write a new revision of each string; offset, polygons and project make new objects. Ramp from a start places a ramp's polygon by two clicks in the view, along the string picked last or
  * straight, and Move it places the last one again.
+ *
+ * While the Workflow panel is adding steps, the button reads Add to the workflow and adds the tool and its settings as a
+ * step instead of running it (decision 0078, workstream 4): the strings picked are found by rule each time it runs, the
+ * strings of a layer by their layer. Number across asks for its line across first. Ramp from a start adds no step.
  */
 
 type Mode = 'offset' | 'number_across' | 'polygons_from_lines' | 'set_grade' | 'set_elevation' | 'drape' | 'project' | 'split' | 'join' | 'smooth' | 'filter' | 'reverse' | 'set_closed' | 'surface_between' | 'ramp_polygon';
@@ -123,8 +127,9 @@ export function StringsPanel() {
   /** What Join joins end to end: the strings picked, the one picked last first, since it keeps the result. */
   const toJoin = string && on.some((o) => o.id === string.id) ? [string, ...on.filter((o) => o.id !== string.id)] : on;
   const closedToJoin = toJoin.filter((o) => o.closed).length;
+  const joinParams = () => ({ strings: toJoin.map((o) => o.id) });
   const joinPieces = async () => {
-    const outcome = await runIt('string.join', { strings: toJoin.map((o) => o.id) });
+    const outcome = await runIt('string.join', joinParams());
     if (outcome.record) setSelection([toJoin[0].id]);
   };
 
@@ -136,19 +141,26 @@ export function StringsPanel() {
     setReport(outcome.record ? { notes: outcome.record.notes } : { notes: [], error: outcome.error });
     return outcome;
   };
-  const numberAcross = async () => {
+  const numberParams = () => ({ strings: toNumber.map((o) => o.id), start, step, name: numberName });
+  /** Number across's settings with the line drawn across the strings, or null when Esc is pressed. */
+  const numberLine = async () => {
     const line = await pickLine('Click where the numbering starts. Esc cancels', 'Click across the strings to where it ends. Esc cancels');
-    if (line) await runIt('string.number_across', { strings: toNumber.map((o) => o.id), from: line[0], to: line[1], start, step, name: numberName });
+    return line ? { ...numberParams(), from: line[0], to: line[1] } : null;
   };
+  const numberAcross = async () => {
+    const params = await numberLine();
+    if (params) await runIt('string.number_across', params);
+  };
+  const polygonParams = () => ({ strings: picked.map((o) => o.id), layer: polygonLayer.trim(), name: polygonName, tolerance: closeWithin / 1000 });
   const makePolygons = async () => {
-    const outcome = await runIt('string.polygons_from_lines', { strings: picked.map((o) => o.id), layer: polygonLayer.trim(), name: polygonName, tolerance: closeWithin / 1000 });
+    const outcome = await runIt('string.polygons_from_lines', polygonParams());
     const made = outcome.record?.outputs.filter((o) => o.change === 'created').map((o) => o.id) ?? [];
     if (made.length > 0) setSelection(made);
   };
 
+  const projectParams = () => ({ strings: toProject.map((o) => o.id), to: projectTo ?? { kind: 'height', height: projectHeight }, batter, side, direction, wall: keepWall });
   const project = async () => {
-    const to = projectTo ?? { kind: 'height', height: projectHeight };
-    const outcome = await runIt('string.project', { strings: toProject.map((o) => o.id), to, batter, side, direction, wall: keepWall });
+    const outcome = await runIt('string.project', projectParams());
     setMade(outcome.record?.outputs.filter((o) => o.change === 'created').map((o) => o.id) ?? []);
   };
   /** A click in the view on the side the new string goes, read against the string picked last. */
@@ -177,8 +189,9 @@ export function StringsPanel() {
   };
   const rampReady = rampWidth > 0 && rampGrade > 0 && rampTo !== null && (rampTo.kind === 'rl' || surfaces.some((s) => s.id === rampTo.id));
   const placedRamp = lastRamp ? (objects.find((o) => o.id === lastRamp.id && o.kind === 'string') ?? null) : null;
+  const surfaceParams = () => ({ strings: toProject.map((o) => o.id), ...(surfaceName.trim() ? { name: surfaceName.trim() } : {}), ...(surfaceLayer.trim() ? { layer: surfaceLayer.trim() } : {}) });
   const makeSurface = async () => {
-    const outcome = await runIt('surface.between_strings', { strings: toProject.map((o) => o.id), ...(surfaceName.trim() ? { name: surfaceName.trim() } : {}), ...(surfaceLayer.trim() ? { layer: surfaceLayer.trim() } : {}) });
+    const outcome = await runIt('surface.between_strings', surfaceParams());
     const surface = outcome.record?.outputs.filter((o) => o.change === 'created').map((o) => o.id) ?? [];
     if (surface.length > 0) setSelection(surface);
   };
@@ -196,48 +209,62 @@ export function StringsPanel() {
     return params;
   };
 
-  /** The one button: what it says, what it runs, and whether it has what it needs. */
-  const does = ((): { label: string; run: () => unknown; ready: boolean; title?: string } => {
+  /** A tool that runs its command as it stands: the run, and the step it adds to a workflow (decision 0078, workstream 4). */
+  const calls = (command: string, params: Record<string, unknown>) => ({ run: () => runIt(command, params), step: { command, params } });
+
+  /**
+   * The one button: what it says, what it runs, whether it has what it needs, and the step it adds while the Workflow
+   * panel is adding. Ramp from a start adds none: it's placed by hand.
+   */
+  const does = ((): { label: string; run: () => unknown; ready: boolean; title?: string; step?: ToolAction['step'] } => {
     const id = string?.id;
     const one = string?.name ?? 'the string';
     const some = on.length > 0;
     switch (mode) {
       case 'offset':
-        return { label: `Offset ${what}${times > 1 ? ` ${times} times` : ''}`, run: () => runIt('string.offset', { strings: ids, distance, side, corners, times }), ready: some && distance !== null && distance > 0 && Number.isInteger(times) };
+        return { label: `Offset ${what}${times > 1 ? ` ${times} times` : ''}`, ...calls('string.offset', { strings: ids, distance, side, corners, times }), ready: some && distance !== null && distance > 0 && Number.isInteger(times) };
       case 'number_across':
-        return { label: `Draw across ${plural(toNumber.length, 'string')}`, run: numberAcross, ready: toNumber.length > 0 && start !== null && step !== 0 && !!numberName.trim(), title: 'Two clicks in the view, across the strings: each string the line crosses takes the next number' };
+        return {
+          label: `Draw across ${plural(toNumber.length, 'string')}`,
+          run: numberAcross,
+          step: { command: 'string.number_across', params: numberParams(), ask: numberLine },
+          ready: toNumber.length > 0 && start !== null && step !== 0 && !!numberName.trim(),
+          title: 'Two clicks in the view, across the strings: each string the line crosses takes the next number',
+        };
       case 'polygons_from_lines':
-        return { label: `Make polygons from ${plural(picked.length, 'line')}`, run: makePolygons, ready: picked.length > 0 && !!polygonName.trim() && !!polygonLayer.trim() };
+        return { label: `Make polygons from ${plural(picked.length, 'line')}`, run: makePolygons, step: { command: 'string.polygons_from_lines', params: polygonParams() }, ready: picked.length > 0 && !!polygonName.trim() && !!polygonLayer.trim() };
       case 'set_grade':
-        return { label: `Grade ${what}`, run: () => runIt('string.set_grade', gradeParams()), ready: some && grade !== null && (many || (Number.isInteger(from) && (to === null || Number.isInteger(to)))) };
+        return { label: `Grade ${what}`, ...calls('string.set_grade', gradeParams()), ready: some && grade !== null && (many || (Number.isInteger(from) && (to === null || Number.isInteger(to)))) };
       case 'set_elevation':
-        return { label: `Set ${what} to RL ${level ?? '…'}`, run: () => runIt('string.set_elevation', { strings: ids, rl: level }), ready: some && level !== null };
+        return { label: `Set ${what} to RL ${level ?? '…'}`, ...calls('string.set_elevation', { strings: ids, rl: level }), ready: some && level !== null };
       case 'drape':
-        return { label: `Drape ${what}`, run: () => runIt('string.drape', { strings: ids, surface: target?.id, crossings }), ready: some && !!target };
+        return { label: `Drape ${what}`, ...calls('string.drape', { strings: ids, surface: target?.id, crossings }), ready: some && !!target };
       case 'project':
         return {
           label: projectWords(),
           run: project,
+          step: { command: 'string.project', params: projectParams() },
           ready: toProject.length > 0 && batter > 0 && batter < 90 && (projectTo === null ? projectHeight > 0 : projectTo.kind === 'rl' || surfaces.some((s) => s.id === projectTo.id)),
           title: 'Each string picked gets a new string where a wall from it at the batter comes out. The strings stay as they are',
         };
       case 'split':
-        return { label: `Split ${one}`, run: () => runIt('string.split', { string: id, at: Math.round(splitAt ?? 1) - 1 }), ready: !!string && splitAt !== null && Number.isInteger(splitAt) };
+        return { label: `Split ${one}`, ...calls('string.split', { string: id, at: Math.round(splitAt ?? 1) - 1 }), ready: !!string && splitAt !== null && Number.isInteger(splitAt) };
       case 'join':
         return {
           label: toJoin.length > 1 ? `Join ${toJoin.length} strings into one` : 'Join the strings picked',
           run: joinPieces,
+          step: { command: 'string.join', params: joinParams() },
           ready: toJoin.length > 1 && closedToJoin === 0,
           title: 'The nearest ends are joined first, then the next nearest. Ends that meet share a vertex; a gap is bridged by a segment and said with its size',
         };
       case 'smooth':
-        return { label: `Smooth ${what}`, run: () => runIt('string.smooth', { strings: ids, spacing }), ready: some };
+        return { label: `Smooth ${what}`, ...calls('string.smooth', { strings: ids, spacing }), ready: some };
       case 'filter':
-        return { label: `Filter ${what}`, run: () => runIt('string.filter', { strings: ids, tolerance }), ready: some && tolerance !== null };
+        return { label: `Filter ${what}`, ...calls('string.filter', { strings: ids, tolerance }), ready: some && tolerance !== null };
       case 'reverse':
-        return { label: `Reverse ${what}`, run: () => runIt('string.reverse', { strings: ids }), ready: some };
+        return { label: `Reverse ${what}`, ...calls('string.reverse', { strings: ids }), ready: some };
       case 'set_closed':
-        return { label: `${closing ? 'Close' : 'Open'} ${what}`, run: () => runIt('string.set_closed', { strings: ids, closed: closing }), ready: some };
+        return { label: `${closing ? 'Close' : 'Open'} ${what}`, ...calls('string.set_closed', { strings: ids, closed: closing }), ready: some };
       case 'ramp_polygon':
         return {
           label: rampFollows === 'line' ? `Place a ramp along ${string?.name ?? 'a line'}` : 'Place a ramp from a start',
@@ -249,6 +276,7 @@ export function StringsPanel() {
         return {
           label: `Make a surface between ${plural(toProject.length, 'string')}`,
           run: makeSurface,
+          step: { command: 'surface.between_strings', params: surfaceParams() },
           ready: toProject.length >= 2,
           title: 'One surface across the strings picked, in order across whatever order they were picked in. The strings stay as they are',
         };
@@ -261,6 +289,7 @@ export function StringsPanel() {
     busy,
     title: does.title,
     run: does.run,
+    step: does.step,
   };
 
   const several = mode === 'number_across' || mode === 'polygons_from_lines' || mode === 'project' || mode === 'surface_between' || mode === 'join';

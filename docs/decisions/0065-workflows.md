@@ -22,7 +22,9 @@ note on why, and runs them again in one go.
    - one object by name and kind (a seam model, a face design);
    - the objects as picked, by id: the fallback, said as a warning when a capture has to use it.
    A rule that finds nothing, or more than one object for a one-object input, refuses the step and says which rule.
-   Objects come in the order the earlier step made them, or the project's order for a layer.
+   Objects come in the order the earlier step made them, or the project's order for a layer. A layer or a name doesn't
+   see what this step or a later one made the last time, since a run makes those again after it (decision 0078,
+   workstream 4).
 4. **Capture** turns runs from the run log (those still applied: not refused, not undone) into steps. Each input id
    becomes the simplest rule that finds exactly the same objects at that point: an earlier captured step's output, whole
    or filtered; else a layer, whole or filtered; else a named object; else the ids. A rule by layer or name must also

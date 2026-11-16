@@ -264,7 +264,21 @@ test('Find a command matches whole words typed, a name first, then a stage or co
 test('the canvas lists the tools that add a step, as the list has them', () => {
   assert.deepEqual(CANVAS_TOOLS.map((t) => t.key), stepTools().map((t) => t.key));
   assert.deepEqual(CANVAS_TOOLS.map((t) => `${t.group}: ${t.label}`), [
+    'Strings: Offset',
+    'Strings: Number across',
+    'Strings: Polygons from lines',
+    'Strings: Set grade',
+    'Strings: Set elevation',
+    'Strings: Drape',
+    'Strings: Project',
+    'Strings: Split',
+    'Strings: Join',
+    'Strings: Smooth',
+    'Strings: Filter',
+    'Strings: Reverse',
+    'Strings: Close',
     'Builder: Build a step',
+    'Strings: Surface between strings',
     'Cut solids: Between surfaces',
     'Cut solids: Strips by faces',
     'Cut solids: By surface or RL',

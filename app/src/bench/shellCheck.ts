@@ -847,6 +847,52 @@ export async function checkShell(
     }
     await wait(500);
 
+    // Add to workflow (decision 0078, workstream 4): while the Workflow panel adds steps, the Strings panel's button adds
+    // its tool as a step and runs nothing, the three toes picked found by their layer, the only strings on it; Number
+    // across asks for its line across first, which goes in as a setting. Stop adding, and the button runs again.
+    const flowId = (await runCommand('workflow.save', { name: 'Toes', content: { steps: [], cases: [] } })).record.outputs[0]?.id ?? '';
+    await show(await projectSummary());
+    showPanel(api, 'workflow');
+    await settle();
+    document.querySelector<HTMLElement>('[aria-label="Add steps from the tool panels: their button reads Add to workflow"]')?.click();
+    await settle();
+    showPanel(api, 'strings');
+    await settle();
+    await useTool('smooth');
+    const countsBefore = (await counts()).join();
+    const addSmooth = await go();
+    await useTool('number_across');
+    await typeNumber('The first number', '1');
+    const addAcross = goButton()?.textContent?.trim() ?? '';
+    goButton()?.click();
+    await wait(500);
+    await click(screen([E + 300, N + 300, 100]));
+    await wait(400);
+    await click(screen([E + 300, N + 396, 100]));
+    await wait(1500);
+    const flow = flowId ? (await objectDetails(flowId)).measures : null;
+    const flowSteps = flow?.kind === 'workflow' ? flow.workflow.steps : [];
+    const stepRules = flowSteps.map((s) => (s.action.kind === 'command' ? { command: s.action.command, from: s.action.inputs.strings?.from, line: 'from' in s.action.settings } : null));
+    const ranNothing = (await counts()).join() === countsBefore && (await projectSummary()).objects.filter((o) => manyIds.includes(o.id)).every((o) => o.name.startsWith('Many '));
+    showPanel(api, 'workflow');
+    await settle();
+    document.querySelector<HTMLElement>('[aria-label="Stop adding from the tool panels"]')?.click();
+    await settle();
+    showPanel(api, 'strings');
+    await settle();
+    const ownAgain = goButton()?.textContent?.trim() ?? '';
+    const byLayer = (k: number) => {
+      const from = stepRules[k]?.from;
+      return !!from && 'layer' in from && from.layer === 'many toes';
+    };
+    expect(
+      "while adding, the Strings panel's button adds its tool to the workflow and runs nothing: Smooth, and Number across with the line drawn across, each finding the three toes by their layer",
+      addSmooth === 'Add to Toes' && addAcross === 'Add to Toes' && flowSteps.length === 2 && stepRules[0]?.command === 'string.smooth' && stepRules[1]?.command === 'string.number_across' && byLayer(0) && byLayer(1) && stepRules[1]?.line === true && ranNothing && ownAgain === 'Draw across 3 strings',
+      { buttons: [addSmooth, addAcross], steps: stepRules, ran_nothing: ranNothing, button_after: ownAgain },
+    );
+    // The workflow taken out again, so the checks after see the project as they always have.
+    if (flowId) await show((await runCommand('object.delete', { object: flowId })).summary);
+
     // Number across: the three picked, by two clicks across them.
     await useTool('number_across');
     await typeNumber('The first number', '1');
