@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use zd_reserves::{Field, Fields};
 
-use crate::ObjectId;
+use crate::{ObjectId, ParamValue};
 
 /// Where a field's value comes from when a block becomes a unit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,8 +49,9 @@ fn is_true(b: &bool) -> bool {
 }
 
 /// One step, by name, on or off, with its settings: the names of the fields and parameter columns it reads where they
-/// aren't the usual ones (decision 0073, point 8), so a site's own names work without renaming them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// aren't the usual ones (decision 0073, point 8), so a site's own names work without renaming them. A step with a
+/// formula is a formula step (decision 0077): its name is its own, and it runs its Starlark on the units its filter fits.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DataflowStep {
     pub step: String,
@@ -58,11 +59,47 @@ pub struct DataflowStep {
     pub on: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub settings: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<FormulaStep>,
+}
+
+/// A formula step's own parts (decision 0077): the units it runs on, its Starlark, and its known answers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FormulaStep {
+    /// The units it runs on, in the bench rules' words, matched against the unit's labels (`material`, `seam`,
+    /// `bench`, `became`) and its block's attributes: `{"material": "coal", "seam": "U, M"}`. None: every unit.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub when: BTreeMap<String, String>,
+    /// Starlark defining `def formula(unit, p):`.
+    pub script: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tests: Vec<FormulaTest>,
+}
+
+/// A worked example a formula must give, run whenever the dataflow is saved: a unit's fields and labels, its block's
+/// attributes and its parameters, and the fields the formula must leave it with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FormulaTest {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub unit: BTreeMap<String, ParamValue>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub block: BTreeMap<String, ParamValue>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<String, ParamValue>,
+    pub expect: BTreeMap<String, f64>,
 }
 
 impl DataflowStep {
     pub fn on(step: &str) -> Self {
-        DataflowStep { step: step.to_string(), on: true, settings: BTreeMap::new() }
+        DataflowStep { step: step.to_string(), on: true, settings: BTreeMap::new(), formula: None }
+    }
+
+    /// A formula step of this name, running this script on every unit.
+    pub fn formula(step: &str, script: &str) -> Self {
+        DataflowStep { formula: Some(FormulaStep { when: BTreeMap::new(), script: script.to_string(), tests: Vec::new() }), ..DataflowStep::on(step) }
     }
 
     /// A setting's value, or the usual name where the step doesn't set it.
@@ -149,6 +186,14 @@ impl Dataflow {
             if self.steps[..i].iter().any(|t| t.step == s.step) {
                 return Err(format!("the step {} is listed twice", s.step));
             }
+            if let Some(f) = &s.formula {
+                if f.script.trim().is_empty() {
+                    return Err(format!("the formula step {} has no script", s.step));
+                }
+                if !s.settings.is_empty() {
+                    return Err(format!("the formula step {} has settings: a formula reads what it needs itself", s.step));
+                }
+            }
         }
         Ok(())
     }
@@ -175,7 +220,7 @@ mod tests {
                 field("ash", FieldKind::Quality, AddUp::Mass { density: "rd".into() }, FieldSource::Attribute { attribute: "as".into() }),
                 field("ash_cutoff", FieldKind::Setting, AddUp::Min, FieldSource::Parameter { column: "ash_cutoff".into() }),
             ],
-            steps: vec![DataflowStep::on("initialise"), DataflowStep { step: "in_situ".into(), on: false, settings: BTreeMap::new() }],
+            steps: vec![DataflowStep::on("initialise"), DataflowStep { on: false, ..DataflowStep::on("in_situ") }],
             parameters: vec![ObjectId::new()],
         }
     }

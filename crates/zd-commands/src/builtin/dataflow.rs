@@ -164,6 +164,11 @@ impl Command for SaveDataflow {
             };
             tables.push(table.clone());
         }
+        // Formula steps compile against the dataflow's names and give their known answers, or it isn't saved (0077).
+        let engine_fields = d.engine_fields().map_err(CommandError::Invalid)?;
+        let refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
+        let built_in: Vec<&str> = super::STEPS.iter().map(|(n, _)| *n).collect();
+        let formulas = super::check_formula_steps(d, &built_in, &super::formula_declared(&engine_fields, &refs)).map_err(CommandError::Invalid)?.len();
         // A setting no table has a column for can never be given: said now, not block by block at the run.
         let mut notes = Vec::new();
         for f in &d.fields {
@@ -188,12 +193,13 @@ impl Command for SaveDataflow {
         };
         let on = d.steps.iter().filter(|s| s.on).count();
         let mut outcome = Outcome::new(vec![change]).message(format!(
-            "saved {}: {} field{}, {on} of {} step{} on, {} parameter table{}",
+            "saved {}: {} field{}, {on} of {} step{} on{}, {} parameter table{}",
             p.name,
             d.fields.len(),
             plural(d.fields.len()),
             d.steps.len(),
             plural(d.steps.len()),
+            if formulas == 0 { String::new() } else { format!(" ({formulas} formula{} checked)", plural(formulas)) },
             tables.len(),
             plural(tables.len())
         ));
