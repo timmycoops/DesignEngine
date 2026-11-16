@@ -130,6 +130,7 @@ codes! {
     InterrogateColumnWholePlan = "interrogate.column_whole_plan", "Blocks whose plan at mid-seam couldn't be worked out, so their column check takes their whole plan";
     CompareBeyond = "compare.beyond", "Blocks whose value differs from another package's by more than its tolerance";
     StringOffSurface = "string.off_surface", "String vertices with no surface under them, keeping their elevations";
+    StringRunsOtherWay = "string.runs_other_way", "A string offset in a run of several that runs the other way to the first, so its offsets went to the other side";
     StringNotCrossed = "string.not_crossed", "Strings a numbering line doesn't cross, left as they were";
     StringCrossesAgain = "string.crosses_again", "A string a numbering line crosses more than once, numbered where it first does";
     StringEndJoined = "string.end_joined", "An end of a line joined to another line across a gap within the tolerance";

@@ -60,7 +60,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 ## Object model
 
 - `Polyline` (string): ordered `[f64; 3]` vertices, closed flag, attributes. A strip's number is its `strip` attribute, set
-  by a line drawn across the strings, and what a run makes keeps it (`docs/decisions/0029-strip-numbers.md`). A string
+  by a line drawn across the strings, and what a run makes keeps it (`docs/decisions/0029-strip-numbers.md`). The string
+  commands that offset or edit a string take one (`string`) or several as one run (`strings`): one undo, one record, a
+  string that can't be done refusing the run with each listed, one that comes out as it was left and said
+  (`docs/decisions/0078-strings-as-one-run.md`). A string
   is projected at a batter by `string.project`: up or down, on the side the new string comes out on, to an RL, a height
   above or below it, a grid or a surface, every string picked in one run, each as it's drawn and left as it is, with
   the wall kept as a surface if asked; to an RL or a surface it's a face's one wall, by a height its plan offset lifted

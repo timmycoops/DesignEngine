@@ -144,11 +144,33 @@ def a_workflow_is_captured_and_run_again():
     assert not s.set_layer_visible("no such layer", False) and len(s.log()) == runs
 
 
+def several_strings_are_one_run():
+    """Decision 0078: three toes set to RL 120 as `strings` are one run and one undo; one that can't be done refuses
+    the run with every string as it was."""
+    s = zd.Session()
+    e, n = 650_000.0, 7_450_000.0
+    toes = [s.run("string.create", name=f"Toe {k + 1}", layer="toes", points=[[e, n - 50 * k, 100.0 + k], [e + 200, n - 50 * k, 100.0 + k], [e + 400, n - 50 * k + 30, 100.0 + k]])["outputs"][0]["id"] for k in range(3)]
+    record = s.run("string.set_elevation", strings=toes, rl=120.0)
+    assert len(record["outputs"]) == 3 and record["messages"][0] == "set to RL 120.000: 3 of 3 strings"
+    assert all(p[2] == 120.0 for toe in toes for p in s.object(toe)["points"])
+    short = s.run("string.create", name="Short", layer="toes", points=[[e, n + 500, 0.0], [e + 100, n + 500, 0.0]])["outputs"][0]["id"]
+    try:
+        s.run("string.set_closed", strings=toes + [short], closed=True)
+        raise AssertionError("expected zd.CommandError")
+    except zd.CommandError as refused:
+        assert "1 of 4 strings can't be done, so nothing was changed" in str(refused), refused
+    assert not any(s.object(toe)["closed"] for toe in toes)
+    s.undo()
+    s.undo()
+    assert [s.object(toe)["points"][0][2] for toe in toes] == [100.0, 101.0, 102.0], "one undo for the three"
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         original = a_project_is_made_saved_and_opened(tmp)
         the_gate_open_list_run_read(tmp, original)
     a_workflow_is_captured_and_run_again()
+    several_strings_are_one_run()
     print(f"zd {zd.__version__}: open, list, run and read the log all pass")
 
 
