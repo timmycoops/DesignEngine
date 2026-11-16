@@ -1,0 +1,18 @@
+[package]
+name = "zd-script"
+description = "Formulas a planner edits, run on the reserves dataflow's units, for the Zovlyn Pit Design Engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Starlark, the dataflow's scripting language (decision 0077, agreed by Tim 2026-11-16). Pinned exactly: the trace
+# uses the evaluator's statement hook, which the crate marks as not yet stable.
+starlark.workspace = true
+starlark_derive.workspace = true
+allocative.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

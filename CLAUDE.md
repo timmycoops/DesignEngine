@@ -24,12 +24,13 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 | Wall offsets | Straight skeleton on wall planes in `zd-geom` (each segment's plane set by its batter, hips where planes meet); a berm is the conditioned crest moved out and registered back on the grid; no offset-then-repair (`docs/decisions/0023-wall-step.md`) |
 | Planar offsets | Clipper2 or Manifold `CrossSection` for plain 2D offsets |
 | Viewport | three.js with `WebGPURenderer` (auto WebGL2 fallback) |
-| Interface | React + TypeScript, shadcn/ui, Tailwind, dockview, TanStack Table, React Flow (`@xyflow/react`) for node graphs (`docs/decisions/0067-workflow-canvas.md`), `cmdk` for Find a command (`docs/decisions/0076-docks-and-workflow-tabs.md`) |
+| Interface | React + TypeScript, shadcn/ui, Tailwind, dockview, TanStack Table, React Flow (`@xyflow/react`) for node graphs (`docs/decisions/0067-workflow-canvas.md`), `cmdk` for Find a command (`docs/decisions/0076-docks-and-workflow-tabs.md`), CodeMirror 6 for the formula editor (`docs/decisions/0077-formulas-in-starlark.md`) |
 | Data at rest | One `.zdp` file a project: a zip of Parquet/Arrow tables with a JSON manifest, meshes in the OMF2 layout (vertices `x, y, z` f64; triangles `a, b, c` u32, counter-clockwise about an outward normal), saved beside then swapped in (`docs/decisions/0058-one-file-a-project.md`); geology (seam grids, block models) referenced by location, never packed in; DXF/CSV/OMF only for exchange. Evaluate the `omf` Rust crate before writing our own |
 | Python | PyO3 bindings in `crates/zd-py` from Phase 1, built with maturin (reconciliation and test scripts run from Python) |
 | Package manager (JS) | pnpm |
 | Zips | `zip` crate, deflate only (`docs/decisions/0019-solids-by-the-thousand.md`) |
 | Deswik XML | `quick-xml` and `base64` (`docs/decisions/0036-deswik-drawings.md`) |
+| Formulas | Starlark (`starlark` crate 0.14.2, patched in `vendor/starlark` to leave serde_json's `arbitrary_precision` off) in `zd-script`: the arithmetic and tests a site edits, kept in the dataflow; what moves material between units stays built in (`docs/decisions/0077-formulas-in-starlark.md`) |
 
 ## Engine rules (non-negotiable)
 
@@ -230,6 +231,7 @@ crates/zd-geom       projection, offsets, triangulation, booleans, section lines
 crates/zd-commands   typed commands, registry, run log
 crates/zd-io         DXF/CSV/OMF import-export, zips and folders of solids, Parquet project store
 crates/zd-reserves   reserves dataflow: block columns, units, labels, splits, fields that add up (0070); benches joined by in situ share, put back at writes (0071)
+crates/zd-script     formulas a planner edits, in Starlark: checked on save, run on units, traced line by line (0077)
 crates/zd-py         PyO3 bindings (Phase 1)
 app/src-tauri        Tauri shell, command bridge, binary transfer
 app/src              React: viewport/, panels/, forms/, design-system/

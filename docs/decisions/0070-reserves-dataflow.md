@@ -44,6 +44,7 @@ a dilution shortfall undoes losses without saying, and losses are written out be
     there; it runs as a workflow step and on its own; Rust on Arrow (Arrow for settings and results; a column in
     work is plain rows, tens of units); formulas in a small language of our own, built last; settings by range
     (seam, material, strip, block) with a default and CSV in and out, a missing one stopping that block.
+    *Changed by 0077:* formulas are Starlark (`zd-script`), not a language of our own.
 
 ## Workstreams
 
