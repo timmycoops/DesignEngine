@@ -1,6 +1,7 @@
 // `--dataflow <project.zdp>`: Properties' views of a parameter table, a dataflow and a results table (decisions 0072,
 // 0073), read as Tim would see them. The project (the demo pit saved by testdata/synthetic/workflow_demo.py, its
 // dataflow the starter's) is opened, each object clicked in the Layers panel, and what Properties shows read back.
+import { EditorView } from '@codemirror/view';
 import type { DockviewApi } from 'dockview-react';
 import { objectDetails, openProject, type ProjectSummary, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, undo, writePicture } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
@@ -155,6 +156,7 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     expect('the 50m table opens in under 200 ms and a block in under 100 ms', treeMs + pitMs < 200 && blockMs < 100, { leaves: tree.leaves, treeMs: Math.round(treeMs), pitMs: Math.round(pitMs), blockMs: Math.round(blockMs) });
   }
   await checkParameters(summary, api, expect, show, picture);
+  await checkFormulas(expect, picture);
   return { ...results, failures };
 }
 
@@ -227,4 +229,52 @@ async function checkParameters(summary: ProjectSummary, api: DockviewApi, expect
   await show(await undo());
   const undone = await objectDetails(assumptions.id);
   expect('an undo puts the table back', undone.measures.kind === 'parameter_table' && undone.measures.parameters.rows[ri].values[column.name] === before && undone.history.length === details.history.length);
+}
+
+/**
+ * The formula panel (decision 0077, 7d) on the demo's dataflow: its five starter formulas listed; `densities` opened,
+ * checked with its worked examples holding; run on the picked block's unit (a solid of 3_B1, picked by Select its
+ * solids), lines that ran tinted and rd_is set; a misspelt field shown on its line, Save off; Discard puts it back.
+ */
+async function checkFormulas(expect: Expect, picture: Picture) {
+  const panel = () => document.querySelector<HTMLElement>('[data-tool-panel="parameters"]');
+  panel()?.querySelector<HTMLButtonElement>('[data-slot="parameters-item"][data-name="Reserves"]')?.click();
+  for (let k = 0; k < 50 && !panel()?.querySelector('[data-formula="yes"]'); k++) await wait(100);
+  const formulas = [...(panel()?.querySelectorAll<HTMLElement>('[data-formula="yes"]') ?? [])].map((e) => e.dataset.step);
+  expect('the dataflow lists its starter formulas', JSON.stringify(formulas) === JSON.stringify(['fill_size', 'limits', 'densities', 'discard', 'rom_qualities']), formulas);
+  panel()?.querySelector<HTMLButtonElement>('[data-formula="yes"][data-step="densities"] button[title="Open this formula"]')?.click();
+  for (let k = 0; k < 50 && !panel()?.querySelector('[data-slot="formula-ok"]'); k++) await wait(100);
+  const ok = panel()?.querySelector('[data-slot="formula-ok"]')?.textContent ?? '';
+  expect('a formula opens checked, its worked examples holding', ok.includes('3 worked examples hold'), ok);
+  const button = (label: string) => [...(panel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent?.trim() === label) ?? null;
+  button('Check')?.click();
+  for (let k = 0; k < 100 && !panel()?.querySelector('[data-slot="formula-trace"]'); k++) await wait(100);
+  const sets = panel()?.querySelector('[data-slot="formula-sets"]')?.textContent ?? '';
+  const ran = panel()?.querySelectorAll('[data-slot="script-editor"] .cm-ran').length ?? 0;
+  // A line in a loop runs more than once; it's tinted once.
+  const lines = new Set([...(panel()?.querySelectorAll<HTMLElement>('[data-slot="formula-trace"] [data-line]') ?? [])].map((e) => e.dataset.line)).size;
+  expect('run on the picked block, the lines that ran are shown and tinted, and what it set', sets.includes('rd_is = ') && ran > 3 && ran === lines, { ran, lines, sets: sets.replace(/[0-9.]+/g, '#') });
+  if (picture) {
+    const press = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)?.click();
+    press('Fill the window');
+    await picture('formula-panel');
+    press('Put the tables back under the view');
+    await wait(300);
+  }
+  // A misspelt field: shown on its line, underlined, and Save off.
+  const dom = panel()?.querySelector<HTMLElement>('[data-slot="script-editor"] .cm-editor');
+  const view = dom ? EditorView.findFromDOM(dom) : null;
+  const text = view?.state.doc.toString() ?? '';
+  const at = text.indexOf('unit.rd_is = rd_is');
+  view?.dispatch({ changes: { from: at + 'unit.'.length, to: at + 'unit.rd_is'.length, insert: 'rd_si' } });
+  for (let k = 0; k < 50 && !panel()?.querySelector('[data-slot="formula-problem"]'); k++) await wait(100);
+  await wait(400);
+  const problem = panel()?.querySelector('[data-slot="formula-problem"]')?.textContent ?? '';
+  const underlined = panel()?.querySelectorAll('.cm-lintRange-error').length ?? 0;
+  const save = button('Save');
+  expect('a misspelt field is shown on its line and underlined, and Save is off', at >= 0 && /^line \d+: `unit\.rd_si` isn't a field/.test(problem) && underlined > 0 && !!save?.disabled, { problem, underlined, save: save?.disabled });
+  button('Discard')?.click();
+  await wait(400);
+  const back = view?.state.doc.toString() ?? '';
+  expect('Discard puts the formula back', back === text && !panel()?.querySelector('[data-slot="formula-problem"]'));
 }

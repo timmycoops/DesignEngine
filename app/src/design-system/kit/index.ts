@@ -11,3 +11,4 @@ export { PanelHead } from './PanelHead';
 export { canShow, lookAt, noteTone, plainNote } from './notes';
 export { RunGoing, useRunning } from './RunGoing';
 export { ToolButton } from './ToolButton';
+export { ScriptEditor, type ScriptProblem } from './ScriptEditor';
