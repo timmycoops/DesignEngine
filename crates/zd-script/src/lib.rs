@@ -183,7 +183,8 @@ fn problem(e: &starlark::Error, unit: Option<usize>) -> Problem {
     let full = format!("{e}");
     // A runtime error comes after its traceback, on the line that starts "error:".
     let headline = full.lines().find(|l| l.starts_with("error:")).or_else(|| full.lines().find(|l| !l.trim().is_empty())).unwrap_or("");
-    let mut message = headline.trim_start_matches("error:").trim().to_string();
+    // `fail("…")` is the formula saying why it stopped: its words alone.
+    let mut message = headline.trim_start_matches("error:").trim().trim_start_matches("fail:").trim().to_string();
     let line = full.lines().filter_map(|l| l.split_once(&format!("{FILE}:"))).filter_map(|(_, rest)| rest.split(':').next()?.trim().parse::<usize>().ok()).next_back();
     if let Some(name) = message.strip_prefix("Object of type `parameters` has no attribute `").and_then(|r| r.split('`').next()) {
         message = format!("no parameter row gives `{name}` for this unit; read it with getattr(p, \"{name}\", default) where it may be missing");
