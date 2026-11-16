@@ -383,7 +383,8 @@ export function BuilderPanel() {
     <ToolPanel
       title="Builder"
       panel="builder"
-      summary="Pick a line and build one wall or berm from it. Edit any line between steps; Rebuild from here builds the steps above it again."
+      summary="Builds one wall or berm from the line you pick."
+      more="Edit any line between steps; Rebuild from here builds the steps above it again."
       result={report}
       action={action}
     >

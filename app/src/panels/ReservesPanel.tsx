@@ -17,6 +17,11 @@ type Scope = 'picked' | 'layer' | 'visible';
 
 const MODES: readonly Mode[] = ['interrogate', 'compare'];
 const MODE_LABELS: Record<Mode, string> = { interrogate: 'Interrogate', compare: 'Compare' };
+/** What each does, in the panel's one line. */
+const MODE_LINES: Record<Mode, string> = {
+  interrogate: "Writes each seam grid's value onto blocks, from a seam model.",
+  compare: "Sets blocks beside Spry's or Deswik's numbers.",
+};
 const SCOPES: readonly Scope[] = ['picked', 'layer', 'visible'];
 
 export function ReservesPanel() {
@@ -105,7 +110,7 @@ export function ReservesPanel() {
     <ToolPanel
       title="Reserves"
       panel="reserves"
-      summary="Interrogate blocks against a seam model, writing each seam grid's value onto them, or set them beside Spry's or Deswik's numbers."
+      summary={MODE_LINES[mode]}
       result={report}
       action={action}
     >

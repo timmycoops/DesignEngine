@@ -3,8 +3,8 @@
 Status: agreed 16 November 2026. Tim picked "panel and then b" of the options put to him (fix how panels open first,
 then the workflow tabs), and agreed the six decisions on the Build Plan's "UI improvements plan" tab as recommended
 ("Agree all 6"). It takes over the open parts of the UI plan tab and replaces 0051's one toolbar row. 0051's minimised
-strips and the ` key stay. Built as seven workstreams, a PR each. Workstreams 1, the docks, and 2, the view bar, are
-built.
+strips and the ` key stay. Built as seven workstreams, a PR each. Workstreams 1, the docks, 2, the view bar, and 3,
+compact heads, are built.
 
 ## Why
 
@@ -142,6 +142,38 @@ over a made-up topography and block.
 `--select` (29 of 29) covers F, Shift+F, T, hold Z, 2 and E through key events, reading the view bar where it read the
 toolbar; `--section-guide` (11 of 11), `--workflow` (43 of 43) and `--dataflow` (21 of 21) still pass. The window
 pictures gain `view-bar-section`, a section open with its step and fill on the bar.
+
+## Built: workstream 3, compact heads
+
+- **A panel's head is one line** (`PanelHead` in the kit, 28 px): what the panel does, never its name, which is on its
+  tab. A line too long for the panel is cut short; the whole of it, and anything more to say, is in a tip on the line and
+  on the mark at its end.
+- **`ToolPanel` takes `summary`, one line, and `more`, for the tip**, and no longer shows its title, which names the
+  panel to a screen reader. Builder, Cut solids, Reserves and Workflow each have a line written to fit the 400 px dock.
+- **Cut solids' and Reserves' lines follow what they're set to do**: a line a choice ("Cuts solids by the seam model's
+  horizons, in one run.").
+- **Cut solids' six choices are three to a row** (`Choice` takes `columns`), each shown whole. At 400 px they ran off the
+  dock in one row, their words wrapped and cut.
+- **Face design** opens on the same head. With a design open it starts with its controls, as the tables do: none of them
+  said its name twice or opened with a paragraph, so they are as they were.
+- The Workflow panel's first section is headed Saved, not Workflow again.
+
+Release app, 16 November 2026, a 1,600 × 1,000 window, every panel open in its dock. `--shell` passes 38 of 38: the 33
+above and five for the heads.
+
+| Check | Result |
+|---|---|
+| Builder, Cut solids, Reserves, Workflow | each a 28 px head, its line whole at 400 px, its name nowhere under its tab |
+| The rest of what a tool does | in a tip at the end of the line, and on the line |
+| Cut solids' line | six choices, six lines, each whole |
+| Cut solids' six choices | two rows of three inside the dock, none cut short |
+| First control under the tab: Cut solids, Reserves | 37 px (about 90 px and 75 px before, read off the earlier pictures) |
+| The same: Builder, Workflow, Face design | 36 px |
+| The same: Run log, Block table, Layers | 32 px, 14 px, 6 px |
+| First line under the tab: Reserves table, Parameters, the canvas with nothing to show, Properties | at the top |
+
+`--select` (29 of 29), `--section-guide` (11 of 11), `--workflow` (43 of 43) and `--dataflow` (21 of 21) still pass;
+`--builder` and `--cut` run with no failed check.
 
 ## Known limits
 

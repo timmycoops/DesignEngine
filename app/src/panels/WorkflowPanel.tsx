@@ -234,12 +234,13 @@ export function WorkflowPanel() {
     <ToolPanel
       title="Workflow"
       panel="workflow"
-      summary="Saved steps run again in one go: capture runs from the Run log, or add steps from the tool panels."
+      summary="Saved steps, run again in one go."
+      more="Capture runs from the Run log, or add steps from the tool panels."
       result={report}
       action={action}
     >
       <ToolSection
-        title="Workflow"
+        title="Saved"
         aside={
           chosen ? (
             <Button variant="outline" size="sm" className="h-6 px-2 text-xs" title="The workflow as nodes and wires: what each step reads, and wiring an input by drawing" onClick={() => openPanel('canvas')}>

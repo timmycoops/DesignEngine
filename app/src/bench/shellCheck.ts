@@ -7,7 +7,10 @@
 // view and takes it back, the other docks staying put. Then the view bar (workstream 2): the view has no tab strip and
 // takes no panel dropped on its middle; its tools are on a bar over it and off the toolbar, and their buttons and keys
 // (T, 2, [, ], E) do their jobs over a made-up topography and block; with a section open the bar never covers the
-// section's overview, in a tall view or a short one. With `--pictures <folder>` the window is then drawn in its states
+// section's overview, in a tall view or a short one. Then the panels' heads (workstream 3): a tool panel says what it
+// does in one line that fits its dock, the rest in a tip, and its name only on its tab; Cut solids' line follows what
+// it's set to do and its six choices show whole; and every panel's first control, or its first line where it has none,
+// is within 40 px of its tab. With `--pictures <folder>` the window is then drawn in its states
 // (a tool and a table open for the Solids, Walls and Reserves work, and a section open), over the project given by
 // `--dataflow` if there is one. The layout saved on this machine is put back as it was at the end.
 import * as THREE from 'three/webgpu';
@@ -356,6 +359,91 @@ export async function checkShell(
     expect('2 closes the section, and its step and fill leave the bar', !section()?.open && !onBar().includes('Fill') && !pressed('Section'), { open: !!section()?.open, on_the_bar: onBar() });
     viewport.setPlanView(false);
     await settle();
+
+    // The panels' heads, every panel open in its dock.
+    resetLayout(api);
+    await settle();
+    const everyPanel = ['builder', 'cut', 'reserves', 'workflow', 'blocks', 'restable', 'params', 'canvas', 'face'] as const;
+    for (const id of everyPanel) showPanel(api, id);
+    await settle();
+    const toFront = async (id: PanelId) => {
+      api.getPanel(id)?.api.setActive();
+      await settle();
+    };
+    const groupOf = (id: PanelId) => api.getPanel(id)?.group.element;
+    const stripOf = (id: PanelId) => groupOf(id)?.querySelector<HTMLElement>('.dv-tabs-and-actions-container') ?? null;
+    const shown = (e: Element) => e.getClientRects().length > 0;
+    /** What's in a panel under its tabs, in the order it's read. */
+    const inPanel = (id: PanelId, what: string) => [...(groupOf(id)?.querySelectorAll<HTMLElement>(what) ?? [])].filter((e) => !stripOf(id)?.contains(e) && shown(e));
+    const headOf = (id: PanelId) => inPanel(id, '[data-slot="panel-head"]')[0] ?? null;
+    const lineOf = (id: PanelId) => headOf(id)?.querySelector<HTMLElement>('span') ?? null;
+    /** How far under its tabs a panel's first control is, or its first line of words where it has no control (px). */
+    const firstAt = (id: PanelId) => {
+      const top = stripOf(id)?.getBoundingClientRect().bottom ?? 0;
+      const control = inPanel(id, 'button, input, select').find((e) => !e.closest('[data-slot="panel-head"]'));
+      const words = inPanel(id, 'p, div, span, th, td, h3').find((e) => !e.closest('[data-slot="panel-head"]') && e.children.length === 0 && (e.textContent?.trim() ?? '') !== '');
+      const first = control ?? words;
+      return first ? Math.round(first.getBoundingClientRect().top - top) : null;
+    };
+    const toolPanels = ['builder', 'cut', 'reserves', 'workflow'] as const;
+    const titles: Record<(typeof toolPanels)[number], string> = { builder: 'Builder', cut: 'Cut solids', reserves: 'Reserves', workflow: 'Workflow' };
+    const heads: Record<string, unknown> = {};
+    let headsOk = true;
+    for (const id of toolPanels) {
+      await toFront(id);
+      const head = headOf(id);
+      const line = lineOf(id);
+      const words = line?.textContent?.trim() ?? '';
+      const height = head ? Math.round(head.getBoundingClientRect().height) : 0;
+      const whole = !!line && line.scrollWidth <= line.clientWidth;
+      const named = inPanel(id, '*').some((e) => e.children.length === 0 && e.textContent?.trim() === titles[id] && !e.closest('label, select, option, button'));
+      heads[id] = { line: words, height, whole, name_again: named };
+      headsOk &&= !!head && height === 28 && whole && words !== '' && !named;
+    }
+    expect('a tool panel says what it does in one line that fits, and its name only on its tab', headsOk, heads);
+
+    await toFront('builder');
+    const mark = headOf('builder')?.querySelector<HTMLButtonElement>('[data-slot="panel-head-more"]');
+    mark?.focus();
+    await settle();
+    const tip = document.querySelector('[data-slot="tooltip-content"]')?.textContent ?? '';
+    mark?.blur();
+    await settle();
+    expect('the rest of what a tool does is in a tip at the end of the line', !!mark && tip.includes('Rebuild from here') && (lineOf('builder')?.title ?? '').includes('Rebuild from here'), { tip: tip.slice(0, 140) });
+
+    await toFront('cut');
+    const choice = groupOf('cut')?.querySelector<HTMLElement>('[role="group"][aria-label="What to do"]');
+    const choices = [...(choice?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
+    const lines: string[] = [];
+    let linesFit = true;
+    for (const b of choices) {
+      b.click();
+      await settle();
+      const line = lineOf('cut');
+      lines.push(line?.textContent?.trim() ?? '');
+      linesFit &&= !!line && line.scrollWidth <= line.clientWidth;
+    }
+    choices[0]?.click();
+    await settle();
+    expect("Cut solids' line says what it's set to do, a line a choice, each fitting the dock", lines.length === 6 && new Set(lines).size === 6 && linesFit, { lines });
+    const rows = new Set(choices.map((b) => Math.round(b.getBoundingClientRect().top))).size;
+    const cutShort = choices.filter((b) => b.scrollWidth > b.clientWidth).map((b) => b.textContent?.trim());
+    const choiceBox = boxOf(choice);
+    const cutBox = boxOf(groupOf('cut'));
+    expect("Cut solids' six choices show whole in the dock, three to a row", choices.length === 6 && rows === 2 && cutShort.length === 0 && !!choiceBox && !!cutBox && choiceBox.right <= cutBox.right && choiceBox.left >= cutBox.left, {
+      rows,
+      cut_short: cutShort,
+      choice: choiceBox,
+      dock: cutBox,
+    });
+
+    const firsts: Record<string, number | null> = {};
+    for (const id of [...everyPanel, 'runlog', 'properties', 'layers'] as const) {
+      await toFront(id);
+      firsts[id] = firstAt(id);
+    }
+    const far = Object.entries(firsts).filter(([, px]) => px === null || px > 40);
+    expect("every panel's first control, or its first line, is within 40 px of its tab", far.length === 0, firsts);
 
     if (pictures) {
       if (pictures.project) {
