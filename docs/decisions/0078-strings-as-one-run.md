@@ -1,8 +1,7 @@
 # 0078 — String tools on several strings, as one run
 
-Status: agreed 16 November 2026 (Tim: "Agree all 7", the Build Plan's "Strings on many strips plan" tab). Workstreams 1,
-the commands, 2, the panel, and 3, Join on the pieces picked, are built here. Workstream 4 (Add to workflow) is to
-build.
+Status: agreed 16 November 2026 (Tim: "Agree all 7", the Build Plan's "Strings on many strips plan" tab). All four
+workstreams are built here: 1, the commands; 2, the panel; 3, Join on the pieces picked; and 4, Add to workflow.
 
 ## Why
 
@@ -168,6 +167,42 @@ The timing test is `timings_for_joining_pieces`
 last, and says so: "Join 4 strings into one", with how many and their names on its Join row. With a closed string among
 them the button is off and the row says to open it or leave it out. After the run the joined string is the one picked.
 
+## Built: workstream 4, Add to workflow
+
+**In the panel.** While the Workflow panel is adding steps, the Strings panel's button reads Add to the workflow, as
+Cut solids', Builder's and Reserves' do (0065), and adds the tool with its settings as a step, running nothing. Every
+string tool but Ramp from a start does: Offset, Number across, Polygons from lines, Set grade, Set elevation, Drape,
+Project, Split, Join, Smooth, Filter, Reverse, Close and Surface between strings. Ramp from a start is a ramp placed
+by hand. Number across asks for its line across first, as when it runs; the line goes in as a setting and Esc adds
+nothing (the kit's `ToolAction.step.ask`). The same fourteen are on the workflow canvas's list of tools, under Strings,
+from the one tool list.
+
+**The strings are found by rule**, as any step's objects are (0065): what an earlier step made, else what's on a layer,
+else one by name, else the strings as picked, said. Toes picked that are all the strings on their layer are found by the
+layer, so the step runs on however many toes are there the next time. Toes picked from among others on their layer
+are kept as picked, and the save warns (`workflow.picked`).
+
+**A rule by layer or name doesn't see what this step or a later one made the last time** (`resolve_in`,
+`crates/zd-commands/src/workflow.rs`). A run makes those again after this point, so as the step sees the project they
+aren't there yet. Without it, an offset made onto its own toe's layer (the panel has no layer for it) found its
+offsets of the last run with the toe the next time, and offset them too: three offsets became twelve. This holds for
+every workflow, not only strings; what earlier steps made, and anything drawn by hand, is seen as before.
+
+Tests, `crates/zd-commands/tests/strings_workflow.rs`, with their known answers:
+
+| Case | Known answer | Tolerance |
+|---|---|---|
+| Drape added on three toes, the only strings on their layer; two more toes drawn; the workflow run | The rule is the layer; all five toes on the plane z = 100 + 0.1 x + 0.05 y; one undo puts all five back at RL 0 | 1e-9 m |
+| Drape added on three toes of five on their layer | Kept as picked, one `workflow.picked` warning; the three draped, the other two at RL 0 | 1e-9 m |
+| A base toe offset 60 m three times by a step with no layer, then Set elevation added on what it made; run again | The second step takes what step 1 made; the same three toes as their next revisions, 60, 120 and 180 m north, at RL 120 | 1e-9 m |
+| A toe in three pieces on a layer, Join added picked last-first | Found by the layer; the first drawn keeps the toe, exactly, and the other two are deleted | Exact |
+| Number across added on three toes, two more drawn, run | The line across is a setting; the five named Strip 1 to Strip 5 from where the line starts | Names |
+
+In the app, `zd-app --bench --shell` saves an empty workflow, sets the Workflow panel adding, and from the Strings panel
+adds Smooth and then Number across (two clicks across the toes) on the three toes picked: both buttons read Add to
+Toes, both steps find the toes by the layer 'many toes', Number across's line is a setting, nothing runs, and once
+adding stops the button reads Draw across 3 strings again.
+
 ## Known limits
 
 - **Join has no tolerance.** Ends a hair apart are bridged by a segment that long, and said; Filter takes such a
@@ -186,3 +221,11 @@ them the button is off and the row says to open it or leave it out. After the ru
 - **An open string and a closed one aren't compared** for which way they run, and an open string whose ends are over
   each other in plan is compared with nothing.
 - **A run of several that changes nothing** is in the run log but is no step to undo.
+- **Join in a workflow takes the pieces in the project's order** when they're found by a layer, not the order picked:
+  the first drawn keeps the toe. And a Join step run again with nothing new on the layer finds only the string it
+  joined into, and is refused (joining takes two strings or more), stopping the run there.
+- **Ramp from a start adds no step.** Number across adds its line as fixed coordinates: the strings found are the
+  ones it crosses each time.
+- **A step added in the middle of a workflow** is given its rules from the project as it stands, which may hold what
+  the steps after it made the last time; a run doesn't see those (above), so a layer rule is still right, but the
+  choice of rule can fall back to picked where a layer would have done.

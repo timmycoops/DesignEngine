@@ -63,7 +63,8 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   by a line drawn across the strings, and what a run makes keeps it (`docs/decisions/0029-strip-numbers.md`). The string
   commands that offset or edit a string take one (`string`) or several as one run (`strings`): one undo, one record, a
   string that can't be done refusing the run with each listed, one that comes out as it was left and said; Join takes
-  the open pieces picked and joins them end to end into the first, nearest ends first, each gap bridged and said
+  the open pieces picked and joins them end to end into the first, nearest ends first, each gap bridged and said; and
+  each tool but Ramp from a start adds a workflow step from the panel, its strings found by rule, a layer's by the layer
   (`docs/decisions/0078-strings-as-one-run.md`). A string
   is projected at a batter by `string.project`: up or down, on the side the new string comes out on, to an RL, a height
   above or below it, a grid or a surface, every string picked in one run, each as it's drawn and left as it is, with

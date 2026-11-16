@@ -187,19 +187,19 @@ export const TOOLS: readonly Tool[] = [
 
   // Strings: the Strings panel's thirteen, each opening it set to that tool, on the string picked.
   { key: 'strings', stage: 'strings', label: 'Strings', tip: 'offset, number, grade, drape, split, join and tidy the strings picked', panel: 'strings' },
-  { key: 'strings:offset', stage: 'strings', label: 'Offset', tip: 'Offsets each string picked to one side, once or more.', icon: 'offset', panel: 'strings', mode: 'offset', command: 'string.offset' },
-  { key: 'strings:number_across', stage: 'strings', label: 'Number across', tip: 'Numbers the strips by a line drawn across the strings.', icon: 'number', panel: 'strings', mode: 'number_across', command: 'string.number_across' },
-  { key: 'strings:polygons_from_lines', stage: 'strings', label: 'Polygons from lines', tip: 'Makes named block polygons from the lines picked.', icon: 'polygons', panel: 'strings', mode: 'polygons_from_lines', command: 'string.polygons_from_lines' },
-  { key: 'strings:set_grade', stage: 'strings', label: 'Set grade', tip: 'Grades each string picked, or one between two vertices.', icon: 'grade', panel: 'strings', mode: 'set_grade', command: 'string.set_grade' },
-  { key: 'strings:set_elevation', stage: 'strings', label: 'Set elevation', tip: 'Sets every vertex of each string picked to one RL.', icon: 'elevation', panel: 'strings', mode: 'set_elevation', command: 'string.set_elevation' },
-  { key: 'strings:drape', stage: 'strings', label: 'Drape', tip: 'Drapes each string picked onto a grid or surface.', icon: 'drape', panel: 'strings', mode: 'drape', command: 'string.drape' },
-  { key: 'strings:project', stage: 'strings', label: 'Project', tip: 'Projects strings at a batter, up or down, to a target.', icon: 'project', panel: 'strings', mode: 'project', command: 'string.project' },
-  { key: 'strings:split', stage: 'strings', label: 'Split', tip: 'Splits the string at a vertex.', icon: 'split', panel: 'strings', mode: 'split', command: 'string.split' },
-  { key: 'strings:join', stage: 'strings', label: 'Join', tip: 'Joins the open strings picked end to end into one.', icon: 'join', panel: 'strings', mode: 'join', command: 'string.join' },
-  { key: 'strings:smooth', stage: 'strings', label: 'Smooth', tip: 'Smooths each string picked, a vertex every so many metres.', icon: 'smooth', panel: 'strings', mode: 'smooth', command: 'string.smooth' },
-  { key: 'strings:filter', stage: 'strings', label: 'Filter', tip: "Takes out vertices each string picked doesn't need.", icon: 'filter', panel: 'strings', mode: 'filter', command: 'string.filter' },
-  { key: 'strings:reverse', stage: 'strings', label: 'Reverse', tip: 'Turns each string picked to run the other way.', icon: 'reverse', panel: 'strings', mode: 'reverse', command: 'string.reverse' },
-  { key: 'strings:set_closed', stage: 'strings', label: 'Close', tip: 'Closes each string picked, or opens it.', icon: 'close', panel: 'strings', mode: 'set_closed', command: 'string.set_closed' },
+  { key: 'strings:offset', stage: 'strings', label: 'Offset', tip: 'Offsets each string picked to one side, once or more.', icon: 'offset', panel: 'strings', mode: 'offset', command: 'string.offset', step: { takes: 'the strings picked' } },
+  { key: 'strings:number_across', stage: 'strings', label: 'Number across', tip: 'Numbers the strips by a line drawn across the strings.', icon: 'number', panel: 'strings', mode: 'number_across', command: 'string.number_across', step: { takes: 'strings and a line across them' } },
+  { key: 'strings:polygons_from_lines', stage: 'strings', label: 'Polygons from lines', tip: 'Makes named block polygons from the lines picked.', icon: 'polygons', panel: 'strings', mode: 'polygons_from_lines', command: 'string.polygons_from_lines', step: { takes: 'the lines picked' } },
+  { key: 'strings:set_grade', stage: 'strings', label: 'Set grade', tip: 'Grades each string picked, or one between two vertices.', icon: 'grade', panel: 'strings', mode: 'set_grade', command: 'string.set_grade', step: { takes: 'the strings picked' } },
+  { key: 'strings:set_elevation', stage: 'strings', label: 'Set elevation', tip: 'Sets every vertex of each string picked to one RL.', icon: 'elevation', panel: 'strings', mode: 'set_elevation', command: 'string.set_elevation', step: { takes: 'the strings picked' } },
+  { key: 'strings:drape', stage: 'strings', label: 'Drape', tip: 'Drapes each string picked onto a grid or surface.', icon: 'drape', panel: 'strings', mode: 'drape', command: 'string.drape', step: { takes: 'strings and a grid or surface' } },
+  { key: 'strings:project', stage: 'strings', label: 'Project', tip: 'Projects strings at a batter, up or down, to a target.', icon: 'project', panel: 'strings', mode: 'project', command: 'string.project', step: { takes: 'strings and an RL, grid or surface' } },
+  { key: 'strings:split', stage: 'strings', label: 'Split', tip: 'Splits the string at a vertex.', icon: 'split', panel: 'strings', mode: 'split', command: 'string.split', step: { takes: 'one string' } },
+  { key: 'strings:join', stage: 'strings', label: 'Join', tip: 'Joins the open strings picked end to end into one.', icon: 'join', panel: 'strings', mode: 'join', command: 'string.join', step: { takes: 'the pieces picked' } },
+  { key: 'strings:smooth', stage: 'strings', label: 'Smooth', tip: 'Smooths each string picked, a vertex every so many metres.', icon: 'smooth', panel: 'strings', mode: 'smooth', command: 'string.smooth', step: { takes: 'the strings picked' } },
+  { key: 'strings:filter', stage: 'strings', label: 'Filter', tip: "Takes out vertices each string picked doesn't need.", icon: 'filter', panel: 'strings', mode: 'filter', command: 'string.filter', step: { takes: 'the strings picked' } },
+  { key: 'strings:reverse', stage: 'strings', label: 'Reverse', tip: 'Turns each string picked to run the other way.', icon: 'reverse', panel: 'strings', mode: 'reverse', command: 'string.reverse', step: { takes: 'the strings picked' } },
+  { key: 'strings:set_closed', stage: 'strings', label: 'Close', tip: 'Closes each string picked, or opens it.', icon: 'close', panel: 'strings', mode: 'set_closed', command: 'string.set_closed', step: { takes: 'the strings picked' } },
 
   // Walls. Ramp from a start and Surface between strings are the Strings panel's, but they're wall work: a ramp placed
   // by hand, and a road or a batter drawn by hand.
@@ -208,7 +208,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'builder:step', stage: 'walls', label: 'Build a step', tip: 'Builds one wall or berm from the line you pick.', panel: 'builder', command: 'face.build_step', step: { takes: 'the line picked' } },
   { key: 'builder:rebuild', stage: 'walls', label: 'Rebuild from here', tip: 'Builds the steps above an edited line again, each with its settings', icon: 'rebuild', panel: 'builder', command: 'face.rebuild' },
   { key: 'strings:ramp_polygon', stage: 'walls', label: 'Ramp from a start', tip: 'Places a ramp from a start, as its polygon.', short: 'Ramp', icon: 'ramp', panel: 'strings', mode: 'ramp_polygon', command: 'string.ramp_polygon' },
-  { key: 'strings:surface_between', stage: 'walls', label: 'Surface between strings', tip: 'Makes one surface between the strings picked.', short: 'Surface between', icon: 'surface-between', panel: 'strings', mode: 'surface_between', command: 'surface.between_strings' },
+  { key: 'strings:surface_between', stage: 'walls', label: 'Surface between strings', tip: 'Makes one surface between the strings picked.', short: 'Surface between', icon: 'surface-between', panel: 'strings', mode: 'surface_between', command: 'surface.between_strings', step: { takes: 'two strings or more' } },
   { key: 'cut:join_faces', stage: 'walls', label: 'Join faces', tip: 'Makes one face a strip from up and down faces, several runs or a build’s steps', icon: 'join-faces', panel: 'cut', mode: 'strips', command: 'face.join' },
 
   // Solids. Cut solids' six, in the order the work is done; the panel's own choice keeps its order.

@@ -26,7 +26,11 @@ export function ToolPanel({ title, summary, more, children, result, action: own,
           disabled: own.disabled,
           title: `Adds ${step.command} with these settings as ${addingTo.at === undefined ? 'the last step' : `step ${addingTo.at + 1}`} of ${addingTo.name}, its objects found by rule; nothing runs`,
           hint: `Adds ${addingTo.at === undefined ? 'a step at the end' : `step ${addingTo.at + 1}`}; nothing runs · Ctrl+Enter`,
-          run: () => addStep(step.command, step.params),
+          run: async () => {
+            // A step that needs clicks in the view first (a line across) asks for them; Esc adds nothing.
+            const params = step.ask ? await step.ask() : step.params;
+            if (params) await addStep(step.command, params);
+          },
         }
       : own;
   // Another run going: this one waits, saying on what (decision 0060).
@@ -83,7 +87,12 @@ export interface ToolAction {
   busyLabel?: string;
   hint?: string;
   /** What it runs, so it can be added to a workflow as a step instead (decision 0065). */
-  step?: { command: string; params: Record<string, unknown> };
+  step?: {
+    command: string;
+    params: Record<string, unknown>;
+    /** For a step that needs clicks in the view, as a line across: its settings with them, or null when cancelled. */
+    ask?: () => Promise<Record<string, unknown> | null>;
+  };
 }
 
 /** A titled part of a tool panel: Inputs, Settings, Output, or one of its own. */
