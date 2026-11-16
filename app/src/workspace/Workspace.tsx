@@ -1,6 +1,5 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
-  type AddPanelOptions,
   type DockviewApi,
   DockviewDefaultTab,
   type DockviewGroupPanel,
@@ -10,7 +9,7 @@ import {
   type IDockviewPanelHeaderProps,
   themeDark,
 } from 'dockview-react';
-import { Minus } from 'lucide-react';
+import { Maximize2, Minimize2, Minus } from 'lucide-react';
 import { cn } from 'cn';
 import { BuilderPanel } from '@/panels/BuilderPanel';
 import { CutPanel } from '@/panels/CutPanel';
@@ -57,25 +56,43 @@ const tabComponents = {
 
 export type PanelId = Exclude<keyof typeof components, 'viewport'>;
 
-/** The panels that can be closed and reopened, with where each goes and its size there. */
-export const PANELS: { id: PanelId; title: string; place: AddPanelOptions['position']; size: { width?: number; height?: number } }[] = [
-  { id: 'layers', title: 'Layers', place: { referencePanel: 'viewport', direction: 'left' }, size: { width: 280 } },
-  { id: 'properties', title: 'Properties', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 320 } },
-  { id: 'runlog', title: 'Run log', place: { referencePanel: 'viewport', direction: 'below' }, size: { height: 200 } },
-  { id: 'face', title: 'Face design', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 680 } },
-  { id: 'builder', title: 'Builder', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 440 } },
-  { id: 'cut', title: 'Cut solids', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 400 } },
-  { id: 'reserves', title: 'Reserves', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 400 } },
-  { id: 'workflow', title: 'Workflow', place: { referencePanel: 'viewport', direction: 'right' }, size: { width: 420 } },
-  { id: 'canvas', title: 'Workflow canvas', place: { referencePanel: 'viewport', direction: 'below' }, size: { height: 420 } },
-  { id: 'blocks', title: 'Block table', place: { referencePanel: 'viewport', direction: 'below' }, size: { height: 320 } },
-  { id: 'restable', title: 'Reserves table', place: { referencePanel: 'viewport', direction: 'below' }, size: { height: 420 } },
-  { id: 'params', title: 'Parameters', place: { referencePanel: 'viewport', direction: 'below' }, size: { height: 420 } },
+/**
+ * Where a panel opens (decision 0076): the tree on the left, a tool as a tab in the tool dock on the right, beside
+ * Properties, and a table as a tab in the results dock under the view. The view keeps its room whatever is open.
+ */
+export type Dock = 'left' | 'tools' | 'results';
+
+/** The tool dock's width: one width, so the view is as wide with every tool open as with one. */
+export const TOOL_DOCK_WIDTH = 400;
+
+/**
+ * The panels that can be closed and reopened, a dock at a time, with the room each asks for there: a width on the left
+ * and in the tool dock, and in the results dock the height a table needs, which the dock grows to when it opens.
+ */
+export const PANELS: { id: PanelId; title: string; dock: Dock; size: number }[] = [
+  { id: 'layers', title: 'Layers', dock: 'left', size: 280 },
+  { id: 'properties', title: 'Properties', dock: 'tools', size: TOOL_DOCK_WIDTH },
+  { id: 'builder', title: 'Builder', dock: 'tools', size: TOOL_DOCK_WIDTH },
+  { id: 'cut', title: 'Cut solids', dock: 'tools', size: TOOL_DOCK_WIDTH },
+  { id: 'reserves', title: 'Reserves', dock: 'tools', size: TOOL_DOCK_WIDTH },
+  { id: 'workflow', title: 'Workflow', dock: 'tools', size: TOOL_DOCK_WIDTH },
+  { id: 'runlog', title: 'Run log', dock: 'results', size: 200 },
+  { id: 'blocks', title: 'Block table', dock: 'results', size: 320 },
+  { id: 'restable', title: 'Reserves table', dock: 'results', size: 400 },
+  { id: 'params', title: 'Parameters', dock: 'results', size: 400 },
+  { id: 'canvas', title: 'Workflow canvas', dock: 'results', size: 400 },
+  { id: 'face', title: 'Face design', dock: 'results', size: 400 },
 ];
 
-const LAYOUT_KEY = 'zd.workspace.layout.v3';
-/** Which edge each minimised group shrank to, by group id. The layout itself keeps that it's hidden. */
-const MINIMISED_KEY = 'zd.workspace.minimised.v1';
+const dockOf = (id: string): Dock | undefined => PANELS.find((p) => p.id === id)?.dock;
+
+/**
+ * The saved layout, and beside it which edge each minimised group shrank to, by group id (the layout itself keeps that
+ * it's hidden). Layouts saved before the docks (v3, and its v1 edges) aren't read: the app opens once on the new default.
+ */
+export const LAYOUT_KEYS = ['zd.workspace.layout.v4', 'zd.workspace.minimised.v2'] as const;
+const [LAYOUT_KEY, MINIMISED_KEY] = LAYOUT_KEYS;
+const OLD_LAYOUT_KEYS = ['zd.workspace.layout.v3', 'zd.workspace.minimised.v1'];
 
 type Edge = 'left' | 'right' | 'top' | 'bottom';
 
@@ -126,10 +143,39 @@ function edgeOf(api: DockviewApi, group: DockviewGroupPanel): Edge {
   return 'top';
 }
 
+/** A dock's size as it stood: its width beside the view, or its height above or below it. */
+type Held = { group: DockviewGroupPanel; upright: boolean; size: number };
+
+/** The docks' sizes as they stand, to put back after a dock comes or goes. None while a group fills the window. */
+function dockSizes(api: DockviewApi): Held[] {
+  if (api.hasMaximizedGroup()) return [];
+  return api.groups
+    .filter((g) => g.api.location.type === 'grid' && g.api.isVisible && !g.panels.some((p) => p.id === 'viewport'))
+    .map((group) => {
+      const edge = edgeOf(api, group);
+      const upright = edge === 'left' || edge === 'right';
+      return { group, upright, size: upright ? group.api.width : group.api.height };
+    });
+}
+
+/**
+ * Puts the docks still there back at the sizes they had. dockview shares a closed dock's room out among every panel
+ * left, and takes a new dock's from them all; this way the view takes the room and gives it, and the docks stay put.
+ */
+function holdDocks(api: DockviewApi, held: Held[]) {
+  if (api.hasMaximizedGroup()) return;
+  for (const { group, upright, size } of held) {
+    if (api.getGroup(group.id) !== group || !group.api.isVisible || size <= 0) continue;
+    group.api.setSize(upright ? { width: size } : { height: size });
+  }
+}
+
 /** Shrinks a group to a strip with its panels' names at the nearest edge of the window. The viewport takes the room. */
 function minimise(api: DockviewApi, group: DockviewGroupPanel) {
   writeEdges({ ...readEdges(), [group.id]: edgeOf(api, group) });
+  const held = dockSizes(api);
   group.api.setVisible(false);
+  holdDocks(api, held);
   saveLayout(api);
   onMinimisedChange?.();
 }
@@ -138,7 +184,9 @@ function minimise(api: DockviewApi, group: DockviewGroupPanel) {
 function restore(api: DockviewApi, groupId: string, panelId: string) {
   const group = api.getGroup(groupId);
   if (!group) return;
+  const held = dockSizes(api);
   group.api.setVisible(true);
+  holdDocks(api, held);
   api.getPanel(panelId)?.api.setActive();
   const { [groupId]: _gone, ...rest } = readEdges();
   writeEdges(rest);
@@ -146,33 +194,60 @@ function restore(api: DockviewApi, groupId: string, panelId: string) {
   onMinimisedChange?.();
 }
 
-/** Hides every panel but the viewport, which fills the window, or brings them back (`, or a double-click on its tab). */
+/**
+ * Hides every panel but the viewport, which fills the window, or brings them back (`, or a double-click on its tab).
+ * With a table filling the window, the view takes its place.
+ */
 export function toggleAllPanels(api: DockviewApi) {
+  const view = api.getPanel('viewport');
+  const viewFills = view?.api.isMaximized() ?? false;
   if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
-  else api.getPanel('viewport')?.api.maximize();
+  if (!viewFills) view?.api.maximize();
   onMinimisedChange?.();
 }
+
+/** Lets a group fill the window, over the view and every other panel, or puts it back in its dock. */
+function toggleFill(group: DockviewGroupPanel) {
+  if (group.api.isMaximized()) group.api.exitMaximized();
+  else group.api.maximize();
+  onMinimisedChange?.();
+}
+
+/**
+ * A dock as it stands: the group in the layout holding the most of its panels, wherever it has been dragged to. The
+ * viewport's own group is never one, so a table dragged over the view doesn't take the next table with it.
+ */
+function dockGroup(api: DockviewApi, dock: Dock): DockviewGroupPanel | undefined {
+  const count = (g: DockviewGroupPanel) => g.panels.filter((p) => dockOf(p.id) === dock).length;
+  return api.groups
+    .filter((g) => g.api.location.type === 'grid' && count(g) > 0 && !g.panels.some((p) => p.id === 'viewport'))
+    .sort((a, b) => count(b) - count(a))[0];
+}
+
+/** The room a dock is made with: a width beside the view, a height under it. */
+const dockSize = (panel: (typeof PANELS)[number]) => (panel.dock === 'results' ? { height: panel.size } : { width: panel.size });
 
 function addViewport(api: DockviewApi) {
   // 'always' keeps the canvas in the page while other tabs share its group.
   api.addPanel({ id: 'viewport', component: 'viewport', tabComponent: 'fixed', title: 'Viewport', renderer: 'always' });
 }
 
-/** The layer tree on the left, properties on the right, the run log under the viewport. */
+/** The layer tree on the left, the tool dock with Properties on the right, the results dock with the run log under the view. */
 function defaultLayout(api: DockviewApi) {
   addViewport(api);
-  api.addPanel({ id: 'layers', component: 'layers', title: 'Layers', position: { referencePanel: 'viewport', direction: 'left' } });
-  api.addPanel({ id: 'properties', component: 'properties', title: 'Properties', position: { referencePanel: 'viewport', direction: 'right' } });
-  api.addPanel({ id: 'runlog', component: 'runlog', title: 'Run log', position: { referencePanel: 'viewport', direction: 'below' } });
+  const first = ['layers', 'properties', 'runlog'] as const;
+  for (const id of first) showPanel(api, id);
   // Splits start even; give the viewport the room.
-  for (const id of ['layers', 'properties', 'runlog'] as const) {
-    api.getPanel(id)?.group.api.setSize(PANELS.find((p) => p.id === id)!.size);
-  }
+  const size = () => first.forEach((id) => api.getPanel(id)?.group.api.setSize(dockSize(PANELS.find((p) => p.id === id)!)));
+  size();
+  // As the app starts the workspace has no size yet, and shares the window out evenly when it gets one: size it then.
+  if (api.width === 0 || api.height === 0) requestAnimationFrame(size);
 }
 
 /** The saved layout from the last session, or the default one if there is none or it no longer fits. */
 function restoreLayout(api: DockviewApi) {
   try {
+    for (const key of OLD_LAYOUT_KEYS) localStorage.removeItem(key);
     const saved = localStorage.getItem(LAYOUT_KEY);
     if (saved) {
       api.fromJSON(JSON.parse(saved));
@@ -185,7 +260,11 @@ function restoreLayout(api: DockviewApi) {
   defaultLayout(api);
 }
 
-/** Brings a panel to the front, reopening it where it belongs if it was closed, or its group if it was minimised. */
+/**
+ * Brings a panel to the front. One that was closed opens as a tab in its dock: a tool beside Properties, a table under
+ * the view, so the view keeps its room. A minimised dock comes back with the panel in front. A dock with nothing left
+ * in it is made again: the tools down the right of the window, the tables under the view.
+ */
 export function showPanel(api: DockviewApi, id: PanelId) {
   const open = api.getPanel(id);
   if (open) {
@@ -193,7 +272,20 @@ export function showPanel(api: DockviewApi, id: PanelId) {
     return open.api.setActive();
   }
   const panel = PANELS.find((p) => p.id === id)!;
-  api.addPanel({ id, component: id, title: panel.title, position: panel.place }).group.api.setSize(panel.size);
+  const dock = dockGroup(api, panel.dock);
+  if (!dock) {
+    const position = panel.dock === 'results' ? ({ referencePanel: 'viewport', direction: 'below' } as const) : ({ direction: panel.dock === 'left' ? 'left' : 'right' } as const);
+    const held = dockSizes(api);
+    const made = api.addPanel({ id, component: id, title: panel.title, position }).group;
+    made.api.setSize(dockSize(panel));
+    holdDocks(api, held);
+    made.api.setSize(dockSize(panel));
+    return;
+  }
+  api.addPanel({ id, component: id, title: panel.title, position: { referenceGroup: dock, direction: 'within' } });
+  if (!dock.api.isVisible) return restore(api, dock.id, id);
+  // A table gets the height it asks for; the dock never shrinks under one, and a tool never widens its dock.
+  if (panel.dock === 'results' && !dock.api.isMaximized() && dock.api.height < panel.size) dock.api.setSize({ height: panel.size });
 }
 
 export function resetLayout(api: DockviewApi) {
@@ -206,21 +298,48 @@ export function resetLayout(api: DockviewApi) {
 
 const MinimiseContext = createContext<DockviewApi | null>(null);
 
-/** A group's header: a button that minimises it, on every group but the viewport's and one floating free. */
+/**
+ * A group's header: a button that minimises it, on every group but the viewport's and one floating free, and on the
+ * results dock one before it that lets a table fill the window and puts it back.
+ */
 function GroupActions({ group, panels, location }: IDockviewHeaderActionsProps) {
   const api = useContext(MinimiseContext);
+  const [fills, setFills] = useState(() => group.api.isMaximized());
+  useEffect(() => {
+    if (!api) return;
+    setFills(group.api.isMaximized());
+    const changed = api.onDidMaximizedGroupChange(() => setFills(group.api.isMaximized()));
+    return () => changed.dispose();
+  }, [api, group]);
   if (!api || panels.some((p) => p.id === 'viewport') || (location && location.type !== 'grid')) return null;
   const names = panels.map((p) => p.title ?? p.id).join(', ');
+  const tables = panels.some((p) => dockOf(p.id) === 'results');
+  const button = 'flex h-full items-center px-2 text-muted-foreground hover:text-foreground';
   return (
-    <button
-      type="button"
-      className="flex h-full items-center px-2 text-muted-foreground hover:text-foreground"
-      title={`Minimise ${names}: it shrinks to its name at the edge of the window; click the name to bring it back`}
-      aria-label={`Minimise ${names}`}
-      onClick={() => minimise(api, group)}
-    >
-      <Minus className="size-3.5" />
-    </button>
+    <div className="flex h-full">
+      {tables && (
+        <button
+          type="button"
+          className={button}
+          title={fills ? 'Put the tables back under the view' : 'Fill the window with this table; the same button puts it back under the view'}
+          aria-label={fills ? 'Put the tables back under the view' : 'Fill the window'}
+          onClick={() => toggleFill(group)}
+        >
+          {fills ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+        </button>
+      )}
+      {!fills && (
+        <button
+          type="button"
+          className={button}
+          title={`Minimise ${names}: it shrinks to its name at the edge of the window; click the name to bring it back`}
+          aria-label={`Minimise ${names}`}
+          onClick={() => minimise(api, group)}
+        >
+          <Minus className="size-3.5" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -260,6 +379,7 @@ export function Workspace({ onReady }: { onReady: (api: DockviewApi) => void }) 
   const [api, setApi] = useState<DockviewApi | null>(null);
   const [minimised, setMinimised] = useState<Minimised[]>([]);
   const [allHidden, setAllHidden] = useState(false);
+  const room = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!api) return;
@@ -274,12 +394,28 @@ export function Workspace({ onReady }: { onReady: (api: DockviewApi) => void }) 
     };
     onMinimisedChange = refresh;
     refresh();
+    // The docks' sizes after each change to the layout, kept while a group fills the window: what they go back to when a
+    // dock's last tab is closed, and when the workspace changes size.
+    let held = dockSizes(api);
     const layout = api.onDidLayoutChange(() => {
+      if (!api.hasMaximizedGroup()) held = dockSizes(api);
       saveLayout(api);
       refresh();
     });
+    const closed = api.onDidRemoveGroup(() => holdDocks(api, held));
+    // The window resized, or the strips came or went: dockview scales every panel, so once it has, the docks are put
+    // back at their sizes and the view takes the difference.
+    let frame = 0;
+    const resized = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => (frame = requestAnimationFrame(() => holdDocks(api, held))));
+    });
+    if (room.current) resized.observe(room.current);
     return () => {
       layout.dispose();
+      closed.dispose();
+      resized.disconnect();
+      cancelAnimationFrame(frame);
       if (onMinimisedChange === refresh) onMinimisedChange = null;
     };
   }, [api]);
@@ -296,7 +432,7 @@ export function Workspace({ onReady }: { onReady: (api: DockviewApi) => void }) 
         {strip('left')}
         <div className="flex min-w-0 flex-1 flex-col">
           {strip('top')}
-          <div className="min-h-0 flex-1">
+          <div ref={room} className="min-h-0 flex-1">
             <DockviewReact
               components={components}
               tabComponents={tabComponents}

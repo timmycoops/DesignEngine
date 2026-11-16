@@ -1,16 +1,27 @@
 // `--shell`: the panels and the toolbar, as Tim would use them. Panels minimised by their header's button to strips
 // at the window's edges and brought back by a name on a strip, kept that way through the layout being saved and read
 // again; every panel hidden by the ` key and brought back; and the toolbar's groups, with what came off it in the
-// Import menu. The layout saved on this machine is put back as it was at the end.
+// Import menu. Then the docks (decision 0076): tools opened from the toolbar are tabs in one dock beside Properties and
+// tables are tabs in one dock under the view, so the view keeps its width; a minimised dock comes back with the tool
+// asked for in front; a table fills the window and goes back; and a dock closed and opened again gives its room to the
+// view and takes it back, the other docks staying put. With `--pictures <folder>` the window is then drawn in three
+// states (a tool and a table open for the Solids, Walls and Reserves work), over the project given by `--dataflow` if
+// there is one. The layout saved on this machine is put back as it was at the end.
 import type { DockviewApi } from 'dockview-react';
+import { openProject, type ProjectSummary, writePicture } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
-import { resetLayout } from '../workspace/Workspace';
-
-const LAYOUT_KEYS = ['zd.workspace.layout.v3', 'zd.workspace.minimised.v1'];
+import { windowPicture } from './windowPicture';
+import { LAYOUT_KEYS, type PanelId, resetLayout, showPanel, TOOL_DOCK_WIDTH } from '../workspace/Workspace';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export async function checkShell(viewport: Viewport, log: (line: string) => void, dock: () => DockviewApi | null) {
+/** A project to draw the window over, and how the app shows it. */
+interface Pictures {
+  project: string | null;
+  show: (summary: ProjectSummary) => Promise<void> | undefined;
+}
+
+export async function checkShell(viewport: Viewport, log: (line: string) => void, dock: () => DockviewApi | null, pictures: Pictures | null = null) {
   const api = dock();
   if (!api) return { error: 'no dock' };
   const results: Record<string, unknown> = {};
@@ -82,6 +93,93 @@ export async function checkShell(viewport: Viewport, log: (line: string) => void
     // The strips go with the panels, so dockview shares their few pixels out again on the way back: within 10 px.
     expect('` again brings them back as they were', Math.abs(size().width - back.width) <= 10 && strip('left').includes('Layers'), { before: back.width, after: size().width });
 
+    // The docks, from the default layout again.
+    resetLayout(api);
+    await settle();
+    const tool = async (name: string) => {
+      [...document.querySelectorAll<HTMLButtonElement>('header button')].find((b) => b.textContent?.trim() === name)?.click();
+      await settle();
+    };
+    const tabs = (id: PanelId) => api.getPanel(id)?.group.panels.map((p) => p.id) ?? [];
+    const front = (id: PanelId) => api.getPanel(id)?.group.activePanel?.id;
+    const width = (id: PanelId) => api.getPanel(id)?.group.api.width ?? 0;
+    const closeTab = async (id: PanelId) => {
+      api.getPanel(id)?.api.close();
+      await settle();
+    };
+    const open = size();
+    expect('no layout from before the docks is kept', localStorage.getItem('zd.workspace.layout.v3') === null && localStorage.getItem('zd.workspace.minimised.v1') === null);
+    expect('the tool dock starts at its width with Properties in it', width('properties') === TOOL_DOCK_WIDTH && tabs('properties').length === 1, { width: width('properties'), tabs: tabs('properties') });
+
+    await tool('Cut');
+    const oneTool = size();
+    expect('one tool opens as a tab beside Properties: the view keeps its width', oneTool.width === open.width && tabs('cut').includes('properties') && front('cut') === 'cut', { before: open.width, after: oneTool.width, tabs: tabs('cut') });
+    await tool('Builder');
+    const twoTools = size();
+    await tool('Reserves');
+    await tool('Workflow');
+    const allTools = size();
+    expect('two tools, then all four: the view is as wide as with one', twoTools.width === open.width && allTools.width === open.width && tabs('properties').length === 5, {
+      one: oneTool.width,
+      two: twoTools.width,
+      four: allTools.width,
+      tabs: tabs('properties'),
+    });
+
+    await tool('Blocks');
+    const blocksHeight = api.getPanel('blocks')?.group.api.height ?? 0;
+    await tool('Reserves table');
+    await tool('Parameters');
+    await tool('Face');
+    showPanel(api, 'canvas');
+    await settle();
+    const tables = size();
+    expect('the tables and Face design are tabs in one row under the view', tabs('runlog').length === 6 && ['blocks', 'restable', 'params', 'face', 'canvas'].every((id) => tabs('runlog').includes(id as PanelId)) && tables.width === open.width, {
+      tabs: tabs('runlog'),
+      view: tables,
+    });
+    expect('the results dock grows to the height a table asks for, and no further', blocksHeight === 320 && (api.getPanel('runlog')?.group.api.height ?? 0) === 400, { with_block_table: blocksHeight, with_them_all: api.getPanel('runlog')?.group.api.height });
+
+    // A tool closed, its dock minimised, and the tool asked for from the toolbar.
+    await closeTab('builder');
+    document.querySelector<HTMLButtonElement>('button[aria-label^="Minimise Properties"]')?.click();
+    await settle();
+    const toolsAway = strip('right');
+    await tool('Builder');
+    expect('a minimised tool dock comes back with the tool asked for in front', toolsAway.includes('Cut solids') && strip('right').length === 0 && front('properties') === 'builder' && size().width === open.width, {
+      strip_while_minimised: toolsAway,
+      front: front('properties'),
+      view: size().width,
+    });
+
+    // A table fills the window, and goes back.
+    buttonLabelled('Fill the window')?.click();
+    await settle();
+    const dock = api.getPanel('runlog')?.group;
+    const filled = { width: dock?.api.width ?? 0, height: dock?.api.height ?? 0 };
+    buttonLabelled('Put the tables back under the view')?.click();
+    await settle();
+    expect('a table fills the window, and goes back under the view', filled.width >= window.innerWidth - 8 && filled.height > tables.height + 300 && size().width === tables.width && size().height === tables.height, { filled, window: [window.innerWidth, window.innerHeight], back: size() });
+    buttonLabelled('Fill the window')?.click();
+    await settle();
+    await key('`');
+    const viewOnly = size();
+    await key('`');
+    expect('` with a table filling the window gives the window to the view, and ` again brings everything back', viewOnly.width >= window.innerWidth - 8 && Math.abs(size().width - tables.width) <= 10 && tabs('runlog').length === 6, { view_only: viewOnly, back: size() });
+
+    // A dock with nothing left in it goes, and the view takes its room; opened again, the view gives it back.
+    const layers = width('layers');
+    for (const id of ['properties', 'cut', 'builder', 'reserves', 'workflow'] as const) api.getPanel(id)?.api.close();
+    await settle();
+    const noTools = { view: size().width, layers: width('layers') };
+    await tool('Cut');
+    expect('the tool dock closed gives its room to the view, and opened again takes it back; Layers stays as it was', noTools.view >= tables.width + TOOL_DOCK_WIDTH - 2 && noTools.layers === layers && width('cut') === TOOL_DOCK_WIDTH && width('layers') === layers && Math.abs(size().width - tables.width) <= 2, {
+      view_without_tools: noTools.view,
+      view_with_them: size().width,
+      layers: [layers, noTools.layers, width('layers')],
+      tool_dock: width('cut'),
+    });
+
     // The toolbar: groups, with the imports in one menu.
     const header = [...document.querySelectorAll('header button')].map((b) => b.textContent?.trim() ?? '');
     const gone = ['Surface', 'Solids', 'Strings', 'Deswik', 'Spry', 'Vulcan grid', 'Seam model'].filter((word) => header.includes(word));
@@ -94,6 +192,30 @@ export async function checkShell(viewport: Viewport, log: (line: string) => void
     expect('the Import menu holds every import and the seam model', wanted.every((w) => items.includes(w)), { missing: wanted.filter((w) => !items.includes(w)) });
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await settle();
+
+    if (pictures) {
+      if (pictures.project) {
+        log(`shell: opening ${pictures.project}`);
+        await pictures.show(await openProject(pictures.project));
+        await wait(1500);
+        viewport.fitView();
+      }
+      const saved: string[] = [];
+      const picture = async (name: string, panels: PanelId[]) => {
+        resetLayout(api);
+        await settle();
+        for (const id of panels) showPanel(api, id);
+        await wait(1200);
+        const path = await writePicture(name, await windowPicture(viewport));
+        log(`shell: ${path}`);
+        saved.push(path);
+      };
+      await picture('docks-default', []);
+      await picture('docks-solids', ['builder', 'reserves', 'cut', 'blocks']);
+      await picture('docks-walls', ['cut', 'builder', 'face']);
+      await picture('docks-reserves', ['cut', 'reserves', 'params', 'restable']);
+      results.pictures = saved;
+    }
   } finally {
     // This machine's layout, as it was, in the app and in its storage.
     for (const [key, value] of saved) {

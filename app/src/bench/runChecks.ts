@@ -83,7 +83,7 @@ export async function runChecks(
   try {
     if (config.section_guide) {
       results.section_guide = await checkSectionGuide(viewport, log, show, section, strings, !!config.pictures);
-    } else if (config.pictures) {
+    } else if (config.pictures && !config.shell) {
       const take = config.palettes ? takePalettePictures : takePictures;
       results.pictures = await take(viewport, config.surfaces, config.strings, log, show);
     } else if (config.design_lines) {
@@ -95,7 +95,7 @@ export async function runChecks(
     } else if (config.select) {
       results.select = await checkSelect(viewport, log, show, selection);
     } else if (config.shell) {
-      results.shell = await checkShell(viewport, log, dock);
+      results.shell = await checkShell(viewport, log, dock, config.pictures ? { project: config.dataflow, show } : null);
     } else if (config.dataflow) {
       results.dataflow = await checkDataflow(config.dataflow, log, show, dock);
     } else if (config.workflow) {
