@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
-use zd_core::{AttrValue, Attributes, Body, Change, ObjectId, ObjectKind, Polyline};
+use zd_core::{AttrValue, Attributes, Body, Change, Object, ObjectId, ObjectKind, Polyline};
 use zd_geom::{
     Corner, OffsetSide, drape_string, filter_string, grade_string, join_strings, offset_string, plan_crossings, redraw_stretch, smooth_string, split_string, triangulate_grid,
 };
@@ -11,12 +13,99 @@ fn string_input() -> Field {
     Field::object("string", ObjectKind::String, "The string to edit")
 }
 
+/// The other way to give a command its strings (decision 0078): any number, as one run.
+fn strings_input() -> Field {
+    Field::new("strings", FieldType::Objects, "Several strings to edit as one run, in place of `string`")
+}
+
+/// The strings a run works on (decision 0078): one given as `string`, which runs as it always has, or any number
+/// given as `strings`, which is one run, one undo and one record for them all.
+struct Picked {
+    ids: Vec<ObjectId>,
+    /// Given as `strings`, even if it's a list of one.
+    listed: bool,
+}
+
+fn picked(string: Option<ObjectId>, strings: &[ObjectId]) -> Result<Picked, CommandError> {
+    match (string, strings) {
+        (Some(id), []) => Ok(Picked { ids: vec![id], listed: false }),
+        (None, []) => Err(CommandError::Invalid("no string to work on: give one as `string`, or several as `strings`".into())),
+        (Some(_), _) => Err(CommandError::Invalid("give `string` or `strings`, not both".into())),
+        (None, ids) => {
+            let mut seen = std::collections::HashSet::new();
+            if let Some(twice) = ids.iter().find(|id| !seen.insert(**id)) {
+                return Err(CommandError::Invalid(format!("string {twice} is in `strings` twice")));
+            }
+            Ok(Picked { ids: ids.to_vec(), listed: true })
+        }
+    }
+}
+
+/// A setting that names a vertex means one string: with several it's refused, not guessed at.
+fn one_string_only(picked: &Picked, given: bool, what: &str) -> Result<(), CommandError> {
+    if given && picked.ids.len() > 1 {
+        return Err(CommandError::Invalid(format!("{what} is for one string; {} were given", picked.ids.len())));
+    }
+    Ok(())
+}
+
+/// Names for a sentence, the first ten and how many more.
+fn names(of: &[&str]) -> String {
+    let shown: Vec<String> = of.iter().take(10).map(|n| format!("'{n}'")).collect();
+    if of.len() > 10 { format!("{} and {} more", shown.join(", "), of.len() - 10) } else { shown.join(", ") }
+}
+
+/// The run refused because some of its strings can't be done, each listed with why (decision 0078): nothing is half done.
+fn cannot(failed: Vec<String>, of: usize) -> CommandError {
+    CommandError::Invalid(format!("{} of {of} strings can't be done, so nothing was changed. {}", failed.len(), failed.join("; ")))
+}
+
+/// Edits every string picked with `edit`, as one run. Given as `string` it runs as it always has: the string revised
+/// and `edit`'s note as it is. Given as `strings`: a string `edit` can't do refuses the run, each one listed with why;
+/// one that comes back as it was is not revised, and is said; each string's own note is on it, under its name, after
+/// a line saying what the run `did` to how many.
+fn edit_each<'a>(inputs: &Inputs<'a>, picked: &Picked, did: &str, mut edit: impl FnMut(&'a Arc<Object>, &'a Polyline) -> Result<(Polyline, Option<Note>), CommandError>) -> Result<Outcome, CommandError> {
+    if !picked.listed {
+        let (object, line) = inputs.string(picked.ids[0])?;
+        let (edited, note) = edit(object, line)?;
+        let mut outcome = Outcome::new(vec![Change::revise_body(object, Body::String(edited))]);
+        outcome.notes.extend(note);
+        return Ok(outcome);
+    }
+    let (mut changes, mut notes, mut failed, mut left) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for &id in &picked.ids {
+        let (object, line) = inputs.string(id)?;
+        match edit(object, line) {
+            Ok((edited, note)) => {
+                notes.extend(note.map(|n| Note { text: format!("'{}': {}", object.name, n.text), ..n }.on(object.id)));
+                if edited == *line {
+                    left.push(object.name.as_str());
+                } else {
+                    changes.push(Change::revise_body(object, Body::String(edited)));
+                }
+            }
+            Err(CommandError::Invalid(why) | CommandError::Geometry(why)) => failed.push(format!("'{}': {why}", object.name)),
+            Err(other) => return Err(other),
+        }
+    }
+    if !failed.is_empty() {
+        return Err(cannot(failed, picked.ids.len()));
+    }
+    let mut said = format!("{did}: {} of {} strings", changes.len(), picked.ids.len());
+    if !left.is_empty() {
+        said += &format!("; {} came out as {} and {} left: {}", left.len(), if left.len() == 1 { "it was" } else { "they were" }, if left.len() == 1 { "is" } else { "are" }, names(&left));
+    }
+    let mut outcome = Outcome::new(changes).message(said);
+    outcome.notes.extend(notes);
+    Ok(outcome)
+}
+
 /// Open strings need two vertices, closed ones three; every coordinate finite.
 fn check_line(line: &Polyline) -> Result<(), CommandError> {
     let needed = if line.closed { 3 } else { 2 };
     if line.vertices.len() < needed {
-        let kind = if line.closed { "closed" } else { "open" };
-        return Err(CommandError::Invalid(format!("an {kind} string needs at least {needed} vertices")));
+        let kind = if line.closed { "a closed" } else { "an open" };
+        return Err(CommandError::Invalid(format!("{kind} string needs at least {needed} vertices")));
     }
     line.vertices.iter().try_for_each(finite)
 }
@@ -235,13 +324,20 @@ fn vertex_range(line: &Polyline, from: usize, to: Option<usize>) -> Result<usize
 
 /// `string.set_grade`: elevations along the string at a grade. Vertex `from` takes `rl` (its own
 /// elevation by default) and each vertex from there to `to` rises `grade` % per 100 m of plan length;
-/// the rest keep theirs. A new revision of the string.
+/// the rest keep theirs. A new revision of the string. Several strings are each graded from their first vertex to their
+/// last, from their own elevation there or from `rl`.
 pub struct SetGrade;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SetGradeParams {
-    pub string: ObjectId,
+    /// The string, or `strings` for several as one run (decision 0078).
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
+    /// The first vertex by default, and always with several strings.
+    #[serde(default)]
     pub from: usize,
     /// Defaults to the last vertex; may be before `from` to grade backwards.
     #[serde(default)]
@@ -261,9 +357,9 @@ impl Command for SetGrade {
         CommandSpec {
             name: Self::NAME,
             summary: "Set a grade along a string",
-            inputs: vec![string_input()],
+            inputs: vec![string_input(), strings_input()],
             params: vec![
-                Field::new("from", FieldType::Integer, "The vertex the grade starts at"),
+                Field::new("from", FieldType::Integer, "The vertex the grade starts at; the first by default, and with several strings"),
                 Field::new("to", FieldType::Integer, "The vertex it ends at; the last by default"),
                 Field::new("grade", FieldType::Number { unit: "%" }, "Positive uphill from the start, along plan length"),
                 Field::new("rl", FieldType::Number { unit: "m" }, "Elevation at the start; its own by default"),
@@ -273,19 +369,22 @@ impl Command for SetGrade {
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let (object, line) = inputs.string(p.string)?;
-        let to = vertex_range(line, p.from, p.to)?;
-        let rl = p.rl.unwrap_or(line.vertices[p.from][2]);
-        let graded = grade_string(line, p.from, to, rl, p.grade).map_err(|e| CommandError::Invalid(e.to_string()))?;
-        let message = format!(
-            "vertices {} to {} at {} % from RL {rl:.3}: RL {:.3} at vertex {}",
-            p.from + 1,
-            to + 1,
-            p.grade,
-            graded.vertices[to][2],
-            to + 1
-        );
-        Ok(Outcome::new(vec![Change::revise_body(object, Body::String(graded))]).message(message))
+        let picked = picked(p.string, &p.strings)?;
+        one_string_only(&picked, p.from != 0 || p.to.is_some(), "a grade between two vertices (`from`, `to`)")?;
+        edit_each(inputs, &picked, &format!("graded at {} %", p.grade), |_, line| {
+            let to = vertex_range(line, p.from, p.to)?;
+            let rl = p.rl.unwrap_or(line.vertices[p.from][2]);
+            let graded = grade_string(line, p.from, to, rl, p.grade).map_err(|e| CommandError::Invalid(e.to_string()))?;
+            let message = format!(
+                "vertices {} to {} at {} % from RL {rl:.3}: RL {:.3} at vertex {}",
+                p.from + 1,
+                to + 1,
+                p.grade,
+                graded.vertices[to][2],
+                to + 1
+            );
+            Ok((graded, Some(Note::info(message))))
+        })
     }
 }
 
@@ -315,13 +414,19 @@ fn once() -> u32 {
 /// `string.offset`: a new string `distance` metres in plan to the left or right of this one (looking
 /// along it from above), with mitred or round outside corners. Each new vertex takes the elevation of
 /// the nearest point on the source, or `rl`. The source is not changed; an offset that pinches off
-/// makes one string per piece. With `times`, a string at each multiple of the distance.
+/// makes one string per piece. With `times`, a string at each multiple of the distance. Several strings are each
+/// offset the same, to their own left or right: one running the other way to the first goes to the other side, and
+/// is warned of.
 pub struct OffsetString;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OffsetStringParams {
-    pub string: ObjectId,
+    /// The string, or `strings` for several as one run (decision 0078).
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
     pub distance: f64,
     pub side: SideParam,
     #[serde(default)]
@@ -335,7 +440,7 @@ pub struct OffsetStringParams {
     /// Defaults to the source string's layer.
     #[serde(default)]
     pub layer: Option<String>,
-    /// Defaults to the source's name with the offset.
+    /// Defaults to the source's name with the offset. For one string only.
     #[serde(default)]
     pub name: Option<String>,
     /// How many strings, each `distance` further out, all measured from the source.
@@ -351,7 +456,7 @@ impl Command for OffsetString {
         CommandSpec {
             name: Self::NAME,
             summary: "Offset a string in plan",
-            inputs: vec![string_input()],
+            inputs: vec![string_input(), strings_input()],
             params: vec![
                 Field::new("distance", FieldType::Number { unit: "m" }, "Horizontal distance"),
                 Field::new("side", FieldType::Text, "left or right, looking along the string"),
@@ -359,7 +464,7 @@ impl Command for OffsetString {
                 Field::new("mitre_limit", FieldType::Number { unit: "x distance" }, "Mitres reaching farther are bevelled; 4 by default"),
                 Field::new("rl", FieldType::Number { unit: "m" }, "Fixed elevation; the source's by default"),
                 Field::new("layer", FieldType::Layer, "Layer for the new string; the source's by default"),
-                Field::new("name", FieldType::Text, "Optional"),
+                Field::new("name", FieldType::Text, "Optional, for one string"),
                 Field::new("times", FieldType::Integer, "How many strings, each the distance further out; 1 by default"),
             ],
             outputs: vec![Field::object("strings", ObjectKind::String, "The offset strings, one per piece")],
@@ -367,7 +472,8 @@ impl Command for OffsetString {
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let (object, line) = inputs.string(p.string)?;
+        let picked = picked(p.string, &p.strings)?;
+        one_string_only(&picked, p.name.is_some(), "a name of your own (`name`)")?;
         if let Some(rl) = p.rl {
             finite(&[0.0, 0.0, rl])?;
         }
@@ -386,34 +492,97 @@ impl Command for OffsetString {
             SideParam::Left => "left",
             SideParam::Right => "right",
         };
-        let layer = p.layer.clone().unwrap_or_else(|| inputs.layer_name(object));
         let mut changes = Vec::new();
         let mut vertices = 0;
-        for time in 1..=p.times {
-            let distance = p.distance * f64::from(time);
-            let pieces = offset_string(line, distance, side, corner, p.rl).map_err(|e| CommandError::Invalid(if p.times > 1 { format!("at {distance} m: {e}") } else { e.to_string() }))?;
-            let base = match &p.name {
-                Some(name) if p.times > 1 => format!("{name} {time}"),
-                Some(name) => name.clone(),
-                None => format!("{} offset {distance} m {side_word}", object.name),
-            };
-            let count = pieces.len();
-            vertices += pieces.iter().map(|l| l.vertices.len()).sum::<usize>();
-            changes.extend(pieces.into_iter().enumerate().map(|(i, piece)| Change::Create {
-                name: if count == 1 { base.clone() } else { format!("{base} ({})", i + 1) },
-                layer: layer.clone(),
-                attributes: Attributes::new(),
-                body: Body::String(piece),
-            }));
+        let mut failed = Vec::new();
+        let mut ways: Vec<(&Arc<Object>, Way)> = Vec::new();
+        for &id in &picked.ids {
+            let (object, line) = inputs.string(id)?;
+            ways.push((object, way_of(line)));
+            let layer = p.layer.clone().unwrap_or_else(|| inputs.layer_name(object));
+            for time in 1..=p.times {
+                let distance = p.distance * f64::from(time);
+                let pieces = match offset_string(line, distance, side, corner, p.rl) {
+                    Ok(pieces) => pieces,
+                    Err(e) => {
+                        let why = if p.times > 1 { format!("at {distance} m: {e}") } else { e.to_string() };
+                        if !picked.listed {
+                            return Err(CommandError::Invalid(why));
+                        }
+                        failed.push(format!("'{}': {why}", object.name));
+                        break;
+                    }
+                };
+                let base = match &p.name {
+                    Some(name) if p.times > 1 => format!("{name} {time}"),
+                    Some(name) => name.clone(),
+                    None => format!("{} offset {distance} m {side_word}", object.name),
+                };
+                let count = pieces.len();
+                vertices += pieces.iter().map(|l| l.vertices.len()).sum::<usize>();
+                changes.extend(pieces.into_iter().enumerate().map(|(i, piece)| Change::Create {
+                    name: if count == 1 { base.clone() } else { format!("{base} ({})", i + 1) },
+                    layer: layer.clone(),
+                    attributes: Attributes::new(),
+                    body: Body::String(piece),
+                }));
+            }
+        }
+        if !failed.is_empty() {
+            return Err(cannot(failed, picked.ids.len()));
         }
         let message = format!(
-            "offset {} m to the {side_word}{} with {} corners: {} string(s), {vertices} vertices",
+            "offset {} m to the {side_word}{} with {} corners: {} string(s){}, {vertices} vertices",
             p.distance,
             if p.times > 1 { format!(", {} times", p.times) } else { String::new() },
             if matches!(p.corners, CornerParam::Round) { "round" } else { "mitred" },
             changes.len(),
+            if picked.listed { format!(" from {}", picked.ids.len()) } else { String::new() },
         );
-        Ok(Outcome::new(changes).message(message))
+        let mut outcome = Outcome::new(changes).message(message);
+        // Left and right are each string's own, looking along it: one running against the first went the other way.
+        for (object, way) in ways.iter().skip(1) {
+            if way.against(&ways[0].1) {
+                let text = format!("'{}' runs the other way to '{}', so its {side_word} is the other side: reverse it first if that's not meant", object.name, ways[0].0.name);
+                outcome.notes.push(Note::warning(Code::StringRunsOtherWay, text).on(object.id));
+            }
+        }
+        Ok(outcome)
+    }
+}
+
+/// Which way a string runs, for telling whether two offset to the same side: an open one from its first vertex to its
+/// last in plan, a closed one clockwise or not.
+enum Way {
+    Along([f64; 2]),
+    Turning(f64),
+    /// An open string whose ends are over each other in plan, or a closed one with no area.
+    Neither,
+}
+
+fn way_of(line: &Polyline) -> Way {
+    let v = &line.vertices;
+    if line.closed {
+        // About the first vertex, so mine grid eastings and northings don't swamp the sum.
+        let o = v[0];
+        let twice_area: f64 = (0..v.len()).map(|i| (v[i], v[(i + 1) % v.len()])).map(|(a, b)| (a[0] - o[0]) * (b[1] - o[1]) - (b[0] - o[0]) * (a[1] - o[1])).sum();
+        return if twice_area == 0.0 { Way::Neither } else { Way::Turning(twice_area) };
+    }
+    match (v.first(), v.last()) {
+        (Some(a), Some(b)) if a[0] != b[0] || a[1] != b[1] => Way::Along([b[0] - a[0], b[1] - a[1]]),
+        _ => Way::Neither,
+    }
+}
+
+impl Way {
+    /// True where both run a way that can be told apart and they differ: open strings more than a right angle apart,
+    /// closed ones turning opposite ways. An open and a closed string aren't compared.
+    fn against(&self, first: &Way) -> bool {
+        match (self, first) {
+            (Way::Along(a), Way::Along(b)) => a[0] * b[0] + a[1] * b[1] < 0.0,
+            (Way::Turning(a), Way::Turning(b)) => a * b < 0.0,
+            _ => false,
+        }
     }
 }
 
@@ -532,7 +701,8 @@ impl Command for NumberStrings {
 /// `string.drape`: the string laid on a surface or elevation grid. Each vertex takes the surface's
 /// elevation under it; with `crossings` (the default) a vertex is added wherever the string crosses a
 /// triangle edge, so it follows the surface between vertices. Vertices with no surface under them keep
-/// their elevations and are counted. A new revision of the string.
+/// their elevations and are counted. A new revision of the string. Several strings are each draped on the one surface,
+/// which is triangulated once.
 pub struct DrapeString;
 
 fn yes() -> bool {
@@ -542,7 +712,11 @@ fn yes() -> bool {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DrapeStringParams {
-    pub string: ObjectId,
+    /// The string, or `strings` for several as one run (decision 0078).
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
     pub surface: ObjectId,
     #[serde(default = "yes")]
     pub crossings: bool,
@@ -556,14 +730,14 @@ impl Command for DrapeString {
         CommandSpec {
             name: Self::NAME,
             summary: "Drape a string onto a surface",
-            inputs: vec![string_input(), Field::object("surface", ObjectKind::Surface, "A surface or elevation grid")],
+            inputs: vec![string_input(), strings_input(), Field::object("surface", ObjectKind::Surface, "A surface or elevation grid")],
             params: vec![Field::new("crossings", FieldType::Bool, "Add vertices where the string crosses triangle edges")],
             outputs: vec![],
         }
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let (object, line) = inputs.string(p.string)?;
+        let picked = picked(p.string, &p.strings)?;
         let target = inputs.object(p.surface)?;
         let triangulated;
         let mesh = match &target.body {
@@ -574,27 +748,31 @@ impl Command for DrapeString {
             }
             other => return Err(CommandError::WrongKind { id: p.surface, expected: ObjectKind::Surface, found: other.kind() }),
         };
-        let (draped, log) = drape_string(line, mesh, p.crossings).map_err(|e| CommandError::Invalid(e.to_string()))?;
-        let mut message = format!("draped on {}: {} crossings added", target.name, log.crossings_added);
-        let mut note = Note::info("");
-        if log.off_surface > 0 {
-            message += &format!("; {} vertices have no surface under them and keep their elevations", log.off_surface);
-            note = Note::warning(Code::StringOffSurface, "").measured(log.off_surface as f64, "vertices");
-        }
-        let mut outcome = Outcome::new(vec![Change::revise_body(object, Body::String(draped))]);
-        outcome.notes.push(Note { text: message, ..note }.on(object.id));
-        Ok(outcome)
+        edit_each(inputs, &picked, &format!("draped on {}", target.name), |object, line| {
+            let (draped, log) = drape_string(line, mesh, p.crossings).map_err(|e| CommandError::Invalid(e.to_string()))?;
+            let mut message = format!("draped on {}: {} crossings added", target.name, log.crossings_added);
+            let mut note = Note::info("");
+            if log.off_surface > 0 {
+                message += &format!("; {} vertices have no surface under them and keep their elevations", log.off_surface);
+                note = Note::warning(Code::StringOffSurface, "").measured(log.off_surface as f64, "vertices");
+            }
+            Ok((draped, Some(Note { text: message, ..note }.on(object.id))))
+        })
     }
 }
 
 /// `string.set_elevation`: vertices `from` to `to` (all by default) set to one elevation. A new
-/// revision of the string.
+/// revision of the string. Several strings each go to it whole.
 pub struct SetElevation;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SetElevationParams {
-    pub string: ObjectId,
+    /// The string, or `strings` for several as one run (decision 0078).
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
     pub rl: f64,
     #[serde(default)]
     pub from: Option<usize>,
@@ -610,7 +788,7 @@ impl Command for SetElevation {
         CommandSpec {
             name: Self::NAME,
             summary: "Set a string's vertices to one elevation",
-            inputs: vec![string_input()],
+            inputs: vec![string_input(), strings_input()],
             params: vec![
                 Field::new("rl", FieldType::Number { unit: "m" }, "The elevation"),
                 Field::new("from", FieldType::Integer, "First vertex; the first by default"),
@@ -621,16 +799,19 @@ impl Command for SetElevation {
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let (object, line) = inputs.string(p.string)?;
+        let picked = picked(p.string, &p.strings)?;
+        one_string_only(&picked, p.from.is_some() || p.to.is_some(), "an elevation between two vertices (`from`, `to`)")?;
         finite(&[0.0, 0.0, p.rl])?;
-        let from = p.from.unwrap_or(0);
-        let to = vertex_range(line, from, p.to)?;
-        let mut edited = line.clone();
-        for v in &mut edited.vertices[from.min(to)..=from.max(to)] {
-            v[2] = p.rl;
-        }
-        let message = format!("vertices {} to {} set to RL {:.3}", from.min(to) + 1, from.max(to) + 1, p.rl);
-        Ok(Outcome::new(vec![Change::revise_body(object, Body::String(edited))]).message(message))
+        edit_each(inputs, &picked, &format!("set to RL {:.3}", p.rl), |_, line| {
+            let from = p.from.unwrap_or(0);
+            let to = vertex_range(line, from, p.to)?;
+            let mut edited = line.clone();
+            for v in &mut edited.vertices[from.min(to)..=from.max(to)] {
+                v[2] = p.rl;
+            }
+            let message = format!("vertices {} to {} set to RL {:.3}", from.min(to) + 1, from.max(to) + 1, p.rl);
+            Ok((edited, Some(Note::info(message))))
+        })
     }
 }
 
@@ -643,13 +824,21 @@ pub struct SetClosed;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StringParams {
-    pub string: ObjectId,
+    /// The string, or `strings` for several as one run (decision 0078).
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SetClosedParams {
-    pub string: ObjectId,
+    /// The string, or `strings` for several as one run (decision 0078).
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
     pub closed: bool,
 }
 
@@ -658,14 +847,16 @@ impl Command for ReverseString {
     const NAME: &'static str = "string.reverse";
 
     fn spec(&self) -> CommandSpec {
-        CommandSpec { name: Self::NAME, summary: "Reverse a string's direction", inputs: vec![string_input()], params: vec![], outputs: vec![] }
+        CommandSpec { name: Self::NAME, summary: "Reverse a string's direction", inputs: vec![string_input(), strings_input()], params: vec![], outputs: vec![] }
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let (object, line) = inputs.string(p.string)?;
-        let mut edited = line.clone();
-        edited.vertices.reverse();
-        Ok(Outcome::new(vec![Change::revise_body(object, Body::String(edited))]))
+        let picked = picked(p.string, &p.strings)?;
+        edit_each(inputs, &picked, "reversed", |_, line| {
+            let mut edited = line.clone();
+            edited.vertices.reverse();
+            Ok((edited, None))
+        })
     }
 }
 
@@ -677,20 +868,23 @@ impl Command for SetClosed {
         CommandSpec {
             name: Self::NAME,
             summary: "Close or open a string",
-            inputs: vec![string_input()],
+            inputs: vec![string_input(), strings_input()],
             params: vec![Field::new("closed", FieldType::Bool, "Join the last vertex back to the first")],
             outputs: vec![],
         }
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let (object, line) = inputs.string(p.string)?;
-        if line.closed == p.closed {
-            return Err(CommandError::Invalid(format!("'{}' is already {}", object.name, if p.closed { "closed" } else { "open" })));
-        }
-        let edited = Polyline { vertices: line.vertices.clone(), closed: p.closed };
-        check_line(&edited)?;
-        Ok(Outcome::new(vec![Change::revise_body(object, Body::String(edited))]))
+        let picked = picked(p.string, &p.strings)?;
+        edit_each(inputs, &picked, if p.closed { "closed" } else { "opened" }, |object, line| {
+            // One string already so is a mistake to say; among several it's left as it is, and said.
+            if line.closed == p.closed && !picked.listed {
+                return Err(CommandError::Invalid(format!("'{}' is already {}", object.name, if p.closed { "closed" } else { "open" })));
+            }
+            let edited = Polyline { vertices: line.vertices.clone(), closed: p.closed };
+            check_line(&edited)?;
+            Ok((edited, None))
+        })
     }
 }
 
@@ -794,7 +988,11 @@ pub struct SmoothString;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SmoothStringParams {
-    pub string: ObjectId,
+    /// The string, or `strings` for several as one run (decision 0078).
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
     #[serde(default = "default_spacing")]
     pub spacing: f64,
 }
@@ -807,17 +1005,19 @@ impl Command for SmoothString {
         CommandSpec {
             name: Self::NAME,
             summary: "Smooth a string through its vertices",
-            inputs: vec![string_input()],
+            inputs: vec![string_input(), strings_input()],
             params: vec![Field::new("spacing", FieldType::Number { unit: "m" }, "Longest step along the curve in plan; 5 m by default")],
             outputs: vec![],
         }
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let (object, line) = inputs.string(p.string)?;
-        let smoothed = smooth_string(line, p.spacing).map_err(|e| CommandError::Invalid(e.to_string()))?;
-        let message = format!("smoothed at {} m: {} vertices, was {}", p.spacing, smoothed.vertices.len(), line.vertices.len());
-        Ok(Outcome::new(vec![Change::revise_body(object, Body::String(smoothed))]).message(message))
+        let picked = picked(p.string, &p.strings)?;
+        edit_each(inputs, &picked, &format!("smoothed at {} m", p.spacing), |_, line| {
+            let smoothed = smooth_string(line, p.spacing).map_err(|e| CommandError::Invalid(e.to_string()))?;
+            let message = format!("smoothed at {} m: {} vertices, was {}", p.spacing, smoothed.vertices.len(), line.vertices.len());
+            Ok((smoothed, Some(Note::info(message))))
+        })
     }
 }
 
@@ -828,7 +1028,11 @@ pub struct FilterString;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FilterStringParams {
-    pub string: ObjectId,
+    /// The string, or `strings` for several as one run (decision 0078).
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
     pub tolerance: f64,
 }
 
@@ -840,17 +1044,19 @@ impl Command for FilterString {
         CommandSpec {
             name: Self::NAME,
             summary: "Remove vertices within a tolerance of the line",
-            inputs: vec![string_input()],
+            inputs: vec![string_input(), strings_input()],
             params: vec![Field::new("tolerance", FieldType::Number { unit: "m" }, "Largest 3D distance a removed vertex may be from the line")],
             outputs: vec![],
         }
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let (object, line) = inputs.string(p.string)?;
-        let filtered = filter_string(line, p.tolerance).map_err(|e| CommandError::Invalid(e.to_string()))?;
-        let removed = line.vertices.len() - filtered.vertices.len();
-        let message = format!("filtered at {} m: {removed} of {} vertices removed", p.tolerance, line.vertices.len());
-        Ok(Outcome::new(vec![Change::revise_body(object, Body::String(filtered))]).message(message))
+        let picked = picked(p.string, &p.strings)?;
+        edit_each(inputs, &picked, &format!("filtered at {} m", p.tolerance), |_, line| {
+            let filtered = filter_string(line, p.tolerance).map_err(|e| CommandError::Invalid(e.to_string()))?;
+            let removed = line.vertices.len() - filtered.vertices.len();
+            let message = format!("filtered at {} m: {removed} of {} vertices removed", p.tolerance, line.vertices.len());
+            Ok((filtered, Some(Note::info(message))))
+        })
     }
 }

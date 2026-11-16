@@ -60,7 +60,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 ## Object model
 
 - `Polyline` (string): ordered `[f64; 3]` vertices, closed flag, attributes. A strip's number is its `strip` attribute, set
-  by a line drawn across the strings, and what a run makes keeps it (`docs/decisions/0029-strip-numbers.md`).
+  by a line drawn across the strings, and what a run makes keeps it (`docs/decisions/0029-strip-numbers.md`). The string
+  commands that offset or edit a string take one (`string`) or several as one run (`strings`): one undo, one record, a
+  string that can't be done refusing the run with each listed, one that comes out as it was left and said
+  (`docs/decisions/0078-strings-as-one-run.md`).
 - `Surface`: triangulated mesh (vertices f64, triangles u32), name, layer.
 - `Solid`: closed manifold mesh; must always be watertight. The large one strips are cut from is made inside a closed
   string between two surfaces or grids (`solid.between_surfaces`), and every cut is one Cut solids panel: into strips by
