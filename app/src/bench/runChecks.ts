@@ -95,7 +95,7 @@ export async function runChecks(
     } else if (config.select) {
       results.select = await checkSelect(viewport, log, show, selection);
     } else if (config.shell) {
-      results.shell = await checkShell(viewport, log, dock, config.pictures ? { project: config.dataflow, show } : null);
+      results.shell = await checkShell(viewport, log, dock, show, section, config.pictures ? { project: config.dataflow } : null);
     } else if (config.dataflow) {
       results.dataflow = await checkDataflow(config.dataflow, log, show, dock);
     } else if (config.workflow) {

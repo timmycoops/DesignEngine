@@ -263,14 +263,17 @@ The shell is docks round the view (`docs/decisions/0076-docks-and-workflow-tabs.
 plan" tab): the layer tree on the left, one tool dock on the right where every tool opens as a tab beside Properties,
 and one results dock under the view where every table opens as a tab (Run log, Block table, Reserves table, Parameters,
 Workflow canvas, Face design). A new panel names its dock in `PANELS` (`app/src/workspace/Workspace.tsx`) and opens
-through `showPanel`; it never adds a column or a row of its own, and the view keeps its room. Still to build from 0076:
-the view bar, compact panel heads, one tool list, a tab a stage (Project · Strings · Walls · Solids · Geology ·
-Reserves), Find a command (`cmdk`, agreed there) and the string tools out of Properties.
+through `showPanel`; it never adds a column or a row of its own, and the view keeps its room. The view has no tab strip,
+and its own tools (Select, Draw, Snap, 3D or Plan, the zooms, the field of view, Section and its step and fill) are on
+the view bar over it (`app/src/panels/ViewBar.tsx`): a new view tool goes there, through `ViewTools`, never on the
+toolbar, and nothing drawn over the view may sit behind the bar. Still to build from 0076: compact panel heads, one
+tool list, a tab a stage (Project · Strings · Walls · Solids · Geology · Reserves), Find a command (`cmdk`, agreed
+there) and the string tools out of Properties.
 
 The UI plan (the Build Plan's "UI plan" tab) keeps the app one way of working as it grows. A tool panel is made from the
 kit in `app/src/design-system/kit/`: `ToolPanel` (what it does, its sections, one button at the foot named for what it
-does, Ctrl+Enter), `NumberInput` with its unit, `TargetInput` for an RL, grid or surface, `Choice`, `Field`, the badges
-and `RunResult`. Colours come from the theme's tokens, one meaning each: gold picked, orange `warning`, blue `edited`,
+does, Ctrl+Enter), `NumberInput` with its unit, `TargetInput` for an RL, grid or surface, `Choice`, `Field`, the badges,
+`RunResult`, and `ToolButton` for a button on a bar of tools. Colours come from the theme's tokens, one meaning each: gold picked, orange `warning`, blue `edited`,
 red refused, green valid. Don't hand-roll an input, select, badge or colour a kit part covers; add to the kit instead.
 
 ## How to work

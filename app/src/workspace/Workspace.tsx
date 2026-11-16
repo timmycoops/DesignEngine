@@ -44,14 +44,10 @@ const components = {
 /** The key that hides every panel, so the viewport fills the window, and brings them back. */
 export const ALL_PANELS_KEY = '`';
 
-// The viewport tab has no close button: there is one viewport and the app always shows it. A double-click on it
-// hides every other panel, or brings them back.
+// The view has no tab strip of its own (decision 0076). Its tab shows only while another panel shares its group, in a
+// layout saved before the strip went, and has no close button: there is one view and the app always shows it.
 const tabComponents = {
-  fixed: (props: IDockviewPanelHeaderProps) => (
-    <div className="h-full" onDoubleClick={() => toggleAllPanels(props.containerApi)} title={`Double-click (or ${ALL_PANELS_KEY}) to hide every panel, or bring them back`}>
-      <DockviewDefaultTab {...props} hideClose />
-    </div>
-  ),
+  fixed: (props: IDockviewPanelHeaderProps) => <DockviewDefaultTab {...props} hideClose />,
 };
 
 export type PanelId = Exclude<keyof typeof components, 'viewport'>;
@@ -195,8 +191,8 @@ function restore(api: DockviewApi, groupId: string, panelId: string) {
 }
 
 /**
- * Hides every panel but the viewport, which fills the window, or brings them back (`, or a double-click on its tab).
- * With a table filling the window, the view takes its place.
+ * Hides every panel but the viewport, which fills the window, or brings them back (`, or the Panels menu). With a table
+ * filling the window, the view takes its place.
  */
 export function toggleAllPanels(api: DockviewApi) {
   const view = api.getPanel('viewport');
@@ -230,6 +226,20 @@ const dockSize = (panel: (typeof PANELS)[number]) => (panel.dock === 'results' ?
 function addViewport(api: DockviewApi) {
   // 'always' keeps the canvas in the page while other tabs share its group.
   api.addPanel({ id: 'viewport', component: 'viewport', tabComponent: 'fixed', title: 'Viewport', renderer: 'always' });
+  bareView(api);
+}
+
+/**
+ * The view's group has no tab strip, and takes no panel dropped on its middle: a panel dropped there would cover the
+ * view with no tab to come back by. Panels still dock against its edges. If a layout from before has a panel sharing
+ * the group, the strip shows until that panel is closed or dragged out.
+ */
+function bareView(api: DockviewApi) {
+  const group = api.getPanel('viewport')?.group;
+  if (!group) return;
+  const alone = group.panels.length === 1;
+  if (group.header.hidden !== alone) group.header.hidden = alone;
+  if (group.locked !== alone) group.locked = alone;
 }
 
 /** The layer tree on the left, the tool dock with Properties on the right, the results dock with the run log under the view. */
@@ -252,6 +262,7 @@ function restoreLayout(api: DockviewApi) {
     if (saved) {
       api.fromJSON(JSON.parse(saved));
       if (!api.getPanel('viewport')) addViewport(api);
+      bareView(api);
       return;
     }
   } catch {
@@ -394,10 +405,12 @@ export function Workspace({ onReady }: { onReady: (api: DockviewApi) => void }) 
     };
     onMinimisedChange = refresh;
     refresh();
+    bareView(api);
     // The docks' sizes after each change to the layout, kept while a group fills the window: what they go back to when a
     // dock's last tab is closed, and when the workspace changes size.
     let held = dockSizes(api);
     const layout = api.onDidLayoutChange(() => {
+      bareView(api);
       if (!api.hasMaximizedGroup()) held = dockSizes(api);
       saveLayout(api);
       refresh();

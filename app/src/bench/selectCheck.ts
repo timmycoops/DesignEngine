@@ -88,8 +88,8 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
     window.dispatchEvent(new KeyboardEvent('keydown', { key: name, shiftKey: shift, bubbles: true }));
     await settle();
   };
-  /** The toolbar's plan button says Plan or 3D. */
-  const toolbarSays = (word: string) => [...document.querySelectorAll('header button')].some((b) => b.textContent?.trim() === word);
+  /** The view bar's plan button says Plan or 3D. */
+  const toolbarSays = (word: string) => [...document.querySelectorAll('[data-slot="view-bar"] button')].some((b) => b.textContent?.trim() === word);
   /** The screen box round some cubes, a few pixels out. */
   const around = (ks: number[]): [[number, number], [number, number]] => {
     const points = ks.flatMap((k) => cornersOf(k).map(screen));
@@ -229,7 +229,7 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
   viewport.fitView();
   await settle();
   await key('t');
-  expect('T goes into plan, and the toolbar says so', viewport.planView && toolbarSays('Plan'), { plan: viewport.planView });
+  expect('T goes into plan, and the view bar says so', viewport.planView && toolbarSays('Plan'), { plan: viewport.planView });
   await key('t');
   expect('T again comes back to 3D', !viewport.planView && toolbarSays('3D'), { plan: viewport.planView });
 
@@ -250,7 +250,7 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
   await settle();
   const forward = viewport.camera.getWorldDirection(new THREE.Vector3());
   const tilt = THREE.MathUtils.radToDeg(forward.angleTo(new THREE.Vector3(0, 0, -1)));
-  expect('Z and a drag in plan tilt out of it into 3D, and the toolbar says 3D', !viewport.planView && toolbarSays('3D') && tilt > 10, { tilt_from_straight_down_deg: Number(tilt.toFixed(1)) });
+  expect('Z and a drag in plan tilt out of it into 3D, and the view bar says 3D', !viewport.planView && toolbarSays('3D') && tilt > 10, { tilt_from_straight_down_deg: Number(tilt.toFixed(1)) });
   const pivot = under ? viewport.projectToClient(new THREE.Vector3(...under)) : null;
   const moved = pivot ? Math.hypot(pivot[0] - press[0], pivot[1] - press[1]) : null;
   expect('the point under the cursor stays put through the tilt (px)', moved !== null && moved < 2, moved === null ? null : Number(moved.toFixed(3)));

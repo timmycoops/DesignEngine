@@ -174,6 +174,29 @@
   pointer-events: none;
 }
 
+/*
+ * The view's tools, on a bar in its top left corner. With a section open in a view too short for both, the bar sits
+ * beside the section's overview, never over it.
+ */
+.view-panel {
+  container-type: size;
+}
+
+.view-bar {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  max-width: calc(100% - 16px);
+}
+
+@container (max-height: 340px) {
+  .view-bar[data-section='open'] {
+    left: 264px;
+    max-width: calc(100% - 272px);
+  }
+}
+
 /* The section's plan overview, in the corner of the viewport. */
 .section-overview {
   position: absolute;

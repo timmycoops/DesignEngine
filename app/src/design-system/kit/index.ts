@@ -9,3 +9,4 @@ export { type RunReport, RunResult, type ToolAction, ToolPanel, ToolSection } fr
 export { NoteLine, ShowNote } from './NoteLine';
 export { canShow, lookAt, noteTone, plainNote } from './notes';
 export { RunGoing, useRunning } from './RunGoing';
+export { ToolButton } from './ToolButton';

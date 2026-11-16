@@ -10,6 +10,7 @@ import { DEFAULT_CONTOURS, type SeamShown } from '@/viewport/sceneSync';
 import { valueBands } from '@/viewport/bands';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
+import { ViewBar } from './ViewBar';
 
 function Swatch({ colour, label }: { colour: string; label: string }) {
   return (
@@ -25,7 +26,8 @@ function Legends() {
   const { seamViews, rlShown, sectionOpen } = useWorkspace();
   if (seamViews.length === 0 && rlShown.objects.length === 0) return null;
   return (
-    <div className={`absolute left-3 z-10 flex max-h-[calc(100%-1.5rem)] w-64 flex-col gap-2 overflow-auto ${sectionOpen ? 'bottom-[264px]' : 'bottom-3'}`}>
+    // Under the view bar at the top, and over the section's overview at the foot while one is open.
+    <div className={`absolute left-3 z-10 flex w-64 flex-col gap-2 overflow-auto ${sectionOpen ? 'bottom-[264px] max-h-[calc(100%-264px-3.25rem)]' : 'bottom-3 max-h-[calc(100%-4rem)]'}`}>
       {rlShown.objects.length > 0 && <RlLegend />}
       {seamViews.map((view) => (
         <SeamLegend key={view.id} seamView={view} />
@@ -246,7 +248,7 @@ function TypedEntry() {
   );
 }
 
-/** Mounts the app's single viewport canvas; the Viewport itself lives as long as the app. */
+/** Mounts the app's single viewport canvas, with the view's tools on a bar over it; the Viewport itself lives as long as the app. */
 export function ViewportPanel() {
   const { viewportHost, viewportMounted } = useWorkspace();
   const ref = useRef<HTMLDivElement>(null);
@@ -256,8 +258,9 @@ export function ViewportPanel() {
     return () => viewportHost.remove();
   }, [viewportHost, viewportMounted]);
   return (
-    <div className="relative h-full w-full overflow-hidden bg-[#161e29]">
+    <div className="view-panel relative h-full w-full overflow-hidden bg-[#161e29]">
       <div ref={ref} className="absolute inset-0" />
+      <ViewBar />
       <Legends />
       <TypedEntry />
     </div>
