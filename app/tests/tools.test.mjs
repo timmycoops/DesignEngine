@@ -83,7 +83,7 @@ test('every stage has a row of tools that exist, named in words', () => {
   assert.deepEqual(names('geology'), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology']);
   assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Reserves table', 'Compare', 'Report']);
   assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Join faces']);
-  assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Split', 'Join', 'Smooth', 'Filter', 'Reverse', 'Close']);
+  assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Join', 'Smooth', 'Filter', 'Reverse', 'Close']);
 });
 
 test("a stage's tools are on its row, but for the few reached another way", () => {
@@ -94,7 +94,7 @@ test("a stage's tools are on its row, but for the few reached another way", () =
   }
   // The older project folder is in the project's menu; Build a step and Interrogate are what Builder and Reserves open
   // on, listed for the canvas; Cut solids as it stands is in the Panels menu, its six choices on the row.
-  // Strings as it stands is in the Panels menu too, its twelve tools on the row.
+  // Strings as it stands is in the Panels menu too, its thirteen tools on the row.
   assert.deepEqual(elsewhere.sort(), ['builder:step', 'cut', 'project.open_folder', 'reserves:interrogate', 'strings']);
   // A row shows a tool from another stage only where the plan has it: Relink geology on Project, and the Import and
   // Export menus there, which gather their tools from every stage.
@@ -205,9 +205,9 @@ test("a panel's choices take their names and their lines from the list", () => {
   const reserves = choiceWords('reserves', ['interrogate', 'compare']);
   assert.deepEqual(Object.values(reserves.labels), ['Interrogate', 'Compare']);
   // A line at a panel's head is a sentence short enough for the 400 px tool dock (the shell bench measures it on screen).
-  const stringModes = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'split', 'join', 'smooth', 'filter', 'reverse', 'set_closed'];
+  const stringModes = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'join', 'smooth', 'filter', 'reverse', 'set_closed'];
   const strings = choiceWords('strings', stringModes);
-  assert.deepEqual(Object.values(strings.labels), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Split', 'Join', 'Smooth', 'Filter', 'Reverse', 'Close']);
+  assert.deepEqual(Object.values(strings.labels), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Join', 'Smooth', 'Filter', 'Reverse', 'Close']);
   for (const mode of stringModes) assert.equal(choiceTool('strings', mode).command, `string.${mode}`, 'a string tool is named for its command');
   for (const line of [...Object.values(cut.lines), ...Object.values(reserves.lines), ...Object.values(strings.lines)]) assert.ok(line.endsWith('.') && line.length <= 62, line);
   assert.equal(choiceTool('cut', 'polygons').command, 'solid.cut_by_polygons');

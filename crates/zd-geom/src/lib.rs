@@ -18,6 +18,7 @@ mod grid;
 mod halfspace;
 mod orient;
 mod polygons;
+mod project;
 mod ray;
 mod repair;
 mod reserves;
@@ -57,6 +58,7 @@ pub use slice::{SectionPlane, SliceIndex, SliceLine, slice_indexed, slice_mesh, 
 pub use stack::{StackHorizon, SuggestedHorizon, check_seam_stack, stack_issue_nodes, suggest_no_seam_rl, suggest_seam_tree};
 pub use face::{EditReport, Face, FaceBench, FaceEdit, FaceStep, FaceTarget, JoinBoxes, JoinNote, MetBoxes, RegisterLog, TooClose, StepReport, WallToCome, at_line_heights, conditioned_toe, level_floor, project_edited_face, project_face, register_toe, run_on};
 pub use reserves::{Composite, EVERY_RL, NodeColumn, Sample, Variable, cells_in_solid, column_volume, column_volume_within, columns_in_solid, composite, horizon_samples, in_situ_rd, mid_seam_cells, mid_seam_cells_within, thickness_between};
+pub use project::{ProjectTo, ProjectedString, project_string};
 pub use road::{FaceRamp, FaceRoad, NoRoad, RoadTop};
 pub use wall::{ConditionLog, Stretch, WallLog, WallStep, next_toe, project_wall, project_wall_by_edge};
 pub use strips::{CLEAR_OF_SOLID, Crossing, FaceCut, FaceShort, FilledGap, JoinLog, ShortEnd, Shortfall, SliceRefusal, SliceTimings, StripPiece, StripSlice, faces_through_solid, join_faces, place, short_words, shortfall_words, slice_solid_by_faces, slice_solid_by_faces_watched};

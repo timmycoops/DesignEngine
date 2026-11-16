@@ -1363,6 +1363,9 @@ pub struct BenchConfig {
     /// With `--builder`, the Builder panel driven as Tim would: steps built from a toe, a step picked from the list, a berm's
     /// line edited and the wall above built on it (decision 0048).
     builder: bool,
+    /// With `--project`, Project on the Strings tab driven as Tim would: the side set by a click in the view, three toes
+    /// picked by a box and projected in one run, on to a surface with walls kept, a refusal, and one undo (decision 0079).
+    project: bool,
     /// With `--cut`, the Cut solids panel driven as Tim would: a pit made between two surfaces inside its limit, sliced
     /// into strips by fifteen numbered faces, the faces joined a face a strip, and the pit cut at an RL (decision 0049).
     cut: bool,
@@ -1424,6 +1427,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         palettes: args.iter().any(|a| a == "--palettes"),
         design_lines: args.iter().any(|a| a == "--design-lines"),
         builder: args.iter().any(|a| a == "--builder"),
+        project: args.iter().any(|a| a == "--project"),
         cut: args.iter().any(|a| a == "--cut"),
         select: args.iter().any(|a| a == "--select"),
         shell: args.iter().any(|a| a == "--shell"),

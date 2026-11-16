@@ -1191,6 +1191,8 @@ export interface BenchConfig {
   dataflow: string | null;
   /** With `--builder`, the Builder panel driven as Tim would, from a toe up, with an edit between steps (decision 0048). */
   builder: boolean;
+  /** With `--project`, Project on the Strings tab driven as Tim would, through the panel and clicks in the view (decision 0079). */
+  project: boolean;
   /** With `--cut`, the Cut solids panel driven as Tim would: a pit between two surfaces, sliced into strips, cut at an RL (decision 0049). */
   cut: boolean;
   /** With `--section-guide`, the dashed line from a section's first point to the cursor, on a made-up topography. */

@@ -102,6 +102,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "string.number_across",
             "string.offset",
             "string.polygons_from_lines",
+            "string.project",
             "string.redraw_stretch",
             "string.reverse",
             "string.set_closed",

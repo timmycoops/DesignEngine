@@ -60,7 +60,11 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 ## Object model
 
 - `Polyline` (string): ordered `[f64; 3]` vertices, closed flag, attributes. A strip's number is its `strip` attribute, set
-  by a line drawn across the strings, and what a run makes keeps it (`docs/decisions/0029-strip-numbers.md`).
+  by a line drawn across the strings, and what a run makes keeps it (`docs/decisions/0029-strip-numbers.md`). A string
+  is projected at a batter by `string.project`: up or down, on the side the new string comes out on, to an RL, a height
+  above or below it, a grid or a surface, every string picked in one run, each as it's drawn and left as it is, with
+  the wall kept as a surface if asked; to an RL or a surface it's a face's one wall, by a height its plan offset lifted
+  (`docs/decisions/0079-project-ramps-by-hand-and-measure.md`).
 - `Surface`: triangulated mesh (vertices f64, triangles u32), name, layer.
 - `Solid`: closed manifold mesh; must always be watertight. The large one strips are cut from is made inside a closed
   string between two surfaces or grids (`solid.between_surfaces`), and every cut is one Cut solids panel: into strips by
