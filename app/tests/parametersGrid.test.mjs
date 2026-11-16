@@ -7,6 +7,7 @@ import {
   cellEdited,
   columnEdited,
   copyText,
+  copyTextTurned,
   deleteRows,
   fromGrid,
   gridEdited,
@@ -14,6 +15,7 @@ import {
   moveColumn,
   moveRow,
   paste,
+  pasteTurned,
   parseClipboard,
   setCell,
   toGrid,
@@ -98,6 +100,22 @@ test('cells pasted from Excel fill from the cell picked, adding rows; cells past
   ]);
   assert.equal(paste(g, g.rows[0].key, col(g, 'loader'), [['a', 'b', 'c']]).cut, 2);
   assert.equal(copyText(g, new Set([g.rows[1].key])), 'when seam\twhen strip\tash_cutoff (%)\twaste_rd (t/m3)\tloader\nU, M\t\t\t2.4\t');
+});
+
+test('turned, as the tab shows it: a pasted line runs across the rows for one parameter, adding rows; copy runs the same way', () => {
+  const g = toGrid(table);
+  // Pasted at row 3's seam: seam across rows 3 and 4, then strip, then ash_cutoff with a cell left out.
+  const block = parseClipboard('M\tL, M\n6-9\n31\t\n');
+  const { grid, cut } = pasteTurned(g, g.rows[2].key, col(g, 'seam'), block);
+  assert.equal(cut, 0);
+  assert.equal(grid.rows.length, 4);
+  assert.deepEqual(fromGrid(grid).table.rows.slice(2), [
+    { when: { seam: 'M', strip: '6-9' }, values: { ash_cutoff: 31, waste_rd: 2.3, loader: 'EX3600' } },
+    { when: { seam: 'L, M' }, values: {} },
+  ]);
+  // Three lines from loader, the last parameter: two lines past it are left out.
+  assert.equal(pasteTurned(g, g.rows[0].key, col(g, 'loader'), [['a'], ['b'], ['c']]).cut, 2);
+  assert.equal(copyTextTurned(g, new Set([g.rows[1].key, g.rows[2].key])), 'when seam\tU, M\t\nwhen strip\t\t\nash_cutoff (%)\t\t35\nwaste_rd (t/m3)\t2.4\t2.3\nloader\t\tEX3600');
 });
 
 test('a dataflow field changes where it comes from and how it adds up', () => {

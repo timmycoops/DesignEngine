@@ -116,3 +116,23 @@ refused, an edit saves as revision 2 and an undo puts it back.
 
 Not yet: folder state saved with the table (it's remembered on the machine for now), and fields as columns, the other
 way round.
+
+## The parameter grid turned
+
+Tim, 16 November, on the grid with a column a parameter: "thats awful to look at - id expect to see those as rows." The
+Parameters tab now shows a parameter table turned, as the reserves table shows its fields:
+
+- down the side, the filters (`when seam`, on a shaded band) then the parameters, each with its unit and 123 or abc,
+  moved up and down, renamed or taken out there;
+- across, the table's rows as numbered columns, read left to right: each value comes from the first column that fits
+  and holds it. A column is picked by its number, moved left (read earlier) or right, added at the right or taken out;
+- the picked solid's columns marked by their numbers in gold, the cells it takes in gold, a value from another table
+  said under the parameter's name ("from Case table, column 1");
+- Enter goes down to the next parameter, Tab across. Cells pasted from Excel go as shown, a line along a parameter
+  across the columns, columns added to the right as needed; Copy writes it the same way, a line a parameter with its
+  heading first.
+
+Only the view turned: the table, its CSV and the engine still hold a row a rule, read top down (`pasteTurned` and
+`copyTextTurned` in `parametersGrid.ts`). Known answers: the grid test pastes a turned block into the made-up table
+(rows added, a cell the block leaves out kept) and copies two of its rows turned; the app check finds the demo's filters
+and parameters down the side and a column a row of its table.
