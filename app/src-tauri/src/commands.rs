@@ -1369,6 +1369,9 @@ pub struct BenchConfig {
     /// With `--measure`, the distance measure on the view bar driven as Tim would: M, two clicks on a string's ends for a
     /// known leg, a click on for a total, Backspace, Esc, and nothing made (decision 0079).
     measure: bool,
+    /// With `--ramp`, a ramp made by hand from the Walls row as Tim would: an edge graded, offset, projected up and down,
+    /// and one surface between the four strings, its area known (decision 0079).
+    ramp: bool,
     /// With `--cut`, the Cut solids panel driven as Tim would: a pit made between two surfaces inside its limit, sliced
     /// into strips by fifteen numbered faces, the faces joined a face a strip, and the pit cut at an RL (decision 0049).
     cut: bool,
@@ -1432,6 +1435,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         builder: args.iter().any(|a| a == "--builder"),
         project: args.iter().any(|a| a == "--project"),
         measure: args.iter().any(|a| a == "--measure"),
+        ramp: args.iter().any(|a| a == "--ramp"),
         cut: args.iter().any(|a| a == "--cut"),
         select: args.iter().any(|a| a == "--select"),
         shell: args.iter().any(|a| a == "--shell"),

@@ -16,6 +16,7 @@ mod layer;
 mod object;
 mod project;
 mod seam;
+mod sheet;
 mod solid;
 mod spry;
 mod string;
@@ -40,6 +41,7 @@ pub use interrogate::{COLUMN_DELTA, COLUMN_VOLUME, INTERROGATED, Interrogate, In
 pub use layer::{CreateLayer, CreateLayerParams, DeleteLayer, DeleteLayerParams, RecolourLayer, RecolourLayerParams, RenameLayer, RenameLayerParams};
 pub use project::{ProjectString, ProjectStringParams, ProjectToParam};
 pub use object::{DeleteObject, DeleteObjects, MoveObjects, MoveObjectsParams, ObjectParams, ObjectsParams, RenameObject, RenameParams};
+pub use sheet::{SurfaceBetweenStrings, SurfaceBetweenStringsParams};
 pub use seam::{BuildSeamModel, BuildSeamModelParams, ModelLinks, RelinkParams, RelinkSeamModels, SuggestSeamDefinition, SuggestSeamDefinitionParams, seam_links};
 pub(crate) use solid::check_solids_made;
 pub use spry::{ImportSpry, ImportSpryParams};
@@ -96,6 +98,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(SmoothString);
     registry.register(FilterString);
     registry.register(ProjectString);
+    registry.register(SurfaceBetweenStrings);
     registry.register(ImportStrings);
     registry.register(ImportSurface);
     registry.register(SurfaceFromMesh);

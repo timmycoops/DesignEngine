@@ -25,6 +25,7 @@ mod reserves;
 mod road;
 mod rule;
 mod self_union;
+mod sheet;
 mod seam;
 mod section_fill;
 mod section_snap;
@@ -60,6 +61,7 @@ pub use face::{EditReport, Face, FaceBench, FaceEdit, FaceStep, FaceTarget, Join
 pub use reserves::{Composite, EVERY_RL, NodeColumn, Sample, Variable, cells_in_solid, column_volume, column_volume_within, columns_in_solid, composite, horizon_samples, in_situ_rd, mid_seam_cells, mid_seam_cells_within, thickness_between};
 pub use project::{ProjectTo, ProjectedString, project_string};
 pub use road::{FaceRamp, FaceRoad, NoRoad, RoadTop};
+pub use sheet::{Across, sheet_between, sheets_as_one, strings_across};
 pub use wall::{ConditionLog, Stretch, WallLog, WallStep, next_toe, project_wall, project_wall_by_edge};
 pub use strips::{CLEAR_OF_SOLID, Crossing, FaceCut, FaceShort, FilledGap, JoinLog, ShortEnd, Shortfall, SliceRefusal, SliceTimings, StripPiece, StripSlice, faces_through_solid, join_faces, place, short_words, shortfall_words, slice_solid_by_faces, slice_solid_by_faces_watched};
 pub use string::{Corner, DrapeLog, OffsetSide, ON_THE_STRING, PlanCrossing, drape_string, filter_string, grade_string, join_strings, offset_string, plan_crossings, redraw_stretch, smooth_string, split_string};

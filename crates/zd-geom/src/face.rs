@@ -1976,11 +1976,9 @@ fn whole_band(a: &Polyline, b: &Polyline) -> Result<TriMesh, GeomError> {
             outline.pop();
         }
     }
-    if a.closed {
-        outline.pop();
-        outline.insert(a.vertices.len() + 2, b.vertices[0]);
-        outline.truncate(a.vertices.len() + 2 + b.vertices.len());
-    }
+    // A closed pair's outline is now all the way round: out along `a` and back to its first vertex, across the slit to
+    // `b`'s first, and back round `b` the other way to end on that vertex again. (It used to drop that last vertex and
+    // double the one after the slit, which left `b`'s first segment out of the outline and one triangle out of the ring.)
     let about = outline[0];
     let local: Vec<[f64; 3]> = outline.iter().map(|p| [p[0] - about[0], p[1] - about[1], p[2] - about[2]]).collect();
     let triangles = std::panic::catch_unwind(|| triangles_of(&local)).ok().flatten();
@@ -2053,6 +2051,18 @@ mod tests {
 
     fn line(points: &[[f64; 3]]) -> Polyline {
         Polyline { vertices: points.iter().map(|p| [p[0] + E, p[1] + N, p[2]]).collect(), closed: false }
+    }
+
+    /// The band between two closed strings goes all the way round. A 100 m square at RL 100 and a 60 m square inside it
+    /// at RL 90, both anticlockwise from their south-west corners: four trapezia, (100 + 60) / 2 x sqrt(20^2 + 10^2)
+    /// each, to 1e-6 m2, in one piece open only at the two strings.
+    #[test]
+    fn a_band_between_closed_strings_goes_all_the_way_round() {
+        let square = |from: f64, to: f64, z: f64| Polyline { closed: true, ..line(&[[from, from, z], [to, from, z], [to, to, z], [from, to, z]]) };
+        let ring = band(&square(0.0, 100.0, 100.0), &square(20.0, 80.0, 90.0)).unwrap();
+        let want = 4.0 * 80.0 * 500f64.sqrt();
+        assert!((ring.area() - want).abs() < 1e-6, "{} against {want}", ring.area());
+        assert_eq!(crate::boundary_loops(&ring).unwrap().len(), 2);
     }
 
     /// A line redrawn by hand lies on its floor (decision 0046). On a floor rising 1 in 10 to a ridge at x = 200 and falling

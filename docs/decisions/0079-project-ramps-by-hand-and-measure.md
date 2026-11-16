@@ -1,7 +1,7 @@
 # 0079 — Project a string, ramps from polylines, and a distance measure
 
 Status: agreed 16 November 2026 (Tim, on the plan and its seven decisions as picked: "Yes, go ahead"). Three pieces,
-a PR each. Project and Measure are built here; the surface between strings follows, and is written up here as it lands.
+a PR each, all three built here.
 
 ## Why
 
@@ -27,8 +27,11 @@ if asked.
 4. **Each string goes as it's drawn, at its own heights.** Nothing is registered first; Drape does that.
 5. **Ramps from polylines are a kit of parts,** as they're made in Deswik: draw and grade the road's edge (Set grade),
    offset it by the road's width (Offset keeps the heights), project batters from both edges (Project), and make the
-   road and any sheet by hand with a surface between two strings (to build). Join faces then makes one face a strip for
-   the cut. A one-run "road from a string" tool can sit on those parts later.
+   road and any sheet by hand with a surface between the strings. Join faces then makes one face a strip for
+   the cut. A one-run "road from a string" tool can sit on those parts later. **The grade is set on a string once it's
+   drawn, not digitised as it's clicked** (Tim, 16 November, asked which: "I think it would be set grade as a rule like
+   you did. These are more manual tools so you would move the ramp in theory"): the edge is drawn and moved by hand, and
+   Set grade is run on it again.
 6. **Measure reads out and keeps nothing:** plan distance, slope distance, RL difference, grade and bearing between
    clicks, on the view bar. It makes no object.
 7. **Order:** Project, then Measure, then the surface between strings.
@@ -142,6 +145,54 @@ The shell check (`--shell`) doesn't pass every run on this machine, with or with
 two runs of this branch, 51 of 53 on main at bf6ddb3, a different check failing each time (the panels' sizes after the
 ` key, a tool's tip). It needs looking at on its own.
 
+## Built: ramps from polylines
+
+**`surface.between_strings`** (`crates/zd-commands/src/builtin/sheet.rs`, `crates/zd-geom/src/sheet.rs`): `strings`
+(two or more), `layer`, `name`. One surface between the strings picked, left as they are.
+
+- **Between two strings** it's the band a face builds between a crest and the next toe (`band`): their outline
+  triangulated in plan, so it can't reach across either line, wound upward. Every corner is a vertex of a string; nothing
+  moves. So it's a sheet single-valued in plan, as every road and every wall under 90° is.
+- **Several strings make one sheet across them all,** as the toe of a fill, a road's two edges and the crest of a cut.
+  They're put in order across whatever order they're given in (the two furthest apart are the ends of the row, the rest
+  fall between), each is taken the same way along as the one before, a band is made between each and the next, and the
+  bands are welded where they share a string. The run says the order, and which strings it took the other way along.
+- **Closed strings** make a ring, as a pit's toe and crest: each is started from the vertex nearest the other's first.
+  Open and closed strings together are refused.
+- **Refused, naming the two strings:** strings that cross in plan or double back past each other, where a surface would
+  fold over itself, and strings that run along each other with nothing between.
+- The surface is named for the strings at either side unless the run names it, goes on the first string's layer, keeps
+  the `strip` and `pit` its strings share, and is checked for crossing triangles as a face is.
+
+**A fault found on the way, and fixed.** `band` between two closed strings left one triangle out of the ring: its outline
+dropped the last vertex of the second string and doubled the one after the slit, so that string's first segment wasn't
+in it. A berm on a closed toe had the same hole. No test covered a closed pair; one does now (a 100 m square and a 60 m
+square inside it, 10 m lower: four trapezia, 7,155.4 m², to 1e-6 m²).
+
+**In the app:** Surface between strings is a tool of the Strings panel on the Walls row, with the string tools a ramp is
+made from beside it: Set grade, Offset, Project, Surface between, then Join faces. It works on every string picked, two
+or more, and the surface it makes is picked.
+
+Known answers:
+
+- a road 30 m wide and 200 m long at 10 % between its two edges: 30 × 200 × √1.01 m², to 1e-6 m², four vertices; given
+  running opposite ways it's the same sheet, and said;
+- four strings across a road cut into a slope, given out of order and one backwards (fill toe at RL 90, edges at RL 100
+  30 m apart, cut crest at RL 115): one sheet, 200 × (10√2 + 30 + 15√2) m², eight vertices, one boundary;
+- a pit's toe and crest as closed strings drawn opposite ways round from different corners: the ring above, two
+  boundaries;
+- a road round a quarter circle, edges at 100 and 130 m radius in 16 chords: the chords' own area to 1e-6 m², within 1 %
+  of the quarter annulus;
+- **a ramp by hand through the commands** (`crates/zd-commands/tests/sheet.rs`): an inside edge 200 m long graded at 10 %
+  from RL 100, its outside edge by Offset 30 m right at the same heights, the cut's crest by Project 15 m up at 45° on the
+  left, the fill's toe by Project 10 m down at 45° on the right, and one surface between the four: 13,118.6 m², the three
+  parallelograms' areas to 1e-6 m², 11,000 m² in plan, six triangles on eight vertices, one sheet. One undo takes it back.
+
+The app's own check (`zd-app --bench --ramp`), from the Walls row through the panel, 11 of 11: the same ramp, made as
+above by Set grade, Offset, Project twice and Surface between strings on four strings picked by a box, with each line
+where it should be to the millimetre and the surface's area to 1e-6 m². The Project (18) and Measure (13) checks pass on
+the same build, and `cargo test -p zd-geom -p zd-commands` (664).
+
 ## What this leaves
 
 - **Rules** for the batter (by azimuth, inside a polygon or solid, by horizon): a number for now, as the Builder's.
@@ -150,4 +201,6 @@ two runs of this branch, 51 of 53 on main at bf6ddb3, a different check failing 
 - **Cleaning the line first.** A string goes as it's drawn. One with a vertex at every triangle it was draped across is
   fine where those lie on straight runs in plan; one that wanders needs Filter first, as a profile's condition does.
 - **Measure:** a dimension left in the view, angles between legs, and areas.
-- **The surface between strings:** the next PR.
+- **Ramps by hand:** a one-run "road from a string" on these parts, a sheet from strings with breaklines inside it, and
+  a vertical face. Moving a whole string, or a ramp's strings together, by a distance: today a string moves a vertex at
+  a time.

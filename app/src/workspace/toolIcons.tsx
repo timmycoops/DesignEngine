@@ -76,6 +76,7 @@ const ICONS: Record<ToolIcon, LucideIcon> = {
   elevation: ArrowUpToLine,
   drape: Waves,
   project: MoveUpRight,
+  'surface-between': BetweenHorizontalStart,
   split: Split,
   join: Merge,
   smooth: Spline,

@@ -82,7 +82,7 @@ test('every stage has a row of tools that exist, named in words', () => {
   assert.deepEqual(names('project'), ['New', 'Open', 'Save as', 'Relink geology']);
   assert.deepEqual(names('geology'), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology']);
   assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Reserves table', 'Compare', 'Report']);
-  assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Join faces']);
+  assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Set grade', 'Offset', 'Project', 'Surface between', 'Join faces']);
   assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Join', 'Smooth', 'Filter', 'Reverse', 'Close']);
 });
 
@@ -111,6 +111,10 @@ test("a stage's tools are on its row, but for the few reached another way", () =
     'project: seam.build',
     'project: seam.relink',
     'project: seam.suggest',
+    // The string tools a ramp is made from by hand are on Walls too (decision 0079).
+    'walls: strings:offset',
+    'walls: strings:project',
+    'walls: strings:set_grade',
   ]);
 });
 
@@ -205,10 +209,11 @@ test("a panel's choices take their names and their lines from the list", () => {
   const reserves = choiceWords('reserves', ['interrogate', 'compare']);
   assert.deepEqual(Object.values(reserves.labels), ['Interrogate', 'Compare']);
   // A line at a panel's head is a sentence short enough for the 400 px tool dock (the shell bench measures it on screen).
-  const stringModes = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'join', 'smooth', 'filter', 'reverse', 'set_closed'];
+  const stringModes = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'join', 'smooth', 'filter', 'reverse', 'set_closed', 'surface_between'];
   const strings = choiceWords('strings', stringModes);
-  assert.deepEqual(Object.values(strings.labels), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Join', 'Smooth', 'Filter', 'Reverse', 'Close']);
-  for (const mode of stringModes) assert.equal(choiceTool('strings', mode).command, `string.${mode}`, 'a string tool is named for its command');
+  assert.deepEqual(Object.values(strings.labels), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Join', 'Smooth', 'Filter', 'Reverse', 'Close', 'Surface between strings']);
+  // The one that makes a surface is named for what it makes, as a solid between surfaces is.
+  for (const mode of stringModes) assert.equal(choiceTool('strings', mode).command, mode === 'surface_between' ? 'surface.between_strings' : `string.${mode}`, 'a string tool is named for its command');
   for (const line of [...Object.values(cut.lines), ...Object.values(reserves.lines), ...Object.values(strings.lines)]) assert.ok(line.endsWith('.') && line.length <= 62, line);
   assert.equal(choiceTool('cut', 'polygons').command, 'solid.cut_by_polygons');
   assert.throws(() => choiceTool('cut', 'nothing'));
