@@ -11,6 +11,8 @@ members = [
     "bench",
     "app/src-tauri",
 ]
+# Patched copies of crates, used through [patch.crates-io] below; never members, so never linted or tested here.
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.1.0"
@@ -53,6 +55,11 @@ starlark_derive = "=0.14.2"
 allocative = "0.3.6"
 anyhow = "1"
 spade = "2.15.1"
+
+# Starlark without serde_json's `arbitrary_precision`, which it asks for and Cargo would turn on across the whole build,
+# breaking every untagged or flattened number the app reads (decision 0077; vendor/starlark/ZOVLYN.md).
+[patch.crates-io]
+starlark = { path = "vendor/starlark" }
 
 # Build the C++ Manifold kernel and the BVH code optimised even in dev builds:
 # a debug Manifold makes every test and `tauri dev` session crawl.

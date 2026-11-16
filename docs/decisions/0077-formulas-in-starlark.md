@@ -109,5 +109,14 @@ Timing, release build: a million made-up units, 20 to a column, each column its 
 (eight reads, a Preston-Sanders call, two or three sets) take 187 ms on 48 threads, 1.17 µs a unit on one. The demo pit's
 50m case is 2,847 leaves.
 
+**Starlark is patched** (`vendor/starlark`, used through `[patch.crates-io]`). The published crate asks for
+`serde_json`'s `arbitrary_precision` feature, and Cargo turns a dependency's features on for the whole build. That
+feature breaks serde's untagged enums and flattened structs holding numbers: 12 places in our types (attribute and
+parameter values, face steps, dataflow fields). CI caught it as a note's coordinates failing to read back. Tim chose the
+patch on 16 November over changing our types or the language. The copy leaves the feature off and drops Starlark's own
+tests; nothing else changes. The only loss is `json.encode` of integers wider than 64 bits, which come out as floats.
+`serde_json_reads_numbers_as_plain_floats` fails if the feature is ever back. `vendor/starlark/ZOVLYN.md` says how to
+move to a newer Starlark.
+
 Not yet: formula steps in the dataflow and `reserves.run` (7b), the starter scripts (7c), the panel (7d) and the
 reference for AI (7e).

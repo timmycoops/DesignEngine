@@ -30,7 +30,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 | Package manager (JS) | pnpm |
 | Zips | `zip` crate, deflate only (`docs/decisions/0019-solids-by-the-thousand.md`) |
 | Deswik XML | `quick-xml` and `base64` (`docs/decisions/0036-deswik-drawings.md`) |
-| Formulas | Starlark (`starlark` crate, pinned) in `zd-script`: the arithmetic and tests a site edits, kept in the dataflow; what moves material between units stays built in (`docs/decisions/0077-formulas-in-starlark.md`) |
+| Formulas | Starlark (`starlark` crate 0.14.2, patched in `vendor/starlark` to leave serde_json's `arbitrary_precision` off) in `zd-script`: the arithmetic and tests a site edits, kept in the dataflow; what moves material between units stays built in (`docs/decisions/0077-formulas-in-starlark.md`) |
 
 ## Engine rules (non-negotiable)
 

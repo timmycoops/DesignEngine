@@ -65,6 +65,14 @@ def formula(unit, p):
         unit.discard = "ash"
 "#;
 
+/// The guard on the patched Starlark (vendor/starlark/ZOVLYN.md): built with it, serde_json must still read a number as
+/// a plain f64. With `arbitrary_precision` back it keeps every digit it was given, and the app's untagged numbers break.
+#[test]
+fn serde_json_reads_numbers_as_plain_floats() {
+    let v: serde_json::Value = serde_json::from_str("0.1000000000000000000001").expect("a number");
+    assert_eq!(serde_json::to_string(&v).expect("written"), "0.1", "serde_json's arbitrary_precision is on: see vendor/starlark/ZOVLYN.md");
+}
+
 #[test]
 fn the_library_gives_known_answers() {
     // Preston and Sanders by hand: 1.45 × 96.5 ÷ (100 + 1.45 × 4.5 − 8) = 139.925 ÷ 98.525.
