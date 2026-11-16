@@ -54,15 +54,21 @@ export function NumberInput({ value, onChange, label, unit, range, width = 'w-20
 }
 
 /** A choice of a few, as a row of buttons, the one chosen lit. */
-export function Choice<T extends string>({ value, options, labels, onChange, label }: { value: T; options: readonly T[]; labels?: Partial<Record<T, string>>; onChange: (value: T) => void; label: string }) {
+export function Choice<T extends string>({ value, options, labels, onChange, label, columns }: { value: T; options: readonly T[]; labels?: Partial<Record<T, string>>; onChange: (value: T) => void; label: string; columns?: number }) {
   return (
-    <span className="inline-flex h-7 shrink-0 overflow-hidden rounded-md border border-input text-xs" role="group" aria-label={label} title={label}>
+    <span
+      className={cn('shrink-0 overflow-hidden rounded-md border border-input text-xs', columns ? 'grid w-full' : 'inline-flex h-7')}
+      style={columns ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}
+      role="group"
+      aria-label={label}
+      title={label}
+    >
       {options.map((option) => (
         <button
           key={option}
           type="button"
           aria-pressed={option === value}
-          className={cn('px-2 transition-colors', option === value ? 'bg-selection text-primary' : 'text-muted-foreground hover:text-foreground')}
+          className={cn('px-2 transition-colors', columns && 'h-7 truncate', option === value ? 'bg-selection text-primary' : 'text-muted-foreground hover:text-foreground')}
           onClick={() => onChange(option)}
         >
           {labels?.[option] ?? option}

@@ -7,6 +7,7 @@ export { CellInput, Choice, Field, NumberInput, Select, TargetInput, TargetOptio
 export { type Range, readNumber, showNumber } from './number';
 export { type RunReport, RunResult, type ToolAction, ToolPanel, ToolSection } from './ToolPanel';
 export { NoteLine, ShowNote } from './NoteLine';
+export { PanelHead } from './PanelHead';
 export { canShow, lookAt, noteTone, plainNote } from './notes';
 export { RunGoing, useRunning } from './RunGoing';
 export { ToolButton } from './ToolButton';

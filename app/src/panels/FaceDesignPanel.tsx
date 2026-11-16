@@ -4,7 +4,7 @@ import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine,
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
-import { NoteLine } from '@/design-system/kit';
+import { NoteLine, PanelHead } from '@/design-system/kit';
 import { rampColour } from '@/viewport/rampColours';
 import { useWorkspace } from '@/workspace/context';
 
@@ -1035,9 +1035,9 @@ export function FaceDesignPanel() {
 
   if (!draft) {
     return (
-      <div className="flex h-full flex-col gap-2 overflow-auto p-3 text-xs">
-        <p className="text-muted-foreground">A face design holds the lines to run, a table of steps for each, and any rules those steps share.</p>
-        <div className="flex items-center gap-2">
+      <div className="flex h-full flex-col overflow-auto text-xs" data-tool-panel="face">
+        <PanelHead line="A face design holds the lines to run, a table of steps for each, and any rules those steps share." />
+        <div className="flex items-center gap-2 px-3 pt-2">
           <SmallButton onClick={start}>
             <Plus className="size-3" /> New design
           </SmallButton>
@@ -1055,7 +1055,7 @@ export function FaceDesignPanel() {
             </select>
           )}
         </div>
-        {report.error && <p className="text-destructive">{report.error}</p>}
+        {report.error && <p className="px-3 pt-2 text-destructive">{report.error}</p>}
       </div>
     );
   }
@@ -1373,7 +1373,7 @@ export function FaceDesignPanel() {
   };
 
   return (
-    <div className="h-full overflow-auto pb-3">
+    <div className="h-full overflow-auto pb-3" data-tool-panel="face">
       <div className="flex items-center gap-1 px-3 pt-2">
         <select
           className={`${selectClass} max-w-40`}

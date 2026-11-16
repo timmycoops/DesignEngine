@@ -24,6 +24,15 @@ type Scope = 'picked' | 'layer' | 'visible';
 
 const MODES: readonly Mode[] = ['strips', 'seams', 'benches', 'polygons', 'cut', 'between'];
 const MODE_LABELS: Record<Mode, string> = { strips: 'Into strips', seams: 'By seams', benches: 'By benches', polygons: 'By polygons', cut: 'By a surface', between: 'Between surfaces' };
+/** What each does, in the panel's one line. */
+const MODE_LINES: Record<Mode, string> = {
+  strips: 'Slices solids into strips by faces, from the pit out.',
+  seams: "Cuts solids by the seam model's horizons, in one run.",
+  benches: 'Cuts pieces at bench levels, by the bench rules.',
+  polygons: 'Cuts solids vertically into blocks, by named polygons.',
+  cut: 'Cuts solids by a surface, a grid or an RL.',
+  between: 'Makes one solid inside a closed string, between two surfaces.',
+};
 const SCOPES: readonly Scope[] = ['picked', 'layer', 'visible'];
 
 export function CutPanel() {
@@ -294,12 +303,13 @@ export function CutPanel() {
     <ToolPanel
       title="Cut solids"
       panel="cut"
-      summary="Slice solids into strips by faces, cut them by seams, at bench levels or into blocks by polygons, cut them by a surface, grid or RL, or make one between two surfaces. What's given stays as it is."
+      summary={MODE_LINES[mode]}
+      more="What's given stays as it is."
       result={report}
       action={action}
     >
       <ToolSection>
-        <Choice value={mode} options={MODES} labels={MODE_LABELS} onChange={setMode} label="What to do" />
+        <Choice value={mode} options={MODES} labels={MODE_LABELS} onChange={setMode} label="What to do" columns={3} />
       </ToolSection>
 
       {mode !== 'between' && solidsSection}

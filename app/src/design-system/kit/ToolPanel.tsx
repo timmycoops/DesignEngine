@@ -4,17 +4,18 @@ import { cn } from 'cn';
 import type { Note } from '../../bridge';
 import { useWorkspace } from '../../workspace/context';
 import { NoteLine } from './NoteLine';
+import { PanelHead } from './PanelHead';
 import { useRunning } from './RunGoing';
 import { waitingOn } from '../../running';
 
 /**
- * The frame of every tool panel (UI plan, one way of working, item 2): what it does in a line at the top, its sections, and
- * at the foot what the last run did above the one button named for what it does. Ctrl+Enter anywhere in the panel presses
- * that button. While the Workflow panel is adding steps, a panel whose action says what it runs reads Add to workflow
+ * The frame of every tool panel (UI plan, one way of working, item 2): what it does in one line at the top, with `more`
+ * behind a tip (its name is on its tab, and names the panel to a screen reader), its sections, and at the foot what the
+ * last run did above the one button named for what it does. Ctrl+Enter anywhere in the panel presses that button. While the Workflow panel is adding steps, a panel whose action says what it runs reads Add to workflow
  * instead, and adds its command and settings as the workflow's last step, running nothing (decision 0065), or after the
  * step a tool was dropped on in the workflow canvas (decision 0067).
  */
-export function ToolPanel({ title, summary, children, result, action: own, panel }: { title: string; summary: ReactNode; children: ReactNode; result?: RunReport; action?: ToolAction; panel?: string }) {
+export function ToolPanel({ title, summary, more, children, result, action: own, panel }: { title: string; summary: string; more?: string; children: ReactNode; result?: RunReport; action?: ToolAction; panel?: string }) {
   const { addingTo, addStep } = useWorkspace();
   const step = own?.step;
   const action: ToolAction | undefined =
@@ -35,6 +36,8 @@ export function ToolPanel({ title, summary, children, result, action: own, panel
     <div
       className="flex h-full flex-col text-xs"
       data-tool-panel={panel ?? title}
+      role="region"
+      aria-label={title}
       onKeyDown={(e) => {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && action && !action.disabled && !action.busy && !waiting) {
           e.preventDefault();
@@ -42,10 +45,7 @@ export function ToolPanel({ title, summary, children, result, action: own, panel
         }
       }}
     >
-      <div className="shrink-0 border-b px-3 py-2">
-        <div className="text-sm font-medium">{title}</div>
-        <div className="text-muted-foreground">{summary}</div>
-      </div>
+      <PanelHead line={summary} more={more} />
       <div className="min-h-0 flex-1 overflow-auto">{children}</div>
       {(result || action) && (
         <div className="flex shrink-0 flex-col gap-2 border-t px-3 py-2">
