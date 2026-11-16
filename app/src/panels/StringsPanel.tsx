@@ -8,10 +8,11 @@ import { useWorkspace } from '@/workspace/context';
 
 /**
  * Strings (decision 0076, workstream 7): the commands on a string, out of Properties and onto the kit. Each tool on the
- * Strings tab opens this panel set to it. A tool works on the string picked, the last one picked where several are;
- * Number across and Polygons from lines work on several. Vertex numbers are as Properties lists them, from 1. Grade,
- * RL, drape, split, smooth, filter, reverse and close write a new revision of the string; offset and polygons make new
- * objects; join takes the other string into this one. One undo each.
+ * Strings tab opens this panel set to it. A tool works on every string picked, as one run and one undo (decision 0078):
+ * offset, grade, RL, drape, smooth, filter, reverse and close. Split and Join work on one string, the last picked, and
+ * Number across and Polygons from lines on several as they did. Vertex numbers are as Properties lists them, from 1, and
+ * are for one string. Grade, RL, drape, split, smooth, filter, reverse and close write a new revision of each string;
+ * offset and polygons make new objects; join takes the other string into this one.
  */
 
 type Mode = 'offset' | 'number_across' | 'polygons_from_lines' | 'set_grade' | 'set_elevation' | 'drape' | 'split' | 'join' | 'smooth' | 'filter' | 'reverse' | 'set_closed';
@@ -21,7 +22,12 @@ const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines'
 /** Each tool's name, and the line it puts at the panel's head, from the one tool list. */
 const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('strings', MODES);
 
+/** The tools that work on one string, the last picked: they work at a vertex, or on a string and one other. */
+const ONE_STRING: readonly Mode[] = ['split', 'join'];
+
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+/** The first three names and how many more, for under a count. */
+const firstNames = (names: string[]) => (names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', '));
 
 export function StringsPanel() {
   const { summary, selected, selection, runRecord, clearRefusal, setSelection, pickLine, toolAsk, toolMode } = useWorkspace();
@@ -56,16 +62,25 @@ export function StringsPanel() {
   const [splitAt, setSplitAt] = useState<number | null>(null);
   const [joinWith, setJoinWith] = useState<string | null>(null);
   const [spacing, setSpacing] = useState(5);
+  const [closeOrOpen, setCloseOrOpen] = useState<'close' | 'open'>('close');
   const [tolerance, setTolerance] = useState<number | null>(null);
   const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
 
   const objects = summary?.objects ?? [];
   const strings = objects.filter((o) => o.kind === 'string');
-  /** The string a tool works on: the last picked, if it's a string. */
+  /** The string a one-string tool works on, and whose vertices a setting names: the last picked, if it's a string. */
   const string = strings.find((o) => o.id === selected) ?? null;
   const pickedIds = new Set(selection);
   const picked = strings.filter((o) => pickedIds.has(o.id));
+  /** What the tools that take several work on: every string picked, as one run (decision 0078). */
+  const on = picked.length > 0 ? picked : string ? [string] : [];
+  const ids = on.map((o) => o.id);
+  const many = on.length > 1;
+  const what = on.length === 1 ? on[0].name : on.length > 1 ? `${on.length} strings` : 'the string';
+  /** Close closes the open ones or opens the closed ones; where the strings picked differ, the panel asks which. */
+  const mixed = on.some((o) => o.closed) && on.some((o) => !o.closed);
+  const closing = mixed ? closeOrOpen === 'close' : !on[0]?.closed;
   /** What Number across numbers: the strings picked, where several are; else what's on the string's layer that a face run didn't make. */
   const onItsLayer = string ? strings.filter((o) => !o.hidden && o.layer === string.layer && o.attributes.face_design === undefined) : [];
   const toNumber = picked.length > 1 ? picked : onItsLayer;
@@ -92,9 +107,11 @@ export function StringsPanel() {
     if (made.length > 0) setSelection(made);
   };
 
+  /** Several strings are each graded from their first vertex to their last; From and To are for one. */
   const gradeParams = () => {
-    const params: Record<string, unknown> = { string: string?.id, from: Math.round(from) - 1, grade };
-    if (to !== null) params.to = Math.round(to) - 1;
+    const params: Record<string, unknown> = { strings: ids, grade };
+    if (!many) params.from = Math.round(from) - 1;
+    if (!many && to !== null) params.to = Math.round(to) - 1;
     if (startRl !== null) params.rl = startRl;
     return params;
   };
@@ -102,32 +119,33 @@ export function StringsPanel() {
   /** The one button: what it says, what it runs, and whether it has what it needs. */
   const does = ((): { label: string; run: () => unknown; ready: boolean; title?: string } => {
     const id = string?.id;
-    const on = string?.name ?? 'the string';
+    const one = string?.name ?? 'the string';
+    const some = on.length > 0;
     switch (mode) {
       case 'offset':
-        return { label: `Offset ${on}${times > 1 ? ` ${times} times` : ''}`, run: () => runIt('string.offset', { string: id, distance, side, corners, times }), ready: !!string && distance !== null && distance > 0 && Number.isInteger(times) };
+        return { label: `Offset ${what}${times > 1 ? ` ${times} times` : ''}`, run: () => runIt('string.offset', { strings: ids, distance, side, corners, times }), ready: some && distance !== null && distance > 0 && Number.isInteger(times) };
       case 'number_across':
         return { label: `Draw across ${plural(toNumber.length, 'string')}`, run: numberAcross, ready: toNumber.length > 0 && start !== null && step !== 0 && !!numberName.trim(), title: 'Two clicks in the view, across the strings: each string the line crosses takes the next number' };
       case 'polygons_from_lines':
         return { label: `Make polygons from ${plural(picked.length, 'line')}`, run: makePolygons, ready: picked.length > 0 && !!polygonName.trim() && !!polygonLayer.trim() };
       case 'set_grade':
-        return { label: `Grade ${on}`, run: () => runIt('string.set_grade', gradeParams()), ready: !!string && grade !== null && Number.isInteger(from) && (to === null || Number.isInteger(to)) };
+        return { label: `Grade ${what}`, run: () => runIt('string.set_grade', gradeParams()), ready: some && grade !== null && (many || (Number.isInteger(from) && (to === null || Number.isInteger(to)))) };
       case 'set_elevation':
-        return { label: `Set ${on} to RL ${level ?? '…'}`, run: () => runIt('string.set_elevation', { string: id, rl: level }), ready: !!string && level !== null };
+        return { label: `Set ${what} to RL ${level ?? '…'}`, run: () => runIt('string.set_elevation', { strings: ids, rl: level }), ready: some && level !== null };
       case 'drape':
-        return { label: `Drape ${on}`, run: () => runIt('string.drape', { string: id, surface: target?.id, crossings }), ready: !!string && !!target };
+        return { label: `Drape ${what}`, run: () => runIt('string.drape', { strings: ids, surface: target?.id, crossings }), ready: some && !!target };
       case 'split':
-        return { label: `Split ${on}`, run: () => runIt('string.split', { string: id, at: Math.round(splitAt ?? 1) - 1 }), ready: !!string && splitAt !== null && Number.isInteger(splitAt) };
+        return { label: `Split ${one}`, run: () => runIt('string.split', { string: id, at: Math.round(splitAt ?? 1) - 1 }), ready: !!string && splitAt !== null && Number.isInteger(splitAt) };
       case 'join':
-        return { label: `Join ${partner?.name ?? 'a string'} onto ${on}`, run: () => runIt('string.join', { string: id, other: partner?.id }), ready: !!string && !string.closed && !!partner };
+        return { label: `Join ${partner?.name ?? 'a string'} onto ${one}`, run: () => runIt('string.join', { string: id, other: partner?.id }), ready: !!string && !string.closed && !!partner };
       case 'smooth':
-        return { label: `Smooth ${on}`, run: () => runIt('string.smooth', { string: id, spacing }), ready: !!string };
+        return { label: `Smooth ${what}`, run: () => runIt('string.smooth', { strings: ids, spacing }), ready: some };
       case 'filter':
-        return { label: `Filter ${on}`, run: () => runIt('string.filter', { string: id, tolerance }), ready: !!string && tolerance !== null };
+        return { label: `Filter ${what}`, run: () => runIt('string.filter', { strings: ids, tolerance }), ready: some && tolerance !== null };
       case 'reverse':
-        return { label: `Reverse ${on}`, run: () => runIt('string.reverse', { string: id }), ready: !!string };
+        return { label: `Reverse ${what}`, run: () => runIt('string.reverse', { strings: ids }), ready: some };
       case 'set_closed':
-        return { label: `${string?.closed ? 'Open' : 'Close'} ${on}`, run: () => runIt('string.set_closed', { string: id, closed: !string?.closed }), ready: !!string };
+        return { label: `${closing ? 'Close' : 'Open'} ${what}`, run: () => runIt('string.set_closed', { strings: ids, closed: closing }), ready: some };
     }
   })();
   const action: ToolAction = {
@@ -163,10 +181,23 @@ export function StringsPanel() {
           <Field label="Lines" hint="The lines across the strips and the lines closing them: pick them all, by a box or from the tree">
             <span data-slot="strings-on">{plural(picked.length, 'line')} picked</span>
           </Field>
-        ) : (
-          <Field label="On" hint={string ? (picked.length > 1 ? `The last of the ${picked.length} picked` : undefined) : 'Pick a string in the view or the tree'}>
+        ) : ONE_STRING.includes(mode) ? (
+          <Field label="On" hint={string ? (picked.length > 1 ? `The last of the ${picked.length} picked: this tool works on one string` : undefined) : 'Pick a string in the view or the tree'}>
             <span data-slot="strings-on" className={string ? undefined : 'text-muted-foreground'}>
               {string ? `${string.name}${string.closed ? ' · closed' : ''}` : 'No string picked'}
+            </span>
+          </Field>
+        ) : (
+          <Field label="On" hint={many ? 'Every string picked, as one run and one undo' : on.length === 1 ? undefined : 'Pick a string in the view or the tree, or several by a box or Ctrl-click'}>
+            <span className="flex min-w-0 flex-col">
+              <span data-slot="strings-on" className={on.length > 0 ? undefined : 'text-muted-foreground'}>
+                {on.length === 0 ? 'No string picked' : many ? `${on.length} strings` : `${on[0].name}${on[0].closed ? ' · closed' : ''}`}
+              </span>
+              {many && (
+                <span data-slot="strings-on-names" className="truncate text-muted-foreground" title={on.map((o) => o.name).join(', ')}>
+                  {firstNames(on.map((o) => o.name))}
+                </span>
+              )}
             </span>
           </Field>
         )}
@@ -180,7 +211,7 @@ export function StringsPanel() {
           <Field label="Times" hint="How many strings, each the distance further out">
             <NumberInput value={times} onChange={setTimes} label="How many offsets" range={{ min: 1 }} />
           </Field>
-          <Field label="Side" hint="Looking along the string">
+          <Field label="Side" hint={many ? "Looking along each string. One that runs the other way to the first goes to the other side, and the run says so" : 'Looking along the string'}>
             <Choice value={side} options={['left', 'right'] as const} labels={{ left: 'Left', right: 'Right' }} onChange={setSide} label="The side to offset to, looking along the string" />
           </Field>
           <Field label="Corners">
@@ -222,13 +253,23 @@ export function StringsPanel() {
           <Field label="Grade" hint="Positive uphill along the string">
             <NumberOrBlank value={grade} onChange={setGrade} label="Grade" unit="%" blank="" />
           </Field>
-          <Field label="From vertex">
-            <NumberInput value={from} onChange={setFrom} label="Start vertex" range={{ min: 1 }} />
-          </Field>
-          <Field label="To vertex">
-            <NumberOrBlank value={to} onChange={setTo} label="End vertex" range={{ min: 1 }} blank="end" />
-          </Field>
-          <Field label="At RL" hint="The RL at the start vertex">
+          {many ? (
+            <Field label="Along" hint="From and To vertex are for one string">
+              <span data-slot="strings-grade-along" className="text-muted-foreground">
+                Each string, first vertex to last
+              </span>
+            </Field>
+          ) : (
+            <>
+              <Field label="From vertex">
+                <NumberInput value={from} onChange={setFrom} label="Start vertex" range={{ min: 1 }} />
+              </Field>
+              <Field label="To vertex">
+                <NumberOrBlank value={to} onChange={setTo} label="End vertex" range={{ min: 1 }} blank="end" />
+              </Field>
+            </>
+          )}
+          <Field label="At RL" hint={many ? "The RL at each string's first vertex" : 'The RL at the start vertex'}>
             <NumberOrBlank value={startRl} onChange={setStartRl} label="RL at the start vertex" blank="its own" />
           </Field>
         </ToolSection>
@@ -287,6 +328,14 @@ export function StringsPanel() {
                 ))}
               </Select>
             )}
+          </Field>
+        </ToolSection>
+      )}
+
+      {mode === 'set_closed' && mixed && (
+        <ToolSection title="Settings">
+          <Field label="Do" hint="Some of the strings picked are open and some closed: the ones already so are left">
+            <Choice value={closeOrOpen} options={['close', 'open'] as const} labels={{ close: 'Close', open: 'Open' }} onChange={setCloseOrOpen} label="Close the strings picked, or open them" />
           </Field>
         </ToolSection>
       )}

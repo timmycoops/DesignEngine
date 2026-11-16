@@ -1,7 +1,8 @@
 # 0078 — String tools on several strings, as one run
 
-Status: agreed 16 November 2026 (Tim: "Agree all 7", the Build Plan's "Strings on many strips plan" tab). Workstream 1,
-the commands, is built here. Workstreams 2 to 4 (the panel, Join on the pieces picked, Add to workflow) are to build.
+Status: agreed 16 November 2026 (Tim: "Agree all 7", the Build Plan's "Strings on many strips plan" tab). Workstreams 1,
+the commands, and 2, the panel, are built here. Workstreams 3 and 4 (Join on the pieces picked, Add to workflow) are to
+build.
 
 ## Why
 
@@ -78,10 +79,51 @@ Each run is the one after the row above, on the strings as that left them. The t
 `timings_for_many_strings_in_one_run`, ignored unless asked for
 (`cargo test --release -p zd-commands --test strings_many -- --ignored --nocapture`).
 
+## Built: workstream 2, the panel
+
+- **The Strings panel works on every string picked** (`app/src/panels/StringsPanel.tsx`) for the eight tools, as one
+  run: its On row says how many ("3 strings") with the first three names under it and the rest in a tip, and its button
+  says so too ("Drape 3 strings", "Set 3 strings to RL 110"). With one string picked it reads as it did.
+- **It always sends a list**, of one or of many, so a run captured into a workflow finds its strings by rule and takes
+  however many are there next time.
+- **Set grade with several** has no vertex to choose: each string is graded from its first vertex to its last, and the
+  panel says so in place of From and To vertex.
+- **Close with several** closes them if all are open and opens them if all are closed; where they differ the panel
+  asks which, Close or Open, and the ones already so are left.
+- **Split and Join stay on one string**, the last picked, and say so where several are picked.
+- The tool list's lines for the eight say "each string picked", which is what Find a command and the panel's head read.
+
+Release app, 16 November 2026. `pnpm test` passes 83. `--shell` passes 60 of 60, seven of them new: the twelve string
+tools each run from the panel, on three made-up toes picked by a click and two Ctrl-clicks, and four lines round a block.
+
+| Check | Result |
+|---|---|
+| Three toes picked, Set elevation to RL 110 | "3 strings", their names under it; "Set 3 strings to RL 110"; every vertex of the three at RL 110; the run says 3 of 3 |
+| Set grade at 2 % | No vertex to choose; each toe from RL 110 at its first vertex to over RL 125 at its last |
+| Drape on the topography | Every vertex of the three at RL 100, to 1e-6 m |
+| Smooth at 5 m, then Filter at 1 m | Each toe gains vertices, then loses them |
+| Reverse | Each of the three runs the other way |
+| Close, then the same button again | "Close 3 strings": all closed; "Open 3 strings": all open |
+| Split at vertex 2, then Join, with three picked | On the last picked only: a second part is made, and joined back on |
+| Number across, two clicks across the three | Strip 1, Strip 2 and Strip 3 |
+| Offset 8 m, three picked | "Offset 3 strings": three strings made |
+| Polygons from lines, four lines picked | "Make polygons from 4 lines": one block polygon |
+
+`--select` (29 of 29), `--section-guide` (11 of 11), `--workflow` (43 of 43) and `--dataflow` (21 of 21) still pass;
+`--builder` and `--cut` run with no failed check. A picture of the panel on three toes is `strings-many.png`.
+
+Those are the last runs. Over five runs each on these builds `--shell` passed 60 of 60 three times and `--select` 29
+of 29 three times; the other runs failed one to three checks of the docks' layout or the remembered stage, none of
+them on strings and different ones each time. Another session was building on the machine at the time. Not looked
+into here.
+
+A picture drew a select as its first option, whatever it held: `windowPicture.ts` copies the option chosen now.
+
 ## Known limits
 
-- **The app still sends one string**: the Strings panel is workstream 2. Until then several strings as one run are
-  for scripts and workflows.
+- **Close's Close-or-Open choice** for a mix of open and closed strings is not run by a check, nor is a refusal that
+  lists several strings read in the panel.
+- **The panel shows a run's notes as a list**, a line a string. Fifteen toes are sixteen lines; 150 would be 151.
 - **Every string takes the same settings.** A different distance or RL a string is not here; nor is a list of strip
   widths, which Offset's `times` does only for equal ones.
 - **Offset's side isn't asked for by a click.** Strings running against the first are warned of, not turned.

@@ -692,6 +692,175 @@ export async function checkShell(
     expect('Properties shows the string and runs no string command', (properties?.textContent ?? '').includes('Length (plan)') && !(properties?.textContent ?? '').includes('String tools') && propertyButtons.every((b) => !commandWords.some((w) => b.startsWith(w))), {
       buttons: propertyButtons,
     });
+    // Several strings as one run (decision 0078): every one of the twelve tools, on three made-up toes north of the
+    // block. Picked once, by a click and two Ctrl-clicks, and each tool run from the panel's one button.
+    const toeY = [320, 345, 370];
+    for (const [k, y] of toeY.entries()) {
+      await runCommand('string.create', { name: `Many ${k + 1}`, layer: 'many toes', closed: false, points: [[E + 100, N + y, 100], [E + 500, N + y + 12, 100], [E + 900, N + y, 100]] });
+    }
+    await show(await projectSummary());
+    await wait(1000);
+    viewport.fitView();
+    await settle();
+    const manyIds = (await stringsNamed('Many ')).map((o) => o.id);
+    const ctrlClick = async (at: [number, number]) => {
+      for (const type of ['pointerdown', 'pointerup']) {
+        canvas.dispatchEvent(new PointerEvent(type, { clientX: at[0], clientY: at[1], button: 0, buttons: type === 'pointerup' ? 0 : 1, pointerId: 1, pointerType: 'mouse', isPrimary: true, bubbles: true, cancelable: true, ctrlKey: true }));
+      }
+      await settle();
+    };
+    // On each toe 40 m along its first leg, where smoothing moves it least.
+    const toeAt = (k: number) => screen([E + 140, N + toeY[k] + 1.2, 100]);
+    const pickToes = async () => {
+      await click(toeAt(0));
+      await ctrlClick(toeAt(1));
+      await ctrlClick(toeAt(2));
+      await wait(500);
+    };
+    const choose = async (name: string, value: string) => {
+      const select = stringsNow()?.querySelector<HTMLSelectElement>(`select[aria-label="${name}"]`);
+      if (!select) return false;
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, value);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+      return true;
+    };
+    const useTool = (mode: string) => choose('String tool', mode);
+    const go = async (ms = 1200) => {
+      const says = goButton()?.textContent?.trim() ?? '';
+      goButton()?.click();
+      await wait(ms);
+      return says;
+    };
+    const many = async () => {
+      const lines = [];
+      for (const id of manyIds) {
+        const measures = (await objectDetails(id)).measures;
+        if (measures?.kind === 'string') lines.push(measures);
+      }
+      return lines;
+    };
+    const counts = async () => (await many()).map((m) => m.points.length);
+
+    await goStage('strings');
+    await clickTool('strings:set_elevation');
+    await pickToes();
+    const onMany = stringsOn();
+    const namesUnder = (stringsNow()?.querySelector('[data-slot="strings-on-names"]')?.textContent?.trim() ?? '').split(', ').sort().join(', ');
+    await typeNumber('RL for every vertex', '110');
+    const rlMany = await go();
+    const atRl = (await many()).map((m) => m.points.every((q) => q[2] === 110));
+    const saidOnce = (stringsNow()?.textContent ?? '').includes('3 of 3 strings');
+    expect(
+      'with three strings picked a tool works on all three as one run: the panel says how many and names them, and Set elevation sets every vertex of the three',
+      manyIds.length === 3 && onMany === '3 strings' && namesUnder === 'Many 1, Many 2, Many 3' && rlMany === 'Set 3 strings to RL 110' && atRl.length === 3 && atRl.every(Boolean) && saidOnce,
+      { strings: manyIds.length, on: onMany, names: namesUnder, button: rlMany, at_rl_110: atRl, says_3_of_3: saidOnce },
+    );
+    if (pictures) log(`shell: ${await writePicture('strings-many', await windowPicture(viewport))}`);
+
+    await useTool('set_grade');
+    const along = !!stringsNow()?.querySelector('[data-slot="strings-grade-along"]') && !stringsNow()?.querySelector('input[aria-label="Start vertex"]');
+    await typeNumber('Grade', '2');
+    const gradeSays = await go();
+    const graded = (await many()).map((m) => m.points[0][2] === 110 && (m.points.at(-1)?.[2] ?? 0) > 125);
+    await useTool('drape');
+    const drapeSays = await go(1500);
+    const draped = (await many()).map((m) => m.points.every((q) => Math.abs(q[2] - 100) < 1e-6));
+    const asDraped = await counts();
+    await useTool('smooth');
+    const smoothSays = await go();
+    const smoothed = await counts();
+    await useTool('filter');
+    await typeNumber('Distance from the line', '1');
+    const filterSays = await go();
+    const filtered = await counts();
+    await useTool('reverse');
+    const reverseSays = await go();
+    const reversed = (await many()).map((m) => m.points[0][0] > (m.points.at(-1)?.[0] ?? Infinity));
+    expect(
+      'Grade, Drape, Smooth, Filter and Reverse each run on the three picked: graded first vertex to last with no vertex to choose, draped to the surface, vertices added then taken out, and turned round',
+      along &&
+        [gradeSays, drapeSays, smoothSays, filterSays, reverseSays].join() === 'Grade 3 strings,Drape 3 strings,Smooth 3 strings,Filter 3 strings,Reverse 3 strings' &&
+        graded.length === 3 && graded.every(Boolean) && draped.every(Boolean) && reversed.every(Boolean) &&
+        smoothed.every((n, k) => n > asDraped[k]) && filtered.every((n, k) => n < smoothed[k]),
+      { no_vertex_to_choose: along, buttons: [gradeSays, drapeSays, smoothSays, filterSays, reverseSays], graded, draped, vertices: { draped: asDraped, smoothed, filtered }, reversed },
+    );
+
+    await useTool('set_closed');
+    const closeSays = await go();
+    const closed = (await many()).map((m) => m.closed);
+    const openSays = await go();
+    const opened = (await many()).map((m) => !m.closed);
+    expect('Close closes the three picked, and then opens them', closeSays === 'Close 3 strings' && closed.length === 3 && closed.every(Boolean) && openSays === 'Open 3 strings' && opened.every(Boolean), {
+      buttons: [closeSays, openSays],
+      closed,
+      opened,
+    });
+
+    // Split and Join work at a vertex or on a string and one other: one string, the last picked.
+    await useTool('split');
+    const last = stringsOn();
+    await typeNumber('Vertex to split at', '2');
+    const splitSays = await go();
+    const part = (await stringsNamed(`${last} part 2`))[0];
+    await useTool('join');
+    const chosen = part ? await choose('String to join on', part.id) : false;
+    const joinSays = await go();
+    const partsLeft = (await stringsNamed(`${last} part 2`)).length;
+    expect('Split and Join work on one string, the last of the three picked: it splits at a vertex, and its second part joins back on', last.startsWith('Many ') && splitSays === `Split ${last}` && !!part && chosen && joinSays === `Join ${last} part 2 onto ${last}` && partsLeft === 0, {
+      on: last,
+      buttons: [splitSays, joinSays],
+      second_part_made: !!part,
+      second_parts_left: partsLeft,
+    });
+
+    // Number across: the three picked, by two clicks across them.
+    await useTool('number_across');
+    await typeNumber('The first number', '1');
+    const acrossSays = goButton()?.textContent?.trim() ?? '';
+    goButton()?.click();
+    await wait(500);
+    await click(screen([E + 300, N + 300, 100]));
+    await wait(400);
+    await click(screen([E + 300, N + 396, 100]));
+    await wait(1500);
+    const numbered = (await projectSummary()).objects.filter((o) => manyIds.includes(o.id)).map((o) => o.name).sort();
+    expect('Number across numbers the three picked in the order a line drawn across them crosses them', acrossSays === 'Draw across 3 strings' && numbered.join() === 'Strip 1,Strip 2,Strip 3', { button: acrossSays, names: numbered });
+
+    await useTool('offset');
+    await pickToes();
+    const onForOffset = stringsOn();
+    await typeNumber('Offset distance', '8');
+    await typeNumber('How many offsets', '1');
+    const offsetMany = await go(1500);
+    const offsets = (await projectSummary()).objects.filter((o) => o.kind === 'string' && o.name.includes(' offset 8 m ')).length;
+    expect('Offset offsets each of the three picked, as one run', onForOffset === '3 strings' && offsetMany === 'Offset 3 strings' && offsets === 3, { on: onForOffset, button: offsetMany, strings_made: offsets });
+
+    // Polygons from lines: four lines round a block east of the solid, picked the same way.
+    const blockLines: [string, Vec3, Vec3][] = [
+      ['south', [E + 680, N + 120, 100], [E + 920, N + 120, 100]],
+      ['north', [E + 680, N + 260, 100], [E + 920, N + 260, 100]],
+      ['west', [E + 700, N + 100, 100], [E + 700, N + 280, 100]],
+      ['east', [E + 900, N + 100, 100], [E + 900, N + 280, 100]],
+    ];
+    for (const [name, a, b] of blockLines) await runCommand('string.create', { name: `Line ${name}`, layer: 'block lines', closed: false, points: [a, b] });
+    await show(await projectSummary());
+    await wait(1000);
+    await useTool('polygons_from_lines');
+    await click(screen([E + 800, N + 120, 100]));
+    await ctrlClick(screen([E + 800, N + 260, 100]));
+    await ctrlClick(screen([E + 700, N + 190, 100]));
+    await ctrlClick(screen([E + 900, N + 190, 100]));
+    await wait(500);
+    const linesOn = stringsOn();
+    const polygonSays = await go(1500);
+    const polygons = (await projectSummary()).objects.filter((o) => o.kind === 'string' && o.closed && /^B\d+$/.test(o.name));
+    expect('Polygons from lines makes a block polygon from the four lines picked', linesOn === '4 lines picked' && polygonSays === 'Make polygons from 4 lines' && polygons.length === 1, {
+      on: linesOn,
+      button: polygonSays,
+      polygons: polygons.map((o) => o.name),
+    });
+
     viewport.setPlanView(false);
     await goStage('solids');
     await clickTool('solids.repair');

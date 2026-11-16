@@ -281,7 +281,8 @@ the rows are `ROWS` in the tool list, a row too long folds into More, the tool i
 changes the row only. A new tool goes on its stage's row there. Find a command (Ctrl+K, `FindCommand.tsx`) searches
 the list by whole words, so a tool's name and its line are what it's found by: write them in the words a planner would
 type. Properties shows only: an object's name, look, attributes, measures and history. A command on an object is a tool
-in a panel on the kit, never a row in Properties (the string tools are the Strings panel). All seven workstreams of 0076
+in a panel on the kit, never a row in Properties (the string tools are the Strings panel, which works on every string
+picked as one run, `docs/decisions/0078-strings-as-one-run.md`). All seven workstreams of 0076
 are built.
 
 The UI plan (the Build Plan's "UI plan" tab) keeps the app one way of working as it grows. A tool panel is made from the
