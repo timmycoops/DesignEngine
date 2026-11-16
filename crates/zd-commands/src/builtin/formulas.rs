@@ -1,0 +1,128 @@
+//! Formula steps (decision 0077, workstream 7b): a dataflow's own Starlark, run on the units its filter fits, between the
+//! built-in steps. The engine hands `zd-script` a column's units and writes back what each formula set; a formula reads
+//! and sets field values only, and never moves material, which is a built-in step's work.
+
+use std::collections::BTreeMap;
+
+use zd_core::{AttrValue, Attributes, Dataflow, DataflowStep, FormulaStep, ParamValue, ParameterTable, attribute_word};
+use zd_reserves::{FieldKind, Fields};
+use zd_script::{ColumnInput, Declared, FieldDecl, Formula, Kind, ScriptValue, UnitInput, Values};
+
+/// The built-in steps a formula step may follow (decision 0077, point 4): after `initialise`, before in situ; after
+/// `working_sections`; after `rom_dilution`; after `rom`, before the final writes. Other formula steps may sit between.
+pub const FORMULA_STAGES: [&str; 4] = ["initialise", "working_sections", "rom_dilution", "rom"];
+
+/// The labels a unit carries, read by a formula and matched by a step's filter, never set: its seam (the horizon as
+/// cut), its material, its bench (as cut, none once joined) and what it became (loss, dilution, …), none until it's set.
+pub const LABELS: [&str; 4] = ["seam", "material", "bench", "became"];
+
+/// A relative tolerance for a formula's known answers: a worked example should match to the last few digits.
+pub const TEST_TOLERANCE: f64 = 1e-9;
+
+fn unit_of(kind: FieldKind) -> &'static str {
+    match kind {
+        FieldKind::Volume => "m3",
+        FieldKind::Thickness | FieldKind::Length => "m",
+        FieldKind::Area => "m2",
+        FieldKind::Density => "t/m3",
+        FieldKind::Moisture => "%",
+        _ => "",
+    }
+}
+
+/// What a dataflow's formulas may use: its fields (numbers, each with its unit), the unit's labels, and the parameter
+/// tables' value columns, the first table's where two have one of a name.
+pub fn declared(fields: &Fields, tables: &[&ParameterTable]) -> Declared {
+    let mut parameters: Vec<FieldDecl> = Vec::new();
+    for t in tables {
+        for c in &t.columns {
+            if !parameters.iter().any(|p| p.name == c.name) {
+                parameters.push(FieldDecl { name: c.name.clone(), kind: if c.text { Kind::Text } else { Kind::Number }, unit: c.unit.clone() });
+            }
+        }
+    }
+    Declared {
+        fields: fields.list().iter().map(|f| FieldDecl::number(&f.name, unit_of(f.kind))).collect(),
+        labels: LABELS.iter().map(|l| l.to_string()).collect(),
+        parameters,
+    }
+}
+
+pub fn param_value(v: &ParamValue) -> ScriptValue {
+    match v {
+        ParamValue::Number(n) => ScriptValue::Number(*n),
+        ParamValue::Text(t) => ScriptValue::Text(t.clone()),
+    }
+}
+
+pub fn attr_value(v: &AttrValue) -> ScriptValue {
+    match v {
+        AttrValue::Number(n) => ScriptValue::Number(*n),
+        other => ScriptValue::Text(attribute_word(other)),
+    }
+}
+
+/// A block's attributes as a formula reads them (`unit.block.strip`).
+pub fn block_values(attributes: &Attributes) -> Values {
+    std::sync::Arc::new(attributes.iter().map(|(k, v)| (k.to_string(), attr_value(v))).collect())
+}
+
+/// The parameters for a block: each value column of the dataflow's tables, from the first row that fits the block and
+/// holds it; one no row gives is left out, so reading it stops the block (0070).
+pub fn parameter_values(tables: &[&ParameterTable], declared: &Declared, attributes: &Attributes) -> Values {
+    std::sync::Arc::new(
+        declared
+            .parameters
+            .iter()
+            .filter_map(|p| ParameterTable::lookup_in(tables, attributes, &p.name).map(|found| (p.name.clone(), param_value(found.value))))
+            .collect(),
+    )
+}
+
+/// Every formula step sits at one of the stages and none takes a built-in step's name; each compiles against the
+/// dataflow's names and gives its known answers. Said for the first step that doesn't, with why.
+pub fn check_formula_steps(dataflow: &Dataflow, built_in: &[&str], declared: &Declared) -> Result<Vec<(usize, Formula)>, String> {
+    let mut last_built_in: Option<&str> = None;
+    let mut compiled = Vec::new();
+    for (i, s) in dataflow.steps.iter().enumerate() {
+        let Some(f) = &s.formula else {
+            last_built_in = Some(s.step.as_str());
+            continue;
+        };
+        if built_in.contains(&s.step.as_str()) {
+            return Err(format!("the formula step {} has a built-in step's name: give it its own", s.step));
+        }
+        if !last_built_in.is_some_and(|b| FORMULA_STAGES.contains(&b)) {
+            return Err(format!(
+                "the formula step {} sits {}: a formula step goes after initialise (before in situ), working_sections, rom_dilution or rom (before the final writes)",
+                s.step,
+                last_built_in.map_or("before any built-in step".to_string(), |b| format!("after {b}"))
+            ));
+        }
+        let formula = Formula::compile(&f.script, declared.clone()).map_err(|problems| {
+            let said: Vec<String> = problems.iter().map(|p| p.to_string()).collect();
+            format!("the formula step {}: {}", s.step, said.join("; "))
+        })?;
+        run_tests(s, f, &formula)?;
+        compiled.push((i, formula));
+    }
+    Ok(compiled)
+}
+
+/// A formula step's known answers, each a unit on its own: the fields it must leave the unit with.
+fn run_tests(step: &DataflowStep, f: &FormulaStep, formula: &Formula) -> Result<(), String> {
+    for t in &f.tests {
+        let map = |m: &BTreeMap<String, zd_core::ParamValue>| -> Values { std::sync::Arc::new(m.iter().map(|(k, v)| (k.clone(), param_value(v))).collect()) };
+        let input = ColumnInput { units: vec![UnitInput { fields: map(&t.unit), block: map(&t.block), parameters: map(&t.parameters), section: None }], sections: Vec::new(), column: map(&t.unit) };
+        let out = formula.run(&input, &[0]).map_err(|p| format!("the formula step {}, test {}: {p}", step.step, t.name))?;
+        for (field, want) in &t.expect {
+            let got = out[0].get(field).cloned().or_else(|| t.unit.get(field).map(param_value));
+            let ok = matches!(got, Some(ScriptValue::Number(x)) if (x - want).abs() <= TEST_TOLERANCE * want.abs().max(1.0));
+            if !ok {
+                let got = got.map_or("nothing".to_string(), |g| g.to_string());
+                return Err(format!("the formula step {}, test {}: {field} is {got}, not {want}", step.step, t.name));
+            }
+        }
+    }
+    Ok(())
+}

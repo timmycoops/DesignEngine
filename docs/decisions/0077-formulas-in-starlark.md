@@ -118,5 +118,45 @@ tests; nothing else changes. The only loss is `json.encode` of integers wider th
 `serde_json_reads_numbers_as_plain_floats` fails if the feature is ever back. `vendor/starlark/ZOVLYN.md` says how to
 move to a newer Starlark.
 
-Not yet: formula steps in the dataflow and `reserves.run` (7b), the starter scripts (7c), the panel (7d) and the
-reference for AI (7e).
+## Built: 7b, formula steps in the dataflow
+
+- **A dataflow step may carry a formula** (`DataflowStep.formula`):
+  - `when`, a filter in the bench rules' words, matched against the unit's labels (`seam`, `material`, `bench`,
+    `became`) and its block's attributes;
+  - `script`, the Starlark;
+  - `tests`, known answers: a unit's fields, block and parameters, and the fields the formula must leave it with, to
+    1e-9 relative.
+
+  Its name is its own, never a built-in step's, and it takes no settings: a formula reads what it needs itself.
+- **Where it sits**: after `initialise` (before in situ), `working_sections`, `rom_dilution` or `rom` (before the final
+  writes), with other formula steps between. Anywhere else is refused, with where it sits.
+- **Checked when saved**: `dataflow.save` compiles each formula against the dataflow's fields, the unit's labels and its
+  parameter tables' columns, and runs its tests. Any problem, said with the step and the line, refuses the save; the
+  save says how many formulas it checked.
+- **Run in place**: `reserves.run` compiles each formula once and runs it on each column, columns in parallel as before.
+  - Each unit the filter fits is handed over top down: its fields (a missing value reads `None`) and labels, its block's
+    attributes, its parameters from the dataflow's tables as the built-in steps read them, its working section's units
+    and the column added up, and the unit above.
+  - What it sets is written back.
+  - A formula that stops on a unit stops its block, said with the step, the line and the solid; the other blocks go on.
+  - Setting the volume, the volume of record, stops the block: moving material is a built-in step's work.
+  - What it prints is said, counted by step with the units' volume (`reserves.formula_said`).
+  - The run names formula steps among the steps it ran, and the preview shows the column after each.
+- **The balance after every run**: a column whose volume out isn't its volume in, to 1e-9 of it, is now a warning
+  naming the block and by how much (`reserves.unbalanced`). Before, the run's first line only gave the worst.
+
+Known answers (`crates/zd-commands/tests/formula_steps.rs`, on the made-up strip of `reserves_run.rs`):
+
+- `ash2 = ash × 2 + the ash cut-off` after initialise, on U's coal only, gives 55 on B1's U and both of B2's benches,
+  none on L.
+- A formula reading the block's strip and the unit above gives 31 for coal under waste and 30 for B2's lower bench
+  under its upper. Its print is said as 4 units and 60,000 m³.
+- Each refusal on save, said with its line: a misspelt field (with "did you mean"), a step before any built-in or after
+  `in_situ`, a built-in's name, and a test whose answer is 55, not 56.
+- Reading a parameter no row gives stops B1 alone, said with the step, line 2 and the solid; setting the volume stops
+  its blocks.
+
+The workspace's tests are unchanged, with no column out of balance. The app check (`--dataflow`) on the demo pit passes
+21 of 21. The app is 40 MB with Starlark in it, 35 MB before.
+
+Not yet: the starter scripts (7c), the panel (7d) and the reference for AI (7e).

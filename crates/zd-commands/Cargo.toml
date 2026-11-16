@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "zd-commands"
 description = "Typed commands for the Zovlyn Pit Design Engine: registry, session, run log, undo"
 version.workspace = true
@@ -11,6 +11,7 @@ zd-core.workspace = true
 zd-geom.workspace = true
 zd-io.workspace = true
 zd-reserves.workspace = true
+zd-script.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

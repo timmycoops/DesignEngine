@@ -23,6 +23,8 @@ use zd_core::{
 use zd_reserves::{AddUp, Amount, Became, BecameKind, Bench, Column, ColumnKey, End, FieldKind, Fields, Labels, Origin, Unit, UnitId};
 
 use super::blocks::horizon_order;
+use super::formulas;
+use zd_script::Problem;
 use super::measure::plan_area;
 use super::in_parallel_watched;
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome, Severity};
@@ -30,11 +32,20 @@ use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, 
 /// The case a block belongs to when it carries none: the workflow's own steps (decision 0066).
 const BASE: &str = "Base";
 
+/// How far a column's volume out may be from its volume in, relative, before the run says so: rounding, no more.
+const BALANCE_TOLERANCE: f64 = 1e-9;
+
 /// Blocks named in a note before the rest are counted.
 const NAMED: usize = 5;
 
 /// What a step does to a column, given its settings. Registered by name; a dataflow lists names.
 type StepFn = fn(&mut ColumnRun<'_>, &DataflowStep) -> Result<(), String>;
+
+/// A step as a run makes it: a built-in step, or a dataflow's own formula compiled once (decision 0077).
+pub(crate) enum StepRun {
+    BuiltIn(StepFn),
+    Formula(Arc<zd_script::Formula>),
+}
 
 /// The origin an added unit carries in place of a block: ground outside the model, the underburden (decision 0073).
 pub const OUT_OF_MODEL: &str = "out of model";
@@ -215,7 +226,9 @@ pub(crate) struct Prepared {
     fields: Arc<Fields>,
     tables: Vec<Arc<ParameterTable>>,
     horizons: Vec<String>,
-    steps: Vec<(&'static str, StepFn, DataflowStep)>,
+    steps: Vec<(String, StepRun, DataflowStep)>,
+    /// What the dataflow's formulas may use.
+    declared: zd_script::Declared,
     /// The attributes of the levels above the seam, which make a column, and of those below it, which make a leaf.
     upper: Vec<String>,
     lower: Vec<String>,
@@ -297,14 +310,21 @@ pub(crate) fn prepare(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError
     if horizons.is_empty() {
         return Err(CommandError::Invalid("no stack order: give the seam model, or the horizons top down".into()));
     }
+    let built_in: Vec<&str> = STEPS.iter().map(|(n, _)| *n).collect();
+    let table_refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
+    let declared = formulas::declared(&fields, &table_refs);
+    let mut compiled: BTreeMap<usize, Arc<zd_script::Formula>> =
+        formulas::check_formula_steps(dataflow, &built_in, &declared).map_err(CommandError::Invalid)?.into_iter().map(|(i, f)| (i, Arc::new(f))).collect();
     let mut steps = Vec::new();
-    for s in dataflow.steps.iter().filter(|s| s.on) {
+    for (i, s) in dataflow.steps.iter().enumerate().filter(|(_, s)| s.on) {
+        if let Some(f) = compiled.remove(&i) {
+            steps.push((s.step.clone(), StepRun::Formula(f), s.clone()));
+            continue;
+        }
         let Some(f) = step_fn(&s.step) else {
-            let known: Vec<&str> = STEPS.iter().map(|(n, _)| *n).collect();
-            return Err(CommandError::Invalid(format!("the dataflow names a step {}, which this build doesn't have; it has {}", s.step, known.join(", "))));
+            return Err(CommandError::Invalid(format!("the dataflow names a step {}, which this build doesn't have; it has {}", s.step, built_in.join(", "))));
         };
-        let name = STEPS.iter().find(|(n, _)| *n == s.step).map(|(n, _)| *n).expect("a registered step");
-        steps.push((name, f, s.clone()));
+        steps.push((s.step.clone(), StepRun::BuiltIn(f), s.clone()));
     }
     let split = dataflow.column_levels();
     let upper: Vec<String> = dataflow.levels[..split].iter().map(|l| l.attribute.clone()).collect();
@@ -330,7 +350,7 @@ pub(crate) fn prepare(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError
         let case = word("case").unwrap_or_else(|| BASE.to_string());
         columns.entry(ColumnKey { case, path }).or_default().push(object);
     }
-    Ok(Prepared { name: flow.name.clone(), dataflow: dataflow.clone(), fields, tables, horizons, steps, upper, lower, columns, unplaced })
+    Ok(Prepared { name: flow.name.clone(), dataflow: dataflow.clone(), fields, tables, horizons, steps, declared, upper, lower, columns, unplaced })
 }
 
 /// A word from the parameter tables, read in order.
@@ -513,13 +533,104 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
         p.push(view(&run, "as input"));
     }
     for (name, step, settings) in &prepared.steps {
-        step(&mut run, settings).map_err(|why| stop(format!("{} at {name}: {why}", key.words())))?;
+        let done = match step {
+            StepRun::BuiltIn(f) => f(&mut run, settings),
+            StepRun::Formula(f) => run_formula(&mut run, f, settings, &prepared.declared),
+        };
+        done.map_err(|why| stop(format!("{} at {name}: {why}", key.words())))?;
         if let Some(p) = preview.as_deref_mut() {
             p.push(view(&run, name));
         }
     }
     let imbalance = input_volume - (run.column.balance()[volume] - run.added_volume);
     Ok(Ran { key: key.clone(), rows: run.rows, said: run.said, imbalance, input_volume })
+}
+
+/// A unit's labels as a formula reads them and a formula step's filter matches them.
+fn unit_labels(u: &Unit) -> [(&'static str, Option<String>); 4] {
+    let became = u.became.as_ref().map(|b| serde_json::to_value(b.kind).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default());
+    [("seam", Some(u.in_situ.seam.clone())), ("material", Some(u.in_situ.material.clone())), ("bench", u.bench.as_ref().map(|b| b.label.clone())), ("became", became)]
+}
+
+/// A formula step on a column (decision 0077): the units its filter fits, top down, each with its fields, labels, block,
+/// parameters and working section added up; what it sets written back. It may not set the volume, the volume of record:
+/// moving material is a built-in step's work. What it prints is said with the step's name.
+fn run_formula(run: &mut ColumnRun<'_>, formula: &zd_script::Formula, step: &DataflowStep, declared: &zd_script::Declared) -> Result<(), String> {
+    use zd_script::{ColumnInput, ScriptValue, UnitInput, Values};
+    let fields = run.column.fields().clone();
+    let names: Vec<&str> = fields.list().iter().map(|f| f.name.as_str()).collect();
+    let numbers = |values: &[f64]| -> Vec<(String, ScriptValue)> {
+        names.iter().zip(values).map(|(n, v)| (n.to_string(), if v.is_nan() { ScriptValue::None } else { ScriptValue::Number(*v) })).collect()
+    };
+    let tables: Vec<&ParameterTable> = run.tables.iter().map(|t| t.as_ref()).collect();
+    let blocks: Vec<Values> = run.attributes.iter().map(formulas::block_values).collect();
+    let params: Vec<Values> = run.attributes.iter().map(|a| formulas::parameter_values(&tables, declared, a)).collect();
+    // Each working section's units, added up by their rules.
+    let mut ids: Vec<u32> = Vec::new();
+    let section_of: Vec<Option<usize>> = run
+        .column
+        .units()
+        .iter()
+        .map(|u| {
+            let id = u.section.as_ref()?.id?;
+            Some(ids.iter().position(|&i| i == id).unwrap_or_else(|| {
+                ids.push(id);
+                ids.len() - 1
+            }))
+        })
+        .collect();
+    let sections: Vec<Values> = (0..ids.len())
+        .map(|s| Arc::new(numbers(&run.column.add_up((0..run.column.len()).filter(|&at| section_of[at] == Some(s))))))
+        .collect();
+    let units: Vec<UnitInput> = run
+        .column
+        .units()
+        .iter()
+        .enumerate()
+        .map(|(at, u)| {
+            let mut values = numbers(u.values());
+            values.extend(unit_labels(u).into_iter().map(|(k, v)| (k.to_string(), v.map_or(ScriptValue::None, ScriptValue::Text))));
+            UnitInput { fields: Arc::new(values), block: blocks[u.origin as usize].clone(), parameters: params[u.origin as usize].clone(), section: section_of[at] }
+        })
+        .collect();
+    let when = step.formula.as_ref().map(|f| f.when.clone()).unwrap_or_default();
+    let which: Vec<usize> = (0..run.column.len())
+        .filter(|&at| {
+            let u = &run.column.units()[at];
+            let mut attributes = run.attributes[u.origin as usize].clone();
+            for (k, v) in unit_labels(u) {
+                if let Some(v) = v {
+                    attributes.insert(k.to_string(), AttrValue::Text(v));
+                }
+            }
+            zd_core::filter_fits(&when, &attributes)
+        })
+        .collect();
+    let input = ColumnInput { units, sections, column: Arc::new(numbers(&run.column.balance())) };
+    let out = formula.run(&input, &which).map_err(|p| {
+        let unit = p.unit.map(|u| format!(" on {}", run.name_of(u))).unwrap_or_default();
+        format!("{}{unit}", Problem { unit: None, ..p })
+    })?;
+    let volume = fields.volume();
+    for done in out {
+        for (field, value) in done.sets {
+            let i = fields.at(&field).map_err(|e| e.to_string())?;
+            if i == volume {
+                return Err(format!("it sets {field} on {}: the volume is of record, and moving material is a built-in step's work", run.name_of(done.unit)));
+            }
+            let x = match value {
+                ScriptValue::Number(x) => x,
+                ScriptValue::None => f64::NAN,
+                ScriptValue::Text(t) => return Err(format!("it sets {field} to words ({t:?}) on {}", run.name_of(done.unit))),
+            };
+            run.column.unit_mut(done.unit).set(i, x);
+        }
+        let v = run.column.units()[done.unit].value(volume);
+        for text in done.said {
+            run.said.count(format!("printed by {}: {text}", step.step), v);
+        }
+    }
+    Ok(())
 }
 
 /// The column after each of the dataflow's steps, for one block: the canvas's before and after (decision 0072, point 7).
@@ -1676,7 +1787,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
     for (n, level) in prepared.upper.iter().chain(&prepared.lower).enumerate() {
         columns.push(TableColumn::text(level, leaves.iter().map(|l| Some(l.0[n + 1].clone()).filter(|v| !v.is_empty())).collect()));
     }
-    let setting = |key: &str| prepared.steps.iter().find(|(n, _, _)| *n == "in_situ").map_or(key.to_string(), |(_, _, s)| s.setting(key).to_string());
+    let setting = |key: &str| prepared.steps.iter().find(|(n, _, _)| n == "in_situ").map_or(key.to_string(), |(_, _, s)| s.setting(key).to_string());
     let field = |key: &str| fields.iter().position(|f| f.name == setting(key));
     let v = prepared.fields.volume();
     for folder in &folders {
@@ -1765,7 +1876,7 @@ fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: V
         changes.push(Change::Create { name: name.clone(), layer: p.layer.clone(), attributes, body: Body::Table(Arc::new(table)) });
         messages.push(format!("{name}: {} block{}, {rows} lea{}", of.len(), plural(of.len()), if rows == 1 { "f" } else { "ves" }));
     }
-    let steps: Vec<&str> = prepared.steps.iter().map(|(n, _, _)| *n).collect();
+    let steps: Vec<&str> = prepared.steps.iter().map(|(n, _, _)| n.as_str()).collect();
     let mut head = format!(
         "{} of {} block{} ran through {}",
         ran.len(),
@@ -1777,6 +1888,12 @@ fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: V
     let volume: f64 = ran.iter().map(|r| r.input_volume).sum::<f64>() + 0.0;
     let worst = ran.iter().map(|r| (r.imbalance / r.input_volume.max(1.0)).abs()).fold(0.0, f64::max);
     head.push_str(&format!("; {volume:.1} m3 in, every column balanced to {worst:.1e} of its volume; {:.0} ms", started.elapsed().as_secs_f64() * 1000.0));
+    // The balance after every run (decision 0077): what came out of each column is what went in, to rounding.
+    let unbalanced: Vec<String> = ran
+        .iter()
+        .filter(|r| (r.imbalance / r.input_volume.max(1.0)).abs() > BALANCE_TOLERANCE)
+        .map(|r| format!("{} ({:+.3} m3)", r.key.words(), r.imbalance))
+        .collect();
     messages.insert(0, head);
     let mut outcome = Outcome::new(changes);
     for m in messages {
@@ -1794,8 +1911,18 @@ fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: V
             named.entry(check.as_str()).or_default().extend(blocks.iter().map(String::as_str));
         }
     }
+    if !unbalanced.is_empty() {
+        let n = unbalanced.len();
+        let mut words: Vec<String> = unbalanced.iter().take(NAMED).cloned().collect();
+        if n > NAMED {
+            words.push(format!("and {} more", n - NAMED));
+        }
+        outcome.notes.push(Note::warning(Code::ReservesUnbalanced, format!("{n} column{} didn't keep its volume: {}", plural(n), words.join(", "))));
+    }
     for (what, (n, v)) in counts {
-        let code = if what.contains("small volume") {
+        let code = if what.starts_with("printed by ") {
+            Code::ReservesFormulaSaid
+        } else if what.contains("small volume") {
             Code::ReservesSmallVolume
         } else if what.contains("underburden") {
             Code::ReservesUnderburden

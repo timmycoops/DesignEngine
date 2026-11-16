@@ -5944,6 +5944,7 @@ dependencies = [
  "zd-geom",
  "zd-io",
  "zd-reserves",
+ "zd-script",
  "zip",
 ]
 
