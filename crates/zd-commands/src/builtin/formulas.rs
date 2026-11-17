@@ -85,6 +85,14 @@ pub fn parameter_values(tables: &[&ParameterTable], declared: &Declared, attribu
 /// Every formula step sits at one of the stages and none takes a built-in step's name; each compiles against the
 /// dataflow's names and gives its known answers. Said for the first step that doesn't, with why.
 pub fn check_formula_steps(dataflow: &Dataflow, built_in: &[&str], declared: &Declared) -> Result<Vec<(usize, Formula)>, String> {
+    check_formula_steps_flagging(dataflow, built_in, declared, None)
+}
+
+/// As `check_formula_steps`, but with `failing`, a worked example that doesn't hold is said there and the formula is
+/// still compiled to run: a dataflow being edited is run with its failing examples flagged, not refused (decision 0081,
+/// Tim, 17 November). A formula that doesn't compile, or sits where a formula can't, is refused either way; saving a
+/// dataflow still refuses a failing example.
+pub fn check_formula_steps_flagging(dataflow: &Dataflow, built_in: &[&str], declared: &Declared, mut failing: Option<&mut Vec<String>>) -> Result<Vec<(usize, Formula)>, String> {
     let mut last_built_in: Option<&str> = None;
     let mut compiled = Vec::new();
     for (i, s) in dataflow.steps.iter().enumerate() {
@@ -106,7 +114,10 @@ pub fn check_formula_steps(dataflow: &Dataflow, built_in: &[&str], declared: &De
             let said: Vec<String> = problems.iter().map(|p| p.to_string()).collect();
             format!("the formula step {}: {}", s.step, said.join("; "))
         })?;
-        run_tests(s, f, &formula)?;
+        match failing.as_deref_mut() {
+            Some(list) => list.extend(failing_tests(s, f, &formula)),
+            None => run_tests(s, f, &formula)?,
+        }
         compiled.push((i, formula));
     }
     Ok(compiled)
@@ -114,10 +125,15 @@ pub fn check_formula_steps(dataflow: &Dataflow, built_in: &[&str], declared: &De
 
 /// A formula step's known answers, each a unit on its own: the fields it must leave the unit with.
 fn run_tests(step: &DataflowStep, f: &FormulaStep, formula: &Formula) -> Result<(), String> {
-    for t in &f.tests {
-        test_result(t, formula).map_err(|why| format!("the formula step {}, test {}: {why}", step.step, t.name))?;
+    match failing_tests(step, f, formula).into_iter().next() {
+        Some(why) => Err(why),
+        None => Ok(()),
     }
-    Ok(())
+}
+
+/// Every known answer of a formula step that doesn't hold, each said with its test's name and why.
+fn failing_tests(step: &DataflowStep, f: &FormulaStep, formula: &Formula) -> Vec<String> {
+    f.tests.iter().filter_map(|t| test_result(t, formula).err().map(|why| format!("the formula step {}, test {}: {why}", step.step, t.name))).collect()
 }
 
 /// One known answer: none where it holds, else why not.

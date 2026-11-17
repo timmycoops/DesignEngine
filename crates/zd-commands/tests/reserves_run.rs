@@ -524,8 +524,8 @@ fn coal_is_written_on_the_in_situ_basis_by_preston_sanders() {
 
 /// The notebook's formula cells (decision 0081): `densities` traced on B1's U (RD 1.4, Mad 3 %, Mis 8 %) sets rd_is to
 /// Preston-Sanders' 1.358 ÷ 0.99 on a line that ran. A built-in step has no lines to trace. Edited and not saved (rd_is
-/// doubled, the filter coal only), the cell gives the edited value and OB isn't taken, with no lines run; the saved
-/// dataflow still gives 1.358 ÷ 0.99.
+/// doubled, the filter coal only), the cell gives the edited value and OB isn't taken, with no lines run; the worked
+/// examples it now fails are said, not refused, though saving it is; the saved dataflow still gives 1.358 ÷ 0.99.
 #[test]
 fn a_notebook_traces_a_formula_cell_saved_or_as_edited() {
     let mut s = session();
@@ -551,17 +551,19 @@ fn a_notebook_traces_a_formula_cell_saved_or_as_edited() {
     let err = column_trace(s.project(), s.log(), id, &node, initialise, u, None).unwrap_err();
     assert!(err.to_string().contains("initialise is built in, not a formula"), "{err}");
 
-    // Edited, not saved: rd_is doubled and the filter coal only. Its worked examples, which an edit like this one would
-    // fail (and so be refused, as a formula is checked before it runs), are taken off with it.
+    // Edited, not saved: rd_is doubled and the filter coal only. Its worked examples now fail: the column runs anyway,
+    // each failing example said (Tim, 17 November), where saving it is still refused.
     let Body::Dataflow(saved) = &s.project().object(flow).unwrap().body else { panic!("a dataflow") };
     let mut edited = (**saved).clone();
     let densities = edited.steps.iter_mut().find(|st| st.step == "densities").unwrap().formula.as_mut().unwrap();
     densities.script = densities.script.replace("rd_is = in_situ_rd(", "rd_is = 2 * in_situ_rd(");
-    densities.tests.clear();
     densities.when = [("material".to_string(), "coal".to_string())].into_iter().collect();
     let edited = std::sync::Arc::new(edited);
     let opened_edited = table_column(s.project(), s.log(), id, &node, Some(&edited)).unwrap();
-    assert!(opened_edited.edited && !opened.edited);
+    assert!(opened_edited.edited && !opened.edited && opened.failing.is_empty());
+    assert!(!opened_edited.failing.is_empty() && opened_edited.failing.iter().all(|f| f.starts_with("the formula step densities, test ")), "{:?}", opened_edited.failing);
+    let refused = s.run("dataflow.save", json!({ "name": "Reserves", "content": &*edited })).unwrap_err();
+    assert!(refused.to_string().contains("the formula step densities, test "), "saving it is still refused: {refused}");
     let after = |o: &zd_commands::builtin::ColumnSteps| o.steps[at].units.iter().find(|u| u.horizon == "U").unwrap().values["rd_is"];
     assert!(close(after(&opened_edited), 2.0 * rd_is) && close(after(&opened), rd_is));
     assert_eq!(opened_edited.steps[at].fits, [u, unit_id(&opened_edited.steps[at - 1], "L")], "U and L are B1's coal");

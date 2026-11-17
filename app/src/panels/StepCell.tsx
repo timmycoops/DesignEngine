@@ -1,6 +1,7 @@
 import { Braces, ChevronDown, ChevronRight, Columns3 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { ColumnSteps, FormulaTrace } from '@/bridge';
+import { StatusBadge } from '@/design-system/kit';
 import { cn } from 'cn';
 import { stepLabel, unitWords, valueText } from './columnSteps';
 import { type CellSummary, cellOut, codeLines, type Focus, focusAt, focusOf, readsFor, readsOnce, readWords, shortValue, summaryWords, whenWords } from './notebook';
@@ -27,6 +28,7 @@ export function StepCell({
   trace,
   onEdit,
   onWhole,
+  edited = false,
 }: {
   column: ColumnSteps;
   at: number;
@@ -38,6 +40,8 @@ export function StepCell({
   trace: CellTrace | null;
   onEdit?: () => void;
   onWhole: () => void;
+  /** The step being edited, run here before it's saved (decision 0081, point 7). */
+  edited?: boolean;
 }) {
   const cell = column.steps[at];
   const kind = cell.kind === 'formula' ? 'formula' : cell.kind === 'built_in' ? 'built in' : 'the blocks';
@@ -51,6 +55,11 @@ export function StepCell({
           {kind}
           {cell.kind === 'formula' && ` · ${whenWords(cell.when)}`}
         </span>
+        {edited && (
+          <StatusBadge tone="edited" title="Run here as edited, not yet saved">
+            edited
+          </StatusBadge>
+        )}
         <span className={cn('ml-auto', summary.quiet || at === 0 ? 'text-muted-foreground' : 'text-edited')} data-slot="cell-summary">
           {at === 0 ? `${cell.units.length} units as the blocks give them` : summaryWords(summary)}
         </span>

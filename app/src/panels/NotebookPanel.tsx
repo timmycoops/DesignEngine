@@ -17,9 +17,10 @@ import { type CellTrace, StepCell } from './StepCell';
 const keyOf = (path: string[]) => path.join('\u0001');
 
 export function Notebook() {
-  const { summary, notebookOf, openTool } = useWorkspace();
+  const { summary, notebookOf, openTool, runInNotebook } = useWorkspace();
   const table = useMemo(() => (notebookOf ? (summary?.objects ?? []).find((o) => o.id === notebookOf.table) : undefined), [summary, notebookOf]);
   const node = notebookOf?.node ?? [];
+  const edited = notebookOf?.edited ?? null;
   const [column, setColumn] = useState<ColumnSteps | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [focus, setFocus] = useState<Focus | null>(null);
@@ -37,12 +38,23 @@ export function Notebook() {
     setOpened(new Map());
     setTraces(new Map());
     if (!table) return;
-    void reservesColumn(table.id, node)
+    void reservesColumn(table.id, node, edited?.dataflow ?? null)
       .then((c) => {
         if (!live) return;
+        // An edited formula runs on the column of a table its own dataflow made, never another's.
+        if (edited && c.dataflow_id !== edited.dataflowId) {
+          setError(`This table was made by the ${c.dataflow} dataflow, not the one being edited: open a column of a table it made to run the formula there.`);
+          return;
+        }
         setColumn(c);
         const below = node.slice(c.column.length);
         setFocus(defaultFocus(c.steps, below.length ? { seam: below[0], bench: below[1] } : null));
+        // The edited step's cell open and in sight.
+        const at = edited ? c.steps.findIndex((s) => s.step === edited.step) : -1;
+        if (at > 0) {
+          setOpened(new Map([[at, true]]));
+          requestAnimationFrame(() => document.querySelector(`[data-slot="notebook-cell"][data-step="${CSS.escape(edited!.step)}"]`)?.scrollIntoView({ block: 'start' }));
+        }
       })
       .catch((e) => live && setError(String(e)));
     return () => {
@@ -69,7 +81,7 @@ export function Notebook() {
     for (const w of wanted) {
       if (traces.has(w.key)) continue;
       setTraces((m) => new Map(m).set(w.key, { state: 'loading' }));
-      void reservesColumnTrace(table.id, node, w.at, w.unit)
+      void reservesColumnTrace(table.id, node, w.at, w.unit, edited?.dataflow ?? null)
         .then((trace) => setTraces((m) => new Map(m).set(w.key, { state: 'done', trace })))
         .catch((e) => setTraces((m) => new Map(m).set(w.key, { state: 'failed', why: String(e) })));
     }
@@ -86,7 +98,7 @@ export function Notebook() {
   if (whole !== null) {
     return (
       <div className="flex h-full min-h-0 text-xs" data-tool-panel="notebook">
-        <ColumnStepsView table={table} node={node} backLabel="Notebook" startStep={whole} onBack={() => setWhole(null)} />
+        <ColumnStepsView table={table} node={node} backLabel="Notebook" startStep={whole} dataflow={edited?.dataflow ?? null} onBack={() => setWhole(null)} />
       </div>
     );
   }
@@ -140,6 +152,28 @@ export function Notebook() {
         )}
       </div>
       {error && <div className="px-2 py-1 text-destructive">{error}</div>}
+      {column?.edited && edited && (
+        <div className="flex flex-wrap items-center gap-x-3 px-2 py-1 text-edited" data-slot="notebook-edited">
+          <span>
+            Run on the {column.dataflow} dataflow as edited, not saved: {edited.step.replaceAll('_', ' ')} changed. Nothing is kept.
+          </span>
+          <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => runInNotebook(null)}>
+            Back to the saved formula
+          </button>
+        </div>
+      )}
+      {column && column.failing.length > 0 && (
+        <div className="px-2 py-1 text-warning" data-slot="notebook-failing">
+          <div>
+            {column.failing.length} worked example{column.failing.length === 1 ? " doesn't" : "s don't"} hold, run anyway: saving the formula is refused until {column.failing.length === 1 ? 'it holds' : 'they hold'} or {column.failing.length === 1 ? "it's" : "they're"} changed.
+          </div>
+          {column.failing.map((f) => (
+            <div key={f} className="pl-3">
+              {f}
+            </div>
+          ))}
+        </div>
+      )}
       {column && column.changed.length > 0 && (
         <div className="px-2 py-1 text-warning" data-slot="column-changed">
           Run on what's there now: {column.changed.join(', ')} changed since this table was made, so the cells may not give the table's numbers. Run reserves again to bring them together.
@@ -161,6 +195,7 @@ export function Notebook() {
               trace={traceAt(i)}
               onEdit={c.kind === 'formula' ? () => openTool('params', `formula:${column.dataflow_id}:${c.step}`) : undefined}
               onWhole={() => setWhole(i)}
+              edited={!!column.edited && edited?.step === c.step}
             />
           ))}
       </div>

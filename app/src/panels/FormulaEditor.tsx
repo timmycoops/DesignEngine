@@ -1,4 +1,4 @@
-import { Bot, Check, MessageSquareText, Play, Trash2, X } from 'lucide-react';
+import { Bot, Check, MessageSquareText, NotebookText, Play, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { type Dataflow, type DataflowStep, type FormulaReport, type FormulaTest, type FormulaTrace, formulaCheck, formulaReference, formulaTrace } from '@/bridge';
 import { forAi, readWhen, whenText } from './formulaText';
@@ -13,8 +13,25 @@ import { useWorkspace } from '@/workspace/context';
  * Explain, which hand an AI the formula and the dataflow's names, never a value. Saved with the dataflow.
  */
 
-export function FormulaEditor({ flow, index, saved, onStep, onRemove, onClose }: { flow: Dataflow; index: number; saved?: DataflowStep; onStep: (s: DataflowStep) => void; onRemove: () => void; onClose: () => void }) {
-  const { summary, selection } = useWorkspace();
+export function FormulaEditor({
+  flow,
+  flowId,
+  index,
+  saved,
+  onStep,
+  onRemove,
+  onClose,
+}: {
+  flow: Dataflow;
+  /** The saved dataflow's id: Run in notebook runs the notebook's column on this one as edited. */
+  flowId: string;
+  index: number;
+  saved?: DataflowStep;
+  onStep: (s: DataflowStep) => void;
+  onRemove: () => void;
+  onClose: () => void;
+}) {
+  const { summary, selection, notebookOf, runInNotebook } = useWorkspace();
   const step = flow.steps[index];
   const formula = step.formula ?? { script: '' };
   const [report, setReport] = useState<FormulaReport | null>(null);
@@ -100,6 +117,22 @@ export function FormulaEditor({ flow, index, saved, onStep, onRemove, onClose }:
           </span>
         )}
         <span className="ml-auto flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-6 px-2 text-xs"
+            disabled={!notebookOf || (report?.problems.length ?? 1) > 0}
+            onClick={() => runInNotebook({ dataflowId: flowId, dataflow: flow, step: step.step })}
+            title={
+              !notebookOf
+                ? "Open a block's column in the Notebook first (Reserves table, Open its column), then run this formula there as edited"
+                : (report?.problems.length ?? 1) > 0
+                  ? 'The formula has to compile to run'
+                  : "Run the Notebook's column on this dataflow as edited, before it's saved: every cell after this step shows what the edit does. Nothing is kept."
+            }
+          >
+            <NotebookText className="size-3.5" /> Run in notebook
+          </Button>
           <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => copy('write')} title="Copy how formulas are written, this dataflow's field and parameter names, and this formula, for an AI to write or change it. Names only, never values.">
             <Bot className="size-3.5" /> Copy for AI
           </Button>

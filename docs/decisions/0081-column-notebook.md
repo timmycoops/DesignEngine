@@ -1,8 +1,8 @@
 # 0081 — A block's column as a notebook
 
 Status: agreed 17 November 2026. Tim agreed the seven decisions on the Build Plan's "Column notebook plan" tab ("Agree
-all 7, go ahead with workstream 1"). Workstreams 1 (the engine) and 2 (the Notebook tab) are built here; running on
-the formula as edited (3) follows.
+all 7, go ahead with workstream 1"). All three workstreams are built here: the engine (1), the Notebook tab (2) and
+running on the formula as edited (3).
 
 ## Why
 
@@ -89,5 +89,28 @@ ROM ash cut-off, rom) are folded; `densities` shows its formula with 11 lines ru
 touched; its Whole column gives U's ROM coal as the table's 10,840.1 m³ (10,177.2 after `rom_loss`); Edit opens
 `densities` in the Parameters tab.
 
-Not yet: Run in notebook on a formula as edited (workstream 3), Copy for AI from a cell, and the notebook following a
-solid picked in the view.
+Not yet: Copy for AI from a cell, and the notebook following a solid picked in the view. Tim tried the tab on 17
+November: "a great start", the layout to be revisited later.
+
+## Built: workstream 3, Run in notebook
+
+Tim, 17 November, on an edit whose worked examples fail: "Let it run with the failing example flagged".
+
+- **Run in notebook** in the formula panel runs the open Notebook's column again on the dataflow as edited, not saved
+  (`runInNotebook`). The Notebook comes to the front: a line says it's the edited dataflow and which step, with Back
+  to the saved formula; the edited step's cell is open, in sight and marked edited; every cell after it shows what the
+  edit does, Whole column too. Nothing is kept. Off until a column is open in the Notebook and while the formula
+  doesn't compile; refused, said in the Notebook, where the table was made by another dataflow.
+- **Failing worked examples are flagged, not refused**, on a dataflow being edited
+  (`check_formula_steps_flagging`): a formula that doesn't compile or sits where a formula can't is refused as before,
+  but a worked example that doesn't hold is said (`ColumnSteps::failing`, each with its step and test) and the column
+  runs. The Notebook lists them in orange: saving is refused until they hold or are changed, as `dataflow.save` still
+  refuses them. The formula panel's own trace on a picked block runs the same way.
+- **The Parameters tab stays in the page** while another tab of its dock is in front, as the view does
+  (`KEEP_MOUNTED`): it holds edits not yet saved, which putting it behind the Notebook used to lose.
+
+Known answers: `a_notebook_traces_a_formula_cell_saved_or_as_edited` now keeps `densities`' worked examples on the
+edit: the column runs, U's rd_is doubled, each failing example said as `the formula step densities, test …`, and
+`dataflow.save` of the same edit is refused. The app check (36 of 36): rd_is doubled in `densities`, not saved, Run in
+notebook shows the edited cell marked, the doubled line run and one failing worked example flagged; the Parameters tab,
+behind the Notebook, still holds the edit; Back to the saved formula runs the saved one; Discard puts it back.

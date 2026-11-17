@@ -611,6 +611,7 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
           <section className="min-w-0 flex-1">
             <FormulaEditor
               flow={flow}
+              flowId={object.id}
               index={formulaAt}
               saved={saved.steps.find((s) => s.step === flow.steps[formulaAt].step)}
               onStep={(s) => set({ steps: flow.steps.map((t, j) => (j === formulaAt ? s : t)) })}
