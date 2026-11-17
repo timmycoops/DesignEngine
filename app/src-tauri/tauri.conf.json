@@ -15,7 +15,8 @@
         "label": "main",
         "title": "Zovlyn Pit Design",
         "width": 1600,
-        "height": 1000
+        "height": 1000,
+        "dragDropEnabled": false
       }
     ],
     "security": {

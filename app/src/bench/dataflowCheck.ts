@@ -168,6 +168,7 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
   }
   await checkParameters(summary, api, expect, show, picture);
   await checkFormulas(expect, picture, api);
+  await checkBeside(expect, api);
   return { ...results, failures };
 }
 
@@ -410,4 +411,39 @@ async function checkFormulas(expect: Expect, picture: Picture, api: DockviewApi)
   await wait(200);
   button('Discard')?.click();
   await wait(400);
+}
+
+/**
+ * Beside the Notebook: the Parameters and the Reserves table each put in their own half of its room with a press, and
+ * back as tabs with another; with the Reserves table beside, picking another block there runs its column in the Notebook
+ * with no press of Open its column.
+ */
+async function checkBeside(expect: Expect, api: DockviewApi) {
+  const nb = () => document.querySelector<HTMLElement>('[data-tool-panel="notebook"]');
+  const rt = () => document.querySelector<HTMLElement>('[data-tool-panel="reserves-table"]');
+  const press = (label: string) => [...(nb()?.querySelectorAll<HTMLButtonElement>('[data-slot="notebook-beside"] button') ?? [])].find((b) => b.textContent === label)?.click();
+  const group = (id: string) => api.getPanel(id)?.group.id;
+  showPanel(api, 'notebook');
+  for (let k = 0; k < 50 && !nb(); k++) await wait(100);
+  press('Parameters beside');
+  press('Reserves table beside');
+  await wait(400);
+  const apart = new Set([group('notebook'), group('params'), group('restable')]).size === 3;
+  expect('Parameters beside and Reserves table beside put each in its own half beside the Notebook, all three in sight', apart && !!nb() && !!rt() && !!document.querySelector('[data-tool-panel="parameters"]'));
+
+  const shown = () => nb()?.querySelector('[aria-label="Column shown"]')?.textContent ?? '';
+  const was = shown();
+  const other = [...(rt()?.querySelectorAll<HTMLElement>('[data-slot="reserves-node"]') ?? [])].find((r) => {
+    const path = (r.dataset.path ?? '').split(' > ');
+    return path.length === 3 && path[0] === 'Pit' && !was.endsWith(`› ${path[2]}`) && !was.includes(`› ${path[2]} ›`);
+  });
+  other?.click();
+  const want = (other?.dataset.path ?? '').split(' > ').join(' › ');
+  for (let k = 0; k < 100 && !(shown() === want && nb()?.querySelector('[data-slot="notebook-cell"]')); k++) await wait(100);
+  expect('the Notebook follows a block picked in the Reserves table beside it, with no press of Open its column', !!other && shown() === want, { was, now: shown() });
+
+  press('Parameters as a tab');
+  press('Reserves table as a tab');
+  await wait(400);
+  expect('pressed again, they go back as tabs behind the Notebook', group('params') === group('notebook') && group('restable') === group('notebook'));
 }

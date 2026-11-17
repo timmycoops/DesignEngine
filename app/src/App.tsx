@@ -60,7 +60,7 @@ import { type Mode, StringLayer } from './viewport/strings';
 import { typing } from './viewport/camera';
 import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Viewport';
 import { type AddingTo, type NotebookEdit, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
-import { ALL_PANELS_KEY, type PanelId, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
+import { ALL_PANELS_KEY, isBeside, type PanelId, placeBeside, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
 import { inUse, type Tool, type ToolAction, type ToolNeeds } from './tools';
 import { listenForChords } from './workspace/chords';
 import { FindCommand } from './workspace/FindCommand';
@@ -397,6 +397,12 @@ export default function App() {
   const runInNotebook = useCallback((edited: NotebookEdit | null) => {
     if (dockRef.current) showPanel(dockRef.current, 'notebook');
     setNotebookOf((was) => (was ? { ...was, n: was.n + 1, edited } : was));
+  }, []);
+  // The block picked in the Reserves table: the Notebook follows it, a formula run as edited carried on to it.
+  const followInNotebook = useCallback((table: string, node: string[]) => {
+    setNotebookOf((was) =>
+      was && was.table === table && was.node.length === node.length && was.node.every((w, i) => w === node[i]) ? was : { table, node, n: (was?.n ?? 0) + 1, edited: was?.edited ?? null },
+    );
   }, []);
   const [workflowPick, setWorkflowPick] = useState<{ id: string | null; case: string }>({ id: null, case: 'Base' });
   // What the ribbon lights: the panels in front in their docks, and what each is set to do, as the panels say.
@@ -1091,6 +1097,9 @@ export default function App() {
       notebookOf,
       openNotebook,
       runInNotebook,
+      followInNotebook,
+      placeBeside: (id, beside) => dockRef.current && placeBeside(dockRef.current, id, beside),
+      isBeside: (id, beside) => !!dockRef.current && isBeside(dockRef.current, id, beside),
       run,
       runRecord,
       seamViews,

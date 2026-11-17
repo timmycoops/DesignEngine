@@ -297,6 +297,35 @@ function bringToFront(api: DockviewApi, id: PanelId) {
   if (panel.dock === 'results' && !dock.api.isMaximized() && dock.api.height < panel.size) dock.api.setSize({ height: panel.size });
 }
 
+/** Whether `id` is open in a group of its own beside `beside`'s, rather than a tab in the same group. */
+export function isBeside(api: DockviewApi, id: PanelId, beside: PanelId) {
+  const panel = api.getPanel(id);
+  const other = api.getPanel(beside);
+  return !!panel && !!other && panel.group.id !== other.group.id && panel.group.api.location.type === 'grid' && panel.group.api.isVisible;
+}
+
+/**
+ * Puts `id` beside `beside`, each with half of `beside`'s room (the Parameters beside the Notebook, say), so both are
+ * read at once without dragging a tab. Asked again with them side by side, `id` goes back in as a tab behind it.
+ */
+export function placeBeside(api: DockviewApi, id: PanelId, beside: PanelId) {
+  const other = api.getPanel(beside);
+  if (!other) return showPanel(api, id);
+  if (other.group.api.isMaximized()) other.group.api.exitMaximized();
+  const panel = api.getPanel(id);
+  if (panel && isBeside(api, id, beside)) {
+    panel.api.moveTo({ group: other.group, position: 'center' });
+    other.api.setActive();
+  } else if (panel) {
+    panel.api.moveTo({ group: other.group, position: 'right' });
+  } else {
+    const made = PANELS.find((p) => p.id === id)!;
+    api.addPanel({ id, component: id, title: made.title, position: { referencePanel: beside, direction: 'right' } });
+  }
+  keepMounted(api);
+  onMinimisedChange?.();
+}
+
 export function resetLayout(api: DockviewApi) {
   if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
   api.clear();

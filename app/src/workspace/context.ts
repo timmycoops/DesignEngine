@@ -68,6 +68,15 @@ export interface Workspace {
   openNotebook: (table: string, node: string[]) => void;
   /** Runs the open notebook's column again on a dataflow as edited, not saved; null goes back to the saved one. */
   runInNotebook: (edit: NotebookEdit | null) => void;
+  /**
+   * The block picked in the Reserves table, which the Notebook follows without a press: its column, keeping a formula
+   * run as edited. Brings no tab to the front.
+   */
+  followInNotebook: (table: string, node: string[]) => void;
+  /** Puts one tab beside another, its own half of the other's dock, or back in with it as a tab if it's beside already. */
+  placeBeside: (id: PanelId, beside: PanelId) => void;
+  /** Whether a tab is open in a group of its own beside another's, rather than a tab behind it. */
+  isBeside: (id: PanelId, beside: PanelId) => boolean;
   /** A panel that does several things says which it's set to, so the ribbon lights that tool; null as it closes. */
   toolMode: (panel: PanelId, mode: string | null) => void;
   /** Runs an engine command; reports the outcome on the status line. False if it failed. */

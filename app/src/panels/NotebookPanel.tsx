@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { type ColumnSteps, reservesColumn, reservesColumnTrace } from '@/bridge';
 import { Select } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
+import type { PanelId } from '@/workspace/panels';
 import { ColumnStepsView } from './ColumnStepsView';
 import { unitWords } from './columnSteps';
 import { cellSummaries, defaultFocus, type Focus, focusAt, focusOf } from './notebook';
@@ -16,8 +17,16 @@ import { type CellTrace, StepCell } from './StepCell';
 
 const keyOf = (path: string[]) => path.join('\u0001');
 
+/** The tabs a planner reads beside the notebook: the parameters its steps read, and the table whose block it follows. */
+const BESIDE: readonly { id: PanelId; title: string }[] = [
+  { id: 'params', title: 'Parameters' },
+  { id: 'restable', title: 'Reserves table' },
+];
+
 export function Notebook() {
-  const { summary, notebookOf, openTool, runInNotebook } = useWorkspace();
+  const { summary, notebookOf, openTool, runInNotebook, placeBeside, isBeside } = useWorkspace();
+  // Bumped as a tab is put beside or back, so the buttons say which way they go next.
+  const [, setLaidOut] = useState(0);
   const table = useMemo(() => (notebookOf ? (summary?.objects ?? []).find((o) => o.id === notebookOf.table) : undefined), [summary, notebookOf]);
   const node = notebookOf?.node ?? [];
   const edited = notebookOf?.edited ?? null;
@@ -92,8 +101,32 @@ export function Notebook() {
     return u ? (traces.get(`${ask}|${i}:${u.id}`) ?? { state: 'loading' }) : null;
   };
 
+  // Tabs to read beside the notebook, each its own half of the dock, and back as a tab with a second press.
+  const besideButtons = (
+    <span className="flex gap-2" data-slot="notebook-beside">
+      {BESIDE.map(({ id, title }) => {
+        const beside = isBeside(id, 'notebook');
+        return (
+          <button
+            key={id}
+            type="button"
+            className="text-muted-foreground hover:text-foreground hover:underline"
+            title={beside ? `Put the ${title} tab back behind the Notebook` : `The ${title} tab beside the Notebook, each with half the room, to read both at once`}
+            onClick={() => (placeBeside(id, 'notebook'), setLaidOut((n) => n + 1))}
+          >
+            {beside ? `${title} as a tab` : `${title} beside`}
+          </button>
+        );
+      })}
+    </span>
+  );
   if (!notebookOf || !table) {
-    return <div className="p-3 text-xs text-muted-foreground">Pick a block in the Reserves table (or a seam or bench of one) and press Open its column: its column shows here a step at a time, what went in, what ran and what it changed.</div>;
+    return (
+      <div className="space-y-2 p-3 text-xs text-muted-foreground" data-tool-panel="notebook">
+        <div>Pick a block in the Reserves table, or a seam or bench of one: its column shows here a step at a time, what went in, what ran and what it changed. The Notebook follows the block picked there.</div>
+        {besideButtons}
+      </div>
+    );
   }
   if (whole !== null) {
     return (
@@ -140,16 +173,19 @@ export function Notebook() {
           <input type="checkbox" checked={fold} onChange={(e) => (setFold(e.target.checked), setOpened(new Map()))} />
           Fold steps that changed nothing
         </label>
-        {column && (
-          <span className="ml-auto flex gap-2">
-            <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => setOpened(new Map(column.steps.map((_, i) => [i, true])))}>
+        <span className="ml-auto flex gap-3">
+          {besideButtons}
+          {column && (
+            <span className="flex gap-2">
+              <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => setOpened(new Map(column.steps.map((_, i) => [i, true])))}>
               Open all
             </button>
-            <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => setOpened(new Map(column.steps.map((_, i) => [i, false])))}>
-              Fold all
-            </button>
-          </span>
-        )}
+              <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => setOpened(new Map(column.steps.map((_, i) => [i, false])))}>
+                Fold all
+              </button>
+            </span>
+          )}
+        </span>
       </div>
       {error && <div className="px-2 py-1 text-destructive">{error}</div>}
       {column?.edited && edited && (
