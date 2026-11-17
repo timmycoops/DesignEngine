@@ -130,6 +130,7 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
   for (let k = 0; k < 50 && !(panel()?.textContent ?? '').includes('solids picked'); k++) await wait(100);
   const picked = /([\d,]+) solids? picked/.exec(panel()?.textContent ?? '')?.[1];
   expect("Select its solids picks the block's 21 solids", picked === '21', picked);
+  await checkColumn(panel, expect, picture);
   if (baseTable) {
     const ids = await reservesSolids(baseTable.id, ['Pit', '4', 'B2', 'M']);
     const where = ids.length ? await reservesNodeOf(baseTable.id, ids[0]) : null;
@@ -161,6 +162,57 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
 }
 
 type Expect = (what: string, ok: boolean, detail?: unknown) => void;
+
+/**
+ * Open its column (decision 0075, 5b) on block 3_B1 of the Base table: its column run again step by step. The steps are
+ * the dataflow's; after rom_dilution the units sent to U's ROM coal section add up to the table's ROM coal U, 10,840.1
+ * m³, more than after rom_loss as dilution came in, the dilution units new; ← steps back; Table goes back.
+ */
+async function checkColumn(panel: () => HTMLElement | null, expect: Expect, picture: Picture) {
+  const button = (label: string) => [...(panel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent?.trim() === label) ?? null;
+  button('Open its column')?.click();
+  const grid = () => panel()?.querySelector<HTMLElement>('[data-slot="column-grid"]') ?? null;
+  for (let k = 0; k < 100 && !grid(); k++) await wait(100);
+  const steps = [...(panel()?.querySelectorAll<HTMLElement>('[data-slot="column-steps"] [data-step]') ?? [])].map((s) => s.dataset.step);
+  const want = ['as input', 'small_volumes', 'initialise', 'fill_size', 'limits', 'densities', 'in_situ', 'join_benches', 'discard', 'working_sections', 'rom_loss', 'rom_dilution', 'rom_ash_cutoff', 'rom', 'rom_qualities', 'final'];
+  expect("Open its column runs 3_B1's column through the dataflow's steps", !!grid() && JSON.stringify(steps) === JSON.stringify(want), steps);
+  const at = async (step: string) => {
+    panel()?.querySelector<HTMLButtonElement>(`[data-slot="column-steps"] [data-step="${step}"]`)?.click();
+    for (let k = 0; k < 50 && panel()?.querySelector(`[data-step="${step}"]`)?.getAttribute('aria-selected') !== 'true'; k++) await wait(50);
+    await wait(100);
+  };
+  // U's ROM coal, by the units' heads: those a step sent to its ROM coal section (dilution), and its coal still in its
+  // working section, sent nowhere else; their volumes after the step (the cell's own line, not what it was).
+  const romCoalU = () => {
+    const heads = [...(grid()?.querySelectorAll<HTMLElement>('thead th[data-unit]') ?? [])];
+    const cells = [...(grid()?.querySelectorAll<HTMLElement>('tr[data-field="volume"] td') ?? [])].slice(1);
+    const toU = (head: string) => /ROM \d* ?coal U$/.test(head) || (/section \d+ coal U$/.test(head) && !head.includes('ROM'));
+    return heads.reduce((s, h, i) => (toU(h.textContent ?? '') ? s + (Number((cells[i]?.childNodes[0]?.textContent ?? '').replaceAll(',', '')) || 0) : s), 0);
+  };
+  await at('rom_loss');
+  const afterLoss = romCoalU();
+  await at('rom_dilution');
+  const afterDilution = romCoalU();
+  const fresh = grid()?.querySelectorAll('thead th[data-unit] [title="Made by this step"]').length ?? 0;
+  const changed = grid()?.querySelectorAll('td.text-edited').length ?? 0;
+  expect(
+    "after rom_dilution U's ROM coal is the table's 10,840.1 m³, up from after rom_loss, its dilution new units",
+    // Each unit's volume is read as shown, to 0.1 m³: five of them may be out by 0.25 m³ added up.
+    Math.abs(afterDilution - 10_840.1) < 0.3 && afterDilution > afterLoss && fresh > 0,
+    { afterLoss: Math.round(afterLoss * 10) / 10, afterDilution: Math.round(afterDilution * 10) / 10, fresh, changed },
+  );
+  const tab = panel()?.querySelector<HTMLElement>('[data-step="rom_dilution"]')?.getBoundingClientRect();
+  const strip = panel()?.querySelector<HTMLElement>('[data-step="rom_dilution"]')?.parentElement?.getBoundingClientRect();
+  expect('the step picked is in sight along the strip', !!tab && !!strip && tab.left >= strip.left - 1 && tab.right <= strip.right + 1, tab && strip ? { tab: [Math.round(tab.left), Math.round(tab.right)], strip: [Math.round(strip.left), Math.round(strip.right)] } : null);
+  if (picture) await picture('open-its-column');
+  // ← goes back a step, from the grid.
+  panel()?.querySelector<HTMLElement>('[data-slot="column-steps"]')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+  for (let k = 0; k < 50 && panel()?.querySelector('[data-step="rom_loss"]')?.getAttribute('aria-selected') !== 'true'; k++) await wait(50);
+  expect('← steps back to rom_loss', panel()?.querySelector('[data-step="rom_loss"]')?.getAttribute('aria-selected') === 'true');
+  button('Table')?.click();
+  for (let k = 0; k < 50 && !panel()?.querySelector('[data-slot="reserves-breakdown"]'); k++) await wait(100);
+  expect('Table goes back to the breakdown', !!panel()?.querySelector('[data-slot="reserves-breakdown"]'));
+}
 
 /**
  * The Parameters tab (decision 0075, 5d) on the demo pit's assumptions: the solids Select its solids picked mark the cells

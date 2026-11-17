@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Download, MousePointerSquareDashed } from 'lucide-react';
+import { ChevronDown, ChevronRight, Columns3, Download, MousePointerSquareDashed } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { type Breakdown, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, type ReservesNode } from '@/bridge';
 import { Choice, Field, Select } from '@/design-system/kit';
@@ -6,6 +6,7 @@ import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { breakdownCsv, cellText, fieldRows, nodeForLeaf, samePath, startsWith, unitLabel } from './reservesTable';
+import { ColumnStepsView } from './ColumnStepsView';
 import { fmt } from './format';
 
 /**
@@ -92,6 +93,8 @@ export function ReservesTable() {
     writeAcross(a);
   };
   const [said, setSaid] = useState<string | null>(null);
+  // Open its column (5b): the node whose block column is shown step by step in place of the breakdown.
+  const [columnOf, setColumnOf] = useState<string[] | null>(null);
 
   const tableKey = table ? `${table.id}@${table.revision}` : '';
   useEffect(() => {
@@ -100,6 +103,7 @@ export function ReservesTable() {
     setNode([]);
     setOpen([]);
     setLeaf(null);
+    setColumnOf(null);
     if (!table) return;
     void reservesTree(table.id).then((t) => {
       if (!live) return;
@@ -151,6 +155,8 @@ export function ReservesTable() {
       setNode(at.node);
       setOpen(at.open);
       setLeaf(found);
+      // An open column follows too: the picked solid's own.
+      setColumnOf((c) => (c ? found : c));
       setExpanded((e) => new Set([...e, ...at.node.map((_, i) => keyOf(at.node.slice(0, i + 1))), keyOf([])]));
     });
     return () => {
@@ -166,6 +172,9 @@ export function ReservesTable() {
     setOpen([]);
     setLeaf(null);
     setSaid(null);
+    // An open column shows the column of a block picked in the tree, and gives way to the table above a block.
+    const seam = breakdown ? breakdown.levels.findIndex((l) => l.toLowerCase() === 'seam') : -1;
+    setColumnOf((c) => (c && seam > 0 && path.length >= seam ? path : null));
   };
   const toggleOpen = (path: string[]) => setOpen((o) => (o.some((p) => samePath(p, path)) ? o.filter((p) => !startsWith(p, path)) : [...o, path]));
   const toggleFolded = (key: string) =>
@@ -195,7 +204,10 @@ export function ReservesTable() {
     return <div className="p-3 text-xs text-muted-foreground">No reserves table yet: run a reserves dataflow (Reserves, or the workflow's reserves step) and its table shows here.</div>;
   }
 
-  const crumbs: { label: string; path: string[] }[] = [{ label: 'All', path: [] }, ...node.map((w, i) => ({ label: w || '(none)', path: node.slice(0, i + 1) }))];
+  // A column is a block: the levels above the seam. A node at a block or below it opens its block's column.
+  const seamAt = breakdown ? breakdown.levels.findIndex((l) => l.toLowerCase() === 'seam') : -1;
+  const canOpenColumn = seamAt > 0 && node.length >= seamAt;
+  const crumbs: { label: string; path: string[] }[] =[{ label: 'All', path: [] }, ...node.map((w, i) => ({ label: w || '(none)', path: node.slice(0, i + 1) }))];
   return (
     <div className="flex h-full min-h-0 text-xs" data-tool-panel="reserves-table">
       <div className="flex w-52 shrink-0 flex-col border-r border-border">
@@ -212,6 +224,9 @@ export function ReservesTable() {
           {tree && <TreeRow n={tree} depth={0} node={node} leaf={leaf} expanded={expanded} setExpanded={setExpanded} show={show} />}
         </div>
       </div>
+      {columnOf && table ? (
+        <ColumnStepsView table={table} node={columnOf} onBack={() => setColumnOf(null)} />
+      ) : (
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1">
           <span className="flex items-center gap-1" aria-label="Node shown">
@@ -233,6 +248,16 @@ export function ReservesTable() {
           <Choice value={follow} options={FOLLOWS} labels={FOLLOW_LABELS} onChange={setFollow} label="Follow a solid picked in the view" />
           <span className="ml-auto flex items-center gap-1">
             {said && <span className="text-ok">{said}</span>}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              disabled={!canOpenColumn}
+              title={canOpenColumn ? "Step this block's column through the dataflow: every unit before and after each step" : 'Pick a block, or a seam or bench of one, to step its column through the dataflow'}
+              onClick={() => setColumnOf(leaf && startsWith(leaf, node) ? leaf : node)}
+            >
+              <Columns3 className="size-3.5" /> Open its column
+            </Button>
             <Button variant="outline" size="sm" className="h-6 px-2 text-xs" title="Pick the solids this node was made from, in the view, the tree and Blocks" onClick={() => void selectSolids()}>
               <MousePointerSquareDashed className="size-3.5" /> Select its solids
             </Button>
@@ -324,6 +349,7 @@ export function ReservesTable() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

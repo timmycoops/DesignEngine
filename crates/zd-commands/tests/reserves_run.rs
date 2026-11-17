@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use zd_commands::builtin::{RunReservesParams, reserves_preview};
+use zd_commands::builtin::{RunReservesParams, reserves_preview, table_column};
 use zd_commands::{Code, Command, CommandError, CommandSpec, Inputs, Outcome, Registry, RunRecord, Session, Severity};
 use zd_core::{Attributes, Body, Change, ChangeKind, ColumnValues, ObjectId, Table};
 
@@ -317,6 +317,71 @@ fn the_preview_shows_a_block_s_column_after_each_step() {
     let u = &views[5].units[1];
     assert_eq!(u.joined, [("18".to_string(), 0.5), ("16".to_string(), 0.5)]);
     assert!(close(u.values["rd"], 1.5) && close(u.values["volume"], 20_000.0));
+}
+
+/// Open its column (decision 0075, 5b): a bench of a reserves table opens its block's column, run again with the table's
+/// own run's settings from the log. B2's units keep their ids through the steps but for U's two benches, which
+/// `join_benches` takes away and makes one new unit of, and the underburden `initialise` adds; each step says what it
+/// did to this column alone. A strip is above a column and refused; a block revised since is named as changed.
+#[test]
+fn a_table_s_bench_opens_its_block_s_column_step_by_step() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "in_situ", "join_benches"]);
+    let params = json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" });
+    let record = s.run("reserves.run", params.clone()).unwrap();
+    let id = created(&record)[0];
+    let node: Vec<String> = ["Pit", "3", "B2", "U", "18"].map(String::from).to_vec();
+    let opened = table_column(s.project(), s.log(), id, &node).unwrap();
+    assert_eq!(opened.column, ["Pit", "3", "B2"]);
+    assert_eq!((opened.case.as_str(), opened.dataflow.as_str()), ("Base", "Reserves"));
+    assert!(opened.changed.is_empty(), "{:?}", opened.changed);
+
+    // The same column as the preview gives, step for step.
+    let p: RunReservesParams = serde_json::from_value(params).unwrap();
+    let project = s.project();
+    let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+    let preview = reserves_preview(&get, &p, "Base", &opened.column).unwrap();
+    let steps: Vec<&str> = opened.steps.iter().map(|v| v.step.as_str()).collect();
+    assert_eq!(steps, ["as input", "initialise", "fill_size", "limits", "in_situ", "join_benches"]);
+    for (a, b) in opened.steps.iter().zip(&preview) {
+        assert_eq!(a.units.len(), b.units.len());
+        for (u, w) in a.units.iter().zip(&b.units) {
+            assert_eq!((u.id, &u.horizon, &u.bench), (w.id, &w.horizon, &w.bench));
+            assert!(u.values.iter().all(|(k, v)| v.to_bits() == w.values[k].to_bits() || (v.is_nan() && w.values[k].is_nan())), "{k:?}", k = a.step);
+        }
+    }
+
+    // Ids: input OB, U 18, U 16, U-L, L; underburden new at initialise; U's benches gone at join_benches, one new U.
+    let ids_at = |i: usize| opened.steps[i].units.iter().map(|u| (u.id, u.horizon.clone(), u.bench.clone())).collect::<Vec<_>>();
+    let input = ids_at(0);
+    assert_eq!(input.iter().map(|(_, h, b)| format!("{h} {}", b.clone().unwrap_or_default())).collect::<Vec<_>>(), ["OB ", "U 18", "U 16", "U-L ", "L "]);
+    let initialised = ids_at(1);
+    assert_eq!(&initialised[..5], &input[..], "initialise keeps every unit, in order");
+    assert!(initialised[5].1 == "underburden" && !input.iter().any(|(id, ..)| *id == initialised[5].0), "the underburden is a new unit");
+    let joined = ids_at(5);
+    let kept: Vec<u32> = [0, 3, 4].map(|i| input[i].0).to_vec();
+    assert_eq!(joined.iter().filter(|(id, ..)| kept.contains(id)).count(), 3, "OB, U-L and L keep their ids");
+    assert!(!joined.iter().any(|(id, ..)| *id == input[1].0 || *id == input[2].0), "U's benches are gone after the join");
+    let u = &opened.steps[5].units[1];
+    assert!(!input.iter().any(|(id, ..)| *id == u.id) && u.joined == [("18".to_string(), 0.5), ("16".to_string(), 0.5)]);
+    assert!(close(u.values["volume"], 20_000.0) && close(u.values["rd"], 1.5));
+
+    // What each step said, of this column only: one underburden of 5,000 m² x 10 m.
+    assert!(opened.steps[0].said.is_empty() && opened.steps[5].said.is_empty(), "{:?}", opened.steps[0].said);
+    assert_eq!(opened.steps[1].said, ["1 unit underburden added below the last coal, out of model, 50000.0 m3"]);
+
+    // A strip is above a column.
+    let err = table_column(s.project(), s.log(), id, &["Pit".to_string(), "3".to_string()]).unwrap_err();
+    assert!(err.to_string().contains("pick a pit, strip, block or below it"), "{err}");
+
+    // A block revised since the table was made is named, and the column runs on it as it is now.
+    let l = ids[ids.len() - 1];
+    s.run("test.tag", json!({ "object": l, "attributes": { "ash": 25.0 } })).unwrap();
+    let opened = table_column(s.project(), s.log(), id, &node).unwrap();
+    assert_eq!(opened.changed, ["3_B2_L"]);
+    let l_unit = opened.steps[0].units.iter().find(|u| u.horizon == "L").unwrap();
+    assert!(close(l_unit.values["ash"], 25.0));
 }
 
 // Decision 0073, workstream 3a: small volumes, initialise's checks, underburden and quality defaults.

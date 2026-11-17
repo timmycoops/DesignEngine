@@ -58,7 +58,10 @@ pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, S
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
 pub use workflow::{SaveWorkflow, SaveWorkflowParams, WORKFLOW_LAYER};
 pub use measure::{MEASURES, Measure, MeasureParams, block_length, floor_dip, measure, plan_area};
-pub use reserves_run::{FormulaTraceView, TraceLineView, formula_trace, OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, UNDERBURDEN_THICKNESS, UnitView, dataflow_starter, preston_sanders, reserves_preview};
+pub use reserves_run::{
+    ColumnSteps, FormulaTraceView, TraceLineView, formula_trace, OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, UNDERBURDEN_THICKNESS, UnitView, dataflow_starter, preston_sanders,
+    reserves_preview, table_column,
+};
 pub use starter::{DISCARDED, RD_ADT, starter_formulas, with_starter_formulas};
 pub use zd_script::REFERENCE as FORMULA_REFERENCE;
 pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_formula_steps, declared as formula_declared};

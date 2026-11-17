@@ -630,6 +630,49 @@ export const reservesSolids = (object: string, node: string[]) => invoke<string[
 /** Where a solid sits in a reserves table, or null if it isn't in it. */
 export const reservesNodeOf = (object: string, solid: string) => invoke<string[] | null>('reserves_node_of', { object, solid });
 
+/** A unit of a block's column after a step (decision 0075, 5b): its id, kept through the steps, its labels and values. */
+export interface ColumnUnit {
+  id: number;
+  horizon: string;
+  material: string;
+  seam: string;
+  bench: string | null;
+  /** For a joined unit, its benches and their shares. */
+  joined: [string, number][];
+  became: string | null;
+  section: string | null;
+  rom: string | null;
+  /** A value a field; null where it has none. */
+  values: Record<string, number | null>;
+}
+
+/** The column after one step, and what the step said of it. */
+export interface ColumnStep {
+  step: string;
+  units: ColumnUnit[];
+  said: string[];
+}
+
+/** A field of a block's column, in the dataflow's order, with its unit and kind. */
+export interface ColumnField {
+  name: string;
+  unit: string;
+  kind: string;
+}
+
+/** A reserves table's block column run again step by step, with what has changed since the table was made. */
+export interface ColumnSteps {
+  column: string[];
+  case: string;
+  dataflow: string;
+  fields: ColumnField[];
+  steps: ColumnStep[];
+  changed: string[];
+}
+
+/** Open its column: the block column a reserves table's node sits in, run again through its dataflow, every step. */
+export const reservesColumn = (object: string, node: string[]) => invoke<ColumnSteps>('reserves_column', { object, node });
+
 /** One folder a seam model reads its grids from, with how many of them are there (decision 0058, stage 4). */
 export interface FolderCheck {
   folder: string;

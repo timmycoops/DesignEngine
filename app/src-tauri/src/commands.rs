@@ -688,6 +688,18 @@ pub async fn reserves_breakdown(object: ObjectId, node: Vec<String>, open: Vec<V
     .await?
 }
 
+/// Open its column (decision 0075, 5b): the block column a reserves table's node sits in, run again through its dataflow
+/// with the settings of the run that made the table, every unit after each step. Nothing is kept.
+#[tauri::command]
+pub async fn reserves_column(object: ObjectId, node: Vec<String>, state: State<'_, AppState>) -> Result<zd_commands::builtin::ColumnSteps, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        zd_commands::builtin::table_column(app.session.project(), app.session.log(), object, &node).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
 /// The parameter tables read with one, in order, and where a picked solid takes its values from (decision 0075, 5d).
 #[derive(Serialize)]
 pub struct ParametersPicked {
