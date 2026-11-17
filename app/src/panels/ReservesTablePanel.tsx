@@ -66,7 +66,7 @@ function writeFolded(folded: Set<string>) {
 const keyOf = (path: string[]) => path.join('\u0001');
 
 export function ReservesTable() {
-  const { summary, selection, setSelection, openNotebook } = useWorkspace();
+  const { summary, selection, setSelection, openNotebook, followInNotebook } = useWorkspace();
   const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table'), [summary]);
   const [tableId, setTableId] = useState<string | null>(null);
   // A table picked anywhere is the one shown.
@@ -161,6 +161,15 @@ export function ReservesTable() {
 
   const rows = useMemo(() => (breakdown ? fieldRows(breakdown, fields === 'all', folded) : []), [breakdown, fields, folded]);
 
+  // The Notebook follows the block shown here, or the seam or bench of it marked, with no press of Open its column.
+  const levels = breakdown?.levels;
+  const followKey = table ? `${table.id}|${keyOf(node)}|${leaf ? keyOf(leaf) : ''}|${levels?.join('|') ?? ''}` : '';
+  useEffect(() => {
+    if (!table || !levels) return;
+    const seam = levels.findIndex((l) => l.toLowerCase() === 'seam');
+    if (seam > 0 && node.length >= seam) followInNotebook(table.id, leaf && startsWith(leaf, node) ? leaf : node);
+  }, [followKey]);
+
   const show = (path: string[]) => {
     setNode(path);
     setOpen([]);
@@ -198,6 +207,7 @@ export function ReservesTable() {
   // A column is a block: the levels above the seam. A node at a block or below it opens its block's column.
   const seamAt = breakdown ? breakdown.levels.findIndex((l) => l.toLowerCase() === 'seam') : -1;
   const canOpenColumn = seamAt > 0 && node.length >= seamAt;
+  const columnNode = leaf && startsWith(leaf, node) ? leaf : node;
   const crumbs: { label: string; path: string[] }[] =[{ label: 'All', path: [] }, ...node.map((w, i) => ({ label: w || '(none)', path: node.slice(0, i + 1) }))];
   return (
     <div className="flex h-full min-h-0 text-xs" data-tool-panel="reserves-table">
@@ -241,8 +251,8 @@ export function ReservesTable() {
               size="sm"
               className="h-6 px-2 text-xs"
               disabled={!canOpenColumn}
-              title={canOpenColumn ? "This block's column in the Notebook: each step, what it read, its formula or rule, and what it changed" : 'Pick a block, or a seam or bench of one, to open its column in the Notebook'}
-              onClick={() => table && openNotebook(table.id, leaf && startsWith(leaf, node) ? leaf : node)}
+              title={canOpenColumn ? "This block's column in the Notebook: each step, what it read, its formula or rule, and what it changed. An open Notebook follows the block shown here without a press" :'Pick a block, or a seam or bench of one, to open its column in the Notebook'}
+              onClick={() => table && openNotebook(table.id, columnNode)}
             >
               <Columns3 className="size-3.5" /> Open its column
             </Button>
