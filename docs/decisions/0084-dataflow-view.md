@@ -1,8 +1,9 @@
 # 0084 — The Dataflow view: a flow strip, the step, the block before and after
 
 Status: agreed 17 November 2026. Tim picked layout B of three drawn as pictures and agreed the seven decisions on the
-Build Plan's "Dataflow view plan" tab ("Yep layout b looks good", then "Go for it"). Workstream 1 (what each step wrote)
-is built here; 2 (the Inputs row and the strip) and 3 (the step pane, Before and After) are to come.
+Build Plan's "Dataflow view plan" tab ("Yep layout b looks good", then "Go for it"). Workstreams 1 (what each step
+wrote) and 2 (the Inputs row, the strip and Show as graph) are built here; 3 (the step pane, Before and After, the tab
+renamed) is to come.
 
 ## Why
 
@@ -42,3 +43,31 @@ pieces a step added when the column is opened (`table_column`, `reserves_preview
 | Test | Known answer | Tolerance |
 |---|---|---|
 | `each_step_s_writes_add_up_to_the_reserves_table_folder_by_folder` (the 4c column, dilution only, run to `final`) | Imported 95,000 m³ waste (3 units) and 25,000 m³ coal (2); rom_dilution roof 500, floor 1,000, edge 10, other 250 m³, two units each; `final` ROM coal 10,854 + 15,906 m³; every folder's writes over the steps equal the table's total for it, and no volume in the table that no step wrote | 1e-9 relative |
+
+## Built: workstream 2, the Inputs row, the strip and Show as graph
+
+Over the Notebook's cells for now; workstream 3 puts the step pane and Before and After under them in place of the
+cells.
+
+- **The column's inputs from the engine.** `ColumnSteps` gives `blocks` (the column's block solids by name, top down),
+  `model` (the seam model the run named, by name; none where it gave its own stack) and `horizons` (how many the stack
+  holds).
+- **The logic** (`app/src/panels/dataflowView.ts`): `stripSteps` (a step a chip, the column as input named Imported, its
+  units passed on, its writes under their top folder, `Dilution` from `Dilution\Roof` and `Dilution\Floor`, volumes added
+  up); `inputsOf` (the blocks, the model or the run's own stack, and each parameter table; the blocks and stack lit when
+  the column as input is picked, a table lit with the columns a built-in step read from it, for the unit followed where
+  it read any, else for every unit; a formula's reads are in its trace by name and light nothing); `tablesRead` (what the
+  graph wires); `volumeShort` (412.3k, 1.1k, 350).
+- **The strip** (`DataflowStrip.tsx`): Inputs, then the steps wrapping as they need to; a formula marked ƒ and dashed, a
+  step that changed nothing quieter; under each step its writes with their volumes (the folders in full in the tip); the
+  units passed on under each arrow. A step clicked is picked, lit gold, its cell opened, marked gold down its left and
+  brought into sight.
+- **Show as graph** (`DataflowGraph.tsx`, React Flow): the inputs across the top, the steps below in rows of six in run
+  order, each write a node under its step, the blocks wired to the column as input and each table wired, dashed, to the
+  steps that read it, the picked step's wires gold. Not dragged; zoom and pan. A step clicked picks it.
+
+| Test | Known answer |
+|---|---|
+| `a_table_s_bench_opens_its_block_s_column_step_by_step` (engine) | B2's five block solids top down, no seam model, as many horizons as the run's own stack |
+| `dataflowView.test.mjs` (6) | writes under their top folder (Dilution 1,500 m³ from roof 500 and floor 1,000); Imported first with its units; short volumes; nothing lit with no step picked; the blocks and stack lit for the column as input; a built-in step's table and columns lit for the unit followed, else every unit; a formula lighting nothing |
+| `zd-app --bench --dataflow` (16 Nov demo, 3_B1) | a chip a step in run order, Imported writing Imported, rom_dilution Dilution, final ROM; units on every arrow; rom_dilution clicked picked, its cell marked, Reserves assumptions and its column lit; Show as graph a node a step, the writes, the tables wired; a step clicked in the graph picked |

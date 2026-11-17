@@ -4,6 +4,8 @@ import { Select } from '@/design-system/kit';
 import { useWorkspace } from '@/workspace/context';
 import type { PanelId } from '@/workspace/panels';
 import { ColumnStepsView } from './ColumnStepsView';
+import { DataflowGraph } from './DataflowGraph';
+import { DataflowStrip } from './DataflowStrip';
 import { unitWords } from './columnSteps';
 import { cellSummaries, defaultFocus, type Focus, focusAt, focusOf } from './notebook';
 import { type CellTrace, StepCell } from './StepCell';
@@ -12,7 +14,9 @@ import { type CellTrace, StepCell } from './StepCell';
  * The Notebook tab (decision 0081): a block's column as a notebook, a cell a step down the page, each showing what went
  * in for the unit in focus, the formula that ran on it or the built-in step's rule, and what the step caused across the
  * column. Opened from the Reserves table's Open its column. Steps that changed nothing fold to one line; a cell's Whole
- * column shows today's grid at that step; a formula's Edit opens it in the Parameters tab.
+ * column shows today's grid at that step; a formula's Edit opens it in the Parameters tab. Over the cells, the Dataflow
+ * view's strip (decision 0084): the column's inputs and its steps in run order, what each wrote, a step clicked picked
+ * and its cell brought into sight; Show as graph draws the same as nodes and wires.
  */
 
 const keyOf = (path: string[]) => path.join('\u0001');
@@ -37,6 +41,9 @@ export function Notebook() {
   const [opened, setOpened] = useState<Map<number, boolean>>(new Map());
   const [whole, setWhole] = useState<number | null>(null);
   const [traces, setTraces] = useState<Map<string, CellTrace>>(new Map());
+  // The step picked in the strip (decision 0084), and the strip drawn as a graph.
+  const [picked, setPicked] = useState<number | null>(null);
+  const [graph, setGraph] = useState(false);
 
   const ask = `${notebookOf?.n ?? 0}:${table?.id ?? ''}@${table?.revision ?? 0}:${keyOf(node)}`;
   useEffect(() => {
@@ -46,6 +53,7 @@ export function Notebook() {
     setWhole(null);
     setOpened(new Map());
     setTraces(new Map());
+    setPicked(null);
     if (!table) return;
     void reservesColumn(table.id, node, edited?.dataflow ?? null)
       .then((c) => {
@@ -61,6 +69,7 @@ export function Notebook() {
         // The edited step's cell open and in sight.
         const at = edited ? c.steps.findIndex((s) => s.step === edited.step) : -1;
         if (at > 0) {
+          setPicked(at);
           setOpened(new Map([[at, true]]));
           requestAnimationFrame(() => document.querySelector(`[data-slot="notebook-cell"][data-step="${CSS.escape(edited!.step)}"]`)?.scrollIntoView({ block: 'start' }));
         }
@@ -100,6 +109,17 @@ export function Notebook() {
     const u = focusAt(column.steps[i - 1].units, focus);
     return u ? (traces.get(`${ask}|${i}:${u.id}`) ?? { state: 'loading' }) : null;
   };
+
+  // A step picked in the strip: its cell opened and brought into sight.
+  const pick = (at: number) => {
+    if (!column) return;
+    setPicked(at);
+    setOpened((m) => new Map(m).set(at, true));
+    const step = column.steps[at].step;
+    requestAnimationFrame(() => document.querySelector(`[data-slot="notebook-cell"][data-step="${CSS.escape(step)}"]`)?.scrollIntoView({ block: 'start' }));
+  };
+  // The unit followed as it stands going into the picked step: whose rows the inputs light.
+  const pickedUnit = column && focus && picked !== null && picked > 0 ? (focusAt(column.steps[picked - 1].units, focus)?.id ?? null) : null;
 
   // Tabs to read beside the notebook, each its own half of the dock, and back as a tab with a second press.
   const besideButtons = (
@@ -174,6 +194,17 @@ export function Notebook() {
           Fold steps that changed nothing
         </label>
         <span className="ml-auto flex gap-3">
+          {column && (
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground hover:underline"
+              data-slot="show-as-graph"
+              title={graph ? 'The steps as a strip again' : 'The steps as a graph: the inputs wired to the steps that read them, what each wrote below it'}
+              onClick={() => setGraph((g) => !g)}
+            >
+              {graph ? 'Show as strip' : 'Show as graph'}
+            </button>
+          )}
           {besideButtons}
           {column && (
             <span className="flex gap-2">
@@ -215,6 +246,15 @@ export function Notebook() {
           Run on what's there now: {column.changed.join(', ')} changed since this table was made, so the cells may not give the table's numbers. Run reserves again to bring them together.
         </div>
       )}
+      {column && (
+        <div className="shrink-0 border-b border-border px-2 py-1.5">
+          {graph ? (
+            <DataflowGraph column={column} quiet={summaries.map((x) => x.quiet)} picked={picked} unit={pickedUnit} onPick={pick} />
+          ) : (
+            <DataflowStrip column={column} quiet={summaries.map((x) => x.quiet)} picked={picked} unit={pickedUnit} onPick={pick} />
+          )}
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-auto" data-slot="notebook">
         {!column && !error && <div className="p-3 text-muted-foreground">Running the column…</div>}
         {column &&
@@ -232,6 +272,7 @@ export function Notebook() {
               onEdit={c.kind === 'formula' ? () => openTool('params', `formula:${column.dataflow_id}:${c.step}`) : undefined}
               onWhole={() => setWhole(i)}
               edited={!!column.edited && edited?.step === c.step}
+              picked={picked === i}
             />
           ))}
       </div>

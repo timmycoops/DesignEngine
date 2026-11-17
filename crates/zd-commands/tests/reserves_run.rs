@@ -337,6 +337,9 @@ fn a_table_s_bench_opens_its_block_s_column_step_by_step() {
     assert_eq!((opened.case.as_str(), opened.dataflow.as_str()), ("Base", "Reserves"));
     assert_eq!(opened.dataflow_id, flow, "the saved dataflow, where its formulas are edited");
     assert!(opened.changed.is_empty(), "{:?}", opened.changed);
+    // Its inputs (decision 0084): B2's five block solids top down, and the run's own stack, no seam model.
+    assert_eq!(opened.blocks, ["3_B2_OB", "3_B2_U_18", "3_B2_U_16", "3_B2_U-L", "3_B2_L"]);
+    assert_eq!((opened.model.as_deref(), opened.horizons), (None, STACK.len()));
 
     // The same column as the preview gives, step for step.
     let p: RunReservesParams = serde_json::from_value(params).unwrap();

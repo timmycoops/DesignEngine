@@ -1024,6 +1024,12 @@ pub struct ColumnSteps {
     pub fields: Vec<ColumnField>,
     /// The parameter tables read, in order, by name: what a read's `table` counts in.
     pub tables: Vec<String>,
+    /// The column's block solids by name, as the run read them: what the column as input is made of (decision 0084).
+    pub blocks: Vec<String>,
+    /// The seam model whose stack orders the column, by name; none where the run gave its own stack of horizons.
+    pub model: Option<String>,
+    /// How many horizons the stack holds, the model's or the run's own.
+    pub horizons: usize,
     /// Whether the column was run on a dataflow given as edited, not the one saved (decision 0081, point 7).
     pub edited: bool,
     /// The edited dataflow's worked examples that don't hold, each with its step and test: run anyway, said here.
@@ -1052,7 +1058,21 @@ pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: 
     let mut steps = Vec::new();
     run_column(&opened.prepared, &opened.key, blocks, Some(&mut steps)).map_err(|s| CommandError::Invalid(s.why))?;
     let fields = opened.prepared.fields.list().iter().map(|f| ColumnField { name: f.name.clone(), unit: unit_of_kind(f.kind), kind: f.kind }).collect();
-    Ok(ColumnSteps { column: opened.key.path.clone(), case: opened.key.case.clone(), dataflow: opened.prepared.name.clone(), dataflow_id: opened.dataflow_id, fields, tables: opened.tables, edited: dataflow.is_some(), failing: opened.prepared.failing.clone(), steps, changed: opened.changed })
+    Ok(ColumnSteps {
+        column: opened.key.path.clone(),
+        case: opened.key.case.clone(),
+        dataflow: opened.prepared.name.clone(),
+        dataflow_id: opened.dataflow_id,
+        fields,
+        tables: opened.tables,
+        blocks: blocks.iter().map(|b| b.name.clone()).collect(),
+        model: opened.model,
+        horizons: opened.prepared.horizons.len(),
+        edited: dataflow.is_some(),
+        failing: opened.prepared.failing.clone(),
+        steps,
+        changed: opened.changed,
+    })
 }
 
 /// A formula step of a table's column traced on one unit (decision 0081): the column run up to `step` (its place in
@@ -1092,6 +1112,8 @@ struct OpenedColumn {
     dataflow_id: ObjectId,
     key: ColumnKey,
     tables: Vec<String>,
+    /// The seam model the run named, by name.
+    model: Option<String>,
     changed: Vec<String>,
 }
 
@@ -1147,7 +1169,8 @@ fn open_column(project: &zd_core::Project, log: &[crate::LogEntry], get: &dyn Fn
     if !prepared.columns.contains_key(&key) {
         return Err(CommandError::Invalid(format!("no blocks of case {case} at {} now", key.words())));
     }
-    Ok(OpenedColumn { prepared, dataflow_id: p.dataflow, key, tables, changed })
+    let model = p.model.map(|id| project.object(id).map_or_else(|| "a seam model since deleted".into(), |o| o.name.clone()));
+    Ok(OpenedColumn { prepared, dataflow_id: p.dataflow, key, tables, model, changed })
 }
 
 /// `small_volumes`: each unit under the `min_volume` its parameter rows give set aside and written (decision 0073,

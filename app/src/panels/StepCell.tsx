@@ -29,6 +29,7 @@ export function StepCell({
   onEdit,
   onWhole,
   edited = false,
+  picked = false,
 }: {
   column: ColumnSteps;
   at: number;
@@ -42,11 +43,13 @@ export function StepCell({
   onWhole: () => void;
   /** The step being edited, run here before it's saved (decision 0081, point 7). */
   edited?: boolean;
+  /** Picked in the Dataflow view's strip (decision 0084): marked down its left in gold. */
+  picked?: boolean;
 }) {
   const cell = column.steps[at];
   const kind = cell.kind === 'formula' ? 'formula' : cell.kind === 'built_in' ? 'built in' : 'the blocks';
   return (
-    <section className="border-b border-border" data-slot="notebook-cell" data-step={cell.step} data-open={open ? 'yes' : 'no'}>
+    <section className={cn('border-b border-border', picked && 'border-l-2 border-l-primary')} data-slot="notebook-cell" data-step={cell.step} data-open={open ? 'yes' : 'no'} data-picked={picked ? 'yes' : 'no'}>
       <button type="button" className="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-accent/40" onClick={onToggle} aria-expanded={open}>
         {open ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
         <span className="w-5 shrink-0 text-right text-muted-foreground tabular-nums">{at}</span>
