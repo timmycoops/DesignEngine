@@ -715,6 +715,8 @@ export interface ColumnSteps {
   fields: ColumnField[];
   /** The parameter tables read, in order, by name: what a read's `table` counts in. */
   tables: string[];
+  /** Each of those tables' ids, where it's an object of the project: where a setting read is edited (decision 0082, point 7). */
+  table_ids: (string | null)[];
   /** The column's block solids by name, top down: what the column as input is made of (decision 0084). */
   blocks: string[];
   /** The seam model whose stack orders the column; null where the run gave its own stack. */

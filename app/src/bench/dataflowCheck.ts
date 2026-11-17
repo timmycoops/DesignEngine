@@ -515,6 +515,23 @@ async function checkLive(summary: ProjectSummary, expect: Expect, picture: Pictu
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, text);
     input.dispatchEvent(new Event('input', { bubbles: true }));
   };
+  // A setting clicked in In, then one named in Workings, opens its cell (decision 0082, point 7): in sight, focused, ringed.
+  const asked = () => params()?.querySelector<HTMLInputElement>('input[data-asked="yes"]') ?? null;
+  const askedFor = async (name: string) => {
+    for (let k = 0; k < 50 && !asked()?.getAttribute('aria-label')?.endsWith(`, ${name}`); k++) await wait(50);
+    const a = asked();
+    return { cell: a?.getAttribute('aria-label') ?? null, focused: !!a && document.activeElement === a };
+  };
+  nb()?.querySelector<HTMLButtonElement>('[data-slot="step-pane"] button[data-slot="cell-read"][data-name="roof_dilution"]')?.click();
+  const fromIn = await askedFor('roof_dilution');
+  nb()?.querySelector<HTMLButtonElement>('[data-slot="step-pane"] button[data-slot="working-setting"][data-name="floor_dilution"]')?.click();
+  const fromWorkings = await askedFor('floor_dilution');
+  const rowOf = (name: string) => t.rows.findIndex((r) => typeof r.values[name] === 'number' && r.values[name] > 0);
+  expect(
+    "a setting clicked in In or named in Workings opens its cell in the Parameters tab, focused and ringed",
+    fromIn.focused && fromIn.cell === `Column ${ri + 1}, roof_dilution` && fromWorkings.focused && fromWorkings.cell === `Column ${rowOf('floor_dilution') + 1}, floor_dilution`,
+    { fromIn, fromWorkings },
+  );
   const banner = () => nb()?.querySelector('[data-slot="notebook-edited"]')?.textContent ?? '';
   const movedWrite = () => nb()?.querySelector('[data-strip-step="rom_dilution"] [data-moved="yes"]') ?? null;
   const started = performance.now();

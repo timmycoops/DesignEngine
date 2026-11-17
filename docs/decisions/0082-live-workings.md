@@ -4,7 +4,7 @@ Status: agreed 17 November 2026. Tim agreed the seven decisions on the Build Pla
 7, start ws1"). Workstream 1 (the engine's workings) is built here; 2 (the Workings row) was built in the Dataflow
 view's step pane (0084, workstream 3); 3 (live) is built here, on the Dataflow tab, after Tim asked on 18 November how to
 run the dataflow again once a parameter was edited; 4 (the rest of the steps) is to come. Point 7 (a setting clicked
-goes to its cell in the Parameters tab) is still to do.
+goes to its cell in the Parameters tab) is built here too.
 
 ## Why
 
@@ -91,3 +91,23 @@ re-run the dataflow once the parameter was edited". The tab ran its column only 
 | `a_column_runs_on_a_parameter_table_as_edited_and_the_project_keeps_the_saved_one` (engine) | roof dilution 0.10 m for 0.05 m: 1,000 m³ of roof dilution, not 500 m³ (1e-9 relative), the table named as unsaved; the saved run still 500 m³ and the table's revision unchanged; a table edited past its own check refused with its name |
 | `dataflowView.test.mjs` (3 more) | units matched by what they are when an edit moves their ids; OB cut 49,000 m³ against the saved 49,500 m³ and the dilution 1,000 against 500 marked, U's benches not; the strip's Dilution 1,000 against 500; a unit the saved run hasn't marked made by the edit |
 | `zd-app --bench --dataflow` (16 Nov demo, 3_B1) | roof dilution doubled in the Parameters tab beside it: rom_dilution's write and 12 values moved within about 0.4 s, the table edited in Inputs; a word typed keeps the last run and says why; Discard brings the saved run back. rd_is doubled in densities: picked by Show in Dataflow, marked edited, its failing worked example flagged and run, the densities it moved marked; Discard runs the saved formula again |
+
+## Built: point 7, a setting to its cell
+
+A setting in the Dataflow tab's step pane opens the cell it was read from in the Parameters tab: in In, each setting a
+built-in step read from a parameter table is a button; in Workings, each setting the step read for the unit followed is
+a link where its name stands in the line. The Parameters tab shows the table, scrolls the cell into sight, focuses it
+and rings it gold for a moment, so it's typed into at once (and with the Dataflow tab beside, the column runs on the
+edit live).
+
+- **Which table.** `ColumnSteps.table_ids`: each table read, by id, beside `tables`; none for the run's own rows or a
+  table since deleted, whose settings stay words.
+- **Which cell.** A read's row is the table's row as saved; the Parameters tab finds the grid column that holds it
+  (rows can be added before it while editing), and the parameter's cell in it. Asked through the tool ask
+  `cell:<table>:<row>:<parameter>`, as a formula's Edit is `formula:<dataflow>:<step>`.
+- A formula's reads are in its trace by name and not lit (0084), so they open nothing.
+
+| Test | Known answer |
+|---|---|
+| reserves_run engine test, the live column | the column's one table, assumptions, by its id |
+| `zd-app --bench --dataflow` (16 Nov demo, 3_B1, rom_dilution, U followed) | roof_dilution clicked in In opens column 2's roof_dilution cell, focused and ringed; floor_dilution clicked in a Workings line opens column 2's floor_dilution cell |

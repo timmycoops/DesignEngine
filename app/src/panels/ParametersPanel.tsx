@@ -60,11 +60,19 @@ export function Parameters() {
   }, [last, objects]);
   // A formula asked for from elsewhere (a notebook cell's Edit, decision 0081): its dataflow shown, the formula opened.
   const [openStep, setOpenStep] = useState<{ step: string; n: number } | null>(null);
+  // A setting asked for from the Dataflow tab (decision 0082, point 7): its table shown, the cell it came from in sight.
+  const [openCell, setOpenCell] = useState<OpenCell | null>(null);
   useEffect(() => {
-    if (toolAsk?.panel !== 'params' || !toolAsk.mode?.startsWith('formula:')) return;
-    const [, flowId, step] = toolAsk.mode.split(':');
-    setId(flowId);
-    setOpenStep({ step, n: toolAsk.n });
+    if (toolAsk?.panel !== 'params' || !toolAsk.mode) return;
+    if (toolAsk.mode.startsWith('formula:')) {
+      const [, flowId, step] = toolAsk.mode.split(':');
+      setId(flowId);
+      setOpenStep({ step, n: toolAsk.n });
+    } else if (toolAsk.mode.startsWith('cell:')) {
+      const [, tableId, row, ...column] = toolAsk.mode.split(':');
+      setId(tableId);
+      setOpenCell({ row: Number(row), column: column.join(':'), n: toolAsk.n });
+    }
   }, [toolAsk]);
   const object = objects.find((o) => o.id === id) ?? objects.find((o) => o.kind === 'parameter_table') ?? objects[0] ?? null;
 
@@ -96,7 +104,7 @@ export function Parameters() {
       </div>
       <div className="flex min-w-0 flex-1 flex-col">
         {object.kind === 'parameter_table' ? (
-          <TableEditor key={`${object.id}@${object.revision}`} object={object} onMade={setId} />
+          <TableEditor key={`${object.id}@${object.revision}`} object={object} onMade={setId} openCell={openCell} />
         ) : (
           <DataflowEditor key={`${object.id}@${object.revision}`} object={object} tables={tables} openStep={openStep} />
         )}
@@ -113,7 +121,14 @@ const saveKey = (save: () => void) => (e: KeyboardEvent) => {
   }
 };
 
-function TableEditor({ object, onMade }: { object: ObjectSummary; onMade: (id: string) => void }) {
+/** A cell asked for: the table's row (as saved, from 0) and the parameter; `n` counts asks, so the same again shows it again. */
+interface OpenCell {
+  row: number;
+  column: string;
+  n: number;
+}
+
+function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMade: (id: string) => void; openCell: OpenCell | null }) {
   const { summary, selection, runRecord, setDraft } = useWorkspace();
   const [saved, setSaved] = useState<ParameterTable | null>(null);
   const [grid, setGrid] = useState<Grid | null>(null);
@@ -163,6 +178,28 @@ function TableEditor({ object, onMade }: { object: ObjectSummary; onMade: (id: s
       clearTimeout(t);
     };
   }, [checked]);
+
+  // A cell asked for, once the grid is read: scrolled into sight, focused and ringed for a moment.
+  const [asked, setAsked] = useState<string | null>(null);
+  const gridRead = grid !== null;
+  useEffect(() => {
+    if (!openCell || !grid) return;
+    const ri = grid.rows.findIndex((r) => r.saved === openCell.row);
+    if (ri < 0) return;
+    const label = `Column ${ri + 1}, ${openCell.column}`;
+    setAsked(label);
+    const frame = requestAnimationFrame(() => {
+      const input = document.querySelector<HTMLInputElement>(`[data-tool-panel="parameters"] input[aria-label="${CSS.escape(label)}"]`);
+      input?.scrollIntoView({ block: 'center', inline: 'center' });
+      input?.focus();
+      input?.select();
+    });
+    const t = setTimeout(() => setAsked(null), 2500);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(t);
+    };
+  }, [openCell?.n, gridRead]);
 
   // The edits as they stand, for the Dataflow tab to run on live (decision 0082); none once saved, discarded or closed.
   useEffect(() => {
@@ -378,6 +415,8 @@ function TableEditor({ object, onMade }: { object: ObjectSummary; onMade: (id: s
                         value={r.cells[c.key] ?? ''}
                         label={`Column ${ri + 1}, ${filter ? `when ${c.name}` : c.name}`}
                         data-cell={`${pi}:${ri}`}
+                        data-asked={asked === `Column ${ri + 1}, ${c.name}` && !filter ? 'yes' : undefined}
+                        className={cn(asked === `Column ${ri + 1}, ${c.name}` && !filter && 'ring-2 ring-primary')}
                         numeric={!filter && !c.text}
                         placeholder={filter ? 'any' : ''}
                         edited={cellEdited(r, c)}

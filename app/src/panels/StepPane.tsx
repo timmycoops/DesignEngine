@@ -1,6 +1,6 @@
 import { Braces, Columns3 } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type { ColumnSteps, ColumnUnit, FormulaTrace } from '@/bridge';
+import type { ColumnSteps, ColumnUnit, FormulaTrace, ParamRead } from '@/bridge';
 import { StatusBadge } from '@/design-system/kit';
 import { cn } from 'cn';
 import { stepLabel, unitWords, valueText } from './columnSteps';
@@ -13,8 +13,18 @@ import { unitLabel } from './reservesTable';
  * or a formula, and what it did), then In (what it read for the unit followed, its settings with the table and column
  * each came from), Rule (a built-in step's rule in words) or Code (the formula, the lines that ran on that unit tinted
  * with the values they gave), Workings (a built-in step's arithmetic for that unit, decision 0082) and Out (what it said,
- * took away and wrote to the reserves table, the column's volume). Was the notebook's cell (decision 0081).
+ * took away and wrote to the reserves table, the column's volume). Was the notebook's cell (decision 0081). A setting
+ * read from a parameter table, in In or named in Workings, opens its cell in the Parameters tab (decision 0082, point 7).
  */
+
+/** Opens the cell a setting was read from: the table's id, its row as saved (from 0), the parameter. */
+export type OpenSetting = (table: string, row: number, column: string) => void;
+
+/** Where a read came from as something to open, or nothing for the run's own rows, a table gone, or no row. */
+const opener = (column: ColumnSteps, r: ParamRead, open?: OpenSetting) => {
+  const table = r.table !== null ? column.table_ids?.[r.table] : null;
+  return open && table && r.row !== null ? () => open(table, r.row!, r.column) : undefined;
+};
 
 /** A formula's trace on the unit followed: on its way, there, or why not. */
 export type CellTrace = { state: 'loading' } | { state: 'done'; trace: FormulaTrace } | { state: 'failed'; why: string };
@@ -28,6 +38,7 @@ export function StepPane({
   onEdit,
   onWhole,
   edited = false,
+  onSetting,
 }: {
   column: ColumnSteps;
   at: number;
@@ -38,6 +49,8 @@ export function StepPane({
   onWhole: () => void;
   /** The step being edited, run here before it's saved (decision 0081, point 7). */
   edited?: boolean;
+  /** Opens a setting's cell in the Parameters tab. */
+  onSetting?: OpenSetting;
 }) {
   const cell = column.steps[at];
   const kind = cell.kind === 'formula' ? 'formula' : cell.kind === 'built_in' ? 'built in' : 'the blocks';
@@ -60,9 +73,9 @@ export function StepPane({
       <div className={cn(summary.quiet || at === 0 ? 'text-muted-foreground' : 'text-edited')} data-slot="cell-summary">
         {at === 0 ? `${cell.units.length} units as the blocks give them` : summaryWords(summary)}
       </div>
-      {at > 0 && <CellIn column={column} at={at} unit={unit} trace={trace} />}
+      {at > 0 && <CellIn column={column} at={at} unit={unit} trace={trace} onSetting={onSetting} />}
       {at > 0 && <CellCode column={column} at={at} trace={trace} onEdit={onEdit} />}
-      {at > 0 && cell.kind === 'built_in' && <CellWorkings column={column} at={at} unit={unit} />}
+      {at > 0 && cell.kind === 'built_in' && <CellWorkings column={column} at={at} unit={unit} onSetting={onSetting} />}
       <CellOut column={column} at={at} onWhole={onWhole} />
     </section>
   );
@@ -78,7 +91,7 @@ function Row({ label, children, slot }: { label: string; children: ReactNode; sl
 }
 
 /** What the step read for the unit followed: a built-in step's parameters with where each came from, a formula's reads. */
-function CellIn({ column, at, unit, trace }: { column: ColumnSteps; at: number; unit: ColumnUnit | null; trace: CellTrace | null }) {
+function CellIn({ column, at, unit, trace, onSetting }: { column: ColumnSteps; at: number; unit: ColumnUnit | null; trace: CellTrace | null; onSetting?: OpenSetting }) {
   const cell = column.steps[at];
   const who = unit ? unitWords(unit) : 'the unit followed';
   if (cell.kind === 'formula') {
@@ -112,7 +125,7 @@ function CellIn({ column, at, unit, trace }: { column: ColumnSteps; at: number; 
       ) : (
         reads.map((r) => {
           const w = readWords(r, column.tables, unitOf(r.column));
-          return <Chip key={r.column} name={w.name} value={w.value} from={w.from} missing={r.table === null} />;
+          return <Chip key={r.column} name={w.name} value={w.value} from={w.from} missing={r.table === null} onOpen={opener(column, r, onSetting)} />;
         })
       )}
       {others > 0 && <span className="text-muted-foreground"> · and for {others} other unit{others === 1 ? '' : 's'}</span>}
@@ -121,12 +134,49 @@ function CellIn({ column, at, unit, trace }: { column: ColumnSteps; at: number; 
 }
 
 /** A setting read, lit gold as its table is in Inputs (decision 0084, point 2). */
-function Chip({ name, value, from, missing }: { name: string; value: string; from?: string; missing?: boolean }) {
-  return (
-    <span className={cn('mr-1.5 mb-0.5 inline-block rounded px-1 whitespace-nowrap', !missing && from && 'bg-selection')} data-slot="cell-read" data-name={name}>
+function Chip({ name, value, from, missing, onOpen }: { name: string; value: string; from?: string; missing?: boolean; onOpen?: () => void }) {
+  const words = (
+    <>
       {name} <span className={cn('font-semibold tabular-nums', missing ? 'font-normal text-muted-foreground' : from && 'text-primary')}>{value}</span>
       {from && <span className="text-muted-foreground"> ({from})</span>}
-    </span>
+    </>
+  );
+  const look = cn('mr-1.5 mb-0.5 inline-block rounded px-1 text-left whitespace-nowrap', !missing && from && 'bg-selection');
+  if (!onOpen) {
+    return (
+      <span className={look} data-slot="cell-read" data-name={name}>
+        {words}
+      </span>
+    );
+  }
+  return (
+    <button type="button" className={cn(look, 'hover:underline hover:ring-1 hover:ring-primary')} data-slot="cell-read" data-name={name} onClick={onOpen} title={`Open ${from} in the Parameters tab, at ${name}`}>
+      {words}
+    </button>
+  );
+}
+
+/** A working's words with each setting the step read for the unit, by name, a link to its cell. */
+function Linked({ text, reads, column, onSetting }: { text: string; reads: ParamRead[]; column: ColumnSteps; onSetting?: OpenSetting }) {
+  const open = new Map(reads.flatMap((r) => {
+    const go = opener(column, r, onSetting);
+    return go ? [[r.column, go] as const] : [];
+  }));
+  if (open.size === 0) return <>{text}</>;
+  const names = [...open.keys()].sort((a, b) => b.length - a.length).map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const parts = text.split(new RegExp(`\\b(${names.join('|')})\\b`));
+  return (
+    <>
+      {parts.map((p, i) =>
+        open.has(p) ? (
+          <button key={i} type="button" className="text-primary underline decoration-dotted underline-offset-2 hover:decoration-solid" data-slot="working-setting" data-name={p} onClick={open.get(p)} title={`Open ${p}'s cell in the Parameters tab`}>
+            {p}
+          </button>
+        ) : (
+          p
+        ),
+      )}
+    </>
   );
 }
 
@@ -176,17 +226,21 @@ const figure = (v: number) => v.toLocaleString('en-AU', { maximumFractionDigits:
  * A built-in step's arithmetic for the unit followed (decision 0082, workstream 2): each line what was worked out or
  * tested, the numbers that went in, what it came to and what followed. A step that writes none keeps its rule.
  */
-function CellWorkings({ column, at, unit }: { column: ColumnSteps; at: number; unit: ColumnUnit | null }) {
+function CellWorkings({ column, at, unit, onSetting }: { column: ColumnSteps; at: number; unit: ColumnUnit | null; onSetting?: OpenSetting }) {
   const cell = column.steps[at];
   if (cell.workings.length === 0) return null;
   const lines = unit ? cell.workings.filter((w) => w.unit === unit.id) : [];
   const others = new Set(cell.workings.filter((w) => w.unit !== unit?.id).map((w) => w.unit)).size;
+  const reads = unit ? readsFor(cell, unit.id) : [];
   return (
     <Row label="Workings" slot="cell-workings">
       {lines.length === 0 && <div className="text-muted-foreground">none for {unit ? unitWords(unit) : 'the unit followed'}</div>}
       {lines.map((w, i) => (
         <div key={i} className="leading-snug" data-slot="working" data-what={w.what}>
-          <span className="font-semibold">{w.what}</span> <span className="text-muted-foreground">{w.sum}</span>
+          <span className="font-semibold">{w.what}</span>{' '}
+          <span className="text-muted-foreground">
+            <Linked text={w.sum} reads={reads} column={column} onSetting={onSetting} />
+          </span>
           {w.value !== null && (
             <span className="tabular-nums">
               {' '}= <span className="font-semibold text-edited">{figure(w.value)}</span> {w.measure}

@@ -320,6 +320,7 @@ export function DataflowView() {
               onEdit={step.kind === 'formula' ? () => openTool('params', `formula:${column.dataflow_id}:${step.step}`) : undefined}
               onWhole={() => setWhole(at)}
               edited={!!against && stepChanged(against, column, at)}
+              onSetting={(t, row, name) => openTool('params', `cell:${t}:${row}:${name}`)}
             />
           </div>
           <UnitTable side="before" column={column} at={at} table={tables} followed={into?.id ?? null} onFollow={(u) => setFocus(focusOf(u))} />
