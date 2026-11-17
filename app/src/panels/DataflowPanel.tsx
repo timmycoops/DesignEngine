@@ -1,7 +1,7 @@
 import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
-import { type ColumnSteps, reservesColumn, reservesColumnTrace } from '@/bridge';
+import { type ColumnSteps, type Dataflow, type ParameterTable, reservesColumn, reservesColumnTrace } from '@/bridge';
 import { Select } from '@/design-system/kit';
-import { useWorkspace } from '@/workspace/context';
+import { type Draft, useWorkspace } from '@/workspace/context';
 import type { PanelId } from '@/workspace/panels';
 import { ColumnStepsView } from './ColumnStepsView';
 import { unitWords } from './columnSteps';
@@ -24,6 +24,42 @@ import { type CellTrace, StepPane } from './StepPane';
 
 const keyOf = (path: string[]) => path.join('\u0001');
 
+/** Whether a step itself is edited: its formula, filter or rule as run on the edits isn't as saved. */
+function stepChanged(saved: ColumnSteps, live: ColumnSteps, at: number): boolean {
+  const s = live.steps[at];
+  const was = saved.steps[at]?.step === s.step ? saved.steps[at] : saved.steps.find((x) => x.step === s.step);
+  return !was || JSON.stringify([was.source, was.when, was.rule]) !== JSON.stringify([s.source, s.when, s.rule]);
+}
+
+/** How long after the last keystroke the column runs again on the edits (decision 0082, point 4). */
+const LIVE_MS = 330;
+
+/** A run on unsaved edits, with what it was run on (for the trace) and a count (to keep its traces apart). */
+interface LiveRun {
+  column: ColumnSteps;
+  dataflow: Dataflow | null;
+  tables: [string, ParameterTable][];
+  n: number;
+}
+
+/**
+ * The Parameters tab's unsaved edits a column reads: its own dataflow as edited, and the tables it reads (by name, as the
+ * run names them). `key` changes with them; `why` is the first that doesn't check, and stops the run.
+ */
+function editsFor(column: ColumnSteps, drafts: Record<string, Draft>) {
+  const flow = Object.entries(drafts).find(([id, d]) => d.kind === 'dataflow' && id === column.dataflow_id);
+  const tables = Object.entries(drafts).filter(([, d]) => d.kind === 'table' && column.tables.includes(d.name));
+  const used = [...(flow ? [flow] : []), ...tables];
+  if (used.length === 0) return null;
+  const stuck = used.find(([, d]) => d.why);
+  return {
+    key: JSON.stringify(used.map(([id, d]) => [id, d.kind === 'table' ? d.table : d.dataflow])),
+    why: stuck ? `${stuck[1].name}: ${stuck[1].why}` : null,
+    dataflow: flow && flow[1].kind === 'dataflow' ? flow[1].dataflow : null,
+    tables: tables.flatMap(([id, d]): [string, ParameterTable][] => (d.kind === 'table' && d.table ? [[id, d.table]] : [])),
+  };
+}
+
 /** The tabs a planner reads beside the Dataflow tab: the parameters its steps read, and the table whose block it follows. */
 const BESIDE: readonly { id: PanelId; title: string }[] = [
   { id: 'params', title: 'Parameters' },
@@ -31,13 +67,17 @@ const BESIDE: readonly { id: PanelId; title: string }[] = [
 ];
 
 export function DataflowView() {
-  const { summary, notebookOf, openTool, runInNotebook, placeBeside, isBeside } = useWorkspace();
+  const { summary, notebookOf, openTool, placeBeside, isBeside, drafts } = useWorkspace();
   // Bumped as a tab is put beside or back, so the buttons say which way they go next.
   const [, setLaidOut] = useState(0);
   const table = useMemo(() => (notebookOf ? (summary?.objects ?? []).find((o) => o.id === notebookOf.table) : undefined), [summary, notebookOf]);
   const node = notebookOf?.node ?? [];
-  const edited = notebookOf?.edited ?? null;
-  const [column, setColumn] = useState<ColumnSteps | null>(null);
+  // A formula's Show in Dataflow: the step to pick.
+  const shown = notebookOf?.edited ?? null;
+  // The column run on what's saved, and on the Parameters tab's unsaved edits (decision 0082): the last run that worked.
+  const [saved, setSaved] = useState<ColumnSteps | null>(null);
+  const [live, setLive] = useState<LiveRun | null>(null);
+  const [liveWhy, setLiveWhy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [focus, setFocus] = useState<Focus | null>(null);
   const [whole, setWhole] = useState<number | null>(null);
@@ -47,54 +87,89 @@ export function DataflowView() {
   const [graph, setGraph] = useState(false);
   const [all, setAll] = useState(false);
 
-  const ask = `${notebookOf?.n ?? 0}:${table?.id ?? ''}@${table?.revision ?? 0}:${keyOf(node)}`;
+  // A parameter table or dataflow saved runs the column again: their revisions are part of what's asked.
+  const inputsSaved = (summary?.objects ?? [])
+    .filter((o) => o.kind === 'parameter_table' || o.kind === 'dataflow')
+    .map((o) => `${o.id}@${o.revision}`)
+    .join(',');
+  const ask = `${notebookOf?.n ?? 0}:${table?.id ?? ''}@${table?.revision ?? 0}:${keyOf(node)}|${inputsSaved}`;
   useEffect(() => {
-    let live = true;
-    setColumn(null);
+    let current = true;
     setError(null);
     setWhole(null);
     setTraces(new Map());
-    if (!table) return;
-    void reservesColumn(table.id, node, edited?.dataflow ?? null)
+    setLive(null);
+    setLiveWhy(null);
+    if (!table) return setSaved(null);
+    void reservesColumn(table.id, node)
       .then((c) => {
-        if (!live) return;
-        // An edited formula runs on the column of a table its own dataflow made, never another's.
-        if (edited && c.dataflow_id !== edited.dataflowId) {
-          setError(`This table was made by the ${c.dataflow} dataflow, not the one being edited: open a column of a table it made to run the formula there.`);
-          return;
-        }
-        setColumn(c);
-        const below = node.slice(c.column.length);
-        setFocus(defaultFocus(c.steps, below.length ? { seam: below[0], bench: below[1] } : null));
-        // The edited step picked; else the step already picked, where this column has it; else the first that did something.
+        if (!current) return;
+        setSaved((was) => {
+          // A new column, not the same one run again: the unit followed starts at the node picked.
+          if (!was || keyOf(was.column) !== keyOf(c.column) || was.case !== c.case) {
+            const below = node.slice(c.column.length);
+            setFocus(defaultFocus(c.steps, below.length ? { seam: below[0], bench: below[1] } : null));
+          }
+          return c;
+        });
+        // The step a formula asked for; else the step already picked, where this column has it; else the first that did something.
         setPicked((was) => {
-          const at = edited ? c.steps.findIndex((s) => s.step === edited.step) : -1;
+          const at = shown ? c.steps.findIndex((s) => s.step === shown.step) : -1;
           if (at > 0) return at;
           if (was > 0 && was < c.steps.length) return was;
           const busy = cellSummaries(c.steps).findIndex((s, i) => i > 0 && !s.quiet);
           return busy > 0 ? busy : 0;
         });
       })
-      .catch((e) => live && setError(String(e)));
+      .catch((e) => current && (setSaved(null), setError(String(e))));
     return () => {
-      live = false;
+      current = false;
     };
   }, [ask]);
 
+  // The unsaved edits this column reads: its own dataflow's, and the tables it reads, by name.
+  const edits = useMemo(() => (saved ? editsFor(saved, drafts) : null), [saved, drafts]);
+  // Run on them about a third of a second after they stop changing; an edit that doesn't check leaves the last good run.
+  useEffect(() => {
+    if (!edits || !table) {
+      setLive(null);
+      setLiveWhy(null);
+      return;
+    }
+    if (edits.why) return setLiveWhy(edits.why);
+    let current = true;
+    const t = setTimeout(() => {
+      void reservesColumn(table.id, node, edits.dataflow, edits.tables)
+        .then((c) => {
+          if (!current) return;
+          setLive((was) => ({ column: c, dataflow: edits.dataflow, tables: edits.tables, n: (was?.n ?? 0) + 1 }));
+          setLiveWhy(null);
+        })
+        .catch((e) => current && setLiveWhy(String(e)));
+    }, LIVE_MS);
+    return () => {
+      current = false;
+      clearTimeout(t);
+    };
+  }, [edits?.key, edits?.why, saved]);
+
+  const column = edits && live ? live.column : saved;
+  const against = column && column !== saved ? saved : null;
   const summaries = useMemo(() => (column ? cellSummaries(column.steps) : []), [column]);
   const at = column ? Math.min(picked, column.steps.length - 1) : 0;
-  const tables = useMemo(() => (column ? beforeAfter(column, at, all) : null), [column, at, all]);
+  const tables = useMemo(() => (column ? beforeAfter(column, at, all, against) : null), [column, at, all, against]);
   // The unit followed as it stands going into the picked step (what In and Workings show, whose rows Inputs light), and
   // as the step left it (After's row).
   const into = column && focus && at > 0 ? focusAt(column.steps[at - 1].units, focus) : null;
   const outOf = column && focus ? focusAt(column.steps[at].units, focus) : null;
 
-  // The picked formula step traced on the unit followed; a trace is kept by step and unit.
-  const wanted = column && at > 0 && column.steps[at].kind === 'formula' && into ? `${ask}|${at}:${into.id}` : null;
+  // The picked formula step traced on the unit followed, on what the column was run on; kept by run, step and unit.
+  const onLive = !!live && column === live.column;
+  const wanted = column && at > 0 && column.steps[at].kind === 'formula' && into ? `${ask}|${onLive ? live!.n : 0}|${at}:${into.id}` : null;
   useEffect(() => {
     if (!table || !wanted || !into || traces.has(wanted)) return;
     setTraces((m) => new Map(m).set(wanted, { state: 'loading' }));
-    void reservesColumnTrace(table.id, node, at, into.id, edited?.dataflow ?? null)
+    void reservesColumnTrace(table.id, node, at, into.id, onLive ? live!.dataflow : null, onLive ? live!.tables : [])
       .then((trace) => setTraces((m) => new Map(m).set(wanted, { state: 'done', trace })))
       .catch((e) => setTraces((m) => new Map(m).set(wanted, { state: 'failed', why: String(e) })));
   }, [wanted]);
@@ -140,7 +215,7 @@ export function DataflowView() {
   if (whole !== null) {
     return (
       <div className="flex h-full min-h-0 text-xs" data-tool-panel="notebook">
-        <ColumnStepsView table={table} node={node} backLabel="Dataflow" startStep={whole} dataflow={edited?.dataflow ?? null} onBack={() => setWhole(null)} />
+        <ColumnStepsView table={table} node={node} backLabel="Dataflow" startStep={whole} dataflow={onLive ? live!.dataflow : null} tables={onLive ? live!.tables : []} onBack={() => setWhole(null)} />
       </div>
     );
   }
@@ -196,14 +271,15 @@ export function DataflowView() {
       </div>
       {error && <div className="px-2 py-1 text-destructive">{error}</div>}
       {!column && !error && <div className="p-3 text-muted-foreground">Running the column…</div>}
-      {column?.edited && edited && (
-        <div className="flex flex-wrap items-center gap-x-3 px-2 py-1 text-edited" data-slot="notebook-edited">
-          <span>
-            Run on the {column.dataflow} dataflow as edited, not saved: {edited.step.replaceAll('_', ' ')} changed. Nothing is kept.
-          </span>
-          <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => runInNotebook(null)}>
-            Back to the saved formula
-          </button>
+      {column?.edited && (
+        <div className="px-2 py-1 text-edited" data-slot="notebook-edited">
+          Run live on unsaved edits to {column.unsaved.join(' and ')}: what they moved is blue, the saved run's value struck through beside it. Nothing is
+          kept; Save or Discard them in the Parameters tab.
+        </div>
+      )}
+      {liveWhy && (
+        <div className="px-2 py-1 text-warning" data-slot="live-why">
+          Not run on the latest edit, {liveWhy}. {column?.edited ? 'Showing the last edit that ran.' : 'Showing the saved run.'}
         </div>
       )}
       {column && column.failing.length > 0 && (
@@ -228,7 +304,7 @@ export function DataflowView() {
           {graph ? (
             <DataflowGraph column={column} quiet={summaries.map((x) => x.quiet)} picked={at} unit={into?.id ?? null} onPick={setPicked} />
           ) : (
-            <DataflowStrip column={column} quiet={summaries.map((x) => x.quiet)} picked={at} unit={into?.id ?? null} onPick={setPicked} />
+            <DataflowStrip column={column} saved={against} quiet={summaries.map((x) => x.quiet)} picked={at} unit={into?.id ?? null} onPick={setPicked} />
           )}
         </div>
       )}
@@ -243,7 +319,7 @@ export function DataflowView() {
               trace={trace}
               onEdit={step.kind === 'formula' ? () => openTool('params', `formula:${column.dataflow_id}:${step.step}`) : undefined}
               onWhole={() => setWhole(at)}
-              edited={!!column.edited && edited?.step === step.step}
+              edited={!!against && stepChanged(against, column, at)}
             />
           </div>
           <UnitTable side="before" column={column} at={at} table={tables} followed={into?.id ?? null} onFollow={(u) => setFocus(focusOf(u))} />

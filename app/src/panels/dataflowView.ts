@@ -11,6 +11,8 @@ export interface StripWrite {
   folder: string;
   volume: number;
   parts: StepWrite[];
+  /** What the saved run wrote here where an unsaved edit moved it (decision 0082, point 6): 0 where it wrote nothing. */
+  was?: number;
 }
 
 /** A step as the strip shows it. */
@@ -41,15 +43,28 @@ export function writesByFolder(writes: StepWrite[]): StripWrite[] {
   return out;
 }
 
-export function stripSteps(steps: ColumnStep[], quiet: boolean[]): StripStep[] {
-  return steps.map((s, at) => ({
-    at,
-    name: at === 0 ? 'Imported' : s.step,
-    kind: s.kind,
-    quiet: quiet[at] ?? false,
-    units: s.units.length,
-    writes: writesByFolder(s.writes ?? []),
-  }));
+/**
+ * The steps as the strip shows them. With `saved`, the same column run on what's saved while this one runs on unsaved
+ * edits: a write the edits moved carries what the saved run wrote, a step matched by its name and place.
+ */
+export function stripSteps(steps: ColumnStep[], quiet: boolean[], saved: ColumnStep[] | null = null): StripStep[] {
+  return steps.map((s, at) => {
+    const writes = writesByFolder(s.writes ?? []);
+    const before = saved ? savedStep(saved, s.step, at) : undefined;
+    if (before) {
+      const old = writesByFolder(before.writes ?? []);
+      for (const w of writes) {
+        const was = old.find((o) => o.folder === w.folder)?.volume ?? 0;
+        if (differs(w.volume, was)) w.was = was;
+      }
+    }
+    return { at, name: at === 0 ? 'Imported' : s.step, kind: s.kind, quiet: quiet[at] ?? false, units: s.units.length, writes };
+  });
+}
+
+/** The saved run's step for one of the live run's: the same name at the same place, else the first of that name. */
+function savedStep(saved: ColumnStep[], step: string, at: number): ColumnStep | undefined {
+  return saved[at]?.step === step ? saved[at] : saved.find((s) => s.step === step);
 }
 
 /** A volume short enough for a tag: 412.3k, 1.1k, 350, −19.5k; m³ is understood. */
@@ -75,6 +90,8 @@ export interface InputChip {
   lit: boolean;
   /** For a table, the rows the picked step read, numbered as the Parameters tab shows them (its columns, from 1). */
   rows: number[];
+  /** Run on as edited, not saved (decision 0082). */
+  edited: boolean;
 }
 
 /**
@@ -94,6 +111,7 @@ export function inputsOf(column: ColumnSteps, picked: number | null, unit: numbe
       title: `The column as input, a unit a solid: ${blocks.join(', ')}`,
       lit: asInput,
       rows: [],
+      edited: false,
     },
     {
       key: 'model',
@@ -102,6 +120,7 @@ export function inputsOf(column: ColumnSteps, picked: number | null, unit: numbe
       title: column.model ? `The seam model whose stack orders the column, ${column.horizons} horizons` : `The run's own stack of ${column.horizons} horizons, no seam model: it orders the column`,
       lit: asInput,
       rows: [],
+      edited: false,
     },
   ];
   const step = picked !== null ? column.steps[picked] : undefined;
@@ -118,6 +137,7 @@ export function inputsOf(column: ColumnSteps, picked: number | null, unit: numbe
       title: lit ? `${step!.step} read ${name}, column ${rows.join(', ')} as the Parameters tab shows it` : `Parameter table ${name}`,
       lit,
       rows,
+      edited: (column.unsaved ?? []).includes(name),
     });
   });
   return chips;
@@ -142,7 +162,9 @@ export interface TableRow {
   label: string;
   detail: string;
   mark: 'new' | 'gone' | null;
-  cells: { value: number | null; changed: boolean }[];
+  /** Run on unsaved edits, a cell they moved holds what the saved run gave (`was`); a row the saved run hasn't is `added`. */
+  cells: { value: number | null; changed: boolean; was?: number | null }[];
+  added: boolean;
 }
 
 /** The picked step's Before and After (decision 0084, points 4 and 5): every unit of the column a row, a field a column. */
@@ -166,7 +188,7 @@ const valueOf = (u: ColumnUnit, f: string) => u.values[f] ?? null;
  * unit, or gave a unit it made, come first in the dataflow's order; All fields puts the rest after them. A step that
  * reads and changes no field shows the volume. A unit the step made is new on After; one it took away is gone on Before.
  */
-export function beforeAfter(column: ColumnSteps, at: number, all: boolean): BeforeAfter {
+export function beforeAfter(column: ColumnSteps, at: number, all: boolean, saved: ColumnSteps | null = null): BeforeAfter {
   const step = column.steps[at];
   const prev = at > 0 ? column.steps[at - 1].units : [];
   const was = new Map(prev.map((u) => [u.id, u]));
@@ -183,20 +205,60 @@ export function beforeAfter(column: ColumnSteps, at: number, all: boolean): Befo
   if (own.length === 0) own = tagged.filter((t) => t.field.kind === 'volume');
   const rest = tagged.filter((t) => !own.includes(t));
   const fields = all ? [...own, ...rest] : own;
-  const row = (u: ColumnUnit, mark: TableRow['mark'], against: ColumnUnit | undefined): TableRow => ({
-    unit: u,
-    label: unitWords(u),
-    detail: detailOf(u),
-    mark,
-    cells: fields.map(({ field }) => ({ value: valueOf(u, field.name), changed: !!against && differs(valueOf(u, field.name), valueOf(against, field.name)) })),
-  });
+  // The saved run's units as they stood before and after this step, matched to these by what they are.
+  const savedAt = (i: number, units: ColumnUnit[]) => {
+    const s = saved && i >= 0 ? savedStep(saved.steps, column.steps[i].step, i) : undefined;
+    return s ? matchUnits(units, s.units) : null;
+  };
+  const savedBefore = savedAt(at - 1, prev);
+  const savedAfter = savedAt(at, step.units);
+  const row = (u: ColumnUnit, mark: TableRow['mark'], against: ColumnUnit | undefined, matched: Map<number, ColumnUnit> | null): TableRow => {
+    const twin = matched?.get(u.id);
+    return {
+      unit: u,
+      label: unitWords(u),
+      detail: detailOf(u),
+      mark,
+      added: !!matched && !twin,
+      cells: fields.map(({ field }) => {
+        const value = valueOf(u, field.name);
+        const cell: TableRow['cells'][number] = { value, changed: !!against && differs(value, valueOf(against, field.name)) };
+        if (matched) {
+          const was = twin ? valueOf(twin, field.name) : null;
+          if (differs(value, was)) cell.was = was;
+        }
+        return cell;
+      }),
+    };
+  };
   const volume = column.fields.find((f) => f.kind === 'volume')?.name;
   const total = (units: ColumnUnit[]) => (volume ? units.reduce((s, u) => s + (valueOf(u, volume) ?? 0), 0) : null);
   return {
     fields,
     more: all ? 0 : rest.length,
-    before: prev.map((u) => row(u, here.has(u.id) ? null : 'gone', undefined)),
-    after: step.units.map((u) => row(u, at > 0 && !was.has(u.id) ? 'new' : null, was.get(u.id))),
+    before: prev.map((u) => row(u, here.has(u.id) ? null : 'gone', undefined, savedBefore)),
+    after: step.units.map((u) => row(u, at > 0 && !was.has(u.id) ? 'new' : null, was.get(u.id), savedAfter)),
     volume: { before: at > 0 ? total(prev) : null, after: total(step.units) },
   };
+}
+
+/** What a unit is, past its id: its horizon, bench or benches, material and what it became. */
+const identity = (u: ColumnUnit) => [u.horizon, u.bench ?? '', u.joined.map(([b]) => b).join(','), u.material, u.became ?? ''].join('');
+
+/**
+ * Each unit of a live run matched to the saved run's (decision 0082, point 6): ids are handed out as a run goes, so an
+ * edit that makes or takes a unit moves them; a unit is matched by what it is and, of the same, by its order.
+ */
+export function matchUnits(live: ColumnUnit[], saved: ColumnUnit[]): Map<number, ColumnUnit> {
+  const pool = new Map<string, ColumnUnit[]>();
+  for (const u of saved) {
+    const k = identity(u);
+    pool.set(k, [...(pool.get(k) ?? []), u]);
+  }
+  const out = new Map<number, ColumnUnit>();
+  for (const u of live) {
+    const twin = pool.get(identity(u))?.shift();
+    if (twin) out.set(u.id, twin);
+  }
+  return out;
 }

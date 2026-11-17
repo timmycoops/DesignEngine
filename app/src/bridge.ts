@@ -721,8 +721,10 @@ export interface ColumnSteps {
   model: string | null;
   /** How many horizons the stack holds. */
   horizons: number;
-  /** Run on a dataflow given as edited, not the one saved. */
+  /** Run on anything given as edited, not as saved. */
   edited: boolean;
+  /** What it was run on as edited, by name: the dataflow and the parameter tables it reads (decision 0082). */
+  unsaved: string[];
   /** The edited dataflow's worked examples that don't hold, each with its step and test: run anyway (decision 0081). */
   failing: string[];
   steps: ColumnStep[];
@@ -733,10 +735,11 @@ export interface ColumnSteps {
  * Open its column: the block column a reserves table's node sits in, run again through its dataflow, every step; with
  * `dataflow`, through that dataflow as edited, not the one saved (decision 0081).
  */
-export const reservesColumn = (object: string, node: string[], dataflow: Dataflow | null = null) => invoke<ColumnSteps>('reserves_column', { object, node, dataflow });
+export const reservesColumn = (object: string, node: string[], dataflow: Dataflow | null = null, tables: [string, ParameterTable][] = []) =>
+  invoke<ColumnSteps>('reserves_column', { object, node, dataflow, tables: tables.length ? tables : null });
 /** A notebook cell's formula traced on one unit (by id), the column run up to it: `step` 1 is the first after the column as input. */
-export const reservesColumnTrace = (object: string, node: string[], step: number, unit: number, dataflow: Dataflow | null = null) =>
-  invoke<FormulaTrace>('reserves_column_trace', { object, node, step, unit, dataflow });
+export const reservesColumnTrace = (object: string, node: string[], step: number, unit: number, dataflow: Dataflow | null = null, tables: [string, ParameterTable][] = []) =>
+  invoke<FormulaTrace>('reserves_column_trace', { object, node, step, unit, dataflow, tables: tables.length ? tables : null });
 
 /** One folder a seam model reads its grids from, with how many of them are there (decision 0058, stage 4). */
 export interface FolderCheck {

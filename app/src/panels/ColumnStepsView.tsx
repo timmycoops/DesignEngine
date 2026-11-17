@@ -1,6 +1,6 @@
 import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { type ColumnSteps, type Dataflow, reservesColumn } from '@/bridge';
+import { type ColumnSteps, type Dataflow, type ParameterTable, reservesColumn } from '@/bridge';
 import { Choice, Field, StatusBadge } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
@@ -25,6 +25,7 @@ export function ColumnStepsView({
   backLabel = 'Table',
   startStep,
   dataflow = null,
+  tables = [],
 }: {
   table: { id: string; name: string; revision: number };
   node: string[];
@@ -35,6 +36,8 @@ export function ColumnStepsView({
   startStep?: number;
   /** A dataflow as edited to run the column on, not the saved one (decision 0081, point 7). */
   dataflow?: Dataflow | null;
+  /** Parameter tables as edited, each in place of the saved one with its id (decision 0082). */
+  tables?: [string, ParameterTable][];
 }) {
   const [column, setColumn] = useState<ColumnSteps | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +49,7 @@ export function ColumnStepsView({
     let live = true;
     setColumn(null);
     setError(null);
-    void reservesColumn(table.id, node, dataflow)
+    void reservesColumn(table.id, node, dataflow, tables)
       .then((c) => {
         if (!live) return;
         setColumn(c);

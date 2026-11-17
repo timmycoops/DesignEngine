@@ -114,7 +114,7 @@ const saveKey = (save: () => void) => (e: KeyboardEvent) => {
 };
 
 function TableEditor({ object, onMade }: { object: ObjectSummary; onMade: (id: string) => void }) {
-  const { summary, selection, runRecord } = useWorkspace();
+  const { summary, selection, runRecord, setDraft } = useWorkspace();
   const [saved, setSaved] = useState<ParameterTable | null>(null);
   const [grid, setGrid] = useState<Grid | null>(null);
   const [savedColumns, setSavedColumns] = useState<string[]>([]);
@@ -163,6 +163,14 @@ function TableEditor({ object, onMade }: { object: ObjectSummary; onMade: (id: s
       clearTimeout(t);
     };
   }, [checked]);
+
+  // The edits as they stand, for the Dataflow tab to run on live (decision 0082); none once saved, discarded or closed.
+  useEffect(() => {
+    if (!grid || !saved || !checked || !gridEdited(grid, saved.rows.length, savedColumns)) return setDraft(object.id, null);
+    const why = checked.problems[0]?.why ?? engineWhy;
+    setDraft(object.id, { kind: 'table', name: object.name, table: why ? null : checked.table, why });
+  }, [checked, engineWhy, saved]);
+  useEffect(() => () => setDraft(object.id, null), [object.id]);
 
   if (!grid || !saved || !checked) return <div className="p-3 text-muted-foreground">Opening {object.name}…</div>;
 
@@ -397,7 +405,7 @@ function TableEditor({ object, onMade }: { object: ObjectSummary; onMade: (id: s
 type FlowField = Dataflow['fields'][number];
 
 function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; tables: ObjectSummary[]; openStep: { step: string; n: number } | null }) {
-  const { runRecord } = useWorkspace();
+  const { runRecord, setDraft } = useWorkspace();
   const [saved, setSaved] = useState<Dataflow | null>(null);
   const [flow, setFlow] = useState<Dataflow | null>(null);
   const [engineWhy, setEngineWhy] = useState<string | null>(null);
@@ -436,6 +444,14 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
       clearTimeout(t);
     };
   }, [flow]);
+
+  // The dataflow as edited, its formulas with it, for the Dataflow tab to run on live (decision 0082). Always handed on:
+  // a worked example that fails is flagged there and run anyway (0081), and what can't run comes back with why.
+  useEffect(() => {
+    if (!flow || !saved || JSON.stringify(flow) === JSON.stringify(saved)) return setDraft(object.id, null);
+    setDraft(object.id, { kind: 'dataflow', name: object.name, dataflow: flow, why: null });
+  }, [flow, saved]);
+  useEffect(() => () => setDraft(object.id, null), [object.id]);
 
   if (!flow || !saved) return <div className="p-3 text-muted-foreground">Opening {object.name}…</div>;
 

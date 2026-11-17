@@ -1056,8 +1056,10 @@ pub struct ColumnSteps {
     pub model: Option<String>,
     /// How many horizons the stack holds, the model's or the run's own.
     pub horizons: usize,
-    /// Whether the column was run on a dataflow given as edited, not the one saved (decision 0081, point 7).
+    /// Whether the column was run on anything given as edited, not as saved (decisions 0081, point 7, and 0082).
     pub edited: bool,
+    /// What it was run on as edited, by name: the dataflow, and the parameter tables it reads (decision 0082, point 5).
+    pub unsaved: Vec<String>,
     /// The edited dataflow's worked examples that don't hold, each with its step and test: run anyway, said here.
     pub failing: Vec<String>,
     pub steps: Vec<StepView>,
@@ -1073,13 +1075,47 @@ pub struct ColumnField {
     pub kind: FieldKind,
 }
 
+/// What a column is run on that isn't saved (decision 0082, points 4 and 5): the dataflow as edited, and parameter tables
+/// as edited, each standing in for the saved one with its id. Nothing is kept: the run reads them, the project doesn't.
+#[derive(Debug, Clone, Default)]
+pub struct Unsaved {
+    pub dataflow: Option<Arc<Dataflow>>,
+    pub tables: Vec<(ObjectId, Arc<ParameterTable>)>,
+}
+
+impl Unsaved {
+    /// Only the dataflow as edited.
+    pub fn flow(dataflow: Arc<Dataflow>) -> Self {
+        Self { dataflow: Some(dataflow), tables: Vec::new() }
+    }
+
+    /// The project's objects, an edited parameter table in place of its saved one; each edited table checked first.
+    fn reader<'a>(&'a self, project: &'a zd_core::Project) -> Result<impl Fn(ObjectId) -> Result<Arc<Object>, CommandError> + 'a, CommandError> {
+        for (id, table) in &self.tables {
+            let name = project.object(*id).map_or_else(|| "a parameter table".to_string(), |o| o.name.clone());
+            table.check().map_err(|e| CommandError::Invalid(format!("{name} as edited: {e}")))?;
+        }
+        Ok(move |id: ObjectId| {
+            let object = project.object(id).cloned().ok_or(CommandError::MissingObject(id))?;
+            Ok(match self.tables.iter().find(|(t, _)| *t == id) {
+                Some((_, table)) if matches!(object.body, Body::ParameterTable(_)) => {
+                    let mut edited = (*object).clone();
+                    edited.body = Body::ParameterTable(table.clone());
+                    Arc::new(edited)
+                }
+                _ => object,
+            })
+        })
+    }
+}
+
 /// Runs the column a node of a reserves table sits in (a block, or a seam or bench of it) through the dataflow again,
 /// with the parameters the table's own run was given, read from the run log; or through `dataflow` as given, one being
 /// edited (decision 0081). Nothing is kept. A node above a column (a pit, a strip) is refused, as is a table no reserves
 /// run in the log made.
-pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: ObjectId, node: &[String], dataflow: Option<&Arc<Dataflow>>) -> Result<ColumnSteps, CommandError> {
-    let get = |id: ObjectId| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
-    let opened = open_column(project, log, &get, table, node, dataflow)?;
+pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: ObjectId, node: &[String], unsaved: &Unsaved) -> Result<ColumnSteps, CommandError> {
+    let get = unsaved.reader(project)?;
+    let opened = open_column(project, log, &get, table, node, unsaved.dataflow.as_ref())?;
     let blocks = &opened.prepared.columns[&opened.key];
     let mut steps = Vec::new();
     run_column(&opened.prepared, &opened.key, blocks, Some(&mut steps)).map_err(|s| CommandError::Invalid(s.why))?;
@@ -1094,7 +1130,8 @@ pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: 
         blocks: blocks.iter().map(|b| b.name.clone()).collect(),
         model: opened.model,
         horizons: opened.prepared.horizons.len(),
-        edited: dataflow.is_some(),
+        edited: !opened.unsaved.is_empty(),
+        unsaved: opened.unsaved,
         failing: opened.prepared.failing.clone(),
         steps,
         changed: opened.changed,
@@ -1104,9 +1141,9 @@ pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: 
 /// A formula step of a table's column traced on one unit (decision 0081): the column run up to `step` (its place in
 /// the notebook, 1 being the first step after the column as input), then the formula traced on the unit with id `unit`
 /// as it stands there. On the saved dataflow, or `dataflow` as edited. Nothing is kept.
-pub fn column_trace(project: &zd_core::Project, log: &[crate::LogEntry], table: ObjectId, node: &[String], step: usize, unit: UnitId, dataflow: Option<&Arc<Dataflow>>) -> Result<FormulaTraceView, CommandError> {
-    let get = |id: ObjectId| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
-    let opened = open_column(project, log, &get, table, node, dataflow)?;
+pub fn column_trace(project: &zd_core::Project, log: &[crate::LogEntry], table: ObjectId, node: &[String], step: usize, unit: UnitId, unsaved: &Unsaved) -> Result<FormulaTraceView, CommandError> {
+    let get = unsaved.reader(project)?;
+    let opened = open_column(project, log, &get, table, node, unsaved.dataflow.as_ref())?;
     let prepared = &opened.prepared;
     let (name, s, settings) = step.checked_sub(1).and_then(|i| prepared.steps.get(i)).ok_or_else(|| CommandError::Invalid(format!("the dataflow runs {} steps, not {step}", prepared.steps.len())))?;
     let StepRun::Formula(formula) = s else { return Err(CommandError::Invalid(format!("{name} is built in, not a formula: it has no lines to trace"))) };
@@ -1141,6 +1178,8 @@ struct OpenedColumn {
     /// The seam model the run named, by name.
     model: Option<String>,
     changed: Vec<String>,
+    /// What it's run on as edited, by name: the dataflow, and the edited tables among those it reads.
+    unsaved: Vec<String>,
 }
 
 fn open_column(project: &zd_core::Project, log: &[crate::LogEntry], get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>, table: ObjectId, node: &[String], dataflow: Option<&Arc<Dataflow>>) -> Result<OpenedColumn, CommandError> {
@@ -1179,8 +1218,14 @@ fn open_column(project: &zd_core::Project, log: &[crate::LogEntry], get: &dyn Fn
     if p.parameters.is_some() {
         tables.push("the run's own rows".into());
     }
+    let mut unsaved: Vec<String> = dataflow.map(|_| saved.name.clone()).into_iter().collect();
     for &id in &prepared.dataflow.parameters {
-        tables.push(project.object(id).map_or_else(|| "a table since deleted".into(), |o| o.name.clone()));
+        let name = project.object(id).map_or_else(|| "a table since deleted".into(), |o| o.name.clone());
+        // A table read as edited is said by name: the lookup gave it in place of the saved one.
+        if get(id).ok().zip(project.object(id)).is_some_and(|(read, stored)| !Arc::ptr_eq(&read, stored)) {
+            unsaved.push(name.clone());
+        }
+        tables.push(name);
     }
     // The node's words by the table's levels; the column is the words of the dataflow's levels above the seam.
     let levels = crate::reserves_view::levels(t);
@@ -1196,7 +1241,7 @@ fn open_column(project: &zd_core::Project, log: &[crate::LogEntry], get: &dyn Fn
         return Err(CommandError::Invalid(format!("no blocks of case {case} at {} now", key.words())));
     }
     let model = p.model.map(|id| project.object(id).map_or_else(|| "a seam model since deleted".into(), |o| o.name.clone()));
-    Ok(OpenedColumn { prepared, dataflow_id: p.dataflow, key, tables, model, changed })
+    Ok(OpenedColumn { prepared, dataflow_id: p.dataflow, key, tables, model, changed, unsaved })
 }
 
 /// `small_volumes`: each unit under the `min_volume` its parameter rows give set aside and written (decision 0073,
