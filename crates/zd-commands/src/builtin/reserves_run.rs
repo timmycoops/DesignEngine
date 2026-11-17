@@ -137,6 +137,8 @@ pub struct RunReservesParams {
 #[derive(Debug, Clone)]
 struct Piece {
     folder: String,
+    /// The unit it was written from, or onto where a step shares material out (ROM's dilution on its plies).
+    unit: UnitId,
     leaf: Vec<String>,
     values: Vec<f64>,
     texts: Vec<(String, String)>,
@@ -619,6 +621,39 @@ pub struct StepView {
     /// A built-in step's arithmetic, unit by unit, in the order worked (decision 0082); none for a formula, whose lines
     /// are in its trace, or a step that writes none yet.
     pub workings: Vec<Working>,
+    /// What the step wrote to the reserves table for this column, a folder each, in the order written (decision 0084);
+    /// the column as input writes Imported.
+    pub writes: Vec<StepWrite>,
+}
+
+/// What a step wrote to one folder of the reserves table for a column (decision 0084): the units its pieces were written
+/// from (or onto, where a step shares material out over plies), and the volume written, its pieces added up.
+#[derive(Debug, Clone, Serialize)]
+pub struct StepWrite {
+    /// `Insitu\Coal`, `Loss\Roof`: the folder the pieces went under, without the field.
+    pub folder: String,
+    pub units: Vec<UnitId>,
+    pub volume: f64,
+}
+
+/// Pieces as the folders they went to, in the order first written: their units, once each, and their volume added up.
+fn writes_of(pieces: &[Piece], volume: usize) -> Vec<StepWrite> {
+    let mut writes: Vec<StepWrite> = Vec::new();
+    for piece in pieces {
+        let at = match writes.iter().position(|w| w.folder == piece.folder) {
+            Some(at) => at,
+            None => {
+                writes.push(StepWrite { folder: piece.folder.clone(), units: Vec::new(), volume: 0.0 });
+                writes.len() - 1
+            }
+        };
+        let w = &mut writes[at];
+        if !w.units.contains(&piece.unit) {
+            w.units.push(piece.unit);
+        }
+        w.volume += piece.values[volume];
+    }
+    writes
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -672,7 +707,7 @@ fn view(run: &ColumnRun<'_>, step: &str, said: Vec<String>) -> StepView {
             values: fields.list().iter().zip(u.values()).map(|(f, v)| (f.name.clone(), *v)).collect(),
         })
         .collect();
-    StepView { step: step.to_string(), units, said, kind: StepKind::Input, rule: String::new(), when: BTreeMap::new(), source: None, fits: Vec::new(), reads: Vec::new(), workings: Vec::new() }
+    StepView { step: step.to_string(), units, said, kind: StepKind::Input, rule: String::new(), when: BTreeMap::new(), source: None, fits: Vec::new(), reads: Vec::new(), workings: Vec::new(), writes: Vec::new() }
 }
 
 /// One column: its blocks made units, then each step in turn. With `preview`, the column after each step, with what
@@ -680,14 +715,18 @@ fn view(run: &ColumnRun<'_>, step: &str, said: Vec<String>) -> StepView {
 fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut preview: Option<&mut Vec<StepView>>) -> Result<Ran, Stopped> {
     let stop = |why: String| Stopped { why };
     let (mut run, input_volume) = begin_column(prepared, key, blocks)?;
+    let volume = prepared.fields.volume();
     if let Some(p) = preview.as_deref_mut() {
-        // What reading the blocks said (a volume measured before a cut) goes with the column as input.
-        p.push(view(&run, "as input", run.said.since(&Said::default())));
+        // What reading the blocks said (a volume measured before a cut) goes with the column as input, as does Imported.
+        let mut input = view(&run, "as input", run.said.since(&Said::default()));
+        input.writes = writes_of(&run.rows, volume);
+        p.push(input);
         run.reads = Some(std::cell::RefCell::new(Vec::new()));
         run.workings = Some(std::cell::RefCell::new(Vec::new()));
     }
     for (name, step, settings) in &prepared.steps {
         let before = preview.is_some().then(|| run.said.clone());
+        let written = run.rows.len();
         let fits: Vec<UnitId> = match (preview.is_some(), step) {
             (true, StepRun::Formula(_)) => formula_fits(&run, settings).into_iter().map(|at| run.column.units()[at].id).collect(),
             (true, StepRun::BuiltIn(_)) => run.column.units().iter().map(|u| u.id).collect(),
@@ -703,6 +742,7 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
             cell.fits = fits;
             cell.reads = run.reads.as_ref().map(|r| std::mem::take(&mut *r.borrow_mut())).unwrap_or_default();
             cell.workings = run.workings.as_ref().map(|w| std::mem::take(&mut *w.borrow_mut())).unwrap_or_default();
+            cell.writes = writes_of(&run.rows[written..], volume);
             match step {
                 StepRun::Formula(_) => {
                     let f = settings.formula.as_ref();
@@ -720,7 +760,6 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
             p.push(cell);
         }
     }
-    let volume = prepared.fields.volume();
     let imbalance = input_volume - (run.column.balance()[volume] - run.added_volume);
     Ok(Ran { key: key.clone(), rows: run.rows, said: run.said, imbalance, input_volume })
 }
@@ -2022,7 +2061,7 @@ fn place(run: &ColumnRun<'_>, values: &[f64], onto: usize, folder: &str, texts: 
             let attributes = &run.attributes[origin as usize];
             let leaf = run.lower.iter().map(|l| attribute_ci(attributes, l).map(attribute_word).unwrap_or_default()).collect();
             let values = values.iter().enumerate().map(|(f, x)| if fields.is_summed(f) { x * share } else { *x }).collect();
-            Piece { folder: folder.to_string(), leaf, values, texts: texts.to_vec() }
+            Piece { folder: folder.to_string(), unit: u.id, leaf, values, texts: texts.to_vec() }
         })
         .collect()
 }
@@ -2192,7 +2231,7 @@ fn write_pieces(run: &mut ColumnRun<'_>, folder: impl Fn(&Unit) -> Option<String
             let values = u.values().iter().zip(&summed).map(|(v, s)| if *s { v * share } else { *v }).collect();
             let attributes = &run.attributes[origin as usize];
             let leaf = run.lower.iter().map(|l| attribute_ci(attributes, l).map(attribute_word).unwrap_or_default()).collect();
-            pieces.push(Piece { folder: folder.clone(), leaf, values, texts: texts.clone() });
+            pieces.push(Piece { folder: folder.clone(), unit: u.id, leaf, values, texts: texts.clone() });
         }
     }
     run.rows.extend(pieces);

@@ -672,6 +672,15 @@ export interface ColumnStep {
   reads: ParamRead[];
   /** A built-in step's arithmetic, unit by unit (decision 0082); none for a formula or the column as input. */
   workings: Working[];
+  /** What the step wrote to the reserves table for this column, a folder each (decision 0084); the column as input writes Imported. */
+  writes: StepWrite[];
+}
+
+/** What a step wrote to one folder of the reserves table (decision 0084): the units its pieces came from, or went onto, and the volume. */
+export interface StepWrite {
+  folder: string;
+  units: number[];
+  volume: number;
 }
 
 /**
