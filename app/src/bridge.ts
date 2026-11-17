@@ -691,6 +691,8 @@ export interface ColumnSteps {
   tables: string[];
   /** Run on a dataflow given as edited, not the one saved. */
   edited: boolean;
+  /** The edited dataflow's worked examples that don't hold, each with its step and test: run anyway (decision 0081). */
+  failing: string[];
   steps: ColumnStep[];
   changed: string[];
 }

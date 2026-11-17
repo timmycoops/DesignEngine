@@ -64,7 +64,7 @@ pub use reserves_run::{
 };
 pub use starter::{DISCARDED, RD_ADT, starter_formulas, with_starter_formulas};
 pub use zd_script::REFERENCE as FORMULA_REFERENCE;
-pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_formula_steps, declared as formula_declared};
+pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_formula_steps, check_formula_steps_flagging, declared as formula_declared};
 pub use dataflow::{DATAFLOW_LAYER, ExportParameters, PARAMETERS_LAYER, SaveDataflow, SaveParameters};
 
 use crate::{CommandError, Registry};

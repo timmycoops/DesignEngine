@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { Colouring, Contours, LogEntry, ProjectSummary, RunRecord, Vec3, WorkflowRecord } from '@/bridge';
+import type { Colouring, Contours, Dataflow, LogEntry, ProjectSummary, RunRecord, Vec3, WorkflowRecord } from '@/bridge';
 import type { RlShown, SeamShown } from '@/viewport/sceneSync';
 import type { PanelId } from './panels';
 
@@ -8,6 +8,13 @@ export interface AddingTo {
   id: string;
   name: string;
   at?: number;
+}
+
+/** A dataflow being edited, run in the notebook before it's saved (decision 0081, point 7): which, as edited, and the step. */
+export interface NotebookEdit {
+  dataflowId: string;
+  dataflow: Dataflow;
+  step: string;
 }
 
 /** What every panel reads, and the actions they share. App owns the state. */
@@ -56,9 +63,11 @@ export interface Workspace {
   /** The last ask to a panel to show one of what it does; `n` counts asks, so asking the same again shows it again. */
   toolAsk: { panel: PanelId; mode?: string; n: number } | null;
   /** The column the Notebook tab shows (decision 0081): a reserves table and a node at a block or below; `n` counts asks. */
-  notebookOf: { table: string; node: string[]; n: number } | null;
-  /** Opens the Notebook tab on a reserves table's node: its block column, a cell a step. */
+  notebookOf: { table: string; node: string[]; n: number; edited: NotebookEdit | null } | null;
+  /** Opens the Notebook tab on a reserves table's node: its block column, a cell a step, on the saved dataflow. */
   openNotebook: (table: string, node: string[]) => void;
+  /** Runs the open notebook's column again on a dataflow as edited, not saved; null goes back to the saved one. */
+  runInNotebook: (edit: NotebookEdit | null) => void;
   /** A panel that does several things says which it's set to, so the ribbon lights that tool; null as it closes. */
   toolMode: (panel: PanelId, mode: string | null) => void;
   /** Runs an engine command; reports the outcome on the status line. False if it failed. */

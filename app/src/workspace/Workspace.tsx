@@ -241,6 +241,7 @@ function restoreLayout(api: DockviewApi) {
       api.fromJSON(JSON.parse(saved));
       if (!api.getPanel('viewport')) addViewport(api);
       bareView(api);
+      keepMounted(api);
       return;
     }
   } catch {
@@ -255,6 +256,25 @@ function restoreLayout(api: DockviewApi) {
  * in it is made again: the tools down the right of the window, the tables under the view.
  */
 export function showPanel(api: DockviewApi, id: PanelId) {
+  bringToFront(api, id);
+  keepMounted(api);
+}
+
+/**
+ * Tabs kept in the page while another tab of their dock is in front, as the view is: the Parameters tab holds edits
+ * not yet saved, which a tab put away would lose, as Run in notebook brings the Notebook to the front beside it
+ * (decision 0081, point 7).
+ */
+const KEEP_MOUNTED: readonly PanelId[] = ['params'];
+
+function keepMounted(api: DockviewApi) {
+  for (const id of KEEP_MOUNTED) {
+    const panel = api.getPanel(id);
+    if (panel && panel.api.renderer !== 'always') panel.api.setRenderer('always');
+  }
+}
+
+function bringToFront(api: DockviewApi, id: PanelId) {
   const open = api.getPanel(id);
   if (open) {
     if (!open.group.api.isVisible) return restore(api, open.group.id, id);

@@ -282,6 +282,8 @@ struct Ran {
 /// What a dataflow run reads, settled once before the columns run.
 pub(crate) struct Prepared {
     name: String,
+    /// The worked examples of a dataflow being edited that don't hold, said: it runs anyway (decision 0081).
+    failing: Vec<String>,
     dataflow: Arc<Dataflow>,
     fields: Arc<Fields>,
     tables: Vec<Arc<ParameterTable>>,
@@ -343,11 +345,13 @@ pub(crate) fn prepare(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError
     let Body::Dataflow(dataflow) = &flow.body else {
         return Err(CommandError::WrongKind { id: p.dataflow, expected: ObjectKind::Dataflow, found: flow.kind() });
     };
-    prepare_flow(&flow.name, dataflow, get, p)
+    prepare_flow(&flow.name, dataflow, get, p, false)
 }
 
 /// As `prepare`, for a dataflow as given: one being edited, not yet saved (decision 0077, 7d).
-pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>, p: &RunReservesParams) -> Result<Prepared, CommandError> {
+///
+/// With `flagging`, a dataflow being edited: a formula's worked example that fails is kept in `failing`, not refused.
+pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>, p: &RunReservesParams, flagging: bool) -> Result<Prepared, CommandError> {
     dataflow.check().map_err(CommandError::Invalid)?;
     let fields = Arc::new(dataflow.engine_fields().map_err(CommandError::Invalid)?);
     let mut tables = Vec::new();
@@ -378,8 +382,9 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     let built_in: Vec<&str> = STEPS.iter().map(|(n, _)| *n).collect();
     let table_refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
     let declared = formulas::declared(&fields, &table_refs);
+    let mut failing: Vec<String> = Vec::new();
     let mut compiled: BTreeMap<usize, Arc<zd_script::Formula>> =
-        formulas::check_formula_steps(dataflow, &built_in, &declared).map_err(CommandError::Invalid)?.into_iter().map(|(i, f)| (i, Arc::new(f))).collect();
+        formulas::check_formula_steps_flagging(dataflow, &built_in, &declared, flagging.then_some(&mut failing)).map_err(CommandError::Invalid)?.into_iter().map(|(i, f)| (i, Arc::new(f))).collect();
     let mut steps = Vec::new();
     for (i, s) in dataflow.steps.iter().enumerate().filter(|(_, s)| s.on) {
         if let Some(f) = compiled.remove(&i) {
@@ -415,7 +420,7 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
         let case = word("case").unwrap_or_else(|| BASE.to_string());
         columns.entry(ColumnKey { case, path }).or_default().push(object);
     }
-    Ok(Prepared { name: name.to_string(), dataflow: dataflow.clone(), fields, tables, horizons, steps, declared, upper, lower, columns, unplaced })
+    Ok(Prepared { name: name.to_string(), failing, dataflow: dataflow.clone(), fields, tables, horizons, steps, declared, upper, lower, columns, unplaced })
 }
 
 /// A value from the parameter tables, read in order.
@@ -802,7 +807,7 @@ pub struct FormulaTraceView {
 /// Runs a solid's block column through a dataflow (as given, saved or not) up to its formula step `step`, then traces the
 /// formula on the unit the solid is part of. Nothing is kept.
 pub fn formula_trace(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>, dataflow: &Arc<Dataflow>, p: &RunReservesParams, step: &str, solid: ObjectId) -> Result<FormulaTraceView, CommandError> {
-    let prepared = prepare_flow("dataflow", dataflow, get, p)?;
+    let prepared = prepare_flow("dataflow", dataflow, get, p, true)?;
     let (key, blocks) = prepared.columns.iter().find(|(_, blocks)| blocks.iter().any(|b| b.id == solid)).ok_or_else(|| CommandError::Invalid("the picked solid isn't one of the blocks run".into()))?;
     let (mut run, _) = begin_column(&prepared, key, blocks).map_err(|s| CommandError::Invalid(s.why))?;
     let mut traced = None;
@@ -877,6 +882,8 @@ pub struct ColumnSteps {
     pub tables: Vec<String>,
     /// Whether the column was run on a dataflow given as edited, not the one saved (decision 0081, point 7).
     pub edited: bool,
+    /// The edited dataflow's worked examples that don't hold, each with its step and test: run anyway, said here.
+    pub failing: Vec<String>,
     pub steps: Vec<StepView>,
     /// What the table was made from that has changed since, by name: the column is run on them as they are now, so it
     /// may not be the table's.
@@ -901,7 +908,7 @@ pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: 
     let mut steps = Vec::new();
     run_column(&opened.prepared, &opened.key, blocks, Some(&mut steps)).map_err(|s| CommandError::Invalid(s.why))?;
     let fields = opened.prepared.fields.list().iter().map(|f| ColumnField { name: f.name.clone(), unit: unit_of_kind(f.kind), kind: f.kind }).collect();
-    Ok(ColumnSteps { column: opened.key.path.clone(), case: opened.key.case.clone(), dataflow: opened.prepared.name.clone(), dataflow_id: opened.dataflow_id, fields, tables: opened.tables, edited: dataflow.is_some(), steps, changed: opened.changed })
+    Ok(ColumnSteps { column: opened.key.path.clone(), case: opened.key.case.clone(), dataflow: opened.prepared.name.clone(), dataflow_id: opened.dataflow_id, fields, tables: opened.tables, edited: dataflow.is_some(), failing: opened.prepared.failing.clone(), steps, changed: opened.changed })
 }
 
 /// A formula step of a table's column traced on one unit (decision 0081): the column run up to `step` (its place in
@@ -973,7 +980,7 @@ fn open_column(project: &zd_core::Project, log: &[crate::LogEntry], get: &dyn Fn
     p.blocks.retain(|id| project.object(*id).is_some());
     let saved = get(p.dataflow)?;
     let prepared = match dataflow {
-        Some(edited) => prepare_flow(&saved.name, edited, get, &p)?,
+        Some(edited) => prepare_flow(&saved.name, edited, get, &p, true)?,
         None => prepare(get, &p)?,
     };
     let mut tables: Vec<String> = Vec::new();

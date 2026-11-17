@@ -167,7 +167,7 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     expect('the 50m table opens in under 200 ms and a block in under 100 ms', treeMs + pitMs < 200 && blockMs < 100, { leaves: tree.leaves, treeMs: Math.round(treeMs), pitMs: Math.round(pitMs), blockMs: Math.round(blockMs) });
   }
   await checkParameters(summary, api, expect, show, picture);
-  await checkFormulas(expect, picture);
+  await checkFormulas(expect, picture, api);
   return { ...results, failures };
 }
 
@@ -330,7 +330,7 @@ async function checkParameters(summary: ProjectSummary, api: DockviewApi, expect
  * checked with its worked examples holding; run on the picked block's unit (a solid of 3_B1, picked by Select its
  * solids), lines that ran tinted and rd_is set; a misspelt field shown on its line, Save off; Discard puts it back.
  */
-async function checkFormulas(expect: Expect, picture: Picture) {
+async function checkFormulas(expect: Expect, picture: Picture, api: DockviewApi) {
   const panel = () => document.querySelector<HTMLElement>('[data-tool-panel="parameters"]');
   panel()?.querySelector<HTMLButtonElement>('[data-slot="parameters-item"][data-name="Reserves"]')?.click();
   for (let k = 0; k < 50 && !panel()?.querySelector('[data-formula="yes"]'); k++) await wait(100);
@@ -371,4 +371,43 @@ async function checkFormulas(expect: Expect, picture: Picture) {
   await wait(400);
   const back = view?.state.doc.toString() ?? '';
   expect('Discard puts the formula back', back === text && !panel()?.querySelector('[data-slot="formula-problem"]'));
+
+  // Run in notebook (decision 0081, point 7): rd_is doubled and not saved, run on the Notebook's column (3_B1, opened
+  // above). Its densities cell runs the edit, marked edited, and the worked examples it breaks are flagged, not refused;
+  // the Parameters tab, put behind, still holds the edit; back to the saved formula, then the edit discarded.
+  const at2 = back.indexOf('rd_is = in_situ_rd(');
+  view?.dispatch({ changes: { from: at2 + 'rd_is = '.length, to: at2 + 'rd_is = '.length, insert: '2 * ' } });
+  await wait(600);
+  button('Run in notebook')?.click();
+  const nb = () => document.querySelector<HTMLElement>('[data-tool-panel="notebook"]');
+  const dens = () => nb()?.querySelector<HTMLElement>('[data-slot="notebook-cell"][data-step="densities"]') ?? null;
+  for (let k = 0; k < 100 && !(nb()?.querySelector('[data-slot="notebook-edited"]') && dens()?.querySelector('[data-ran="yes"]')); k++) await wait(100);
+  const code = dens()?.querySelector('[data-slot="cell-code"]')?.textContent ?? '';
+  const failing = nb()?.querySelector('[data-slot="notebook-failing"]')?.textContent ?? '';
+  const badge = [...(dens()?.querySelectorAll('span') ?? [])].some((e) => e.textContent === 'edited');
+  expect(
+    'Run in notebook runs the edited formula on the column, marked edited, its failing worked examples flagged, not refused',
+    code.includes('2 * in_situ_rd(') && /rd_is = [\d.]+/.test(code) && badge && failing.includes('the formula step densities, test'),
+    { badge, failing: failing.slice(0, 120) },
+  );
+  if (picture) {
+    document.querySelector<HTMLButtonElement>('button[aria-label="Fill the window"]')?.click();
+    await picture('run-in-notebook');
+    document.querySelector<HTMLButtonElement>('button[aria-label="Put the tables back under the view"]')?.click();
+    await wait(300);
+  }
+  showPanel(api, 'params');
+  await wait(300);
+  const kept = (view && panel()?.contains(view.dom) ? view : null)?.state.doc.toString() ?? '';
+  expect('the Parameters tab, put behind the Notebook, still holds the edit', kept.includes('rd_is = 2 * in_situ_rd('));
+  showPanel(api, 'notebook');
+  [...(nb()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent === 'Back to the saved formula')?.click();
+  for (let k = 0; k < 100 && nb()?.querySelector('[data-slot="notebook-edited"]'); k++) await wait(100);
+  for (let k = 0; k < 100 && !dens()?.querySelector('[data-ran="yes"]'); k++) await wait(100);
+  const savedCode = dens()?.querySelector('[data-slot="cell-code"]')?.textContent ?? '';
+  expect('Back to the saved formula runs the saved one again', !nb()?.querySelector('[data-slot="notebook-edited"]') && savedCode.includes('rd_is = in_situ_rd(') && !savedCode.includes('2 * in_situ_rd('));
+  showPanel(api, 'params');
+  await wait(200);
+  button('Discard')?.click();
+  await wait(400);
 }

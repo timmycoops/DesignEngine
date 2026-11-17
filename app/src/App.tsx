@@ -59,7 +59,7 @@ import { RoadLayer } from './viewport/roads';
 import { type Mode, StringLayer } from './viewport/strings';
 import { typing } from './viewport/camera';
 import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Viewport';
-import { type AddingTo, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
+import { type AddingTo, type NotebookEdit, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
 import { ALL_PANELS_KEY, type PanelId, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
 import { inUse, type Tool, type ToolAction, type ToolNeeds } from './tools';
 import { listenForChords } from './workspace/chords';
@@ -388,10 +388,15 @@ export default function App() {
     setToolAsk((was) => ({ panel, mode, n: (was?.n ?? 0) + 1 }));
   }, []);
   // The column the Notebook tab shows (decision 0081), asked for from the Reserves table's Open its column.
-  const [notebookOf, setNotebookOf] = useState<{ table: string; node: string[]; n: number } | null>(null);
+  const [notebookOf, setNotebookOf] = useState<{ table: string; node: string[]; n: number; edited: NotebookEdit | null } | null>(null);
   const openNotebook = useCallback((table: string, node: string[]) => {
     if (dockRef.current) showPanel(dockRef.current, 'notebook');
-    setNotebookOf((was) => ({ table, node, n: (was?.n ?? 0) + 1 }));
+    setNotebookOf((was) => ({ table, node, n: (was?.n ?? 0) + 1, edited: null }));
+  }, []);
+  // The open notebook's column again, on a formula as edited (decision 0081, point 7); nothing to do with none open.
+  const runInNotebook = useCallback((edited: NotebookEdit | null) => {
+    if (dockRef.current) showPanel(dockRef.current, 'notebook');
+    setNotebookOf((was) => (was ? { ...was, n: was.n + 1, edited } : was));
   }, []);
   const [workflowPick, setWorkflowPick] = useState<{ id: string | null; case: string }>({ id: null, case: 'Base' });
   // What the ribbon lights: the panels in front in their docks, and what each is set to do, as the panels say.
@@ -1085,6 +1090,7 @@ export default function App() {
       toolMode,
       notebookOf,
       openNotebook,
+      runInNotebook,
       run,
       runRecord,
       seamViews,
@@ -1114,7 +1120,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook],
+    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook],
   );
 
   /** The view's own tools, for the bar on the view (decision 0076). The keys below do the same. */
