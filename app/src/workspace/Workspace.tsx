@@ -23,6 +23,7 @@ import { ViewportPanel } from '@/panels/ViewportPanel';
 import { WorkflowCanvas } from '@/panels/WorkflowCanvas';
 import { BlockTable } from '@/panels/BlockTablePanel';
 import { ReservesTable } from '@/panels/ReservesTablePanel';
+import { Notebook } from '@/panels/NotebookPanel';
 import { Parameters } from '@/panels/ParametersPanel';
 import { WorkflowPanel } from '@/panels/WorkflowPanel';
 import { type Dock, type PanelId, PANELS, TOOL_DOCK_WIDTH } from './panels';
@@ -42,6 +43,7 @@ const components: Record<PanelId | 'viewport', () => ReactNode> = {
   canvas: WorkflowCanvas,
   blocks: BlockTable,
   restable: ReservesTable,
+  notebook: Notebook,
   params: Parameters,
 };
 

@@ -50,7 +50,7 @@ const FORMULA_STAGES = ['initialise', 'join_benches', 'working_sections', 'rom_d
 const isEditable = (o: ObjectSummary) => o.kind === 'parameter_table' || o.kind === 'dataflow';
 
 export function Parameters() {
-  const { summary, selection } = useWorkspace();
+  const { summary, selection, toolAsk } = useWorkspace();
   const objects = useMemo(() => (summary?.objects ?? []).filter(isEditable), [summary]);
   const [id, setId] = useState<string | null>(null);
   const last = selection[selection.length - 1] ?? null;
@@ -58,6 +58,14 @@ export function Parameters() {
   useEffect(() => {
     if (last && objects.some((o) => o.id === last)) setId(last);
   }, [last, objects]);
+  // A formula asked for from elsewhere (a notebook cell's Edit, decision 0081): its dataflow shown, the formula opened.
+  const [openStep, setOpenStep] = useState<{ step: string; n: number } | null>(null);
+  useEffect(() => {
+    if (toolAsk?.panel !== 'params' || !toolAsk.mode?.startsWith('formula:')) return;
+    const [, flowId, step] = toolAsk.mode.split(':');
+    setId(flowId);
+    setOpenStep({ step, n: toolAsk.n });
+  }, [toolAsk]);
   const object = objects.find((o) => o.id === id) ?? objects.find((o) => o.kind === 'parameter_table') ?? objects[0] ?? null;
 
   if (!object) {
@@ -90,7 +98,7 @@ export function Parameters() {
         {object.kind === 'parameter_table' ? (
           <TableEditor key={`${object.id}@${object.revision}`} object={object} onMade={setId} />
         ) : (
-          <DataflowEditor key={`${object.id}@${object.revision}`} object={object} tables={tables} />
+          <DataflowEditor key={`${object.id}@${object.revision}`} object={object} tables={tables} openStep={openStep} />
         )}
       </div>
     </div>
@@ -388,13 +396,20 @@ function TableEditor({ object, onMade }: { object: ObjectSummary; onMade: (id: s
 
 type FlowField = Dataflow['fields'][number];
 
-function DataflowEditor({ object, tables }: { object: ObjectSummary; tables: ObjectSummary[] }) {
+function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; tables: ObjectSummary[]; openStep: { step: string; n: number } | null }) {
   const { runRecord } = useWorkspace();
   const [saved, setSaved] = useState<Dataflow | null>(null);
   const [flow, setFlow] = useState<Dataflow | null>(null);
   const [engineWhy, setEngineWhy] = useState<string | null>(null);
   const [said, setSaid] = useState<{ text: string; tone: 'ok' | 'refused' } | null>(null);
   const [formulaAt, setFormulaAt] = useState<number | null>(null);
+  // A formula asked for by name opens once the dataflow is read.
+  const flowRead = flow !== null;
+  useEffect(() => {
+    if (!openStep || !flow) return;
+    const at = flow.steps.findIndex((s) => s.step === openStep.step && s.formula);
+    if (at >= 0) setFormulaAt(at);
+  }, [openStep, flowRead]);
 
   useEffect(() => {
     let live = true;

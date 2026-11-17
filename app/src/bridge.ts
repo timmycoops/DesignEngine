@@ -684,6 +684,8 @@ export interface ColumnSteps {
   column: string[];
   case: string;
   dataflow: string;
+  /** The saved dataflow's id: where its formulas are edited. */
+  dataflow_id: string;
   fields: ColumnField[];
   /** The parameter tables read, in order, by name: what a read's `table` counts in. */
   tables: string[];

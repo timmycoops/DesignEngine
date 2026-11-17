@@ -65,6 +65,7 @@ export type ToolIcon =
   | 'reserves'
   | 'compare'
   | 'reserves-table'
+  | 'notebook'
   | 'parameters'
   | 'report'
   | 'workflow'
@@ -244,6 +245,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'reserves:compare', stage: 'reserves', label: 'Compare', tip: "Sets blocks beside Spry's or Deswik's numbers.", icon: 'compare', panel: 'reserves', mode: 'compare', command: 'solid.compare' },
   { key: 'params', stage: 'reserves', label: 'Parameters', tip: 'parameter tables and dataflows edited as grids, a picked solid\'s values marked where they come from', icon: 'parameters', panel: 'params' },
   { key: 'restable', stage: 'reserves', label: 'Reserves table', tip: "a node's fields down the side, broken down by its children across, from Imported to Scheduled", icon: 'reserves-table', panel: 'restable' },
+  { key: 'notebook', stage: 'reserves', label: 'Notebook', tip: "a block's column step by step: what each step read, its formula or rule, and what it changed", icon: 'notebook', panel: 'notebook' },
   { key: 'workflow:report', stage: 'reserves', label: 'Report', tip: "Writes a workflow's report, every case from its latest run", icon: 'report', panel: 'workflow' },
 
   // Always there, whatever the stage.
@@ -365,7 +367,7 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     { label: 'Export solids', icon: 'solids-out', tip: 'Solids out as a zip or a folder, a DXF each', keys: ['export.selected_solids', 'export.visible_solids'] },
   ],
   geology: ['import.vulcan_grid', 'seam.suggest', 'seam.build', 'seam.relink'],
-  reserves: ['reserves', 'params', 'restable', 'reserves:compare', 'workflow:report'],
+  reserves: ['reserves', 'params', 'restable', 'notebook', 'reserves:compare', 'workflow:report'],
 };
 
 /** At the right of every row, whatever the stage. */

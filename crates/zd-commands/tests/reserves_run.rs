@@ -335,6 +335,7 @@ fn a_table_s_bench_opens_its_block_s_column_step_by_step() {
     let opened = table_column(s.project(), s.log(), id, &node, None).unwrap();
     assert_eq!(opened.column, ["Pit", "3", "B2"]);
     assert_eq!((opened.case.as_str(), opened.dataflow.as_str()), ("Base", "Reserves"));
+    assert_eq!(opened.dataflow_id, flow, "the saved dataflow, where its formulas are edited");
     assert!(opened.changed.is_empty(), "{:?}", opened.changed);
 
     // The same column as the preview gives, step for step.

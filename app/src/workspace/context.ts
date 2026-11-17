@@ -55,6 +55,10 @@ export interface Workspace {
   openTool: (id: PanelId, mode?: string) => void;
   /** The last ask to a panel to show one of what it does; `n` counts asks, so asking the same again shows it again. */
   toolAsk: { panel: PanelId; mode?: string; n: number } | null;
+  /** The column the Notebook tab shows (decision 0081): a reserves table and a node at a block or below; `n` counts asks. */
+  notebookOf: { table: string; node: string[]; n: number } | null;
+  /** Opens the Notebook tab on a reserves table's node: its block column, a cell a step. */
+  openNotebook: (table: string, node: string[]) => void;
   /** A panel that does several things says which it's set to, so the ribbon lights that tool; null as it closes. */
   toolMode: (panel: PanelId, mode: string | null) => void;
   /** Runs an engine command; reports the outcome on the status line. False if it failed. */

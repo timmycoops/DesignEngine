@@ -869,6 +869,8 @@ pub struct ColumnSteps {
     pub column: Vec<String>,
     pub case: String,
     pub dataflow: String,
+    /// The saved dataflow's id: where its formulas are edited.
+    pub dataflow_id: ObjectId,
     /// The dataflow's fields in its order, each with its unit and kind.
     pub fields: Vec<ColumnField>,
     /// The parameter tables read, in order, by name: what a read's `table` counts in.
@@ -899,7 +901,7 @@ pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: 
     let mut steps = Vec::new();
     run_column(&opened.prepared, &opened.key, blocks, Some(&mut steps)).map_err(|s| CommandError::Invalid(s.why))?;
     let fields = opened.prepared.fields.list().iter().map(|f| ColumnField { name: f.name.clone(), unit: unit_of_kind(f.kind), kind: f.kind }).collect();
-    Ok(ColumnSteps { column: opened.key.path.clone(), case: opened.key.case.clone(), dataflow: opened.prepared.name.clone(), fields, tables: opened.tables, edited: dataflow.is_some(), steps, changed: opened.changed })
+    Ok(ColumnSteps { column: opened.key.path.clone(), case: opened.key.case.clone(), dataflow: opened.prepared.name.clone(), dataflow_id: opened.dataflow_id, fields, tables: opened.tables, edited: dataflow.is_some(), steps, changed: opened.changed })
 }
 
 /// A formula step of a table's column traced on one unit (decision 0081): the column run up to `step` (its place in
@@ -936,6 +938,7 @@ pub fn column_trace(project: &zd_core::Project, log: &[crate::LogEntry], table: 
 /// the tables read by name, and what has changed since the table was made.
 struct OpenedColumn {
     prepared: Prepared,
+    dataflow_id: ObjectId,
     key: ColumnKey,
     tables: Vec<String>,
     changed: Vec<String>,
@@ -993,7 +996,7 @@ fn open_column(project: &zd_core::Project, log: &[crate::LogEntry], get: &dyn Fn
     if !prepared.columns.contains_key(&key) {
         return Err(CommandError::Invalid(format!("no blocks of case {case} at {} now", key.words())));
     }
-    Ok(OpenedColumn { prepared, key, tables, changed })
+    Ok(OpenedColumn { prepared, dataflow_id: p.dataflow, key, tables, changed })
 }
 
 /// `small_volumes`: each unit under the `min_volume` its parameter rows give set aside and written (decision 0073,

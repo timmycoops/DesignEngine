@@ -81,7 +81,7 @@ test('every stage has a row of tools that exist, named in words', () => {
   assert.deepEqual(names('solids'), ['Between surfaces', 'Strips by faces', 'By surface or RL', 'By seams', 'By benches', 'By blocks', 'Block table', 'Repair']);
   assert.deepEqual(names('project'), ['New', 'Open', 'Save as', 'Relink geology']);
   assert.deepEqual(names('geology'), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology']);
-  assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Reserves table', 'Compare', 'Report']);
+  assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Reserves table', 'Notebook', 'Compare', 'Report']);
   assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Ramp', 'Set grade', 'Offset', 'Project', 'Surface between', 'Join faces']);
   assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Join', 'Smooth', 'Filter', 'Reverse', 'Close']);
 });
