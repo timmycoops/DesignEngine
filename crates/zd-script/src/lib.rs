@@ -295,6 +295,12 @@ impl Formula {
         &self.source
     }
 
+    /// The dataflow's fields it reads, read off its source, each once in the order first read (decision 0084): what the
+    /// Dataflow view lights in Before and After.
+    pub fn fields_read(&self) -> Vec<String> {
+        check::signature(&self.source).map_or_else(Vec::new, |(_, unit, _)| check::fields_read(&self.source, &self.declared, &unit))
+    }
+
     fn unit_handle(&self, column: &ColumnInput, u: usize, log: Option<handles::Log>) -> Unit {
         let unit = &column.units[u];
         Unit {

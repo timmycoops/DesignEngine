@@ -23,7 +23,7 @@ export function FormulaEditor({
   onClose,
 }: {
   flow: Dataflow;
-  /** The saved dataflow's id: Run in notebook runs the notebook's column on this one as edited. */
+  /** The saved dataflow's id: Run in Dataflow runs the Dataflow tab's column on this one as edited. */
   flowId: string;
   index: number;
   saved?: DataflowStep;
@@ -125,13 +125,13 @@ export function FormulaEditor({
             onClick={() => runInNotebook({ dataflowId: flowId, dataflow: flow, step: step.step })}
             title={
               !notebookOf
-                ? "Open a block's column in the Notebook first (Reserves table, Open its column), then run this formula there as edited"
+                ? "Open a block's column in the Dataflow tab first (Reserves table, Open its column), then run this formula there as edited"
                 : (report?.problems.length ?? 1) > 0
                   ? 'The formula has to compile to run'
-                  : "Run the Notebook's column on this dataflow as edited, before it's saved: every cell after this step shows what the edit does. Nothing is kept."
+                  : "Run the Dataflow tab's column on this dataflow as edited, before it's saved: every step after this one shows what the edit does. Nothing is kept."
             }
           >
-            <NotebookText className="size-3.5" /> Run in notebook
+            <NotebookText className="size-3.5" /> Run in Dataflow
           </Button>
           <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => copy('write')} title="Copy how formulas are written, this dataflow's field and parameter names, and this formula, for an AI to write or change it. Names only, never values.">
             <Bot className="size-3.5" /> Copy for AI

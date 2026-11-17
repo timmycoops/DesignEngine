@@ -1,9 +1,9 @@
 # 0084 — The Dataflow view: a flow strip, the step, the block before and after
 
 Status: agreed 17 November 2026. Tim picked layout B of three drawn as pictures and agreed the seven decisions on the
-Build Plan's "Dataflow view plan" tab ("Yep layout b looks good", then "Go for it"). Workstreams 1 (what each step
-wrote) and 2 (the Inputs row, the strip and Show as graph) are built here; 3 (the step pane, Before and After, the tab
-renamed) is to come.
+Build Plan's "Dataflow view plan" tab ("Yep layout b looks good", then "Go for it"). All three workstreams are built
+here: 1 (what each step wrote), 2 (the Inputs row, the strip and Show as graph) and 3 (the step pane, Before and After,
+the tab renamed).
 
 ## Why
 
@@ -46,8 +46,7 @@ pieces a step added when the column is opened (`table_column`, `reserves_preview
 
 ## Built: workstream 2, the Inputs row, the strip and Show as graph
 
-Over the Notebook's cells for now; workstream 3 puts the step pane and Before and After under them in place of the
-cells.
+Over the Notebook's cells at first; workstream 3 put the step pane and Before and After under them in their place.
 
 - **The column's inputs from the engine.** `ColumnSteps` gives `blocks` (the column's block solids by name, top down),
   `model` (the seam model the run named, by name; none where it gave its own stack) and `horizons` (how many the stack
@@ -71,3 +70,36 @@ cells.
 | `a_table_s_bench_opens_its_block_s_column_step_by_step` (engine) | B2's five block solids top down, no seam model, as many horizons as the run's own stack |
 | `dataflowView.test.mjs` (6) | writes under their top folder (Dilution 1,500 m³ from roof 500 and floor 1,000); Imported first with its units; short volumes; nothing lit with no step picked; the blocks and stack lit for the column as input; a built-in step's table and columns lit for the unit followed, else every unit; a formula lighting nothing |
 | `zd-app --bench --dataflow` (16 Nov demo, 3_B1) | a chip a step in run order, Imported writing Imported, rom_dilution Dilution, final ROM; units on every arrow; rom_dilution clicked picked, its cell marked, Reserves assumptions and its column lit; Show as graph a node a step, the writes, the tables wired; a step clicked in the graph picked |
+
+## Built: workstream 3, the step pane, Before and After, the tab renamed
+
+The Notebook tab is the Dataflow tab now, in layout B: the Inputs row and the strip (or graph) across the top, and three
+columns under them. Its list of cells is gone; the step picked is shown one at a time.
+
+- **What each step reads, from the engine.** `StepView.fields_read`: the fields of the units the step reads. A built-in
+  step's are declared beside the steps (`builtin_fields_read`): `rom_loss` and `rom_dilution` thickness, volume, area
+  and length; `working_sections` the discarded mark, thickness and volume; `final` the volume and the qualities; and so
+  on. A formula's are read off its source (`Formula::fields_read` in `zd-script`): every `unit.name` and a field read
+  through `unit.above`, `.section`, `.column` or `.rom_coal`, a plain `unit.name = …` being a set and not a read, `+=` a
+  read too; a name worked out as it runs (`unit[name]`) can't be read off the source and isn't lit. What a step changed
+  is seen on the units, as before.
+- **The step pane** (`StepPane.tsx`, was the cell): its head and what it did; In, the settings it read for the unit
+  followed, each lit gold with its table and column; Rule or Code, the formula traced on that unit; Workings, a built-in
+  step's arithmetic for that unit (0082, workstream 2, here); Out, what it said, took away and wrote to the reserves
+  table, the column's volume, and Whole column. A formula's Edit opens it in the Parameters tab, as before.
+- **Before and After** (`DataflowTables.tsx`, `beforeAfter` in `dataflowView.ts`): every unit of the block a row, the
+  labels then the fields the step reads and changes, in the dataflow's order; All fields puts the rest after them; a step
+  that reads and changes none shows the volume. A field read is lit gold in both, one changed underlined blue; a value
+  changed is blue on After, a unit made marked new, one taken away struck through on Before. Each says its units and
+  volume. The unit followed is marked in both, and a row clicked follows that unit.
+- **Picking.** A column opens on the edited step if a formula is run in it, else the step picked before, else the first
+  that did something. ← and → step through the strip. Run in notebook is Run in Dataflow.
+- **The rename.** The tab, its tool and the words that point to it say Dataflow; the panel keeps its id (`notebook`) so
+  saved layouts and the Reserves table's following carry on; a layout saved with the old name is given today's on opening.
+
+| Test | Known answer |
+|---|---|
+| `a_formula_s_fields_read_are_read_off_its_source` (zd-script) | the in situ formula reads rd, mad, mis, volume and ash_ad, not rd_is, tonnes_is or discard, which it only sets, nor material, a label; `+=` reads, a comment doesn't, `u.section.thickness` and `u.above.volume` do |
+| `each_step_s_writes_add_up…` and `a_notebook_traces_a_formula_cell…` (engine) | rom_dilution and rom_loss read thickness, volume, area and length; final volume and ash; initialise thickness and area; the column as input and rom nothing; the starter's densities rd, mad and mis first, no density it sets |
+| `dataflowView.test.mjs` (3 more) | dilution reads and changes volume and thickness, gives rd to the unit it made, ash left for All fields; OB cut changed, the new unit marked new and changed in nothing; a join's benches gone on Before and one unit new on After; a quiet step shows the volume; the column as input has no Before; volumes in and out 60,000 m³ |
+| `zd-app --bench --dataflow` (16 Nov demo, 3_B1) | the tab called Dataflow in a layout saved as Notebook; a chip a step; a step picked as it opens, in the step pane, no cells; densities' lines traced, RD and the moistures lit and rd_is underlined, alike in Before and After; rom_dilution's four settings with their table and column, its workings, its dilution new in After, thickness, volume, area and length lit; a row clicked follows its unit; → and ← step; the graph picks; Whole column the table's 10,840.1 m³ and back; Run in Dataflow picks the edited step |

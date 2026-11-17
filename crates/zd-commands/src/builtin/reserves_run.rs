@@ -624,6 +624,30 @@ pub struct StepView {
     /// What the step wrote to the reserves table for this column, a folder each, in the order written (decision 0084);
     /// the column as input writes Imported.
     pub writes: Vec<StepWrite>,
+    /// The fields of the units the step reads (decision 0084), for the Dataflow view to light in Before and After: a
+    /// built-in step's as declared beside it, a formula's read off its source. None for the column as input.
+    pub fields_read: Vec<String>,
+}
+
+/// The fields of the units a built-in step reads (decision 0084), declared beside the steps for the Dataflow view to
+/// light; the fields a step changes are seen on the units. `join_benches` adds every field up, its shares by volume and
+/// thickness; `rom_ash_cutoff` adds up the ash it tests by its own rule. A field the dataflow lacks is left out.
+fn builtin_fields_read(step: &DataflowStep, fields: &Fields) -> Vec<String> {
+    let list = fields.list();
+    let (volume, thickness) = (list[fields.volume()].name.clone(), list[fields.thickness()].name.clone());
+    let of_kind = |kind: FieldKind| list.iter().filter(move |f| f.kind == kind).map(|f| f.name.clone());
+    let named = |setting: &str| fields.at(step.setting(setting)).ok().map(|i| list[i].name.clone());
+    match step.step.as_str() {
+        "small_volumes" => vec![volume],
+        "initialise" => std::iter::once(thickness).chain(of_kind(FieldKind::Area)).collect(),
+        "in_situ" => named("rd_is").into_iter().collect(),
+        "join_benches" => vec![volume, thickness],
+        "working_sections" => named("discarded").into_iter().chain([thickness, volume]).collect(),
+        "rom_loss" | "rom_dilution" => [thickness, volume].into_iter().chain(of_kind(FieldKind::Area)).chain(named("length")).collect(),
+        "rom_ash_cutoff" => named("ash").into_iter().chain([volume]).collect(),
+        "final" => std::iter::once(volume).chain(of_kind(FieldKind::Quality)).collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// What a step wrote to one folder of the reserves table for a column (decision 0084): the units its pieces were written
@@ -707,7 +731,7 @@ fn view(run: &ColumnRun<'_>, step: &str, said: Vec<String>) -> StepView {
             values: fields.list().iter().zip(u.values()).map(|(f, v)| (f.name.clone(), *v)).collect(),
         })
         .collect();
-    StepView { step: step.to_string(), units, said, kind: StepKind::Input, rule: String::new(), when: BTreeMap::new(), source: None, fits: Vec::new(), reads: Vec::new(), workings: Vec::new(), writes: Vec::new() }
+    StepView { step: step.to_string(), units, said, kind: StepKind::Input, rule: String::new(), when: BTreeMap::new(), source: None, fits: Vec::new(), reads: Vec::new(), workings: Vec::new(), writes: Vec::new(), fields_read: Vec::new() }
 }
 
 /// One column: its blocks made units, then each step in turn. With `preview`, the column after each step, with what
@@ -744,9 +768,10 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
             cell.workings = run.workings.as_ref().map(|w| std::mem::take(&mut *w.borrow_mut())).unwrap_or_default();
             cell.writes = writes_of(&run.rows[written..], volume);
             match step {
-                StepRun::Formula(_) => {
+                StepRun::Formula(formula) => {
                     let f = settings.formula.as_ref();
                     cell.kind = StepKind::Formula;
+                    cell.fields_read = formula.fields_read();
                     cell.when = f.map(|f| f.when.clone()).unwrap_or_default();
                     cell.source = f.map(|f| f.script.clone());
                     // A formula's own reads are in its trace; what its fields' parameters gave isn't the step's.
@@ -754,7 +779,8 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
                 }
                 StepRun::BuiltIn(_) => {
                     cell.kind = StepKind::BuiltIn;
-                    cell.rule = STEPS.iter().find(|(n, _)| *n == settings.step).map_or(String::new(), |(_, r)| r.to_string());
+                    cell.fields_read = builtin_fields_read(settings, &prepared.fields);
+                    cell.rule =STEPS.iter().find(|(n, _)| *n == settings.step).map_or(String::new(), |(_, r)| r.to_string());
                 }
             }
             p.push(cell);

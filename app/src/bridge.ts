@@ -674,6 +674,8 @@ export interface ColumnStep {
   workings: Working[];
   /** What the step wrote to the reserves table for this column, a folder each (decision 0084); the column as input writes Imported. */
   writes: StepWrite[];
+  /** The fields of the units the step reads (decision 0084): a built-in step's as declared, a formula's off its source. */
+  fields_read: string[];
 }
 
 /** What a step wrote to one folder of the reserves table (decision 0084): the units its pieces came from, or went onto, and the volume. */

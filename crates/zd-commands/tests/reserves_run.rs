@@ -543,7 +543,10 @@ fn a_notebook_traces_a_formula_cell_saved_or_as_edited() {
     assert_eq!(cell.kind, StepKind::Formula);
     assert!(cell.source.as_deref().is_some_and(|f| f.contains("in_situ_rd(")) && cell.rule.is_empty() && cell.reads.is_empty());
     assert_eq!(cell.fits.len(), opened.steps[at - 1].units.len(), "no filter: every unit");
-    let unit_id = |c: &zd_commands::builtin::StepView, h: &str| c.units.iter().find(|u| u.horizon == h).unwrap().id;
+    // The fields it reads, off its source (decision 0084): RD and the moistures, not the densities it only sets.
+    assert_eq!(cell.fields_read[..3], ["rd", "mad", "mis"], "{:?}", cell.fields_read);
+    assert!(!cell.fields_read.iter().any(|f| f.starts_with("rd_")), "{:?}", cell.fields_read);
+    let unit_id =|c: &zd_commands::builtin::StepView, h: &str| c.units.iter().find(|u| u.horizon == h).unwrap().id;
     let u = unit_id(&opened.steps[at - 1], "U");
     let rd_is = 1.358 / 0.99;
     let trace = column_trace(s.project(), s.log(), id, &node, at, u, None).unwrap();
@@ -1412,6 +1415,14 @@ fn each_step_s_writes_add_up_to_the_reserves_table_folder_by_folder() {
         assert!(close(w.volume, v) && w.units.len() == 2, "{folder}: {} m³, {} units", w.volume, w.units.len());
     }
     assert!(opened.steps.iter().filter(|c| ["initialise", "join_benches", "rom_loss", "rom"].contains(&c.step.as_str())).all(|c| c.writes.is_empty()), "steps that write nothing here");
+    // What each built-in step reads of the units (decision 0084): dilution its thickness, volume, area and length (edge
+    // dilution runs along the block); final the volume and the quality; the column as input nothing.
+    let read = |step: &str| opened.steps.iter().find(|c| c.step == step).unwrap().fields_read.clone();
+    assert_eq!(read("rom_dilution"), ["thickness", "volume", "area", "length"]);
+    assert_eq!(read("rom_loss"), read("rom_dilution"));
+    assert_eq!(read("final"), ["volume", "ash"]);
+    assert_eq!(read("initialise"), ["thickness", "area"]);
+    assert!(opened.steps[0].fields_read.is_empty() && read("rom").is_empty());
 
     // final: ROM coal, A's and B's.
     let last = opened.steps.iter().find(|c| c.step == "final").unwrap();
