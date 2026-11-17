@@ -208,6 +208,44 @@ async function checkColumn(panel: () => HTMLElement | null, expect: Expect, pict
   const made = dil?.querySelectorAll('[data-slot="cell-out-table"] th[data-unit]').length ?? 0;
   const rule = dil?.querySelector('[data-slot="cell-rule"]')?.textContent ?? '';
   expect("rom_dilution shows its rule, the four dilution settings it read and where each came from, and what it made", named && made > 0 && rule.includes('cuts each waste interval'), { reads, made });
+
+  // The Dataflow view's strip (decision 0084): a step a chip in run order, what each wrote under it; rom_dilution
+  // clicked is picked, its cell marked, and the table and column it read lit in Inputs.
+  const strip = () => nb()?.querySelector<HTMLElement>('[data-slot="dataflow-strip"]') ?? null;
+  const chip = (step: string) => strip()?.querySelector<HTMLButtonElement>(`[data-strip-step="${step}"]`) ?? null;
+  const chips = [...(strip()?.querySelectorAll<HTMLElement>('[data-strip-step]') ?? [])].map((c) => c.dataset.stripStep);
+  const writesOf = (step: string) => [...(chip(step)?.querySelectorAll('[data-slot="step-writes"] > span') ?? [])].map((w) => (w.textContent ?? '').split(' ')[0]);
+  expect(
+    'the strip has a step a chip in run order, Imported writing Imported, rom_dilution Dilution and final ROM',
+    JSON.stringify(chips) === JSON.stringify(want) && writesOf('as input').includes('Imported') && writesOf('rom_dilution').includes('Dilution') && writesOf('final').includes('ROM'),
+    { chips, imported: writesOf('as input'), dilution: writesOf('rom_dilution'), final: writesOf('final') },
+  );
+  const arrows = [...(strip()?.querySelectorAll('[data-slot="step-units"]') ?? [])].map((a) => Number(a.textContent?.replace('→', '')));
+  expect('each arrow carries the units passed on', arrows.length === want.length - 1 && arrows.every((n) => n > 0), arrows);
+  chip('rom_dilution')?.click();
+  for (let k = 0; k < 50 && cell('rom_dilution')?.dataset.picked !== 'yes'; k++) await wait(50);
+  const lit = [...(strip()?.querySelectorAll<HTMLElement>('[data-slot="dataflow-inputs"] [data-lit="yes"]') ?? [])].map((t) => t.textContent ?? '');
+  expect(
+    'rom_dilution clicked is picked, its cell marked, and the table and column it read lit in Inputs',
+    chip('rom_dilution')?.getAttribute('aria-pressed') === 'true' && cell('rom_dilution')?.dataset.picked === 'yes' && lit.length === 1 && /^Reserves assumptions · column \d+/.test(lit[0]),
+    lit,
+  );
+  // Show as graph: the same as nodes, a step clicked there picked; and back.
+  buttonIn(nb(), 'Show as graph')?.click();
+  const graphNodes = () => [...(nb()?.querySelectorAll<HTMLElement>('[data-slot="dataflow-graph"] .react-flow__node') ?? [])];
+  for (let k = 0; k < 50 && graphNodes().length === 0; k++) await wait(100);
+  const stepNodes = graphNodes().filter((n) => n.dataset.id?.startsWith('step:'));
+  const wroteNodes = graphNodes().filter((n) => n.dataset.id?.startsWith('wrote:'));
+  const readEdges = nb()?.querySelectorAll('[data-slot="dataflow-graph"] .react-flow__edge[data-id^="read:"]').length ?? 0;
+  expect('Show as graph draws a node a step, a node a write, and the tables wired to what read them', stepNodes.length === want.length && wroteNodes.length >= 4 && readEdges > 1, { steps: stepNodes.length, writes: wroteNodes.length, reads: readEdges });
+  if (picture) await picture('dataflow-graph');
+  stepNodes.find((n) => n.dataset.id === `step:${want.indexOf('working_sections')}`)?.click();
+  for (let k = 0; k < 50 && cell('working_sections')?.dataset.picked !== 'yes'; k++) await wait(50);
+  expect('a step clicked in the graph is picked', cell('working_sections')?.dataset.picked === 'yes');
+  buttonIn(nb(), 'Show as strip')?.click();
+  for (let k = 0; k < 50 && !strip(); k++) await wait(50);
+  chip('rom_dilution')?.click();
+  await wait(100);
   if (picture) {
     // A picture doesn't keep the scroll: every cell folded but densities and rom_dilution, so they're what it shows.
     buttonIn(nb(), 'Fold all')?.click();

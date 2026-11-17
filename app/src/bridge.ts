@@ -713,6 +713,12 @@ export interface ColumnSteps {
   fields: ColumnField[];
   /** The parameter tables read, in order, by name: what a read's `table` counts in. */
   tables: string[];
+  /** The column's block solids by name, top down: what the column as input is made of (decision 0084). */
+  blocks: string[];
+  /** The seam model whose stack orders the column; null where the run gave its own stack. */
+  model: string | null;
+  /** How many horizons the stack holds. */
+  horizons: number;
   /** Run on a dataflow given as edited, not the one saved. */
   edited: boolean;
   /** The edited dataflow's worked examples that don't hold, each with its step and test: run anyway (decision 0081). */
