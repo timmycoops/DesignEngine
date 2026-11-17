@@ -2,7 +2,7 @@
 // the picked step read lit, on a made-up column. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { inputsOf, stripSteps, tablesRead, volumeShort, writeTip, writesByFolder } from '../src/panels/dataflowView.ts';
+import { beforeAfter, inputsOf, stripSteps, tablesRead, volumeShort, writeTip, writesByFolder } from '../src/panels/dataflowView.ts';
 
 const unit = (id) => ({ id, horizon: 'U', material: 'coal', seam: 'U', bench: null, joined: [], became: null, section: null, rom: null, values: {} });
 const step = (name, units, more = {}) => ({ step: name, units: units.map(unit), said: [], kind: 'built_in', rule: '', when: {}, source: null, fits: [], reads: [], workings: [], writes: [], ...more });
@@ -73,4 +73,62 @@ test('a built-in step lights the table and the rows it read: for the unit follow
 
 test('the tables a step read, for the graph to wire', () => {
   assert.deepEqual(column.steps.map(tablesRead), [[], [1], [0], []]);
+});
+
+// Before and After (decision 0084, points 4 and 5): OB 50,000 m³ over U 10,000 m³; rom_dilution reads thickness and
+// volume, cuts 500 m³ of roof dilution off OB's bottom as a new unit and takes nothing away; join_benches joins U's
+// two benches into one; rom reads and changes nothing.
+const v = (id, horizon, material, values, more = {}) => ({ ...unit(id), horizon, material, seam: horizon, values, ...more });
+const small = {
+  ...column,
+  fields: [
+    { name: 'volume', unit: 'm3', kind: 'volume' },
+    { name: 'thickness', unit: 'm', kind: 'thickness' },
+    { name: 'rd', unit: 't/m3', kind: 'density' },
+    { name: 'ash', unit: '%', kind: 'quality' },
+  ],
+  steps: [
+    step('as input', [], { kind: 'input' }),
+    step('rom_dilution', [], { fields_read: ['thickness', 'volume'] }),
+    step('join_benches', [], { fields_read: ['volume', 'thickness'] }),
+    step('rom', [], { fields_read: [] }),
+  ],
+};
+const ob = v(1, 'OB', 'waste', { volume: 50000, thickness: 10, rd: 2.3, ash: null });
+const u130 = v(2, 'U', 'coal', { volume: 6000, thickness: 3, rd: 1.4, ash: 12 }, { bench: '130' });
+const u120 = v(3, 'U', 'coal', { volume: 4000, thickness: 2, rd: 1.5, ash: 14 }, { bench: '120' });
+const obCut = { ...ob, values: { ...ob.values, volume: 49500, thickness: 9.9 } };
+const dil = v(4, 'OB', 'waste', { volume: 500, thickness: 0.1, rd: 2.3, ash: null }, { became: 'dilution (roof)' });
+const joined = v(5, 'U', 'coal', { volume: 10000, thickness: 5, rd: 1.44, ash: 12.8 }, { joined: [['130', 0.6], ['120', 0.4]] });
+small.steps[0].units = [ob, u130, u120];
+small.steps[1].units = [obCut, dil, u130, u120];
+small.steps[2].units = [obCut, dil, joined];
+small.steps[3].units = [obCut, dil, joined];
+
+test('Before and After: the fields the step reads and changes first, a unit a row, what changed and what it made', () => {
+  const ba = beforeAfter(small, 1, false);
+  assert.deepEqual(ba.fields.map((f) => [f.field.name, f.read, f.wrote]), [['volume', true, true], ['thickness', true, true], ['rd', false, true]], 'rd only on the unit it made');
+  assert.equal(ba.more, 1, 'All fields adds ash');
+  assert.deepEqual(ba.before.map((r) => [r.label, r.mark]), [['OB', null], ['U 130', null], ['U 120', null]]);
+  assert.deepEqual(ba.after.map((r) => [r.label, r.mark]), [['OB', null], ['OB', 'new'], ['U 130', null], ['U 120', null]]);
+  assert.deepEqual(ba.after[0].cells.map((c) => [c.value, c.changed]), [[49500, true], [9.9, true], [2.3, false]]);
+  assert.deepEqual(ba.after[1].cells.map((c) => c.changed), [false, false, false], 'a new unit has nothing to change from');
+  assert.deepEqual(ba.volume, { before: 60000, after: 60000 });
+  assert.deepEqual(beforeAfter(small, 1, true).fields.map((f) => f.field.name), ['volume', 'thickness', 'rd', 'ash'], 'the rest after');
+});
+
+test('a join takes its benches away on Before and makes one unit on After', () => {
+  const ba = beforeAfter(small, 2, false);
+  assert.deepEqual(ba.before.map((r) => r.mark), [null, null, 'gone', 'gone']);
+  assert.deepEqual(ba.after.map((r) => [r.label, r.mark]), [['OB', null], ['OB', null], ['U (2 benches)', 'new']]);
+  assert.deepEqual(ba.fields.map((f) => f.field.name), ['volume', 'thickness', 'rd', 'ash'], 'every field the joined unit has');
+});
+
+test('a step that reads and changes nothing shows the volume; the column as input has no Before', () => {
+  const quiet = beforeAfter(small, 3, false);
+  assert.deepEqual(quiet.fields.map((f) => [f.field.name, f.read, f.wrote]), [['volume', false, false]]);
+  assert.equal(quiet.more, 3);
+  const input = beforeAfter(small, 0, false);
+  assert.deepEqual([input.before.length, input.after.length, input.volume.before, input.volume.after], [0, 3, null, 60000]);
+  assert.ok(input.after.every((r) => r.mark === null && r.cells.every((c) => !c.changed)));
 });

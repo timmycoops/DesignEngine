@@ -74,6 +74,8 @@ pub(crate) struct Chain {
     pub parts: Vec<String>,
     pub line: usize,
     pub set: bool,
+    /// Set by `+=` and the like, which read it first.
+    pub augmented: bool,
 }
 
 pub(crate) fn chains(source: &str) -> Vec<Chain> {
@@ -113,8 +115,9 @@ pub(crate) fn chains(source: &str) -> Vec<Chain> {
                     j += 1;
                 }
                 let next: String = chars[j..(j + 2).min(chars.len())].iter().collect();
-                let set = next.starts_with('=') && next != "==" || ["+=", "-=", "*=", "/="].contains(&next.as_str());
-                out.push(Chain { parts, line, set });
+                let augmented = ["+=", "-=", "*=", "/="].contains(&next.as_str());
+                let set = next.starts_with('=') && next != "==" || augmented;
+                out.push(Chain { parts, line, set, augmented });
             }
             continue;
         }
@@ -140,6 +143,30 @@ pub(crate) fn signature(source: &str) -> Option<(usize, String, Option<String>)>
         }
     }
     None
+}
+
+/// The fields of the dataflow a formula reads (decision 0084), each once in the order first read: `unit.name`, and a field
+/// read through `unit.above`, `unit.section`, `unit.column` or `unit.rom_coal`. A plain `unit.name = …` sets it without
+/// reading it; `+=` reads it first. Labels, block attributes and parameters aren't fields; a name worked out as it runs
+/// (`unit.above[m]`) can't be read off the source.
+pub(crate) fn fields_read(source: &str, declared: &Declared, unit: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for c in chains(source) {
+        let [head, rest @ ..] = c.parts.as_slice() else { continue };
+        if head != unit {
+            continue;
+        }
+        let name = match rest {
+            [part, name, ..] if matches!(part.as_str(), "section" | "column" | "rom_coal" | "above") => name,
+            [name] if c.set && !c.augmented => continue,
+            [name, ..] => name,
+            [] => continue,
+        };
+        if declared.is_field(name) && !out.contains(name) {
+            out.push(name.clone());
+        }
+    }
+    out
 }
 
 /// Every name a formula uses that the dataflow doesn't have, said with its line.

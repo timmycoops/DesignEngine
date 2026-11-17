@@ -23,7 +23,7 @@ import { ViewportPanel } from '@/panels/ViewportPanel';
 import { WorkflowCanvas } from '@/panels/WorkflowCanvas';
 import { BlockTable } from '@/panels/BlockTablePanel';
 import { ReservesTable } from '@/panels/ReservesTablePanel';
-import { Notebook } from '@/panels/NotebookPanel';
+import { DataflowView } from '@/panels/DataflowPanel';
 import { Parameters } from '@/panels/ParametersPanel';
 import { WorkflowPanel } from '@/panels/WorkflowPanel';
 import { type Dock, type PanelId, PANELS, TOOL_DOCK_WIDTH } from './panels';
@@ -43,7 +43,7 @@ const components: Record<PanelId | 'viewport', () => ReactNode> = {
   canvas: WorkflowCanvas,
   blocks: BlockTable,
   restable: ReservesTable,
-  notebook: Notebook,
+  notebook: DataflowView,
   params: Parameters,
 };
 
@@ -239,6 +239,11 @@ function restoreLayout(api: DockviewApi) {
     const saved = localStorage.getItem(LAYOUT_KEY);
     if (saved) {
       api.fromJSON(JSON.parse(saved));
+      // A layout saved before a tab was renamed (the Notebook, now Dataflow) keeps its old title: today's names.
+      for (const p of PANELS) {
+        const shown = api.getPanel(p.id);
+        if (shown && shown.title !== p.title) shown.api.setTitle(p.title);
+      }
       if (!api.getPanel('viewport')) addViewport(api);
       bareView(api);
       keepMounted(api);

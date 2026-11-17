@@ -25,7 +25,7 @@ export const PANELS: readonly { id: PanelId; title: string; dock: Dock; size: nu
   { id: 'runlog', title: 'Run log', dock: 'results', size: 200 },
   { id: 'blocks', title: 'Block table', dock: 'results', size: 320 },
   { id: 'restable', title: 'Reserves table', dock: 'results', size: 400 },
-  { id: 'notebook', title: 'Notebook', dock: 'results', size: 480 },
+  { id: 'notebook', title: 'Dataflow', dock: 'results', size: 480 },
   { id: 'params', title: 'Parameters', dock: 'results', size: 400 },
   { id: 'canvas', title: 'Workflow canvas', dock: 'results', size: 400 },
   { id: 'face', title: 'Face design', dock: 'results', size: 400 },

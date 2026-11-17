@@ -161,7 +161,7 @@ export function ReservesTable() {
 
   const rows = useMemo(() => (breakdown ? fieldRows(breakdown, fields === 'all', folded) : []), [breakdown, fields, folded]);
 
-  // The Notebook follows the block shown here, or the seam or bench of it marked, with no press of Open its column.
+  // The Dataflow tab follows the block shown here, or the seam or bench of it marked, with no press of Open its column.
   const levels = breakdown?.levels;
   const followKey = table ? `${table.id}|${keyOf(node)}|${leaf ? keyOf(leaf) : ''}|${levels?.join('|') ?? ''}` : '';
   useEffect(() => {
@@ -251,7 +251,7 @@ export function ReservesTable() {
               size="sm"
               className="h-6 px-2 text-xs"
               disabled={!canOpenColumn}
-              title={canOpenColumn ? "This block's column in the Notebook: each step, what it read, its formula or rule, and what it changed. An open Notebook follows the block shown here without a press" :'Pick a block, or a seam or bench of one, to open its column in the Notebook'}
+              title={canOpenColumn ? "This block's column in the Dataflow tab: its steps in a strip, what each read and wrote, and its units before and after each. An open Dataflow tab follows the block shown here without a press" :'Pick a block, or a seam or bench of one, to open its column in the Dataflow tab'}
               onClick={() => table && openNotebook(table.id, columnNode)}
             >
               <Columns3 className="size-3.5" /> Open its column

@@ -356,3 +356,20 @@ fn a_million_units_through_a_formula() {
     let us = t1.elapsed().as_secs_f64() * 1e6 / (one.len() * per) as f64;
     println!("one thread: {us:.2} us a unit");
 }
+
+/// The fields a formula reads, for the Dataflow view (decision 0084): each once, in the order first read; a field it only
+/// sets isn't read, one it adds to is; labels, parameters and comments are left out, and a field read through the unit
+/// above or the section counts.
+#[test]
+fn a_formula_s_fields_read_are_read_off_its_source() {
+    let f = Formula::compile(IN_SITU, declared()).expect("compiles");
+    assert_eq!(f.fields_read(), ["rd", "mad", "mis", "volume", "ash_ad"], "rd_is, tonnes_is and discard are only set; material is a label");
+    let more = r#"
+def formula(u):
+    # u.thickness in a comment isn't read
+    u.share += u.section.thickness
+    u.tonnes_is = u.above.volume * 2 + u.volume
+"#;
+    let g = Formula::compile(more, declared()).expect("compiles");
+    assert_eq!(g.fields_read(), ["share", "thickness", "volume"]);
+}

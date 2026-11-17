@@ -1,8 +1,9 @@
 # 0082 — The notebook calculates live: built-in workings, rerun as you edit
 
 Status: agreed 17 November 2026. Tim agreed the seven decisions on the Build Plan's "Live workings plan" tab ("Agree all
-7, start ws1"). Workstream 1 (the engine's workings) is built here; 2 (the cell's Workings row), 3 (live) and 4 (the
-rest of the steps) are to come.
+7, start ws1"). Workstream 1 (the engine's workings) is built here; 2 (the Workings row) was built in the Dataflow
+view's step pane (0084, workstream 3); 3 (live) and 4 (the rest of the steps) are to come, on that layout. Point 7 (a
+setting clicked goes to its cell in the Parameters tab) is still to do.
 
 ## Why
 

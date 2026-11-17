@@ -249,7 +249,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'reserves:compare', stage: 'reserves', label: 'Compare', tip: "Sets blocks beside Spry's or Deswik's numbers.", icon: 'compare', panel: 'reserves', mode: 'compare', command: 'solid.compare' },
   { key: 'params', stage: 'reserves', label: 'Parameters', tip: 'parameter tables and dataflows edited as grids, a picked solid\'s values marked where they come from', icon: 'parameters', panel: 'params' },
   { key: 'restable', stage: 'reserves', label: 'Reserves table', tip: "a node's fields down the side, broken down by its children across, from Imported to Scheduled", icon: 'reserves-table', panel: 'restable' },
-  { key: 'notebook', stage: 'reserves', label: 'Notebook', tip: "a block's column step by step: what each step read, its formula or rule, and what it changed", icon: 'notebook', panel: 'notebook' },
+  { key: 'notebook', stage: 'reserves', label: 'Dataflow', tip: "a block's column through its dataflow: its inputs and steps in a strip, what each step read and wrote, and the block's units before and after it", icon: 'notebook', panel: 'notebook' },
   { key: 'workflow:report', stage: 'reserves', label: 'Report', tip: "Writes a workflow's report, every case from its latest run", icon: 'report', panel: 'workflow' },
 
   // Always there, whatever the stage.

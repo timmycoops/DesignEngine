@@ -1,4 +1,5 @@
-import type { ColumnStep, ColumnSteps, StepWrite } from '../bridge';
+import type { ColumnField, ColumnStep, ColumnSteps, ColumnUnit, StepWrite } from '../bridge';
+import { detailOf, unitWords } from './columnSteps.ts';
 
 /**
  * The Dataflow view's strip (decision 0084, layout B): the column's inputs, then its steps in run order, each with what it
@@ -126,4 +127,76 @@ export function inputsOf(column: ColumnSteps, picked: number | null, unit: numbe
 export function tablesRead(step: ColumnStep): number[] {
   if (step.kind !== 'built_in') return [];
   return [...new Set(step.reads.filter((r) => r.table !== null).map((r) => r.table!))].sort((a, b) => a - b);
+}
+
+/** A field as Before and After show it: whether the picked step reads it (lit gold) and whether it changed it (blue). */
+export interface TableField {
+  field: ColumnField;
+  read: boolean;
+  wrote: boolean;
+}
+
+/** A unit a row of Before or After: its words, and on After whether the step made it, on Before whether it took it away. */
+export interface TableRow {
+  unit: ColumnUnit;
+  label: string;
+  detail: string;
+  mark: 'new' | 'gone' | null;
+  cells: { value: number | null; changed: boolean }[];
+}
+
+/** The picked step's Before and After (decision 0084, points 4 and 5): every unit of the column a row, a field a column. */
+export interface BeforeAfter {
+  fields: TableField[];
+  /** The fields All fields adds. */
+  more: number;
+  before: TableRow[];
+  after: TableRow[];
+  /** The column's volume going in and coming out; none going into the column as input. */
+  volume: { before: number | null; after: number | null };
+}
+
+const SAME = 1e-9;
+const differs = (a: number | null, b: number | null) => (a === null || b === null ? a !== b : Math.abs(a - b) > SAME * Math.max(1, Math.abs(b)));
+const valueOf = (u: ColumnUnit, f: string) => u.values[f] ?? null;
+
+/**
+ * Before and After step `at`: Before the units as they came in (none for the column as input, which the blocks make),
+ * After as the step left them. The fields the step reads (the engine's `fields_read`) and the ones it changed on some
+ * unit, or gave a unit it made, come first in the dataflow's order; All fields puts the rest after them. A step that
+ * reads and changes no field shows the volume. A unit the step made is new on After; one it took away is gone on Before.
+ */
+export function beforeAfter(column: ColumnSteps, at: number, all: boolean): BeforeAfter {
+  const step = column.steps[at];
+  const prev = at > 0 ? column.steps[at - 1].units : [];
+  const was = new Map(prev.map((u) => [u.id, u]));
+  const here = new Set(step.units.map((u) => u.id));
+  const reads = new Set(at > 0 ? (step.fields_read ?? []) : []);
+  const wrote = (f: string) =>
+    at > 0 &&
+    step.units.some((u) => {
+      const w = was.get(u.id);
+      return w ? differs(valueOf(u, f), valueOf(w, f)) : valueOf(u, f) !== null;
+    });
+  const tagged = column.fields.map((field) => ({ field, read: reads.has(field.name), wrote: wrote(field.name) }));
+  let own = tagged.filter((t) => t.read || t.wrote);
+  if (own.length === 0) own = tagged.filter((t) => t.field.kind === 'volume');
+  const rest = tagged.filter((t) => !own.includes(t));
+  const fields = all ? [...own, ...rest] : own;
+  const row = (u: ColumnUnit, mark: TableRow['mark'], against: ColumnUnit | undefined): TableRow => ({
+    unit: u,
+    label: unitWords(u),
+    detail: detailOf(u),
+    mark,
+    cells: fields.map(({ field }) => ({ value: valueOf(u, field.name), changed: !!against && differs(valueOf(u, field.name), valueOf(against, field.name)) })),
+  });
+  const volume = column.fields.find((f) => f.kind === 'volume')?.name;
+  const total = (units: ColumnUnit[]) => (volume ? units.reduce((s, u) => s + (valueOf(u, volume) ?? 0), 0) : null);
+  return {
+    fields,
+    more: all ? 0 : rest.length,
+    before: prev.map((u) => row(u, here.has(u.id) ? null : 'gone', undefined)),
+    after: step.units.map((u) => row(u, at > 0 && !was.has(u.id) ? 'new' : null, was.get(u.id))),
+    volume: { before: at > 0 ? total(prev) : null, after: total(step.units) },
+  };
 }
