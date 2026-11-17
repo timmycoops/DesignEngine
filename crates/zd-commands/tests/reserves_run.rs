@@ -1029,6 +1029,175 @@ fn the_rom_ash_cut_off_rejects_a_section_once() {
     assert!(close(value(&t, leaf(&t, "B1", "B", None), "Loss\\High ROM ash\\volume").unwrap(), 15_000.0));
 }
 
+// Decision 0082, workstream 1: a built-in step's workings, the arithmetic the notebook shows, line by line.
+
+/// A unit's id in a cell by its horizon and material, the first not yet set aside or cut.
+fn unit_in(cell: &zd_commands::builtin::StepView, horizon: &str) -> u32 {
+    cell.units.iter().find(|u| u.horizon == horizon && u.became.is_none()).unwrap_or_else(|| panic!("no {horizon} in {}", cell.step)).id
+}
+
+/// The workings a step wrote for a unit, by what was worked out.
+fn worked<'a>(cell: &'a zd_commands::builtin::StepView, unit: u32, what: &str) -> Vec<&'a zd_commands::builtin::Working> {
+    cell.workings.iter().filter(|w| w.unit == unit && w.what == what).collect()
+}
+
+/// `rom_dilution` in the notebook on the dilution column (roof 0.05 m, floor 0.1 m, edge 0.02 m, other 1 %): A-B's
+/// workings give A its floor dilution 0.1 × 5,000 m² = 500 m³ off its top and B its roof 0.05 × 5,000 = 250 m³, edge
+/// 0.02 × 100 m × 3 m = 6 m³ and other 1 % of 15,000 m³ = 150 m³, each the volume of the piece it cut; B's coal carries
+/// the lines for its own dilution. Each value against the piece: to 1e-9 relative.
+#[test]
+fn rom_dilution_writes_its_arithmetic_for_the_notebook() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, dilution_steps(), &dilution_csv([0.0; 4], [0.05, 0.1, 0.02, 1.0], ""));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let opened = table_column(s.project(), s.log(), created(&record)[0], &["Pit".to_string(), "1".to_string(), "B1".to_string()], None).unwrap();
+    let at = opened.steps.iter().position(|c| c.step == "rom_dilution").unwrap();
+    let (before, cell) = (&opened.steps[at - 1], &opened.steps[at]);
+    let (parting, b) = (unit_in(before, "A-B"), unit_in(before, "B"));
+    let piece = |kind: &str| cell.units.iter().find(|u| u.horizon == "A-B" && u.became.as_deref() == Some(kind)).unwrap().values["volume"];
+    let one = |unit: u32, what: &str| {
+        let lines = worked(cell, unit, what);
+        assert_eq!(lines.len(), 1, "{what} on {unit}: {:?}", cell.workings);
+        lines[0].clone()
+    };
+    let floor = one(parting, "floor dilution");
+    assert_eq!(floor.sum, "floor_dilution 0.1 m × area 5,000 m²");
+    assert_eq!(floor.then.as_deref(), Some("off the top of section 3 waste B, into section 2 coal A"));
+    let roof = one(parting, "roof dilution");
+    assert_eq!((roof.sum.as_str(), roof.measure), ("roof_dilution 0.05 m × area 5,000 m²", "m³"));
+    assert_eq!(roof.then.as_deref(), Some("off the bottom of section 3 waste B, into section 4 coal B"));
+    let edge = one(parting, "edge dilution");
+    assert_eq!(edge.sum, "edge_dilution 0.02 m × length 100 m × thickness 3 m");
+    let other = one(parting, "other dilution");
+    assert_eq!(other.sum, "other_dilution 1 % × coal 15,000 m³");
+    for (line, kind, want) in [(&floor, "dilution (floor)", 500.0), (&roof, "dilution (roof)", 250.0), (&edge, "dilution (edge)", 6.0), (&other, "dilution (other)", 150.0)] {
+        let value = line.value.unwrap();
+        assert!(close(value, want) && close(value, piece(kind)), "{kind}: {value} against {want} and the piece {}", piece(kind));
+    }
+    // B's coal has its own dilution's lines: its roof from A-B, its floor from the waste below, not A's floor dilution.
+    assert_eq!(one(b, "roof dilution"), zd_commands::builtin::Working { unit: b, ..roof.clone() });
+    assert_eq!(one(b, "floor dilution").then.as_deref(), Some("off the top of section 5 waste, into section 4 coal B"));
+    // A formula step and the column as input write none.
+    assert!(opened.steps.iter().filter(|c| c.kind != StepKind::BuiltIn).all(|c| c.workings.is_empty()));
+}
+
+/// A-B (25,000 m³) short of the 27,500 m³ asked: its workings say so, and each dilution's share, A's floor 15,000 ×
+/// 25,000 ÷ 27,500 = 13,636.4 m³.
+#[test]
+fn a_waste_short_of_its_dilution_says_its_shares() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, dilution_steps(), &dilution_csv([0.1, 0.1, 0.0, 0.0], [2.5, 3.0, 0.0, 0.0], ""));
+    let views = preview_of(&s, flow, &ids, &LOSS_STACK);
+    let at = views.iter().position(|c| c.step == "rom_dilution").unwrap();
+    let parting = unit_in(&views[at - 1], "A-B");
+    let holds = worked(&views[at], parting, "waste holds");
+    assert_eq!(holds.len(), 1);
+    assert_eq!(holds[0].sum, "25,000 m³ < dilution asked 27,500 m³");
+    let floor = worked(&views[at], parting, "floor dilution")[0];
+    assert!(close(floor.value.unwrap(), 15_000.0), "the floor dilution asked");
+    assert_eq!(floor.then.as_deref(), Some("13,636.4 m³ of it, shared out, off the top of section 3 waste B, into section 2 coal A"));
+}
+
+/// `working_sections` on the hand-worked section column: each test the step made, with its numbers and what followed.
+#[test]
+fn working_sections_write_each_test_with_its_numbers() {
+    let mut s = session();
+    let ids = section_column(&mut s);
+    let flow = flow(&mut s, section_steps(), SECTION_CSV);
+    let views = preview_of(&s, flow, &ids, &SECTION_STACK);
+    let at = views.iter().position(|c| c.step == "working_sections").unwrap();
+    let (before, cell) = (&views[at - 1], &views[at]);
+    let line = |horizon: &str, what: &str| {
+        let lines = worked(cell, unit_in(before, horizon), what);
+        assert_eq!(lines.len(), 1, "{what} on {horizon}: {:?}", cell.workings);
+        (lines[0].sum.clone(), lines[0].then.clone().unwrap_or_default(), lines[0].value)
+    };
+    // A-B: 0.3 m, under B's and A's 1 m, then B's 7,500 m³ × 0.5 = 3,750 covers its 1,500 m³.
+    let (sum, then, _) = line("A-B", "parting");
+    assert_eq!((sum.as_str(), then.as_str()), ("thickness 0.3 m ≤ min_parting 1 m (the larger of the plies' either side)", "may join the plies either side, by the strip ratio"));
+    let (sum, then, value) = line("B", "strip ratio");
+    assert_eq!(sum, "B coal 7,500 m³ × ws_strip_ratio 0.5 = 3,750 m³ ≥ parting 1,500 m³");
+    assert_eq!((then.as_str(), value), ("B coal joins the section, with the parting", Some(3_750.0)));
+    assert_eq!(line("A-B", "strip ratio").0, sum, "the parting carries the same line");
+    // B-C: 5 m, a break. E-F: F's 1,250 doesn't cover 4,500.
+    assert_eq!(line("B-C", "parting").1, "a break: the plies either side start new groups");
+    let (sum, then, _) = line("E-F", "strip ratio");
+    assert_eq!(sum, "F coal 2,500 m³ × ws_strip_ratio 0.5 = 1,250 m³ < parting 4,500 m³");
+    assert_eq!(then, "the section closes and the next starts at F coal; the parting stays waste");
+    // Sections by thickness: A-B 3.8 m kept, C 0.4 m thin.
+    assert_eq!(line("A", "section thickness"), ("3.8 m, partings in, > min_coal_thickness 0.45 m".into(), "a working section".into(), None));
+    assert_eq!(line("C", "section thickness"), ("0.4 m, partings in, ≤ min_coal_thickness 0.45 m".into(), "thin loss: its coal set aside, its partings waste".into(), None));
+    // D discarded for its in situ ash, and the waste round it a break.
+    assert!(line("D", "discarded").1.starts_with("high in situ ash"));
+    assert_eq!(line("D-E", "parting").0, "holds discarded coal");
+    // The parting in section A-B is its dilution.
+    assert_eq!(line("A-B", "working section"), ("number 2, coal, A-B".into(), "a parting in a coal section: parting dilution".into(), None));
+}
+
+/// `rom_loss` on the loss column (roof 0.1 m, floor 0.2 m, edge 0.05 m, other 2 %): A's coal says its roof loss 0.1 ×
+/// 5,000 m² = 500 m³ into OB, floor 1,000 m³ into A-B, edge 0.05 × 100 m × 2 m = 10 m³ and other 2 % of 10,000 m³ = 200
+/// m³ off its top into OB.
+#[test]
+fn rom_loss_writes_its_arithmetic_for_the_notebook() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, loss_steps(), &loss_csv(0.1, 0.2));
+    let views = preview_of(&s, flow, &ids, &LOSS_STACK);
+    let at = views.iter().position(|c| c.step == "rom_loss").unwrap();
+    let a = unit_in(&views[at - 1], "A");
+    let cell = &views[at];
+    let one = |what: &str| {
+        let lines = worked(cell, a, what);
+        assert_eq!(lines.len(), 1, "{what}: {:?}", cell.workings);
+        (lines[0].sum.clone(), lines[0].value, lines[0].then.clone().unwrap_or_default())
+    };
+    assert_eq!(one("roof loss"), ("roof_loss 0.1 m × area 5,000 m²".into(), Some(500.0), "off the top of section 2 coal A, into section 1 waste A".into()));
+    let (sum, value, then) = one("floor loss");
+    assert_eq!((sum.as_str(), then.as_str()), ("floor_loss 0.2 m × area 5,000 m²", "off the bottom of section 2 coal A, into section 3 waste B"));
+    assert!(close(value.unwrap(), 1_000.0));
+    let (sum, value, then) = one("edge loss");
+    assert_eq!((sum.as_str(), then.as_str()), ("edge_loss 0.05 m × length 100 m × thickness 2 m", "off its top, into section 1 waste A"));
+    assert!(close(value.unwrap(), 10.0));
+    let (sum, value, _) = one("other loss");
+    assert_eq!(sum, "other_loss 2 % × volume 10,000 m³");
+    assert!(close(value.unwrap(), 200.0));
+    assert_eq!(one("section holds").2, "it holds them");
+}
+
+/// `rom_ash_cutoff`: B's ROM ash 16.32 % over its 15 % cut-off, rejected, said on its coal; A, with no cut-off, isn't
+/// tested.
+#[test]
+fn the_rom_ash_cut_off_writes_its_test() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, dilution_steps(), &dilution_csv([0.0; 4], [0.05, 0.1, 0.02, 1.0], "15"));
+    let views = preview_of(&s, flow, &ids, &LOSS_STACK);
+    let at = views.iter().position(|c| c.step == "rom_ash_cutoff").unwrap();
+    let cell = &views[at];
+    let b = worked(cell, unit_in(&views[at - 1], "B"), "ROM ash");
+    assert_eq!(b.len(), 1, "{:?}", cell.workings);
+    assert_eq!(b[0].sum, "ash 16.32 %, over its coal, partings and dilution, > rom_ash_cutoff 15 %");
+    assert_eq!(b[0].then.as_deref(), Some("section 4 coal B rejected: its coal high ROM ash loss, its dilution back to its waste"));
+    let a = worked(cell, unit_in(&views[at - 1], "A"), "ROM ash");
+    assert_eq!((a[0].sum.as_str(), a[0].then.as_deref()), ("no rom_ash_cutoff for its coal", Some("not tested")));
+}
+
+/// A number as a working shows it: thousands marked, no trailing zeros.
+#[test]
+fn workings_mark_thousands_and_drop_trailing_zeros() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, loss_steps(), &loss_csv(0.1, 0.2));
+    let views = preview_of(&s, flow, &ids, &LOSS_STACK);
+    // Every figure in every line reads plainly: no long decimals from float sums, thousands marked.
+    for w in views.iter().flat_map(|c| &c.workings) {
+        assert!(!w.sum.contains("000000") && !w.sum.contains("99999"), "{}", w.sum);
+        assert!(!w.sum.contains(".0 ") && !w.sum.contains("10000"), "{}", w.sum);
+    }
+}
+
 // Decision 0074: block geometry measured onto the blocks; the dataflow reads it.
 
 /// A 100 m by 50 m block from RL 38 to 40 at mine coordinates: 10,000 m³ over 5,000 m², 2 m thick, 100 m long and 50 m

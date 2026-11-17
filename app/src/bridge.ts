@@ -670,6 +670,21 @@ export interface ColumnStep {
   source: string | null;
   fits: number[];
   reads: ParamRead[];
+  /** A built-in step's arithmetic, unit by unit (decision 0082); none for a formula or the column as input. */
+  workings: Working[];
+}
+
+/**
+ * A line of a built-in step's arithmetic for a unit (decision 0082): what was worked out or tested, the numbers that went
+ * in, what it came to (none for a test) and what followed.
+ */
+export interface Working {
+  unit: number;
+  what: string;
+  sum: string;
+  value: number | null;
+  measure: string;
+  then: string | null;
 }
 
 /** A field of a block's column, in the dataflow's order, with its unit and kind. */
