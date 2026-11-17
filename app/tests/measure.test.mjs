@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { gradeWords, legBetween, legLabel, legWords, measureTotals, measureWords } from '../src/viewport/measure.ts';
+import { cursorLabel, gradeWords, legBetween, legLabel, legWords, measureTotals, measureWords } from '../src/viewport/measure.ts';
 
 // Mine grid coordinates, so nothing passes only near the origin.
 const E = 650_000;
@@ -59,4 +59,14 @@ test('clicks on add up along the points, with the rise from the first to the las
   assert.equal(measureWords(points.slice(0, 1)), 'Measure: from RL 100.00; click the next point. Esc clears');
   assert.ok(measureWords(points.slice(0, 2)).startsWith('Measure: plan 200.00 m · slope 200.00 m · RL +0.00 m · level · bearing 090.0°.'));
   assert.equal(measureWords(points), 'Measure: plan 200.00 m · slope 200.00 m · RL +0.00 m · level · bearing 270.0°. Total over 3 legs: plan 500.00 m · slope 500.50 m · RL +10.00 m');
+});
+
+test('beside the cursor: the leg to it, and from the second leg on the running total to it under it', () => {
+  const points = [[E, N, 100], [E + 200, N, 100], [E + 200, N + 100, 110]];
+  // One point down: the leg alone.
+  assert.equal(cursorLabel(points.slice(0, 1), points[1]), '200.00 m plan · 200.00 m slope · RL +0.00 · 090.0°');
+  // Two down, the cursor on the third: the leg up the ramp, and the total along both legs to the cursor.
+  assert.equal(cursorLabel(points.slice(0, 2), points[2]), '100.00 m plan · 100.50 m slope · RL +10.00 · 10.0 % · 000.0°\nTotal 2 legs: 300.00 m plan · 300.50 m slope · RL +10.00');
+  // Three down, the cursor back along the next bench: 3 legs, 500 m in plan.
+  assert.ok(cursorLabel(points, [E, N + 100, 110]).endsWith('\nTotal 3 legs: 500.00 m plan · 500.50 m slope · RL +10.00'));
 });

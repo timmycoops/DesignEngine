@@ -29,7 +29,7 @@ import { type DesignLine, designLineMessage, lineToPick, type NearLine } from '.
 import { typing } from './camera';
 import { colourOf, SELECTED } from './load';
 import { PointMark } from './markers';
-import { legBetween, legLabel, measureWords } from './measure';
+import { cursorLabel, measureWords } from './measure';
 import type { Viewport } from './Viewport';
 
 export type Mode = 'select' | 'draw' | 'section' | 'measure';
@@ -626,14 +626,16 @@ export class StringLayer {
   }
 
   /**
-   * Measuring, with a point down: the line through the points to where the cursor lands, and that last leg read out
-   * beside the cursor, from the points' world coordinates.
+   * Measuring, with a point down: the line through the points to where the cursor lands, that last leg read out beside
+   * the cursor, and from the second leg on the running total under it, from the points' world coordinates.
    */
   private showMeasure(hit: SnapHit, at: { x: number; y: number }): void {
-    const last = this.pending[this.pending.length - 1];
     this.showPreview([...this.pending.map((h) => new THREE.Vector3(...h.local)), new THREE.Vector3(...hit.local)]);
     const box = this.viewport.renderer.domElement.getBoundingClientRect();
-    this.snapLabel.textContent = legLabel(legBetween(last.world, hit.world));
+    this.snapLabel.textContent = cursorLabel(
+      this.pending.map((h) => h.world),
+      hit.world,
+    );
     this.snapLabel.style.transform = `translate(${at.x - box.left + 14}px, ${at.y - box.top + 14}px)`;
     this.snapLabel.hidden = false;
   }

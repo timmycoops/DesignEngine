@@ -161,7 +161,7 @@
   top: 0;
   left: 0;
   z-index: 5;
-  max-width: 22rem;
+  max-width: 30rem;
   padding: 1px 6px;
   overflow: hidden;
   border-radius: 3px;
@@ -169,7 +169,8 @@
   color: var(--popover-foreground);
   font-size: 11px;
   line-height: 16px;
-  white-space: nowrap;
+  /* A line a line: Measure's leg, and its running total under it. */
+  white-space: pre;
   text-overflow: ellipsis;
   pointer-events: none;
 }
