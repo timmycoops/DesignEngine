@@ -81,6 +81,8 @@ function More({ items, use }: { items: readonly RowItem[]; use: ToolUse }) {
 function ToolRow({ items, use }: { items: readonly RowItem[]; use: ToolUse }) {
   const row = useRef<HTMLDivElement>(null);
   const widths = useRef<number[] | null>(null);
+  /** The room More takes: as allowed for until it's drawn, then as wide as it is, with the gap before it. */
+  const moreRoom = useRef(MORE_ROOM);
   const [fit, setFit] = useState(items.length);
 
   useLayoutEffect(() => {
@@ -99,7 +101,7 @@ function ToolRow({ items, use }: { items: readonly RowItem[]; use: ToolUse }) {
       let used = 0;
       let count = 0;
       for (const w of all) {
-        if (used + w > room - MORE_ROOM) break;
+        if (used + w > room - moreRoom.current) break;
         used += w + GAP;
         count++;
       }
@@ -112,6 +114,27 @@ function ToolRow({ items, use }: { items: readonly RowItem[]; use: ToolUse }) {
     resized.observe(element);
     return () => resized.disconnect();
   }, [items]);
+
+  // More drawn wider than allowed for (its words, the icons): the row folds again with its real width, so nothing before
+  // it is clipped.
+  useLayoutEffect(() => {
+    const more = row.current?.querySelector<HTMLElement>(':scope > [data-slot="row-more"]');
+    const element = row.current;
+    if (!more || !element || !widths.current) return;
+    const needed = Math.ceil(more.getBoundingClientRect().width) + GAP;
+    if (needed <= moreRoom.current) return;
+    moreRoom.current = needed;
+    const room = element.clientWidth;
+    let used = 0;
+    let count = 0;
+    for (const w of widths.current) {
+      if (used + w > room - needed) break;
+      used += w + GAP;
+      count++;
+    }
+    while (count > 0 && items[count - 1] === '|') count--;
+    setFit(count);
+  }, [fit, items]);
 
   return (
     <div ref={row} data-slot="tool-row-tools" className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">

@@ -34,3 +34,14 @@ test("where it can't be told there's no side", () => {
   assert.equal(sideOf([at(0, 0)], false, at(5, 5)), null);
   assert.equal(sideOf([at(0, 0), at(200, 0)], false, at(100, 0)), null, 'on the string');
 });
+
+test('a click on a string finds it, the nearest in plan within the reach, and nothing past it', async () => {
+  const { nearestString } = await import('../src/panels/stringSide.ts');
+  const line = (id, y) => ({ id, closed: false, vertices: [[650000, 7450000 + y, 100], [650100, 7450000 + y, 110]] });
+  const strings = [line('a', 0), line('b', 10)];
+  assert.equal(nearestString(strings, [650050, 7450000.5, 0], 2)?.id, 'a');
+  assert.equal(nearestString(strings, [650050, 7450009, 0], 2)?.id, 'b');
+  assert.equal(nearestString(strings, [650050, 7450005, 0], 2), null, 'five metres off both is neither');
+  const ring = { id: 'ring', closed: true, vertices: [[0, 0, 0], [10, 0, 0], [10, 10, 0]] };
+  assert.equal(nearestString([ring], [5, 5.2, 0], 1)?.id, 'ring', 'its closing side counts');
+});

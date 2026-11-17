@@ -1,5 +1,6 @@
 import {
   ArrowLeftRight,
+  ArrowRightToLine,
   ArrowUpToLine,
   BetweenHorizontalStart,
   CircleDot,
@@ -45,6 +46,7 @@ import {
   Route,
   Ruler,
   Scissors,
+  ScissorsLineDashed,
   Sheet,
   Sigma,
   Slice,
@@ -81,6 +83,8 @@ const ICONS: Record<ToolIcon, LucideIcon> = {
   'surface-between': BetweenHorizontalStart,
   ramp: Route,
   split: Split,
+  trim: ScissorsLineDashed,
+  extend: ArrowRightToLine,
   join: Merge,
   smooth: Spline,
   filter: Filter,

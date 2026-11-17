@@ -33,6 +33,7 @@ mod section_snap;
 mod slice;
 mod stack;
 mod string;
+mod string_cut;
 mod strips;
 mod wall;
 
@@ -66,6 +67,7 @@ pub use road::{FaceRamp, FaceRoad, NoRoad, RoadTop};
 pub use sheet::{Across, sheet_between, sheets_as_one, strings_across};
 pub use wall::{ConditionLog, Stretch, WallLog, WallStep, next_toe, project_wall, project_wall_by_edge};
 pub use strips::{CLEAR_OF_SOLID, Crossing, FaceCut, FaceShort, FilledGap, JoinLog, ShortEnd, Shortfall, SliceRefusal, SliceTimings, StripPiece, StripSlice, faces_through_solid, join_faces, place, short_words, shortfall_words, slice_solid_by_faces, slice_solid_by_faces_watched};
+pub use string_cut::{Extended, Keep, Trimmed, extend_string, split_string_at, trim_string};
 pub use string::{Corner, DrapeLog, MOST_LOOSE_PIECES, OffsetSide, ON_THE_STRING, PieceJoin, PlanCrossing, branching_ends, drape_string, filter_string, grade_string, join_pieces, join_strings, offset_string, plan_crossings, redraw_stretch, smooth_string, split_string};
 
 /// Below this many triangles a search stays on one thread.

@@ -45,7 +45,7 @@ test('every tool is one of what a panel that adds steps does, each key once', ()
   // Every string tool but Ramp from a start, which is placed by hand (decision 0078, workstream 4).
   assert.deepEqual(
     CANVAS_TOOLS.filter((t) => t.panel === 'strings').map((t) => t.mode).sort(),
-    ['filter', 'join', 'number_across', 'offset', 'polygons_from_lines', 'project', 'reverse', 'set_closed', 'set_elevation', 'set_grade', 'smooth', 'split', 'surface_between', 'drape'].sort(),
+    ['filter', 'join', 'number_across', 'offset', 'polygons_from_lines', 'project', 'reverse', 'set_closed', 'set_elevation', 'set_grade', 'smooth', 'split', 'surface_between', 'drape', 'trim', 'extend'].sort(),
   );
   assert.deepEqual(
     CANVAS_TOOLS.filter((t) => t.panel === 'cut').map((t) => t.mode).sort(),

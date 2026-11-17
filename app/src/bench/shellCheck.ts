@@ -817,6 +817,9 @@ export async function checkShell(
       return screen([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]);
     };
     const whole = (await pointsOf(lastId)).length;
+    // Split splits at a click by default (String tools plan, workstream 1): a vertex by number is the other choice.
+    [...(stringsNow()?.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Where the string splits"] button') ?? [])].find((b) => b.textContent?.trim() === 'A vertex')?.click();
+    await settle();
     await typeNumber('Vertex to split at', '2');
     const splitSays = await go();
     const part = (await stringsNamed(`${last} part 2`))[0];

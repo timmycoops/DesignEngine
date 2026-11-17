@@ -1475,6 +1475,9 @@ pub struct BenchConfig {
     /// With `--clicks`, how the view takes clicks and Esc driven as Tim would: NS starts a string, a right click finishes
     /// it, a right drag pans, Esc takes back one thing a press, from a tool panel's box too (decision 0080).
     clicks: bool,
+    /// With `--string-edits`, Trim, Extend, Split at a click and Join driven as Tim would, by picks and clicks in the
+    /// view (String tools plan, workstream 1).
+    string_edits: bool,
     /// With `--ramp`, a ramp made by hand from the Walls row as Tim would: an edge graded, offset, projected up and down,
     /// and one surface between the four strings, its area known (decision 0079).
     ramp: bool,
@@ -1545,6 +1548,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         project: args.iter().any(|a| a == "--project"),
         measure: args.iter().any(|a| a == "--measure"),
         clicks: args.iter().any(|a| a == "--clicks"),
+        string_edits: args.iter().any(|a| a == "--string-edits"),
         ramp: args.iter().any(|a| a == "--ramp"),
         ramp_start: args.iter().any(|a| a == "--ramp-start"),
         cut: args.iter().any(|a| a == "--cut"),

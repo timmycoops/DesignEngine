@@ -31,6 +31,7 @@ import { takePalettePictures, takePictures } from './pictures';
 import { checkDataflow } from './dataflowCheck';
 import { checkSectionGuide } from './sectionGuideCheck';
 import { checkClicks } from './clicksCheck';
+import { checkStringEdits } from './stringEditsCheck';
 import { checkMeasure } from './measureCheck';
 import { checkProject } from './projectCheck';
 import { checkRamp } from './rampCheck';
@@ -101,6 +102,8 @@ export async function runChecks(
       results.measure = await checkMeasure(viewport, log, show, strings);
     } else if (config.clicks) {
       results.clicks = await checkClicks(viewport, log, show, strings, selection);
+    } else if (config.string_edits) {
+      results.string_edits = await checkStringEdits(viewport, log, show, selection);
     } else if (config.ramp) {
       results.ramp = await checkRamp(viewport, log, show, strings, selection);
     } else if (config.ramp_start) {
