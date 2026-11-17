@@ -60,7 +60,7 @@ pub use workflow::{SaveWorkflow, SaveWorkflowParams, WORKFLOW_LAYER};
 pub use measure::{MEASURES, Measure, MeasureParams, block_length, floor_dip, measure, plan_area};
 pub use reserves_run::{
     ColumnSteps, FormulaTraceView, ParamRead, StepKind, TraceLineView, column_trace, formula_trace, OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, StepWrite, UNDERBURDEN_THICKNESS, UnitView, Working, dataflow_starter, preston_sanders,
-    reserves_preview, table_column,
+    reserves_preview, table_column, Unsaved,
 };
 pub use starter::{DISCARDED, RD_ADT, starter_formulas, with_starter_formulas};
 pub use zd_script::REFERENCE as FORMULA_REFERENCE;

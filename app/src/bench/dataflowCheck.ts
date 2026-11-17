@@ -168,6 +168,7 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
   }
   await checkParameters(summary, api, expect, show, picture);
   await checkFormulas(expect, picture, api);
+  await checkLive(summary, expect, picture);
   await checkBeside(expect, api);
   return { ...results, failures };
 }
@@ -445,27 +446,30 @@ async function checkFormulas(expect: Expect, picture: Picture, api: DockviewApi)
   const back = view?.state.doc.toString() ?? '';
   expect('Discard puts the formula back', back === text && !panel()?.querySelector('[data-slot="formula-problem"]'));
 
-  // Run in Dataflow (decision 0081, point 7): rd_is doubled and not saved, run on the Dataflow tab's column (3_B1, opened
-  // above). densities is picked and runs the edit, marked edited, and the worked examples it breaks are flagged, not refused;
-  // the Parameters tab, put behind, still holds the edit; back to the saved formula, then the edit discarded.
+  // Live (decision 0082, points 4 to 6): rd_is doubled and not saved runs the Dataflow tab's column (3_B1, opened above)
+  // on the edit as it's typed. Show in Dataflow brings the tab forward on densities, marked edited, the worked examples
+  // it breaks flagged, not refused, and rd_is moved against the saved run; the Parameters tab still holds the edit, and
+  // Discard there runs the column on the saved formula again.
   const at2 = back.indexOf('rd_is = in_situ_rd(');
   view?.dispatch({ changes: { from: at2 + 'rd_is = '.length, to: at2 + 'rd_is = '.length, insert: '2 * ' } });
-  await wait(600);
-  button('Run in Dataflow')?.click();
+  button('Show in Dataflow')?.click();
   const nb = () => document.querySelector<HTMLElement>('[data-tool-panel="notebook"]');
   const dens = () => nb()?.querySelector<HTMLElement>('[data-slot="step-pane"][data-step="densities"]') ?? null;
-  for (let k = 0; k < 100 && !(nb()?.querySelector('[data-slot="notebook-edited"]') && dens()?.querySelector('[data-ran="yes"]')); k++) await wait(100);
+  const ranEdit = () => (dens()?.querySelector('[data-slot="cell-code"]')?.textContent ?? '').includes('2 * in_situ_rd(') && !!dens()?.querySelector('[data-ran="yes"]');
+  for (let k = 0; k < 100 && !(nb()?.querySelector('[data-slot="notebook-edited"]') && ranEdit()); k++) await wait(100);
   const code = dens()?.querySelector('[data-slot="cell-code"]')?.textContent ?? '';
   const failing = nb()?.querySelector('[data-slot="notebook-failing"]')?.textContent ?? '';
   const badge = [...(dens()?.querySelectorAll('span') ?? [])].some((e) => e.textContent === 'edited');
+  const movedRdIs = [...(nb()?.querySelectorAll<HTMLElement>('[data-slot="after-table"] td[data-moved="yes"]') ?? [])].length;
   expect(
-    'Run in Dataflow picks the edited step and runs the edited formula on the column, marked edited, its failing worked examples flagged, not refused',
+    'an edited formula runs live in the Dataflow tab: densities picked, marked edited, its failing worked examples flagged, not refused',
     code.includes('2 * in_situ_rd(') && /rd_is = [\d.]+/.test(code) && badge && failing.includes('the formula step densities, test'),
     { badge, failing: failing.slice(0, 120) },
   );
+  expect('what the edit moved is marked against the saved run', movedRdIs > 0 && (nb()?.querySelector('[data-slot="notebook-edited"]')?.textContent ?? '').includes('Reserves'), movedRdIs);
   if (picture) {
     document.querySelector<HTMLButtonElement>('button[aria-label="Fill the window"]')?.click();
-    await picture('run-in-dataflow');
+    await picture('dataflow-live-formula');
     document.querySelector<HTMLButtonElement>('button[aria-label="Put the tables back under the view"]')?.click();
     await wait(300);
   }
@@ -473,16 +477,73 @@ async function checkFormulas(expect: Expect, picture: Picture, api: DockviewApi)
   await wait(300);
   const kept = (view && panel()?.contains(view.dom) ? view : null)?.state.doc.toString() ?? '';
   expect('the Parameters tab, put behind the Dataflow tab, still holds the edit', kept.includes('rd_is = 2 * in_situ_rd('));
-  showPanel(api, 'notebook');
-  [...(nb()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent === 'Back to the saved formula')?.click();
-  for (let k = 0; k < 100 && nb()?.querySelector('[data-slot="notebook-edited"]'); k++) await wait(100);
-  for (let k = 0; k < 100 && !dens()?.querySelector('[data-ran="yes"]'); k++) await wait(100);
-  const savedCode = dens()?.querySelector('[data-slot="cell-code"]')?.textContent ?? '';
-  expect('Back to the saved formula runs the saved one again', !nb()?.querySelector('[data-slot="notebook-edited"]') && savedCode.includes('rd_is = in_situ_rd(') && !savedCode.includes('2 * in_situ_rd('));
-  showPanel(api, 'params');
-  await wait(200);
   button('Discard')?.click();
-  await wait(400);
+  showPanel(api, 'notebook');
+  for (let k = 0; k < 100 && (nb()?.querySelector('[data-slot="notebook-edited"]') || !dens()?.querySelector('[data-ran="yes"]')); k++) await wait(100);
+  const savedCode = dens()?.querySelector('[data-slot="cell-code"]')?.textContent ?? '';
+  expect('Discard in the Parameters tab runs the column on the saved formula again', !nb()?.querySelector('[data-slot="notebook-edited"]') && savedCode.includes('rd_is = in_situ_rd(') && !savedCode.includes('2 * in_situ_rd('));
+}
+
+/**
+ * Live on a parameter table (decision 0082, points 4 to 6), the Parameters beside the Dataflow tab: the coal's roof
+ * dilution doubled and not saved runs 3_B1's column again in about a third of a second, rom_dilution's Dilution write and
+ * the units it moved marked against the saved run, the table marked edited in Inputs. A word typed in the cell doesn't
+ * check: the last run stays, and why is said. Discard puts the saved run back.
+ */
+async function checkLive(summary: ProjectSummary, expect: Expect, picture: Picture) {
+  const assumptions = summary.objects.find((o) => o.name === 'Reserves assumptions');
+  if (!assumptions) return;
+  const nb = () => document.querySelector<HTMLElement>('[data-tool-panel="notebook"]');
+  const params = () => document.querySelector<HTMLElement>('[data-tool-panel="parameters"]');
+  const pressIn = (root: HTMLElement | null, label: string) => [...(root?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent?.trim() === label)?.click();
+  pressIn(nb(), 'Parameters beside');
+  for (let k = 0; k < 50 && !params(); k++) await wait(100);
+  params()?.querySelector<HTMLButtonElement>('[data-slot="parameters-item"][data-name="Reserves assumptions"]')?.click();
+  for (let k = 0; k < 50 && !params()?.querySelector('[data-slot="parameters-grid"]'); k++) await wait(100);
+  nb()?.querySelector<HTMLButtonElement>('[data-strip-step="rom_dilution"]')?.click();
+  await wait(200);
+  const details = await objectDetails(assumptions.id);
+  if (details.measures.kind !== 'parameter_table') return expect('the assumptions open as a parameter table', false);
+  const t = details.measures.parameters;
+  const ri = t.rows.findIndex((r) => typeof r.values.roof_dilution === 'number' && r.values.roof_dilution > 0);
+  if (ri < 0) return expect('the assumptions give a roof dilution', false);
+  const roof = t.rows[ri].values.roof_dilution as number;
+  const cell = () => params()?.querySelector<HTMLInputElement>(`input[aria-label="Column ${ri + 1}, roof_dilution"]`) ?? null;
+  const type = (text: string) => {
+    const input = cell();
+    if (!input) return;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, text);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const banner = () => nb()?.querySelector('[data-slot="notebook-edited"]')?.textContent ?? '';
+  const movedWrite = () => nb()?.querySelector('[data-strip-step="rom_dilution"] [data-moved="yes"]') ?? null;
+  const started = performance.now();
+  type(String(roof * 2));
+  for (let k = 0; k < 200 && !movedWrite(); k++) await wait(25);
+  const ms = Math.round(performance.now() - started);
+  const moved = nb()?.querySelectorAll('[data-slot="after-table"] td[data-moved="yes"]').length ?? 0;
+  const chip = nb()?.querySelector('[data-input^="table:"][data-lit="yes"]')?.textContent ?? '';
+  expect(
+    "a parameter edited and not saved runs the column again live: rom_dilution's write and the units it moved marked, the table edited in Inputs",
+    !!movedWrite() && moved > 0 && banner().includes('Reserves assumptions') && chip.includes('edited') && ms < 3000,
+    { ms, moved, write: movedWrite()?.textContent },
+  );
+  if (picture) {
+    document.querySelector<HTMLButtonElement>('button[aria-label="Fill the window"]')?.click();
+    await wait(300);
+    await picture('dataflow-live');
+    document.querySelector<HTMLButtonElement>('button[aria-label="Put the tables back under the view"]')?.click();
+    await wait(300);
+  }
+  type('3O');
+  for (let k = 0; k < 50 && !nb()?.querySelector('[data-slot="live-why"]'); k++) await wait(50);
+  expect('an edit that does not check keeps the last run that worked, and says why', !!nb()?.querySelector('[data-slot="live-why"]') && !!movedWrite() && banner() !== '');
+  pressIn(params(), 'Discard');
+  for (let k = 0; k < 100 && (banner() || movedWrite() || nb()?.querySelector('[data-slot="live-why"]')); k++) await wait(50);
+  const left = { banner: banner().slice(0, 60), write: movedWrite()?.textContent ?? null, why: nb()?.querySelector('[data-slot="live-why"]')?.textContent?.slice(0, 120) ?? null, moved: nb()?.querySelectorAll('td[data-moved="yes"]').length ?? 0 };
+  expect('Discard puts the saved run back', !left.banner && !left.write && !left.why && left.moved === 0, left);
+  pressIn(nb(), 'Parameters as a tab');
+  await wait(300);
 }
 
 /**

@@ -2,7 +2,7 @@
 // the picked step read lit, on a made-up column. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { beforeAfter, inputsOf, stripSteps, tablesRead, volumeShort, writeTip, writesByFolder } from '../src/panels/dataflowView.ts';
+import { beforeAfter, inputsOf, matchUnits, stripSteps, tablesRead, volumeShort, writeTip, writesByFolder } from '../src/panels/dataflowView.ts';
 
 const unit = (id) => ({ id, horizon: 'U', material: 'coal', seam: 'U', bench: null, joined: [], became: null, section: null, rom: null, values: {} });
 const step = (name, units, more = {}) => ({ step: name, units: units.map(unit), said: [], kind: 'built_in', rule: '', when: {}, source: null, fits: [], reads: [], workings: [], writes: [], ...more });
@@ -131,4 +131,55 @@ test('a step that reads and changes nothing shows the volume; the column as inpu
   const input = beforeAfter(small, 0, false);
   assert.deepEqual([input.before.length, input.after.length, input.volume.before, input.volume.after], [0, 3, null, 60000]);
   assert.ok(input.after.every((r) => r.mark === null && r.cells.every((c) => !c.changed)));
+});
+
+// What an unsaved edit moved against the saved run (decision 0082, point 6): roof dilution made 0.10 m from 0.05 m cuts
+// 1,000 m³ off OB, not 500 m³, so OB's cut and the dilution move; U doesn't. The edit also gives the dilution unit a new
+// id (ids are handed out as a run goes), so units are matched by what they are.
+const savedDil = { ...dil, values: { ...dil.values } };
+const liveObCut = { ...ob, values: { ...ob.values, volume: 49000, thickness: 9.8 } };
+const liveDil = { ...dil, id: 9, values: { ...dil.values, volume: 1000, thickness: 0.2 } };
+const savedRun = {
+  ...small,
+  steps: [
+    { ...small.steps[0] },
+    { ...small.steps[1], writes: [{ folder: 'Dilution\\Roof', units: [4], volume: 500 }] },
+    small.steps[2],
+    small.steps[3],
+  ],
+};
+const liveRun = {
+  ...small,
+  steps: [
+    { ...small.steps[0] },
+    { ...small.steps[1], units: [liveObCut, liveDil, u130, u120], writes: [{ folder: 'Dilution\\Roof', units: [9], volume: 1000 }] },
+    { ...small.steps[2], units: [liveObCut, liveDil, joined] },
+    { ...small.steps[3], units: [liveObCut, liveDil, joined] },
+  ],
+};
+savedRun.steps[1].units = [obCut, savedDil, u130, u120];
+
+test('units are matched across runs by what they are, not their ids', () => {
+  const m = matchUnits(liveRun.steps[1].units, savedRun.steps[1].units);
+  assert.deepEqual([...m.entries()].map(([id, u]) => [id, u.id]), [[1, 1], [9, 4], [2, 2], [3, 3]]);
+});
+
+test('run on an edit, a value it moved carries the saved one; one it left alone carries none', () => {
+  const ba = beforeAfter(liveRun, 1, false, savedRun);
+  assert.deepEqual(ba.after[0].cells.map((c) => [c.value, c.was]), [[49000, 49500], [9.8, 9.9], [2.3, undefined]], 'OB cut by 1,000 m³, not 500');
+  assert.deepEqual(ba.after[1].cells.map((c) => c.was), [500, 0.1, undefined], 'the dilution');
+  assert.ok(ba.after.slice(2).every((r) => r.cells.every((c) => c.was === undefined) && !r.added), "U's benches didn't move");
+  assert.ok(ba.before.every((r) => r.cells.every((c) => c.was === undefined)), 'what came in is as saved');
+  assert.ok(beforeAfter(liveRun, 1, false).after.every((r) => r.cells.every((c) => c.was === undefined)), 'nothing to set it against: nothing moved');
+  const strip = stripSteps(liveRun.steps, [false, false, false, true], savedRun.steps);
+  assert.deepEqual(strip[1].writes.map((w) => [w.folder, w.volume, w.was]), [['Dilution', 1000, 500]]);
+  assert.equal(stripSteps(savedRun.steps, [false, false, false, true], savedRun.steps)[1].writes[0].was, undefined);
+});
+
+test('a unit the saved run has nothing like is marked as made by the edit', () => {
+  const extra = v(7, 'M', 'coal', { volume: 10, thickness: 0.1, rd: 1.4, ash: 20 });
+  const run = { ...liveRun, steps: liveRun.steps.map((s, i) => (i === 1 ? { ...s, units: [...s.units, extra] } : s)) };
+  const ba = beforeAfter(run, 1, false, savedRun);
+  const row = ba.after.find((r) => r.unit.id === 7);
+  assert.ok(row.added && row.cells[0].was === null);
 });

@@ -10,9 +10,24 @@ import { type InputChip, inputsOf, stripSteps, volumeShort, writeTip } from './d
  * wrote to the reserves table under it and the units it passed on along the arrow after it. A step clicked is picked, lit
  * gold, and what it read is lit in the inputs: the table and the rows it took.
  */
-export function DataflowStrip({ column, quiet, picked, unit, onPick }: { column: ColumnSteps; quiet: boolean[]; picked: number | null; unit: number | null; onPick: (at: number) => void }) {
+export function DataflowStrip({
+  column,
+  saved = null,
+  quiet,
+  picked,
+  unit,
+  onPick,
+}: {
+  column: ColumnSteps;
+  /** The column run on what's saved, where this one is run on unsaved edits: a write they moved shows its saved volume. */
+  saved?: ColumnSteps | null;
+  quiet: boolean[];
+  picked: number | null;
+  unit: number | null;
+  onPick: (at: number) => void;
+}) {
   const inputs = inputsOf(column, picked, unit);
-  const steps = stripSteps(column.steps, quiet);
+  const steps = stripSteps(column.steps, quiet, saved?.steps ?? null);
   return (
     <div className="flex flex-col gap-1.5" data-slot="dataflow-strip">
       <div className="flex flex-wrap items-center gap-1.5" data-slot="dataflow-inputs">
@@ -43,8 +58,13 @@ export function DataflowStrip({ column, quiet, picked, unit, onPick }: { column:
               {s.writes.length > 0 && (
                 <span className="flex flex-wrap justify-center gap-0.5" data-slot="step-writes">
                   {s.writes.map((w) => (
-                    <span key={w.folder} className="rounded border border-border bg-muted px-1 text-[11px] font-normal text-muted-foreground" title={`Written to the reserves table:\n${writeTip(w)}`}>
-                      {w.folder} {volumeShort(w.volume)}
+                    <span
+                      key={w.folder}
+                      data-moved={w.was !== undefined ? 'yes' : 'no'}
+                      className={cn('rounded border border-border bg-muted px-1 text-[11px] font-normal text-muted-foreground', w.was !== undefined && 'border-edited text-edited')}
+                      title={`Written to the reserves table:\n${writeTip(w)}${w.was !== undefined ? `\nThe saved run wrote ${volumeShort(w.was)} m³` : ''}`}
+                    >
+                      {w.folder} {w.was !== undefined && <span className="line-through opacity-70">{volumeShort(w.was)}</span>} {volumeShort(w.volume)}
                     </span>
                   ))}
                 </span>
@@ -76,6 +96,7 @@ function InputTag({ chip }: { chip: InputChip }) {
     >
       <Icon className="size-3" aria-hidden />
       {chip.label}
+      {chip.edited && <span className="rounded bg-edited/20 px-1 text-[10px] text-edited">edited</span>}
     </span>
   );
 }

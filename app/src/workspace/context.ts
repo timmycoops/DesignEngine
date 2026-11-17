@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { Colouring, Contours, Dataflow, LogEntry, ProjectSummary, RunRecord, Vec3, WorkflowRecord } from '@/bridge';
+import type { Colouring, Contours, Dataflow, LogEntry, ParameterTable, ProjectSummary, RunRecord, Vec3, WorkflowRecord } from '@/bridge';
 import type { RlShown, SeamShown } from '@/viewport/sceneSync';
 import type { PanelId } from './panels';
 
@@ -10,12 +10,18 @@ export interface AddingTo {
   at?: number;
 }
 
-/** A dataflow being edited, run in the notebook before it's saved (decision 0081, point 7): which, as edited, and the step. */
+/** A formula's Show in Dataflow (decision 0081, point 7; 0082): the step the Dataflow tab picks. It runs on the edits live. */
 export interface NotebookEdit {
   dataflowId: string;
   dataflow: Dataflow;
   step: string;
 }
+
+/**
+ * An object open in the Parameters tab with edits not yet saved (decision 0082, points 4 and 5): the Dataflow tab runs
+ * its column on it live. `why` says what stops it running (a cell that doesn't check), and the last good run stays.
+ */
+export type Draft = { name: string; why: string | null } & ({ kind: 'table'; table: ParameterTable | null } | { kind: 'dataflow'; dataflow: Dataflow | null });
 
 /** What every panel reads, and the actions they share. App owns the state. */
 export interface Workspace {
@@ -66,13 +72,17 @@ export interface Workspace {
   notebookOf: { table: string; node: string[]; n: number; edited: NotebookEdit | null } | null;
   /** Opens the Notebook tab on a reserves table's node: its block column, a cell a step, on the saved dataflow. */
   openNotebook: (table: string, node: string[]) => void;
-  /** Runs the open notebook's column again on a dataflow as edited, not saved; null goes back to the saved one. */
+  /** Brings the Dataflow tab forward on a formula's step; its column runs on the Parameters tab's edits as they're typed. */
   runInNotebook: (edit: NotebookEdit | null) => void;
   /**
    * The block picked in the Reserves table, which the Notebook follows without a press: its column, keeping a formula
    * run as edited. Brings no tab to the front.
    */
   followInNotebook: (table: string, node: string[]) => void;
+  /** The objects being edited in the Parameters tab, by id, not yet saved (decision 0082): what the Dataflow tab runs on. */
+  drafts: Record<string, Draft>;
+  /** An object's edits as they stand, or null once it's saved, discarded or closed. */
+  setDraft: (id: string, draft: Draft | null) => void;
   /** Puts one tab beside another, its own half of the other's dock, or back in with it as a tab if it's beside already. */
   placeBeside: (id: PanelId, beside: PanelId) => void;
   /** Whether a tab is open in a group of its own beside another's, rather than a tab behind it. */

@@ -692,14 +692,21 @@ pub async fn reserves_breakdown(object: ObjectId, node: Vec<String>, open: Vec<V
 /// with the settings of the run that made the table, every unit after each step. Nothing is kept.
 ///
 /// The notebook (decision 0081): each step with what it is, the units it took and the parameters it read; with
-/// `dataflow`, run on that dataflow as edited, not the one saved.
+/// `dataflow`, run on that dataflow as edited, not the one saved; with `tables`, on those parameter tables as edited, each
+/// in place of the saved one with its id (decision 0082, the Dataflow tab live).
 #[tauri::command]
-pub async fn reserves_column(object: ObjectId, node: Vec<String>, dataflow: Option<zd_core::Dataflow>, state: State<'_, AppState>) -> Result<zd_commands::builtin::ColumnSteps, String> {
+pub async fn reserves_column(
+    object: ObjectId,
+    node: Vec<String>,
+    dataflow: Option<zd_core::Dataflow>,
+    tables: Option<Vec<(ObjectId, zd_core::ParameterTable)>>,
+    state: State<'_, AppState>,
+) -> Result<zd_commands::builtin::ColumnSteps, String> {
     let app = state.app.clone();
     blocking(move || {
         let app = app.lock().unwrap();
-        let edited = dataflow.map(std::sync::Arc::new);
-        zd_commands::builtin::table_column(app.session.project(), app.session.log(), object, &node, edited.as_ref()).map_err(|e| e.to_string())
+        let unsaved = unsaved(dataflow, tables);
+        zd_commands::builtin::table_column(app.session.project(), app.session.log(), object, &node, &unsaved).map_err(|e| e.to_string())
     })
     .await?
 }
@@ -713,15 +720,24 @@ pub async fn reserves_column_trace(
     step: usize,
     unit: u32,
     dataflow: Option<zd_core::Dataflow>,
+    tables: Option<Vec<(ObjectId, zd_core::ParameterTable)>>,
     state: State<'_, AppState>,
 ) -> Result<zd_commands::builtin::FormulaTraceView, String> {
     let app = state.app.clone();
     blocking(move || {
         let app = app.lock().unwrap();
-        let edited = dataflow.map(std::sync::Arc::new);
-        zd_commands::builtin::column_trace(app.session.project(), app.session.log(), object, &node, step, unit, edited.as_ref()).map_err(|e| e.to_string())
+        let unsaved = unsaved(dataflow, tables);
+        zd_commands::builtin::column_trace(app.session.project(), app.session.log(), object, &node, step, unit, &unsaved).map_err(|e| e.to_string())
     })
     .await?
+}
+
+/// A dataflow and parameter tables as edited, for a column run on them.
+fn unsaved(dataflow: Option<zd_core::Dataflow>, tables: Option<Vec<(ObjectId, zd_core::ParameterTable)>>) -> zd_commands::builtin::Unsaved {
+    zd_commands::builtin::Unsaved {
+        dataflow: dataflow.map(std::sync::Arc::new),
+        tables: tables.unwrap_or_default().into_iter().map(|(id, t)| (id, std::sync::Arc::new(t))).collect(),
+    }
 }
 
 /// The parameter tables read with one, in order, and where a picked solid takes its values from (decision 0075, 5d).

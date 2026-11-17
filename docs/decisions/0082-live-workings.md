@@ -2,8 +2,9 @@
 
 Status: agreed 17 November 2026. Tim agreed the seven decisions on the Build Plan's "Live workings plan" tab ("Agree all
 7, start ws1"). Workstream 1 (the engine's workings) is built here; 2 (the Workings row) was built in the Dataflow
-view's step pane (0084, workstream 3); 3 (live) and 4 (the rest of the steps) are to come, on that layout. Point 7 (a
-setting clicked goes to its cell in the Parameters tab) is still to do.
+view's step pane (0084, workstream 3); 3 (live) is built here, on the Dataflow tab, after Tim asked on 18 November how to
+run the dataflow again once a parameter was edited; 4 (the rest of the steps) is to come. Point 7 (a setting clicked
+goes to its cell in the Parameters tab) is still to do.
 
 ## Why
 
@@ -58,3 +59,35 @@ pieces they cut (1e-9 relative) with their words exact; a waste short of its dil
 15,000); working_sections' parting, strip ratio, thickness, discard and section lines exact; rom_loss's roof, floor,
 edge and other lines (500, 1,000, 10 and 200 m³); the ROM ash cut-off's test (16.32 % > 15 %) and an untested section.
 The reserves tests that check the tables are unchanged and pass: the workings change nothing a run writes.
+
+## Built: workstream 3, live
+
+Tim, 18 November, editing `min_volume` in the Parameters tab with the Dataflow tab open beside it: "i dont see how i
+re-run the dataflow once the parameter was edited". The tab ran its column only when one was opened.
+
+- **The engine runs a column on what isn't saved.** `Unsaved` (`crates/zd-commands/src/builtin/reserves_run.rs`): the
+  dataflow as edited, and parameter tables as edited, each standing in for the saved one with its id; `table_column` and
+  `column_trace` take it. An edited table is checked first and refused with its name. `ColumnSteps.unsaved` names what
+  the run stood in for: the dataflow, and the edited tables among those it reads. Nothing is kept.
+- **The Parameters tab hands its edits on.** A table being edited, or a dataflow (its formulas with it), is a draft in
+  the workspace (`drafts`, `setDraft`) while it differs from what's saved, and goes when it's saved, discarded or closed.
+  A table whose grid doesn't check hands on why instead of the table. A dataflow is always handed on: a worked example
+  that fails is flagged and run anyway (0081), and what can't run comes back from the engine with why.
+- **The Dataflow tab runs on them.** It runs its column on what's saved, and on the drafts it reads (its own dataflow,
+  the tables it reads) 330 ms after they stop changing. An edit that doesn't check, or a run that fails, leaves the last
+  good run showing and says why. Saving a parameter table or dataflow runs the column again (their revisions are part of
+  what's asked), so what's saved is what's shown after a Save.
+- **What moved** (point 6): the units of the live run are matched to the saved run's by what they are (horizon, bench,
+  material, what it became) and their order, as an edit that makes or takes a unit moves the ids. A value the edits
+  moved is washed blue in Before and After with the saved run's struck through beside it; a unit the saved run hasn't is
+  marked edit; a write in the strip they moved shows the saved volume struck through; the table read is marked edited in
+  Inputs, and a step whose formula, filter or rule is edited is marked edited in the step pane. A banner says what the
+  run stood in for. Whole column runs on the same edits.
+- **Run in Dataflow is Show in Dataflow**: the tab runs on a formula as it's typed, so the button only brings the tab
+  forward on its step. Back to the saved formula is Discard in the Parameters tab.
+
+| Test | Known answer |
+|---|---|
+| `a_column_runs_on_a_parameter_table_as_edited_and_the_project_keeps_the_saved_one` (engine) | roof dilution 0.10 m for 0.05 m: 1,000 m³ of roof dilution, not 500 m³ (1e-9 relative), the table named as unsaved; the saved run still 500 m³ and the table's revision unchanged; a table edited past its own check refused with its name |
+| `dataflowView.test.mjs` (3 more) | units matched by what they are when an edit moves their ids; OB cut 49,000 m³ against the saved 49,500 m³ and the dilution 1,000 against 500 marked, U's benches not; the strip's Dilution 1,000 against 500; a unit the saved run hasn't marked made by the edit |
+| `zd-app --bench --dataflow` (16 Nov demo, 3_B1) | roof dilution doubled in the Parameters tab beside it: rom_dilution's write and 12 values moved within about 0.4 s, the table edited in Inputs; a word typed keeps the last run and says why; Discard brings the saved run back. rd_is doubled in densities: picked by Show in Dataflow, marked edited, its failing worked example flagged and run, the densities it moved marked; Discard runs the saved formula again |

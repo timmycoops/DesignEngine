@@ -59,7 +59,7 @@ import { RoadLayer } from './viewport/roads';
 import { type Mode, StringLayer } from './viewport/strings';
 import { typing } from './viewport/camera';
 import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Viewport';
-import { type AddingTo, type NotebookEdit, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
+import { type AddingTo, type Draft, type NotebookEdit, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
 import { ALL_PANELS_KEY, isBeside, type PanelId, placeBeside, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
 import { inUse, type Tool, type ToolAction, type ToolNeeds } from './tools';
 import { listenForChords } from './workspace/chords';
@@ -403,6 +403,18 @@ export default function App() {
     setNotebookOf((was) =>
       was && was.table === table && was.node.length === node.length && was.node.every((w, i) => w === node[i]) ? was : { table, node, n: (was?.n ?? 0) + 1, edited: was?.edited ?? null },
     );
+  }, []);
+  // The Parameters tab's unsaved edits, by object (decision 0082): the Dataflow tab runs on them live.
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const setDraft = useCallback((id: string, draft: Draft | null) => {
+    setDrafts((was) => {
+      if (draft === null) {
+        if (!(id in was)) return was;
+        const { [id]: _gone, ...rest } = was;
+        return rest;
+      }
+      return { ...was, [id]: draft };
+    });
   }, []);
   const [workflowPick, setWorkflowPick] = useState<{ id: string | null; case: string }>({ id: null, case: 'Base' });
   // What the ribbon lights: the panels in front in their docks, and what each is set to do, as the panels say.
@@ -1098,6 +1110,8 @@ export default function App() {
       openNotebook,
       runInNotebook,
       followInNotebook,
+      drafts,
+      setDraft,
       placeBeside: (id, beside) => dockRef.current && placeBeside(dockRef.current, id, beside),
       isBeside: (id, beside) => !!dockRef.current && isBeside(dockRef.current, id, beside),
       run,
@@ -1129,7 +1143,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook],
+    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook, drafts],
   );
 
   /** The view's own tools, for the bar on the view (decision 0076). The keys below do the same. */

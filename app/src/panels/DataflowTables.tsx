@@ -8,7 +8,8 @@ import { fieldLabel, unitLabel } from './reservesTable';
  * Before and After the picked step (decision 0084, points 4 and 5), each its own column of the Dataflow view: every unit
  * of the block a row, the labels then the fields the step reads and changes. A field it reads is lit gold, one it
  * changed underlined blue; a value it changed is blue on After, a unit it made marked new, one it took away struck
- * through on Before. The unit followed is marked; a row clicked follows that unit.
+ * through on Before. The unit followed is marked; a row clicked follows that unit. Run on unsaved edits (decision 0082,
+ * point 6), a value they moved is washed blue with the saved run's struck through beside it.
  */
 export function UnitTable({
   side,
@@ -99,6 +100,11 @@ function Row({ row, table, followed, onFollow }: { row: TableRow; table: BeforeA
       <td className={cn('sticky left-0 bg-inherit px-2 py-0.5 whitespace-nowrap', followed ? 'bg-accent' : 'bg-background')}>
         {row.mark === 'new' && <span className="mr-1 rounded bg-edited/20 px-1 text-[10px] text-edited">new</span>}
         {gone && <span className="mr-1 rounded bg-muted px-1 text-[10px] text-muted-foreground">gone</span>}
+        {row.added && (
+          <span className="mr-1 rounded border border-edited px-1 text-[10px] text-edited" title="The saved run has no unit like this one here: the edits made it">
+            edit
+          </span>
+        )}
         <span className={cn(followed && 'font-semibold text-primary', gone && 'text-muted-foreground line-through')}>{row.label}</span>
         <span className="ml-1.5 text-[10px] text-muted-foreground">{row.detail}</span>
       </td>
@@ -108,9 +114,12 @@ function Row({ row, table, followed, onFollow }: { row: TableRow; table: BeforeA
           <td
             key={field.name}
             data-changed={c.changed ? 'yes' : 'no'}
-            className={cn('px-2 py-0.5 text-right whitespace-nowrap', read && 'bg-selection/40', c.changed && 'text-edited', gone && 'text-muted-foreground line-through')}
+            data-moved={c.was !== undefined ? 'yes' : 'no'}
+            title={c.was !== undefined ? `The saved run: ${valueText(c.was, field.unit) || 'none'}` : undefined}
+            className={cn('px-2 py-0.5 text-right whitespace-nowrap', read && 'bg-selection/40', c.was !== undefined && 'bg-edited/15', c.changed && 'text-edited', gone && 'text-muted-foreground line-through')}
           >
-            {valueText(c.value, field.unit)}
+            {c.was !== undefined && <span className="mr-1 text-[10px] text-muted-foreground line-through">{valueText(c.was, field.unit) || 'none'}</span>}
+            <span className={cn(c.was !== undefined && 'font-semibold text-edited')}>{valueText(c.value, field.unit)}</span>
           </td>
         );
       })}
