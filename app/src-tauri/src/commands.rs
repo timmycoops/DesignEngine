@@ -690,12 +690,36 @@ pub async fn reserves_breakdown(object: ObjectId, node: Vec<String>, open: Vec<V
 
 /// Open its column (decision 0075, 5b): the block column a reserves table's node sits in, run again through its dataflow
 /// with the settings of the run that made the table, every unit after each step. Nothing is kept.
+///
+/// The notebook (decision 0081): each step with what it is, the units it took and the parameters it read; with
+/// `dataflow`, run on that dataflow as edited, not the one saved.
 #[tauri::command]
-pub async fn reserves_column(object: ObjectId, node: Vec<String>, state: State<'_, AppState>) -> Result<zd_commands::builtin::ColumnSteps, String> {
+pub async fn reserves_column(object: ObjectId, node: Vec<String>, dataflow: Option<zd_core::Dataflow>, state: State<'_, AppState>) -> Result<zd_commands::builtin::ColumnSteps, String> {
     let app = state.app.clone();
     blocking(move || {
         let app = app.lock().unwrap();
-        zd_commands::builtin::table_column(app.session.project(), app.session.log(), object, &node).map_err(|e| e.to_string())
+        let edited = dataflow.map(std::sync::Arc::new);
+        zd_commands::builtin::table_column(app.session.project(), app.session.log(), object, &node, edited.as_ref()).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
+/// A notebook cell's formula traced on one unit (decision 0081): the column run up to the step (1, the first after the
+/// column as input), the formula traced on the unit with that id as it stands there. Nothing is kept.
+#[tauri::command]
+pub async fn reserves_column_trace(
+    object: ObjectId,
+    node: Vec<String>,
+    step: usize,
+    unit: u32,
+    dataflow: Option<zd_core::Dataflow>,
+    state: State<'_, AppState>,
+) -> Result<zd_commands::builtin::FormulaTraceView, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let edited = dataflow.map(std::sync::Arc::new);
+        zd_commands::builtin::column_trace(app.session.project(), app.session.log(), object, &node, step, unit, edited.as_ref()).map_err(|e| e.to_string())
     })
     .await?
 }

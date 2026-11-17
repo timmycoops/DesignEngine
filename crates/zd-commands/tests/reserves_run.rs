@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use zd_commands::builtin::{RunReservesParams, reserves_preview, table_column};
+use zd_commands::builtin::{RunReservesParams, StepKind, column_trace, reserves_preview, table_column};
 use zd_commands::{Code, Command, CommandError, CommandSpec, Inputs, Outcome, Registry, RunRecord, Session, Severity};
 use zd_core::{Attributes, Body, Change, ChangeKind, ColumnValues, ObjectId, Table};
 
@@ -332,7 +332,7 @@ fn a_table_s_bench_opens_its_block_s_column_step_by_step() {
     let record = s.run("reserves.run", params.clone()).unwrap();
     let id = created(&record)[0];
     let node: Vec<String> = ["Pit", "3", "B2", "U", "18"].map(String::from).to_vec();
-    let opened = table_column(s.project(), s.log(), id, &node).unwrap();
+    let opened = table_column(s.project(), s.log(), id, &node, None).unwrap();
     assert_eq!(opened.column, ["Pit", "3", "B2"]);
     assert_eq!((opened.case.as_str(), opened.dataflow.as_str()), ("Base", "Reserves"));
     assert!(opened.changed.is_empty(), "{:?}", opened.changed);
@@ -372,13 +372,13 @@ fn a_table_s_bench_opens_its_block_s_column_step_by_step() {
     assert_eq!(opened.steps[1].said, ["1 unit underburden added below the last coal, out of model, 50000.0 m3"]);
 
     // A strip is above a column.
-    let err = table_column(s.project(), s.log(), id, &["Pit".to_string(), "3".to_string()]).unwrap_err();
+    let err = table_column(s.project(), s.log(), id, &["Pit".to_string(), "3".to_string()], None).unwrap_err();
     assert!(err.to_string().contains("pick a pit, strip, block or below it"), "{err}");
 
     // A block revised since the table was made is named, and the column runs on it as it is now.
     let l = ids[ids.len() - 1];
     s.run("test.tag", json!({ "object": l, "attributes": { "ash": 25.0 } })).unwrap();
-    let opened = table_column(s.project(), s.log(), id, &node).unwrap();
+    let opened = table_column(s.project(), s.log(), id, &node, None).unwrap();
     assert_eq!(opened.changed, ["3_B2_L"]);
     let l_unit = opened.steps[0].units.iter().find(|u| u.horizon == "L").unwrap();
     assert!(close(l_unit.values["ash"], 25.0));
@@ -519,6 +519,90 @@ fn coal_is_written_on_the_in_situ_basis_by_preston_sanders() {
     }
     assert!(close(value(&t, u, &at(WASTE, "tonnes")).unwrap(), 115_000.0) && close(value(&t, u, &at(WASTE, "rd_rom")).unwrap(), 2.3));
     assert_eq!(t.column(&at(COAL, "ash_is")).unwrap().add_up, Some(zd_reserves::AddUp::Mass { density: at(COAL, "rd_is") }));
+}
+
+/// The notebook's formula cells (decision 0081): `densities` traced on B1's U (RD 1.4, Mad 3 %, Mis 8 %) sets rd_is to
+/// Preston-Sanders' 1.358 ÷ 0.99 on a line that ran. A built-in step has no lines to trace. Edited and not saved (rd_is
+/// doubled, the filter coal only), the cell gives the edited value and OB isn't taken, with no lines run; the saved
+/// dataflow still gives 1.358 ÷ 0.99.
+#[test]
+fn a_notebook_traces_a_formula_cell_saved_or_as_edited() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = moist_flow(&mut s, "when material,rd (t/m3),mad (%),mis (%),mrom (%),underburden_thickness (m)\nwaste,2.3,,,,0\ncoal,,3,8,10,\n");
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let node: Vec<String> = ["Pit", "3", "B1", "U"].map(String::from).to_vec();
+    let opened = table_column(s.project(), s.log(), id, &node, None).unwrap();
+    let at = opened.steps.iter().position(|c| c.step == "densities").unwrap();
+    let cell = &opened.steps[at];
+    assert_eq!(cell.kind, StepKind::Formula);
+    assert!(cell.source.as_deref().is_some_and(|f| f.contains("in_situ_rd(")) && cell.rule.is_empty() && cell.reads.is_empty());
+    assert_eq!(cell.fits.len(), opened.steps[at - 1].units.len(), "no filter: every unit");
+    let unit_id = |c: &zd_commands::builtin::StepView, h: &str| c.units.iter().find(|u| u.horizon == h).unwrap().id;
+    let u = unit_id(&opened.steps[at - 1], "U");
+    let rd_is = 1.358 / 0.99;
+    let trace = column_trace(s.project(), s.log(), id, &node, at, u, None).unwrap();
+    let set = |t: &zd_commands::builtin::FormulaTraceView| t.sets.iter().find(|(k, _)| k == "rd_is").map(|(_, v)| v.parse::<f64>().unwrap());
+    assert!(trace.fits && set(&trace).is_some_and(|v| close(v, rd_is)), "{:?}", trace.sets);
+    assert!(trace.lines.iter().any(|l| l.text.contains("in_situ_rd(")), "the line that worked it ran");
+    let initialise = opened.steps.iter().position(|c| c.step == "initialise").unwrap();
+    let err = column_trace(s.project(), s.log(), id, &node, initialise, u, None).unwrap_err();
+    assert!(err.to_string().contains("initialise is built in, not a formula"), "{err}");
+
+    // Edited, not saved: rd_is doubled and the filter coal only. Its worked examples, which an edit like this one would
+    // fail (and so be refused, as a formula is checked before it runs), are taken off with it.
+    let Body::Dataflow(saved) = &s.project().object(flow).unwrap().body else { panic!("a dataflow") };
+    let mut edited = (**saved).clone();
+    let densities = edited.steps.iter_mut().find(|st| st.step == "densities").unwrap().formula.as_mut().unwrap();
+    densities.script = densities.script.replace("rd_is = in_situ_rd(", "rd_is = 2 * in_situ_rd(");
+    densities.tests.clear();
+    densities.when = [("material".to_string(), "coal".to_string())].into_iter().collect();
+    let edited = std::sync::Arc::new(edited);
+    let opened_edited = table_column(s.project(), s.log(), id, &node, Some(&edited)).unwrap();
+    assert!(opened_edited.edited && !opened.edited);
+    let after = |o: &zd_commands::builtin::ColumnSteps| o.steps[at].units.iter().find(|u| u.horizon == "U").unwrap().values["rd_is"];
+    assert!(close(after(&opened_edited), 2.0 * rd_is) && close(after(&opened), rd_is));
+    assert_eq!(opened_edited.steps[at].fits, [u, unit_id(&opened_edited.steps[at - 1], "L")], "U and L are B1's coal");
+    let ob = unit_id(&opened_edited.steps[at - 1], "OB");
+    let skipped = column_trace(s.project(), s.log(), id, &node, at, ob, Some(&edited)).unwrap();
+    assert!(!skipped.fits && skipped.lines.is_empty(), "{:?}", skipped.lines.len());
+    let again = table_column(s.project(), s.log(), id, &node, None).unwrap();
+    assert!(close(after(&again), rd_is), "the saved dataflow is as it was");
+}
+
+/// A built-in step's reads (decision 0081): `rom_dilution` on the loss column reads each coal unit's dilution settings,
+/// A's from the assumptions' row 3 (any coal) and B's from row 2 (coal, B), table 0; `small_volumes` with no
+/// `min_volume` column reads none for every unit, no table or row.
+#[test]
+fn a_notebook_says_which_row_each_built_in_setting_came_from() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, dilution_steps(), &dilution_csv([0.0; 4], [0.05, 0.1, 0.02, 1.0], ""));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let opened = table_column(s.project(), s.log(), id, &["Pit".to_string(), "1".to_string(), "B1".to_string()], None).unwrap();
+    assert_eq!(opened.tables, ["assumptions"]);
+    let cell = opened.steps.iter().find(|c| c.step == "rom_dilution").unwrap();
+    assert_eq!(cell.kind, StepKind::BuiltIn);
+    assert!(cell.rule.starts_with("cuts each waste interval") && cell.source.is_none());
+    let coal = |seam: &str| cell.units.iter().find(|u| u.material == "coal" && u.seam == seam && u.became.is_none()).unwrap().id;
+    let read = |unit: u32, column: &str| cell.reads.iter().find(|r| r.unit == unit && r.column == column).cloned();
+    for (seam, row) in [("A", 2), ("B", 1)] {
+        for (column, value) in [("roof_dilution", 0.05), ("floor_dilution", 0.1), ("edge_dilution", 0.02), ("other_dilution", 1.0)] {
+            let r = read(coal(seam), column).unwrap_or_else(|| panic!("{seam} reads {column}: {:?}", cell.reads));
+            assert_eq!((r.value, r.table, r.row), (Some(value), Some(0), Some(row)), "{seam} {column}");
+        }
+    }
+
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["small_volumes", "initialise"]);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let opened = table_column(s.project(), s.log(), created(&record)[0], &["Pit".to_string(), "3".to_string(), "B1".to_string()], None).unwrap();
+    let small = opened.steps.iter().find(|c| c.step == "small_volumes").unwrap();
+    assert_eq!(small.reads.len(), small.units.len(), "one read a unit");
+    assert!(small.reads.iter().all(|r| r.column == "min_volume" && r.value.is_none() && r.table.is_none() && r.row.is_none()), "{:?}", small.reads);
+    assert!(opened.steps[0].reads.is_empty() && opened.steps[0].kind == StepKind::Input);
 }
 
 /// Coal with no in situ moisture can't be put on the in situ basis: its block stops, said with what's missing.

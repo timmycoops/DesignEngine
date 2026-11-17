@@ -86,6 +86,8 @@ to its 64,519.3 m³ of ROM coal (to the shown decimals). The 50m pit's 2,847 lea
 
 Tim picked the rest of 5b next on 17 November ("Im happy with 5B to be next"). Fields as rows were built with 5a; this
 is decision 2's **Open its column**: one block stepped through the dataflow, every unit before and after each step.
+Tim then asked to see what causes each change, as a notebook does: 0081 turns the column into one, a cell a step, and
+a cell is decision 4's step panel.
 
 - **`table_column`** in `zd-commands`: the column a reserves table's node sits in (a block, or a seam or bench of it), run
   again through the dataflow with the parameters of the `reserves.run` that made the table, read from the run log by the

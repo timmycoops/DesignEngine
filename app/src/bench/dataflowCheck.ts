@@ -96,6 +96,9 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(pick, baseTable.id);
     pick.dispatchEvent(new Event('change', { bubbles: true }));
   }
+  // Across is remembered on the machine: Children first, whatever the last session left.
+  for (let k = 0; k < 50 && !panel()?.querySelector('button'); k++) await wait(100);
+  [...(panel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent === 'Children')?.click();
   const nodeRow = (path: string) => panel()?.querySelector<HTMLElement>(`[data-slot="reserves-node"][data-path="${path}"]`) ?? null;
   for (let k = 0; k < 50 && !nodeRow('Pit > 3'); k++) await wait(100);
   nodeRow('Pit > 3')?.querySelector<HTMLButtonElement>('button')?.click();
@@ -103,6 +106,13 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
   nodeRow('Pit > 3 > B1')?.click();
   const heads = () => [...(panel()?.querySelectorAll<HTMLElement>('[data-slot="reserves-breakdown"] th[data-col]') ?? [])].map((h) => h.dataset.col ?? '');
   for (let k = 0; k < 50 && heads()[0] !== 'Pit > 3 > B1'; k++) await wait(100);
+  // Folded folders are remembered on the machine too: every one opened, whatever the last session left.
+  for (let k = 0; k < 20; k++) {
+    const folded = panel()?.querySelector<HTMLButtonElement>('tr[data-folder] button[aria-label^="Open "]');
+    if (!folded) break;
+    folded.click();
+    await wait(50);
+  }
   expect("a block's fields run down the side, its seams across", JSON.stringify(heads()) === JSON.stringify(['Pit > 3 > B1', 'Pit > 3 > B1 > U', 'Pit > 3 > B1 > M', 'Pit > 3 > B1 > L']), heads());
   const cells = (field: string) => [...(panel()?.querySelectorAll<HTMLElement>(`tr[data-field="${CSS.escape(field)}"] td`) ?? [])].slice(1).map((c) => c.textContent ?? '');
   expect("its ROM coal is the engine's: 64,519.3 m³, its seams 10,840.1, 18,541.2 and 35,137.9", JSON.stringify(cells('ROM\\Coal\\volume')) === JSON.stringify(['64,519.3', '10,840.1', '18,541.2', '35,137.9']), cells('ROM\\Coal\\volume'));
