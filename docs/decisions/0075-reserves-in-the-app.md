@@ -2,7 +2,7 @@
 
 Status: agreed 15 November 2026. Tim agreed the eight decisions on the Build Plan's "Reserves app plan" tab, with the
 table turned so the fields run down the side ("I like the look of that better for what I want"). This is workstream 5 of
-0070. Workstream 5a, the reserves table tab, is built here; 5b to 5e follow.
+0070. Workstreams 5a, 5b and 5d are built here; 5c and 5e follow.
 
 ## Why
 
@@ -81,6 +81,43 @@ botom of the stack)". The tab's **Across** choice is Children (as above) or **Le
 `reserves_view::breakdown_leaves`. Known answers: strip 1 of the made-up table runs B2 U, B10 U 110, B10 U 100, B10 L,
 adding up to 10,000 m³. On the demo pit, block 3_B1 runs U 130 to U 100, M 110 to M 50, L 60 to L 20, its leaves adding up
 to its 64,519.3 m³ of ROM coal (to the shown decimals). The 50m pit's 2,847 leaves show the first 500 in 48 ms.
+
+## Built: 5b, Open its column
+
+Tim picked the rest of 5b next on 17 November ("Im happy with 5B to be next"). Fields as rows were built with 5a; this
+is decision 2's **Open its column**: one block stepped through the dataflow, every unit before and after each step.
+
+- **`table_column`** in `zd-commands`: the column a reserves table's node sits in (a block, or a seam or bench of it), run
+  again through the dataflow with the parameters of the `reserves.run` that made the table, read from the run log by the
+  table's provenance. The column is the node's words at the dataflow's levels above the seam; the case is the table's.
+  Anything the run read that has a newer revision now, or is gone, is named, since the column is run on what's there
+  now. Nothing is kept. A node above a block, or a table no reserves run in the log made, is refused.
+- **Units keep their id through the steps** (`UnitView::id`, the column's own): a unit a step splits off or joins is a
+  new id, one it joins or takes away is gone after it. Before and after are matched by it.
+- **Each step says what it did to this column** (`StepView::said`), in the run's words: "1 unit underburden added below
+  the last coal, out of model, 50000.0 m3".
+- **The app**: Open its column, in the Reserves table tab, for a block or below. The steps run across the top, picked or
+  stepped with ← and →, each showing how many changes it made, and steps that changed nothing are muted. It opens at the
+  first step that did something. Under them, what the step said and the units it took away; then the fields down the
+  side (Main fields, Every field, or Only what changed) and the units across, top of the stack to the bottom, each with
+  its material, what it became, its working section and where it goes in ROM. A value the step changed is blue with
+  what it was under it, a unit it made is marked new, and the picked seam or bench is gold. The column's volume after
+  the step is on the bar, with what it was where the step changed it (the underburden). Table goes back. Follow the
+  pick moves an open column to the picked solid's block, and a block picked in the tree opens its own.
+
+Known answers:
+
+- `reserves_run` (`a_table_s_bench_opens_its_block_s_column_step_by_step`), on the made-up strip:
+  - bench 18 of B2's U opens column Pit 3 B2 with the same units and values as `reserves_preview`, step for step;
+  - OB, U-L and L keep their ids; U's benches 18 and 16 are gone after `join_benches`, and one new U of both comes,
+    20,000 m³ at RD 1.5; the underburden is new at `initialise`;
+  - `initialise` says one underburden of 50,000 m³, and the column as input says nothing;
+  - a strip is refused, and a block revised since is named.
+- `app/tests/columnSteps.test.mjs`: before and after matched by id, a changed value with what it was, a join's benches
+  gone and its unit new, Only what changed, a picked bench marking the joined unit that holds it.
+- The app check on the demo pit opens 3_B1's column through the dataflow's sixteen steps. After `rom_dilution` the
+  units sent to U's ROM coal section add up to the table's 10,840.1 m³, up from after `rom_loss`, with the dilution as
+  new units. ← steps back, and Table goes back.
 
 ## Built: 5d, the Parameters tab
 

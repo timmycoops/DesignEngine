@@ -161,7 +161,7 @@ pub struct ColumnRun<'a> {
 }
 
 /// What a column's steps changed, counted by what and how much, and the blocks out of range by check.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Said {
     counts: BTreeMap<String, (usize, f64)>,
     named: BTreeMap<String, Vec<String>>,
@@ -179,6 +179,25 @@ impl Said {
         if !n.iter().any(|b| b == block) {
             n.push(block.to_string());
         }
+    }
+
+    /// What was said after `before`, in the run's own words: a count with its volume, or a check with the blocks it names.
+    fn since(&self, before: &Said) -> Vec<String> {
+        let mut lines = Vec::new();
+        for (what, (n, v)) in &self.counts {
+            let (n0, v0) = before.counts.get(what).copied().unwrap_or_default();
+            if *n > n0 {
+                let n = n - n0;
+                lines.push(format!("{n} unit{} {what}, {:.1} m3", plural(n), v - v0));
+            }
+        }
+        for (check, blocks) in &self.named {
+            let had = before.named.get(check).map_or(0, Vec::len);
+            if blocks.len() > had {
+                lines.push(format!("{check}: {}", blocks[had..].join(", ")));
+            }
+        }
+        lines
     }
 }
 
@@ -445,10 +464,15 @@ fn unit_of(prepared: &Prepared, object: &Object) -> Result<(u32, Labels, Option<
 pub struct StepView {
     pub step: String,
     pub units: Vec<UnitView>,
+    /// What the step said of this column, in the run's words (none for the column as input).
+    pub said: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UnitView {
+    /// Its id in the column, kept through every step: a unit a step splits off or joins is a new id, and one it joins or
+    /// takes away is gone after it. Before and after a step are matched by it.
+    pub id: UnitId,
     pub horizon: String,
     pub material: String,
     pub seam: String,
@@ -464,7 +488,7 @@ pub struct UnitView {
     pub values: BTreeMap<String, f64>,
 }
 
-fn view(run: &ColumnRun<'_>, step: &str) -> StepView {
+fn view(run: &ColumnRun<'_>, step: &str, said: Vec<String>) -> StepView {
     let became = |b: &Became| {
         let kind = format!("{:?}", b.kind).to_lowercase();
         if b.detail.is_empty() { kind } else { format!("{kind} ({})", b.detail) }
@@ -475,6 +499,7 @@ fn view(run: &ColumnRun<'_>, step: &str) -> StepView {
         .units()
         .iter()
         .map(|u: &Unit| UnitView {
+            id: u.id,
             horizon: run.horizons[u.stack as usize].clone(),
             material: u.in_situ.material.clone(),
             seam: u.in_situ.seam.clone(),
@@ -486,7 +511,7 @@ fn view(run: &ColumnRun<'_>, step: &str) -> StepView {
             values: fields.list().iter().zip(u.values()).map(|(f, v)| (f.name.clone(), *v)).collect(),
         })
         .collect();
-    StepView { step: step.to_string(), units }
+    StepView { step: step.to_string(), units, said }
 }
 
 /// One column: its blocks made units, then each step in turn. With `preview`, the column after each step.
@@ -494,16 +519,18 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
     let stop = |why: String| Stopped { why };
     let (mut run, input_volume) = begin_column(prepared, key, blocks)?;
     if let Some(p) = preview.as_deref_mut() {
-        p.push(view(&run, "as input"));
+        // What reading the blocks said (a volume measured before a cut) goes with the column as input.
+        p.push(view(&run, "as input", run.said.since(&Said::default())));
     }
     for (name, step, settings) in &prepared.steps {
+        let before = preview.is_some().then(|| run.said.clone());
         let done = match step {
             StepRun::BuiltIn(f) => f(&mut run, settings),
             StepRun::Formula(f) => run_formula(&mut run, f, settings, &prepared.declared),
         };
         done.map_err(|why| stop(format!("{} at {name}: {why}", key.words())))?;
-        if let Some(p) = preview.as_deref_mut() {
-            p.push(view(&run, name));
+        if let (Some(p), Some(before)) = (preview.as_deref_mut(), before) {
+            p.push(view(&run, name, run.said.since(&before)));
         }
     }
     let volume = prepared.fields.volume();
@@ -742,6 +769,78 @@ pub fn reserves_preview(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandErr
     let mut views = Vec::new();
     run_column(&prepared, &key, blocks, Some(&mut views)).map_err(|s| CommandError::Invalid(s.why))?;
     Ok(views)
+}
+
+/// A reserves table's block column, step by step (decision 0075, 5b, Open its column): the column the node sits in, run
+/// through its dataflow again with the settings of the run that made the table, every unit after each step.
+#[derive(Debug, Clone, Serialize)]
+pub struct ColumnSteps {
+    /// The column's words, its levels above the seam (`Pit`, `3`, `B1`).
+    pub column: Vec<String>,
+    pub case: String,
+    pub dataflow: String,
+    /// The dataflow's fields in its order, each with its unit and kind.
+    pub fields: Vec<ColumnField>,
+    pub steps: Vec<StepView>,
+    /// What the table was made from that has changed since, by name: the column is run on them as they are now, so it
+    /// may not be the table's.
+    pub changed: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ColumnField {
+    pub name: String,
+    pub unit: &'static str,
+    pub kind: FieldKind,
+}
+
+/// Runs the column a node of a reserves table sits in (a block, or a seam or bench of it) through the dataflow again,
+/// with the parameters the table's own run was given, read from the run log. Nothing is kept. A node above a column (a
+/// pit, a strip) is refused, as is a table no reserves run in the log made.
+pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: ObjectId, node: &[String]) -> Result<ColumnSteps, CommandError> {
+    let object = project.object(table).ok_or(CommandError::MissingObject(table))?;
+    let Body::Table(t) = &object.body else {
+        return Err(CommandError::WrongKind { id: table, expected: ObjectKind::Table, found: object.kind() });
+    };
+    let record = log
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            crate::LogEntry::Run(r) if r.run == object.provenance && r.command == RunReserves::NAME => Some(r),
+            _ => None,
+        })
+        .ok_or_else(|| CommandError::Invalid(format!("{} wasn't made by a reserves run in this project's log, so its columns can't be run again", object.name)))?;
+    let mut p: RunReservesParams = serde_json::from_value(record.params.clone()).map_err(|e| CommandError::Invalid(format!("the run that made {} can't be read again: {e}", object.name)))?;
+    let mut changed: Vec<String> = Vec::new();
+    let mut gone = 0;
+    for input in &record.inputs {
+        match project.object(input.id) {
+            Some(o) if o.revision != input.revision => changed.push(o.name.clone()),
+            None => gone += 1,
+            _ => {}
+        }
+    }
+    if gone > 0 {
+        changed.push(format!("{gone} object{} deleted since", plural(gone)));
+    }
+    p.blocks.retain(|id| project.object(*id).is_some());
+    let get = |id: ObjectId| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+    let prepared = prepare(&get, &p)?;
+    // The node's words by the table's levels; the column is the words of the dataflow's levels above the seam.
+    let levels = crate::reserves_view::levels(t);
+    let mut column = Vec::with_capacity(prepared.upper.len());
+    for attribute in &prepared.upper {
+        let at = levels.iter().position(|l| l.eq_ignore_ascii_case(attribute)).ok_or_else(|| CommandError::Invalid(format!("{} has no {attribute} level", object.name)))?;
+        let word = node.get(at).ok_or_else(|| CommandError::Invalid(format!("pick a {} or below it: a column is one {}", prepared.upper.join(", "), prepared.upper.last().map_or("block", String::as_str))))?;
+        column.push(word.clone());
+    }
+    let case = crate::reserves_view::case_of(&object.attributes);
+    let key = ColumnKey { case: case.clone(), path: column.clone() };
+    let blocks = prepared.columns.get(&key).ok_or_else(|| CommandError::Invalid(format!("no blocks of case {case} at {} now", key.words())))?;
+    let mut steps = Vec::new();
+    run_column(&prepared, &key, blocks, Some(&mut steps)).map_err(|s| CommandError::Invalid(s.why))?;
+    let fields = prepared.fields.list().iter().map(|f| ColumnField { name: f.name.clone(), unit: unit_of_kind(f.kind), kind: f.kind }).collect();
+    Ok(ColumnSteps { column, case, dataflow: prepared.name.clone(), fields, steps, changed })
 }
 
 /// `small_volumes`: each unit under the `min_volume` its parameter rows give set aside and written (decision 0073,
