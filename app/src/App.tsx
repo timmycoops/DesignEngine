@@ -538,6 +538,7 @@ export default function App() {
         status: (text, error) => setStatus({ text, error }),
         layer: () => layerRef.current,
         toSelect: () => setMode('select'),
+        remove: () => void deleteSelection(),
         pick: (x, y, add) =>
           void objectAt(created, sync, section, x, y).then((id) => {
             if (!add) select(id);
@@ -901,6 +902,18 @@ export default function App() {
     });
   };
 
+  /**
+   * Delete (the key, or Find a command): everything selected, as one run and one undo (decision 0080), and it says so.
+   * The Delete key over a handle of the selected string deletes that vertex instead (`strings.ts`).
+   */
+  const deleteSelection = async () => {
+    const ids = selectionRef.current;
+    if (ids.length === 0) return setStatus({ text: 'Nothing selected to delete' });
+    if (!(await run('object.delete_many', { objects: ids }))) return;
+    select(null);
+    setStatus({ text: `Deleted ${ids.length === 1 ? '1 object' : `${ids.length} objects`}: Ctrl+Z brings ${ids.length === 1 ? 'it' : 'them'} back` });
+  };
+
   /** Plan or 3D over the same spot (T, or the view bar). A section open is closed first. */
   const togglePlan = () => {
     const viewport = viewportRef.current;
@@ -1143,6 +1156,7 @@ export default function App() {
     'project.save': () => onSave(false),
     'project.save_as': () => onSave(true),
     'edit.undo': onUndo,
+    'edit.delete': () => void deleteSelection(),
     'edit.redo': onRedo,
     'import.surfaces': onImportSurface,
     'import.vulcan_grid': onImportVulcan,
@@ -1182,6 +1196,7 @@ export default function App() {
   const toolCounts: Record<ToolNeeds, number> = {
     undo: summary?.can_undo ? 1 : 0,
     redo: summary?.can_redo ? 1 : 0,
+    selected: selection.length,
     'selected-dxf': selectedDxf.length,
     'selected-strings': selectedStrings.length,
     'selected-solids': selectedSolids.length,

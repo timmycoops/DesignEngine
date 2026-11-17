@@ -8,7 +8,7 @@
 // string to select it; drag one of its handles to move that vertex (`string.move_vertex`, one
 // command per drag, with a snapped preview while dragging); Alt+click on the selected string inserts
 // a vertex on it (`string.insert_vertex`); Delete removes the vertex under the cursor
-// (`string.delete_vertex`). Every edit is a command, so undo covers it. A line a face design made is made again
+// (`string.delete_vertex`), and anywhere else deletes everything selected (`object.delete_many`, decision 0080). Every edit is a command, so undo covers it. A line a face design made is made again
 // each time it runs, so an edit to one is refused, saying which row's ✎ gives a line of your own; where strings lie
 // on each other, as Edit from here's copy lies on the design's line, a click keeps the selected one, then takes one
 // of your own over the design's (`designLines.ts`).
@@ -48,6 +48,8 @@ export interface StringActions {
   section(a: Vec3, b: Vec3): void;
   /** Esc with nothing in hand in Draw, Measure or Section: back to Select. */
   toSelect(): void;
+  /** Delete with the cursor off the selected string's handles: deletes everything selected, in one undo. */
+  remove(): void;
   /**
    * A click that met no string: selects what's under it alone, or nothing. With `add` (Ctrl), adds what's under
    * it to the selection or takes it off, and a click on nothing leaves the selection as it is.
@@ -453,7 +455,11 @@ export class StringLayer {
     const key = (e: KeyboardEvent) => this.keyDown(e);
     // Capture phase runs before OrbitControls' own listener on the canvas.
     canvas.addEventListener('pointerdown', down, { capture: true });
-    const left = () => this.clearSnapMark();
+    // Off the view, no handle is under the cursor: Delete then takes what's selected, not a vertex.
+    const left = () => {
+      this.clearSnapMark();
+      this.hovered = null;
+    };
     canvas.addEventListener('pointermove', move);
     canvas.addEventListener('pointerup', up);
     canvas.addEventListener('pointerleave', left);
@@ -834,6 +840,7 @@ export class StringLayer {
       }
       return;
     }
+    if (e.key === 'Delete' && !this.hovered && !this.wanted && !typing(e.target)) return this.actions.remove();
     if ((e.key === 'Delete' || e.key === 'Backspace') && this.hovered) {
       const { id, index } = this.hovered;
       if (this.refusedDesignEdit(id)) return;

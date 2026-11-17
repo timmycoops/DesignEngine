@@ -1,7 +1,8 @@
 // `--clicks`: how the view takes clicks and Esc (decision 0080), driven as Tim would. NS (N then S) starts a new
 // string without turning snap off; left clicks add points and a right click finishes it; a right drag pans and makes
 // nothing; Esc takes back one thing a press and says so: the points, then Draw back to Select, then the selection, and
-// from a box on a tool panel too. A right click ends a measure, and the next click starts another.
+// from a box on a tool panel too. A right click ends a measure, and the next click starts another. Delete deletes
+// what's selected in one undo, or the vertex under the cursor on the selected string.
 import * as THREE from 'three/webgpu';
 import { projectSummary, type ProjectSummary, runCommand, type Vec3 } from '../bridge';
 import type { StringLayer } from '../viewport/strings';
@@ -40,7 +41,7 @@ export async function checkClicks(viewport: Viewport, log: (line: string) => voi
   const screen = (p: Vec3) => viewport.projectToClient(new THREE.Vector3(p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]));
   const pointer = (type: string, x: number, y: number, button: 0 | 2) =>
     canvas.dispatchEvent(
-      new PointerEvent(type, { clientX: x, clientY: y, button, buttons: type === 'pointerup' ? 0 : button === 2 ? 2 : 1, pointerId: 1, pointerType: 'mouse', isPrimary: true, bubbles: true, cancelable: true }),
+      new PointerEvent(type, { clientX: x, clientY: y, button, buttons: type === 'pointerup' || (type === 'pointermove' && button === 0) ? 0 : button === 2 ? 2 : 1, pointerId: 1, pointerType: 'mouse', isPrimary: true, bubbles: true, cancelable: true }),
     );
   const settle = async () => {
     await wait(400);
@@ -53,8 +54,8 @@ export async function checkClicks(viewport: Viewport, log: (line: string) => voi
     await settle();
   };
   /** A key pressed where the focus is, as the keyboard sends it. */
-  const key = async (name: string, on: Element = document.activeElement ?? document.body) => {
-    on.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true }));
+  const key = async (name: string, on: Element = document.activeElement ?? document.body, ctrlKey = false) => {
+    on.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true, ctrlKey }));
     await settle();
   };
   const footer = () => document.querySelector('footer')?.textContent ?? '';
@@ -127,6 +128,45 @@ export async function checkClicks(viewport: Viewport, log: (line: string) => voi
     picked: selection().length,
     footer: footer().slice(0, 40),
   });
+
+  // Delete: what's selected, in one undo; over a handle of the selected string, that vertex.
+  const make = async (name: string, points: Vec3[]) => (await runCommand('string.create', { name, layer: 'design', closed: false, points })).record.outputs[0].id as string;
+  const one = await make('Delete one', [[E, N + 400, 100], [E + 100, N + 400, 100]]);
+  const two = await make('Delete two', [[E, N + 450, 100], [E + 100, N + 450, 100]]);
+  const three = await make('Delete a vertex', [[E + 300, N + 450, 100], [E + 350, N + 450, 100], [E + 400, N + 450, 100]]);
+  await show(await projectSummary());
+  await settle();
+  const alive = async () => new Set((await strings()).map((o) => o.id));
+  layer.select(one);
+  await settle();
+  const [cx, cy] = screen([E + 50, N + 450, 100]);
+  canvas.dispatchEvent(new PointerEvent('pointerdown', { clientX: cx, clientY: cy, button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true, bubbles: true, cancelable: true, ctrlKey: true }));
+  canvas.dispatchEvent(new PointerEvent('pointerup', { clientX: cx, clientY: cy, button: 0, buttons: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true, bubbles: true, cancelable: true, ctrlKey: true }));
+  await settle();
+  expect('two strings picked, the second by Ctrl+click', selection().length === 2 && selection().includes(one) && selection().includes(two), selection().length);
+  await key('Delete', document.body);
+  await wait(400);
+  let now = await alive();
+  expect('Delete deletes both, and says so', !now.has(one) && !now.has(two) && selection().length === 0 && footer().includes('Deleted 2 objects'), footer().slice(0, 60));
+  await key('z', document.body, true);
+  await wait(400);
+  now = await alive();
+  expect('one Ctrl+Z brings both back', now.has(one) && now.has(two));
+  await key('Delete', document.body);
+  expect('Delete with nothing selected says so', footer().includes('Nothing selected to delete'), footer().slice(0, 40));
+  layer.select(three);
+  await settle();
+  const [vx, vy] = screen([E + 350, N + 450, 100]);
+  pointer('pointermove', vx, vy, 0);
+  await settle();
+  await key('Delete', document.body);
+  await wait(400);
+  const left = (await strings()).find((o) => o.id === three);
+  expect('Delete over a handle takes that vertex, not the string', left?.vertices_local?.length === 2, left?.vertices_local?.length);
+  canvas.dispatchEvent(new PointerEvent('pointerleave', { bubbles: false }));
+  await key('Delete', document.body);
+  await wait(400);
+  expect('off the view, Delete takes the string', !(await alive()).has(three));
 
   // A right click ends a measure; the next click starts another.
   await key('m');
