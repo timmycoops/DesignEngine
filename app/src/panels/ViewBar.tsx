@@ -63,7 +63,7 @@ export function ViewBar() {
       </ToolButton>
       <ToolButton
         size="icon-sm"
-        tip={sectionOpen ? 'Draw a string on the section: snaps to crossings, vertices and lines of the cut' : 'Draw a string: snaps to string vertices and segments, then surfaces'}
+        tip={sectionOpen ? 'Draw a string on the section (NS): snaps to crossings, vertices and lines of the cut; right-click finishes' : 'Draw a string (NS): snaps to string vertices and segments, then surfaces; right-click finishes'}
         aria-label="Draw string"
         active={mode === 'draw'}
         onClick={() => view.setMode('draw')}

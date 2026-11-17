@@ -62,6 +62,7 @@ import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Vie
 import { type AddingTo, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
 import { ALL_PANELS_KEY, type PanelId, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
 import { inUse, type Tool, type ToolAction, type ToolNeeds } from './tools';
+import { listenForChords } from './workspace/chords';
 import { FindCommand } from './workspace/FindCommand';
 import { Ribbon, type StageId } from './workspace/Ribbon';
 import { rememberStage, stageOf } from './workspace/stage';
@@ -536,6 +537,7 @@ export default function App() {
         snapDown: (x, y) => snapRay([x, y, 1e6], [0, 0, -1]),
         status: (text, error) => setStatus({ text, error }),
         layer: () => layerRef.current,
+        toSelect: () => setMode('select'),
         pick: (x, y, add) =>
           void objectAt(created, sync, section, x, y).then((id) => {
             if (!add) select(id);
@@ -892,9 +894,9 @@ export default function App() {
         next === 'section'
           ? 'Section: pick the first point'
           : next === 'measure'
-            ? 'Measure: click two points for the distance, RL difference, grade and bearing between them; click on for a running total. Backspace takes a point off, Esc clears, M ends'
+            ? 'Measure: click two points for the distance, RL difference, grade and bearing between them; click on for a running total; right-click ends one. Backspace takes a point off, Esc clears, M stops measuring'
           : next === 'draw'
-            ? 'Draw: click on a surface to add vertices; Enter or double-click finishes, Backspace removes the last, Esc abandons'
+            ? 'Draw: click on a surface to add vertices; right-click, Enter or double-click finishes, Backspace removes the last, Esc abandons'
             : 'Select: click a string, drag its handles; Alt+click inserts a vertex, Delete removes the one under the cursor',
     });
   };
@@ -1195,6 +1197,10 @@ export default function App() {
     // The tool in use: its panel in front in its dock, set to it.
     lit: (tool) => !!tool.panel && panelsShown.includes(tool.panel) && inUse(tool, panelModes[tool.panel]),
   };
+  // Two-letter shortcuts (NS, decision 0080), carried out as a click on their tool would be.
+  const runToolRef = useRef(runTool);
+  runToolRef.current = runTool;
+  useEffect(() => listenForChords((tool) => runToolRef.current(tool), (text) => setStatus({ text })), []);
 
   return (
     <TooltipProvider delayDuration={400}>

@@ -147,7 +147,10 @@ export interface Tool {
   /** What it does, in a line. For a panel's choice this is the line at the panel's head. */
   tip: string;
   icon?: ToolIcon;
-  /** The keys that do the same, as written for people ("Ctrl+S"). */
+  /**
+   * The keys that do the same, as written for people ("Ctrl+S"). Two capital letters are typed one after the other
+   * ("NS" is N then S, decision 0080), and their first letter is never a shortcut on its own.
+   */
   shortcut?: string;
   /** The panel it opens. A tool whose key is its panel's id opens the panel as it stands. */
   panel?: PanelId;
@@ -256,7 +259,7 @@ export const TOOLS: readonly Tool[] = [
 
   // The view's own tools, which the view bar draws itself (workstream 2); listed so Find a command reaches them.
   { key: 'view.select', stage: 'always', label: 'Select', tip: 'Select and edit strings', icon: 'select', action: 'view.select' },
-  { key: 'view.draw', stage: 'always', label: 'Draw string', tip: 'Draw a string: snaps to string vertices and segments, then surfaces', icon: 'draw', action: 'view.draw' },
+  { key: 'view.draw', stage: 'always', label: 'Draw string', tip: 'Draw a new string: snaps to string vertices and segments, then surfaces; right-click finishes', icon: 'draw', shortcut: 'NS', action: 'view.draw' },
   { key: 'view.snap', stage: 'always', label: 'Snap', tip: 'Turns snap on, or off', icon: 'snap', shortcut: 'S', action: 'view.snap' },
   { key: 'view.plan', stage: 'always', label: 'Plan or 3D', tip: 'Plan view, straight down and north up, or back to 3D', icon: 'plan', shortcut: 'T', action: 'view.plan' },
   { key: 'view.zoom_selection', stage: 'always', label: "Zoom to what's selected", tip: "From the way you're looking", icon: 'zoom-selection', shortcut: 'F', action: 'view.zoom_selection' },
@@ -264,6 +267,9 @@ export const TOOLS: readonly Tool[] = [
   { key: 'view.section', stage: 'always', label: 'Section', tip: 'Pick two points for a true vertical slice, or close the one open', icon: 'section', shortcut: '2', action: 'view.section' },
   { key: 'view.measure', stage: 'always', label: 'Measure distance', tip: 'The distance, RL difference, grade and bearing between clicks; click on for a running total', icon: 'measure', shortcut: 'M', action: 'view.measure' },
 ];
+
+/** Tools with a two-letter shortcut, by it ("NS"): typed one letter after the other (decision 0080). */
+export const chordTools = (): Map<string, Tool> => new Map(TOOLS.flatMap((t) => (t.shortcut && /^[A-Z]{2}$/.test(t.shortcut) ? [[t.shortcut, t] as const] : [])));
 
 export const toolByKey = (key: string): Tool | undefined => TOOLS.find((t) => t.key === key);
 

@@ -1,8 +1,10 @@
 // Strings in the viewport, and editing them through engine commands. A layer's strings draw as one
 // set of lines, so thousands of contours are one draw, and the selected string draws over them.
 //
-// Draw mode: each click adds a vertex; Enter or a double-click finishes the string
-// (`string.create`), Backspace drops the last vertex, Escape abandons it. Select mode: click a
+// Draw mode: each click adds a vertex; a right click, Enter or a double-click finishes the string
+// (`string.create`), Backspace drops the last vertex, Escape abandons it. Left adds, right finishes, wherever points
+// are clicked: a right drag still pans. Esc takes back one thing a press, from a panel's box too, and says what it
+// did (decision 0080). Select mode: click a
 // string to select it; drag one of its handles to move that vertex (`string.move_vertex`, one
 // command per drag, with a snapped preview while dragging); Alt+click on the selected string inserts
 // a vertex on it (`string.insert_vertex`); Delete removes the vertex under the cursor
@@ -24,6 +26,7 @@
 import * as THREE from 'three/webgpu';
 import type { Layer, ProjectSummary, SnapHit, Vec3 } from '../bridge';
 import { type DesignLine, designLineMessage, lineToPick, type NearLine } from './designLines';
+import { typing } from './camera';
 import { colourOf, SELECTED } from './load';
 import { PointMark } from './markers';
 import { legBetween, legLabel, measureWords } from './measure';
@@ -43,6 +46,8 @@ export interface StringActions {
   layer(): string;
   /** The second point of a section was picked. */
   section(a: Vec3, b: Vec3): void;
+  /** Esc with nothing in hand in Draw, Measure or Section: back to Select. */
+  toSelect(): void;
   /**
    * A click that met no string: selects what's under it alone, or nothing. With `add` (Ctrl), adds what's under
    * it to the selection or takes it off, and a click on nothing leaves the selection as it is.
@@ -146,6 +151,10 @@ export class StringLayer {
   private lastPick = new THREE.Vector3();
   private trail: THREE.Vector3[] = [];
   private trailDone = false;
+  /** The pick waiting is a string's points (`pickString`), which a right click finishes as Enter does. */
+  private stringPick = false;
+  /** Measuring, ended by a right click: the line stays read out until the next click starts a new one. */
+  private measureEnded = false;
   selected: string | null = null;
 
   private shown = new Map<string, Shown>();
@@ -167,6 +176,8 @@ export class StringLayer {
   private drag: { id: string; index: number; hit: SnapHit | null } | null = null;
   private hovered: { id: string; index: number } | null = null;
   private down: { x: number; y: number } | null = null;
+  /** Where the right button went down: let up within a few pixels it's a click, which finishes; dragged, it panned. */
+  private rightDown: { x: number; y: number } | null = null;
   /** A box being dragged out with Shift held, from where the button went down. */
   private boxing: { pointer: number; x: number; y: number; outline: HTMLElement } | null = null;
   private latest: { x: number; y: number } | null = null;
@@ -252,12 +263,14 @@ export class StringLayer {
   async pickString(prompt: string): Promise<Vec3[] | null> {
     const points: Vec3[] = [];
     this.trailDone = false;
+    this.stringPick = true;
     for (let point = await this.pickPoint(prompt); point; point = await this.pickPoint(prompt)) {
       const last = points[points.length - 1];
       if (last?.every((c, i) => c === point?.[i])) continue;
       points.push(point);
       this.trail.push(this.lastPick.clone());
     }
+    this.stringPick = false;
     this.clearTrail();
     return this.trailDone && points.length > 1 ? points : null;
   }
@@ -278,6 +291,7 @@ export class StringLayer {
     this.finishPick(null);
     this.mode = mode;
     this.pending = [];
+    this.measureEnded = false;
     this.clearSnapMark();
     this.refreshPreview();
     this.placeHandles();
@@ -456,6 +470,7 @@ export class StringLayer {
   }
 
   private pointerDown(e: PointerEvent): void {
+    if (e.button === 2) this.rightDown = { x: e.clientX, y: e.clientY };
     if (e.button !== 0) return;
     // The turn key held: the press is the camera's, to turn, and not a click, a box or a vertex drag.
     if (this.viewport.controls.turnHeld) return;
@@ -676,6 +691,12 @@ export class StringLayer {
   }
 
   private async pointerUp(e: PointerEvent): Promise<void> {
+    if (e.button === 2) {
+      const down = this.rightDown;
+      this.rightDown = null;
+      if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) <= CLICK_SLOP_PX) await this.rightClick();
+      return;
+    }
     if (this.boxing) return this.endBox(e);
     if (this.drag) {
       const { id, index, hit } = this.drag;
@@ -712,6 +733,10 @@ export class StringLayer {
     if (this.mode === 'measure') {
       const hit = await this.snapAt(e.clientX, e.clientY);
       if (!hit) return this.actions.status('No point there: tilt the view down or use plan view');
+      if (this.measureEnded) {
+        this.measureEnded = false;
+        this.pending = [];
+      }
       // A double-click lands two clicks on one spot: the second adds nothing.
       const last = this.pending[this.pending.length - 1];
       if (!last || last.world.some((c, i) => c !== hit.world[i])) this.pending.push(hit);
@@ -726,7 +751,7 @@ export class StringLayer {
       this.refreshPreview();
       this.placeHandles();
       const snapped = hit.kind && hit.kind !== 'surface' ? ` (on ${hit.label})` : '';
-      this.actions.status(`${this.pending.length} vertices${snapped}; Enter or double-click to finish, Esc to abandon`);
+      this.actions.status(`${this.pending.length} vertices${snapped}; right-click, Enter or double-click to finish, Esc to abandon`);
       return;
     }
     if (e.altKey && this.selected) {
@@ -745,10 +770,53 @@ export class StringLayer {
     if (design && !add) this.actions.status(designLineMessage(design, this.designNames.get(design.design)));
   }
 
+  /**
+   * A right click, the button let up where it went down (dragged, it panned): finishes what the left clicks were
+   * adding to. The string being drawn is made, a string a panel asked for is done, and a measure ends, its reading kept
+   * until the next click starts another.
+   */
+  private async rightClick(): Promise<void> {
+    if (this.wanted) {
+      if (!this.stringPick || this.trail.length === 0) return;
+      this.trailDone = true;
+      return this.finishPick(null);
+    }
+    if (this.mode === 'draw') return this.finishDrawing();
+    if (this.mode === 'measure' && this.pending.length > 1 && !this.measureEnded) {
+      this.measureEnded = true;
+      this.actions.status(`${measureWords(this.pending.map((h) => h.world))}. Click to start another`);
+    }
+  }
+
+  /**
+   * Esc takes back one thing a press, the nearest first, and says what it did (decision 0080): a pick a panel is
+   * waiting on, then the points put down, then Draw, Measure or Section back to Select, then the selection. In a
+   * panel's box it leaves the box and carries on, so the press is never lost to where the cursor was. A menu or dialog
+   * it closed, or a box that used it (a rename put back), marks it handled, and that was the press.
+   */
+  private escape(e: KeyboardEvent): void {
+    if (e.defaultPrevented) return;
+    if (typing(e.target) && e.target instanceof HTMLElement) e.target.blur();
+    if (this.wanted) {
+      this.finishPick(null);
+      return this.actions.status('Pick cancelled');
+    }
+    if (this.mode !== 'select' && this.pending.length > 0) {
+      this.pending = [];
+      this.measureEnded = false;
+      this.refreshPreview();
+      this.placeHandles();
+      return this.actions.status(this.mode === 'section' ? 'Section: pick the first point' : this.mode === 'measure' ? measureWords([]) : 'String abandoned');
+    }
+    if (this.mode !== 'select') return this.actions.toSelect();
+    this.actions.choose(null, false);
+    this.actions.status('Nothing selected');
+  }
+
   private keyDown(e: KeyboardEvent): void {
+    if (e.key === 'Escape') return this.escape(e);
     if (e.target instanceof HTMLInputElement) return;
     if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey && !e.altKey) return this.toggleSnapping();
-    if (e.key === 'Escape' && this.wanted) return this.finishPick(null);
     if (e.key === 'Enter' && this.wanted && this.trail.length > 0) {
       // A button left with the focus would take this Enter as a click.
       e.preventDefault();
@@ -757,13 +825,8 @@ export class StringLayer {
     }
     if (this.mode !== 'select') {
       if (e.key === 'Enter') void this.finishDrawing();
-      if (e.key === 'Escape') {
-        this.pending = [];
-        this.refreshPreview();
-        this.placeHandles();
-        this.actions.status(this.mode === 'section' ? 'Section: pick the first point' : this.mode === 'measure' ? measureWords([]) : 'String abandoned');
-      }
       if (e.key === 'Backspace' && this.pending.length > 0) {
+        this.measureEnded = false;
         this.pending.pop();
         this.refreshPreview();
         this.placeHandles();
@@ -771,7 +834,6 @@ export class StringLayer {
       }
       return;
     }
-    if (e.key === 'Escape') this.actions.choose(null, false);
     if ((e.key === 'Delete' || e.key === 'Backspace') && this.hovered) {
       const { id, index } = this.hovered;
       if (this.refusedDesignEdit(id)) return;

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
-import { ALWAYS_ROW, choiceTool, choiceWords, findGroups, findScore, findWords, inUse, menuTools, menuWords, panelTool, rowName, ROWS, rowTools, STAGES, stageTools, stepTools, tipOf, toolByKey, TOOLS } from '../src/tools.ts';
+import { ALWAYS_ROW, chordTools, choiceTool, choiceWords, findGroups, findScore, findWords, inUse, menuTools, menuWords, panelTool, rowName, ROWS, rowTools, STAGES, stageTools, stepTools, tipOf, toolByKey, TOOLS } from '../src/tools.ts';
 import { rememberStage, stageOf } from '../src/workspace/stage.ts';
 import { PANELS } from '../src/workspace/panels.ts';
 import { CANVAS_TOOLS } from '../src/panels/workflowTools.ts';
@@ -232,7 +232,7 @@ test('Find a command lists every tool once, under its own name, a stage at a tim
   assert.ok(findWords(toolByKey('import.solids')).includes('A zip or files…'));
   assert.ok(findWords(toolByKey('workflow')).includes('Always there'));
   // The view's tools are in the list for it, each with its key.
-  assert.deepEqual(TOOLS.filter((t) => t.key.startsWith('view.')).map((t) => `${t.label} ${t.shortcut ?? ''}`.trim()), ['Select', 'Draw string', 'Snap S', 'Plan or 3D T', "Zoom to what's selected F", 'Zoom to everything E', 'Section 2', 'Measure distance M']);
+  assert.deepEqual(TOOLS.filter((t) => t.key.startsWith('view.')).map((t) => `${t.label} ${t.shortcut ?? ''}`.trim()), ['Select', 'Draw string NS', 'Snap S', 'Plan or 3D T', "Zoom to what's selected F", 'Zoom to everything E', 'Section 2', 'Measure distance M']);
 });
 
 test('Find a command matches whole words typed, a name first, then a stage or command, then what a tool does', () => {
@@ -288,4 +288,13 @@ test('the canvas lists the tools that add a step, as the list has them', () => {
     'Reserves: Interrogate',
   ]);
   for (const tool of stepTools()) assert.ok(tool.command && tool.panel && tool.step.takes, tool.key);
+});
+
+test('a two-letter shortcut never starts with a key that is a shortcut on its own (decision 0080)', () => {
+  const chords = chordTools();
+  assert.equal(chords.get('NS')?.key, 'view.draw', 'NS draws a new string');
+  // Every single key the app takes: the tool list's, and Z, held to turn.
+  const single = new Set([...TOOLS.flatMap((t) => (t.shortcut && t.shortcut.length === 1 ? [t.shortcut.toUpperCase()] : [])), 'Z']);
+  for (const [keys, tool] of chords) assert.ok(!single.has(keys[0]), `${tool.key}'s ${keys} starts with ${keys[0]}, a shortcut on its own`);
+  for (const tool of TOOLS) if (tool.shortcut && /^[A-Z]+$/.test(tool.shortcut)) assert.ok(tool.shortcut.length <= 2, `${tool.key}'s ${tool.shortcut} is more than two letters`);
 });
