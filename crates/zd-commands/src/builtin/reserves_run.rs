@@ -158,6 +158,8 @@ pub struct ColumnRun<'a> {
     added_volume: f64,
     /// The largest plan area of the column's blocks.
     block_area: f64,
+    /// The parameters read, unit by unit, while a column is opened as a notebook (decision 0081); none in a run.
+    reads: Option<std::cell::RefCell<Vec<ParamRead>>>,
 }
 
 /// What a column's steps changed, counted by what and how much, and the blocks out of range by check.
@@ -201,11 +203,53 @@ impl Said {
     }
 }
 
+/// A parameter a step read for a unit, as the notebook shows it (decision 0081): the column, what it found, and the table
+/// (its place in the list read) and row that gave it; none of those where no row gives it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ParamRead {
+    pub unit: UnitId,
+    pub column: String,
+    pub value: Option<f64>,
+    pub text: Option<String>,
+    pub table: Option<usize>,
+    pub row: Option<usize>,
+}
+
 impl ColumnRun<'_> {
     /// A parameter for the unit at `at`, matched by the attributes of the block it came from (its top bench's, once
     /// joined, as Spry's).
     fn parameter(&self, at: usize, column: &str) -> Option<f64> {
-        parameter(self.tables, &self.attributes[self.column.units()[at].origin as usize], column)
+        self.lookup(at, column).and_then(|v| match v {
+            ParamValue::Number(n) => Some(n),
+            ParamValue::Text(t) => t.trim().parse().ok(),
+        })
+    }
+
+    /// A parameter as words, for a setting such as `ws_split` or a yes or no.
+    fn parameter_word(&self, at: usize, column: &str) -> Option<String> {
+        self.lookup(at, column).map(|v| match v {
+            ParamValue::Number(n) => n.to_string(),
+            ParamValue::Text(t) => t.trim().to_string(),
+        })
+    }
+
+    /// Every parameter a step reads comes through here, so the notebook can say where each came from.
+    fn lookup(&self, at: usize, column: &str) -> Option<ParamValue> {
+        let refs: Vec<&ParameterTable> = self.tables.iter().map(|t| t.as_ref()).collect();
+        let found = ParameterTable::lookup_in(&refs, &self.attributes[self.column.units()[at].origin as usize], column);
+        if let Some(reads) = &self.reads {
+            let (value, text) = match found.as_ref().map(|f| f.value) {
+                Some(ParamValue::Number(n)) => (Some(*n), None),
+                Some(ParamValue::Text(t)) => (t.trim().parse().ok(), Some(t.trim().to_string())),
+                None => (None, None),
+            };
+            let read = ParamRead { unit: self.column.units()[at].id, column: column.to_string(), value, text, table: found.as_ref().map(|f| f.table), row: found.as_ref().map(|f| f.row) };
+            let mut reads = reads.borrow_mut();
+            if !reads.contains(&read) {
+                reads.push(read);
+            }
+        }
+        found.map(|f| f.value.clone())
     }
 
     fn name_of(&self, at: usize) -> String {
@@ -374,15 +418,6 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     Ok(Prepared { name: name.to_string(), dataflow: dataflow.clone(), fields, tables, horizons, steps, declared, upper, lower, columns, unplaced })
 }
 
-/// A word from the parameter tables, read in order.
-fn parameter_text(tables: &[Arc<ParameterTable>], attributes: &Attributes, column: &str) -> Option<String> {
-    let refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
-    ParameterTable::lookup_in(&refs, attributes, column).map(|f| match f.value {
-        ParamValue::Number(n) => n.to_string(),
-        ParamValue::Text(t) => t.trim().to_string(),
-    })
-}
-
 /// A value from the parameter tables, read in order.
 fn parameter(tables: &[Arc<ParameterTable>], attributes: &Attributes, column: &str) -> Option<f64> {
     let refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
@@ -459,13 +494,32 @@ fn unit_of(prepared: &Prepared, object: &Object) -> Result<(u32, Labels, Option<
     Ok((stack as u32, Labels::new(&material, &word("seam")), bench_of(object)?, values))
 }
 
-/// A column's units, after each step when asked: the preview.
+/// A column's units, after each step when asked: the preview, and the notebook's cells (decision 0081).
 #[derive(Debug, Clone, Serialize)]
 pub struct StepView {
     pub step: String,
     pub units: Vec<UnitView>,
     /// What the step said of this column, in the run's words (none for the column as input).
     pub said: Vec<String>,
+    pub kind: StepKind,
+    /// What a built-in step does, in words; empty for a formula and the column as input.
+    pub rule: String,
+    /// A formula step's filter, in the bench rules' words (`material`: `coal`); none, every unit.
+    pub when: BTreeMap<String, String>,
+    /// A formula step's script.
+    pub source: Option<String>,
+    /// The units a formula step's filter took, by id, as the column stood before it; every unit for a built-in step.
+    pub fits: Vec<UnitId>,
+    /// The parameters a built-in step read, unit by unit, in the order read (a formula's are in its trace).
+    pub reads: Vec<ParamRead>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepKind {
+    Input,
+    BuiltIn,
+    Formula,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -511,26 +565,50 @@ fn view(run: &ColumnRun<'_>, step: &str, said: Vec<String>) -> StepView {
             values: fields.list().iter().zip(u.values()).map(|(f, v)| (f.name.clone(), *v)).collect(),
         })
         .collect();
-    StepView { step: step.to_string(), units, said }
+    StepView { step: step.to_string(), units, said, kind: StepKind::Input, rule: String::new(), when: BTreeMap::new(), source: None, fits: Vec::new(), reads: Vec::new() }
 }
 
-/// One column: its blocks made units, then each step in turn. With `preview`, the column after each step.
+/// One column: its blocks made units, then each step in turn. With `preview`, the column after each step, with what
+/// each step is, the units it took and the parameters it read: the notebook's cells (decision 0081).
 fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut preview: Option<&mut Vec<StepView>>) -> Result<Ran, Stopped> {
     let stop = |why: String| Stopped { why };
     let (mut run, input_volume) = begin_column(prepared, key, blocks)?;
     if let Some(p) = preview.as_deref_mut() {
         // What reading the blocks said (a volume measured before a cut) goes with the column as input.
         p.push(view(&run, "as input", run.said.since(&Said::default())));
+        run.reads = Some(std::cell::RefCell::new(Vec::new()));
     }
     for (name, step, settings) in &prepared.steps {
         let before = preview.is_some().then(|| run.said.clone());
+        let fits: Vec<UnitId> = match (preview.is_some(), step) {
+            (true, StepRun::Formula(_)) => formula_fits(&run, settings).into_iter().map(|at| run.column.units()[at].id).collect(),
+            (true, StepRun::BuiltIn(_)) => run.column.units().iter().map(|u| u.id).collect(),
+            _ => Vec::new(),
+        };
         let done = match step {
             StepRun::BuiltIn(f) => f(&mut run, settings),
             StepRun::Formula(f) => run_formula(&mut run, f, settings, &prepared.declared),
         };
         done.map_err(|why| stop(format!("{} at {name}: {why}", key.words())))?;
         if let (Some(p), Some(before)) = (preview.as_deref_mut(), before) {
-            p.push(view(&run, name, run.said.since(&before)));
+            let mut cell = view(&run, name, run.said.since(&before));
+            cell.fits = fits;
+            cell.reads = run.reads.as_ref().map(|r| std::mem::take(&mut *r.borrow_mut())).unwrap_or_default();
+            match step {
+                StepRun::Formula(_) => {
+                    let f = settings.formula.as_ref();
+                    cell.kind = StepKind::Formula;
+                    cell.when = f.map(|f| f.when.clone()).unwrap_or_default();
+                    cell.source = f.map(|f| f.script.clone());
+                    // A formula's own reads are in its trace; what its fields' parameters gave isn't the step's.
+                    cell.reads.clear();
+                }
+                StepRun::BuiltIn(_) => {
+                    cell.kind = StepKind::BuiltIn;
+                    cell.rule = STEPS.iter().find(|(n, _)| *n == settings.step).map_or(String::new(), |(_, r)| r.to_string());
+                }
+            }
+            p.push(cell);
         }
     }
     let volume = prepared.fields.volume();
@@ -574,6 +652,7 @@ fn begin_column<'a>(prepared: &'a Prepared, key: &ColumnKey, blocks: &[Arc<Objec
         said: Said::default(),
         added_volume: 0.0,
         block_area,
+        reads: None,
     };
     for name in &mismatched {
         run.said.name("whose volume isn't its solid's (measured before it was cut again?)", name);
@@ -676,8 +755,14 @@ fn formula_input(run: &ColumnRun<'_>, step: &DataflowStep, declared: &zd_script:
             UnitInput { fields: Arc::new(values), block: blocks[u.origin as usize].clone(), parameters: params[u.origin as usize].clone(), section: section_of[at], rom_coal: rom_of[at] }
         })
         .collect();
+    let which = formula_fits(run, step);
+    (ColumnInput { units, sections, rom_coals, column: Arc::new(numbers(&run.column.balance())) }, which)
+}
+
+/// The units a formula step's filter takes, top down: matched on each unit's labels and its block's attributes.
+fn formula_fits(run: &ColumnRun<'_>, step: &DataflowStep) -> Vec<usize> {
     let when = step.formula.as_ref().map(|f| f.when.clone()).unwrap_or_default();
-    let which: Vec<usize> = (0..run.column.len())
+    (0..run.column.len())
         .filter(|&at| {
             let u = &run.column.units()[at];
             let mut attributes = run.attributes[u.origin as usize].clone();
@@ -688,8 +773,7 @@ fn formula_input(run: &ColumnRun<'_>, step: &DataflowStep, declared: &zd_script:
             }
             zd_core::filter_fits(&when, &attributes)
         })
-        .collect();
-    (ColumnInput { units, sections, rom_coals, column: Arc::new(numbers(&run.column.balance())) }, which)
+        .collect()
 }
 
 /// A line of a traced formula: its number, its text and the values it gave its names.
@@ -742,13 +826,19 @@ pub fn formula_trace(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>
     };
     let at = (0..run.column.len()).find(|&i| of_solid(&run.column.units()[i]) && run.column.units()[i].became.is_none()).or_else(|| (0..run.column.len()).find(|&i| of_solid(&run.column.units()[i])));
     let at = at.ok_or_else(|| CommandError::Invalid("the picked solid has no unit at this step".into()))?;
-    let (input, which) = formula_input(&run, &settings, &prepared.declared);
+    Ok(trace_at(&run, &prepared, &formula, &settings, at))
+}
+
+/// A formula traced on the unit at `at` of a column brought up to its step: the unit as the formula finds it, whether
+/// its filter takes it, the lines that ran with their values, what it read and set, what it printed, where it stopped.
+fn trace_at(run: &ColumnRun<'_>, prepared: &Prepared, formula: &zd_script::Formula, settings: &DataflowStep, at: usize) -> FormulaTraceView {
+    let (input, which) = formula_input(run, settings, &prepared.declared);
     let u = &run.column.units()[at];
     let unit = format!("{} {}{}", u.in_situ.seam, u.in_situ.material, u.bench.as_ref().map_or(String::new(), |b| format!(", bench {}", b.label)));
     let before = run.column.fields().list().iter().zip(u.values()).map(|(f, v)| (f.name.clone(), v.is_finite().then_some(*v))).collect();
     let trace = formula.trace(&input, at);
     let show = |v: &zd_script::ScriptValue| v.to_string();
-    Ok(FormulaTraceView {
+    FormulaTraceView {
         block: run.name_of(at),
         unit,
         fits: which.contains(&at),
@@ -758,7 +848,7 @@ pub fn formula_trace(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>
         sets: trace.sets.iter().map(|(k, v)| (k.clone(), show(v))).collect(),
         said: trace.said,
         stopped: trace.stopped.map(|p| super::formulas::FormulaProblem { message: p.message, line: p.line }),
-    })
+    }
 }
 
 /// The column after each of the dataflow's steps, for one block: the canvas's before and after (decision 0072, point 7).
@@ -781,6 +871,10 @@ pub struct ColumnSteps {
     pub dataflow: String,
     /// The dataflow's fields in its order, each with its unit and kind.
     pub fields: Vec<ColumnField>,
+    /// The parameter tables read, in order, by name: what a read's `table` counts in.
+    pub tables: Vec<String>,
+    /// Whether the column was run on a dataflow given as edited, not the one saved (decision 0081, point 7).
+    pub edited: bool,
     pub steps: Vec<StepView>,
     /// What the table was made from that has changed since, by name: the column is run on them as they are now, so it
     /// may not be the table's.
@@ -795,9 +889,59 @@ pub struct ColumnField {
 }
 
 /// Runs the column a node of a reserves table sits in (a block, or a seam or bench of it) through the dataflow again,
-/// with the parameters the table's own run was given, read from the run log. Nothing is kept. A node above a column (a
-/// pit, a strip) is refused, as is a table no reserves run in the log made.
-pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: ObjectId, node: &[String]) -> Result<ColumnSteps, CommandError> {
+/// with the parameters the table's own run was given, read from the run log; or through `dataflow` as given, one being
+/// edited (decision 0081). Nothing is kept. A node above a column (a pit, a strip) is refused, as is a table no reserves
+/// run in the log made.
+pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: ObjectId, node: &[String], dataflow: Option<&Arc<Dataflow>>) -> Result<ColumnSteps, CommandError> {
+    let get = |id: ObjectId| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+    let opened = open_column(project, log, &get, table, node, dataflow)?;
+    let blocks = &opened.prepared.columns[&opened.key];
+    let mut steps = Vec::new();
+    run_column(&opened.prepared, &opened.key, blocks, Some(&mut steps)).map_err(|s| CommandError::Invalid(s.why))?;
+    let fields = opened.prepared.fields.list().iter().map(|f| ColumnField { name: f.name.clone(), unit: unit_of_kind(f.kind), kind: f.kind }).collect();
+    Ok(ColumnSteps { column: opened.key.path.clone(), case: opened.key.case.clone(), dataflow: opened.prepared.name.clone(), fields, tables: opened.tables, edited: dataflow.is_some(), steps, changed: opened.changed })
+}
+
+/// A formula step of a table's column traced on one unit (decision 0081): the column run up to `step` (its place in
+/// the notebook, 1 being the first step after the column as input), then the formula traced on the unit with id `unit`
+/// as it stands there. On the saved dataflow, or `dataflow` as edited. Nothing is kept.
+pub fn column_trace(project: &zd_core::Project, log: &[crate::LogEntry], table: ObjectId, node: &[String], step: usize, unit: UnitId, dataflow: Option<&Arc<Dataflow>>) -> Result<FormulaTraceView, CommandError> {
+    let get = |id: ObjectId| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+    let opened = open_column(project, log, &get, table, node, dataflow)?;
+    let prepared = &opened.prepared;
+    let (name, s, settings) = step.checked_sub(1).and_then(|i| prepared.steps.get(i)).ok_or_else(|| CommandError::Invalid(format!("the dataflow runs {} steps, not {step}", prepared.steps.len())))?;
+    let StepRun::Formula(formula) = s else { return Err(CommandError::Invalid(format!("{name} is built in, not a formula: it has no lines to trace"))) };
+    let (mut run, _) = begin_column(prepared, &opened.key, &prepared.columns[&opened.key]).map_err(|s| CommandError::Invalid(s.why))?;
+    for (name, s, settings) in &prepared.steps[..step - 1] {
+        let done = match s {
+            StepRun::BuiltIn(f) => f(&mut run, settings),
+            StepRun::Formula(f) => run_formula(&mut run, f, settings, &prepared.declared),
+        };
+        done.map_err(|why| CommandError::Invalid(format!("{} at {name}: {why}", opened.key.words())))?;
+    }
+    let at = run.column.position(unit).ok_or_else(|| CommandError::Invalid(format!("the column has no unit {unit} at {name}")))?;
+    let mut view = trace_at(&run, prepared, formula, settings, at);
+    // A unit the step's filter leaves out isn't run on, so no line ran for it: the cell says so, and shows none.
+    if !view.fits {
+        view.lines.clear();
+        view.reads.clear();
+        view.sets.clear();
+        view.said.clear();
+        view.stopped = None;
+    }
+    Ok(view)
+}
+
+/// A table's column made ready to run: the dataflow prepared with the table's own run's parameters, the column's key,
+/// the tables read by name, and what has changed since the table was made.
+struct OpenedColumn {
+    prepared: Prepared,
+    key: ColumnKey,
+    tables: Vec<String>,
+    changed: Vec<String>,
+}
+
+fn open_column(project: &zd_core::Project, log: &[crate::LogEntry], get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>, table: ObjectId, node: &[String], dataflow: Option<&Arc<Dataflow>>) -> Result<OpenedColumn, CommandError> {
     let object = project.object(table).ok_or(CommandError::MissingObject(table))?;
     let Body::Table(t) = &object.body else {
         return Err(CommandError::WrongKind { id: table, expected: ObjectKind::Table, found: object.kind() });
@@ -824,8 +968,18 @@ pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: 
         changed.push(format!("{gone} object{} deleted since", plural(gone)));
     }
     p.blocks.retain(|id| project.object(*id).is_some());
-    let get = |id: ObjectId| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
-    let prepared = prepare(&get, &p)?;
+    let saved = get(p.dataflow)?;
+    let prepared = match dataflow {
+        Some(edited) => prepare_flow(&saved.name, edited, get, &p)?,
+        None => prepare(get, &p)?,
+    };
+    let mut tables: Vec<String> = Vec::new();
+    if p.parameters.is_some() {
+        tables.push("the run's own rows".into());
+    }
+    for &id in &prepared.dataflow.parameters {
+        tables.push(project.object(id).map_or_else(|| "a table since deleted".into(), |o| o.name.clone()));
+    }
     // The node's words by the table's levels; the column is the words of the dataflow's levels above the seam.
     let levels = crate::reserves_view::levels(t);
     let mut column = Vec::with_capacity(prepared.upper.len());
@@ -835,12 +989,11 @@ pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: 
         column.push(word.clone());
     }
     let case = crate::reserves_view::case_of(&object.attributes);
-    let key = ColumnKey { case: case.clone(), path: column.clone() };
-    let blocks = prepared.columns.get(&key).ok_or_else(|| CommandError::Invalid(format!("no blocks of case {case} at {} now", key.words())))?;
-    let mut steps = Vec::new();
-    run_column(&prepared, &key, blocks, Some(&mut steps)).map_err(|s| CommandError::Invalid(s.why))?;
-    let fields = prepared.fields.list().iter().map(|f| ColumnField { name: f.name.clone(), unit: unit_of_kind(f.kind), kind: f.kind }).collect();
-    Ok(ColumnSteps { column, case, dataflow: prepared.name.clone(), fields, steps, changed })
+    let key = ColumnKey { case: case.clone(), path: column };
+    if !prepared.columns.contains_key(&key) {
+        return Err(CommandError::Invalid(format!("no blocks of case {case} at {} now", key.words())));
+    }
+    Ok(OpenedColumn { prepared, key, tables, changed })
 }
 
 /// `small_volumes`: each unit under the `min_volume` its parameter rows give set aside and written (decision 0073,
@@ -1080,7 +1233,7 @@ fn working_sections(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), 
                 continue;
             }
             // Forced splits: a new part where the plies' names change, each parting with the ply above.
-            let name = |run: &ColumnRun<'_>, i: usize| parameter_text(run.tables, &run.attributes[run.column.units()[i].origin as usize], step.setting("ws_split")).unwrap_or_default();
+            let name = |run: &ColumnRun<'_>, i: usize| run.parameter_word(i, step.setting("ws_split")).unwrap_or_default();
             let mut part: Vec<usize> = Vec::new();
             let mut last: Option<String> = None;
             for &i in &units {
@@ -1235,7 +1388,7 @@ fn rom_loss(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String> 
     let (v, thickness) = (fields.volume(), fields.thickness());
     let area = fields.list().iter().position(|f| f.kind == FieldKind::Area);
     let sections = sections_of(run);
-    let across = |run: &ColumnRun<'_>, at: usize| parameter_text(run.tables, &run.attributes[run.column.units()[at].origin as usize], step.setting("loss_between_coal")).is_some_and(|t| matches!(t.to_lowercase().as_str(), "yes" | "y" | "true" | "1"));
+    let across = |run: &ColumnRun<'_>, at: usize| run.parameter_word(at, step.setting("loss_between_coal")).is_some_and(|t| matches!(t.to_lowercase().as_str(), "yes" | "y" | "true" | "1"));
     for (k, s) in sections.iter().enumerate() {
         if !s.coal {
             continue;
@@ -1599,7 +1752,7 @@ fn plies_of(run: &ColumnRun<'_>, s: &Section) -> Vec<usize> {
 }
 
 fn says_yes(run: &ColumnRun<'_>, at: usize, column: &str) -> bool {
-    parameter_text(run.tables, &run.attributes[run.column.units()[at].origin as usize], column).is_some_and(|t| matches!(t.to_lowercase().as_str(), "yes" | "y" | "true" | "1"))
+    run.parameter_word(at, column).is_some_and(|t| matches!(t.to_lowercase().as_str(), "yes" | "y" | "true" | "1"))
 }
 
 /// `rom` (decision 0074, point 8): nothing built in since decision 0077 (7c, part 2). The starter's `rom_qualities`

@@ -646,11 +646,30 @@ export interface ColumnUnit {
   values: Record<string, number | null>;
 }
 
-/** The column after one step, and what the step said of it. */
+/** A parameter a built-in step read for a unit (decision 0081): what it found, and the table (its place in `tables`) and row. */
+export interface ParamRead {
+  unit: number;
+  column: string;
+  value: number | null;
+  text: string | null;
+  table: number | null;
+  row: number | null;
+}
+
+/**
+ * The column after one step, and what the step said of it; with, for the notebook (decision 0081), what the step is: its
+ * rule in words (built in) or its filter and script (a formula), the units it took, and the parameters it read.
+ */
 export interface ColumnStep {
   step: string;
   units: ColumnUnit[];
   said: string[];
+  kind: 'input' | 'built_in' | 'formula';
+  rule: string;
+  when: Record<string, string>;
+  source: string | null;
+  fits: number[];
+  reads: ParamRead[];
 }
 
 /** A field of a block's column, in the dataflow's order, with its unit and kind. */
@@ -666,12 +685,22 @@ export interface ColumnSteps {
   case: string;
   dataflow: string;
   fields: ColumnField[];
+  /** The parameter tables read, in order, by name: what a read's `table` counts in. */
+  tables: string[];
+  /** Run on a dataflow given as edited, not the one saved. */
+  edited: boolean;
   steps: ColumnStep[];
   changed: string[];
 }
 
-/** Open its column: the block column a reserves table's node sits in, run again through its dataflow, every step. */
-export const reservesColumn = (object: string, node: string[]) => invoke<ColumnSteps>('reserves_column', { object, node });
+/**
+ * Open its column: the block column a reserves table's node sits in, run again through its dataflow, every step; with
+ * `dataflow`, through that dataflow as edited, not the one saved (decision 0081).
+ */
+export const reservesColumn = (object: string, node: string[], dataflow: Dataflow | null = null) => invoke<ColumnSteps>('reserves_column', { object, node, dataflow });
+/** A notebook cell's formula traced on one unit (by id), the column run up to it: `step` 1 is the first after the column as input. */
+export const reservesColumnTrace = (object: string, node: string[], step: number, unit: number, dataflow: Dataflow | null = null) =>
+  invoke<FormulaTrace>('reserves_column_trace', { object, node, step, unit, dataflow });
 
 /** One folder a seam model reads its grids from, with how many of them are there (decision 0058, stage 4). */
 export interface FolderCheck {

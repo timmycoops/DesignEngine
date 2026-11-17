@@ -59,7 +59,7 @@ pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMes
 pub use workflow::{SaveWorkflow, SaveWorkflowParams, WORKFLOW_LAYER};
 pub use measure::{MEASURES, Measure, MeasureParams, block_length, floor_dip, measure, plan_area};
 pub use reserves_run::{
-    ColumnSteps, FormulaTraceView, TraceLineView, formula_trace, OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, UNDERBURDEN_THICKNESS, UnitView, dataflow_starter, preston_sanders,
+    ColumnSteps, FormulaTraceView, ParamRead, StepKind, TraceLineView, column_trace, formula_trace, OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, UNDERBURDEN_THICKNESS, UnitView, dataflow_starter, preston_sanders,
     reserves_preview, table_column,
 };
 pub use starter::{DISCARDED, RD_ADT, starter_formulas, with_starter_formulas};
