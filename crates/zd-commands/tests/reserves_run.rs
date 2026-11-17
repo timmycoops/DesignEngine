@@ -1380,6 +1380,63 @@ fn final_writes_rom_coal_and_waste_where_they_end_and_scheduled_beside_them() {
     assert_eq!(texts(&t, "ROM\\section")[(0..t.rows()).find(|&i| texts(&t, "seam")[i].as_deref() == Some("B")).unwrap()].as_deref(), Some("B"));
 }
 
+/// What each step wrote (decision 0084), as the Dataflow tab shows under each step: the 4c column with dilution only, run
+/// to `final`. The column as input writes Imported, every block, 120,000 m³; `final` writes ROM coal A and B, 10,854 +
+/// 15,906 m³. Every folder's writes, added up over the steps, are the reserves table's total for it, and every folder the
+/// table holds a volume for was written by a step: nothing written that the table hasn't, nothing in it from nowhere.
+#[test]
+fn each_step_s_writes_add_up_to_the_reserves_table_folder_by_folder() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, final_steps(), &dilution_csv([0.0; 4], [0.05, 0.1, 0.02, 1.0], ""));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let t = table(&s, id);
+    let opened = table_column(s.project(), s.log(), id, &["Pit".to_string(), "1".to_string(), "B1".to_string()], None).unwrap();
+
+    // The column as input: Imported, coal (A, B) and waste (OB, A-B, below B), each block as read.
+    let input = &opened.steps[0].writes;
+    let folders: Vec<(&str, usize)> = input.iter().map(|w| (w.folder.as_str(), w.units.len())).collect();
+    assert_eq!(folders.len(), 2, "{folders:?}");
+    assert!(folders.contains(&("Imported\\Waste", 3)) && folders.contains(&("Imported\\Coal", 2)), "{folders:?}");
+    assert!(close(input.iter().map(|w| w.volume).sum(), 120_000.0));
+
+    // rom_dilution, as the 4c column: roof 250 m³ to A off OB and 250 m³ to B off A-B; floor 500 m³ to A off A-B and
+    // 500 m³ to B off the waste below; edge 4 + 6 m³; other 100 + 150 m³. Each folder two units, the coal it went to.
+    let dilution = opened.steps.iter().find(|c| c.step == "rom_dilution").unwrap();
+    for (folder, v) in [("Dilution\\Roof", 500.0), ("Dilution\\Floor", 1_000.0), ("Dilution\\Edge", 10.0), ("Dilution\\Other", 250.0)] {
+        let w = dilution.writes.iter().find(|w| w.folder == folder).unwrap_or_else(|| panic!("{folder}: {:?}", dilution.writes));
+        assert!(close(w.volume, v) && w.units.len() == 2, "{folder}: {} m³, {} units", w.volume, w.units.len());
+    }
+    assert!(opened.steps.iter().filter(|c| ["initialise", "join_benches", "rom_loss", "rom"].contains(&c.step.as_str())).all(|c| c.writes.is_empty()), "steps that write nothing here");
+
+    // final: ROM coal, A's and B's.
+    let last = opened.steps.iter().find(|c| c.step == "final").unwrap();
+    let rom_coal = last.writes.iter().find(|w| w.folder == "ROM\\Coal").unwrap_or_else(|| panic!("{:?}", last.writes));
+    assert!(close(rom_coal.volume, 10_854.0 + 15_906.0), "{}", rom_coal.volume);
+
+    // Every folder's writes over the steps are the table's total for it (one block, so the table is this column's).
+    let mut written: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
+    for cell in &opened.steps {
+        for w in &cell.writes {
+            *written.entry(w.folder.clone()).or_default() += w.volume;
+        }
+    }
+    for (folder, v) in &written {
+        let path = format!("{folder}\\volume");
+        assert!(close(total(&t, &path), *v), "{path}: table {} written {v}", total(&t, &path));
+    }
+    // And no volume in the table that no step wrote (the summary is the table's own, worked from the folders).
+    let unwritten: Vec<&str> = t
+        .columns
+        .iter()
+        .map(|c| c.name.as_str())
+        .filter(|n| n.ends_with("\\volume") && !n.starts_with("Summary\\"))
+        .filter(|n| !written.contains_key(n.trim_end_matches("\\volume")) && total(&t, n) != 0.0)
+        .collect();
+    assert!(unwritten.is_empty(), "{unwritten:?}");
+}
+
 /// Floor loss 0.2 m alone: A's 1,000 m³ goes into A-B, written in ROM waste on A-B's leaf (B's), its first unit; B's goes
 /// into the waste below, and is ROM waste on its leaf, coal lost. ROM coal A 9,000 m³ and B 14,000 m³; ROM waste on B's
 /// leaf A-B's 25,000 + A's 1,000 m³. The 20,000 m³ of waste below B, the last coal, is underburden, not mined.
