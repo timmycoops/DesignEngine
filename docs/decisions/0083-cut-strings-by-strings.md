@@ -1,4 +1,4 @@
-# 0082 — Cutting strings by strings: Trim, Extend, Split at a point, Join finished
+# 0083 — Cutting strings by strings: Trim, Extend, Split at a point, Join finished
 
 Status: agreed 17 November 2026 (Tim: "Agree all nine", the String tools plan tab of the Build Plan). This record is
 that plan's workstream 1; the later workstreams add to it as they merge.
