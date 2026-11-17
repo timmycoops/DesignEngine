@@ -69,6 +69,17 @@ export function legLabel(leg: Leg): string {
   return parts.join(' · ');
 }
 
+/**
+ * The label beside the cursor while measuring: the leg from the last point clicked to the cursor, and once there are
+ * two legs or more, the running total along every leg to the cursor under it.
+ */
+export function cursorLabel(points: readonly Point[], cursor: Point): string {
+  const leg = legLabel(legBetween(points[points.length - 1], cursor));
+  if (points.length < 2) return leg;
+  const total = measureTotals([...points, cursor]);
+  return `${leg}\nTotal ${total.legs} legs: ${metres(total.plan)} m plan · ${metres(total.slope)} m slope · RL ${signed(total.rise)}`;
+}
+
 /** What the status line says of the points clicked so far. */
 export function measureWords(points: readonly Point[]): string {
   if (points.length === 0) return 'Measure: click the first point';

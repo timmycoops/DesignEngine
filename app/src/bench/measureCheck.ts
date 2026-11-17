@@ -87,6 +87,12 @@ export async function checkMeasure(viewport: Viewport, log: (line: string) => vo
   // A click on, on the topography 300 m east of the top: a running total.
   await click([E + 600, N + 400, 100]);
   expect('a click on adds a leg and a total', footer().includes('Total over 2 legs: plan 800.00 m') && footer().includes('RL +0.00 m'), footer().slice(0, 200));
+  // Moving on from there, 100 m south on the topography: the leg beside the cursor, and the running total under it.
+  const [tx, ty] = screen([E + 600, N + 300, 100]);
+  pointer('pointermove', tx, ty);
+  await settle();
+  const running = layer.cursorLabel ?? '';
+  expect('beside the cursor, the running total to it under the leg', /\nTotal 3 legs: 9\d\d\.\d\d m plan · /.test(running), running);
   await key('Backspace');
   expect('Backspace takes the last point off', layer.measured.length === 2 && footer().includes(said), footer().slice(0, 140));
   await key('Escape');
