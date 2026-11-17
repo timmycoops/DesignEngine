@@ -314,10 +314,11 @@ fn plan_key(p: [f64; 3]) -> (u64, u64) {
 
 /// Open strings joined end to end into one, as a toe that came in as pieces is put back together: the two nearest
 /// ends (in plan) of different pieces are joined first, then the next nearest left, until one string is left. It runs
-/// the way the first piece does. Ends that meet exactly share a vertex; otherwise a segment bridges the gap. Every
-/// join comes back with it, in the order the string runs. Three or more ends meeting at a place is refused: see
-/// [`branching_ends`].
-pub fn join_pieces(pieces: &[&Polyline]) -> Result<(Polyline, Vec<PieceJoin>), GeomError> {
+/// the way the first piece does. Ends within `tolerance` of each other in 3D share a vertex, the one of the piece
+/// before as the string runs; otherwise a segment bridges the gap. Pieces that make a ring, the string's own two ends
+/// within the tolerance, close: that join comes last, from the last piece to the first. Every join comes back with
+/// it, in the order the string runs. Three or more ends meeting at a place is refused: see [`branching_ends`].
+pub fn join_pieces(pieces: &[&Polyline], tolerance: f64) -> Result<(Polyline, Vec<PieceJoin>), GeomError> {
     let n = pieces.len();
     if n < 2 {
         return Err(GeomError::InvalidInput("joining takes two strings or more".into()));
@@ -413,9 +414,17 @@ pub fn join_pieces(pieces: &[&Polyline]) -> Result<(Polyline, Vec<PieceJoin>), G
         if let Some(&at) = vertices.last() {
             let gap = distance3(at, run[0]);
             joins.push(PieceJoin { before: order[k - 1].0, after: piece, at, gap, plan_gap: plan(at, run[0]) });
-            skip = usize::from(gap == 0.0);
+            skip = usize::from(gap <= tolerance);
         }
         vertices.extend(run.into_iter().skip(skip));
+    }
+    // A ring of pieces: its two ends meet, so it closes, keeping the first vertex.
+    let (first, last) = (vertices[0], *vertices.last().expect("vertices"));
+    let gap = distance3(last, first);
+    if gap <= tolerance && vertices.len() >= 4 {
+        joins.push(PieceJoin { before: order[n - 1].0, after: order[0].0, at: last, gap, plan_gap: plan(last, first) });
+        vertices.pop();
+        return Ok((Polyline { vertices, closed: true }, joins));
     }
     Ok((Polyline { vertices, closed: false }, joins))
 }
@@ -1277,17 +1286,17 @@ mod tests {
         let west = line(&[[10.0, 0.0, 0.0], [0.0, 0.0, 0.0]], false);
         let east = line(&[[30.0, 0.0, 0.0], [20.0, 0.0, 0.0]], false);
         let past = line(&[[33.0, 4.0, 0.0], [50.0, 4.0, 0.0]], false);
-        let (joined, joins) = join_pieces(&[&first, &past, &west, &east]).unwrap();
+        let (joined, joins) = join_pieces(&[&first, &past, &west, &east], 0.0).unwrap();
         assert_eq!(local(&joined), [[0.0, 0.0], [10.0, 0.0], [20.0, 0.0], [30.0, 0.0], [33.0, 4.0], [50.0, 4.0]]);
         assert_eq!(joins.iter().map(|j| (j.before, j.after, j.gap, j.plan_gap)).collect::<Vec<_>>(), [(2, 0, 0.0, 0.0), (0, 3, 0.0, 0.0), (3, 1, 5.0, 5.0)]);
         // Given first, the piece drawn westwards turns the whole string to run west.
-        let (joined, _) = join_pieces(&[&west, &first, &east]).unwrap();
+        let (joined, _) = join_pieces(&[&west, &first, &east], 0.0).unwrap();
         assert_eq!(local(&joined), [[30.0, 0.0], [20.0, 0.0], [10.0, 0.0], [0.0, 0.0]]);
         // A third end at a place two meet at: refused, with the place and the three pieces.
         let spur = line(&[[10.0, 0.0, 0.0], [10.0, 20.0, 0.0]], false);
         assert_eq!(branching_ends(&[&first, &west, &spur]), [([first.vertices[0][0], first.vertices[0][1]], vec![0, 1, 2])]);
-        assert!(join_pieces(&[&first, &west, &spur]).is_err());
-        assert!(join_pieces(&[&first]).is_err() && join_pieces(&[&first, &square()]).is_err(), "two or more, all open");
+        assert!(join_pieces(&[&first, &west, &spur], 0.0).is_err());
+        assert!(join_pieces(&[&first], 0.0).is_err() && join_pieces(&[&first, &square()], 0.0).is_err(), "two or more, all open");
     }
 
     #[test]

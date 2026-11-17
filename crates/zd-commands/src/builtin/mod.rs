@@ -52,7 +52,7 @@ pub use string::{
     CornerParam, CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, DrapeString, DrapeStringParams, FilterString,
     FilterStringParams, InsertVertex, InsertVertexParams, JoinStrings, JoinStringsParams, MoveVertex, MoveVertexParams, NumberStrings,
     NumberStringsParams, OffsetString, OffsetStringParams, RedrawStretch, RedrawStretchParams, ReverseString, SetClosed, SetClosedParams, SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam,
-    SmoothString, SmoothStringParams, SplitString, SplitStringParams, StringParams,
+    SmoothString, SmoothStringParams, SplitString, SplitStringParams, StringParams, ExtendString, ExtendStringParams, TrimKeep, TrimString, TrimStringParams,
 };
 pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, SolidBetween, SolidBetweenParams, check_slice};
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
@@ -101,6 +101,8 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(SetClosed);
     registry.register(SplitString);
     registry.register(JoinStrings);
+    registry.register(TrimString);
+    registry.register(ExtendString);
     registry.register(SmoothString);
     registry.register(FilterString);
     registry.register(ProjectString);

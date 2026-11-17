@@ -6,7 +6,7 @@ import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
 import { Choice, Field, NumberInput, NumberOrBlank, type RunReport, Select, TargetInput, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { choiceWords } from '@/tools';
-import { sideOf } from './stringSide';
+import { nearestString, sideOf } from './stringSide';
 import { useWorkspace } from '@/workspace/context';
 
 /**
@@ -19,15 +19,22 @@ import { useWorkspace } from '@/workspace/context';
  * reverse and close write a new revision of each string; offset, polygons and project make new objects. Ramp from a start places a ramp's polygon by two clicks in the view, along the string picked last or
  * straight, and Move it places the last one again.
  *
+ * Trim and Extend (String tools plan, workstream 1) work on the strings picked, then a click on the cutting string, or
+ * the string to run on to, and for Trim a click on the side to keep, which holds for every string. Split splits at a
+ * click on the string, or at a vertex by number. Join joins ends within a tolerance as one vertex.
+ *
  * While the Workflow panel is adding steps, the button reads Add to the workflow and adds the tool and its settings as a
  * step instead of running it (decision 0078, workstream 4): the strings picked are found by rule each time it runs, the
  * strings of a layer by their layer. Number across asks for its line across first. Ramp from a start adds no step.
  */
 
-type Mode = 'offset' | 'number_across' | 'polygons_from_lines' | 'set_grade' | 'set_elevation' | 'drape' | 'project' | 'split' | 'join' | 'smooth' | 'filter' | 'reverse' | 'set_closed' | 'surface_between' | 'ramp_polygon';
+type Mode = 'offset' | 'number_across' | 'polygons_from_lines' | 'set_grade' | 'set_elevation' | 'drape' | 'project' | 'split' | 'trim' | 'extend' | 'join' | 'smooth' | 'filter' | 'reverse' | 'set_closed' | 'surface_between' | 'ramp_polygon';
 
 /** In the order the Strings tab has them. */
-const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'join', 'smooth', 'filter', 'reverse', 'set_closed', 'surface_between', 'ramp_polygon'];
+const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'trim', 'extend', 'join', 'smooth', 'filter', 'reverse', 'set_closed', 'surface_between', 'ramp_polygon'];
+
+/** How far from a string a click on it may land and still be it, in plan (m). Clicks snap, so on it they're on it. */
+const CLICK_ON_A_STRING = 2;
 /** Each tool's name, and the line it puts at the panel's head, from the one tool list. */
 const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('strings', MODES);
 
@@ -87,6 +94,12 @@ export function StringsPanel() {
   /** What the last Project made, until the project's summary has it. */
   const [made, setMade] = useState<string[]>([]);
   const [splitAt, setSplitAt] = useState<number | null>(null);
+  const [splitBy, setSplitBy] = useState<'click' | 'vertex'>('click');
+  /** Trim keeps the side clicked, or both sides, split. */
+  const [keep, setKeep] = useState<'side' | 'both'>('side');
+  const [reach, setReach] = useState(100);
+  /** Join: ends this close share a vertex (mm). */
+  const [joinWithin, setJoinWithin] = useState(10);
   const [spacing, setSpacing] = useState(5);
   const [closeOrOpen, setCloseOrOpen] = useState<'close' | 'open'>('close');
   const [tolerance, setTolerance] = useState<number | null>(null);
@@ -127,7 +140,7 @@ export function StringsPanel() {
   /** What Join joins end to end: the strings picked, the one picked last first, since it keeps the result. */
   const toJoin = string && on.some((o) => o.id === string.id) ? [string, ...on.filter((o) => o.id !== string.id)] : on;
   const closedToJoin = toJoin.filter((o) => o.closed).length;
-  const joinParams = () => ({ strings: toJoin.map((o) => o.id) });
+  const joinParams = () => ({ strings: toJoin.map((o) => o.id), tolerance: joinWithin / 1000 });
   const joinPieces = async () => {
     const outcome = await runIt('string.join', joinParams());
     if (outcome.record) setSelection([toJoin[0].id]);
@@ -200,6 +213,47 @@ export function StringsPanel() {
     return `Project ${toProject.length === 1 ? toProject[0].name : plural(toProject.length, 'string')} ${where}`;
   };
 
+  /** A click on a string in the view other than those worked on: the cutting string, or the one to run on to. */
+  const clickString = async (prompt: string) => {
+    const point = await pickPoint(prompt);
+    const origin = summary?.origin;
+    if (!point || !origin) return null;
+    const others = strings
+      .filter((o) => !o.hidden && o.vertices_local && !ids.includes(o.id))
+      .map((o) => ({ id: o.id, name: o.name, closed: !!o.closed, vertices: (o.vertices_local ?? []).map((v) => [v[0] + origin[0], v[1] + origin[1], v[2] + origin[2]] as const) }));
+    const found = nearestString(others, point, CLICK_ON_A_STRING);
+    if (!found) setReport({ notes: [], error: 'No string there: click on the string itself, not one of those picked' });
+    return found;
+  };
+  /** Trim's settings with its clicks: the cutting string, then the side to keep. Null when Esc is pressed. */
+  const trimParams = async () => {
+    const cutter = await clickString(`Click the string that cuts ${what}. Esc cancels`);
+    if (!cutter) return null;
+    if (keep === 'both') return { strings: ids, by: cutter.id, keep: 'both' };
+    const at = await pickPoint(`Click on the side of ${cutter.name} to keep. Esc cancels`);
+    return at ? { strings: ids, by: cutter.id, keep: 'side', side: at } : null;
+  };
+  const trim = async () => {
+    const params = await trimParams();
+    if (!params) return;
+    const outcome = await runIt('string.trim', params);
+    const kept = outcome.record?.outputs.filter((o) => o.change === 'created' || o.change === 'revised').map((o) => o.id) ?? [];
+    if (kept.length > 0) setSelection(kept);
+  };
+  const extendParams = async () => {
+    const to = await clickString(`Click the string to run ${what} on to. Esc cancels`);
+    return to ? { strings: ids, to: to.id, reach } : null;
+  };
+  const extend = async () => {
+    const params = await extendParams();
+    if (params) await runIt('string.extend', params);
+  };
+  const splitAtClick = async () => {
+    if (!string) return;
+    const point = await pickPoint(`Click on ${string.name} where it splits. Esc cancels`);
+    if (point) await runIt('string.split', { string: string.id, point });
+  };
+
   /** Several strings are each graded from their first vertex to their last; From and To are for one. */
   const gradeParams = () => {
     const params: Record<string, unknown> = { strings: ids, grade };
@@ -248,7 +302,25 @@ export function StringsPanel() {
           title: 'Each string picked gets a new string where a wall from it at the batter comes out. The strings stay as they are',
         };
       case 'split':
-        return { label: `Split ${one}`, ...calls('string.split', { string: id, at: Math.round(splitAt ?? 1) - 1 }), ready: !!string && splitAt !== null && Number.isInteger(splitAt) };
+        return splitBy === 'click'
+          ? { label: `Split ${one} at a click`, run: splitAtClick, ready: !!string, title: 'A click on the string: a vertex goes in there at its height, or it splits at a vertex within a millimetre' }
+          : { label: `Split ${one}`, ...calls('string.split', { string: id, at: Math.round(splitAt ?? 1) - 1 }), ready: !!string && splitAt !== null && Number.isInteger(splitAt) };
+      case 'trim':
+        return {
+          label: keep === 'both' ? `Split ${what} at a string` : `Trim ${what}`,
+          run: trim,
+          step: { command: 'string.trim', params: { strings: ids, keep }, ask: trimParams },
+          ready: some,
+          title: keep === 'both' ? 'A click on the string that cuts them: each is split where it crosses' : 'A click on the string that cuts them, then one on the side to keep, for every string picked',
+        };
+      case 'extend':
+        return {
+          label: `Run ${what} on`,
+          run: extend,
+          step: { command: 'string.extend', params: { strings: ids, reach }, ask: extendParams },
+          ready: some && reach > 0,
+          title: 'A click on the string to run them on to: each runs on from its nearer end, at its own grade',
+        };
       case 'join':
         return {
           label: toJoin.length > 1 ? `Join ${toJoin.length} strings into one` : 'Join the strings picked',
@@ -553,8 +625,37 @@ export function StringsPanel() {
 
       {mode === 'split' && (
         <ToolSection title="Settings">
-          <Field label="At vertex" hint="Split here; a closed string opens here">
-            <NumberOrBlank value={splitAt} onChange={setSplitAt} label="Vertex to split at" range={{ min: 1 }} blank="" />
+          <Field label="At" hint="A click on the string, or a vertex by its number; a closed string opens there">
+            <Choice value={splitBy} options={['click', 'vertex'] as const} labels={{ click: 'A click', vertex: 'A vertex' }} onChange={setSplitBy} label="Where the string splits" />
+          </Field>
+          {splitBy === 'vertex' && (
+            <Field label="At vertex">
+              <NumberOrBlank value={splitAt} onChange={setSplitAt} label="Vertex to split at" range={{ min: 1 }} blank="" />
+            </Field>
+          )}
+        </ToolSection>
+      )}
+
+      {mode === 'trim' && (
+        <ToolSection title="Settings">
+          <Field label="Keep" hint={keep === 'side' ? 'The side of the cutting string you click, inside or outside a closed one, for every string picked' : 'Every part: each string is split where the cutting string crosses it'}>
+            <Choice value={keep} options={['side', 'both'] as const} labels={{ side: 'The side clicked', both: 'Both, split' }} onChange={setKeep} label="What the trim keeps" />
+          </Field>
+        </ToolSection>
+      )}
+
+      {mode === 'extend' && (
+        <ToolSection title="Settings">
+          <Field label="Reach" hint="The furthest an end runs on, in plan. One that meets nothing within it stops the run, and is named">
+            <NumberInput value={reach} onChange={setReach} label="Furthest an end runs on" unit="m" range={{ min: 0, minIncluded: false }} />
+          </Field>
+        </ToolSection>
+      )}
+
+      {mode === 'join' && (
+        <ToolSection title="Settings">
+          <Field label="Ends within" hint="Ends this close share one vertex; further apart, a segment bridges them and it's said. Pieces making a ring close">
+            <NumberInput value={joinWithin} onChange={setJoinWithin} label="How close ends share a vertex" unit="mm" range={{ min: 0 }} />
           </Field>
         </ToolSection>
       )}

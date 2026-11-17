@@ -134,6 +134,7 @@ codes! {
     StringNotCrossed = "string.not_crossed", "Strings a numbering line doesn't cross, left as they were";
     StringCrossesAgain = "string.crosses_again", "A string a numbering line crosses more than once, numbered where it first does";
     StringGapBridged = "string.gap_bridged", "Strings joined end to end across a gap, bridged by a segment";
+    StringAttributesDiffer = "string.attributes_differ", "Strings joined into one that differ on an attribute, the kept string's value standing";
     StringEndJoined = "string.end_joined", "An end of a line joined to another line across a gap within the tolerance";
     StringEndShort = "string.end_short", "A line ending inside a polygon it was meant to split, short of the line it should meet";
     StringClosesNothing = "string.closes_nothing", "A line that closes no area, left out of the polygons";

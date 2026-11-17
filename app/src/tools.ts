@@ -40,6 +40,8 @@ export type ToolIcon =
   | 'surface-between'
   | 'ramp'
   | 'split'
+  | 'trim'
+  | 'extend'
   | 'join'
   | 'smooth'
   | 'filter'
@@ -199,7 +201,9 @@ export const TOOLS: readonly Tool[] = [
   { key: 'strings:set_elevation', stage: 'strings', label: 'Set elevation', tip: 'Sets every vertex of each string picked to one RL.', icon: 'elevation', panel: 'strings', mode: 'set_elevation', command: 'string.set_elevation', step: { takes: 'the strings picked' } },
   { key: 'strings:drape', stage: 'strings', label: 'Drape', tip: 'Drapes each string picked onto a grid or surface.', icon: 'drape', panel: 'strings', mode: 'drape', command: 'string.drape', step: { takes: 'strings and a grid or surface' } },
   { key: 'strings:project', stage: 'strings', label: 'Project', tip: 'Projects strings at a batter, up or down, to a target.', icon: 'project', panel: 'strings', mode: 'project', command: 'string.project', step: { takes: 'strings and an RL, grid or surface' } },
-  { key: 'strings:split', stage: 'strings', label: 'Split', tip: 'Splits the string at a vertex.', icon: 'split', panel: 'strings', mode: 'split', command: 'string.split', step: { takes: 'one string' } },
+  { key: 'strings:split', stage: 'strings', label: 'Split', tip: 'Splits the string at a point clicked on it, or a vertex.', icon: 'split', panel: 'strings', mode: 'split', command: 'string.split', step: { takes: 'one string' } },
+  { key: 'strings:trim', stage: 'strings', label: 'Trim', tip: 'Trims each string picked back to a string clicked.', icon: 'trim', panel: 'strings', mode: 'trim', command: 'string.trim', step: { takes: 'the strings picked and a cutting string' } },
+  { key: 'strings:extend', stage: 'strings', label: 'Extend', tip: 'Runs each string picked on to a string clicked.', icon: 'extend', panel: 'strings', mode: 'extend', command: 'string.extend', step: { takes: 'the strings picked and a string to run on to' } },
   { key: 'strings:join', stage: 'strings', label: 'Join', tip: 'Joins the open strings picked end to end into one.', icon: 'join', panel: 'strings', mode: 'join', command: 'string.join', step: { takes: 'the pieces picked' } },
   { key: 'strings:smooth', stage: 'strings', label: 'Smooth', tip: 'Smooths each string picked, a vertex every so many metres.', icon: 'smooth', panel: 'strings', mode: 'smooth', command: 'string.smooth', step: { takes: 'the strings picked' } },
   { key: 'strings:filter', stage: 'strings', label: 'Filter', tip: "Takes out vertices each string picked doesn't need.", icon: 'filter', panel: 'strings', mode: 'filter', command: 'string.filter', step: { takes: 'the strings picked' } },
@@ -345,6 +349,8 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     'strings:project',
     '|',
     'strings:split',
+    'strings:trim',
+    'strings:extend',
     'strings:join',
     'strings:smooth',
     'strings:filter',

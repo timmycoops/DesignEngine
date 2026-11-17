@@ -113,7 +113,7 @@ fn the_nearest_ends_join_first_and_the_biggest_gap_is_said_first() {
 }
 
 /// Two ends over each other in plan at different RLs are joined by a segment straight up, and that's said: 5 m, none
-/// of it in plan. A gap under half a millimetre is said in full, not as 0.000 m.
+/// of it in plan. A gap under half a millimetre, joined with no tolerance, is said in full, not as 0.000 m.
 #[test]
 fn a_gap_straight_up_and_a_hair_of_a_gap_are_said_as_they_are() {
     let mut s = Session::with_builtins();
@@ -124,7 +124,8 @@ fn a_gap_straight_up_and_a_hair_of_a_gap_are_said_as_they_are() {
     assert_eq!(line(&s, a).vertices.len(), 4);
 
     let c = string(&mut s, "c", &[at(20.0, 0.0001, 55.0), at(30.0, 0.0, 55.0)], false);
-    let record = s.run("string.join", json!({ "strings": [a, c] })).unwrap();
+    // With no tolerance: within the default centimetre it would be one vertex.
+    let record = s.run("string.join", json!({ "strings": [a, c], "tolerance": 0.0 })).unwrap();
     assert!(record.messages[1].starts_with("bridged a 0.000100 m gap between 'a' and 'c'"), "{}", record.messages[1]);
 }
 
