@@ -125,7 +125,7 @@ export type ToolAction =
 /** What a tool needs before it can be used: something to undo, or something of a kind selected. It's off without it. */
 export type ToolNeeds = 'undo' | 'redo' | 'selected' | 'selected-dxf' | 'selected-strings' | 'selected-solids';
 
-export type MenuId = 'project' | 'import' | 'export';
+export type MenuId = 'open' | 'import' | 'export';
 
 /** Where a tool sits in one of the toolbar's menus. */
 export interface MenuPlace {
@@ -179,10 +179,10 @@ const SOLIDS_MENU = { name: 'Solids', tip: 'Closed triangulations in Vulcan .00t
 
 export const TOOLS: readonly Tool[] = [
   // Project: the file, and getting data in and out.
-  { key: 'project.new', stage: 'project', label: 'New project', tip: 'Starts an empty project', short: 'New', icon: 'new', action: 'project.new', menu: { in: 'project', at: 1 } },
-  { key: 'project.open', stage: 'project', label: 'Open a project', tip: 'Opens a .zdp project file', short: 'Open', icon: 'open', action: 'project.open', menu: { in: 'project', at: 2, name: 'Open a project (.zdp)…' } },
-  { key: 'project.open_folder', stage: 'project', label: 'Open an older project folder', tip: 'Opens a .zdproj folder, which saves as a .zdp beside it', icon: 'open', action: 'project.open_folder', menu: { in: 'project', at: 3, name: 'Open an older project folder (.zdproj)…' } },
-  { key: 'project.save_as', stage: 'project', label: 'Save as', tip: 'Saves the project as another .zdp file', short: 'Save as', icon: 'save-as', action: 'project.save_as', menu: { in: 'project', at: 5, name: 'Save as…' } },
+  { key: 'project.new', stage: 'project', label: 'New project', tip: 'Starts an empty project', short: 'New', icon: 'new', action: 'project.new' },
+  { key: 'project.open', stage: 'project', label: 'Open a project', tip: 'Opens a .zdp project file', short: 'Open', icon: 'open', action: 'project.open', menu: { in: 'open', at: 1, name: 'A project (.zdp)…' } },
+  { key: 'project.open_folder', stage: 'project', label: 'Open an older project folder', tip: 'Opens a .zdproj folder, which saves as a .zdp beside it', icon: 'open', action: 'project.open_folder', menu: { in: 'open', at: 2, name: 'An older project folder (.zdproj)…' } },
+  { key: 'project.save_as', stage: 'project', label: 'Save as', tip: 'Saves the project as another .zdp file', short: 'Save as', icon: 'save-as', action: 'project.save_as' },
   { key: 'import.surfaces', stage: 'project', label: 'Import surfaces', tip: 'Vulcan .00t, DXF 3DFACE or polyface, or an XYZ or CSV grid', command: 'surface.import', action: 'import.surfaces', menu: { in: 'import', at: 1, name: 'Surfaces…' } },
   { key: 'import.strings', stage: 'project', label: 'Import strings', tip: 'DXF polylines and lines, or CSV with x, y and z columns', command: 'string.import', action: 'import.strings', menu: { in: 'import', at: 3, name: 'Strings…' } },
   { key: 'import.deswik', stage: 'project', label: 'Import a Deswik drawing', tip: 'Layers of a Deswik drawing: strings with their projection details, surfaces and solids', command: 'deswik.import', action: 'import.deswik', menu: { in: 'import', at: 8, name: 'Deswik drawing (.dcf)…', rule: true } },
@@ -253,7 +253,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'workflow:report', stage: 'reserves', label: 'Report', tip: "Writes a workflow's report, every case from its latest run", icon: 'report', panel: 'workflow' },
 
   // Always there, whatever the stage.
-  { key: 'project.save', stage: 'always', label: 'Save', tip: 'Saves the project', icon: 'save', shortcut: 'Ctrl+S', action: 'project.save', menu: { in: 'project', at: 4, rule: true } },
+  { key: 'project.save', stage: 'always', label: 'Save', tip: 'Saves the project', icon: 'save', shortcut: 'Ctrl+S', action: 'project.save' },
   { key: 'edit.undo', stage: 'always', label: 'Undo', tip: 'Takes back the last change', icon: 'undo', shortcut: 'Ctrl+Z', action: 'edit.undo', needs: 'undo' },
   { key: 'edit.redo', stage: 'always', label: 'Redo', tip: 'Puts back the change just undone', icon: 'redo', shortcut: 'Ctrl+Y', action: 'edit.redo', needs: 'redo' },
   { key: 'edit.delete', stage: 'always', label: 'Delete what is selected', tip: 'Deletes everything selected, in one undo', shortcut: 'Delete', action: 'edit.delete', needs: 'selected' },
@@ -328,6 +328,7 @@ export interface RowMenu {
 /** What sits on a row: a tool by its key, a rule between groups, or a menu. */
 export type RowItem = string | '|' | RowMenu;
 
+const OPEN_MENU: RowMenu = { label: 'Open', icon: 'open', tip: 'Open a project (.zdp), or an older project folder (.zdproj), which saves as a .zdp beside it', menu: 'open' };
 const IMPORT_MENU: RowMenu = { label: 'Import', icon: 'import', tip: 'Bring in surfaces, grids, strings, solids, Deswik and Spry, and build a seam model', menu: 'import' };
 const EXPORT_MENU: RowMenu = { label: 'Export', icon: 'export', tip: 'Strings, surfaces and solids out to DXF, CSV or a zip', menu: 'export' };
 
@@ -337,7 +338,7 @@ const EXPORT_MENU: RowMenu = { label: 'Export', icon: 'export', tip: 'Strings, s
  * Walls the string tools a ramp is made from by hand (decision 0079): Set grade, Offset and Project.
  */
 export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
-  project: ['project.new', 'project.open', 'project.save_as', '|', IMPORT_MENU, EXPORT_MENU, '|', 'seam.relink'],
+  project: ['project.new', OPEN_MENU, 'project.save_as', '|', IMPORT_MENU, EXPORT_MENU, '|', 'seam.relink'],
   strings: [
     'strings:offset',
     'strings:number_across',

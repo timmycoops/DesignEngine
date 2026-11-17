@@ -6,7 +6,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Separator } from '@/design-system/ui/separator';
 import { ALWAYS_ROW, panelTool, type RowItem, type RowMenu, ROWS, type Stage, STAGES, toolByKey } from '@/tools';
 import { PANELS } from './panels';
-import { BarTool, RowMenuItems, RowToolItem, ToolMenuItems, type ToolUse } from './ToolMenu';
+import { BarTool, RowMenuItems, RowToolItem, type ToolUse } from './ToolMenu';
 import { IconNamed } from './toolIcons';
 
 export type StageId = Exclude<Stage, 'always'>;
@@ -150,24 +150,25 @@ function ToolRow({ items, use }: { items: readonly RowItem[]; use: ToolUse }) {
 
 /**
  * The ribbon (decision 0076): a tab a stage, in the order the work is done, and under it the row of that stage's
- * tools, named in words. The project's menu, Save, Undo and Redo sit before the tabs and Find a command after them;
+ * tools, named in words. The project's name (a click opens the Project tab, no menu of its own: Tim, 17 November), Save,
+ * Undo and Redo sit before the tabs and Find a command after them;
  * Workflow and the Panels menu at the end of the row. Switching stage changes the row only: the panels stay where they were left.
  */
 export function Ribbon({ projectName, projectPath, stage, onStage, onFind, use }: { projectName: string; projectPath: string | null; stage: StageId; onStage: (stage: StageId) => void; onFind: () => void; use: ToolUse }) {
   return (
     <header data-slot="ribbon" className="shrink-0 border-b bg-card">
       <div data-slot="tab-row" className="flex h-[31px] items-center gap-0.5 px-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-6 max-w-60 font-semibold" title={projectPath ?? 'Not saved yet'} data-slot="project-menu">
-              <span className="truncate">{projectName}</span>
-              <ChevronDown className="text-muted-foreground" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <ToolMenuItems menu="project" use={use} />
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {/* The project's name, no menu of its own: its commands are the Project row's, which a click opens. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 max-w-60 font-semibold"
+          title={`${projectPath ?? 'Not saved yet'}: New, Open, Save as, Import and Export are on the Project tab`}
+          data-slot="project-name"
+          onClick={() => onStage('project')}
+        >
+          <span className="truncate">{projectName}</span>
+        </Button>
         {['project.save', 'edit.undo', 'edit.redo'].map((key) => (
           <BarTool key={key} tool={toolByKey(key)!} use={use} />
         ))}

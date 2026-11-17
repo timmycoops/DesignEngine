@@ -331,7 +331,16 @@ export async function checkShell(
       remembered: kept.filter(([path]) => path === ''),
     });
 
-    // The menus: the project's on its name, Import and Export on the Project row, Panels at the row's end.
+    // The project's name is no menu: a click opens the Project tab, whose row holds New, Open, Save as, Import and Export.
+    await goStage('solids');
+    document.querySelector<HTMLElement>('[data-slot="project-name"]')?.click();
+    for (let k = 0; k < 20 && document.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute('data-stage') !== 'project'; k++) await wait(50);
+    expect(
+      "the project's name opens the Project tab, and is no menu of its own",
+      document.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute('data-stage') === 'project' && !document.querySelector('[data-slot="project-menu"]'),
+    );
+
+    // The menus: Open, Import and Export on the Project row, Panels at the row's end.
     await goStage('project');
     const menuOf = async (button: HTMLElement | null | undefined) => {
       await openMenu(button);
@@ -340,16 +349,16 @@ export async function checkShell(
       return found;
     };
     const rowMenu = (name: string) => document.querySelector<HTMLElement>(`[data-row-menu="${name}"]`);
-    const projectMenu = await menuOf(document.querySelector<HTMLElement>('[data-slot="project-menu"]'));
+    const projectMenu = await menuOf(rowMenu('Open'));
     const importMenu = await menuOf(rowMenu('Import'));
     const exportMenu = await menuOf(rowMenu('Export'));
     const panelsMenu = await menuOf(document.querySelector<HTMLElement>('[data-slot="panels-menu"]'));
-    const projectWas = ['New project', 'Open a project (.zdp)…', 'Open an older project folder (.zdproj)…', 'SaveCtrl+S', 'Save as…'];
+    const projectWas = ['A project (.zdp)…', 'An older project folder (.zdproj)…'];
     const importWas = ['Surfaces…', 'Vulcan grid…', 'Strings…', 'Solids', 'Deswik drawing (.dcf)…', 'Spry project (.spry)…', 'Suggest a stack definition (CSV)…', 'Build and check from a definition…', 'Relink geology…'];
     const exportWas = ['Selected to DXF…', 'Selected strings to CSV…', 'Selected solids to a zip…', 'Everything visible to DXF…', 'Visible strings to CSV…', 'Visible solids to a zip…'];
-    const panelsWas = ['Layers', 'Properties', 'Strings', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Run log', 'Block table', 'Reserves table', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
+    const panelsWas = ['Layers', 'Properties', 'Strings', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Run log', 'Block table', 'Reserves table', 'Notebook', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
     const reads = (menu: { words: string }[], was: string[]) => menu.map((m) => m.words).join('|') === was.join('|');
-    expect('the project, Import, Export and Panels menus read as they did, what needs a selection off without one', reads(projectMenu, projectWas) && reads(importMenu, importWas) && reads(exportMenu, exportWas) && reads(panelsMenu, panelsWas) && exportMenu.map((m) => m.off).join() === 'true,true,true,false,false,false', {
+    expect('the Open, Import, Export and Panels menus read as they should, what needs a selection off without one', reads(projectMenu, projectWas) && reads(importMenu, importWas) && reads(exportMenu, exportWas) && reads(panelsMenu, panelsWas) && exportMenu.map((m) => m.off).join() === 'true,true,true,false,false,false', {
       project: projectMenu.map((m) => m.words),
       import: importMenu.map((m) => m.words),
       export: exportMenu.map((m) => `${m.words}${m.off ? ' (off)' : ''}`),
@@ -962,8 +971,12 @@ export async function checkShell(
     const groupOf = (id: PanelId) => api.getPanel(id)?.group.element;
     const stripOf = (id: PanelId) => groupOf(id)?.querySelector<HTMLElement>('.dv-tabs-and-actions-container') ?? null;
     const shown = (e: Element) => e.getClientRects().length > 0;
-    /** What's in a panel under its tabs, in the order it's read. */
-    const inPanel = (id: PanelId, what: string) => [...(groupOf(id)?.querySelectorAll<HTMLElement>(what) ?? [])].filter((e) => !stripOf(id)?.contains(e) && shown(e));
+    /**
+     * What's in a panel under its tabs, in the order it's read: in its own content, which a panel kept in the page
+     * (Parameters, 0081) holds outside its group.
+     */
+    const contentOf = (id: PanelId) => (api.getPanel(id) as { view?: { content?: { element?: HTMLElement } } } | undefined)?.view?.content?.element ?? groupOf(id);
+    const inPanel = (id: PanelId, what: string) => [...(contentOf(id)?.querySelectorAll<HTMLElement>(what) ?? [])].filter((e) => !stripOf(id)?.contains(e) && shown(e));
     const headOf = (id: PanelId) => inPanel(id, '[data-slot="panel-head"]')[0] ?? null;
     const lineOf = (id: PanelId) => headOf(id)?.querySelector<HTMLElement>('span') ?? null;
     /** How far under its tabs a panel's first control is, or its first line of words where it has no control (px). */

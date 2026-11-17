@@ -219,11 +219,16 @@ choices (Block table's Select shown, the Layers tree's commands).
   layout against 709 px with the old row and the view's own tab strip.
 - **Before the tabs**: the project's menu on its name, Save, Undo, Redo. **At the end of every row**: Workflow and the
   Panels menu.
+- **Changed 17 November 2026: the name's menu is gone.** Tim: the project menu on the name "appears to control the open
+  close, import etc. Surely that's not correct". It held New, Open, Save and Save as, the Project row's own. The name is
+  now a label (its path in its tip) that opens the Project tab; Open on the Project row is a menu of two, a project
+  (.zdp) or an older project folder (.zdproj), the one command only the name's menu held. Save, Undo and Redo stay
+  beside the name.
 - **The rows are in the tool list** (`ROWS` in `app/src/tools.ts`), as agreed (decision 1):
 
   | Stage | Its row |
   |---|---|
-  | Project | New, Open, Save as · Import ▾, Export ▾ · Relink geology |
+  | Project | New, Open (▾ since 17 November), Save as · Import ▾, Export ▾ · Relink geology |
   | Strings | Offset, Number across, Polygons from lines · Set grade, Set elevation, Drape · Split, Join, Smooth, Filter, Reverse, Close |
   | Walls | Face design, Builder, Rebuild from here, Join faces |
   | Solids | Between surfaces, Strips by faces, By surface or RL, By seams, By benches, By blocks · Block table, Repair · Import solids ▾, Export solids ▾ |

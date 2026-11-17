@@ -79,7 +79,9 @@ test('every stage has a row of tools that exist, named in words', () => {
   }
   const names = (stage) => ROWS[stage].filter((i) => typeof i === 'string' && i !== '|').map((key) => rowName(toolByKey(key)));
   assert.deepEqual(names('solids'), ['Between surfaces', 'Strips by faces', 'By surface or RL', 'By seams', 'By benches', 'By blocks', 'Block table', 'Repair']);
-  assert.deepEqual(names('project'), ['New', 'Open', 'Save as', 'Relink geology']);
+  assert.deepEqual(names('project'), ['New', 'Save as', 'Relink geology']);
+  // Open is a menu on the row: a project, or an older project folder.
+  assert.deepEqual(ROWS.project.filter((i) => typeof i !== 'string').map((m) => m.label), ['Open', 'Import', 'Export']);
   assert.deepEqual(names('geology'), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology']);
   assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Reserves table', 'Notebook', 'Compare', 'Report']);
   assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Ramp', 'Set grade', 'Offset', 'Project', 'Surface between', 'Join faces']);
@@ -92,10 +94,10 @@ test("a stage's tools are on its row, but for the few reached another way", () =
     const onRow = new Set(rowTools(id).map((t) => t.key));
     for (const tool of stageTools(id)) if (!onRow.has(tool.key)) elsewhere.push(tool.key);
   }
-  // The older project folder is in the project's menu; Build a step and Interrogate are what Builder and Reserves open
+  // Build a step and Interrogate are what Builder and Reserves open
   // on, listed for the canvas; Cut solids as it stands is in the Panels menu, its six choices on the row.
   // Strings as it stands is in the Panels menu too, its thirteen tools on the row.
-  assert.deepEqual(elsewhere.sort(), ['builder:step', 'cut', 'project.open_folder', 'reserves:interrogate', 'strings']);
+  assert.deepEqual(elsewhere.sort(), ['builder:step', 'cut', 'reserves:interrogate', 'strings']);
   // A row shows a tool from another stage only where the plan has it: Relink geology on Project, and the Import and
   // Export menus there, which gather their tools from every stage.
   const visiting = STAGES.flatMap(({ id }) => rowTools(id).filter((t) => t.stage !== id && t.stage !== 'always').map((t) => `${id}: ${t.key}`));
@@ -164,7 +166,7 @@ test('the stage is remembered a project, Project for one never opened', () => {
 
 test('the menus read top to bottom as they always have', () => {
   const words = (menu) => menuTools(menu).map((t) => t.menu.name ?? t.label);
-  assert.deepEqual(words('project'), ['New project', 'Open a project (.zdp)…', 'Open an older project folder (.zdproj)…', 'Save', 'Save as…']);
+  assert.deepEqual(words('open'), ['A project (.zdp)…', 'An older project folder (.zdproj)…']);
   assert.deepEqual(words('import'), [
     'Surfaces…',
     'Vulcan grid…',
@@ -180,7 +182,7 @@ test('the menus read top to bottom as they always have', () => {
     'Relink geology…',
   ]);
   assert.deepEqual(words('export'), ['Selected to DXF…', 'Selected strings to CSV…', 'Selected solids to a zip…', 'Everything visible to DXF…', 'Visible strings to CSV…', 'Visible solids to a zip…']);
-  for (const menu of ['project', 'import', 'export']) {
+  for (const menu of ['open', 'import', 'export']) {
     const places = menuTools(menu).map((t) => t.menu.at);
     assert.equal(new Set(places).size, places.length, `two tools at one place in ${menu}`);
   }
@@ -190,7 +192,6 @@ test('the menus read top to bottom as they always have', () => {
   assert.equal(imports.find((t) => t.menu.heading === 'Repaired as they come in').key, 'import.solids_repaired');
   assert.deepEqual(imports.filter((t) => t.menu.rule).map((t) => t.key), ['import.solids_repaired', 'import.deswik', 'seam.suggest']);
   assert.equal(imports.find((t) => t.menu.heading === 'Seam model').key, 'seam.suggest');
-  assert.deepEqual(menuTools('project').filter((t) => t.menu.rule).map((t) => t.key), ['project.save']);
 });
 
 test('a menu item says how many it would take, past one', () => {
