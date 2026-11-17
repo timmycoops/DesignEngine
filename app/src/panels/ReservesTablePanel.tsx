@@ -6,7 +6,6 @@ import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { breakdownCsv, cellText, fieldRows, nodeForLeaf, samePath, startsWith, unitLabel } from './reservesTable';
-import { ColumnStepsView } from './ColumnStepsView';
 import { fmt } from './format';
 
 /**
@@ -67,7 +66,7 @@ function writeFolded(folded: Set<string>) {
 const keyOf = (path: string[]) => path.join('\u0001');
 
 export function ReservesTable() {
-  const { summary, selection, setSelection } = useWorkspace();
+  const { summary, selection, setSelection, openNotebook } = useWorkspace();
   const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table'), [summary]);
   const [tableId, setTableId] = useState<string | null>(null);
   // A table picked anywhere is the one shown.
@@ -93,8 +92,6 @@ export function ReservesTable() {
     writeAcross(a);
   };
   const [said, setSaid] = useState<string | null>(null);
-  // Open its column (5b): the node whose block column is shown step by step in place of the breakdown.
-  const [columnOf, setColumnOf] = useState<string[] | null>(null);
 
   const tableKey = table ? `${table.id}@${table.revision}` : '';
   useEffect(() => {
@@ -103,7 +100,6 @@ export function ReservesTable() {
     setNode([]);
     setOpen([]);
     setLeaf(null);
-    setColumnOf(null);
     if (!table) return;
     void reservesTree(table.id).then((t) => {
       if (!live) return;
@@ -155,8 +151,6 @@ export function ReservesTable() {
       setNode(at.node);
       setOpen(at.open);
       setLeaf(found);
-      // An open column follows too: the picked solid's own.
-      setColumnOf((c) => (c ? found : c));
       setExpanded((e) => new Set([...e, ...at.node.map((_, i) => keyOf(at.node.slice(0, i + 1))), keyOf([])]));
     });
     return () => {
@@ -172,9 +166,6 @@ export function ReservesTable() {
     setOpen([]);
     setLeaf(null);
     setSaid(null);
-    // An open column shows the column of a block picked in the tree, and gives way to the table above a block.
-    const seam = breakdown ? breakdown.levels.findIndex((l) => l.toLowerCase() === 'seam') : -1;
-    setColumnOf((c) => (c && seam > 0 && path.length >= seam ? path : null));
   };
   const toggleOpen = (path: string[]) => setOpen((o) => (o.some((p) => samePath(p, path)) ? o.filter((p) => !startsWith(p, path)) : [...o, path]));
   const toggleFolded = (key: string) =>
@@ -224,9 +215,6 @@ export function ReservesTable() {
           {tree && <TreeRow n={tree} depth={0} node={node} leaf={leaf} expanded={expanded} setExpanded={setExpanded} show={show} />}
         </div>
       </div>
-      {columnOf && table ? (
-        <ColumnStepsView table={table} node={columnOf} onBack={() => setColumnOf(null)} />
-      ) : (
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1">
           <span className="flex items-center gap-1" aria-label="Node shown">
@@ -253,8 +241,8 @@ export function ReservesTable() {
               size="sm"
               className="h-6 px-2 text-xs"
               disabled={!canOpenColumn}
-              title={canOpenColumn ? "Step this block's column through the dataflow: every unit before and after each step" : 'Pick a block, or a seam or bench of one, to step its column through the dataflow'}
-              onClick={() => setColumnOf(leaf && startsWith(leaf, node) ? leaf : node)}
+              title={canOpenColumn ? "This block's column in the Notebook: each step, what it read, its formula or rule, and what it changed" : 'Pick a block, or a seam or bench of one, to open its column in the Notebook'}
+              onClick={() => table && openNotebook(table.id, leaf && startsWith(leaf, node) ? leaf : node)}
             >
               <Columns3 className="size-3.5" /> Open its column
             </Button>
@@ -349,7 +337,6 @@ export function ReservesTable() {
           )}
         </div>
       </div>
-      )}
     </div>
   );
 }

@@ -57,7 +57,8 @@ export function unitWords(u: ColumnUnit): string {
   return u.bench ? `${u.horizon} ${u.bench}` : u.horizon;
 }
 
-function detailOf(u: ColumnUnit): string {
+/** What a unit is past its horizon: its material, what it became, its working section and where it goes in ROM. */
+export function detailOf(u: ColumnUnit): string {
   const parts = [u.material];
   if (u.became) parts.push(u.became.replace(/_/g, ' '));
   if (u.section) parts.push(`section ${u.section}`);

@@ -174,54 +174,86 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
 type Expect = (what: string, ok: boolean, detail?: unknown) => void;
 
 /**
- * Open its column (decision 0075, 5b) on block 3_B1 of the Base table: its column run again step by step. The steps are
- * the dataflow's; after rom_dilution the units sent to U's ROM coal section add up to the table's ROM coal U, 10,840.1
- * m³, more than after rom_loss as dilution came in, the dilution units new; ← steps back; Table goes back.
+ * Open its column (decision 0075, 5b) on block 3_B1 of the Base table, as a notebook (decision 0081): a cell a step, the
+ * dataflow's. `densities` shows its formula with the lines that ran on the unit in focus tinted and rd_is set;
+ * `rom_dilution` shows the four dilution settings it read for it, each with its table and column, and its dilution as new
+ * units. Whole column at rom_dilution: the units sent to U's ROM coal section add up to the table's 10,840.1 m³, more than
+ * after rom_loss (← steps back). Notebook goes back; a formula's Edit opens it in the Parameters tab.
  */
 async function checkColumn(panel: () => HTMLElement | null, expect: Expect, picture: Picture) {
-  const button = (label: string) => [...(panel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent?.trim() === label) ?? null;
-  button('Open its column')?.click();
-  const grid = () => panel()?.querySelector<HTMLElement>('[data-slot="column-grid"]') ?? null;
-  for (let k = 0; k < 100 && !grid(); k++) await wait(100);
-  const steps = [...(panel()?.querySelectorAll<HTMLElement>('[data-slot="column-steps"] [data-step]') ?? [])].map((s) => s.dataset.step);
+  const buttonIn = (root: HTMLElement | null | undefined, label: string) => [...(root?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent?.trim() === label) ?? null;
+  buttonIn(panel(), 'Open its column')?.click();
+  const nb = () => document.querySelector<HTMLElement>('[data-tool-panel="notebook"]');
+  const cells = () => [...(nb()?.querySelectorAll<HTMLElement>('[data-slot="notebook-cell"]') ?? [])];
+  for (let k = 0; k < 100 && cells().length === 0; k++) await wait(100);
+  const steps = cells().map((c) => c.dataset.step);
   const want = ['as input', 'small_volumes', 'initialise', 'fill_size', 'limits', 'densities', 'in_situ', 'join_benches', 'discard', 'working_sections', 'rom_loss', 'rom_dilution', 'rom_ash_cutoff', 'rom', 'rom_qualities', 'final'];
-  expect("Open its column runs 3_B1's column through the dataflow's steps", !!grid() && JSON.stringify(steps) === JSON.stringify(want), steps);
-  const at = async (step: string) => {
-    panel()?.querySelector<HTMLButtonElement>(`[data-slot="column-steps"] [data-step="${step}"]`)?.click();
-    for (let k = 0; k < 50 && panel()?.querySelector(`[data-step="${step}"]`)?.getAttribute('aria-selected') !== 'true'; k++) await wait(50);
+  expect("Open its column opens the Notebook, a cell for each of the dataflow's steps", JSON.stringify(steps) === JSON.stringify(want), steps);
+  const cell = (step: string) => nb()?.querySelector<HTMLElement>(`[data-slot="notebook-cell"][data-step="${step}"]`) ?? null;
+  const folded = cells().filter((c) => c.dataset.open === 'no').map((c) => `${c.dataset.step}: ${c.querySelector('[data-slot="cell-summary"]')?.textContent}`);
+  expect('steps that changed nothing are folded to one line', folded.every((f) => f.endsWith('nothing changed in this column')), folded);
+
+  // densities: its formula, the lines that ran on the unit in focus tinted, rd_is set.
+  for (let k = 0; k < 100 && !cell('densities')?.querySelector('[data-ran="yes"]'); k++) await wait(100);
+  const ran = cell('densities')?.querySelectorAll('[data-slot="cell-code"] [data-ran="yes"]').length ?? 0;
+  const code = cell('densities')?.querySelector('[data-slot="cell-code"]')?.textContent ?? '';
+  const inLine = cell('densities')?.querySelector('[data-slot="cell-in"]')?.textContent ?? '';
+  expect('densities shows its formula, the lines that ran on the unit in focus and rd_is set', ran > 3 && code.includes('in_situ_rd(') && /rd_is = [\d.]+/.test(code), { ran, in: inLine.replace(/[\d.]+/g, '#') });
+
+  // rom_dilution: the settings it read for the unit in focus, with where each came from; its dilution new.
+  const dil = cell('rom_dilution');
+  const reads = [...(dil?.querySelectorAll<HTMLElement>('[data-slot="cell-read"]') ?? [])].map((r) => r.textContent ?? '');
+  const named = ['roof_dilution', 'floor_dilution', 'edge_dilution', 'other_dilution'].every((n) => reads.some((r) => r.startsWith(n) && /\(Reserves assumptions, column \d+\)/.test(r)));
+  const made = dil?.querySelectorAll('[data-slot="cell-out-table"] th[data-unit]').length ?? 0;
+  const rule = dil?.querySelector('[data-slot="cell-rule"]')?.textContent ?? '';
+  expect("rom_dilution shows its rule, the four dilution settings it read and where each came from, and what it made", named && made > 0 && rule.includes('cuts each waste interval'), { reads, made });
+  if (picture) {
+    // A picture doesn't keep the scroll: every cell folded but densities and rom_dilution, so they're what it shows.
+    buttonIn(nb(), 'Fold all')?.click();
     await wait(100);
-  };
+    for (const step of ['densities', 'rom_dilution']) cell(step)?.querySelector<HTMLButtonElement>('button[aria-expanded]')?.click();
+    for (let k = 0; k < 100 && !cell('densities')?.querySelector('[data-ran="yes"]'); k++) await wait(100);
+    document.querySelector<HTMLButtonElement>('button[aria-label="Fill the window"]')?.click();
+    await picture('notebook');
+    document.querySelector<HTMLButtonElement>('button[aria-label="Put the tables back under the view"]')?.click();
+    buttonIn(nb(), 'Open all')?.click();
+    await wait(300);
+  }
+
+  // Whole column at rom_dilution: the grid of every unit, U's ROM coal the table's.
+  buttonIn(dil, 'Whole column')?.click();
+  const grid = () => nb()?.querySelector<HTMLElement>('[data-slot="column-grid"]') ?? null;
+  for (let k = 0; k < 100 && !grid(); k++) await wait(100);
+  for (let k = 0; k < 50 && nb()?.querySelector('[data-step="rom_dilution"]')?.getAttribute('aria-selected') !== 'true'; k++) await wait(50);
   // U's ROM coal, by the units' heads: those a step sent to its ROM coal section (dilution), and its coal still in its
   // working section, sent nowhere else; their volumes after the step (the cell's own line, not what it was).
   const romCoalU = () => {
     const heads = [...(grid()?.querySelectorAll<HTMLElement>('thead th[data-unit]') ?? [])];
-    const cells = [...(grid()?.querySelectorAll<HTMLElement>('tr[data-field="volume"] td') ?? [])].slice(1);
+    const vols = [...(grid()?.querySelectorAll<HTMLElement>('tr[data-field="volume"] td') ?? [])].slice(1);
     const toU = (head: string) => /ROM \d* ?coal U$/.test(head) || (/section \d+ coal U$/.test(head) && !head.includes('ROM'));
-    return heads.reduce((s, h, i) => (toU(h.textContent ?? '') ? s + (Number((cells[i]?.childNodes[0]?.textContent ?? '').replaceAll(',', '')) || 0) : s), 0);
+    return heads.reduce((sum, h, i) => (toU(h.textContent ?? '') ? sum + (Number((vols[i]?.childNodes[0]?.textContent ?? '').replaceAll(',', '')) || 0) : sum), 0);
   };
-  await at('rom_loss');
-  const afterLoss = romCoalU();
-  await at('rom_dilution');
+  await wait(100);
   const afterDilution = romCoalU();
-  const fresh = grid()?.querySelectorAll('thead th[data-unit] [title="Made by this step"]').length ?? 0;
-  const changed = grid()?.querySelectorAll('td.text-edited').length ?? 0;
+  nb()?.querySelector<HTMLElement>('[data-slot="column-steps"]')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+  for (let k = 0; k < 50 && nb()?.querySelector('[data-step="rom_loss"]')?.getAttribute('aria-selected') !== 'true'; k++) await wait(50);
+  await wait(100);
+  const afterLoss = romCoalU();
   expect(
-    "after rom_dilution U's ROM coal is the table's 10,840.1 m³, up from after rom_loss, its dilution new units",
+    "Whole column at rom_dilution: U's ROM coal is the table's 10,840.1 m³, up from after rom_loss",
     // Each unit's volume is read as shown, to 0.1 m³: five of them may be out by 0.25 m³ added up.
-    Math.abs(afterDilution - 10_840.1) < 0.3 && afterDilution > afterLoss && fresh > 0,
-    { afterLoss: Math.round(afterLoss * 10) / 10, afterDilution: Math.round(afterDilution * 10) / 10, fresh, changed },
+    Math.abs(afterDilution - 10_840.1) < 0.3 && afterDilution > afterLoss,
+    { afterLoss: Math.round(afterLoss * 10) / 10, afterDilution: Math.round(afterDilution * 10) / 10 },
   );
-  const tab = panel()?.querySelector<HTMLElement>('[data-step="rom_dilution"]')?.getBoundingClientRect();
-  const strip = panel()?.querySelector<HTMLElement>('[data-step="rom_dilution"]')?.parentElement?.getBoundingClientRect();
-  expect('the step picked is in sight along the strip', !!tab && !!strip && tab.left >= strip.left - 1 && tab.right <= strip.right + 1, tab && strip ? { tab: [Math.round(tab.left), Math.round(tab.right)], strip: [Math.round(strip.left), Math.round(strip.right)] } : null);
-  if (picture) await picture('open-its-column');
-  // ← goes back a step, from the grid.
-  panel()?.querySelector<HTMLElement>('[data-slot="column-steps"]')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
-  for (let k = 0; k < 50 && panel()?.querySelector('[data-step="rom_loss"]')?.getAttribute('aria-selected') !== 'true'; k++) await wait(50);
-  expect('← steps back to rom_loss', panel()?.querySelector('[data-step="rom_loss"]')?.getAttribute('aria-selected') === 'true');
-  button('Table')?.click();
-  for (let k = 0; k < 50 && !panel()?.querySelector('[data-slot="reserves-breakdown"]'); k++) await wait(100);
-  expect('Table goes back to the breakdown', !!panel()?.querySelector('[data-slot="reserves-breakdown"]'));
+  buttonIn(nb(), 'Notebook')?.click();
+  for (let k = 0; k < 50 && cells().length === 0; k++) await wait(100);
+  expect('Notebook goes back to the cells', cells().length === want.length);
+
+  // A formula's Edit opens it in the Parameters tab.
+  buttonIn(cell('densities'), 'Edit in the formula panel')?.click();
+  const params = () => document.querySelector<HTMLElement>('[data-tool-panel="parameters"]');
+  for (let k = 0; k < 100 && !params()?.querySelector('[data-formula="yes"][data-step="densities"].bg-selection'); k++) await wait(100);
+  expect("a formula cell's Edit opens it in the Parameters tab", !!params()?.querySelector('[data-formula="yes"][data-step="densities"].bg-selection') && !!params()?.querySelector('[data-slot="script-editor"]'));
 }
 
 /**

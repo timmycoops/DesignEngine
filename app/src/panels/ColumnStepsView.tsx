@@ -18,7 +18,21 @@ type Show = 'main' | 'all' | 'changed';
 const SHOWS: readonly Show[] = ['main', 'all', 'changed'];
 const SHOW_LABELS: Record<Show, string> = { main: 'Main fields', all: 'Every field', changed: 'Only what changed' };
 
-export function ColumnStepsView({ table, node, onBack }: { table: { id: string; name: string; revision: number }; node: string[]; onBack: () => void }) {
+export function ColumnStepsView({
+  table,
+  node,
+  onBack,
+  backLabel = 'Table',
+  startStep,
+}: {
+  table: { id: string; name: string; revision: number };
+  node: string[];
+  onBack: () => void;
+  /** What going back goes to: the table, or the notebook (decision 0081, Whole column). */
+  backLabel?: string;
+  /** The step to open at, by its place; else the first step that did something. */
+  startStep?: number;
+}) {
   const [column, setColumn] = useState<ColumnSteps | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [at, setAt] = useState(0);
@@ -36,7 +50,7 @@ export function ColumnStepsView({ table, node, onBack }: { table: { id: string; 
         // The first step that did something to this column, so there's a change to read.
         const activity = stepActivity(c.steps);
         const first = activity.findIndex((a, i) => i > 0 && a.changes + a.made + a.gone > 0);
-        setAt(first > 0 ? first : 0);
+        setAt(startStep !== undefined && startStep < c.steps.length ? startStep : first > 0 ? first : 0);
         grid.current?.focus();
       })
       .catch((e) => live && setError(String(e)));
@@ -74,8 +88,8 @@ export function ColumnStepsView({ table, node, onBack }: { table: { id: string; 
   return (
     <div className="flex min-w-0 flex-1 flex-col outline-none" ref={grid} tabIndex={0} onKeyDown={onKey} data-slot="column-steps">
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1">
-        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" title="Back to the table, at this node" onClick={onBack}>
-          <ArrowLeft className="size-3.5" /> Table
+        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" title={`Back to the ${backLabel.toLowerCase()}`} onClick={onBack}>
+          <ArrowLeft className="size-3.5" /> {backLabel}
         </Button>
         <span className="font-semibold text-primary" aria-label="Column shown">
           {column ? column.column.join(' › ') : node.join(' › ')}

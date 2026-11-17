@@ -387,6 +387,12 @@ export default function App() {
     if (dockRef.current) showPanel(dockRef.current, panel);
     setToolAsk((was) => ({ panel, mode, n: (was?.n ?? 0) + 1 }));
   }, []);
+  // The column the Notebook tab shows (decision 0081), asked for from the Reserves table's Open its column.
+  const [notebookOf, setNotebookOf] = useState<{ table: string; node: string[]; n: number } | null>(null);
+  const openNotebook = useCallback((table: string, node: string[]) => {
+    if (dockRef.current) showPanel(dockRef.current, 'notebook');
+    setNotebookOf((was) => ({ table, node, n: (was?.n ?? 0) + 1 }));
+  }, []);
   const [workflowPick, setWorkflowPick] = useState<{ id: string | null; case: string }>({ id: null, case: 'Base' });
   // What the ribbon lights: the panels in front in their docks, and what each is set to do, as the panels say.
   const [panelsShown, setPanelsShown] = useState<PanelId[]>([]);
@@ -1077,6 +1083,8 @@ export default function App() {
       openTool,
       toolAsk,
       toolMode,
+      notebookOf,
+      openNotebook,
       run,
       runRecord,
       seamViews,
@@ -1106,7 +1114,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode],
+    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook],
   );
 
   /** The view's own tools, for the bar on the view (decision 0076). The keys below do the same. */

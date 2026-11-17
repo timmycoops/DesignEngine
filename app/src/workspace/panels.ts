@@ -3,7 +3,7 @@
  * as a tab in the tool dock on the right, beside Properties, and a table as a tab in the results dock under the view.
  * Kept free of React, so the tool list and the tests can read it.
  */
-export type PanelId = 'layers' | 'properties' | 'strings' | 'builder' | 'cut' | 'reserves' | 'workflow' | 'runlog' | 'blocks' | 'restable' | 'params' | 'canvas' | 'face';
+export type PanelId = 'layers' | 'properties' | 'strings' | 'builder' | 'cut' | 'reserves' | 'workflow' | 'runlog' | 'blocks' | 'restable' | 'notebook' | 'params' | 'canvas' | 'face';
 
 export type Dock = 'left' | 'tools' | 'results';
 
@@ -25,6 +25,7 @@ export const PANELS: readonly { id: PanelId; title: string; dock: Dock; size: nu
   { id: 'runlog', title: 'Run log', dock: 'results', size: 200 },
   { id: 'blocks', title: 'Block table', dock: 'results', size: 320 },
   { id: 'restable', title: 'Reserves table', dock: 'results', size: 400 },
+  { id: 'notebook', title: 'Notebook', dock: 'results', size: 480 },
   { id: 'params', title: 'Parameters', dock: 'results', size: 400 },
   { id: 'canvas', title: 'Workflow canvas', dock: 'results', size: 400 },
   { id: 'face', title: 'Face design', dock: 'results', size: 400 },
