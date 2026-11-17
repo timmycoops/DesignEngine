@@ -116,10 +116,11 @@ export type ToolAction =
   | 'view.zoom_selection'
   | 'view.zoom_all'
   | 'view.section'
-  | 'view.measure';
+  | 'view.measure'
+  | 'edit.delete';
 
 /** What a tool needs before it can be used: something to undo, or something of a kind selected. It's off without it. */
-export type ToolNeeds = 'undo' | 'redo' | 'selected-dxf' | 'selected-strings' | 'selected-solids';
+export type ToolNeeds = 'undo' | 'redo' | 'selected' | 'selected-dxf' | 'selected-strings' | 'selected-solids';
 
 export type MenuId = 'project' | 'import' | 'export';
 
@@ -249,6 +250,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'project.save', stage: 'always', label: 'Save', tip: 'Saves the project', icon: 'save', shortcut: 'Ctrl+S', action: 'project.save', menu: { in: 'project', at: 4, rule: true } },
   { key: 'edit.undo', stage: 'always', label: 'Undo', tip: 'Takes back the last change', icon: 'undo', shortcut: 'Ctrl+Z', action: 'edit.undo', needs: 'undo' },
   { key: 'edit.redo', stage: 'always', label: 'Redo', tip: 'Puts back the change just undone', icon: 'redo', shortcut: 'Ctrl+Y', action: 'edit.redo', needs: 'redo' },
+  { key: 'edit.delete', stage: 'always', label: 'Delete what is selected', tip: 'Deletes everything selected, in one undo', shortcut: 'Delete', action: 'edit.delete', needs: 'selected' },
   { key: 'workflow', stage: 'always', label: 'Workflow', tip: 'saved steps run again in one go, captured from the Run log or added from the tool panels', icon: 'workflow', panel: 'workflow' },
   { key: 'canvas', stage: 'always', label: 'Workflow canvas', tip: 'a workflow as nodes and wires: what each step reads', panel: 'canvas' },
   { key: 'layers', stage: 'always', label: 'Layers', tip: 'the layer tree: show, hide, select and arrange', panel: 'layers' },

@@ -288,7 +288,8 @@ toolbar, and nothing drawn over the view may sit behind the bar. Measure (M) rea
 bearing between clicks from the points' world coordinates, and makes nothing
 (`docs/decisions/0079-project-ramps-by-hand-and-measure.md`). In the view, left clicks add points and a right click
 finishes (a right drag pans); Esc takes back one thing a press, nearest first, from a tool panel's box too, and says
-what it did; a tool's shortcut may be two letters typed in turn (NS, a new string), never starting with a key that's a
+what it did; Delete deletes what's selected in one undo (a vertex only under the cursor on the selected string); a
+tool's shortcut may be two letters typed in turn (NS, a new string), never starting with a key that's a
 shortcut on its own (`docs/decisions/0080-right-click-esc-and-two-letter-shortcuts.md`). A panel never says its name under its tab: its head is
 one line of what it does (`PanelHead`), and its first control is within 40 px of the tab. Every tool is listed once in
 `app/src/tools.ts`, in its stage, with its name, what it does, and the panel it opens or the action App carries out;

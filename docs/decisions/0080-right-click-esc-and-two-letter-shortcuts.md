@@ -1,6 +1,7 @@
 # 0080 — Right-click to finish, Esc a step a press, and two-letter shortcuts
 
-Status: agreed 17 November 2026 (Tim: "Yes, build it"; the menu he meant is a tool panel).
+Status: agreed 17 November 2026 (Tim: "Yes, build it"; the menu he meant is a tool panel). Item 4, the Delete key,
+added the same day (Tim: "shouldn't have to select the delete in the properties").
 
 ## Why
 
@@ -38,11 +39,16 @@ Drawing could only be started from the pen on the view bar or from Find a comman
    handler (capture, on the window), so the second letter is never also its own shortcut (S, snap). The first letter is
    never a shortcut on its own, nor Z (held to turn), which `tests/tools.test.mjs` checks. Not while typing in a box.
    Find a command and the tips show them as they show S or T.
+4. **The Delete key deletes what's selected**, every object of any kind, as one run (`object.delete_many`) and one
+   undo, and says so ("Deleted 2 objects: Ctrl+Z brings them back"); with nothing selected it says that. Over a handle
+   of the selected string, Delete still deletes that vertex, as before; off the view no handle counts as under the
+   cursor. Not while typing in a box, nor while a panel waits on a pick. Backspace stays for a vertex only, so a stray
+   one never takes an object. Properties keeps its delete button; it's Delete what is selected in Find a command.
 
 ## Where
 
-`app/src/viewport/strings.ts` (`rightClick`, `escape`), `app/src/workspace/chords.ts`, the `toSelect` action in
-`App.tsx`, and the rename boxes in `LayersPanel.tsx` and `PropertiesPanel.tsx`.
+`app/src/viewport/strings.ts` (`rightClick`, `escape`, Delete in `keyDown`), `app/src/workspace/chords.ts`, the
+`toSelect` and `remove` actions and `deleteSelection` in `App.tsx`, and the rename boxes in `LayersPanel.tsx` and `PropertiesPanel.tsx`.
 
 ## Checked
 
@@ -51,4 +57,6 @@ The app's own check (`zd-app --bench --clicks`) drives it as Tim would. NS start
 N then Esc lets go; three clicks and a right click make a three-vertex string and stay in Draw; a right drag makes
 nothing; Esc abandons the points, then goes back to Select with the new string still selected, then clears the
 selection and says so; Esc in a box on the Strings panel leaves the box and clears the selection; a right click ends a
-measure with its reading kept, and the next click starts another.
+measure with its reading kept, and the next click starts another. With Delete (24 of 24): two strings picked by a click
+and a Ctrl+click go with one Delete and come back with one Ctrl+Z; Delete with nothing picked says so; over a handle it
+takes that vertex and leaves the string; off the view it takes the string.

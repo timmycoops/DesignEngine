@@ -199,7 +199,9 @@ test('a menu item says how many it would take, past one', () => {
   assert.equal(menuWords(dxf, 1), 'Selected to DXF…');
   assert.equal(menuWords(dxf, 3), 'Selected to DXF (3)…');
   assert.equal(menuWords(toolByKey('project.save'), null), 'Save');
-  for (const tool of TOOLS.filter((t) => t.needs?.startsWith('selected'))) assert.equal(tool.menu?.in, 'export', tool.key);
+  // A kind selected is what an export takes; Delete takes whatever is selected, from its key.
+  for (const tool of TOOLS.filter((t) => t.needs?.startsWith('selected-'))) assert.equal(tool.menu?.in, 'export', tool.key);
+  assert.equal(toolByKey('edit.delete').shortcut, 'Delete');
 });
 
 test("a panel's choices take their names and their lines from the list", () => {
