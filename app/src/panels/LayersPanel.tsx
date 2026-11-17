@@ -189,7 +189,11 @@ function RenameBox({ layer, onDone }: { layer: Layer; onDone: () => void }) {
       onBlur={(e) => void finish(e.target.value)}
       onKeyDown={(e) => {
         if (e.key === 'Enter') void finish(e.currentTarget.value);
-        if (e.key === 'Escape') void finish(layer.name);
+        if (e.key === 'Escape') {
+          // The rename put back is this press: it doesn't go on to clear the selection (decision 0080).
+          e.preventDefault();
+          void finish(layer.name);
+        }
       }}
     />
   );

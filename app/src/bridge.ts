@@ -1247,6 +1247,8 @@ export interface BenchConfig {
   project: boolean;
   /** With `--measure`, the distance measure on the view bar driven as Tim would, by its key, its button and clicks (decision 0079). */
   measure: boolean;
+  /** With `--clicks`, how the view takes clicks and Esc driven as Tim would: NS, right-click to finish, Esc a step a press (decision 0080). */
+  clicks: boolean;
   /** With `--ramp`, a ramp made by hand from the Walls row: Set grade, Offset, Project and a surface between the strings (decision 0079). */
   ramp: boolean;
   /** With `--ramp-start`, Ramp from a start driven as Tim would: placed, moved, undone, and to a surface (decision 0079). */

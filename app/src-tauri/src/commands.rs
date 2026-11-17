@@ -1436,6 +1436,9 @@ pub struct BenchConfig {
     /// With `--measure`, the distance measure on the view bar driven as Tim would: M, two clicks on a string's ends for a
     /// known leg, a click on for a total, Backspace, Esc, and nothing made (decision 0079).
     measure: bool,
+    /// With `--clicks`, how the view takes clicks and Esc driven as Tim would: NS starts a string, a right click finishes
+    /// it, a right drag pans, Esc takes back one thing a press, from a tool panel's box too (decision 0080).
+    clicks: bool,
     /// With `--ramp`, a ramp made by hand from the Walls row as Tim would: an edge graded, offset, projected up and down,
     /// and one surface between the four strings, its area known (decision 0079).
     ramp: bool,
@@ -1505,6 +1508,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         builder: args.iter().any(|a| a == "--builder"),
         project: args.iter().any(|a| a == "--project"),
         measure: args.iter().any(|a| a == "--measure"),
+        clicks: args.iter().any(|a| a == "--clicks"),
         ramp: args.iter().any(|a| a == "--ramp"),
         ramp_start: args.iter().any(|a| a == "--ramp-start"),
         cut: args.iter().any(|a| a == "--cut"),

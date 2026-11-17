@@ -849,6 +849,8 @@ export function PropertiesPanel() {
           onKeyDown={(e) => {
             if (e.key === 'Enter') e.currentTarget.blur();
             if (e.key === 'Escape') {
+              // The name put back is this press: it doesn't go on to clear the selection (decision 0080).
+              e.preventDefault();
               setName(object.name);
               e.currentTarget.blur();
             }
