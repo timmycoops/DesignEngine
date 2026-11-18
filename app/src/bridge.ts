@@ -626,12 +626,14 @@ export interface Breakdown {
   hidden: number;
 }
 
-export const reservesTree = (object: string) => invoke<ReservesNode>('reserves_tree', { object });
+export const reservesTree = (object: string, when: Record<string, string> = {}) => invoke<ReservesNode>('reserves_tree', { object, when });
+/** A reserves table's leaves as attributes, a leaf a row: what the filter box counts to tick (decision 0088). */
+export const reservesFilterRows = (object: string) => invoke<Record<string, boolean | number | string>[]>('reserves_filter_rows', { object });
 /**
  * A reserves table's node with its fields down the side and across its children, each in `open` opened; or, with
  * `leaves`, every leaf under it in stack order with no subtotals.
  */
-export const reservesBreakdown = (object: string, node: string[], open: string[][], leaves = false) => invoke<Breakdown>('reserves_breakdown', { object, node, open, leaves });
+export const reservesBreakdown = (object: string, node: string[], open: string[][], leaves = false, when: Record<string, string> = {}) => invoke<Breakdown>('reserves_breakdown', { object, node, open, leaves, when });
 /** The solids a reserves table's node was made from, to select. */
 export const reservesSolids = (object: string, node: string[]) => invoke<string[]>('reserves_solids', { object, node });
 /** A reserves field's value for each block solid of the table's case, its leaf's or its block's (decision 0075, point 7). */

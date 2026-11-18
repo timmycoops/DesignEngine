@@ -686,12 +686,12 @@ pub async fn solids_table(objects: Vec<ObjectId>, state: State<'_, AppState>) ->
 
 /// A reserves table's tree of levels (decision 0075): every node with how many leaves are under it.
 #[tauri::command]
-pub async fn reserves_tree(object: ObjectId, state: State<'_, AppState>) -> Result<zd_commands::reserves_view::TreeNode, String> {
+pub async fn reserves_tree(object: ObjectId, when: Option<std::collections::BTreeMap<String, String>>, state: State<'_, AppState>) -> Result<zd_commands::reserves_view::TreeNode, String> {
     let app = state.app.clone();
     blocking(move || {
         let app = app.lock().unwrap();
         match &app.session.project().object(object).ok_or("no such object")?.body {
-            zd_core::Body::Table(t) => Ok(zd_commands::reserves_view::tree(t)),
+            zd_core::Body::Table(t) => Ok(zd_commands::reserves_view::tree_where(t, &when.unwrap_or_default())),
             _ => Err("not a table".to_string()),
         }
     })
@@ -701,13 +701,29 @@ pub async fn reserves_tree(object: ObjectId, state: State<'_, AppState>) -> Resu
 /// A reserves table's node broken down (decision 0075): its fields down the side, its total and children across, each
 /// child in `open` followed by its own.
 #[tauri::command]
-pub async fn reserves_breakdown(object: ObjectId, node: Vec<String>, open: Vec<Vec<String>>, leaves: Option<bool>, state: State<'_, AppState>) -> Result<zd_commands::reserves_view::Breakdown, String> {
+pub async fn reserves_breakdown(object: ObjectId, node: Vec<String>, open: Vec<Vec<String>>, leaves: Option<bool>, when: Option<std::collections::BTreeMap<String, String>>, state: State<'_, AppState>) -> Result<zd_commands::reserves_view::Breakdown, String> {
+    let app = state.app.clone();
+    let when = when.unwrap_or_default();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        match &app.session.project().object(object).ok_or("no such object")?.body {
+            zd_core::Body::Table(t) if leaves == Some(true) => zd_commands::reserves_view::breakdown_leaves_where(t, &node, &when),
+            zd_core::Body::Table(t) => zd_commands::reserves_view::breakdown_where(t, &node, &open, &when),
+            _ => Err("not a table".to_string()),
+        }
+    })
+    .await?
+}
+
+/// A reserves table's leaves as attributes, a leaf a row: their levels' words, what the filter box counts to tick
+/// (decision 0088, workstream 4).
+#[tauri::command]
+pub async fn reserves_filter_rows(object: ObjectId, state: State<'_, AppState>) -> Result<Vec<zd_core::Attributes>, String> {
     let app = state.app.clone();
     blocking(move || {
         let app = app.lock().unwrap();
         match &app.session.project().object(object).ok_or("no such object")?.body {
-            zd_core::Body::Table(t) if leaves == Some(true) => zd_commands::reserves_view::breakdown_leaves(t, &node),
-            zd_core::Body::Table(t) => zd_commands::reserves_view::breakdown(t, &node, &open),
+            zd_core::Body::Table(t) => Ok(zd_commands::reserves_view::filter_rows(t)),
             _ => Err("not a table".to_string()),
         }
     })
