@@ -1,6 +1,9 @@
+import { RotateCw } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
-import { type ColumnSteps, type Dataflow, type ParameterTable, reservesColumn, reservesColumnTrace } from '@/bridge';
+import { type ColumnSteps, type Dataflow, type ParameterTable, reservesColumn, reservesColumnTrace, reservesRerunParams } from '@/bridge';
 import { Select } from '@/design-system/kit';
+import { Button } from '@/design-system/ui/button';
+import { cn } from 'cn';
 import { type Draft, useWorkspace } from '@/workspace/context';
 import type { PanelId } from '@/workspace/panels';
 import { ColumnStepsView } from './ColumnStepsView';
@@ -8,7 +11,7 @@ import { unitWords } from './columnSteps';
 import { DataflowGraph } from './DataflowGraph';
 import { DataflowStrip } from './DataflowStrip';
 import { UnitTable } from './DataflowTables';
-import { beforeAfter } from './dataflowView';
+import { beforeAfter, type RerunRange, rerunOnly } from './dataflowView';
 import { cellSummaries, defaultFocus, type Focus, focusAt, focusOf } from './notebook';
 import { type CellTrace, StepPane } from './StepPane';
 
@@ -67,7 +70,7 @@ const BESIDE: readonly { id: PanelId; title: string }[] = [
 ];
 
 export function DataflowView() {
-  const { summary, notebookOf, openTool, placeBeside, isBeside, drafts } = useWorkspace();
+  const { summary, notebookOf, openTool, placeBeside, isBeside, drafts, runRecord } = useWorkspace();
   // Bumped as a tab is put beside or back, so the buttons say which way they go next.
   const [, setLaidOut] = useState(0);
   const table = useMemo(() => (notebookOf ? (summary?.objects ?? []).find((o) => o.id === notebookOf.table) : undefined), [summary, notebookOf]);
@@ -86,6 +89,9 @@ export function DataflowView() {
   const [picked, setPicked] = useState(0);
   const [graph, setGraph] = useState(false);
   const [all, setAll] = useState(false);
+  // Run again into the table (decision 0085): how much, whether it's running, and what it said.
+  const [range, setRange] = useState<RerunRange>('block');
+  const [rerun, setRerun] = useState<{ running: boolean; said: string | null; refused: boolean }>({ running: false, said: null, refused: false });
 
   // A parameter table or dataflow saved runs the column again: their revisions are part of what's asked.
   const inputsSaved = (summary?.objects ?? [])
@@ -175,6 +181,46 @@ export function DataflowView() {
   }, [wanted]);
   const trace = wanted ? (traces.get(wanted) ?? { state: 'loading' }) : null;
 
+  // The table's blocks in the range run again into it with what's saved: the table's next revision, which the tab and the
+  // Reserves table then show.
+  const runAgain = async () => {
+    if (!table || !saved) return;
+    setRerun({ running: true, said: null, refused: false });
+    try {
+      const only = rerunOnly(saved.column, range);
+      const reply = await runRecord('reserves.run', await reservesRerunParams(table.id, only));
+      const words = only.length ? only.join(' › ') : 'every block';
+      setRerun(reply.error ? { running: false, said: reply.error, refused: true } : { running: false, said: `${words} run again into ${table.name}.`, refused: false });
+    } catch (e) {
+      setRerun({ running: false, said: String(e), refused: true });
+    }
+  };
+  const rangeWords = (r: RerunRange) => {
+    const path = saved?.column ?? [];
+    return r === 'block' ? `block ${path[path.length - 1] ?? ''}` : r === 'strip' ? `strip ${path[path.length - 2] ?? ''}` : 'every block';
+  };
+  const runAgainControls = (
+    <span className="flex items-center gap-1" data-slot="run-again">
+      <Select className="h-6 w-32" aria-label="How much of the table to run again" value={range} onChange={(e) => setRange(e.target.value as RerunRange)}>
+        {(['block', 'strip', 'all'] as const).map((r) => (
+          <option key={r} value={r}>
+            {rangeWords(r)}
+          </option>
+        ))}
+      </Select>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-6 px-2 text-xs"
+        disabled={rerun.running || !saved}
+        onClick={() => void runAgain()}
+        title="Run the reserves dataflow again for these blocks, on what's saved, into this table: their rows replaced, the rest kept, the table's next revision (one undo)"
+      >
+        <RotateCw className={cn('size-3.5', rerun.running && 'animate-spin')} /> {rerun.running ? 'Running…' : 'Run again'}
+      </Button>
+    </span>
+  );
+
   // ← and → step through the strip, away from a box being typed in.
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (!column || e.ctrlKey || e.altKey || e.metaKey) return;
@@ -194,7 +240,7 @@ export function DataflowView() {
           <button
             key={id}
             type="button"
-            className="text-muted-foreground hover:text-foreground hover:underline"
+            className="whitespace-nowrap text-muted-foreground hover:text-foreground hover:underline"
             title={beside ? `Put the ${title} tab back behind the Dataflow tab` : `The ${title} tab beside the Dataflow tab, each with half the room, to read both at once`}
             onClick={() => (placeBeside(id, 'notebook'), setLaidOut((n) => n + 1))}
           >
@@ -254,11 +300,12 @@ export function DataflowView() {
             </Select>
           </label>
         )}
-        <span className="ml-auto flex gap-3">
+        <span className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+          {saved && runAgainControls}
           {column && (
             <button
               type="button"
-              className="text-muted-foreground hover:text-foreground hover:underline"
+              className="whitespace-nowrap text-muted-foreground hover:text-foreground hover:underline"
               data-slot="show-as-graph"
               title={graph ? 'The steps as a strip again' : 'The steps as a graph: the inputs wired to the steps that read them, what each wrote below it'}
               onClick={() => setGraph((g) => !g)}
@@ -270,6 +317,11 @@ export function DataflowView() {
         </span>
       </div>
       {error && <div className="px-2 py-1 text-destructive">{error}</div>}
+      {rerun.said && (
+        <div className={cn('px-2 py-1', rerun.refused ? 'text-destructive' : 'text-ok')} data-slot="run-again-said">
+          {rerun.said}
+        </div>
+      )}
       {!column && !error && <div className="p-3 text-muted-foreground">Running the column…</div>}
       {column?.edited && (
         <div className="px-2 py-1 text-edited" data-slot="notebook-edited">
@@ -296,7 +348,8 @@ export function DataflowView() {
       )}
       {column && column.changed.length > 0 && (
         <div className="px-2 py-1 text-warning" data-slot="column-changed">
-          Run on what's there now: {column.changed.join(', ')} changed since this table was made, so the steps may not give the table's numbers. Run reserves again to bring them together.
+          Run on what's there now: {column.changed.join(', ')} changed since this table's numbers for this block were made, so the steps may not give
+          them. Run again, beside Show as graph, brings them together.
         </div>
       )}
       {column && (

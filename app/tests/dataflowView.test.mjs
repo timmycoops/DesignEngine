@@ -2,7 +2,7 @@
 // the picked step read lit, on a made-up column. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { beforeAfter, inputsOf, matchUnits, stripSteps, tablesRead, volumeShort, writeTip, writesByFolder } from '../src/panels/dataflowView.ts';
+import { beforeAfter, inputsOf, matchUnits, rerunOnly, stripSteps, tablesRead, volumeShort, writeTip, writesByFolder } from '../src/panels/dataflowView.ts';
 
 const unit = (id) => ({ id, horizon: 'U', material: 'coal', seam: 'U', bench: null, joined: [], became: null, section: null, rom: null, values: {} });
 const step = (name, units, more = {}) => ({ step: name, units: units.map(unit), said: [], kind: 'built_in', rule: '', when: {}, source: null, fits: [], reads: [], workings: [], writes: [], ...more });
@@ -182,4 +182,9 @@ test('a unit the saved run has nothing like is marked as made by the edit', () =
   const ba = beforeAfter(run, 1, false, savedRun);
   const row = ba.after.find((r) => r.unit.id === 7);
   assert.ok(row.added && row.cells[0].was === null);
+});
+
+test('Run again takes the block, its strip, or every block (decision 0085)', () => {
+  const column = ['Pit', '5', 'B18'];
+  assert.deepEqual(['block', 'strip', 'all'].map((r) => rerunOnly(column, r)), [['Pit', '5', 'B18'], ['Pit', '5'], []]);
 });

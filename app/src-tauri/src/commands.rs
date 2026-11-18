@@ -732,6 +732,18 @@ pub async fn reserves_column_trace(
     .await?
 }
 
+/// The settings to run a reserves table's blocks under `only` again into it (decision 0085): its own run's, the table and
+/// the run that last wrote it named. Run with `reserves.run`, as any command, one undo.
+#[tauri::command]
+pub async fn reserves_rerun_params(object: ObjectId, only: Vec<String>, state: State<'_, AppState>) -> Result<zd_commands::builtin::RunReservesParams, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        zd_commands::builtin::rerun_params(app.session.project(), app.session.log(), object, &only).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
 /// A dataflow and parameter tables as edited, for a column run on them.
 fn unsaved(dataflow: Option<zd_core::Dataflow>, tables: Option<Vec<(ObjectId, zd_core::ParameterTable)>>) -> zd_commands::builtin::Unsaved {
     zd_commands::builtin::Unsaved {
@@ -848,7 +860,7 @@ pub async fn formula_trace(content: zd_core::Dataflow, step: String, solid: Obje
         let picked = project.object(solid).ok_or("the picked solid isn't in the project")?;
         let blocks: Vec<ObjectId> = project.objects().filter(|o| o.layer == picked.layer && matches!(o.body, zd_core::Body::Solid(_))).map(|o| o.id).collect();
         let model = project.objects().find(|o| matches!(o.body, zd_core::Body::SeamModel(_))).map(|o| o.id).ok_or("the project has no seam model to put the column in order")?;
-        let p = zd_commands::builtin::RunReservesParams { dataflow: ObjectId::new(), blocks, model: Some(model), stack: Vec::new(), layer: "trace".into(), parameters: None, name: String::new() };
+        let p = zd_commands::builtin::RunReservesParams { dataflow: ObjectId::new(), blocks, model: Some(model), stack: Vec::new(), layer: "trace".into(), parameters: None, name: String::new(), table: None, only: Vec::new(), previous: None };
         let get = |id: ObjectId| project.object(id).cloned().ok_or(zd_commands::CommandError::MissingObject(id));
         zd_commands::builtin::formula_trace(&get, &std::sync::Arc::new(content), &p, &step, solid).map_err(|e| e.to_string())
     })
