@@ -95,6 +95,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "string.delete_vertex",
             "string.drape",
             "string.extend",
+            "string.fillet",
             "string.filter",
             "string.import",
             "string.insert_vertex",

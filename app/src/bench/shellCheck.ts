@@ -1008,6 +1008,8 @@ export async function checkShell(
     const mark = headOf('builder')?.querySelector<HTMLButtonElement>('[data-slot="panel-head-more"]');
     mark?.focus();
     await settle();
+    // A tooltip opens on its own delay: waited for, not read after one pause (this check failed now and then on that).
+    for (let k = 0; k < 20 && !document.querySelector('[data-slot="tooltip-content"]'); k++) await wait(100);
     const tip = document.querySelector('[data-slot="tooltip-content"]')?.textContent ?? '';
     mark?.blur();
     await settle();

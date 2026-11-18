@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, Object, ObjectId, ObjectKind, Polyline};
 use zd_geom::{
-    Corner, GeomError, Keep, OffsetSide, branching_ends, drape_string, extend_string, filter_string, grade_string, join_pieces, join_strings, offset_string, plan_crossings, redraw_stretch, smooth_string,
+    Corner, GeomError, Keep, OffsetSide, branching_ends, drape_string, extend_string, fillet_string, filter_string, grade_string, join_pieces, join_strings, offset_string, plan_crossings, redraw_stretch, smooth_string,
     split_string, split_string_at, trim_string, triangulate_grid,
 };
 
@@ -1363,6 +1363,73 @@ impl Command for SmoothString {
             let smoothed = smooth_string(line, p.spacing).map_err(|e| CommandError::Invalid(e.to_string()))?;
             let message = format!("smoothed at {} m: {} vertices, was {}", p.spacing, smoothed.vertices.len(), line.vertices.len());
             Ok((smoothed, Some(Note::info(message))))
+        })
+    }
+}
+
+/// `string.fillet` (String tools plan, workstream 2, decision 0083): every corner of each string picked turning more
+/// than `angle` degrees in plan rounded to `radius` metres, a vertex every `spacing` metres along each arc, heights graded
+/// evenly through it from the legs' own. A corner whose legs can't hold the radius takes the biggest they can, and the
+/// run says which and what it got. A new revision of each string; one with no corner past the angle is left as it was.
+pub struct FilletString;
+
+fn default_fillet_angle() -> f64 {
+    10.0
+}
+
+fn default_fillet_spacing() -> f64 {
+    2.0
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilletStringParams {
+    /// The string, or `strings` for several as one run (decision 0078).
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
+    pub radius: f64,
+    /// Corners turning more than this, in degrees, are rounded; 10 unless given.
+    #[serde(default = "default_fillet_angle")]
+    pub angle: f64,
+    /// Metres between vertices along an arc; 2 unless given.
+    #[serde(default = "default_fillet_spacing")]
+    pub spacing: f64,
+}
+
+impl Command for FilletString {
+    type Params = FilletStringParams;
+    const NAME: &'static str = "string.fillet";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Round each string's corners turning more than an angle to a radius",
+            inputs: vec![string_input(), strings_input()],
+            params: vec![
+                Field::new("radius", FieldType::Number { unit: "m" }, "The radius of each corner in plan"),
+                Field::new("angle", FieldType::Number { unit: "deg" }, "Corners turning more than this are rounded (10 unless given)"),
+                Field::new("spacing", FieldType::Number { unit: "m" }, "Metres between vertices along an arc (2 unless given)"),
+            ],
+            outputs: vec![],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let picked = picked(p.string, &p.strings)?;
+        let words = format!("corners over {}° rounded at {} m", p.angle, p.radius);
+        edit_each(inputs, &picked, &words, |_, line| {
+            let (round, corners) = fillet_string(line, p.radius, p.angle, p.spacing).map_err(|e| CommandError::Invalid(e.to_string()))?;
+            if corners.is_empty() {
+                return Ok((line.clone(), None));
+            }
+            let tight: Vec<String> = corners.iter().filter(|c| c.tightened).map(|c| format!("vertex {} at {:.2} m", c.vertex + 1, c.radius)).collect();
+            let mut message = format!("{} corner{} rounded at {} m", corners.len(), if corners.len() == 1 { "" } else { "s" }, p.radius);
+            if !tight.is_empty() {
+                message += &format!("; legs too short for it, so the biggest that fits: {}", tight.join(", "));
+            }
+            Ok((round, Some(Note::info(message))))
         })
     }
 }

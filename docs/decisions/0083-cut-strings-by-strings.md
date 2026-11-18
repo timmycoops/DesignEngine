@@ -1,7 +1,7 @@
 # 0083 — Cutting strings by strings: Trim, Extend, Split at a point, Join finished
 
 Status: agreed 17 November 2026 (Tim: "Agree all nine", the String tools plan tab of the Build Plan). This record is
-that plan's workstream 1; the later workstreams add to it as they merge.
+that plan's workstream 1; the later workstreams add to it as they merge: workstream 2, round corners, below.
 
 ## Why
 
@@ -77,3 +77,35 @@ the button, a click on the limit and one on the side to keep, each ending at RL 
 Trim waits lets it go; Extend by one click runs them on to RL 115; Keep both makes a part each; Split at a click puts
 a vertex in at the string's height; Join puts the two back. The shell check passes 59 of 61; its two failures (the
 menus' words and a panel's first control) fail the same way on main's exe.
+
+## Built: workstream 2, round corners
+
+Decision 3 of the plan as picked: a radius and an angle on every string picked.
+
+- **The geometry** (`crates/zd-geom/src/fillet.rs`, `fillet_string`). Every corner turning more than the angle in plan
+  (10° unless given) becomes a circular arc of the radius in plan, tangent to both legs, a vertex every so many metres
+  along it (2 m unless given). Where the arc meets each leg it takes the leg's own height there, and the heights are
+  graded evenly along the arc between. A leg between two corners being rounded lends each half its length; a leg to an
+  open string's end lends all of it; a corner whose legs can't hold the radius takes the biggest they can
+  (radius = what they lend ÷ tan(turn ÷ 2)). Corners turning less, a reversal, and an open string's ends stay as they
+  are; a closed string's every corner is a corner.
+- **The command** (`string.fillet`): `string` or `strings`, `radius`, `angle`, `spacing`; one run and one undo for every
+  string picked, a string with no corner past the angle left as it was and said, and each string's corners said with
+  any that took a smaller radius ("vertex 2 at 3.00 m").
+- **The tool**: Round corners on the Strings row, after Join; its panel takes the radius, the angle and the spacing;
+  it adds a workflow step from the panel, as the other Strings tools.
+- **More lights.** With Round corners the Strings row is a tool longer, and at the bench's width Reverse now folds into
+  More. A tool in use folded into More left nothing lit; More is now lit and says which ("More: Reverse"), carrying the
+  tool's key as its button would.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_right_angle_rounded_at_20_m` (zd-geom) | a right-angled corner with 100 m legs at mine coordinates: every arc vertex 20 m from the centre (80 m along each leg, 20 m in); plan length 2 × 80 + 10π = 191.42 m from 200 m; the arc starting at RL 108 on the leg climbing 10 %, ending at RL 110 on the flat, graded up between | 1e-9 m on the circle and heights; 2 cm on the length |
+| `a_corner_too_tight_takes_the_biggest_radius_that_fits` | the same corner with 10 m legs asked for 20 m: 10 m, said | 1e-9 m |
+| `a_closed_square_and_corners_under_the_angle` | a 100 m square, closed, at 10 m: four corners each 10 m; plan length 4 × (80 + 16 × 2 × 10 × sin(π/64)) = 382.81 m, its arcs' chords at a metre; a 5° corner left at 10°; two vertices as they were | 1e-9 m |
+| `round_corners_on_fifteen_toes_in_one_run` (zd-commands) | fifteen toes' 8.5° corners left at 10°, rounded at 5° in one run (each arc starting 50 × tan(4.27°) = 3.73 m back), one undo for all; a 3 m dog-leg asked for 20 m given 3 m and said | 1e-9 m |
+| `zd-app --bench --string-edits` | the dog-leg picked by a click, 20 m typed, the button pressed: 19 vertices, every arc vertex 20 m from the centre, the ends kept; one Ctrl+Z puts it back | 1e-6 m |
+| `zd-app --bench --shell` | Reverse chosen in the Strings panel lights More as "More: Reverse" | |
+
+Timings (release, made-up toes of 40 vertices, every corner over 1° rounded at 20 m): 15 strings 0.1 ms, 690 vertices
+after; 150 strings 0.9 ms, 6,900 vertices after.
