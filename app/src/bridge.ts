@@ -627,6 +627,8 @@ export const reservesTree = (object: string) => invoke<ReservesNode>('reserves_t
 export const reservesBreakdown = (object: string, node: string[], open: string[][], leaves = false) => invoke<Breakdown>('reserves_breakdown', { object, node, open, leaves });
 /** The solids a reserves table's node was made from, to select. */
 export const reservesSolids = (object: string, node: string[]) => invoke<string[]>('reserves_solids', { object, node });
+/** A reserves field's value for each block solid of the table's case, its leaf's or its block's (decision 0075, point 7). */
+export const reservesFieldValues = (object: string, column: string, byBlock: boolean) => invoke<[string, number][]>('reserves_field_values', { object, column, byBlock });
 /** Where a solid sits in a reserves table, or null if it isn't in it. */
 export const reservesNodeOf = (object: string, solid: string) => invoke<string[] | null>('reserves_node_of', { object, solid });
 

@@ -377,6 +377,44 @@ pub fn children_sum(b: &Breakdown, field: &str) -> Option<(f64, f64)> {
     Some((total, children))
 }
 
+/// A field's value for each solid of a reserves table's case (decision 0075, point 7: blocks coloured by any reserves
+/// field): the leaf the solid is on, matched by its levels' words as Select its solids matches it; or with `by_block`, the
+/// block it's in (the levels above the seam), the field added up by its own rule over the block's leaves. A solid on no
+/// leaf of the table, or whose leaf or block has no value, is left out.
+pub fn values_by_solid<'a>(table: &Table, attributes: &Attributes, column: &str, by_block: bool, solids: impl IntoIterator<Item = (zd_core::ObjectId, &'a Attributes)>) -> Vec<(zd_core::ObjectId, f64)> {
+    let levels = levels(table);
+    let defaults = level_defaults(attributes);
+    let case = case_of(attributes);
+    let depth = if by_block { levels.iter().position(|l| l.eq_ignore_ascii_case("seam")).unwrap_or(levels.len().saturating_sub(1)) } else { levels.len() };
+    // Each row's words for the levels, cut to the depth: the leaves under each key.
+    let words: Vec<&Vec<Option<String>>> = levels
+        .iter()
+        .filter_map(|l| match table.column(l).map(|c| &c.values) {
+            Some(ColumnValues::Text(v)) => Some(v),
+            _ => None,
+        })
+        .collect();
+    let mut under: std::collections::HashMap<Vec<String>, Vec<usize>> = std::collections::HashMap::new();
+    for row in 0..table.rows() {
+        let key: Vec<String> = words.iter().take(depth).map(|v| v[row].clone().unwrap_or_default()).collect();
+        under.entry(key).or_default().push(row);
+    }
+    let mut value: std::collections::HashMap<Vec<String>, Option<f64>> = std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for (id, a) in solids {
+        if case_of(a) != case {
+            continue;
+        }
+        let mut key = leaf_of(&levels, &defaults, a);
+        key.truncate(depth);
+        let found = *value.entry(key.clone()).or_insert_with(|| under.get(&key).and_then(|rows| add_up_column(table, column, rows)));
+        if let Some(x) = found.filter(|x| x.is_finite()) {
+            out.push((id, x));
+        }
+    }
+    out
+}
+
 /// A block's geometry, which doesn't add up across leaves as a field does (decision 0086).
 #[derive(Clone, Copy, PartialEq)]
 enum Geometry {
@@ -592,5 +630,38 @@ mod tests {
         assert_eq!((at("width", &[0, 1, 2]), at("dip", &[0, 1, 2])), (50.0, 4.0), "B10 its own");
         assert!((at("width", &[0, 1, 2, 3]) - (50.0 * 1_200.0 + 30.0 * 3_000.0) / 4_200.0).abs() < 1e-12);
         assert!((at("dip", &[0, 1, 2, 3]) - (4.0 * 1_200.0 + 8.0 * 3_000.0) / 4_200.0).abs() < 1e-12);
+    }
+
+    /// Blocks coloured by a reserves field (decision 0075, point 7): each solid its leaf's ROM coal volume (B10's U bench
+    /// 100 1,000 m³, bench 110 3,000 m³, its L 2,000 m³), or by block B10's 6,000 m³ for every solid of B10; a solid of
+    /// another case, or on no leaf of the table, left out.
+    #[test]
+    fn a_field_s_value_for_each_solid_by_leaf_or_by_block() {
+        let t = table();
+        let attrs = |block: &str, seam: &str, bench: &str, case: &str| -> Attributes {
+            let mut a: Attributes = [("strip".to_string(), AttrValue::Number(1.0)), ("block".to_string(), AttrValue::Text(block.into())), ("seam".to_string(), AttrValue::Text(seam.into()))].into_iter().collect();
+            if !bench.is_empty() {
+                a.insert("bench".into(), AttrValue::Text(bench.into()));
+            }
+            if !case.is_empty() {
+                a.insert("case".into(), AttrValue::Text(case.into()));
+            }
+            a
+        };
+        let ids: Vec<zd_core::ObjectId> = (0..6).map(|_| zd_core::ObjectId::new()).collect();
+        let solids = [
+            attrs("B10", "U", "100", ""),
+            attrs("B10", "U", "110", ""),
+            attrs("B10", "L", "", ""),
+            attrs("B2", "U", "", ""),
+            attrs("B10", "U", "100", "Pit shell"),
+            attrs("B99", "U", "", ""),
+        ];
+        let table_attrs = Attributes::new();
+        let given = || ids.iter().copied().zip(solids.iter());
+        let by_leaf = values_by_solid(&t, &table_attrs, "ROM\\Coal\\volume", false, given());
+        assert_eq!(by_leaf, [(ids[0], 1_000.0), (ids[1], 3_000.0), (ids[2], 2_000.0), (ids[3], 4_000.0)]);
+        let by_block = values_by_solid(&t, &table_attrs, "ROM\\Coal\\volume", true, given());
+        assert_eq!(by_block, [(ids[0], 6_000.0), (ids[1], 6_000.0), (ids[2], 6_000.0), (ids[3], 4_000.0)]);
     }
 }

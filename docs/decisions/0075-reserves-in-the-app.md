@@ -2,7 +2,8 @@
 
 Status: agreed 15 November 2026. Tim agreed the eight decisions on the Build Plan's "Reserves app plan" tab, with the
 table turned so the fields run down the side ("I like the look of that better for what I want"). This is workstream 5 of
-0070. Workstreams 5a, 5b and 5d are built here; 5c and 5e follow.
+0070. Workstreams 5a, 5b, 5d and 5e are built here; 5c follows (most of it is now the Dataflow tab, 0084, with Run
+again, 0085).
 
 ## Why
 
@@ -175,3 +176,24 @@ Only the view turned: the table, its CSV and the engine still hold a row a rule,
 `copyTextTurned` in `parametersGrid.ts`). Known answers: the grid test pastes a turned block into the made-up table
 (rows added, a cell the block leaves out kept) and copies two of its rows turned; the app check finds the demo's filters
 and parameters down the side and a column a row of its table.
+
+## Built: 5e, blocks coloured by a reserves field
+
+Point 7. Tim picked it on 18 November, after the reserves fields plan (0086) was done.
+
+- **From a field's row** in the Reserves table tab (Breakdown): a palette button on the row colours the blocks in the
+  view by that field, each solid its own leaf's value.
+- **The values** (`reserves_view::values_by_solid`, Tauri `reserves_field_values`): every solid of the table's case is
+  matched to its leaf by its levels' words, as Select its solids matches it; by leaf it takes that leaf's value, by block
+  the field added up by its own rule over its block's leaves (the levels above the seam), so a ratio or a quality reads
+  right over the block. A solid on no leaf of the table, or whose leaf or block has no value, isn't coloured.
+- **The colours** are the view's own block colouring (decision 0061, workstream 6, made for a seam grid's values): bands
+  across the values' range on the RL ramp. Colouring by a seam grid and by a reserves field replace each other.
+- **The legend** in the view: which field, its range on the ramp, By block, how many solids took a colour and from which
+  table, and Stop, which puts the layers' colours back. The table run again (0085) colours them again with its new
+  values.
+
+| Test | Known answer |
+|---|---|
+| `a_field_s_value_for_each_solid_by_leaf_or_by_block` (reserves_view) | by leaf, B10's U benches 1,000 and 3,000 m³ and its L 2,000 m³, B2's U 4,000 m³; by block, every solid of B10 6,000 m³; a solid of another case and one on no leaf left out |
+| `zd-app --bench --dataflow` (16 Nov demo, every block run again) | ROM coal volume from its row: 810 solids coloured by leaf (the coal), all 1,815 by block; the legend names the field; Stop takes it away |

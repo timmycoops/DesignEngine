@@ -895,6 +895,22 @@ pub async fn reserves_solids(object: ObjectId, node: Vec<String>, state: State<'
     .await?
 }
 
+/// A reserves field's value for each block solid of the table's case (decision 0075, point 7): its leaf's, or with
+/// `by_block` its block's, added up by the field's rule. For colouring the blocks in the view.
+#[tauri::command]
+pub async fn reserves_field_values(object: ObjectId, column: String, by_block: bool, state: State<'_, AppState>) -> Result<Vec<(ObjectId, f64)>, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let table = project.object(object).ok_or("no such object")?;
+        let zd_core::Body::Table(t) = &table.body else { return Err("not a table".to_string()) };
+        let solids = project.objects().filter(|o| matches!(o.body, zd_core::Body::Solid(_))).map(|o| (o.id, &o.attributes));
+        Ok(zd_commands::reserves_view::values_by_solid(t, &table.attributes, &column, by_block, solids))
+    })
+    .await?
+}
+
 /// Where a solid sits in a reserves table (decision 0075): its levels' words as the run placed it, if it's of the table's
 /// case and the table holds that leaf.
 #[tauri::command]

@@ -22,6 +22,7 @@ import {
   type ProjectSummary,
   projectSummary,
   redo,
+  reservesFieldValues,
   type RunRecord,
   type WorkflowRecord,
   type ModelLinks,
@@ -45,7 +46,7 @@ import {
   withLooks,
 } from './bridge';
 import { runChecks } from './bench/runChecks';
-import { valueBands } from './viewport/bands';
+import { type Bands, valueBands } from './viewport/bands';
 import { lookAt, RunGoing, ShowNote } from './design-system/kit';
 import { TooltipProvider } from './design-system/ui/tooltip';
 import { type DeswikChoice, DeswikImportDialog, type ImportSource, type PickableLayer } from './panels/DeswikImportDialog';
@@ -59,7 +60,7 @@ import { RoadLayer } from './viewport/roads';
 import { type Mode, StringLayer } from './viewport/strings';
 import { typing } from './viewport/camera';
 import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Viewport';
-import { type AddingTo, type Draft, type NotebookEdit, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
+import { type AddingTo, type Draft, type FieldColour, type NotebookEdit, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
 import { ALL_PANELS_KEY, isBeside, type PanelId, placeBeside, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
 import { inUse, type Tool, type ToolAction, type ToolNeeds } from './tools';
 import { listenForChords } from './workspace/chords';
@@ -187,10 +188,50 @@ export default function App() {
   /** The blocks coloured by a seam grid's value, as `model#horizon#variable`. */
   const [blocksColouredBy, setBlocksColouredBy] = useState<string | null>(null);
 
+  /** The reserves field the blocks are coloured by (decision 0075, point 7). */
+  const [fieldColoured, setFieldColoured] = useState<(FieldColour & { bands: Bands; count: number }) | null>(null);
+  const colourBlocksByField = useCallback((field: FieldColour | null) => {
+    if (!field) {
+      setFieldColoured(null);
+      void syncRef.current?.colourBlocks(null);
+      return;
+    }
+    void reservesFieldValues(field.table, field.column, field.byBlock)
+      .then(async (pairs) => {
+        if (pairs.length === 0) {
+          setStatus({ text: `No block has a ${field.column}: run the reserves (or Run again) so the table holds it`, error: true });
+          return;
+        }
+        const values = pairs.map(([, v]) => v);
+        const bands = valueBands(Math.min(...values), Math.max(...values));
+        await syncRef.current?.colourBlocks({ values: new Map(pairs), bands });
+        // One colouring of the blocks at a time: a seam grid's goes.
+        setBlocksColouredBy(null);
+        setFieldColoured({ ...field, bands, count: pairs.length });
+        setStatus({ text: `${pairs.length} blocks coloured by ${field.column}, ${field.byBlock ? "each its block's" : 'each its own leaf'}` });
+      })
+      .catch((e) => setStatus({ text: String(e), error: true }));
+  }, []);
+
+  // The table run again (a revision): the blocks take its new values.
+  const colouredTable = fieldColoured ? summary?.objects.find((o) => o.id === fieldColoured.table) : undefined;
+  const colouredRevision = colouredTable?.revision ?? null;
+  const colouredAt = useRef<number | null>(null);
+  useEffect(() => {
+    if (!fieldColoured) {
+      colouredAt.current = null;
+      return;
+    }
+    if (colouredRevision === null) return colourBlocksByField(null);
+    if (colouredAt.current !== null && colouredAt.current !== colouredRevision) colourBlocksByField({ table: fieldColoured.table, column: fieldColoured.column, byBlock: fieldColoured.byBlock });
+    colouredAt.current = colouredRevision;
+  }, [colouredRevision, fieldColoured?.table]);
+
   const showSeamHorizon = useCallback((id: string, code: string, variable: string | null = null) => {
     setStatus({ text: `Reading the grids for ${code}…` });
     // Blocks coloured by another grid's bands would no longer read against what's shown.
     setBlocksColouredBy(null);
+    setFieldColoured(null);
     void syncRef.current?.colourBlocks(null);
     void syncRef.current?.showHorizon(id, code, variable).then(() => setStatus({ text: `Showing ${code}, coloured by ${variable ?? 'thickness'}` }));
   }, []);
@@ -207,6 +248,7 @@ export default function App() {
       .then(async (pairs) => {
         await syncRef.current?.colourBlocks({ values: new Map(pairs), bands: valueBands(r.value_range[0], r.value_range[1]) });
         setBlocksColouredBy(`${view.id}#${r.horizon}#${variable}`);
+        setFieldColoured(null);
         setStatus({
           text:
             pairs.length === 0
@@ -1119,6 +1161,8 @@ export default function App() {
       seamViews,
       colourSeamBlocks,
       blocksColouredBy,
+      colourBlocksByField,
+      fieldColoured,
       sectionOpen,
       lineWeight: (layer) => sectionRef.current?.weightOf(layer) ?? null,
       setLineWeight: (layer, px) => sectionRef.current?.setWeight(layer, px),
@@ -1143,7 +1187,7 @@ export default function App() {
       drawing: mode === 'draw',
       typeVertex,
     }),
-    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook, drafts],
+    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook, drafts],
   );
 
   /** The view's own tools, for the bar on the view (decision 0076). The keys below do the same. */

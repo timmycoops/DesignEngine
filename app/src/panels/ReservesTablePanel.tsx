@@ -1,8 +1,8 @@
-import { ChevronDown, ChevronRight, Columns3, Download, MousePointerSquareDashed } from 'lucide-react';
+import { ChevronDown, ChevronRight, Columns3, Download, MousePointerSquareDashed, Palette } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { ReservesBalance } from './ReservesBalanceView';
 import { type Breakdown, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, type ReservesNode } from '@/bridge';
-import { Choice, Field, Select } from '@/design-system/kit';
+import { Choice, Field, IconButton, Select } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
@@ -72,7 +72,7 @@ function writeFolded(folded: Set<string>) {
 const keyOf = (path: string[]) => path.join('\u0001');
 
 export function ReservesTable() {
-  const { summary, selection, setSelection, openNotebook, followInNotebook } = useWorkspace();
+  const { summary, selection, setSelection, openNotebook, followInNotebook, colourBlocksByField, fieldColoured } = useWorkspace();
   const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table'), [summary]);
   const [tableId, setTableId] = useState<string | null>(null);
   // A table picked anywhere is the one shown.
@@ -329,9 +329,22 @@ export function ReservesTable() {
                       ))}
                     </tr>
                   ) : (
-                    <tr key={r.key} data-field={r.key} className="hover:bg-accent/40">
+                    <tr key={r.key} data-field={r.key} className="group hover:bg-accent/40">
                       <td className={cn('sticky left-0 bg-card py-px pr-2', r.depth === 1 ? 'pl-5' : 'pl-8')}>
                         {r.label} <span className="text-muted-foreground">{unitLabel(r.unit)}</span>
+                        {table && (
+                          <IconButton
+                            label={`Colour the blocks in the view by ${r.key}, each its own leaf's value (decision 0075, point 7)`}
+                            data-slot="colour-by"
+                            className={cn(
+                              'ml-1 size-5 align-middle opacity-0 group-hover:opacity-100 focus:opacity-100',
+                              fieldColoured?.table === table.id && fieldColoured.column === r.key && 'text-primary opacity-100',
+                            )}
+                            onClick={() => colourBlocksByField({ table: table.id, column: r.key, byBlock: false })}
+                          >
+                            <Palette />
+                          </IconButton>
+                        )}
                       </td>
                       {breakdown.columns.map((c, i) => (
                         <td
