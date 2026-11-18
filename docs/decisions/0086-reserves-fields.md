@@ -1,9 +1,9 @@
 # 0086 — The reserves table's fields: clean coal under ROM, a balance of coal and waste, ratios and an audit
 
 Status: agreed 18 November 2026. Tim agreed the seven decisions on the Build Plan's "Reserves fields plan" tab ("Agree
-all 7"), the balance as he refined it. Workstreams 1 (the folders and the summary) and 2 (the Reserves table tab:
-thickness, area and length shown, the Balance view) are built here; 3 (dip, width and centroid in the starter dataflow)
-is to come.
+all 7"), the balance as he refined it. All three workstreams are built here: 1 (the folders and the summary), 2 (the Reserves
+table tab: thickness, area and length shown, the Balance view) and 3 (dip, width and centroid in the starter
+dataflow).
 
 ## Why
 
@@ -88,3 +88,24 @@ In `crates/zd-commands/src/builtin/reserves_run.rs`:
 | `reservesBalance.test.mjs` (2) | the 4c column's dilution balance a row a stage: to coal +1,760 coal and −1,760 waste, not mined −19,500 waste and total, Imported plus the moves each part's ROM, every check holding; 5 m³ off of 120,000 said; a table without a balance |
 | `dataflowView.test.mjs` | ROM 100 + 50 m³ with clean coal 90 m³ in the tip: the tag 150 m³ |
 | `zd-app --bench --dataflow` (16 Nov demo) | every block run again: the Reserves table tab's Balance shows Imported, Insitu, ROM and Scheduled with its three checks holding; Fields shows the coal's thickness (11.84 m on the node shown) |
+
+## Built: workstream 3, dip, width and centroid
+
+solid.measure already wrote each block's width, dip (degrees) and centroid onto it; the starter dataflow
+(`dataflow_starter`) now reads them as fields beside volume, thickness, area and length:
+
+- `width`, a length, and `dip`, each a column's largest within a run (a seam's benches share one dip). In the table
+  they're written with no add-up rule, as thickness is, and the Reserves table tab takes a block's own and, above a
+  block, the mean weighted by each block's area (`reserves_view`, as thickness).
+- `centroid_x`, `centroid_y` and `centroid_z`, by volume: the centroid of the pieces together.
+- Units: dip in degrees (shown °), the centroid in metres. They're with the detail fields (Every field).
+
+A dataflow made before this keeps its fields: add them in the Parameters tab's dataflow (from the block attributes
+`width`, `dip`, `centroid_x`, `centroid_y`, `centroid_z`), or make a new starter.
+
+| Test | Known answer |
+|---|---|
+| `the_starter_reads_each_block_s_width_dip_and_centroid` | width and dip by largest, the centroid by volume, each from the block attribute of its name |
+| `a_run_writes_each_block_s_width_dip_and_centroid` (the 4c column, 100 m by 50 m, flat) | OB 50 m wide, dip 0°, centroid at RL 45; A's centroid at RL 39; dip and width with no add-up rule, the centroid by volume; units deg and m |
+| `width_and_dip_are_a_block_s_own_area_weighted_above` (reserves_view) | B10 50 m and 4° its own; the strip (50 × 1,200 + 30 × 3,000) ÷ 4,200 = 35.71 m and (4 × 1,200 + 8 × 3,000) ÷ 4,200 = 6.857° |
+| `reservesTable.test.mjs` | `deg` shown °; width, dip and centroid detail fields, thickness not |

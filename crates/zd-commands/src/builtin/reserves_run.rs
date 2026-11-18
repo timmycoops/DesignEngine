@@ -2522,6 +2522,15 @@ fn unit_of_kind(kind: FieldKind) -> &'static str {
     }
 }
 
+/// A field's unit in the table: its kind's, and a block's dip in degrees and its centroid in metres (decision 0086).
+fn unit_of_field(f: &zd_reserves::Field) -> &'static str {
+    match f.name.as_str() {
+        "dip" => "deg",
+        "centroid_x" | "centroid_y" | "centroid_z" => "m",
+        _ => unit_of_kind(f.kind),
+    }
+}
+
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
@@ -2613,8 +2622,9 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
             }
             // A thickness adds down a column and an area is a column's largest; across leaves neither adds up, so a
             // summary shows neither.
-            let across = if matches!(f.kind, FieldKind::Thickness | FieldKind::Area | FieldKind::Length) { None } else { Some(f.add_up.clone()) };
-            push(TableColumn { name: format!("{folder}\\{}", f.name), unit: unit_of_kind(f.kind).to_string(), add_up: across, values: zd_core::ColumnValues::Number(value(i)) });
+            // So is a block's dip (decision 0086): the Reserves table tab adds these up by block.
+            let across = if matches!(f.kind, FieldKind::Thickness | FieldKind::Area | FieldKind::Length) || f.name == "dip" { None } else { Some(f.add_up.clone()) };
+            push(TableColumn { name: format!("{folder}\\{}", f.name), unit: unit_of_field(f).to_string(), add_up: across, values: zd_core::ColumnValues::Number(value(i)) });
         }
         let tonnes = |d: usize| added.iter().map(|a| a.as_ref().map(|a| a[v] * a[d]).filter(|x| x.is_finite())).collect::<Vec<_>>();
         let named = |n: &str| format!("{folder}\\{n}");
@@ -3017,6 +3027,13 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
         field("thickness", FieldKind::Thickness, AddUp::Sum, measured("true_thickness")),
         field("area", FieldKind::Area, AddUp::Max, measured("plan_area")),
         field("length", FieldKind::Length, AddUp::Max, measured("length")),
+        // The rest of a block's geometry as solid.measure wrote it (decision 0086): its width and dip, a column's largest
+        // (a seam's benches share one dip), and its centroid, by volume.
+        field("width", FieldKind::Length, AddUp::Max, measured("width")),
+        field("dip", FieldKind::Other, AddUp::Max, measured("dip")),
+        field("centroid_x", FieldKind::Other, AddUp::Volume, measured("centroid_x")),
+        field("centroid_y", FieldKind::Other, AddUp::Volume, measured("centroid_y")),
+        field("centroid_z", FieldKind::Other, AddUp::Volume, measured("centroid_z")),
         field(&density, FieldKind::Density, AddUp::Volume, FieldSource::Attribute { attribute: density.clone() }),
     ];
     for q in &qualities {
