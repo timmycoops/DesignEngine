@@ -35,6 +35,7 @@ fn main() {
             commands::check_links,
             commands::set_layer_visible,
             commands::set_layer_filter,
+            commands::reserves_filter_rows,
             commands::layer_attributes,
             commands::set_objects_visible,
             commands::set_looks,

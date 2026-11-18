@@ -1,8 +1,9 @@
 import { ChevronDown, ChevronRight, Columns3, Download, MousePointerSquareDashed, Palette } from 'lucide-react';
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { ReservesBalance } from './ReservesBalanceView';
-import { type Breakdown, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, type ReservesNode } from '@/bridge';
-import { Choice, Field, IconButton, ObjectMenu, Select } from '@/design-system/kit';
+import { type Breakdown, reservesBreakdown, reservesFilterRows, reservesNodeOf, reservesSolids, reservesTree, type ReservesNode } from '@/bridge';
+import { type When, whenText } from '@/filters';
+import { Choice, Field, FilterInput, IconButton, ObjectMenu, Select } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
@@ -99,32 +100,50 @@ export function ReservesTable() {
   };
   const [said, setSaid] = useState<string | null>(null);
   const [view, setView] = useState<View>('fields');
+  /** The leaves the table adds up (decision 0088, workstream 4): levels to tick, fields typed. */
+  const [when, setWhen] = useState<When>({});
+  const [filterRows, setFilterRows] = useState<Record<string, boolean | number | string>[]>([]);
+  const whenKey = whenText(when);
 
   const tableKey = table ? `${table.id}@${table.revision}` : '';
   useEffect(() => {
     let live = true;
-    setTree(null);
-    setNode([]);
-    setOpen([]);
-    setLeaf(null);
+    setFilterRows([]);
+    if (table) void reservesFilterRows(table.id).then((rows) => live && setFilterRows(rows));
+    return () => {
+      live = false;
+    };
+  }, [tableKey]);
+  // Another table starts at All; the same one filtered keeps the node shown and what's open.
+  const treeOf = useRef('');
+  useEffect(() => {
+    let live = true;
+    const fresh = treeOf.current !== tableKey;
+    treeOf.current = tableKey;
+    if (fresh) {
+      setTree(null);
+      setNode([]);
+      setOpen([]);
+      setLeaf(null);
+    }
     if (!table) return;
-    void reservesTree(table.id).then((t) => {
+    void reservesTree(table.id, when).then((t) => {
       if (!live) return;
       setTree(t);
       // The first level open, and its first node shown, so there's something to read.
-      setExpanded(new Set([keyOf([]), ...t.children.slice(0, 1).map((c) => keyOf(c.path))]));
+      if (fresh) setExpanded(new Set([keyOf([]), ...t.children.slice(0, 1).map((c) => keyOf(c.path))]));
     });
     return () => {
       live = false;
     };
-    // `tableKey` stands for the table and its revision.
-  }, [tableKey]);
+    // `tableKey` stands for the table and its revision, `whenKey` for the filter.
+  }, [tableKey, whenKey]);
 
   const openKey = open.map(keyOf).join('|');
   useEffect(() => {
     let live = true;
     if (!table) return setBreakdown(null);
-    void reservesBreakdown(table.id, node, open, across === 'leaves')
+    void reservesBreakdown(table.id, node, open, across === 'leaves', when)
       .then((b) => {
         if (!live) return;
         setBreakdown(b);
@@ -134,7 +153,7 @@ export function ReservesTable() {
     return () => {
       live = false;
     };
-  }, [tableKey, keyOf(node), openKey, across]);
+  }, [tableKey, keyOf(node), openKey, across, whenKey]);
 
   // Across leaves, a line where the leaf's parent changes (one seam's benches from the next).
   const groupStarts = useMemo(() => {
@@ -202,7 +221,7 @@ export function ReservesTable() {
     if (!breakdown || !table) return;
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([breakdownCsv(breakdown)], { type: 'text/csv' }));
-    link.download = `${table.name}${node.length ? ` ${node.join(' ')}` : ''}.csv`;
+    link.download = `${table.name}${node.length ? ` ${node.join(' ')}` : ''}${whenKey ? ` where ${whenKey.replace(/[\\/:*?"<>|]/g, ' ')}` : ''}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
   };
@@ -238,6 +257,15 @@ export function ReservesTable() {
         </div>
       </div>
       <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-1" data-slot="reserves-filter">
+          <span className="shrink-0 text-muted-foreground">Leaves</span>
+          <FilterInput rows={filterRows} value={when} onChange={setWhen} label="Filter the leaves" className="max-w-md flex-1" />
+          {tree && (
+            <span className="shrink-0 text-muted-foreground tabular-nums" data-slot="reserves-filter-kept">
+              {Object.keys(when).length > 0 ? `${fmt(tree.leaves)} of ${fmt(filterRows.length)} leaves` : `${fmt(tree.leaves)} leaves`}
+            </span>
+          )}
+        </div>
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1">
           <span className="flex items-center gap-1" aria-label="Node shown">
             {crumbs.map((c, i) => (

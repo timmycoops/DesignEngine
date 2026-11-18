@@ -1,6 +1,6 @@
 # 0088 — One filter by attributes and measures
 
-Date: 2026-11-18 · Status: accepted (Tim, 2026-11-18: decisions 1 to 9 of the Filtering plan) · Workstreams 1 to 3
+Date: 2026-11-18 · Status: accepted (Tim, 2026-11-18: decisions 1 to 9 of the Filtering plan) · Workstreams 1 to 4
 built; the later workstreams add to this record as they merge
 
 ## Why
@@ -118,6 +118,24 @@ triangles each): `seam: U; strip: 1-5` set in 23.7 ms, 36,400 left out; `volume:
 run (one renamed) with the volume filter on, 33.1 ms; cleared, 0.1 ms. A filter by volume reads every solid's volume
 again on every run, which grows with a solid's triangles; PIT B's run about 116 a solid.
 
+## Built: workstream 4, the tables
+
+- **The Objects table** took the filter box in workstream 2.
+- **The Reserves table** filters its leaves (`reserves_view::rows_fitting`, `tree_where`, `breakdown_where`,
+  `breakdown_leaves_where`). A filter names the table's columns: a level (`seam: U`, `strip: 1-5`, `bench: >=110`), or a
+  field by its folders (`Insitu\Coal\thickness: <0.3`, `ROM\Coal\ash: <15`), the name's case aside, a number compared
+  as one. The tree holds only the nodes some leaf fits under; the node's total and every column add up only the leaves
+  kept, each field by its own rule (a sum, by volume, by mass, a ratio of sums), so a filtered node is what the run's
+  add-up gives for them, and the Balance view, Across leaves and CSV follow it. A node nothing under fits is empty, not
+  refused. The box sits over the breakdown, with the levels' words to tick (`reserves_filter_rows`) and fields typed, and
+  says how many leaves of how many it keeps; changing it keeps the node shown and what's open. A CSV saved filtered is
+  named with its filter.
+
+| Test | Known answer |
+|---|---|
+| `a_filter_keeps_the_leaves_that_fit_and_each_field_adds_up_over_them` (zd-commands) | strip 1 of B2 and B10 (10,000 m³): `seam: U` (or `Seam: u`) keeps three leaves, 8,000 m³, B2 and B10 4,000 each; B10's RD over U by volume 1.55; the tree's B10 holds U alone; `bench: >=110` keeps one; `ROM\Coal\ash: <15` keeps ash 10 and 12, B2 with none out; `seam: !U` B10's L alone; B2 filtered to L is empty, not refused; Across leaves keeps U's three in stack order; the rows to tick are the levels' words, no fields |
+| `zd-app --bench --dataflow` | on the demo pit's Base table at block 3 B1 (64,519.3 m³ of ROM coal over U, M and L): `seam: U` typed adds up U alone, 10,840.1 m³, its one column, 381 of 1,436 leaves kept, at the same node; cleared, its three seams again |
+
 ## Known limits
 
 - **Measures cost a pass over the object** each time one is read: fine for a step's input or a table, to be timed when a
@@ -128,3 +146,5 @@ again on every run, which grows with a solid's triangles; PIT B's run about 116 
 - **The filter box on a layer counts attributes only.** Measures are typed (`volume: <500`, `length: >170`); they're not
   listed to tick, as each object's is its own.
 - **Isolate is kept for the session**, not saved: a project opened again shows the layers as they were left.
+- **Select its solids, Open its column and colouring by a field don't follow the Reserves table's filter.** They take
+  the node's solids and block as the run made them.

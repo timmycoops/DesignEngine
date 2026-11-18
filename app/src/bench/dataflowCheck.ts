@@ -142,6 +142,27 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
   const cells = (field: string) => [...(panel()?.querySelectorAll<HTMLElement>(`tr[data-field="${CSS.escape(field)}"] td`) ?? [])].slice(1).map((c) => c.textContent ?? '');
   expect("its ROM coal is the engine's: 64,519.3 m³, its seams 10,840.1, 18,541.2 and 35,137.9", JSON.stringify(cells('ROM\\Coal\\volume')) === JSON.stringify(['64,519.3', '10,840.1', '18,541.2', '35,137.9']), cells('ROM\\Coal\\volume'));
   expect('each stage folder is a group of rows', ['Imported', 'Insitu', 'Loss', 'Dilution', 'ROM', 'Scheduled', 'Clean coal'].every((f) => !!panel()?.querySelector(`tr[data-folder="${f}"]`)));
+  // The leaves filtered (decision 0088, workstream 4): seam U alone, B1's total is its U, 10,840.1 m³, its only column.
+  const filterBox = () => panel()?.querySelector<HTMLInputElement>('input[aria-label="Filter the leaves"]') ?? null;
+  const typeFilter = async (text: string) => {
+    const box = filterBox();
+    if (!box) return;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(box, text);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    await wait(600);
+  };
+  await typeFilter('seam: U');
+  for (let k = 0; k < 50 && heads().length !== 2; k++) await wait(100);
+  const kept = panel()?.querySelector('[data-slot="reserves-filter-kept"]')?.textContent ?? '';
+  const filteredHeads = heads();
+  const filteredCoal = cells('ROM\\Coal\\volume');
+  await typeFilter('');
+  for (let k = 0; k < 50 && heads().length < 4; k++) await wait(100);
+  expect(
+    "seam: U in the leaves' filter: B1 adds up its U alone, 10,840.1 m³, its one column; cleared, its three seams again",
+    !!filterBox() && JSON.stringify(filteredHeads) === JSON.stringify(['Pit > 3 > B1', 'Pit > 3 > B1 > U']) && filteredCoal[0] === '10,840.1' && kept.includes(' of ') && heads().length === 4,
+    { found: !!filterBox(), heads: filteredHeads, coal: filteredCoal, kept, back: heads().length },
+  );
   // A seam opened to its benches.
   panel()?.querySelector<HTMLButtonElement>('button[aria-label="Open U"]')?.click();
   for (let k = 0; k < 50 && heads().length < 8; k++) await wait(100);

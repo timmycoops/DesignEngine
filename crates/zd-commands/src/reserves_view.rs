@@ -6,9 +6,10 @@
 //! smallest), the weight found beside it, so a parent here is what the run's own add-up gives.
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 
 use serde::Serialize;
-use zd_core::{AttrValue, Attributes, BASE_CASE, ColumnValues, Table, attribute_ci, attribute_word};
+use zd_core::{AttrValue, Attributes, BASE_CASE, ColumnValues, Table, attribute_ci, attribute_word, list_fits};
 use zd_reserves::AddUp;
 
 /// The table's level columns, top down: its text columns outside any folder, but the case it's of.
@@ -60,10 +61,65 @@ pub struct TreeNode {
 /// The table's tree: the root (every leaf) with a child per value of the first level, and so on down. A leaf with no value
 /// at a level sits under "(none)" there.
 pub fn tree(table: &Table) -> TreeNode {
+    tree_where(table, &BTreeMap::new())
+}
+
+/// The tree of the leaves a filter keeps (decision 0088, workstream 4): a node no leaf under it fits has no place in it.
+pub fn tree_where(table: &Table, when: &BTreeMap<String, String>) -> TreeNode {
     let levels = levels(table);
     let words = level_words(table, &levels);
-    let all: Vec<usize> = (0..table.rows()).collect();
-    node(&levels, &words, Vec::new(), "All".into(), &all)
+    node(&levels, &words, Vec::new(), "All".into(), &rows_fitting(table, when))
+}
+
+/// The leaves (rows) a filter keeps, in order: every leaf with no filter. A filter names the table's columns as attributes,
+/// a level (`seam: U, M`, `strip: 1-5`) or a field by its folders (`Insitu\Coal\thickness: <0.3`), the name's case aside;
+/// a number is compared as one, words as words, as every filter reads them (decision 0088). A column the table hasn't is
+/// a value that isn't there.
+pub fn rows_fitting(table: &Table, when: &BTreeMap<String, String>) -> Vec<usize> {
+    let lists: Vec<(Option<&ColumnValues>, &str)> = when
+        .iter()
+        .filter(|(_, list)| !list.trim().is_empty())
+        .map(|(key, list)| {
+            let column = table.column(key).or_else(|| table.columns.iter().find(|c| c.name.eq_ignore_ascii_case(key)));
+            (column.map(|c| &c.values), list.as_str())
+        })
+        .collect();
+    (0..table.rows())
+        .filter(|&i| {
+            lists.iter().all(|(values, list)| {
+                let value = match values {
+                    Some(ColumnValues::Number(v)) => v[i].filter(|x| x.is_finite()).map(AttrValue::Number),
+                    Some(ColumnValues::Text(v)) => v[i].clone().filter(|w| !w.is_empty()).map(AttrValue::Text),
+                    None => None,
+                };
+                list_fits(list, value.as_ref())
+            })
+        })
+        .collect()
+}
+
+/// Each leaf's levels and other words as attributes, a leaf a row: what the filter box counts to tick. Fields are typed.
+pub fn filter_rows(table: &Table) -> Vec<Attributes> {
+    let words: Vec<(&str, &Vec<Option<String>>)> = table
+        .columns
+        .iter()
+        .filter(|c| !c.name.contains('\\'))
+        .filter_map(|c| match &c.values {
+            ColumnValues::Text(v) => Some((c.name.as_str(), v)),
+            ColumnValues::Number(_) => None,
+        })
+        .collect();
+    (0..table.rows())
+        .map(|i| {
+            let mut row = Attributes::new();
+            for (name, v) in &words {
+                if let Some(w) = v[i].as_deref().filter(|w| !w.is_empty()) {
+                    row.insert(name.to_string(), AttrValue::Text(w.to_string()));
+                }
+            }
+            row
+        })
+        .collect()
 }
 
 fn node(levels: &[String], words: &[Vec<String>], path: Vec<String>, label: String, leaves: &[usize]) -> TreeNode {
@@ -201,7 +257,13 @@ pub const LEAVES_SHOWN: usize = 500;
 /// the node's total then its children, each child in `open` followed by its own children. A field with no value in any
 /// column is left out.
 pub fn breakdown(table: &Table, node: &[String], open: &[Vec<String>]) -> Result<Breakdown, String> {
-    let (levels, words, mut columns, mut sets) = node_column(table, node)?;
+    breakdown_where(table, node, open, &BTreeMap::new())
+}
+
+/// [`breakdown`] over the leaves a filter keeps (decision 0088, workstream 4): the node's total and every column add up
+/// only those, each by its own rule, so a filtered node is what the run's add-up gives for them.
+pub fn breakdown_where(table: &Table, node: &[String], open: &[Vec<String>], when: &BTreeMap<String, String>) -> Result<Breakdown, String> {
+    let (levels, words, mut columns, mut sets) = node_column(table, node, when)?;
     let under = sets[0].clone();
     add_children(&levels, &words, node, &under, 1, open, &mut columns, &mut sets);
     let fields = fields_of(table, &sets);
@@ -213,7 +275,12 @@ pub fn breakdown(table: &Table, node: &[String], open: &[Vec<String>]) -> Result
 /// next seam's, with no subtotals between. A leaf is labelled by its words below the node ("U 130" under a block). Past
 /// `LEAVES_SHOWN` leaves the rest are counted in `hidden`, not shown.
 pub fn breakdown_leaves(table: &Table, node: &[String]) -> Result<Breakdown, String> {
-    let (levels, words, mut columns, mut sets) = node_column(table, node)?;
+    breakdown_leaves_where(table, node, &BTreeMap::new())
+}
+
+/// [`breakdown_leaves`] over the leaves a filter keeps.
+pub fn breakdown_leaves_where(table: &Table, node: &[String], when: &BTreeMap<String, String>) -> Result<Breakdown, String> {
+    let (levels, words, mut columns, mut sets) = node_column(table, node, when)?;
     let under = sets[0].clone();
     let mut leaves = Vec::new();
     leaves_in_order(&levels, &words, node, &under, &mut leaves);
@@ -244,15 +311,17 @@ fn leaves_in_order(levels: &[String], words: &[Vec<String>], path: &[String], ro
 
 type NodeColumn = (Vec<String>, Vec<Vec<String>>, Vec<BreakdownColumn>, Vec<Vec<usize>>);
 
-/// The table's levels and words, and the node's own column (its total) with its rows.
-fn node_column(table: &Table, node: &[String]) -> Result<NodeColumn, String> {
+/// The table's levels and words, and the node's own column (its total) with its rows: those under it a filter keeps. A
+/// node a filter keeps nothing of is empty, not refused.
+fn node_column(table: &Table, node: &[String], when: &BTreeMap<String, String>) -> Result<NodeColumn, String> {
     let levels = levels(table);
     if node.len() > levels.len() {
         return Err(format!("the table has {} levels, not {}", levels.len(), node.len()));
     }
     let words = level_words(table, &levels);
-    let under: Vec<usize> = (0..table.rows()).filter(|&i| node.iter().enumerate().all(|(d, w)| words[d][i] == *w)).collect();
-    if under.is_empty() && table.rows() > 0 {
+    let kept = rows_fitting(table, when);
+    let under: Vec<usize> = kept.iter().copied().filter(|&i| node.iter().enumerate().all(|(d, w)| words[d][i] == *w)).collect();
+    if under.is_empty() && table.rows() > 0 && kept.len() == table.rows() {
         return Err(format!("no leaves under {}", node.join(" > ")));
     }
     let columns = vec![BreakdownColumn {
@@ -583,6 +652,36 @@ mod tests {
         assert_eq!(b10.columns.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["B10", "U 110", "U 100", "L"]);
         let leaf = breakdown_leaves(&table(), &["1".into(), "B10".into(), "L".into(), "".into()]).unwrap();
         assert_eq!(leaf.columns.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["(none)", "(none)"]);
+    }
+
+    /// A filter on the leaves (decision 0088, workstream 4): `seam: U` keeps B10's two U benches and B2's U, 8,000 m³ of
+    /// the strip's 10,000; the tree holds U alone; B10's RD is then U's by volume, 1.55. `bench: >=110` keeps one leaf;
+    /// a field compared, `ROM\Coal\ash: <15`, keeps the two leaves of ash under 15 (10 and 12), and B2 with none is out;
+    /// `seam: !U` is B10's L alone. A filter keeping nothing under a node gives it empty, not refused.
+    #[test]
+    fn a_filter_keeps_the_leaves_that_fit_and_each_field_adds_up_over_them() {
+        let when = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<BTreeMap<_, _>>();
+        let table = table();
+        assert_eq!(rows_fitting(&table, &when(&[])), [0, 1, 2, 3]);
+        assert_eq!(rows_fitting(&table, &when(&[("Seam", "u")])), [0, 1, 3], "the name's case and the word's aside");
+        let strip = breakdown_where(&table, &["1".into()], &[], &when(&[("seam", "U")])).unwrap();
+        let f = |b: &Breakdown, name: &str| b.fields.iter().find(|f| f.column == name).unwrap().values.clone();
+        assert_eq!(f(&strip, "ROM\\Coal\\volume"), [Some(8_000.0), Some(4_000.0), Some(4_000.0)], "the strip, B2 and B10 over U alone");
+        assert_eq!(strip.columns[0].leaves, 3);
+        let b10 = breakdown_where(&table, &["1".into(), "B10".into()], &[], &when(&[("seam", "U")])).unwrap();
+        assert!((f(&b10, "ROM\\Coal\\rd")[0].unwrap() - 1.55).abs() < 1e-12, "RD by volume over the U leaves");
+        let tree = tree_where(&table, &when(&[("seam", "U")]));
+        assert_eq!((tree.leaves, tree.children[0].children[1].children.len()), (3, 1), "B10 holds U alone");
+        assert_eq!(rows_fitting(&table, &when(&[("bench", ">=110")])), [1]);
+        assert_eq!(rows_fitting(&table, &when(&[("ROM\\Coal\\ash", "<15")])), [0, 2], "B2 has no ash: a value that isn't there");
+        assert_eq!(rows_fitting(&table, &when(&[("seam", "!U")])), [2]);
+        let none = breakdown_where(&table, &["1".into(), "B2".into()], &[], &when(&[("seam", "L")])).unwrap();
+        assert_eq!((none.columns[0].leaves, none.fields.len()), (0, 0), "nothing kept under B2: empty, not refused");
+        let leaves = breakdown_leaves_where(&table, &["1".into()], &when(&[("seam", "U")])).unwrap();
+        assert_eq!(leaves.columns.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["1", "B2 U", "B10 U 110", "B10 U 100"]);
+        let rows = filter_rows(&table);
+        assert_eq!((rows.len(), rows[2].get("seam"), rows[2].get("bench")), (4, Some(&AttrValue::Text("L".into())), None), "levels' words, a blank left out; no fields");
+        assert!(rows[0].keys().all(|k| !k.contains('\\')));
     }
 
     #[test]
