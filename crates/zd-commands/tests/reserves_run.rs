@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use zd_commands::builtin::{RunReservesParams, StepKind, Unsaved, column_trace, reserves_preview, table_column};
+use zd_commands::builtin::{RunReservesParams, StepKind, Unsaved, column_trace, rerun_params, reserves_preview, table_column};
 use zd_commands::{Code, Command, CommandError, CommandSpec, Inputs, Outcome, Registry, RunRecord, Session, Severity};
 use zd_core::{Attributes, Body, Change, ChangeKind, ColumnValues, ObjectId, Table};
 
@@ -1805,4 +1805,72 @@ fn in_situ_writes_each_unit_s_tonnes_for_the_notebook() {
             assert!(lines[0].sum.ends_with("rd_is 1.3717 t/m³"), "{}", lines[0].sum);
         }
     }
+}
+
+// Decision 0085: a reserves table's blocks run again into it, a block, a strip or every block.
+
+/// Waste RD 2.3 run into the table, then the assumptions saved with waste RD 2.5. B1 run again: the same table, its next
+/// revision, as many rows; B1's waste written at 2.5 and B2's left at 2.3. B1's column is read against the run again
+/// (nothing changed since) and B2's against the first run (the assumptions changed since). Every block run again: B2 at
+/// 2.5 too, and nothing changed for either. An undo puts B2 back at 2.3.
+#[test]
+fn a_table_s_blocks_run_again_into_it_a_block_or_all() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let csv = |rd: f64| format!("when material,rd (t/m3),mad (%),mis (%),mrom (%),underburden_thickness (m)\nwaste,{rd},,,,0\ncoal,,3,8,10,\n");
+    let flow = moist_flow(&mut s, &csv(2.3));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let before = table(&s, id);
+    let revision = s.project().object(id).unwrap().revision;
+    let Body::Dataflow(d) = &s.project().object(flow).unwrap().body else { panic!("a dataflow") };
+    let assumptions = d.parameters[0];
+    s.run("parameters.save", json!({ "table": assumptions, "name": "assumptions", "csv": csv(2.5) })).unwrap();
+
+    // The waste RDs written for a block, by its rows.
+    let waste_rd = |t: &Table, block: &str| -> Vec<f64> {
+        let blocks = texts(t, "block");
+        (0..t.rows()).filter(|&r| blocks[r].as_deref() == Some(block)).filter_map(|r| value(t, r, &at(WASTE, "rd"))).collect()
+    };
+    let column = |block: &str| ["Pit", "3", block].map(String::from).to_vec();
+    let changed = |s: &Session, block: &str| table_column(s.project(), s.log(), id, &column(block), &Unsaved::default()).unwrap().changed;
+    assert!(waste_rd(&before, "B1").iter().chain(&waste_rd(&before, "B2")).all(|&rd| close(rd, 2.3)));
+    assert_eq!(changed(&s, "B2"), ["assumptions"], "the assumptions changed since the table was made");
+
+    let p = rerun_params(s.project(), s.log(), id, &column("B1")).unwrap();
+    let again = s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+    assert!(created(&again).is_empty(), "no new table");
+    let after = table(&s, id);
+    assert_eq!(s.project().object(id).unwrap().revision, revision + 1);
+    assert_eq!(after.rows(), before.rows());
+    let (b1, b2) = (waste_rd(&after, "B1"), waste_rd(&after, "B2"));
+    assert!(!b1.is_empty() && b1.iter().all(|&rd| close(rd, 2.5)), "{b1:?}");
+    assert!(!b2.is_empty() && b2.iter().all(|&rd| close(rd, 2.3)), "{b2:?}");
+    assert!(changed(&s, "B1").is_empty(), "B1 read against the run again: {:?}", changed(&s, "B1"));
+    assert_eq!(changed(&s, "B2"), ["assumptions"], "B2 still read against the first run");
+    // A seam of B1 is read against B1's run too.
+    let seam = ["Pit", "3", "B1", "U"].map(String::from).to_vec();
+    assert!(table_column(s.project(), s.log(), id, &seam, &Unsaved::default()).unwrap().changed.is_empty());
+
+    let p = rerun_params(s.project(), s.log(), id, &[]).unwrap();
+    s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+    let all = table(&s, id);
+    assert!(waste_rd(&all, "B2").iter().all(|&rd| close(rd, 2.5)) && changed(&s, "B2").is_empty() && changed(&s, "B1").is_empty());
+    assert_eq!(all.rows(), before.rows());
+
+    s.undo().unwrap();
+    assert!(waste_rd(&table(&s, id), "B2").iter().all(|&rd| close(rd, 2.3)), "an undo puts the table back");
+}
+
+/// A block that isn't in the table's case, or under nothing there, is refused with what was asked.
+#[test]
+fn running_again_under_nothing_is_refused() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = moist_flow(&mut s, "when material,rd (t/m3),mad (%),mis (%),mrom (%),underburden_thickness (m)\nwaste,2.3,,,,0\ncoal,,3,8,10,\n");
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let p = rerun_params(s.project(), s.log(), id, &["Pit".to_string(), "9".to_string()]).unwrap();
+    let err = s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap_err();
+    assert!(err.to_string().contains("no blocks of case Base under Pit › 9 to run again into"), "{err}");
 }

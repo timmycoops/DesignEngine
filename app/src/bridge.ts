@@ -740,6 +740,11 @@ export interface ColumnSteps {
 export const reservesColumn = (object: string, node: string[], dataflow: Dataflow | null = null, tables: [string, ParameterTable][] = []) =>
   invoke<ColumnSteps>('reserves_column', { object, node, dataflow, tables: tables.length ? tables : null });
 /** A notebook cell's formula traced on one unit (by id), the column run up to it: `step` 1 is the first after the column as input. */
+/**
+ * The settings to run a reserves table's blocks under `only` again into it (decision 0085): its own run's, read from the
+ * log; [] every block, a column's path its block, the path less its last word its strip. Run them with `reserves.run`.
+ */
+export const reservesRerunParams = (object: string, only: string[]) => invoke<Record<string, unknown>>('reserves_rerun_params', { object, only });
 export const reservesColumnTrace = (object: string, node: string[], step: number, unit: number, dataflow: Dataflow | null = null, tables: [string, ParameterTable][] = []) =>
   invoke<FormulaTrace>('reserves_column_trace', { object, node, step, unit, dataflow, tables: tables.length ? tables : null });
 

@@ -262,3 +262,9 @@ export function matchUnits(live: ColumnUnit[], saved: ColumnUnit[]): Map<number,
   }
   return out;
 }
+
+/** How much of a reserves table Run again runs: this column's block, its strip, or every block (decision 0085). */
+export type RerunRange = 'block' | 'strip' | 'all';
+
+/** The start of the column paths a range runs again: the block's path, its strip's (the path less its block), or none. */
+export const rerunOnly = (column: string[], range: RerunRange): string[] => (range === 'block' ? [...column] : range === 'strip' ? column.slice(0, -1) : []);

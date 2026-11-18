@@ -169,6 +169,7 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
   await checkParameters(summary, api, expect, show, picture);
   await checkFormulas(expect, picture, api);
   await checkLive(summary, expect, picture);
+  await checkRunAgain(summary, expect, show, picture);
   await checkBeside(expect, api);
   return { ...results, failures };
 }
@@ -579,6 +580,53 @@ async function checkLive(summary: ProjectSummary, expect: Expect, picture: Pictu
   for (let k = 0; k < 100 && (banner() || movedWrite() || nb()?.querySelector('[data-slot="live-why"]')); k++) await wait(50);
   const left = { banner: banner().slice(0, 60), write: movedWrite()?.textContent ?? null, why: nb()?.querySelector('[data-slot="live-why"]')?.textContent?.slice(0, 120) ?? null, moved: nb()?.querySelectorAll('td[data-moved="yes"]').length ?? 0 };
   expect('Discard puts the saved run back', !left.banner && !left.write && !left.why && left.moved === 0, left);
+  pressIn(nb(), 'Parameters as a tab');
+  await wait(300);
+}
+
+/**
+ * Run again (decision 0085), the Parameters beside the Dataflow tab on 3_B1: the coal's roof dilution doubled and saved,
+ * the block's column says the assumptions changed since the table's numbers for it were made; Run again for the block
+ * runs it into the table, the same table at its next revision, and the warning goes. Two undos put the demo back.
+ */
+async function checkRunAgain(summary: ProjectSummary, expect: Expect, show: Show, picture: Picture) {
+  const assumptions = summary.objects.find((o) => o.name === 'Reserves assumptions');
+  if (!assumptions) return;
+  const nb = () => document.querySelector<HTMLElement>('[data-tool-panel="notebook"]');
+  const params = () => document.querySelector<HTMLElement>('[data-tool-panel="parameters"]');
+  const pressIn = (root: HTMLElement | null, label: string) => [...(root?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent?.trim() === label)?.click();
+  pressIn(nb(), 'Parameters beside');
+  for (let k = 0; k < 50 && !params(); k++) await wait(100);
+  params()?.querySelector<HTMLButtonElement>('[data-slot="parameters-item"][data-name="Reserves assumptions"]')?.click();
+  for (let k = 0; k < 50 && !params()?.querySelector('[data-slot="parameters-grid"]'); k++) await wait(100);
+  const details = await objectDetails(assumptions.id);
+  if (details.measures.kind !== 'parameter_table') return;
+  const t = details.measures.parameters;
+  const ri = t.rows.findIndex((r) => typeof r.values.roof_dilution === 'number' && r.values.roof_dilution > 0);
+  const input = params()?.querySelector<HTMLInputElement>(`input[aria-label="Column ${ri + 1}, roof_dilution"]`) ?? null;
+  if (!input) return expect('the assumptions give a roof dilution to edit', false);
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, String((t.rows[ri].values.roof_dilution as number) * 2));
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  await wait(400);
+  pressIn(params(), 'Save');
+  const changed = () => nb()?.querySelector('[data-slot="column-changed"]')?.textContent ?? '';
+  for (let k = 0; k < 100 && !changed().includes('Reserves assumptions'); k++) await wait(100);
+  const warned = changed().includes('Reserves assumptions');
+  const tableName = summary.objects.find((o) => o.kind === 'table' && o.name.includes('Base'))?.name ?? '';
+  const range = nb()?.querySelector<HTMLSelectElement>('[data-slot="run-again"] select');
+  const said = () => nb()?.querySelector('[data-slot="run-again-said"]')?.textContent ?? '';
+  pressIn(nb(), 'Run again');
+  for (let k = 0; k < 200 && !said(); k++) await wait(100);
+  for (let k = 0; k < 100 && changed(); k++) await wait(100);
+  expect(
+    'a parameter saved warns the block\'s numbers were made before it; Run again for the block runs it into the table and the warning goes',
+    warned && range?.value === 'block' && said().endsWith(`run again into ${tableName}.`) && !changed(),
+    { warned, range: range?.value, said: said().slice(0, 120), left: changed().slice(0, 80) },
+  );
+  if (picture) await picture('run-again');
+  await show(await undo());
+  await show(await undo());
+  await wait(300);
   pressIn(nb(), 'Parameters as a tab');
   await wait(300);
 }

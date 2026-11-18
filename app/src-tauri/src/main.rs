@@ -46,6 +46,7 @@ fn main() {
             commands::reserves_solids,
             commands::reserves_column,
             commands::reserves_column_trace,
+            commands::reserves_rerun_params,
             commands::parameters_picked,
             commands::parameters_check,
             commands::dataflow_check,
