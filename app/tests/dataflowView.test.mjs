@@ -188,3 +188,12 @@ test('Run again takes the block, its strip, or every block (decision 0085)', () 
   const column = ['Pit', '5', 'B18'];
   assert.deepEqual(['block', 'strip', 'all'].map((r) => rerunOnly(column, r)), [['Pit', '5', 'B18'], ['Pit', '5'], []]);
 });
+
+test("ROM's clean coal is in the tip but not added to ROM's volume again (decision 0086)", () => {
+  const rom = writesByFolder([
+    { folder: 'ROM\\Coal', units: [1], volume: 100 },
+    { folder: 'ROM\\Clean coal', units: [1], volume: 90 },
+    { folder: 'ROM\\Waste', units: [2], volume: 50 },
+  ]);
+  assert.deepEqual(rom.map((w) => [w.folder, w.volume, w.parts.length]), [['ROM', 150, 3]]);
+});

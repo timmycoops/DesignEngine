@@ -1,9 +1,9 @@
 # 0086 — The reserves table's fields: clean coal under ROM, a balance of coal and waste, ratios and an audit
 
 Status: agreed 18 November 2026. Tim agreed the seven decisions on the Build Plan's "Reserves fields plan" tab ("Agree
-all 7"), the balance as he refined it. Workstream 1 (the folders and the summary) is built here; 2 (the Reserves table
-tab: thickness, area and length shown, the Balance view) and 3 (dip, width and centroid in the starter dataflow) are to
-come.
+all 7"), the balance as he refined it. Workstreams 1 (the folders and the summary) and 2 (the Reserves table tab:
+thickness, area and length shown, the Balance view) are built here; 3 (dip, width and centroid in the starter dataflow)
+is to come.
 
 ## Why
 
@@ -63,3 +63,28 @@ In `crates/zd-commands/src/builtin/reserves_run.rs`:
 | `the_balance_without_an_in_situ_step_checks_rom_against_what_came_in` | no in situ columns; ROM coal 26,760 m³; checks zero |
 | `clean_coal_is_under_rom_and_the_summary_has_ratios_and_an_audit` | `ROM\Clean coal` and no `Clean coal\`; no qualities on ROM or Scheduled waste; the strip ratio over the column its ROM waste over its ROM coal tonnes, the yield its clean coal over its ROM coal tonnes; the audit's run in UTC, "Reserves r1", "assumptions r1" |
 | `zd-app --bench --dataflow` (16 Nov demo) | every block run again into the Base table: 90 blocks, each with its checks, the worst 2e-16 of its volume; the balance's ROM coal each block's ROM coal |
+
+## Built: workstream 2, the Reserves table tab
+
+- **Thickness, area and length shown** (`reserves_view::add_up_geometry`). They're written with no add-up rule, and the
+  tab added every value up by its rule, so they never showed. Now a column of one of them with no rule adds up by
+  block, the leaves' words for the levels above the seam (as `Dataflow::column_levels` splits them): a leaf its own;
+  thickness added down a block (its benches and seams stacked) and averaged over blocks by each block's largest area;
+  area each block's largest, added over blocks; length a block's own, none above it. Thickness is each block's own true
+  thickness added up, not volume over area, so a leaf and its parents are on one measure; the decision's own words
+  (benches stacked add up, blocks beside each other an area-weighted mean) are what it does.
+- **The Balance view** (`ReservesBalanceView.tsx`, `reservesBalance.ts`): Fields or Balance in the tab's header. Balance
+  shows the picked node's `Summary\Balance` a row a stage (Imported, Insitu, ROM, Scheduled; coal, waste and total
+  across), the moves between them signed as they change each part (small volume set aside, coal to waste, waste to
+  coal, from outside, not mined; a move none made is left out), and after each stage its check, green where coal, waste
+  and the total each hold within 1e-6 of the imported volume and red where one doesn't. A table made before this says to
+  run it again.
+- **The Dataflow strip's ROM tag** no longer adds ROM's clean coal, a part of its coal, to ROM's volume again; the tip
+  still lists it.
+
+| Test | Known answer |
+|---|---|
+| `thickness_area_and_length_add_up_by_block` (reserves_view) | a bench its own, 2 m; U in B10, benches 3 m and 2 m stacked, 5 m over 1,000 m²; B10, every seam stacked, 6.5 m over 1,200 m², length 100 m; the strip (6.5 × 1,200 + 4 × 3,000) ÷ 4,200 = 4.714 m over 4,200 m², no length |
+| `reservesBalance.test.mjs` (2) | the 4c column's dilution balance a row a stage: to coal +1,760 coal and −1,760 waste, not mined −19,500 waste and total, Imported plus the moves each part's ROM, every check holding; 5 m³ off of 120,000 said; a table without a balance |
+| `dataflowView.test.mjs` | ROM 100 + 50 m³ with clean coal 90 m³ in the tip: the tag 150 m³ |
+| `zd-app --bench --dataflow` (16 Nov demo) | every block run again: the Reserves table tab's Balance shows Imported, Insitu, ROM and Scheduled with its three checks holding; Fields shows the coal's thickness (11.84 m on the node shown) |

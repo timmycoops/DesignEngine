@@ -169,7 +169,7 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
   await checkParameters(summary, api, expect, show, picture);
   await checkFormulas(expect, picture, api);
   await checkLive(summary, expect, picture);
-  await checkRunAgain(summary, expect, show, picture);
+  await checkRunAgain(summary, expect, show, picture, api);
   await checkBeside(expect, api);
   return { ...results, failures };
 }
@@ -590,7 +590,7 @@ async function checkLive(summary: ProjectSummary, expect: Expect, picture: Pictu
  * runs it into the table, the same table at its next revision, and the warning goes. Every block run again then
  * balances (decision 0086). Three undos put the demo back.
  */
-async function checkRunAgain(summary: ProjectSummary, expect: Expect, show: Show, picture: Picture) {
+async function checkRunAgain(summary: ProjectSummary, expect: Expect, show: Show, picture: Picture, api: DockviewApi) {
   const assumptions = summary.objects.find((o) => o.name === 'Reserves assumptions');
   if (!assumptions) return;
   const nb = () => document.querySelector<HTMLElement>('[data-tool-panel="notebook"]');
@@ -662,6 +662,39 @@ async function checkRunAgain(summary: ProjectSummary, expect: Expect, show: Show
     said().startsWith('every block run again') && blocks > 0 && without === 0 && worst < 1e-9 && romMatches,
     { blocks, without, worst, romMatches },
   );
+  // The Reserves table tab beside (decision 0086, workstream 2): the node's Balance, a row a stage with every check
+  // holding; and back on Breakdown, its coal's thickness shown, which no add-up rule gave before.
+  const rt = () => document.querySelector<HTMLElement>('[data-tool-panel="reserves-table"]');
+  pressIn(nb(), 'Reserves table beside');
+  for (let k = 0; k < 50 && !rt(); k++) await wait(100);
+  pressIn(rt(), 'Balance');
+  const balance = () => rt()?.querySelector<HTMLElement>('[data-slot="reserves-balance"]') ?? null;
+  for (let k = 0; k < 50 && !balance()?.querySelector('tr[data-kind]'); k++) await wait(100);
+  const stages = [...(balance()?.querySelectorAll<HTMLElement>('tr[data-kind="stage"]') ?? [])].map((r) => r.dataset.balance);
+  const checks = [...(balance()?.querySelectorAll<HTMLElement>('tr[data-kind="check"]') ?? [])].map((r) => r.dataset.holds);
+  // The Reserves table as a tab again, in front, filling the window for its picture.
+  pressIn(nb(), 'Reserves table as a tab');
+  await wait(300);
+  showPanel(api, 'restable');
+  await wait(300);
+  if (picture) {
+    document.querySelector<HTMLButtonElement>('button[aria-label="Fill the window"]')?.click();
+    await wait(300);
+    await picture('reserves-balance');
+    document.querySelector<HTMLButtonElement>('button[aria-label="Put the tables back under the view"]')?.click();
+    await wait(300);
+  }
+  pressIn(rt(), 'Breakdown');
+  for (let k = 0; k < 50 && !rt()?.querySelector('[data-slot="reserves-breakdown"]'); k++) await wait(100);
+  const thick = [...(rt()?.querySelectorAll<HTMLElement>('tr[data-field]') ?? [])].find((r) => r.dataset.field?.endsWith('Coal\\thickness'));
+  const thickness = thick?.querySelectorAll('td')[1]?.textContent?.trim() ?? '';
+  expect(
+    "the Reserves table tab's Balance shows Imported, Insitu, ROM and Scheduled with every check holding, and Breakdown shows the coal's thickness",
+    JSON.stringify(stages) === JSON.stringify(['imported', 'insitu', 'rom', 'scheduled']) && checks.length === 3 && checks.every((h) => h === 'yes') && thickness !== '',
+    { stages, checks, thickness },
+  );
+  showPanel(api, 'notebook');
+  await wait(300);
   await show(await undo());
   await show(await undo());
   await show(await undo());

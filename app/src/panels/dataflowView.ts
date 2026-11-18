@@ -34,11 +34,13 @@ export function writesByFolder(writes: StepWrite[]): StripWrite[] {
   const out: StripWrite[] = [];
   for (const w of writes) {
     const name = top(w.folder);
+    // ROM's clean coal is a part of its coal (decision 0086): in the tip, not added to the folder's volume again.
+    const volume = w.folder === 'ROM\\Clean coal' ? 0 : w.volume;
     const had = out.find((o) => o.folder === name);
     if (had) {
-      had.volume += w.volume;
+      had.volume += volume;
       had.parts.push(w);
-    } else out.push({ folder: name, volume: w.volume, parts: [w] });
+    } else out.push({ folder: name, volume, parts: [w] });
   }
   return out;
 }
