@@ -2,7 +2,7 @@
 // filter as words, and a filter that's more than ticks turned into the ticks of what it keeps. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isOn, isTicked, readWhen, tick, valuesOf, whenFits, whenText } from '../src/filters.ts';
+import { accept, isOn, isTicked, measuresOf, readWhen, suggest, tick, valuesOf, whenFits, whenText } from '../src/filters.ts';
 
 const rows = [
   { seam: 'U', strip: 3, material: 'coal', volume: 120 },
@@ -10,6 +10,57 @@ const rows = [
   { seam: 'M', strip: 9, material: 'waste' },
   { Seam: 'L', strip: 3 },
 ];
+
+test('suggestions: names where a name is typed, the cuts first, those named elsewhere left out', () => {
+  const values = valuesOf(rows);
+  const at = (text, caret = text.length, names) => suggest(text, caret, values, names);
+  const empty = at('');
+  assert.deepEqual(empty.items.map((i) => i.label), ['strip', 'seam', 'material', 'volume']);
+  assert.deepEqual(empty.items[0], { insert: 'strip: ', label: 'strip', detail: '3 to 10' });
+  assert.equal(empty.items[1].detail, '3 values');
+  assert.deepEqual(at('se').items.map((i) => i.label), ['seam']);
+  assert.deepEqual(at('al').items.map((i) => i.label), ['material'], 'one that holds what is typed');
+  const second = at('seam: U; s');
+  assert.deepEqual(second.items.map((i) => i.label), ['strip'], 'seam is named already');
+  assert.deepEqual([second.from, second.to], [9, 10]);
+  assert.deepEqual(accept('seam: U; s', second, second.items[0]), { text: 'seam: U; strip: ', caret: 16 });
+  // A name changed in front of its colon: only the name goes in.
+  const before = at('sx: 3', 1);
+  assert.deepEqual([before.from, before.to, before.items[0].insert], [0, 2, 'strip']);
+  assert.equal(accept('sx: 3', before, before.items[0]).text, 'strip: 3');
+  // A table's fields, typed and never ticked, offered too; nothing that isn't there.
+  assert.deepEqual(at('ro', 2, ['ROM\\Coal\\ash']).items, [{ insert: 'ROM\\Coal\\ash: ', label: 'ROM\\Coal\\ash', detail: 'type it' }]);
+  // A layer's measures by what's on it; one an attribute already names isn't offered twice.
+  assert.deepEqual(measuresOf(['string']).map((m) => m.key), ['length', 'area', 'rl_min', 'rl_max']);
+  assert.deepEqual(measuresOf(['solid', 'grid']).map((m) => m.key), ['volume', 'rl_min', 'rl_max']);
+  assert.deepEqual(at('vol', 3, measuresOf(['solid'])).items.map((i) => `${i.label} ${i.detail}`), ['volume 120 to 480'], 'the attribute wins');
+  assert.equal(at('zz').hint, 'Nothing here is called zz');
+});
+
+test('suggestions: values after the colon, counted, those in the list already left out, a not kept', () => {
+  const values = valuesOf(rows);
+  const at = (text, caret = text.length, names) => suggest(text, caret, values, names);
+  const seam = at('seam: ');
+  assert.deepEqual(seam.items.map((i) => `${i.label} ${i.detail}`), ['L 1', 'M 1', 'U 2']);
+  assert.deepEqual([seam.from, seam.to], [6, 6]);
+  assert.deepEqual(at('seam: M, ').items.map((i) => i.label), ['L', 'U'], 'M is in the list');
+  const typed = at('seam: M, u');
+  assert.deepEqual(typed.items.map((i) => i.insert), ['U']);
+  assert.deepEqual(accept('seam: M, u', typed, typed.items[0]), { text: 'seam: M, U', caret: 10 });
+  assert.deepEqual(at('Seam: !').items.map((i) => i.insert), ['!L', '!M', '!U'], 'the not kept, the name read case aside');
+  // In the middle: the item the caret is in is replaced up to its comma, the rest kept.
+  const middle = at('seam: m, L; strip: 3', 7);
+  assert.deepEqual([middle.from, middle.to, middle.items.map((i) => i.insert)], [6, 7, ['M']]);
+  assert.equal(accept('seam: m, L; strip: 3', middle, middle.items[0]).text, 'seam: M, L; strip: 3');
+  // Numbers: in order, with their range and the ways to type one; a range or comparison typed offers nothing more.
+  const strip = at('strip: ');
+  assert.deepEqual(strip.items.map((i) => i.label), ['3', '9', '10']);
+  assert.match(strip.hint, /^3 to 10: tick one, or type a range \(1-5\)/);
+  assert.deepEqual(at('volume: <2').items, []);
+  assert.match(at('strip: 3-5').hint, /^3 to 10/);
+  assert.match(at('ROM\\Coal\\ash: ', undefined, ['ROM\\Coal\\ash']).hint, /^Type a range/);
+  assert.equal(at('depth: ').hint, 'Nothing here is called depth');
+});
 
 test('values are counted an attribute at a time, the cuts first, case aside', () => {
   const v = valuesOf(rows);

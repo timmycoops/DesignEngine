@@ -160,6 +160,133 @@ export function valuesOf(rows: readonly Attributes[]): AttributeValues[] {
   });
 }
 
+/** One thing the filter box offers to put in as it's typed. */
+export interface Suggestion {
+  /** What goes in the text. */
+  insert: string;
+  /** What the list shows. */
+  label: string;
+  /** Beside it, quieter: how many hold it, or an attribute's range. */
+  detail?: string;
+}
+
+/** What the box offers where the caret is: the stretch of text a suggestion takes the place of, and a line to help. */
+export interface Suggestions {
+  from: number;
+  to: number;
+  items: Suggestion[];
+  hint?: string;
+}
+
+/** A name to offer that no row lists to tick, typed instead: a table's field, or a measure. */
+export type Named = string | { key: string; detail: string };
+const named_ = (n: Named) => (typeof n === 'string' ? { key: n, detail: 'type it' } : n);
+
+/**
+ * The measures (`zd-core` `MEASURES`) objects of these kinds have, as names to offer: a solid's volume, a string's length
+ * and area (a closed one's, in plan), a surface's area, and the lowest and highest RL of all four.
+ */
+export function measuresOf(kinds: Iterable<string>): Named[] {
+  const has = new Set(kinds);
+  const out: Named[] = [];
+  if (has.has('solid')) out.push({ key: 'volume', detail: 'm³' });
+  if (has.has('string')) out.push({ key: 'length', detail: 'm' });
+  if (has.has('string') || has.has('surface')) out.push({ key: 'area', detail: 'm²' });
+  if (['solid', 'string', 'surface', 'grid'].some((k) => has.has(k))) out.push({ key: 'rl_min', detail: 'RL' }, { key: 'rl_max', detail: 'RL' });
+  return out;
+}
+
+/** More than this, and the list shows only the first: typing narrows it. */
+const MOST_SUGGESTED = 50;
+
+const fmtCount = new Intl.NumberFormat('en-AU');
+const fmtNumber = (n: number) => (Number.isInteger(n) ? String(n) : String(Number(n.toPrecision(6))));
+
+/** Those that start with what's typed first, then those that hold it, case aside. */
+function matching<T>(all: readonly T[], typed: string, text: (t: T) => string): T[] {
+  const t = typed.trim().toLowerCase();
+  if (t === '') return [...all];
+  const starts = all.filter((a) => text(a).toLowerCase().startsWith(t));
+  const holds = all.filter((a) => !text(a).toLowerCase().startsWith(t) && text(a).toLowerCase().includes(t));
+  return [...starts, ...holds];
+}
+
+/**
+ * What the filter box offers as it's typed (Filtering plan, after workstream 5): where the caret is in an attribute's
+ * name, the names the rows carry and `names` (fields a table has that aren't listed to tick, `ROM\Coal\ash`), those not
+ * already named; after its colon, the attribute's values with how many hold each, those not already in its list, a `!`
+ * typed kept before the value; for numbers, their range and the ways to type one. A suggestion takes the place of the
+ * word the caret is in, from its start to the next separator.
+ */
+export function suggest(text: string, caret: number, attributes: readonly AttributeValues[], names: readonly Named[] = []): Suggestions {
+  const at = Math.max(0, Math.min(caret, text.length));
+  const partStart = text.lastIndexOf(';', at - 1) + 1;
+  const before = text.slice(partStart, at);
+  const colon = before.indexOf(':');
+  const lead = (s: string) => s.length - s.trimStart().length;
+
+  if (colon < 0) {
+    // A name: those carried and those only typed, less those other parts already name.
+    const from = partStart + lead(before);
+    const rest = text.slice(at).match(/^[^:;]*/)?.[0] ?? '';
+    const to = at + rest.trimEnd().length;
+    const hasColon = text.slice(at + rest.length).startsWith(':');
+    const typed = text.slice(from, at);
+    const named = new Set<string>();
+    let start = 0;
+    for (const p of text.split(';')) {
+      const name = p.slice(0, Math.max(0, p.indexOf(':'))).trim().toLowerCase();
+      if (start !== partStart && name !== '') named.add(name);
+      start += p.length + 1;
+    }
+    const carried = attributes.map((a) => ({ key: a.key, detail: a.numeric && a.min !== null && a.max !== null ? (a.min === a.max ? fmtNumber(a.min) : `${fmtNumber(a.min)} to ${fmtNumber(a.max)}`) : `${fmtCount.format(a.values.length)} value${a.values.length === 1 ? '' : 's'}` }));
+    const only = names.map(named_).filter((n) => !attributes.some((a) => a.key.toLowerCase() === n.key.toLowerCase()));
+    const all = [...carried, ...only].filter((c) => !named.has(c.key.toLowerCase()));
+    const items = matching(all, typed, (c) => c.key)
+      .slice(0, MOST_SUGGESTED)
+      .map((c) => ({ insert: hasColon ? c.key : `${c.key}: `, label: c.key, detail: c.detail }));
+    return { from, to, items, hint: items.length === 0 && typed.trim() !== '' ? `Nothing here is called ${typed.trim()}` : undefined };
+  }
+
+  // A value of the attribute named before the colon.
+  const key = before.slice(0, colon).trim();
+  const attribute = attributes.find((a) => a.key.toLowerCase() === key.toLowerCase());
+  const listStart = colon + 1;
+  const itemStart = before.lastIndexOf(',') >= listStart ? before.lastIndexOf(',') + 1 : listStart;
+  const itemText = before.slice(itemStart);
+  const from = partStart + itemStart + lead(itemText);
+  const to = at + (text.slice(at).match(/^[^,;]*/)?.[0] ?? '').trimEnd().length;
+  const typedItem = text.slice(from, at);
+  const not = typedItem.startsWith('!');
+  const typed = not ? typedItem.slice(1).trimStart() : typedItem;
+  const ways = 'a range (1-5), < > <= >= a number, or ! before one it may not hold';
+  if (!attribute) {
+    const field = names.some((n) => named_(n).key.toLowerCase() === key.toLowerCase());
+    return { from, to, items: [], hint: field ? `Type ${ways}` : key === '' ? undefined : `Nothing here is called ${key}` };
+  }
+  const hint = attribute.numeric && attribute.min !== null && attribute.max !== null
+    ? `${fmtNumber(attribute.min)} to ${fmtNumber(attribute.max)}: tick one, or type ${ways}`
+    : undefined;
+  if (comparison(typed) || range(typed)) return { from, to, items: [], hint };
+  // The list's other items, less this one: what's already there isn't offered again.
+  const listEnd = at + (text.slice(at).match(/^[^;]*/)?.[0] ?? '').length;
+  const list = text.slice(partStart + listStart, listEnd);
+  const used = new Set(
+    items(list)
+      .map((i) => (i.startsWith('!') ? i.slice(1).trim() : i).toLowerCase())
+      .filter((i) => i !== typed.trim().toLowerCase()),
+  );
+  const offered = matching(attribute.values.filter((v) => !used.has(v.value.toLowerCase())), typed, (v) => (v.value === '' ? '(blank)' : v.value));
+  const shown = offered.slice(0, MOST_SUGGESTED).map((v) => ({ insert: `${not ? '!' : ''}${v.value}`, label: `${not ? '!' : ''}${v.value === '' ? '(blank)' : v.value}`, detail: fmtCount.format(v.count) }));
+  return { from, to, items: shown, hint: hint ?? (offered.length > MOST_SUGGESTED ? `${fmtCount.format(offered.length - MOST_SUGGESTED)} more: type to narrow` : undefined) };
+}
+
+/** The text with a suggestion put in, and where the caret goes: after it. */
+export function accept(text: string, suggestions: Suggestions, suggestion: Suggestion): { text: string; caret: number } {
+  const next = text.slice(0, suggestions.from) + suggestion.insert + text.slice(suggestions.to);
+  return { text: next, caret: suggestions.from + suggestion.insert.length };
+}
+
 /** Whether a list is only values to tick: words and numbers, no range, comparison, `*` or `!`. */
 export const isTicked = (list: string) => items(list).every((i) => i !== '*' && !i.startsWith('!') && !comparison(i) && !range(i));
 
