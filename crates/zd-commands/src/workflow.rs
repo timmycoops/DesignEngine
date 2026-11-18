@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::{Map, Value};
-use zd_core::{AttrValue, Body, ChangeKind, InputRule, LastRun, Object, ObjectId, ObjectKind, Project, RunId, Source, StepAction, Workflow, WorkflowStep};
+use zd_core::{AttrValue, Body, ChangeKind, InputRule, LastRun, input_filter_fits, Object, ObjectId, ObjectKind, Project, RunId, Source, StepAction, Workflow, WorkflowStep};
 
 use crate::builtin::SaveWorkflowParams;
 use crate::{CommandError, LogEntry, RunRecord, RunStatus, Session, Severity};
@@ -50,7 +50,7 @@ pub const CASE_ATTRIBUTE: &str = "case";
 
 /// [`resolve`] as one case sees the project.
 pub fn resolve_in(project: &Project, workflow: &Workflow, at: usize, rule: &InputRule, scope: &CaseScope) -> Result<Vec<ObjectId>, String> {
-    let keep = |o: &Object| scope.sees(o) && rule.kind.is_none_or(|k| o.kind() == k) && rule.filter.iter().all(|(key, value)| o.attributes.get(key) == Some(value));
+    let keep = |o: &Object| scope.sees(o) && rule.kind.is_none_or(|k| o.kind() == k) && input_filter_fits(&rule.filter, o);
     // What this step and the ones after it made the last time aren't there yet at this point of a run, which makes them
     // again after it: a layer or a name sees the project as it stood here. Otherwise an offset onto its own toe's layer
     // would offset its offsets too the next time (decision 0078, workstream 4).
@@ -282,7 +282,8 @@ fn rule_for(targets: &[ObjectId], many: bool, there: &[&Object], now: &[&Object]
         filters
     };
     let found = |pool: &[&Object], kind: Option<ObjectKind>, filter: &BTreeMap<String, AttrValue>| -> HashSet<ObjectId> {
-        pool.iter().filter(|o| kind.is_none_or(|k| o.kind() == k) && filter.iter().all(|(key, value)| o.attributes.get(key) == Some(value))).map(|o| o.id).collect()
+        // Found as a run reads the rule, so a value that reads otherwise as a filter (`1-5` as a word, say) isn't taken.
+        pool.iter().filter(|o| kind.is_none_or(|k| o.kind() == k) && input_filter_fits(filter, o)).map(|o| o.id).collect()
     };
     let finds = |pool: &[&Object], kind: Option<ObjectKind>, filter: &BTreeMap<String, AttrValue>| found(pool, kind, filter) == wanted;
     // The targets still there now, which the same rule must find among what's there now, as it is now.

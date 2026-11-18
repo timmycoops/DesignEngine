@@ -29,7 +29,7 @@ function WhenInput({ when, onChange, index }: { when: Record<string, string>; on
       placeholder="Everything"
       aria-label={`Rule ${index + 1}: which solids`}
       aria-invalid={why !== null}
-      title={why ?? 'Attribute: values; another: values. A comma list of words, numbers or ranges such as 1-5; blank is everything'}
+      title={why ?? 'Attribute: values; another: values. A comma list of words, numbers, ranges such as 1-5 or comparisons such as <0.3, and !WASTE for a value it may not hold; blank is everything'}
       onChange={(e) => {
         setText(e.target.value);
         const read = readWhen(e.target.value);

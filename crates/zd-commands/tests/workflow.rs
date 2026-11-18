@@ -478,3 +478,23 @@ fn an_input_renamed_since_is_not_found_by_its_old_name() {
     // Made (1) and numbered (2), then made again (3) and numbered again (4).
     assert_eq!(created(&offsets).iter().map(|&t| revision(&s, t)).collect::<Vec<_>>(), [4, 4]);
 }
+
+/// A step's input filter takes the filter syntax (Filtering plan, decision 8) and an object's measures (decision 2): on
+/// the box pit cut at RL 40, `volume: <300000` finds the 240,000 m³ piece below alone, `rl_min: >=40` the 360,000 m³
+/// piece above, and `volume: !240000` the same; a number saved before is still that value. Volume tolerance 1e-6 m³.
+#[test]
+fn a_step_input_filters_by_the_filter_syntax_and_measures() {
+    let (s, _, cut) = box_pit();
+    let pieces = created(&cut);
+    let below = pieces.iter().copied().find(|&id| (volume(&s, id) - 240_000.0).abs() < 1e-6).expect("the piece below RL 40");
+    let above = pieces.iter().copied().find(|&id| (volume(&s, id) - 360_000.0).abs() < 1e-6).expect("the piece above RL 40");
+    let rule = |key: &str, value: AttrValue| InputRule { from: Source::Layer("cut".into()), kind: Some(ObjectKind::Solid), filter: [(key.to_string(), value)].into(), many: true };
+    let w = Workflow::default();
+    let found = |key: &str, value: AttrValue| resolve(s.project(), &w, 0, &rule(key, value));
+    assert_eq!(found("volume", AttrValue::Text("<300000".into())), Ok(vec![below]));
+    assert_eq!(found("rl_min", AttrValue::Text(">=40".into())), Ok(vec![above]));
+    assert_eq!(found("volume", AttrValue::Text("!240000".into())), Ok(vec![above]));
+    assert_eq!(found("volume", AttrValue::Number(240_000.0)), Ok(vec![below]), "a number saved as one is that value");
+    let none = found("volume", AttrValue::Text("<1".into())).unwrap_err();
+    assert!(none.contains("finds nothing") && none.contains("where volume is <1"), "{none}");
+}

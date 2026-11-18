@@ -532,7 +532,7 @@ impl Session {
                     Source::Picked(ids) => ids.iter().filter_map(|&id| project.object(id)).map(|o| o.as_ref()).collect(),
                     Source::Step(_) => Vec::new(),
                 };
-                let found: Vec<&Object> = found.into_iter().filter(|o| rule.kind.is_none_or(|k| o.kind() == k)).filter(|o| rule.filter.iter().all(|(a, v)| o.attributes.get(a) == Some(v))).collect();
+                let found: Vec<&Object> = found.into_iter().filter(|o| rule.kind.is_none_or(|k| o.kind() == k)).filter(|o| zd_core::input_filter_fits(&rule.filter, o)).collect();
                 let described = match found.len() {
                     0 => "nothing, now".to_string(),
                     1 => format!("'{}', revision {}", found[0].name, found[0].revision),

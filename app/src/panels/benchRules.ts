@@ -9,7 +9,7 @@ export type AttrValue = boolean | number | string;
 export type Attributes = Record<string, AttrValue>;
 
 export interface BenchRule {
-  /** Attribute name to the values it may hold: a comma list of words, numbers or ranges (`1-5`); blank or `*` is any. */
+  /** Attribute name to the values it may hold: a comma list of words, numbers, ranges (`1-5`) or comparisons (`<0.3`), `!` before one it may not; blank or `*` is any. */
   when: Record<string, string>;
   benched: boolean;
   from: number;
@@ -38,19 +38,46 @@ export function range(item: string): [number, number] | null {
 /** A value as it reads in a name or a filter: whole numbers without a decimal point. */
 const word = (v: AttrValue) => (typeof v === 'number' ? String(v) : String(v).trim());
 
+/** A comparison such as `<0.3` or `>=120`: how it compares and the number; `<abc` is none, and is read as a word. */
+export function comparison(item: string): [string, number] | null {
+  const op = ['<=', '>=', '<', '>'].find((o) => item.startsWith(o));
+  if (!op) return null;
+  const rest = item.slice(op.length).trim();
+  const x = Number(rest);
+  return rest !== '' && Number.isFinite(x) ? [op, x] : null;
+}
+
 function itemFits(item: string, value: AttrValue): boolean {
   if (item === '*') return true;
   const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value)) ? Number(value) : null;
+  const compared = comparison(item);
   if (n !== null) {
+    if (compared) {
+      const [op, x] = compared;
+      return op === '<' ? n < x : op === '<=' ? n <= x : op === '>' ? n > x : n >= x;
+    }
     const r = range(item);
     if (r) return r[0] <= n && n <= r[1];
     const x = Number(item);
     if (item !== '' && Number.isFinite(x)) return Math.abs(x - n) <= 1e-9 * Math.max(Math.abs(x), 1);
   }
-  return word(value).toLowerCase() === item.toLowerCase();
+  // A comparison never fits a word.
+  return !compared && word(value).toLowerCase() === item.toLowerCase();
 }
 
 const items = (list: string) => list.split(',').map((i) => i.trim()).filter((i) => i !== '');
+
+/**
+ * Whether a filter's comma list fits a value, as the engine's `list_fits` (Filtering plan, decision 1): blank fits
+ * anything; of the items without `!` one must fit, so a value that isn't there fits none; of those with `!` none may.
+ */
+export function listFits(list: string, value: AttrValue | undefined): boolean {
+  const all = items(list);
+  const not = all.filter((i) => i.startsWith('!')).map((i) => i.slice(1).trim()).filter((i) => i !== '');
+  const may = all.filter((i) => !i.startsWith('!'));
+  const mayFits = may.length === 0 || may.includes('*') || (value !== undefined && may.some((i) => itemFits(i, value)));
+  return mayFits && !(value !== undefined && not.some((i) => itemFits(i, value)));
+}
 
 /** An attribute's value by name, the name's case aside. */
 function attribute(attributes: Attributes, key: string): AttrValue | undefined {
@@ -60,12 +87,7 @@ function attribute(attributes: Attributes, key: string): AttrValue | undefined {
 }
 
 export function fits(rule: BenchRule, attributes: Attributes): boolean {
-  return Object.entries(rule.when).every(([key, list]) => {
-    const all = items(list);
-    if (all.length === 0 || all.includes('*')) return true;
-    const value = attribute(attributes, key);
-    return value !== undefined && all.some((i) => itemFits(i, value));
-  });
+  return Object.entries(rule.when).every(([key, list]) => listFits(list, attribute(attributes, key)));
 }
 
 /** The index of the first rule a solid fits, or -1 where none does. */
