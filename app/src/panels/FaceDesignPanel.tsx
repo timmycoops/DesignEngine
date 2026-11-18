@@ -4,7 +4,7 @@ import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine,
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
-import { NoteLine, PanelHead } from '@/design-system/kit';
+import { NoteLine, ObjectMenu, PanelHead } from '@/design-system/kit';
 import { rampColour } from '@/viewport/rampColours';
 import { useWorkspace } from '@/workspace/context';
 
@@ -1401,6 +1401,7 @@ export function FaceDesignPanel() {
         <SmallButton onClick={() => void save()} title="Save this design with the project">
           <Save className="size-3" /> Save{dirty ? ' *' : ''}
         </SmallButton>
+        <ObjectMenu object={open ?? null} what="face design" onDeleted={() => setId(null)} />
       </div>
 
       {stepping && (
@@ -1467,7 +1468,7 @@ export function FaceDesignPanel() {
       <div className="flex flex-wrap items-center gap-1 px-3 pt-1">
         <SmallButton
           disabled={chosen.length === 0}
-          title="A line for each string selected. Ctrl-click strings in the viewport, Shift-drag a box round them, or Ctrl or Shift in the tree, to select several"
+          title="A line for each string selected. Ctrl-click strings in the viewport, Shift-drag a box round them, or Select shown in the Objects table, to select several"
           onClick={() => chosen.forEach((s) => addLine({ string: s.id }))}
         >
           <Plus className="size-3" /> Apply to selected{chosen.length > 0 ? ` (${chosen.length})` : ''}

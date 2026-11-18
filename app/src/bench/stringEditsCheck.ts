@@ -3,7 +3,9 @@
 // one Ctrl+Z puts all three back. Extend runs them on to a line by one click on it, at their own grade. Esc in the middle
 // of a trim lets it go and changes nothing. Keep both splits them at the limit. Split at a click puts a vertex in where
 // it's clicked, and Join puts the two back as one, ends within its tolerance sharing a vertex. Round corners (workstream
-// 2) rounds a dog-leg's corner at a radius typed, every arc vertex that far from the centre; Ctrl+Z puts it back.
+// 2) rounds a dog-leg's corner at a radius typed, every arc vertex that far from the centre; Ctrl+Z puts it back. Then
+// the layers-only tree (Filtering plan, workstream 0): a row a layer saying what's on it, none a string; a right click on
+// the dog-leg in the view hides it from its menu, its layer's row says so, and Show all hidden brings it back.
 import * as THREE from 'three/webgpu';
 import { objectDetails, projectSummary, type ProjectSummary, runCommand, type Vec3 } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
@@ -200,6 +202,50 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   expect('one Ctrl+Z puts the dog-leg back', (await points(dogleg)).length === 3, (await points(dogleg)).length);
   void limit;
   void ramp;
+
+  // The layers-only tree: a row a layer, what's on it by kind, no row for a string.
+  const treeRows = () => [...document.querySelectorAll<HTMLElement>('[data-slot="tree"] [data-slot="tree-row"]')];
+  const rowOf = (layer: string) => treeRows().find((r) => r.dataset.layer === layer) ?? null;
+  const kindsOn = (layer: string) => rowOf(layer)?.querySelector('[data-slot="layer-kinds"]')?.textContent ?? '';
+  const now = await projectSummary();
+  const layerRowsOnly = treeRows().length === now.layers.length && !treeRows().some((r) => /Toe 1|Dog-leg|Pit limit/.test(r.textContent ?? ''));
+  expect(
+    'the tree has a row a layer, saying what is on it by kind, and none for a string',
+    layerRowsOnly && kindsOn('toes') === '4 strings' && kindsOn('limits') === '2 strings' && kindsOn('surfaces') === '1 surface',
+    { rows: treeRows().length, layers: now.layers.length, toes: kindsOn('toes'), limits: kindsOn('limits'), surfaces: kindsOn('surfaces') },
+  );
+  // A right click on the dog-leg: picked, its menu opens on it, and Hide hides it.
+  const rightClick = async (at: Vec3) => {
+    const [x, y] = screen(at);
+    for (const type of ['pointerdown', 'pointerup']) {
+      canvas.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, button: 2, buttons: type === 'pointerup' ? 0 : 2, pointerId: 1, pointerType: 'mouse', isPrimary: true, bubbles: true, cancelable: true }));
+    }
+    for (let k = 0; k < 30 && !document.querySelector('[data-slot="view-menu"]'); k++) await wait(100);
+  };
+  const menu = () => document.querySelector<HTMLElement>('[data-slot="view-menu"]');
+  const item = (starts: string) => [...(menu()?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])].find((m) => m.textContent?.trim().startsWith(starts)) ?? null;
+  await key('Escape');
+  await rightClick([E - 30, N + 170, 100]);
+  const menuSays = menu()?.textContent ?? '';
+  const pickedByIt = selection().length === 1 && selection()[0] === dogleg;
+  item('Hide')?.click();
+  await wait(800);
+  const hidden = (await projectSummary()).objects.find((o) => o.id === dogleg)?.hidden ?? false;
+  await settle();
+  const rowSays = rowOf('toes')?.textContent ?? '';
+  expect(
+    'a right click on the dog-leg picks it and opens its menu, and Hide hides it: its layer reads 3 of 4',
+    pickedByIt && menuSays.startsWith('Dog-leg') && hidden && rowSays.includes('3 of 4'),
+    { picked: pickedByIt, menu: menuSays.slice(0, 60), hidden, row: rowSays },
+  );
+  // A right click on nothing: Show all hidden brings it back.
+  await rightClick([E + 250, N - 80, 100]);
+  const showAll = item('Show all hidden');
+  const offered = showAll?.textContent?.trim() ?? '';
+  showAll?.click();
+  await wait(800);
+  const back2 = !((await projectSummary()).objects.find((o) => o.id === dogleg)?.hidden ?? true);
+  expect('a right click on nothing offers Show all hidden (1), which brings the dog-leg back', offered === 'Show all hidden (1)' && back2, { offered, back: back2 });
 
   results.failures = failures;
   return results;

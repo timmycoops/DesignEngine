@@ -1,6 +1,5 @@
-import { Box, ChevronDown, ChevronRight, Grid3x3, Layers, type LucideIcon, Mountain, PencilRuler, SlidersHorizontal, Spline, Table2, Waypoints, Workflow } from 'lucide-react';
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { type Colouring, type Layer, layerOpacityOf, lookOf, type ObjectKind, type ObjectSummary } from '@/bridge';
+import { type Colouring, type Layer, layerOpacityOf, lookOf } from '@/bridge';
 import { ROW_HEIGHT, useRowWindow } from '@/design-system/DataTable';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import {
@@ -16,111 +15,8 @@ import {
 import { Input } from '@/design-system/ui/input';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
-import { canColour, canSeeThrough, fmt, kindLabel } from './format';
-
-/**
- * What comes in numbers shares a row on its layer, shut until it's wanted: a face run makes four strings a
- * wall and a seam's import brings forty quality grids, and a row for each of those is no use to anyone.
- */
-const GROUPS: { id: string; label: string; icon: LucideIcon; holds: (o: ObjectSummary) => boolean }[] = [
-  { id: 'strings', label: 'Strings', icon: Spline, holds: (o) => o.kind === 'string' },
-  { id: 'solids', label: 'Solids', icon: Box, holds: (o) => o.kind === 'solid' },
-  { id: 'quality', label: 'Quality grids', icon: Grid3x3, holds: (o) => o.kind === 'grid' && !o.drawn },
-];
-
-/** Fewer than this of a kind on a layer just list. */
-const GROUP_FROM = 2;
-
-/** A strip's number, which its string and everything a run makes from it carry. */
-const stripOf = (o: ObjectSummary) => (typeof o.attributes.strip === 'number' ? o.attributes.strip : null);
-const stripGroup = (strip: number) => `strip ${strip}`;
-/** Names in the order a person would put them: Strip 9 before Strip 10. */
-const byName = new Intl.Collator(undefined, { numeric: true }).compare;
-
-const kindIcon: Record<ObjectKind, LucideIcon> = {
-  string: Spline,
-  surface: Mountain,
-  solid: Box,
-  grid: Grid3x3,
-  seam_model: Layers,
-  face_design: PencilRuler,
-  workflow: Workflow,
-  parameter_table: SlidersHorizontal,
-  dataflow: Waypoints,
-  table: Table2,
-};
-
-type LayerEntry = { kind: 'layer'; layer: Layer; count: number; hidden: number; open: boolean };
-type GroupEntry = { kind: 'group'; key: string; layer: Layer; label: string; icon: LucideIcon; objects: ObjectSummary[]; open: boolean };
-type TreeRow = LayerEntry | GroupEntry | { kind: 'object'; object: ObjectSummary; inGroup: boolean };
-
-const groupKey = (layer: string, group: string) => `${layer} ${group}`;
-
-/** Each open layer's objects, then a row for what comes in numbers, with its objects if it's open. */
-function layerRows(layer: Layer, on: ObjectSummary[], toggled: Map<string, boolean>): TreeRow[] {
-  const strips = new Map<number, ObjectSummary[]>();
-  for (const object of on) {
-    const strip = stripOf(object);
-    if (strip === null) continue;
-    const held = strips.get(strip);
-    if (held) held.push(object);
-    else strips.set(strip, [object]);
-  }
-  const stripRows = [...strips].filter(([, objects]) => objects.length >= GROUP_FROM).sort(([a], [b]) => a - b);
-  const inStrips = new Set(stripRows.flatMap(([, objects]) => objects));
-  const rest = on.filter((o) => !inStrips.has(o));
-  const groups = GROUPS.map((group) => ({ group, objects: rest.filter(group.holds) })).filter(({ objects }) => objects.length >= GROUP_FROM);
-  const grouped = new Set(groups.flatMap(({ objects }) => objects));
-  const rows: TreeRow[] = rest.filter((o) => !grouped.has(o)).map((object) => ({ kind: 'object', object, inGroup: false }));
-  const add = (id: string, label: string, icon: LucideIcon, objects: ObjectSummary[]) => {
-    const key = groupKey(layer.id, id);
-    const open = toggled.get(key) ?? false;
-    rows.push({ kind: 'group', key, layer, label, icon, objects, open });
-    if (open) rows.push(...[...objects].sort((a, b) => byName(a.name, b.name)).map((object): TreeRow => ({ kind: 'object', object, inGroup: true })));
-  };
-  for (const [strip, objects] of stripRows) add(stripGroup(strip), `Strip ${strip}`, Spline, objects);
-  for (const { group, objects } of groups) add(group.id, group.label, group.icon, objects);
-  return rows;
-}
-
-/** Each layer, followed by what's on it if it is open. `toggled` holds what was opened or closed by hand. */
-function treeRows(layers: Layer[], objects: ObjectSummary[], toggled: Map<string, boolean>): TreeRow[] {
-  const held = new Map<string, ObjectSummary[]>();
-  for (const object of objects) {
-    const on = held.get(object.layer);
-    if (on) on.push(object);
-    else held.set(object.layer, [object]);
-  }
-  const rows: TreeRow[] = [];
-  for (const layer of layers) {
-    const on = held.get(layer.id) ?? [];
-    const open = toggled.get(layer.id) ?? true;
-    rows.push({ kind: 'layer', layer, count: on.length, hidden: on.filter((o) => o.hidden).length, open });
-    if (open) rows.push(...layerRows(layer, on, toggled));
-  }
-  return rows;
-}
-
-/** The layer whose objects fill the top of the tree, once its own row has scrolled away. */
-function layerAbove(rows: TreeRow[], row: number): { entry: LayerEntry; at: number } | undefined {
-  if (!rows[row] || rows[row].kind === 'layer') return undefined;
-  for (let at = row - 1; at >= 0; at--) {
-    const entry = rows[at];
-    if (entry.kind === 'layer') return { entry, at };
-  }
-  return undefined;
-}
-
-/** A property grid or a face design has nothing to show or hide. */
-const canHide = (object: ObjectSummary) => object.drawn || object.kind === 'string' || object.kind === 'seam_model';
-
-/** What a row's name doesn't say, shown on hover. */
-function noteOf(object: ObjectSummary): string | undefined {
-  if (object.kind === 'grid' && !object.drawn) return 'Property grid: listed, not drawn';
-  if (object.kind === 'seam_model') return 'Seam model: its grids stay in their files';
-  if (object.kind === 'face_design') return 'Face design: open it in the Face design panel';
-  return undefined;
-}
+import { canColour, fmt } from './format';
+import { kindsOf, type LayerEntry, layerEntries } from './layerTree';
 
 /** A layer's line weight in the section, in pixels; blank takes the default for what is cut. */
 function LineWeight({ layer }: { layer: string }) {
@@ -203,130 +99,48 @@ interface LayerRowProps {
   entry: LayerEntry;
   renaming: boolean;
   onRenamed: () => void;
-  onToggle: () => void;
 }
 
-function LayerRow({ entry: { layer, count, hidden, open }, renaming, onRenamed, onToggle }: LayerRowProps) {
+function LayerRow({ entry: { layer, objects, hidden, picked }, renaming, onRenamed }: LayerRowProps) {
   const { summary, activeLayer, setActiveLayer, setLayerVisible, setObjectsVisible, sectionOpen } = useWorkspace();
-  const Chevron = open ? ChevronDown : ChevronRight;
   const active = layer.name === activeLayer;
+  const count = objects.length;
+  const kinds = kindsOf(objects);
   // The tick says what is on screen: all of the layer, none of it, or some.
   const tick = !layer.visible || (count > 0 && hidden === count) ? false : hidden === 0 ? true : 'indeterminate';
   const tickLayer = (on: boolean) => {
     // Turned off and on, a layer comes back as it was. With nothing to come back to, or some showing, it all shows.
     if (!on || (!layer.visible && (count === 0 || hidden < count))) setLayerVisible(layer.id, on);
-    else setObjectsVisible(summary?.objects.filter((o) => o.layer === layer.id).map((o) => o.id) ?? [], true);
+    else setObjectsVisible(objects.map((o) => o.id), true);
   };
   return (
     <div
       data-slot="tree-row"
-      className={cn('flex items-center gap-1.5 pr-2 pl-0.5 text-xs hover:bg-accent', active && 'bg-selection')}
+      data-layer={layer.name}
+      data-state={picked > 0 ? 'selected' : undefined}
+      className={cn('flex items-center gap-1.5 pr-2 pl-2 text-xs hover:bg-accent', active && 'bg-selection')}
       style={{ height: ROW_HEIGHT }}
       onClick={() => setActiveLayer(layer.name)}
-      title="Click to draw new strings on this layer; right-click for more"
+      title={`${layer.name}${kinds ? `: ${kinds}` : ''}. Click to draw new strings on this layer; right-click for more`}
     >
-      {count > 0 ? (
-        <button
-          type="button"
-          className="grid size-4 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
-          aria-label={`${open ? 'Close' : 'Open'} ${layer.name}`}
-          aria-expanded={open}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggle();
-          }}
-        >
-          <Chevron className="size-3.5" />
-        </button>
-      ) : (
-        <span className="size-4 shrink-0" />
-      )}
-      <Checkbox
-        checked={tick}
-        onClick={(e) => e.stopPropagation()}
-        onCheckedChange={(checked) => tickLayer(checked === true)}
-        aria-label={`Show ${layer.name}`}
-      />
+      <Checkbox checked={tick} onClick={(e) => e.stopPropagation()} onCheckedChange={(checked) => tickLayer(checked === true)} aria-label={`Show ${layer.name}`} />
       <Swatch layer={layer} />
-      {renaming ? <RenameBox layer={layer} onDone={onRenamed} /> : <span className={cn('min-w-0 flex-1 truncate', active && 'text-primary')}>{layer.name}</span>}
-      {sectionOpen && <LineWeight layer={layer.id} />}
-      <OpacityNote opacity={layerOpacityOf(summary?.display, layer.id)} title="Layer opacity: right-click to change it" />
-      <span className="text-muted-foreground tabular-nums" title={layer.visible && hidden > 0 ? `${hidden} of ${count} hidden` : undefined}>
-        {layer.visible && hidden > 0 ? `${count - hidden} of ${count}` : count}
-      </span>
-    </div>
-  );
-}
-
-/** One row for what comes in numbers on a layer: its tick takes them all, and it opens to list them. */
-function GroupRow({ entry, onToggle, onTick }: { entry: GroupEntry; onToggle: () => void; onTick: (shown: boolean) => void }) {
-  const Chevron = entry.open ? ChevronDown : ChevronRight;
-  const Icon = entry.icon;
-  const count = entry.objects.length;
-  const hidden = entry.objects.filter((o) => o.hidden).length;
-  const tick = !entry.layer.visible || hidden === count ? false : hidden === 0 ? true : 'indeterminate';
-  return (
-    <div data-slot="tree-row" className="flex cursor-pointer items-center gap-1 pr-2 pl-4 text-xs hover:bg-accent" style={{ height: ROW_HEIGHT }} onClick={onToggle} title={`${entry.open ? 'Close' : 'Open'} to ${entry.open ? 'hide' : 'see'} each one; right-click for more`}>
-      <span className="grid size-4 shrink-0 place-items-center text-muted-foreground" aria-label={`${entry.open ? 'Close' : 'Open'} ${entry.label} on ${entry.layer.name}`} role="button">
-        <Chevron className="size-3.5" />
-      </span>
-      {entry.objects.some(canHide) ? (
-        <Checkbox checked={tick} onClick={(e) => e.stopPropagation()} onCheckedChange={(checked) => onTick(checked === true)} aria-label={`Show ${entry.label} on ${entry.layer.name}`} />
-      ) : (
-        <span className="size-4 shrink-0" />
-      )}
-      <Icon className="ml-0.5 size-3.5 shrink-0 text-muted-foreground" />
-      <span className="ml-0.5 min-w-0 flex-1 truncate">{entry.label}</span>
-      <span className="text-muted-foreground tabular-nums">{entry.layer.visible && hidden > 0 ? `${count - hidden} of ${count}` : fmt(count)}</span>
-    </div>
-  );
-}
-
-interface ObjectRowProps {
-  object: ObjectSummary;
-  /** One of a group's, a step further in. */
-  inGroup: boolean;
-  /** Its layer's on, so its own tick is what decides. */
-  layerOn: boolean;
-  /** Selected, alone or with others: what a tick or the menu on it acts on. */
-  picked: boolean;
-  /** The last one picked of several: the one the Builder and Use selected take. */
-  last: boolean;
-  onClick: (e: MouseEvent) => void;
-  onTick: (shown: boolean) => void;
-}
-
-function ObjectRow({ object, inGroup, layerOn, picked, last, onClick, onTick }: ObjectRowProps) {
-  const { summary } = useWorkspace();
-  const Icon = kindIcon[object.kind];
-  const note = noteOf(object);
-  const showing = layerOn && !object.hidden;
-  return (
-    <div
-      data-slot="tree-row"
-      data-state={picked ? 'selected' : undefined}
-      className={cn('flex cursor-pointer items-center gap-1.5 pr-2 text-xs hover:bg-accent data-[state=selected]:bg-selection', inGroup ? 'pl-14' : 'pl-9', last && 'font-semibold')}
-      style={{ height: ROW_HEIGHT }}
-      onClick={onClick}
-    >
-      {canHide(object) ? (
-        <Checkbox checked={showing} onClick={(e) => e.stopPropagation()} onCheckedChange={(checked) => onTick(checked === true)} aria-label={`Show ${object.name}`} />
-      ) : (
-        <span className="size-4 shrink-0" />
-      )}
-      <span title={kindLabel[object.kind]}>
-        <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-      </span>
-      <span className={cn('min-w-0 flex-1 truncate', canHide(object) && !showing && 'text-muted-foreground')} title={note ?? object.name}>
-        {object.name}
-        {note && <span className="ml-1 text-muted-foreground">·</span>}
-      </span>
-      <OpacityNote opacity={lookOf(summary?.display, object.id).opacity} title="Opacity: right-click or Properties to change it" />
-      {object.revision > 1 && (
-        <span className="text-muted-foreground tabular-nums" title={`Revision ${object.revision}`}>
-          r{object.revision}
+      {renaming ? <RenameBox layer={layer} onDone={onRenamed} /> : <span className={cn('min-w-0 shrink-0 truncate', active && 'text-primary')} style={{ maxWidth: '55%' }}>{layer.name}</span>}
+      {picked > 0 && (
+        <span className="shrink-0 text-primary tabular-nums" title={`${fmt(picked)} of what's on it picked`}>
+          {fmt(picked)} picked
         </span>
       )}
+      <span className="min-w-0 flex-1 truncate text-right text-muted-foreground tabular-nums" data-slot="layer-kinds">
+        {count === 0 ? 'empty' : kinds}
+      </span>
+      {layer.visible && hidden > 0 && (
+        <span className="shrink-0 text-muted-foreground tabular-nums" title={`${fmt(hidden)} of ${fmt(count)} hidden: right-click for Show all on it`}>
+          {fmt(count - hidden)} of {fmt(count)}
+        </span>
+      )}
+      {sectionOpen && <LineWeight layer={layer.id} />}
+      <OpacityNote opacity={layerOpacityOf(summary?.display, layer.id)} title="Layer opacity: right-click to change it" />
     </div>
   );
 }
@@ -350,79 +164,41 @@ function OpacityNote({ opacity, title }: { opacity: number; title: string }) {
 }
 
 /**
- * Every layer and what is on it, in one tree that draws only the rows on screen. Click a layer to draw
- * new strings on it, or an object to select it; Ctrl-click adds one or takes it off and Shift-click selects
- * a run of rows, for a tick or the right-click menu to act on together.
+ * Every layer, one row each (Filtering plan, L1): what's on it by kind, never a row an object. Click a layer to draw new
+ * strings on it; right-click it to zoom to it, select or show all on it, colour it, rename or delete it. An object is
+ * picked, hidden or shown in the view, with its right-click; a pick lights its layer's row here (L3).
  */
 export function LayersPanel() {
-  const { summary, selected, selection, select, setSelection, toggleSelected, zoomTo, activeLayer, setActiveLayer, setObjectsVisible, setLooks, setLayerOpacity, run } = useWorkspace();
-  const [toggled, setToggled] = useState(new Map<string, boolean>());
+  const { summary, selection, setSelection, zoomTo, setObjectsVisible, setLooks, setLayerOpacity, run } = useWorkspace();
   const picked = useMemo(() => new Set(selection), [selection]);
   const [renaming, setRenaming] = useState<string | null>(null);
-  const [target, setTarget] = useState<TreeRow | null>(null);
-  /** The last row clicked, where a Shift-click's run starts. */
-  const anchor = useRef<number | null>(null);
-  const rows = useMemo(() => treeRows(summary?.layers ?? [], summary?.objects ?? [], toggled), [summary, toggled]);
-  const { scroller, top, first, last, onScroll } = useRowWindow(rows.length, true);
-  const toggle = (entry: LayerEntry | GroupEntry) => setToggled((was) => new Map(was).set(entry.kind === 'group' ? entry.key : entry.layer.id, !entry.open));
-  const pinned = layerAbove(rows, Math.floor(top / ROW_HEIGHT));
+  const [target, setTarget] = useState<LayerEntry | null>(null);
+  const rows = useMemo(() => layerEntries(summary?.layers ?? [], summary?.objects ?? [], picked), [summary, picked]);
+  const { scroller, first, last, onScroll } = useRowWindow(rows.length, true);
 
-  // Something picked in the viewport: open its layer, then bring its row into view.
-  const revealing = useRef<string | null>(null);
+  // Something picked in the view: its layer's row comes into view, lit.
+  const lastPicked = selection.at(-1) ?? null;
   useEffect(() => {
-    const object = selected ? summary?.objects.find((o) => o.id === selected) : undefined;
-    if (!object) return;
-    revealing.current = object.id;
-    const group = GROUPS.find((g) => g.holds(object));
-    const strip = stripOf(object);
-    setToggled((was) => {
-      const next = new Map(was).set(object.layer, true);
-      if (strip !== null) next.set(groupKey(object.layer, stripGroup(strip)), true);
-      return group ? next.set(groupKey(object.layer, group.id), true) : next;
-    });
-  }, [selected]);
-  useEffect(() => {
-    const at = revealing.current ? rows.findIndex((r) => r.kind === 'object' && r.object.id === revealing.current) : -1;
+    const layer = lastPicked ? summary?.objects.find((o) => o.id === lastPicked)?.layer : undefined;
+    const at = layer ? rows.findIndex((r) => r.layer.id === layer) : -1;
     const element = scroller.current;
     if (at < 0 || !element) return;
-    revealing.current = null;
     const y = at * ROW_HEIGHT;
-    // The row under the pinned one is covered.
-    if (y < element.scrollTop + ROW_HEIGHT || y + ROW_HEIGHT > element.scrollTop + element.clientHeight) element.scrollTo(0, y - element.clientHeight / 2);
-  }, [rows, selected]);
-
-  /**
-   * A click selects the row alone. Ctrl adds it or takes it off; Shift selects the rows from the last one clicked
-   * to this one, or with Ctrl too adds them. The row clicked is the last picked.
-   */
-  const clickObject = (e: MouseEvent, at: number, id: string) => {
-    const add = e.ctrlKey || e.metaKey;
-    if (e.shiftKey && anchor.current !== null) {
-      const [from, to] = [Math.min(anchor.current, at), Math.max(anchor.current, at)];
-      const run = rows.slice(from, to + 1).flatMap((r) => (r.kind === 'object' && r.object.id !== id ? [r.object.id] : []));
-      setSelection([...(add ? selection : []), ...run, id]);
-      return;
-    }
-    anchor.current = at;
-    if (add) toggleSelected(id);
-    else select(id);
-  };
-
-  /** What an action on this object takes: everything selected, if it's one of them. */
-  const takenWith = (id: string) => (picked.has(id) ? selection : [id]);
+    if (y < element.scrollTop || y + ROW_HEIGHT > element.scrollTop + element.clientHeight) element.scrollTo(0, y - element.clientHeight / 2);
+    // Only a new pick moves the tree, never a change to what's on the layers.
+  }, [lastPicked]);
 
   /** What's on a layer and on show, or everything on it if nothing is. */
-  const layerShowing = (layer: string) => {
-    const on = summary?.objects.filter((o) => o.layer === layer) ?? [];
-    const showing = on.filter((o) => !o.hidden);
-    return (showing.length > 0 ? showing : on).map((o) => o.id);
+  const layerShowing = (entry: LayerEntry) => {
+    const showing = entry.objects.filter((o) => !o.hidden);
+    return (showing.length > 0 ? showing : entry.objects).map((o) => o.id);
   };
 
   const rowAt = (e: MouseEvent) => {
     const element = scroller.current;
     if (!element) return null;
     const y = e.clientY - element.getBoundingClientRect().top;
-    return pinned && y < ROW_HEIGHT ? pinned.entry : (rows[Math.floor((y + element.scrollTop) / ROW_HEIGHT)] ?? null);
+    return rows[Math.floor((y + element.scrollTop) / ROW_HEIGHT)] ?? null;
   };
 
   const newLayer = async () => {
@@ -432,18 +208,12 @@ export function LayersPanel() {
     if (await run('layer.create', { name })) setRenaming(name);
   };
 
-  const layerRow = (entry: LayerEntry, onToggle: () => void, key?: string) => (
-    <LayerRow key={key} entry={entry} renaming={renaming === entry.layer.name} onRenamed={() => setRenaming(null)} onToggle={onToggle} />
-  );
-
-  /**
-   * Colour by RL or the layer's, for the objects that can take it, and an opacity, set by `opacity` (the
-   * objects' own, or for a layer the layer's). A tick shows the value they all share, if they do.
-   */
-  const lookMenu = (objects: ObjectSummary[], opacity: (o: number) => void, currentOpacity: number | null) => {
-    const coloured = objects.filter(canColour);
+  /** Colour by RL or the layer's for what can take it, and the layer's opacity. A tick shows the value they all share. */
+  const lookMenu = (entry: LayerEntry) => {
+    const coloured = entry.objects.filter(canColour);
     const colourings = new Set(coloured.map((o) => lookOf(summary?.display, o.id).colouring));
     const colour = (colouring: Colouring) => setLooks(coloured.map((o) => o.id), colouring, null);
+    const opacity = layerOpacityOf(summary?.display, entry.layer.id);
     const tick = (on: boolean) => <span className="w-3 text-primary">{on ? '✓' : ''}</span>;
     return (
       <>
@@ -464,8 +234,8 @@ export function LayersPanel() {
           <ContextMenuSubTrigger>Opacity</ContextMenuSubTrigger>
           <ContextMenuSubContent>
             {OPACITIES.map((o) => (
-              <ContextMenuItem key={o} onSelect={() => opacity(o)}>
-                {tick(currentOpacity === o)}
+              <ContextMenuItem key={o} onSelect={() => setLayerOpacity(entry.layer.id, o)}>
+                {tick(opacity === o)}
                 {percent(o)}
               </ContextMenuItem>
             ))}
@@ -475,113 +245,62 @@ export function LayersPanel() {
     );
   };
 
-  /** The menu for some objects, from one on a layer to everything in a group. */
-  const objectsMenu = (taken: string[], layer: string) => {
-    const label = taken.length > 1 ? ` ${plural(taken.length)}` : '';
-    const act = (name: string, params: Record<string, unknown>) => void run(name, params);
-    const ids = new Set(taken);
-    const looking = summary?.objects.filter((o) => ids.has(o.id) && canSeeThrough(o)) ?? [];
-    const opacities = new Set(looking.map((o) => lookOf(summary?.display, o.id).opacity));
-    return (
-      <>
-        <ContextMenuItem onSelect={() => zoomTo(taken)}>Zoom to{label}</ContextMenuItem>
-        {taken.length > 1 && taken !== selection && <ContextMenuItem onSelect={() => setSelection(taken)}>Select{label}</ContextMenuItem>}
-        <ContextMenuItem onSelect={() => setObjectsVisible(taken, true)}>Show{label}</ContextMenuItem>
-        <ContextMenuItem onSelect={() => setObjectsVisible(taken, false)}>Hide{label}</ContextMenuItem>
-        {looking.length > 0 &&
-          lookMenu(looking, (o) => setLooks(looking.map((x) => x.id), null, o), opacities.size === 1 ? [...opacities][0] : null)}
-        <ContextMenuSub>
-          <ContextMenuSubTrigger>Move{label} to</ContextMenuSubTrigger>
-          <ContextMenuSubContent>
-            {summary?.layers
-              .filter((l) => l.id !== layer || taken.length > 1)
-              .map((l) => (
-                <ContextMenuItem key={l.id} onSelect={() => act('object.move', { objects: taken, layer: l.name })}>
-                  {l.name}
-                </ContextMenuItem>
-              ))}
-          </ContextMenuSubContent>
-        </ContextMenuSub>
-        <ContextMenuItem variant="destructive" onSelect={() => act('object.delete_many', { objects: taken })}>
-          Delete{label}
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-      </>
-    );
-  };
-
   return (
     <div className="flex h-full flex-col">
-      <label className="flex items-center gap-2 border-b px-2 py-1.5 text-xs text-muted-foreground">
-        Draw on
-        <Input
-          className="h-6 flex-1 px-1.5 text-xs"
-          value={activeLayer}
-          onChange={(e) => setActiveLayer(e.target.value)}
-          onBlur={(e) => !e.target.value.trim() && setActiveLayer('design')}
-          title="New strings go on this layer; it is created with the first string"
-        />
-      </label>
+      <DrawOn />
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div ref={scroller} onScroll={onScroll} onContextMenu={(e) => setTarget(rowAt(e))} data-slot="tree" className="min-h-0 flex-1 overflow-auto select-none">
             {rows.length === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">Nothing here yet: import a surface or draw a string.</p>}
-            {pinned && (
-              <div className="sticky top-0 z-10 bg-background" style={{ marginBottom: -ROW_HEIGHT }}>
-                {layerRow(pinned.entry, () => {
-                  toggle(pinned.entry);
-                  scroller.current?.scrollTo(0, pinned.at * ROW_HEIGHT);
-                })}
-              </div>
-            )}
             <div style={{ height: first * ROW_HEIGHT }} />
-            {rows.slice(first, last).map((row, k) =>
-              row.kind === 'layer' ? (
-                layerRow(row, () => toggle(row), row.layer.id)
-              ) : row.kind === 'group' ? (
-                <GroupRow key={row.key} entry={row} onToggle={() => toggle(row)} onTick={(shown) => setObjectsVisible(row.objects.map((o) => o.id), shown)} />
-              ) : (
-                <ObjectRow
-                  key={row.object.id}
-                  object={row.object}
-                  inGroup={row.inGroup}
-                  layerOn={summary?.layers.find((l) => l.id === row.object.layer)?.visible ?? true}
-                  picked={picked.has(row.object.id)}
-                  last={selection.length > 1 && row.object.id === selected}
-                  onClick={(e) => clickObject(e, first + k, row.object.id)}
-                  onTick={(shown) => setObjectsVisible(takenWith(row.object.id), shown)}
-                />
-              ),
-            )}
+            {rows.slice(first, last).map((entry) => (
+              <LayerRow key={entry.layer.id} entry={entry} renaming={renaming === entry.layer.name} onRenamed={() => setRenaming(null)} />
+            ))}
             <div style={{ height: (rows.length - last) * ROW_HEIGHT }} />
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent onCloseAutoFocus={(e) => e.preventDefault()}>
-          {target?.kind === 'layer' && (
+          {target && (
             <>
-              <ContextMenuItem disabled={target.count === 0} onSelect={() => zoomTo(layerShowing(target.layer.id))}>
+              <ContextMenuItem disabled={target.objects.length === 0} onSelect={() => zoomTo(layerShowing(target))}>
                 Zoom to
               </ContextMenuItem>
-              <ContextMenuItem disabled={target.count === 0} onSelect={() => setSelection(layerShowing(target.layer.id))}>
+              <ContextMenuItem disabled={target.objects.length === 0} onSelect={() => setSelection(layerShowing(target))}>
                 Select all on it
               </ContextMenuItem>
-              {lookMenu(
-                summary?.objects.filter((o) => o.layer === target.layer.id) ?? [],
-                (o) => setLayerOpacity(target.layer.id, o),
-                layerOpacityOf(summary?.display, target.layer.id),
+              {target.hidden > 0 && (
+                <ContextMenuItem onSelect={() => setObjectsVisible(target.objects.filter((o) => o.hidden).map((o) => o.id), true)}>
+                  Show all on it ({fmt(target.hidden)} hidden)
+                </ContextMenuItem>
               )}
+              {lookMenu(target)}
               <ContextMenuItem onSelect={() => setRenaming(target.layer.name)}>Rename</ContextMenuItem>
               <ContextMenuItem variant="destructive" onSelect={() => void run('layer.delete', { layer: target.layer.name })}>
-                Delete{target.count > 0 ? ` with ${plural(target.count)}` : ''}
+                Delete{target.all > 0 ? ` with ${plural(target.all)}` : ''}
               </ContextMenuItem>
               <ContextMenuSeparator />
             </>
           )}
-          {target?.kind === 'object' && objectsMenu(takenWith(target.object.id), target.object.layer)}
-          {target?.kind === 'group' && objectsMenu(target.objects.map((o) => o.id), target.layer.id)}
           <ContextMenuItem onSelect={() => void newLayer()}>New layer</ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
     </div>
+  );
+}
+
+/** The layer new strings are drawn on; it is created with the first string. */
+function DrawOn() {
+  const { activeLayer, setActiveLayer } = useWorkspace();
+  return (
+    <label className="flex items-center gap-2 border-b px-2 py-1.5 text-xs text-muted-foreground">
+      Draw on
+      <Input
+        className="h-6 flex-1 px-1.5 text-xs"
+        value={activeLayer}
+        onChange={(e) => setActiveLayer(e.target.value)}
+        onBlur={(e) => !e.target.value.trim() && setActiveLayer('design')}
+        title="New strings go on this layer; it is created with the first string"
+      />
+    </label>
   );
 }

@@ -1,6 +1,7 @@
 // `--dataflow <project.zdp>`: Properties' views of a parameter table, a dataflow and a results table (decisions 0072,
 // 0073), read as Tim would see them. The project (the demo pit saved by testdata/synthetic/workflow_demo.py, its
-// dataflow the starter's) is opened, each object clicked in the Layers panel, and what Properties shows read back.
+// dataflow the starter's) is opened, each object picked in its own tab's list (the layer tree has no row for them,
+// Filtering plan L4), and what Properties shows read back.
 import { EditorView } from '@codemirror/view';
 import type { DockviewApi } from 'dockview-react';
 import { objectDetails, openProject, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, undo, writePicture } from '../bridge';
@@ -40,23 +41,56 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
   const kinds = new Map(summary.objects.map((o) => [o.name, o.kind]));
   expect('the project holds a parameter table, a dataflow and two results tables', kinds.get('Reserves assumptions') === 'parameter_table' && kinds.get('Reserves') === 'dataflow' && kinds.get('Reserves Base') === 'table' && kinds.get('Reserves 50m') === 'table');
 
-  const rows = () => [...document.querySelectorAll<HTMLElement>('[data-slot="tree-row"]')];
-  /** Clicks an object's row in the Layers panel, once it's drawn, and gives back the page's text once Properties has it. */
+  /**
+   * Picks an object in its own tab's list (the Parameters tab's for a table or dataflow, the Reserves table tab's for a
+   * results table), then Show in Properties on its menu, and gives back the page's text once Properties has it.
+   */
   const shown = async (name: string, waitFor: string) => {
-    let row: HTMLElement | undefined;
-    for (let k = 0; k < 100 && !row; k++) {
-      // Its name, then any revision badge (r2).
-      row = rows().find((r) => {
-        const text = r.textContent?.trim() ?? '';
-        return text === name || (text.startsWith(name) && /^r\d+$/.test(text.slice(name.length)));
-      });
-      if (!row) await wait(100);
+    const object = summary.objects.find((o) => o.name === name && ['parameter_table', 'dataflow', 'table'].includes(o.kind));
+    if (!object) return null;
+    if (object.kind === 'table') {
+      showPanel(api, 'restable');
+      let pick: HTMLSelectElement | null = null;
+      for (let k = 0; k < 50 && !pick; k++) {
+        pick = document.querySelector<HTMLSelectElement>('[data-tool-panel="reserves-table"] select[aria-label="Reserves table"]');
+        if (!pick) await wait(100);
+      }
+      if (!pick) return null;
+      // React reads a select's value through its own setter.
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(pick, object.id);
+      pick.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+      showPanel(api, 'params');
+      let item: HTMLElement | null = null;
+      for (let k = 0; k < 50 && !item; k++) {
+        item = document.querySelector<HTMLElement>(`[data-slot="parameters-item"][data-name="${CSS.escape(name)}"]`);
+        if (!item) await wait(100);
+      }
+      if (!item) return null;
+      item.click();
     }
-    if (!row) {
-      results[`rows seen looking for ${name}`] = rows().map((r) => r.textContent?.trim()).slice(0, 40);
-      return null;
+    // The menu beside it: in the Parameters list, on the row picked once it's lit; for a results table, beside its select.
+    const triggerOf = () =>
+      object.kind === 'table'
+        ? document.querySelector<HTMLElement>('[data-tool-panel="reserves-table"] [data-slot="object-menu"]')
+        : (document.querySelector<HTMLElement>(`[data-slot="parameters-item"][data-name="${CSS.escape(name)}"]`)?.parentElement?.querySelector<HTMLElement>('[data-slot="object-menu"]') ?? null);
+    let trigger: HTMLElement | null = null;
+    for (let k = 0; k < 50 && !trigger; k++) {
+      trigger = triggerOf();
+      if (!trigger) await wait(100);
     }
-    row.click();
+    // The last menu gone first, so the one found is this one's; then it opens on the press, as a person's would.
+    const menus = () => document.querySelectorAll('[data-slot="object-menu-items"]').length;
+    for (let k = 0; k < 30 && menus() > 0; k++) await wait(100);
+    trigger?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' }));
+    let showIt: HTMLElement | undefined;
+    for (let k = 0; k < 30 && !showIt; k++) {
+      showIt = [...document.querySelectorAll<HTMLElement>('[data-slot="object-menu-items"] [role="menuitem"]')].filter((m) => m.textContent?.trim() === 'Show in Properties').at(-1);
+      if (!showIt) await wait(100);
+    }
+    if (!showIt) return null;
+    showIt.click();
+    for (let k = 0; k < 30 && menus() > 0; k++) await wait(100);
     for (let k = 0; k < 50 && !(document.body.textContent ?? '').includes(waitFor); k++) await wait(100);
     return document.body.textContent ?? '';
   };
@@ -69,15 +103,6 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     // The starter's formulas after initialise, qualities weighed by air-dried tonnes Spry's way (decision 0077, 7c).
     !!flow && flow.includes('small_volumes, initialise, fill_size, limits, densities, in_situ, join_benches, discard, working_sections') && flow.includes('rom, rom_qualities, final') && flow.includes('Reserves assumptions') && flow.includes('by tonnes (rd_adt)') && flow.includes('attribute mis'),
   );
-  // The Layers list draws only the rows in view: the other layers closed, as Tim would, so the results layer's rows show.
-  for (let k = 0; k < 100; k++) {
-    // Only the layers' own open and close buttons in the tree, never a panel's.
-    const open = [...document.querySelectorAll<HTMLElement>('[aria-expanded="true"][aria-label^="Close "]')].find((b) => b.getAttribute('aria-label') !== 'Close 10 reserves');
-    if (!open) break;
-    open.click();
-    await wait(60);
-  }
-  await wait(300);
   const base = await shown('Reserves Base', 'Insitu by seam');
   for (let k = 0; k < 50 && !(document.body.textContent ?? '').includes('Working section by seam'); k++) await wait(100);
   const parts = ['Reserves table', 'Imported by seam', 'Insitu by seam', 'Insitu by bench', 'Working section by seam', 'Loss by seam', 'Dilution by seam', 'ROM by seam', 'Scheduled by seam', 'Clean coal by seam', 'Total', '6,461,308', 'tonnes ad t'].map((w) => [w, !!(document.body.textContent ?? '').includes(w)] as const);

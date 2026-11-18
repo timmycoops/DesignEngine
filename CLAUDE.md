@@ -289,7 +289,10 @@ $env:VIRTUAL_ENV = "$PWD\.venv"; .venv\Scripts\maturin develop --release -m crat
 ## Interface
 
 The shell is docks round the view (`docs/decisions/0076-docks-and-workflow-tabs.md`, the Build Plan's "UI improvements
-plan" tab): the layer tree on the left, one tool dock on the right where every tool opens as a tab beside Properties,
+plan" tab): the layer tree on the left, a row a layer saying what's on it by kind and never a row an object, what isn't
+drawn (face designs, workflows, parameter tables, dataflows, reserves tables) found in its own tab's list with Rename and
+Delete there, an object hidden or shown from the view's right-click in Select, and found by name in the Objects table
+(`docs/decisions/0087-layers-only.md`); one tool dock on the right where every tool opens as a tab beside Properties,
 and one results dock under the view where every table opens as a tab (Run log, Block table, Reserves table, Parameters,
 Workflow canvas, Face design). A new panel names its dock in `PANELS` (`app/src/workspace/Workspace.tsx`) and opens
 through `showPanel`; it never adds a column or a row of its own, and the view keeps its room. The view has no tab strip,

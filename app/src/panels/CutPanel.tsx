@@ -273,7 +273,7 @@ export function CutPanel() {
 
   const solidsSection = (
     <ToolSection title="Solids">
-      <Field label="Take" hint={chosen.length === 0 ? 'Pick a solid in the view or the tree, or take those on show' : chosen.length === 1 ? chosen[0].name : `${chosen.length} solids, each on its own`}>
+      <Field label="Take" hint={chosen.length === 0 ? 'Pick a solid in the view or the Objects table, or take those on show' : chosen.length === 1 ? chosen[0].name : `${chosen.length} solids, each on its own`}>
         <Choice value={scope} options={SCOPES} labels={scopeLabels} onChange={setScope} label="Which solids" />
       </Field>
     </ToolSection>

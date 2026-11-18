@@ -60,7 +60,7 @@ import { RoadLayer } from './viewport/roads';
 import { type Mode, StringLayer } from './viewport/strings';
 import { typing } from './viewport/camera';
 import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Viewport';
-import { type AddingTo, type Draft, type FieldColour, type NotebookEdit, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
+import { type AddingTo, type Draft, type FieldColour, type NotebookEdit, type ViewMenuAt, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
 import { ALL_PANELS_KEY, isBeside, type PanelId, placeBeside, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
 import { inUse, type Tool, type ToolAction, type ToolNeeds } from './tools';
 import { listenForChords } from './workspace/chords';
@@ -161,6 +161,7 @@ export default function App() {
   summaryRef.current = summary;
   const seamsRef = useRef<SeamShown[]>([]);
   const selectionRef = useRef<string[]>([]);
+  const [viewMenu, setViewMenu] = useState<ViewMenuAt | null>(null);
   const [deswikFile, setDeswikFile] = useState<{ path: string; layers: DeswikLayer[] } | null>(null);
   const [spryFile, setSpryFile] = useState<{ path: string; layers: PickableLayer[]; solidFields: Set<string> } | null>(null);
   const [notSolids, setNotSolids] = useState<NotASolid[] | null>(null);
@@ -617,6 +618,13 @@ export default function App() {
           }),
         choose: (id, add) => (add && id ? toggleSelected(id) : select(id)),
         box: (min, max, add) => void boxSelect(min, max, add),
+        menu: (x, y, string) =>
+          void (string ? Promise.resolve(string) : objectAt(created, sync, section, x, y)).then((id) => {
+            const now = selectionRef.current;
+            // A right click on something not picked picks it alone, as a left click would; on nothing, the menu is for what's picked.
+            if (id && !now.includes(id)) select(id);
+            setViewMenu({ x, y, ids: id && !now.includes(id) ? [id] : now, n: Date.now() });
+          }),
       });
       strings.onSnapping = setSnapping;
       section.mapShows = [strings.lines];
@@ -1186,8 +1194,10 @@ export default function App() {
       pickString,
       drawing: mode === 'draw',
       typeVertex,
+      viewMenu,
+      closeViewMenu: () => setViewMenu(null),
     }),
-    [summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook, drafts],
+    [viewMenu, summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook, drafts],
   );
 
   /** The view's own tools, for the bar on the view (decision 0076). The keys below do the same. */

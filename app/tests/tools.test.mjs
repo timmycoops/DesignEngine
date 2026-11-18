@@ -78,7 +78,7 @@ test('every stage has a row of tools that exist, named in words', () => {
     assert.notEqual(ROWS[id].at(-1), '|');
   }
   const names = (stage) => ROWS[stage].filter((i) => typeof i === 'string' && i !== '|').map((key) => rowName(toolByKey(key)));
-  assert.deepEqual(names('solids'), ['Between surfaces', 'Strips by faces', 'By surface or RL', 'By seams', 'By benches', 'By blocks', 'Block table', 'Repair']);
+  assert.deepEqual(names('solids'), ['Between surfaces', 'Strips by faces', 'By surface or RL', 'By seams', 'By benches', 'By blocks', 'Objects table', 'Repair']);
   assert.deepEqual(names('project'), ['New', 'Save as', 'Relink geology']);
   // Open is a menu on the row: a project, or an older project folder.
   assert.deepEqual(ROWS.project.filter((i) => typeof i !== 'string').map((m) => m.label), ['Open', 'Import', 'Export']);
