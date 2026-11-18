@@ -383,6 +383,9 @@ enum Geometry {
     Thickness,
     Area,
     Length,
+    /// A block's width and dip: its own, area-weighted above it.
+    Width,
+    Dip,
 }
 
 impl Geometry {
@@ -391,6 +394,8 @@ impl Geometry {
             "thickness" => Some(Self::Thickness),
             "area" => Some(Self::Area),
             "length" => Some(Self::Length),
+            "width" => Some(Self::Width),
+            "dip" => Some(Self::Dip),
             _ => None,
         }
     }
@@ -412,9 +417,10 @@ fn blocks_of(table: &Table, leaves: &[usize]) -> Vec<String> {
     leaves.iter().map(|&i| words.iter().map(|v| v[i].as_deref().unwrap_or("")).collect::<Vec<_>>().join("\u{1}")).collect()
 }
 
-/// Thickness, area and length over some leaves (decision 0086): a leaf its own; above it, by block, thickness added down
-/// a block (its benches and seams stacked) and averaged over blocks by their areas, area each block's largest added over
-/// blocks, length a block's own and none above it.
+/// Thickness, area, length, width and dip over some leaves (decision 0086): a leaf its own; above it, by block, thickness
+/// added down a block (its benches and seams stacked) and averaged over blocks by their areas, area each block's largest
+/// added over blocks, length a block's own and none above it, width and dip a block's own averaged over blocks by their
+/// areas.
 fn add_up_geometry(table: &Table, name: &str, v: &[Option<f64>], kind: Geometry, leaves: &[usize]) -> Option<f64> {
     let folder = name.rsplit_once('\\').map_or("", |(f, _)| f);
     let area = match table.column(&format!("{folder}\\area")).map(|c| &c.values) {
@@ -444,7 +450,7 @@ fn add_up_geometry(table: &Table, name: &str, v: &[Option<f64>], kind: Geometry,
     match kind {
         Geometry::Length => (blocks.len() == 1).then(|| blocks[0].1),
         Geometry::Area => Some(blocks.iter().map(|b| b.1).sum()),
-        Geometry::Thickness => {
+        Geometry::Thickness | Geometry::Width | Geometry::Dip => {
             let weighed: f64 = blocks.iter().map(|b| b.2.unwrap_or(0.0)).sum();
             if weighed > 0.0 {
                 Some(blocks.iter().map(|b| b.1 * b.2.unwrap_or(0.0)).sum::<f64>() / weighed)
@@ -571,5 +577,20 @@ mod tests {
         let strip = at("thickness", &[0, 1, 2, 3]).unwrap();
         assert!((strip - (6.5 * 1_200.0 + 4.0 * 3_000.0) / 4_200.0).abs() < 1e-12, "{strip}");
         assert_eq!((at("area", &[0, 1, 2, 3]), at("length", &[0, 1, 2, 3])), (Some(4_200.0), None), "the strip");
+    }
+
+    /// Width and dip (decision 0086), a block's own and area-weighted over blocks: B10 50 m wide dipping 4° over
+    /// 1,200 m², B2 30 m dipping 8° over 3,000 m²; the strip (50 × 1,200 + 30 × 3,000) ÷ 4,200 = 35.71 m and
+    /// (4 × 1,200 + 8 × 3,000) ÷ 4,200 = 6.857°.
+    #[test]
+    fn width_and_dip_are_a_block_s_own_area_weighted_above() {
+        let mut t = table();
+        t.columns.push(TableColumn { name: "ROM\\Coal\\area".into(), unit: "m2".into(), add_up: None, values: ColumnValues::Number(n(&[1_000.0, 1_000.0, 1_200.0, 3_000.0])) });
+        t.columns.push(TableColumn { name: "ROM\\Coal\\width".into(), unit: "m".into(), add_up: None, values: ColumnValues::Number(n(&[50.0, 50.0, 50.0, 30.0])) });
+        t.columns.push(TableColumn { name: "ROM\\Coal\\dip".into(), unit: "deg".into(), add_up: None, values: ColumnValues::Number(n(&[4.0, 4.0, 4.0, 8.0])) });
+        let at = |name: &str, leaves: &[usize]| add_up_column(&t, &format!("ROM\\Coal\\{name}"), leaves).unwrap();
+        assert_eq!((at("width", &[0, 1, 2]), at("dip", &[0, 1, 2])), (50.0, 4.0), "B10 its own");
+        assert!((at("width", &[0, 1, 2, 3]) - (50.0 * 1_200.0 + 30.0 * 3_000.0) / 4_200.0).abs() < 1e-12);
+        assert!((at("dip", &[0, 1, 2, 3]) - (4.0 * 1_200.0 + 8.0 * 3_000.0) / 4_200.0).abs() < 1e-12);
     }
 }

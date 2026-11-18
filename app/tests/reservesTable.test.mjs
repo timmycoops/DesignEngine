@@ -57,3 +57,9 @@ test('a picked leaf shows on its block, its seam opened', () => {
   assert.deepEqual(nodeForLeaf(b.levels, ['Pit', '3', 'B1', 'U', '110']), { node: ['Pit', '3', 'B1'], open: [['Pit', '3', 'B1', 'U']] });
   assert.deepEqual(nodeForLeaf(['strip', 'block'], ['3', 'B1']), { node: ['3'], open: [['3', 'B1']] });
 });
+
+test("a block's dip reads in degrees, its geometry with the detail fields (decision 0086)", async () => {
+  const { unitLabel, isDetail } = await import('../src/panels/reservesTable.ts');
+  assert.equal(unitLabel('deg'), '°');
+  assert.ok(['width', 'dip', 'centroid_z'].every(isDetail) && !isDetail('thickness'));
+});

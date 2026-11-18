@@ -22,7 +22,7 @@ export type FieldRow =
   | { kind: 'field'; key: string; label: string; unit: string; depth: number; field: BreakdownField };
 
 /** Fields left out unless every field is asked for: densities, moistures and plan geometry, which the steps read. */
-const DETAIL = new Set(['area', 'length', 'mad', 'mis', 'mrom', 'rd', 'rd_is', 'rd_rom', 'tonnes_ad', 'id']);
+const DETAIL = new Set(['area', 'length', 'width', 'dip', 'centroid_x', 'centroid_y', 'centroid_z', 'mad', 'mis', 'mrom', 'rd', 'rd_is', 'rd_rom', 'tonnes_ad', 'id']);
 
 export function isDetail(name: string): boolean {
   return DETAIL.has(name.toLowerCase());
@@ -47,6 +47,7 @@ export function decimals(unit: string): number {
 }
 
 export function unitLabel(unit: string): string {
+  if (unit === 'deg') return '°';
   return unit.replace('m3', 'm³').replace('m2', 'm²');
 }
 

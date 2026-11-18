@@ -1978,3 +1978,64 @@ fn the_balance_without_an_in_situ_step_checks_rom_against_what_came_in() {
         assert!(balance_total(&t, &format!("{part}\\unaccounted_rom")).abs() < 1e-6, "{part}");
     }
 }
+
+// Decision 0086, workstream 3: a block's width, dip and centroid in the starter dataflow.
+
+/// The starter dataflow reads each block's width, dip and centroid as solid.measure wrote them: width a length, dip and
+/// width a column's largest, the centroid by volume.
+#[test]
+fn the_starter_reads_each_block_s_width_dip_and_centroid() {
+    let model = zd_core::SeamModel {
+        folder: String::new(),
+        density: "rd".into(),
+        tolerance: 0.0,
+        lattice: zd_core::Lattice { origin: [0.0; 2], cell_size: [1.0; 2], cols: 1, rows: 1 },
+        no_seam: None,
+        z_range: None,
+        horizons: Vec::new(),
+        issues: Vec::new(),
+    };
+    let (_, flow) = zd_commands::builtin::dataflow_starter(&model);
+    let field = |name: &str| flow.fields.iter().find(|f| f.field.name == name).unwrap_or_else(|| panic!("no {name}"));
+    for (name, add_up) in [("width", "max"), ("dip", "max"), ("centroid_x", "volume"), ("centroid_y", "volume"), ("centroid_z", "volume")] {
+        let f = field(name);
+        assert_eq!(serde_json::to_value(&f.field.add_up).unwrap()["by"], add_up, "{name}");
+        assert_eq!(serde_json::to_value(&f.source).unwrap()["attribute"], name, "{name} read from the block");
+    }
+}
+
+/// The 4c column's blocks, 100 m by 50 m and flat, measured and run with width, dip and centroid fields: OB, from RL 40
+/// to 50, 50 m wide, dipping 0°, its centroid at RL 45; A, RL 38 to 40, at RL 39. Dip and width are written with no
+/// add-up rule, as thickness is (the Reserves table tab adds them up by block), the centroid by volume.
+#[test]
+fn a_run_writes_each_block_s_width_dip_and_centroid() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let table_id = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let content = json!({
+        "fields": [
+            { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
+            { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
+            { "name": "area", "kind": "area", "add_up": { "by": "max" }, "from": "plan_area" },
+            { "name": "length", "kind": "length", "add_up": { "by": "max" }, "from": "attribute", "attribute": "length" },
+            { "name": "width", "kind": "length", "add_up": { "by": "max" }, "from": "attribute", "attribute": "width" },
+            { "name": "dip", "kind": "other", "add_up": { "by": "max" }, "from": "attribute", "attribute": "dip" },
+            { "name": "centroid_z", "kind": "other", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "centroid_z" },
+            { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
+        ],
+        "steps": [{ "step": "initialise" }, { "step": "in_situ" }],
+        "parameters": [table_id],
+    });
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0];
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let seams = texts(&t, "seam");
+    let ob = (0..t.rows()).find(|&i| value(&t, i, &at(WASTE, "volume")).is_some_and(|v| close(v, 50_000.0)) && seams[i].as_deref() == Some("A")).expect("OB's leaf");
+    assert!(close(value(&t, ob, &at(WASTE, "width")).unwrap(), 50.0) && value(&t, ob, &at(WASTE, "dip")).unwrap().abs() < 1e-9);
+    assert!(close(value(&t, ob, &at(WASTE, "centroid_z")).unwrap(), 45.0));
+    let a = (0..t.rows()).find(|&i| value(&t, i, &at(COAL, "volume")).is_some_and(|v| close(v, 10_000.0))).expect("A's leaf");
+    assert!(close(value(&t, a, &at(COAL, "centroid_z")).unwrap(), 39.0));
+    let col = |name: &str| t.column(&at(WASTE, name)).unwrap();
+    assert!(col("dip").add_up.is_none() && col("width").add_up.is_none() && col("centroid_z").add_up.is_some());
+    assert_eq!((col("dip").unit.as_str(), col("centroid_z").unit.as_str()), ("deg", "m"));
+}
