@@ -321,6 +321,12 @@ fn words_of(values: &[Option<String>], leaves: &[usize]) -> Option<String> {
 /// path); the largest or smallest. None where no leaf has a value, or no weight.
 pub fn add_up_column(table: &Table, name: &str, leaves: &[usize]) -> Option<f64> {
     let column = table.column(name)?;
+    if column.add_up.is_none()
+        && let ColumnValues::Number(v) = &column.values
+        && let Some(kind) = Geometry::of(name)
+    {
+        return add_up_geometry(table, name, v, kind, leaves);
+    }
     let (Some(rule), ColumnValues::Number(v)) = (&column.add_up, &column.values) else { return None };
     let folder = name.rsplit_once('\\').map_or("", |(f, _)| f);
     let beside = |field: &str| -> Option<&Vec<Option<f64>>> {
@@ -369,6 +375,84 @@ pub fn children_sum(b: &Breakdown, field: &str) -> Option<(f64, f64)> {
     let total = f.values[0]?;
     let children: f64 = b.columns.iter().zip(&f.values).filter(|(c, _)| c.depth == 1).filter_map(|(_, v)| *v).sum();
     Some((total, children))
+}
+
+/// A block's geometry, which doesn't add up across leaves as a field does (decision 0086).
+#[derive(Clone, Copy, PartialEq)]
+enum Geometry {
+    Thickness,
+    Area,
+    Length,
+}
+
+impl Geometry {
+    fn of(name: &str) -> Option<Self> {
+        match name.rsplit_once('\\').map_or(name, |(_, f)| f) {
+            "thickness" => Some(Self::Thickness),
+            "area" => Some(Self::Area),
+            "length" => Some(Self::Length),
+            _ => None,
+        }
+    }
+}
+
+/// Each leaf's block: its words for the levels above the seam (the column a reserves run makes), as `Dataflow::
+/// column_levels` splits them; every level but the last where there's no seam level.
+fn blocks_of(table: &Table, leaves: &[usize]) -> Vec<String> {
+    let levels = levels(table);
+    let upper = levels.iter().position(|l| l.eq_ignore_ascii_case("seam")).unwrap_or(levels.len().saturating_sub(1));
+    let words: Vec<&Vec<Option<String>>> = levels[..upper]
+        .iter()
+        .chain(std::iter::once(&"case".to_string()))
+        .filter_map(|l| match table.column(l).map(|c| &c.values) {
+            Some(ColumnValues::Text(v)) => Some(v),
+            _ => None,
+        })
+        .collect();
+    leaves.iter().map(|&i| words.iter().map(|v| v[i].as_deref().unwrap_or("")).collect::<Vec<_>>().join("\u{1}")).collect()
+}
+
+/// Thickness, area and length over some leaves (decision 0086): a leaf its own; above it, by block, thickness added down
+/// a block (its benches and seams stacked) and averaged over blocks by their areas, area each block's largest added over
+/// blocks, length a block's own and none above it.
+fn add_up_geometry(table: &Table, name: &str, v: &[Option<f64>], kind: Geometry, leaves: &[usize]) -> Option<f64> {
+    let folder = name.rsplit_once('\\').map_or("", |(f, _)| f);
+    let area = match table.column(&format!("{folder}\\area")).map(|c| &c.values) {
+        Some(ColumnValues::Number(a)) => Some(a),
+        _ => None,
+    };
+    let held: Vec<usize> = leaves.iter().copied().filter(|&i| v[i].is_some()).collect();
+    if held.is_empty() {
+        return None;
+    }
+    // Each block's added thickness or largest value, and its largest area.
+    let mut blocks: Vec<(String, f64, Option<f64>)> = Vec::new();
+    for (i, block) in held.iter().zip(blocks_of(table, &held)) {
+        let x = v[*i].unwrap_or(0.0);
+        let a = area.and_then(|a| a[*i]);
+        match blocks.iter_mut().find(|b| b.0 == block) {
+            Some(b) => {
+                b.1 = if kind == Geometry::Thickness { b.1 + x } else { b.1.max(x) };
+                b.2 = match (b.2, a) {
+                    (Some(p), Some(q)) => Some(p.max(q)),
+                    (p, q) => p.or(q),
+                };
+            }
+            None => blocks.push((block, x, a)),
+        }
+    }
+    match kind {
+        Geometry::Length => (blocks.len() == 1).then(|| blocks[0].1),
+        Geometry::Area => Some(blocks.iter().map(|b| b.1).sum()),
+        Geometry::Thickness => {
+            let weighed: f64 = blocks.iter().map(|b| b.2.unwrap_or(0.0)).sum();
+            if weighed > 0.0 {
+                Some(blocks.iter().map(|b| b.1 * b.2.unwrap_or(0.0)).sum::<f64>() / weighed)
+            } else {
+                Some(blocks.iter().map(|b| b.1).sum::<f64>() / blocks.len() as f64)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -468,5 +552,24 @@ mod tests {
         let mut v = vec!["B10", "B2", "b1", "B02x", "10", "9"];
         v.sort_by(|a, b| natural(a, b));
         assert_eq!(v, ["9", "10", "b1", "B2", "B02x", "B10"]);
+    }
+
+    /// Thickness, area and length (decision 0086) on B10 (seam U on benches 110 and 100, 2 m and 3 m over 1,000 m², and
+    /// L, 1.5 m over 1,200 m²) and B2 (U, 4 m over 3,000 m²), all written with no add-up rule: a bench its own; U in B10
+    /// its benches stacked, 5 m over 1,000 m²; B10 every seam stacked, 6.5 m over its largest, 1,200 m²; the strip
+    /// (6.5 × 1,200 + 4 × 3,000) ÷ 4,200 = 4.714 m over 4,200 m²; length a block's own, none for the strip.
+    #[test]
+    fn thickness_area_and_length_add_up_by_block() {
+        let mut t = table();
+        t.columns.push(TableColumn { name: "ROM\\Coal\\thickness".into(), unit: "m".into(), add_up: None, values: ColumnValues::Number(n(&[3.0, 2.0, 1.5, 4.0])) });
+        t.columns.push(TableColumn { name: "ROM\\Coal\\area".into(), unit: "m2".into(), add_up: None, values: ColumnValues::Number(n(&[1_000.0, 1_000.0, 1_200.0, 3_000.0])) });
+        t.columns.push(TableColumn { name: "ROM\\Coal\\length".into(), unit: "m".into(), add_up: None, values: ColumnValues::Number(n(&[100.0, 100.0, 100.0, 120.0])) });
+        let at = |name: &str, leaves: &[usize]| add_up_column(&t, &format!("ROM\\Coal\\{name}"), leaves);
+        assert_eq!(at("thickness", &[1]), Some(2.0), "a bench its own");
+        assert_eq!((at("thickness", &[0, 1]), at("area", &[0, 1])), (Some(5.0), Some(1_000.0)), "U in B10, its benches stacked");
+        assert_eq!((at("thickness", &[0, 1, 2]), at("area", &[0, 1, 2]), at("length", &[0, 1, 2])), (Some(6.5), Some(1_200.0), Some(100.0)), "B10");
+        let strip = at("thickness", &[0, 1, 2, 3]).unwrap();
+        assert!((strip - (6.5 * 1_200.0 + 4.0 * 3_000.0) / 4_200.0).abs() < 1e-12, "{strip}");
+        assert_eq!((at("area", &[0, 1, 2, 3]), at("length", &[0, 1, 2, 3])), (Some(4_200.0), None), "the strip");
     }
 }

@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight, Columns3, Download, MousePointerSquareDashed } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useState } from 'react';
+import { ReservesBalance } from './ReservesBalanceView';
 import { type Breakdown, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, type ReservesNode } from '@/bridge';
 import { Choice, Field, Select } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
@@ -27,6 +28,11 @@ const FOLLOW_LABELS: Record<Follow, string> = { on: 'Follow the pick', off: 'Sta
 type Across = 'children' | 'leaves';
 const ACROSS: readonly Across[] = ['children', 'leaves'];
 const ACROSS_LABELS: Record<Across, string> = { children: 'Children', leaves: 'Leaves' };
+
+// The node as fields down the side and children across, or as its balance of coal and waste (decision 0086).
+type View = 'fields' | 'balance';
+const VIEWS: readonly View[] = ['fields', 'balance'];
+const VIEW_LABELS: Record<View, string> = { fields: 'Breakdown', balance: 'Balance' };
 
 const FOLDED_KEY = 'zd.reservesTable.folded.v1';
 const ACROSS_KEY = 'zd.reservesTable.across.v1';
@@ -92,6 +98,7 @@ export function ReservesTable() {
     writeAcross(a);
   };
   const [said, setSaid] = useState<string | null>(null);
+  const [view, setView] = useState<View>('fields');
 
   const tableKey = table ? `${table.id}@${table.revision}` : '';
   useEffect(() => {
@@ -237,6 +244,7 @@ export function ReservesTable() {
               </Fragment>
             ))}
           </span>
+          <Choice value={view} options={VIEWS} labels={VIEW_LABELS} onChange={setView} label="The node's fields, or its balance of coal and waste from Imported to Scheduled" />
           <Field label="Fields">
             <Choice value={fields} options={FIELDS} labels={FIELD_LABELS} onChange={setFields} label="Which fields" />
           </Field>
@@ -271,7 +279,8 @@ export function ReservesTable() {
           </div>
         )}
         <div className="min-h-0 flex-1 overflow-auto">
-          {breakdown && (
+          {breakdown && view === 'balance' && <ReservesBalance fields={breakdown.fields} node={crumbs.map((c) => c.label).join(' › ')} />}
+          {breakdown && view === 'fields' && (
             <table className="border-separate border-spacing-0 tabular-nums" data-slot="reserves-breakdown">
               <thead className="sticky top-0 z-10 bg-card">
                 <tr>
