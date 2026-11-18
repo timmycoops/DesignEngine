@@ -23,6 +23,33 @@ export function ruleWords(workflow: Workflow, rule: InputRule): string {
   return said;
 }
 
+/** A rule's filter as the filter box has it (decision 0088): each value as its text, a number or true as it reads. */
+export function whereOf(rule: InputRule): Record<string, string> {
+  return Object.fromEntries(Object.entries(rule.where ?? {}).map(([key, value]) => [key, String(value)]));
+}
+
+/**
+ * The workflow with one step input's filter set (decision 0088, workstream 5): a value whose text is as saved keeps the
+ * type it was saved as (a number captured stays that value), the rest are filter text; an empty filter takes `where`
+ * away. A step's filter is the step's own, so every case reads it.
+ */
+export function withWhere(workflow: Workflow, step: number, input: string, when: Record<string, string>): Workflow {
+  const steps = workflow.steps.map((s) => {
+    if (s.id !== step || s.action.kind !== 'command' || !s.action.inputs[input]) return s;
+    const rule = s.action.inputs[input];
+    const where = Object.fromEntries(
+      Object.entries(when).map(([key, text]) => {
+        const was = rule.where?.[key];
+        return [key, was !== undefined && String(was) === text ? was : text];
+      }),
+    );
+    const next: InputRule = { ...rule, where };
+    if (Object.keys(where).length === 0) delete next.where;
+    return { ...s, action: { ...s.action, inputs: { ...s.action.inputs, [input]: next } } };
+  });
+  return { ...workflow, steps };
+}
+
 /**
  * Runs ticked after a click on run `index`: it turns over, or with `range` every tickable run between it and the last
  * clicked turns as it does. Runs that can't be captured are never ticked.

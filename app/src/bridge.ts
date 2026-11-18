@@ -794,6 +794,9 @@ export const setLayerFilter = async (layer: string, when: Record<string, string>
   (idle(), summaryAfter(await invoke<ProjectChanges>('set_layer_filter', { layer, when })));
 /** Every attribute of what's on a layer and the layers under it, an object a row: what the filter box counts. */
 export const layerAttributes = (layer: string) => invoke<Record<string, boolean | number | string>[]>('layer_attributes', { layer });
+/** What one input of a workflow step finds before its filter, as the case sees it, an object a row with its measures. */
+export const workflowInputRows = (workflow: string, step: number, input: string, caseName?: string) =>
+  invoke<Record<string, boolean | number | string>[]>('workflow_input_rows', { workflow, step, input, case: caseName });
 /** Colours objects by RL or their layer, sets their opacity, or both (null leaves it). Display state, not a run. */
 export const setLooks = async (objects: string[], colouring: Colouring | null, opacity: number | null) =>
   (idle(), invoke<Display>('set_looks', { objects, colouring, opacity }));

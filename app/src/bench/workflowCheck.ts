@@ -102,6 +102,37 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     const runlog = document.body.textContent ?? '';
     expect('the run log has the workflow run', runlog.includes('Box pit: 2 steps run from step 1, finished'));
 
+    // A step input's filter (decision 0088, workstream 5): step 2's solids, what step 1 made (the pit, 600,000 m³), filtered
+    // by its volume under the step, saved as the step's own, the line reading it; cleared, the step reads as before.
+    const solidsRuleNow = async () => {
+      const d = await objectDetails(captureWorkflowId());
+      const s = d.measures.kind === 'workflow' ? d.measures.workflow.steps[1] : undefined;
+      return s?.action.kind === 'command' ? s.action.inputs.solids : undefined;
+    };
+    const filterLabel = "Filter what step 2's solids takes";
+    await press(labelled(`${filterLabel}, by attributes`));
+    await wait(600);
+    const finds = () => document.querySelector('[data-slot="input-filter"][data-input="solids"] [data-slot="input-filter-finds"]')?.textContent ?? '';
+    const opened = finds();
+    typeInto(filterLabel, 'volume: <1');
+    await wait(300);
+    const none = finds();
+    typeInto(filterLabel, 'volume: >500000');
+    await wait(1400);
+    const kept = finds();
+    const savedRule = await solidsRuleNow();
+    const line = panelText('workflow');
+    expect(
+      "step 2's solids filtered under the step: the pit it finds, 600,000 m³, kept by volume: >500000 and not by <1, saved as the step's, the line reading it",
+      opened.includes('Keeps 1 of the 1 object it finds') && none.includes('Keeps 0 of the 1 object') && kept.includes('Keeps 1 of the 1 object') && savedRule?.where?.volume === '>500000' && line.includes('solids: the objects step 1 made where volume is >500000'),
+      { opened, none, kept, where: savedRule?.where },
+    );
+    typeInto(filterLabel, '');
+    await wait(1400);
+    const clearedRule = await solidsRuleNow();
+    await press(labelled(`Close the filter of step 2's solids`));
+    expect('cleared, the step takes what step 1 made with no filter', clearedRule !== undefined && clearedRule.where === undefined && panelText('workflow').includes('solids: the objects step 1 made'), clearedRule?.where);
+
     // Tidy after a run (on by default): the pit, which only step 1 made, hidden; the pieces, the result, on show; the
     // surfaces and the outline, drawn before, left as they were.
     const shown = async () => Object.fromEntries((await projectSummary()).layers.map((l) => [l.name, l.visible]));

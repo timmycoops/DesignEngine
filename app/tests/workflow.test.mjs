@@ -2,7 +2,7 @@
 // capture them. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BASE, caseValue, changesOfCase, onlyLayers, readSetting, ruleWords, settingRows, settingsOfStep, stepsOfCase, tickRuns, tidyLayers, withSetting } from '../src/panels/workflow.ts';
+import { BASE, caseValue, changesOfCase, onlyLayers, readSetting, ruleWords, settingRows, settingsOfStep, stepsOfCase, tickRuns, tidyLayers, whereOf, withSetting, withWhere } from '../src/panels/workflow.ts';
 
 const workflow = {
   steps: [
@@ -20,6 +20,27 @@ test('a rule reads as the engine says it, a step by where it is now', () => {
   assert.equal(ruleWords(workflow, { from: { named: 'Seam model' }, kind: 'seam_model', many: false }), "the seam model named 'Seam model'");
   assert.equal(ruleWords(workflow, { from: { picked: ['a'] }, many: false }), '1 object as picked');
   assert.equal(ruleWords(workflow, { from: { picked: ['a', 'b'] }, kind: 'solid', many: true }), '2 solids as picked');
+});
+
+test("a step input's filter is set as text, a value saved as a number kept while its text is the same (0088 ws5)", () => {
+  const captured = {
+    steps: [
+      { id: 4, action: { kind: 'command', command: 'solid.slice_by_faces', settings: {}, inputs: {} } },
+      { id: 2, action: { kind: 'command', command: 'solid.cut_by_seams', settings: {}, inputs: { solids: { from: { step: 4 }, kind: 'solid', where: { strip: 3, material: 'coal' }, many: true }, model: { from: { named: 'Seam model' }, many: false } } } },
+    ],
+  };
+  const rule = captured.steps[1].action.inputs.solids;
+  assert.deepEqual(whereOf(rule), { strip: '3', material: 'coal' });
+  const next = withWhere(captured, 2, 'solids', { strip: '3', seam: 'M, L', volume: '<500' });
+  const where = next.steps[1].action.inputs.solids.where;
+  assert.deepEqual(where, { strip: 3, seam: 'M, L', volume: '<500' }, 'strip 3 stays the number captured; material dropped');
+  assert.equal(ruleWords(next, next.steps[1].action.inputs.solids), 'the solids step 1 made where strip is 3 where seam is M, L where volume is <500');
+  assert.equal(withWhere(captured, 2, 'solids', { strip: '1-5' }).steps[1].action.inputs.solids.where.strip, '1-5', 'changed, it is filter text');
+  const cleared = withWhere(captured, 2, 'solids', {}).steps[1].action.inputs.solids;
+  assert.equal('where' in cleared, false, 'an empty filter takes where away');
+  assert.equal(withWhere(captured, 2, 'model', { name: 'x' }).steps[1].action.inputs.model.where.name, 'x');
+  assert.equal(withWhere(captured, 4, 'solids', { strip: '1' }).steps[0], captured.steps[0], 'a step without that input is left as it is');
+  assert.equal(captured.steps[1].action.inputs.solids.where.material, 'coal', 'the workflow given is not changed');
 });
 
 test('a click ticks one run, a Shift-click every run between, never one that can not be captured', () => {

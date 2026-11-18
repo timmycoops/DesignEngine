@@ -327,6 +327,16 @@ impl Session {
         self.begin_case(workflow, from, BASE_CASE)
     }
 
+    /// What one input of one step finds before its filter, as the case sees the project (decision 0088, workstream 5):
+    /// the objects the Workflow panel's filter box lists the values of and counts, in the order the rule gives.
+    pub fn input_pool(&self, workflow: ObjectId, step: u32, input: &str, case: &str) -> Result<Vec<ObjectId>, CommandError> {
+        let run = self.begin_case(workflow, 1, case)?;
+        let Some(at) = run.workflow.position(step) else { return Err(CommandError::Invalid(format!("the workflow has no step id {step}"))) };
+        let StepAction::Command { inputs, .. } = &run.workflow.steps[at].action else { return Err(CommandError::Invalid(format!("step {} is a pause, which takes nothing", at + 1))) };
+        let Some(rule) = inputs.get(input) else { return Err(CommandError::Invalid(format!("step {} has no input '{input}'", at + 1))) };
+        crate::workflow::rule_pool(self.project(), &run.workflow, at, rule, &run.scope).map_err(CommandError::Invalid)
+    }
+
     /// [`Session::begin_workflow`] for one of its cases (decision 0066): the steps with the case's settings, its layers
     /// named `<layer> <case>`, what it makes tagged `case`, and its rules seeing what it made and what no step made,
     /// never another case's.

@@ -4,9 +4,9 @@
 use std::time::Instant;
 
 use serde_json::json;
-use zd_commands::workflow::resolve;
+use zd_commands::workflow::{CaseScope, resolve, rule_pool};
 use zd_commands::{Code, LogEntry, RunRecord, Session, Severity, StepOutcome, WorkflowStatus};
-use zd_core::{AttrValue, Body, ChangeKind, InputRule, ObjectId, ObjectKind, Source, StepAction, Workflow};
+use zd_core::{AttrValue, BASE_CASE, Body, ChangeKind, InputRule, ObjectId, ObjectKind, Source, StepAction, Workflow};
 
 const E: f64 = 650_000.0;
 const N: f64 = 7_450_000.0;
@@ -497,4 +497,35 @@ fn a_step_input_filters_by_the_filter_syntax_and_measures() {
     assert_eq!(found("volume", AttrValue::Number(240_000.0)), Ok(vec![below]), "a number saved as one is that value");
     let none = found("volume", AttrValue::Text("<1".into())).unwrap_err();
     assert!(none.contains("finds nothing") && none.contains("where volume is <1"), "{none}");
+}
+
+/// Workstream 5 of 0088: the panel's filter box lists what a step's input finds before its filter.
+#[test]
+fn an_inputs_pool_is_what_it_finds_before_its_filter() {
+    let (s, _, cut) = box_pit();
+    let pieces = created(&cut);
+    let w = Workflow::default();
+    // A filter that keeps nothing, on a rule for one: the pool is still both pieces, 240,000 and 360,000 m³.
+    let one = InputRule { from: Source::Layer("cut".into()), kind: Some(ObjectKind::Solid), filter: [("volume".to_string(), AttrValue::Text("<1".into()))].into(), many: false };
+    let pool = rule_pool(s.project(), &w, 0, &one, &CaseScope::default()).unwrap();
+    assert_eq!(pool.iter().collect::<std::collections::HashSet<_>>(), pieces.iter().collect(), "both pieces");
+    assert_eq!(pool.len(), 2);
+    let volumes: f64 = pool.iter().map(|&id| volume(&s, id)).sum();
+    assert!((volumes - 600_000.0).abs() < 1e-6, "{volumes}");
+    // Nothing on the layer at all: said, as a run says it.
+    let empty = InputRule { from: Source::Layer("no such layer".into()), ..one };
+    assert!(rule_pool(s.project(), &w, 0, &empty, &CaseScope::default()).unwrap_err().contains("finds nothing"));
+
+    // Through the session, for a saved workflow's step: step 2's cut takes the pit step 1 made, whatever its filter.
+    let (mut s, id, pit, _) = captured_box_pit();
+    let mut saved = workflow(&s, id);
+    let StepAction::Command { inputs, .. } = &mut saved.steps[1].action else { panic!("step 2 is the cut") };
+    let (input, rule) = inputs.iter_mut().find(|(_, r)| matches!(r.from, Source::Step(_))).expect("an input from step 1");
+    let input = input.clone();
+    rule.filter = [("volume".to_string(), AttrValue::Text("<1".into()))].into();
+    let step = saved.steps[1].id;
+    s.run("workflow.save", json!({ "workflow": id, "name": "Box pit", "content": saved })).unwrap();
+    assert_eq!(s.input_pool(id, step, &input, BASE_CASE).unwrap(), vec![pit]);
+    assert!(s.input_pool(id, 99, &input, BASE_CASE).unwrap_err().to_string().contains("no step id 99"));
+    assert!(s.input_pool(id, step, "no such input", BASE_CASE).unwrap_err().to_string().contains("no input 'no such input'"));
 }
