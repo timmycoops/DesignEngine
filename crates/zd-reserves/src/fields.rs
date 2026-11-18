@@ -41,6 +41,9 @@ pub enum AddUp {
     Max,
     /// The smallest (the ash cut-off).
     Min,
+    /// A ratio of sums (decision 0086): the column `of` added up over the column `per`, both beside it in its folder, so
+    /// a strip ratio or a yield adds up right over any group. For a results table's summary only; never a field's.
+    Ratio { of: String, per: String },
 }
 
 /// One field: its name, what it is and how it adds up.
@@ -107,6 +110,7 @@ impl Fields {
                     Some(&d) if !matches!(list[d].add_up, AddUp::Mass { .. }) => Ok(Weight::Mass(d)),
                     _ => Err(ColumnError::NoDensity { field: f.name.clone(), density: density.clone() }),
                 },
+                AddUp::Ratio { .. } => Err(ColumnError::RatioField(f.name.clone())),
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self { list, index, weights, volume, thickness })

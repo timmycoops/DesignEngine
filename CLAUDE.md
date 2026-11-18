@@ -124,7 +124,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   node's children across, its solids matched by the levels the table records (`docs/decisions/0075-reserves-in-the-app.md`). `reserves.run` runs a dataflow a column a pit, strip
   and block (the dataflow's levels above the seam), its steps registered by name, and writes a reserves table: a row a
   leaf of the levels, a column a field under its folders (`Insitu\Coal\volume`), coal and waste on one leaf as Spry's
-  node (`docs/decisions/0072-dataflow-parameters-tables.md`, `0074-rom-and-the-reserves-table.md`).
+  node (`docs/decisions/0072-dataflow-parameters-tables.md`, `0074-rom-and-the-reserves-table.md`); clean coal under ROM,
+  and a Summary: the balance of coal and waste from Imported through Insitu and ROM to Scheduled with what moved between
+  them, each check zero for every block, ratios as ratios of sums (`AddUp::Ratio`) and an audit
+  (`docs/decisions/0086-reserves-fields.md`).
 - `Rule`: a function from a string to one value per edge. Types: fixed, fixed list, inside polygon,
   inside solid, segment azimuth, by horizon. Later: block model, geotech solid with transition distance.
   Blending between rules may only widen berms and flatten slopes: where a value changes along a straight run, a

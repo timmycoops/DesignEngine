@@ -418,6 +418,8 @@ const addUpWords = (a: AddUp | undefined) => {
       return 'largest';
     case 'min':
       return 'smallest';
+    case 'ratio':
+      return `${a.of} over ${a.per}`;
   }
 };
 

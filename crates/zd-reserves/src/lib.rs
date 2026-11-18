@@ -39,6 +39,8 @@ pub enum ColumnError {
     ShortOf { unit: UnitId, asked: f64, had: f64 },
     /// An input bench with no RL to put it in order.
     BadBench { unit: String, bench: String },
+    /// A field adding up as a ratio, which only a results table's summary does.
+    RatioField(String),
 }
 
 impl fmt::Display for ColumnError {
@@ -56,6 +58,7 @@ impl fmt::Display for ColumnError {
             Self::BadAmount { unit, asked } => write!(f, "unit {unit}: a split of {asked} isn't a piece"),
             Self::ShortOf { unit, asked, had } => write!(f, "unit {unit} is short: {asked} asked of {had}"),
             Self::BadBench { unit, bench } => write!(f, "{unit}'s bench {bench} has no RL to put it in order"),
+            Self::RatioField(name) => write!(f, "{name} adds up as a ratio, which only a reserves table's summary does: give it sum, volume, mass, max or min"),
         }
     }
 }

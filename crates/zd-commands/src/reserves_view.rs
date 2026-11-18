@@ -352,6 +352,11 @@ pub fn add_up_column(table: &Table, name: &str, leaves: &[usize]) -> Option<f64>
             let d = beside(density);
             weighted(&|i| Some(volume?[i]? * d?[i]?))
         }
+        AddUp::Ratio { of, per } => {
+            let (Some(of), Some(per)) = (beside(of), beside(per)) else { return None };
+            let (top, bottom): (f64, f64) = leaves.iter().map(|&i| (of[i].unwrap_or(0.0), per[i].unwrap_or(0.0))).fold((0.0, 0.0), |(a, b), (x, y)| (a + x, b + y));
+            (bottom != 0.0).then(|| top / bottom)
+        }
         AddUp::Max => leaves.iter().filter_map(|&i| v[i]).reduce(f64::max),
         AddUp::Min => leaves.iter().filter_map(|&i| v[i]).reduce(f64::min),
     }
