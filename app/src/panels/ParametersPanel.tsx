@@ -436,7 +436,7 @@ function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMa
           </tbody>
         </table>
         <p className="px-3 py-2 text-muted-foreground">
-          Read left to right: each value comes from the first column that fits and holds it; a blank filter fits anything. A filter cell takes words, numbers and ranges as the bench rules do (U, 1-5, "U, M"). Paste cells from Excel into any cell: a line along a parameter, across the columns.
+          Read left to right: each value comes from the first column that fits and holds it; a blank filter fits anything. A filter cell takes words, numbers, ranges, comparisons and nots as the bench rules do (U, 1-5, "U, M", &lt;0.3, !P). Paste cells from Excel into any cell: a line along a parameter, across the columns.
         </p>
       </div>
     </div>

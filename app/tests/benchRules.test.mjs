@@ -2,7 +2,7 @@
 // pieces. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { catchAll, everything, fits, horizonState, horizonsOf, range, readWhen, ruleFor, rulesFromCsv, rulesParam, rulesToCsv, setHorizonBenched, taken, whenText } from '../src/panels/benchRules.ts';
+import { catchAll, comparison, everything, fits, horizonState, listFits, horizonsOf, range, readWhen, ruleFor, rulesFromCsv, rulesParam, rulesToCsv, setHorizonBenched, taken, whenText } from '../src/panels/benchRules.ts';
 
 const piece = (strip, horizon, material) => ({ strip, horizon, material, seam: material === 'coal' ? horizon : 'U' });
 // Two strips cut by seams, top down: OB, U, U-M, M.
@@ -81,4 +81,18 @@ test('CSV with mistakes is refused line by line; columns may be left out', () =>
   assert.deepEqual(short.errors, []);
   assert.deepEqual(rulesParam(short.rules), [{ when: { horizon: 'OB' }, benched: true, from: 0, to: 500, every: 10, named_by: 'bottom' }]);
   assert.deepEqual(rulesFromCsv('from,to,every\n10,0,5\n').errors, ['line 2: from RL 10 is above to RL 0']);
+});
+
+test('comparisons and not, as the engine reads them (Filtering plan, decision 1)', () => {
+  assert.deepEqual([comparison('<0.3'), comparison('>= 120'), comparison('<abc'), comparison('-20--5')], [['<', 0.3], ['>=', 120], null, null]);
+  assert.ok(listFits('<0.3', 0.25) && !listFits('<0.25', 0.25) && listFits('<=0.25', 0.25));
+  assert.ok(listFits('>=120', '120') && !listFits('>120', '120'), 'text that reads as a number compares as one');
+  assert.ok(!listFits('<5', 'U'), 'a comparison never fits a word');
+  assert.ok(listFits('<abc', '<abc'), '`<abc` is a word');
+  assert.ok(listFits('!waste', 'Coal') && !listFits('!waste', 'WASTE') && listFits('!waste', undefined), 'what has none is not waste');
+  assert.ok(listFits('*, !WASTE', 'Coal') && !listFits('*, !WASTE', 'WASTE'));
+  assert.ok(!listFits('Coal, !WASTE', undefined), 'with values it may hold, one must be there');
+  assert.ok(!listFits('1-10, !4', 4) && listFits('1-10, !5-6', 4));
+  const rule = { ...everything(), when: readWhen('thickness: <0.3; seam: !P').when };
+  assert.ok(fits(rule, { thickness: 0.2, seam: 'U' }) && !fits(rule, { thickness: 0.2, seam: 'P' }) && !fits(rule, { thickness: 0.4, seam: 'U' }));
 });
