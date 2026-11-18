@@ -75,6 +75,10 @@ pub struct Display {
     pub layers: BTreeMap<LayerId, f64>,
     #[serde(default)]
     pub contours: Contours,
+    /// A layer's filter by attributes and measures (decision 0088, workstream 3): attribute name to the comma list it
+    /// may hold. What doesn't fit, on the layer and the layers under it, isn't drawn, snapped to or cut by a section.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub filters: BTreeMap<LayerId, BTreeMap<String, String>>,
 }
 
 impl Display {

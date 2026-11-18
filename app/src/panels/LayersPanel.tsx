@@ -1,5 +1,9 @@
+import { Filter } from 'lucide-react';
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { type Colouring, type Layer, layerOpacityOf, lookOf } from '@/bridge';
+import { type Colouring, concealed, type Layer, layerAttributes, layerOpacityOf, lookOf } from '@/bridge';
+import { Button } from '@/design-system/ui/button';
+import { FilterInput } from '@/design-system/kit';
+import { whenText } from '@/filters';
 import { ROW_HEIGHT, useRowWindow } from '@/design-system/DataTable';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import {
@@ -99,9 +103,11 @@ interface LayerRowProps {
   entry: LayerEntry;
   renaming: boolean;
   onRenamed: () => void;
+  /** Opens the filter box on this layer. */
+  onFilter: () => void;
 }
 
-function LayerRow({ entry: { layer, objects, hidden, picked }, renaming, onRenamed }: LayerRowProps) {
+function LayerRow({ entry: { layer, objects, hidden, concealed: notShowing, picked, filter }, renaming, onRenamed, onFilter }: LayerRowProps) {
   const { summary, activeLayer, setActiveLayer, setLayerVisible, setObjectsVisible, sectionOpen } = useWorkspace();
   const active = layer.name === activeLayer;
   const count = objects.length;
@@ -134,9 +140,28 @@ function LayerRow({ entry: { layer, objects, hidden, picked }, renaming, onRenam
       <span className="min-w-0 flex-1 truncate text-right text-muted-foreground tabular-nums" data-slot="layer-kinds">
         {count === 0 ? 'empty' : kinds}
       </span>
-      {layer.visible && hidden > 0 && (
-        <span className="shrink-0 text-muted-foreground tabular-nums" title={`${fmt(hidden)} of ${fmt(count)} hidden: right-click for Show all on it`}>
-          {fmt(count - hidden)} of {fmt(count)}
+      {filter && (
+        <button
+          type="button"
+          className="grid size-4 shrink-0 place-items-center text-primary"
+          data-slot="layer-filter"
+          title={`Filtered: ${whenText(filter)}. Click to change it; right-click for Clear filter`}
+          aria-label={`Filter on ${layer.name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onFilter();
+          }}
+        >
+          <Filter className="size-3" />
+        </button>
+      )}
+      {layer.visible && notShowing > 0 && (
+        <span
+          className="shrink-0 text-muted-foreground tabular-nums"
+          data-slot="layer-showing"
+          title={[hidden > 0 ? `${fmt(hidden)} hidden: right-click for Show all on it` : '', notShowing > hidden ? `${fmt(notShowing - hidden)} left out by a filter` : ''].filter(Boolean).join('; ')}
+        >
+          {fmt(count - notShowing)} of {fmt(count)}
         </span>
       )}
       {sectionOpen && <LineWeight layer={layer.id} />}
@@ -169,11 +194,28 @@ function OpacityNote({ opacity, title }: { opacity: number; title: string }) {
  * picked, hidden or shown in the view, with its right-click; a pick lights its layer's row here (L3).
  */
 export function LayersPanel() {
-  const { summary, selection, setSelection, zoomTo, setObjectsVisible, setLooks, setLayerOpacity, run } = useWorkspace();
+  const { summary, selection, setSelection, zoomTo, setObjectsVisible, setLayersVisible, setLayerFilter, setLooks, setLayerOpacity, run } = useWorkspace();
   const picked = useMemo(() => new Set(selection), [selection]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [target, setTarget] = useState<LayerEntry | null>(null);
-  const rows = useMemo(() => layerEntries(summary?.layers ?? [], summary?.objects ?? [], picked), [summary, picked]);
+  /** The layer the filter box is open on. */
+  const [filtering, setFiltering] = useState<string | null>(null);
+  /** A layer shown alone, and the layers that were showing before, to put back (Filtering plan, decision 9). */
+  const [isolated, setIsolated] = useState<{ layer: string; was: string[] } | null>(null);
+  const rows = useMemo(() => layerEntries(summary?.layers ?? [], summary?.objects ?? [], picked, summary?.display.filters), [summary, picked]);
+  const filteringRow = filtering ? (rows.find((r) => r.layer.id === filtering) ?? null) : null;
+
+  /** One layer alone, the rest off; again, the layers that were showing come back. */
+  const isolate = (entry: LayerEntry) => {
+    const layers = summary?.layers ?? [];
+    if (isolated?.layer === entry.layer.id) {
+      setIsolated(null);
+      return void setLayersVisible(isolated.was, layers.filter((l) => !isolated.was.includes(l.id)).map((l) => l.id));
+    }
+    const was = isolated ? isolated.was : layers.filter((l) => l.visible).map((l) => l.id);
+    setIsolated({ layer: entry.layer.id, was });
+    void setLayersVisible([entry.layer.id], layers.filter((l) => l.id !== entry.layer.id && l.visible).map((l) => l.id));
+  };
   const { scroller, first, last, onScroll } = useRowWindow(rows.length, true);
 
   // Something picked in the view: its layer's row comes into view, lit.
@@ -190,7 +232,7 @@ export function LayersPanel() {
 
   /** What's on a layer and on show, or everything on it if nothing is. */
   const layerShowing = (entry: LayerEntry) => {
-    const showing = entry.objects.filter((o) => !o.hidden);
+    const showing = entry.objects.filter((o) => !concealed(o));
     return (showing.length > 0 ? showing : entry.objects).map((o) => o.id);
   };
 
@@ -248,13 +290,14 @@ export function LayersPanel() {
   return (
     <div className="flex h-full flex-col">
       <DrawOn />
+      {filteringRow && <FilterBar entry={filteringRow} onChange={(when) => setLayerFilter(filteringRow.layer.id, when)} onDone={() => setFiltering(null)} />}
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div ref={scroller} onScroll={onScroll} onContextMenu={(e) => setTarget(rowAt(e))} data-slot="tree" className="min-h-0 flex-1 overflow-auto select-none">
             {rows.length === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">Nothing here yet: import a surface or draw a string.</p>}
             <div style={{ height: first * ROW_HEIGHT }} />
             {rows.slice(first, last).map((entry) => (
-              <LayerRow key={entry.layer.id} entry={entry} renaming={renaming === entry.layer.name} onRenamed={() => setRenaming(null)} />
+              <LayerRow key={entry.layer.id} entry={entry} renaming={renaming === entry.layer.name} onRenamed={() => setRenaming(null)} onFilter={() => setFiltering(entry.layer.id)} />
             ))}
             <div style={{ height: (rows.length - last) * ROW_HEIGHT }} />
           </div>
@@ -265,9 +308,28 @@ export function LayersPanel() {
               <ContextMenuItem disabled={target.objects.length === 0} onSelect={() => zoomTo(layerShowing(target))}>
                 Zoom to
               </ContextMenuItem>
-              <ContextMenuItem disabled={target.objects.length === 0} onSelect={() => setSelection(layerShowing(target))}>
+              <ContextMenuItem disabled={target.objects.length === 0} onSelect={() => setSelection(target.objects.map((o) => o.id))}>
                 Select all on it
               </ContextMenuItem>
+              <ContextMenuItem disabled={!target.layer.visible || target.objects.length === target.concealed} onSelect={() => setSelection(target.objects.filter((o) => !concealed(o)).map((o) => o.id))}>
+                Select what's shown
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem disabled={target.objects.length === 0} onSelect={() => setFiltering(target.layer.id)}>
+                Filter by attributes…
+              </ContextMenuItem>
+              {target.filter && (
+                <ContextMenuItem
+                  onSelect={() => {
+                    setLayerFilter(target.layer.id, {});
+                    if (filtering === target.layer.id) setFiltering(null);
+                  }}
+                >
+                  Clear filter
+                </ContextMenuItem>
+              )}
+              <ContextMenuItem onSelect={() => isolate(target)}>{isolated?.layer === target.layer.id ? 'Show what was shown' : 'Isolate'}</ContextMenuItem>
+              <ContextMenuSeparator />
               {target.hidden > 0 && (
                 <ContextMenuItem onSelect={() => setObjectsVisible(target.objects.filter((o) => o.hidden).map((o) => o.id), true)}>
                   Show all on it ({fmt(target.hidden)} hidden)
@@ -302,5 +364,40 @@ function DrawOn() {
         title="New strings go on this layer; it is created with the first string"
       />
     </label>
+  );
+}
+
+/**
+ * The filter box on a layer (decision 0088, workstream 3): its objects' attributes, and those on the layers under it, to
+ * tick or type; what doesn't fit isn't drawn, snapped to or cut by a section, as hidden. Read again when what's on it
+ * changes. Done closes the box and keeps the filter.
+ */
+function FilterBar({ entry, onChange, onDone }: { entry: LayerEntry; onChange: (when: Record<string, string>) => void; onDone: () => void }) {
+  const [rows, setRows] = useState<Record<string, boolean | number | string>[]>([]);
+  // The same objects at the same revisions read the same.
+  const key = `${entry.layer.id}:${entry.objects.length}:${entry.objects.reduce((sum, o) => sum + o.revision, 0)}`;
+  useEffect(() => {
+    let live = true;
+    void layerAttributes(entry.layer.id).then((got) => live && setRows(got));
+    return () => {
+      live = false;
+    };
+  }, [key]);
+  const count = entry.objects.length;
+  return (
+    <div className="flex flex-col gap-1 border-b px-2 py-1.5 text-xs" data-slot="layer-filter-bar">
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate">
+          Filter on <span className="text-foreground">{entry.layer.name}</span>
+        </span>
+        <span className="tabular-nums" data-slot="layer-filter-shows">
+          {fmt(count - entry.concealed)} of {fmt(count)} showing
+        </span>
+        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onDone}>
+          Done
+        </Button>
+      </div>
+      <FilterInput rows={rows} value={entry.filter ?? {}} onChange={onChange} label={`Filter on ${entry.layer.name}`} />
+    </div>
   );
 }

@@ -2,6 +2,7 @@
 // the face it's cut into, whatever is ticked among the strings, so a road can't be somewhere you can't see it.
 // They give way to a section, which draws what's cut through the plane.
 
+import { concealed } from '../bridge';
 import * as THREE from 'three';
 import type { ObjectSummary, ProjectSummary } from '../bridge';
 import { rampColour } from './rampColours';
@@ -26,7 +27,7 @@ export class RoadLayer {
   /** Brings the drawn roads in line with the project: those whose faces are showing. */
   sync(summary: ProjectSummary): void {
     const layerOn = (o: ObjectSummary) => summary.layers.find((l) => l.id === o.layer)?.visible ?? true;
-    const faces = new Set(summary.objects.filter((o) => o.drawn && !o.hidden && layerOn(o)).map((o) => o.name));
+    const faces = new Set(summary.objects.filter((o) => o.drawn && !concealed(o) && layerOn(o)).map((o) => o.name));
     const edges = summary.objects.filter((o) => typeof o.attributes.road === 'string' && faces.has(String(o.attributes.road_face)) && o.vertices_local);
     const drawn = edges.map((o) => `${o.id}:${o.revision}`).join();
     if (drawn === this.drawn) return;

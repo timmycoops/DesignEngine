@@ -64,6 +64,11 @@ export interface Workspace {
   setLayerVisible: (layer: string, visible: boolean) => void;
   /** Shows and hides several layers in one go, drawn once when they're all set. Display only: not undone. */
   setLayersVisible: (show: string[], hide: string[]) => Promise<void>;
+  /**
+   * A layer's filter by attributes and measures (decision 0088): what doesn't fit, on it and the layers under it, isn't
+   * drawn, snapped to or cut by a section. {} takes it away. Display only: saved, not undone.
+   */
+  setLayerFilter: (layer: string, when: Record<string, string>) => void;
   /** Shows or hides objects one by one, under their layer's tick. Display only: not undone. */
   setObjectsVisible: (objects: string[], visible: boolean) => void;
   /**

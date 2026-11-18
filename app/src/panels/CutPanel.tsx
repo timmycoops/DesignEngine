@@ -1,6 +1,6 @@
 import { Combine, Grid3x3, Layers, Rows3, Slice } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { checkCutByPolygons, checkCutBySeams, checkSlice, type Note, type ObjectSummary, type StepTarget, solidsTable } from '@/bridge';
+import { concealed, checkCutByPolygons, checkCutBySeams, checkSlice, type Note, type ObjectSummary, type StepTarget, solidsTable } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { Choice, Field, NoteLine, NumberInput, type RunReport, Select, TargetInput, TargetOptions, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
@@ -68,7 +68,7 @@ export function CutPanel() {
   const picked = solids.filter((o) => pickedIds.has(o.id));
   const onLayer = picked.length > 0 ? solids.filter((o) => o.layer === picked[0].layer) : [];
   const shown = new Set(layers.filter((l) => l.visible).map((l) => l.id));
-  const visible = solids.filter((o) => shown.has(o.layer) && !o.hidden);
+  const visible = solids.filter((o) => shown.has(o.layer) && !concealed(o));
   const chosen = scope === 'picked' ? picked : scope === 'layer' ? onLayer : visible;
   const scopeLabels: Record<Scope, string> = { picked: `Picked (${picked.length})`, layer: `Its layer (${onLayer.length})`, visible: `On show (${visible.length})` };
 

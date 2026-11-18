@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { type Colouring, lookOf } from '@/bridge';
+import { concealed, type Colouring, lookOf } from '@/bridge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,7 +32,7 @@ export function ViewMenu() {
   const objects = summary.objects.filter((o) => ids.has(o.id));
   const taken = objects.map((o) => o.id);
   const layersOf = new Set(objects.map((o) => o.layer));
-  const others = summary.objects.filter((o) => IN_TREE(o) && layersOf.has(o.layer) && !ids.has(o.id) && !o.hidden).map((o) => o.id);
+  const others = summary.objects.filter((o) => IN_TREE(o) && layersOf.has(o.layer) && !ids.has(o.id) && !concealed(o)).map((o) => o.id);
   const visible = new Set(summary.layers.filter((l) => l.visible).map((l) => l.id));
   const hidden = summary.objects.filter((o) => IN_TREE(o) && o.hidden && visible.has(o.layer)).map((o) => o.id);
   const label = objects.length === 1 ? objects[0].name : `${fmt(objects.length)} objects`;

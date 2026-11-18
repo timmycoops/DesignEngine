@@ -303,6 +303,8 @@ export interface ObjectSummary {
   drawn: boolean;
   /** Hidden on its own: not drawn, snapped to or cut by a section. */
   hidden: boolean;
+  /** Left out by a layer's filter (decision 0088): drawn, snapped to and cut as hidden, but not hidden on its own. */
+  filtered: boolean;
   /** Changes only when the geometry does. */
   geometry_key: string;
   /** String vertices, offset from the scene origin. Strings only: other rows leave it out. */
@@ -370,7 +372,12 @@ export interface Display {
   /** A layer's opacity, which multiplies its objects'. */
   layers?: Record<string, number>;
   contours: Contours;
+  /** A layer's filter by attributes and measures, by layer id (decision 0088): what doesn't fit isn't drawn. */
+  filters?: Record<string, Record<string, string>>;
 }
+
+/** Not drawn, snapped to or cut by a section: hidden on its own, or left out by a layer's filter. */
+export const concealed = (o: { hidden: boolean; filtered?: boolean }) => o.hidden || !!o.filtered;
 
 export const DEFAULT_LOOK: Look = { colouring: 'by_rl', opacity: 1 };
 export const lookOf = (display: Display | undefined, id: string): Look => display?.objects?.[id] ?? DEFAULT_LOOK;
@@ -780,6 +787,11 @@ export const setLayerVisible = async (layer: string, visible: boolean) =>
   (idle(), summaryAfter(await invoke<ProjectChanges>('set_layer_visible', { layer, visible })));
 export const setObjectsVisible = async (objects: string[], visible: boolean) =>
   (idle(), summaryAfter(await invoke<ProjectChanges>('set_objects_visible', { objects, visible })));
+/** A layer's filter (decision 0088): attribute or measure name to the list it may hold; {} takes it away. Display state. */
+export const setLayerFilter = async (layer: string, when: Record<string, string>) =>
+  (idle(), summaryAfter(await invoke<ProjectChanges>('set_layer_filter', { layer, when })));
+/** Every attribute of what's on a layer and the layers under it, an object a row: what the filter box counts. */
+export const layerAttributes = (layer: string) => invoke<Record<string, boolean | number | string>[]>('layer_attributes', { layer });
 /** Colours objects by RL or their layer, sets their opacity, or both (null leaves it). Display state, not a run. */
 export const setLooks = async (objects: string[], colouring: Colouring | null, opacity: number | null) =>
   (idle(), invoke<Display>('set_looks', { objects, colouring, opacity }));

@@ -440,6 +440,62 @@ fn a_hidden_object_stays_hidden_through_undo_and_a_save_and_a_command_still_take
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A layer's filter (decision 0088, workstream 3) is display state, as hiding is: what doesn't fit, on the layer and the
+/// layers under it by name, isn't drawn, snapped to or cut by a section, and isn't hidden one by one. It follows a run
+/// that changes what fits, an undo and a save, and a command still takes what it leaves out. Three blocks at mine
+/// coordinates of 1,000, 2,000 and 3,000 m³ (10 m by 10 m, 10, 20 and 30 m high); volume tolerance 1e-6 m³.
+#[test]
+fn a_layers_filter_conceals_what_does_not_fit_on_it_and_under_it() {
+    let mut s = Session::with_builtins();
+    let mut block = |name: &str, layer: &str, k: f64, height: f64| {
+        let mut params = box_mesh(name, [E + 20.0 * k, N, 100.0], [E + 20.0 * k + 10.0, N + 10.0, 100.0 + height]);
+        params["layer"] = json!(layer);
+        created(&s.run("solid.from_mesh", params).unwrap())[0]
+    };
+    let (small, middle, large) = (block("small", "blocks", 0.0, 10.0), block("middle", "blocks", 1.0, 20.0), block("large", "blocks", 2.0, 30.0));
+    let below = block("below", "blocks\\B1", 3.0, 30.0);
+    let beside = block("beside", "blocksX", 4.0, 30.0);
+    let blocks = s.project().layer_named("blocks").unwrap().id;
+    let out = |s: &Session| [small, middle, large, below, beside].map(|id| s.project().is_filtered_out(id));
+    let when = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<std::collections::BTreeMap<_, _>>();
+
+    assert!(s.set_layer_filter(blocks, when(&[("volume", "<2500")])));
+    assert!(!s.set_layer_filter(blocks, when(&[("volume", "<2500"), ("seam", " ")])), "a blank list is dropped: the same filter");
+    assert_eq!(out(&s), [false, false, true, true, false], "3,000 m³ is out, on the layer and on blocks\\B1 under it, not on blocksX");
+    assert!(s.project().is_concealed(large) && !s.project().is_hidden(large), "concealed, not hidden one by one");
+    s.set_objects_visible(&[small], false);
+    assert_eq!([small, middle, large].map(|id| s.project().is_concealed(id)), [true, false, true], "the hidden and the filtered out together");
+    s.set_objects_visible(&[small], true);
+
+    // A run that changes what fits: the large block cut at RL 120 is 2,000 m³ below and 1,000 m³ above, both in.
+    let cut = s.run("solid.cut_by_surface", json!({ "solids": [large], "rl": 120.0, "keep": "both", "layer": "blocks" })).unwrap();
+    let pieces = created(&cut);
+    assert_eq!(pieces.len(), 2);
+    assert!(pieces.iter().all(|&id| !s.project().is_filtered_out(id)), "2,000 and 1,000 m³ fit under 2,500");
+    s.undo().unwrap();
+    assert!(s.project().is_filtered_out(large), "an undo brings the 3,000 m³ back, and it's out again");
+    s.run("object.rename", json!({ "object": large, "name": "named" })).unwrap();
+    assert_eq!(s.project().object(large).unwrap().name, "named", "a command takes what a filter leaves out");
+
+    // A filter on the layer under it as well: each must fit.
+    let b1 = s.project().layer_named("blocks\\B1").unwrap().id;
+    s.set_layer_filter(blocks, when(&[("volume", "<=3000")]));
+    s.set_layer_filter(b1, when(&[("rl_max", "<120")]));
+    assert_eq!(out(&s), [false, false, false, true, false], "B1's own filter takes the 130 m top out");
+
+    let dir = std::env::temp_dir().join(format!("zd-commands-filter-{}-{}", std::process::id(), zd_core::RunId::new()));
+    let path = dir.join("pit.zdp");
+    s.save(&path).unwrap();
+    let reopened = Session::open(&path).unwrap();
+    assert_eq!(reopened.project().layer_filter(b1), Some(&when(&[("rl_max", "<120")])), "a save keeps the filters");
+    assert!(reopened.project().is_filtered_out(below) && !reopened.project().is_filtered_out(large));
+
+    assert!(s.set_layer_filter(b1, when(&[])) && s.set_layer_filter(blocks, when(&[])));
+    assert_eq!(out(&s), [false; 5], "a filter of nothing takes the layer's away");
+    assert!(s.project().filtered_out().is_empty() && s.project().layer_filter(blocks).is_none());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// A tick means what it says: showing an object on a layer that's off shows that object and nothing else.
 #[test]
 fn showing_an_object_on_a_layer_that_is_off_shows_it_alone() {

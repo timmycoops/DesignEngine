@@ -71,7 +71,7 @@ impl ScreenBox {
 /// Everything on show that lies wholly inside a box drawn on screen, in project order: strings, surfaces, grids,
 /// solids and seam models. Hidden objects and those on hidden layers are left out, as they aren't drawn.
 pub fn objects_in_box(project: &Project, screen: &ScreenBox) -> Vec<ObjectId> {
-    let on_show = |o: &Object| !project.is_hidden(o.id) && project.layer(o.layer).is_some_and(|l| l.visible);
+    let on_show = |o: &Object| !project.is_concealed(o.id) && project.layer(o.layer).is_some_and(|l| l.visible);
     let pickable = |o: &Object| matches!(o.body, Body::String(_) | Body::SeamModel(_)) || is_drawn_surface(o);
     project.objects().filter(|o| on_show(o) && pickable(o) && screen.holds_object(o)).map(|o| o.id).collect()
 }

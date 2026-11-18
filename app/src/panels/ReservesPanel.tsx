@@ -1,3 +1,4 @@
+import { concealed } from '@/bridge';
 import { FolderOpen, Scale, Sigma } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -52,7 +53,7 @@ export function ReservesPanel() {
   const picked = solids.filter((o) => pickedIds.has(o.id));
   const onLayer = picked.length > 0 ? solids.filter((o) => o.layer === picked[0].layer) : [];
   const shown = new Set(layers.filter((l) => l.visible).map((l) => l.id));
-  const visible = solids.filter((o) => shown.has(o.layer) && !o.hidden);
+  const visible = solids.filter((o) => shown.has(o.layer) && !concealed(o));
   const chosen = scope === 'picked' ? picked : scope === 'layer' ? onLayer : visible;
   const scopeLabels: Record<Scope, string> = { picked: `Picked (${picked.length})`, layer: `Its layer (${onLayer.length})`, visible: `On show (${visible.length})` };
 

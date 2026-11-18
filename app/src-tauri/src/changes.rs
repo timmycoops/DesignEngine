@@ -39,11 +39,26 @@ fn next_epoch() -> u64 {
 pub struct Sent {
     epoch: Option<u64>,
     /// The revision sent, held so its address can't be taken by another while it's compared against.
-    rows: HashMap<ObjectId, (Arc<Object>, bool)>,
+    rows: HashMap<ObjectId, (Arc<Object>, Flags)>,
     order: Vec<ObjectId>,
     origin: Option<[f64; 3]>,
     /// The objects hidden one by one, as sent: a hide or show is told from it without walking every object.
     hidden: Arc<HashSet<ObjectId>>,
+    /// The objects a layer's filter left out, as sent, the same way.
+    filtered: Arc<HashSet<ObjectId>>,
+}
+
+/// What a row says of how an object is shown: hidden on its own, and left out by a filter.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Flags {
+    hidden: bool,
+    filtered: bool,
+}
+
+impl Flags {
+    fn of(project: &Project, id: ObjectId) -> Flags {
+        Flags { hidden: project.is_hidden(id), filtered: project.is_filtered_out(id) }
+    }
 }
 
 /// The project as the app needs it after a change. With no `base` it's the whole project, in place of what the app
@@ -106,6 +121,8 @@ pub struct ObjectSummary {
     drawn: bool,
     /// Hidden on its own: see [`zd_core::Project::set_objects_visible`].
     hidden: bool,
+    /// Left out by a layer's filter (decision 0088): drawn, snapped to and cut as hidden, but not hidden on its own.
+    filtered: bool,
     /// Changes only when the geometry does; fetch a new render buffer when it changes.
     geometry_key: String,
     /// String vertices, offset from the scene origin. Strings only: left out of other rows.
@@ -130,6 +147,7 @@ fn row(project: &Project, object: &Object, origin: [f64; 3]) -> ObjectSummary {
         attributes: row_attributes(&object.attributes),
         drawn: is_drawn_surface(object),
         hidden: project.is_hidden(object.id),
+        filtered: project.is_filtered_out(object.id),
         geometry_key: geometry_key(&object.body).to_string(),
         vertices_local,
         closed,
@@ -153,18 +171,18 @@ pub fn changes(app: &mut AppInner, whole: bool) -> ProjectChanges {
     let mut added = Vec::new();
     let mut kept = 0;
     for object in project.objects() {
-        let hidden = project.is_hidden(object.id);
+        let flags = Flags::of(project, object.id);
         match sent.rows.get(&object.id) {
-            Some((was, was_hidden)) => {
+            Some((was, was_flags)) => {
                 kept += 1;
-                if Arc::ptr_eq(was, object) && *was_hidden == hidden {
+                if Arc::ptr_eq(was, object) && *was_flags == flags {
                     continue;
                 }
             }
             None => added.push(object.id),
         }
         objects.push(row(project, object, o));
-        sent.rows.insert(object.id, (object.clone(), hidden));
+        sent.rows.insert(object.id, (object.clone(), flags));
     }
     // Objects the app holds that the project doesn't: looked for only when some are gone, as is the order.
     let mut removed = Vec::new();
@@ -205,13 +223,13 @@ pub fn changes_after_hiding(app: &mut AppInner) -> ProjectChanges {
     let o = origin.unwrap_or([0.0; 3]);
     let project = app.session.project();
     let sent = &mut app.sent;
-    let now = project.hidden();
     let mut objects = Vec::new();
-    for &id in sent.hidden.symmetric_difference(now) {
+    let changed: HashSet<ObjectId> = sent.hidden.symmetric_difference(project.hidden()).chain(sent.filtered.symmetric_difference(project.filtered_out())).copied().collect();
+    for id in changed {
         let (Some(object), Some(entry)) = (project.object(id), sent.rows.get_mut(&id)) else { continue };
-        let hidden = now.contains(&id);
-        if entry.1 != hidden {
-            entry.1 = hidden;
+        let flags = Flags::of(project, id);
+        if entry.1 != flags {
+            entry.1 = flags;
             objects.push(row(project, object, o));
         }
     }
@@ -225,6 +243,7 @@ fn reply(app: &mut AppInner, base: Option<u64>, objects: Vec<ObjectSummary>, rem
     let epoch = next_epoch();
     app.sent.epoch = Some(epoch);
     app.sent.hidden = project.hidden().clone();
+    app.sent.filtered = project.filtered_out().clone();
     ProjectChanges {
         base,
         epoch,

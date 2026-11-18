@@ -4,7 +4,7 @@
 //! delete adds a tombstone, so undo steps back exactly and redo steps forward again without
 //! re-running any command (decision 0004).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 
 use crate::display::{self, Colouring, Contours, Display, Look};
-use crate::{Attributes, Body, Layer, LayerId, Object, ObjectId, RunId};
+use crate::{Attributes, Body, Layer, LayerId, Object, ObjectId, RunId, object_fits};
 
 /// One change a command asks for. A run's changes apply together or not at all.
 #[derive(Debug, Clone)]
@@ -150,8 +150,13 @@ pub struct Project {
     /// Objects hidden one by one. Display state, saved with the project; shared so a snap can read it
     /// without holding the project.
     hidden: Arc<HashSet<ObjectId>>,
-    /// How objects and layers look: display state, saved with the project.
+    /// How objects and layers look, and the layers' filters: display state, saved with the project.
     display: Display,
+    /// Objects a layer's filter leaves out (decision 0088, workstream 3), worked out again when an object, a layer or a
+    /// filter changes. Not saved: the filters are.
+    filtered: Arc<HashSet<ObjectId>>,
+    /// What isn't drawn, snapped to or cut by a section: the hidden and the filtered out together. Shared as `hidden` is.
+    concealed: Arc<HashSet<ObjectId>>,
     /// See [`Project::generation`]. Not saved.
     generation: u64,
 }
@@ -202,13 +207,88 @@ impl Project {
     /// The same project with these objects hidden, as saved.
     pub fn with_hidden(mut self, ids: impl IntoIterator<Item = ObjectId>) -> Project {
         self.hidden = Arc::new(ids.into_iter().collect());
+        self.conceal();
         self
     }
 
-    /// The same project with these looks, as saved.
+    /// The same project with these looks and filters, as saved.
     pub fn with_display(mut self, display: Display) -> Project {
         self.display = display;
+        self.refilter();
         self
+    }
+
+    /// Sets a layer's filter: attribute or measure name to the comma list it may hold, as the bench rules type them
+    /// (decision 0088). Blank lists are dropped, and a filter of nothing takes the layer's away. What doesn't fit, on the
+    /// layer and the layers under it (`Pit` over `Pit\Strips`), isn't drawn, snapped to or cut by a section, as hidden;
+    /// a command that names it still takes it. Display state only: not a change, not undone. Returns whether it changed.
+    pub fn set_layer_filter(&mut self, id: LayerId, when: BTreeMap<String, String>) -> bool {
+        if self.layer(id).is_none() {
+            return false;
+        }
+        let when: BTreeMap<String, String> = when.into_iter().map(|(k, v)| (k.trim().to_string(), v.trim().to_string())).filter(|(k, v)| !k.is_empty() && !v.is_empty()).collect();
+        if self.display.filters.get(&id).map_or(when.is_empty(), |was| *was == when) {
+            return false;
+        }
+        if when.is_empty() {
+            self.display.filters.remove(&id);
+        } else {
+            self.display.filters.insert(id, when);
+        }
+        self.refilter();
+        self.generation = next_generation();
+        true
+    }
+
+    /// A layer's own filter, if it has one.
+    pub fn layer_filter(&self, id: LayerId) -> Option<&BTreeMap<String, String>> {
+        self.display.filters.get(&id)
+    }
+
+    /// Whether a layer's filter, its own or one over it, leaves this object out.
+    pub fn is_filtered_out(&self, id: ObjectId) -> bool {
+        self.filtered.contains(&id)
+    }
+
+    /// Every object a layer's filter leaves out.
+    pub fn filtered_out(&self) -> &Arc<HashSet<ObjectId>> {
+        &self.filtered
+    }
+
+    /// Whether an object isn't drawn, snapped to or cut by a section: hidden, or left out by a filter.
+    pub fn is_concealed(&self, id: ObjectId) -> bool {
+        self.concealed.contains(&id)
+    }
+
+    /// Every object not drawn, snapped to or cut by a section: the hidden and the filtered out.
+    pub fn concealed(&self) -> &Arc<HashSet<ObjectId>> {
+        &self.concealed
+    }
+
+    /// Works out again what the filters leave out: each layer's filter, and those of the layers it's under by name,
+    /// read on each object on it, its attributes then its measures.
+    fn refilter(&mut self) {
+        if self.display.filters.is_empty() {
+            if !self.filtered.is_empty() {
+                self.filtered = Arc::default();
+            }
+            return self.conceal();
+        }
+        let filters: Vec<(&str, &BTreeMap<String, String>)> = self.display.filters.iter().filter_map(|(id, when)| self.layer(*id).map(|l| (l.name.as_str(), when))).collect();
+        let under: HashMap<LayerId, Vec<&BTreeMap<String, String>>> = self
+            .layers
+            .iter()
+            .map(|l| (l.id, filters.iter().filter(|(name, _)| l.name == *name || l.name.strip_prefix(*name).is_some_and(|rest| rest.starts_with('\\'))).map(|(_, when)| *when).collect::<Vec<_>>()))
+            .filter(|(_, whens)| !whens.is_empty())
+            .collect();
+        let filtered: HashSet<ObjectId> = self.objects().filter(|o| under.get(&o.layer).is_some_and(|whens| !whens.iter().all(|when| object_fits(when, o)))).map(|o| o.id).collect();
+        self.filtered = Arc::new(filtered);
+        self.conceal();
+    }
+
+    /// The hidden and the filtered out together.
+    fn conceal(&mut self) {
+        self.concealed = if self.filtered.is_empty() { self.hidden.clone() } else { Arc::new(self.hidden.union(&self.filtered).copied().collect()) };
     }
 
     /// How objects and layers look. An object deleted keeps its look here, so undoing the delete brings
@@ -303,6 +383,7 @@ impl Project {
         for layer in self.layers.iter_mut().filter(|l| off.contains(&l.id)) {
             layer.visible = true;
         }
+        self.conceal();
         self.generation = next_generation();
         changing.len()
     }
@@ -356,6 +437,7 @@ impl Project {
         self.push(&transaction);
         self.done.push(transaction);
         self.undone.clear();
+        self.refilter();
         self.generation = next_generation();
         Ok(applied)
     }
@@ -384,6 +466,7 @@ impl Project {
         self.layers.retain(|l| !added.contains(&l.id));
         let run = transaction.run;
         self.undone.push(transaction);
+        self.refilter();
         self.generation = next_generation();
         Some(run)
     }
@@ -417,6 +500,7 @@ impl Project {
         self.push(&transaction);
         let run = transaction.run;
         self.done.push(transaction);
+        self.refilter();
         self.generation = next_generation();
         Some(run)
     }

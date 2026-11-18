@@ -40,3 +40,17 @@ test('what is not drawn is not in the tree, and a layer of nothing else has no r
   const mixed = rows[2];
   assert.deepEqual([mixed.objects.length, mixed.all], [1, 2], 'a table on a layer of solids is not counted in the row, but its delete takes it');
 });
+
+test("a layer's row counts what's hidden and what a filter leaves out apart, and carries its filter", () => {
+  const layers = [layer('blocks'), layer('other')];
+  const objects = [
+    object('solid', 'blocks', { hidden: true }),
+    object('solid', 'blocks', { filtered: true }),
+    object('solid', 'blocks', { hidden: true, filtered: true }),
+    object('solid', 'blocks'),
+    object('solid', 'other'),
+  ];
+  const rows = layerEntries(layers, objects, new Set(), { blocks: { volume: '<500' } });
+  assert.deepEqual([rows[0].hidden, rows[0].concealed, rows[0].filter], [2, 3, { volume: '<500' }], 'two hidden, three not showing');
+  assert.deepEqual([rows[1].concealed, rows[1].filter], [0, null]);
+});

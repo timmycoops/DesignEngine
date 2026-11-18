@@ -23,6 +23,7 @@
 // strings stay ordinary 3D strings, and stepping between clicks draws one across several sections.
 // Only what lies within the section's width can be picked, shown a handle or dragged, and a dragged
 // vertex lands on the plane.
+import { concealed } from '../bridge';
 import * as THREE from 'three/webgpu';
 import type { Layer, ProjectSummary, SnapHit, Vec3 } from '../bridge';
 import { type DesignLine, designLineMessage, lineToPick, type NearLine } from './designLines';
@@ -365,7 +366,7 @@ export class StringLayer {
     this.designNames = new Map(summary.objects.filter((o) => o.kind === 'face_design').map((o) => [o.id, o.name]));
     const everyString = summary.objects.filter((o) => o.kind === 'string' && o.vertices_local);
     this.names = Math.max(this.names, everyString.length);
-    const strings = everyString.filter((o) => !o.hidden);
+    const strings = everyString.filter((o) => !concealed(o));
     // Layers whose lines must be made again; an edit on one leaves the contours on another alone.
     const changed = new Set<string>();
     const live = new Set(strings.map((s) => s.id));
