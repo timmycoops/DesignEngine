@@ -410,6 +410,11 @@ impl Session {
         Arc::make_mut(&mut self.project).set_layer_opacity(layer, opacity)
     }
 
+    /// See [`Project::set_layer_filter`]. Display state only: not a command, not undone.
+    pub fn set_layer_filter(&mut self, layer: LayerId, when: std::collections::BTreeMap<String, String>) -> bool {
+        Arc::make_mut(&mut self.project).set_layer_filter(layer, when)
+    }
+
     /// See [`Project::set_contours`]. Display state only.
     pub fn set_contours(&mut self, contours: Contours) -> bool {
         Arc::make_mut(&mut self.project).set_contours(contours)

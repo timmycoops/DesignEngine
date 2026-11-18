@@ -34,6 +34,8 @@ fn main() {
             commands::save_project,
             commands::check_links,
             commands::set_layer_visible,
+            commands::set_layer_filter,
+            commands::layer_attributes,
             commands::set_objects_visible,
             commands::set_looks,
             commands::set_layer_opacity,

@@ -93,7 +93,7 @@ pub fn pick_on_section(app: &AppInner, at: [f64; 2], reach: f64) -> Option<Objec
         app.solid_casters
             .iter()
             .filter(|(tile, (key, _))| app.solid_keys.get(tile) == Some(key) && project.layer(tile.layer).is_some_and(|l| l.visible))
-            .filter_map(|(_, (_, caster))| caster.cast(point, direction, project.hidden()))
+            .filter_map(|(_, (_, caster))| caster.cast(point, direction, project.concealed()))
             .min_by(|a, b| height(a).total_cmp(&height(b)))
     };
     match (nearest([0.0, 0.0, 1.0]), nearest([0.0, 0.0, -1.0])) {
@@ -105,7 +105,7 @@ pub fn pick_on_section(app: &AppInner, at: [f64; 2], reach: f64) -> Option<Objec
 /// Adds the selected object's lines as a group of their own, to draw over everything else.
 pub fn add_selected(app: &AppInner, plane: &SectionPlane, width: f64, groups: &mut Vec<SectionGroup>, id: ObjectId) {
     let project = app.session.project();
-    let Some(object) = project.object(id).filter(|o| !project.is_hidden(id) && project.layer(o.layer).is_some_and(|l| l.visible)) else {
+    let Some(object) = project.object(id).filter(|o| !project.is_concealed(id) && project.layer(o.layer).is_some_and(|l| l.visible)) else {
         return;
     };
     let segments: Vec<Segment> = match &object.body {
@@ -171,7 +171,7 @@ fn section_inputs(app: &mut AppInner) -> Result<Arc<SectionInputs>, String> {
     }
     let project = app.session.project();
     let visible = |layer: LayerId| project.layer(layer).is_some_and(|l| l.visible);
-    let shown = |object: &Object| visible(object.layer) && !project.is_hidden(object.id);
+    let shown = |object: &Object| visible(object.layer) && !project.is_concealed(object.id);
     let mut meshes: Vec<CutMesh> = Vec::new();
     let mut seams: Vec<CutSeam> = Vec::new();
     let mut made = std::mem::take(&mut app.section_meshes);

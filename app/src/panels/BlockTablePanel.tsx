@@ -1,6 +1,6 @@
 import { Download, EyeOff, MousePointerSquareDashed, Scan, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { type ObjectKind, solidsTable } from '@/bridge';
+import { concealed, type ObjectKind, solidsTable } from '@/bridge';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
 import { Choice, Field, FilterInput, NumberInput, Select } from '@/design-system/kit';
 import type { When } from '@/filters';
@@ -61,7 +61,7 @@ export function BlockTable() {
     const visible = new Map((summary?.layers ?? []).map((l) => [l.id, l.visible]));
     if (take === 'layer') return solids.filter((o) => o.layer === layer);
     if (take === 'picked') return solids.filter((o) => selection.includes(o.id));
-    return solids.filter((o) => visible.get(o.layer) && !o.hidden);
+    return solids.filter((o) => visible.get(o.layer) && !concealed(o));
   }, [take, layer, solids, selection, summary]);
 
   // Volumes and every attribute, read in one call whenever what's taken, or any of it, changes.

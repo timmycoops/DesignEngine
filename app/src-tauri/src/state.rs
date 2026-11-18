@@ -123,11 +123,11 @@ pub fn geometry_key(body: &Body) -> usize {
     }
 }
 
-/// A key for each layer holding solids that aren't hidden, changed by any change to their geometry or
+/// A key for each layer holding solids that aren't hidden or filtered out, changed by any change to their geometry or
 /// by hiding or showing one. Solids are drawn and cut by a section by layer, so tens of thousands of
 /// them are one mesh rather than one each.
 pub fn solid_layer_keys(project: &Project) -> BTreeMap<LayerId, String> {
-    layer_keys(project, |object| !project.is_hidden(object.id))
+    layer_keys(project, |object| !project.is_concealed(object.id))
 }
 
 fn layer_keys(project: &Project, keep: impl Fn(&Object) -> bool) -> BTreeMap<LayerId, String> {
@@ -244,9 +244,9 @@ pub fn tile_solids(project: &Project, tiles: &mut Tiles, tile: TileId) -> Vec<(O
         .collect()
 }
 
-/// The meshes of a layer's solids that aren't hidden.
+/// The meshes of a layer's solids that aren't hidden or filtered out.
 pub fn layer_solids(project: &Project, layer: LayerId) -> Vec<Arc<TriMesh>> {
-    every_layer_solid(project, layer).into_iter().filter(|(id, _)| !project.is_hidden(*id)).map(|(_, mesh)| mesh).collect()
+    every_layer_solid(project, layer).into_iter().filter(|(id, _)| !project.is_concealed(*id)).map(|(_, mesh)| mesh).collect()
 }
 
 /// A layer's solids, hidden or not, with their meshes.

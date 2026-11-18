@@ -117,6 +117,10 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
   const [a, b] = lineAt(160);
   await click(screen([(a[0] + b[0]) / 2 + 10, a[1], a[2]]), true);
   expect('Ctrl-click adds a string', same(selection(), [cubes[1], cubes[2], cubes[3], strings[1]]), names(selection()));
+  // Properties brought forward: a bench run before this one may have left another tab in front, as the layout is saved.
+  const propertiesTab = [...document.querySelectorAll<HTMLElement>('.dv-tab')].find((t) => t.textContent?.trim() === 'Properties');
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) propertiesTab?.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' }));
+  await settle();
   expect('Properties shows them together', document.body.textContent?.includes('4 selected') ?? false, { said: (document.body.textContent ?? '').match(/\d+ selected/g)?.slice(0, 4) ?? [], tabs: [...document.querySelectorAll('.dv-tab')].map((t) => t.textContent?.trim()).slice(0, 30), active: [...document.querySelectorAll('.dv-tab.dv-active-tab')].map((t) => t.textContent?.trim()) });
 
   // The selected blocks draw gold over their layer; the others don't.

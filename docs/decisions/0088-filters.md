@@ -1,6 +1,6 @@
 # 0088 — One filter by attributes and measures
 
-Date: 2026-11-18 · Status: accepted (Tim, 2026-11-18: decisions 1 to 9 of the Filtering plan) · Workstreams 1 and 2
+Date: 2026-11-18 · Status: accepted (Tim, 2026-11-18: decisions 1 to 9 of the Filtering plan) · Workstreams 1 to 3
 built; the later workstreams add to this record as they merge
 
 ## Why
@@ -87,6 +87,37 @@ attributes, and a bench rule against a piece's.
 | `filters.test.mjs` (app) | four rows: strip, seam, material, volume listed in that order; seam's L, M and U counted 1, 1, 2 (U and u one, Seam and seam one); strip numeric, 3 to 10, values 3, 9, 10; ticking U and M writes `seam: U, M`, which keeps 3 rows; unticking both is no filter; `strip: 1-9` ticks 3 and 9, not 10; ticking 10 on writes `3, 9, 10`, ticking 9 off writes `3`; `material: !waste` with coal ticked off leaves material out |
 | `zd-app --bench --workflow` | the box pit's two pieces in the Objects table: `volume: <300000` typed keeps the piece below RL 40, 240,000 m³; cleared, both; the funnel's volume lists the two volumes, one each; ticking the smaller keeps the piece below and writes `volume: 240000…` into the text |
 
+## Built: workstream 3, a layer's filter in the view
+
+- **In the engine** (`Project::set_layer_filter`, saved in the project's display state as `filters`, by layer). Display
+  state, as hiding is: not a run, not undone, kept by a save. A layer's filter holds on it and on the layers under it by
+  name (`blocks` over `blocks\B1`, not `blocksX`); where both have one, each must fit. What doesn't fit is
+  *filtered out* (`is_filtered_out`), which isn't hidden on its own: the two together are *concealed* (`is_concealed`,
+  `concealed`), and that's what isn't drawn, snapped to or cut by a section, the viewport's solid flags, strings, roads,
+  picks, box selection and section included. A command that names what's left out still takes it. What a filter leaves
+  out is worked out again when a filter changes and after every run, undo and redo, so a run that changes an attribute
+  or a volume moves an object in or out; with no filter it costs nothing.
+- **The tree**: a layer's right-click has Filter by attributes…, which opens the filter box under Draw on, the layer's
+  attributes and those of the layers under it to tick with their counts (read from the engine, `layer_attributes`) and
+  the filter as text, measures typed (`length: >170`); how many show of how many; Done closes it, keeping the filter.
+  A filtered layer's row has a gold funnel (click to change the filter; its tip says it) and `1 of 4` where some don't
+  show, its tip saying how many are hidden and how many filtered out. Clear filter, Select what's shown (what's on it
+  and showing, where Select all on it takes everything), and Isolate (the layer alone, the rest off; again, Show what
+  was shown puts back the layers that were showing) are on the same menu.
+- **Show all hidden and Show all on it** bring back what was hidden one by one, not what a filter leaves out: that's
+  Clear filter's.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_layers_filter_conceals_what_does_not_fit_on_it_and_under_it` (zd-commands) | blocks of 1,000, 2,000 and 3,000 m³ at mine coordinates: `volume: <2500` on `blocks` leaves out the 3,000 m³ block and one on `blocks\B1`, not one on `blocksX`; concealed, not hidden; hidden and filtered together conceal; cut at RL 120 the 3,000 m³ block's 2,000 and 1,000 m³ pieces are in, and an undo puts it back out; a command renames it; B1's own `rl_max: <120` with `volume: <=3000` over it leaves its 130 m top out; a save keeps both filters; cleared, nothing's out | 1e-6 m³ |
+| `layerTree.test.mjs` (app) | a layer's row counts what's hidden and what's concealed apart | exact |
+| `zd-app --bench --string-edits` | Filter by attributes… on the toes' right-click, `length: >170` typed: the 180 m dog-leg kept, the three toes run on to 151 m left out, the row `1 of 4` with a funnel; a click on a toe picks nothing of it; Isolate leaves the toes the only layer on, and Show what was shown puts the rest back as they were; Clear filter brings every toe back | |
+
+Timings (release, `crates/zd-core/tests/layer_filter_timing.rs`, 42,000 block solids on one layer as PIT B holds, 12
+triangles each): `seam: U; strip: 1-5` set in 23.7 ms, 36,400 left out; `volume: <500` in 31.7 ms, 37,800 left out; a
+run (one renamed) with the volume filter on, 33.1 ms; cleared, 0.1 ms. A filter by volume reads every solid's volume
+again on every run, which grows with a solid's triangles; PIT B's run about 116 a solid.
+
 ## Known limits
 
 - **Measures cost a pass over the object** each time one is read: fine for a step's input or a table, to be timed when a
@@ -94,3 +125,6 @@ attributes, and a bench rule against a piece's.
 - **A solid has no `area`**, and a surface no `length`: they're not asked for yet.
 - **The Objects table filters by volume and attributes only.** A string's `length` or a surface's `area` are measures the
   engine reads in a step's input; the table has no column for them yet.
+- **The filter box on a layer counts attributes only.** Measures are typed (`volume: <500`, `length: >170`); they're not
+  listed to tick, as each object's is its own.
+- **Isolate is kept for the session**, not saved: a project opened again shows the layers as they were left.

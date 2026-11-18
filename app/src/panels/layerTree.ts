@@ -5,6 +5,9 @@
 import type { Layer, ObjectKind, ObjectSummary } from '@/bridge';
 import { fmt } from './format.ts';
 
+/** Not showing: hidden on its own, or left out by a filter (the bridge's `concealed`, kept here so the tests run). */
+const concealed = (o: ObjectSummary) => o.hidden || !!o.filtered;
+
 /**
  * What isn't drawn has no place in the tree (Filtering plan, L4): a face design, workflow, parameter table, dataflow or
  * reserves table is found in the list its own tab or panel has, with Rename and Delete there.
@@ -34,17 +37,22 @@ export interface LayerEntry {
   layer: Layer;
   /** What's on it that the tree speaks for: everything drawn, and seam models. */
   objects: ObjectSummary[];
+  /** Hidden on their own. */
   hidden: number;
+  /** Not showing: hidden, or left out by a filter, its own or one over it (decision 0088). */
+  concealed: number;
   picked: number;
   /** Everything on it, things not in the tree too: what deleting it takes. */
   all: number;
+  /** Its own filter, if it has one. */
+  filter: Record<string, string> | null;
 }
 
 /**
  * Every layer in the project's order, but those holding only what isn't in the tree (a layer of face designs, say). A
  * layer with nothing on it yet shows, as it's where the next string is drawn.
  */
-export function layerEntries(layers: readonly Layer[], objects: readonly ObjectSummary[], selection: ReadonlySet<string>): LayerEntry[] {
+export function layerEntries(layers: readonly Layer[], objects: readonly ObjectSummary[], selection: ReadonlySet<string>, filters: Record<string, Record<string, string>> = {}): LayerEntry[] {
   const held = new Map<string, ObjectSummary[]>();
   for (const object of objects) {
     const on = held.get(object.layer);
@@ -55,7 +63,17 @@ export function layerEntries(layers: readonly Layer[], objects: readonly ObjectS
     const all = held.get(layer.id) ?? [];
     const shown = all.filter(IN_TREE);
     if (all.length > 0 && shown.length === 0) return [];
-    return [{ layer, objects: shown, hidden: shown.filter((o) => o.hidden).length, picked: shown.filter((o) => selection.has(o.id)).length, all: all.length }];
+    return [
+      {
+        layer,
+        objects: shown,
+        hidden: shown.filter((o) => o.hidden).length,
+        concealed: shown.filter(concealed).length,
+        picked: shown.filter((o) => selection.has(o.id)).length,
+        all: all.length,
+        filter: filters[layer.id] ?? null,
+      },
+    ];
   });
 }
 

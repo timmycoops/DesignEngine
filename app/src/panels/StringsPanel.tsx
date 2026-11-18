@@ -1,3 +1,4 @@
+import { concealed } from '@/bridge';
 import { ArrowLeftRight, Check, MousePointerClick } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { StepTarget } from '@/bridge';
@@ -125,7 +126,7 @@ export function StringsPanel() {
   const mixed = on.some((o) => o.closed) && on.some((o) => !o.closed);
   const closing = mixed ? closeOrOpen === 'close' : !on[0]?.closed;
   /** What Number across numbers: the strings picked, where several are; else what's on the string's layer that a face run didn't make. */
-  const onItsLayer = string ? strings.filter((o) => !o.hidden && o.layer === string.layer && o.attributes.face_design === undefined) : [];
+  const onItsLayer = string ? strings.filter((o) => !concealed(o) && o.layer === string.layer && o.attributes.face_design === undefined) : [];
   const toNumber = picked.length > 1 ? picked : onItsLayer;
   const surfaces = objects.filter((o) => o.drawn && (o.kind === 'surface' || o.kind === 'grid'));
   const target = surfaces.find((s) => s.id === surface) ?? surfaces[0] ?? null;
@@ -223,7 +224,7 @@ export function StringsPanel() {
     const origin = summary?.origin;
     if (!point || !origin) return null;
     const others = strings
-      .filter((o) => !o.hidden && o.vertices_local && !ids.includes(o.id))
+      .filter((o) => !concealed(o) && o.vertices_local && !ids.includes(o.id))
       .map((o) => ({ id: o.id, name: o.name, closed: !!o.closed, vertices: (o.vertices_local ?? []).map((v) => [v[0] + origin[0], v[1] + origin[1], v[2] + origin[2]] as const) }));
     const found = nearestString(others, point, CLICK_ON_A_STRING);
     if (!found) setReport({ notes: [], error: 'No string there: click on the string itself, not one of those picked' });

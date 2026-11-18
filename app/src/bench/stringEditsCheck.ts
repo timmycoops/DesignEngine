@@ -5,7 +5,9 @@
 // it's clicked, and Join puts the two back as one, ends within its tolerance sharing a vertex. Round corners (workstream
 // 2) rounds a dog-leg's corner at a radius typed, every arc vertex that far from the centre; Ctrl+Z puts it back. Then
 // the layers-only tree (Filtering plan, workstream 0): a row a layer saying what's on it, none a string; a right click on
-// the dog-leg in the view hides it from its menu, its layer's row says so, and Show all hidden brings it back.
+// the dog-leg in the view hides it from its menu, its layer's row says so, and Show all hidden brings it back. A layer's
+// filter (decision 0088, workstream 3): Filter by attributes… on the toes' right-click, `length: >170` typed keeps the
+// dog-leg alone, the toes left out are passed over by a click, and Isolate, its undoing, and Clear filter put it back.
 import * as THREE from 'three/webgpu';
 import { objectDetails, projectSummary, type ProjectSummary, runCommand, type Vec3 } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
@@ -246,6 +248,56 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   await wait(800);
   const back2 = !((await projectSummary()).objects.find((o) => o.id === dogleg)?.hidden ?? true);
   expect('a right click on nothing offers Show all hidden (1), which brings the dog-leg back', offered === 'Show all hidden (1)' && back2, { offered, back: back2 });
+
+  // A layer's filter, from the tree's right-click.
+  const treeMenu = async (layer: string, item: string) => {
+    const row = rowOf(layer);
+    const box = row?.getBoundingClientRect();
+    if (!row || !box) return false;
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2, button: 2 }));
+    await wait(300);
+    const found = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((m) => m.textContent?.trim() === item);
+    found?.click();
+    await wait(500);
+    return !!found;
+  };
+  const typeFilter = async (text: string) => {
+    const input = document.querySelector<HTMLInputElement>('[data-slot="layer-filter-bar"] input');
+    if (!input) return false;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, text);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await wait(800);
+    return true;
+  };
+  const filteredOut = async () => (await projectSummary()).objects.filter((o) => o.filtered).map((o) => o.name).sort();
+  const opened = await treeMenu('toes', 'Filter by attributes…');
+  const typed = await typeFilter('length: >170');
+  const out = await filteredOut();
+  await settle();
+  const toesSay = rowOf('toes')?.querySelector('[data-slot="layer-showing"]')?.textContent ?? '';
+  const funnel = !!rowOf('toes')?.querySelector('[data-slot="layer-filter"]');
+  expect(
+    "Filter by attributes… on the toes, length: >170 typed: the dog-leg (180 m) alone kept, the toes run on to 151 m left out, its row 1 of 4 with a funnel",
+    opened && typed && JSON.stringify(out) === JSON.stringify(['Toe 1', 'Toe 2', 'Toe 3']) && toesSay === '1 of 4' && funnel,
+    { opened, typed, out, row: toesSay, funnel },
+  );
+  // A click where Toe 1 lies picks nothing of it: it isn't drawn or picked.
+  await key('Escape');
+  await click([E + 20, N + toeY[0], 102]);
+  const pickedToe = selection().includes(toes[0]);
+  expect('a click on a toe the filter leaves out picks nothing of it', !pickedToe, selection().length);
+  // Isolate the toes: the other layers go off; again, they come back.
+  const visibleLayers = async () => (await projectSummary()).layers.filter((l) => l.visible).map((l) => l.name).sort();
+  const before = await visibleLayers();
+  await treeMenu('toes', 'Isolate');
+  const alone = await visibleLayers();
+  await treeMenu('toes', 'Show what was shown');
+  const after = await visibleLayers();
+  expect('Isolate shows the toes alone, and Show what was shown puts the rest back', JSON.stringify(alone) === JSON.stringify(['toes']) && JSON.stringify(after) === JSON.stringify(before), { before, alone, after });
+  // Clear filter: every toe back.
+  await treeMenu('toes', 'Clear filter');
+  const cleared = await filteredOut();
+  expect('Clear filter on the right-click puts every toe back', cleared.length === 0 && !rowOf('toes')?.querySelector('[data-slot="layer-filter"]'), cleared);
 
   results.failures = failures;
   return results;

@@ -7,7 +7,7 @@
 // table beside the mesh, never the mesh (decision 0060). Anything else hidden on its own is only switched off. How each one looks (by RL or its layer's colour, and how see-through) is
 // uniforms on its material, so a change of look never refetches anything.
 import * as THREE from 'three/webgpu';
-import { type Contours, layerOpacityOf, lookOf, type ObjectSummary, type ProjectSummary, type StagedHorizon, stageLayerSolids, stageObject, stageSeamHorizon } from '../bridge';
+import { concealed, type Contours, layerOpacityOf, lookOf, type ObjectSummary, type ProjectSummary, type StagedHorizon, stageLayerSolids, stageObject, stageSeamHorizon } from '../bridge';
 import { colourOf, loadStaged, SELECTED } from './load';
 import type { SolidFlags } from './solidFlags';
 import { type Bands, bandsFor } from './rlColour';
@@ -144,7 +144,7 @@ export class SceneSync {
       if (!o) return undefined;
       return seam(o.kind) ? `${o.geometry_key}#${this.horizons.get(id) ?? ''}#${this.variables.get(id) ?? ''}` : o.geometry_key;
     };
-    const on = (o: ObjectSummary) => (layers.get(o.layer)?.visible ?? true) && !o.hidden;
+    const on = (o: ObjectSummary) => (layers.get(o.layer)?.visible ?? true) && !concealed(o);
     // Before anything loads, so a surface's first frame has its bands on round RLs.
     this.viewport.originZ = summary.origin?.[2] ?? 0;
     for (const [id, shown] of this.shown) {
@@ -170,7 +170,7 @@ export class SceneSync {
         continue;
       }
       // Loaded when first shown: a model hidden in a saved project shouldn't read its grids.
-      if (object.hidden) continue;
+      if (concealed(object)) continue;
       let group: THREE.Group;
       let view: SeamShown | undefined;
       if (seam(object.kind)) {
@@ -319,7 +319,7 @@ export class SceneSync {
     for (const o of summary.objects) {
       if (o.kind !== 'solid') continue;
       const band = coloured ? bandOf(coloured.values.get(o.id), coloured.bands) : null;
-      this.tableOf.get(o.id)?.put(o.id, o.hidden, picked.has(o.id), band);
+      this.tableOf.get(o.id)?.put(o.id, concealed(o), picked.has(o.id), band);
     }
     for (const { flags } of tables.values()) flags.bandCount.value = coloured?.bands.count ?? 1;
     for (const [key, { layer: id, group, flags }] of tables) {

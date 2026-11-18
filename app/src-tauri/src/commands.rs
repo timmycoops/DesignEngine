@@ -562,6 +562,32 @@ pub async fn set_objects_visible(objects: Vec<ObjectId>, visible: bool, state: S
     Ok(changes_after_hiding(&mut app))
 }
 
+/// A layer's filter by attributes and measures (decision 0088, workstream 3): what doesn't fit, on it and the layers
+/// under it, is drawn, snapped to and cut as hidden. Display state, as hiding is: not a run, not undone. Only the rows
+/// whose flags changed come back.
+#[tauri::command]
+pub async fn set_layer_filter(layer: LayerId, when: std::collections::BTreeMap<String, String>, state: State<'_, AppState>) -> Result<ProjectChanges, String> {
+    let mut app = state.app.lock().unwrap();
+    app.idle()?;
+    app.session.set_layer_filter(layer, when);
+    Ok(changes_after_hiding(&mut app))
+}
+
+/// Every attribute of what's on a layer and the layers under it, an object a row: what the filter box lists and counts
+/// to tick (decision 0088). Only what the layer tree speaks for: no face designs, workflows, tables or dataflows.
+#[tauri::command]
+pub async fn layer_attributes(layer: LayerId, state: State<'_, AppState>) -> Result<Vec<zd_core::Attributes>, String> {
+    let app = state.app.lock().unwrap();
+    let project = app.session.project();
+    let Some(name) = project.layer(layer).map(|l| l.name.clone()) else { return Err("no such layer".into()) };
+    let under: std::collections::HashSet<LayerId> = project.layers().iter().filter(|l| l.name == name || l.name.strip_prefix(name.as_str()).is_some_and(|rest| rest.starts_with('\\'))).map(|l| l.id).collect();
+    Ok(project
+        .objects()
+        .filter(|o| under.contains(&o.layer) && !matches!(o.kind(), zd_core::ObjectKind::FaceDesign | zd_core::ObjectKind::Workflow | zd_core::ObjectKind::ParameterTable | zd_core::ObjectKind::Dataflow | zd_core::ObjectKind::Table))
+        .map(|o| o.attributes.clone())
+        .collect())
+}
+
 #[tauri::command]
 pub async fn set_layer_visible(layer: LayerId, visible: bool, state: State<'_, AppState>) -> Result<ProjectChanges, String> {
     let mut app = state.app.lock().unwrap();
@@ -1437,7 +1463,7 @@ fn snap_along(origin: [f64; 3], direction: [f64; 3], state: &AppState) -> Option
         let mut app = state.app.lock().unwrap();
         let scene_origin = app.origin()?;
         let project = app.session.project();
-        let visible = |o: &zd_core::Object| !project.is_hidden(o.id) && project.layer(o.layer).is_some_and(|l| l.visible);
+        let visible = |o: &zd_core::Object| !project.is_concealed(o.id) && project.layer(o.layer).is_some_and(|l| l.visible);
         let objects: Vec<(ObjectId, Arc<SurfaceRayCaster>)> = app
             .casters
             .iter()
@@ -1447,7 +1473,7 @@ fn snap_along(origin: [f64; 3], direction: [f64; 3], state: &AppState) -> Option
             })
             .collect();
         let layers: Vec<Arc<SolidCaster>> = app.solid_casters.iter().filter(|(tile, (key, _))| app.solid_keys.get(tile) == Some(key) && project.layer(tile.layer).is_some_and(|l| l.visible)).map(|(_, (_, caster))| caster.clone()).collect();
-        (scene_origin, objects, layers, project.hidden().clone())
+        (scene_origin, objects, layers, project.concealed().clone())
     };
     let from = [origin[0] + scene_origin[0], origin[1] + scene_origin[1], origin[2] + scene_origin[2]];
     let on_objects = objects.iter().filter_map(|(id, c)| c.cast(from, direction).map(|hit| (Some(*id), hit)));

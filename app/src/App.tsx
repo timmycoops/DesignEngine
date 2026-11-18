@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { confirm, message, open, save } from '@tauri-apps/plugin-dialog';
 import type { DockviewApi } from 'dockview-react';
 import { cn } from 'cn';
-import {
+import { concealed,
   benchConfig,
   blockValues,
   buildSnapIndex,
@@ -36,6 +36,7 @@ import {
   saveProject,
   setContours,
   setLayerOpacity,
+  setLayerFilter,
   setLayerVisible,
   setLooks,
   setObjectsVisible,
@@ -921,7 +922,7 @@ export default function App() {
   const visibleObjects = (kinds: Set<string>) => {
     // Objects carry their layer's id.
     const shown = new Set(summary?.layers.filter((l) => l.visible).map((l) => l.id));
-    return summary?.objects.filter((o) => kinds.has(o.kind) && shown.has(o.layer) && !o.hidden) ?? [];
+    return summary?.objects.filter((o) => kinds.has(o.kind) && shown.has(o.layer) && !concealed(o)) ?? [];
   };
 
   const onImportVulcan = () =>
@@ -1086,6 +1087,11 @@ export default function App() {
     [show],
   );
 
+  const changeLayerFilter = useCallback(
+    (layer: string, when: Record<string, string>) => void attempt(async () => show(await setLayerFilter(layer, when))),
+    [attempt, show],
+  );
+
   const setObjectsShown = useCallback(
     (objects: string[], visible: boolean) => void attempt(async () => show(await setObjectsVisible(objects, visible))),
     [attempt, show],
@@ -1148,6 +1154,7 @@ export default function App() {
       setLayerVisible: setVisible,
       setLayersVisible: setLayersShown,
       setObjectsVisible: setObjectsShown,
+      setLayerFilter: changeLayerFilter,
       setLooks: changeLooks,
       setLayerOpacity: changeLayerOpacity,
       setContours: changeContours,
@@ -1197,7 +1204,7 @@ export default function App() {
       viewMenu,
       closeViewMenu: () => setViewMenu(null),
     }),
-    [viewMenu, summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook, drafts],
+    [viewMenu, summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLayerFilter, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook, drafts],
   );
 
   /** The view's own tools, for the bar on the view (decision 0076). The keys below do the same. */
