@@ -1,7 +1,7 @@
 # 0088 — One filter by attributes and measures
 
-Date: 2026-11-18 · Status: accepted (Tim, 2026-11-18: decisions 1 to 9 of the Filtering plan) · Workstream 1 built; the
-later workstreams add to this record as they merge
+Date: 2026-11-18 · Status: accepted (Tim, 2026-11-18: decisions 1 to 9 of the Filtering plan) · Workstreams 1 and 2
+built; the later workstreams add to this record as they merge
 
 ## Why
 
@@ -63,8 +63,34 @@ attributes, and a bench rule against a piece's.
 | `a_step_input_filters_by_the_filter_syntax_and_measures` (zd-commands) | the box pit cut at RL 40: `volume: <300000` finds the 240,000 m³ piece alone, `rl_min: >=40` the 360,000 m³ piece, `volume: !240000` the same, a saved 240000 the piece below; `<1` finds nothing and says the rule | 1e-6 m³ |
 | `benchRules.test.mjs` (app) | the twin reads the same items the same way, and a rule typed `thickness: <0.3; seam: !P` takes 0.2 m of U, not of P, not 0.4 m | exact |
 
+## Built: workstream 2, the filter box
+
+- **One filter in the app** (`app/src/filters.ts`). The engine's reading, item for item: ranges, comparisons, nots,
+  case aside. The bench rules' twin moved here, so the bench rules, the filter box and the tables read a filter one
+  way; `benchRules.ts` takes it from here.
+- **The values to tick** (`valuesOf`): each attribute the rows carry, the cuts' own first (strip, block, seam,
+  horizon, bench, material, case) and the rest by name, with its values in a person's order (9 before 10) and how many
+  rows hold each, case aside (U and u are one, as the engine matches them). For numbers, the lowest and highest too.
+- **A tick** (`tick`) adds a value to its attribute's list as a word, or takes it off; the last off leaves the attribute
+  out, which is anything. A list that's more than ticks (`1-9`, `<500`, `!waste`), ticked, becomes the ticks of the values
+  it keeps now, that one on or off, so nothing kept is lost. A value shows ticked where the list keeps it.
+- **The kit's `FilterInput`**: a funnel button that opens the attributes, each a submenu of its values with their counts
+  to tick (the first 60; more are typed as a range), and the filter as text beside it, as the bench rules type theirs.
+  Ticks write the text and the text sets the ticks; text that doesn't read is ringed red with why, and leaves the filter
+  as it was. The funnel lights gold when it filters; × or Clear the filter clears it.
+- **First use: the Objects table.** Beside its words box, it filters the rows by their attributes and, for a solid, its
+  `volume`. Totals, Select shown, Zoom to, Hide shown, Delete shown and CSV follow what it keeps, as they follow the
+  words. The Reserves table's filter (workstream 4) and a layer's in the view (workstream 3) take the same box.
+
+| Test | Known answer |
+|---|---|
+| `filters.test.mjs` (app) | four rows: strip, seam, material, volume listed in that order; seam's L, M and U counted 1, 1, 2 (U and u one, Seam and seam one); strip numeric, 3 to 10, values 3, 9, 10; ticking U and M writes `seam: U, M`, which keeps 3 rows; unticking both is no filter; `strip: 1-9` ticks 3 and 9, not 10; ticking 10 on writes `3, 9, 10`, ticking 9 off writes `3`; `material: !waste` with coal ticked off leaves material out |
+| `zd-app --bench --workflow` | the box pit's two pieces in the Objects table: `volume: <300000` typed keeps the piece below RL 40, 240,000 m³; cleared, both; the funnel's volume lists the two volumes, one each; ticking the smaller keeps the piece below and writes `volume: 240000…` into the text |
+
 ## Known limits
 
 - **Measures cost a pass over the object** each time one is read: fine for a step's input or a table, to be timed when a
   layer's filter runs over a pit's solids in the view (workstream 3).
 - **A solid has no `area`**, and a surface no `length`: they're not asked for yet.
+- **The Objects table filters by volume and attributes only.** A string's `length` or a surface's `area` are measures the
+  engine reads in a step's input; the table has no column for them yet.

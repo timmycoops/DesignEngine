@@ -243,7 +243,33 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     await wait(1000);
     const totals = () => document.querySelector('[aria-label="Totals of the rows shown"]')?.textContent ?? '';
     expect("the block table lists the two pieces on 'cut', 600,000 m³", totals().includes('2 of 2 shown') && totals().includes('600,000'), totals());
-    typeInto('Filter the rows', 'below');
+    // The filter box (decision 0088, workstream 2): typed by a measure, then ticked from the values with their counts.
+    typeInto('Filter the rows by attributes', 'volume: <300000');
+    await wait(400);
+    const typed = totals();
+    typeInto('Filter the rows by attributes', '');
+    await wait(400);
+    const cleared = totals();
+    const table = () => document.querySelector<HTMLElement>('[data-tool-panel="blocks"]');
+    table()?.querySelector<HTMLElement>('[data-slot="filter-values"]')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' }));
+    await wait(400);
+    document.querySelector<HTMLElement>('[data-slot="filter-menu"] [data-attribute="volume"]')?.click();
+    await wait(400);
+    const ticks = [...document.querySelectorAll<HTMLElement>('[data-slot="filter-values-of"][data-attribute="volume"] [role="menuitemcheckbox"]')];
+    const counted = ticks.map((t) => t.textContent ?? '');
+    ticks[0]?.click();
+    await wait(400);
+    const ticked = totals();
+    const boxText = document.querySelector<HTMLInputElement>('[aria-label="Filter the rows by attributes"]')?.value ?? '';
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await wait(300);
+    expect(
+      'the filter box takes volume: <300000 typed, then a tick of the smaller volume from its two, each counted once: the piece below RL 40, 240,000 m³',
+      typed.includes('1 of 2 shown') && typed.includes('240,000') && cleared.includes('2 of 2 shown') && counted.length === 2 && counted.every((c) => c.endsWith('1')) && ticked.includes('1 of 2 shown') && ticked.includes('240,000') && boxText.startsWith('volume: 240000'),
+      { typed, cleared, counted, ticked, box: boxText },
+    );
+    typeInto('Filter the rows by attributes', '');
+    typeInto('Filter the rows by words', 'below');
     await wait(400);
     expect('filtered to the piece below RL 40: 40 m × 6,000 m², 240,000 m³', totals().includes('1 of 2 shown') && totals().includes('240,000'), totals());
     await press(button('Delete shown'));

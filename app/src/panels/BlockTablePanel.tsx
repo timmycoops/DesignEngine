@@ -2,11 +2,12 @@ import { Download, EyeOff, MousePointerSquareDashed, Scan, Trash2 } from 'lucide
 import { useEffect, useMemo, useState } from 'react';
 import { type ObjectKind, solidsTable } from '@/bridge';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
-import { Choice, Field, NumberInput, Select } from '@/design-system/kit';
+import { Choice, Field, FilterInput, NumberInput, Select } from '@/design-system/kit';
+import type { When } from '@/filters';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { useWorkspace } from '@/workspace/context';
-import { attributeColumns, csvOf, densityColumns, shownRows, type SolidRow, totalsOf } from './blockTable';
+import { attributeColumns, csvOf, densityColumns, filterable, shownRows, type SolidRow, totalsOf } from './blockTable';
 import { fmt, kindLabel } from './format';
 import { IN_TREE } from './layerTree';
 
@@ -37,6 +38,7 @@ export function BlockTable() {
   const [take, setTake] = useState<Take>('layer');
   const [layerId, setLayerId] = useState<string | null>(null);
   const [words, setWords] = useState('');
+  const [when, setWhen] = useState<When>({});
   const [under, setUnder] = useState(0);
   const [density, setDensity] = useState<string | null>(null);
   const [rows, setRows] = useState<SolidRow[]>([]);
@@ -92,7 +94,8 @@ export function BlockTable() {
   const withVolume = kind === 'solid' || (kind === 'all' && rows.some((r) => Number.isFinite(r.volume)));
   const densities = useMemo(() => densityColumns(columns), [columns]);
   const rd = density && densities.includes(density) ? density : (densities[0] ?? null);
-  const shown = useMemo(() => shownRows(rows, { words, under }), [rows, words, under]);
+  const shown = useMemo(() => shownRows(rows, { words, under, when }), [rows, words, under, when]);
+  const filterRows = useMemo(() => rows.map(filterable), [rows]);
   const totals = useMemo(() => totalsOf(shown, rd), [shown, rd]);
   const picked = useMemo(() => new Set(selection), [selection]);
 
@@ -153,7 +156,8 @@ export function BlockTable() {
             ))}
           </Select>
         )}
-        <Input className="h-7 w-44 px-1.5 text-xs" value={words} placeholder="Filter: 3 M coal…" aria-label="Filter the rows" onChange={(e) => setWords(e.target.value)} />
+        <Input className="h-7 w-36 px-1.5 text-xs" value={words} placeholder="Words: 3 M coal…" aria-label="Filter the rows by words" onChange={(e) => setWords(e.target.value)} />
+        <FilterInput rows={filterRows} value={when} onChange={setWhen} label="Filter the rows by attributes" className="w-72" />
         {withVolume && (
           <Field label="Under" hint="Only rows under this volume; 0 for any">
             <NumberInput value={under} onChange={setUnder} label="Volume under" unit="m³" width="w-24" />
