@@ -44,6 +44,7 @@ fn main() {
             commands::reserves_tree,
             commands::reserves_breakdown,
             commands::reserves_solids,
+            commands::reserves_field_values,
             commands::reserves_column,
             commands::reserves_column_trace,
             commands::reserves_rerun_params,

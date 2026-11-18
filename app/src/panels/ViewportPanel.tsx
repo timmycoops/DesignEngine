@@ -23,11 +23,12 @@ function Swatch({ colour, label }: { colour: string; label: string }) {
 
 /** Colour by RL on show, then every seam model on show, nearest the top the first in the project. */
 function Legends() {
-  const { seamViews, rlShown, sectionOpen } = useWorkspace();
-  if (seamViews.length === 0 && rlShown.objects.length === 0) return null;
+  const { seamViews, rlShown, sectionOpen, fieldColoured } = useWorkspace();
+  if (seamViews.length === 0 && rlShown.objects.length === 0 && !fieldColoured) return null;
   return (
     // Under the view bar at the top, and over the section's overview at the foot while one is open.
     <div className={`absolute left-3 z-10 flex w-64 flex-col gap-2 overflow-auto ${sectionOpen ? 'bottom-[264px] max-h-[calc(100%-264px-3.25rem)]' : 'bottom-3 max-h-[calc(100%-4rem)]'}`}>
+      {fieldColoured && <FieldLegend />}
       {rlShown.objects.length > 0 && <RlLegend />}
       {seamViews.map((view) => (
         <SeamLegend key={view.id} seamView={view} />
@@ -47,6 +48,43 @@ function bandsCss(bands: Bands): string {
 }
 
 const MOST_LISTED = 6;
+
+/**
+ * The blocks coloured by a reserves field (decision 0075, point 7): which field of which table, its bands, how many
+ * blocks took a colour, each solid its own leaf's value or its block's, and Stop.
+ */
+function FieldLegend() {
+  const { fieldColoured, colourBlocksByField, summary } = useWorkspace();
+  if (!fieldColoured) return null;
+  const { bands, column, byBlock, count, table } = fieldColoured;
+  const tableName = summary?.objects.find((o) => o.id === table)?.name ?? 'a reserves table';
+  return (
+    <div className="shrink-0 rounded-md border bg-card/90 p-2 text-xs shadow-md backdrop-blur-sm" data-slot="field-legend">
+      <div className="flex items-center gap-1">
+        <span className="min-w-0 flex-1 truncate font-medium" title={`${column}, from ${tableName}`}>
+          Blocks by {column.split('\\').join(' › ')}
+        </span>
+        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => colourBlocksByField(null)} title="Colour the blocks by their layers again">
+          Stop
+        </Button>
+      </div>
+      <div className="mt-1 h-2.5 rounded-sm" style={{ background: bandsCss(bands) }} />
+      <div className="flex justify-between text-muted-foreground tabular-nums">
+        <span>{fmt(bands.low)}</span>
+        <span>{fmt(bands.high)}</span>
+      </div>
+      <div className="mt-1 flex items-center gap-2">
+        <label className="flex items-center gap-1.5" title="Each solid takes its block's value, the field added up over the block's seams and benches, not its own leaf's">
+          <Checkbox checked={byBlock} onCheckedChange={(c) => colourBlocksByField({ table, column, byBlock: c === true })} aria-label="By block" />
+          By block
+        </label>
+        <span className="ml-auto text-muted-foreground">
+          {fmt(count)} solid{count === 1 ? '' : 's'}, {tableName}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 /**
  * What's coloured by RL: the interval (picked from the range, or set), the ramp, the RLs it spans, and

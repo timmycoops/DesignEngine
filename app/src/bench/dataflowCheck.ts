@@ -693,6 +693,28 @@ async function checkRunAgain(summary: ProjectSummary, expect: Expect, show: Show
     JSON.stringify(stages) === JSON.stringify(['imported', 'insitu', 'rom', 'scheduled']) && checks.length === 3 && checks.every((h) => h === 'yes') && thickness !== '',
     { stages, checks, thickness },
   );
+  // Blocks coloured by a reserves field (decision 0075, point 7): ROM coal volume from its row, each solid its leaf's,
+  // then by block; Stop puts the layers' colours back.
+  const legend = () => document.querySelector<HTMLElement>('[data-slot="field-legend"]');
+  const legendCount = () => Number((legend()?.textContent ?? '').match(/([\d,]+) solids?/)?.[1]?.replaceAll(',', '') ?? 0);
+  const romRow = [...(rt()?.querySelectorAll<HTMLElement>('tr[data-field]') ?? [])].find((r) => r.dataset.field === 'ROM\\Coal\\volume');
+  romRow?.querySelector<HTMLButtonElement>('[data-slot="colour-by"]')?.click();
+  for (let k = 0; k < 100 && !legend(); k++) await wait(100);
+  const byLeaf = legendCount();
+  const title = legend()?.textContent ?? '';
+  legend()?.querySelector<HTMLButtonElement>('button[aria-label="By block"]')?.click();
+  for (let k = 0; k < 100 && legend()?.querySelector('button[aria-label="By block"][data-state="checked"]') === null; k++) await wait(100);
+  await wait(300);
+  const byBlock = legendCount();
+  if (picture) await picture('blocks-by-field');
+  [...(legend()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent?.trim() === 'Stop')?.click();
+  for (let k = 0; k < 50 && legend(); k++) await wait(100);
+  expect(
+    'blocks coloured by a reserves field from its row: ROM coal volume, each solid its leaf\'s, then by block; Stop puts them back',
+    !!romRow && byLeaf > 0 && title.includes('ROM › Coal › volume') && byBlock >= byLeaf && !legend(),
+    { byLeaf, byBlock, title: title.slice(0, 60) },
+  );
+
   showPanel(api, 'notebook');
   await wait(300);
   await show(await undo());

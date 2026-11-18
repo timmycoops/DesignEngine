@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { Colouring, Contours, Dataflow, LogEntry, ParameterTable, ProjectSummary, RunRecord, Vec3, WorkflowRecord } from '@/bridge';
+import type { Bands } from '@/viewport/rlColour';
 import type { RlShown, SeamShown } from '@/viewport/sceneSync';
 import type { PanelId } from './panels';
 
@@ -22,6 +23,13 @@ export interface NotebookEdit {
  * its column on it live. `why` says what stops it running (a cell that doesn't check), and the last good run stays.
  */
 export type Draft = { name: string; why: string | null } & ({ kind: 'table'; table: ParameterTable | null } | { kind: 'dataflow'; dataflow: Dataflow | null });
+
+/** A reserves field to colour the blocks by: the table, the field's column, and whether by each solid's leaf or its block. */
+export interface FieldColour {
+  table: string;
+  column: string;
+  byBlock: boolean;
+}
 
 /** What every panel reads, and the actions they share. App owns the state. */
 export interface Workspace {
@@ -128,6 +136,13 @@ export interface Workspace {
   colourSeamBlocks: (seamView: SeamShown | null) => void;
   /** Which horizon's grid the blocks are coloured by, as `model#horizon#variable`, or null. */
   blocksColouredBy: string | null;
+  /**
+   * Colours the blocks by a reserves table's field (decision 0075, point 7): each solid its leaf's value, or its block's;
+   * null puts them back. Replaces colouring by a seam grid, and the other way round.
+   */
+  colourBlocksByField: (field: FieldColour | null) => void;
+  /** The reserves field the blocks are coloured by, with its bands and how many took a colour; or null. */
+  fieldColoured: (FieldColour & { bands: Bands; count: number }) | null;
   /** Shows the horizon an issue is on and flies the view to its worst node. */
   focusIssue: (id: string, horizon: string, issue: number) => void;
   /** Marks crossing sites (world coordinates) in the viewport, replacing any marked; [] clears them. */
