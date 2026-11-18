@@ -1050,6 +1050,9 @@ pub struct ColumnSteps {
     pub fields: Vec<ColumnField>,
     /// The parameter tables read, in order, by name: what a read's `table` counts in.
     pub tables: Vec<String>,
+    /// Each of those tables' ids, where it's an object of the project: where a setting read is edited (decision 0082,
+    /// point 7). None for the run's own rows and a table since deleted.
+    pub table_ids: Vec<Option<ObjectId>>,
     /// The column's block solids by name, as the run read them: what the column as input is made of (decision 0084).
     pub blocks: Vec<String>,
     /// The seam model whose stack orders the column, by name; none where the run gave its own stack of horizons.
@@ -1127,6 +1130,7 @@ pub fn table_column(project: &zd_core::Project, log: &[crate::LogEntry], table: 
         dataflow_id: opened.dataflow_id,
         fields,
         tables: opened.tables,
+        table_ids: opened.table_ids,
         blocks: blocks.iter().map(|b| b.name.clone()).collect(),
         model: opened.model,
         horizons: opened.prepared.horizons.len(),
@@ -1175,6 +1179,7 @@ struct OpenedColumn {
     dataflow_id: ObjectId,
     key: ColumnKey,
     tables: Vec<String>,
+    table_ids: Vec<Option<ObjectId>>,
     /// The seam model the run named, by name.
     model: Option<String>,
     changed: Vec<String>,
@@ -1215,8 +1220,10 @@ fn open_column(project: &zd_core::Project, log: &[crate::LogEntry], get: &dyn Fn
         None => prepare(get, &p)?,
     };
     let mut tables: Vec<String> = Vec::new();
+    let mut table_ids: Vec<Option<ObjectId>> = Vec::new();
     if p.parameters.is_some() {
         tables.push("the run's own rows".into());
+        table_ids.push(None);
     }
     let mut unsaved: Vec<String> = dataflow.map(|_| saved.name.clone()).into_iter().collect();
     for &id in &prepared.dataflow.parameters {
@@ -1226,6 +1233,7 @@ fn open_column(project: &zd_core::Project, log: &[crate::LogEntry], get: &dyn Fn
             unsaved.push(name.clone());
         }
         tables.push(name);
+        table_ids.push(project.object(id).map(|_| id));
     }
     // The node's words by the table's levels; the column is the words of the dataflow's levels above the seam.
     let levels = crate::reserves_view::levels(t);
@@ -1241,7 +1249,7 @@ fn open_column(project: &zd_core::Project, log: &[crate::LogEntry], get: &dyn Fn
         return Err(CommandError::Invalid(format!("no blocks of case {case} at {} now", key.words())));
     }
     let model = p.model.map(|id| project.object(id).map_or_else(|| "a seam model since deleted".into(), |o| o.name.clone()));
-    Ok(OpenedColumn { prepared, dataflow_id: p.dataflow, key, tables, model, changed, unsaved })
+    Ok(OpenedColumn { prepared, dataflow_id: p.dataflow, key, tables, table_ids, model, changed, unsaved })
 }
 
 /// `small_volumes`: each unit under the `min_volume` its parameter rows give set aside and written (decision 0073,

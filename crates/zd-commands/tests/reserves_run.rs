@@ -1692,6 +1692,8 @@ fn a_column_runs_on_a_parameter_table_as_edited_and_the_project_keeps_the_saved_
     let live = table_column(s.project(), s.log(), id, &node, &unsaved).unwrap();
     assert!(close(roof(&live), 1_000.0), "{}", roof(&live));
     assert!(live.edited && live.unsaved == ["assumptions"], "{:?}", live.unsaved);
+    // Where a setting read is edited (decision 0082, point 7): each table read, by id.
+    assert_eq!((live.tables.clone(), live.table_ids.clone()), (vec!["assumptions".to_string()], vec![Some(table)]));
 
     let saved = table_column(s.project(), s.log(), id, &node, &Unsaved::default()).unwrap();
     assert!(close(roof(&saved), 500.0) && !saved.edited && saved.unsaved.is_empty());
