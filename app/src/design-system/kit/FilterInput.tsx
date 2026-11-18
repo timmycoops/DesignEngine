@@ -17,6 +17,7 @@ import {
 import { Input } from '@/design-system/ui/input';
 import { cn } from 'cn';
 import { IconButton } from './badges';
+import { MENU_LIT, MENU_SURFACE } from './Select';
 
 /** More values than this to an attribute, and its ticks list only the first so many: a range is typed for the rest. */
 const MOST_TICKS = 60;
@@ -46,8 +47,9 @@ function SuggestionList({ anchor, offered, lit, onLight, onTake }: { anchor: HTM
       ref={list}
       role="listbox"
       data-slot="filter-suggestions"
-      className="fixed z-50 max-w-96 overflow-y-auto rounded-lg bg-popover p-1 text-xs text-popover-foreground shadow-md ring-1 ring-foreground/10"
-      style={{ ...at, maxHeight: LIST_HEIGHT }}
+      className={cn(MENU_SURFACE, 'fixed z-50 max-w-96 overflow-y-auto')}
+      style={{ ...at, maxHeight: LIST_HEIGHT, pointerEvents: 'auto' }}
+      onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.preventDefault()}
     >
       {offered.items.map((s, k) => (
@@ -56,7 +58,7 @@ function SuggestionList({ anchor, offered, lit, onLight, onTake }: { anchor: HTM
           role="option"
           aria-selected={k === lit}
           data-value={s.insert}
-          className={cn('flex cursor-default items-center gap-3 rounded-md px-1.5 py-1', k === lit && 'bg-accent text-accent-foreground')}
+          className={cn('flex cursor-default items-center gap-3 rounded-md px-1.5 py-1', k === lit && MENU_LIT)}
           onMouseEnter={() => onLight(k)}
           onClick={() => onTake(s)}
         >
@@ -145,7 +147,7 @@ export function FilterInput({ rows, value, onChange, label = 'Filter by attribut
     <span className={cn('inline-flex min-w-0 items-center gap-1', className)} data-slot="filter-input">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <IconButton label={`${label}: tick values`} className={cn(filtered && 'text-primary')} data-slot="filter-values">
+          <IconButton label={`${label}: tick values`} className={cn(filtered && 'bg-primary/20 text-primary')} data-slot="filter-values" data-on={filtered || undefined}>
             <Filter />
           </IconButton>
         </DropdownMenuTrigger>
@@ -196,7 +198,7 @@ export function FilterInput({ rows, value, onChange, label = 'Filter by attribut
       </DropdownMenu>
       <Input
         ref={box}
-        className={cn('h-7 min-w-0 flex-1 px-1.5 text-xs', why && 'border-destructive focus-visible:ring-destructive/40')}
+        className={cn('h-7 min-w-0 flex-1 px-1.5 text-xs', filtered && !why && 'border-primary/70 bg-primary/5', why && 'border-destructive focus-visible:ring-destructive/40')}
         value={text}
         placeholder="strip: 1-5; seam: U, M; volume: <500"
         aria-label={label}

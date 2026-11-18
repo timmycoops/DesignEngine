@@ -2,6 +2,7 @@ import { type ComponentProps, type ReactNode, useEffect, useId, useState } from 
 import { cn } from 'cn';
 import type { ObjectSummary, StepTarget } from '@/bridge';
 import { type Range, readNumber, showNumber } from './number';
+import { Select } from './Select';
 
 /**
  * The inputs every tool panel is made of (UI plan, the kit): a number with its unit, a choice of a few, a select, an RL,
@@ -127,10 +128,8 @@ export function Choice<T extends string>({ value, options, labels, onChange, lab
   );
 }
 
-/** A select, in the kit's look. */
-export function Select({ className, ...props }: ComponentProps<'select'>) {
-  return <select className={cn(boxClass, 'min-w-0 px-1', className)} {...props} />;
-}
+/** A select, in the kit's look: its choices in the app's own list (decision 0089). */
+export { Select };
 
 /** The grids and surfaces in a project, each kind under its own heading, or a word that there are none yet. */
 export function TargetOptions({ surfaces }: { surfaces: ObjectSummary[] }) {

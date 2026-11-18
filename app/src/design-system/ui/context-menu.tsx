@@ -25,7 +25,7 @@ function ContextMenuContent({
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.Content
         data-slot="context-menu-content"
-        className={cn("z-50 max-h-(--radix-context-menu-content-available-height) min-w-40 origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-100 data-open:animate-in data-open:fade-in-0", className)}
+        className={cn("z-50 max-h-(--radix-context-menu-content-available-height) min-w-40 origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-lg shadow-black/50 ring-1 ring-foreground/20 duration-100 data-open:animate-in data-open:fade-in-0", className)}
         {...props}
       />
     </ContextMenuPrimitive.Portal>
@@ -99,7 +99,7 @@ function ContextMenuSubContent({
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.SubContent
         data-slot="context-menu-sub-content"
-        className={cn("z-50 max-h-80 min-w-32 overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-foreground/10", className)}
+        className={cn("z-50 max-h-80 min-w-32 overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-lg shadow-black/50 ring-1 ring-foreground/20", className)}
         {...props}
       />
     </ContextMenuPrimitive.Portal>

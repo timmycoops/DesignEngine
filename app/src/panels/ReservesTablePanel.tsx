@@ -273,7 +273,7 @@ export function ReservesTable() {
           <span className="shrink-0 text-muted-foreground">Leaves</span>
           <FilterInput rows={filterRows} value={when} onChange={setWhen} label="Filter the leaves" names={fieldNames} className="max-w-md flex-1" />
           {tree && (
-            <span className="shrink-0 text-muted-foreground tabular-nums" data-slot="reserves-filter-kept">
+            <span className={cn('shrink-0 tabular-nums', Object.keys(when).length > 0 ? 'text-primary' : 'text-muted-foreground')} data-slot="reserves-filter-kept">
               {Object.keys(when).length > 0 ? `${fmt(tree.leaves)} of ${fmt(filterRows.length)} leaves` : `${fmt(tree.leaves)} leaves`}
             </span>
           )}

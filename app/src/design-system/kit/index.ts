@@ -4,6 +4,7 @@
  */
 export { IconButton, RoadBadge, StatusBadge } from './badges';
 export { CellInput, Choice, Field, NumberInput, NumberOrBlank, Select, TargetInput, TargetOptions } from './fields';
+export { MENU_LIT, MENU_SURFACE } from './Select';
 export { FilterInput } from './FilterInput';
 export { type Range, readNumber, showNumber } from './number';
 export { type RunReport, RunResult, type ToolAction, ToolPanel, ToolSection } from './ToolPanel';
