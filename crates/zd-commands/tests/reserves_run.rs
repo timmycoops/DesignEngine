@@ -1381,7 +1381,7 @@ fn final_writes_rom_coal_and_waste_where_they_end_and_scheduled_beside_them() {
     assert!(close(total(&t, "ROM\\Coal\\volume") + total(&t, "ROM\\Waste\\volume"), 120_000.0 - 19_500.0), "ROM is the blocks but the waste below the last coal");
     assert_eq!(notes_of(&record, Code::ReservesUnderburden).iter().filter(|n| n.contains("below the last coal")).count(), 1, "said as underburden");
     assert!(close(total(&t, "Scheduled\\Coal\\volume"), total(&t, "ROM\\Coal\\volume")) && close(total(&t, "Scheduled\\Waste\\volume"), total(&t, "ROM\\Waste\\volume")));
-    assert!(close(at_seam(&t, Some("A"), "Clean coal\\Coal\\volume"), 10_000.0) && close(at_seam(&t, Some("B"), "Clean coal\\Coal\\volume"), 15_000.0));
+    assert!(close(at_seam(&t, Some("A"), "ROM\\Clean coal\\volume"), 10_000.0) && close(at_seam(&t, Some("B"), "ROM\\Clean coal\\volume"), 15_000.0));
     assert!(close(at_seam(&t, Some("A"), "ROM\\Coal\\tonnes"), 10_000.0 * 1.4 + 854.0 * 2.3));
     assert_eq!(texts(&t, "ROM\\section")[(0..t.rows()).find(|&i| texts(&t, "seam")[i].as_deref() == Some("B")).unwrap()].as_deref(), Some("B"));
 }
@@ -1499,7 +1499,7 @@ fn aggregate_sections_puts_the_section_s_quality_on_its_coal() {
     let t = table(&s, created(&record)[0]);
     let (a2, b2) = (at_seam(&t, Some("A"), "ROM\\Coal\\ash"), at_seam(&t, Some("B"), "ROM\\Coal\\ash"));
     assert!(close(a2, b2) && a2 > 10.0 && a2 < 80.0, "{a2} {b2}, own {a} {b}");
-    assert!(close(at_seam(&t, Some("A"), "Clean coal\\Coal\\ash"), at_seam(&t, Some("B"), "Clean coal\\Coal\\ash")) && at_seam(&t, Some("A"), "Clean coal\\Coal\\ash") < 12.0, "clean coal its coal's own average");
+    assert!(close(at_seam(&t, Some("A"), "ROM\\Clean coal\\ash"), at_seam(&t, Some("B"), "ROM\\Clean coal\\ash")) && at_seam(&t, Some("A"), "ROM\\Clean coal\\ash") < 12.0, "clean coal its coal's own average");
 }
 
 /// Clean coal at its section's average, by tonnes (decision 0077, 7c part 2; Tim: qualities are weighed by tonnes). One
@@ -1529,7 +1529,7 @@ fn clean_coal_takes_its_section_s_average_by_tonnes() {
         let flow = flow(s, final_steps(), &csv(yes));
         let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": stack, "layer": "reserves" })).unwrap();
         let t = table(s, created(&record)[0]);
-        (at_seam(&t, Some("A"), "Clean coal\\Coal\\ash"), at_seam(&t, Some("B"), "Clean coal\\Coal\\ash"))
+        (at_seam(&t, Some("A"), "ROM\\Clean coal\\ash"), at_seam(&t, Some("B"), "ROM\\Clean coal\\ash"))
     };
     let (a, b) = clean(&mut s, "");
     assert!(close(a, 10.0) && close(b, 20.0), "each its own: {a} {b}");
@@ -1738,7 +1738,7 @@ fn final_writes_where_each_unit_goes_for_the_notebook() {
     let all: f64 = cell.workings.iter().filter(|w| w.what == "ROM coal").map(|w| w.value.unwrap()).sum();
     assert!(close(all, 10_854.0 + 15_906.0), "{all}");
     let clean = one(a, "clean coal");
-    assert!(close(clean.value.unwrap(), 10_000.0) && clean.then.as_deref() == Some("Clean coal\\Coal"), "{clean:?}");
+    assert!(close(clean.value.unwrap(), 10_000.0) && clean.then.as_deref() == Some("ROM\\Clean coal"), "{clean:?}");
     let ob = one(unit_in(before, "OB"), "ROM waste");
     assert!(close(ob.value.unwrap(), 49_646.0), "{ob:?}");
     assert_eq!(ob.then.as_deref(), Some("ROM\\Waste and Scheduled\\Waste, on its own leaves"));
@@ -1873,4 +1873,108 @@ fn running_again_under_nothing_is_refused() {
     let p = rerun_params(s.project(), s.log(), id, &["Pit".to_string(), "9".to_string()]).unwrap();
     let err = s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap_err();
     assert!(err.to_string().contains("no blocks of case Base under Pit › 9 to run again into"), "{err}");
+}
+
+// Decision 0086, workstream 1: the reserves table's summary, its balance of coal and waste through the stages.
+
+/// The 4c column run through every step to `final`, in situ written, as a table; with a balance column added up over
+/// the whole column (one block).
+fn balance_of(csv: &str) -> (Table, fn(&Table, &str) -> f64) {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let steps = json!([
+        { "step": "initialise" }, { "step": "in_situ" }, { "step": "join_benches" }, { "step": "working_sections" }, { "step": "rom_loss" },
+        { "step": "rom_dilution" }, { "step": "rom_ash_cutoff" }, { "step": "rom" }, { "step": "final" }
+    ]);
+    let flow = flow(&mut s, steps, csv);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    (t, balance_total)
+}
+
+/// A balance column added up over every leaf.
+fn balance_total(t: &Table, path: &str) -> f64 {
+    total(t, &format!("Summary\\Balance\\{path}"))
+}
+
+/// Dilution only (roof 0.05 m, floor 0.1 m, edge 0.02 m, other 1 %): coal 25,000 m³ and waste 95,000 m³ imported and in
+/// situ; to coal, the dilution, A's 250 + 500 + 4 + 100 and B's 250 + 500 + 6 + 150 = 1,760 m³; nothing to waste; ROM coal
+/// 25,000 + 1,760 = 26,760 m³ (the table's 10,854 + 15,906); the 19,500 m³ below B, the last coal, not mined; ROM waste
+/// 95,000 − 1,760 − 19,500 = 73,740 m³; Scheduled as ROM; and every check zero. To 1e-9 relative.
+#[test]
+fn the_balance_follows_coal_and_waste_through_dilution() {
+    let (t, b) = balance_of(&dilution_csv([0.0; 4], [0.05, 0.1, 0.02, 1.0], ""));
+    for (path, want) in [
+        ("Coal\\imported", 25_000.0),
+        ("Coal\\insitu", 25_000.0),
+        ("Coal\\to_coal", 1_760.0),
+        ("Coal\\to_waste", 0.0),
+        ("Coal\\rom", 26_760.0),
+        ("Coal\\scheduled", 26_760.0),
+        ("Waste\\imported", 95_000.0),
+        ("Waste\\insitu", 95_000.0),
+        ("Waste\\to_coal", 1_760.0),
+        ("Waste\\not_mined", 19_500.0),
+        ("Waste\\rom", 73_740.0),
+        ("Total\\imported", 120_000.0),
+        ("Total\\not_mined", 19_500.0),
+        ("Total\\rom", 100_500.0),
+    ] {
+        assert!(close(b(&t, path), want), "{path}: {} not {want}", b(&t, path));
+    }
+    assert!(close(b(&t, "Coal\\rom"), total(&t, "ROM\\Coal\\volume")) && close(b(&t, "Waste\\rom"), total(&t, "ROM\\Waste\\volume")));
+    for part in ["Coal", "Waste", "Total"] {
+        for check in ["unaccounted_insitu", "unaccounted_rom", "unaccounted_scheduled"] {
+            assert!(b(&t, &format!("{part}\\{check}")).abs() < 1e-6, "{part} {check}: {}", b(&t, &format!("{part}\\{check}")));
+        }
+    }
+}
+
+/// Losses only (roof 0.1 m, floor 0.2 m over 5,000 m²): to waste A's 500 + 1,000 and B's 500 + 1,000 = 3,000 m³, coal's
+/// and waste's the same move; ROM coal 25,000 − 3,000 = 22,000 m³; ROM waste 95,000 + 3,000 − 20,000 not mined = 78,000
+/// m³; every check zero.
+#[test]
+fn the_balance_follows_coal_lost_to_waste() {
+    let (t, b) = balance_of(&dilution_csv([0.1, 0.2, 0.0, 0.0], [0.0; 4], ""));
+    for (path, want) in [("Coal\\to_waste", 3_000.0), ("Waste\\to_waste", 3_000.0), ("Coal\\rom", 22_000.0), ("Waste\\not_mined", 20_000.0), ("Waste\\rom", 78_000.0)] {
+        assert!(close(b(&t, path), want), "{path}: {} not {want}", b(&t, path));
+    }
+    assert!(close(b(&t, "Coal\\to_waste"), (["Roof", "Floor", "Edge", "Other", "Thin", "High ROM ash"].iter().map(|k| total(&t, &format!("Loss\\{k}\\volume"))).sum::<f64>())), "to waste is every loss");
+    for part in ["Coal", "Waste", "Total"] {
+        assert!(b(&t, &format!("{part}\\unaccounted_rom")).abs() < 1e-6, "{part}");
+    }
+}
+
+/// Clean coal sits under ROM; ROM and Scheduled waste carry no qualities; the ratios add up as ratios of sums (the strip
+/// ratio over the column is its ROM waste over its ROM coal tonnes, not an average of leaves' ratios); the audit says
+/// the run, its dataflow and its parameter tables with their revisions.
+#[test]
+fn clean_coal_is_under_rom_and_the_summary_has_ratios_and_an_audit() {
+    let (t, _) = balance_of(&dilution_csv([0.0; 4], [0.05, 0.1, 0.02, 1.0], ""));
+    let names: Vec<&str> = t.columns.iter().map(|c| c.name.as_str()).collect();
+    assert!(names.contains(&"ROM\\Clean coal\\volume") && !names.iter().any(|n| n.starts_with("Clean coal\\")));
+    assert!(!names.iter().any(|n| (n.starts_with("ROM\\Waste\\") || n.starts_with("Scheduled\\Waste\\")) && (n.ends_with("\\ash") || n.ends_with("_rom") && !n.ends_with("rd_rom"))), "{names:?}");
+    let all: Vec<usize> = (0..t.rows()).collect();
+    let strip = zd_commands::reserves_view::add_up_column(&t, "Summary\\Ratios\\strip_ratio", &all).unwrap();
+    assert!(close(strip, total(&t, "ROM\\Waste\\volume") / total(&t, "ROM\\Coal\\tonnes")), "{strip}");
+    let yield_ = zd_commands::reserves_view::add_up_column(&t, "Summary\\Ratios\\clean_coal_yield", &all).unwrap();
+    assert!(close(yield_, total(&t, "ROM\\Clean coal\\tonnes") / total(&t, "ROM\\Coal\\tonnes")), "{yield_}");
+    let audit = |name: &str| texts(&t, &format!("Summary\\Audit\\{name}"))[0].clone().unwrap_or_default();
+    assert!(audit("run").ends_with(" UTC") && audit("dataflow") == "Reserves r1" && audit("parameters") == "assumptions r1", "{} | {} | {}", audit("run"), audit("dataflow"), audit("parameters"));
+}
+
+/// A dataflow with no in situ step writes no Insitu: the balance checks ROM against what came in, coal 25,000 m³ plus
+/// its 1,760 m³ of dilution, and leaves the in situ columns out rather than say a gap that isn't there.
+#[test]
+fn the_balance_without_an_in_situ_step_checks_rom_against_what_came_in() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, final_steps(), &dilution_csv([0.0; 4], [0.05, 0.1, 0.02, 1.0], ""));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    assert!(t.column("Summary\\Balance\\Coal\\insitu").is_none() && t.column("Summary\\Balance\\Coal\\unaccounted_insitu").is_none());
+    assert!(close(balance_total(&t, "Coal\\rom"), 26_760.0));
+    for part in ["Coal", "Waste", "Total"] {
+        assert!(balance_total(&t, &format!("{part}\\unaccounted_rom")).abs() < 1e-6, "{part}");
+    }
 }

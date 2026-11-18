@@ -3,7 +3,7 @@
 // dataflow the starter's) is opened, each object clicked in the Layers panel, and what Properties shows read back.
 import { EditorView } from '@codemirror/view';
 import type { DockviewApi } from 'dockview-react';
-import { objectDetails, openProject, type ProjectSummary, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, undo, writePicture } from '../bridge';
+import { objectDetails, openProject, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, undo, writePicture } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
 import { windowPicture } from './windowPicture';
 import { showPanel } from '../workspace/Workspace';
@@ -587,7 +587,8 @@ async function checkLive(summary: ProjectSummary, expect: Expect, picture: Pictu
 /**
  * Run again (decision 0085), the Parameters beside the Dataflow tab on 3_B1: the coal's roof dilution doubled and saved,
  * the block's column says the assumptions changed since the table's numbers for it were made; Run again for the block
- * runs it into the table, the same table at its next revision, and the warning goes. Two undos put the demo back.
+ * runs it into the table, the same table at its next revision, and the warning goes. Every block run again then
+ * balances (decision 0086). Three undos put the demo back.
  */
 async function checkRunAgain(summary: ProjectSummary, expect: Expect, show: Show, picture: Picture) {
   const assumptions = summary.objects.find((o) => o.name === 'Reserves assumptions');
@@ -624,6 +625,44 @@ async function checkRunAgain(summary: ProjectSummary, expect: Expect, show: Show
     { warned, range: range?.value, said: said().slice(0, 120), left: changed().slice(0, 80) },
   );
   if (picture) await picture('run-again');
+
+  // Every block run again into the table (decision 0086): each block's balance of coal and waste, Imported › Insitu ›
+  // ROM › Scheduled with what moved between them, leaves nothing unaccounted; ROM coal in the balance is ROM coal.
+  const select = nb()?.querySelector<HTMLSelectElement>('[data-slot="run-again"] select');
+  if (select) {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, 'all');
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  await wait(200);
+  pressIn(nb(), 'Run again');
+  for (let k = 0; k < 300 && !said().startsWith('every block run again'); k++) await wait(100);
+  const table = summary.objects.find((o) => o.kind === 'table' && o.name === tableName);
+  let blocks = 0;
+  let worst = 0;
+  let romMatches = true;
+  let without = 0;
+  if (table) {
+    const tree = await reservesTree(table.id);
+    const under = (n: ReservesNode): ReservesNode[] => (n.path.length === 3 ? [n] : n.children.flatMap(under));
+    for (const block of under(tree)) {
+      const b = await reservesBreakdown(table.id, block.path, []);
+      const at = (name: string) => b.fields.find((f) => f.column === name)?.values[0] ?? null;
+      const checks = b.fields.filter((f) => f.column.startsWith('Summary\\Balance\\') && f.name.startsWith('unaccounted'));
+      if (checks.length === 0) without++;
+      const size = Math.max(1, at('Summary\\Balance\\Total\\imported') ?? 0);
+      for (const c of checks) worst = Math.max(worst, Math.abs(c.values[0] ?? 0) / size);
+      const rom = at('Summary\\Balance\\Coal\\rom');
+      const romCoal = at('ROM\\Coal\\volume');
+      if (rom !== null && romCoal !== null && Math.abs(rom - romCoal) > 1e-6 * Math.max(1, romCoal)) romMatches = false;
+      blocks++;
+    }
+  }
+  expect(
+    'every block run again balances: coal and waste through Imported, Insitu, ROM and Scheduled leave nothing unaccounted',
+    said().startsWith('every block run again') && blocks > 0 && without === 0 && worst < 1e-9 && romMatches,
+    { blocks, without, worst, romMatches },
+  );
+  await show(await undo());
   await show(await undo());
   await show(await undo());
   await wait(300);

@@ -1089,7 +1089,7 @@ export type Measures =
   | { kind: 'table'; rows: number; columns: { name: string; unit?: string; text?: boolean; add_up?: AddUp }[]; figures: { writes: WriteFigures[] } };
 
 /** How a field adds up over units or rows (decision 0070, point 4). */
-export type AddUp = { by: 'sum' | 'volume' | 'max' | 'min' } | { by: 'mass'; density: string };
+export type AddUp = { by: 'sum' | 'volume' | 'max' | 'min' } | { by: 'mass'; density: string } | { by: 'ratio'; of: string; per: string };
 
 /** A reserves dataflow (decisions 0070, 0072): its fields, where each value comes from, its steps and its tables. */
 export interface Dataflow {

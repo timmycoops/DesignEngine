@@ -175,6 +175,9 @@ pub struct ColumnRun<'a> {
     reads: Option<std::cell::RefCell<Vec<ParamRead>>>,
     /// A built-in step's arithmetic, unit by unit, while a column is opened as a notebook (decision 0082); none in a run.
     workings: Option<std::cell::RefCell<Vec<Working>>>,
+    /// What moved between coal and waste, for the table's balance (decision 0086).
+    moves: Vec<Piece>,
+    finalised: bool,
 }
 
 /// A line of a built-in step's arithmetic for a unit, as the notebook shows it (decision 0082): what was worked out or
@@ -383,6 +386,11 @@ struct Stopped {
 }
 
 struct Ran {
+    /// What moved between coal and waste, and in from or out of the model, a piece a unit on its own leaves (decision
+    /// 0086): `to_waste`, `to_coal`, `from_outside`, `not_mined` as the folder. Made by `final`.
+    moves: Vec<Piece>,
+    /// Whether `final` ran, so ROM and Scheduled were written and the balance can be read.
+    finalised: bool,
     key: ColumnKey,
     rows: Vec<Piece>,
     said: Said,
@@ -410,6 +418,9 @@ pub(crate) struct Prepared {
     columns: BTreeMap<ColumnKey, Vec<Arc<Object>>>,
     /// Blocks missing a level that has no default, by name, with the level.
     unplaced: Vec<(String, String)>,
+    /// What the run read, for the table's audit (decision 0086): the dataflow and its parameter tables at their revisions.
+    audit_dataflow: String,
+    audit_tables: String,
 }
 
 impl Command for RunReserves {
@@ -464,7 +475,9 @@ impl Command for RunReserves {
                 Err(s) => stopped.push(s),
             }
         }
-        let mut out = outcome(&prepared, p, ran, stopped, started);
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+        let when = if p.table.is_some() { format!("{}, run again", utc_words(now)) } else { utc_words(now) };
+        let mut out = outcome(&prepared, p, ran, stopped, started, &when);
         if let Some(object) = into {
             into_table(&mut out, &object, &prepared, p)?;
         }
@@ -478,7 +491,9 @@ pub(crate) fn prepare(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError
     let Body::Dataflow(dataflow) = &flow.body else {
         return Err(CommandError::WrongKind { id: p.dataflow, expected: ObjectKind::Dataflow, found: flow.kind() });
     };
-    prepare_flow(&flow.name, dataflow, get, p, false)
+    let mut prepared = prepare_flow(&flow.name, dataflow, get, p, false)?;
+    prepared.audit_dataflow = format!("{} r{}", flow.name, flow.revision);
+    Ok(prepared)
 }
 
 /// As `prepare`, for a dataflow as given: one being edited, not yet saved (decision 0077, 7d).
@@ -488,12 +503,15 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     dataflow.check().map_err(CommandError::Invalid)?;
     let fields = Arc::new(dataflow.engine_fields().map_err(CommandError::Invalid)?);
     let mut tables = Vec::new();
+    let mut audit_tables: Vec<String> = Vec::new();
     if let Some(own) = &p.parameters {
         own.check().map_err(|e| CommandError::Invalid(format!("the step's parameter rows: {e}")))?;
         tables.push(Arc::new(own.clone()));
+        audit_tables.push("the run's own rows".into());
     }
     for &id in &dataflow.parameters {
         let object = get(id)?;
+        audit_tables.push(format!("{} r{}", object.name, object.revision));
         let Body::ParameterTable(table) = &object.body else {
             return Err(CommandError::WrongKind { id, expected: ObjectKind::ParameterTable, found: object.kind() });
         };
@@ -553,7 +571,9 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
         let case = word("case").unwrap_or_else(|| BASE.to_string());
         columns.entry(ColumnKey { case, path }).or_default().push(object);
     }
-    Ok(Prepared { name: name.to_string(), failing, dataflow: dataflow.clone(), fields, tables, horizons, steps, declared, upper, lower, columns, unplaced })
+    let audit_tables = audit_tables.join("; ");
+    let audit_dataflow = format!("{name} as edited");
+    Ok(Prepared { name: name.to_string(), failing, dataflow: dataflow.clone(), fields, tables, horizons, steps, declared, upper, lower, columns, unplaced, audit_dataflow, audit_tables })
 }
 
 /// A value from the parameter tables, read in order.
@@ -819,7 +839,7 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
         }
     }
     let imbalance = input_volume - (run.column.balance()[volume] - run.added_volume);
-    Ok(Ran { key: key.clone(), rows: run.rows, said: run.said, imbalance, input_volume })
+    Ok(Ran { moves: run.moves, finalised: run.finalised, key: key.clone(), rows: run.rows, said: run.said, imbalance, input_volume })
 }
 
 /// A column's blocks made units, its imported rows written: ready for its steps. Gives back its input volume too.
@@ -860,6 +880,8 @@ fn begin_column<'a>(prepared: &'a Prepared, key: &ColumnKey, blocks: &[Arc<Objec
         block_area,
         reads: None,
         workings: None,
+        moves: Vec::new(),
+        finalised: false,
     };
     for name in &mismatched {
         run.said.name("whose volume isn't its solid's (measured before it was cut again?)", name);
@@ -2211,7 +2233,7 @@ fn place(run: &ColumnRun<'_>, values: &[f64], onto: usize, folder: &str, texts: 
 /// - **ROM waste**: waste, discarded, thin and high ROM ash coal on their own leaves; roof, edge and other loss on the last
 ///   unit of the waste it went into, floor loss on its first; a loss into the underburden, which has no leaf, on its own.
 /// - **Scheduled**, beside them: what a schedule takes, a copy of ROM until factors come between them.
-/// - **Clean coal**: what's coal in situ and in ROM, each section's coal alone, its qualities the section's coal's where
+/// - **ROM clean coal** (`ROM\Clean coal`, decision 0086): what's coal in situ and in ROM, each section's coal alone, its qualities the section's coal's where
 ///   aggregated.
 /// - **Out of model**: underburden taken into ROM coal as dilution, under `Summary\Out of model`, on the leaves it's
 ///   written on; the underburden left is never written. Small volumes are never in ROM.
@@ -2220,6 +2242,7 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
     let qualities: Vec<usize> = run.column.fields().list().iter().enumerate().filter(|(_, f)| f.kind == FieldKind::Quality).map(|(i, _)| i).collect();
     let sections = sections_of(run);
     let mut pieces: Vec<Piece> = Vec::new();
+    let mut moves: Vec<Piece> = Vec::new();
     let mut in_rom_coal = vec![false; run.column.len()];
     for s in sections.iter().filter(|s| s.coal) {
         let plies = plies_of(run, s);
@@ -2284,6 +2307,12 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
             if out_of_model {
                 run.said.count("underburden taken into ROM coal, out of model".into(), u.value(v));
             }
+            // Waste ending in ROM coal moved to coal; the underburden came from outside the model (decision 0086).
+            if out_of_model {
+                moves.extend(place(run, u.values(), m, "from_outside", &[]));
+            } else if !is_coal(u) {
+                moves.extend(place(run, u.values(), m, "to_coal", &[]));
+            }
             if plies.contains(&m) {
                 let mut clean = values.clone();
                 if clean_average {
@@ -2293,9 +2322,9 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
                 }
                 run.work(&[run.column.units()[m].id], || {
                     let at = if clean_average { format!(", at the section's coal average ({} or {} yes)", step.setting("clean_coal_average"), step.setting("aggregate_sections")) } else { String::new() };
-                    Line::sum("clean coal", format!("{}{at}", run.words_of(m)), clean[v], "m³").then("Clean coal\\Coal")
+                    Line::sum("clean coal", format!("{}{at}", run.words_of(m)), clean[v], "m³").then("ROM\\Clean coal")
                 });
-                pieces.extend(place(run, &clean, m, "Clean coal\\Coal", &texts));
+                pieces.extend(place(run, &clean, m, "ROM\\Clean coal", &texts));
             }
         }
     }
@@ -2320,6 +2349,7 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
         if last_coal.is_some_and(|c| i > c) && !is_coal(u) {
             let summed: Vec<f64> = u.values().iter().enumerate().map(|(f, x)| if run.column.fields().is_summed(f) { -x } else { *x }).collect();
             run.work(&[u.id], || Line::sum("out of model", format!("{}, model waste below the last coal", run.words_of(i)), -u.value(v), "m³").then("not mined: taken as underburden, netted off Summary\\Out of model"));
+            moves.extend(place(run, u.values(), i, "not_mined", &[]));
             pieces.extend(place(run, &summed, i, "Summary\\Out of model", &[]));
             run.said.count("model waste below the last coal taken as underburden, out of model".into(), u.value(v));
             continue;
@@ -2337,11 +2367,17 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
             let then = if onto == i { "ROM\\Waste and Scheduled\\Waste, on its own leaves".to_string() } else { format!("ROM\\Waste and Scheduled\\Waste, on {}'s leaves, the waste it was lost into", run.words_of(onto)) };
             Line::sum("ROM waste", run.words_of(i), u.value(v), "m³").then(then)
         });
+        // Coal ending in ROM waste moved to waste: losses, thin and high ROM ash coal, discarded coal (decision 0086).
+        if is_coal(u) {
+            moves.extend(place(run, u.values(), i, "to_waste", &[]));
+        }
         let values = u.values().to_vec();
         pieces.extend(place(run, &values, onto, "ROM\\Waste", &[]));
         pieces.extend(place(run, &values, onto, "Scheduled\\Waste", &[]));
     }
     run.rows.extend(pieces);
+    run.moves.extend(moves);
+    run.finalised = true;
     Ok(())
 }
 
@@ -2495,11 +2531,11 @@ fn plural(n: usize) -> &'static str {
 /// field's rule, with the field's unit. Where a folder holds an in situ density, its tonnes on the in situ basis, its
 /// air-dried tonnes and each quality on the in situ basis beside them; where only an RD, its tonnes on the RD's basis.
 /// A column with no value at all is left out.
-fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
+fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
     let fields = prepared.fields.list();
     // The leaves in the order they were first written, and what each holds.
     // A leaf: its key (case and level values), each folder's pieces' values, and its words by column.
-    type Leaf = (Vec<String>, BTreeMap<String, Vec<Vec<f64>>>, BTreeMap<String, String>);
+    type Leaf = (Vec<String>, BTreeMap<String, Vec<Vec<f64>>>, BTreeMap<String, String>, BTreeMap<String, f64>);
     let mut leaves: Vec<Leaf> = Vec::new();
     let mut at: BTreeMap<Vec<String>, usize> = BTreeMap::new();
     let mut folders: Vec<String> = Vec::new();
@@ -2510,7 +2546,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
             key.extend(r.key.path.iter().cloned());
             key.extend(piece.leaf.iter().cloned());
             let i = *at.entry(key.clone()).or_insert_with(|| {
-                leaves.push((key, BTreeMap::new(), BTreeMap::new()));
+                leaves.push((key, BTreeMap::new(), BTreeMap::new(), BTreeMap::new()));
                 leaves.len() - 1
             });
             if !folders.contains(&piece.folder) {
@@ -2529,6 +2565,18 @@ fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
                     held.push_str(word);
                 }
             }
+        }
+        // What moved between coal and waste, on the leaves of the units it moved (decision 0086).
+        let v = prepared.fields.volume();
+        for piece in &r.moves {
+            let mut key = vec![r.key.case.clone()];
+            key.extend(r.key.path.iter().cloned());
+            key.extend(piece.leaf.iter().cloned());
+            let i = *at.entry(key.clone()).or_insert_with(|| {
+                leaves.push((key, BTreeMap::new(), BTreeMap::new(), BTreeMap::new()));
+                leaves.len() - 1
+            });
+            *leaves[i].3.entry(piece.folder.clone()).or_default() += piece.values[v];
         }
     }
     let mut columns = vec![TableColumn::text("case", leaves.iter().map(|l| Some(l.0[0].clone())).collect())];
@@ -2557,7 +2605,12 @@ fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
                 columns.push(column);
             }
         };
+        // ROM and Scheduled waste keep what waste has (decision 0086): no qualities or moistures, which are coal's.
+        let waste_out = folder == "ROM\\Waste" || folder == "Scheduled\\Waste";
         for (i, f) in fields.iter().enumerate() {
+            if waste_out && matches!(f.kind, FieldKind::Quality | FieldKind::Moisture | FieldKind::MoistureFactor) {
+                continue;
+            }
             // A thickness adds down a column and an area is a column's largest; across leaves neither adds up, so a
             // summary shows neither.
             let across = if matches!(f.kind, FieldKind::Thickness | FieldKind::Area | FieldKind::Length) { None } else { Some(f.add_up.clone()) };
@@ -2566,13 +2619,13 @@ fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
         let tonnes = |d: usize| added.iter().map(|a| a.as_ref().map(|a| a[v] * a[d]).filter(|x| x.is_finite())).collect::<Vec<_>>();
         let named = |n: &str| format!("{folder}\\{n}");
         // ROM, Scheduled and clean coal on the ROM basis: tonnes by the ROM density, qualities × (1 − Mrom) ÷ (1 − Mad).
-        let rom_basis = ["ROM", "Scheduled", "Clean coal"].iter().any(|top| folder.starts_with(&format!("{top}\\")));
+        let rom_basis = ["ROM", "Scheduled"].iter().any(|top| folder.starts_with(&format!("{top}\\")));
         if let (true, Some(rd), Some(rd_rom)) = (rom_basis, field("rd"), field("rd_rom"))
             && added.iter().flatten().any(|a| a[rd_rom].is_finite())
         {
             push(TableColumn::adding(&named("tonnes"), "t", AddUp::Sum, tonnes(rd_rom)));
             push(TableColumn::adding(&named("tonnes_ad"), "t", AddUp::Sum, tonnes(field(super::RD_ADT).unwrap_or(rd))));
-            if let (Some(mad), Some(mrom)) = (field("mad"), field("mrom")) {
+            if let (false, Some(mad), Some(mrom)) = (waste_out, field("mad"), field("mrom")) {
                 for (q, f) in fields.iter().enumerate().filter(|(_, f)| f.kind == FieldKind::Quality) {
                     let values = added.iter().map(|a| a.as_ref().map(|a| a[q] * (1.0 - a[mrom] / 100.0) / (1.0 - a[mad] / 100.0)).filter(|x| x.is_finite())).collect();
                     push(TableColumn::adding(&named(&format!("{}_rom", f.name)), "", AddUp::Mass { density: named(&setting("rd_rom")) }, values));
@@ -2601,7 +2654,135 @@ fn table_of(prepared: &Prepared, ran: &[&Ran]) -> Table {
     for column in &text_columns {
         columns.push(TableColumn::text(column, leaves.iter().map(|l| l.2.get(column).cloned().filter(|w| !w.is_empty())).collect()));
     }
+    if ran.iter().any(|r| r.finalised) {
+        let moved: Vec<&BTreeMap<String, f64>> = leaves.iter().map(|l| &l.3).collect();
+        let written: Vec<&BTreeMap<String, Vec<Vec<f64>>>> = leaves.iter().map(|l| &l.1).collect();
+        columns.extend(balance_columns(&written, &moved, v));
+    }
+    columns.extend(ratio_columns(&columns));
+    for (name, words) in [("run", when.to_string()), ("dataflow", prepared.audit_dataflow.clone()), ("parameters", prepared.audit_tables.clone())] {
+        columns.push(TableColumn::text(&format!("Summary\\Audit\\{name}"), leaves.iter().map(|_| Some(words.clone()).filter(|w| !w.is_empty())).collect()));
+    }
     Table { columns }
+}
+
+/// The table's balance (decision 0086): coal, waste and the two together, each with its volume at every stage, what
+/// moved between them and in from or out of the model, and each stage's check against the one before, which is zero for
+/// every block. A leaf can be off where material moves between seams; read at the block and above.
+fn balance_columns(written: &[&BTreeMap<String, Vec<Vec<f64>>>], moved: &[&BTreeMap<String, f64>], v: usize) -> Vec<TableColumn> {
+    let n = written.len();
+    // A stage's volume on each leaf: its coal folder, or every other material's (waste, partings) together.
+    let stage = |top: &str, coal: bool| -> Vec<f64> {
+        written
+            .iter()
+            .map(|folders| {
+                folders
+                    .iter()
+                    .filter(|(f, _)| f.split_once('\\').is_some_and(|(t, m)| t == top && !m.contains('\\') && (m == "Coal") == coal && m != "Clean coal"))
+                    .flat_map(|(_, pieces)| pieces.iter().map(|p| p[v]))
+                    .sum()
+            })
+            .collect()
+    };
+    let moves = |what: &str| -> Vec<f64> { moved.iter().map(|m| m.get(what).copied().unwrap_or(0.0)).collect() };
+    // A dataflow with no in situ step writes no Insitu: ROM is checked against what came in less small volumes.
+    let has_insitu = written.iter().any(|folders| folders.keys().any(|f| f.starts_with("Insitu\\")));
+    let (to_waste, to_coal, from_outside, not_mined) = (moves("to_waste"), moves("to_coal"), moves("from_outside"), moves("not_mined"));
+    let zero = vec![0.0; n];
+    let mut columns = Vec::new();
+    for part in ["Coal", "Waste", "Total"] {
+        let of = |top: &str| -> Vec<f64> {
+            match part {
+                "Coal" => stage(top, true),
+                "Waste" => stage(top, false),
+                _ => stage(top, true).iter().zip(stage(top, false)).map(|(a, b)| a + b).collect(),
+            }
+        };
+        let (imported, small, rom, scheduled) = (of("Imported"), of("Small volume"), of("ROM"), of("Scheduled"));
+        let insitu: Vec<f64> = if has_insitu { of("Insitu") } else { (0..n).map(|i| imported[i] - small[i]).collect() };
+        // Coal sends to waste and takes to coal; waste the other way; the total only gains from outside and loses what
+        // isn't mined.
+        let (sign_waste, sign_coal, outside, unmined) = match part {
+            "Coal" => (-1.0, 1.0, &from_outside, &zero),
+            "Waste" => (1.0, -1.0, &zero, &not_mined),
+            _ => (0.0, 0.0, &from_outside, &not_mined),
+        };
+        let unaccounted_insitu: Vec<f64> = (0..n).map(|i| imported[i] - small[i] - insitu[i]).collect();
+        let unaccounted_rom: Vec<f64> = (0..n).map(|i| insitu[i] + sign_waste * to_waste[i] + sign_coal * to_coal[i] + outside[i] - unmined[i] - rom[i]).collect();
+        let unaccounted_scheduled: Vec<f64> = (0..n).map(|i| rom[i] - scheduled[i]).collect();
+        let shown = |x: &[f64]| x.iter().map(|&x| (x != 0.0).then_some(x)).collect::<Vec<_>>();
+        let always = |x: &[f64]| x.iter().map(|&x| Some(x)).collect::<Vec<_>>();
+        let mut add = |name: &str, values: Vec<Option<f64>>| {
+            if values.iter().any(Option::is_some) {
+                columns.push(TableColumn::adding(&format!("Summary\\Balance\\{part}\\{name}"), "m3", AddUp::Sum, values));
+            }
+        };
+        add("imported", shown(&imported));
+        add("small_volume", shown(&small));
+        if has_insitu {
+            add("insitu", shown(&insitu));
+        }
+        if part != "Total" {
+            add("to_waste", shown(&to_waste));
+            add("to_coal", shown(&to_coal));
+        }
+        add("from_outside", shown(outside));
+        add("not_mined", shown(unmined));
+        add("rom", shown(&rom));
+        add("scheduled", shown(&scheduled));
+        if has_insitu {
+            add("unaccounted_insitu", always(&unaccounted_insitu));
+        }
+        add("unaccounted_rom", always(&unaccounted_rom));
+        add("unaccounted_scheduled", always(&unaccounted_scheduled));
+    }
+    columns
+}
+
+/// The table's ratios (decision 0086), each a ratio of sums so it adds up right: the strip ratio in ROM (ROM waste bcm
+/// per ROM coal tonne) and in situ, and the clean coal yield (ROM clean coal tonnes per ROM coal tonne), with the sums
+/// they're made of beside them.
+fn ratio_columns(columns: &[TableColumn]) -> Vec<TableColumn> {
+    let numbers = |name: &str| columns.iter().find(|c| c.name == name).and_then(|c| match &c.values {
+        zd_core::ColumnValues::Number(v) => Some(v.clone()),
+        _ => None,
+    });
+    let mut out = Vec::new();
+    let ratio = |out: &mut Vec<TableColumn>, name: &str, unit: &str, (of, of_name, of_unit): (&str, &str, &str), (per, per_name, per_unit): (&str, &str, &str)| {
+        let (Some(top), Some(bottom)) = (numbers(of), numbers(per)) else { return };
+        let at = |n: &str| format!("Summary\\Ratios\\{n}");
+        for (n, u, values) in [(of_name, of_unit, &top), (per_name, per_unit, &bottom)] {
+            if !out.iter().any(|c: &TableColumn| c.name == at(n)) {
+                out.push(TableColumn::adding(&at(n), u, AddUp::Sum, values.clone()));
+            }
+        }
+        let values = top.iter().zip(&bottom).map(|(a, b)| match (a, b) {
+            (Some(a), Some(b)) if *b != 0.0 => Some(a / b),
+            _ => None,
+        });
+        out.push(TableColumn::adding(&at(name), unit, AddUp::Ratio { of: of_name.into(), per: per_name.into() }, values.collect()));
+    };
+    ratio(&mut out, "strip_ratio", "bcm/t", ("ROM\\Waste\\volume", "rom_waste", "m3"), ("ROM\\Coal\\tonnes", "rom_coal", "t"));
+    ratio(&mut out, "insitu_strip_ratio", "bcm/t", ("Insitu\\Waste\\volume", "insitu_waste", "m3"), ("Insitu\\Coal\\tonnes", "insitu_coal", "t"));
+    ratio(&mut out, "clean_coal_yield", "t/t", ("ROM\\Clean coal\\tonnes", "clean_coal", "t"), ("ROM\\Coal\\tonnes", "rom_coal", "t"));
+    out
+}
+
+/// A moment as the audit says it: the date and time, UTC (`2026-11-18 09:31 UTC`).
+fn utc_words(unix_ms: u64) -> String {
+    let secs = unix_ms / 1000;
+    let (days, rest) = ((secs / 86_400) as i64, secs % 86_400);
+    // Days to a civil date (Howard Hinnant's days_from_civil, inverted).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02} {:02}:{:02} UTC", rest / 3_600, rest % 3_600 / 60)
 }
 
 /// A run again into a table (decision 0085): the table the run made for the case taken into the one given, its rows for
@@ -2698,7 +2879,7 @@ fn run_for_column<'a>(log: &'a [crate::LogEntry], latest: zd_core::RunId, column
     Some(at)
 }
 
-fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: Vec<Stopped>, started: Instant) -> Outcome {
+fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: Vec<Stopped>, started: Instant, when: &str) -> Outcome {
     let mut cases: BTreeMap<&str, Vec<&Ran>> = BTreeMap::new();
     for r in &ran {
         cases.entry(r.key.case.as_str()).or_default().push(r);
@@ -2706,7 +2887,7 @@ fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: V
     let mut changes = Vec::new();
     let mut messages = Vec::new();
     for (case, of) in &cases {
-        let table = table_of(prepared, of);
+        let table = table_of(prepared, of, when);
         let rows = table.rows();
         let name = p.name.replace("{dataflow}", &prepared.name).replace("{case}", case);
         // Its levels and their defaults, so a leaf can be matched to its solids as the run placed them (decision 0075).
