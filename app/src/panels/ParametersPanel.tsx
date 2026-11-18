@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Braces, Copy, CopyPlus, Plus, Save, Trash2, Undo2, X } from 'lucide-react';
 import { type ClipboardEvent, type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import { type Dataflow, dataflowCheck, objectDetails, type ObjectSummary, type ParameterTable, type ParametersPicked, parametersCheck, parametersPicked } from '@/bridge';
-import { CellInput, Choice, IconButton, Select, StatusBadge } from '@/design-system/kit';
+import { CellInput, Choice, IconButton, ObjectMenu, Select, StatusBadge } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
@@ -82,17 +82,19 @@ export function Parameters() {
   const tables = objects.filter((o) => o.kind === 'parameter_table');
   const flows = objects.filter((o) => o.kind === 'dataflow');
   const item = (o: ObjectSummary) => (
-    <button
-      key={o.id}
-      type="button"
-      data-slot="parameters-item"
-      data-name={o.name}
-      className={cn('block w-full truncate px-3 py-0.5 text-left hover:bg-accent', o.id === object.id && 'bg-selection text-primary')}
-      onClick={() => setId(o.id)}
-      title={`${o.name}, revision ${o.revision}`}
-    >
-      {o.name}
-    </button>
+    <div key={o.id} className={cn('flex items-center pr-1 hover:bg-accent', o.id === object.id && 'bg-selection text-primary')}>
+      <button
+        type="button"
+        data-slot="parameters-item"
+        data-name={o.name}
+        className="block min-w-0 flex-1 truncate py-0.5 pl-3 text-left"
+        onClick={() => setId(o.id)}
+        title={`${o.name}, revision ${o.revision}`}
+      >
+        {o.name}
+      </button>
+      {o.id === object.id && <ObjectMenu object={o} what={o.kind === 'dataflow' ? 'dataflow' : 'parameter table'} onDeleted={() => setId(null)} />}
+    </div>
   );
   return (
     <div className="flex h-full min-h-0 text-xs" data-tool-panel="parameters">

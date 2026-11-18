@@ -121,7 +121,7 @@ export function ReservesPanel() {
       </ToolSection>
 
       <ToolSection title="Blocks">
-        <Field label="Take" hint={chosen.length === 0 ? 'Pick a block in the view or the tree, or take those on show' : chosen.length === 1 ? chosen[0].name : `${chosen.length} blocks`}>
+        <Field label="Take" hint={chosen.length === 0 ? 'Pick a block in the view or the Objects table, or take those on show' : chosen.length === 1 ? chosen[0].name : `${chosen.length} blocks`}>
           <Choice value={scope} options={SCOPES} labels={scopeLabels} onChange={setScope} label="Which blocks" />
         </Field>
       </ToolSection>

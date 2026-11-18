@@ -31,6 +31,14 @@ export interface FieldColour {
   byBlock: boolean;
 }
 
+/** Where a right click in the view opened its menu, in client pixels, and what the menu acts on; `n` tells two apart. */
+export interface ViewMenuAt {
+  x: number;
+  y: number;
+  ids: string[];
+  n: number;
+}
+
 /** What every panel reads, and the actions they share. App owns the state. */
 export interface Workspace {
   summary: ProjectSummary | null;
@@ -163,6 +171,9 @@ export interface Workspace {
   drawing: boolean;
   /** Adds a typed vertex while drawing (`E N [RL]` or `@distance<bearing [RL|grade%]`); an error to show, or null. */
   typeVertex: (text: string) => Promise<string | null>;
+  /** The view's right-click menu (Filtering plan, L2), open where it was asked for; null when shut. */
+  viewMenu: ViewMenuAt | null;
+  closeViewMenu: () => void;
 }
 
 export const WorkspaceContext = createContext<Workspace | null>(null);

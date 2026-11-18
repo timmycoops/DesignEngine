@@ -387,11 +387,11 @@ export function StringsPanel() {
 
       <ToolSection title={several ? 'Picked' : 'String'}>
         {mode === 'number_across' ? (
-          <Field label="Number" hint={picked.length > 1 ? 'The strings picked' : string ? "What's on its layer that a face run didn't make. Pick several strings to number those alone" : 'Pick a string in the view or the tree: its layer is numbered. Or pick several'}>
+          <Field label="Number" hint={picked.length > 1 ? 'The strings picked' : string ? "What's on its layer that a face run didn't make. Pick several strings to number those alone" : 'Pick a string in the view or the Objects table: its layer is numbered. Or pick several'}>
             <span data-slot="strings-on">{plural(toNumber.length, 'string')}</span>
           </Field>
         ) : mode === 'polygons_from_lines' ? (
-          <Field label="Lines" hint="The lines across the strips and the lines closing them: pick them all, by a box or from the tree">
+          <Field label="Lines" hint="The lines across the strips and the lines closing them: pick them all, by a box, Ctrl-click or the Objects table">
             <span data-slot="strings-on">{plural(picked.length, 'line')} picked</span>
           </Field>
         ) : mode === 'ramp_polygon' ? (
@@ -400,7 +400,7 @@ export function StringsPanel() {
               <Choice value={rampFollows} options={['line', 'direction'] as const} labels={{ line: 'A line', direction: 'A direction' }} onChange={setRampFollows} label="What the ramp follows" />
             </Field>
             {rampFollows === 'line' && (
-              <Field label="Along" hint={string ? undefined : 'Pick the line in the view or the tree: a toe or a crest'}>
+              <Field label="Along" hint={string ? undefined : 'Pick the line in the view or the Objects table: a toe or a crest'}>
                 <span data-slot="strings-on" className={string ? undefined : 'text-muted-foreground'}>
                   {string ? string.name : 'No line picked'}
                 </span>
@@ -414,7 +414,7 @@ export function StringsPanel() {
             </span>
           </Field>
         ) : mode === 'project' ? (
-          <Field label="Project" hint={toProject.length > 0 ? 'Every string picked, each on its own, in one run' : 'Pick the strings in the view or the tree: by a box, or with Ctrl held'}>
+          <Field label="Project" hint={toProject.length > 0 ? 'Every string picked, each on its own, in one run' : 'Pick the strings in the view or the Objects table: by a box, or with Ctrl held'}>
             <span data-slot="strings-on" className={toProject.length > 0 ? undefined : 'text-muted-foreground'}>
               {toProject.length === 1 ? toProject[0].name : toProject.length > 0 ? plural(toProject.length, 'string') : 'No string picked'}
             </span>
@@ -442,13 +442,13 @@ export function StringsPanel() {
             </span>
           </Field>
         ) : ONE_STRING.includes(mode) ? (
-          <Field label="On" hint={string ? (picked.length > 1 ? `The last of the ${picked.length} picked: this tool works on one string` : undefined) : 'Pick a string in the view or the tree'}>
+          <Field label="On" hint={string ? (picked.length > 1 ? `The last of the ${picked.length} picked: this tool works on one string` : undefined) : 'Pick a string in the view or the Objects table'}>
             <span data-slot="strings-on" className={string ? undefined : 'text-muted-foreground'}>
               {string ? `${string.name}${string.closed ? ' · closed' : ''}` : 'No string picked'}
             </span>
           </Field>
         ) : (
-          <Field label="On" hint={many ? 'Every string picked, as one run and one undo' : on.length === 1 ? undefined : 'Pick a string in the view or the tree, or several by a box or Ctrl-click'}>
+          <Field label="On" hint={many ? 'Every string picked, as one run and one undo' : on.length === 1 ? undefined : 'Pick a string in the view or the Objects table, or several by a box or Ctrl-click'}>
             <span className="flex min-w-0 flex-col">
               <span data-slot="strings-on" className={on.length > 0 ? undefined : 'text-muted-foreground'}>
                 {on.length === 0 ? 'No string picked' : many ? `${on.length} strings` : `${on[0].name}${on[0].closed ? ' · closed' : ''}`}

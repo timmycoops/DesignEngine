@@ -1,6 +1,7 @@
 # 0026 — One layer tree
 
-Date: 2026-11-01 · Status: accepted (Tim, 2026-11-01)
+Date: 2026-11-01 · Status: accepted (Tim, 2026-11-01); decisions 1, 7, 8 and 16 replaced by 0087 (2026-11-18): the tree
+is a row a layer, an object is hidden from the view's right-click, and what isn't drawn is in its own tab's list
 
 ## Why
 

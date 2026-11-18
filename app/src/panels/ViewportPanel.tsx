@@ -11,6 +11,7 @@ import { valueBands } from '@/viewport/bands';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
 import { ViewBar } from './ViewBar';
+import { ViewMenu } from './ViewMenu';
 
 function Swatch({ colour, label }: { colour: string; label: string }) {
   return (
@@ -301,6 +302,7 @@ export function ViewportPanel() {
       <ViewBar />
       <Legends />
       <TypedEntry />
+      <ViewMenu />
     </div>
   );
 }

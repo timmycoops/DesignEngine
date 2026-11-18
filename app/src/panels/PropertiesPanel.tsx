@@ -639,7 +639,7 @@ function Measurements({ d }: { d: ObjectDetails }) {
  */
 /**
  * Keeps selected only the solids holding less than a volume: small pieces to look at and delete by hand (decision 0062;
- * no automatic limit). Select a layer's solids from the tree first.
+ * no automatic limit). Select a layer's solids first: Select all on it, on its right-click in the tree.
  */
 function SolidsUnder({ solids }: { solids: ObjectSummary[] }) {
   const { setSelection } = useWorkspace();

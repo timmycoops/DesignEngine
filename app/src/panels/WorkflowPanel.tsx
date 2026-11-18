@@ -4,7 +4,7 @@ import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import type { LogEntry, Note, ReportFile, WorkflowRecord, WorkflowStep } from '@/bridge';
 import { objectDetails, openWorkflowReport, projectSummary, workflowReports, writeWorkflowReport } from '@/bridge';
-import { Field, IconButton, plainNote, type RunReport, Select, StatusBadge, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { Field, IconButton, ObjectMenu, plainNote, type RunReport, Select, StatusBadge, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
 import { LastBadge, plural, StepSettings, usePickedWorkflow } from './workflowParts';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
@@ -260,6 +260,7 @@ export function WorkflowPanel() {
                 </option>
               ))}
             </Select>
+            <ObjectMenu object={chosen ?? null} what="workflow" />
           </Field>
         )}
       </ToolSection>

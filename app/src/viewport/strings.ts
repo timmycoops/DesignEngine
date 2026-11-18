@@ -59,6 +59,11 @@ export interface StringActions {
   choose(id: string | null, add: boolean): void;
   /** A box dragged with Shift held, corners in normalised device coordinates: selects what lies wholly inside it. */
   box(min: [number, number], max: [number, number], add: boolean): void;
+  /**
+   * A right click in Select (Filtering plan, L2): the menu for what's picked, the string under the cursor or, with no
+   * string there, what's on top, picked first if it isn't already.
+   */
+  menu(clientX: number, clientY: number, string: string | null): void;
 }
 
 interface Shown {
@@ -702,7 +707,7 @@ export class StringLayer {
     if (e.button === 2) {
       const down = this.rightDown;
       this.rightDown = null;
-      if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) <= CLICK_SLOP_PX) await this.rightClick();
+      if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) <= CLICK_SLOP_PX) await this.rightClick(e.clientX, e.clientY);
       return;
     }
     if (this.boxing) return this.endBox(e);
@@ -781,15 +786,16 @@ export class StringLayer {
   /**
    * A right click, the button let up where it went down (dragged, it panned): finishes what the left clicks were
    * adding to. The string being drawn is made, a string a panel asked for is done, and a measure ends, its reading kept
-   * until the next click starts another.
+   * until the next click starts another. In Select, with nothing being added to, it opens the menu for what's picked.
    */
-  private async rightClick(): Promise<void> {
+  private async rightClick(x: number, y: number): Promise<void> {
     if (this.wanted) {
       if (!this.stringPick || this.trail.length === 0) return;
       this.trailDone = true;
       return this.finishPick(null);
     }
     if (this.mode === 'draw') return this.finishDrawing();
+    if (this.mode === 'select') return this.actions.menu(x, y, this.stringAt(x, y));
     if (this.mode === 'measure' && this.pending.length > 1 && !this.measureEnded) {
       this.measureEnded = true;
       this.actions.status(`${measureWords(this.pending.map((h) => h.world))}. Click to start another`);

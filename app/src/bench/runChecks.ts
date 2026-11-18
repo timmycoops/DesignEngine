@@ -56,8 +56,6 @@ interface FrameSummary {
 }
 
 const WARM_UP_FRAMES = 30;
-/** Scroll positions the tree is drawn at, end to end. */
-const TREE_SCROLL_STEPS = 120;
 
 /** Shows a summary as the app does: panels, strings, geometry and the snap index. */
 type Show = (summary: ProjectSummary) => Promise<void> | undefined;
@@ -891,34 +889,20 @@ async function checkSolids(viewport: Viewport, config: BenchConfig, path: string
   };
 }
 
-/** The tree with every solid on one layer: opening it, and its frames from one end to the other. */
+/**
+ * The tree with every solid on one layer (Filtering plan, L1): one row for the layer, saying how many solids, never a row
+ * a solid. A count only: names stay out of the results.
+ */
 async function checkTree(summary: ProjectSummary) {
   const tree = document.querySelector('[data-slot="tree"]');
-  const opener = document.querySelector<HTMLElement>('[aria-label="Open Solids on solids"]');
-  if (!tree || !opener) return { error: 'no tree with a closed group of solids in the page' };
-  const nextPaint = () => new Promise(requestAnimationFrame);
-  const start = performance.now();
-  opener.click();
-  await nextPaint();
-  const openMs = performance.now() - start;
-  // Only the rows on screen are in the page, and the far end of the list is a scroll away.
-  const rowsInPage = tree.querySelectorAll('[data-slot="tree-row"]').length;
-  const frames: number[] = [];
-  for (let k = 1; k <= TREE_SCROLL_STEPS; k++) {
-    const t = performance.now();
-    tree.scrollTo(0, (tree.scrollHeight * k) / TREE_SCROLL_STEPS);
-    await nextPaint();
-    frames.push(performance.now() - t);
-  }
-  await nextPaint();
-  const rows = tree.querySelectorAll('[data-slot="tree-row"]');
-  frames.sort((a, b) => a - b);
+  if (!tree) return { error: 'no tree in the page' };
+  const solids = summary.objects.filter((o) => o.kind === 'solid').length;
+  const row = tree.querySelector<HTMLElement>('[data-slot="tree-row"][data-layer="solids"]');
+  const says = row?.querySelector('[data-slot="layer-kinds"]')?.textContent ?? '';
   return {
-    open_ms: openMs,
-    rows_in_page: rowsInPage,
-    last_solid_in_last_row: rows[rows.length - 1]?.textContent?.includes(summary.objects[summary.objects.length - 1].name) ?? false,
-    scroll_p50_ms: frames[Math.floor(frames.length / 2)],
-    scroll_max_ms: frames[frames.length - 1],
+    rows_in_page: tree.querySelectorAll('[data-slot="tree-row"]').length,
+    layers: summary.layers.length,
+    solids_counted_on_its_row: says.includes(`${solids.toLocaleString('en-AU')} solid`),
   };
 }
 
@@ -977,7 +961,7 @@ async function checkLayerCommands(viewport: Viewport, summary: ProjectSummary, s
 
 /**
  * Clicks in the viewport: on a solid with everything else off, then at the same spot on a seam model and
- * on a surface. Each should select what is on top there, light it up and find its row in the tree.
+ * on a surface. Each should select what is on top there, light it up and light its layer's row in the tree.
  */
 async function checkClickObjects(viewport: Viewport, summary: ProjectSummary, show: Show) {
   const canvas = viewport.renderer.domElement;

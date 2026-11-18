@@ -2,7 +2,7 @@ import { ChevronDown, ChevronRight, Columns3, Download, MousePointerSquareDashed
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { ReservesBalance } from './ReservesBalanceView';
 import { type Breakdown, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, type ReservesNode } from '@/bridge';
-import { Choice, Field, IconButton, Select } from '@/design-system/kit';
+import { Choice, Field, IconButton, ObjectMenu, Select } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
@@ -148,7 +148,7 @@ export function ReservesTable() {
     return starts;
   }, [breakdown, across]);
 
-  // A solid picked in the view or the tree: its block, its seam opened, its leaf marked.
+  // A solid picked in the view or the Objects table: its block, its seam opened, its leaf marked.
   useEffect(() => {
     if (!table || !breakdown || follow !== 'on' || !last || last === table.id) return;
     let live = true;
@@ -219,14 +219,19 @@ export function ReservesTable() {
   return (
     <div className="flex h-full min-h-0 text-xs" data-tool-panel="reserves-table">
       <div className="flex w-52 shrink-0 flex-col border-r border-border">
-        <div className="border-b border-border px-2 py-1">
-          <Select value={table?.id ?? ''} aria-label="Reserves table" onChange={(e) => setTableId(e.target.value)}>
+        <div className="flex items-center gap-1 border-b border-border px-2 py-1">
+          <Select
+            value={table?.id ?? ''}
+            aria-label="Reserves table"
+            onChange={(e) => setTableId(e.target.value)}
+          >
             {tables.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>
             ))}
           </Select>
+          <ObjectMenu object={table} what="reserves table" onDeleted={() => setTableId(null)} />
         </div>
         <div className="min-h-0 flex-1 overflow-auto py-1" role="tree" aria-label="Levels">
           {tree && <TreeRow n={tree} depth={0} node={node} leaf={leaf} expanded={expanded} setExpanded={setExpanded} show={show} />}
