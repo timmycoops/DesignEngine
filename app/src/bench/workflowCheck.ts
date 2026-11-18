@@ -191,6 +191,34 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     await press(button('Add'));
     const caseList = document.querySelector<HTMLSelectElement>('select[aria-label="Case"]');
     expect('the new case is picked', caseList?.value === '60', caseList?.value);
+    // The kit's select (decision 0089): its choices open in the app's own list, the one it holds ticked; a click picks
+    // one, ↓ and Enter another, Esc closes it, and the system's list never opens.
+    const menu = () => document.querySelector<HTMLElement>('[data-slot="select-menu"]');
+    const options = () => [...(menu()?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])];
+    const keyOn = async (target: HTMLElement | null, key: string) => {
+      target?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+      await wait(200);
+    };
+    const opening = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 });
+    caseList?.dispatchEvent(opening);
+    await wait(300);
+    const listed = options().map((o) => `${o.textContent}${o.getAttribute('aria-selected') === 'true' ? ' (held)' : ''}`);
+    options().find((o) => o.dataset.value === 'Base')?.click();
+    await wait(300);
+    const clicked = caseList?.value;
+    const closedByPick = menu() === null;
+    await keyOn(caseList, 'Enter');
+    const openedByKey = menu() !== null;
+    await keyOn(caseList, 'ArrowDown');
+    await keyOn(caseList, 'Enter');
+    const keyed = caseList?.value;
+    await keyOn(caseList, 'Enter');
+    await keyOn(caseList, 'Escape');
+    expect(
+      "the Case select opens the app's own list, not the system's: Base and 60, 60 held; a click picks Base, Enter opens it, down and Enter pick 60, Esc closes it",
+      opening.defaultPrevented && JSON.stringify(listed) === JSON.stringify(['Base', '60 (held)']) && clicked === 'Base' && closedByPick && openedByKey && keyed === '60' && menu() === null,
+      { systemListStopped: opening.defaultPrevented, listed, clicked, closedByPick, openedByKey, keyed, closed: menu() === null },
+    );
     labelled('Settings of step 2')?.click();
     await wait(200);
     const cell = document.querySelector<HTMLInputElement>('input[aria-label="60: step 2 rl"]');

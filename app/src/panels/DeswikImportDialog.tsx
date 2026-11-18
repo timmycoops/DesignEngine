@@ -3,6 +3,7 @@ import { Dialog } from 'radix-ui';
 import { Button } from '../design-system/ui/button';
 import { Checkbox } from '../design-system/ui/checkbox';
 import { Input } from '../design-system/ui/input';
+import { Select } from '../design-system/kit';
 
 export type MeshesAs = 'auto' | 'solids' | 'surfaces' | 'none';
 
@@ -131,12 +132,12 @@ export function DeswikImportDialog({
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <label className="flex items-center gap-1.5">
               Meshes
-              <select className="h-7 rounded border bg-transparent px-1" value={meshes} onChange={(e) => setMeshes(e.target.value as MeshesAs)}>
+              <Select value={meshes} onChange={(e) => setMeshes(e.target.value as MeshesAs)}>
                 <option value="auto">closed ones solids, open ones surfaces</option>
                 <option value="solids">all solids</option>
                 <option value="surfaces">all surfaces</option>
                 <option value="none">none: strings only</option>
-              </select>
+              </Select>
             </label>
             <label className="flex items-center gap-1.5" title="Sheets and fins off, cracks joined, holes up to 10 % filled">
               <Checkbox checked={repair} onCheckedChange={(on) => setRepair(on === true)} />

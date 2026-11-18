@@ -393,7 +393,7 @@ function FilterBar({ entry, onChange, onDone }: { entry: LayerEntry; onChange: (
         <span className="min-w-0 flex-1 truncate">
           Filter on <span className="text-foreground">{entry.layer.name}</span>
         </span>
-        <span className="tabular-nums" data-slot="layer-filter-shows">
+        <span className={cn('tabular-nums', Object.keys(entry.filter ?? {}).length > 0 && 'text-primary')} data-slot="layer-filter-shows">
           {fmt(count - entry.concealed)} of {fmt(count)} showing
         </span>
         <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onDone}>

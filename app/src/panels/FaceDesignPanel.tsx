@@ -4,11 +4,12 @@ import { type AzimuthSector, type FaceDesign, type FaceDirection, type FaceLine,
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
-import { NoteLine, ObjectMenu, PanelHead } from '@/design-system/kit';
+import { NoteLine, ObjectMenu, PanelHead, Select } from '@/design-system/kit';
 import { rampColour } from '@/viewport/rampColours';
 import { useWorkspace } from '@/workspace/context';
 
-const selectClass = 'h-7 min-w-0 rounded border bg-background px-1 text-xs';
+/** Selects here are the kit's (decision 0089); this only sizes them. */
+const selectClass = '';
 const headClass = 'px-1 font-normal';
 const cellClass = 'px-1 py-0.5';
 
@@ -317,13 +318,13 @@ function RuleDetail({ rule, polygons, solidName, selectedSolid, surfaces, onChan
     case 'inside_polygon':
       return (
         <span className="flex flex-wrap items-center gap-2">
-          <select className={`${selectClass} max-w-36`} value={rule.polygon} aria-label="Polygon" onChange={(e) => onChange({ ...rule, polygon: e.target.value })}>
+          <Select className={`${selectClass} max-w-36`} value={rule.polygon} aria-label="Polygon" onChange={(e) => onChange({ ...rule, polygon: e.target.value })}>
             {polygons.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
               </option>
             ))}
-          </select>
+          </Select>
           {number('Inside', rule.inside, (inside) => onChange({ ...rule, inside }))}
           {number('Outside', rule.outside, (outside) => onChange({ ...rule, outside }))}
         </span>
@@ -372,9 +373,9 @@ function RuleDetail({ rule, polygons, solidName, selectedSolid, surfaces, onChan
             const change = (c: Partial<HorizonValue>) => onChange({ ...rule, values: replaceAt(rule.values, k, { ...entry, ...c }) });
             return (
               <span key={k} className="flex items-center gap-2" title="A row that finishes on this surface takes this value">
-                <select className={`${selectClass} max-w-36`} value={entry.surface} aria-label="Horizon" onChange={(e) => change({ surface: e.target.value })}>
+                <Select className={`${selectClass} max-w-36`} value={entry.surface} aria-label="Horizon" onChange={(e) => change({ surface: e.target.value })}>
                   <SurfaceOptions surfaces={surfaces} />
-                </select>
+                </Select>
                 {number('Value', entry.value, (value) => change({ value }))}
                 <IconButton title="Remove this horizon" onClick={() => onChange({ ...rule, values: rule.values.filter((_, j) => j !== k) })}>
                   <Trash2 className="size-3" />
@@ -476,17 +477,17 @@ function StepRow({ number, step, surfaces, rules, above, carries, ramps, bridged
     <tr className="border-t">
       <td className={`${cellClass} tabular-nums text-muted-foreground`}>{number}</td>
       <td className={cellClass}>
-        <select className={selectClass} value={step.step} aria-label="Type" onChange={(e) => onChange({ ...blank(e.target.value as ProfileStep['step']), condition: step.condition })}>
+        <Select className={selectClass} value={step.step} aria-label="Type" onChange={(e) => onChange({ ...blank(e.target.value as ProfileStep['step']), condition: step.condition })}>
           <option value="project">Project</option>
           <option value="berm">Berm</option>
-        </select>
+        </Select>
       </td>
       <td className={cellClass}>
-        <select className={`${selectClass} w-full max-w-36`} value={surfaceValue} aria-label="Surface" disabled={held} onChange={(e) => setSurface(e.target.value)}>
+        <Select className={`${selectClass} w-full max-w-36`} value={surfaceValue} aria-label="Surface" disabled={held} onChange={(e) => setSurface(e.target.value)}>
           {step.step === 'berm' && <option value="">{above} (as above)</option>}
           <SurfaceOptions surfaces={surfaces} />
           {(step.step === 'project' || target?.kind === 'rl') && <option value="rl">–</option>}
-        </select>
+        </Select>
       </td>
       <td className={cellClass}>
         <NumberBox width="w-14" value={target?.kind === 'rl' ? target.rl : null} title="RL" disabled={held} onChange={setRl} />
@@ -639,7 +640,7 @@ function RampRow({ ramp, stringName, placed, onWalls, waits, turns, results, swa
           </>
         ) : (
           <>
-            <select
+            <Select
               className={selectClass}
               value={ramp.fixed}
               aria-label="Where the road is set"
@@ -649,7 +650,7 @@ function RampRow({ ramp, stringName, placed, onWalls, waits, turns, results, swa
               <option value="start">Starts</option>
               <option value="end">Ends</option>
               <option value="line">From line</option>
-            </select>
+            </Select>
             {fromLine ? (
               <span className="text-muted-foreground" title={`No string: each line carries on road ${ramp.name} from where the design below left it, heading the way it was`}>
                 carries on from the design below
@@ -671,7 +672,7 @@ function RampRow({ ramp, stringName, placed, onWalls, waits, turns, results, swa
             )}
           </>
         )}
-        <select
+        <Select
           className={selectClass}
           value={ramp.berm ?? 'after'}
           aria-label="How it gets past a berm"
@@ -680,7 +681,7 @@ function RampRow({ ramp, stringName, placed, onWalls, waits, turns, results, swa
         >
           <option value="after">After berm</option>
           <option value="through">Through berm</option>
-        </select>
+        </Select>
         <Labelled label="Width, m">
           <NumberBox width="w-12" value={ramp.width} title="Road width in metres, square to the road" onChange={(width) => onChange({ width })} />
         </Labelled>
@@ -808,10 +809,10 @@ function StepTable({ profile, surfaces, rules, carryRamps, hand, onChange }: { p
               <td />
               <td className={`${cellClass} px-2`}>Register</td>
               <td className={cellClass}>
-                <select className={`${selectClass} w-full max-w-36`} value={register.kind === 'surface' ? register.id : 'rl'} aria-label="Register toe to" title="What the toe registers to: a surface it follows, or – for an RL it lies flat on" onChange={(e) => onChange({ register: e.target.value === 'rl' ? { kind: 'rl', rl: 0 } : { kind: 'surface', id: e.target.value } })}>
+                <Select className={`${selectClass} w-full max-w-36`} value={register.kind === 'surface' ? register.id : 'rl'} aria-label="Register toe to" title="What the toe registers to: a surface it follows, or – for an RL it lies flat on" onChange={(e) => onChange({ register: e.target.value === 'rl' ? { kind: 'rl', rl: 0 } : { kind: 'surface', id: e.target.value } })}>
                   <SurfaceOptions surfaces={surfaces} />
                   <option value="rl">–</option>
-                </select>
+                </Select>
               </td>
               <td className={cellClass}>
                 <NumberBox width="w-14" value={register.kind === 'rl' ? register.rl : null} title="The RL the toe lies flat on" onChange={(rl) => onChange({ register: { kind: 'rl', rl } })} />
@@ -1045,14 +1046,14 @@ export function FaceDesignPanel() {
             <Footprints className="size-3" /> Step design
           </SmallButton>
           {designs.length > 0 && (
-            <select className={selectClass} value="" aria-label="Open a design" onChange={(e) => setId(e.target.value)}>
+            <Select className={selectClass} value="" aria-label="Open a design" onChange={(e) => setId(e.target.value)}>
               <option value="">Open a design</option>
               {designs.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
         </div>
         {report.error && <p className="px-3 pt-2 text-destructive">{report.error}</p>}
@@ -1375,7 +1376,7 @@ export function FaceDesignPanel() {
   return (
     <div className="h-full overflow-auto pb-3" data-tool-panel="face">
       <div className="flex items-center gap-1 px-3 pt-2">
-        <select
+        <Select
           className={`${selectClass} max-w-40`}
           value={id ?? ''}
           aria-label="Design"
@@ -1390,7 +1391,7 @@ export function FaceDesignPanel() {
               {d.name}
             </option>
           ))}
-        </select>
+        </Select>
         <Input className="h-7 min-w-0 flex-1 px-1 text-xs" value={name} aria-label="Design name" onChange={(e) => (setName(e.target.value), setDirty(true))} />
         <SmallButton onClick={start}>
           <Plus className="size-3" /> New
@@ -1438,13 +1439,13 @@ export function FaceDesignPanel() {
                       {lineName(line)}
                     </td>
                     <td className="px-1 py-0.5">
-                      <select className={`${selectClass} max-w-40`} value={line.profile} aria-label="Profile" onChange={(e) => change({ profile: e.target.value })}>
+                      <Select className={`${selectClass} max-w-40`} value={line.profile} aria-label="Profile" onChange={(e) => change({ profile: e.target.value })}>
                         {draft.profiles.map((p) => (
                           <option key={p.name} value={p.name}>
                             {p.name} ({p.direction})
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     </td>
                     <td className="px-1 py-0.5">
                       <Choice value={line.side} options={SIDES} onChange={(side) => change({ side })} />
@@ -1473,14 +1474,14 @@ export function FaceDesignPanel() {
         >
           <Plus className="size-3" /> Apply to selected{chosen.length > 0 ? ` (${chosen.length})` : ''}
         </SmallButton>
-        <select className={`${selectClass} max-w-32`} value={addingLayer} aria-label="A layer of strings to add" onChange={(e) => setAddingLayer(e.target.value)}>
+        <Select className={`${selectClass} max-w-32`} value={addingLayer} aria-label="A layer of strings to add" onChange={(e) => setAddingLayer(e.target.value)}>
           <option value="">A layer…</option>
           {layers.map((l) => (
             <option key={l.id} value={l.id}>
               {l.name}
             </option>
           ))}
-        </select>
+        </Select>
         <SmallButton disabled={!addingLayer} title="One line for the layer: each run takes the strings on it at the time" onClick={() => (addLine({ layer: addingLayer }), setAddingLayer(''))}>
           Apply to layer
         </SmallButton>
@@ -1502,11 +1503,11 @@ export function FaceDesignPanel() {
       {profile && (
         <>
           <div className="flex items-center gap-1 px-3 pb-1 text-xs">
-            <select className={`${selectClass} max-w-32`} value={profile.name} aria-label="Profile to edit" onChange={(e) => setProfileName(e.target.value)}>
+            <Select className={`${selectClass} max-w-32`} value={profile.name} aria-label="Profile to edit" onChange={(e) => setProfileName(e.target.value)}>
               {profileNames.map((p) => (
                 <option key={p}>{p}</option>
               ))}
-            </select>
+            </Select>
             <Input className="h-7 w-28 px-1 text-xs" value={profile.name} aria-label="Profile name" onChange={(e) => renameProfile(e.target.value)} />
             <span className="ml-auto text-muted-foreground">Direction</span>
             <Choice value={profile.direction} options={DIRECTIONS} onChange={(direction) => setProfile({ direction })} />
@@ -1609,7 +1610,7 @@ export function FaceDesignPanel() {
                   <Input className="h-7 w-32 px-1 text-xs" value={rule.name} aria-label="Rule name" onChange={(e) => renameRule(rule.name, e.target.value)} />
                 </td>
                 <td className="px-1 py-0.5 align-top">
-                  <select
+                  <Select
                     className={`${selectClass} w-28`}
                     value={rule.value.type}
                     aria-label="Rule type"
@@ -1620,7 +1621,7 @@ export function FaceDesignPanel() {
                         {label}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </td>
                 <td className="px-1 py-0.5">
                   <RuleDetail
