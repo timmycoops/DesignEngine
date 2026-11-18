@@ -1,4 +1,6 @@
-import { ArrowDown, ArrowUp, Eye, FileText, Layers, Pause, Play, Plus, SkipForward, SlidersHorizontal, Trash2, Workflow } from 'lucide-react';
+import { ArrowDown, ArrowUp, Eye, FileText, Filter, Layers, Pause, Play, Plus, SkipForward, SlidersHorizontal, Trash2, Workflow } from 'lucide-react';
+import { cn } from 'cn';
+import { InputFilter } from './InputFilter';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
@@ -8,7 +10,7 @@ import { Field, IconButton, ObjectMenu, plainNote, type RunReport, Select, Statu
 import { LastBadge, plural, StepSettings, usePickedWorkflow } from './workflowParts';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
-import { BASE, caseValue, changesOfCase, onlyLayers, ruleWords, type SettingRow, settingsOfStep, stepsOfCase, tidyLayers, withSetting } from './workflow';
+import { BASE, caseValue, changesOfCase, onlyLayers, ruleWords, type SettingRow, settingsOfStep, stepsOfCase, tidyLayers, withSetting, withWhere } from './workflow';
 
 /**
  * Workflow (decision 0065): saved steps run again in one go. A workflow is captured from runs in the Run log, or built
@@ -28,6 +30,9 @@ import { BASE, caseValue, changesOfCase, onlyLayers, ruleWords, type SettingRow,
  * Settings sit with their step: its sliders open them under it, as the case picked has them. In Base they're the
  * step's own; in a case an empty box reads as Base (its value greyed in it) and what the case changes shows in blue,
  * with a blue badge on the step saying how many it changes.
+ *
+ * Each input's funnel opens its filter under it (decision 0088, workstream 5): the filter box over what the input finds
+ * before its filter, saying how many it keeps, saved as the step's own.
  */
 
 /** Tidy after a run: on unless turned off, remembered on this machine. */
@@ -67,6 +72,14 @@ export function WorkflowPanel() {
     setOpened((was) => {
       const next = new Set(was);
       if (!next.delete(step)) next.add(step);
+      return next;
+    });
+  // The inputs whose filters are open under them, as `<step id>:<input>`.
+  const [filtering, setFiltering] = useState<ReadonlySet<string>>(new Set());
+  const toggleFilter = (key: string) =>
+    setFiltering((was) => {
+      const next = new Set(was);
+      if (!next.delete(key)) next.add(key);
       return next;
     });
 
@@ -446,11 +459,38 @@ export function WorkflowPanel() {
                 </div>
                 <div className="ml-10 flex flex-col text-muted-foreground">
                   {step.action.kind === 'command' &&
-                    Object.entries(step.action.inputs).map(([field, rule]) => (
-                      <span key={field} className="truncate" title={ruleWords(workflow, rule)}>
-                        {field}: {ruleWords(workflow, rule)}
-                      </span>
-                    ))}
+                    Object.entries(step.action.inputs).map(([field, rule]) => {
+                      const key = `${step.id}:${field}`;
+                      const filtered = Object.keys(rule.where ?? {}).length > 0;
+                      return (
+                        <div key={field} className="flex flex-col">
+                          <div className="flex min-w-0 items-center gap-1">
+                            <span className="min-w-0 flex-1 truncate" title={ruleWords(workflow, rule)} data-slot="step-input">
+                              {field}: {ruleWords(workflow, rule)}
+                            </span>
+                            <IconButton
+                              label={filtering.has(key) ? `Close the filter of step ${at + 1}'s ${field}` : `Filter what step ${at + 1}'s ${field} takes, by attributes`}
+                              className={cn(filtered && 'text-primary', filtering.has(key) && 'bg-primary/20')}
+                              data-slot="step-input-filter"
+                              onClick={() => toggleFilter(key)}
+                            >
+                              <Filter />
+                            </IconButton>
+                          </div>
+                          {filtering.has(key) && chosen && (
+                            <InputFilter
+                              workflow={chosen.id}
+                              step={step.id}
+                              position={at + 1}
+                              input={field}
+                              rule={rule}
+                              caseName={caseName}
+                              save={(when) => workflow && void save(withWhere(workflow, step.id, field, when))}
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
                   {step.action.kind === 'command' && opened.has(step.id) && (
                     <StepSettings
                       rows={settingsOfStep(workflow, step.id)}

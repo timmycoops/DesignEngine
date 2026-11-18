@@ -588,6 +588,31 @@ pub async fn layer_attributes(layer: LayerId, state: State<'_, AppState>) -> Res
         .collect())
 }
 
+/// What one input of a workflow step finds before its filter, an object a row: its attributes and the measures it has
+/// that no attribute names (`volume`, `length`, `area`, `rl_min`, `rl_max`), for the Workflow panel's filter box to list
+/// and count (decision 0088, workstream 5). Seen as the case picked sees the project.
+#[tauri::command]
+pub async fn workflow_input_rows(workflow: ObjectId, step: u32, input: String, case: Option<String>, state: State<'_, AppState>) -> Result<Vec<zd_core::Attributes>, String> {
+    let app = state.app.lock().unwrap();
+    let pool = app.session.input_pool(workflow, step, &input, case.as_deref().unwrap_or(zd_core::BASE_CASE)).map_err(|e| e.to_string())?;
+    let project = app.session.project();
+    Ok(pool
+        .iter()
+        .filter_map(|&id| project.object(id))
+        .map(|o| {
+            let mut row = o.attributes.clone();
+            for name in zd_core::MEASURES {
+                if zd_core::attribute_ci(&o.attributes, name).is_none()
+                    && let Some(value) = zd_core::measure(o, name)
+                {
+                    row.insert(name.to_string(), zd_core::AttrValue::Number(value));
+                }
+            }
+            row
+        })
+        .collect())
+}
+
 #[tauri::command]
 pub async fn set_layer_visible(layer: LayerId, visible: bool, state: State<'_, AppState>) -> Result<ProjectChanges, String> {
     let mut app = state.app.lock().unwrap();

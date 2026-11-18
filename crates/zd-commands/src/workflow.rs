@@ -84,6 +84,14 @@ pub fn resolve_in(project: &Project, workflow: &Workflow, at: usize, rule: &Inpu
     }
 }
 
+/// What a rule finds before its filter (decision 0088, workstream 5): the objects its filter chooses among, as the panel
+/// lists their values to tick and counts how many the filter keeps. One rule for one object still lists every one it
+/// might take; a rule that finds nothing at all says why.
+pub fn rule_pool(project: &Project, workflow: &Workflow, at: usize, rule: &InputRule, scope: &CaseScope) -> Result<Vec<ObjectId>, String> {
+    let unfiltered = InputRule { filter: BTreeMap::new(), many: true, ..rule.clone() };
+    resolve_in(project, workflow, at, &unfiltered, scope)
+}
+
 /// A rule in words, as the panel and a refusal say it.
 pub fn describe(workflow: &Workflow, rule: &InputRule) -> String {
     let what = rule.kind.map_or("objects".to_string(), |k| format!("{} objects", kind_name(k)));

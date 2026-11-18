@@ -1,7 +1,7 @@
 # 0088 — One filter by attributes and measures
 
-Date: 2026-11-18 · Status: accepted (Tim, 2026-11-18: decisions 1 to 9 of the Filtering plan) · Workstreams 1 to 4
-built; the later workstreams add to this record as they merge
+Date: 2026-11-18 · Status: accepted (Tim, 2026-11-18: decisions 1 to 9 of the Filtering plan) · All five workstreams
+built (18 and 19 November)
 
 ## Why
 
@@ -136,6 +136,23 @@ again on every run, which grows with a solid's triangles; PIT B's run about 116 
 | `a_filter_keeps_the_leaves_that_fit_and_each_field_adds_up_over_them` (zd-commands) | strip 1 of B2 and B10 (10,000 m³): `seam: U` (or `Seam: u`) keeps three leaves, 8,000 m³, B2 and B10 4,000 each; B10's RD over U by volume 1.55; the tree's B10 holds U alone; `bench: >=110` keeps one; `ROM\Coal\ash: <15` keeps ash 10 and 12, B2 with none out; `seam: !U` B10's L alone; B2 filtered to L is empty, not refused; Across leaves keeps U's three in stack order; the rows to tick are the levels' words, no fields |
 | `zd-app --bench --dataflow` | on the demo pit's Base table at block 3 B1 (64,519.3 m³ of ROM coal over U, M and L): `seam: U` typed adds up U alone, 10,840.1 m³, its one column, 381 of 1,436 leaves kept, at the same node; cleared, its three seams again |
 
+## Built: workstream 5, a workflow step's filter
+
+- **Edited under the step** in the Workflow panel: each input's line has a funnel that opens the filter box under it,
+  over what the input finds before its filter (`workflow::rule_pool`, `Session::input_pool`, the app's
+  `workflow_input_rows`), as the case picked sees the project. Its values are there to tick, with the measures each object
+  has (`volume`, `length`, `area`, `rl_min`, `rl_max`) where no attribute names them, and it says how many of how many it
+  keeps, in red where a rule for one object would keep other than one, or where the input finds nothing (a step not yet
+  run). It's saved as the step's own a moment after the last change, and when it closes; every case reads it.
+- **A value as it was saved stays as it was saved**: a number captured (`strip: 3`) is kept as that number while its text
+  is unchanged; anything changed is saved as filter text. An empty filter takes `where` away, so the step reads as before.
+
+| Test | Known answer |
+|---|---|
+| `an_inputs_pool_is_what_it_finds_before_its_filter` (zd-commands) | the box pit cut at RL 40: a rule for one solid on layer `cut` filtered by `volume: <1` still finds both pieces before its filter, 600,000 m³; a layer that isn't there finds nothing, said; through the session, step 2's cut filtered by `volume: <1` still finds the pit step 1 made; a step id or input that isn't there is said |
+| `workflow.test.mjs` | `strip: 3` captured stays the number 3 beside `seam: M, L` and `volume: <500` typed; `strip: 1-5` typed is text; an empty filter takes `where` away; the workflow given isn't changed |
+| `zd-app --bench --workflow` | step 2's solids (the pit step 1 made, 600,000 m³): the box keeps 1 of the 1 object it finds, 0 with `volume: <1`, 1 with `volume: >500000`, saved as the step's `where` and read on its line; cleared, `where` is gone |
+
 ## Known limits
 
 - **Measures cost a pass over the object** each time one is read: fine for a step's input or a table, to be timed when a
@@ -148,3 +165,5 @@ again on every run, which grows with a solid's triangles; PIT B's run about 116 
 - **Isolate is kept for the session**, not saved: a project opened again shows the layers as they were left.
 - **Select its solids, Open its column and colouring by a field don't follow the Reserves table's filter.** They take
   the node's solids and block as the run made them.
+- **A case can't change a step's filter.** The filter is the step's own, read by every case, as its inputs are; a case
+  changes settings only (0066).

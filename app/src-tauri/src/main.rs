@@ -37,6 +37,7 @@ fn main() {
             commands::set_layer_filter,
             commands::reserves_filter_rows,
             commands::layer_attributes,
+            commands::workflow_input_rows,
             commands::set_objects_visible,
             commands::set_looks,
             commands::set_layer_opacity,
