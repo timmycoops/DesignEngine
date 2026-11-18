@@ -186,6 +186,18 @@ export function ReservesTable() {
   }, [last, follow, tableKey, breakdown !== null]);
 
   const rows = useMemo(() => (breakdown ? fieldRows(breakdown, fields === 'all', folded) : []), [breakdown, fields, folded]);
+  // The fields of numbers by their folders, offered as the filter's typed (`ROM\Coal\ash`): never ticked, each leaf's its own.
+  const fieldColumns = (breakdown?.fields ?? []).filter((f) => !f.words).map((f) => `${f.column}\t${f.unit}`).join('\n');
+  const fieldNames = useMemo(
+    () =>
+      fieldColumns === ''
+        ? []
+        : fieldColumns.split('\n').map((line) => {
+            const [key, unit] = line.split('\t');
+            return { key, detail: unit || 'field' };
+          }),
+    [fieldColumns],
+  );
 
   // The Dataflow tab follows the block shown here, or the seam or bench of it marked, with no press of Open its column.
   const levels = breakdown?.levels;
@@ -259,7 +271,7 @@ export function ReservesTable() {
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-1" data-slot="reserves-filter">
           <span className="shrink-0 text-muted-foreground">Leaves</span>
-          <FilterInput rows={filterRows} value={when} onChange={setWhen} label="Filter the leaves" className="max-w-md flex-1" />
+          <FilterInput rows={filterRows} value={when} onChange={setWhen} label="Filter the leaves" names={fieldNames} className="max-w-md flex-1" />
           {tree && (
             <span className="shrink-0 text-muted-foreground tabular-nums" data-slot="reserves-filter-kept">
               {Object.keys(when).length > 0 ? `${fmt(tree.leaves)} of ${fmt(filterRows.length)} leaves` : `${fmt(tree.leaves)} leaves`}

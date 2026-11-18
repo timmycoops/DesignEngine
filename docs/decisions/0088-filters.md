@@ -153,6 +153,28 @@ again on every run, which grows with a solid's triangles; PIT B's run about 116 
 | `workflow.test.mjs` | `strip: 3` captured stays the number 3 beside `seam: M, L` and `volume: <500` typed; `strip: 1-5` typed is text; an empty filter takes `where` away; the workflow given isn't changed |
 | `zd-app --bench --workflow` | step 2's solids (the pit step 1 made, 600,000 m³): the box keeps 1 of the 1 object it finds, 0 with `volume: <1`, 1 with `volume: >500000`, saved as the step's `where` and read on its line; cleared, `where` is gone |
 
+## Built after the plan: suggestions as it's typed
+
+Tim, 19 November: "Possible to have intellisense options in the filter?" The filter box (the kit's `FilterInput`, so the
+layer filter, the Objects table, the Reserves table and a workflow step's filter at once) offers what fits where the
+caret is (`filters.ts` `suggest` and `accept`):
+
+- **In a name**: the attributes the rows carry, the cuts' own first, with their range or how many values; and names no
+  row lists to tick, typed instead: a layer's measures by what's on it (`measuresOf`: a solid's `volume`, a string's
+  `length` and `area`, a surface's `area`, `rl_min` and `rl_max`), and the Reserves table's fields of numbers by their
+  folders (`ROM\Coal\ash`) with their units. Those that start with what's typed come first, then those that hold it;
+  one another part names already isn't offered. Put in, a name gains its `: `.
+- **After the colon**: the attribute's values with how many hold each, those already in its list left out, a `!` typed
+  kept before the value; for numbers, their range and the ways to type one (a range, `<`, `>`, `<=`, `>=`, `!`).
+- **Keys**: ↑ ↓ light one, Tab or Enter puts it in, a click too; Esc closes the list, and a second press clears the box
+  (decision 0080: a press a thing, nearest first). The list is drawn over the docks, below the box or above it where
+  there's no room.
+
+| Test | Known answer |
+|---|---|
+| `filters.test.mjs` | four rows (seam U, u, M, L; strip 3, 10, 9, 3; material; volume 120, 480): an empty box offers strip, seam, material, volume, strip `3 to 10`; `se` seam; `al` material; after `seam: U; ` seam isn't offered again; a name changed before its colon goes in alone (`strip: 3`); `seam: ` offers L 1, M 1, U 2, `seam: M, ` L and U, `Seam: !` the three with `!`; the item the caret is in is replaced up to its comma; strip's values in order with `3 to 10`; `volume: <2` offers nothing more; a layer of strings offers length, area, rl_min, rl_max |
+| `zd-app --bench --dataflow` | the demo pit's leaves' filter: `se` offers seam first, Tab puts in `seam: `, then L, M and U with their counts; `ROM\Coal\vol` offers `ROM\Coal\volume`; Esc closes the list, a second press clears the box |
+
 ## Known limits
 
 - **Measures cost a pass over the object** each time one is read: fine for a step's input or a table, to be timed when a
@@ -167,3 +189,4 @@ again on every run, which grows with a solid's triangles; PIT B's run about 116 
   the node's solids and block as the run made them.
 - **A case can't change a step's filter.** The filter is the step's own, read by every case, as its inputs are; a case
   changes settings only (0066).
+- **The Objects table offers no measures by name** but a solid's `volume`, the one it has in its rows.

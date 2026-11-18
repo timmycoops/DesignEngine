@@ -163,6 +163,30 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     !!filterBox() && JSON.stringify(filteredHeads) === JSON.stringify(['Pit > 3 > B1', 'Pit > 3 > B1 > U']) && filteredCoal[0] === '10,840.1' && kept.includes(' of ') && heads().length === 4,
     { found: !!filterBox(), heads: filteredHeads, coal: filteredCoal, kept, back: heads().length },
   );
+  // Suggestions as it's typed: `se` offers seam, Tab puts it in, then its words with their counts; a field by its
+  // folders is offered too; Esc closes the list, a second clears the box.
+  const offered = () => [...document.querySelectorAll<HTMLElement>('[data-slot="filter-suggestions"] [role="option"]')].map((o) => o.textContent ?? '');
+  const press = async (key: string) => {
+    filterBox()?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    await wait(300);
+  };
+  await typeFilter('se');
+  const names = offered();
+  await press('Tab');
+  const afterTab = filterBox()?.value ?? '';
+  const seams = offered();
+  await typeFilter('ROM\\Coal\\vol');
+  const fieldsOffered = offered();
+  await press('Escape');
+  const closed = offered().length === 0 && filterBox()?.value === 'ROM\\Coal\\vol';
+  await press('Escape');
+  const emptied = filterBox()?.value ?? null;
+  await typeFilter('');
+  expect(
+    "the leaves' filter suggests as it's typed: se offers seam, Tab puts in 'seam: ', then U, M and L with their counts; ROM\\Coal\\vol offers the field; Esc closes the list, again clears the box",
+    names[0]?.startsWith('seam') === true && afterTab === 'seam: ' && ['U', 'M', 'L'].every((s) => seams.some((o) => o.startsWith(s))) && fieldsOffered.some((o) => o.startsWith('ROM\\Coal\\volume')) && closed && emptied === '',
+    { names: names.slice(0, 3), afterTab, seams, fields: fieldsOffered.slice(0, 3), closed, emptied },
+  );
   // A seam opened to its benches.
   panel()?.querySelector<HTMLButtonElement>('button[aria-label="Open U"]')?.click();
   for (let k = 0; k < 50 && heads().length < 8; k++) await wait(100);

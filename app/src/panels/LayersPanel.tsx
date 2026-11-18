@@ -3,7 +3,7 @@ import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { type Colouring, concealed, type Layer, layerAttributes, layerOpacityOf, lookOf } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { FilterInput } from '@/design-system/kit';
-import { whenText } from '@/filters';
+import { measuresOf, whenText } from '@/filters';
 import { ROW_HEIGHT, useRowWindow } from '@/design-system/DataTable';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import {
@@ -384,6 +384,9 @@ function FilterBar({ entry, onChange, onDone }: { entry: LayerEntry; onChange: (
     };
   }, [key]);
   const count = entry.objects.length;
+  // The measures what's on it has, offered as it's typed: never listed to tick, as each object's is its own.
+  const kinds = [...new Set(entry.objects.map((o) => o.kind))].sort().join(',');
+  const measures = useMemo(() => measuresOf(kinds.split(',')), [kinds]);
   return (
     <div className="flex flex-col gap-1 border-b px-2 py-1.5 text-xs" data-slot="layer-filter-bar">
       <div className="flex items-center gap-2 text-muted-foreground">
@@ -397,7 +400,7 @@ function FilterBar({ entry, onChange, onDone }: { entry: LayerEntry; onChange: (
           Done
         </Button>
       </div>
-      <FilterInput rows={rows} value={entry.filter ?? {}} onChange={onChange} label={`Filter on ${entry.layer.name}`} />
+      <FilterInput rows={rows} value={entry.filter ?? {}} onChange={onChange} label={`Filter on ${entry.layer.name}`} names={measures} />
     </div>
   );
 }
