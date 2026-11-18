@@ -4,6 +4,8 @@
  * how many, their volume and, by a density column, their tonnes. Kept free of React, so the tests can run it.
  */
 
+import { type Attributes, type When, whenFits } from '../filters.ts';
+
 export type AttrValue = boolean | number | string;
 
 export interface SolidRow {
@@ -45,13 +47,19 @@ export interface Filter {
   words: string;
   /** Only rows under this volume (m³); 0 for any. */
   under: number;
+  /** Only rows that fit this filter by attributes and, for a solid, its `volume` (decision 0088); none for any. */
+  when?: When;
 }
+
+/** What a row's filter reads: its attributes and, for a solid, its volume, an attribute of that name winning. */
+export const filterable = (row: SolidRow): Attributes => (Number.isFinite(row.volume) ? { volume: row.volume, ...row.attributes } : row.attributes);
 
 /** The rows the filter keeps, in order. */
 export function shownRows(rows: readonly SolidRow[], filter: Filter): SolidRow[] {
   const words = filter.words.toLowerCase().split(/\s+/).filter(Boolean);
   return rows.filter((row) => {
     if (filter.under > 0 && !(row.volume < filter.under)) return false;
+    if (filter.when && !whenFits(filter.when, filterable(row))) return false;
     if (words.length === 0) return true;
     const text = [row.name, row.layer, ...Object.values(row.attributes).map(String)].join(' ').toLowerCase();
     return words.every((w) => text.includes(w));
