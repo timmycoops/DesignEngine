@@ -2201,6 +2201,12 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
         let clean_values = run.column.add_up(plies.iter().copied());
         let texts = vec![("ROM\\section".to_string(), s.name.clone())];
         let ply_volume: f64 = plies.iter().map(|&p| run.column.units()[p].value(v)).sum();
+        if aggregate && !qualities.is_empty() {
+            run.work(&run.ids(&members), || {
+                let q: Vec<String> = qualities.iter().map(|&q| format!("{} {}", run.column.fields().list()[q].name, figure(section_values[q], 2))).collect();
+                Line::note("section qualities", format!("{} yes: every piece of {} at the section's {}", step.setting("aggregate_sections"), section_words(s), q.join(", ")))
+            });
+        }
         for &m in &members {
             in_rom_coal[m] = true;
             let u = &run.column.units()[m];
@@ -2222,6 +2228,17 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
                 _ => plies.iter().map(|&p| (p, if ply_volume > 0.0 { run.column.units()[p].value(v) / ply_volume } else { 1.0 / plies.len() as f64 })).collect(),
             };
             let out_of_model = run.is_out_of_model(u);
+            run.work(&[u.id], || {
+                let whose = if out_of_model { "underburden, outside the model, " } else { "" };
+                match onto.as_slice() {
+                    [(p, _)] if *p == m => Line::sum("ROM coal", format!("{whose}{}", run.words_of(m)), u.value(v), "m³").then(format!("ROM\\Coal and Scheduled\\Coal, {} on its own leaves", section_words(s))),
+                    [(p, _)] => Line::sum("ROM coal", format!("{whose}{}", run.words_of(m)), u.value(v), "m³").then(format!("ROM\\Coal and Scheduled\\Coal, {}, on {}'s leaves", section_words(s), run.words_of(*p))),
+                    many => {
+                        let shares: Vec<String> = many.iter().map(|(p, share)| format!("{} {} m³", run.words_of(*p), vol(u.value(v) * share))).collect();
+                        Line::sum("ROM coal", format!("{whose}{}, shared over the plies by their volumes", run.words_of(m)), u.value(v), "m³").then(format!("ROM\\Coal and Scheduled\\Coal, {}: {}", section_words(s), shares.join(", ")))
+                    }
+                }
+            });
             for (p, share) in onto {
                 let scaled: Vec<f64> = values.iter().enumerate().map(|(f, x)| if run.column.fields().is_summed(f) { x * share } else { *x }).collect();
                 pieces.extend(place(run, &scaled, p, "ROM\\Coal", &texts));
@@ -2240,6 +2257,10 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
                         clean[q] = clean_values[q];
                     }
                 }
+                run.work(&[run.column.units()[m].id], || {
+                    let at = if clean_average { format!(", at the section's coal average ({} or {} yes)", step.setting("clean_coal_average"), step.setting("aggregate_sections")) } else { String::new() };
+                    Line::sum("clean coal", format!("{}{at}", run.words_of(m)), clean[v], "m³").then("Clean coal\\Coal")
+                });
                 pieces.extend(place(run, &clean, m, "Clean coal\\Coal", &texts));
             }
         }
@@ -2254,11 +2275,17 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
     // ROM waste: everything else in the model but small volumes.
     for (i, &taken) in in_rom_coal.iter().enumerate() {
         let u = &run.column.units()[i];
-        if taken || run.is_out_of_model(u) || u.became.as_ref().is_some_and(|b| b.kind == BecameKind::SmallVolume) {
+        if taken {
+            continue;
+        }
+        if run.is_out_of_model(u) || u.became.as_ref().is_some_and(|b| b.kind == BecameKind::SmallVolume) {
+            let why = if run.is_out_of_model(u) { "the underburden left, outside the model" } else { "a small volume" };
+            run.work(&[u.id], || Line::test("ROM", format!("{}: {why}", run.words_of(i)), "never written in ROM"));
             continue;
         }
         if last_coal.is_some_and(|c| i > c) && !is_coal(u) {
             let summed: Vec<f64> = u.values().iter().enumerate().map(|(f, x)| if run.column.fields().is_summed(f) { -x } else { *x }).collect();
+            run.work(&[u.id], || Line::sum("out of model", format!("{}, model waste below the last coal", run.words_of(i)), -u.value(v), "m³").then("not mined: taken as underburden, netted off Summary\\Out of model"));
             pieces.extend(place(run, &summed, i, "Summary\\Out of model", &[]));
             run.said.count("model waste below the last coal taken as underburden, out of model".into(), u.value(v));
             continue;
@@ -2272,6 +2299,10 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
             }
             _ => i,
         };
+        run.work(&[u.id], || {
+            let then = if onto == i { "ROM\\Waste and Scheduled\\Waste, on its own leaves".to_string() } else { format!("ROM\\Waste and Scheduled\\Waste, on {}'s leaves, the waste it was lost into", run.words_of(onto)) };
+            Line::sum("ROM waste", run.words_of(i), u.value(v), "m³").then(then)
+        });
         let values = u.values().to_vec();
         pieces.extend(place(run, &values, onto, "ROM\\Waste", &[]));
         pieces.extend(place(run, &values, onto, "Scheduled\\Waste", &[]));
@@ -2282,8 +2313,38 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
 
 /// `join_benches`: each horizon's benches joined into one unit, each bench's in situ share of its volume kept.
 fn join_benches(run: &mut ColumnRun<'_>, _: &DataflowStep) -> Result<(), String> {
+    let before: Vec<UnitId> = run.column.units().iter().map(|u| u.id).collect();
+    // Each bench as it comes in, by the block it came from: whose lines a join's working goes on.
+    let mut benches: BTreeMap<u32, UnitId> = BTreeMap::new();
+    for u in run.column.units().iter().filter(|u| u.bench.is_some() && u.became.is_none() && u.joined.is_none()) {
+        benches.entry(u.origin).or_insert(u.id);
+    }
     run.column.join_benches();
+    work_joins(run, &before, &benches);
     Ok(())
+}
+
+/// The joins' workings (decision 0082, workstream 4): each bench's volume and the joined unit's, with each bench's in situ
+/// share, on the benches and the unit they made.
+fn work_joins(run: &ColumnRun<'_>, before: &[UnitId], benches: &BTreeMap<u32, UnitId>) {
+    if run.workings.is_none() {
+        return;
+    }
+    let v = run.column.fields().volume();
+    for u in run.column.units() {
+        let Some(j) = u.joined else { continue };
+        if before.contains(&u.id) {
+            continue;
+        }
+        let join = &run.column.joins()[j as usize];
+        let horizon = &run.horizons[u.stack as usize];
+        let ids: Vec<UnitId> = join.benches.iter().filter_map(|b| benches.get(&b.origin).copied()).chain([u.id]).collect();
+        run.work(&ids, || {
+            let parts: Vec<String> = join.benches.iter().map(|b| format!("bench {} {} m³", b.bench.label, vol(b.values[v]))).collect();
+            let shares: Vec<String> = join.benches.iter().map(|b| format!("{} {}", b.bench.label, figure(b.share, 4))).collect();
+            Line::sum("join", format!("{horizon} {}", parts.join(" + ")), u.value(v), "m³").then(format!("one unit, {horizon} ({} benches), each bench's in situ share kept to write it back: {}", join.benches.len(), shares.join(", ")))
+        });
+    }
 }
 
 /// The in situ density from an air-dried RD and the air-dried and in situ moistures (fractions), by Preston and
@@ -2305,8 +2366,39 @@ fn in_situ(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String> {
             }
         }
     }
+    work_in_situ(run, step);
     write_pieces(run, |u| (!u.is_set_aside()).then(|| "Insitu".into()), |_| Vec::new());
     Ok(())
+}
+
+/// The in situ step's workings (decision 0082, workstream 4): each unit's volume and, where the dataflow has an in situ
+/// density, its in situ tonnes, and where it's written; a unit set aside or outside the model isn't written, said.
+fn work_in_situ(run: &ColumnRun<'_>, step: &DataflowStep) {
+    if run.workings.is_none() {
+        return;
+    }
+    let fields = run.column.fields();
+    let v = fields.volume();
+    let rd_is = fields.at(step.setting("rd_is")).ok();
+    for (at, u) in run.column.units().iter().enumerate() {
+        run.work(&[u.id], || {
+            if run.is_out_of_model(u) {
+                return Line::test("in situ", format!("{}: the underburden, outside the model", run.words_of(at)), "not written");
+            }
+            if let Some(b) = u.became.as_ref().filter(|_| u.is_set_aside()) {
+                return Line::test("in situ", format!("{}: set aside, {}", run.words_of(at), format!("{:?}", b.kind).to_lowercase()), "not written in situ");
+            }
+            let folder = format!("Insitu\\{}", title(&u.in_situ.material));
+            let then = match u.joined {
+                Some(j) => format!("{folder}, on its {} benches by their in situ shares", run.column.joins()[j as usize].benches.len()),
+                None => folder,
+            };
+            match rd_is.map(|d| u.value(d)).filter(|d| d.is_finite()) {
+                Some(d) => Line::sum("in situ tonnes", format!("{} {} m³ × {} {} t/m³", run.words_of(at), vol(u.value(v)), step.setting("rd_is"), set(d)), u.value(v) * d, "t").then(then),
+                None => Line::sum("in situ", run.words_of(at), u.value(v), "m³").then(then),
+            }
+        });
+    }
 }
 
 /// Writes each unit `folder` names a folder for (decision 0074): a piece a bench it holds, a joined unit's summed fields

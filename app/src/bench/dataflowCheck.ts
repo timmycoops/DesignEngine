@@ -236,6 +236,26 @@ async function checkColumn(panel: () => HTMLElement | null, expect: Expect, pict
     { made, changed, read: dilRead },
   );
 
+  // Workings for the rest of the built-in steps (decision 0082, workstream 4): in_situ, join_benches and final, for U.
+  const whats = async (step: string) => {
+    await pick(step);
+    return [...(pane()?.querySelectorAll<HTMLElement>('[data-slot="working"]') ?? [])].map((w) => w.dataset.what ?? '');
+  };
+  const rest = { in_situ: await whats('in_situ'), join_benches: await whats('join_benches'), final: await whats('final') };
+  expect(
+    'in_situ, join_benches and final show their workings for the unit followed',
+    rest.in_situ.some((w) => w.startsWith('in situ')) && rest.join_benches.includes('join') && rest.final.includes('ROM coal') && rest.final.includes('clean coal'),
+    rest,
+  );
+  if (picture) {
+    document.querySelector<HTMLButtonElement>('button[aria-label="Fill the window"]')?.click();
+    await wait(300);
+    await picture('workings-final');
+    document.querySelector<HTMLButtonElement>('button[aria-label="Put the tables back under the view"]')?.click();
+    await wait(300);
+  }
+  await pick('rom_dilution');
+
   // The strip (decision 0084): what each wrote under it, units on the arrows, the picked step's table and column lit.
   const writesOf = (step: string) => [...(chip(step)?.querySelectorAll('[data-slot="step-writes"] > span') ?? [])].map((w) => (w.textContent ?? '').split(' ')[0]);
   expect(

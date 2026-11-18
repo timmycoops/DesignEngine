@@ -3,8 +3,8 @@
 Status: agreed 17 November 2026. Tim agreed the seven decisions on the Build Plan's "Live workings plan" tab ("Agree all
 7, start ws1"). Workstream 1 (the engine's workings) is built here; 2 (the Workings row) was built in the Dataflow
 view's step pane (0084, workstream 3); 3 (live) is built here, on the Dataflow tab, after Tim asked on 18 November how to
-run the dataflow again once a parameter was edited; 4 (the rest of the steps) is to come. Point 7 (a setting clicked
-goes to its cell in the Parameters tab) is built here too.
+run the dataflow again once a parameter was edited; 4 (the rest of the steps) is built here too, as is point 7 (a
+setting clicked goes to its cell in the Parameters tab). The plan is done.
 
 ## Why
 
@@ -111,3 +111,28 @@ edit live).
 |---|---|
 | reserves_run engine test, the live column | the column's one table, assumptions, by its id |
 | `zd-app --bench --dataflow` (16 Nov demo, 3_B1, rom_dilution, U followed) | roof_dilution clicked in In opens column 2's roof_dilution cell, focused and ringed; floor_dilution clicked in a Workings line opens column 2's floor_dilution cell |
+
+## Built: workstream 4, the rest of the steps
+
+Point 2 named in_situ, join_benches, rom, rom_qualities and final after the steps that move material. Since 0077,
+`rom` does nothing built in and `rom_qualities` is a starter formula, whose own lines are its trace; so the three left
+are built in, each writing its lines as the others do (`ColumnRun::work`, only when the column is opened):
+
+- `in_situ`: each unit's volume × its in situ density, its in situ tonnes, and the folder it's written to (on its
+  benches by their in situ shares, for a joined unit); its volume and folder where the dataflow has no in situ density;
+  a unit set aside, or the underburden outside the model, not written, said.
+- `join_benches`: each join on its benches and the unit they make: the benches' volumes added up to the unit's, and
+  each bench's in situ share, kept to write it back.
+- `final`: where each unit goes. ROM coal: a section's unit on its own leaves, roof dilution on its first ply's,
+  floor dilution and losses on its first or last, edge and other dilution shared over its plies by their volumes (each
+  ply's part said); with `aggregate_sections` yes, the section's qualities every piece carries. Clean coal: each ply,
+  at the section's average where `clean_coal_average` (or `aggregate_sections`) says yes. ROM waste: on its own leaves,
+  or a loss on the waste it went into. Model waste below the last coal netted off out of model; small volumes and the
+  underburden left never in ROM.
+
+| Test | Known answer |
+|---|---|
+| `final_writes_where_each_unit_goes_for_the_notebook` (the 4c column, dilution only) | A's ROM coal 10,000 m³ on its own leaves; the roof dilution cut for it, 250 m³, on A's; every ROM coal line adding up to the table's 10,854 + 15,906 m³; A's clean coal 10,000 m³; OB's ROM waste 50,000 − 250 − 4 − 100 = 49,646 m³; below B's 19,500 m³ netted off out of model. 1e-9 relative |
+| `join_benches_and_in_situ_write_their_workings_for_the_notebook` (B2) | U's benches 18 and 16, 10,000 m³ each, joined into 20,000 m³, shares 0.5 and 0.5, said on both benches and the unit; each unit's in situ volume and folder; the underburden not written |
+| `in_situ_writes_each_unit_s_tonnes_for_the_notebook` (starter densities) | each coal unit's tonnes its volume × its rd_is; U's rd_is 1.358 ÷ 0.99, said 1.3717 t/m³ |
+| `zd-app --bench --dataflow` (16 Nov demo, 3_B1, U followed) | in_situ shows in situ tonnes, join_benches the join, final ROM coal and clean coal |

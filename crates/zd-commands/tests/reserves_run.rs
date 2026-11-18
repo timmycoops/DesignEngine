@@ -1705,3 +1705,104 @@ fn a_column_runs_on_a_parameter_table_as_edited_and_the_project_keeps_the_saved_
     let err = table_column(s.project(), s.log(), id, &node, &Unsaved { dataflow: None, tables: vec![(table, std::sync::Arc::new(broken))] }).unwrap_err();
     assert!(err.to_string().starts_with("assumptions as edited: "), "{err}");
 }
+
+// Decision 0082, workstream 4: workings for the rest of the built-in steps.
+
+/// `final` on the 4c column (dilution only, roof 0.05 m, floor 0.1 m, edge 0.02 m, other 1 %): A's coal, 10,000 m³, goes
+/// to ROM coal on its own leaves; the roof dilution cut for A, 250 m³, on A's; every ROM coal line added up is the
+/// table's 10,854 + 15,906 m³; A's clean coal is its 10,000 m³; OB's ROM waste is what dilution left, 50,000 − 250 − 4 −
+/// 100 = 49,646 m³, on its own leaves; the 19,500 m³ below B, model waste below the last coal, is netted off out of
+/// model. To 1e-9 relative.
+#[test]
+fn final_writes_where_each_unit_goes_for_the_notebook() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = flow(&mut s, final_steps(), &dilution_csv([0.0; 4], [0.05, 0.1, 0.02, 1.0], ""));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let opened = table_column(s.project(), s.log(), created(&record)[0], &["Pit".to_string(), "1".to_string(), "B1".to_string()], &Unsaved::default()).unwrap();
+    let at = opened.steps.iter().position(|c| c.step == "final").unwrap();
+    let (before, cell) = (&opened.steps[at - 1], &opened.steps[at]);
+    let one = |unit: u32, what: &str| {
+        let lines = worked(cell, unit, what);
+        assert_eq!(lines.len(), 1, "{what} on {unit}: {:?}", cell.workings);
+        lines[0].clone()
+    };
+    let a = unit_in(before, "A");
+    let rom = one(a, "ROM coal");
+    assert!(close(rom.value.unwrap(), 10_000.0) && rom.sum == "A coal", "{rom:?}");
+    assert_eq!(rom.then.as_deref(), Some("ROM\\Coal and Scheduled\\Coal, section 2 coal A on its own leaves"));
+    let roof = before.units.iter().find(|u| u.horizon == "OB" && u.became.as_deref() == Some("dilution (roof)")).unwrap().id;
+    let r = one(roof, "ROM coal");
+    assert!(close(r.value.unwrap(), 250.0), "{r:?}");
+    assert_eq!(r.then.as_deref(), Some("ROM\\Coal and Scheduled\\Coal, section 2 coal A, on A coal's leaves"));
+    let all: f64 = cell.workings.iter().filter(|w| w.what == "ROM coal").map(|w| w.value.unwrap()).sum();
+    assert!(close(all, 10_854.0 + 15_906.0), "{all}");
+    let clean = one(a, "clean coal");
+    assert!(close(clean.value.unwrap(), 10_000.0) && clean.then.as_deref() == Some("Clean coal\\Coal"), "{clean:?}");
+    let ob = one(unit_in(before, "OB"), "ROM waste");
+    assert!(close(ob.value.unwrap(), 49_646.0), "{ob:?}");
+    assert_eq!(ob.then.as_deref(), Some("ROM\\Waste and Scheduled\\Waste, on its own leaves"));
+    let below = one(unit_in(before, "below B"), "out of model");
+    assert!(close(below.value.unwrap(), -19_500.0), "{below:?}");
+    assert_eq!(below.then.as_deref(), Some("not mined: taken as underburden, netted off Summary\\Out of model"));
+}
+
+/// `join_benches` and `in_situ` on B2's column: U's benches 18 and 16, 10,000 m³ each, join into one unit of 20,000 m³,
+/// each bench's share 0.5, said on both benches and the unit they made; `in_situ` writes each unit's volume to its folder
+/// (this dataflow has no in situ density), and the underburden, outside the model, isn't written.
+#[test]
+fn join_benches_and_in_situ_write_their_workings_for_the_notebook() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "in_situ", "join_benches"]);
+    let p: RunReservesParams = serde_json::from_value(json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let project = s.project();
+    let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+    let views = reserves_preview(&get, &p, "Base", &["Pit".to_string(), "3".to_string(), "B2".to_string()]).unwrap();
+    let at = views.iter().position(|v| v.step == "join_benches").unwrap();
+    let benches: Vec<u32> = views[at - 1].units.iter().filter(|u| u.horizon == "U").map(|u| u.id).collect();
+    let joined = views[at].units.iter().find(|u| u.horizon == "U").unwrap().id;
+    assert_eq!(benches.len(), 2);
+    for unit in [benches[0], benches[1], joined] {
+        let lines = worked(&views[at], unit, "join");
+        assert_eq!(lines.len(), 1, "{unit}: {:?}", views[at].workings);
+        assert_eq!(lines[0].sum, "U bench 18 10,000 m³ + bench 16 10,000 m³");
+        assert!(close(lines[0].value.unwrap(), 20_000.0));
+        assert_eq!(lines[0].then.as_deref(), Some("one unit, U (2 benches), each bench's in situ share kept to write it back: 18 0.5, 16 0.5"));
+    }
+
+    let at = views.iter().position(|v| v.step == "in_situ").unwrap();
+    for u in &views[at - 1].units {
+        let lines = worked(&views[at], u.id, "in situ");
+        assert_eq!(lines.len(), 1, "{}: {:?}", u.horizon, views[at].workings);
+        if u.horizon == "underburden" {
+            assert_eq!((lines[0].value, lines[0].then.as_deref()), (None, Some("not written")));
+        } else {
+            assert!(close(lines[0].value.unwrap(), u.values["volume"]), "{}", u.horizon);
+            assert_eq!(lines[0].then.as_deref(), Some(if u.material == "coal" { "Insitu\\Coal" } else { "Insitu\\Waste" }));
+        }
+    }
+}
+
+/// `in_situ` with the starter densities: each coal unit's in situ tonnes are its volume × its rd_is; U's (RD 1.4, Mad 3 %,
+/// Mis 8 %) at 1.358 ÷ 0.99 t/m³, said 1.3717. To 1e-9 relative.
+#[test]
+fn in_situ_writes_each_unit_s_tonnes_for_the_notebook() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = moist_flow(&mut s, "when material,rd (t/m3),mad (%),mis (%),mrom (%),underburden_thickness (m)\nwaste,2.3,,,,0\ncoal,,3,8,10,\n");
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let opened = table_column(s.project(), s.log(), created(&record)[0], &["Pit".to_string(), "3".to_string(), "B1".to_string()], &Unsaved::default()).unwrap();
+    let at = opened.steps.iter().position(|c| c.step == "in_situ").unwrap();
+    let coal: Vec<&zd_commands::builtin::UnitView> = opened.steps[at - 1].units.iter().filter(|u| u.material == "coal").collect();
+    assert!(!coal.is_empty());
+    for u in coal {
+        let lines = worked(&opened.steps[at], u.id, "in situ tonnes");
+        assert_eq!(lines.len(), 1, "{}: {:?}", u.horizon, opened.steps[at].workings);
+        assert!(close(lines[0].value.unwrap(), u.values["volume"] * u.values["rd_is"]), "{}: {:?}", u.horizon, lines[0]);
+        if u.horizon == "U" {
+            assert!(close(u.values["rd_is"], 1.358 / 0.99));
+            assert!(lines[0].sum.ends_with("rd_is 1.3717 t/m³"), "{}", lines[0].sum);
+        }
+    }
+}
