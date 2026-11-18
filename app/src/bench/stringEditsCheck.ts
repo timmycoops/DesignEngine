@@ -2,7 +2,8 @@
 // two Ctrl-clicks are trimmed back to a pit limit by Trim's button, a click on the limit and a click on the side to keep;
 // one Ctrl+Z puts all three back. Extend runs them on to a line by one click on it, at their own grade. Esc in the middle
 // of a trim lets it go and changes nothing. Keep both splits them at the limit. Split at a click puts a vertex in where
-// it's clicked, and Join puts the two back as one, ends within its tolerance sharing a vertex.
+// it's clicked, and Join puts the two back as one, ends within its tolerance sharing a vertex. Round corners (workstream
+// 2) rounds a dog-leg's corner at a radius typed, every arc vertex that far from the centre; Ctrl+Z puts it back.
 import * as THREE from 'three/webgpu';
 import { objectDetails, projectSummary, type ProjectSummary, runCommand, type Vec3 } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
@@ -37,6 +38,7 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   for (const [k, y] of toeY.entries()) toes.push(await make(`Toe ${k + 1}`, [[E, N + y, 100], [E + 50, N + y, 105], [E + 100, N + y, 110]]));
   const limit = await make('Pit limit', [[E + 60, N - 50, 100], [E + 60, N + 150, 100]], 'limits');
   const ramp = await make('Ramp line', [[E + 150, N - 50, 100], [E + 150, N + 150, 100]], 'limits');
+  const dogleg = await make('Dog-leg', [[E - 60, N + 170, 100], [E + 40, N + 170, 100], [E + 40, N + 250, 100]]);
   const summary = await projectSummary();
   await show(summary);
   await wait(1500);
@@ -171,6 +173,31 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
     const joined = await points(toes[0]);
     expect('Join puts the two back as one', joined.length === 4 && !(await projectSummary()).objects.some((o) => o.name === 'Toe 1 part 2'), joined.length);
   }
+  // Round corners: the dog-leg picked by a click, a radius of 20 m typed, the button pressed; its corner at 40 m east,
+  // 170 m north becomes an arc round a centre 20 m back along both legs, its ends kept; one Ctrl+Z puts it back.
+  await useTool('fillet');
+  await click([E - 30, N + 170, 100]);
+  const radiusBox = panel()?.querySelector<HTMLInputElement>('input[aria-label="Corner radius"]') ?? null;
+  if (radiusBox) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(radiusBox, '20');
+    radiusBox.dispatchEvent(new Event('input', { bubbles: true }));
+    radiusBox.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  await settle();
+  const roundButton = goButton()?.textContent?.trim() ?? '';
+  goButton()?.click();
+  await wait(800);
+  const rounded = await points(dogleg);
+  const centre = [E + 20, N + 190];
+  const arc = rounded.slice(1, -1);
+  expect(
+    'Round corners rounds the dog-leg at 20 m: every arc vertex 20 m from the centre, the ends kept',
+    roundButton.startsWith('Round the corners of') && arc.length > 5 && arc.every((p) => near(Math.hypot(p[0] - centre[0], p[1] - centre[1]), 20)) && near(rounded[0][0], E - 60) && near(rounded.at(-1)?.[1] ?? 0, N + 250),
+    { button: roundButton, vertices: rounded.length },
+  );
+  await key('z', true);
+  await wait(500);
+  expect('one Ctrl+Z puts the dog-leg back', (await points(dogleg)).length === 3, (await points(dogleg)).length);
   void limit;
   void ramp;
 

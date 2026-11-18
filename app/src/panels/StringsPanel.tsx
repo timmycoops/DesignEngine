@@ -28,10 +28,10 @@ import { useWorkspace } from '@/workspace/context';
  * strings of a layer by their layer. Number across asks for its line across first. Ramp from a start adds no step.
  */
 
-type Mode = 'offset' | 'number_across' | 'polygons_from_lines' | 'set_grade' | 'set_elevation' | 'drape' | 'project' | 'split' | 'trim' | 'extend' | 'join' | 'smooth' | 'filter' | 'reverse' | 'set_closed' | 'surface_between' | 'ramp_polygon';
+type Mode = 'offset' | 'number_across' | 'polygons_from_lines' | 'set_grade' | 'set_elevation' | 'drape' | 'project' | 'split' | 'trim' | 'extend' | 'join' | 'fillet' | 'smooth' | 'filter' | 'reverse' | 'set_closed' | 'surface_between' | 'ramp_polygon';
 
 /** In the order the Strings tab has them. */
-const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'trim', 'extend', 'join', 'smooth', 'filter', 'reverse', 'set_closed', 'surface_between', 'ramp_polygon'];
+const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'trim', 'extend', 'join', 'fillet', 'smooth', 'filter', 'reverse', 'set_closed', 'surface_between', 'ramp_polygon'];
 
 /** How far from a string a click on it may land and still be it, in plan (m). Clicks snap, so on it they're on it. */
 const CLICK_ON_A_STRING = 2;
@@ -103,6 +103,10 @@ export function StringsPanel() {
   const [spacing, setSpacing] = useState(5);
   const [closeOrOpen, setCloseOrOpen] = useState<'close' | 'open'>('close');
   const [tolerance, setTolerance] = useState<number | null>(null);
+  // Round corners (String tools plan, workstream 2): the radius, the corners it takes, and the arcs' vertex spacing.
+  const [radius, setRadius] = useState<number | null>(null);
+  const [cornerAngle, setCornerAngle] = useState(10);
+  const [arcSpacing, setArcSpacing] = useState(2);
   const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
 
@@ -331,6 +335,8 @@ export function StringsPanel() {
         };
       case 'smooth':
         return { label: `Smooth ${what}`, ...calls('string.smooth', { strings: ids, spacing }), ready: some };
+      case 'fillet':
+        return { label: `Round the corners of ${what}`, ...calls('string.fillet', { strings: ids, radius, angle: cornerAngle, spacing: arcSpacing }), ready: some && radius !== null };
       case 'filter':
         return { label: `Filter ${what}`, ...calls('string.filter', { strings: ids, tolerance }), ready: some && tolerance !== null };
       case 'reverse':
@@ -672,6 +678,20 @@ export function StringsPanel() {
         <ToolSection title="Settings">
           <Field label="Every" hint="The longest step along the curve, in plan">
             <NumberInput value={spacing} onChange={setSpacing} label="Longest step along the curve" unit="m" range={{ min: 0, minIncluded: false }} />
+          </Field>
+        </ToolSection>
+      )}
+
+      {mode === 'fillet' && (
+        <ToolSection title="Settings">
+          <Field label="Radius" hint="Each corner's radius in plan; a corner whose legs are too short takes the biggest that fits, and the run says which">
+            <NumberOrBlank value={radius} onChange={setRadius} label="Corner radius" unit="m" range={{ min: 0, minIncluded: false }} blank="" />
+          </Field>
+          <Field label="Corners over" hint="Only corners turning more than this are rounded">
+            <NumberInput value={cornerAngle} onChange={setCornerAngle} label="Corners turning more than" unit="°" range={{ min: 0, max: 179 }} />
+          </Field>
+          <Field label="Every" hint="A vertex every so many metres along each arc, its heights graded evenly from the legs'">
+            <NumberInput value={arcSpacing} onChange={setArcSpacing} label="Metres between vertices along an arc" unit="m" range={{ min: 0, minIncluded: false }} />
           </Field>
         </ToolSection>
       )}

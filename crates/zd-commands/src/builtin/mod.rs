@@ -49,7 +49,7 @@ pub(crate) use solid::check_solids_made;
 pub use spry::{ImportSpry, ImportSpryParams};
 pub use solid::{CutBySurface, CutBySurfaceParams, ImportSolid, ImportSolidParams, ImportSolids, ImportSolidsParams, RepairSolids, RepairSolidsParams, SolidFromMesh};
 pub use string::{
-    CornerParam, CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, DrapeString, DrapeStringParams, FilterString,
+    CornerParam, CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, DrapeString, DrapeStringParams, FilletString, FilletStringParams, FilterString,
     FilterStringParams, InsertVertex, InsertVertexParams, JoinStrings, JoinStringsParams, MoveVertex, MoveVertexParams, NumberStrings,
     NumberStringsParams, OffsetString, OffsetStringParams, RedrawStretch, RedrawStretchParams, ReverseString, SetClosed, SetClosedParams, SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam,
     SmoothString, SmoothStringParams, SplitString, SplitStringParams, StringParams, ExtendString, ExtendStringParams, TrimKeep, TrimString, TrimStringParams,
@@ -104,6 +104,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(TrimString);
     registry.register(ExtendString);
     registry.register(SmoothString);
+    registry.register(FilletString);
     registry.register(FilterString);
     registry.register(ProjectString);
     registry.register(SurfaceBetweenStrings);

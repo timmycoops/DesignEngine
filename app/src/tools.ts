@@ -44,6 +44,7 @@ export type ToolIcon =
   | 'extend'
   | 'join'
   | 'smooth'
+  | 'round-corners'
   | 'filter'
   | 'reverse'
   | 'close'
@@ -205,6 +206,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'strings:trim', stage: 'strings', label: 'Trim', tip: 'Trims each string picked back to a string clicked.', icon: 'trim', panel: 'strings', mode: 'trim', command: 'string.trim', step: { takes: 'the strings picked and a cutting string' } },
   { key: 'strings:extend', stage: 'strings', label: 'Extend', tip: 'Runs each string picked on to a string clicked.', icon: 'extend', panel: 'strings', mode: 'extend', command: 'string.extend', step: { takes: 'the strings picked and a string to run on to' } },
   { key: 'strings:join', stage: 'strings', label: 'Join', tip: 'Joins the open strings picked end to end into one.', icon: 'join', panel: 'strings', mode: 'join', command: 'string.join', step: { takes: 'the pieces picked' } },
+  { key: 'strings:fillet', stage: 'strings', label: 'Round corners', tip: 'Rounds the corners of each string picked to a radius.', icon: 'round-corners', panel: 'strings', mode: 'fillet', command: 'string.fillet', step: { takes: 'the strings picked' } },
   { key: 'strings:smooth', stage: 'strings', label: 'Smooth', tip: 'Smooths each string picked, a vertex every so many metres.', icon: 'smooth', panel: 'strings', mode: 'smooth', command: 'string.smooth', step: { takes: 'the strings picked' } },
   { key: 'strings:filter', stage: 'strings', label: 'Filter', tip: "Takes out vertices each string picked doesn't need.", icon: 'filter', panel: 'strings', mode: 'filter', command: 'string.filter', step: { takes: 'the strings picked' } },
   { key: 'strings:reverse', stage: 'strings', label: 'Reverse', tip: 'Turns each string picked to run the other way.', icon: 'reverse', panel: 'strings', mode: 'reverse', command: 'string.reverse', step: { takes: 'the strings picked' } },
@@ -353,6 +355,7 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     'strings:trim',
     'strings:extend',
     'strings:join',
+    'strings:fillet',
     'strings:smooth',
     'strings:filter',
     'strings:reverse',

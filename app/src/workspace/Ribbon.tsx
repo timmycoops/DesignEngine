@@ -4,7 +4,7 @@ import { cn } from 'cn';
 import { Button } from '@/design-system/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
 import { Separator } from '@/design-system/ui/separator';
-import { ALWAYS_ROW, panelTool, type RowItem, type RowMenu, ROWS, type Stage, STAGES, toolByKey } from '@/tools';
+import { ALWAYS_ROW, panelTool, type RowItem, type RowMenu, ROWS, rowName, type Stage, STAGES, toolByKey } from '@/tools';
 import { PANELS } from './panels';
 import { BarTool, RowMenuItems, RowToolItem, type ToolUse } from './ToolMenu';
 import { IconNamed } from './toolIcons';
@@ -43,11 +43,21 @@ function RowPart({ item, use }: { item: RowItem; use: ToolUse }) {
 function More({ items, use }: { items: readonly RowItem[]; use: ToolUse }) {
   // No rule first or last, where the row's rule fell at the fold.
   const shown = items.filter((item, k) => item !== '|' || (k > 0 && k < items.length - 1));
+  // The tool in use, if it's one folded in here: More is lit and says which, as the tool's own button would be.
+  const inUse = items.flatMap((item) => (typeof item === 'string' && item !== '|' ? [toolByKey(item)] : [])).find((t) => t && use.lit(t)) ?? null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="shrink-0 px-2" title="The tools that don't fit the row" data-slot="row-more">
-          <IconNamed name="more" /> More <ChevronDown className="text-muted-foreground" />
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn('shrink-0 px-2', inUse && 'bg-selection text-primary')}
+          title={inUse ? `${rowName(inUse)} is in use; the tools that don't fit the row` : "The tools that don't fit the row"}
+          data-slot="row-more"
+          data-tool={inUse?.key}
+          aria-pressed={inUse ? true : undefined}
+        >
+          <IconNamed name="more" /> {inUse ? `More: ${rowName(inUse)}` : 'More'} <ChevronDown className="text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">

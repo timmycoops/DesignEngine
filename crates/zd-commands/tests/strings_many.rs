@@ -305,7 +305,35 @@ fn timings_for_many_strings_in_one_run() {
         time(&format!("drape on the {count} triangle surface"), "string.drape", json!({ "strings": ids, "surface": big }));
         time("set elevation", "string.set_elevation", json!({ "strings": ids, "rl": 100.0 }));
         time("filter at 0.5 m", "string.filter", json!({ "strings": ids, "tolerance": 0.5 }));
+        time("round corners at 20 m, every corner over 1°", "string.fillet", json!({ "strings": ids, "radius": 20.0, "angle": 1.0 }));
         time("smooth at 5 m", "string.smooth", json!({ "strings": ids, "spacing": 5.0 }));
         time("reverse", "string.reverse", json!({ "strings": ids }));
     }
+}
+
+/// Round corners (String tools plan, workstream 2) on fifteen toes in one run: each toe's one corner (turning 8.5°, east
+/// then 200 m east and 30 m north) is under 10° and left; at 5° every toe's corner is rounded, one revision each, one
+/// undo. A corner whose legs are too short takes the biggest radius they hold, and the run says which.
+#[test]
+fn round_corners_on_fifteen_toes_in_one_run() {
+    let mut s = Session::with_builtins();
+    let ids = toes(&mut s, 15);
+    let none = s.run("string.fillet", json!({ "strings": ids, "radius": 50.0 })).unwrap();
+    assert!(none.outputs.is_empty(), "8.5° corners are under the 10° default");
+    let record = s.run("string.fillet", json!({ "strings": ids, "radius": 50.0, "angle": 5.0 })).unwrap();
+    assert_eq!(record.outputs.len(), 15);
+    assert!(ids.iter().all(|&id| line(&s, id).vertices.len() > 3 && revision(&s, id) == 2));
+    // The arc ends where it meets each leg, R × tan(8.53° / 2) = 3.73 m either side of the corner, the ends kept.
+    let first = line(&s, ids[0]);
+    let turn = (30.0f64).atan2(200.0);
+    let tangent = 50.0 * (turn / 2.0).tan();
+    assert!((first.vertices[1][0] - (E + 200.0 - tangent)).abs() < 1e-9 && first.vertices[1][1] == N, "{:?}", first.vertices[1]);
+    assert_eq!((first.vertices[0], *first.vertices.last().unwrap()), (toe_points(0)[0], toe_points(0)[2]));
+    s.undo().unwrap();
+    assert!(ids.iter().enumerate().all(|(k, &id)| line(&s, id).vertices == toe_points(k)), "one undo puts all fifteen back");
+
+    // A 3 m dog-leg can't hold 20 m: it gets the most its legs allow, and the run says so.
+    let short = string(&mut s, "Short", "toes", &[[E, N, 100.0], [E + 3.0, N, 100.0], [E + 3.0, N + 3.0, 100.0]], false);
+    let tight = s.run("string.fillet", json!({ "string": short, "radius": 20.0 })).unwrap();
+    assert!(tight.messages.iter().any(|m| m.contains("legs too short for it, so the biggest that fits: vertex 2 at 3.00 m")), "{:?}", tight.messages);
 }
