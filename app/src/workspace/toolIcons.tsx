@@ -1,6 +1,7 @@
 import {
   ArrowLeftRight,
   Crop,
+  Diff,
   SquaresUnite,
   GitMerge,
   Mountain,
@@ -77,6 +78,7 @@ import type { Tool, ToolIcon } from '@/tools';
 /** The picture for each icon the tool list names. A name with no picture doesn't compile. */
 const ICONS: Record<ToolIcon, LucideIcon> = {
   clip: Crop,
+  'compare-surfaces': Diff,
   'polygon-ops': SquaresUnite,
   meet: GitMerge,
   contours: Mountain,

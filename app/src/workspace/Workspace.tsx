@@ -28,6 +28,7 @@ import { ReservesTable } from '@/panels/ReservesTablePanel';
 import { DataflowView } from '@/panels/DataflowPanel';
 import { Parameters } from '@/panels/ParametersPanel';
 import { WorkflowPanel } from '@/panels/WorkflowPanel';
+import { SurfacesPanel } from '@/panels/SurfacesPanel';
 import { type Dock, type PanelId, PANELS, TOOL_DOCK_WIDTH } from './panels';
 
 /** What each panel draws. A panel in the list with nothing to draw doesn't compile. */
@@ -37,6 +38,7 @@ const components: Record<PanelId | 'viewport', () => ReactNode> = {
   properties: PropertiesPanel,
   strings: StringsPanel,
   from_surfaces: FromSurfacesPanel,
+  surfaces: SurfacesPanel,
   move: MovePanel,
   runlog: RunLogPanel,
   face: FaceDesignPanel,

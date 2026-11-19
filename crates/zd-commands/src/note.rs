@@ -141,6 +141,7 @@ codes! {
     StringIsland = "string.island", "Lines inside a polygon that don't touch its sides, so they don't split it";
     StringProjectedInPieces = "string.projected_in_pieces", "A string projected by a height whose new string pinched off into pieces";
     StringSurfacesFlat = "string.surfaces_flat", "Triangles of two surfaces lying in one plane where they overlap, so no line can be drawn where they meet there";
+    SurfaceColumnsDiffer = "surface.columns_differ", "Two surfaces compared, the column check more than 0.1 % from the exact cut or fill";
     StringPolygonOff = "string.polygon_off", "A vertex of a polygon made in plan lying on no edge of the strings it was made from, given the height of the nearest";
     SolidOutsidePolygons = "solid.outside_polygons", "Part of a solid outside every block polygon, found before a cut by polygons, which it holds";
     BlockNameRepeated = "block.name_repeated", "Blocks given the same name, which should be unique";

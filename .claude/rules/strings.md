@@ -1,8 +1,8 @@
 ---
 paths:
-  - "crates/zd-geom/src/{string,string_cut,vertices,transform,crossings,polygons,polygon_ops,fillet,project,sheet,from_surfaces}.rs"
-  - "crates/zd-commands/src/builtin/{string,object,project,sheet,surface,from_surfaces}.rs"
-  - "app/src/panels/{StringsPanel,MovePanel,FromSurfacesPanel}.tsx"
+  - "crates/zd-geom/src/{string,string_cut,vertices,transform,crossings,polygons,polygon_ops,fillet,project,sheet,from_surfaces,compare_surfaces}.rs"
+  - "crates/zd-commands/src/builtin/{string,object,project,sheet,surface,from_surfaces,surface_compare}.rs"
+  - "app/src/panels/{StringsPanel,MovePanel,FromSurfacesPanel,SurfacesPanel}.tsx"
   - "app/src/panels/{stringSide,moveWords,strips}.ts"
 ---
 
@@ -40,3 +40,7 @@ ramps by hand, measure), 0083 (cut strings by strings).
   outside, cut at its own heights as Trim does; Union, overlap or difference makes new closed strings of closed strings
   in plan, on Manifold's CrossSection about a local origin, each vertex that was there coming back exactly with its
   height and each new one taking the height along the first set's edge.
+- Surfaces against surfaces (Surface tools plan, 0093 on), in the Surfaces panel, a panel of its own: Compare gives cut
+  (the second below the first) and fill, exact as the solids between them each way, with a 2.5D column check said
+  beside them and a warning past 0.1 %, inside a closed string or wherever both are; a thickness grid only when
+  switched on. Merge, Trim and Triangulate join it as they're built.

@@ -28,6 +28,7 @@ mod dataflow;
 mod reserves_run;
 mod formulas;
 mod from_surfaces;
+mod surface_compare;
 mod starter;
 mod measure;
 
@@ -59,6 +60,7 @@ pub use string::{
 pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, SolidBetween, SolidBetweenParams, check_slice};
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
 pub use workflow::{SaveWorkflow, SaveWorkflowParams, WORKFLOW_LAYER};
+pub use surface_compare::{CompareSurfaces, CompareSurfacesParams};
 pub use from_surfaces::{Contours, ContoursParams, FromSection, FromSectionParams, Outline, OutlineParams, WhereSurfacesMeet, WhereSurfacesMeetParams};
 pub use measure::{MEASURES, Measure, MeasureParams, block_length, floor_dip, measure, plan_area};
 pub use reserves_run::{
@@ -90,6 +92,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(DeleteObject);
     registry.register(CreateString);
     registry.register(WhereSurfacesMeet);
+    registry.register(CompareSurfaces);
     registry.register(Contours);
     registry.register(Outline);
     registry.register(FromSection);

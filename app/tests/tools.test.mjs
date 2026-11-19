@@ -83,8 +83,8 @@ test('every stage has a row of tools that exist, named in words', () => {
   // Open is a menu on the row: a project, or an older project folder.
   assert.deepEqual(ROWS.project.filter((i) => typeof i !== 'string').map((m) => m.label), ['Open', 'Import', 'Export']);
   assert.deepEqual(names('geology'), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology']);
-  assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Reserves table', 'Dataflow', 'Compare', 'Report']);
-  assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Ramp', 'Set grade', 'Offset', 'Project', 'Surface between', 'Join faces']);
+  assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Reserves table', 'Dataflow', 'Compare', 'Compare', 'Report']);
+  assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Ramp', 'Set grade', 'Offset', 'Project', 'Surface between', 'Join faces', 'Compare']);
   assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Clip', 'Union', 'Join', 'Round corners', 'Smooth', 'Filter', 'Densify', 'At crossings', 'Reverse', 'Close', 'Where they meet', 'Contours', 'Outline', 'Section strings', 'Move', 'Rotate', 'Mirror']);
 });
 
@@ -98,7 +98,7 @@ test("a stage's tools are on its row, but for the few reached another way", () =
   // on, listed for the canvas; Cut solids as it stands is in the Panels menu, its six choices on the row.
   // Strings as it stands is in the Panels menu too, its thirteen tools on the row; so is Strings from surfaces, its four
   // on the row (String tools plan, workstream 5).
-  assert.deepEqual(elsewhere.sort(), ['builder:step', 'cut', 'from_surfaces', 'reserves:interrogate', 'strings']);
+  assert.deepEqual(elsewhere.sort(), ['builder:step', 'cut', 'from_surfaces', 'reserves:interrogate', 'strings', 'surfaces']);
   // A row shows a tool from another stage only where the plan has it: Relink geology on Project, and the Import and
   // Export menus there, which gather their tools from every stage.
   const visiting = STAGES.flatMap(({ id }) => rowTools(id).filter((t) => t.stage !== id && t.stage !== 'always').map((t) => `${id}: ${t.key}`));
@@ -114,6 +114,8 @@ test("a stage's tools are on its row, but for the few reached another way", () =
     'project: seam.build',
     'project: seam.relink',
     'project: seam.suggest',
+    // Compare surfaces is on Reserves too (Surface tools plan, decision 5).
+    'reserves: surfaces:compare',
     // The string tools a ramp is made from by hand are on Walls too (decision 0079).
     'walls: strings:offset',
     'walls: strings:project',
@@ -294,6 +296,7 @@ test('the canvas lists the tools that add a step, as the list has them', () => {
     'Strings: Close',
     'Builder: Build a step',
     'Strings: Surface between strings',
+    'Surfaces: Compare surfaces',
     'Cut solids: Between surfaces',
     'Cut solids: Strips by faces',
     'Cut solids: By surface or RL',

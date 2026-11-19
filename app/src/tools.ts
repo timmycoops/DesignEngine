@@ -88,6 +88,7 @@ export type ToolIcon =
   | 'section'
   | 'measure'
   | 'clip'
+  | 'compare-surfaces'
   | 'polygon-ops'
   | 'meet'
   | 'contours'
@@ -245,6 +246,8 @@ export const TOOLS: readonly Tool[] = [
 
   // Solids. Cut solids' six, in the order the work is done; the panel's own choice keeps its order.
   { key: 'cut', stage: 'solids', label: 'Cut solids', tip: 'into strips by faces, by a surface, grid or RL, or one between two surfaces', icon: 'cut', panel: 'cut' },
+  { key: 'surfaces', stage: 'walls', label: 'Surfaces', tip: 'work on surfaces and grids: compare them, cut and fill', icon: 'compare-surfaces', panel: 'surfaces' },
+  { key: 'surfaces:compare', stage: 'walls', label: 'Compare surfaces', tip: 'Cut and fill between two surfaces, exact, with a column check.', short: 'Compare', icon: 'compare-surfaces', panel: 'surfaces', mode: 'compare', command: 'surface.compare', step: { takes: 'two surfaces or grids, and a closed string or none' } },
   { key: 'cut:between', stage: 'solids', label: 'Between surfaces', tip: 'Makes one solid inside a closed string, between two surfaces.', icon: 'between', panel: 'cut', mode: 'between', command: 'solid.between_surfaces', step: { takes: 'a closed string, top and bottom' } },
   { key: 'cut:strips', stage: 'solids', label: 'Strips by faces', tip: 'Slices solids into strips by faces, from the pit out.', icon: 'strips', panel: 'cut', mode: 'strips', command: 'solid.slice_by_faces', step: { takes: 'solids and a face a strip' } },
   { key: 'cut:cut', stage: 'solids', label: 'By surface or RL', tip: 'Cuts solids by a surface, a grid or an RL.', icon: 'cut', panel: 'cut', mode: 'cut', command: 'solid.cut_by_surface', step: { takes: 'solids and a surface, grid or RL' } },
@@ -401,7 +404,7 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     '|',
     ...MOVE_TOOLS,
   ],
-  walls: ['face', 'builder', 'builder:rebuild', '|', 'strings:ramp_polygon', 'strings:set_grade', 'strings:offset', 'strings:project', 'strings:surface_between', '|', 'cut:join_faces'],
+  walls: ['face', 'builder', 'builder:rebuild', '|', 'strings:ramp_polygon', 'strings:set_grade', 'strings:offset', 'strings:project', 'strings:surface_between', '|', 'cut:join_faces', '|', 'surfaces:compare'],
   solids: [
     'cut:between',
     'cut:strips',
@@ -420,7 +423,7 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     ...MOVE_TOOLS,
   ],
   geology: ['import.vulcan_grid', 'seam.suggest', 'seam.build', 'seam.relink'],
-  reserves: ['reserves', 'params', 'restable', 'notebook', 'reserves:compare', 'workflow:report'],
+  reserves: ['reserves', 'params', 'restable', 'notebook', 'reserves:compare', 'surfaces:compare', 'workflow:report'],
 };
 
 /** At the right of every row, whatever the stage. */

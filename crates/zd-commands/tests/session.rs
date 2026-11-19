@@ -127,6 +127,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "string.vertices_at_crossings",
             "string.where_surfaces_meet",
             "surface.between_strings",
+            "surface.compare",
             "surface.from_mesh",
             "surface.import",
             "workflow.save",
