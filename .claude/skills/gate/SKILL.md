@@ -44,11 +44,10 @@ Build the module if needed (`VIRTUAL_ENV="$PWD/.venv" .venv/Scripts/maturin deve
 then run `.venv/Scripts/python testdata/synthetic/workflow_demo.py bench/out/gate/demo` (a scratch folder, so Tim's
 own demo isn't touched).
 
-Compare what it prints for each case (Base and 50m: blocks, coal blocks, total m3, benches, leaves, working sections,
-ROM coal and waste m3 and t) with `bench/gate-figures.json`. If that file doesn't exist, show the figures and ask Tim
-before writing it. A figure that moved beyond 1e-6 relative is a finding: name the commits since the figures were
-recorded that touched `crates/` (`git log --oneline <recorded commit>..HEAD -- crates`), and ask before updating the
-file.
+The script checks its own totals: `RECORDED` in it holds Base's and 50m's ROM coal (m3 and t), ROM waste, out of model
+and clean coal, and it fails, naming each figure, when one moves by more than 0.1. A failure is a finding: name the
+commits since `RECORDED` was last changed that touched `crates/` (`git log --oneline <that commit>..HEAD -- crates`),
+and ask Tim before changing `RECORDED`. Report the blocks, leaves and working sections it prints alongside.
 
 ## 3. Report
 

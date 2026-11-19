@@ -140,6 +140,13 @@ catches the next change.
 **Wanted:** find which change moved it and say so in its decision record. Then keep one place (the demo script's
 asserts, or `bench/RESULTS.md`) holding the demo's current Base and 50m totals, with the check failing when they move.
 
+Done (19 Nov, branch `app/review-fixes`). I ran the demo at each commit since 0074 recorded its figures, and the move
+came from 25b41af, "Measure a block's length along its strip and width across it" (0074). The new lengths changed
+edge loss and dilution, and 41.1 m³ went from ROM waste to ROM coal. 0074 now says so under its table. The current totals
+for Base and 50m (ROM coal m³ and t, ROM waste, out of model, clean coal) are `RECORDED` in
+`testdata/synthetic/workflow_demo.py`, which fails, naming each figure, when one moves by more than 0.1. `/gate` reads
+them from there.
+
 ## Smaller things, take or leave
 
 - Two face designs are both named "Highwall" (one r3, one with no revision shown). Say which the workflow uses, or keep
