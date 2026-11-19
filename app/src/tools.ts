@@ -48,6 +48,10 @@ export type ToolIcon =
   | 'filter'
   | 'reverse'
   | 'close'
+  | 'move'
+  | 'copy'
+  | 'rotate'
+  | 'mirror'
   | 'face'
   | 'builder'
   | 'rebuild'
@@ -259,6 +263,13 @@ export const TOOLS: readonly Tool[] = [
   { key: 'edit.undo', stage: 'always', label: 'Undo', tip: 'Takes back the last change', icon: 'undo', shortcut: 'Ctrl+Z', action: 'edit.undo', needs: 'undo' },
   { key: 'edit.redo', stage: 'always', label: 'Redo', tip: 'Puts back the change just undone', icon: 'redo', shortcut: 'Ctrl+Y', action: 'edit.redo', needs: 'redo' },
   { key: 'edit.delete', stage: 'always', label: 'Delete what is selected', tip: 'Deletes everything selected, in one undo', shortcut: 'Delete', action: 'edit.delete', needs: 'selected' },
+  // Move and copy (String tools plan, workstream 3): on strings, surfaces, solids and grids, so always there, and on the
+  // Strings and Solids rows.
+  { key: 'move', stage: 'always', label: 'Move and copy', tip: 'move, copy, rotate or mirror the strings, surfaces, solids and grids picked, whole', icon: 'move', panel: 'move' },
+  { key: 'move:move', stage: 'always', label: 'Move', tip: 'Moves what is picked by two clicks, or by distances typed.', icon: 'move', panel: 'move', mode: 'move', command: 'object.transform', step: { takes: 'the objects picked' } },
+  { key: 'move:copy', stage: 'always', label: 'Copy', tip: 'Copies what is picked, by two clicks or by distances typed.', icon: 'copy', panel: 'move', mode: 'copy', command: 'object.copy', step: { takes: 'the objects picked' } },
+  { key: 'move:rotate', stage: 'always', label: 'Rotate', tip: 'Turns what is picked about a point clicked, by an angle.', icon: 'rotate', panel: 'move', mode: 'rotate', command: 'object.transform', step: { takes: 'the objects picked' } },
+  { key: 'move:mirror', stage: 'always', label: 'Mirror', tip: 'Mirrors what is picked across a line clicked in plan.', icon: 'mirror', panel: 'move', mode: 'mirror', command: 'object.transform', step: { takes: 'the objects picked' } },
   { key: 'workflow', stage: 'always', label: 'Workflow', tip: 'saved steps run again in one go, captured from the Run log or added from the tool panels', icon: 'workflow', panel: 'workflow' },
   { key: 'canvas', stage: 'always', label: 'Workflow canvas', tip: 'a workflow as nodes and wires: what each step reads', panel: 'canvas' },
   { key: 'layers', stage: 'always', label: 'Layers', tip: 'the layer tree: show, hide, select and arrange', panel: 'layers' },
@@ -332,7 +343,9 @@ export type RowItem = string | '|' | RowMenu;
 
 const OPEN_MENU: RowMenu = { label: 'Open', icon: 'open', tip: 'Open a project (.zdp), or an older project folder (.zdproj), which saves as a .zdp beside it', menu: 'open' };
 const IMPORT_MENU: RowMenu = { label: 'Import', icon: 'import', tip: 'Bring in surfaces, grids, strings, solids, Deswik and Spry, and build a seam model', menu: 'import' };
-const EXPORT_MENU: RowMenu = { label: 'Export', icon: 'export', tip: 'Strings, surfaces and solids out to DXF, CSV or a zip', menu: 'export' };
+/** Move, Copy, Rotate and Mirror: on the Strings row and the Solids row, as they work on both (and on surfaces and grids). */
+const MOVE_TOOLS = ['move:move', 'move:copy', 'move:rotate', 'move:mirror'] as const;
+const EXPORT_MENU: RowMenu ={ label: 'Export', icon: 'export', tip: 'Strings, surfaces and solids out to DXF, CSV or a zip', menu: 'export' };
 
 /**
  * The row of tools under each stage's tab, left to right, in the order the work is done (decision 0076). A tool is in
@@ -360,6 +373,8 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     'strings:filter',
     'strings:reverse',
     'strings:set_closed',
+    '|',
+    ...MOVE_TOOLS,
   ],
   walls: ['face', 'builder', 'builder:rebuild', '|', 'strings:ramp_polygon', 'strings:set_grade', 'strings:offset', 'strings:project', 'strings:surface_between', '|', 'cut:join_faces'],
   solids: [
@@ -375,6 +390,9 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     '|',
     { label: 'Import solids', icon: 'solids-in', tip: 'Closed triangulations in Vulcan .00t or DXF files, or a zip or folder of them', keys: ['import.solids', 'import.solids_folder', 'import.solids_repaired', 'import.solids_folder_repaired'] },
     { label: 'Export solids', icon: 'solids-out', tip: 'Solids out as a zip or a folder, a DXF each', keys: ['export.selected_solids', 'export.visible_solids'] },
+    // Last, so on a narrow window they fold into More before the solids' own menus do.
+    '|',
+    ...MOVE_TOOLS,
   ],
   geology: ['import.vulcan_grid', 'seam.suggest', 'seam.build', 'seam.relink'],
   reserves: ['reserves', 'params', 'restable', 'notebook', 'reserves:compare', 'workflow:report'],

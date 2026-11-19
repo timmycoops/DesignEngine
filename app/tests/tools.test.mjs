@@ -78,14 +78,14 @@ test('every stage has a row of tools that exist, named in words', () => {
     assert.notEqual(ROWS[id].at(-1), '|');
   }
   const names = (stage) => ROWS[stage].filter((i) => typeof i === 'string' && i !== '|').map((key) => rowName(toolByKey(key)));
-  assert.deepEqual(names('solids'), ['Between surfaces', 'Strips by faces', 'By surface or RL', 'By seams', 'By benches', 'By blocks', 'Objects table', 'Repair']);
+  assert.deepEqual(names('solids'), ['Between surfaces', 'Strips by faces', 'By surface or RL', 'By seams', 'By benches', 'By blocks', 'Objects table', 'Repair', 'Move', 'Copy', 'Rotate', 'Mirror']);
   assert.deepEqual(names('project'), ['New', 'Save as', 'Relink geology']);
   // Open is a menu on the row: a project, or an older project folder.
   assert.deepEqual(ROWS.project.filter((i) => typeof i !== 'string').map((m) => m.label), ['Open', 'Import', 'Export']);
   assert.deepEqual(names('geology'), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology']);
   assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Reserves table', 'Dataflow', 'Compare', 'Report']);
   assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Ramp', 'Set grade', 'Offset', 'Project', 'Surface between', 'Join faces']);
-  assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Join', 'Round corners', 'Smooth', 'Filter', 'Reverse', 'Close']);
+  assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Join', 'Round corners', 'Smooth', 'Filter', 'Reverse', 'Close', 'Move', 'Copy', 'Rotate', 'Mirror']);
 });
 
 test("a stage's tools are on its row, but for the few reached another way", () => {
@@ -292,6 +292,10 @@ test('the canvas lists the tools that add a step, as the list has them', () => {
     'Cut solids: By benches',
     'Cut solids: By blocks',
     'Reserves: Interrogate',
+    'Move and copy: Move',
+    'Move and copy: Copy',
+    'Move and copy: Rotate',
+    'Move and copy: Mirror',
   ]);
   for (const tool of stepTools()) assert.ok(tool.command && tool.panel && tool.step.takes, tool.key);
 });

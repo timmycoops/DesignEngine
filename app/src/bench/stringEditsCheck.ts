@@ -3,7 +3,10 @@
 // one Ctrl+Z puts all three back. Extend runs them on to a line by one click on it, at their own grade. Esc in the middle
 // of a trim lets it go and changes nothing. Keep both splits them at the limit. Split at a click puts a vertex in where
 // it's clicked, and Join puts the two back as one, ends within its tolerance sharing a vertex. Round corners (workstream
-// 2) rounds a dog-leg's corner at a radius typed, every arc vertex that far from the centre; Ctrl+Z puts it back. Then
+// 2) rounds a dog-leg's corner at a radius typed, every arc vertex that far from the centre; Ctrl+Z puts it back. Move
+// and copy (workstream 3), from the Solids row: a toe moved by two snapped clicks and by distances typed, one rotated a
+// quarter turn about a vertex clicked, and a mirrored copy of the dog-leg across the pit limit, picked once made; each
+// put back by Ctrl+Z. Then
 // the layers-only tree (Filtering plan, workstream 0): a row a layer saying what's on it, none a string; a right click on
 // the dog-leg in the view hides it from its menu, its layer's row says so, and Show all hidden brings it back. A layer's
 // filter (decision 0088, workstream 3): Filter by attributes… on the toes' right-click, `length: >170` typed keeps the
@@ -202,6 +205,114 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   await key('z', true);
   await wait(500);
   expect('one Ctrl+Z puts the dog-leg back', (await points(dogleg)).length === 3, (await points(dogleg)).length);
+
+  // Move and copy (workstream 3), from the Solids row, or its More where the row folds.
+  const movePanel = () => document.querySelector<HTMLElement>('[data-tool-panel="move"]');
+  const moveButton = () => [...(movePanel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].at(-1) ?? null;
+  const useMove = async (tool: string) => {
+    await key('Escape');
+    document.querySelector<HTMLButtonElement>('[role="tab"][data-stage="solids"]')?.click();
+    await wait(200);
+    const onRow = document.querySelector<HTMLButtonElement>(`[data-slot="ribbon"] button[data-tool="move:${tool}"]:not([data-slot="row-more"])`);
+    if (onRow) onRow.click();
+    else {
+      document.querySelector<HTMLButtonElement>('[data-slot="row-more"]')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', ctrlKey: false }));
+      await settle();
+      document.querySelector<HTMLElement>(`[role="menuitem"][data-tool="move:${tool}"]`)?.click();
+    }
+    await wait(500);
+  };
+  const typeInto = (label: string, value: string) => {
+    const box = movePanel()?.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`) ?? null;
+    if (!box) return false;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(box, value);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  };
+  const moved = (a: Vec3[], b: Vec3[], by: Vec3) => a.length === b.length && a.every((p, k) => near(b[k][0], p[0] + by[0]) && near(b[k][1], p[1] + by[1]) && near(b[k][2], p[2] + by[2]));
+  const rel = (ps: Vec3[]) => ps.map((p) => [p[0] - E, p[1] - N, p[2]]);
+
+  // Move by two clicks: Toe 1 picked, then its first vertex and the pit limit's south end, both snapped. RLs kept.
+  await useMove('move');
+  await click([E + 20, N + toeY[0], 102]);
+  const toe1 = (await points(toes[0])) as Vec3[];
+  const moveSays = moveButton()?.textContent?.trim() ?? '';
+  moveButton()?.click();
+  await settle();
+  const askedFrom = footer().includes('Click a point on Toe 1 to move it from');
+  await click([E, N + toeY[0], 100]);
+  await click([E + 60, N - 50, 100]);
+  await wait(800);
+  const toe1Moved = (await points(toes[0])) as Vec3[];
+  expect(
+    'Move by two clicks, snapped to a vertex of Toe 1 and the end of the pit limit: every vertex 60 m east and 50 m south, RLs kept',
+    moveSays === 'Move Toe 1' && askedFrom && moved(toe1, toe1Moved, [60, -50, 0]),
+    { button: moveSays, asked: askedFrom, now: rel(toe1Moved) },
+  );
+  await key('z', true);
+  await wait(500);
+  expect('one Ctrl+Z puts Toe 1 back', moved(toe1, (await points(toes[0])) as Vec3[], [0, 0, 0]));
+
+  // Move by distances typed: Toe 2, 100.5 m east, 200.25 m south and 3 m up.
+  await click([E + 20, N + toeY[1], 102]);
+  [...(movePanel()?.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Moved by two clicks or by distances typed"] button') ?? [])].find((b) => b.textContent?.trim() === 'Distances')?.click();
+  await settle();
+  const typedIn = typeInto('Distance east, west negative', '100.5') && typeInto('Distance north, south negative', '-200.25') && typeInto('Distance up, down negative', '3');
+  await settle();
+  const toe2 = (await points(toes[1])) as Vec3[];
+  moveButton()?.click();
+  await wait(800);
+  const toe2Moved = (await points(toes[1])) as Vec3[];
+  expect('Move by distances typed moves Toe 2 by exactly 100.5 m east, 200.25 m south and 3 m up', typedIn && moved(toe2, toe2Moved, [100.5, -200.25, 3]), { typed: typedIn, now: rel(toe2Moved) });
+  await key('z', true);
+  await wait(500);
+
+  // Rotate: Toe 3 (run on to 150 m by Extend) a quarter turn anticlockwise about its own first vertex, clicked: its end
+  // goes from 150 m east of that vertex to 150 m north of it, at its own RL.
+  await useMove('rotate');
+  await click([E + 20, N + toeY[2], 102]);
+  const toe3Before = ((await points(toes[2])) as Vec3[]).at(-1) ?? [0, 0, 0];
+  moveButton()?.click();
+  await settle();
+  await click([E, N + toeY[2], 100]);
+  await wait(800);
+  const toe3End = ((await points(toes[2])) as Vec3[]).at(-1) ?? [0, 0, 0];
+  expect(
+    "Rotate 90° about Toe 3's first vertex, clicked: its end as far north of it as it was east, at its own RL",
+    near(toe3End[0], E) && near(toe3End[1], N + toeY[2] + (toe3Before[0] - E)) && near(toe3End[2], toe3Before[2]) && toe3Before[0] - E > 100,
+    { before: rel([toe3Before]), after: rel([toe3End]) },
+  );
+  await key('z', true);
+  await wait(500);
+
+  // Mirror copies: the dog-leg across the pit limit (two clicks on its ends, snapped); a copy named for it, picked,
+  // as far east of the limit as the dog-leg is west of it; the dog-leg itself where it was.
+  await useMove('mirror');
+  await click([E - 30, N + 170, 100]);
+  const copies = movePanel()?.querySelector<HTMLButtonElement>('[aria-label="Mirror copies, leaving the originals"]');
+  copies?.click();
+  await settle();
+  const mirrorSays = moveButton()?.textContent?.trim() ?? '';
+  const legBefore = (await points(dogleg)) as Vec3[];
+  moveButton()?.click();
+  await settle();
+  await click([E + 60, N - 50, 100]);
+  await click([E + 60, N + 150, 100]);
+  await wait(800);
+  const copy = (await projectSummary()).objects.find((o) => o.kind === 'string' && o.name === 'Dog-leg copy');
+  const copyPoints = copy ? ((await points(copy.id)) as Vec3[]) : [];
+  const mirrored = copyPoints.length === 3 && legBefore.every((p, k) => near(copyPoints[k][0], 2 * (E + 60) - p[0]) && near(copyPoints[k][1], p[1]) && near(copyPoints[k][2], p[2]));
+  expect(
+    'Mirror with Copies ticked: a Dog-leg copy across the pit limit, picked once made, the dog-leg where it was',
+    mirrorSays === 'Copy and mirror Dog-leg' && mirrored && !!copy && selection().length === 1 && selection()[0] === copy.id && moved(legBefore, (await points(dogleg)) as Vec3[], [0, 0, 0]),
+    { button: mirrorSays, copy: rel(copyPoints), picked: selection().length },
+  );
+  copies?.click();
+  await key('z', true);
+  await wait(500);
+  expect('one Ctrl+Z takes the copy away', !(await projectSummary()).objects.some((o) => o.name === 'Dog-leg copy'));
+  await key('Escape');
   void limit;
   void ramp;
 

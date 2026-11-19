@@ -1,7 +1,8 @@
 # 0083 — Cutting strings by strings: Trim, Extend, Split at a point, Join finished
 
 Status: agreed 17 November 2026 (Tim: "Agree all nine", the String tools plan tab of the Build Plan). This record is
-that plan's workstream 1; the later workstreams add to it as they merge: workstream 2, round corners, below.
+that plan's workstream 1; the later workstreams add to it as they merge: workstream 2, round corners, and workstream 3,
+move, copy, rotate and mirror, below.
 
 ## Why
 
@@ -109,3 +110,50 @@ Decision 3 of the plan as picked: a radius and an angle on every string picked.
 
 Timings (release, made-up toes of 40 vertices, every corner over 1° rounded at 20 m): 15 strings 0.1 ms, 690 vertices
 after; 150 strings 0.9 ms, 6,900 vertices after.
+
+## Built: workstream 3, move, copy, rotate, mirror
+
+Decisions 4 and 5 of the plan as picked: strings, surfaces, solids and grids; a copy on its original's layer, named for
+it, picked once made.
+
+- **The geometry** (`crates/zd-geom/src/transform.rs`). A move by an easting, northing and RL; a rotation in plan about
+  a point, anticlockwise seen from above, exact at quarter turns; a mirror across a line through two points in plan.
+  Rotate and mirror leave heights as they are. Points are worked from the point or line they turn about, so mine grid
+  coordinates keep their precision. A mirrored mesh has each triangle wound the other way, so one that faced out still
+  does. A grid moves by its origin and every live height (a null stays null), and doesn't rotate or mirror: its rows run
+  east and north.
+- **`object.transform`**: `objects` and `transform` (`{kind: move, by: [E, N, RL]}`, `{kind: rotate, about: [E, N],
+  angle}` or `{kind: mirror, from, to}`). The next revision of each object, in one run and one undo; its name, layer and
+  attributes stay. A surface's or solid's validity flags are worked out again from the moved mesh, and its crossing
+  check is moved with it rather than run again, since a rigid move makes no crossing and takes none away. Refused, with
+  nothing changed: a run with a grid rotated or mirrored, or with anything not drawn (each listed, as 0078); a mirror
+  line with no length; a move by nothing or a whole number of turns.
+- **`object.copy`**: the same `objects` and an optional `transform` (none copies in place). A new object for each, on
+  its layer, named `<name> copy`, carrying its attributes; the objects picked are untouched. Attributes are copied as
+  they are, so a copied block solid has its original's `block`, `seam` and the rest: rename it or set them before
+  reserves run, since a reserves table finds a leaf's solids by those.
+- **The tools**: Move and copy, a panel in the tool dock with Move, Copy, Rotate and Mirror, listed under `always` and on
+  the Strings and Solids rows (the Strings row folds them into More at the bench's width). Move and Copy go by two clicks
+  (a point, then where it goes, both snapped; RLs kept unless Heights is set to move by the clicks) or by distances
+  typed. Rotate takes an angle and a click on the point to turn about; Mirror two clicks on the line. Rotate and Mirror
+  can make copies instead (Copies). Copies are picked once made. Each adds a workflow step from the panel, its clicks
+  taken when it's added.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_quarter_turn_about_a_point_takes_east_to_north_exactly` (zd-geom) | a vertex 100 m east of the point lands 100 m north of it, its RL kept; −270° the same | Exact |
+| `a_mirror_across_a_line_north_puts_a_point_as_far_the_other_side` | 20 m east of the line, 20 m west of it; across a 45° line, east becomes north | Exact; 1e-9 m |
+| `a_string_moved_by_distances_typed_moves_every_vertex_by_exactly_that` (zd-commands) | 100.5 m east, 200.25 m south and 3 m up, every vertex; name and layer kept; one undo | Exact |
+| `fifteen_toes_rotated_a_quarter_turn_about_a_point_in_one_undo` | each toe's end 100 m east of the point lands 100 m north of it; one undo for all fifteen | 1e-9 m |
+| `a_cube_mirrored_moved_or_turned_keeps_its_volume_and_faces_out` | a 10 m cube mirrored: 1,000 m³, Closed, Manifold and ConsistentWinding, 40 to 50 m west of the line as it was east; then moved, then turned 30°: 1,000 m³ | 1e-9 relative |
+| `a_copy_is_a_new_object_and_the_original_stays_as_it_was` | the original at the same revision; the copy a new object with the same vertices, `Strip 4 copy` on `toes` with `strip` 4; copied 50 m north, the original where it was | Exact |
+| `a_grid_moves_but_a_rotation_with_one_in_it_is_refused_whole` | the grid's origin moved, a live node 104 to 107, the null still null; rotated with a string, refused naming the grid, both as they were | Exact |
+| `a_mirror_line_with_no_length_and_a_move_by_nothing_are_refused` | refused, the string untouched | Exact |
+
+| `zd-app --bench --string-edits` | Toe 1 moved by two clicks snapped to its vertex and the pit limit's end: 60 m east and 50 m south, RLs kept; Toe 2 by 100.5, −200.25 and 3 typed; Toe 3 a quarter turn about its first vertex clicked, its end as far north as it was east; the dog-leg mirrored across the pit limit with Copies ticked, the copy picked and the dog-leg where it was; each put back by one Ctrl+Z | 1e-6 m |
+| `zd-app --bench --shell` | the Panels menu lists Move and copy; the Solids row keeps its Import and Export solids menus, the four tools after them | |
+
+Timings (release, made-up): 150 toes of 41 vertices and 1,000 10 m cubes (12,000 triangles) in one run: moved in 2.8 ms,
+turned 30° in 2.2 ms, copied mirrored (1,150 objects made) in 2.4 ms.
+
+In the app, `--string-edits` passes 23 of 23, `--shell` 62 of 62, and `--select`, `--clicks` and `--workflow` pass whole.
