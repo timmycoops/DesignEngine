@@ -8,7 +8,10 @@
 // string to select it; drag one of its handles to move that vertex (`string.move_vertex`, one
 // command per drag, with a snapped preview while dragging); Alt+click on the selected string inserts
 // a vertex on it (`string.insert_vertex`); Delete removes the vertex under the cursor
-// (`string.delete_vertex`), and anywhere else deletes everything selected (`object.delete_many`, decision 0080). Every edit is a command, so undo covers it. A line a face design made is made again
+// (`string.delete_vertex`), and anywhere else deletes everything selected (`object.delete_many`, decision 0080).
+// Alt and a left drag draw a box that picks the vertices of the strings picked within it (String tools plan,
+// workstream 4): they show gold, a drag on one moves them all (`string.move_vertices`), Delete deletes them
+// (`string.delete_vertices`), and Esc lets them go before it lets the strings go. Alt+click without a drag still inserts. Every edit is a command, so undo covers it. A line a face design made is made again
 // each time it runs, so an edit to one is refused, saying which row's ✎ gives a line of your own; where strings lie
 // on each other, as Edit from here's copy lies on the design's line, a click keeps the selected one, then takes one
 // of your own over the design's (`designLines.ts`).
@@ -181,13 +184,14 @@ export class StringLayer {
   private handles: THREE.InstancedMesh;
   private dummy = new THREE.Object3D();
   private pending: SnapHit[] = [];
-  private drag: { id: string; index: number; hit: SnapHit | null } | null = null;
+  /** A vertex being dragged; with `group`, one of the vertices picked, and they all move with it. */
+  private drag: { id: string; index: number; hit: SnapHit | null; group?: boolean } | null = null;
   private hovered: { id: string; index: number } | null = null;
   private down: { x: number; y: number } | null = null;
   /** Where the right button went down: let up within a few pixels it's a click, which finishes; dragged, it panned. */
   private rightDown: { x: number; y: number } | null = null;
   /** A box being dragged out with Shift held, from where the button went down. */
-  private boxing: { pointer: number; x: number; y: number; outline: HTMLElement } | null = null;
+  private boxing: { pointer: number; x: number; y: number; outline: HTMLElement; vertices: boolean } | null = null;
   private latest: { x: number; y: number } | null = null;
   private inFlight = false;
   private layers = new Map<string, Layer>();
@@ -205,6 +209,19 @@ export class StringLayer {
   private designNames = new Map<string, string>();
   /** Lines on the rows of the step design open in the panel: a click takes them over other strings on top of them. */
   private preferred = new Set<string>();
+  /** The other strings picked, lit over their layers: with the selected one, what Alt and a box picks vertices from. */
+  private marked = new Set<string>();
+  /**
+   * Vertices picked by Alt and a box (String tools plan, workstream 4), each string's by number from 0: drawn gold, a
+   * drag on one moves them all, Delete deletes them, and the Strings panel's Set elevation, Set grade and Drape act on
+   * them alone.
+   */
+  private picks = new Map<string, Set<number>>();
+  private pickedHandles: THREE.InstancedMesh;
+  /** The vertices picked being dragged: their strings as they'd be. */
+  private groupPreview: THREE.LineSegments;
+  /** The vertices picked changed: each string's, by number from 0. */
+  onVertices?: (picks: Record<string, number[]>) => void;
   /** Snapping was switched on or off. */
   onSnapping?: (on: boolean) => void;
   /** The scene origin: world = origin + local, exactly, for points the shell sent. */
@@ -230,6 +247,14 @@ export class StringLayer {
     this.handles.count = 0;
     this.handles.renderOrder = 13;
     this.handles.frustumCulled = false;
+    this.pickedHandles = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1), new THREE.MeshBasicMaterial({ color: SELECTED, depthTest: false }), MAX_HANDLES);
+    this.pickedHandles.count = 0;
+    this.pickedHandles.renderOrder = 14;
+    this.pickedHandles.frustumCulled = false;
+    this.groupPreview = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: PREVIEW, depthTest: false }));
+    this.groupPreview.renderOrder = 12;
+    this.groupPreview.frustumCulled = false;
+    this.groupPreview.visible = false;
     const guide = new THREE.BufferGeometry();
     guide.setAttribute('position', new THREE.Float32BufferAttribute(6, 3));
     guide.setAttribute('lineDistance', new THREE.Float32BufferAttribute(2, 1));
@@ -240,7 +265,7 @@ export class StringLayer {
       line.frustumCulled = false;
       line.visible = false;
     }
-    viewport.overlay.add(this.group, this.highlight, this.markedLines, this.preview, this.sectionGuideUnder, this.sectionGuide, this.handles);
+    viewport.overlay.add(this.group, this.highlight, this.markedLines, this.preview, this.sectionGuideUnder, this.sectionGuide, this.handles, this.pickedHandles, this.groupPreview);
     viewport.beforeRender.add(() => this.placeHandles());
     viewport.beforeRender.add(() => this.placeSectionGuide());
     this.snapMark = new PointMark(viewport, SNAP_MARK_PX);
@@ -399,8 +424,111 @@ export class StringLayer {
       (lines.material as THREE.LineBasicMaterial).color.setHex(layer ? colourOf(layer.colour) : 0xffffff);
     }
     if (this.selected && !this.shown.has(this.selected)) this.showSelected(null);
+    this.keepPicks();
     this.recolour();
     this.placeHandles();
+  }
+
+  /** Each string's vertices picked, by number from 0, in order. */
+  vertexPicks(): Record<string, number[]> {
+    return Object.fromEntries([...this.picks].map(([id, set]) => [id, [...set].sort((a, b) => a - b)]));
+  }
+
+  /** The vertices picked as a command takes them: the strings, and each one's vertices in the same order. */
+  private picksAsParams(): { strings: string[]; vertices: number[][] } {
+    const picks = Object.entries(this.vertexPicks());
+    return { strings: picks.map(([id]) => id), vertices: picks.map(([, v]) => v) };
+  }
+
+  private vertexPicksChanged(): void {
+    this.placeHandles();
+    this.onVertices?.(this.vertexPicks());
+  }
+
+  /** Lets every vertex picked go. */
+  letVerticesGo(): void {
+    if (this.picks.size === 0) return;
+    this.picks.clear();
+    this.vertexPicksChanged();
+  }
+
+  /** Picks only on strings still picked and on show, and only vertices they still have. */
+  private keepPicks(): void {
+    let changed = false;
+    for (const [id, set] of this.picks) {
+      const shown = this.shown.get(id);
+      if (!shown || !shown.visible || (id !== this.selected && !this.marked.has(id))) {
+        this.picks.delete(id);
+        changed = true;
+        continue;
+      }
+      for (const i of set) {
+        if (i >= shown.points.length) {
+          set.delete(i);
+          changed = true;
+        }
+      }
+      if (set.size === 0) this.picks.delete(id);
+    }
+    if (changed) this.vertexPicksChanged();
+  }
+
+  /**
+   * Alt and a box let go: the vertices of the strings picked within it are picked, or with Ctrl added to those picked.
+   * In 3D only what's in front of the camera.
+   */
+  private pickVertices(ax: number, ay: number, bx: number, by: number, add: boolean): void {
+    const [x0, x1, y0, y1] = [Math.min(ax, bx), Math.max(ax, bx), Math.min(ay, by), Math.max(ay, by)];
+    if (!add) this.picks.clear();
+    const screen = this.screen();
+    const at = new THREE.Vector3();
+    for (const id of new Set([this.selected, ...this.marked])) {
+      const shown = id ? this.shown.get(id) : undefined;
+      if (!id || !shown?.visible) continue;
+      const set = this.picks.get(id) ?? new Set<number>();
+      shown.points.forEach((p, i) => {
+        at.copy(p).project(this.viewport.camera);
+        if (at.z < -1 || at.z > 1) return;
+        const [sx, sy] = screen(p);
+        if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) set.add(i);
+      });
+      if (set.size > 0) this.picks.set(id, set);
+    }
+    const count = [...this.picks.values()].reduce((n, set) => n + set.size, 0);
+    this.actions.status(
+      count === 0
+        ? 'No vertex of the strings picked in the box: pick the strings first, then Alt and a box round their vertices'
+        : `${count} ${count === 1 ? 'vertex' : 'vertices'} picked on ${this.picks.size} ${this.picks.size === 1 ? 'string' : 'strings'}: drag one to move them all, Delete deletes them, Esc lets them go`,
+    );
+    this.vertexPicksChanged();
+  }
+
+  /** A picked vertex near the cursor, if any. */
+  private pickedAt(x: number, y: number): { id: string; index: number } | null {
+    const screen = this.screen();
+    let best: { id: string; index: number } | null = null;
+    let bestDist = HANDLE_PX * HANDLE_PX;
+    for (const [id, set] of this.picks) {
+      const shown = this.shown.get(id);
+      if (!shown) continue;
+      for (const i of set) {
+        const [sx, sy] = screen(shown.points[i]);
+        const d = (sx - x) ** 2 + (sy - y) ** 2;
+        if (d <= bestDist) {
+          best = { id, index: i };
+          bestDist = d;
+        }
+      }
+    }
+    return best;
+  }
+
+  /** Alt+click on the selected string: a vertex in on the segment there, so the string keeps its shape. */
+  private async insertAt(x: number, y: number): Promise<void> {
+    if (!this.selected || this.refusedDesignEdit(this.selected)) return;
+    const segment = this.segmentAt(this.selected, x, y);
+    const hit = segment < 0 ? null : this.pointOnSegment(this.selected, segment, x, y);
+    if (hit) await this.actions.run('string.insert_vertex', { string: this.selected, index: segment + 1, point: hit.world });
   }
 
   /** The lines a click takes first where strings lie on each other, after the selected one (`designLines.ts`). */
@@ -410,6 +538,8 @@ export class StringLayer {
 
   /** Draws the marked strings over everything, as a selected one is. */
   setMarked(ids: string[]): void {
+    this.marked = new Set(ids);
+    this.keepPicks();
     const strings = ids.flatMap((id) => this.shown.get(id) ?? []).filter((s) => s.visible);
     const points = strings.flatMap((s) => {
       const line = s.closed ? [...s.points, s.points[0]] : s.points;
@@ -486,7 +616,19 @@ export class StringLayer {
     if (e.button !== 0) return;
     // The turn key held: the press is the camera's, to turn, and not a click, a box or a vertex drag.
     if (this.viewport.controls.turnHeld) return;
-    if (e.shiftKey && this.mode === 'select' && !this.wanted && !this.section) return this.startBox(e);
+    if (e.altKey && this.mode === 'select' && !this.wanted && !this.section && (this.selected || this.marked.size > 0)) return this.startBox(e, true);
+    if (e.shiftKey && this.mode === 'select' && !this.wanted && !this.section) return this.startBox(e, false);
+    if (this.mode === 'select' && !this.wanted && this.picks.size > 0) {
+      const at = this.pickedAt(e.clientX, e.clientY);
+      if (at) {
+        e.stopImmediatePropagation();
+        if ([...this.picks.keys()].some((id) => this.refusedDesignEdit(id))) return;
+        this.drag = { ...at, hit: null, group: true };
+        this.viewport.controls.enabled = false;
+        this.viewport.renderer.domElement.setPointerCapture(e.pointerId);
+        return;
+      }
+    }
     if (this.mode === 'select' && this.selected && !this.wanted) {
       const index = this.handleAt(this.selected, e.clientX, e.clientY);
       if (index >= 0 && this.refusedDesignEdit(this.selected)) {
@@ -527,12 +669,12 @@ export class StringLayer {
    * Shift and a left drag draw a box that selects what lies wholly inside it, in 3D or plan; the view doesn't turn
    * or pan meanwhile. Not on a section, where what's drawn is the cut.
    */
-  private startBox(e: PointerEvent): void {
+  private startBox(e: PointerEvent, vertices: boolean): void {
     const canvas = this.viewport.renderer.domElement;
     this.boxing?.outline.remove();
-    const outline = Object.assign(document.createElement('div'), { className: 'select-box', hidden: true });
+    const outline = Object.assign(document.createElement('div'), { className: vertices ? 'select-box vertex-box' : 'select-box', hidden: true });
     canvas.parentElement?.append(outline);
-    this.boxing = { pointer: e.pointerId, x: e.clientX, y: e.clientY, outline };
+    this.boxing = { pointer: e.pointerId, x: e.clientX, y: e.clientY, outline, vertices };
     try {
       canvas.setPointerCapture(e.pointerId);
     } catch {
@@ -564,9 +706,12 @@ export class StringLayer {
       // Already released.
     }
     if (Math.hypot(e.clientX - box.x, e.clientY - box.y) <= CLICK_SLOP_PX) {
+      // Alt+click with no drag inserts a vertex, as it always has.
+      if (box.vertices) return void this.insertAt(e.clientX, e.clientY);
       const string = this.stringAt(e.clientX, e.clientY);
       return string ? this.actions.choose(string, true) : this.actions.pick(e.clientX, e.clientY, true);
     }
+    if (box.vertices) return this.pickVertices(box.x, box.y, e.clientX, e.clientY, e.ctrlKey || e.metaKey);
     const [ax, ay] = this.viewport.clientToNdc(box.x, box.y);
     const [bx, by] = this.viewport.clientToNdc(e.clientX, e.clientY);
     this.actions.box([Math.min(ax, bx), Math.min(ay, by)], [Math.max(ax, bx), Math.max(ay, by)], e.ctrlKey || e.metaKey);
@@ -690,7 +835,9 @@ export class StringLayer {
       this.showSnap(hit, target);
       this.drag.hit = hit;
       const shown = this.shown.get(this.drag.id);
-      if (shown) {
+      if (shown && this.drag.group) {
+        this.showGroupPreview(shown.points[this.drag.index], hit);
+      } else if (shown) {
         const points = shown.points.map((p) => p.clone());
         const { index } = this.drag;
         points[index].set(...hit.local);
@@ -713,13 +860,21 @@ export class StringLayer {
     }
     if (this.boxing) return this.endBox(e);
     if (this.drag) {
-      const { id, index, hit } = this.drag;
+      const { id, index, hit, group } = this.drag;
       this.drag = null;
       this.latest = null;
       this.viewport.controls.enabled = true;
       this.viewport.renderer.domElement.releasePointerCapture(e.pointerId);
       this.preview.visible = false;
+      this.groupPreview.visible = false;
       this.clearSnapMark();
+      if (hit && group) {
+        const from = this.shown.get(id)?.points[index];
+        // To a micrometre, as typed numbers are: a drag from one vertex onto another moves by whole metres exactly.
+        const round = (v: number) => Math.round(v * 1e6) / 1e6 + 0;
+        if (from) await this.actions.run('string.move_vertices', { ...this.picksAsParams(), by: [round(hit.local[0] - from.x), round(hit.local[1] - from.y), round(hit.local[2] - from.z)] });
+        return;
+      }
       if (hit) await this.actions.run('string.move_vertex', { string: id, index, to: hit.world });
       return;
     }
@@ -768,14 +923,7 @@ export class StringLayer {
       this.actions.status(`${this.pending.length} vertices${snapped}; right-click, Enter or double-click to finish, Esc to abandon`);
       return;
     }
-    if (e.altKey && this.selected) {
-      if (this.refusedDesignEdit(this.selected)) return;
-      // On the segment itself, so the string keeps its shape.
-      const segment = this.segmentAt(this.selected, e.clientX, e.clientY);
-      const hit = segment < 0 ? null : this.pointOnSegment(this.selected, segment, e.clientX, e.clientY);
-      if (hit) await this.actions.run('string.insert_vertex', { string: this.selected, index: segment + 1, point: hit.world });
-      return;
-    }
+    if (e.altKey && this.selected) return this.insertAt(e.clientX, e.clientY);
     const string = this.stringAt(e.clientX, e.clientY);
     const add = e.ctrlKey || e.metaKey;
     if (!string) return this.actions.pick(e.clientX, e.clientY, add);
@@ -824,6 +972,10 @@ export class StringLayer {
       return this.actions.status(this.mode === 'section' ? 'Section: pick the first point' : this.mode === 'measure' ? measureWords([]) : 'String abandoned');
     }
     if (this.mode !== 'select') return this.actions.toSelect();
+    if (this.picks.size > 0) {
+      this.letVerticesGo();
+      return this.actions.status('Vertices let go; the strings stay picked');
+    }
     this.actions.choose(null, false);
     this.actions.status('Nothing selected');
   }
@@ -847,6 +999,13 @@ export class StringLayer {
         this.placeHandles();
         if (this.mode === 'measure') this.actions.status(measureWords(this.pending.map((h) => h.world)));
       }
+      return;
+    }
+    if (e.key === 'Delete' && this.picks.size > 0 && !this.wanted && !typing(e.target)) {
+      if ([...this.picks.keys()].some((id) => this.refusedDesignEdit(id))) return;
+      void this.actions.run('string.delete_vertices', this.picksAsParams()).then((ok) => {
+        if (ok) this.letVerticesGo();
+      });
       return;
     }
     if (e.key === 'Delete' && !this.hovered && !this.wanted && !typing(e.target)) return this.actions.remove();
@@ -882,6 +1041,22 @@ export class StringLayer {
     } else {
       this.preview.visible = false;
     }
+  }
+
+  /** The strings of the vertices picked as they'd be, moved as the dragged one has from `from`. */
+  private showGroupPreview(from: THREE.Vector3, hit: SnapHit): void {
+    const by = new THREE.Vector3(...hit.local).sub(from);
+    const segments: THREE.Vector3[] = [];
+    for (const [id, set] of this.picks) {
+      const shown = this.shown.get(id);
+      if (!shown) continue;
+      const points = shown.points.map((p, i) => (set.has(i) ? p.clone().add(by) : p));
+      const line = shown.closed ? [...points, points[0]] : points;
+      for (let k = 1; k < line.length; k++) segments.push(line[k - 1], line[k]);
+    }
+    this.groupPreview.geometry.dispose();
+    this.groupPreview.geometry = new THREE.BufferGeometry().setFromPoints(segments);
+    this.groupPreview.visible = segments.length > 0;
   }
 
   private showPreview(points: THREE.Vector3[]): void {
@@ -931,6 +1106,24 @@ export class StringLayer {
     }
     this.handles.count = n;
     this.handles.instanceMatrix.needsUpdate = true;
+    // Every vertex picked, gold, however close together: they're what a drag or Delete takes.
+    let m = 0;
+    if (this.mode === 'select') {
+      for (const [id, set] of this.picks) {
+        const shown = this.shown.get(id);
+        if (!shown?.visible) continue;
+        for (const i of set) {
+          if (m >= MAX_HANDLES) break;
+          const p = shown.points[i];
+          this.dummy.position.copy(p);
+          this.dummy.scale.setScalar(this.viewport.pixelSize(p) * 7);
+          this.dummy.updateMatrix();
+          this.pickedHandles.setMatrixAt(m++, this.dummy.matrix);
+        }
+      }
+    }
+    this.pickedHandles.count = m;
+    this.pickedHandles.instanceMatrix.needsUpdate = true;
   }
 
   /** Scene-local points to client pixels, for many at a time: one read of the canvas, no allocation. */

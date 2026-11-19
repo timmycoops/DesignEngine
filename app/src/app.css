@@ -156,6 +156,12 @@
   pointer-events: none;
 }
 
+/* Alt and a box picks vertices, not objects (String tools plan, workstream 4): dashed, so the two read apart. */
+.select-box.vertex-box {
+  border-style: dashed;
+  background: transparent;
+}
+
 .snap-label {
   position: absolute;
   top: 0;

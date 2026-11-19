@@ -24,15 +24,42 @@ import { useWorkspace } from '@/workspace/context';
  * the string to run on to, and for Trim a click on the side to keep, which holds for every string. Split splits at a
  * click on the string, or at a vertex by number. Join joins ends within a tolerance as one vertex.
  *
+ * Vertices (workstream 4): with vertices picked in the view by Alt and a box, Set grade, Set elevation and Drape act on
+ * them alone, the button saying how many, and add no workflow step. Densify adds a vertex every so many metres, the
+ * line unchanged; Vertices at crossings adds one on each string picked wherever another of them crosses it.
+ *
  * While the Workflow panel is adding steps, the button reads Add to the workflow and adds the tool and its settings as a
  * step instead of running it (decision 0078, workstream 4): the strings picked are found by rule each time it runs, the
  * strings of a layer by their layer. Number across asks for its line across first. Ramp from a start adds no step.
  */
 
-type Mode = 'offset' | 'number_across' | 'polygons_from_lines' | 'set_grade' | 'set_elevation' | 'drape' | 'project' | 'split' | 'trim' | 'extend' | 'join' | 'fillet' | 'smooth' | 'filter' | 'reverse' | 'set_closed' | 'surface_between' | 'ramp_polygon';
+type Mode =
+  | 'offset'
+  | 'number_across'
+  | 'polygons_from_lines'
+  | 'set_grade'
+  | 'set_elevation'
+  | 'drape'
+  | 'project'
+  | 'split'
+  | 'trim'
+  | 'extend'
+  | 'join'
+  | 'fillet'
+  | 'smooth'
+  | 'filter'
+  | 'densify'
+  | 'vertices_at_crossings'
+  | 'reverse'
+  | 'set_closed'
+  | 'surface_between'
+  | 'ramp_polygon';
 
 /** In the order the Strings tab has them. */
-const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'trim', 'extend', 'join', 'fillet', 'smooth', 'filter', 'reverse', 'set_closed', 'surface_between', 'ramp_polygon'];
+const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'trim', 'extend', 'join', 'fillet', 'smooth', 'filter', 'densify', 'vertices_at_crossings', 'reverse', 'set_closed', 'surface_between', 'ramp_polygon'];
+
+/** The tools that act on the vertices picked alone, when some are (String tools plan, workstream 4). */
+const ON_VERTICES: readonly Mode[] = ['set_grade', 'set_elevation', 'drape'];
 
 /** How far from a string a click on it may land and still be it, in plan (m). Clicks snap, so on it they're on it. */
 const CLICK_ON_A_STRING = 2;
@@ -47,7 +74,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const firstNames = (names: string[]) => (names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', '));
 
 export function StringsPanel() {
-  const { summary, selected, selection, runRecord, clearRefusal, setSelection, pickLine, pickPoint, toolAsk, toolMode } = useWorkspace();
+  const { summary, selected, selection, runRecord, clearRefusal, setSelection, pickLine, pickPoint, toolAsk, toolMode, vertexPicks } = useWorkspace();
   const [mode, setMode] = useState<Mode>('offset');
   // A tool on the Strings tab, or found by Find a command, asks for one of what this does.
   useEffect(() => {
@@ -108,6 +135,8 @@ export function StringsPanel() {
   const [radius, setRadius] = useState<number | null>(null);
   const [cornerAngle, setCornerAngle] = useState(10);
   const [arcSpacing, setArcSpacing] = useState(2);
+  /** Densify: the most a vertex is from the next, in plan. */
+  const [denseSpacing, setDenseSpacing] = useState(2);
   const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
 
@@ -122,6 +151,13 @@ export function StringsPanel() {
   const ids = on.map((o) => o.id);
   const many = on.length > 1;
   const what = on.length === 1 ? on[0].name : on.length > 1 ? `${on.length} strings` : 'the string';
+  /** The vertices picked in the view (Alt and a box), on strings still here: Set grade, Set elevation and Drape take them alone. */
+  const picks = Object.entries(vertexPicks).filter(([id, v]) => v.length > 0 && strings.some((o) => o.id === id));
+  const vertexCount = picks.reduce((n, [, v]) => n + v.length, 0);
+  const onVertices = ON_VERTICES.includes(mode) && vertexCount > 0;
+  const vertexWhat = vertexCount === 1 ? '1 vertex' : `${vertexCount} vertices`;
+  /** A command's strings: the vertices picked and their strings, or every string worked on. */
+  const worksOn = () => (onVertices ? { strings: picks.map(([id]) => id), vertices: picks.map(([, v]) => v) } : { strings: ids });
   /** Close closes the open ones or opens the closed ones; where the strings picked differ, the panel asks which. */
   const mixed = on.some((o) => o.closed) && on.some((o) => !o.closed);
   const closing = mixed ? closeOrOpen === 'close' : !on[0]?.closed;
@@ -261,15 +297,17 @@ export function StringsPanel() {
 
   /** Several strings are each graded from their first vertex to their last; From and To are for one. */
   const gradeParams = () => {
-    const params: Record<string, unknown> = { strings: ids, grade };
-    if (!many) params.from = Math.round(from) - 1;
-    if (!many && to !== null) params.to = Math.round(to) - 1;
+    const params: Record<string, unknown> = { ...worksOn(), grade };
+    if (!many && !onVertices) params.from = Math.round(from) - 1;
+    if (!many && !onVertices && to !== null) params.to = Math.round(to) - 1;
     if (startRl !== null) params.rl = startRl;
     return params;
   };
 
   /** A tool that runs its command as it stands: the run, and the step it adds to a workflow (decision 0078, workstream 4). */
   const calls = (command: string, params: Record<string, unknown>) => ({ run: () => runIt(command, params), step: { command, params } });
+  /** On the vertices picked: run as it stands, no workflow step, since a workflow finds strings by rule, not vertices. */
+  const onPicked = (command: string, params: Record<string, unknown>) => (onVertices ? { run: () => runIt(command, params) } : calls(command, params));
 
   /**
    * The one button: what it says, what it runs, whether it has what it needs, and the step it adds while the Workflow
@@ -293,11 +331,15 @@ export function StringsPanel() {
       case 'polygons_from_lines':
         return { label: `Make polygons from ${plural(picked.length, 'line')}`, run: makePolygons, step: { command: 'string.polygons_from_lines', params: polygonParams() }, ready: picked.length > 0 && !!polygonName.trim() && !!polygonLayer.trim() };
       case 'set_grade':
-        return { label: `Grade ${what}`, ...calls('string.set_grade', gradeParams()), ready: some && grade !== null && (many || (Number.isInteger(from) && (to === null || Number.isInteger(to)))) };
+        return {
+          label: `Grade ${onVertices ? vertexWhat : what}`,
+          ...onPicked('string.set_grade', gradeParams()),
+          ready: (onVertices || some) && grade !== null && (onVertices || many || (Number.isInteger(from) && (to === null || Number.isInteger(to)))),
+        };
       case 'set_elevation':
-        return { label: `Set ${what} to RL ${level ?? '…'}`, ...calls('string.set_elevation', { strings: ids, rl: level }), ready: some && level !== null };
+        return { label: `Set ${onVertices ? vertexWhat : what} to RL ${level ?? '…'}`, ...onPicked('string.set_elevation', { ...worksOn(), rl: level }), ready: (onVertices || some) && level !== null };
       case 'drape':
-        return { label: `Drape ${what}`, ...calls('string.drape', { strings: ids, surface: target?.id, crossings }), ready: some && !!target };
+        return { label: `Drape ${onVertices ? vertexWhat : what}`, ...onPicked('string.drape', { ...worksOn(), surface: target?.id, ...(onVertices ? {} : { crossings }) }), ready: (onVertices || some) && !!target };
       case 'project':
         return {
           label: projectWords(),
@@ -340,6 +382,15 @@ export function StringsPanel() {
         return { label: `Round the corners of ${what}`, ...calls('string.fillet', { strings: ids, radius, angle: cornerAngle, spacing: arcSpacing }), ready: some && radius !== null };
       case 'filter':
         return { label: `Filter ${what}`, ...calls('string.filter', { strings: ids, tolerance }), ready: some && tolerance !== null };
+      case 'densify':
+        return { label: `Add vertices to ${what}`, ...calls('string.densify', { strings: ids, spacing: denseSpacing }), ready: some && denseSpacing > 0, title: 'Each segment split into equal parts no longer than the spacing; the line stays exactly where it was' };
+      case 'vertices_at_crossings':
+        return {
+          label: `Add vertices where ${what} cross`,
+          ...calls('string.vertices_at_crossings', { strings: ids }),
+          ready: on.length > 1,
+          title: 'A vertex on each string picked wherever another of them crosses it, at its own RL there',
+        };
       case 'reverse':
         return { label: `Reverse ${what}`, ...calls('string.reverse', { strings: ids }), ready: some };
       case 'set_closed':
@@ -442,6 +493,12 @@ export function StringsPanel() {
               )}
             </span>
           </Field>
+        ) : onVertices ? (
+          <Field label="On" hint="Only the vertices picked change, the rest as they are. Esc in the view lets them go and the tool works on the strings whole">
+            <span data-slot="strings-on">
+              {vertexWhat} picked on {plural(picks.length, 'string')}
+            </span>
+          </Field>
         ) : ONE_STRING.includes(mode) ? (
           <Field label="On" hint={string ? (picked.length > 1 ? `The last of the ${picked.length} picked: this tool works on one string` : undefined) : 'Pick a string in the view or the Objects table'}>
             <span data-slot="strings-on" className={string ? undefined : 'text-muted-foreground'}>
@@ -514,7 +571,13 @@ export function StringsPanel() {
           <Field label="Grade" hint="Positive uphill along the string">
             <NumberOrBlank value={grade} onChange={setGrade} label="Grade" unit="%" blank="" />
           </Field>
-          {many ? (
+          {onVertices ? (
+            <Field label="Along" hint="Measured in plan along each string from its first vertex picked, through the vertices between">
+              <span data-slot="strings-grade-along" className="text-muted-foreground">
+                From the first vertex picked
+              </span>
+            </Field>
+          ) : many ? (
             <Field label="Along" hint="From and To vertex are for one string">
               <span data-slot="strings-grade-along" className="text-muted-foreground">
                 Each string, first vertex to last
@@ -530,7 +593,7 @@ export function StringsPanel() {
               </Field>
             </>
           )}
-          <Field label="At RL" hint={many ? "The RL at each string's first vertex" : 'The RL at the start vertex'}>
+          <Field label="At RL" hint={onVertices ? "The RL at each string's first vertex picked" : many ? "The RL at each string's first vertex" : 'The RL at the start vertex'}>
             <NumberOrBlank value={startRl} onChange={setStartRl} label="RL at the start vertex" blank="its own" />
           </Field>
         </ToolSection>
@@ -559,9 +622,11 @@ export function StringsPanel() {
               </Select>
             )}
           </Field>
-          <Field label="Follow" hint="Adds vertices where the string crosses the surface's triangle edges">
-            <Checkbox checked={crossings} aria-label="Follow the surface between vertices" onCheckedChange={(c) => setCrossings(c === true)} />
-          </Field>
+          {!onVertices && (
+            <Field label="Follow" hint="Adds vertices where the string crosses the surface's triangle edges">
+              <Checkbox checked={crossings} aria-label="Follow the surface between vertices" onCheckedChange={(c) => setCrossings(c === true)} />
+            </Field>
+          )}
         </ToolSection>
       )}
 
@@ -701,6 +766,14 @@ export function StringsPanel() {
         <ToolSection title="Settings">
           <Field label="Within" hint="Vertices within this 3D distance of the line are taken out">
             <NumberOrBlank value={tolerance} onChange={setTolerance} label="Distance from the line" unit="m" range={{ min: 0 }} blank="" />
+          </Field>
+        </ToolSection>
+      )}
+
+      {mode === 'densify' && (
+        <ToolSection title="Settings">
+          <Field label="Every" hint="The most a vertex is from the next, in plan: each segment split into equal parts, the line as it was">
+            <NumberInput value={denseSpacing} onChange={setDenseSpacing} label="Vertex spacing" unit="m" range={{ min: 0, minIncluded: false }} />
           </Field>
         </ToolSection>
       )}

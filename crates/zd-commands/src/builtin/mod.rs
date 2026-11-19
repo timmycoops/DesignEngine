@@ -49,7 +49,8 @@ pub(crate) use solid::check_solids_made;
 pub use spry::{ImportSpry, ImportSpryParams};
 pub use solid::{CutBySurface, CutBySurfaceParams, ImportSolid, ImportSolidParams, ImportSolids, ImportSolidsParams, RepairSolids, RepairSolidsParams, SolidFromMesh};
 pub use string::{
-    CornerParam, CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, DrapeString, DrapeStringParams, FilletString, FilletStringParams, FilterString,
+    CornerParam, CreateString, CreateStringParams, DeleteVertex, DeleteVertexParams, DeleteVertices, DeleteVerticesParams, DensifyString, DensifyStringParams, MoveVertices, MoveVerticesParams,
+    VerticesAtCrossings, VerticesAtCrossingsParams, DrapeString, DrapeStringParams, FilletString, FilletStringParams, FilterString,
     FilterStringParams, InsertVertex, InsertVertexParams, JoinStrings, JoinStringsParams, MoveVertex, MoveVertexParams, NumberStrings,
     NumberStringsParams, OffsetString, OffsetStringParams, RedrawStretch, RedrawStretchParams, ReverseString, SetClosed, SetClosedParams, SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam,
     SmoothString, SmoothStringParams, SplitString, SplitStringParams, StringParams, ExtendString, ExtendStringParams, TrimKeep, TrimString, TrimStringParams,
@@ -89,6 +90,10 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(InsertVertex);
     registry.register(MoveVertex);
     registry.register(DeleteVertex);
+    registry.register(MoveVertices);
+    registry.register(DeleteVertices);
+    registry.register(VerticesAtCrossings);
+    registry.register(DensifyString);
     registry.register(RedrawStretch);
     registry.register(SetGrade);
     registry.register(OffsetString);

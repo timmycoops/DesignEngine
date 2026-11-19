@@ -158,6 +158,8 @@ export default function App() {
   /** Everything selected, the last picked last. */
   const [selection, setSelectionState] = useState<string[]>([]);
   const selected = selection.at(-1) ?? null;
+  /** Vertices picked by Alt and a box on the strings picked, each string's by number from 0 (String tools plan, ws4). */
+  const [vertexPicks, setVertexPicks] = useState<Record<string, number[]>>({});
   const [seamViews, setSeamViews] = useState<SeamShown[]>([]);
   const [rlShown, setRlShown] = useState<RlShown>({ shared: false, objects: [] });
   const summaryRef = useRef(summary);
@@ -630,6 +632,7 @@ export default function App() {
           }),
       });
       strings.onSnapping = setSnapping;
+      strings.onVertices = setVertexPicks;
       section.mapShows = [strings.lines];
       section.onUnfilled = (count) => setStatus({ text: `${count === 1 ? 'A closed loop' : `${count} closed loops`} in this section could not be filled: the lines show as cut` });
       created.pickPoint = (x, y) => strings.pick(x, y);
@@ -1207,12 +1210,14 @@ export default function App() {
       pickPoint,
       pickLine,
       pickString,
+      vertexPicks,
+      letVerticesGo: () => stringsRef.current?.letVerticesGo(),
       drawing: mode === 'draw',
       typeVertex,
       viewMenu,
       closeViewMenu: () => setViewMenu(null),
     }),
-    [viewMenu, summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLayerFilter, changeReservesFilter, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook, drafts],
+    [viewMenu, summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLayerFilter, changeReservesFilter, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, vertexPicks, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook, drafts],
   );
 
   /** The view's own tools, for the bar on the view (decision 0076). The keys below do the same. */

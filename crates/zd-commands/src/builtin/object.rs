@@ -191,21 +191,24 @@ impl TransformParam {
     /// What it does, in words, for the run's message: "100.5 m east, 200.25 m south and 3 m up".
     fn words(&self) -> String {
         match *self {
-            TransformParam::Move { by } => {
-                let part = |v: f64, plus: &str, minus: &str| (v != 0.0).then(|| format!("{} m {}", metres(v.abs()), if v > 0.0 { plus } else { minus }));
-                let parts: Vec<String> = [part(by[0], "east", "west"), part(by[1], "north", "south"), part(by[2], "up", "down")].into_iter().flatten().collect();
-                match parts.as_slice() {
-                    [] => "nowhere: in place".into(),
-                    [one] => one.clone(),
-                    [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
-                }
-            }
+            TransformParam::Move { by } => move_words(by),
             TransformParam::Rotate { about, angle } => {
                 let way = if angle >= 0.0 { "anticlockwise" } else { "clockwise" };
                 format!("{}° {way} about {:.3} E, {:.3} N", metres(angle.abs()), about[0], about[1])
             }
             TransformParam::Mirror { from, to } => format!("across the line from {:.3} E, {:.3} N to {:.3} E, {:.3} N", from[0], from[1], to[0], to[1]),
         }
+    }
+}
+
+/// A move in words: "100.5 m east, 200.25 m south and 3 m up".
+pub(crate) fn move_words(by: [f64; 3]) -> String {
+    let part = |v: f64, plus: &str, minus: &str| (v != 0.0).then(|| format!("{} m {}", metres(v.abs()), if v > 0.0 { plus } else { minus }));
+    let parts: Vec<String> = [part(by[0], "east", "west"), part(by[1], "north", "south"), part(by[2], "up", "down")].into_iter().flatten().collect();
+    match parts.as_slice() {
+        [] => "nowhere: in place".into(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 

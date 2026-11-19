@@ -85,7 +85,7 @@ test('every stage has a row of tools that exist, named in words', () => {
   assert.deepEqual(names('geology'), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology']);
   assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Reserves table', 'Dataflow', 'Compare', 'Report']);
   assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Ramp', 'Set grade', 'Offset', 'Project', 'Surface between', 'Join faces']);
-  assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Join', 'Round corners', 'Smooth', 'Filter', 'Reverse', 'Close', 'Move', 'Copy', 'Rotate', 'Mirror']);
+  assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Join', 'Round corners', 'Smooth', 'Filter', 'Densify', 'At crossings', 'Reverse', 'Close', 'Move', 'Copy', 'Rotate', 'Mirror']);
 });
 
 test("a stage's tools are on its row, but for the few reached another way", () => {
@@ -281,6 +281,8 @@ test('the canvas lists the tools that add a step, as the list has them', () => {
     'Strings: Round corners',
     'Strings: Smooth',
     'Strings: Filter',
+    'Strings: Densify',
+    'Strings: Vertices at crossings',
     'Strings: Reverse',
     'Strings: Close',
     'Builder: Build a step',
