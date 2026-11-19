@@ -1,8 +1,8 @@
 import { Check } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ObjectSummary } from '@/bridge';
 import { Input } from '@/design-system/ui/input';
-import { Field, NumberInput, NumberOrBlank, type RunReport, Select, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { type Asker, AskSteps, Field, NumberInput, NumberOrBlank, type RunReport, Select, type ToolAction, ToolPanel, ToolSection, useAsking } from '@/design-system/kit';
 import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
 
@@ -10,8 +10,9 @@ import { useWorkspace } from '@/workspace/context';
  * Strings from surfaces (String tools plan, workstream 5; decision 0083): new strings made from surfaces, grids and
  * solids, on a layer, what they're made from left as it was.
  *
- * - Where surfaces meet: two surfaces or grids picked, the line where they meet at its own RLs, such as a design's crest
- *   on the topography.
+ * - Where surfaces meet: two surfaces or grids, the line where they meet at its own RLs, such as a design's crest on the
+ *   topography. It asks for them in turn (decision 0092): the one to start from, then the one it meets (two picked when
+ *   it opens fill both), runs, and asks again; Esc steps back a prompt a press. The button runs with the two picked.
  * - Contours: on the surface or grid picked last, every so many metres between two RLs (left blank, its own range), each
  *   string carrying its RL.
  * - Outline: each surface's or grid's edge, every hole its own string; a solid's outline in plan, at its lowest RL.
@@ -35,7 +36,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const names = (on: ObjectSummary[]) => (on.length > 3 ? `${on.slice(0, 3).map((o) => o.name).join(', ')} and ${on.length - 3} more` : on.map((o) => o.name).join(', '));
 
 export function FromSurfacesPanel() {
-  const { summary, selection, selected, runRecord, clearRefusal, pickLine, toolAsk, toolMode, sectionPlane, sectionOpen } = useWorkspace();
+  const { summary, selection, selected, runRecord, clearRefusal, pickLine, toolAsk, toolMode, sectionPlane, sectionOpen, setSelection, addingTo, panelsShown } = useWorkspace();
   const [mode, setMode] = useState<Mode>('contours');
   useEffect(() => {
     if (toolAsk?.panel === 'from_surfaces' && MODES.includes(toolAsk.mode as Mode)) setMode(toolAsk.mode as Mode);
@@ -78,6 +79,71 @@ export function FromSurfacesPanel() {
     return line ? { from: [line[0][0], line[0][1], 0], to: [line[1][0], line[1][1], 0] } : null;
   };
 
+  /**
+   * Where surfaces meet asks in turn (decision 0092). The loop outlives a render, so it reads the panel through `latest`;
+   * the first surface is kept by name for the steps list once it's asked for the second.
+   */
+  const asking = useAsking();
+  const [startFrom, setStartFrom] = useState<{ id: string; name: string } | null>(null);
+  const latest = useRef({ surfaces, layer, runIt });
+  latest.current = { surfaces, layer, runIt };
+  const meetLoop = useCallback(
+    async (ask: Asker) => {
+      let first = true;
+      while (ask.alive()) {
+        ask.step(0);
+        setStartFrom(null);
+        const now = () => latest.current.surfaces;
+        let a = first && now().length >= 2 ? now()[0] : undefined;
+        let b = first && now().length >= 2 ? now()[1] : undefined;
+        if (!a) {
+          if (!(first && now().length === 1)) {
+            const done = await ask.gather('Pick the surface or grid to start from: a click. Right-click when done; Esc stops');
+            if (!done || !ask.alive()) return;
+            // The button with two picked runs with them.
+            if (done === 'pressed' && now().length >= 2) [a, b] = [now()[0], now()[1]];
+          }
+          first = false;
+          a ??= now().at(-1);
+          if (!a) continue;
+          if (!b) {
+            ask.step(1);
+            setStartFrom({ id: a.id, name: a.name });
+            setSelection([]);
+            const done = await ask.gather(`Pick the surface or grid ${a.name} meets: a click. Right-click when done; Esc goes back`);
+            if (!ask.alive()) return;
+            if (!done) continue;
+            const start = a;
+            b = [...now()].reverse().find((o) => o.id !== start.id);
+            if (!b) continue;
+          }
+        }
+        first = false;
+        if (!b) continue;
+        ask.step(2);
+        await latest.current.runIt('string.where_surfaces_meet', { surface: a.id, with: b.id, layer: latest.current.layer });
+      }
+    },
+    [setSelection],
+  );
+  const asks = mode === 'where_surfaces_meet' && !addingTo && panelsShown.includes('from_surfaces');
+  useEffect(() => {
+    if (asks) asking.start(meetLoop);
+    else asking.stop();
+  }, [asks, asking.start, asking.stop, meetLoop]);
+  // Picked again from the ribbon or Find a command as this same tool, it asks afresh. Picked as another of this panel's
+  // tools, the mode changes and that starts it: the ask for another mode must not restart this one first.
+  const askedAgain = toolAsk?.panel === 'from_surfaces' && toolAsk.mode === mode ? toolAsk.n : null;
+  const seenAsk = useRef({ key: askedAgain, mode });
+  useEffect(() => {
+    const was = seenAsk.current;
+    seenAsk.current = { key: askedAgain, mode };
+    if (askedAgain !== null && askedAgain !== was.key && mode === was.mode && asks) {
+      asking.start(meetLoop);
+    }
+  }, [askedAgain, mode, asks, asking.start, meetLoop]);
+  useEffect(() => () => asking.stop(), [asking.stop]);
+
   const contourParams = () => ({ surface: contoured?.id, every, layer, ...(from === null ? {} : { from }), ...(to === null ? {} : { to }) });
   const meetParams = () => ({ surface: surfaces[0]?.id, with: surfaces[1]?.id, layer });
   const outlineParams = () => ({ objects: meshes.map((o) => o.id), layer });
@@ -89,9 +155,9 @@ export function FromSurfacesPanel() {
         return {
           label: surfaces.length === 2 ? `Where ${surfaces[0].name} meets ${surfaces[1].name}` : 'Where surfaces meet',
           icon,
-          disabled: surfaces.length !== 2,
+          disabled: surfaces.length === 0 && asking.at !== null,
           busy,
-          run: () => runIt('string.where_surfaces_meet', meetParams()),
+          run: () => asking.next(meetLoop),
           step: { command: 'string.where_surfaces_meet', params: meetParams() },
         };
       case 'contours':
@@ -162,6 +228,17 @@ export function FromSurfacesPanel() {
           </Select>
         </Field>
       </ToolSection>
+
+      {mode === 'where_surfaces_meet' && (
+        <AskSteps
+          steps={[
+            { label: 'The surface or grid to start from', value: startFrom?.name ?? (surfaces.length > 0 ? surfaces[0].name : undefined) },
+            { label: 'The one it meets', value: startFrom ? surfaces.at(-1)?.name : surfaces[1]?.name },
+            { label: 'Where they meet, made' },
+          ]}
+          at={asking.at}
+        />
+      )}
 
       <ToolSection title="Picked">
         <Field label="From" hint={mode === 'where_surfaces_meet' && surfaces.length === 2 ? 'The strings are named for the first picked, then the second' : undefined}>

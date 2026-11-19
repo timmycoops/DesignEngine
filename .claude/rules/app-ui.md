@@ -45,8 +45,9 @@ foot named for what it does, Ctrl+Enter), `PanelHead` for a panel that isn't a t
 `resultParams` to what it runs: the panel then shows the one Result control, In place or As new on a layer
 (`docs/decisions/0091-in-place-or-as-new.md`); a tool that makes something doesn't. A tool that takes inputs asks for them in
 turn (`useAsking` and `AskSteps`, `docs/decisions/0092-tools-ask-in-turn.md`): what to work on, then what with, then it
-runs and asks again; Esc steps back a prompt a press, and it asks only while its panel is in front. Clip and Trim do
-so far; the other two-input tools move onto it next. Colours come from the theme's tokens, one meaning each: gold picked, orange `warning`, blue `edited`,
+runs and asks again; Esc steps back a prompt a press, and it asks only while its panel is in front. The button always
+runs with what the panel has. Clip, Trim, Extend, Split at a click, Where surfaces meet and every Cut solids mode do;
+a new tool that takes inputs asks the same way. Colours come from the theme's tokens, one meaning each: gold picked, orange `warning`, blue `edited`,
 red refused, green valid. Don't hand-roll an input, select, badge or colour a kit part covers; add to the kit instead.
 
 

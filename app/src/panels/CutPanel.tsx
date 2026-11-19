@@ -1,9 +1,9 @@
 import { Combine, Grid3x3, Layers, Rows3, Slice } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { concealed, checkCutByPolygons, checkCutBySeams, checkSlice, type Note, type ObjectSummary, type StepTarget, solidsTable } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
-import { Choice, Field, NoteLine, NumberInput, type RunReport, Select, TargetInput, TargetOptions, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { type Asker, AskSteps, Choice, Field, NoteLine, NumberInput, type RunReport, Select, TargetInput, TargetOptions, type ToolAction, ToolPanel, ToolSection, useAsking } from '@/design-system/kit';
 import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
 import { BenchRulesSection } from './BenchRulesSection';
@@ -18,6 +18,12 @@ import { byStrip, facesLine } from './strips';
  * piece taking its bench (decision 0071); or make the large solid between two surfaces
  * inside a closed string. The solids, faces and polygons stay as they are, and each run is one undo. Made from the kit,
  * as every tool panel is.
+ *
+ * Each asks for its inputs in turn (decision 0092). A cut asks for the solids (those picked when it opens fill it the
+ * first time; what's on show needs none), holds them, then for a cut by a surface the surface or grid to cut by unless
+ * one is set, then for the button or a right click, as the rest is the panel's: faces, the seam model, bench rules,
+ * polygons. Between surfaces asks for the closed string around it, the top and the bottom, then makes it. It runs, and
+ * asks again; Esc steps back a prompt a press. The button always runs with what the panel has.
  */
 
 type Mode = 'strips' | 'seams' | 'benches' | 'polygons' | 'cut' | 'between';
@@ -29,7 +35,7 @@ const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('cut', MODES);
 const SCOPES: readonly Scope[] = ['picked', 'layer', 'visible'];
 
 export function CutPanel() {
-  const { summary, selected, selection, runRecord, clearRefusal, select, toolAsk, toolMode } = useWorkspace();
+  const { summary, selected, selection, runRecord, clearRefusal, select, toolAsk, toolMode, setSelection, addingTo, panelsShown } = useWorkspace();
   const [mode, setMode] = useState<Mode>('strips');
   // A tool dropped on the workflow canvas asks for one of what this does (decision 0067).
   useEffect(() => {
@@ -65,11 +71,15 @@ export function CutPanel() {
   // The solids: those selected, all on the layer of the first of them, or all on show.
   const solids = objects.filter((o) => o.kind === 'solid');
   const pickedIds = new Set(selection);
+  const selectionNow = useRef(selection);
+  selectionNow.current = selection;
   const picked = solids.filter((o) => pickedIds.has(o.id));
   const onLayer = picked.length > 0 ? solids.filter((o) => o.layer === picked[0].layer) : [];
   const shown = new Set(layers.filter((l) => l.visible).map((l) => l.id));
   const visible = solids.filter((o) => shown.has(o.layer) && !concealed(o));
-  const chosen = scope === 'picked' ? picked : scope === 'layer' ? onLayer : visible;
+  /** The solids a cut asked for, held while it asks for the rest (decision 0092): what's picked may change meanwhile. */
+  const [held, setHeld] = useState<string[] | null>(null);
+  const chosen = held ? solids.filter((o) => held.includes(o.id)) : scope === 'picked' ? picked : scope === 'layer' ? onLayer : visible;
   const scopeLabels: Record<Scope, string> = { picked: `Picked (${picked.length})`, layer: `Its layer (${onLayer.length})`, visible: `On show (${visible.length})` };
 
   const surfaces = useMemo(() => objects.filter((o) => o.drawn && (o.kind === 'surface' || o.kind === 'grid')), [objects]);
@@ -271,6 +281,136 @@ export function CutPanel() {
     }
   })();
 
+  /**
+   * Asking in turn (decision 0092). The loop outlives a render, so it reads the panel through `latest`: whether the
+   * button would run, its run, and what the asks need. The button runs with what the panel has, whatever is asked.
+   */
+  const asking = useAsking();
+  const latest = useRef({ mode, scope, chosen: chosen.map((o) => o.id), by, ready: !action.disabled, run: action.run, hint: action.hint, label: action.label, solids, surfaces, strings, output, name });
+  latest.current = { mode, scope, chosen: chosen.map((o) => o.id), by, ready: !action.disabled, run: action.run, hint: action.hint, label: action.label, solids, surfaces, strings, output, name };
+  const cutLoop = useCallback(
+    async (ask: Asker) => {
+      let first = true;
+      /** The button pressed where the panel has all it needs: run now. */
+      const goNow = async (done: 'done' | 'pressed' | false) => {
+        if (done !== 'pressed' || !latest.current.ready) return false;
+        await latest.current.run();
+        return true;
+      };
+      const lastOf = (ids: () => string[], fits: (id: string) => boolean) => [...ids()].reverse().find(fits);
+      while (ask.alive()) {
+        ask.step(0);
+        setHeld(null);
+        const now = latest.current;
+        if (now.mode === 'between') {
+          // The closed string around it, the top, the bottom.
+          const picks = () => [...latest.current.strings, ...latest.current.surfaces].map((o) => o.id);
+          const pickedNow = (kinds: (id: string) => boolean) => lastOf(() => picks().filter((id) => selectionNow.current.includes(id)), kinds);
+          const isString = (id: string) => latest.current.strings.some((o) => o.id === id);
+          const isSurface = (id: string) => latest.current.surfaces.some((o) => o.id === id);
+          let ring = first ? pickedNow(isString) : undefined;
+          first = false;
+          if (!ring) {
+            const done = await ask.gather('Pick the closed string around the solid: a click. Right-click when done; Esc stops');
+            if (!done || !ask.alive()) return;
+            if (await goNow(done)) continue;
+            ring = pickedNow(isString);
+            if (!ring) continue;
+          }
+          setLimit(ring);
+          ask.step(1);
+          setSelection([]);
+          const topDone = await ask.gather('Pick the top: a surface or grid. Right-click when done; Esc goes back');
+          if (!ask.alive()) return;
+          if (!topDone) continue;
+          if (await goNow(topDone)) continue;
+          const topId = pickedNow(isSurface);
+          if (!topId) continue;
+          setTop(topId);
+          ask.step(2);
+          setSelection([]);
+          const bottomDone = await ask.gather('Pick the bottom: a surface or grid. Right-click when done; Esc goes back');
+          if (!ask.alive()) return;
+          if (!bottomDone) continue;
+          const bottomId = pickedNow((id) => isSurface(id) && id !== topId);
+          if (!bottomId) continue;
+          setBottom(bottomId);
+          ask.step(3);
+          await runIt('solid.between_surfaces', { top: topId, bottom: bottomId, string: ring, layer: latest.current.output, ...(latest.current.name.trim() ? { name: latest.current.name.trim() } : {}) });
+          continue;
+        }
+        // A cut: the solids, held; for a cut by a surface, the surface unless one's set; then the button or a right click.
+        if (!(first && (now.scope === 'visible' || now.chosen.length > 0))) {
+          const done = await ask.gather('Pick the solids to cut: a click, a box or Ctrl-click. Right-click when done; Esc stops');
+          if (!done || !ask.alive()) return;
+          first = false;
+          if (await goNow(done)) continue;
+        }
+        first = false;
+        if (latest.current.chosen.length === 0) continue;
+        // Held while the rest is asked for, and picked again once it's run, ready for the next cut.
+        const holding = latest.current.chosen;
+        setHeld(holding);
+        ask.step(1);
+        if (latest.current.mode === 'cut' && latest.current.by === null) {
+          setSelection([]);
+          const done = await ask.gather('Pick the surface or grid to cut by: a click, or type an RL in the panel. Right-click when done; Esc goes back');
+          if (!ask.alive()) return;
+          if (!done) continue;
+          if (await goNow(done)) {
+            setSelection(holding);
+            continue;
+          }
+          const surface = lastOf(() => selectionNow.current, (id) => latest.current.surfaces.some((o) => o.id === id));
+          if (!surface) continue;
+          setBy({ kind: 'surface', id: surface });
+          ask.step(2);
+        }
+        const confirm = await ask.gather(`Check the settings, then ${latest.current.label} on the button, or right-click; Esc goes back`);
+        if (!ask.alive()) return;
+        if (!confirm) {
+          setSelection(holding);
+          continue;
+        }
+        if (latest.current.ready) {
+          await latest.current.run();
+          setSelection(holding);
+        } else setReport({ notes: [], error: latest.current.hint ?? 'Not ready: the panel shows what it needs' });
+      }
+    },
+    // Everything it reads changes is read through `latest` and `selectionNow`.
+    [setSelection],
+  );
+  const asks = !addingTo && panelsShown.includes('cut');
+  useEffect(() => {
+    // Let go first: the loop's first steps run at once, and may hold solids straight away.
+    setHeld(null);
+    if (asks) asking.start(cutLoop);
+    else asking.stop();
+  }, [asks, mode, asking.start, asking.stop, cutLoop]);
+  // Picked again from the ribbon or Find a command as this same tool, it asks afresh. Picked as another of this panel's
+  // tools, the mode changes and that starts it: the ask for another mode must not restart this one first.
+  const askedAgain = toolAsk?.panel === 'cut' && toolAsk.mode === mode ? toolAsk.n : null;
+  const seenAsk = useRef({ key: askedAgain, mode });
+  useEffect(() => {
+    const was = seenAsk.current;
+    seenAsk.current = { key: askedAgain, mode };
+    if (askedAgain !== null && askedAgain !== was.key && mode === was.mode && asks) {
+      setHeld(null);
+      asking.start(cutLoop);
+    }
+  }, [askedAgain, mode, asks, asking.start, cutLoop]);
+  useEffect(() => () => asking.stop(), [asking.stop]);
+  const askSteps =
+    mode === 'between'
+      ? [{ label: 'The closed string around it', value: around?.name }, { label: 'The top', value: topOf?.name }, { label: 'The bottom', value: bottomOf?.name }, { label: 'The solid, made' }]
+      : [
+          { label: 'The solids to cut', value: chosen.length > 0 ? (chosen.length === 1 ? chosen[0].name : `${chosen.length} solids`) : undefined },
+          ...(mode === 'cut' ? [{ label: 'The surface or grid to cut by', value: by?.kind === 'rl' ? `RL ${by.rl}` : surfaces.find((o) => by?.kind === 'surface' && o.id === by.id)?.name }] : []),
+          { label: `${action.label}: the button, or a right click` },
+        ];
+  const askingAction: ToolAction = asks ? { ...action, run: () => asking.next(cutLoop), disabled: asking.at === null ? false : action.disabled } : action;
+
   const solidsSection = (
     <ToolSection title="Solids">
       <Field label="Take" hint={chosen.length === 0 ? 'Pick a solid in the view or the Objects table, or take those on show' : chosen.length === 1 ? chosen[0].name : `${chosen.length} solids, each on its own`}>
@@ -304,11 +444,13 @@ export function CutPanel() {
       summary={MODE_LINES[mode]}
       more="What's given stays as it is."
       result={report}
-      action={action}
+      action={askingAction}
     >
       <ToolSection>
         <Choice value={mode} options={MODES} labels={MODE_LABELS} onChange={setMode} label="What to do" columns={3} />
       </ToolSection>
+
+      <AskSteps steps={askSteps} at={asking.at} />
 
       {mode !== 'between' && solidsSection}
 

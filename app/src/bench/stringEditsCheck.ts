@@ -148,7 +148,10 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
     { askedAgain, backToWhat, stopped, footer: footer().slice(0, 40), vertices: stillThere },
   );
 
-  // Extend: one click on the line to run them on to.
+  // Extend: opened with nothing picked it asks what to run on (decision 0092); the toes, the button, then one click on
+  // the line to run them on to.
+  await key('Escape');
+  await key('Escape');
   await useTool('extend');
   await pickToes();
   const extendButton = goButton()?.textContent?.trim() ?? '';
@@ -180,7 +183,9 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   await key('z', true);
   await wait(500);
 
-  // Split at a click, then Join the two back as one.
+  // Split at a click, then Join the two back as one. Opened with nothing picked it asks for the string, then where.
+  await key('Escape');
+  await key('Escape');
   await useTool('split');
   await click([E + 20, N, 102]);
   const splitButton = goButton()?.textContent?.trim() ?? '';
@@ -604,15 +609,17 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   await key('Escape');
   await click([E + 350, N + 50, 110]);
   await click([E - 80, N - 80, 100], true);
+  // Opened with the two picked, it runs at once (decision 0092), and asks again.
   await useFromSurfaces('where_surfaces_meet');
+  await wait(1000);
   const meetButton = [...(fromPanel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].at(-1)?.textContent?.trim() ?? '';
-  await fromGo();
+  const meetAsksAgain = footer().includes('Pick the surface or grid to start from');
   const met = await madeNamed('Bench slope meets Topography');
   const metPoints = met.length === 1 ? await points(met[0].id) : [];
   expect(
-    'Where surfaces meet, the slope and the topography picked: one string 250 m east at RL 100, named for both',
-    met.length === 1 && metPoints.length >= 2 && metPoints.every((p) => near(p[0], E + 250) && near(p[2], 100)),
-    { button: meetButton, strings: met.length, points: metPoints.length },
+    'Where surfaces meet, opened with the slope and the topography picked: one string 250 m east at RL 100, named for both, then it asks again',
+    met.length === 1 && metPoints.length >= 2 && metPoints.every((p) => near(p[0], E + 250) && near(p[2], 100)) && meetAsksAgain,
+    { button: meetButton, strings: met.length, points: metPoints.length, asksAgain: meetAsksAgain },
   );
   await key('Escape');
   await key('Escape');
