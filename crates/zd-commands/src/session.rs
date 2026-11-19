@@ -415,6 +415,11 @@ impl Session {
         Arc::make_mut(&mut self.project).set_layer_filter(layer, when)
     }
 
+    /// See [`Project::set_reserves_filter`]. Display state only: not a command, not undone.
+    pub fn set_reserves_filter(&mut self, filter: Option<zd_core::ReservesFilter>) -> bool {
+        Arc::make_mut(&mut self.project).set_reserves_filter(filter)
+    }
+
     /// See [`Project::set_contours`]. Display state only.
     pub fn set_contours(&mut self, contours: Contours) -> bool {
         Arc::make_mut(&mut self.project).set_contours(contours)

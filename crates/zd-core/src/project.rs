@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use crate::display::{self, Colouring, Contours, Display, Look};
+use crate::display::{self, Colouring, Contours, Display, Look, ReservesFilter};
 use crate::{Attributes, Body, Layer, LayerId, Object, ObjectId, RunId, object_fits};
 
 /// One change a command asks for. A run's changes apply together or not at all.
@@ -240,6 +240,24 @@ impl Project {
         true
     }
 
+    /// Carries a reserves table's leaves filter to the view (decision 0090), or takes it away (None): the solids on the
+    /// table's leaves that the filter leaves out, and with `coal_only` the waste on those it keeps, are drawn, snapped
+    /// to and cut as hidden, as a layer's filter leaves them out. Solids on no leaf of the table are left as they are.
+    /// One at a time; worked out again when the table runs again. Display state only: not undone. Returns whether it
+    /// changed.
+    pub fn set_reserves_filter(&mut self, filter: Option<ReservesFilter>) -> bool {
+        let filter = filter
+            .map(|f| ReservesFilter { when: f.when.into_iter().map(|(k, v)| (k.trim().to_string(), v.trim().to_string())).filter(|(k, v)| !k.is_empty() && !v.is_empty()).collect(), ..f })
+            .filter(|f| !f.when.is_empty() || f.coal_only);
+        if self.display.reserves == filter {
+            return false;
+        }
+        self.display.reserves = filter;
+        self.refilter();
+        self.generation = next_generation();
+        true
+    }
+
     /// A layer's own filter, if it has one.
     pub fn layer_filter(&self, id: LayerId) -> Option<&BTreeMap<String, String>> {
         self.display.filters.get(&id)
@@ -268,12 +286,13 @@ impl Project {
     /// Works out again what the filters leave out: each layer's filter, and those of the layers it's under by name,
     /// read on each object on it, its attributes then its measures.
     fn refilter(&mut self) {
-        if self.display.filters.is_empty() {
+        if self.display.filters.is_empty() && self.display.reserves.is_none() {
             if !self.filtered.is_empty() {
                 self.filtered = Arc::default();
             }
             return self.conceal();
         }
+        let mut filtered = self.reserves_filtered();
         let filters: Vec<(&str, &BTreeMap<String, String>)> = self.display.filters.iter().filter_map(|(id, when)| self.layer(*id).map(|l| (l.name.as_str(), when))).collect();
         let under: HashMap<LayerId, Vec<&BTreeMap<String, String>>> = self
             .layers
@@ -281,9 +300,23 @@ impl Project {
             .map(|l| (l.id, filters.iter().filter(|(name, _)| l.name == *name || l.name.strip_prefix(*name).is_some_and(|rest| rest.starts_with('\\'))).map(|(_, when)| *when).collect::<Vec<_>>()))
             .filter(|(_, whens)| !whens.is_empty())
             .collect();
-        let filtered: HashSet<ObjectId> = self.objects().filter(|o| under.get(&o.layer).is_some_and(|whens| !whens.iter().all(|when| object_fits(when, o)))).map(|o| o.id).collect();
+        filtered.extend(self.objects().filter(|o| under.get(&o.layer).is_some_and(|whens| !whens.iter().all(|when| object_fits(when, o)))).map(|o| o.id));
         self.filtered = Arc::new(filtered);
         self.conceal();
+    }
+
+    /// What a reserves table's filter in the view leaves out (decision 0090): the solids on its leaves it doesn't keep,
+    /// and with `coal_only` the waste on those it does. Nothing when the table is gone.
+    fn reserves_filtered(&self) -> HashSet<ObjectId> {
+        let Some(f) = &self.display.reserves else { return HashSet::new() };
+        let Some(table) = self.object(f.table) else { return HashSet::new() };
+        let Body::Table(t) = &table.body else { return HashSet::new() };
+        let leaves = crate::leaves::TableLeaves::new(t, &table.attributes, &f.when);
+        self.objects()
+            .filter(|o| matches!(o.body, Body::Solid(_)))
+            .filter(|o| leaves.leaf(&o.attributes).is_some_and(|leaf| !leaves.keeps(&leaf) || (f.coal_only && crate::leaves::is_waste(&o.attributes))))
+            .map(|o| o.id)
+            .collect()
     }
 
     /// The hidden and the filtered out together.
@@ -916,5 +949,75 @@ mod tests {
         p.undo();
         assert!(p.object(topo).is_none());
         assert_eq!(p.display().layer_opacity(layer), 0.25, "undo leaves a look alone");
+    }
+
+    /// A reserves table's filter in the view (decision 0090). The table holds four leaves of strip 1: B1 U 100 (coal
+    /// 1,000 m³), B1 U 110 (none), B1 L (500) and B2 U (2,000), of case Base. Solids: a coal and a waste piece on B1 U 100,
+    /// one on each other leaf, one of another case on B1 U 100, and a strip solid (no block) on no leaf. Coal volume >0
+    /// leaves out only the solid on B1 U 110; Coal solids only also leaves out the waste on B1 U 100. The other case's and
+    /// the strip's are never touched. The table run again (revised) is read again; the table deleted takes it away.
+    #[test]
+    fn a_reserves_tables_filter_leaves_out_the_solids_on_the_leaves_it_does_not_keep() {
+        use crate::{AttrValue, ColumnValues, Solid, Table, TableColumn, TriMesh};
+        let t = |w: &[&str]| w.iter().map(|w| (!w.is_empty()).then(|| w.to_string())).collect::<Vec<_>>();
+        let table = |coal: [f64; 4]| {
+            Body::Table(Arc::new(Table {
+                columns: vec![
+                    TableColumn::text("strip", t(&["1", "1", "1", "1"])),
+                    TableColumn::text("block", t(&["B1", "B1", "B1", "B2"])),
+                    TableColumn::text("seam", t(&["U", "U", "L", "U"])),
+                    TableColumn::text("bench", t(&["100", "110", "", ""])),
+                    TableColumn { name: "Insitu\\Coal\\volume".into(), unit: "m3".into(), add_up: None, values: ColumnValues::Number(coal.map(Some).to_vec()) },
+                ],
+            }))
+        };
+        let solid = || Body::Solid(Solid::new(TriMesh::new(vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], vec![[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]])).unwrap());
+        let piece = |name: &str, words: &[(&str, &str)]| Change::Create {
+            name: name.into(),
+            layer: "blocks".into(),
+            attributes: words.iter().map(|(k, v)| (k.to_string(), if *k == "strip" { AttrValue::Number(v.parse().unwrap()) } else { AttrValue::Text(v.to_string()) })).collect(),
+            body: solid(),
+        };
+        let mut p = Project::new();
+        let made = p
+            .apply(
+                RunId::new(),
+                vec![
+                    create("Reserves", "tables", table([1_000.0, 0.0, 500.0, 2_000.0])),
+                    piece("coal", &[("strip", "1"), ("block", "B1"), ("seam", "U"), ("bench", "100"), ("material", "coal")]),
+                    piece("waste", &[("strip", "1"), ("block", "B1"), ("seam", "U"), ("bench", "100"), ("material", "waste")]),
+                    piece("no coal", &[("strip", "1"), ("block", "B1"), ("seam", "U"), ("bench", "110"), ("material", "coal")]),
+                    piece("L", &[("strip", "1"), ("block", "B1"), ("seam", "L"), ("material", "coal")]),
+                    piece("B2", &[("strip", "1"), ("block", "B2"), ("seam", "U"), ("material", "coal")]),
+                    piece("other case", &[("strip", "1"), ("block", "B1"), ("seam", "U"), ("bench", "100"), ("material", "waste"), ("case", "60")]),
+                    piece("strip", &[("strip", "1")]),
+                ],
+            )
+            .unwrap();
+        let ids: Vec<ObjectId> = made.changes.iter().map(|c| c.id).collect();
+        let (tid, solids) = (ids[0], &ids[1..]);
+        let out = |p: &Project| solids.iter().map(|&id| p.is_filtered_out(id)).collect::<Vec<_>>();
+        let when = |k: &str, v: &str| [(k.to_string(), v.to_string())].into_iter().collect::<BTreeMap<_, _>>();
+
+        assert!(p.set_reserves_filter(Some(ReservesFilter { table: tid, when: when("Insitu\\coal\\volume", ">0"), coal_only: false })));
+        assert_eq!(out(&p), [false, false, true, false, false, false, false], "only the leaf with no coal is out");
+        assert!(p.is_concealed(solids[2]) && !p.is_hidden(solids[2]));
+        assert!(p.set_reserves_filter(Some(ReservesFilter { table: tid, when: when("Insitu\\coal\\volume", ">0"), coal_only: true })));
+        assert_eq!(out(&p), [false, true, true, false, false, false, false], "and the waste on a leaf kept");
+        assert!(!p.set_reserves_filter(Some(ReservesFilter { table: tid, when: when("Insitu\\coal\\volume", ">0"), coal_only: true })), "the same filter");
+        assert!(p.set_reserves_filter(Some(ReservesFilter { table: tid, when: BTreeMap::new(), coal_only: true })));
+        assert_eq!(out(&p), [false, true, false, false, false, false, false], "Coal solids only on its own: every bench's waste out");
+        p.set_reserves_filter(Some(ReservesFilter { table: tid, when: when("Insitu\\coal\\volume", ">0"), coal_only: false }));
+
+        // The table run again: B1 U 110 now has coal, B2 U none.
+        let v1 = p.object(tid).unwrap().clone();
+        p.apply(RunId::new(), vec![Change::revise_body(&v1, table([1_000.0, 300.0, 500.0, 0.0]))]).unwrap();
+        assert_eq!(out(&p), [false, false, false, false, true, false, false], "worked out again from the table's new values");
+
+        assert!(!p.set_reserves_filter(Some(ReservesFilter { table: tid, when: when("seam", " "), coal_only: false })) || p.display().reserves.is_none(), "a blank filter is no filter");
+        p.set_reserves_filter(Some(ReservesFilter { table: tid, when: when("Insitu\\coal\\volume", ">0"), coal_only: false }));
+        p.apply(RunId::new(), vec![Change::Delete { id: tid, base: 2 }]).unwrap();
+        assert_eq!(out(&p), [false; 7], "the table gone, nothing is left out");
+        assert!(p.set_reserves_filter(None) && p.filtered_out().is_empty());
     }
 }

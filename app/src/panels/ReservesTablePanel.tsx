@@ -5,6 +5,7 @@ import { type Breakdown, reservesBreakdown, reservesFilterRows, reservesNodeOf, 
 import { type When, whenText } from '@/filters';
 import { Choice, Field, FilterInput, IconButton, ObjectMenu, Select } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
+import { Checkbox } from '@/design-system/ui/checkbox';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { breakdownCsv, cellText, fieldRows, type Isolation, isolation, nodeForLeaf, samePath, startsWith, unitLabel } from './reservesTable';
@@ -73,7 +74,7 @@ function writeFolded(folded: Set<string>) {
 const keyOf = (path: string[]) => path.join('\u0001');
 
 export function ReservesTable() {
-  const { summary, selection, setSelection, openNotebook, followInNotebook, colourBlocksByField, fieldColoured, zoomTo, setObjectsVisible, setLayersVisible } = useWorkspace();
+  const { summary, selection, setSelection, openNotebook, followInNotebook, colourBlocksByField, fieldColoured, zoomTo, setObjectsVisible, setLayersVisible, setReservesFilter } = useWorkspace();
   const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table'), [summary]);
   const [tableId, setTableId] = useState<string | null>(null);
   // A table picked anywhere is the one shown.
@@ -100,12 +101,20 @@ export function ReservesTable() {
   };
   const [said, setSaid] = useState<string | null>(null);
   const [view, setView] = useState<View>('fields');
-  /** A node's solids alone on screen, and what to put back: the layers as they were, and what it hid or showed. */
-  const [isolated, setIsolated] = useState<{ key: string; layers: { id: string; visible: boolean }[]; changed: Isolation } | null>(null);
+  /**
+   * What's on screen alone, and what to put back: the table's layers (Show), or a node's solids (Isolate its solids) with
+   * what it hid or showed. One at a time: a press of either puts the last back first.
+   */
+  const [alone, setAlone] = useState<{ key: string; layers: { id: string; visible: boolean }[]; changed: Isolation | null } | null>(null);
   /** The leaves the table adds up (decision 0088, workstream 4): levels to tick, fields typed. */
   const [when, setWhen] = useState<When>({});
   const [filterRows, setFilterRows] = useState<Record<string, boolean | number | string>[]>([]);
   const whenKey = whenText(when);
+  /** The leaves filter carried to the view, and only the coal solids on the leaves kept (decision 0090). */
+  const [inView, setInView] = useState(false);
+  const [coalOnly, setCoalOnly] = useState(false);
+  /** Every solid on the table's leaves: their layers are the table's. */
+  const [tableSolids, setTableSolids] = useState<string[]>([]);
 
   const tableKey = table ? `${table.id}@${table.revision}` : '';
   useEffect(() => {
@@ -116,6 +125,30 @@ export function ReservesTable() {
       live = false;
     };
   }, [tableKey]);
+  useEffect(() => {
+    let live = true;
+    setTableSolids([]);
+    if (table) void reservesSolids(table.id, []).then((ids) => live && setTableSolids(ids));
+    return () => {
+      live = false;
+    };
+  }, [tableKey]);
+  // A table whose filter is in the view picks it up again: its leaves filter and its ticks.
+  const viewFilter = summary?.display.reserves;
+  useEffect(() => {
+    const mine = !!table && viewFilter?.table === table.id;
+    setInView(mine);
+    setCoalOnly(mine && !!viewFilter?.coal_only);
+    if (mine && viewFilter?.when) setWhen(viewFilter.when);
+  }, [table?.id]);
+  // The filter in the view follows the box as it's typed, a moment after the last change.
+  useEffect(() => {
+    if (!table) return;
+    const mine = viewFilter?.table === table.id;
+    if (!inView && !mine) return;
+    const timer = setTimeout(() => void setReservesFilter(inView ? { table: table.id, when, coal_only: coalOnly } : null), 300);
+    return () => clearTimeout(timer);
+  }, [inView, coalOnly, whenKey, table?.id]);
   // Another table starts at All; the same one filtered keeps the node shown and what's open.
   const treeOf = useRef('');
   useEffect(() => {
@@ -225,37 +258,66 @@ export function ReservesTable() {
       writeFolded(next);
       return next;
     });
+  const tableLayers = useMemo(() => {
+    const ids = new Set(tableSolids);
+    const on = new Set((summary?.objects ?? []).filter((o) => ids.has(o.id)).map((o) => o.layer));
+    return (summary?.layers ?? []).filter((l) => on.has(l.id));
+  }, [tableSolids, summary]);
   const selectSolids = async () => {
     if (!table) return;
-    const ids = await reservesSolids(table.id, node);
+    const ids = await reservesSolids(table.id, node, when);
     setSelection(ids);
     setSaid(`${fmt(ids.length)} solid${ids.length === 1 ? '' : 's'} picked`);
   };
-  const isolatedKey = table ? `${table.id}|${keyOf(node)}` : '';
-  /** The node's solids alone on screen, zoomed to; again, everything as it was. */
+  const isolatedKey = table ? `node:${table.id}|${keyOf(node)}|${whenKey}` : '';
+  const layersKey = table ? `layers:${table.id}` : '';
+  /** Whatever is alone on screen put back: the layers as they were, and only what was hidden or shown changed back. */
+  const putBack = async () => {
+    if (!alone) return;
+    const { layers, changed } = alone;
+    setAlone(null);
+    if (changed?.hide.length) await setObjectsVisible(changed.hide, true);
+    if (changed?.unhide.length) await setObjectsVisible(changed.unhide, false);
+    await setLayersVisible(
+      layers.filter((l) => l.visible).map((l) => l.id),
+      layers.filter((l) => !l.visible).map((l) => l.id),
+    );
+    setSaid('Shown as it was');
+  };
+  const layersNow = () => (summary?.layers ?? []).map((l) => ({ id: l.id, visible: l.visible }));
+  /** The node's solids (those on leaves the filter keeps) alone on screen, zoomed to; again, everything as it was. */
   const isolateSolids = async () => {
     if (!table || !summary) return;
-    if (isolated) {
-      const { layers, changed } = isolated;
-      setIsolated(null);
-      if (changed.hide.length) await setObjectsVisible(changed.hide, true);
-      if (changed.unhide.length) await setObjectsVisible(changed.unhide, false);
-      await setLayersVisible(
-        layers.filter((l) => l.visible).map((l) => l.id),
-        layers.filter((l) => !l.visible).map((l) => l.id),
-      );
-      setSaid('Shown as it was');
-      if (isolated.key === isolatedKey) return;
-    }
-    const ids = await reservesSolids(table.id, node);
+    const was = alone?.key;
+    await putBack();
+    if (was === isolatedKey) return;
+    const ids = await reservesSolids(table.id, node, when);
     if (ids.length === 0) return setSaid('No solids to isolate');
     const changed = isolation(ids, summary.objects, summary.layers);
-    setIsolated({ key: isolatedKey, layers: summary.layers.map((l) => ({ id: l.id, visible: l.visible })), changed });
+    setAlone({ key: isolatedKey, layers: layersNow(), changed });
     if (changed.unhide.length) await setObjectsVisible(changed.unhide, true);
     if (changed.hide.length) await setObjectsVisible(changed.hide, false);
     await setLayersVisible(changed.showLayers, changed.hideLayers);
     zoomTo(ids);
     setSaid(`${fmt(ids.length)} solid${ids.length === 1 ? '' : 's'} alone on show`);
+  };
+  /** The table's solids' layers on and every other layer off; again, the layers as they were. */
+  const showTableLayers = async () => {
+    if (!table || tableLayers.length === 0) return;
+    const was = alone?.key;
+    await putBack();
+    if (was === layersKey) return;
+    const on = new Set(tableLayers.map((l) => l.id));
+    setAlone({ key: layersKey, layers: layersNow(), changed: null });
+    await setLayersVisible([...on], (summary?.layers ?? []).filter((l) => l.visible && !on.has(l.id)).map((l) => l.id));
+    setSaid(`${tableLayers.map((l) => l.name).join(', ')} alone on show`);
+  };
+  /** The leaves filter in the view: on, the table's layers are turned on too, so what it keeps is on show. */
+  const filterTheView = async (on: boolean) => {
+    setInView(on);
+    if (!on) return setCoalOnly(false);
+    const off = tableLayers.filter((l) => !l.visible).map((l) => l.id);
+    if (off.length) await setLayersVisible(off, []);
   };
   const saveCsv = () => {
     if (!breakdown || !table) return;
@@ -292,6 +354,22 @@ export function ReservesTable() {
           </Select>
           <ObjectMenu object={table} what="reserves table" onDeleted={() => setTableId(null)} />
         </div>
+        {tableLayers.length > 0 && (
+          <div className="flex items-center gap-1 border-b border-border px-2 py-1" data-slot="reserves-layers">
+            <span className="min-w-0 flex-1 truncate text-muted-foreground" title={`The table's solids are on ${tableLayers.map((l) => l.name).join(', ')}`}>
+              Solids on <span className="text-foreground">{tableLayers.map((l) => l.name).join(', ')}</span>
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn('h-6 shrink-0 px-2 text-xs', alone?.key === layersKey && 'border-primary/70 text-primary')}
+              title={alone?.key === layersKey ? 'Put the layers back as they were' : "Turn the table's solids' layer on and every other layer off; again, the layers as they were"}
+              onClick={() => void showTableLayers()}
+            >
+              {alone?.key === layersKey ? 'Back' : 'Show'}
+            </Button>
+          </div>
+        )}
         <div className="min-h-0 flex-1 overflow-auto py-1" role="tree" aria-label="Levels">
           {tree && <TreeRow n={tree} depth={0} node={node} leaf={leaf} expanded={expanded} setExpanded={setExpanded} show={show} />}
         </div>
@@ -305,6 +383,20 @@ export function ReservesTable() {
               {Object.keys(when).length > 0 ? `${fmt(tree.leaves)} of ${fmt(filterRows.length)} leaves` : `${fmt(tree.leaves)} leaves`}
             </span>
           )}
+          <label
+            className={cn('flex shrink-0 items-center gap-1.5', inView ? 'text-primary' : 'text-muted-foreground')}
+            title="Draw only the solids on the leaves the filter keeps, on the table's layer, as a layer's filter does. Saved with the project; untick to draw them all again"
+          >
+            <Checkbox checked={inView} onCheckedChange={(c) => void filterTheView(c === true)} aria-label="Filter the view too" data-slot="reserves-in-view" />
+            Filter the view too
+          </label>
+          <label
+            className={cn('flex shrink-0 items-center gap-1.5', !inView ? 'text-muted-foreground/50' : coalOnly ? 'text-primary' : 'text-muted-foreground')}
+            title="Only the coal solids on the leaves kept, by the material the seam cut gave them: a bench's waste isn't drawn. Coal the working sections reject still shows, as its solid is coal"
+          >
+            <Checkbox checked={coalOnly} disabled={!inView} onCheckedChange={(c) => setCoalOnly(c === true)} aria-label="Coal solids only" data-slot="reserves-coal-only" />
+            Coal solids only
+          </label>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1">
           <span className="flex items-center gap-1" aria-label="Node shown">
@@ -337,21 +429,21 @@ export function ReservesTable() {
             >
               <Columns3 className="size-3.5" /> Open its column
             </Button>
-            <Button variant="outline" size="sm" className="h-6 px-2 text-xs" title="Pick the solids this node was made from, in the view, the tree and Blocks" onClick={() => void selectSolids()}>
+            <Button variant="outline" size="sm" className="h-6 px-2 text-xs" title="Pick the solids this node was made from, on the leaves the filter keeps, in the view, the tree and Blocks" onClick={() => void selectSolids()}>
               <MousePointerSquareDashed className="size-3.5" /> Select its solids
             </Button>
             <Button
               variant="outline"
               size="sm"
-              className={cn('h-6 px-2 text-xs', isolated?.key === isolatedKey && 'border-primary/70 text-primary')}
+              className={cn('h-6 px-2 text-xs', alone?.key === isolatedKey && 'border-primary/70 text-primary')}
               title={
-                isolated?.key === isolatedKey
+                alone?.key === isolatedKey
                   ? 'Put back the layers and objects that were showing before Isolate'
-                  : 'Show only the solids this node was made from, zoomed to: every other layer off, and the rest on their layers hidden. Pressed again, everything comes back as it was'
+                  : 'Show only the solids this node was made from, on the leaves the filter keeps, zoomed to: every other layer off, and the rest on their layers hidden. Pressed again, everything comes back as it was'
               }
               onClick={() => void isolateSolids()}
             >
-              <Focus className="size-3.5" /> {isolated?.key === isolatedKey ? 'Show what was shown' : 'Isolate its solids'}
+              <Focus className="size-3.5" /> {alone?.key === isolatedKey ? 'Show what was shown' : 'Isolate its solids'}
             </Button>
             <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={!breakdown} title="This node's breakdown as CSV, exact values" onClick={saveCsv}>
               <Download className="size-3.5" /> CSV

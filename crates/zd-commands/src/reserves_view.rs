@@ -9,45 +9,10 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use serde::Serialize;
-use zd_core::{AttrValue, Attributes, BASE_CASE, ColumnValues, Table, attribute_ci, attribute_word, list_fits};
+use zd_core::{AttrValue, Attributes, ColumnValues, Table};
 use zd_reserves::AddUp;
 
-/// The table's level columns, top down: its text columns outside any folder, but the case it's of.
-pub fn levels(table: &Table) -> Vec<String> {
-    table
-        .columns
-        .iter()
-        .filter(|c| !c.name.contains('\\') && !c.name.eq_ignore_ascii_case("case") && matches!(c.values, ColumnValues::Text(_)))
-        .map(|c| c.name.clone())
-        .collect()
-}
-
-/// The defaults a run gave levels a block has no value for (pit `Pit`), from the table's `levels` attribute
-/// (`pit=Pit;strip;block;seam;bench`). A table written before it has none.
-pub fn level_defaults(attributes: &Attributes) -> Vec<(String, String)> {
-    let Some(AttrValue::Text(levels)) = attributes.get("levels") else { return Vec::new() };
-    levels.split(';').filter_map(|l| l.split_once('=')).map(|(a, d)| (a.to_string(), d.to_string())).collect()
-}
-
-/// The words a solid's attributes give a table's levels, top down, as the run placed it: its own word, else the level's
-/// default, else none ("").
-pub fn leaf_of(levels: &[String], defaults: &[(String, String)], attributes: &Attributes) -> Vec<String> {
-    levels
-        .iter()
-        .map(|l| {
-            attribute_ci(attributes, l)
-                .map(attribute_word)
-                .filter(|w| !w.is_empty())
-                .or_else(|| defaults.iter().find(|(a, _)| a.eq_ignore_ascii_case(l)).map(|(_, d)| d.clone()))
-                .unwrap_or_default()
-        })
-        .collect()
-}
-
-/// The case a solid or table is of: its `case` attribute, else Base.
-pub fn case_of(attributes: &Attributes) -> String {
-    attribute_ci(attributes, "case").map(attribute_word).filter(|w| !w.is_empty()).unwrap_or_else(|| BASE_CASE.to_string())
-}
+pub use zd_core::leaves::{case_of, leaf_of, level_defaults, levels};
 
 /// One node of the tree: the level values down to it, its label, how many leaves are under it and its children.
 #[derive(Clone, Debug, Serialize)]
@@ -71,32 +36,7 @@ pub fn tree_where(table: &Table, when: &BTreeMap<String, String>) -> TreeNode {
     node(&levels, &words, Vec::new(), "All".into(), &rows_fitting(table, when))
 }
 
-/// The leaves (rows) a filter keeps, in order: every leaf with no filter. A filter names the table's columns as attributes,
-/// a level (`seam: U, M`, `strip: 1-5`) or a field by its folders (`Insitu\Coal\thickness: <0.3`), the name's case aside;
-/// a number is compared as one, words as words, as every filter reads them (decision 0088). A column the table hasn't is
-/// a value that isn't there.
-pub fn rows_fitting(table: &Table, when: &BTreeMap<String, String>) -> Vec<usize> {
-    let lists: Vec<(Option<&ColumnValues>, &str)> = when
-        .iter()
-        .filter(|(_, list)| !list.trim().is_empty())
-        .map(|(key, list)| {
-            let column = table.column(key).or_else(|| table.columns.iter().find(|c| c.name.eq_ignore_ascii_case(key)));
-            (column.map(|c| &c.values), list.as_str())
-        })
-        .collect();
-    (0..table.rows())
-        .filter(|&i| {
-            lists.iter().all(|(values, list)| {
-                let value = match values {
-                    Some(ColumnValues::Number(v)) => v[i].filter(|x| x.is_finite()).map(AttrValue::Number),
-                    Some(ColumnValues::Text(v)) => v[i].clone().filter(|w| !w.is_empty()).map(AttrValue::Text),
-                    None => None,
-                };
-                list_fits(list, value.as_ref())
-            })
-        })
-        .collect()
-}
+pub use zd_core::leaves::rows_fitting;
 
 /// Each leaf's levels and other words as attributes, a leaf a row: what the filter box counts to tick. Fields are typed.
 pub fn filter_rows(table: &Table) -> Vec<Attributes> {

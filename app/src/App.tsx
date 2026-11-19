@@ -10,6 +10,7 @@ import { concealed,
   type Contours,
   type DeswikLayer,
   type Display,
+  type ReservesFilter,
   deswikLayers,
   spryContents,
   type LogEntry,
@@ -37,6 +38,7 @@ import { concealed,
   setContours,
   setLayerOpacity,
   setLayerFilter,
+  setReservesFilter,
   setLayerVisible,
   setLooks,
   setObjectsVisible,
@@ -1092,6 +1094,11 @@ export default function App() {
     [attempt, show],
   );
 
+  const changeReservesFilter = useCallback(
+    (filter: ReservesFilter | null) => attempt(async () => show(await setReservesFilter(filter))),
+    [attempt, show],
+  );
+
   const setObjectsShown = useCallback(
     (objects: string[], visible: boolean) => attempt(async () => show(await setObjectsVisible(objects, visible))),
     [attempt, show],
@@ -1155,6 +1162,7 @@ export default function App() {
       setLayersVisible: setLayersShown,
       setObjectsVisible: setObjectsShown,
       setLayerFilter: changeLayerFilter,
+      setReservesFilter: changeReservesFilter,
       setLooks: changeLooks,
       setLayerOpacity: changeLayerOpacity,
       setContours: changeContours,
@@ -1204,7 +1212,7 @@ export default function App() {
       viewMenu,
       closeViewMenu: () => setViewMenu(null),
     }),
-    [viewMenu, summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLayerFilter, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook, drafts],
+    [viewMenu, summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLayerFilter, changeReservesFilter, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook, drafts],
   );
 
   /** The view's own tools, for the bar on the view (decision 0076). The keys below do the same. */

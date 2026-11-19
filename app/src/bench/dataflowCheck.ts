@@ -4,7 +4,7 @@
 // Filtering plan L4), and what Properties shows read back.
 import { EditorView } from '@codemirror/view';
 import type { DockviewApi } from 'dockview-react';
-import { concealed, objectDetails, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, undo, writePicture } from '../bridge';
+import { concealed, objectDetails, objectsAttributes, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, undo, writePicture } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
 import { windowPicture } from './windowPicture';
 import { showPanel } from '../workspace/Workspace';
@@ -233,6 +233,69 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     alone.length === 21 && JSON.stringify(alone) === JSON.stringify(block) && lit && state(after) === state(before),
     { alone: alone.length, block: block.length, lit, putBack: state(after) === state(before) },
   );
+  // The table's solids' layer named, and Show puts it alone on screen; Back puts the layers back (decision 0090).
+  if (baseTable) {
+    const all = await reservesSolids(baseTable.id, []);
+    const summaryNow = await projectSummary();
+    const layerOf = new Map(summaryNow.objects.map((o) => [o.id, o.layer]));
+    const theirs = [...new Set(all.map((id) => layerOf.get(id)))].sort();
+    const names = summaryNow.layers.filter((l) => theirs.includes(l.id)).map((l) => l.name);
+    const row = panel()?.querySelector<HTMLElement>('[data-slot="reserves-layers"]');
+    const rowButton = () => row?.querySelector<HTMLButtonElement>('button');
+    const named = names.length > 0 && names.every((n) => row?.textContent?.includes(n));
+    const before2 = await projectSummary();
+    rowButton()?.click();
+    for (let k = 0; k < 50 && rowButton()?.textContent !== 'Back'; k++) await wait(100);
+    await wait(200);
+    const shownLayers = (await projectSummary()).layers.filter((l) => l.visible).map((l) => l.id).sort();
+    rowButton()?.click();
+    for (let k = 0; k < 50 && rowButton()?.textContent !== 'Show'; k++) await wait(100);
+    await wait(200);
+    expect(
+      "the table names its solids' layer, Show puts it alone on screen, and Back puts the layers back",
+      named && JSON.stringify(shownLayers) === JSON.stringify(theirs) && state(await projectSummary()) === state(before2),
+      { layers: names.length, shown: shownLayers.length, theirs: theirs.length },
+    );
+
+    // Select and Isolate take the filter: B1's U solids only.
+    await typeFilter('seam: U');
+    for (let k = 0; k < 50 && !heads().includes('Pit > 3 > B1 > U'); k++) await wait(100);
+    const uOnly = (await reservesSolids(baseTable.id, ['Pit', '3', 'B1'], { seam: 'U' })).sort();
+    button('Select its solids')?.click();
+    for (let k = 0; k < 50 && !(panel()?.textContent ?? '').includes(`${uOnly.length} solid`); k++) await wait(100);
+    const pickedU = /([\d,]+) solids? picked/.exec(panel()?.textContent ?? '')?.[1];
+    const uAttrs = await objectsAttributes(uOnly);
+    expect(
+      "with the filter on, Select its solids picks only the solids of the leaves it keeps (B1's U)",
+      uOnly.length > 0 && uOnly.length < 21 && pickedU === String(uOnly.length) && uAttrs.every((a) => String(a.seam) === 'U'),
+      { picked: pickedU, kept: uOnly.length },
+    );
+
+    // Filter the view too: the table's solids on the leaves it leaves out aren't drawn; Coal solids only takes the waste too.
+    const tick = (label: string) => panel()?.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+    const keptAll = new Set(await reservesSolids(baseTable.id, [], { seam: 'U' }));
+    tick('Filter the view too')?.click();
+    for (let k = 0; k < 50 && (await projectSummary()).display.reserves?.table !== baseTable.id; k++) await wait(100);
+    const filteredNow = (s: ProjectSummary) => new Set(s.objects.filter((o) => o.filtered).map((o) => o.id));
+    const out1 = filteredNow(await projectSummary());
+    const viewRight = all.every((id) => out1.has(id) === !keptAll.has(id));
+    tick('Coal solids only')?.click();
+    for (let k = 0; k < 50 && !(await projectSummary()).display.reserves?.coal_only; k++) await wait(100);
+    const out2 = filteredNow(await projectSummary());
+    const keptAttrs = await objectsAttributes([...keptAll]);
+    const coal = new Set([...keptAll].filter((_, i) => String(keptAttrs[i].material).toLowerCase() !== 'waste'));
+    const coalRight = all.every((id) => out2.has(id) === !coal.has(id));
+    tick('Filter the view too')?.click();
+    for (let k = 0; k < 50 && (await projectSummary()).display.reserves; k++) await wait(100);
+    const cleared = filteredNow(await projectSummary());
+    await typeFilter('');
+    for (let k = 0; k < 50 && !heads().includes('Pit > 3 > B1 > M'); k++) await wait(100);
+    expect(
+      "Filter the view too leaves out the table's solids on the leaves the filter doesn't keep; Coal solids only the waste on those it does; unticked, they're all back",
+      viewRight && coalRight && coal.size > 0 && coal.size < keptAll.size && all.every((id) => !cleared.has(id)),
+      { table: all.length, kept: keptAll.size, coal: coal.size, viewRight, coalRight },
+    );
+  }
   await checkColumn(panel, expect, picture);
   if (baseTable) {
     const ids = await reservesSolids(baseTable.id, ['Pit', '4', 'B2', 'M']);

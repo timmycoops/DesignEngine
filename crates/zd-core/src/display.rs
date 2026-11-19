@@ -79,6 +79,23 @@ pub struct Display {
     /// may hold. What doesn't fit, on the layer and the layers under it, isn't drawn, snapped to or cut by a section.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub filters: BTreeMap<LayerId, BTreeMap<String, String>>,
+    /// A reserves table's leaves filter carried to the view (decision 0090): the solids on its leaves the filter leaves
+    /// out, and with `coal_only` its waste, aren't drawn, snapped to or cut by a section.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserves: Option<ReservesFilter>,
+}
+
+/// A reserves table's filter in the view (decision 0090).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ReservesFilter {
+    /// The reserves table whose leaves it reads.
+    pub table: ObjectId,
+    /// The leaves it keeps, as the table's filter box types them (decision 0088): empty keeps them all.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub when: BTreeMap<String, String>,
+    /// Only the coal solids on the leaves kept, by their `material`: a bench's waste left out.
+    #[serde(default)]
+    pub coal_only: bool,
 }
 
 impl Display {

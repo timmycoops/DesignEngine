@@ -374,6 +374,15 @@ export interface Display {
   contours: Contours;
   /** A layer's filter by attributes and measures, by layer id (decision 0088): what doesn't fit isn't drawn. */
   filters?: Record<string, Record<string, string>>;
+  /** A reserves table's leaves filter carried to the view (decision 0090). */
+  reserves?: ReservesFilter;
+}
+
+/** A reserves table's filter in the view (decision 0090): the solids on its leaves `when` leaves out, and with `coal_only` its waste, aren't drawn. */
+export interface ReservesFilter {
+  table: string;
+  when?: Record<string, string>;
+  coal_only?: boolean;
 }
 
 /** Not drawn, snapped to or cut by a section: hidden on its own, or left out by a layer's filter. */
@@ -635,7 +644,8 @@ export const reservesFilterRows = (object: string) => invoke<Record<string, bool
  */
 export const reservesBreakdown = (object: string, node: string[], open: string[][], leaves = false, when: Record<string, string> = {}) => invoke<Breakdown>('reserves_breakdown', { object, node, open, leaves, when });
 /** The solids a reserves table's node was made from, to select. */
-export const reservesSolids = (object: string, node: string[]) => invoke<string[]>('reserves_solids', { object, node });
+/** A node's solids (decisions 0075, 0090): those on the table's leaves under it, and with `when` on the leaves it keeps. */
+export const reservesSolids = (object: string, node: string[], when?: Record<string, string>) => invoke<string[]>('reserves_solids', { object, node, when });
 /** A reserves field's value for each block solid of the table's case, its leaf's or its block's (decision 0075, point 7). */
 export const reservesFieldValues = (object: string, column: string, byBlock: boolean) => invoke<[string, number][]>('reserves_field_values', { object, column, byBlock });
 /** Where a solid sits in a reserves table, or null if it isn't in it. */
@@ -792,6 +802,9 @@ export const setObjectsVisible = async (objects: string[], visible: boolean) =>
 /** A layer's filter (decision 0088): attribute or measure name to the list it may hold; {} takes it away. Display state. */
 export const setLayerFilter = async (layer: string, when: Record<string, string>) =>
   (idle(), summaryAfter(await invoke<ProjectChanges>('set_layer_filter', { layer, when })));
+/** A reserves table's leaves filter in the view (decision 0090); null takes it away. Display state. */
+export const setReservesFilter = async (filter: ReservesFilter | null) =>
+  (idle(), summaryAfter(await invoke<ProjectChanges>('set_reserves_filter', { filter })));
 /** Every attribute of what's on a layer and the layers under it, an object a row: what the filter box counts. */
 export const layerAttributes = (layer: string) => invoke<Record<string, boolean | number | string>[]>('layer_attributes', { layer });
 /** What one input of a workflow step finds before its filter, as the case sees it, an object a row with its measures. */

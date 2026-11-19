@@ -121,7 +121,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   again there runs a block, its strip or every block into the table in place, `reserves.run` with `table` and `only`
   (`docs/decisions/0085-run-a-table-again.md`). `Table`: results, a table a case,
   values as Parquet in the `.zdp`, read by the HTML report and the app's Reserves table tab, fields as rows and a
-  node's children across, its solids matched by the levels the table records (`docs/decisions/0075-reserves-in-the-app.md`). `reserves.run` runs a dataflow a column a pit, strip
+  node's children across, its solids matched by the levels the table records (`docs/decisions/0075-reserves-in-the-app.md`), its leaves filter carried to the view by a tick, coal solids only if asked (`docs/decisions/0090-reserves-filter-in-the-view.md`). `reserves.run` runs a dataflow a column a pit, strip
   and block (the dataflow's levels above the seam), its steps registered by name, and writes a reserves table: a row a
   leaf of the levels, a column a field under its folders (`Insitu\Coal\volume`), coal and waste on one leaf as Spry's
   node (`docs/decisions/0072-dataflow-parameters-tables.md`, `0074-rom-and-the-reserves-table.md`); clean coal under ROM,
