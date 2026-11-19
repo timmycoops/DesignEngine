@@ -157,9 +157,9 @@ function LayerRow({ entry: { layer, objects, hidden, concealed: notShowing, pick
       )}
       {layer.visible && notShowing > 0 && (
         <span
-          className="shrink-0 text-muted-foreground tabular-nums"
+          className={cn('shrink-0 tabular-nums', notShowing > hidden ? 'text-primary' : 'text-muted-foreground')}
           data-slot="layer-showing"
-          title={[hidden > 0 ? `${fmt(hidden)} hidden: right-click for Show all on it` : '', notShowing > hidden ? `${fmt(notShowing - hidden)} left out by a filter` : ''].filter(Boolean).join('; ')}
+          title={[hidden > 0 ? `${fmt(hidden)} hidden: right-click for Show all on it` : '', notShowing > hidden ? `${fmt(notShowing - hidden)} left out by a filter: the layer's, or a reserves table's in the view` : ''].filter(Boolean).join('; ')}
         >
           {fmt(count - notShowing)} of {fmt(count)}
         </span>

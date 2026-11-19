@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { Colouring, Contours, Dataflow, LogEntry, ParameterTable, ProjectSummary, RunRecord, Vec3, WorkflowRecord } from '@/bridge';
+import type { Colouring, Contours, Dataflow, LogEntry, ParameterTable, ProjectSummary, ReservesFilter, RunRecord, Vec3, WorkflowRecord } from '@/bridge';
 import type { Bands } from '@/viewport/rlColour';
 import type { RlShown, SeamShown } from '@/viewport/sceneSync';
 import type { PanelId } from './panels';
@@ -69,6 +69,8 @@ export interface Workspace {
    * drawn, snapped to or cut by a section. {} takes it away. Display only: saved, not undone.
    */
   setLayerFilter: (layer: string, when: Record<string, string>) => void;
+  /** A reserves table's leaves filter in the view (decision 0090), null to take it away. Display only: saved, not undone. */
+  setReservesFilter: (filter: ReservesFilter | null) => Promise<void>;
   /** Shows or hides objects one by one, under their layer's tick, settled when shown. Display only: not undone. */
   setObjectsVisible: (objects: string[], visible: boolean) => Promise<void>;
   /**

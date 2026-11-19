@@ -486,6 +486,7 @@ pub(crate) fn saved_display(project: &Project) -> Display {
         layers: display.layers.iter().filter(|(id, _)| project.layer(**id).is_some()).map(|(&id, &o)| (id, o)).collect(),
         contours: display.contours,
         filters: display.filters.iter().filter(|(id, _)| project.layer(**id).is_some()).map(|(&id, when)| (id, when.clone())).collect(),
+        reserves: display.reserves.clone().filter(|f| live.contains(&f.table)),
     }
 }
 

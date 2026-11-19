@@ -573,6 +573,16 @@ pub async fn set_layer_filter(layer: LayerId, when: std::collections::BTreeMap<S
     Ok(changes_after_hiding(&mut app))
 }
 
+/// A reserves table's leaves filter carried to the view (decision 0090), or taken away (None): the solids on the leaves
+/// it leaves out, and with `coal_only` the waste on those it keeps, drawn, snapped to and cut as hidden. Display state.
+#[tauri::command]
+pub async fn set_reserves_filter(filter: Option<zd_core::ReservesFilter>, state: State<'_, AppState>) -> Result<ProjectChanges, String> {
+    let mut app = state.app.lock().unwrap();
+    app.idle()?;
+    app.session.set_reserves_filter(filter);
+    Ok(changes_after_hiding(&mut app))
+}
+
 /// Every attribute of what's on a layer and the layers under it, an object a row: what the filter box lists and counts
 /// to tick (decision 0088). Only what the layer tree speaks for: no face designs, workflows, tables or dataflows.
 #[tauri::command]
@@ -940,24 +950,18 @@ pub fn formula_reference() -> &'static str {
     zd_commands::builtin::FORMULA_REFERENCE
 }
 
-/// The solids a reserves table's node was made from (decision 0075): every solid of the table's case whose levels, as
-/// the run placed it, start with the node's. To select them.
+/// The solids a reserves table's node was made from (decision 0075): every solid of the table's case on a leaf the table
+/// holds, under the node, and with `when` on a leaf the table's filter keeps (decision 0090). To select or isolate them.
 #[tauri::command]
-pub async fn reserves_solids(object: ObjectId, node: Vec<String>, state: State<'_, AppState>) -> Result<Vec<ObjectId>, String> {
-    use zd_commands::reserves_view::{case_of, leaf_of, level_defaults, levels};
+pub async fn reserves_solids(object: ObjectId, node: Vec<String>, when: Option<std::collections::BTreeMap<String, String>>, state: State<'_, AppState>) -> Result<Vec<ObjectId>, String> {
     let app = state.app.clone();
     blocking(move || {
         let app = app.lock().unwrap();
         let project = app.session.project();
         let table = project.object(object).ok_or("no such object")?;
         let zd_core::Body::Table(t) = &table.body else { return Err("not a table".to_string()) };
-        let (levels, defaults, case) = (levels(t), level_defaults(&table.attributes), case_of(&table.attributes));
-        Ok(project
-            .objects()
-            .filter(|o| matches!(o.body, zd_core::Body::Solid(_)) && case_of(&o.attributes) == case)
-            .filter(|o| leaf_of(&levels, &defaults, &o.attributes).starts_with(&node))
-            .map(|o| o.id)
-            .collect())
+        let leaves = zd_core::leaves::TableLeaves::new(t, &table.attributes, &when.unwrap_or_default());
+        Ok(leaves.solids(&node, project.objects().filter(|o| matches!(o.body, zd_core::Body::Solid(_))).map(|o| (o.id, &o.attributes))))
     })
     .await?
 }
