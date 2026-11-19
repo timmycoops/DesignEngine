@@ -173,6 +173,8 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     expect('the pause is the third step', panelText('workflow').includes('Steps (3)'));
     await press(button('Run 2 steps'));
     expect('the run stops at the pause', panelText('workflow').includes('Paused at step 3'), panelText('workflow').slice(-300));
+    layers = await shown();
+    expect('at the pause, what the step before it made is on show (app review, item 4)', layers.cut === true && layers.pit === false, layers);
 
     // One undo takes the run back.
     const revisions = (await Promise.all(pieces.map(solid))).map((p) => p.revision);

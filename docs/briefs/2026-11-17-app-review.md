@@ -102,6 +102,12 @@ whose note says it's there to look at the strips), the strips layer was hidden a
 **Check:** the workflow bench check finds triangles in view after a run and at the pause, and the demo's strips on show
 at step 14.
 
+Done (19 Nov, branch `app/review-fixes`): Tidy after a run now shows what the last step that made something drawn made
+(strings, surfaces, solids, grids, seam models), walking back from the end. On the demo, the reserves table written last
+leaves the blocks on show, and the strip delete just before the pause leaves the strips on show. Tests: `tidyResult` in
+`app/tests/workflow.test.mjs`, and the workflow bench check finds the cut pieces on show at its pause. Not checked on
+the demo itself in the app yet.
+
 ## 5. The ROM section isn't listed in stack order
 
 **Seen:** in the Reserves table at All, `Working section\name` reads `U; M; L` (stack order), but `ROM\section` reads

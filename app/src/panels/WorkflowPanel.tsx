@@ -10,7 +10,7 @@ import { Field, IconButton, ObjectMenu, plainNote, type RunReport, Select, Statu
 import { LastBadge, plural, StepSettings, usePickedWorkflow } from './workflowParts';
 import { useWorkspace } from '@/workspace/context';
 import { fmt } from './format';
-import { BASE, caseValue, changesOfCase, onlyLayers, ruleWords, type SettingRow, settingsOfStep, stepsOfCase, tidyLayers, withSetting, withWhere } from './workflow';
+import { BASE, caseValue, changesOfCase, onlyLayers, ruleWords, type SettingRow, settingsOfStep, stepsOfCase, tidyLayers, tidyResult, withSetting, withWhere } from './workflow';
 
 /**
  * Workflow (decision 0065): saved steps run again in one go. A workflow is captured from runs in the Run log, or built
@@ -20,8 +20,9 @@ import { BASE, caseValue, changesOfCase, onlyLayers, ruleWords, type SettingRow,
  *
  * Seeing what a step did: a click on a step selects what it last made and zooms to it, and its eye shows only that,
  * every other layer off until Show all again. Tidy after a run (on by default) leaves on screen what the run started
- * from and what it ended with: the layers of what its last step made are shown, the layers only the steps in between
- * made are hidden, and a layer holding anything drawn by hand is left as it is.
+ * from and what it ended with: the layers of what the last step that made something drawn made are shown (not a table
+ * written at the end, nor a delete before a pause), the layers only the steps in between made are hidden, and a layer
+ * holding anything drawn by hand is left as it is.
  *
  * Cases (decision 0066): Base is the steps as they stand; a case changes some settings and runs on its own layers
  * (`8 blocks 50m`), tagging what it makes with its case. The case picked is the one Run runs, and the one the steps'
@@ -196,13 +197,17 @@ export function WorkflowPanel() {
 
   /** The run's inputs and its result on screen, the layers in between hidden: for every case run, when several are. */
   const tidyAfter = async (id: string, record: WorkflowRecord, ran: string[] = [record.case ?? BASE]) => {
-    const last = [...record.steps].reverse().find((s) => s.outcome === 'ran');
-    if (!last) return;
+    const order = record.steps.filter((s) => s.outcome === 'ran').map((s) => s.step);
+    if (order.length === 0) return;
     const [details, now] = await Promise.all([objectDetails(id), projectSummary()]);
     if (details.measures.kind !== 'workflow') return;
     const all = details.measures.workflow;
     const made = [BASE, ...(all.cases ?? []).map((c) => c.name)].flatMap((name) => stepsOfCase(all, name).map((s) => s.last?.made ?? []));
-    const result = ran.flatMap((name) => stepsOfCase(all, name).find((s) => s.id === last.step)?.last?.made ?? []);
+    // The last step that made something drawn: not a table written at the end, nor a delete before a pause.
+    const result = ran.flatMap((name) => {
+      const steps = stepsOfCase(all, name);
+      return tidyResult(order.map((step) => steps.find((s) => s.id === step)?.last?.made ?? []), now.objects);
+    });
     const { show, hide } = tidyLayers(made, result, now.objects);
     setOnly(null);
     await setLayersVisible(show, hide);
