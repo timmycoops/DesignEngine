@@ -1538,14 +1538,9 @@ fn clean_coal_takes_its_section_s_average_by_tonnes() {
     assert!(close(a, by_tonnes) && close(b, by_tonnes), "{a} {b} against {by_tonnes}");
 }
 
-/// Coal at Mad 3 %, Mis 8 %, Mrom 10 %; A-B gives A 500 m³ of floor dilution. The dilution, with no moisture of its own,
-/// takes A's (said), so its ROM density is 2.3 × 0.92 ÷ 0.90; A's ROM tonnes are its coal's 10,000 m³ at its in situ
-/// density × 0.92 ÷ 0.90 and the dilution's 500 m³ at that, and A's ash on the ROM basis is its air-dried ash
-/// × 0.90 ÷ 0.97.
-#[test]
-fn rom_gives_dilution_its_coal_s_moisture_and_works_rom_tonnes() {
-    let mut s = session();
-    let ids = loss_column(&mut s);
+/// The loss column's dataflow with moistures, every step to `final`: coal at Mad 3 %, Mis 8 %, Mrom 10 %, A-B giving A
+/// 0.1 m of floor dilution. Saved as `Reserves`.
+fn rom_moist_flow(s: &mut Session) -> ObjectId {
     let csv = "when material,rd (t/m3),ash_default (%),mad (%),mis (%),mrom (%),min_parting (m),ws_strip_ratio,min_coal_thickness (m),roof_loss (m),floor_loss (m),edge_loss (m),other_loss (%),roof_dilution (m),floor_dilution (m),edge_dilution (m),other_dilution (%)\nwaste,2.3,80,,,,,,,,,,,,,,\ncoal,,,3,8,10,1,0.5,0.5,0,0,0,0,0,0.1,0,0\n";
     let table_id = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": csv })).unwrap())[0];
     let content = json!({
@@ -1567,7 +1562,18 @@ fn rom_gives_dilution_its_coal_s_moisture_and_works_rom_tonnes() {
         ],
         "parameters": [table_id],
     });
-    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0];
+    created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0]
+}
+
+/// Coal at Mad 3 %, Mis 8 %, Mrom 10 %; A-B gives A 500 m³ of floor dilution. The dilution, with no moisture of its own,
+/// takes A's (said), so its ROM density is 2.3 × 0.92 ÷ 0.90; A's ROM tonnes are its coal's 10,000 m³ at its in situ
+/// density × 0.92 ÷ 0.90 and the dilution's 500 m³ at that, and A's ash on the ROM basis is its air-dried ash
+/// × 0.90 ÷ 0.97.
+#[test]
+fn rom_gives_dilution_its_coal_s_moisture_and_works_rom_tonnes() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = rom_moist_flow(&mut s);
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
     let t = table(&s, created(&record)[0]);
     let dis = 1.4 * 0.97 / (1.0 + 1.4 * 0.05 - 0.08);
@@ -2038,4 +2044,74 @@ fn a_run_writes_each_block_s_width_dip_and_centroid() {
     let col = |name: &str| t.column(&at(WASTE, name)).unwrap();
     assert!(col("dip").add_up.is_none() && col("width").add_up.is_none() && col("centroid_z").add_up.is_some());
     assert_eq!((col("dip").unit.as_str(), col("centroid_z").unit.as_str()), ("deg", "m"));
+}
+
+/// What the Reserves table's Main fields shows beside each folder's tonnes (app review brief, 17 Nov, item 2): the
+/// density those tonnes are on. ROM and Scheduled on the ROM density, any other folder with an in situ density on it,
+/// else on the RD (`densityOfTonnes` in `app/src/panels/reservesTable.ts` picks the same). On every leaf of the loss
+/// column run to `final` with moistures, volume × that density is the folder's tonnes to 1e-9, and the air-dried tonnes
+/// are volume × `tonnes_ad_per_m3`.
+#[test]
+fn every_folder_s_tonnes_are_its_volume_by_the_density_main_fields_shows() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = rom_moist_flow(&mut s);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let folders: Vec<String> = t.columns.iter().filter_map(|c| c.name.strip_suffix(r"\tonnes").map(str::to_string)).collect();
+    assert!(folders.len() >= 6, "{folders:?}");
+    let mut checked = 0;
+    let at = |folder: &str, f: &str| format!(r"{folder}\{f}");
+    for folder in &folders {
+        let has = |f: &str| t.column(&at(folder, f)).is_some();
+        let rom = folder.starts_with("ROM\\") || folder.starts_with("Scheduled\\");
+        let density = if rom && has("rd_rom") { "rd_rom" } else if has("rd_is") { "rd_is" } else { "rd" };
+        for i in 0..t.rows() {
+            let (Some(v), Some(tonnes)) = (value(&t, i, &at(folder, "volume")), value(&t, i, &at(folder, "tonnes"))) else { continue };
+            let d = value(&t, i, &at(folder, density)).unwrap_or_else(|| panic!("{folder} {density} on leaf {i}"));
+            assert!((v * d - tonnes).abs() <= 1e-9 * tonnes.abs().max(1.0), "{folder}: {v} x {density} {d} against {tonnes}");
+            if let (Some(ad), Some(per)) = (value(&t, i, &at(folder, "tonnes_ad")), value(&t, i, &at(folder, "tonnes_ad_per_m3"))) {
+                assert!((v * per - ad).abs() <= 1e-9 * ad.abs().max(1.0), "{folder}: air dried");
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 10, "{checked} leaves checked");
+}
+
+/// A project saved before the rename (app review brief, 17 Nov, item 2): its dataflow has `rd_adt` where the starter now
+/// has `tonnes_ad_per_m3`. Opened, the dataflow is renamed by a `dataflow.save` run, said in the open notes and waiting to
+/// be saved, and it gives the same reserves table as the dataflow saved with the new name.
+#[test]
+fn a_dataflow_saved_with_rd_adt_opens_renamed_and_gives_the_same_table() {
+    let dir = std::env::temp_dir().join(format!("zd-reserves-renamed-{}-{}", std::process::id(), zd_core::RunId::new()));
+    let path = dir.join("older.zdp");
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let flow = rom_moist_flow(&mut s);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let now = table(&s, created(&record)[0]);
+    let Body::Dataflow(d) = &s.project().object(flow).unwrap().body else { panic!("a dataflow") };
+    let older: serde_json::Value = serde_json::from_str(&serde_json::to_string(&**d).unwrap().replace("tonnes_ad_per_m3", "rd_adt")).unwrap();
+    let old = created(&s.run("dataflow.save", json!({ "name": "Reserves older", "content": older })).unwrap())[0];
+    s.save(&path).unwrap();
+    drop(s);
+
+    let mut t = Session::open(&path).unwrap();
+    assert!(t.open_notes().iter().any(|n| n.starts_with("Reserves older: a field renamed as the project opened (rd_adt is now tonnes_ad_per_m3)")), "{:?}", t.open_notes());
+    assert!(t.has_unsaved_work(), "the rename is a run, to be saved");
+    let Body::Dataflow(d) = &t.project().object(old).unwrap().body else { panic!("a dataflow") };
+    assert!(!serde_json::to_string(&**d).unwrap().contains("rd_adt"));
+    let record = t.run("reserves.run", json!({ "dataflow": old, "blocks": ids, "stack": LOSS_STACK, "layer": "older" })).unwrap();
+    let after = table(&t, created(&record)[0]);
+    assert_eq!(after.columns.iter().map(|c| &c.name).collect::<Vec<_>>(), now.columns.iter().map(|c| &c.name).collect::<Vec<_>>());
+    for c in &now.columns {
+        if let (ColumnValues::Number(a), ColumnValues::Number(b)) = (&c.values, &after.column(&c.name).unwrap().values) {
+            for (x, y) in a.iter().zip(b) {
+                assert!(match (x, y) { (Some(x), Some(y)) => (x - y).abs() <= 1e-9 * x.abs().max(1.0), (None, None) => true, _ => false }, "{}", c.name);
+            }
+        }
+    }
+    drop(t);
+    std::fs::remove_dir_all(&dir).unwrap();
 }

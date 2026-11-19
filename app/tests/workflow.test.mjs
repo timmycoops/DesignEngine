@@ -2,7 +2,7 @@
 // capture them. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BASE, caseValue, changesOfCase, onlyLayers, readSetting, ruleWords, settingRows, settingsOfStep, stepsOfCase, tickRuns, tidyLayers, whereOf, withSetting, withWhere } from '../src/panels/workflow.ts';
+import { BASE, caseValue, changesOfCase, onlyLayers, readSetting, ruleWords, settingRows, settingsOfStep, stepsOfCase, tickRuns, tidyLayers, tidyResult, whereOf, withSetting, withWhere } from '../src/panels/workflow.ts';
 
 const workflow = {
   steps: [
@@ -70,6 +70,25 @@ test('a tidy run shows its result and hides what only the steps in between made,
   assert.deepEqual(hide.sort(), ['faces', 'pit', 'strips'], 'toes holds the hand-drawn base toe, the grids no step made');
   // Paused after the strips: the strips are the result.
   assert.deepEqual(tidyLayers(made, ['strip1'], objects), { show: ['strips'], hide: ['faces', 'pit', 'blocks'] });
+});
+
+test("a run's result is the last thing drawn it made, not a table at the end or a delete before a pause (app review, item 4)", () => {
+  const kinds = [
+    { id: 'strip1', kind: 'string' },
+    { id: 'strip2', kind: 'string' },
+    { id: 'block1', kind: 'solid' },
+    { id: 'reserves', kind: 'table' },
+    { id: 'params', kind: 'parameter_table' },
+  ];
+  // Strips, a delete (makes nothing), then the pause: the strips are the result.
+  assert.deepEqual(tidyResult([['strip1', 'strip2'], []], kinds), ['strip1', 'strip2']);
+  // Blocks, then the parameters and the reserves table written last: the blocks.
+  assert.deepEqual(tidyResult([['strip1'], ['block1'], ['params'], ['reserves']], kinds), ['block1']);
+  // Only drawn objects of a step that made both.
+  assert.deepEqual(tidyResult([['block1', 'reserves']], kinds), ['block1']);
+  assert.deepEqual(tidyResult([['reserves'], []], kinds), [], 'nothing drawn: nothing to show');
+  // A result gone since (deleted by hand): the step before it.
+  assert.deepEqual(tidyResult([['strip1'], ['gone']], kinds), ['strip1']);
 });
 
 test('only a step shows its layers and turns off every other layer on show', () => {

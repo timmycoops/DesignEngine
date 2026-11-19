@@ -173,6 +173,8 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     expect('the pause is the third step', panelText('workflow').includes('Steps (3)'));
     await press(button('Run 2 steps'));
     expect('the run stops at the pause', panelText('workflow').includes('Paused at step 3'), panelText('workflow').slice(-300));
+    layers = await shown();
+    expect('at the pause, what the step before it made is on show (app review, item 4)', layers.cut === true && layers.pit === false, layers);
 
     // One undo takes the run back.
     const revisions = (await Promise.all(pieces.map(solid))).map((p) => p.revision);
@@ -252,6 +254,36 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     await show(await undo());
     const undoneAll = await projectSummary();
     expect('one undo takes both cases back', !undoneAll.objects.some((o) => o.layer === layerId('cut 60')) && undoneAll.objects.length === beforeCases.objects.length, { before: beforeCases.objects.length, undoneAll: undoneAll.objects.length });
+
+    // Run all cases through a pause (app review brief, 17 Nov, item 3): a pause put in as step 2, Run all cases stops
+    // in Base, the panel says 60 is still to run, and Continue runs Base on and then 60, its pieces on 'cut 60'.
+    await press(labelled('Add a pause at the end'));
+    await wait(600);
+    await press(labelled('Up', 3));
+    await wait(600);
+    expect('a pause as step 2', panelText('workflow').includes('Steps (3)'));
+    await press(buttons().find((b) => b.textContent?.trim().startsWith('Run all 2 cases')));
+    const pausedText = panelText('workflow');
+    expect('Run all cases stops at the pause in Base, and says 60 is still to run', pausedText.includes('Paused at step 2') && pausedText.includes('Still to run: 60'), pausedText.slice(-300));
+    const carryOn = buttons().find((b) => b.textContent?.trim() === 'Continue from step 3, then 60');
+    expect('Continue says it runs 60 after Base', carryOn !== undefined, buttons().map((b) => b.textContent?.trim()).filter((t) => t?.startsWith('Continue')));
+    await press(carryOn);
+    // 60 has the same pause, so it stops there in turn, as Run all cases would, and Continue then goes on in 60.
+    const pausedIn60 = panelText('workflow');
+    const carryOn60 = buttons().find((b) => b.textContent?.trim() === 'Continue of 60 from step 3');
+    expect('Continue runs Base on, then 60 to its own pause, and 60 is picked to go on', pausedIn60.includes('60: 1 step run from step 1') && carryOn60 !== undefined, pausedIn60.slice(-300));
+    await press(carryOn60);
+    const carried = await projectSummary();
+    const cut60 = carried.layers.find((l) => l.name === 'cut 60')?.id;
+    const pieces60 = carried.objects.filter((o) => o.layer === cut60 && o.kind === 'solid');
+    expect("Continue in 60 finishes it: 60's two pieces on 'cut 60', nothing left to continue", pieces60.length === 2 && !buttons().some((b) => b.textContent?.trim().startsWith('Continue')), pieces60.length);
+    await show(await undo());
+    await show(await undo());
+    await show(await undo());
+    await press(labelled('Take this step out', 2));
+    await wait(600);
+    const putBack = await projectSummary();
+    expect('two undos and the pause out put it back as it was', putBack.objects.length === beforeCases.objects.length && panelText('workflow').includes('Steps (2)'), putBack.objects.length);
 
     // The canvas (decision 0067): step 1 clicked, then a tool, opens Cut solids on By surface or RL adding after step 1, with
     // what step 1 made picked; Add puts the step in as step 2, the cut that was step 2 now step 3, its solids found as

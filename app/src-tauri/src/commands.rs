@@ -250,7 +250,7 @@ pub struct CasesReply {
 /// Runs every case of a workflow from its first step, Base first, as one undo (decision 0066); a pause or a refusal
 /// stops it at that case.
 #[tauri::command]
-pub async fn run_all_cases(workflow: ObjectId, state: State<'_, AppState>) -> Result<CasesReply, String> {
+pub async fn run_all_cases(workflow: ObjectId, from: Option<CasesFrom>, state: State<'_, AppState>) -> Result<CasesReply, String> {
     let app = state.app.clone();
     blocking(move || {
         let (names, since) = {
@@ -258,9 +258,10 @@ pub async fn run_all_cases(workflow: ObjectId, state: State<'_, AppState>) -> Re
             app.idle()?;
             (app.session.case_names(workflow).map_err(|e| e.to_string())?, app.session.undo_steps())
         };
+        let names = cases_from(names, from.as_ref())?;
         let mut records = Vec::new();
-        for name in names {
-            let record = run_one_case(&app, workflow, 1, &name)?;
+        for (name, step) in names {
+            let record = run_one_case(&app, workflow, step, &name)?;
             let stop = record.status != zd_commands::WorkflowStatus::Finished;
             records.push(record);
             if stop {
@@ -274,6 +275,22 @@ pub async fn run_all_cases(workflow: ObjectId, state: State<'_, AppState>) -> Re
         Ok(CasesReply { records, changes: changes(&mut app, false) })
     })
     .await?
+}
+
+/// Where Continue picks Run all cases up after a pause (app review brief, 17 Nov, item 3): the case that paused, and
+/// the step after the pause.
+#[derive(serde::Deserialize)]
+pub struct CasesFrom {
+    case: String,
+    step: usize,
+}
+
+/// The cases a Run all cases runs, each with the step it starts from: every case from step 1, or, carrying on after a
+/// pause, the case that paused from the step after it and the cases after it from step 1.
+fn cases_from(names: Vec<String>, from: Option<&CasesFrom>) -> Result<Vec<(String, usize)>, String> {
+    let Some(from) = from else { return Ok(names.into_iter().map(|n| (n, 1)).collect()) };
+    let at = names.iter().position(|n| *n == from.case).ok_or_else(|| format!("the workflow has no case {}", from.case))?;
+    Ok(names.into_iter().skip(at).enumerate().map(|(k, n)| (n, if k == 0 { from.step } else { 1 })).collect())
 }
 
 /// One case of a workflow run step by step, each step's command off the lock.
@@ -1699,6 +1716,13 @@ pub fn write_results(text: String) -> Result<String, String> {
     Ok(path)
 }
 
+/// Whether closing, or starting or opening another project, would lose work: anything run, undone or redone since the
+/// last save or open, or a run still going (app review brief, 17 Nov, item 1).
+#[tauri::command]
+pub async fn project_unsaved(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.app.lock().unwrap().would_lose_work())
+}
+
 #[tauri::command]
 pub fn exit_app(app: AppHandle) {
     app.exit(0);
@@ -1744,6 +1768,19 @@ mod tests {
 
     use super::*;
     use crate::changes::changes;
+
+    /// Run all cases carried on after a pause (app review brief, 17 Nov, item 3): the case that paused from the step
+    /// after the pause, then every case after it from step 1; with nothing to carry on from, every case from step 1.
+    #[test]
+    fn continue_after_a_pause_runs_the_cases_after_it() {
+        let names = || vec!["Base".to_string(), "50m".to_string(), "60m".to_string()];
+        let from = |case: &str, step| CasesFrom { case: case.into(), step };
+        let run = |list: Vec<(String, usize)>| list.into_iter().map(|(n, s)| format!("{n}@{s}")).collect::<Vec<_>>();
+        assert_eq!(run(cases_from(names(), None).unwrap()), ["Base@1", "50m@1", "60m@1"]);
+        assert_eq!(run(cases_from(names(), Some(&from("Base", 15))).unwrap()), ["Base@15", "50m@1", "60m@1"]);
+        assert_eq!(run(cases_from(names(), Some(&from("50m", 3))).unwrap()), ["50m@3", "60m@1"]);
+        assert!(cases_from(names(), Some(&from("70m", 1))).is_err(), "a case the workflow hasn't");
+    }
 
     /// A long run on a made-up project named by `ZD_SCALE_PROJECT` (the store bench's `store-scale.zdp`, made with
     /// `store_scale -- 43000 250`), as `run_command` does it: what a snap waits for while the run goes, and how soon a

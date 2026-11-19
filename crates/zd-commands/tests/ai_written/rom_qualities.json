@@ -1,29 +1,29 @@
 [
   {
-    "name": "dilution aligned to coal Mad 3 from 5: factor 97/95; ash 20x97/95, rd 2x95/97; mis 6 and mrom 8 from coal; rd_rom 2.2x94/92; rd_adt 2.2x94/97; length from coal",
+    "name": "dilution aligned to coal Mad 3 from 5: factor 97/95; ash 20x97/95, rd 2x95/97; mis 6 and mrom 8 from coal; rd_rom 2.2x94/92; tonnes_ad_per_m3 2.2x94/97; length from coal",
     "unit": { "material": "waste", "became": "dilution", "ash": 20, "rd": 2.0, "mad": 5, "rd_is": 2.2, "length": 50 },
     "parameters": { "align_dilution_mad": "yes" },
     "rom_coal": { "mad": 3, "mis": 6, "mrom": 8, "ash": 10, "length": 100 },
-    "expect": { "ash": 20.421052631578947, "rd": 1.958762886597938, "mad": 3, "mis": 6, "mrom": 8, "length": 100, "rd_rom": 2.2478260869565217, "rd_adt": 2.1319587628865979 }
+    "expect": { "ash": 20.421052631578947, "rd": 1.958762886597938, "mad": 3, "mis": 6, "mrom": 8, "length": 100, "rd_rom": 2.2478260869565217, "tonnes_ad_per_m3": 2.1319587628865979 }
   },
   {
-    "name": "no align parameter: Mad stays 5, negative ash takes coal's 10, mis 6 and mrom 8 from coal; rd_rom 2x94/92; rd_adt 2x94/95",
+    "name": "no align parameter: Mad stays 5, negative ash takes coal's 10, mis 6 and mrom 8 from coal; rd_rom 2x94/92; tonnes_ad_per_m3 2x94/95",
     "unit": { "material": "waste", "became": "dilution", "ash": -1, "rd": 2.0, "mad": 5, "rd_is": 2.0, "length": 50 },
     "parameters": {},
     "rom_coal": { "mad": 3, "mis": 6, "mrom": 8, "ash": 10, "length": 100 },
-    "expect": { "ash": 10, "rd": 2.0, "mad": 5, "mis": 6, "mrom": 8, "length": 100, "rd_rom": 2.0434782608695654, "rd_adt": 1.9789473684210526 }
+    "expect": { "ash": 10, "rd": 2.0, "mad": 5, "mis": 6, "mrom": 8, "length": 100, "rd_rom": 2.0434782608695654, "tonnes_ad_per_m3": 1.9789473684210526 }
   },
   {
-    "name": "coal ply keeps its own moistures and ash, only length from the section; rd_rom 1.4x92/91; rd_adt 1.4x92/96",
+    "name": "coal ply keeps its own moistures and ash, only length from the section; rd_rom 1.4x92/91; tonnes_ad_per_m3 1.4x92/96",
     "unit": { "material": "coal", "ash": 12, "rd": 1.4, "mad": 4, "mis": 8, "mrom": 9, "rd_is": 1.4, "length": 30 },
     "parameters": { "align_dilution_mad": "yes" },
     "rom_coal": { "mad": 3, "mis": 6, "mrom": 8, "ash": 10, "length": 80 },
-    "expect": { "ash": 12, "rd": 1.4, "mad": 4, "mis": 8, "mrom": 9, "length": 80, "rd_rom": 1.4153846153846155, "rd_adt": 1.3416666666666666 }
+    "expect": { "ash": 12, "rd": 1.4, "mad": 4, "mis": 8, "mrom": 9, "length": 80, "rd_rom": 1.4153846153846155, "tonnes_ad_per_m3": 1.3416666666666666 }
   },
   {
-    "name": "unit outside a ROM section: only densities; rd_rom 2x95/93; rd_adt 2x95/96",
+    "name": "unit outside a ROM section: only densities; rd_rom 2x95/93; tonnes_ad_per_m3 2x95/96",
     "unit": { "material": "waste", "rd_is": 2.0, "mad": 4, "mis": 5, "mrom": 7, "length": 10 },
     "parameters": {},
-    "expect": { "length": 10, "mad": 4, "rd_rom": 2.043010752688172, "rd_adt": 1.9791666666666667 }
+    "expect": { "length": 10, "mad": 4, "rd_rom": 2.043010752688172, "tonnes_ad_per_m3": 1.9791666666666667 }
   }
 ]

@@ -73,6 +73,18 @@ impl AppInner {
             None => Ok(()),
         }
     }
+
+    /// Whether closing, or starting or opening another project, would lose work, so the app asks first: anything run,
+    /// undone or redone since the last save or open, or a run still going (app review brief, 17 Nov, item 1).
+    pub fn would_lose_work(&self) -> bool {
+        self.running.is_some() || self.session.has_unsaved_work()
+    }
+
+    /// Lets go of the project file as the app closes, however it closes, so its lock note doesn't outlive the window.
+    pub fn closing(&mut self) {
+        self.session.release_file();
+        self.path = None;
+    }
 }
 
 /// A number no session's log has had before, in this run of the app.
@@ -346,6 +358,28 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// Closing asks only when there's work to lose, and closing lets go of the file's lock note (app review brief,
+    /// 17 Nov, item 1).
+    #[test]
+    fn closing_asks_only_with_work_to_lose_and_takes_the_lock_away() {
+        let dir = std::env::temp_dir().join(format!("zd-app-closing-{}-{}", std::process::id(), zd_core::RunId::new()));
+        let path = dir.join("pit.zdp");
+        let lock = dir.join("pit.zdp.lock");
+        let mut app = AppInner::new(Session::with_builtins(), None);
+        assert!(!app.would_lose_work(), "a new project, nothing run");
+        app.session.run("solid.from_mesh", cube("a", 0.0)).unwrap();
+        assert!(app.would_lose_work(), "a run not saved");
+        app.session.save(&path).unwrap();
+        assert!(!app.would_lose_work(), "saved");
+        app.running = Some(Running { command: "solid.cut_by_seams".into(), started: std::time::Instant::now(), control: Arc::new(RunControl::default()) });
+        assert!(app.would_lose_work(), "a run going");
+        app.running = None;
+        assert!(lock.is_file());
+        app.closing();
+        assert!(!lock.exists(), "closing takes the lock away");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// A 10 m cube at `x` as `solid.from_mesh` parameters.
     fn cube(name: &str, x: f64) -> serde_json::Value {

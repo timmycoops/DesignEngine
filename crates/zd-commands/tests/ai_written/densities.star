@@ -27,6 +27,6 @@ def formula(unit):
 
     # Air-dried tonnes a cubic metre in situ: in situ x (100 - Mis) / (100 - Mad), else the in situ density.
     if unit.mad != None and unit.mis != None:
-        unit.rd_adt = rd_is * (100 - unit.mis) / (100 - unit.mad)
+        unit.tonnes_ad_per_m3 = rd_is * (100 - unit.mis) / (100 - unit.mad)
     else:
-        unit.rd_adt = rd_is
+        unit.tonnes_ad_per_m3 = rd_is

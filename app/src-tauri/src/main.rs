@@ -10,6 +10,8 @@ mod shared;
 mod state;
 mod synthetic;
 
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -83,8 +85,27 @@ fn main() {
             commands::bench_config,
             commands::write_results,
             commands::write_picture,
+            commands::project_unsaved,
             commands::exit_app,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Zovlyn Pit Design");
+        .on_window_event(|window, event| {
+            // Closing with work unsaved, or a run going, asks first (app review brief, 17 Nov, item 1): the window
+            // stays and the app is told to ask Save, Don't save or Cancel. Nothing to lose closes at once.
+            if let WindowEvent::CloseRequested { api, .. } = event
+                && window.state::<state::AppState>().app.lock().is_ok_and(|app| app.would_lose_work())
+            {
+                api.prevent_close();
+                let _ = window.emit("close-asked", ());
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building Zovlyn Pit Design")
+        .run(|handle, event| {
+            // However the app closes, the project file is let go of, so its lock note doesn't outlive the window.
+            if let RunEvent::Exit = event
+                && let Ok(mut app) = handle.state::<state::AppState>().app.lock()
+            {
+                app.closing();
+            }
+        });
 }

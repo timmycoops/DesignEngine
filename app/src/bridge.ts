@@ -524,11 +524,11 @@ export const runWorkflow = async (workflow: string, from: number, workflowCase =
   }
 };
 
-/** Runs every case of a workflow from its first step, Base first, as one undo (decision 0066). */
-export const runAllCases = async (workflow: string): Promise<{ records: WorkflowRecord[]; summary: ProjectSummary }> => {
+/** Every case of a workflow, Base first, as one undo; `from` carries on after a pause: that case from that step, then the rest. */
+export const runAllCases = async (workflow: string, from?: { case: string; step: number }): Promise<{ records: WorkflowRecord[]; summary: ProjectSummary }> => {
   if (!running.start('workflow', performance.now())) throw new Error(waitingOn() ?? 'Waiting on a run');
   try {
-    const reply = await invoke<{ records: WorkflowRecord[]; changes: ProjectChanges }>('run_all_cases', { workflow });
+    const reply = await invoke<{ records: WorkflowRecord[]; changes: ProjectChanges }>('run_all_cases', { workflow, from: from ?? null });
     return { records: reply.records, summary: await summaryAfter(reply.changes) };
   } finally {
     running.end();
@@ -1419,3 +1419,6 @@ export const benchConfig = () => invoke<BenchConfig | null>('bench_config');
 export const writeResults = (text: string) => invoke<string>('write_results', { text });
 
 export const exitApp = () => invoke<void>('exit_app');
+
+/** Whether closing, or starting or opening another project, would lose work: runs since the last save or open, or a run going. */
+export const projectUnsaved = () => invoke<boolean>('project_unsaved');

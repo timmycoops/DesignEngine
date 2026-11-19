@@ -1,27 +1,27 @@
 [
   {
-    "name": "coal by Preston and Sanders: 1.4 x 97 / (100 + 1.4 x 5 - 8) = 135.8 / 99; adt = that x 92 / 97",
+    "name": "coal by Preston and Sanders: 1.4 x 97 / (100 + 1.4 x 5 - 8) = 135.8 / 99; tonnes_ad_per_m3 = that x 92 / 97",
     "unit": { "material": "coal", "rd": 1.4, "mad": 3, "mis": 8 },
     "parameters": {},
-    "expect": { "rd_is": 1.3717171717171717, "rd_adt": 1.3010101010101010 }
+    "expect": { "rd_is": 1.3717171717171717, "tonnes_ad_per_m3": 1.3010101010101010 }
   },
   {
     "name": "coal with Mad = Mis = 5 keeps RD 1.5; ROM = 1.5 x 95 / 97.5 = 19/13",
     "unit": { "material": "coal", "rd": 1.5, "mad": 5, "mis": 5, "mrom": 2.5 },
     "parameters": {},
-    "expect": { "rd_is": 1.5, "rd_adt": 1.5, "rd_rom": 1.4615384615384615 }
+    "expect": { "rd_is": 1.5, "tonnes_ad_per_m3": 1.5, "rd_rom": 1.4615384615384615 }
   },
   {
     "name": "waste: 2.4 / (94/98) = 2.4 x 98 / 94; adt back to 2.4; ROM = 2.4 x 98 / 96 = 2.45",
     "unit": { "material": "waste", "rd": 2.4, "mad": 2, "mis": 6, "mrom": 4 },
     "parameters": {},
-    "expect": { "rd_is": 2.502127659574468, "rd_adt": 2.4, "rd_rom": 2.45 }
+    "expect": { "rd_is": 2.502127659574468, "tonnes_ad_per_m3": 2.4, "rd_rom": 2.45 }
   },
   {
     "name": "waste with no Mad takes its RD as it is for all three densities",
     "unit": { "material": "waste", "rd": 2.4, "mis": 6 },
     "parameters": {},
-    "expect": { "rd_is": 2.4, "rd_adt": 2.4, "rd_rom": 2.4 }
+    "expect": { "rd_is": 2.4, "tonnes_ad_per_m3": 2.4, "rd_rom": 2.4 }
   },
   {
     "name": "waste with no RD is left alone",

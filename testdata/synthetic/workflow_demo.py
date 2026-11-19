@@ -172,6 +172,15 @@ def noted(steps):
     return out
 
 
+# The demo's reserves totals, to 0.1 m3 and t, checked on every run of this script. Recorded 19 November 2026 at the
+# app review branch: since 0074 recorded its table, measuring blocks along their strips (25b41af, 0074) moved 41.1 m3
+# of Base's ROM waste into ROM coal through edge loss and dilution, and 0077's formulas moved 50m's (0077's tables).
+RECORDED = {
+    "Base": {"ROM coal m3": 6_247_592.2, "ROM coal t": 9_234_488.8, "ROM waste m3": 69_785_935.0, "out of model m3": 30_369.7, "clean coal m3": 6_051_001.9},
+    "50m": {"ROM coal m3": 6_243_043.6, "ROM coal t": 9_227_428.1, "ROM waste m3": 69_790_493.5, "out of model m3": 30_379.6, "clean coal m3": 6_046_929.8},
+}
+
+
 def main():
     folder = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "reserves" / "workflow demo"
     folder.mkdir(parents=True, exist_ok=True)
@@ -243,6 +252,7 @@ def main():
     # adds up to its blocks' volumes and tonnes to 1e-9, in its Imported folders and its Insitu ones: in situ, coal's by
     # Preston-Sanders at Mad 3.5 % and Mis 8 %, waste's the parameter table's 2.3 as given; air dried, Spry's way (decision
     # 0077, point 5), coal's in situ tonnes x (100 - Mis) / (100 - Mad) and waste's as in situ, having no moistures.
+    moved = []
     for case, suffix in (("Base", ""), ("50m", " 50m")):
         tables = s.objects(layer=f"10 reserves{suffix}", kind="table")
         assert len(tables) == 1, tables
@@ -272,12 +282,27 @@ def main():
         rom_coal, rom_waste = under("ROM", "Coal", "volume"), under("ROM", "Waste", "volume")
         small, out = total("Small volume", "volume"), under("Summary", "Out of model", "volume")
         print(f"      ROM coal {rom_coal:,.1f} m3, {under('ROM', 'Coal', 'tonnes'):,.1f} t at ROM moisture; ROM waste {rom_waste:,.1f} m3; "
-              f"small volumes {small:,.1f} m3; out of model {out:,.1f} m3; clean coal {under('Clean coal', 'Coal', 'volume'):,.1f} m3")
+              f"small volumes {small:,.1f} m3; out of model {out:,.1f} m3; clean coal {under('ROM', 'Clean coal', 'volume'):,.1f} m3")
         assert abs(rom_coal + rom_waste - (volume - small + out)) <= 1e-9 * volume, (rom_coal, rom_waste, volume, small, out)
         assert abs(under("Scheduled", "Coal", "volume") - rom_coal) <= 1e-9 * volume and abs(under("Scheduled", "Waste", "volume") - rom_waste) <= 1e-9 * volume
         assert abs(imported - volume) <= 1e-9 * volume, (imported, volume)
         assert abs(written_ad - tonnes_ad) <= 1e-9 * tonnes_ad, (written_ad, tonnes_ad)
         assert abs(written - volume) <= 1e-9 * volume and abs(written_t - tonnes) <= 1e-9 * tonnes, case
+        now = {"ROM coal m3": rom_coal, "ROM coal t": under("ROM", "Coal", "tonnes"), "ROM waste m3": rom_waste, "out of model m3": out, "clean coal m3": under("ROM", "Clean coal", "volume")}
+        moved += [f"{case} {name}: {now[name]:,.1f}, recorded {was:,.1f}" for name, was in RECORDED[case].items() if abs(now[name] - was) > 0.1]
+        # The density the Reserves table's Main fields shows beside each folder's tonnes (app review brief, item 2): ROM
+        # and Scheduled on rd_rom, any other folder with rd_is on it, else rd. Volume x it is the tonnes, on every leaf.
+        sep = chr(92)
+        for at in [name[: -len(sep + "tonnes")] for name in cols if name.endswith(sep + "tonnes")]:
+            has = lambda f: at + sep + f in cols
+            density = "rd_rom" if at.split(sep)[0] in ("ROM", "Scheduled") and has("rd_rom") else "rd_is" if has("rd_is") else "rd"
+            for v, d, t in zip(cols[at + sep + "volume"], cols[at + sep + density], cols[at + sep + "tonnes"]):
+                if v is not None and t is not None:
+                    assert d is not None and abs(v * d - t) <= 1e-9 * max(abs(t), 1.0), (case, at, density, v, d, t)
+        assert not any("rd_adt" in name for name in cols), "the field is tonnes_ad_per_m3 now"
+    # The demo's totals as recorded (app review brief, 17 Nov, item 6): the one place they're kept. A change that moves
+    # them fails here; say why in its decision record, then record the new figures.
+    assert not moved, "the demo's totals moved:\n  " + "\n  ".join(moved)
     blocks = [b["id"] for b in s.objects(layer="9 blocks", kind="solid")]
     started = time.perf_counter()
     record = s.run("reserves.run", dataflow=flow, blocks=blocks, model=model, layer="timing")

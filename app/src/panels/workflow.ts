@@ -93,6 +93,23 @@ export function tidyLayers(made: string[][], result: string[], objects: Placed[]
   return { show: [...shown], hide };
 }
 
+/** What the view draws: a run's result is the last of these it made, never a table or a setting it wrote. */
+const DRAWN = new Set(['string', 'surface', 'solid', 'grid', 'seam_model']);
+
+/**
+ * A run's result, for Tidy after a run (app review brief, 17 Nov, item 4): what the last step that made something drawn
+ * made, walking back from the end. A reserves table at the end, or a delete just before a pause, leaves the blocks or
+ * the strips before it on show, not an empty view. `made` is each step's, in the order they ran.
+ */
+export function tidyResult(made: string[][], objects: { id: string; kind: string }[]): string[] {
+  const kindOf = new Map(objects.map((o) => [o.id, o.kind]));
+  for (let k = made.length - 1; k >= 0; k--) {
+    const drawn = made[k].filter((id) => DRAWN.has(kindOf.get(id) ?? ''));
+    if (drawn.length > 0) return drawn;
+  }
+  return [];
+}
+
 /** The layers that show only what one step made (option A): its layers on, every other layer on show off. */
 export function onlyLayers(made: string[], objects: Placed[], layers: { id: string; visible: boolean }[]): LayerChange {
   const layerOf = new Map(objects.map((o) => [o.id, o.layer]));

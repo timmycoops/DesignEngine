@@ -4,7 +4,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use zd_core::{AppliedChange, Body, Change, Colouring, Contours, LayerId, ObjectId, ObjectRef, Project, RunId, same_path};
+use zd_core::{AppliedChange, Body, Change, Colouring, Contours, Dataflow, LayerId, ObjectId, ObjectRef, Project, RunId, same_path};
 use zd_io::{FolderLink, ProjectStore, SavedFile, Snapshot, ZdpStore};
 
 use crate::builtin::{ModelLinks, check_solids_made, seam_links};
@@ -284,7 +284,29 @@ impl Session {
         let saved_log_len = if store.is_some() { log.len() } else { 0 };
         let mut session = Session { project: Arc::new(project), registry: Arc::new(registry), log, store, saved_log_len, open_notes: Vec::new() };
         session.relink_beside(&links, path);
+        session.rename_older_fields();
         Ok(session)
+    }
+
+    /// Dataflows saved with a field's old name (`builtin::RENAMED_FIELDS`) renamed as the project opens, each by a
+    /// `dataflow.save` run, logged and undone like any other, and said in the open notes. Reserves tables already
+    /// written keep their columns as written: they're results.
+    fn rename_older_fields(&mut self) {
+        let older: Vec<(ObjectId, String, Dataflow, Vec<String>)> = self
+            .project
+            .objects()
+            .filter_map(|o| match &o.body {
+                Body::Dataflow(d) => crate::builtin::renamed_from_older(d).map(|(renamed, said)| (o.id, o.name.clone(), renamed, said)),
+                _ => None,
+            })
+            .collect();
+        for (id, name, content, said) in older {
+            let params = serde_json::json!({ "dataflow": id, "name": name, "content": content });
+            match self.run("dataflow.save", params) {
+                Ok(_) => self.open_notes.push(format!("{name}: a field renamed as the project opened ({}); save to keep it", said.join(", "))),
+                Err(e) => self.open_notes.push(format!("{name}: a field to rename as the project opened ({}), not done: {e}", said.join(", "))),
+            }
+        }
     }
 
     /// Tries both of each grid folder's locations (decision 0058, stage 4): where a seam model reads from a folder
@@ -366,6 +388,18 @@ impl Session {
     /// The file this session last saved to or opened, if any.
     pub fn file(&self) -> Option<PathBuf> {
         self.store.as_ref().map(|s| s.lock().unwrap_or_else(|p| p.into_inner()).path().to_path_buf())
+    }
+
+    /// Whether anything has been run, undone or redone since the last save or open, so closing would lose it. Display
+    /// state alone (shown, hidden, looks) doesn't count: it isn't work.
+    pub fn has_unsaved_work(&self) -> bool {
+        self.log.len() != self.saved_log_len
+    }
+
+    /// Lets go of the project file: its lock note is removed once no save of it is still running. The session keeps
+    /// its project but no longer knows its file; for when the app closes or moves to another project.
+    pub fn release_file(&mut self) {
+        self.store = None;
     }
 
     /// Who else has this session's file open, when someone does: a save to it is refused.

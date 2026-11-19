@@ -2634,7 +2634,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
             && added.iter().flatten().any(|a| a[rd_rom].is_finite())
         {
             push(TableColumn::adding(&named("tonnes"), "t", AddUp::Sum, tonnes(rd_rom)));
-            push(TableColumn::adding(&named("tonnes_ad"), "t", AddUp::Sum, tonnes(field(super::RD_ADT).unwrap_or(rd))));
+            push(TableColumn::adding(&named("tonnes_ad"), "t", AddUp::Sum, tonnes(field(super::TONNES_AD_PER_M3).unwrap_or(rd))));
             if let (false, Some(mad), Some(mrom)) = (waste_out, field("mad"), field("mrom")) {
                 for (q, f) in fields.iter().enumerate().filter(|(_, f)| f.kind == FieldKind::Quality) {
                     let values = added.iter().map(|a| a.as_ref().map(|a| a[q] * (1.0 - a[mrom] / 100.0) / (1.0 - a[mad] / 100.0)).filter(|x| x.is_finite())).collect();
@@ -2646,7 +2646,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
         match (field("rd"), field("rd_is")) {
             (Some(rd), Some(rd_is)) if added.iter().flatten().any(|a| a[rd_is].is_finite()) => {
                 push(TableColumn::adding(&named("tonnes"), "t", AddUp::Sum, tonnes(rd_is)));
-                push(TableColumn::adding(&named("tonnes_ad"), "t", AddUp::Sum, tonnes(field(super::RD_ADT).unwrap_or(rd))));
+                push(TableColumn::adding(&named("tonnes_ad"), "t", AddUp::Sum, tonnes(field(super::TONNES_AD_PER_M3).unwrap_or(rd))));
                 if let (Some(mad), Some(mis)) = (field("mad"), field("mis")) {
                     for (q, f) in fields.iter().enumerate().filter(|(_, f)| f.kind == FieldKind::Quality) {
                         let values = added.iter().map(|a| a.as_ref().map(|a| a[q] * (1.0 - a[mis] / 100.0) / (1.0 - a[mad] / 100.0)).filter(|x| x.is_finite())).collect();

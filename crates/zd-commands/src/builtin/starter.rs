@@ -10,7 +10,7 @@ use zd_reserves::{AddUp, Field, FieldKind};
 
 /// The field a starter formula works the air-dried tonnes a cubic metre into: what qualities and Mad are weighed by
 /// (decision 0077, point 5, Spry's way).
-pub const RD_ADT: &str = "rd_adt";
+pub const TONNES_AD_PER_M3: &str = "tonnes_ad_per_m3";
 
 /// The field the starter's `discard` formula marks coal in: 1 by hand, 2 by its in situ ash, 0 kept. The working
 /// sections set aside what it marks.
@@ -204,16 +204,16 @@ def formula(unit):
         rd_is = unit.{rd}
     unit.{rd_is} = rd_is
 {rom}    if unit.{mad} != None and unit.{mis} != None:
-        unit.{RD_ADT} = rd_is * (100 - unit.{mis}) / (100 - unit.{mad})
+        unit.{TONNES_AD_PER_M3} = rd_is * (100 - unit.{mis}) / (100 - unit.{mad})
     else:
-        unit.{RD_ADT} = rd_is
+        unit.{TONNES_AD_PER_M3} = rd_is
 "#
     );
     // Hand-worked: coal RD 1.4, Mad 3, Mis 8: 1.4 x 97 / (100 + 1.4 x 5 - 8) = 135.8 / 99; air dried x 92 / 97; ROM at
     // Mrom 10, x 92 / 90. Waste RD 2.3 at Mad 2, Mis 6: over the factor 94 / 98, so 2.3 x 98 / 94, and back to 2.3 air dried.
     let rd_is_coal = 135.8 / 99.0;
     let mut coal_unit = vec![("material", t("coal")), (rd.as_str(), n(1.4)), (mad.as_str(), n(3.0)), (mis.as_str(), n(8.0))];
-    let mut coal_expect = vec![(rd_is.as_str(), rd_is_coal), (RD_ADT, rd_is_coal * 92.0 / 97.0)];
+    let mut coal_expect = vec![(rd_is.as_str(), rd_is_coal), (TONNES_AD_PER_M3, rd_is_coal * 92.0 / 97.0)];
     if let (Some(mrom), Some(rd_rom)) = (mrom, rd_rom) {
         coal_unit.push((mrom.as_str(), n(10.0)));
         coal_expect.push((rd_rom.as_str(), rd_is_coal * 92.0 / 90.0));
@@ -232,9 +232,9 @@ def formula(unit):
             "waste over its moisture factor",
             &[("material", t("waste")), (rd.as_str(), n(2.3)), (mad.as_str(), n(2.0)), (mis.as_str(), n(6.0))],
             &[],
-            &[(rd_is.as_str(), 2.3 * 98.0 / 94.0), (RD_ADT, 2.3)],
+            &[(rd_is.as_str(), 2.3 * 98.0 / 94.0), (TONNES_AD_PER_M3, 2.3)],
         ),
-        test("waste with no moistures: its RD", &[("material", t("waste")), (rd.as_str(), n(2.3))], &[], &[(rd_is.as_str(), 2.3), (RD_ADT, 2.3)]),
+        test("waste with no moistures: its RD", &[("material", t("waste")), (rd.as_str(), n(2.3))], &[], &[(rd_is.as_str(), 2.3), (TONNES_AD_PER_M3, 2.3)]),
     ];
     step("densities", script, tests)
 }
@@ -309,7 +309,7 @@ fn rom_qualities(r: &RomNames) -> DataflowStep {
         body.push_str(&format!("    if unit.{rd_is} != None and unit.{mis} != None and unit.{mrom} != None:\n        unit.{rd_rom} = unit.{rd_is} * (100 - unit.{mis}) / (100 - unit.{mrom})\n"));
     }
     if let (Some(rd_is), Some(mis), Some(mad)) = (&r.rd_is, &r.mis, &r.mad) {
-        body.push_str(&format!("    if unit.{rd_is} != None and unit.{mis} != None and unit.{mad} != None:\n        unit.{RD_ADT} = unit.{rd_is} * (100 - unit.{mis}) / (100 - unit.{mad})\n"));
+        body.push_str(&format!("    if unit.{rd_is} != None and unit.{mis} != None and unit.{mad} != None:\n        unit.{TONNES_AD_PER_M3} = unit.{rd_is} * (100 - unit.{mis}) / (100 - unit.{mad})\n"));
     }
     let head = "# ROM qualities (Spry's ROM Dilution, after the ROM ash cut-off), on what came into a ROM coal section that isn't its\n\
 # coal (dilution, partings, coal lost into it from a neighbour), against the section's coal added up by tonnes:\n\
@@ -338,7 +338,7 @@ fn rom_qualities(r: &RomNames) -> DataflowStep {
         };
         // Dilution of in situ density 2.3 with no moistures takes the coal's 3, 8 and 10 %: ROM density 2.3 x 92 / 90, air
         // dried 2.3 x 92 / 97.
-        with_coal("dilution takes its coal's moistures", dilution(None, 80.0), &[], &[(mad.as_str(), 3.0), (mis.as_str(), 8.0), (mrom.as_str(), 10.0), (rd_rom.as_str(), 2.3 * 92.0 / 90.0), (RD_ADT, 2.3 * 92.0 / 97.0)]);
+        with_coal("dilution takes its coal's moistures", dilution(None, 80.0), &[], &[(mad.as_str(), 3.0), (mis.as_str(), 8.0), (mrom.as_str(), 10.0), (rd_rom.as_str(), 2.3 * 92.0 / 90.0), (TONNES_AD_PER_M3, 2.3 * 92.0 / 97.0)]);
         // At Mad 2 aligned with the coal's 3: its 80 % ash x 97 / 98.
         with_coal("Mad aligned, Spry's way", dilution(Some(2.0), 80.0), &[("align_dilution_mad", t("yes"))], &[(mad.as_str(), 3.0), (q.as_str(), 80.0 * 97.0 / 98.0)]);
         with_coal("Mad left where not asked", dilution(Some(2.0), 80.0), &[], &[(mad.as_str(), 2.0), (q.as_str(), 80.0)]);
@@ -403,28 +403,70 @@ pub fn starter_formulas(d: &Dataflow) -> Vec<(&'static str, DataflowStep)> {
     steps
 }
 
+/// Field names the starter used once, with what each is now: `rd_adt` read as a density beside tonnes it wasn't on (app
+/// review brief, 17 Nov, item 2), so it's named for what it is, the air-dried tonnes a cubic metre in situ.
+pub const RENAMED_FIELDS: &[(&str, &str)] = &[("rd_adt", TONNES_AD_PER_M3)];
+
+/// A dataflow saved with a field's old name, with every use renamed: the field, what weighs by it, the formulas and their
+/// known answers, and any setting naming it. None when it has no old name, or already has the new one as well.
+pub fn renamed_from_older(d: &Dataflow) -> Option<(Dataflow, Vec<String>)> {
+    let found: Vec<&(&str, &str)> = RENAMED_FIELDS
+        .iter()
+        .filter(|(old, new)| d.fields.iter().any(|f| f.field.name == *old) && !d.fields.iter().any(|f| f.field.name == *new))
+        .collect();
+    if found.is_empty() {
+        return None;
+    }
+    let mut text = serde_json::to_string(d).ok()?;
+    for (old, new) in &found {
+        text = replace_word(&text, old, new);
+    }
+    let renamed: Dataflow = serde_json::from_str(&text).ok()?;
+    Some((renamed, found.iter().map(|(old, new)| format!("{old} is now {new}")).collect()))
+}
+
+/// `old` replaced by `new` wherever it stands as a whole word (letters, digits and underscores either side end it).
+fn replace_word(text: &str, old: &str, new: &str) -> String {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(old) {
+        let before = rest[..at].chars().next_back().or_else(|| out.chars().next_back());
+        let after = rest[at + old.len()..].chars().next();
+        out.push_str(&rest[..at]);
+        if before.is_some_and(word) || after.is_some_and(word) {
+            out.push_str(old);
+        } else {
+            out.push_str(new);
+        }
+        rest = &rest[at + old.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// A dataflow given the starter formulas after `initialise` (none it already has, by name). Where it gets `densities`,
-/// it also gets the `rd_adt` field that works into, and its qualities and Mad are weighed by it, as Spry weighs them by
+/// it also gets the `tonnes_ad_per_m3` field that works into, and its qualities and Mad are weighed by it, as Spry weighs them by
 /// air-dried tonnes (decision 0077, point 5).
 pub fn with_starter_formulas(d: &mut Dataflow) {
     let new: Vec<(&str, DataflowStep)> = starter_formulas(d).into_iter().filter(|(_, s)| !d.steps.iter().any(|t| t.step == s.step)).collect();
     if new.iter().any(|(_, s)| s.step == "discard") && !d.fields.iter().any(|f| f.field.name == DISCARDED) {
         d.fields.push(DataflowField { field: Field::new(DISCARDED, FieldKind::Other, AddUp::Max), source: FieldSource::Worked });
     }
-    if new.iter().any(|(_, s)| s.step == "densities") && !d.fields.iter().any(|f| f.field.name == RD_ADT) {
+    if new.iter().any(|(_, s)| s.step == "densities") && !d.fields.iter().any(|f| f.field.name == TONNES_AD_PER_M3) {
         let rd = setting_field(d, "rd");
         for f in d.fields.iter_mut() {
             if let (AddUp::Mass { density }, Some(rd)) = (&mut f.field.add_up, &rd)
                 && density == rd
             {
-                *density = RD_ADT.to_string();
+                *density = TONNES_AD_PER_M3.to_string();
             }
         }
         let after = d.fields.iter().position(|f| Some(&f.field.name) == setting_field(d, "rd_is").as_ref()).map_or(d.fields.len(), |i| i + 1);
         // It starts as the block's RD, so Imported, written before any step, weighs qualities as before, "as read"; the
         // densities formula then works it.
         let source = rd.as_ref().and_then(|rd| d.fields.iter().find(|f| &f.field.name == rd)).map(|f| f.source.clone()).unwrap_or(FieldSource::Worked);
-        d.fields.insert(after, DataflowField { field: Field::new(RD_ADT, FieldKind::Density, AddUp::Volume), source });
+        d.fields.insert(after, DataflowField { field: Field::new(TONNES_AD_PER_M3, FieldKind::Density, AddUp::Volume), source });
     }
     // Each after its stage, in order, after any formula already there.
     for (anchor, s) in new {
@@ -490,12 +532,12 @@ mod tests {
         assert_eq!(at("rom_qualities"), at("rom") + 1);
         assert!(whole.fields.iter().any(|f| f.field.name == DISCARDED));
         assert_eq!(checked(&whole), 5);
-        // Air-dried tonnes Spry's way: rd_adt worked, starting as the block's RD; ash and Mad weighed by it.
-        let rd_adt = d.fields.iter().find(|f| f.field.name == RD_ADT).expect("rd_adt");
-        assert_eq!(rd_adt.source, attr("rd"));
+        // Air-dried tonnes Spry's way: tonnes_ad_per_m3 worked, starting as the block's RD; ash and Mad weighed by it.
+        let ad_per_m3 = d.fields.iter().find(|f| f.field.name == TONNES_AD_PER_M3).expect("tonnes_ad_per_m3");
+        assert_eq!(ad_per_m3.source, attr("rd"));
         for name in ["ash", "mad"] {
             let f = d.fields.iter().find(|f| f.field.name == name).unwrap();
-            assert_eq!(f.field.add_up, AddUp::Mass { density: RD_ADT.into() }, "{name}");
+            assert_eq!(f.field.add_up, AddUp::Mass { density: TONNES_AD_PER_M3.into() }, "{name}");
         }
         // Given twice, nothing is added twice.
         let before = d.clone();
@@ -522,6 +564,26 @@ mod tests {
         assert_eq!(for_names("x = unit.as_ad + unit.as + coal.as", &["as".into()]), r#"x = unit.as_ad + unit["as"] + getattr(coal, "as", None)"#);
     }
 
+    /// A dataflow saved before the rename (app review brief, 17 Nov, item 2): `rd_adt` everywhere it stood becomes
+    /// `tonnes_ad_per_m3`, the field, the qualities weighed by it, the formulas and their known answers, and it still
+    /// compiles and gives its answers; a word only containing it is left alone; one already renamed is left as it is.
+    #[test]
+    fn a_dataflow_saved_with_rd_adt_is_renamed_everywhere() {
+        let mut d = flow(true);
+        d.steps = super::super::STEPS.iter().map(|(n, _)| DataflowStep::on(n)).collect();
+        with_starter_formulas(&mut d);
+        let now = serde_json::to_string(&d).unwrap();
+        let older: Dataflow = serde_json::from_str(&now.replace(TONNES_AD_PER_M3, "rd_adt")).unwrap();
+        assert!(older.fields.iter().any(|f| f.field.name == "rd_adt"), "the older dataflow as saved");
+        let (renamed, said) = renamed_from_older(&older).expect("renamed");
+        assert_eq!(said, ["rd_adt is now tonnes_ad_per_m3"]);
+        assert_eq!(renamed, d, "the same as the starter gives now");
+        assert!(!serde_json::to_string(&renamed).unwrap().contains("rd_adt"));
+        assert_eq!(checked(&renamed), 5);
+        assert_eq!(renamed_from_older(&d), None, "nothing to rename");
+        assert_eq!(replace_word("unit.rd_adt + unit[\"rd_adt\"] + unit.rd_adt_x + my_rd_adt", "rd_adt", "t"), "unit.t + unit[\"t\"] + unit.rd_adt_x + my_rd_adt");
+    }
+
     #[test]
     fn a_dataflow_without_moistures_gets_size_and_limits_only() {
         let mut d = flow(false);
@@ -529,6 +591,6 @@ mod tests {
         let steps: Vec<&str> = d.steps.iter().map(|s| s.step.as_str()).collect();
         assert_eq!(steps, ["initialise", "fill_size", "limits", "in_situ"]);
         assert_eq!(checked(&d), 2);
-        assert!(!d.fields.iter().any(|f| f.field.name == RD_ADT));
+        assert!(!d.fields.iter().any(|f| f.field.name == TONNES_AD_PER_M3));
     }
 }

@@ -6,7 +6,7 @@
 //! smallest), the weight found beside it, so a parent here is what the run's own add-up gives.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::Serialize;
 use zd_core::{AttrValue, Attributes, ColumnValues, Table};
@@ -277,6 +277,7 @@ fn node_column(table: &Table, node: &[String], when: &BTreeMap<String, String>) 
 
 /// Each folder field added up over each column's rows; a field with no value in any column is left out.
 fn fields_of(table: &Table, sets: &[Vec<usize>]) -> Vec<BreakdownField> {
+    let stack = seam_order(table);
     table
         .columns
         .iter()
@@ -286,7 +287,7 @@ fn fields_of(table: &Table, sets: &[Vec<usize>]) -> Vec<BreakdownField> {
             let (name, folders) = parts.split_last()?;
             let (values, words) = match &c.values {
                 ColumnValues::Number(_) => (sets.iter().map(|leaves| add_up_column(table, &c.name, leaves)).collect::<Vec<_>>(), None),
-                ColumnValues::Text(v) => (vec![None; sets.len()], Some(sets.iter().map(|leaves| words_of(v, leaves)).collect::<Vec<_>>())),
+                ColumnValues::Text(v) => (vec![None; sets.len()], Some(sets.iter().map(|leaves| words_of(v, leaves, &stack)).collect::<Vec<_>>())),
             };
             let held = values.iter().any(Option::is_some) || words.as_ref().is_some_and(|w| w.iter().any(Option::is_some));
             held.then(|| BreakdownField { column: c.name.clone(), folders: folders.iter().map(|f| f.to_string()).collect(), name: name.to_string(), unit: c.unit.clone(), values, words })
@@ -312,8 +313,10 @@ fn add_children(levels: &[String], words: &[Vec<String>], path: &[String], leave
     }
 }
 
-/// The distinct words of a column over some leaves, in the order met, each leaf's own "a; b" split.
-fn words_of(values: &[Option<String>], leaves: &[usize]) -> Option<String> {
+/// The distinct words of a column over some leaves, each leaf's own "a; b" split: seams (and sections, named for their
+/// seams) in the stack's order, top down, as working sections are (app review brief, 17 Nov, item 5); any other word
+/// after them, in the order met.
+fn words_of(values: &[Option<String>], leaves: &[usize], stack: &HashMap<String, usize>) -> Option<String> {
     let mut seen: Vec<&str> = Vec::new();
     for &i in leaves {
         for w in values[i].as_deref().unwrap_or("").split("; ").filter(|w| !w.is_empty()) {
@@ -322,7 +325,58 @@ fn words_of(values: &[Option<String>], leaves: &[usize]) -> Option<String> {
             }
         }
     }
+    seen.sort_by_key(|w| stack.get(*w).copied().unwrap_or(usize::MAX));
     (!seen.is_empty()).then(|| seen.join("; "))
+}
+
+/// The seams in the stack's order, top down, from the table itself: within each column (a case and its levels above the
+/// seam) the run writes a seam's leaves before the seam below, so each column says which seams come before which, and
+/// the columns together give the whole stack, though no one column holds every seam (a seam that subcrops, or is lost
+/// in some blocks). Where two seams are never in one column, the one met first comes first.
+fn seam_order(table: &Table) -> HashMap<String, usize> {
+    let levels = levels(table);
+    let Some(at) = levels.iter().position(|l| l.eq_ignore_ascii_case("seam")) else { return HashMap::new() };
+    let words = level_words(table, &levels);
+    let case = match table.column("case").map(|c| &c.values) {
+        Some(ColumnValues::Text(v)) => v.iter().map(|w| w.clone().unwrap_or_default()).collect(),
+        _ => vec![String::new(); table.rows()],
+    };
+    let mut met: Vec<String> = Vec::new();
+    let mut after: HashMap<String, Vec<String>> = HashMap::new();
+    let mut last: HashMap<Vec<String>, String> = HashMap::new();
+    for i in 0..table.rows() {
+        let seam = &words[at][i];
+        if seam.is_empty() {
+            continue;
+        }
+        if !met.contains(seam) {
+            met.push(seam.clone());
+        }
+        let mut column = vec![case[i].clone()];
+        column.extend(words[..at].iter().map(|w| w[i].clone()));
+        if let Some(above) = last.insert(column, seam.clone()).filter(|above| above != seam) {
+            let below = after.entry(above).or_default();
+            if !below.contains(seam) {
+                below.push(seam.clone());
+            }
+        }
+    }
+    // Top down: a seam goes once every seam seen above it has gone, the first met first; a loop (a column out of the
+    // stack's order) is broken by taking the first met left.
+    let mut above_count: HashMap<&str, usize> = met.iter().map(|m| (m.as_str(), 0)).collect();
+    for below in after.values().flatten() {
+        *above_count.get_mut(below.as_str()).expect("met") += 1;
+    }
+    let mut order: HashMap<String, usize> = HashMap::new();
+    while order.len() < met.len() {
+        let next = met.iter().find(|m| !order.contains_key(*m) && above_count[m.as_str()] == 0).or_else(|| met.iter().find(|m| !order.contains_key(*m))).expect("one left");
+        order.insert(next.clone(), order.len());
+        for below in after.get(next).into_iter().flatten() {
+            let n = above_count.get_mut(below.as_str()).expect("met");
+            *n = n.saturating_sub(1);
+        }
+    }
+    order
 }
 
 /// A number column added up over some leaves by its own rule, over the leaves with a value in it: summed; by volume, the
@@ -538,6 +592,33 @@ mod tests {
                 TableColumn::adding("Loss\\Roof\\volume", "m3", AddUp::Sum, n(&[f64::NAN, f64::NAN, f64::NAN, f64::NAN])),
             ],
         }
+    }
+
+    /// Three sections in the stack U, M and L (app review brief, 17 Nov, item 5): block B1, met first, has only M and L
+    /// (U subcrops there), and B2 has all three. At All and at the strip the ROM sections read U; M; L, the stack's order,
+    /// as the working sections do, not M; L; U, the order met; a block's own reads its own seams, top down.
+    #[test]
+    fn section_lists_follow_the_stack_not_the_order_met() {
+        let table = Table {
+            columns: vec![
+                TableColumn::text("case", t(&["Base", "Base", "Base", "Base", "Base"])),
+                TableColumn::text("strip", t(&["1", "1", "1", "1", "1"])),
+                TableColumn::text("block", t(&["B1", "B1", "B2", "B2", "B2"])),
+                TableColumn::text("seam", t(&["M", "L", "U", "M", "L"])),
+                TableColumn::adding("ROM\\Coal\\volume", "m3", AddUp::Sum, n(&[1.0, 1.0, 1.0, 1.0, 1.0])),
+                TableColumn::text("ROM\\section", t(&["M", "L", "U", "M", "L"])),
+                TableColumn::text("Working section\\id", t(&["4", "6", "2", "4", "6"])),
+            ],
+        };
+        let words = |node: &[&str], column: &str| {
+            let node: Vec<String> = node.iter().map(|w| w.to_string()).collect();
+            let b = breakdown(&table, &node, &[]).unwrap();
+            b.fields.iter().find(|f| f.column == column).and_then(|f| f.words.as_ref()?[0].clone())
+        };
+        assert_eq!(words(&[], "ROM\\section").as_deref(), Some("U; M; L"), "All, in the stack's order");
+        assert_eq!(words(&["1"], "ROM\\section").as_deref(), Some("U; M; L"), "the strip");
+        assert_eq!(words(&["1", "B1"], "ROM\\section").as_deref(), Some("M; L"), "B1's own, top down");
+        assert_eq!(words(&[], "Working section\\id").as_deref(), Some("4; 6; 2"), "not seams: in the order met");
     }
 
     #[test]

@@ -34,6 +34,13 @@ in `crates/zd-io/src/zdp.rs` (around line 1226) and not taken away when the wind
 **Check:** an app bench check that runs a command, asks to close, and finds the prompt; Don't save closes and leaves no
 lock file; Save writes the file first.
 
+Done (19 Nov, branch `app/review-fixes`): the shell keeps the window when there's work since the last save or open (a run,
+undo or redo; showing and hiding don't count) or a run going, and the app asks Save, Don't save or Cancel; New and Open
+ask the same. The lock note is taken away on the app's exit, however it closes. Tests: `zd-commands`
+`unsaved_work_is_known_and_the_lock_goes_when_the_file_is_let_go`, `zd-app`
+`closing_asks_only_with_work_to_lose_and_takes_the_lock_away`. Not an app bench check: the prompt is the system's own
+dialog, which the bench can't answer, so the close itself wants a check by hand.
+
 ## 2. `rd_adt` means two things, and Main fields shows the wrong density beside tonnes
 
 **Seen** (Reserves table, Base, block B1, Main fields):
@@ -60,6 +67,38 @@ and `app/src/bench/dataflowCheck.ts`. Main fields' choice of rows is in the app'
 **Check:** a test that, for every folder in Main fields, volume × the density shown equals tonnes to 1e-9; the demo
 pit's figures otherwise unchanged.
 
+Done (19 Nov, branch `app/review-fixes`, Tim agreed the plan below: "Go for item 2"). `rd_adt` is now
+`tonnes_ad_per_m3`. Main fields shows, under each folder, the density its tonnes are on. Older projects' dataflows are
+renamed as they open, and older tables read as the new name. Tests:
+- `zd-commands` `a_dataflow_saved_with_rd_adt_is_renamed_everywhere`,
+  `a_dataflow_saved_with_rd_adt_opens_renamed_and_gives_the_same_table` and
+  `every_folder_s_tonnes_are_its_volume_by_the_density_main_fields_shows`;
+- the app's reserves table test;
+- the demo script, which checks volume × the density shown = tonnes for every folder on every leaf to 1e-9, finds no
+  `rd_adt`, and holds its `RECORDED` totals.
+
+The demo script also read clean coal from its pre-0086 folder: it's `ROM\Clean coal` now, and the figure is the one
+recorded.
+
+The plan as agreed:
+
+- Why it shows: Main fields hides `rd`, `rd_is` and `rd_rom` as detail (`DETAIL` in `app/src/panels/reservesTable.ts`)
+  but not `rd_adt`, so `rd_adt` is the one density left on show beside every folder's tonnes. Under Imported it is still
+  the lab RD, because the field starts as the block's RD and only the `densities` formula works it.
+- Main fields: under each folder, show the density that folder's tonnes are on: `rd` under Imported, `rd_is` under
+  Insitu and Working section, and `rd_rom` under ROM and Scheduled. That's an app change only.
+- The name: `rd_adt` becomes `tonnes_ad_per_m3`, which reads "tonnes, air dried, per m³" in the table. It's a detail
+  field, shown under Every field beside `tonnes_ad`, never beside `tonnes`. Another name is fine; it has to be one word
+  a formula can use (`unit.tonnes_ad_per_m3`).
+- Saved projects: on open, a dataflow with an `rd_adt` field gets it renamed, in its fields, in its qualities'
+  weighting (`by mass, rd_adt`) and in its formula text. The open note says so, and the change is saved with the
+  project. Reserves tables already written keep their `rd_adt` column as written: they're results. The app reads that
+  column as the new name, so an old table shows the same way until it is run again.
+- Also renamed: the starter, `zd-script`'s AI reference, the AI-written test scripts, and the app's dataflow bench
+  check.
+- Tests: for every folder Main fields shows, volume × the density shown = tonnes to 1e-9 on the demo pit; a dataflow
+  saved with `rd_adt` opens renamed and gives the same table; the demo's `RECORDED` totals don't move.
+
 ## 3. Run all cases stops at the pause and never runs 50m
 
 **Seen:** Run all 2 cases ran Base to its pause at step 14. Continue from step 15 finished Base ("8 steps run from step
@@ -73,6 +112,13 @@ cases would have. If that isn't wanted, the panel says plainly which cases are s
 
 **Check:** the workflow bench check (`app/src/bench/workflowCheck.ts`) runs all cases through the pause and finds both
 cases' tables written in this run.
+
+Done (19 Nov, branch `app/review-fixes`): after Run all cases stops at a pause, the panel says which cases are still to run,
+and Continue reads "Continue from step N, then 50m": it runs that case on and then the cases after it, as Run all cases
+would have, stopping again at the next pause or refusal (0066's decision 5 holds). Tests: `zd-app`
+`continue_after_a_pause_runs_the_cases_after_it`, and the workflow bench check now puts a pause in as step 2, runs all
+cases, presses Continue (Base on, then 60 to its own pause, 60 picked), presses Continue again and finds 60's pieces:
+54 of 54 checks pass in the release app.
 
 ## 4. After a run, and at the pause, the view is empty
 
@@ -89,6 +135,12 @@ whose note says it's there to look at the strips), the strips layer was hidden a
 **Check:** the workflow bench check finds triangles in view after a run and at the pause, and the demo's strips on show
 at step 14.
 
+Done (19 Nov, branch `app/review-fixes`): Tidy after a run now shows what the last step that made something drawn made
+(strings, surfaces, solids, grids, seam models), walking back from the end. On the demo, the reserves table written last
+leaves the blocks on show, and the strip delete just before the pause leaves the strips on show. Tests: `tidyResult` in
+`app/tests/workflow.test.mjs`, and the workflow bench check finds the cut pieces on show at its pause. Not checked on
+the demo itself in the app yet.
+
 ## 5. The ROM section isn't listed in stack order
 
 **Seen:** in the Reserves table at All, `Working section\name` reads `U; M; L` (stack order), but `ROM\section` reads
@@ -97,6 +149,13 @@ at step 14.
 **Wanted:** every list of seams or sections in the table follows the seam model's stack order, as working sections do.
 
 **Check:** a reserves test with three sections in one column, finding the ROM section list in stack order.
+
+Done (19 Nov, branch `app/review-fixes`): the cause was that the Reserves table listed a column's words in the order the
+leaves were met. U is lost in the first blocks, so ROM sections met M first, while working sections met U first. The
+table now lists seam and section names in the stack's order, worked out from the table itself (each column's seams
+top down, merged across columns), and other words in the order met. Test: `section_lists_follow_the_stack_not_the_order_met`
+(`zd-commands` reserves view: U subcropping in the first block, All reads U; M; L). On a fresh run of the demo, Base
+and 50m both read `U; M; L` for ROM sections and working sections.
 
 ## 6. The demo's recorded totals have moved
 
@@ -113,6 +172,13 @@ catches the next change.
 
 **Wanted:** find which change moved it and say so in its decision record. Then keep one place (the demo script's
 asserts, or `bench/RESULTS.md`) holding the demo's current Base and 50m totals, with the check failing when they move.
+
+Done (19 Nov, branch `app/review-fixes`). I ran the demo at each commit since 0074 recorded its figures, and the move
+came from 25b41af, "Measure a block's length along its strip and width across it" (0074). The new lengths changed
+edge loss and dilution, and 41.1 m³ went from ROM waste to ROM coal. 0074 now says so under its table. The current totals
+for Base and 50m (ROM coal m³ and t, ROM waste, out of model, clean coal) are `RECORDED` in
+`testdata/synthetic/workflow_demo.py`, which fails, naming each figure, when one moves by more than 0.1. `/gate` reads
+them from there.
 
 ## Smaller things, take or leave
 

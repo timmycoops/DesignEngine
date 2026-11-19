@@ -376,6 +376,12 @@ On the demo pit (mrom 10 %):
 | out of model | 30,369.7 m³ | 30,379.6 m³ |
 | clean coal | 6,050,936.8 m³ | 6,048,893.2 m³ |
 
+These are the figures before "Length along the strip" (below, commit 25b41af). Measuring blocks along their strips
+changed their lengths, and edge loss and dilution with them: Base's ROM coal went to 6,247,592.2 m³ and 9,234,488.8 t,
+and its ROM waste to 69,785,935.0 m³, 41.1 m³ moved, the total the same (found by running the demo at each commit
+since, 19 November). 0077's formulas moved 50m's after that. The demo's current totals are kept in one place now:
+`RECORDED` in `testdata/synthetic/workflow_demo.py`, which fails when they move.
+
 - ROM coal and waste are the blocks less small volumes plus the out-of-model volume, to 1e-9. Scheduled equals ROM.
 - In situ is unchanged, 0 from the blocks.
 - The run takes 46 ms for 90 columns through all ten steps.

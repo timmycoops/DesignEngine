@@ -156,7 +156,7 @@ fn a_unit_reads_its_rom_section_s_coal() {
 #[test]
 fn every_example_in_the_reference_compiles() {
     let names = Declared {
-        fields: ["volume", "thickness", "area", "rd", "rd_is", "rd_rom", "rd_adt", "mad", "mis", "mrom", "ash", "ash_is", "discarded"]
+        fields: ["volume", "thickness", "area", "rd", "rd_is", "rd_rom", "tonnes_ad_per_m3", "mad", "mis", "mrom", "ash", "ash_is", "discarded"]
             .iter()
             .map(|n| FieldDecl::number(n, ""))
             .collect(),

@@ -2,7 +2,7 @@
 // shows, on a made-up breakdown. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { breakdownCsv, cellText, decimals, fieldLabel, fieldRows, isDetail, asPutBack, isolation, nodeForLeaf } from '../src/panels/reservesTable.ts';
+import { breakdownCsv, cellText, decimals, densityOfTonnes, fieldLabel, fieldRows, isDetail, asPutBack, isolation, nodeForLeaf } from '../src/panels/reservesTable.ts';
 
 const field = (column, unit, values, words = null) => {
   const parts = column.split('\\');
@@ -32,6 +32,50 @@ test('rows run by top folder then sub-folder, fields straight under a top folder
   assert.ok(fieldRows(b, true, new Set()).some((r) => r.kind === 'field' && r.key === 'Imported\\Coal\\rd'), 'every field when asked');
   const folded = fieldRows(b, false, new Set(['Imported', 'ROM\\Coal']));
   assert.deepEqual(folded.map((r) => r.label), ['Imported', 'ROM', 'section', 'Coal']);
+});
+
+// App review brief, 17 Nov, item 2: under each folder, Main fields shows the density its tonnes are on, so volume × it is
+// the tonnes shown (B1's coal, from the brief: lab RD 1.444 under Imported, in situ 1.415 under Insitu, and the ROM
+// density under ROM), never the air-dried tonnes a cubic metre, which an older table called rd_adt.
+test('Main fields shows beside each folder its own density, the one its tonnes are on', () => {
+  const v = 1267.8;
+  const node = {
+    ...b,
+    fields: [
+      field('Imported\\Coal\\volume', 'm3', [v]),
+      field('Imported\\Coal\\rd', 't/m3', [1.444]),
+      field('Imported\\Coal\\rd_adt', 't/m3', [1.444]),
+      field('Imported\\Coal\\tonnes', 't', [v * 1.444]),
+      field('Insitu\\Coal\\volume', 'm3', [v]),
+      field('Insitu\\Coal\\rd', 't/m3', [1.444]),
+      field('Insitu\\Coal\\rd_is', 't/m3', [1.415]),
+      field('Insitu\\Coal\\rd_adt', 't/m3', [1.349]),
+      field('Insitu\\Coal\\tonnes', 't', [v * 1.415]),
+      field('Insitu\\Coal\\tonnes_ad', 't', [v * 1.349]),
+      field('ROM\\Coal\\volume', 'm3', [v]),
+      field('ROM\\Coal\\rd_is', 't/m3', [1.415]),
+      field('ROM\\Coal\\rd_rom', 't/m3', [1.39]),
+      field('ROM\\Coal\\tonnes', 't', [v * 1.39]),
+      field('Insitu\\Waste\\volume', 'm3', [500]),
+    ],
+  };
+  const rows = fieldRows(node, false, new Set()).filter((r) => r.kind === 'field');
+  const shown = rows.map((r) => r.key);
+  assert.deepEqual(
+    shown.filter((k) => /\\(rd|rd_is|rd_rom|rd_adt|tonnes_ad)$/.test(k)),
+    ['Imported\\Coal\\rd', 'Insitu\\Coal\\rd_is', 'ROM\\Coal\\rd_rom'],
+    'one density a folder, the one its tonnes are on; no rd_adt or air-dried tonnes in Main fields',
+  );
+  for (const folder of ['Imported\\Coal', 'Insitu\\Coal', 'ROM\\Coal']) {
+    const value = (name) => node.fields.find((f) => f.column === `${folder}\\${name}`)?.values[0];
+    const density = rows.find((r) => r.key.startsWith(`${folder}\\rd`)).field.values[0];
+    assert.ok(Math.abs(value('volume') * density - value('tonnes')) <= 1e-9 * value('tonnes'), folder);
+  }
+  assert.equal(densityOfTonnes(['Insitu', 'Waste'], ['volume']), null, 'no tonnes, no density shown');
+  assert.equal(fieldLabel('rd_adt'), 'tonnes, air dried, per m³', 'an older table reads as it is named now');
+  assert.equal(fieldLabel('tonnes_ad_per_m3'), 'tonnes, air dried, per m³');
+  assert.ok(isDetail('rd_adt') && isDetail('tonnes_ad_per_m3'));
+  assert.ok(fieldRows(node, true, new Set()).some((r) => r.key === 'Insitu\\Coal\\rd_adt'), 'Every field still shows it');
 });
 
 test('fields are worded and shown to their unit', () => {

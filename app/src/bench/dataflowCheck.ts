@@ -101,7 +101,7 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
   expect(
     'a dataflow shows its steps, its parameter table by name and its fields',
     // The starter's formulas after initialise, qualities weighed by air-dried tonnes Spry's way (decision 0077, 7c).
-    !!flow && flow.includes('small_volumes, initialise, fill_size, limits, densities, in_situ, join_benches, discard, working_sections') && flow.includes('rom, rom_qualities, final') && flow.includes('Reserves assumptions') && flow.includes('by tonnes (rd_adt)') && flow.includes('attribute mis'),
+    !!flow && flow.includes('small_volumes, initialise, fill_size, limits, densities, in_situ, join_benches, discard, working_sections') && flow.includes('rom, rom_qualities, final') && flow.includes('Reserves assumptions') && flow.includes('by tonnes (tonnes_ad_per_m3)') && flow.includes('attribute mis'),
   );
   const base = await shown('Reserves Base', 'Insitu by seam');
   for (let k = 0; k < 50 && !(document.body.textContent ?? '').includes('Working section by seam'); k++) await wait(100);
