@@ -8,7 +8,7 @@ import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
-import { breakdownCsv, cellText, fieldRows, type Isolation, isolation, nodeForLeaf, samePath, startsWith, unitLabel } from './reservesTable';
+import { asPutBack, breakdownCsv, cellText, fieldRows, type Isolation, isolation, nodeForLeaf, samePath, startsWith, unitLabel } from './reservesTable';
 import { fmt } from './format';
 
 /**
@@ -284,17 +284,19 @@ export function ReservesTable() {
     );
     setSaid('Shown as it was');
   };
-  const layersNow = () => (summary?.layers ?? []).map((l) => ({ id: l.id, visible: l.visible }));
+  /** The layers and objects as they'll be once what's alone is put back: what the next Show or Isolate starts from. */
+  const startFrom = () => asPutBack(summary?.objects ?? [], summary?.layers ?? [], alone);
   /** The node's solids (those on leaves the filter keeps) alone on screen, zoomed to; again, everything as it was. */
   const isolateSolids = async () => {
     if (!table || !summary) return;
     const was = alone?.key;
+    const start = startFrom();
     await putBack();
     if (was === isolatedKey) return;
     const ids = await reservesSolids(table.id, node, when);
     if (ids.length === 0) return setSaid('No solids to isolate');
-    const changed = isolation(ids, summary.objects, summary.layers);
-    setAlone({ key: isolatedKey, layers: layersNow(), changed });
+    const changed = isolation(ids, start.objects, start.layers);
+    setAlone({ key: isolatedKey, layers: start.layers.map((l) => ({ id: l.id, visible: l.visible })), changed });
     if (changed.unhide.length) await setObjectsVisible(changed.unhide, true);
     if (changed.hide.length) await setObjectsVisible(changed.hide, false);
     await setLayersVisible(changed.showLayers, changed.hideLayers);
@@ -305,11 +307,12 @@ export function ReservesTable() {
   const showTableLayers = async () => {
     if (!table || tableLayers.length === 0) return;
     const was = alone?.key;
+    const start = startFrom();
     await putBack();
     if (was === layersKey) return;
     const on = new Set(tableLayers.map((l) => l.id));
-    setAlone({ key: layersKey, layers: layersNow(), changed: null });
-    await setLayersVisible([...on], (summary?.layers ?? []).filter((l) => l.visible && !on.has(l.id)).map((l) => l.id));
+    setAlone({ key: layersKey, layers: start.layers.map((l) => ({ id: l.id, visible: l.visible })), changed: null });
+    await setLayersVisible([...on], start.layers.filter((l) => l.visible && !on.has(l.id)).map((l) => l.id));
     setSaid(`${tableLayers.map((l) => l.name).join(', ')} alone on show`);
   };
   /** The leaves filter in the view: on, the table's layers are turned on too, so what it keeps is on show. */
