@@ -195,7 +195,9 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
   whether it climbs or falls; the polygon and nothing else, and placed again it has moved
   (`docs/decisions/0079-project-ramps-by-hand-and-measure.md`).
 - Every object has a stable id (128-bit, generated in-house), a name, a layer, and provenance (the command
-  run that made it). Edits write a new revision of the same object; earlier revisions stay for undo
+  run that made it). Strings, surfaces, solids and grids are moved, rotated in plan or mirrored in plan whole by
+  `object.transform`, a grid only moved, and copied so by `object.copy`, each copy on its original's layer named for it
+  (`docs/decisions/0083-cut-strings-by-strings.md`, workstream 3). Edits write a new revision of the same object; earlier revisions stay for undo
   (see `docs/decisions/0004-phase1-foundations.md`). A project is one `<name>.zdp` file; older `<name>.zdproj/` folders still open and save as a `.zdp` beside them (`docs/decisions/0058-one-file-a-project.md`).
 - An object can be hidden on its own, under its layer's tick. That's display state saved with the project, not a
   revision and not undone. Hidden means not drawn, snapped to or cut by a section; a command that names the object
