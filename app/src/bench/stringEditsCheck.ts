@@ -310,18 +310,18 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   await click([E + 60, N - 50, 100]);
   await click([E + 60, N + 150, 100]);
   await wait(800);
-  const copy = (await projectSummary()).objects.find((o) => o.kind === 'string' && o.name === 'Dog-leg copy');
+  const copy = (await projectSummary()).objects.find((o) => o.kind === 'string' && o.name === 'Dog-leg' && o.id !== dogleg);
   const copyPoints = copy ? ((await points(copy.id)) as Vec3[]) : [];
   const mirrored = copyPoints.length === 3 && legBefore.every((p, k) => near(copyPoints[k][0], 2 * (E + 60) - p[0]) && near(copyPoints[k][1], p[1]) && near(copyPoints[k][2], p[2]));
   expect(
-    'Mirror as new: a Dog-leg copy across the pit limit, picked once made, the dog-leg where it was',
+    'Mirror as new: a second Dog-leg across the pit limit, picked once made, the dog-leg where it was',
     mirrorSays === 'Copy and mirror Dog-leg' && mirrored && !!copy && selection().length === 1 && selection()[0] === copy.id && moved(legBefore, (await points(dogleg)) as Vec3[], [0, 0, 0]),
     { button: mirrorSays, copy: rel(copyPoints), picked: selection().length },
   );
   [...(movePanel()?.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Change in place, or make new"] button') ?? [])].find((b) => b.textContent?.trim() === 'In place')?.click();
   await key('z', true);
   await wait(500);
-  expect('one Ctrl+Z takes the copy away', !(await projectSummary()).objects.some((o) => o.name === 'Dog-leg copy'));
+  expect('one Ctrl+Z takes the copy away', !(await projectSummary()).objects.some((o) => o.name === 'Dog-leg' && o.id !== dogleg));
   await key('Escape');
 
   // Vertices (workstream 4): two lines of ten vertices 10 m apart, picked, then Alt and a box round three of each.
@@ -637,7 +637,7 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   expect('Ctrl+Z puts the toe back whole', unclipped === 2 && near(((await points(longToe)) as Vec3[])[0][0], E + 450), unclipped);
 
   // As new (decision 0091): the same clip with the Result control set to As new on 'clipped' leaves the toe whole and
-  // makes "Long toe clipped" there, picked once made.
+  // makes a new "Long toe" there, its own id, picked once made.
   await choose('Change in place, or make new', 'As new');
   const layerBox = panel()?.querySelector<HTMLInputElement>('[aria-label="Layer for what\'s made as new"]');
   if (layerBox) {
@@ -653,12 +653,12 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   await click([E + 500, N + 390, 100]);
   await wait(800);
   const afterClip = await projectSummary();
-  const asNew = afterClip.objects.find((o) => o.kind === 'string' && o.name === 'Long toe clipped');
+  const asNew = afterClip.objects.find((o) => o.kind === 'string' && o.name === 'Long toe' && o.id !== longToe);
   const asNewLayer = afterClip.layers.find((l) => l.id === asNew?.layer)?.name;
   const asNewPoints = asNew ? ((await points(asNew.id)) as Vec3[]) : [];
   const toeWhole = ((await points(longToe)) as Vec3[])[0];
   expect(
-    'Clip as new on clipped: the toe whole, "Long toe clipped" made there and picked, RL 105 to 115',
+    'Clip as new on clipped: the toe whole, a new Long toe made there and picked, RL 105 to 115',
     !!asNew && asNewLayer === 'clipped' && asNewPoints.length === 2 && near(asNewPoints[0][2], 105) && near(asNewPoints[1][2], 115) && near(toeWhole[0], E + 450) && selection().includes(asNew.id),
     { made: asNew?.name, layer: asNewLayer, points: asNewPoints.map((p) => [p[0] - E, p[1] - N, p[2]]), toeStart: toeWhole[0] - E },
   );

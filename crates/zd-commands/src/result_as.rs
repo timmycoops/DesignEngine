@@ -1,8 +1,9 @@
 //! In place or as new on a layer: one rule for every tool (Surface tools plan, decision 6; decision 0091). A tool that
 //! changes an object does it in place by default, as the object's next revision, one undo putting it back. Run with
 //! `"result": {"as_new": true, "layer": "…"}` among its parameters, the same run instead makes each changed object anew:
-//! a copy named for what was done ("Topo trimmed", "Toe 3 graded"), on the layer given (each on its original's layer if
-//! none is), and leaves the original as it was, deleting nothing. It's done here, once, for every command: a command
+//! a copy with its original's name and attributes as they are (Tim, 20 November: nothing added about what changed; its
+//! own id tells it apart), on the layer given (each on its original's layer if none is), and leaves the original as it
+//! was, deleting nothing. It's done here, once, for every command: a command
 //! never sees `result`, and a new one gets the choice without code of its own.
 
 use std::collections::HashMap;
@@ -41,37 +42,11 @@ pub(crate) fn take_result(params: &Value) -> Result<(Value, Option<ResultAs>), C
     Ok((Value::Object(own), Some(result)))
 }
 
-/// What a command did to an object, for the copy's name: "Toe 3 graded".
-pub(crate) fn done_word(command: &str) -> &'static str {
-    match command {
-        "string.trim" => "trimmed",
-        "string.clip" => "clipped",
-        "string.extend" => "extended",
-        "string.split" => "split",
-        "string.join" => "joined",
-        "string.fillet" => "rounded",
-        "string.smooth" => "smoothed",
-        "string.filter" => "filtered",
-        "string.densify" => "densified",
-        "string.vertices_at_crossings" => "with crossings",
-        "string.set_grade" => "graded",
-        "string.set_elevation" => "set",
-        "string.drape" => "draped",
-        "string.reverse" => "reversed",
-        "string.set_closed" => "closed",
-        "string.move_vertex" | "string.move_vertices" | "string.insert_vertex" | "string.delete_vertex" | "string.delete_vertices" | "string.redraw_stretch" => "edited",
-        "object.transform" => "copy",
-        "solid.repair" => "repaired",
-        _ => "edited",
-    }
-}
-
-/// A run's changes made anew: each revision becomes a new object, named for what was done, on the layer asked for (or
-/// its original's); each deletion is dropped, so the originals stay as they were; and, with a layer asked for, what the
+/// A run's changes made anew: each revision becomes a new object with its original's name and attributes unless the run
+/// sets them, on the layer asked for (or its original's); each deletion is dropped, so the originals stay as they were; and, with a layer asked for, what the
 /// run makes besides goes on it too. Notes that name a change by its place follow it, and one naming a dropped deletion
 /// lets it go. A note says what was done; a run that changed nothing in place says so, made as it would have been.
-pub(crate) fn make_anew(project: &Project, command: &str, result: &ResultAs, changes: Vec<Change>, notes: &mut Vec<Note>) -> Result<Vec<Change>, CommandError> {
-    let word = done_word(command);
+pub(crate) fn make_anew(project: &Project, result: &ResultAs, changes: Vec<Change>, notes: &mut Vec<Note>) -> Result<Vec<Change>, CommandError> {
     let mut moved: HashMap<usize, usize> = HashMap::new();
     let (mut made, mut copies, mut left): (Vec<Change>, usize, Vec<ObjectId>) = (Vec::new(), 0, Vec::new());
     for (k, change) in changes.into_iter().enumerate() {
@@ -81,8 +56,8 @@ pub(crate) fn make_anew(project: &Project, command: &str, result: &ResultAs, cha
                 let original_layer = project.layer(original.layer).map(|l| l.name.clone()).unwrap_or_default();
                 copies += 1;
                 Change::Create {
-                    // A run that names the object itself (a rename) gives the copy that name.
-                    name: name.unwrap_or_else(|| format!("{} {word}", original.name)),
+                    // Its original's name, unless the run names it (a rename).
+                    name: name.unwrap_or_else(|| original.name.clone()),
                     layer: result.layer.clone().or(layer).unwrap_or(original_layer),
                     attributes: attributes.unwrap_or_else(|| original.attributes.clone()),
                     body: body.unwrap_or_else(|| original.body.clone()),

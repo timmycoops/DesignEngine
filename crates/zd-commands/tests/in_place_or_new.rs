@@ -1,6 +1,6 @@
 //! In place or as new on a layer (decision 0091): any command that changes an object, run with `result` as new, makes
-//! each changed object anew, named for what was done, on the layer given or its original's, and leaves the originals as
-//! they were, deleting nothing. Every answer is known; mine grid coordinates throughout.
+//! each changed object anew, its name and attributes as its original's, on the layer given or its original's, and leaves
+//! the originals as they were, deleting nothing. Every answer is known; mine grid coordinates throughout.
 
 use serde_json::json;
 use zd_commands::{RunRecord, Session};
@@ -41,7 +41,7 @@ fn string(s: &mut Session, name: &str, points: &[[f64; 3]]) -> ObjectId {
     created(&s.run("string.create", json!({ "name": name, "layer": "toes", "points": points, "closed": false })).unwrap())[0]
 }
 
-/// Two toes, flat at RL 100, graded at 10 % as new on 'graded': two new strings "Toe 1 graded" and "Toe 2 graded" there,
+/// Two toes, flat at RL 100, graded at 10 % as new on 'graded': two new strings "Toe 1" and "Toe 2" there, their own ids,
 /// each rising 10 m over its 100 m; the toes at their revisions and heights; the run's record keeps `result`; one undo
 /// takes the copies off. In place, the same run revises the toes.
 #[test]
@@ -52,7 +52,8 @@ fn graded_as_new_leaves_the_toes_and_makes_graded_copies_on_a_layer() {
     let record = s.run("string.set_grade", json!({ "strings": toes, "grade": 10.0, "result": { "as_new": true, "layer": "graded" } })).unwrap();
     let made = created(&record);
     assert_eq!((made.len(), changed(&record, ChangeKind::Revised), changed(&record, ChangeKind::Deleted)), (2, 0, 0));
-    assert_eq!(made.iter().map(|&id| name(&s, id)).collect::<Vec<_>>(), ["Toe 1 graded", "Toe 2 graded"]);
+    assert_eq!(made.iter().map(|&id| name(&s, id)).collect::<Vec<_>>(), ["Toe 1", "Toe 2"], "the names as they were");
+    assert!(made.iter().all(|id| !toes.contains(id)), "each its own id");
     for (&copy, &toe) in made.iter().zip(&toes) {
         assert_eq!(layer(&s, copy), "graded");
         let (graded, original) = (line(&s, copy), line(&s, toe));
@@ -69,8 +70,8 @@ fn graded_as_new_leaves_the_toes_and_makes_graded_copies_on_a_layer() {
     assert_eq!((created(&record).len(), changed(&record, ChangeKind::Revised)), (0, 2), "in place, the default, revises them");
 }
 
-/// A toe split where a line crosses it, as new with no layer: the first part "Toe 1 trimmed" and the second
-/// "Toe 1 part 2", both on the toe's own layer; the toe whole and as it was.
+/// A toe split where a line crosses it, as new with no layer: the first part "Toe 1" and the second "Toe 1 part 2", both
+/// on the toe's own layer; the toe whole and as it was.
 #[test]
 fn a_trim_as_new_with_no_layer_keeps_each_on_its_originals_layer() {
     let mut s = Session::with_builtins();
@@ -78,7 +79,7 @@ fn a_trim_as_new_with_no_layer_keeps_each_on_its_originals_layer() {
     let across = string(&mut s, "Across", &[[E + 60.0, N - 50.0, 0.0], [E + 60.0, N + 50.0, 0.0]]);
     let record = s.run("string.trim", json!({ "strings": [toe], "by": across, "keep": "both", "result": { "as_new": true } })).unwrap();
     let made = created(&record);
-    assert_eq!(made.iter().map(|&id| name(&s, id)).collect::<Vec<_>>(), ["Toe 1 trimmed", "Toe 1 part 2"]);
+    assert_eq!(made.iter().map(|&id| name(&s, id)).collect::<Vec<_>>(), ["Toe 1", "Toe 1 part 2"]);
     assert!(made.iter().all(|&id| layer(&s, id) == "toes"));
     assert_eq!(line(&s, toe).vertices.len(), 2, "the toe whole");
     assert!((line(&s, made[0]).vertices[1][2] - 106.0).abs() < 1e-9, "the cut at the toe's own height");
@@ -97,14 +98,15 @@ fn a_join_as_new_deletes_nothing() {
     assert!(record.messages.last().unwrap().contains("2 kept that a change in place would have deleted"), "{:?}", record.messages);
 }
 
-/// Move as new is what Copy was: "Toe 1 copy" on the toe's layer, moved 100 m east, the toe where it was.
+/// Move as new is a copy: "Toe 1" again on the toe's layer, its own id, moved 100 m east, the toe where it was.
 #[test]
 fn a_move_as_new_is_a_copy() {
     let mut s = Session::with_builtins();
     let toe = string(&mut s, "Toe 1", &[[E, N, 100.0], [E + 50.0, N, 105.0]]);
     let record = s.run("object.transform", json!({ "objects": [toe], "transform": { "kind": "move", "by": [100.0, 0.0, 0.0] }, "result": { "as_new": true } })).unwrap();
     let copy = created(&record)[0];
-    assert_eq!((name(&s, copy), layer(&s, copy)), ("Toe 1 copy".to_string(), "toes".to_string()));
+    assert_eq!((name(&s, copy), layer(&s, copy)), ("Toe 1".to_string(), "toes".to_string()));
+    assert_ne!(copy, toe);
     assert_eq!(line(&s, copy).vertices[0], [E + 100.0, N, 100.0]);
     assert_eq!(line(&s, toe).vertices[0], [E, N, 100.0]);
 }

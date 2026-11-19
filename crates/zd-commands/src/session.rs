@@ -190,7 +190,7 @@ impl RunJob {
             let guarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let (mut outcome, canonical) = command.run_json(&inputs, &own)?;
                 if let Some(result) = result.as_ref().filter(|r| r.as_new) {
-                    outcome.changes = make_anew(&project, &record.command, result, std::mem::take(&mut outcome.changes), &mut outcome.notes)?;
+                    outcome.changes = make_anew(&project, result, std::mem::take(&mut outcome.changes), &mut outcome.notes)?;
                 }
                 let checked = check_solids_made(&mut outcome.changes, &mut outcome.notes);
                 Ok((outcome, canonical, checked))

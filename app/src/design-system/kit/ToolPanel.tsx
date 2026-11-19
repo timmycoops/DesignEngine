@@ -170,7 +170,7 @@ export function resultParams(result: ResultAs | null | undefined): Record<string
 function ResultSection({ value }: { value: ResultAs }) {
   return (
     <ToolSection title="Result">
-      <Field label="Make" hint={value.asNew ? 'A changed copy of each, named for what was done; the originals stay as they were' : 'Each changed as its next revision; one undo puts it back'}>
+      <Field label="Make" hint={value.asNew ? 'A changed copy of each, its name and attributes as they are; the originals stay as they were' : 'Each changed as its next revision; one undo puts it back'}>
         <Choice value={value.asNew ? 'new' : 'in_place'} options={['in_place', 'new'] as const} labels={{ in_place: 'In place', new: 'As new' }} onChange={(v) => value.setAsNew(v === 'new')} label="Change in place, or make new" />
       </Field>
       {value.asNew && (

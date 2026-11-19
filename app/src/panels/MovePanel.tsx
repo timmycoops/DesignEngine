@@ -11,8 +11,8 @@ import { countedWords, moveBetween } from './moveWords';
  * in one run and one undo. Strings, surfaces, solids and grids; a grid only moves, its rows running east and north. Move
  * goes by two clicks in the view, from a point to where it goes, or by an easting, northing and RL typed. Rotate turns
  * about a point clicked, by an angle typed, anticlockwise. Mirror goes across a line clicked. Each is in place, or as
- * new on a layer (decision 0091), which is what Copy was: a copy named for its original with " copy", on the layer given
- * or its original's, the originals left as they were, picked once made, ready to move on.
+ * new on a layer (decision 0091), which is what Copy was: a copy with its original's name and attributes, on the layer
+ * given or its original's, the originals left as they were, picked once made, ready to move on.
  *
  * While the Workflow panel is adding steps, the button adds the tool as a step instead of running it (decision 0078):
  * the objects picked are found by rule each time it runs, and the clicks are asked for as the step is added.
