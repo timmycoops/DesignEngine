@@ -5,7 +5,7 @@ import type { StepTarget } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
-import { Choice, Field, NumberInput, NumberOrBlank, type RunReport, Select, TargetInput, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { Choice, Field, NumberInput, NumberOrBlank, resultParams, type RunReport, Select, TargetInput, type ToolAction, ToolPanel, ToolSection, useResultAs } from '@/design-system/kit';
 import { choiceWords } from '@/tools';
 import { nearestString, sideOf } from './stringSide';
 import { useWorkspace } from '@/workspace/context';
@@ -63,6 +63,12 @@ type Mode =
 
 /** In the order the Strings tab has them. */
 const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'trim', 'extend', 'clip', 'polygon_boolean', 'join', 'fillet', 'smooth', 'filter', 'densify', 'vertices_at_crossings', 'reverse', 'set_closed', 'surface_between', 'ramp_polygon'];
+
+/**
+ * The tools that change the strings themselves, so offer in place or as new on a layer (decision 0091). The rest make
+ * something new anyway, or set a number on them.
+ */
+const CHANGES: readonly Mode[] = ['set_grade', 'set_elevation', 'drape', 'split', 'trim', 'extend', 'clip', 'join', 'fillet', 'smooth', 'filter', 'densify', 'vertices_at_crossings', 'reverse', 'set_closed'];
 
 /** The tools that act on the vertices picked alone, when some are (String tools plan, workstream 4). */
 const ON_VERTICES: readonly Mode[] = ['set_grade', 'set_elevation', 'drape'];
@@ -151,6 +157,9 @@ export function StringsPanel() {
   const [denseSpacing, setDenseSpacing] = useState(2);
   const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
+  /** In place or as new on a layer, for the tools that change strings (decision 0091). */
+  const resultAs = useResultAs();
+  const changes = CHANGES.includes(mode);
 
   const objects = summary?.objects ?? [];
   const strings = objects.filter((o) => o.kind === 'string');
@@ -196,15 +205,18 @@ export function StringsPanel() {
   const joinParams = () => ({ strings: toJoin.map((o) => o.id), tolerance: joinWithin / 1000 });
   const joinPieces = async () => {
     const outcome = await runIt('string.join', joinParams());
-    if (outcome.record) setSelection([toJoin[0].id]);
+    if (outcome.record && !resultAs.asNew) setSelection([toJoin[0].id]);
   };
 
   const runIt = async (command: string, params: Record<string, unknown>) => {
     setBusy(true);
     clearRefusal();
-    const outcome = await runRecord(command, params);
+    const outcome = await runRecord(command, { ...params, ...(changes ? resultParams(resultAs) : {}) });
     setBusy(false);
     setReport(outcome.record ? { notes: outcome.record.notes } : { notes: [], error: outcome.error });
+    // As new, what's made is picked, ready for the next step.
+    const made = outcome.record?.outputs.filter((o) => o.change === 'created').map((o) => o.id) ?? [];
+    if (changes && resultAs.asNew && made.length > 0) setSelection(made);
     return outcome;
   };
   const numberParams = () => ({ strings: toNumber.map((o) => o.id), start, step, name: numberName });
@@ -488,6 +500,7 @@ export function StringsPanel() {
     title: does.title,
     run: does.run,
     step: does.step,
+    result: changes ? resultAs : undefined,
   };
 
   const several = mode === 'number_across' || mode === 'polygons_from_lines' || mode === 'project' || mode === 'surface_between' || mode === 'join';

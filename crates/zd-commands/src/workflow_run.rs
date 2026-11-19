@@ -128,7 +128,9 @@ impl WorkflowRun {
 /// The checks a cut has, run before it: what it would refuse, found with nothing cut (0049, 0062, 0063).
 fn check_before(project: &Project, command: &str, params: &Value) -> Option<Result<Vec<Note>, CommandError>> {
     fn read<P: serde::de::DeserializeOwned>(params: &Value) -> Result<P, CommandError> {
-        serde_json::from_value(params.clone()).map_err(|e| CommandError::BadParams(e.to_string()))
+        // In place or as new is the session's (decision 0091), not the command's.
+        let (own, _) = crate::result_as::take_result(params)?;
+        serde_json::from_value(own).map_err(|e| CommandError::BadParams(e.to_string()))
     }
     Some(match command {
         "solid.slice_by_faces" => read(params).and_then(|p| check_slice(project, &p)),

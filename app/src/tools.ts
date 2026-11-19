@@ -51,7 +51,6 @@ export type ToolIcon =
   | 'densify'
   | 'crossings'
   | 'move'
-  | 'copy'
   | 'rotate'
   | 'mirror'
   | 'face'
@@ -284,8 +283,7 @@ export const TOOLS: readonly Tool[] = [
   // Move and copy (String tools plan, workstream 3): on strings, surfaces, solids and grids, so always there, and on the
   // Strings and Solids rows.
   { key: 'move', stage: 'always', label: 'Move and copy', tip: 'move, copy, rotate or mirror the strings, surfaces, solids and grids picked, whole', icon: 'move', panel: 'move' },
-  { key: 'move:move', stage: 'always', label: 'Move', tip: 'Moves what is picked by two clicks, or by distances typed.', icon: 'move', panel: 'move', mode: 'move', command: 'object.transform', step: { takes: 'the objects picked' } },
-  { key: 'move:copy', stage: 'always', label: 'Copy', tip: 'Copies what is picked, by two clicks or by distances typed.', icon: 'copy', panel: 'move', mode: 'copy', command: 'object.copy', step: { takes: 'the objects picked' } },
+  { key: 'move:move', stage: 'always', label: 'Move', tip: 'Moves or copies what is picked, by clicks or distances.', icon: 'move', panel: 'move', mode: 'move', command: 'object.transform', step: { takes: 'the objects picked' } },
   { key: 'move:rotate', stage: 'always', label: 'Rotate', tip: 'Turns what is picked about a point clicked, by an angle.', icon: 'rotate', panel: 'move', mode: 'rotate', command: 'object.transform', step: { takes: 'the objects picked' } },
   { key: 'move:mirror', stage: 'always', label: 'Mirror', tip: 'Mirrors what is picked across a line clicked in plan.', icon: 'mirror', panel: 'move', mode: 'mirror', command: 'object.transform', step: { takes: 'the objects picked' } },
   { key: 'workflow', stage: 'always', label: 'Workflow', tip: 'saved steps run again in one go, captured from the Run log or added from the tool panels', icon: 'workflow', panel: 'workflow' },
@@ -362,7 +360,7 @@ export type RowItem = string | '|' | RowMenu;
 const OPEN_MENU: RowMenu = { label: 'Open', icon: 'open', tip: 'Open a project (.zdp), or an older project folder (.zdproj), which saves as a .zdp beside it', menu: 'open' };
 const IMPORT_MENU: RowMenu = { label: 'Import', icon: 'import', tip: 'Bring in surfaces, grids, strings, solids, Deswik and Spry, and build a seam model', menu: 'import' };
 /** Move, Copy, Rotate and Mirror: on the Strings row and the Solids row, as they work on both (and on surfaces and grids). */
-const MOVE_TOOLS = ['move:move', 'move:copy', 'move:rotate', 'move:mirror'] as const;
+const MOVE_TOOLS = ['move:move', 'move:rotate', 'move:mirror'] as const;
 const EXPORT_MENU: RowMenu ={ label: 'Export', icon: 'export', tip: 'Strings, surfaces and solids out to DXF, CSV or a zip', menu: 'export' };
 
 /**

@@ -1,27 +1,26 @@
 import { Check } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { ObjectSummary } from '@/bridge';
-import { Checkbox } from '@/design-system/ui/checkbox';
-import { Choice, Field, NumberInput, type RunReport, Select, type ToolAction, ToolPanel, ToolSection } from '@/design-system/kit';
+import { Choice, Field, NumberInput, resultParams, type RunReport, Select, type ToolAction, ToolPanel, ToolSection, useResultAs } from '@/design-system/kit';
 import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
 import { countedWords, moveBetween } from './moveWords';
 
 /**
- * Move and copy (String tools plan, workstream 3): what's picked moved, copied, rotated in plan or mirrored in plan as a
- * whole, in one run and one undo. Strings, surfaces, solids and grids; a grid only moves, its rows running east and
- * north. Move and Copy go by two clicks in the view, from a point to where it goes, or by an easting, northing and RL
- * typed. Rotate turns about a point clicked, by an angle typed, anticlockwise. Mirror goes across a line clicked. Rotate
- * and Mirror can make copies instead, the originals left as they were. A copy is on its original's layer, named for it
- * with " copy", and picked once made, ready to move on.
+ * Move and copy (String tools plan, workstream 3): what's picked moved, rotated in plan or mirrored in plan as a whole,
+ * in one run and one undo. Strings, surfaces, solids and grids; a grid only moves, its rows running east and north. Move
+ * goes by two clicks in the view, from a point to where it goes, or by an easting, northing and RL typed. Rotate turns
+ * about a point clicked, by an angle typed, anticlockwise. Mirror goes across a line clicked. Each is in place, or as
+ * new on a layer (decision 0091), which is what Copy was: a copy with its original's name and attributes, on the layer
+ * given or its original's, the originals left as they were, picked once made, ready to move on.
  *
  * While the Workflow panel is adding steps, the button adds the tool as a step instead of running it (decision 0078):
  * the objects picked are found by rule each time it runs, and the clicks are asked for as the step is added.
  */
 
-type Mode = 'move' | 'copy' | 'rotate' | 'mirror';
+type Mode = 'move' | 'rotate' | 'mirror';
 
-const MODES: readonly Mode[] = ['move', 'copy', 'rotate', 'mirror'];
+const MODES: readonly Mode[] = ['move', 'rotate', 'mirror'];
 const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('move', MODES);
 
 /** What moves whole: what's drawn. */
@@ -32,6 +31,8 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 export function MovePanel() {
   const { summary, selection, selected, runRecord, clearRefusal, setSelection, pickLine, pickPoint, toolAsk, toolMode } = useWorkspace();
   const [mode, setMode] = useState<Mode>('move');
+  /** In place, or as new on a layer: a copy (decision 0091). */
+  const resultAs = useResultAs();
   useEffect(() => {
     if (toolAsk?.panel === 'move' && MODES.includes(toolAsk.mode as Mode)) setMode(toolAsk.mode as Mode);
   }, [toolAsk]);
@@ -48,8 +49,6 @@ export function MovePanel() {
   const [north, setNorth] = useState(0);
   const [up, setUp] = useState(0);
   const [angle, setAngle] = useState(90);
-  /** Rotate and Mirror: copies, the originals left where they are. */
-  const [copies, setCopies] = useState(false);
   const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
 
@@ -65,13 +64,13 @@ export function MovePanel() {
   const turning = mode === 'rotate' || mode === 'mirror';
   /** A grid only moves. */
   const gridsStop = turning && grids > 0;
-  const copying = mode === 'copy' || (turning && copies);
-  const command = copying ? 'object.copy' : 'object.transform';
+  const copying = resultAs.asNew;
+  const command = 'object.transform';
 
   const runIt = async (params: Record<string, unknown>) => {
     setBusy(true);
     clearRefusal();
-    const outcome = await runRecord(command, params);
+    const outcome = await runRecord(command, { ...params, ...resultParams(resultAs) });
     setBusy(false);
     setReport(outcome.record ? { notes: outcome.record.notes } : { notes: [], error: outcome.error });
     // Copies are picked once made, ready to move on.
@@ -109,13 +108,11 @@ export function MovePanel() {
   const label = (() => {
     switch (mode) {
       case 'move':
-        return `Move ${what}`;
-      case 'copy':
-        return `Copy ${what}`;
+        return `${copying ? 'Copy' : 'Move'} ${what}`;
       case 'rotate':
-        return `${copies ? 'Copy and rotate' : 'Rotate'} ${what}`;
+        return `${copying ? 'Copy and rotate' : 'Rotate'} ${what}`;
       case 'mirror':
-        return `${copies ? 'Copy and mirror' : 'Mirror'} ${what}`;
+        return `${copying ? 'Copy and mirror' : 'Mirror'} ${what}`;
     }
   })();
   const title =
@@ -134,6 +131,7 @@ export function MovePanel() {
     title,
     run,
     step: needsClicks ? { command, params: { objects: ids }, ask: params } : { command, params: { objects: ids, transform: typedMove() } },
+    result: resultAs,
   };
 
   return (
@@ -170,7 +168,7 @@ export function MovePanel() {
       </ToolSection>
 
       <ToolSection title="Settings">
-        {(mode === 'move' || mode === 'copy') && (
+        {mode === 'move' && (
           <>
             <Field label="By" hint={by === 'clicks' ? 'A point on what is picked, then where it goes: clicks snap to vertices and surfaces' : 'East, north and up are positive'}>
               <Choice value={by} options={['clicks', 'typed'] as const} labels={{ clicks: 'Two clicks', typed: 'Distances' }} onChange={setBy} label="Moved by two clicks or by distances typed" />
@@ -202,11 +200,6 @@ export function MovePanel() {
         {mode === 'mirror' && (
           <Field label="Across" hint="A line clicked in plan: two clicks. Heights stay as they are">
             <span className="text-muted-foreground">A line clicked</span>
-          </Field>
-        )}
-        {turning && (
-          <Field label="Copies" hint={copies ? 'Copies are made, each named for its original with “ copy”, and the originals stay' : 'The objects themselves are moved'}>
-            <Checkbox checked={copies} aria-label={mode === 'rotate' ? 'Rotate copies, leaving the originals' : 'Mirror copies, leaving the originals'} onCheckedChange={(c) => setCopies(c === true)} />
           </Field>
         )}
       </ToolSection>

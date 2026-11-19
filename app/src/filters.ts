@@ -184,7 +184,8 @@ const named_ = (n: Named) => (typeof n === 'string' ? { key: n, detail: 'type it
 
 /**
  * The measures (`zd-core` `MEASURES`) objects of these kinds have, as names to offer: a solid's volume, a string's length
- * and area (a closed one's, in plan), a surface's area, and the lowest and highest RL of all four.
+ * and area (a closed one's, in plan), a surface's area, and the lowest and highest RL of all four. Then what every object
+ * has (`OBJECT_FIELDS`): its name, and its id as 32 hex digits, which Properties copies (decision 0091).
  */
 export function measuresOf(kinds: Iterable<string>): Named[] {
   const has = new Set(kinds);
@@ -193,6 +194,7 @@ export function measuresOf(kinds: Iterable<string>): Named[] {
   if (has.has('string')) out.push({ key: 'length', detail: 'm' });
   if (has.has('string') || has.has('surface')) out.push({ key: 'area', detail: 'm²' });
   if (['solid', 'string', 'surface', 'grid'].some((k) => has.has(k))) out.push({ key: 'rl_min', detail: 'RL' }, { key: 'rl_max', detail: 'RL' });
+  if ([...has].some((k) => k.trim() !== '')) out.push({ key: 'name', detail: 'its name' }, { key: 'id', detail: 'from Properties' });
   return out;
 }
 

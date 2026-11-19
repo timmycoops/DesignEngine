@@ -43,7 +43,7 @@ test('every tool is one of what a panel that adds steps does, each key once', ()
   assert.equal(new Set(keys).size, keys.length);
   for (const tool of CANVAS_TOOLS) assert.ok(['builder', 'cut', 'reserves', 'strings', 'from_surfaces', 'move'].includes(tool.panel), tool.key);
   assert.deepEqual(CANVAS_TOOLS.filter((t) => t.panel === 'from_surfaces').map((t) => t.mode), ['where_surfaces_meet', 'contours', 'outline', 'from_section'], 'Strings from surfaces, every one of its four');
-  assert.deepEqual(CANVAS_TOOLS.filter((t) => t.panel === 'move').map((t) => t.mode), ['move', 'copy', 'rotate', 'mirror'], 'Move and copy, every one of its four');
+  assert.deepEqual(CANVAS_TOOLS.filter((t) => t.panel === 'move').map((t) => t.mode), ['move', 'rotate', 'mirror'], 'Move, Rotate and Mirror, Copy being Move as new (decision 0091)');
   // Every string tool but Ramp from a start, which is placed by hand (decision 0078, workstream 4).
   assert.deepEqual(
     CANVAS_TOOLS.filter((t) => t.panel === 'strings').map((t) => t.mode).sort(),
