@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use crate::result_as::{RESULT, make_anew, take_result};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -184,13 +185,21 @@ impl RunJob {
         let made = (|| {
             let command = registry.get(&record.command).ok_or_else(|| CommandError::UnknownCommand(record.command.clone()))?;
             let inputs = Inputs::new(&project, control.clone());
+            // In place or as new (decision 0091): the command reads its own parameters; `result` is the session's.
+            let (own, result) = take_result(&record.params)?;
             let guarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let (mut outcome, canonical) = command.run_json(&inputs, &record.params)?;
+                let (mut outcome, canonical) = command.run_json(&inputs, &own)?;
+                if let Some(result) = result.as_ref().filter(|r| r.as_new) {
+                    outcome.changes = make_anew(&project, &record.command, result, std::mem::take(&mut outcome.changes), &mut outcome.notes)?;
+                }
                 let checked = check_solids_made(&mut outcome.changes, &mut outcome.notes);
                 Ok((outcome, canonical, checked))
             }));
             record.inputs = inputs.into_read();
-            let (outcome, canonical, checked) = guarded.unwrap_or_else(|panic| Err(stopped_on_a_panic(record.command.as_str(), panic.as_ref())))?;
+            let (outcome, mut canonical, checked) = guarded.unwrap_or_else(|panic| Err(stopped_on_a_panic(record.command.as_str(), panic.as_ref())))?;
+            if let (Some(result), Some(object)) = (result, canonical.as_object_mut()) {
+                object.insert(RESULT.into(), serde_json::to_value(result).map_err(|e| CommandError::BadParams(e.to_string()))?);
+            }
             record.params = canonical;
             record.notes = outcome.notes;
             record.messages = record.notes.iter().map(|n| n.text.clone()).collect();

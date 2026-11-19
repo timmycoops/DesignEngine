@@ -7,7 +7,7 @@ export { CellInput, Choice, Field, NumberInput, NumberOrBlank, Select, TargetInp
 export { MENU_LIT, MENU_SURFACE } from './Select';
 export { FilterInput } from './FilterInput';
 export { type Range, readNumber, showNumber } from './number';
-export { type RunReport, RunResult, type ToolAction, ToolPanel, ToolSection } from './ToolPanel';
+export { type ResultAs, resultParams, type RunReport, RunResult, type ToolAction, ToolPanel, ToolSection, useResultAs } from './ToolPanel';
 export { NoteLine, ShowNote } from './NoteLine';
 export { ObjectMenu } from './ObjectMenu';
 export { PanelHead } from './PanelHead';

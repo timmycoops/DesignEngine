@@ -39,8 +39,10 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
    Only the viewport subtracts a local origin before sending f32 data to the GPU.
 3. **Every operation is a typed command** in `zd-commands`: named inputs, parameters, outputs, and a
    serialisable record of the run.
-4. **Commands never modify their inputs.** They create new objects on a named layer. No live dependency
-   graph, no automatic rebuilds — a new design means the user re-runs the command.
+4. **In place or as new, one rule for every tool** (`docs/decisions/0091-in-place-or-as-new.md`). A tool that changes
+   an object writes its next revision (undo puts it back), or, run with `result` as new, a copy on a layer with the
+   original left as it was; the session does this for every command. A tool that makes something makes new objects on
+   a named layer. No live dependency graph, no automatic rebuilds — a new design means the user re-runs the command.
 5. **Cuts are solid booleans.** To cut a solid by an open surface, close the surface into a half-space
    just beyond the solid's bounding box, then run a Manifold boolean.
 6. **Projection targets are triangulations.** Grids convert to triangulations on import; one projection path.

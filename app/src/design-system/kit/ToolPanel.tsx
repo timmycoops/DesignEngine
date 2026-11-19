@@ -1,11 +1,13 @@
 import { ListPlus } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { cn } from 'cn';
 import type { Note } from '../../bridge';
 import { useWorkspace } from '../../workspace/context';
 import { NoteLine } from './NoteLine';
 import { PanelHead } from './PanelHead';
 import { useRunning } from './RunGoing';
+import { Choice, Field } from './fields';
+import { Input } from '../ui/input';
 import { waitingOn } from '../../running';
 
 /**
@@ -29,7 +31,7 @@ export function ToolPanel({ title, summary, more, children, result, action: own,
           run: async () => {
             // A step that needs clicks in the view first (a line across) asks for them; Esc adds nothing.
             const params = step.ask ? await step.ask() : step.params;
-            if (params) await addStep(step.command, params);
+            if (params) await addStep(step.command, { ...params, ...resultParams(own.result) });
           },
         }
       : own;
@@ -50,7 +52,10 @@ export function ToolPanel({ title, summary, more, children, result, action: own,
       }}
     >
       <PanelHead line={summary} more={more} />
-      <div className="min-h-0 flex-1 overflow-auto">{children}</div>
+      <div className="min-h-0 flex-1 overflow-auto">
+        {children}
+        {own?.result && <ResultSection value={own.result} />}
+      </div>
       {(result || action) && (
         <div className="flex shrink-0 flex-col gap-2 border-t px-3 py-2">
           {result && <RunResult report={result} />}
@@ -86,6 +91,12 @@ export interface ToolAction {
   busy?: boolean;
   busyLabel?: string;
   hint?: string;
+  /**
+   * For a tool that changes objects: in place, or as new on a layer (decision 0091). The panel shows the one Result
+   * control for it, the same on every panel, and a workflow step added from it keeps the choice. The panel adds
+   * [`resultParams`] to what it runs.
+   */
+  result?: ResultAs;
   /** What it runs, so it can be added to a workflow as a step instead (decision 0065). */
   step?: {
     command: string;
@@ -129,5 +140,44 @@ export function RunResult({ report }: { report: RunReport }) {
         <NoteLine key={k} note={note} index={k} />
       ))}
     </div>
+  );
+}
+
+/** In place or as new on a layer, for a tool that changes objects (decision 0091). */
+export interface ResultAs {
+  asNew: boolean;
+  /** The layer the new objects go on; blank keeps each on its original's layer. */
+  layer: string;
+  setAsNew: (asNew: boolean) => void;
+  setLayer: (layer: string) => void;
+}
+
+/** A tool panel's choice of in place or as new: in place unless changed. */
+export function useResultAs(): ResultAs {
+  const [asNew, setAsNew] = useState(false);
+  const [layer, setLayer] = useState('');
+  return { asNew, layer, setAsNew, setLayer };
+}
+
+/** What a run takes for the choice: nothing in place, `result` as new (decision 0091). */
+export function resultParams(result: ResultAs | null | undefined): Record<string, unknown> {
+  if (!result?.asNew) return {};
+  const layer = result.layer.trim();
+  return { result: { as_new: true, ...(layer ? { layer } : {}) } };
+}
+
+/** The one Result control on every panel whose tool changes objects: In place, or As new on a layer. */
+function ResultSection({ value }: { value: ResultAs }) {
+  return (
+    <ToolSection title="Result">
+      <Field label="Make" hint={value.asNew ? 'A changed copy of each, named for what was done; the originals stay as they were' : 'Each changed as its next revision; one undo puts it back'}>
+        <Choice value={value.asNew ? 'new' : 'in_place'} options={['in_place', 'new'] as const} labels={{ in_place: 'In place', new: 'As new' }} onChange={(v) => value.setAsNew(v === 'new')} label="Change in place, or make new" />
+      </Field>
+      {value.asNew && (
+        <Field label="On layer" hint="Left blank, each copy goes on its original's layer">
+          <Input className="h-7 px-1.5 text-xs" value={value.layer} placeholder="Its original's layer" aria-label="Layer for what's made as new" onChange={(e) => value.setLayer(e.target.value)} />
+        </Field>
+      )}
+    </ToolSection>
   );
 }

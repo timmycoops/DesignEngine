@@ -5,7 +5,7 @@
 // it's clicked, and Join puts the two back as one, ends within its tolerance sharing a vertex. Round corners (workstream
 // 2) rounds a dog-leg's corner at a radius typed, every arc vertex that far from the centre; Ctrl+Z puts it back. Move
 // and copy (workstream 3), from the Solids row: a toe moved by two snapped clicks and by distances typed, one rotated a
-// quarter turn about a vertex clicked, and a mirrored copy of the dog-leg across the pit limit, picked once made; each
+// quarter turn about a vertex clicked, and the dog-leg mirrored as new across the pit limit, a copy picked once made; each
 // put back by Ctrl+Z. Vertices (workstream 4): Alt and a box round three vertices each of two lines picked, set to RL 90
 // by Set elevation, dragged 10 m north by one of them, deleted by Delete, let go by Esc before the strings; Densify and
 // Vertices at crossings by their buttons. Polygons (workstream 6): Clip keeps a toe inside a block clicked, and Union
@@ -300,8 +300,8 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   // as far east of the limit as the dog-leg is west of it; the dog-leg itself where it was.
   await useMove('mirror');
   await click([E - 30, N + 170, 100]);
-  const copies = movePanel()?.querySelector<HTMLButtonElement>('[aria-label="Mirror copies, leaving the originals"]');
-  copies?.click();
+  // As new (decision 0091): the panel's one Result control, in place of the old Copies tick.
+  [...(movePanel()?.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Change in place, or make new"] button') ?? [])].find((b) => b.textContent?.trim() === 'As new')?.click();
   await settle();
   const mirrorSays = moveButton()?.textContent?.trim() ?? '';
   const legBefore = (await points(dogleg)) as Vec3[];
@@ -314,11 +314,11 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   const copyPoints = copy ? ((await points(copy.id)) as Vec3[]) : [];
   const mirrored = copyPoints.length === 3 && legBefore.every((p, k) => near(copyPoints[k][0], 2 * (E + 60) - p[0]) && near(copyPoints[k][1], p[1]) && near(copyPoints[k][2], p[2]));
   expect(
-    'Mirror with Copies ticked: a Dog-leg copy across the pit limit, picked once made, the dog-leg where it was',
+    'Mirror as new: a Dog-leg copy across the pit limit, picked once made, the dog-leg where it was',
     mirrorSays === 'Copy and mirror Dog-leg' && mirrored && !!copy && selection().length === 1 && selection()[0] === copy.id && moved(legBefore, (await points(dogleg)) as Vec3[], [0, 0, 0]),
     { button: mirrorSays, copy: rel(copyPoints), picked: selection().length },
   );
-  copies?.click();
+  [...(movePanel()?.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Change in place, or make new"] button') ?? [])].find((b) => b.textContent?.trim() === 'In place')?.click();
   await key('z', true);
   await wait(500);
   expect('one Ctrl+Z takes the copy away', !(await projectSummary()).objects.some((o) => o.name === 'Dog-leg copy'));
@@ -635,6 +635,35 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   await key('z', true);
   const unclipped = (await points(longToe)).length;
   expect('Ctrl+Z puts the toe back whole', unclipped === 2 && near(((await points(longToe)) as Vec3[])[0][0], E + 450), unclipped);
+
+  // As new (decision 0091): the same clip with the Result control set to As new on 'clipped' leaves the toe whole and
+  // makes "Long toe clipped" there, picked once made.
+  await choose('Change in place, or make new', 'As new');
+  const layerBox = panel()?.querySelector<HTMLInputElement>('[aria-label="Layer for what\'s made as new"]');
+  if (layerBox) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(layerBox, 'clipped');
+    layerBox.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  await settle();
+  await key('Escape');
+  await key('Escape');
+  await click([E + 470, N + 350, 102]);
+  goButton()?.click();
+  await settle();
+  await click([E + 500, N + 390, 100]);
+  await wait(800);
+  const afterClip = await projectSummary();
+  const asNew = afterClip.objects.find((o) => o.kind === 'string' && o.name === 'Long toe clipped');
+  const asNewLayer = afterClip.layers.find((l) => l.id === asNew?.layer)?.name;
+  const asNewPoints = asNew ? ((await points(asNew.id)) as Vec3[]) : [];
+  const toeWhole = ((await points(longToe)) as Vec3[])[0];
+  expect(
+    'Clip as new on clipped: the toe whole, "Long toe clipped" made there and picked, RL 105 to 115',
+    !!asNew && asNewLayer === 'clipped' && asNewPoints.length === 2 && near(asNewPoints[0][2], 105) && near(asNewPoints[1][2], 115) && near(toeWhole[0], E + 450) && selection().includes(asNew.id),
+    { made: asNew?.name, layer: asNewLayer, points: asNewPoints.map((p) => [p[0] - E, p[1] - N, p[2]]), toeStart: toeWhole[0] - E },
+  );
+  await key('z', true);
+  await choose('Change in place, or make new', 'In place');
 
   await key('Escape');
   await key('Escape');
