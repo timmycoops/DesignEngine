@@ -85,7 +85,7 @@ test('every stage has a row of tools that exist, named in words', () => {
   assert.deepEqual(names('geology'), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology']);
   assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Reserves table', 'Dataflow', 'Compare', 'Report']);
   assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Ramp', 'Set grade', 'Offset', 'Project', 'Surface between', 'Join faces']);
-  assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Join', 'Round corners', 'Smooth', 'Filter', 'Densify', 'At crossings', 'Reverse', 'Close', 'Move', 'Copy', 'Rotate', 'Mirror']);
+  assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Join', 'Round corners', 'Smooth', 'Filter', 'Densify', 'At crossings', 'Reverse', 'Close', 'Where they meet', 'Contours', 'Outline', 'Section strings', 'Move', 'Copy', 'Rotate', 'Mirror']);
 });
 
 test("a stage's tools are on its row, but for the few reached another way", () => {
@@ -96,8 +96,9 @@ test("a stage's tools are on its row, but for the few reached another way", () =
   }
   // Build a step and Interrogate are what Builder and Reserves open
   // on, listed for the canvas; Cut solids as it stands is in the Panels menu, its six choices on the row.
-  // Strings as it stands is in the Panels menu too, its thirteen tools on the row.
-  assert.deepEqual(elsewhere.sort(), ['builder:step', 'cut', 'reserves:interrogate', 'strings']);
+  // Strings as it stands is in the Panels menu too, its thirteen tools on the row; so is Strings from surfaces, its four
+  // on the row (String tools plan, workstream 5).
+  assert.deepEqual(elsewhere.sort(), ['builder:step', 'cut', 'from_surfaces', 'reserves:interrogate', 'strings']);
   // A row shows a tool from another stage only where the plan has it: Relink geology on Project, and the Import and
   // Export menus there, which gather their tools from every stage.
   const visiting = STAGES.flatMap(({ id }) => rowTools(id).filter((t) => t.stage !== id && t.stage !== 'always').map((t) => `${id}: ${t.key}`));
@@ -283,6 +284,10 @@ test('the canvas lists the tools that add a step, as the list has them', () => {
     'Strings: Filter',
     'Strings: Densify',
     'Strings: Vertices at crossings',
+    'Strings from surfaces: Where surfaces meet',
+    'Strings from surfaces: Contours',
+    'Strings from surfaces: Outline',
+    'Strings from surfaces: Section to strings',
     'Strings: Reverse',
     'Strings: Close',
     'Builder: Build a step',

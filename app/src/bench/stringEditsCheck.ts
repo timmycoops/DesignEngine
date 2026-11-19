@@ -542,6 +542,68 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   const cleared = await filteredOut();
   expect('Clear filter on the right-click puts every toe back', cleared.length === 0 && !rowOf('toes')?.querySelector('[data-slot="layer-filter"]'), cleared);
 
+  // Strings from surfaces (workstream 5), from the Strings row: a slope 200 m square rising 10 % east from RL 95, half
+  // over the topography at RL 100. Picked with the topography, Where surfaces meet makes one string 50 m into it at RL
+  // 100; alone, Contours every 5 m makes RL 100, 105, 110 and 115, each carrying its RL; Outline makes its edge, 40,000
+  // m² in plan. Three Ctrl+Z put it all back.
+  await runCommand('surface.from_mesh', {
+    name: 'Bench slope',
+    layer: 'slopes',
+    vertices: [[E + 200, N - 50, 95], [E + 400, N - 50, 115], [E + 400, N + 150, 115], [E + 200, N + 150, 95]],
+    triangles: [[0, 1, 2], [0, 2, 3]],
+  });
+  await show(await projectSummary());
+  await settle();
+  const fromPanel = () => document.querySelector<HTMLElement>('[data-tool-panel="from_surfaces"]');
+  const fromGo = async () => {
+    [...(fromPanel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].at(-1)?.click();
+    await wait(1000);
+  };
+  const useFromSurfaces = async (mode: string) => {
+    document.querySelector<HTMLButtonElement>('[role="tab"][data-stage="strings"]')?.click();
+    await wait(200);
+    const onRow = document.querySelector<HTMLButtonElement>(`[data-slot="ribbon"] button[data-tool="from_surfaces:${mode}"]:not([data-slot="row-more"])`);
+    if (onRow) onRow.click();
+    else {
+      document.querySelector<HTMLButtonElement>('[data-slot="row-more"]')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', ctrlKey: false }));
+      await wait(300);
+      document.querySelector<HTMLElement>(`[role="menuitem"][data-tool="from_surfaces:${mode}"]`)?.click();
+    }
+    await wait(500);
+  };
+  const madeNamed = async (prefix: string) => (await projectSummary()).objects.filter((o) => o.kind === 'string' && o.name.startsWith(prefix));
+  await key('Escape');
+  await key('Escape');
+  await click([E + 350, N + 50, 110]);
+  await click([E - 80, N - 80, 100], true);
+  await useFromSurfaces('where_surfaces_meet');
+  const meetButton = [...(fromPanel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].at(-1)?.textContent?.trim() ?? '';
+  await fromGo();
+  const met = await madeNamed('Bench slope meets Topography');
+  const metPoints = met.length === 1 ? await points(met[0].id) : [];
+  expect(
+    'Where surfaces meet, the slope and the topography picked: one string 250 m east at RL 100, named for both',
+    met.length === 1 && metPoints.length >= 2 && metPoints.every((p) => near(p[0], E + 250) && near(p[2], 100)),
+    { button: meetButton, strings: met.length, points: metPoints.length },
+  );
+  await key('Escape');
+  await key('Escape');
+  await click([E + 350, N + 50, 110]);
+  await useFromSurfaces('contours');
+  await fromGo();
+  const contoured = await madeNamed('Contour ');
+  const rls = (await Promise.all(contoured.map((o) => objectDetails(o.id)))).map((d) => Number(d.attributes.rl)).sort((a, b) => a - b);
+  expect('Contours every 5 m on the slope: RL 100, 105, 110 and 115, each carrying its RL', JSON.stringify(rls) === JSON.stringify([100, 105, 110, 115]), rls);
+  await useFromSurfaces('outline');
+  await fromGo();
+  const outlined = await madeNamed('Bench slope outline');
+  const ring = outlined.length === 1 ? await points(outlined[0].id) : [];
+  const ringArea = Math.abs(ring.reduce((a, p, k) => a + (p[0] - E) * (ring[(k + 1) % ring.length][1] - N) - (ring[(k + 1) % ring.length][0] - E) * (p[1] - N), 0)) / 2;
+  expect("Outline of the slope: one closed string round its edge, 40,000 m² in plan", outlined.length === 1 && near(ringArea, 40_000), { strings: outlined.length, area: ringArea });
+  for (let k = 0; k < 3; k++) await key('z', true);
+  const left = [...(await madeNamed('Bench slope')), ...(await madeNamed('Contour '))];
+  expect('three Ctrl+Z put back what the three runs made', left.length === 0, left.map((o) => o.name));
+
   results.failures = failures;
   return results;
 }

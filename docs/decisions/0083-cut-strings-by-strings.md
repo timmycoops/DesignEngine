@@ -2,7 +2,7 @@
 
 Status: agreed 17 November 2026 (Tim: "Agree all nine", the String tools plan tab of the Build Plan). This record is
 that plan's workstream 1; the later workstreams add to it as they merge: workstream 2, round corners, and workstream 3,
-move, copy, rotate and mirror, and workstream 4, vertices, below.
+move, copy, rotate and mirror, workstream 4, vertices, and workstream 5, strings from surfaces, below.
 
 ## Why
 
@@ -202,3 +202,61 @@ The Strings row now folds Densify and Vertices at crossings into More at the ben
 them; the bench reaches them there.
 
 In the app, `--string-edits` passes 31 of 31, `--shell` 62 of 62, and `--select`, `--clicks` and `--workflow` pass whole.
+
+## Built: workstream 5, strings from surfaces
+
+Decision 7 of the plan as picked: all four, from the Strings row. They open a panel of their own, Strings from surfaces,
+because they take surfaces, grids and solids, not strings. Each makes new strings on a layer and leaves what it read as
+it was. A line is open or closed as it runs, and its pieces are one string.
+
+- **Where surfaces meet** (`string.where_surfaces_meet`, `surface` and `with`, surfaces or grids). Every triangle of
+  one is tested against those of the other near it in plan, and the lines are followed at their own RLs. A point is
+  where an edge of one goes through a triangle of the other, worked out from that edge alone, so neighbours agree.
+  Points within 10 nm are one: on two grids gridded alike, which a design and its topography often are, the line
+  crosses where both surfaces have an edge. Pairs of triangles lying flat on each other give no line, and are said
+  (`string.surfaces_flat`). Strings are named "<surface> meets <with>", numbered after the first. The triangles are
+  found through bins in plan, not parry3d's tree as the plan's Where said: it's simpler, and fast enough (below).
+- **Contours** (`string.contours`, a surface or grid, `every`, and `from` and `to`). Left blank, `from` and `to` are the
+  surface's own range on the spacing, counted from RL 0 so two surfaces' contours line up. Each contour is exactly at
+  its RL, named "Contour 105" and on, with an `rl` attribute. The cut is the sections' exact slicing with a level in
+  place of the vertical plane, each triangle looked at once for the RLs it spans. More than 10,000 RLs in one run is
+  refused.
+- **Outline** (`string.outline`, surfaces, grids and solids). A surface's or grid's edge is every edge only one triangle
+  has, at its own RLs, the outside first ("<name> outline") and each hole after ("<name> hole 1"). A grid's nulls are
+  holes. A solid's outline is its shadow in plan through Manifold's projection, laid at its lowest RL.
+- **Section to strings** (`string.from_section`, `from` and `to`, and the objects). The sections' own slicing, kept:
+  "<name> section", numbered. In the app it takes the open section where it stands now, stepped or not, or two clicks
+  with none open. The section view gives its plane to the panels for it.
+
+The geometry is `crates/zd-geom/src/from_surfaces.rs`; the commands are `crates/zd-commands/src/builtin/from_surfaces.rs`;
+the panel is `app/src/panels/FromSurfacesPanel.tsx`.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `contours_every_5_m_on_a_plane_rising_10_percent_east_are_50_m_apart` (zd-geom) | 9 strings from RL 105 to 145, each 50 m further east, every vertex exactly at its RL, 500 m long | 1e-9 m |
+| `a_level_plane_meeting_a_plane_at_45_degrees_is_one_straight_string` | one string 30 m east at RL 100, 200 m long, either way round; none flat | 1e-9 m |
+| `planes_on_one_lattice_still_meet_in_one_string` | the same on one 8- and one 40-cell lattice: one string | 1e-9 m |
+| `rolling_surfaces_on_one_lattice_meet_in_whole_strings` | a rolling topography and a wavy design gridded alike: 9 strings, 2 closed, every open one running to the edge, at 20 and 80 cells | Exact |
+| `a_cone_meeting_a_plane_is_one_closed_ring` | a 72-sided 45° cone, point at RL 150, on a plane at RL 100: one closed ring, a vertex 50 m out on each of its 72 edges, every vertex on the ring, the ring's length | 1e-9 m; 1e-6 m on the length |
+| `a_square_with_a_hole_outlines_as_two_closed_strings` | 10,000 m² and 400 m² in plan, at the surface's own RLs | 1e-6 m² |
+| `a_solid_with_a_hole_through_it_outlines_in_plan` | a 40 m block with a 10 m shaft through it: 1,600 m² and 100 m², at its lowest RL | 1e-6 m² |
+| `a_level_plane_meets_a_45_degree_plane_in_one_straight_string` (zd-commands) | one string named "Design meets Topo", the surfaces at their revisions; a surface with itself, and two that don't meet, refused | 1e-9 m |
+| `contours_every_5_m_carry_their_rl` | 9 named "Contour 105" and on, each with its `rl`; left blank, RL 105 to 150; an RL range it doesn't reach refused | Exact |
+| `outlines_of_a_surface_with_a_hole_and_of_a_solid` | "Pad outline", "Pad hole 1", "Block outline": 10,000, 400 and 100 m² | 1e-6 m² |
+| `a_section_kept_as_strings` | two closed 10 m loops from two cubes and the floor's line at RL 85, each named for what it cut; a section missing all of them refused | 1e-9 m |
+| `zd-app --bench --string-edits` | from the Strings row: a slope picked with the topography, one string 250 m east at RL 100; contours on the slope, RL 100 to 115, each with its RL; its outline 40,000 m²; three Ctrl+Z put them back | 1e-6 m |
+
+Timings in a release build, made-up data, a rolling topography and a wavy design each 2 km square, gridded alike
+(`timing_strings_from_surfaces`, ignored):
+
+| Triangles a surface | Contours every 1 m, RL 80 to 140 | Where they meet |
+|---|---|---|
+| 0.1 M | 16 ms, 356 strings | 61 ms, 9 strings (53,564 pairs looked at) |
+| 1.0 M | 58 ms, 356 strings | 535 ms, 9 strings (169,071 pairs looked at) |
+
+Known limits: a contour exactly at a surface's lowest RL isn't drawn, since a corner at an RL counts as above it, as on
+a section; a surface whose edge runs into itself at a vertex gives an outline that may come out in more than one piece,
+said in the run; a solid's outline is laid flat at its lowest RL, not draped.
+
+In the app, `--string-edits` passes 35 of 35, `--shell` 62 of 62 (the Panels menu now lists Strings from surfaces), and
+`--workflow` 54 of 54.

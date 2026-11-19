@@ -15,6 +15,7 @@ import { BuilderPanel } from '@/panels/BuilderPanel';
 import { CutPanel } from '@/panels/CutPanel';
 import { FaceDesignPanel } from '@/panels/FaceDesignPanel';
 import { LayersPanel } from '@/panels/LayersPanel';
+import { FromSurfacesPanel } from '@/panels/FromSurfacesPanel';
 import { MovePanel } from '@/panels/MovePanel';
 import { PropertiesPanel } from '@/panels/PropertiesPanel';
 import { ReservesPanel } from '@/panels/ReservesPanel';
@@ -35,6 +36,7 @@ const components: Record<PanelId | 'viewport', () => ReactNode> = {
   layers: LayersPanel,
   properties: PropertiesPanel,
   strings: StringsPanel,
+  from_surfaces: FromSurfacesPanel,
   move: MovePanel,
   runlog: RunLogPanel,
   face: FaceDesignPanel,

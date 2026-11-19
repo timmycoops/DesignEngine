@@ -27,6 +27,7 @@ mod workflow;
 mod dataflow;
 mod reserves_run;
 mod formulas;
+mod from_surfaces;
 mod starter;
 mod measure;
 
@@ -58,6 +59,7 @@ pub use string::{
 pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, SolidBetween, SolidBetweenParams, check_slice};
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
 pub use workflow::{SaveWorkflow, SaveWorkflowParams, WORKFLOW_LAYER};
+pub use from_surfaces::{Contours, ContoursParams, FromSection, FromSectionParams, Outline, OutlineParams, WhereSurfacesMeet, WhereSurfacesMeetParams};
 pub use measure::{MEASURES, Measure, MeasureParams, block_length, floor_dip, measure, plan_area};
 pub use reserves_run::{
     ColumnSteps, FormulaTraceView, ParamRead, StepKind, TraceLineView, column_trace, formula_trace, OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, StepWrite, UNDERBURDEN_THICKNESS, UnitView, Working, dataflow_starter, preston_sanders,
@@ -87,6 +89,10 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(RenameObject);
     registry.register(DeleteObject);
     registry.register(CreateString);
+    registry.register(WhereSurfacesMeet);
+    registry.register(Contours);
+    registry.register(Outline);
+    registry.register(FromSection);
     registry.register(InsertVertex);
     registry.register(MoveVertex);
     registry.register(DeleteVertex);

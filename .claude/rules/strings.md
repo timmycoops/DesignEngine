@@ -1,8 +1,8 @@
 ---
 paths:
-  - "crates/zd-geom/src/{string,string_cut,vertices,transform,crossings,polygons,fillet,project,sheet}.rs"
-  - "crates/zd-commands/src/builtin/{string,object,project,sheet,surface}.rs"
-  - "app/src/panels/{StringsPanel,MovePanel}.tsx"
+  - "crates/zd-geom/src/{string,string_cut,vertices,transform,crossings,polygons,fillet,project,sheet,from_surfaces}.rs"
+  - "crates/zd-commands/src/builtin/{string,object,project,sheet,surface,from_surfaces}.rs"
+  - "app/src/panels/{StringsPanel,MovePanel,FromSurfacesPanel}.tsx"
   - "app/src/panels/{stringSide,moveWords,strips}.ts"
 ---
 
@@ -32,3 +32,7 @@ ramps by hand, measure), 0083 (cut strings by strings).
   `surface.between_strings`: a road between its two edges, or one sheet across several put in order across (a fill's
   toe, the road's edges, a cut's crest), every corner a string's vertex, so a ramp can be made by hand from polylines:
   Set grade, Offset, Project and a surface between, all on the Walls row (0079).
+- Strings from surfaces, grids and solids (0083, workstream 5), in a panel of their own from the Strings row: where two
+  surfaces or grids meet, at their own RLs; contours every so many metres, each exactly at its RL with an `rl`
+  attribute; a surface's edge with each hole its own string, or a solid's outline in plan at its lowest RL; and what a
+  section cuts. Lines are exact, as sections are, and whole: open or closed as they run.

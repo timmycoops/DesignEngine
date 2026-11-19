@@ -139,6 +139,8 @@ export interface Workspace {
   seamViews: SeamShown[];
   /** A section is showing in place of the plan view. */
   sectionOpen: boolean;
+  /** The open section's two plan points as it stands, stepped or not (mine grid), or null with none open. */
+  sectionPlane: () => [[number, number], [number, number]] | null;
   /** A layer's own line weight in the section (px), or null for the defaults. Display only. */
   lineWeight: (layer: string) => number | null;
   setLineWeight: (layer: string, px: number | null) => void;

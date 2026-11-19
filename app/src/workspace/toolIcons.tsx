@@ -1,5 +1,9 @@
 import {
   ArrowLeftRight,
+  GitMerge,
+  Mountain,
+  SquareSplitHorizontal,
+  SquareDashed,
   ArrowRightToLine,
   ArrowUpToLine,
   BetweenHorizontalStart,
@@ -71,6 +75,10 @@ import type { Tool, ToolIcon } from '@/tools';
 
 /** The picture for each icon the tool list names. A name with no picture doesn't compile. */
 const ICONS: Record<ToolIcon, LucideIcon> = {
+  meet: GitMerge,
+  contours: Mountain,
+  outline: SquareDashed,
+  'section-strings': SquareSplitHorizontal,
   new: FilePlus,
   open: FolderOpen,
   save: Save,

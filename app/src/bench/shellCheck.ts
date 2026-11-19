@@ -356,7 +356,7 @@ export async function checkShell(
     const projectWas = ['A project (.zdp)…', 'An older project folder (.zdproj)…'];
     const importWas = ['Surfaces…', 'Vulcan grid…', 'Strings…', 'Solids', 'Deswik drawing (.dcf)…', 'Spry project (.spry)…', 'Suggest a stack definition (CSV)…', 'Build and check from a definition…', 'Relink geology…'];
     const exportWas = ['Selected to DXF…', 'Selected strings to CSV…', 'Selected solids to a zip…', 'Everything visible to DXF…', 'Visible strings to CSV…', 'Visible solids to a zip…'];
-    const panelsWas = ['Layers', 'Properties', 'Strings', 'Move and copy', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Run log', 'Objects table', 'Reserves table', 'Dataflow', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
+    const panelsWas = ['Layers', 'Properties', 'Strings', 'Strings from surfaces', 'Move and copy', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Run log', 'Objects table', 'Reserves table', 'Dataflow', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
     const reads = (menu: { words: string }[], was: string[]) => menu.map((m) => m.words).join('|') === was.join('|');
     expect('the Open, Import, Export and Panels menus read as they should, what needs a selection off without one', reads(projectMenu, projectWas) && reads(importMenu, importWas) && reads(exportMenu, exportWas) && reads(panelsMenu, panelsWas) && exportMenu.map((m) => m.off).join() === 'true,true,true,false,false,false', {
       project: projectMenu.map((m) => m.words),

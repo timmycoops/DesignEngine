@@ -1227,6 +1227,7 @@ export default function App() {
       colourBlocksByField,
       fieldColoured,
       sectionOpen,
+      sectionPlane: () => (sectionRef.current?.open ? sectionRef.current.plane : null),
       lineWeight: (layer) => sectionRef.current?.weightOf(layer) ?? null,
       setLineWeight: (layer, px) => sectionRef.current?.setWeight(layer, px),
       showSeamHorizon,

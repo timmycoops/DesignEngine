@@ -160,6 +160,11 @@ export class SectionView {
     this.reweigh();
   }
 
+  /** The plane's two plan points as it stands now, stepped or not (mine grid), or null with no section open. */
+  get plane(): [PlanPoint, PlanPoint] | null {
+    return this.ends ? [this.ends.a, this.ends.b] : null;
+  }
+
   /** Opens the section through two plan points (mine grid), framing the stretch between them. */
   async show(a: PlanPoint, b: PlanPoint, summary: ProjectSummary): Promise<void> {
     this.grid.hide();

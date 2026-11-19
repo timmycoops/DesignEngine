@@ -140,6 +140,7 @@ codes! {
     StringClosesNothing = "string.closes_nothing", "A line that closes no area, left out of the polygons";
     StringIsland = "string.island", "Lines inside a polygon that don't touch its sides, so they don't split it";
     StringProjectedInPieces = "string.projected_in_pieces", "A string projected by a height whose new string pinched off into pieces";
+    StringSurfacesFlat = "string.surfaces_flat", "Triangles of two surfaces lying in one plane where they overlap, so no line can be drawn where they meet there";
     SolidOutsidePolygons = "solid.outside_polygons", "Part of a solid outside every block polygon, found before a cut by polygons, which it holds";
     BlockNameRepeated = "block.name_repeated", "Blocks given the same name, which should be unique";
     BlockVolumeDiffers = "block.volume_differs", "A solid whose blocks and remainder don't add back to its volume";
