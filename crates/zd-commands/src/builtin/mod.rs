@@ -54,7 +54,7 @@ pub use string::{
     VerticesAtCrossings, VerticesAtCrossingsParams, DrapeString, DrapeStringParams, FilletString, FilletStringParams, FilterString,
     FilterStringParams, InsertVertex, InsertVertexParams, JoinStrings, JoinStringsParams, MoveVertex, MoveVertexParams, NumberStrings,
     NumberStringsParams, OffsetString, OffsetStringParams, RedrawStretch, RedrawStretchParams, ReverseString, SetClosed, SetClosedParams, SetElevation, SetElevationParams, SetGrade, SetGradeParams, SideParam,
-    SmoothString, SmoothStringParams, SplitString, SplitStringParams, StringParams, ExtendString, ExtendStringParams, TrimKeep, TrimString, TrimStringParams,
+    SmoothString, SmoothStringParams, SplitString, SplitStringParams, StringParams, ExtendString, ExtendStringParams, TrimKeep, TrimString, TrimStringParams, ClipKeep, ClipString, ClipStringParams, PolygonBoolean, PolygonBooleanParams, PolygonOperation,
 };
 pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, SolidBetween, SolidBetweenParams, check_slice};
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
@@ -116,6 +116,8 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(JoinStrings);
     registry.register(TrimString);
     registry.register(ExtendString);
+    registry.register(ClipString);
+    registry.register(PolygonBoolean);
     registry.register(SmoothString);
     registry.register(FilletString);
     registry.register(FilterString);

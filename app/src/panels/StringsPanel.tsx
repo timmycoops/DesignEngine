@@ -24,6 +24,10 @@ import { useWorkspace } from '@/workspace/context';
  * the string to run on to, and for Trim a click on the side to keep, which holds for every string. Split splits at a
  * click on the string, or at a vertex by number. Join joins ends within a tolerance as one vertex.
  *
+ * Polygons (workstream 6): Clip keeps the parts of the strings picked inside a closed string clicked, or outside it.
+ * Union, overlap or difference makes new closed strings of the closed strings picked: their union, or, with a closed
+ * string clicked, their overlap with it or what's left of them less it.
+ *
  * Vertices (workstream 4): with vertices picked in the view by Alt and a box, Set grade, Set elevation and Drape act on
  * them alone, the button saying how many, and add no workflow step. Densify adds a vertex every so many metres, the
  * line unchanged; Vertices at crossings adds one on each string picked wherever another of them crosses it.
@@ -44,6 +48,8 @@ type Mode =
   | 'split'
   | 'trim'
   | 'extend'
+  | 'clip'
+  | 'polygon_boolean'
   | 'join'
   | 'fillet'
   | 'smooth'
@@ -56,7 +62,7 @@ type Mode =
   | 'ramp_polygon';
 
 /** In the order the Strings tab has them. */
-const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'trim', 'extend', 'join', 'fillet', 'smooth', 'filter', 'densify', 'vertices_at_crossings', 'reverse', 'set_closed', 'surface_between', 'ramp_polygon'];
+const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'trim', 'extend', 'clip', 'polygon_boolean', 'join', 'fillet', 'smooth', 'filter', 'densify', 'vertices_at_crossings', 'reverse', 'set_closed', 'surface_between', 'ramp_polygon'];
 
 /** The tools that act on the vertices picked alone, when some are (String tools plan, workstream 4). */
 const ON_VERTICES: readonly Mode[] = ['set_grade', 'set_elevation', 'drape'];
@@ -126,6 +132,12 @@ export function StringsPanel() {
   /** Trim keeps the side clicked, or both sides, split. */
   const [keep, setKeep] = useState<'side' | 'both'>('side');
   const [reach, setReach] = useState(100);
+  /** Clip keeps the parts inside the closed string clicked, or outside. */
+  const [clipKeep, setClipKeep] = useState<'inside' | 'outside'>('inside');
+  /** Union, overlap or difference: which, and what the strings made are called and where they go. */
+  const [operation, setOperation] = useState<'union' | 'overlap' | 'difference'>('union');
+  const [opName, setOpName] = useState('');
+  const [opLayer, setOpLayer] = useState('polygons');
   /** Join: ends this close share a vertex (mm). */
   const [joinWithin, setJoinWithin] = useState(10);
   const [spacing, setSpacing] = useState(5);
@@ -281,6 +293,43 @@ export function StringsPanel() {
     const kept = outcome.record?.outputs.filter((o) => o.change === 'created' || o.change === 'revised').map((o) => o.id) ?? [];
     if (kept.length > 0) setSelection(kept);
   };
+  /** Clip's settings with its click: the closed string to clip to. Null when Esc is pressed. */
+  const clipParams = async () => {
+    const limit = await clickString(`Click the closed string to clip ${what} to. Esc cancels`);
+    if (!limit) return null;
+    if (!limit.closed) {
+      setReport({ notes: [], error: `${limit.name} isn't closed, so it has no inside to clip to: close it first, or click a closed string` });
+      return null;
+    }
+    return { strings: ids, by: limit.id, keep: clipKeep };
+  };
+  const clip = async () => {
+    const params = await clipParams();
+    if (!params) return;
+    const outcome = await runIt('string.clip', params);
+    const kept = outcome.record?.outputs.filter((o) => o.change === 'created' || o.change === 'revised').map((o) => o.id) ?? [];
+    if (kept.length > 0) setSelection(kept);
+  };
+  const opBase = () => ({ strings: ids, operation, layer: opLayer.trim() || 'polygons', ...(opName.trim() ? { name: opName.trim() } : {}) });
+  /** Union, overlap or difference's settings: for an overlap or a difference, a click on the closed string to work against. */
+  const opParams = async () => {
+    if (operation === 'union') return opBase();
+    const other = await clickString(`Click the closed string to ${operation === 'overlap' ? 'overlap' : 'take away from'} ${what}. Esc cancels`);
+    if (!other) return null;
+    if (!other.closed) {
+      setReport({ notes: [], error: `${other.name} isn't closed, so it has no inside: click a closed string` });
+      return null;
+    }
+    return { ...opBase(), with: [other.id] };
+  };
+  const polygonOp = async () => {
+    const params = await opParams();
+    if (!params) return;
+    const outcome = await runIt('string.polygon_boolean', params);
+    const made = outcome.record?.outputs.filter((o) => o.change === 'created').map((o) => o.id) ?? [];
+    if (made.length > 0) setSelection(made);
+  };
+  const openPicked = on.filter((o) => !o.closed).length;
   const extendParams = async () => {
     const to = await clickString(`Click the string to run ${what} on to. Esc cancels`);
     return to ? { strings: ids, to: to.id, reach } : null;
@@ -367,6 +416,25 @@ export function StringsPanel() {
           step: { command: 'string.extend', params: { strings: ids, reach }, ask: extendParams },
           ready: some && reach > 0,
           title: 'A click on the string to run them on to: each runs on from its nearer end, at its own grade',
+        };
+      case 'clip':
+        return {
+          label: `Clip ${what}`,
+          run: clip,
+          step: { command: 'string.clip', params: { strings: ids, keep: clipKeep }, ask: clipParams },
+          ready: some,
+          title: `A click on the closed string to clip to: each string keeps its parts ${clipKeep} it, cut at its own heights`,
+        };
+      case 'polygon_boolean':
+        return {
+          label: operation === 'union' ? `Union of ${what}` : operation === 'overlap' ? `Overlap ${what} with a polygon` : `Take a polygon from ${what}`,
+          run: polygonOp,
+          step: { command: 'string.polygon_boolean', params: opBase(), ...(operation === 'union' ? {} : { ask: opParams }) },
+          ready: some && openPicked === 0,
+          title:
+            operation === 'union'
+              ? 'One set of closed strings in plan, everywhere inside any of them. The strings picked stay as they are'
+              : 'A click on the closed string to work against. The strings picked, and it, stay as they are',
         };
       case 'join':
         return {
@@ -712,6 +780,44 @@ export function StringsPanel() {
         <ToolSection title="Settings">
           <Field label="Keep" hint={keep === 'side' ? 'The side of the cutting string you click, inside or outside a closed one, for every string picked' : 'Every part: each string is split where the cutting string crosses it'}>
             <Choice value={keep} options={['side', 'both'] as const} labels={{ side: 'The side clicked', both: 'Both, split' }} onChange={setKeep} label="What the trim keeps" />
+          </Field>
+        </ToolSection>
+      )}
+
+      {mode === 'clip' && (
+        <ToolSection title="Settings">
+          <Field label="Keep" hint={clipKeep === 'inside' ? 'The parts inside the closed string clicked, such as toes inside a pit limit' : 'The parts outside the closed string clicked'}>
+            <Choice value={clipKeep} options={['inside', 'outside'] as const} labels={{ inside: 'Inside', outside: 'Outside' }} onChange={setClipKeep} label="What the clip keeps" />
+          </Field>
+        </ToolSection>
+      )}
+
+      {mode === 'polygon_boolean' && (
+        <ToolSection title="Settings">
+          {openPicked > 0 && (
+            <Field label="Open" hint="Only closed strings have an inside: close these first, or leave them out">
+              <span className="text-warning">
+                {plural(openPicked, 'string')} picked {openPicked === 1 ? 'is' : 'are'} open
+              </span>
+            </Field>
+          )}
+          <Field
+            label="Make"
+            hint={
+              operation === 'union'
+                ? 'Everywhere inside any of the strings picked, as one set: those that touch or overlap become one'
+                : operation === 'overlap'
+                  ? 'Where the strings picked and a closed string clicked overlap'
+                  : 'The strings picked less a closed string clicked'
+            }
+          >
+            <Choice value={operation} options={['union', 'overlap', 'difference'] as const} labels={{ union: 'Union', overlap: 'Overlap', difference: 'Difference' }} onChange={setOperation} label="What to make of the polygons" />
+          </Field>
+          <Field label="Name" hint="A second part is numbered on, and a hole named for its part">
+            <Input className="h-7 px-1.5 text-xs" value={opName} placeholder={operation === 'union' ? 'Union' : operation === 'overlap' ? 'Overlap' : 'Difference'} aria-label="Name for the polygons made" onChange={(e) => setOpName(e.target.value)} />
+          </Field>
+          <Field label="Layer">
+            <Input className="h-7 px-1.5 text-xs" value={opLayer} aria-label="Layer for the polygons made" onChange={(e) => setOpLayer(e.target.value)} />
           </Field>
         </ToolSection>
       )}

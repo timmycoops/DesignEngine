@@ -8,7 +8,8 @@
 // quarter turn about a vertex clicked, and a mirrored copy of the dog-leg across the pit limit, picked once made; each
 // put back by Ctrl+Z. Vertices (workstream 4): Alt and a box round three vertices each of two lines picked, set to RL 90
 // by Set elevation, dragged 10 m north by one of them, deleted by Delete, let go by Esc before the strings; Densify and
-// Vertices at crossings by their buttons. Then
+// Vertices at crossings by their buttons. Polygons (workstream 6): Clip keeps a toe inside a block clicked, and Union
+// and Overlap make the blocks' union and overlap, each put back by Ctrl+Z. Then
 // the layers-only tree (Filtering plan, workstream 0): a row a layer saying what's on it, none a string; a right click on
 // the dog-leg in the view hides it from its menu, its layer's row says so, and Show all hidden brings it back. A layer's
 // filter (decision 0088, workstream 3): Filter by attributes… on the toes' right-click, `length: >170` typed keeps the
@@ -603,6 +604,66 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   for (let k = 0; k < 3; k++) await key('z', true);
   const left = [...(await madeNamed('Bench slope')), ...(await madeNamed('Contour '))];
   expect('three Ctrl+Z put back what the three runs made', left.length === 0, left.map((o) => o.name));
+
+  // Polygons (workstream 6), from the Strings row: two 100 m blocks overlapping by half and a toe at 10 % across them.
+  // Clip with the toe picked and a click on Block A keeps its 100 m inside, RL 105 to 115; Union of both blocks picked
+  // makes one closed string of 15,000 m²; Overlap with Block A picked and Block B clicked, 5,000 m². Each Ctrl+Z puts it back.
+  const closedString = async (name: string, points: Vec3[]) => (await runCommand('string.create', { name, layer: 'blocks', closed: true, points })).record.outputs[0].id as string;
+  await closedString('Block A', [[E + 500, N + 300, 100], [E + 600, N + 300, 100], [E + 600, N + 400, 100], [E + 500, N + 400, 100]]);
+  await closedString('Block B', [[E + 550, N + 300, 100], [E + 650, N + 300, 100], [E + 650, N + 400, 100], [E + 550, N + 400, 100]]);
+  const longToe = await make('Long toe', [[E + 450, N + 350, 100], [E + 700, N + 350, 125]]);
+  await show(await projectSummary());
+  viewport.fitView();
+  await settle();
+  const planArea = (ring: Vec3[]) => Math.abs(ring.reduce((a, p, k) => a + (p[0] - E) * (ring[(k + 1) % ring.length][1] - N) - (ring[(k + 1) % ring.length][0] - E) * (p[1] - N), 0)) / 2;
+  await key('Escape');
+  await key('Escape');
+  await click([E + 470, N + 350, 102]);
+  await useTool('clip');
+  const clipSays = goButton()?.textContent?.trim() ?? '';
+  goButton()?.click();
+  await settle();
+  const askedToClip = footer().includes('Click the closed string to clip Long toe to');
+  await click([E + 500, N + 390, 100]);
+  await wait(800);
+  const clipped = (await points(longToe)) as Vec3[];
+  expect(
+    'Clip, the toe picked and Block A clicked: its 100 m inside kept, from RL 105 to RL 115',
+    clipSays === 'Clip Long toe' && askedToClip && clipped.length === 2 && near(clipped[0][0], E + 500) && near(clipped[0][2], 105) && near(clipped[1][0], E + 600) && near(clipped[1][2], 115),
+    { button: clipSays, asked: askedToClip, points: clipped.map((p) => [p[0] - E, p[1] - N, p[2]]) },
+  );
+  await key('z', true);
+  const unclipped = (await points(longToe)).length;
+  expect('Ctrl+Z puts the toe back whole', unclipped === 2 && near(((await points(longToe)) as Vec3[])[0][0], E + 450), unclipped);
+
+  await key('Escape');
+  await key('Escape');
+  await click([E + 500, N + 320, 100]);
+  await click([E + 650, N + 320, 100], true);
+  await useTool('polygon_boolean');
+  const unionSays = goButton()?.textContent?.trim() ?? '';
+  goButton()?.click();
+  await wait(1000);
+  const unions = await madeNamed('Union');
+  const unionArea = unions.length === 1 ? planArea((await points(unions[0].id)) as Vec3[]) : 0;
+  expect('Union of the two blocks picked: one closed string, 15,000 m² in plan', unionSays === 'Union of 2 strings' && unions.length === 1 && near(unionArea, 15_000), { button: unionSays, strings: unions.length, area: unionArea });
+  await key('z', true);
+
+  await key('Escape');
+  await key('Escape');
+  await click([E + 500, N + 320, 100]);
+  await choose('What to make of the polygons', 'Overlap');
+  const overlapSays = goButton()?.textContent?.trim() ?? '';
+  goButton()?.click();
+  await settle();
+  await click([E + 650, N + 380, 100]);
+  await wait(1000);
+  const overlaps = await madeNamed('Overlap');
+  const overlapArea = overlaps.length === 1 ? planArea((await points(overlaps[0].id)) as Vec3[]) : 0;
+  expect('Overlap, Block A picked and Block B clicked: 5,000 m² in plan', overlapSays === 'Overlap Block A with a polygon' && overlaps.length === 1 && near(overlapArea, 5_000), { button: overlapSays, strings: overlaps.length, area: overlapArea });
+  await key('z', true);
+  const polygonsLeft = [...(await madeNamed('Union')), ...(await madeNamed('Overlap'))];
+  expect('Ctrl+Z after each puts back what Union and Overlap made', polygonsLeft.length === 0, polygonsLeft.map((o) => o.name));
 
   results.failures = failures;
   return results;

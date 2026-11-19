@@ -1326,6 +1326,262 @@ impl Command for TrimString {
     }
 }
 
+/// What a clip keeps: the parts inside the closed string, or those outside it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipKeep {
+    #[default]
+    Inside,
+    Outside,
+}
+
+/// `string.clip` (String tools plan, workstream 6): every string picked cut where a closed string's edge crosses it in
+/// plan, keeping the parts inside it, or those outside: toes clipped to a pit limit. As a trim, a cut is at the
+/// string's own height there; the first part kept is the string's next revision and any others are new strings on its
+/// layer, named for it, carrying its attributes. A string the edge doesn't cross, lying on the side kept, is left as it
+/// was and said; one lying wholly on the side dropped refuses the run (decision 0078).
+pub struct ClipString;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClipStringParams {
+    /// The string, or `strings` for several as one run.
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
+    /// The closed string they're clipped to.
+    pub by: ObjectId,
+    #[serde(default)]
+    pub keep: ClipKeep,
+}
+
+impl Command for ClipString {
+    type Params = ClipStringParams;
+    const NAME: &'static str = "string.clip";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Clip strings to a closed string, keeping the parts inside it or outside",
+            inputs: vec![string_input(), strings_input(), Field::object("by", ObjectKind::String, "The closed string they're clipped to")],
+            params: vec![Field::new("keep", FieldType::Text, "`inside` (the default) or `outside`")],
+            outputs: vec![Field::new("parts", FieldType::Objects, "Parts kept as new strings, past each string's first")],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let picked = picked(p.string, &p.strings)?;
+        let (limit_object, limit) = inputs.string(p.by)?;
+        if picked.ids.contains(&p.by) {
+            return Err(CommandError::Invalid(format!("'{}' is the string clipped to, so it can't be clipped by itself; leave it out of those picked", limit_object.name)));
+        }
+        if !limit.closed || limit.vertices.len() < 3 {
+            return Err(CommandError::Invalid(format!("'{}' isn't closed, so it has no inside to clip to; close it first", limit_object.name)));
+        }
+        let inside = p.keep == ClipKeep::Inside;
+        let side = if inside { "inside" } else { "outside" };
+        let (mut changes, mut made, mut failed, mut left) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut cuts, mut dropped, mut clipped) = (0, 0, 0);
+        for &id in &picked.ids {
+            let (object, line) = inputs.string(id)?;
+            match zd_geom::clip_string(line, limit, inside) {
+                Ok(t) if t.cuts == 0 => left.push(object.name.as_str()),
+                Ok(t) => {
+                    clipped += 1;
+                    cuts += t.cuts;
+                    dropped += t.dropped;
+                    let mut pieces = t.pieces.into_iter();
+                    changes.push(Change::revise_body(object, Body::String(pieces.next().expect("a part kept"))));
+                    for (k, piece) in pieces.enumerate() {
+                        made.push(Change::Create { name: format!("{} part {}", object.name, k + 2), layer: inputs.layer_name(object), attributes: object.attributes.clone(), body: Body::String(piece) });
+                    }
+                }
+                Err(e) => failed.push(format!("'{}': {}", object.name, why(e))),
+            }
+        }
+        if !failed.is_empty() {
+            return Err(if picked.listed { cannot(failed, picked.ids.len()) } else { CommandError::Invalid(failed.remove(0)) });
+        }
+        if clipped == 0 {
+            let lying = if left.len() == 1 { format!("'{}' lies", left[0]) } else { format!("all {} strings lie", left.len()) };
+            return Err(CommandError::Invalid(format!("{lying} wholly {side} '{}' already, so there's nothing to clip", limit_object.name)));
+        }
+        let new = made.len();
+        let mut said = format!("clipped {clipped} of {} strings to {side} '{}': cut in {}, {} dropped", picked.ids.len(), limit_object.name, so_many(cuts, "place"), so_many(dropped, "part"));
+        if new > 0 {
+            said += &format!(", {} kept as new strings", so_many(new, "part"));
+        }
+        if !left.is_empty() {
+            said += &format!("; {} wholly {side} already and left as {}: {}", left.len(), if left.len() == 1 { "it was" } else { "they were" }, names(&left));
+        }
+        changes.extend(made);
+        Ok(Outcome::new(changes).message(said))
+    }
+}
+
+/// What `string.polygon_boolean` makes of its two sets.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolygonOperation {
+    #[default]
+    Union,
+    Overlap,
+    Difference,
+}
+
+impl PolygonOperation {
+    fn op(self) -> zd_geom::PolygonOp {
+        match self {
+            PolygonOperation::Union => zd_geom::PolygonOp::Union,
+            PolygonOperation::Overlap => zd_geom::PolygonOp::Overlap,
+            PolygonOperation::Difference => zd_geom::PolygonOp::Difference,
+        }
+    }
+
+    fn word(self) -> &'static str {
+        match self {
+            PolygonOperation::Union => "Union",
+            PolygonOperation::Overlap => "Overlap",
+            PolygonOperation::Difference => "Difference",
+        }
+    }
+}
+
+/// `string.polygon_boolean` (String tools plan, workstream 6): the closed strings picked, and those `with`, made into
+/// one set in plan: their union, their overlap, or the first less the second. Each set is the area inside any of its
+/// strings; a union with nothing `with` joins those picked that touch or overlap. The strings made are new, on a layer:
+/// each part's outside named for the run ("Union", or "Union 2" and on for more parts), each hole after it ("Union
+/// hole 1"), carrying the attributes every string picked has alike. A vertex that was already there keeps its height; a
+/// new one, where edges cross, takes the height along the first set's edge. The strings read are left as they were.
+pub struct PolygonBoolean;
+
+fn default_polygon_layer() -> String {
+    "polygons".into()
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolygonBooleanParams {
+    /// The first set: one string, or `strings` for several.
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
+    /// The second set; may be left empty for a union.
+    #[serde(default)]
+    pub with: Vec<ObjectId>,
+    #[serde(default)]
+    pub operation: PolygonOperation,
+    #[serde(default = "default_polygon_layer")]
+    pub layer: String,
+    /// What the strings made are called; the operation's name if left out.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+impl Command for PolygonBoolean {
+    type Params = PolygonBooleanParams;
+    const NAME: &'static str = "string.polygon_boolean";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Make the union, overlap or difference of closed strings in plan as new closed strings",
+            inputs: vec![
+                Field::object("string", ObjectKind::String, "The first set's string"),
+                Field::new("strings", FieldType::Objects, "The first set's strings, in place of `string`"),
+                Field::new("with", FieldType::Objects, "The second set's strings; none for a union of the first set alone"),
+            ],
+            params: vec![
+                Field::new("operation", FieldType::Text, "`union` (the default), `overlap`, or `difference` (the first less the second)"),
+                Field::new("layer", FieldType::Layer, "Layer for the strings made"),
+                Field::new("name", FieldType::Text, "What they're called; the operation's name if left out"),
+            ],
+            outputs: vec![Field::new("polygons", FieldType::Objects, "The closed strings made, each part's outside before its holes")],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let first = picked(p.string, &p.strings)?;
+        if p.with.is_empty() && p.operation != PolygonOperation::Union {
+            let what = if p.operation == PolygonOperation::Overlap { "an overlap" } else { "a difference" };
+            return Err(CommandError::Invalid(format!("{what} needs a second set of strings to work against, as `with`")));
+        }
+        if let Some(both) = p.with.iter().find(|id| first.ids.contains(id)) {
+            return Err(CommandError::Invalid(format!("string {both} is in both sets; a string goes in one")));
+        }
+        let layer = p.layer.trim();
+        if layer.is_empty() {
+            return Err(CommandError::Invalid("no layer for the strings made".into()));
+        }
+        let mut failed = Vec::new();
+        let mut gather = |ids: &[ObjectId]| -> Result<Vec<(String, Attributes, Polyline)>, CommandError> {
+            let mut set = Vec::new();
+            for &id in ids {
+                let (object, line) = inputs.string(id)?;
+                if !line.closed || line.vertices.len() < 3 {
+                    failed.push(format!("'{}' isn't closed", object.name));
+                } else if zd_geom::polygon_boolean(std::slice::from_ref(line), &[], zd_geom::PolygonOp::Union).is_err() {
+                    failed.push(format!("'{}' closes round no area in plan", object.name));
+                }
+                set.push((object.name.clone(), object.attributes.clone(), line.clone()));
+            }
+            Ok(set)
+        };
+        let a = gather(&first.ids)?;
+        let b = gather(&p.with)?;
+        if !failed.is_empty() {
+            let of = first.ids.len() + p.with.len();
+            return Err(CommandError::Invalid(format!("{} of {of} strings can't be worked as polygons, so nothing was made. {}", failed.len(), failed.join("; "))));
+        }
+        let lines = |set: &[(String, Attributes, Polyline)]| set.iter().map(|(_, _, l)| l.clone()).collect::<Vec<_>>();
+        let made = zd_geom::polygon_boolean(&lines(&a), &lines(&b), p.operation.op()).map_err(|e| CommandError::Invalid(why(e)))?;
+        if made.rings.is_empty() {
+            let first_names: Vec<&str> = a.iter().map(|(n, _, _)| n.as_str()).collect();
+            let with_names: Vec<&str> = b.iter().map(|(n, _, _)| n.as_str()).collect();
+            return Err(CommandError::Invalid(match p.operation {
+                PolygonOperation::Overlap => format!("{} and {} don't overlap anywhere, so there's nothing to make", names(&first_names), names(&with_names)),
+                _ => format!("{} lie wholly inside {}, so nothing is left", names(&first_names), names(&with_names)),
+            }));
+        }
+        // The attributes every string of the first set has alike.
+        let mut attributes = a[0].1.clone();
+        for (_, other, _) in &a[1..] {
+            attributes.retain(|key, value| other.get(key) == Some(&*value));
+        }
+        let base = p.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(p.operation.word()).to_string();
+        let (mut changes, mut outside, mut hole) = (Vec::new(), String::new(), 0);
+        for ring in made.rings {
+            let name = if ring.hole {
+                hole += 1;
+                format!("{outside} hole {hole}")
+            } else {
+                hole = 0;
+                outside = if ring.part == 0 { base.clone() } else { format!("{base} {}", ring.part + 1) };
+                outside.clone()
+            };
+            changes.push(Change::Create { name, layer: layer.to_string(), attributes: attributes.clone(), body: Body::String(ring.line) });
+        }
+        let what = match p.operation {
+            PolygonOperation::Union if b.is_empty() => format!("joined {}", so_many(a.len(), "string")),
+            PolygonOperation::Union => format!("the union of {} with {}", so_many(a.len(), "string"), so_many(b.len(), "string")),
+            PolygonOperation::Overlap => format!("the overlap of {} with {}", so_many(a.len(), "string"), so_many(b.len(), "string")),
+            PolygonOperation::Difference => format!("{} less {}", so_many(a.len(), "string"), so_many(b.len(), "string")),
+        };
+        let vertices = |n: usize| if n == 1 { "1 new vertex".to_string() } else { format!("{n} new vertices") };
+        let mut said = format!("{what}: {}, {}, {:.1} m² in plan, on '{layer}'", so_many(made.parts, "part"), so_many(made.holes, "hole"), made.area);
+        if made.new > 0 {
+            said += &format!("; {} where edges cross, at the height along the first set's edge", vertices(made.new));
+        }
+        let mut outcome = Outcome::new(changes).message(said);
+        if made.off > 0 {
+            outcome.notes.push(Note::warning(Code::StringPolygonOff, format!("{} lay on no string's edge and took the height of the nearest", vertices(made.off).replace(" new", ""))).measured(made.off as f64, "vertices"));
+        }
+        Ok(outcome)
+    }
+}
+
 fn default_reach() -> f64 {
     100.0
 }

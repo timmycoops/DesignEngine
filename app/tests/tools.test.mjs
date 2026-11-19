@@ -85,7 +85,7 @@ test('every stage has a row of tools that exist, named in words', () => {
   assert.deepEqual(names('geology'), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology']);
   assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Reserves table', 'Dataflow', 'Compare', 'Report']);
   assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Ramp', 'Set grade', 'Offset', 'Project', 'Surface between', 'Join faces']);
-  assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Join', 'Round corners', 'Smooth', 'Filter', 'Densify', 'At crossings', 'Reverse', 'Close', 'Where they meet', 'Contours', 'Outline', 'Section strings', 'Move', 'Copy', 'Rotate', 'Mirror']);
+  assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Clip', 'Union', 'Join', 'Round corners', 'Smooth', 'Filter', 'Densify', 'At crossings', 'Reverse', 'Close', 'Where they meet', 'Contours', 'Outline', 'Section strings', 'Move', 'Copy', 'Rotate', 'Mirror']);
 });
 
 test("a stage's tools are on its row, but for the few reached another way", () => {
@@ -213,9 +213,9 @@ test("a panel's choices take their names and their lines from the list", () => {
   const reserves = choiceWords('reserves', ['interrogate', 'compare']);
   assert.deepEqual(Object.values(reserves.labels), ['Interrogate', 'Compare']);
   // A line at a panel's head is a sentence short enough for the 400 px tool dock (the shell bench measures it on screen).
-  const stringModes = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'trim', 'extend', 'join', 'fillet', 'smooth', 'filter', 'reverse', 'set_closed', 'surface_between', 'ramp_polygon'];
+  const stringModes = ['offset', 'number_across', 'polygons_from_lines', 'set_grade', 'set_elevation', 'drape', 'project', 'split', 'trim', 'extend', 'clip', 'polygon_boolean', 'join', 'fillet', 'smooth', 'filter', 'reverse', 'set_closed', 'surface_between', 'ramp_polygon'];
   const strings = choiceWords('strings', stringModes);
-  assert.deepEqual(Object.values(strings.labels), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Join', 'Round corners', 'Smooth', 'Filter', 'Reverse', 'Close', 'Surface between strings', 'Ramp from a start']);
+  assert.deepEqual(Object.values(strings.labels), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Clip', 'Union, overlap or difference', 'Join', 'Round corners', 'Smooth', 'Filter', 'Reverse', 'Close', 'Surface between strings', 'Ramp from a start']);
   // The one that makes a surface is named for what it makes, as a solid between surfaces is.
   for (const mode of stringModes) assert.equal(choiceTool('strings', mode).command, mode === 'surface_between' ? 'surface.between_strings' : `string.${mode}`, 'a string tool is named for its command');
   for (const line of [...Object.values(cut.lines), ...Object.values(reserves.lines), ...Object.values(strings.lines)]) assert.ok(line.endsWith('.') && line.length <= 62, line);
@@ -248,7 +248,7 @@ test('Find a command matches whole words typed, a name first, then a stage or co
   assert.deepEqual(found('seams'), ['cut:seams']);
   assert.equal(found('seam')[0], 'cut:seams');
   assert.ok(['import.vulcan_grid', 'seam.build', 'reserves:interrogate'].every((key) => found('seam').includes(key)));
-  assert.deepEqual(found('polygons'), ['strings:polygons_from_lines', 'cut:polygons']);
+  assert.deepEqual(found('polygons'), ['strings:polygons_from_lines', 'cut:polygons', 'strings:polygon_boolean']);
   assert.deepEqual(found('solid.cut_by_benches'), ['cut:benches']);
   assert.equal(found('distance')[0], 'view.measure', 'found by what a planner would type');
   assert.equal(found('measure')[0], 'view.measure');
@@ -278,6 +278,8 @@ test('the canvas lists the tools that add a step, as the list has them', () => {
     'Strings: Split',
     'Strings: Trim',
     'Strings: Extend',
+    'Strings: Clip',
+    'Strings: Union, overlap or difference',
     'Strings: Join',
     'Strings: Round corners',
     'Strings: Smooth',

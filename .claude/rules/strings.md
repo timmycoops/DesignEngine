@@ -1,6 +1,6 @@
 ---
 paths:
-  - "crates/zd-geom/src/{string,string_cut,vertices,transform,crossings,polygons,fillet,project,sheet,from_surfaces}.rs"
+  - "crates/zd-geom/src/{string,string_cut,vertices,transform,crossings,polygons,polygon_ops,fillet,project,sheet,from_surfaces}.rs"
   - "crates/zd-commands/src/builtin/{string,object,project,sheet,surface,from_surfaces}.rs"
   - "app/src/panels/{StringsPanel,MovePanel,FromSurfacesPanel}.tsx"
   - "app/src/panels/{stringSide,moveWords,strips}.ts"
@@ -36,3 +36,7 @@ ramps by hand, measure), 0083 (cut strings by strings).
   surfaces or grids meet, at their own RLs; contours every so many metres, each exactly at its RL with an `rl`
   attribute; a surface's edge with each hole its own string, or a solid's outline in plan at its lowest RL; and what a
   section cuts. Lines are exact, as sections are, and whole: open or closed as they run.
+- Polygons in plan (0083, workstream 6), on the Strings row: Clip keeps each string's parts inside a closed string, or
+  outside, cut at its own heights as Trim does; Union, overlap or difference makes new closed strings of closed strings
+  in plan, on Manifold's CrossSection about a local origin, each vertex that was there coming back exactly with its
+  height and each new one taking the height along the first set's edge.
