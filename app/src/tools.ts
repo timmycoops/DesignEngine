@@ -87,7 +87,11 @@ export type ToolIcon =
   | 'zoom-selection'
   | 'zoom-all'
   | 'section'
-  | 'measure';
+  | 'measure'
+  | 'meet'
+  | 'contours'
+  | 'outline'
+  | 'section-strings';
 
 /** What App carries out itself: files, undo, the seam model, the layout. */
 export type ToolAction =
@@ -217,6 +221,12 @@ export const TOOLS: readonly Tool[] = [
   { key: 'strings:filter', stage: 'strings', label: 'Filter', tip: "Takes out vertices each string picked doesn't need.", icon: 'filter', panel: 'strings', mode: 'filter', command: 'string.filter', step: { takes: 'the strings picked' } },
   { key: 'strings:densify', stage: 'strings', label: 'Densify', tip: 'Adds a vertex every so many metres to each string picked, the line unchanged.', icon: 'densify', panel: 'strings', mode: 'densify', command: 'string.densify', step: { takes: 'the strings picked' } },
   { key: 'strings:vertices_at_crossings', stage: 'strings', label: 'Vertices at crossings', tip: 'Adds a vertex to each string picked wherever another crosses it.', short: 'At crossings', icon: 'crossings', panel: 'strings', mode: 'vertices_at_crossings', command: 'string.vertices_at_crossings', step: { takes: 'two strings or more' } },
+  // Strings from surfaces (String tools plan, workstream 5): new strings from surfaces, grids and solids, in a panel of their own.
+  { key: 'from_surfaces', stage: 'strings', label: 'Strings from surfaces', tip: 'make strings from surfaces, grids and solids: where two meet, contours, outlines and sections', icon: 'contours', panel: 'from_surfaces' },
+  { key: 'from_surfaces:where_surfaces_meet', stage: 'strings', label: 'Where surfaces meet', tip: 'Makes strings where two surfaces or grids meet, such as a crest on the topography.', short: 'Where they meet', icon: 'meet', panel: 'from_surfaces', mode: 'where_surfaces_meet', command: 'string.where_surfaces_meet', step: { takes: 'two surfaces or grids' } },
+  { key: 'from_surfaces:contours', stage: 'strings', label: 'Contours', tip: 'Makes contour strings on a surface or grid every so many metres, each carrying its RL.', icon: 'contours', panel: 'from_surfaces', mode: 'contours', command: 'string.contours', step: { takes: 'a surface or grid' } },
+  { key: 'from_surfaces:outline', stage: 'strings', label: 'Outline', tip: "Makes a string round each surface's or grid's edge and holes, or a solid's outline in plan.", icon: 'outline', panel: 'from_surfaces', mode: 'outline', command: 'string.outline', step: { takes: 'the surfaces, grids or solids picked' } },
+  { key: 'from_surfaces:from_section', stage: 'strings', label: 'Section to strings', tip: 'Keeps the lines a section cuts through what is picked as strings.', short: 'Section strings', icon: 'section-strings', panel: 'from_surfaces', mode: 'from_section', command: 'string.from_section', step: { takes: 'the surfaces, grids or solids picked' } },
   { key: 'strings:reverse', stage: 'strings', label: 'Reverse', tip: 'Turns each string picked to run the other way.', icon: 'reverse', panel: 'strings', mode: 'reverse', command: 'string.reverse', step: { takes: 'the strings picked' } },
   { key: 'strings:set_closed', stage: 'strings', label: 'Close', tip: 'Closes each string picked, or opens it.', icon: 'close', panel: 'strings', mode: 'set_closed', command: 'string.set_closed', step: { takes: 'the strings picked' } },
 
@@ -379,6 +389,11 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     'strings:vertices_at_crossings',
     'strings:reverse',
     'strings:set_closed',
+    '|',
+    'from_surfaces:where_surfaces_meet',
+    'from_surfaces:contours',
+    'from_surfaces:outline',
+    'from_surfaces:from_section',
     '|',
     ...MOVE_TOOLS,
   ],
