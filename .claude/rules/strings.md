@@ -1,0 +1,34 @@
+---
+paths:
+  - "crates/zd-geom/src/{string,string_cut,vertices,transform,crossings,polygons,fillet,project,sheet}.rs"
+  - "crates/zd-commands/src/builtin/{string,object,project,sheet,surface}.rs"
+  - "app/src/panels/{StringsPanel,MovePanel}.tsx"
+  - "app/src/panels/{stringSide,moveWords,strips}.ts"
+---
+
+# Strings and surfaces between them
+
+Moved from CLAUDE.md's object model. Decisions: 0029 (strip numbers), 0078 (strings as one run), 0079 (project,
+ramps by hand, measure), 0083 (cut strings by strings).
+
+- `Polyline` (string): ordered `[f64; 3]` vertices, closed flag, attributes. A strip's number is its `strip` attribute, set
+  by a line drawn across the strings, and what a run makes keeps it (`docs/decisions/0029-strip-numbers.md`). The string
+  commands that offset or edit a string take one (`string`) or several as one run (`strings`): one undo, one record, a
+  string that can't be done refusing the run with each listed, one that comes out as it was left and said; Join takes
+  the open pieces picked and joins them end to end into the first, nearest ends first, ends within a tolerance as one
+  vertex, a ring closed, each gap bridged and said; Trim cuts the strings picked where another string crosses them,
+  keeping the side clicked or splitting there, Extend runs them on to one at their own grade, and Split splits at a
+  point clicked, each cut at the string's own height (`docs/decisions/0083-cut-strings-by-strings.md`); Alt and a box
+  picks the vertices of the strings picked, a drag on one moving them all and Delete deleting them, and Set elevation,
+  Set grade and Drape then act on them alone (`vertices`), Densify adds a vertex every so many metres and Vertices at
+  crossings one wherever strings cross (0083, workstream 4); and
+  each tool but Ramp from a start adds a workflow step from the panel, its strings found by rule, a layer's by the layer
+  (`docs/decisions/0078-strings-as-one-run.md`). A string
+  is projected at a batter by `string.project`: up or down, on the side the new string comes out on, to an RL, a height
+  above or below it, a grid or a surface, every string picked in one run, each as it's drawn and left as it is, with
+  the wall kept as a surface if asked; to an RL or a surface it's a face's one wall, by a height its plan offset lifted
+  (`docs/decisions/0079-project-ramps-by-hand-and-measure.md`).
+- `Surface`: triangulated mesh (vertices f64, triangles u32), name, layer. One is made between strings by
+  `surface.between_strings`: a road between its two edges, or one sheet across several put in order across (a fill's
+  toe, the road's edges, a cut's crest), every corner a string's vertex, so a ramp can be made by hand from polylines:
+  Set grade, Offset, Project and a surface between, all on the Walls row (0079).
