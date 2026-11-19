@@ -188,6 +188,12 @@ worked it.
     its qualities and Mad are weighed by;
   - reports air-dried tonnes by `rd_adt`.
 
+  Renamed `tonnes_ad_per_m3` on 19 November 2026 (Tim agreed; app review brief of 17 November, item 2). `rd_adt` sat
+  beside in situ tonnes in the Reserves table's Main fields as if it were their density, which it isn't, and under
+  Imported it was still the lab RD. A project saved before then has its dataflows renamed as it opens, by a
+  `dataflow.save` run said in the open notes. Reserves tables already written keep their `rd_adt` column, and the app
+  reads it as the new name. Main fields now shows, under each folder, the density its tonnes are on.
+
   Each formula carries its known answers: Preston-Sanders at RD 1.4, Mad 3 and Mis 8 is 135.8 ÷ 99; waste at RD 2.3,
   Mad 2 and Mis 6 is 2.3 × 98 ÷ 94; a 20 % ash outside 5 to 10 takes 12.
 - **Formulas name a field as they run**: `unit["ash"]` reads and sets as `unit.ash` does (Starlark has no `setattr`), so

@@ -21,15 +21,40 @@ export type FieldRow =
   | { kind: 'folder'; key: string; label: string; depth: number }
   | { kind: 'field'; key: string; label: string; unit: string; depth: number; field: BreakdownField };
 
-/** Fields left out unless every field is asked for: densities, moistures and plan geometry, which the steps read. */
-const DETAIL = new Set(['area', 'length', 'width', 'dip', 'centroid_x', 'centroid_y', 'centroid_z', 'mad', 'mis', 'mrom', 'rd', 'rd_is', 'rd_rom', 'tonnes_ad', 'id']);
+/**
+ * Fields left out unless every field is asked for: densities, moistures and plan geometry, which the steps read. A folder's
+ * own density, the one its tonnes are on, is shown all the same (`densityOfTonnes`).
+ */
+const DETAIL = new Set(['area', 'length', 'width', 'dip', 'centroid_x', 'centroid_y', 'centroid_z', 'mad', 'mis', 'mrom', 'rd', 'rd_is', 'rd_rom', 'tonnes_ad', 'tonnes_ad_per_m3', 'id']);
+
+/**
+ * Field names a reserves table written before a rename still has, read as they're called now (app review brief, 17 Nov,
+ * item 2): `rd_adt` is the air-dried tonnes a cubic metre in situ. A table keeps its columns as written; run again, it
+ * has the new name.
+ */
+const RENAMED: Record<string, string> = { rd_adt: 'tonnes_ad_per_m3' };
+const nowNamed = (name: string) => RENAMED[name.toLowerCase()] ?? name;
 
 export function isDetail(name: string): boolean {
-  return DETAIL.has(name.toLowerCase());
+  return DETAIL.has(nowNamed(name).toLowerCase());
+}
+
+/**
+ * The density a folder's tonnes are on, as `reserves.run` writes them: ROM and Scheduled on the ROM density, any other
+ * folder with an in situ density on it, else on the RD; none where the folder has no tonnes. Volume × it is the tonnes
+ * shown (the engine's `every_folder_s_tonnes_are_its_volume_by_the_density_main_fields_shows` checks the same rule).
+ */
+export function densityOfTonnes(folders: string[], names: string[]): string | null {
+  if (!names.includes('tonnes')) return null;
+  if ((folders[0] === 'ROM' || folders[0] === 'Scheduled') && names.includes('rd_rom')) return 'rd_rom';
+  if (names.includes('rd_is')) return 'rd_is';
+  return names.includes('rd') ? 'rd' : null;
 }
 
 /** A field's name read out: `as_is` is "as, in situ", `as_rom` "as, ROM basis", `tonnes_ad` "tonnes, air dried". */
-export function fieldLabel(name: string): string {
+export function fieldLabel(field: string): string {
+  const name = nowNamed(field);
+  if (name.endsWith('_per_m3')) return `${fieldLabel(name.slice(0, -'_per_m3'.length))}, per m³`;
   const suffixes: [string, string][] = [
     ['_is', ', in situ'],
     ['_rom', ', ROM basis'],
@@ -56,7 +81,11 @@ export function unitLabel(unit: string): string {
  * with its fields; fields straight under a top folder (a section's name) first. Folded folders show their heading only.
  */
 export function fieldRows(b: Breakdown, all: boolean, folded: ReadonlySet<string>): FieldRow[] {
-  const fields = b.fields.filter((f) => all || !isDetail(f.name));
+  // Main fields: no detail, but each folder's own density beside its tonnes.
+  const namesIn = new Map<string, string[]>();
+  const folderOf = (f: BreakdownField) => f.folders.join('/');
+  for (const f of b.fields) namesIn.set(folderOf(f), [...(namesIn.get(folderOf(f)) ?? []), f.name]);
+  const fields = b.fields.filter((f) => all || !isDetail(f.name) || f.name === densityOfTonnes(f.folders, namesIn.get(folderOf(f)) ?? []));
   const tops: string[] = [];
   for (const f of fields) if (f.folders.length > 0 && !tops.includes(f.folders[0])) tops.push(f.folders[0]);
   const rows: FieldRow[] = [];

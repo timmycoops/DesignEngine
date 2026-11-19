@@ -28,4 +28,4 @@ def formula(unit, p):
         if unit.mrom != None:
             unit.rd_rom = unit.rd_is * (100 - unit.mis) / (100 - unit.mrom)
         if unit.mad != None:
-            unit.rd_adt = unit.rd_is * (100 - unit.mis) / (100 - unit.mad)
+            unit.tonnes_ad_per_m3 = unit.rd_is * (100 - unit.mis) / (100 - unit.mad)

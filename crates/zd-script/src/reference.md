@@ -74,7 +74,7 @@ on their own basis**, settings by their largest or smallest.
 
 - Moistures are percentages: `mad` air dried, `mis` in situ, `mrom` ROM.
 - `rd` is the air-dried relative density (t/m³) from the lab and the seam grids; `rd_is` the in situ density;
-  `rd_rom` the ROM density; `rd_adt` the air-dried tonnes a cubic metre in situ (in situ density × (100 − Mis) ÷ (100 −
+  `rd_rom` the ROM density; `tonnes_ad_per_m3` the air-dried tonnes a cubic metre in situ (in situ density × (100 − Mis) ÷ (100 −
   Mad)), what qualities and Mad are weighed by.
 - Qualities (ash, sulphur, …) are stored air dried. A quality on another basis is `to_basis(value, mad, mis)` (in
   situ) or `to_basis(value, mad, mrom)` (ROM).

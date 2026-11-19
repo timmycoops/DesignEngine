@@ -67,7 +67,20 @@ and `app/src/bench/dataflowCheck.ts`. Main fields' choice of rows is in the app'
 **Check:** a test that, for every folder in Main fields, volume × the density shown equals tonnes to 1e-9; the demo
 pit's figures otherwise unchanged.
 
-Waiting on Tim (19 Nov): the plan below, agreed before building.
+Done (19 Nov, branch `app/review-fixes`, Tim agreed the plan below: "Go for item 2"). `rd_adt` is now
+`tonnes_ad_per_m3`. Main fields shows, under each folder, the density its tonnes are on. Older projects' dataflows are
+renamed as they open, and older tables read as the new name. Tests:
+- `zd-commands` `a_dataflow_saved_with_rd_adt_is_renamed_everywhere`,
+  `a_dataflow_saved_with_rd_adt_opens_renamed_and_gives_the_same_table` and
+  `every_folder_s_tonnes_are_its_volume_by_the_density_main_fields_shows`;
+- the app's reserves table test;
+- the demo script, which checks volume × the density shown = tonnes for every folder on every leaf to 1e-9, finds no
+  `rd_adt`, and holds its `RECORDED` totals.
+
+The demo script also read clean coal from its pre-0086 folder: it's `ROM\Clean coal` now, and the figure is the one
+recorded.
+
+The plan as agreed:
 
 - Why it shows: Main fields hides `rd`, `rd_is` and `rd_rom` as detail (`DETAIL` in `app/src/panels/reservesTable.ts`)
   but not `rd_adt`, so `rd_adt` is the one density left on show beside every folder's tonnes. Under Imported it is still
