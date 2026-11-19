@@ -3,8 +3,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use zd_core::{AttrValue, Attributes, Body, Change, Object, ObjectId, ObjectKind, Polyline};
 use zd_geom::{
-    Corner, GeomError, Keep, OffsetSide, branching_ends, drape_string, extend_string, fillet_string, filter_string, grade_string, join_pieces, join_strings, offset_string, plan_crossings, redraw_stretch, smooth_string,
-    split_string, split_string_at, trim_string, triangulate_grid,
+    Corner, GeomError, Keep, OffsetSide, branching_ends, delete_vertices, densify_string, drape_string, extend_string, fillet_string, filter_string, grade_string, grade_vertices, join_pieces, join_strings, move_vertices,
+    offset_string, picked_in_order, plan_crossings, redraw_stretch, set_vertices_rl, smooth_string, split_string, split_string_at, trim_string, triangulate_grid, vertices_at_crossings,
 };
 
 use super::finite;
@@ -279,6 +279,207 @@ impl Command for DeleteVertex {
     }
 }
 
+/// A geometry refusal as words, without the error's own prefix.
+fn geom(e: GeomError) -> CommandError {
+    CommandError::Invalid(e.to_string().replace("invalid input: ", ""))
+}
+
+/// Picked vertices (String tools plan, workstream 4), each string's numbered from 0, in the order the strings are given.
+fn vertices_input() -> Field {
+    Field::new("vertices", FieldType::Text, "The vertices picked on each string, numbered from 0, a list a string in the order given; only they change")
+}
+
+/// The vertices picked on each string, by its id; none given, every string whole.
+fn picked_vertices(picked: &Picked, vertices: &Option<Vec<Vec<usize>>>) -> Result<Option<std::collections::HashMap<ObjectId, Vec<usize>>>, CommandError> {
+    let Some(lists) = vertices else { return Ok(None) };
+    if lists.len() != picked.ids.len() {
+        return Err(CommandError::Invalid(format!("`vertices` lists the vertices of {} strings for {} strings", lists.len(), picked.ids.len())));
+    }
+    Ok(Some(picked.ids.iter().copied().zip(lists.iter().cloned()).collect()))
+}
+
+/// Vertex numbers for a sentence, from 1 as Properties lists them: "2, 3 and 7".
+fn vertex_words(picked: &[usize]) -> String {
+    let mut sorted: Vec<usize> = picked.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let words: Vec<String> = sorted.iter().take(10).map(|i| (i + 1).to_string()).collect();
+    let more = sorted.len().saturating_sub(10);
+    match (words.as_slice(), more) {
+        ([one], 0) => format!("vertex {one}"),
+        (_, 0) => format!("vertices {} and {}", words[..words.len() - 1].join(", "), words[words.len() - 1]),
+        _ => format!("vertices {} and {more} more", words.join(", ")),
+    }
+}
+
+/// `string.move_vertices`: the vertices picked on each string moved together by an easting, northing and RL, every
+/// string in one run and one undo (String tools plan, workstream 4). The others stay exactly where they are.
+pub struct MoveVertices;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MoveVerticesParams {
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
+    /// Each string's vertices picked, from 0, in the order of the strings.
+    pub vertices: Vec<Vec<usize>>,
+    /// Easting, northing and RL (m).
+    pub by: [f64; 3],
+}
+
+impl Command for MoveVertices {
+    type Params = MoveVerticesParams;
+    const NAME: &'static str = "string.move_vertices";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Move the vertices picked together",
+            inputs: vec![string_input(), strings_input()],
+            params: vec![vertices_input(), Field::new("by", FieldType::Point, "Easting, northing and RL to move them by")],
+            outputs: vec![],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let picked = picked(p.string, &p.strings)?;
+        finite(&p.by)?;
+        let on = picked_vertices(&picked, &Some(p.vertices.clone()))?.expect("given");
+        let count: usize = p.vertices.iter().map(|v| v.len()).sum();
+        let did = format!("moved {count} vertices {}", super::object::move_words(p.by));
+        edit_each(inputs, &picked, &did, |object, line| {
+            let these = &on[&object.id];
+            let moved = move_vertices(line, these, p.by).map_err(geom)?;
+            Ok((moved, Some(Note::info(format!("{} moved", vertex_words(these))))))
+        })
+    }
+}
+
+/// `string.delete_vertices`: the vertices picked on each string taken out, every string in one run and one undo. A
+/// string that would be left too short refuses the run, each listed (decision 0078).
+pub struct DeleteVertices;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteVerticesParams {
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
+    pub vertices: Vec<Vec<usize>>,
+}
+
+impl Command for DeleteVertices {
+    type Params = DeleteVerticesParams;
+    const NAME: &'static str = "string.delete_vertices";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Delete the vertices picked",
+            inputs: vec![string_input(), strings_input()],
+            params: vec![vertices_input()],
+            outputs: vec![],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let picked = picked(p.string, &p.strings)?;
+        let on = picked_vertices(&picked, &Some(p.vertices.clone()))?.expect("given");
+        let count: usize = p.vertices.iter().map(|v| v.len()).sum();
+        edit_each(inputs, &picked, &format!("deleted {count} vertices"), |object, line| {
+            let these = &on[&object.id];
+            let kept = delete_vertices(line, these).map_err(geom)?;
+            Ok((kept, Some(Note::info(format!("{} deleted", vertex_words(these))))))
+        })
+    }
+}
+
+/// `string.vertices_at_crossings`: a vertex on each string picked wherever another of them, or a string in `with`,
+/// crosses it in plan, at the string's own RL there; none where the crossing is on a vertex already. One run and one
+/// undo; a string nothing crosses is left as it was and said.
+pub struct VerticesAtCrossings;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerticesAtCrossingsParams {
+    pub strings: Vec<ObjectId>,
+    /// Strings that cross them and take no vertices themselves.
+    #[serde(default)]
+    pub with: Vec<ObjectId>,
+}
+
+impl Command for VerticesAtCrossings {
+    type Params = VerticesAtCrossingsParams;
+    const NAME: &'static str = "string.vertices_at_crossings";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Add a vertex wherever strings cross",
+            inputs: vec![strings_input(), Field::new("with", FieldType::Objects, "Strings that cross them and are left as they are")],
+            params: vec![],
+            outputs: vec![],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let picked = picked(None, &p.strings)?;
+        let mut all = Vec::with_capacity(p.strings.len() + p.with.len());
+        for &id in p.strings.iter().chain(&p.with) {
+            all.push((id, inputs.string(id)?.1));
+        }
+        if all.len() < 2 {
+            return Err(CommandError::Invalid("pick two strings or more: a vertex goes where they cross".into()));
+        }
+        edit_each(inputs, &picked, "vertices added where strings cross", |object, line| {
+            let others: Vec<&Polyline> = all.iter().filter(|(id, _)| *id != object.id).map(|(_, l)| *l).collect();
+            let (crossed, added) = vertices_at_crossings(line, &others);
+            Ok((crossed, Some(Note::info(format!("{added} vertices added")))))
+        })
+    }
+}
+
+/// `string.densify`: a vertex at least every `spacing` metres in plan along each string picked, each segment split into
+/// equal parts with RLs graded evenly along it, so the line is the same line (unlike Smooth). One run and one undo.
+pub struct DensifyString;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DensifyStringParams {
+    #[serde(default)]
+    pub string: Option<ObjectId>,
+    #[serde(default)]
+    pub strings: Vec<ObjectId>,
+    pub spacing: f64,
+}
+
+impl Command for DensifyString {
+    type Params = DensifyStringParams;
+    const NAME: &'static str = "string.densify";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Add vertices every so many metres, the line unchanged",
+            inputs: vec![string_input(), strings_input()],
+            params: vec![Field::new("spacing", FieldType::Number { unit: "m" }, "The most a vertex is from the next, in plan")],
+            outputs: vec![],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let picked = picked(p.string, &p.strings)?;
+        edit_each(inputs, &picked, &format!("a vertex every {} m or less", p.spacing), |_, line| {
+            let dense = densify_string(line, p.spacing).map_err(geom)?;
+            let added = dense.vertices.len() - line.vertices.len();
+            Ok((dense, Some(Note::info(format!("{added} vertices added, {} in all", line.vertices.len() + added)))))
+        })
+    }
+}
+
 /// `string.redraw_stretch`: a stretch of an open string redrawn by hand, as a planner redraws part of a line (decision
 /// 0046). The first and last points come onto the string where they're nearest it, within a metre, and the points
 /// between take the place of every vertex between those two places. One revision, one undo.
@@ -348,6 +549,10 @@ pub struct SetGradeParams {
     /// Elevation at `from`; its current elevation by default.
     #[serde(default)]
     pub rl: Option<f64>,
+    /// The vertices picked on each string (String tools plan, workstream 4), from 0, in the order of the strings: only
+    /// they change.
+    #[serde(default)]
+    pub vertices: Option<Vec<Vec<usize>>>,
 }
 
 impl Command for SetGrade {
@@ -364,6 +569,7 @@ impl Command for SetGrade {
                 Field::new("to", FieldType::Integer, "The vertex it ends at; the last by default"),
                 Field::new("grade", FieldType::Number { unit: "%" }, "Positive uphill from the start, along plan length"),
                 Field::new("rl", FieldType::Number { unit: "m" }, "Elevation at the start; its own by default"),
+                vertices_input(),
             ],
             outputs: vec![],
         }
@@ -372,7 +578,17 @@ impl Command for SetGrade {
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let picked = picked(p.string, &p.strings)?;
         one_string_only(&picked, p.from != 0 || p.to.is_some(), "a grade between two vertices (`from`, `to`)")?;
-        edit_each(inputs, &picked, &format!("graded at {} %", p.grade), |_, line| {
+        if p.vertices.is_some() && (p.from != 0 || p.to.is_some()) {
+            return Err(CommandError::Invalid("give the vertices picked or `from` and `to`, not both".into()));
+        }
+        let on = picked_vertices(&picked, &p.vertices)?;
+        edit_each(inputs, &picked, &format!("graded at {} %", p.grade), |object, line| {
+            if let Some(these) = on.as_ref().map(|on| &on[&object.id]) {
+                let first = picked_in_order(line, these).map_err(geom)?[0];
+                let rl = p.rl.unwrap_or(line.vertices[first][2]);
+                let graded = grade_vertices(line, these, rl, p.grade).map_err(geom)?;
+                return Ok((graded, Some(Note::info(format!("{} at {} % from RL {rl:.3}", vertex_words(these), p.grade)))));
+            }
             let to = vertex_range(line, p.from, p.to)?;
             let rl = p.rl.unwrap_or(line.vertices[p.from][2]);
             let graded = grade_string(line, p.from, to, rl, p.grade).map_err(|e| CommandError::Invalid(e.to_string()))?;
@@ -721,6 +937,10 @@ pub struct DrapeStringParams {
     pub surface: ObjectId,
     #[serde(default = "yes")]
     pub crossings: bool,
+    /// The vertices picked on each string (String tools plan, workstream 4), from 0, in the order of the strings: only
+    /// they change.
+    #[serde(default)]
+    pub vertices: Option<Vec<Vec<usize>>>,
 }
 
 impl Command for DrapeString {
@@ -732,7 +952,7 @@ impl Command for DrapeString {
             name: Self::NAME,
             summary: "Drape a string onto a surface",
             inputs: vec![string_input(), strings_input(), Field::object("surface", ObjectKind::Surface, "A surface or elevation grid")],
-            params: vec![Field::new("crossings", FieldType::Bool, "Add vertices where the string crosses triangle edges")],
+            params: vec![Field::new("crossings", FieldType::Bool, "Add vertices where the string crosses triangle edges; never with vertices picked"), vertices_input()],
             outputs: vec![],
         }
     }
@@ -749,7 +969,26 @@ impl Command for DrapeString {
             }
             other => return Err(CommandError::WrongKind { id: p.surface, expected: ObjectKind::Surface, found: other.kind() }),
         };
+        let on = picked_vertices(&picked, &p.vertices)?;
         edit_each(inputs, &picked, &format!("draped on {}", target.name), |object, line| {
+            if let Some(these) = on.as_ref().map(|on| &on[&object.id]) {
+                // The vertices picked take the surface's RL under them; none is added, and the rest stay.
+                let these = picked_in_order(line, these).map_err(geom)?;
+                let alone = Polyline { vertices: these.iter().map(|&i| line.vertices[i]).collect(), closed: false };
+                let (draped, log) = drape_string(&alone, mesh, false).map_err(|e| CommandError::Invalid(e.to_string()))?;
+                let mut edited = line.clone();
+                for (&i, v) in these.iter().zip(&draped.vertices) {
+                    edited.vertices[i][2] = v[2];
+                }
+                let off = log.off_surface;
+                let mut message = format!("{} draped on {}", vertex_words(&these), target.name);
+                let mut note = Note::info("");
+                if off > 0 {
+                    message += &format!("; {off} have no surface under them and keep their elevations");
+                    note = Note::warning(Code::StringOffSurface, "").measured(off as f64, "vertices");
+                }
+                return Ok((edited, Some(Note { text: message, ..note }.on(object.id))));
+            }
             let (draped, log) = drape_string(line, mesh, p.crossings).map_err(|e| CommandError::Invalid(e.to_string()))?;
             let mut message = format!("draped on {}: {} crossings added", target.name, log.crossings_added);
             let mut note = Note::info("");
@@ -779,6 +1018,10 @@ pub struct SetElevationParams {
     pub from: Option<usize>,
     #[serde(default)]
     pub to: Option<usize>,
+    /// The vertices picked on each string (String tools plan, workstream 4), from 0, in the order of the strings: only
+    /// they change.
+    #[serde(default)]
+    pub vertices: Option<Vec<Vec<usize>>>,
 }
 
 impl Command for SetElevation {
@@ -794,6 +1037,7 @@ impl Command for SetElevation {
                 Field::new("rl", FieldType::Number { unit: "m" }, "The elevation"),
                 Field::new("from", FieldType::Integer, "First vertex; the first by default"),
                 Field::new("to", FieldType::Integer, "Last vertex; the last by default"),
+                vertices_input(),
             ],
             outputs: vec![],
         }
@@ -802,8 +1046,16 @@ impl Command for SetElevation {
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let picked = picked(p.string, &p.strings)?;
         one_string_only(&picked, p.from.is_some() || p.to.is_some(), "an elevation between two vertices (`from`, `to`)")?;
+        if p.vertices.is_some() && (p.from.is_some() || p.to.is_some()) {
+            return Err(CommandError::Invalid("give the vertices picked or `from` and `to`, not both".into()));
+        }
         finite(&[0.0, 0.0, p.rl])?;
-        edit_each(inputs, &picked, &format!("set to RL {:.3}", p.rl), |_, line| {
+        let on = picked_vertices(&picked, &p.vertices)?;
+        edit_each(inputs, &picked, &format!("set to RL {:.3}", p.rl), |object, line| {
+            if let Some(these) = on.as_ref().map(|on| &on[&object.id]) {
+                let set = set_vertices_rl(line, these, p.rl).map_err(geom)?;
+                return Ok((set, Some(Note::info(format!("{} set to RL {:.3}", vertex_words(these), p.rl)))));
+            }
             let from = p.from.unwrap_or(0);
             let to = vertex_range(line, from, p.to)?;
             let mut edited = line.clone();

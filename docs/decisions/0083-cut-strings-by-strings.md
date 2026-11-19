@@ -2,7 +2,7 @@
 
 Status: agreed 17 November 2026 (Tim: "Agree all nine", the String tools plan tab of the Build Plan). This record is
 that plan's workstream 1; the later workstreams add to it as they merge: workstream 2, round corners, and workstream 3,
-move, copy, rotate and mirror, below.
+move, copy, rotate and mirror, and workstream 4, vertices, below.
 
 ## Why
 
@@ -157,3 +157,48 @@ Timings (release, made-up): 150 toes of 41 vertices and 1,000 10 m cubes (12,000
 turned 30° in 2.2 ms, copied mirrored (1,150 objects made) in 2.4 ms.
 
 In the app, `--string-edits` passes 23 of 23, `--shell` 62 of 62, and `--select`, `--clicks` and `--workflow` pass whole.
+
+## Built: workstream 4, vertices
+
+Decision 6 of the plan as picked: Alt and a box picks the vertices of the strings picked.
+
+- **Picking** (`app/src/viewport/strings.ts`). With strings picked, Alt and a left drag draw a dashed box; let go, the
+  vertices of the strings picked that lie in it are picked, or with Ctrl added to those picked. In 3D only what's in
+  front of the camera counts; on a section it's off, as Shift and a box is. Alt+click without a drag still inserts a
+  vertex. Picked vertices show gold, every one, however close together. They stay picked through a move and an undo,
+  and go when their string is no longer picked or shown, when they're deleted, or with Esc, which lets them go before
+  it lets the strings go (0080's one thing a press).
+- **A drag on one moves them all**: `string.move_vertices` (`strings`, `vertices` a list a string of its vertex numbers
+  from 0, and `by`), the move being from the dragged vertex to where it snaps, to a micrometre. The rest stay exactly
+  where they are. One run and one undo for every string.
+- **Delete deletes them**: `string.delete_vertices`. A string that would be left with fewer than two vertices (three
+  closed) refuses the run, named, and nothing changes (0078).
+- **Set elevation, Set grade and Drape act on them alone** through a `vertices` input, the button saying how many ("Set
+  6 vertices to RL 90"). Set grade measures from the first vertex picked on each string, in plan along the string
+  through the vertices between, picked or not, and sets only those picked. Drape adds no vertices at the surface's
+  triangle edges with vertices picked. With vertices picked these tools add no workflow step, since a workflow finds
+  strings by rule, not vertices. `vertices` with `from` or `to` is refused.
+- **Densify** (`string.densify`): each segment split into equal parts no longer than the spacing in plan, RLs graded
+  evenly along it, so the line is the same line; unlike Smooth, nothing curves. On the Strings row after Filter.
+- **Vertices at crossings** (`string.vertices_at_crossings`): a vertex on each string picked wherever another of them,
+  or a string in `with`, crosses it in plan, at the string's own RL there (decision 2); none where the crossing is on a
+  vertex already. On the Strings row after Densify.
+
+The geometry is `crates/zd-geom/src/vertices.rs`.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `three_of_ten_moved_five_metres_north_and_the_rest_exactly_where_they_were` (zd-geom) | vertices 3, 5 and 7 of ten 5 m north, a number twice taken once; the other seven unchanged | Exact |
+| `a_grade_on_the_vertices_picked_alone_measured_along_the_string` | vertices 3, 4 and 8 at 10 % from RL 50: 50, 51 and 55 (0, 10 and 50 m along); the others as they were | 1e-9 m |
+| `two_lines_crossing_each_gain_a_vertex_at_the_crossing` | a line east at 10 % crossed 30 m along by one north at RL 50: a vertex on each there, RL 103 and 50; again, none | 1e-9 m |
+| `a_100_m_straight_every_2_m_is_51_vertices_all_on_the_line` | 51 vertices, the ends exactly, each on the line; a closed 10 m square every 5 m, 8 | 1e-9 m |
+| `three_of_ten_moved_five_metres_north_in_one_run_and_one_undo` (zd-commands) | three of one string's and two of another's, one run: those moved, the rest unchanged; one undo for both | Exact |
+| `vertices_deleted_together_and_never_too_few` | three of ten deleted; a run leaving a string one vertex refused, named, nothing changed | Exact |
+| `set_elevation_grade_and_drape_on_the_vertices_picked_alone` | RL 90 on two; a grade on three; two draped on a plane at RL 120, no vertex added; the rest as they were | 1e-9 m |
+| `a_100_m_straight_densified_every_2_m_is_51_vertices_on_the_line` | 49 added, 51 in all, every one on the line | 1e-9 m |
+| `zd-app --bench --string-edits` | two lines picked, Alt and a box round three vertices of each: the panel says 6 picked on 2 strings; Set elevation sets them alone to RL 90; a drag of one onto the vertex 10 m north moves all six 10 m north; Ctrl+Z puts them back; Delete deletes them; Esc lets them go, then the strings; Densify every 5 m makes 19; Vertices at crossings adds one to each line and two to the line across | 1e-6 m |
+
+The Strings row now folds Densify and Vertices at crossings into More at the bench's width, with Move and the rest after
+them; the bench reaches them there.
+
+In the app, `--string-edits` passes 31 of 31, `--shell` 62 of 62, and `--select`, `--clicks` and `--workflow` pass whole.

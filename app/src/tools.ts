@@ -48,6 +48,8 @@ export type ToolIcon =
   | 'filter'
   | 'reverse'
   | 'close'
+  | 'densify'
+  | 'crossings'
   | 'move'
   | 'copy'
   | 'rotate'
@@ -213,6 +215,8 @@ export const TOOLS: readonly Tool[] = [
   { key: 'strings:fillet', stage: 'strings', label: 'Round corners', tip: 'Rounds the corners of each string picked to a radius.', icon: 'round-corners', panel: 'strings', mode: 'fillet', command: 'string.fillet', step: { takes: 'the strings picked' } },
   { key: 'strings:smooth', stage: 'strings', label: 'Smooth', tip: 'Smooths each string picked, a vertex every so many metres.', icon: 'smooth', panel: 'strings', mode: 'smooth', command: 'string.smooth', step: { takes: 'the strings picked' } },
   { key: 'strings:filter', stage: 'strings', label: 'Filter', tip: "Takes out vertices each string picked doesn't need.", icon: 'filter', panel: 'strings', mode: 'filter', command: 'string.filter', step: { takes: 'the strings picked' } },
+  { key: 'strings:densify', stage: 'strings', label: 'Densify', tip: 'Adds a vertex every so many metres to each string picked, the line unchanged.', icon: 'densify', panel: 'strings', mode: 'densify', command: 'string.densify', step: { takes: 'the strings picked' } },
+  { key: 'strings:vertices_at_crossings', stage: 'strings', label: 'Vertices at crossings', tip: 'Adds a vertex to each string picked wherever another crosses it.', short: 'At crossings', icon: 'crossings', panel: 'strings', mode: 'vertices_at_crossings', command: 'string.vertices_at_crossings', step: { takes: 'two strings or more' } },
   { key: 'strings:reverse', stage: 'strings', label: 'Reverse', tip: 'Turns each string picked to run the other way.', icon: 'reverse', panel: 'strings', mode: 'reverse', command: 'string.reverse', step: { takes: 'the strings picked' } },
   { key: 'strings:set_closed', stage: 'strings', label: 'Close', tip: 'Closes each string picked, or opens it.', icon: 'close', panel: 'strings', mode: 'set_closed', command: 'string.set_closed', step: { takes: 'the strings picked' } },
 
@@ -371,6 +375,8 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     'strings:fillet',
     'strings:smooth',
     'strings:filter',
+    'strings:densify',
+    'strings:vertices_at_crossings',
     'strings:reverse',
     'strings:set_closed',
     '|',

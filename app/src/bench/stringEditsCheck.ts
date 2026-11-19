@@ -6,7 +6,9 @@
 // 2) rounds a dog-leg's corner at a radius typed, every arc vertex that far from the centre; Ctrl+Z puts it back. Move
 // and copy (workstream 3), from the Solids row: a toe moved by two snapped clicks and by distances typed, one rotated a
 // quarter turn about a vertex clicked, and a mirrored copy of the dog-leg across the pit limit, picked once made; each
-// put back by Ctrl+Z. Then
+// put back by Ctrl+Z. Vertices (workstream 4): Alt and a box round three vertices each of two lines picked, set to RL 90
+// by Set elevation, dragged 10 m north by one of them, deleted by Delete, let go by Esc before the strings; Densify and
+// Vertices at crossings by their buttons. Then
 // the layers-only tree (Filtering plan, workstream 0): a row a layer saying what's on it, none a string; a right click on
 // the dog-leg in the view hides it from its menu, its layer's row says so, and Show all hidden brings it back. A layer's
 // filter (decision 0088, workstream 3): Filter by attributes… on the toes' right-click, `length: >170` typed keeps the
@@ -70,10 +72,17 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   const goButton = () => [...(panel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].at(-1) ?? null;
   const said = () => panel()?.textContent ?? '';
   const footer = () => document.querySelector('footer')?.textContent ?? '';
+  /** A Strings tool from its row, or from More where the row folds it. */
   const useTool = async (key: string) => {
     document.querySelector<HTMLButtonElement>('[role="tab"][data-stage="strings"]')?.click();
     await wait(200);
-    document.querySelector<HTMLButtonElement>(`[data-slot="ribbon"] [data-tool="strings:${key}"]`)?.click();
+    const onRow = document.querySelector<HTMLButtonElement>(`[data-slot="ribbon"] button[data-tool="strings:${key}"]:not([data-slot="row-more"])`);
+    if (onRow) onRow.click();
+    else {
+      document.querySelector<HTMLButtonElement>('[data-slot="row-more"]')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse', ctrlKey: false }));
+      await wait(300);
+      document.querySelector<HTMLElement>(`[role="menuitem"][data-tool="strings:${key}"]`)?.click();
+    }
     await wait(500);
   };
   const choose = async (group: string, label: string) => {
@@ -312,6 +321,129 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   await key('z', true);
   await wait(500);
   expect('one Ctrl+Z takes the copy away', !(await projectSummary()).objects.some((o) => o.name === 'Dog-leg copy'));
+  await key('Escape');
+
+  // Vertices (workstream 4): two lines of ten vertices 10 m apart, picked, then Alt and a box round three of each.
+  await key('Escape');
+  const lineA = await make('Line A', Array.from({ length: 10 }, (_, i) => [E + 200 + 10 * i, N + 100, 100] as Vec3), 'vertex lines');
+  const lineB = await make('Line B', Array.from({ length: 10 }, (_, i) => [E + 200 + 10 * i, N + 110, 100] as Vec3), 'vertex lines');
+  await show(await projectSummary());
+  await settle();
+  await click([E + 205, N + 100, 100]);
+  await click([E + 205, N + 110, 100], true);
+  const altDrag = async (from: Vec3, to: Vec3) => {
+    const [ax, ay] = screen(from);
+    const [bx, by] = screen(to);
+    const pointer = (type: string, x: number, y: number) =>
+      canvas.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, button: 0, buttons: type === 'pointerup' ? 0 : 1, pointerId: 1, pointerType: 'mouse', isPrimary: true, bubbles: true, cancelable: true, altKey: true }));
+    pointer('pointerdown', ax, ay);
+    pointer('pointermove', (ax + bx) / 2, (ay + by) / 2);
+    pointer('pointermove', bx, by);
+    pointer('pointerup', bx, by);
+    await settle();
+  };
+  await useTool('set_elevation');
+  await altDrag([E + 225, N + 95, 100], [E + 255, N + 115, 100]);
+  const vertexSays = panel()?.querySelector('[data-slot="strings-on"]')?.textContent?.trim() ?? '';
+  expect('Alt and a box round three vertices of each line picks those six: the Strings panel says so', vertexSays === '6 vertices picked on 2 strings' && selection().length === 2, { says: vertexSays, picked: selection().length });
+  const rlBox = panel()?.querySelector<HTMLInputElement>('input[aria-label="RL for every vertex"]') ?? null;
+  if (rlBox) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(rlBox, '90');
+    rlBox.dispatchEvent(new Event('input', { bubbles: true }));
+    rlBox.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  await settle();
+  const levelSays = goButton()?.textContent?.trim() ?? '';
+  goButton()?.click();
+  await wait(800);
+  const rlsOf = async (id: string) => ((await points(id)) as Vec3[]).map((p) => p[2]);
+  const [rlA, rlB] = [await rlsOf(lineA), await rlsOf(lineB)];
+  const picked3 = (rls: number[]) => rls.every((z, i) => (i >= 3 && i <= 5 ? z === 90 : z === 100));
+  expect('Set elevation sets the six vertices picked alone to RL 90, the others at 100', levelSays === 'Set 6 vertices to RL 90' && picked3(rlA) && picked3(rlB), { button: levelSays, a: rlA, b: rlB });
+
+  // A drag on one picked vertex, onto the vertex 10 m north of it on Line B: all six move 10 m north, RLs kept.
+  const yOf = async (id: string) => ((await points(id)) as Vec3[]).map((p) => p[1] - N);
+  {
+    const [ax, ay] = screen([E + 230, N + 100, 90]);
+    const [bx, by] = screen([E + 230, N + 110, 90]);
+    const pointer = (type: string, x: number, y: number) =>
+      canvas.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, button: 0, buttons: type === 'pointerup' ? 0 : 1, pointerId: 1, pointerType: 'mouse', isPrimary: true, bubbles: true, cancelable: true }));
+    pointer('pointerdown', ax, ay);
+    pointer('pointermove', (ax + bx) / 2, (ay + by) / 2);
+    await wait(300);
+    pointer('pointermove', bx, by);
+    await wait(500);
+    pointer('pointerup', bx, by);
+    await wait(800);
+  }
+  const [yA, yB] = [await yOf(lineA), await yOf(lineB)];
+  const movedNorth = (ys: number[], base: number) => ys.every((y, i) => near(y, i >= 3 && i <= 5 ? base + 10 : base));
+  const [zA2, zB2] = [await rlsOf(lineA), await rlsOf(lineB)];
+  expect(
+    'a drag on a picked vertex onto the one 10 m north moves all six 10 m north, at their RLs',
+    movedNorth(yA, 100) && movedNorth(yB, 110) && picked3(zA2) && picked3(zB2),
+    { a: yA, b: yB },
+  );
+  await key('z', true);
+  await wait(500);
+  expect('one Ctrl+Z puts all six back', movedNorth((await yOf(lineA)).map((y, i) => (i >= 3 && i <= 5 ? y + 10 : y)), 100));
+
+  // Delete deletes the six picked, in one undo.
+  await key('Delete');
+  await wait(800);
+  const [countA, countB] = [(await points(lineA)).length, (await points(lineB)).length];
+  expect('Delete deletes the vertices picked from both lines, the strings kept', countA === 7 && countB === 7 && selection().length === 2, { a: countA, b: countB });
+  await key('z', true);
+  await wait(500);
+
+  // Esc lets the vertices go first, then the strings.
+  await altDrag([E + 225, N + 95, 100], [E + 255, N + 115, 100]);
+  const before4 = panel()?.querySelector('[data-slot="strings-on"]')?.textContent?.trim() ?? '';
+  await key('Escape');
+  const after4 = panel()?.querySelector('[data-slot="strings-on"]')?.textContent?.trim() ?? '';
+  const strings4 = selection().length;
+  await key('Escape');
+  expect('Esc lets the vertices go and keeps the strings; again, lets the strings go', before4 === '6 vertices picked on 2 strings' && after4 === '2 strings' && strings4 === 2 && selection().length === 0, { before: before4, after: after4, strings: strings4, then: selection().length });
+
+  // Densify Line A every 5 m: each 10 m segment in two, 19 vertices, on the line.
+  await useTool('densify');
+  await click([E + 205, N + 100, 100]);
+  const densifySays = goButton()?.textContent?.trim() ?? '';
+  const spacingBox = panel()?.querySelector<HTMLInputElement>('input[aria-label="Vertex spacing"]') ?? null;
+  if (spacingBox) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(spacingBox, '5');
+    spacingBox.dispatchEvent(new Event('input', { bubbles: true }));
+    spacingBox.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  await settle();
+  goButton()?.click();
+  await wait(800);
+  const dense = (await points(lineA)) as Vec3[];
+  expect('Densify Line A every 5 m: 19 vertices, every one on the line', densifySays === 'Add vertices to Line A' && dense.length === 19 && dense.every((p, i) => near(p[0], E + 200 + 5 * i) && near(p[1], N + 100)), { button: densifySays, vertices: dense.length });
+  await key('z', true);
+  await wait(500);
+
+  // Vertices at crossings: a line across both, all three picked; each gains a vertex where another crosses it.
+  const across3 = await make('Across', [[E + 235, N + 80, 50], [E + 235, N + 140, 50]], 'vertex lines');
+  await show(await projectSummary());
+  await settle();
+  await useTool('vertices_at_crossings');
+  await click([E + 205, N + 100, 100]);
+  await click([E + 205, N + 110, 100], true);
+  await click([E + 235, N + 130, 50], true);
+  const crossSays = goButton()?.textContent?.trim() ?? '';
+  goButton()?.click();
+  await wait(800);
+  const crossed = [(await points(lineA)).length, (await points(lineB)).length, (await points(across3)).length];
+  const onA = ((await points(lineA)) as Vec3[]).find((p) => near(p[0], E + 235));
+  expect(
+    // Line A's vertices either side, 230 and 240 m east, were set to RL 90 above: the crossing at 235 m is at RL 90.
+    'Vertices at crossings on the two lines and one across them: one each on the lines at their own RL (90), two on the line across',
+    crossSays === 'Add vertices where 3 strings cross' && JSON.stringify(crossed) === '[11,11,4]' && !!onA && near(onA[2], 90),
+    { button: crossSays, vertices: crossed },
+  );
+  await runCommand('object.delete_many', { objects: [lineA, lineB, across3] });
+  await show(await projectSummary());
   await key('Escape');
   void limit;
   void ramp;

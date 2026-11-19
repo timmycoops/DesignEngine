@@ -37,6 +37,7 @@ mod string;
 mod string_cut;
 mod strips;
 mod transform;
+mod vertices;
 mod wall;
 
 pub use benches::{BenchCut, BenchPiece, MAX_LEVELS, bench_levels, cut_solid_by_levels};
@@ -72,6 +73,7 @@ pub use strips::{CLEAR_OF_SOLID, Crossing, FaceCut, FaceShort, FilledGap, JoinLo
 pub use string_cut::{Extended, Keep, Trimmed, extend_string, split_string_at, trim_string};
 pub use fillet::{Rounded, fillet_string};
 pub use transform::{Transform, move_grid, transform_crossings, transform_mesh, transform_string};
+pub use vertices::{delete_vertices, densify_string, grade_vertices, move_vertices, picked_in_order, set_vertices_rl, vertices_at_crossings};
 pub use string::{Corner, DrapeLog, MOST_LOOSE_PIECES, OffsetSide, ON_THE_STRING, PieceJoin, PlanCrossing, branching_ends, drape_string, filter_string, grade_string, join_pieces, join_strings, offset_string, plan_crossings, redraw_stretch, smooth_string, split_string};
 
 /// Below this many triangles a search stays on one thread.

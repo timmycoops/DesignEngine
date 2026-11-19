@@ -172,6 +172,13 @@ export interface Workspace {
   pickPoint: (prompt: string) => Promise<Vec3 | null>;
   /** Two clicks in the viewport, with a line following the cursor from the first. Null if it's cancelled. */
   pickLine: (first: string, second: string) => Promise<[Vec3, Vec3] | null>;
+  /**
+   * Vertices picked in the view by Alt and a box on the strings picked (String tools plan, workstream 4), each string's
+   * by number from 0, in order. Set elevation, Set grade and Drape act on them alone.
+   */
+  vertexPicks: Record<string, number[]>;
+  /** Lets every vertex picked go. */
+  letVerticesGo: () => void;
   /** Clicks in the viewport until Enter, with a line following the cursor. Null if it's cancelled. */
   pickString: (prompt: string) => Promise<Vec3[] | null>;
   /** In Draw string mode. */

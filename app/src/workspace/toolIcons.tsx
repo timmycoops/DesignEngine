@@ -18,6 +18,7 @@ import {
   FlipHorizontal2,
   Focus,
   FolderOpen,
+  GitCommitHorizontal,
   GitCompareArrows,
   Grid2x2,
   Grid3x3,
@@ -64,6 +65,7 @@ import {
   Waypoints,
   Workflow,
   Wrench,
+  X,
 } from 'lucide-react';
 import type { Tool, ToolIcon } from '@/tools';
 
@@ -96,6 +98,8 @@ const ICONS: Record<ToolIcon, LucideIcon> = {
   filter: Filter,
   reverse: ArrowLeftRight,
   close: CircleDot,
+  densify: GitCommitHorizontal,
+  crossings: X,
   move: Move,
   copy: Copy,
   rotate: RotateCcw,
