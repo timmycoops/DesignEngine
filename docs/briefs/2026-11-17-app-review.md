@@ -104,7 +104,8 @@ Done (19 Nov, branch `app/review-fixes`): after Run all cases stops at a pause, 
 and Continue reads "Continue from step N, then 50m": it runs that case on and then the cases after it, as Run all cases
 would have, stopping again at the next pause or refusal (0066's decision 5 holds). Tests: `zd-app`
 `continue_after_a_pause_runs_the_cases_after_it`, and the workflow bench check now puts a pause in as step 2, runs all
-cases, presses Continue and finds the second case's pieces.
+cases, presses Continue (Base on, then 60 to its own pause, 60 picked), presses Continue again and finds 60's pieces:
+54 of 54 checks pass in the release app.
 
 ## 4. After a run, and at the pause, the view is empty
 

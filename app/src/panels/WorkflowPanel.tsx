@@ -166,7 +166,8 @@ export function WorkflowPanel() {
     const stoppedCase = stopped?.case ?? BASE;
     const after = stopped?.status === 'paused' ? columns.slice(columns.indexOf(stoppedCase) + 1) : [];
     setAllPaused(after.length > 0 ? { workflow: chosen.id, case: stoppedCase, after } : null);
-    if (after.length > 0 && stoppedCase !== caseName) pickCase(stoppedCase);
+    // The case that paused is picked, so its Continue is the one on show, whether or not cases follow it.
+    if (stopped?.status === 'paused' && stoppedCase !== caseName) pickCase(stoppedCase);
     if (records.length > 0 && tidy) await tidyAfter(chosen.id, records[records.length - 1], records.map((r) => r.case));
     setBusy(false);
     if (!outcome.records) return setReport({ notes: [], error: outcome.error });
