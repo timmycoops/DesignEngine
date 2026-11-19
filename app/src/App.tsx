@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { confirm, message, open, save } from '@tauri-apps/plugin-dialog';
 import type { DockviewApi } from 'dockview-react';
 import { cn } from 'cn';
@@ -35,6 +36,8 @@ import { concealed,
   checkLinks,
   runLog,
   saveProject,
+  exitApp,
+  projectUnsaved,
   setContours,
   setLayerOpacity,
   setLayerFilter,
@@ -693,23 +696,56 @@ export default function App() {
   const onUndo = () => attempt(async () => show(await undo()));
   const onRedo = () => attempt(async () => show(await redo()));
 
+  /** Saves, to a file asked for when `saveAs` or never saved; false when no file was picked. */
+  const saveNow = async (saveAs: boolean) => {
+    let path: string | undefined;
+    if (saveAs || !summary?.path) {
+      const chosen = await save({ title: 'Save project as', defaultPath: 'project.zdp', filters: [{ name: 'Project', extensions: ['zdp'] }] });
+      if (!chosen) return false;
+      path = chosen.toLowerCase().endsWith('.zdp') ? chosen : `${chosen}.zdp`;
+    }
+    setStatus({ text: 'Saving…' });
+    const reply = await saveProject(path);
+    setStatus({
+      text: reply.unchanged
+        ? `Nothing has changed since the last save of ${reply.path}`
+        : `Saved ${reply.path}: ${(reply.bytes / 1e6).toFixed(1)} MB in ${reply.ms.toFixed(0)} ms`,
+    });
+    show(await projectSummary());
+    return true;
+  };
+  const saveNowRef = useRef(saveNow);
+  saveNowRef.current = saveNow;
+
   const onSave = (saveAs: boolean) =>
     attempt(async () => {
-      let path: string | undefined;
-      if (saveAs || !summary?.path) {
-        const chosen = await save({ title: 'Save project as', defaultPath: 'project.zdp', filters: [{ name: 'Project', extensions: ['zdp'] }] });
-        if (!chosen) return;
-        path = chosen.toLowerCase().endsWith('.zdp') ? chosen : `${chosen}.zdp`;
-      }
-      setStatus({ text: 'Saving…' });
-      const reply = await saveProject(path);
-      setStatus({
-        text: reply.unchanged
-          ? `Nothing has changed since the last save of ${reply.path}`
-          : `Saved ${reply.path}: ${(reply.bytes / 1e6).toFixed(1)} MB in ${reply.ms.toFixed(0)} ms`,
-      });
-      show(await projectSummary());
+      await saveNow(saveAs);
     });
+
+  /**
+   * Before closing, or starting or opening another project (app review brief, 17 Nov, item 1): with work unsaved, asks
+   * Save, Don't save or Cancel. True to go on: nothing to lose, saved, or Don't save; false for Cancel or a save not made.
+   */
+  const keepWork = useCallback(async (before: string) => {
+    if (!(await projectUnsaved())) return true;
+    const answer = await message(`This project has changes that haven't been saved. Save them before ${before}?`, {
+      title: 'Unsaved changes',
+      kind: 'warning',
+      buttons: { yes: 'Save', no: "Don't save", cancel: 'Cancel' },
+    });
+    if (answer === 'Yes' || answer === 'Save') return saveNowRef.current(false);
+    return answer === 'No' || answer === "Don't save";
+  }, []);
+
+  // The window's close button, with work unsaved: the shell keeps the window and asks here (it closes at once otherwise).
+  useEffect(() => {
+    const stop = listen('close-asked', () =>
+      void attempt(async () => {
+        if (await keepWork('closing')) await exitApp();
+      }),
+    );
+    return () => void stop.then((unlisten) => unlisten());
+  }, [attempt, keepWork]);
 
   /**
    * Seam models' grids checked where they are now (decision 0058, stage 4). What opening relinked is said; a folder
@@ -752,6 +788,7 @@ export default function App() {
   /** Opens a `.zdp` project file, or an older `.zdproj` folder, which saves as a `.zdp` beside it (decision 0058). */
   const onOpen = (folder: boolean) =>
     attempt(async () => {
+      if (!(await keepWork('opening another'))) return;
       const path = folder
         ? await open({ directory: true, title: 'Open an older project folder (.zdproj)' })
         : await open({ title: 'Open project', filters: [{ name: 'Project', extensions: ['zdp'] }] });
@@ -771,7 +808,7 @@ export default function App() {
 
   const onNew = () =>
     attempt(async () => {
-      if (!(await confirm('Start a new project? Anything unsaved in this one is lost.', { title: 'New project', kind: 'warning' }))) return;
+      if (!(await keepWork('starting a new one'))) return;
       select(null);
       show(await newProject());
       setStatus({ text: 'New project' });

@@ -1699,6 +1699,13 @@ pub fn write_results(text: String) -> Result<String, String> {
     Ok(path)
 }
 
+/// Whether closing, or starting or opening another project, would lose work: anything run, undone or redone since the
+/// last save or open, or a run still going (app review brief, 17 Nov, item 1).
+#[tauri::command]
+pub async fn project_unsaved(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.app.lock().unwrap().would_lose_work())
+}
+
 #[tauri::command]
 pub fn exit_app(app: AppHandle) {
     app.exit(0);

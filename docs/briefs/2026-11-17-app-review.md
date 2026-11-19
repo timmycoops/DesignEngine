@@ -34,6 +34,13 @@ in `crates/zd-io/src/zdp.rs` (around line 1226) and not taken away when the wind
 **Check:** an app bench check that runs a command, asks to close, and finds the prompt; Don't save closes and leaves no
 lock file; Save writes the file first.
 
+Done (19 Nov, branch `app/review-fixes`): the shell keeps the window when there's work since the last save or open (a run,
+undo or redo; showing and hiding don't count) or a run going, and the app asks Save, Don't save or Cancel; New and Open
+ask the same. The lock note is taken away on the app's exit, however it closes. Tests: `zd-commands`
+`unsaved_work_is_known_and_the_lock_goes_when_the_file_is_let_go`, `zd-app`
+`closing_asks_only_with_work_to_lose_and_takes_the_lock_away`. Not an app bench check: the prompt is the system's own
+dialog, which the bench can't answer, so the close itself wants a check by hand.
+
 ## 2. `rd_adt` means two things, and Main fields shows the wrong density beside tonnes
 
 **Seen** (Reserves table, Base, block B1, Main fields):

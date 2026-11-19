@@ -368,6 +368,18 @@ impl Session {
         self.store.as_ref().map(|s| s.lock().unwrap_or_else(|p| p.into_inner()).path().to_path_buf())
     }
 
+    /// Whether anything has been run, undone or redone since the last save or open, so closing would lose it. Display
+    /// state alone (shown, hidden, looks) doesn't count: it isn't work.
+    pub fn has_unsaved_work(&self) -> bool {
+        self.log.len() != self.saved_log_len
+    }
+
+    /// Lets go of the project file: its lock note is removed once no save of it is still running. The session keeps
+    /// its project but no longer knows its file; for when the app closes or moves to another project.
+    pub fn release_file(&mut self) {
+        self.store = None;
+    }
+
     /// Who else has this session's file open, when someone does: a save to it is refused.
     pub fn locked_by(&self) -> Option<String> {
         self.store.as_ref()?.lock().unwrap_or_else(|p| p.into_inner()).locked_by().map(|l| l.describe())

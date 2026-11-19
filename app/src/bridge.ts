@@ -1419,3 +1419,6 @@ export const benchConfig = () => invoke<BenchConfig | null>('bench_config');
 export const writeResults = (text: string) => invoke<string>('write_results', { text });
 
 export const exitApp = () => invoke<void>('exit_app');
+
+/** Whether closing, or starting or opening another project, would lose work: runs since the last save or open, or a run going. */
+export const projectUnsaved = () => invoke<boolean>('project_unsaved');

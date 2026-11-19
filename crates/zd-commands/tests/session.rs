@@ -316,6 +316,41 @@ fn save_and_open_carry_the_project_and_its_run_log() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// What closing the app asks about (app review brief, 17 Nov, item 1): work since the last save or open, and the lock
+/// note let go of when the app lets go of the file.
+#[test]
+fn unsaved_work_is_known_and_the_lock_goes_when_the_file_is_let_go() {
+    let dir = std::env::temp_dir().join(format!("zd-commands-unsaved-{}-{}", std::process::id(), zd_core::RunId::new()));
+    let path = dir.join("pit.zdp");
+    let lock = dir.join("pit.zdp.lock");
+    let mut s = Session::with_builtins();
+    assert!(!s.has_unsaved_work(), "a new project with nothing run has nothing to lose");
+    let toe = created(&s.run("string.create", json!({ "name": "toe", "layer": "design", "points": [[E, N, 1.0], [E + 10.0, N, 1.0]] })).unwrap())[0];
+    assert!(s.has_unsaved_work(), "a run since the start");
+    s.save(&path).unwrap();
+    assert!(!s.has_unsaved_work(), "saved");
+    assert!(lock.is_file(), "the first save takes the lock");
+    s.set_objects_visible(&[toe], false);
+    assert!(!s.has_unsaved_work(), "hiding is display state, not work");
+    s.undo();
+    assert!(s.has_unsaved_work(), "an undo is a change");
+    s.save(&path).unwrap();
+    drop(s);
+    assert!(!lock.exists(), "a session dropped lets go of its file");
+
+    let mut t = Session::open(&path).unwrap();
+    assert!(!t.has_unsaved_work(), "a file just opened");
+    assert!(lock.is_file(), "opening takes the lock");
+    assert_eq!(t.redo(), None, "nothing to put back after an open");
+    assert!(!t.has_unsaved_work(), "nothing done is nothing to lose");
+    t.run("string.create", json!({ "name": "crest", "layer": "design", "points": [[E, N + 5.0, 9.0], [E + 10.0, N + 5.0, 9.0]] })).unwrap();
+    assert!(t.has_unsaved_work(), "a run since the open");
+    t.release_file();
+    assert!(!lock.exists(), "let go of: the lock note is removed");
+    assert_eq!(t.file(), None);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// A small grid in Vulcan's plain layout (big-endian; nodes from the south-west, x fastest).
 fn vulcan_grid(values: &[Option<f32>], cols: usize, rows: usize) -> Vec<u8> {
     let nodes: Vec<(f32, i32)> = values.iter().map(|v| (v.unwrap_or(0.0), i32::from(v.is_some()))).collect();
