@@ -27,7 +27,7 @@ pub use bounds::Aabb;
 pub use dataflow::{Dataflow, DataflowField, DataflowStep, FieldSource, FormulaStep, FormulaTest, Level, default_levels};
 pub use display::{Colouring, Contours, Display, Look, ReservesFilter};
 pub use face::{AzimuthSector, FaceDesign, FaceDirection, FaceLine, FaceProfile, HorizonValue, LineEdit, LineOn, MOST_TOLERANCE, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, USUAL_TURN_JOIN, WallRule, WallSide};
-pub use filters::{MEASURES, attribute_ci, attribute_word, filter_fits, filter_words, input_filter_fits, list_fits, measure, object_fits, object_value};
+pub use filters::{MEASURES, OBJECT_FIELDS, attribute_ci, attribute_word, filter_fits, filter_words, input_filter_fits, list_fits, measure, object_fits, object_list_fits, object_value};
 pub use grid::Grid;
 pub use id::{LayerId, ObjectId, RunId};
 pub use mesh::TriMesh;

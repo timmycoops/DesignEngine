@@ -31,8 +31,9 @@ test('suggestions: names where a name is typed, the cuts first, those named else
   // A table's fields, typed and never ticked, offered too; nothing that isn't there.
   assert.deepEqual(at('ro', 2, ['ROM\\Coal\\ash']).items, [{ insert: 'ROM\\Coal\\ash: ', label: 'ROM\\Coal\\ash', detail: 'type it' }]);
   // A layer's measures by what's on it; one an attribute already names isn't offered twice.
-  assert.deepEqual(measuresOf(['string']).map((m) => m.key), ['length', 'area', 'rl_min', 'rl_max']);
-  assert.deepEqual(measuresOf(['solid', 'grid']).map((m) => m.key), ['volume', 'rl_min', 'rl_max']);
+  assert.deepEqual(measuresOf(['string']).map((m) => m.key), ['length', 'area', 'rl_min', 'rl_max', 'name', 'id']);
+  assert.deepEqual(measuresOf(['solid', 'grid']).map((m) => m.key), ['volume', 'rl_min', 'rl_max', 'name', 'id']);
+  assert.deepEqual(measuresOf(['']).map((m) => m.key), [], 'an empty layer offers nothing');
   assert.deepEqual(at('vol', 3, measuresOf(['solid'])).items.map((i) => `${i.label} ${i.detail}`), ['volume 120 to 480'], 'the attribute wins');
   assert.equal(at('zz').hint, 'Nothing here is called zz');
 });

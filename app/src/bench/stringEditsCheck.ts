@@ -542,6 +542,18 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   await treeMenu('toes', 'Clear filter');
   const cleared = await filteredOut();
   expect('Clear filter on the right-click puts every toe back', cleared.length === 0 && !rowOf('toes')?.querySelector('[data-slot="layer-filter"]'), cleared);
+  // By id and by name (decision 0091): Toe 2's id typed keeps it alone; `name: Toe 1, Toe 3` keeps those two.
+  await treeMenu('toes', 'Filter by attributes…');
+  await typeFilter(`id: ${toes[1]}`);
+  const byId = await filteredOut();
+  await typeFilter('name: Toe 1, Toe 3');
+  const byName = await filteredOut();
+  expect(
+    'A layer filter by id keeps the one object, and by name the ones named',
+    JSON.stringify(byId) === JSON.stringify(['Dog-leg', 'Toe 1', 'Toe 3']) && JSON.stringify(byName) === JSON.stringify(['Dog-leg', 'Toe 2']),
+    { byId, byName },
+  );
+  await treeMenu('toes', 'Clear filter');
 
   // Strings from surfaces (workstream 5), from the Strings row: a slope 200 m square rising 10 % east from RL 95, half
   // over the topography at RL 100. Picked with the topography, Where surfaces meet makes one string 50 m into it at RL

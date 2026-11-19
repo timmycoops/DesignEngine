@@ -44,11 +44,20 @@ The tools weren't consistent:
    Copies tick are gone. As new on the original's layer is what Copy made, now with the original's own name.
    `object.copy` stays registered so saved workflows and scripts still run.
 5. **Engine rule 4 is reworded** to say this.
+6. **A filter picks objects by name and by id** (Tim, 20 November). A filter's names, wherever filters pick objects (a
+   layer's filter, a workflow step's input), now include `name`, the object's name, and `id`, its id as 32 hex digits.
+   - The id is matched whole, as text and case aside, so digits are never read as a number.
+   - A comma list of ids picks several, and `!` all but one.
+   - An attribute of the same name wins, as it does over a measure.
+   - Properties shows the id under Object, with a button that copies it.
+   - The filter box offers both names on any layer that has objects.
 
 ## Where
 
 - `crates/zd-commands/src/result_as.rs`: `take_result`, `make_anew` and `done_word`. They are called in `RunJob::run`,
   and a cut's pre-check in `workflow_run.rs` ignores `result` too.
+- `object_list_fits` and `OBJECT_FIELDS` in `crates/zd-core/src/filters.rs`; `IdField` in Properties; `measuresOf` in
+  `app/src/filters.ts`.
 - `app/src/design-system/kit/ToolPanel.tsx`: `useResultAs`, `resultParams`, the Result section and `ToolAction.result`.
 - The Strings panel, whose changing tools are listed in `CHANGES`, and the Move panel.
 
@@ -60,10 +69,11 @@ The tools weren't consistent:
 | `a_trim_as_new_with_no_layer_keeps_each_on_its_originals_layer` | A new "Toe 1" and "Toe 1 part 2" on 'toes', the cut at RL 106, the toe whole | 1e-9 m |
 | `a_join_as_new_deletes_nothing` | One joined string of 4 vertices; all three pieces still there, and said | Exact |
 | `a_move_as_new_is_a_copy` | A second "Toe 1" on 'toes' with its own id, 100 m east; the toe where it was | Exact |
+| `name_and_id_pick_objects` (zd-core) | A filter picks by name and by id, case aside: one id, a comma list of two, all but one. A part of an id fits nothing. An attribute called id wins. Two all-digit ids alike to 15 figures are told apart. A workflow step's input picks by id too. | Exact |
 | `what_result_cant_be` | An unknown setting and a blank layer refused with nothing changed; Offset as new says it made no difference | Exact |
 | `zd-app --bench --string-edits` | Clip as new on 'clipped' leaves the toe whole and makes a new "Long toe" there, RL 105 to 115, picked. Mirror as new makes a second "Dog-leg" across the pit limit, picked, with the dog-leg where it was. Ctrl+Z puts each back. | 1e-6 m |
 
-In the app: `--string-edits` 41 of 41, `--shell` 62 of 62, `--workflow` 54 of 54, `--select` 29 of 29 and `--clicks` 24
+In the app: `--string-edits` 42 of 42 (with a layer filter by `id:` and by `name:`), `--shell` 62 of 62, `--workflow` 54 of 54, `--select` 29 of 29 and `--clicks` 24
 of 24.
 
 Known limits:
@@ -71,4 +81,4 @@ Known limits:
 - Only the Strings and Move panels show the control so far. The Builder's Rebuild, Repair and the Surfaces panel take it
   as they're built or touched, and the command layer already honours it for them.
 - A trim's later parts keep the name the command gives them ("Toe 1 part 2"), as they do in place.
-- A filter can't yet pick an object by its id: filters read attributes and measures (0088).
+- Bench rules still read attributes alone, as before; `name` and `id` work where measures do.

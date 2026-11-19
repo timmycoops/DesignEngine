@@ -3,7 +3,8 @@
 //! objects with them. A filter names attributes, each with a comma list of the values it may hold: words, numbers, ranges
 //! such as `1-5`, or comparisons such as `<0.3` and `>=120` (`*` or blank is any). An item starting `!` is a value it may
 //! not hold (`!WASTE`). Names and words match with their case aside. On an object, a name it carries no attribute of may
-//! be one of its measures: `volume`, `area`, `length`, `rl_min` and `rl_max`.
+//! be one of its measures: `volume`, `area`, `length`, `rl_min` and `rl_max`; or `name`, the object's name, or `id`, its
+//! 128-bit id as 32 hex digits, matched whole as text, a comma list of them picking several (decision 0091).
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -116,14 +117,34 @@ pub fn measure(object: &Object, key: &str) -> Option<f64> {
     }
 }
 
-/// What a filter reads for a name on an object: its attribute of that name, case aside, or else its measure.
+/// The names a filter can give on any object besides its attributes and measures (decision 0091).
+pub const OBJECT_FIELDS: [&str; 2] = ["name", "id"];
+
+/// What a filter reads for a name on an object: its attribute of that name, case aside, or else its `name`, or else its
+/// measure. Its `id` is read by [`object_list_fits`], as text and never a number.
 pub fn object_value<'a>(object: &'a Object, key: &str) -> Option<Cow<'a, AttrValue>> {
-    attribute_ci(&object.attributes, key).map(Cow::Borrowed).or_else(|| measure(object, key).map(|m| Cow::Owned(AttrValue::Number(m))))
+    attribute_ci(&object.attributes, key)
+        .map(Cow::Borrowed)
+        .or_else(|| key.eq_ignore_ascii_case("name").then(|| Cow::Owned(AttrValue::Text(object.name.clone()))))
+        .or_else(|| measure(object, key).map(|m| Cow::Owned(AttrValue::Number(m))))
 }
 
-/// Whether an object fits a filter: every name it gives, an attribute or a measure, fits its list.
+/// Whether one name's list fits an object. An `id` it carries no attribute of is its id, matched whole as text, case
+/// aside, so 32 hex digits that happen to read as a number are never compared as one.
+pub fn object_list_fits(list: &str, object: &Object, key: &str) -> bool {
+    if key.eq_ignore_ascii_case("id") && attribute_ci(&object.attributes, key).is_none() {
+        let id = object.id.to_string();
+        let items: Vec<&str> = list.split(',').map(str::trim).filter(|i| !i.is_empty()).collect();
+        let (not, may): (Vec<&str>, Vec<&str>) = items.into_iter().partition(|i| i.starts_with('!'));
+        let is = |item: &str| item == "*" || item.eq_ignore_ascii_case(&id);
+        return (may.is_empty() || may.iter().any(|i| is(i))) && !not.iter().any(|i| i[1..].trim().eq_ignore_ascii_case(&id));
+    }
+    list_fits(list, object_value(object, key).as_deref())
+}
+
+/// Whether an object fits a filter: every name it gives, an attribute, a measure, its name or its id, fits its list.
 pub fn object_fits(when: &BTreeMap<String, String>, object: &Object) -> bool {
-    when.iter().all(|(key, list)| list_fits(list, object_value(object, key).as_deref()))
+    when.iter().all(|(key, list)| object_list_fits(list, object, key))
 }
 
 /// A workflow step input's filter (decision 0065; Filtering plan, decision 8). A word is read as a filter's list, so
@@ -135,7 +156,7 @@ pub fn input_filter_fits(filter: &BTreeMap<String, AttrValue>, object: &Object) 
             AttrValue::Text(t) => Cow::Borrowed(t),
             other => Cow::Owned(attribute_word(other)),
         };
-        list_fits(&list, object_value(object, key).as_deref())
+        object_list_fits(&list, object, key)
     })
 }
 
@@ -253,5 +274,37 @@ mod tests {
         assert!(input_filter_fits(&filter(vec![("strip", AttrValue::Text("1-5".into())), ("material", AttrValue::Text("Coal".into()))]), &solid));
         assert!(input_filter_fits(&filter(vec![("material", AttrValue::Text("!waste".into())), ("volume", AttrValue::Text(">=1000".into()))]), &solid));
         assert!(!input_filter_fits(&filter(vec![("volume", AttrValue::Text("<1000".into()))]), &solid));
+    }
+
+    /// A filter picks objects by their name, and by their id as 32 hex digits, one or several, or all but one; an
+    /// attribute of the same name wins; and an id made only of digits is still matched as text, not as a number.
+    #[test]
+    fn name_and_id_pick_objects() {
+        let when = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<BTreeMap<_, _>>();
+        let toe = object(Body::String(crate::Polyline { vertices: vec![[0.0, 0.0, 100.0], [10.0, 0.0, 100.0]], closed: false }), attrs(&[]));
+        let mut other = toe.clone();
+        other.id = crate::ObjectId::new();
+        other.name = "Crest 2".into();
+        let id = toe.id.to_string();
+        assert_eq!(id.len(), 32);
+        assert!(object_fits(&when(&[("name", &toe.name)]), &toe));
+        assert!(object_fits(&when(&[("NAME", &toe.name.to_uppercase())]), &toe), "case aside");
+        assert!(!object_fits(&when(&[("name", "Crest 2")]), &toe));
+        assert!(object_fits(&when(&[("id", &id)]), &toe));
+        assert!(object_fits(&when(&[("id", &id.to_uppercase())]), &toe), "case aside");
+        assert!(!object_fits(&when(&[("id", &id)]), &other));
+        let both = format!("{id}, {}", other.id);
+        assert!(object_fits(&when(&[("id", &both)]), &toe) && object_fits(&when(&[("id", &both)]), &other), "a comma list picks several");
+        assert!(!object_fits(&when(&[("id", &format!("!{id}"))]), &toe) && object_fits(&when(&[("id", &format!("!{id}"))]), &other), "all but one");
+        assert!(!object_fits(&when(&[("id", &id[..31])]), &toe), "a part of an id isn't it");
+        let named = object(Body::String(crate::Polyline { vertices: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], closed: false }), attrs(&[("id", AttrValue::Text("B12".into()))]));
+        assert!(object_fits(&when(&[("id", "B12")]), &named), "an attribute called id wins");
+        // Two ids of digits alone, alike to 15 figures: as numbers they'd be one; as text, two.
+        let mut digits = toe.clone();
+        digits.id = crate::ObjectId::parse("01900000000000000000000000000001").unwrap();
+        assert!(!object_fits(&when(&[("id", "01900000000000000000000000000002")]), &digits));
+        let mut fields = std::collections::BTreeMap::new();
+        fields.insert("id".to_string(), AttrValue::Text(digits.id.to_string()));
+        assert!(input_filter_fits(&fields, &digits), "a workflow step's input picks by id too");
     }
 }

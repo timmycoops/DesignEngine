@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Check, Focus, Minus, Trash2, X } from 'lucide-react';
+import { Check, Copy, Focus, Minus, Trash2, X } from 'lucide-react';
 import {
   type AddUp,
   type Colouring,
@@ -41,6 +41,41 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     <div className="grid grid-cols-[7.5rem_1fr] gap-2 px-3 py-0.5 text-xs">
       <span className="text-muted-foreground">{label}</span>
       <span className="min-w-0 truncate tabular-nums">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * The object's own 128-bit id, as 32 hex digits, with a button that copies it: what tells two objects of one name apart,
+ * and what a filter picks it by, `id: …` (decision 0091).
+ */
+function IdField({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2 px-3 py-0.5 text-xs">
+      <span className="text-muted-foreground">Id</span>
+      <span className="flex min-w-0 items-center gap-1">
+        <span data-slot="object-id" className="min-w-0 truncate font-mono text-[11px]" title={id}>
+          {id}
+        </span>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title={copied ? 'Copied: paste it into a filter as id: …' : 'Copy the id, to pick this object by it in a filter (id: …)'}
+          aria-label="Copy the id"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(id);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            } catch {
+              setCopied(false);
+            }
+          }}
+        >
+          {copied ? <Check /> : <Copy />}
+        </Button>
+      </span>
     </div>
   );
 }
@@ -871,6 +906,7 @@ export function PropertiesPanel() {
       <Section title="Object">
         <Field label="Layer">{current?.layer ?? '…'}</Field>
         <Field label="Revision">{object.revision}</Field>
+        <IdField id={object.id} />
         {current?.bounds && (
           <>
             <Field label="Easting">
