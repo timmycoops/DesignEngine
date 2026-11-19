@@ -6,7 +6,7 @@ paths:
 # Interface
 
 Moved from CLAUDE.md. Decisions: 0026 (one layer tree), 0043 (colour by RL), 0076 (docks), 0080 (clicks, Esc,
-shortcuts), 0087 (layers only), 0089 (lists in the app's look), 0091 (in place or as new).
+shortcuts), 0087 (layers only), 0089 (lists in the app's look), 0091 (in place or as new), 0092 (tools ask in turn).
 
 The shell is docks round the view (`docs/decisions/0076-docks-and-workflow-tabs.md`, the Build Plan's "UI improvements
 plan" tab): the layer tree on the left, a row a layer saying what's on it by kind and never a row an object, what isn't
@@ -43,7 +43,10 @@ kit in `app/src/design-system/kit/`: `ToolPanel` (what it does in one line that 
 foot named for what it does, Ctrl+Enter), `PanelHead` for a panel that isn't a tool, `NumberInput` with its unit, `NumberOrBlank` for a number that may be left blank, `TargetInput` for an RL, grid or surface, `Choice` (in `columns` where its options don't fit one row), `Select` (its choices in the app's own list, never the system's, `docs/decisions/0089-lists-in-the-apps-look.md`), `FilterInput`, `Field`, the badges,
 `RunResult`, and `ToolButton` for a button on a bar of tools. A tool that changes objects sets `result` on its `ToolAction` (`useResultAs`) and adds
 `resultParams` to what it runs: the panel then shows the one Result control, In place or As new on a layer
-(`docs/decisions/0091-in-place-or-as-new.md`); a tool that makes something doesn't. Colours come from the theme's tokens, one meaning each: gold picked, orange `warning`, blue `edited`,
+(`docs/decisions/0091-in-place-or-as-new.md`); a tool that makes something doesn't. A tool that takes inputs asks for them in
+turn (`useAsking` and `AskSteps`, `docs/decisions/0092-tools-ask-in-turn.md`): what to work on, then what with, then it
+runs and asks again; Esc steps back a prompt a press, and it asks only while its panel is in front. Clip and Trim do
+so far; the other two-input tools move onto it next. Colours come from the theme's tokens, one meaning each: gold picked, orange `warning`, blue `edited`,
 red refused, green valid. Don't hand-roll an input, select, badge or colour a kit part covers; add to the kit instead.
 
 

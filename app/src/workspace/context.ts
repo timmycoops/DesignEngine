@@ -112,6 +112,8 @@ export interface Workspace {
   isBeside: (id: PanelId, beside: PanelId) => boolean;
   /** A panel that does several things says which it's set to, so the ribbon lights that tool; null as it closes. */
   toolMode: (panel: PanelId, mode: string | null) => void;
+  /** The tool panels showing now, each the tab in front of its dock: a tool asks in turn only while it's there (decision 0092). */
+  panelsShown: PanelId[];
   /** Runs an engine command; reports the outcome on the status line. False if it failed. */
   run: (name: string, params: Record<string, unknown>) => Promise<boolean>;
   /** The same, handing back the run's record, or why it failed, for a panel to show. */
@@ -174,6 +176,14 @@ export interface Workspace {
   pickPoint: (prompt: string) => Promise<Vec3 | null>;
   /** Two clicks in the viewport, with a line following the cursor from the first. Null if it's cancelled. */
   pickLine: (first: string, second: string) => Promise<[Vec3, Vec3] | null>;
+  /**
+   * Asks what to work on (decision 0092): picks as ever until a right click or `finishObjects` (true), or Esc (false).
+   */
+  pickObjects: (prompt: string) => Promise<boolean>;
+  /** What's picked is all a tool asked for, as a right click. */
+  finishObjects: () => void;
+  /** Lets go whatever a tool is waiting on in the view. */
+  cancelPicks: () => void;
   /**
    * Vertices picked in the view by Alt and a box on the strings picked (String tools plan, workstream 4), each string's
    * by number from 0, in order. Set elevation, Set grade and Drape act on them alone.

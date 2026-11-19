@@ -273,6 +273,9 @@ export default function App() {
   const pickPoint = useCallback((prompt: string) => stringsRef.current?.pickPoint(prompt) ?? Promise.resolve(null), []);
   const pickLine = useCallback((first: string, second: string) => stringsRef.current?.pickLine(first, second) ?? Promise.resolve(null), []);
   const pickString = useCallback((prompt: string) => stringsRef.current?.pickString(prompt) ?? Promise.resolve(null), []);
+  const pickObjects = useCallback((prompt: string) => stringsRef.current?.pickObjects(prompt) ?? Promise.resolve(false), []);
+  const finishObjects = useCallback(() => stringsRef.current?.finishObjects(), []);
+  const cancelPicks = useCallback(() => stringsRef.current?.cancelPicks(), []);
 
   const focusIssue = useCallback(
     (id: string, horizon: string, issue: number) => {
@@ -1211,6 +1214,7 @@ export default function App() {
       openTool,
       toolAsk,
       toolMode,
+      panelsShown,
       notebookOf,
       openNotebook,
       runInNotebook,
@@ -1248,6 +1252,9 @@ export default function App() {
       pickPoint,
       pickLine,
       pickString,
+      pickObjects,
+      finishObjects,
+      cancelPicks,
       vertexPicks,
       letVerticesGo: () => stringsRef.current?.letVerticesGo(),
       drawing: mode === 'draw',
@@ -1255,7 +1262,7 @@ export default function App() {
       viewMenu,
       closeViewMenu: () => setViewMenu(null),
     }),
-    [viewMenu, summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLayerFilter, changeReservesFilter, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, vertexPicks, mode, typeVertex, openTool, toolAsk, toolMode, notebookOf, openNotebook, runInNotebook, drafts],
+    [viewMenu, summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLayerFilter, changeReservesFilter, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, pickObjects, finishObjects, cancelPicks, vertexPicks, mode, typeVertex, openTool, toolAsk, toolMode, panelsShown, notebookOf, openNotebook, runInNotebook, drafts],
   );
 
   /** The view's own tools, for the bar on the view (decision 0076). The keys below do the same. */
