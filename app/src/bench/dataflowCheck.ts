@@ -4,7 +4,7 @@
 // Filtering plan L4), and what Properties shows read back.
 import { EditorView } from '@codemirror/view';
 import type { DockviewApi } from 'dockview-react';
-import { objectDetails, openProject, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, undo, writePicture } from '../bridge';
+import { concealed, objectDetails, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, undo, writePicture } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
 import { windowPicture } from './windowPicture';
 import { showPanel } from '../workspace/Workspace';
@@ -210,6 +210,29 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
   for (let k = 0; k < 50 && !(panel()?.textContent ?? '').includes('solids picked'); k++) await wait(100);
   const picked = /([\d,]+) solids? picked/.exec(panel()?.textContent ?? '')?.[1];
   expect("Select its solids picks the block's 21 solids", picked === '21', picked);
+  // Isolate its solids: the block's 21 alone on show; again, everything as it was.
+  const onShow = (s: ProjectSummary) => {
+    const on = new Set(s.layers.filter((l) => l.visible).map((l) => l.id));
+    return s.objects.filter((o) => ['string', 'surface', 'solid', 'grid'].includes(o.kind) && on.has(o.layer) && !concealed(o)).map((o) => o.id).sort();
+  };
+  const state = (s: ProjectSummary) => JSON.stringify({ layers: s.layers.map((l) => [l.id, l.visible]), hidden: s.objects.filter((o) => o.hidden).map((o) => o.id).sort() });
+  const before = await projectSummary();
+  const button = (text: string) => [...(panel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent?.includes(text));
+  button('Isolate its solids')?.click();
+  for (let k = 0; k < 50 && !(panel()?.textContent ?? '').includes('alone on show'); k++) await wait(100);
+  await wait(200);
+  const alone = onShow(await projectSummary());
+  const block = baseTable ? (await reservesSolids(baseTable.id, ['Pit', '3', 'B1'])).sort() : [];
+  const lit = button('Show what was shown') !== undefined;
+  button('Show what was shown')?.click();
+  for (let k = 0; k < 50 && !(panel()?.textContent ?? '').includes('Shown as it was'); k++) await wait(100);
+  await wait(200);
+  const after = await projectSummary();
+  expect(
+    "Isolate its solids shows the block's 21 solids alone, and Show what was shown puts the layers and objects back as they were",
+    alone.length === 21 && JSON.stringify(alone) === JSON.stringify(block) && lit && state(after) === state(before),
+    { alone: alone.length, block: block.length, lit, putBack: state(after) === state(before) },
+  );
   await checkColumn(panel, expect, picture);
   if (baseTable) {
     const ids = await reservesSolids(baseTable.id, ['Pit', '4', 'B2', 'M']);

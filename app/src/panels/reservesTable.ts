@@ -112,3 +112,37 @@ export function nodeForLeaf(levels: string[], leaf: string[]): { node: string[];
 
 export const samePath = (a: string[], b: string[]) => a.length === b.length && a.every((w, i) => w === b[i]);
 export const startsWith = (path: string[], head: string[]) => head.length <= path.length && head.every((w, i) => w === path[i]);
+
+/** What Isolate its solids changes, and what it puts back. */
+export interface Isolation {
+  /** The layers holding the solids, turned on. */
+  showLayers: string[];
+  /** Every other layer that was on, turned off. */
+  hideLayers: string[];
+  /** What else is drawn on the solids' layers and was showing, hidden. */
+  hide: string[];
+  /** The node's solids that were hidden on their own, shown. */
+  unhide: string[];
+}
+
+const DRAWN = new Set(['string', 'surface', 'solid', 'grid']);
+
+/**
+ * A node's solids alone on screen: their layers on, every other layer off, and on their layers everything else drawn
+ * hidden. Put back, the layers return as they were and only what this hid or showed changes back, so an object hidden
+ * by hand beforehand stays hidden.
+ */
+export function isolation(
+  solids: string[],
+  objects: { id: string; layer: string; kind: string; hidden: boolean }[],
+  layers: { id: string; visible: boolean }[],
+): Isolation {
+  const ids = new Set(solids);
+  const theirs = new Set(objects.filter((o) => ids.has(o.id)).map((o) => o.layer));
+  return {
+    showLayers: [...theirs],
+    hideLayers: layers.filter((l) => l.visible && !theirs.has(l.id)).map((l) => l.id),
+    hide: objects.filter((o) => theirs.has(o.layer) && !ids.has(o.id) && !o.hidden && DRAWN.has(o.kind)).map((o) => o.id),
+    unhide: objects.filter((o) => ids.has(o.id) && o.hidden).map((o) => o.id),
+  };
+}

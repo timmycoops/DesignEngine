@@ -69,8 +69,8 @@ export interface Workspace {
    * drawn, snapped to or cut by a section. {} takes it away. Display only: saved, not undone.
    */
   setLayerFilter: (layer: string, when: Record<string, string>) => void;
-  /** Shows or hides objects one by one, under their layer's tick. Display only: not undone. */
-  setObjectsVisible: (objects: string[], visible: boolean) => void;
+  /** Shows or hides objects one by one, under their layer's tick, settled when shown. Display only: not undone. */
+  setObjectsVisible: (objects: string[], visible: boolean) => Promise<void>;
   /**
    * Colours objects by RL or their layer, sets their opacity (0 to 1), or both; null leaves that part.
    * Display only: saved with the project, not undone. It shows at once; `commit` false is a preview, as a
