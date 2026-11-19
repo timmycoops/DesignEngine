@@ -34,3 +34,11 @@ __pycache__/
 testdata/synthetic/grids/
 # Made by testdata/synthetic/reserves_workflow.py
 testdata/synthetic/reserves/
+
+# Claude Code: worktrees made by parallel sessions, and personal settings and notes
+.claude/worktrees/
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Extra build folders beside /target/
+/target-*/

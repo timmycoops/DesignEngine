@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm typecheck)",
+      "Bash(pnpm run typecheck)",
+      "Bash(tasklist *)",
+      "mcp__1a59c906-04da-521d-bda7-7f71b9f9e01c__read",
+      "mcp__1a59c906-04da-521d-bda7-7f71b9f9e01c__guide",
+      "mcp__ccd_pr__get_status"
+    ],
+    "deny": [
+      "Edit(//d/Dev/DesignEngine/testdata/golden/**)",
+      "Edit(//d/Deswik Helper/**)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git push origin main)",
+      "Bash(git push origin main *)"
+    ]
+  }
+}
