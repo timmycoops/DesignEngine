@@ -2,7 +2,8 @@
 
 Status: agreed 17 November 2026 (Tim: "Agree all nine", the String tools plan tab of the Build Plan). This record is
 that plan's workstream 1; the later workstreams add to it as they merge: workstream 2, round corners, and workstream 3,
-move, copy, rotate and mirror, workstream 4, vertices, and workstream 5, strings from surfaces, below.
+move, copy, rotate and mirror, workstream 4, vertices, workstream 5, strings from surfaces, and workstream 6,
+polygons, below.
 
 ## Why
 
@@ -260,3 +261,66 @@ said in the run; a solid's outline is laid flat at its lowest RL, not draped.
 
 In the app, `--string-edits` passes 35 of 35, `--shell` 62 of 62 (the Panels menu now lists Strings from surfaces), and
 `--workflow` 54 of 54.
+
+## Built: workstream 6, polygons
+
+Decision 8 of the plan as picked: in plan only, on Manifold's CrossSection, about a local origin so mine grid eastings and
+northings keep their digits. Both tools are on the Strings row after Extend, in the Strings panel.
+
+- **Clip** (`string.clip`, the strings picked, `by` a closed string, `keep` inside or outside). It is a trim whose side is
+  the inside or outside of the closed string, and shares the trim's cut (`cut_keeping` in `string_cut.rs`): each string
+  is cut where the closed string's edge crosses it, at its own height there; the first part kept is the string's next
+  revision, any others new strings named "<name> part 2" and on, carrying its attributes. A string the edge doesn't
+  cross, lying on the side kept, is left as it was and said; one lying wholly on the side dropped refuses the run, each
+  listed, as Trim does (0078). In the app the strings are picked, then the button, then a click on the closed string;
+  a click on an open string is refused in the panel.
+- **Union, overlap or difference** (`string.polygon_boolean`, the closed strings picked as `strings`, the second set as
+  `with`, `operation`, `layer` and `name`). Each set is the area inside any of its strings, so a union with no second set
+  joins those that touch or overlap. The strings made are new, on the layer (`polygons` unless set): each part's outside
+  first, named for the run ("Union", then "Union 2" and on, largest first), each hole after it ("Union hole 1"), outsides
+  anticlockwise and holes clockwise, carrying the attributes every string of the first set has alike. The strings read
+  are left as they were. An open string, or one closing round no area, refuses the run, each listed; an overlap of sets
+  that don't meet, or a difference that leaves nothing, is refused.
+- **Heights.** The areas come back from Manifold as plan points, rounded far finer than a micrometre. Each is put back on
+  the strings it came from: within 1 µm of a vertex it is that vertex, exactly, with its height; else within 1 µm of an
+  edge it is the place on that edge, at the height along it, the first set's edge before the second's. A vertex the
+  area work leaves out where its string runs straight on is put back between its neighbours, with its height. A point
+  on no edge would take the nearest edge's height and be said (`string.polygon_off`); none has turned up.
+- In the app, Union needs no click; Overlap and Difference take the closed string to work against by a click, and so
+  work against one string from the panel (the command takes any number as `with`). Each adds a workflow step from the
+  panel, its click taken when it's added.
+
+The geometry is `clip_string` in `crates/zd-geom/src/string_cut.rs` and `crates/zd-geom/src/polygon_ops.rs`; the commands
+are in `crates/zd-commands/src/builtin/string.rs`; the panel is `app/src/panels/StringsPanel.tsx`.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_graded_toe_clipped_to_a_pit_limit_keeps_the_part_inside_at_its_own_heights` (zd-geom) | a 200 m toe at 10 % from RL 100 across a 100 m limit: the 100 m inside, RL 105 to 115, its own vertex inside kept exactly; outside, its two ends | 1e-9 m |
+| `a_string_wholly_on_one_side_is_kept_whole_or_refused` | inside a limit: kept whole, no cuts; clipped to outside, refused; an open limit refused | Exact |
+| `a_ring_crossing_the_limit_keeps_its_part_inside_as_one_open_string` | a 40 m ring across the limit's edge: one open string, 80 m long | 1e-9 m |
+| `two_100_m_squares_overlapping_by_half` | union 15,000 m², overlap 5,000 m², difference 5,000 m², one string each, every vertex at RL 100 | 1e-6 m² |
+| `vertices_keep_their_heights_and_new_ones_take_the_first_sets` | a square graded 10 % north and a block at RL 200 across its east edge: the overlap 3,000 m², the block's corners kept exactly at RL 200, the new corners on the square's edge at RL 102 and 108; the difference 7,000 m² with the square's corners kept; the union 13,000 m² | 1e-6 m (1e-9 m on the edge) |
+| `a_hole_and_parts_apart` | a square less a smaller one inside it: one part, its outside 10,000 m² and its hole 400 m² clockwise; three squares, two touching, joined: two parts, 20,000 and 2,500 m², the corners where the two met kept on the straight edge; squares apart overlap nowhere | 1e-6 m² |
+| `what_cant_be_worked_is_refused` | an open string, an overlap with no second set, a string closing round no area | Exact |
+| `fifteen_toes_clipped_to_a_pit_limit` (zd-commands) | 15 toes clipped to a limit in one run: each keeps its 100 m inside, RL 105 to 115, one undo puts them back; outside, each keeps two ends, the east one "Toe 1 part 2" and on | 1e-9 m |
+| `what_cant_be_clipped_is_refused` | an open limit; a string wholly outside among those picked, the run refused with it named and nothing changed; one wholly inside alone; the limit clipped by itself | Exact |
+| `two_squares_overlapping_by_half` | named "Union", "Overlap", "Difference" on the layer asked for, 15,000, 5,000 and 5,000 m²; the overlap's corners at their own blocks' RLs, 120 and 100; the squares at their revisions | 1e-6 m² |
+| `joined_with_holes_and_refusals` | four blocks of strip 4, three touching: "Strip 4" (30,000 m²) and "Strip 4 2", carrying `strip` and not the differing `block`; "Difference" and "Difference hole 1" (400 m²); an open string named in the refusal, a missing second set, a string in both sets, blocks that don't overlap, and a difference leaving nothing, refused | 1e-6 m² |
+| `zd-app --bench --string-edits` | from the Strings row: a toe picked and a block clicked, Clip keeps 100 m from RL 105 to 115; two blocks picked, Union 15,000 m²; one picked and the other clicked, Overlap 5,000 m²; Ctrl+Z puts each back | 1e-6 m |
+
+Timings in a release build, made-up data:
+
+| Case | In | Time | Out |
+|---|---|---|---|
+| Union (`timing_polygons`, zd-geom) | 150 block polygons, a vertex every 10 m (6,000 vertices) | 4.6 ms | 1 string, 500 vertices, every vertex on its outside put back |
+| Overlap with a 720-sided limit | the same 150 | 4.4 ms | 1 string, 720 vertices; no vertex off an edge |
+| Less a 720-sided limit | the same 150 | 4.6 ms | 2 strings (its outside and a hole), 1,220 vertices |
+| `string.clip` (zd-commands) | 150 toes, one limit | 0.4 ms | 150 revisions |
+| `string.polygon_boolean` union | 150 block polygons | 2.0 ms | 1 string |
+
+Known limits: heights take no part in the areas, so where two strings at different RLs share an edge in plan, a vertex
+of each on it comes back at its own RL, and the edge between them can step; Overlap and Difference in the panel work
+against one string clicked; a string wholly on the side a clip drops refuses the run, as a trim does, rather than being
+deleted.
+
+In the app, `--string-edits` passes 40 of 40, `--shell` 62 of 62 and `--workflow` 54 of 54.

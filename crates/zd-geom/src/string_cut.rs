@@ -255,6 +255,28 @@ pub fn trim_string(line: &Polyline, cutter: &Polyline, keep: Keep) -> Result<Tri
         },
         Keep::Both => None,
     };
+    cut_keeping(line, cutter, keep_side, "it lies wholly on the side dropped")
+}
+
+/// A string clipped to a closed string in plan (String tools plan, workstream 6): cut wherever the polygon's edge
+/// crosses it, and the parts inside it kept, or those outside, in the order the string runs, as a trim keeping the side
+/// a point inside or outside is on. Every cut is at the string's own height there. A string the edge doesn't cross comes
+/// back whole with no cuts, if it lies on the side kept. Refused if the polygon isn't closed, or if nothing of the
+/// string is on the side kept.
+pub fn clip_string(line: &Polyline, polygon: &Polyline, inside: bool) -> Result<Trimmed, GeomError> {
+    if !polygon.closed || polygon.vertices.len() < 3 {
+        return Err(GeomError::InvalidInput("the string to clip to isn't a closed string of three vertices or more".into()));
+    }
+    if line.vertices.len() < if line.closed { 3 } else { 2 } {
+        return Err(GeomError::InvalidInput("a string with too few vertices to clip".into()));
+    }
+    cut_keeping(line, polygon, Some(if inside { 1 } else { -1 }), if inside { "it lies wholly outside" } else { "it lies wholly inside" })
+}
+
+/// The cut both a trim and a clip make: the string cut where the cutting string crosses it, and the parts on the side
+/// kept (+1 inside or left, -1 outside or right; none for every part) kept. `dropped_words` says why a string with
+/// nothing on the side kept is refused.
+fn cut_keeping(line: &Polyline, cutter: &Polyline, keep_side: Option<i8>, dropped_words: &str) -> Result<Trimmed, GeomError> {
     let m = segments(line) as f64;
     let mut cuts: Vec<Along> = cuts_along(line, cutter).into_iter().map(|(u, _)| u).collect();
     if !line.closed {
@@ -267,7 +289,7 @@ pub fn trim_string(line: &Polyline, cutter: &Polyline, keep: Keep) -> Result<Tri
         if let Some(side) = keep_side
             && side_of(cutter, middle(&Polyline { vertices: line.vertices.clone(), closed: false })) != side
         {
-            return Err(GeomError::InvalidInput("it lies wholly on the side dropped".into()));
+            return Err(GeomError::InvalidInput(dropped_words.into()));
         }
         return Ok(Trimmed { pieces: vec![whole], cuts: 0, dropped: 0 });
     }
@@ -282,7 +304,7 @@ pub fn trim_string(line: &Polyline, cutter: &Polyline, keep: Keep) -> Result<Tri
     let kept: Vec<bool> = parts.iter().map(|p| keep_side.is_none_or(|side| side_of(cutter, middle(p)) == side)).collect();
     let dropped = kept.iter().filter(|&&k| !k).count();
     if dropped == parts.len() {
-        return Err(GeomError::InvalidInput("it lies wholly on the side dropped".into()));
+        return Err(GeomError::InvalidInput(dropped_words.into()));
     }
     let mut pieces: Vec<Polyline> = Vec::new();
     let mut last_kept = false;
@@ -544,5 +566,54 @@ mod tests {
         assert_eq!((at, first.vertices.len(), second.unwrap().vertices.len()), (1, 2, 2));
         assert!(split_string_at(&graded(), [E + 30.0, N + 2.0]).unwrap_err().to_string().contains("more than"));
         assert!(split_string_at(&graded(), [E, N]).unwrap_err().to_string().contains("at an end"));
+    }
+
+    /// A 100 m square pit limit, 0 to 100 m east and north.
+    fn limit() -> Polyline {
+        Polyline { vertices: vec![[E, N, 0.0], [E + 100.0, N, 0.0], [E + 100.0, N + 100.0, 0.0], [E, N + 100.0, 0.0]], closed: true }
+    }
+
+    #[test]
+    fn a_graded_toe_clipped_to_a_pit_limit_keeps_the_part_inside_at_its_own_heights() {
+        // 200 m due east at 10 % from RL 100, from 50 m west of the limit, 50 m north: the 100 m inside, from RL 105
+        // to RL 115, the vertices inside kept exactly.
+        let toe = open(&[[E - 50.0, N + 50.0, 100.0], [E + 30.0, N + 50.0, 108.0], [E + 150.0, N + 50.0, 120.0]]);
+        let t = clip_string(&toe, &limit(), true).unwrap();
+        assert_eq!((t.cuts, t.dropped, t.pieces.len()), (2, 2, 1));
+        let kept = &t.pieces[0].vertices;
+        assert_eq!(kept.len(), 3);
+        assert!((kept[0][0] - E).abs() < 1e-9 && (kept[0][2] - 105.0).abs() < 1e-9, "{:?}", kept[0]);
+        assert_eq!(kept[1], [E + 30.0, N + 50.0, 108.0]);
+        assert!((kept[2][0] - (E + 100.0)).abs() < 1e-9 && (kept[2][2] - 115.0).abs() < 1e-9, "{:?}", kept[2]);
+        // Outside: the two ends, 50 m each.
+        let t = clip_string(&toe, &limit(), false).unwrap();
+        assert_eq!((t.cuts, t.dropped, t.pieces.len()), (2, 1, 2));
+        assert_eq!(t.pieces[0].vertices[0], toe.vertices[0]);
+        assert_eq!(t.pieces[1].vertices.last(), toe.vertices.last());
+    }
+
+    #[test]
+    fn a_string_wholly_on_one_side_is_kept_whole_or_refused() {
+        let inside = open(&[[E + 10.0, N + 10.0, 100.0], [E + 90.0, N + 90.0, 110.0]]);
+        let t = clip_string(&inside, &limit(), true).unwrap();
+        assert_eq!((t.cuts, t.dropped), (0, 0));
+        assert_eq!(t.pieces[0], inside);
+        let refused = clip_string(&inside, &limit(), false).unwrap_err().to_string();
+        assert!(refused.contains("wholly inside"), "{refused}");
+        let mut open_limit = limit();
+        open_limit.closed = false;
+        assert!(clip_string(&inside, &open_limit, true).is_err(), "an open string clips nothing");
+    }
+
+    #[test]
+    fn a_ring_crossing_the_limit_keeps_its_part_inside_as_one_open_string() {
+        // A 40 m square ring centred on the limit's east edge: 20 m of it inside, its three sides there in one piece.
+        let ring = Polyline { vertices: vec![[E + 80.0, N + 30.0, 100.0], [E + 120.0, N + 30.0, 100.0], [E + 120.0, N + 70.0, 100.0], [E + 80.0, N + 70.0, 100.0]], closed: true };
+        let t = clip_string(&ring, &limit(), true).unwrap();
+        assert_eq!((t.cuts, t.pieces.len()), (2, 1));
+        let piece = &t.pieces[0];
+        assert!(!piece.closed);
+        let length: f64 = piece.vertices.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum();
+        assert!((length - 80.0).abs() < 1e-9, "{length}");
     }
 }
