@@ -117,6 +117,13 @@ the demo itself in the app yet.
 
 **Check:** a reserves test with three sections in one column, finding the ROM section list in stack order.
 
+Done (19 Nov, branch `app/review-fixes`): the cause was that the Reserves table listed a column's words in the order the
+leaves were met. U is lost in the first blocks, so ROM sections met M first, while working sections met U first. The
+table now lists seam and section names in the stack's order, worked out from the table itself (each column's seams
+top down, merged across columns), and other words in the order met. Test: `section_lists_follow_the_stack_not_the_order_met`
+(`zd-commands` reserves view: U subcropping in the first block, All reads U; M; L). On a fresh run of the demo, Base
+and 50m both read `U; M; L` for ROM sections and working sections.
+
 ## 6. The demo's recorded totals have moved
 
 **Seen:** Base after a fresh run:
