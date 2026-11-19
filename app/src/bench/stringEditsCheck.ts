@@ -639,6 +639,30 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   const left = [...(await madeNamed('Bench slope')), ...(await madeNamed('Contour '))];
   expect('three Ctrl+Z put back what the three runs made', left.length === 0, left.map((o) => o.name));
 
+  // Compare surfaces (Surface tools plan, workstream 1), from the Walls row: the topography and the slope picked fill
+  // its first two steps; a right click for wherever both are. The slope runs 5 m under the topography to 5 m over it
+  // across the 100 m they share: 25,000 m³ of cut and 25,000 m³ of fill.
+  await key('Escape');
+  await key('Escape');
+  await click([E - 80, N - 80, 100]);
+  await click([E + 350, N + 50, 110], true);
+  document.querySelector<HTMLButtonElement>('[role="tab"][data-stage="walls"]')?.click();
+  await wait(200);
+  document.querySelector<HTMLButtonElement>('[data-slot="ribbon"] button[data-tool="surfaces:compare"]')?.click();
+  await wait(800);
+  const askedForString = footer().includes('Pick a closed string to compare inside');
+  await rightClick([E + 250, N + 100, 100]);
+  await wait(1500);
+  const surfacesPanel = () => document.querySelector<HTMLElement>('[data-tool-panel="surfaces"]');
+  const compareSaid = surfacesPanel()?.textContent ?? '';
+  expect(
+    'Compare surfaces from the Walls row, the topography and the slope picked, then a right click: cut 25,000 m³, fill 25,000 m³',
+    askedForString && compareSaid.includes("'Bench slope' against 'Topography' wherever both are: cut 25,000.0 m³, fill 25,000.0 m³"),
+    { askedForString, said: compareSaid.match(/'Bench slope' against[^;]*/)?.[0] ?? compareSaid.slice(0, 120) },
+  );
+  await key('Escape');
+  await key('Escape');
+
   // Polygons (workstream 6), from the Strings row: two 100 m blocks overlapping by half and a toe at 10 % across them.
   // Clip with the toe picked and a click on Block A keeps its 100 m inside, RL 105 to 115; Union of both blocks picked
   // makes one closed string of 15,000 m²; Overlap with Block A picked and Block B clicked, 5,000 m². Each Ctrl+Z puts it back.

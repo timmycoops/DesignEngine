@@ -12,7 +12,7 @@ use zd_geom::{SectionPlane, SliceLine, contour_levels, contours, slice_mesh, sol
 use crate::{Code, Command, CommandError, CommandSpec, Field, FieldType, Inputs, Note, Outcome};
 
 /// A surface's or grid's triangles, a grid's made as every projection makes them (engine rule 6); a solid's as it is.
-fn mesh_of<'a>(object: &'a Object, solids_too: bool) -> Result<Cow<'a, TriMesh>, CommandError> {
+pub(super) fn mesh_of<'a>(object: &'a Object, solids_too: bool) -> Result<Cow<'a, TriMesh>, CommandError> {
     match &object.body {
         Body::Surface(s) => Ok(Cow::Borrowed(s.mesh())),
         Body::Grid(g) => Ok(Cow::Owned(triangulate_grid(g))),
