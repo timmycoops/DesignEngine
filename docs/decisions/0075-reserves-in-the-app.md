@@ -42,7 +42,7 @@ The eight decisions as agreed, decision 2 as Tim turned it:
   - a tree of the levels on the left, a picked node's breakdown on the right;
   - folders fold, remembered on the machine; main fields or every field;
   - a column header opens a child to its children, and a double-click shows that child on its own;
-  - **Select its solids** picks the node's solids, of the table's case;
+  - **Select its solids** picks the node's solids, of the table's case; **Isolate its solids** shows them alone (below);
   - **Follow the pick**: a solid picked in the view shows its block with its seam opened, its leaf in gold;
   - CSV of the breakdown, exact values.
 - **A floor loss into the underburden** is now ROM waste on its own leaf. It used to land on a leaf with no seam or
@@ -197,3 +197,23 @@ Point 7. Tim picked it on 18 November, after the reserves fields plan (0086) was
 |---|---|
 | `a_field_s_value_for_each_solid_by_leaf_or_by_block` (reserves_view) | by leaf, B10's U benches 1,000 and 3,000 m³ and its L 2,000 m³, B2's U 4,000 m³; by block, every solid of B10 6,000 m³; a solid of another case and one on no leaf left out |
 | `zd-app --bench --dataflow` (16 Nov demo, every block run again) | ROM coal volume from its row: 810 solids coloured by leaf (the coal), all 1,815 by block; the legend names the field; Stop takes it away |
+
+## Built after: Isolate its solids
+
+Tim, 19 November: "In this tool, Select its solids, can we add an Isolate its solids? This would be very helpful."
+
+- **Isolate its solids**, beside Select its solids, shows only the node's solids and zooms to them:
+  - every layer that doesn't hold them is turned off;
+  - on the layers that do, everything else that's drawn is hidden;
+  - any of its solids hidden by hand is shown.
+- **Pressed again, it reads Show what was shown**, edged in gold, and puts everything back as it was:
+  - the layers come back as they were;
+  - only what Isolate hid or showed changes back, so an object you hid beforehand stays hidden.
+- **On another node**, the button reads Isolate its solids again. A press puts the last isolate back first, then isolates the new node.
+- **It's display state, like Hide.** The hidden objects are saved with the project. If the tab closes while a node is isolated, Show all hidden on the view's right-click and the layer ticks bring them back.
+- **A layer's filter is left alone**: a solid its layer's filter leaves out stays out.
+
+| Test | Known answer |
+|---|---|
+| `isolation` (`reservesTable.test.mjs`) | the solids' layers on, only layers that were on turned off, an object already hidden left out of what's hidden, a table not hidden, a hidden solid of the node shown |
+| `zd-app --bench --dataflow` (16 Nov demo) | Pit › 3 › B1 isolated: on show are exactly its 21 solids; Show what was shown puts every layer's tick and every object's hidden flag back as they were |

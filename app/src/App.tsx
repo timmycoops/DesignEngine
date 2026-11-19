@@ -1093,7 +1093,7 @@ export default function App() {
   );
 
   const setObjectsShown = useCallback(
-    (objects: string[], visible: boolean) => void attempt(async () => show(await setObjectsVisible(objects, visible))),
+    (objects: string[], visible: boolean) => attempt(async () => show(await setObjectsVisible(objects, visible))),
     [attempt, show],
   );
 

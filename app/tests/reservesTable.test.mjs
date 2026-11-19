@@ -2,7 +2,7 @@
 // shows, on a made-up breakdown. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { breakdownCsv, cellText, decimals, fieldLabel, fieldRows, isDetail, nodeForLeaf } from '../src/panels/reservesTable.ts';
+import { breakdownCsv, cellText, decimals, fieldLabel, fieldRows, isDetail, isolation, nodeForLeaf } from '../src/panels/reservesTable.ts';
 
 const field = (column, unit, values, words = null) => {
   const parts = column.split('\\');
@@ -62,4 +62,29 @@ test("a block's dip reads in degrees, its geometry with the detail fields (decis
   const { unitLabel, isDetail } = await import('../src/panels/reservesTable.ts');
   assert.equal(unitLabel('deg'), '°');
   assert.ok(['width', 'dip', 'centroid_z'].every(isDetail) && !isDetail('thickness'));
+});
+
+test("Isolate its solids: their layers alone, the rest on them hidden, and only what it changed put back", () => {
+  const objects = [
+    { id: 'a1', layer: 'blocks', kind: 'solid', hidden: false },
+    { id: 'a2', layer: 'blocks', kind: 'solid', hidden: true },
+    { id: 'b1', layer: 'blocks', kind: 'solid', hidden: false },
+    { id: 'b2', layer: 'blocks', kind: 'solid', hidden: true },
+    { id: 'c1', layer: 'blocks2', kind: 'solid', hidden: false },
+    { id: 't', layer: 'blocks', kind: 'table', hidden: false },
+    { id: 'g', layer: 'grids', kind: 'grid', hidden: false },
+  ];
+  const layers = [
+    { id: 'blocks', visible: true },
+    { id: 'blocks2', visible: false },
+    { id: 'grids', visible: true },
+    { id: 'toes', visible: false },
+  ];
+  const got = isolation(['a1', 'a2', 'c1'], objects, layers);
+  assert.deepEqual(got.showLayers, ['blocks', 'blocks2']);
+  // Only layers that were on go off; a layer already off is left alone.
+  assert.deepEqual(got.hideLayers, ['grids']);
+  // b2 was hidden already, so it isn't in what's hidden (nor shown again when put back); the table isn't drawn.
+  assert.deepEqual(got.hide, ['b1']);
+  assert.deepEqual(got.unhide, ['a2']);
 });

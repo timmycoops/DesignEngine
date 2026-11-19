@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Columns3, Download, MousePointerSquareDashed, Palette } from 'lucide-react';
+import { ChevronDown, ChevronRight, Columns3, Download, Focus, MousePointerSquareDashed, Palette } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { ReservesBalance } from './ReservesBalanceView';
 import { type Breakdown, reservesBreakdown, reservesFilterRows, reservesNodeOf, reservesSolids, reservesTree, type ReservesNode } from '@/bridge';
@@ -7,7 +7,7 @@ import { Choice, Field, FilterInput, IconButton, ObjectMenu, Select } from '@/de
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
-import { breakdownCsv, cellText, fieldRows, nodeForLeaf, samePath, startsWith, unitLabel } from './reservesTable';
+import { breakdownCsv, cellText, fieldRows, type Isolation, isolation, nodeForLeaf, samePath, startsWith, unitLabel } from './reservesTable';
 import { fmt } from './format';
 
 /**
@@ -73,7 +73,7 @@ function writeFolded(folded: Set<string>) {
 const keyOf = (path: string[]) => path.join('\u0001');
 
 export function ReservesTable() {
-  const { summary, selection, setSelection, openNotebook, followInNotebook, colourBlocksByField, fieldColoured } = useWorkspace();
+  const { summary, selection, setSelection, openNotebook, followInNotebook, colourBlocksByField, fieldColoured, zoomTo, setObjectsVisible, setLayersVisible } = useWorkspace();
   const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table'), [summary]);
   const [tableId, setTableId] = useState<string | null>(null);
   // A table picked anywhere is the one shown.
@@ -100,6 +100,8 @@ export function ReservesTable() {
   };
   const [said, setSaid] = useState<string | null>(null);
   const [view, setView] = useState<View>('fields');
+  /** A node's solids alone on screen, and what to put back: the layers as they were, and what it hid or showed. */
+  const [isolated, setIsolated] = useState<{ key: string; layers: { id: string; visible: boolean }[]; changed: Isolation } | null>(null);
   /** The leaves the table adds up (decision 0088, workstream 4): levels to tick, fields typed. */
   const [when, setWhen] = useState<When>({});
   const [filterRows, setFilterRows] = useState<Record<string, boolean | number | string>[]>([]);
@@ -229,6 +231,32 @@ export function ReservesTable() {
     setSelection(ids);
     setSaid(`${fmt(ids.length)} solid${ids.length === 1 ? '' : 's'} picked`);
   };
+  const isolatedKey = table ? `${table.id}|${keyOf(node)}` : '';
+  /** The node's solids alone on screen, zoomed to; again, everything as it was. */
+  const isolateSolids = async () => {
+    if (!table || !summary) return;
+    if (isolated) {
+      const { layers, changed } = isolated;
+      setIsolated(null);
+      if (changed.hide.length) await setObjectsVisible(changed.hide, true);
+      if (changed.unhide.length) await setObjectsVisible(changed.unhide, false);
+      await setLayersVisible(
+        layers.filter((l) => l.visible).map((l) => l.id),
+        layers.filter((l) => !l.visible).map((l) => l.id),
+      );
+      setSaid('Shown as it was');
+      if (isolated.key === isolatedKey) return;
+    }
+    const ids = await reservesSolids(table.id, node);
+    if (ids.length === 0) return setSaid('No solids to isolate');
+    const changed = isolation(ids, summary.objects, summary.layers);
+    setIsolated({ key: isolatedKey, layers: summary.layers.map((l) => ({ id: l.id, visible: l.visible })), changed });
+    if (changed.unhide.length) await setObjectsVisible(changed.unhide, true);
+    if (changed.hide.length) await setObjectsVisible(changed.hide, false);
+    await setLayersVisible(changed.showLayers, changed.hideLayers);
+    zoomTo(ids);
+    setSaid(`${fmt(ids.length)} solid${ids.length === 1 ? '' : 's'} alone on show`);
+  };
   const saveCsv = () => {
     if (!breakdown || !table) return;
     const link = document.createElement('a');
@@ -311,6 +339,19 @@ export function ReservesTable() {
             </Button>
             <Button variant="outline" size="sm" className="h-6 px-2 text-xs" title="Pick the solids this node was made from, in the view, the tree and Blocks" onClick={() => void selectSolids()}>
               <MousePointerSquareDashed className="size-3.5" /> Select its solids
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn('h-6 px-2 text-xs', isolated?.key === isolatedKey && 'border-primary/70 text-primary')}
+              title={
+                isolated?.key === isolatedKey
+                  ? 'Put back the layers and objects that were showing before Isolate'
+                  : 'Show only the solids this node was made from, zoomed to: every other layer off, and the rest on their layers hidden. Pressed again, everything comes back as it was'
+              }
+              onClick={() => void isolateSolids()}
+            >
+              <Focus className="size-3.5" /> {isolated?.key === isolatedKey ? 'Show what was shown' : 'Isolate its solids'}
             </Button>
             <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={!breakdown} title="This node's breakdown as CSV, exact values" onClick={saveCsv}>
               <Download className="size-3.5" /> CSV
