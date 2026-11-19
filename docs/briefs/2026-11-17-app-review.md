@@ -67,6 +67,25 @@ and `app/src/bench/dataflowCheck.ts`. Main fields' choice of rows is in the app'
 **Check:** a test that, for every folder in Main fields, volume × the density shown equals tonnes to 1e-9; the demo
 pit's figures otherwise unchanged.
 
+Waiting on Tim (19 Nov): the plan below, agreed before building.
+
+- Why it shows: Main fields hides `rd`, `rd_is` and `rd_rom` as detail (`DETAIL` in `app/src/panels/reservesTable.ts`)
+  but not `rd_adt`, so `rd_adt` is the one density left on show beside every folder's tonnes. Under Imported it is still
+  the lab RD, because the field starts as the block's RD and only the `densities` formula works it.
+- Main fields: under each folder, show the density that folder's tonnes are on: `rd` under Imported, `rd_is` under
+  Insitu and Working section, and `rd_rom` under ROM and Scheduled. That's an app change only.
+- The name: `rd_adt` becomes `tonnes_ad_per_m3`, which reads "tonnes, air dried, per m³" in the table. It's a detail
+  field, shown under Every field beside `tonnes_ad`, never beside `tonnes`. Another name is fine; it has to be one word
+  a formula can use (`unit.tonnes_ad_per_m3`).
+- Saved projects: on open, a dataflow with an `rd_adt` field gets it renamed, in its fields, in its qualities'
+  weighting (`by mass, rd_adt`) and in its formula text. The open note says so, and the change is saved with the
+  project. Reserves tables already written keep their `rd_adt` column as written: they're results. The app reads that
+  column as the new name, so an old table shows the same way until it is run again.
+- Also renamed: the starter, `zd-script`'s AI reference, the AI-written test scripts, and the app's dataflow bench
+  check.
+- Tests: for every folder Main fields shows, volume × the density shown = tonnes to 1e-9 on the demo pit; a dataflow
+  saved with `rd_adt` opens renamed and gives the same table; the demo's `RECORDED` totals don't move.
+
 ## 3. Run all cases stops at the pause and never runs 50m
 
 **Seen:** Run all 2 cases ran Base to its pause at step 14. Continue from step 15 finished Base ("8 steps run from step
