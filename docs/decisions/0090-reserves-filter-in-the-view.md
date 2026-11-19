@@ -56,3 +56,18 @@ The leaf helpers (`levels`, `leaf_of`, `case_of`, `rows_fitting`, and `TableLeav
 
 - **One table's filter in the view at a time.** Ticking it on another table moves it there.
 - **A leaf is the finest a reserves filter goes.** Within a leaf, only Coal solids only tells pieces apart.
+
+## Fixed after: Show then Isolate
+
+Tim, 19 November: pressing Show and then Isolate its solids showed several layers. Isolate put Show back first, which
+turned every layer that had been on back on, but then worked out what to turn off from the screen as Show had left it,
+with only the table's layer on, so it turned nothing off. The same went for Show on one table then Show on another, and
+for Isolate on one node then another.
+
+Show and Isolate now start from the screen as it will be once the last one is put back (`asPutBack`): each layer's tick
+as it was before, and what the last Isolate hid shown again.
+
+| Test | Known answer |
+|---|---|
+| `asPutBack` (`reservesTable.test.mjs`) | after Show, Isolate turns off the layer Show put back; after one Isolate, the next starts with what the first hid shown |
+| `zd-app --bench --dataflow` | Show, then Isolate its solids: exactly the block's 21 solids on show, then every tick and hidden flag as before Show. The check fails on the code before this fix |

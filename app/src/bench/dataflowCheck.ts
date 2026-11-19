@@ -256,6 +256,24 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
       named && JSON.stringify(shownLayers) === JSON.stringify(theirs) && state(await projectSummary()) === state(before2),
       { layers: names.length, shown: shownLayers.length, theirs: theirs.length },
     );
+    // Show, then Isolate its solids without Back first: only the block's solids on show, then everything as before Show.
+    const before3 = await projectSummary();
+    rowButton()?.click();
+    for (let k = 0; k < 50 && rowButton()?.textContent !== 'Back'; k++) await wait(100);
+    await wait(200);
+    button('Isolate its solids')?.click();
+    for (let k = 0; k < 50 && !button('Show what was shown'); k++) await wait(100);
+    await wait(300);
+    const afterShowIso = onShow(await projectSummary());
+    const showFreed = rowButton()?.textContent === 'Show';
+    button('Show what was shown')?.click();
+    for (let k = 0; k < 50 && !button('Isolate its solids'); k++) await wait(100);
+    await wait(300);
+    expect(
+      "Show then Isolate its solids: only the block's 21 solids on show, no layer Show put back left on; then everything as before Show",
+      JSON.stringify(afterShowIso) === JSON.stringify(block) && showFreed && state(await projectSummary()) === state(before3),
+      { onShow: afterShowIso.length, block: block.length, showFreed },
+    );
 
     // Select and Isolate take the filter: B1's U solids only.
     await typeFilter('seam: U');

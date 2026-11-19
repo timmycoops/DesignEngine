@@ -2,7 +2,7 @@
 // shows, on a made-up breakdown. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { breakdownCsv, cellText, decimals, fieldLabel, fieldRows, isDetail, isolation, nodeForLeaf } from '../src/panels/reservesTable.ts';
+import { breakdownCsv, cellText, decimals, fieldLabel, fieldRows, isDetail, asPutBack, isolation, nodeForLeaf } from '../src/panels/reservesTable.ts';
 
 const field = (column, unit, values, words = null) => {
   const parts = column.split('\\');
@@ -87,4 +87,35 @@ test("Isolate its solids: their layers alone, the rest on them hidden, and only 
   // b2 was hidden already, so it isn't in what's hidden (nor shown again when put back); the table isn't drawn.
   assert.deepEqual(got.hide, ['b1']);
   assert.deepEqual(got.unhide, ['a2']);
+});
+
+test('Show then Isolate: Isolate starts from the screen as Show found it, so the layers Show put back go off again', () => {
+  const objects = [
+    { id: 'a1', layer: 'blocks', kind: 'solid', hidden: false },
+    { id: 'b1', layer: 'blocks', kind: 'solid', hidden: false },
+    { id: 't1', layer: 'toes', kind: 'string', hidden: false },
+  ];
+  const before = [
+    { id: 'blocks', visible: true },
+    { id: 'toes', visible: true },
+    { id: 'grids', visible: false },
+  ];
+  // Show: blocks alone. The screen now has toes off; what Show keeps to put back is `before`.
+  const duringShow = [
+    { id: 'blocks', visible: true },
+    { id: 'toes', visible: false },
+    { id: 'grids', visible: false },
+  ];
+  const start = asPutBack(objects, duringShow, { layers: before, changed: null });
+  assert.deepEqual(start.layers, before, 'the toes come back on with Show put back');
+  const iso = isolation(['a1'], start.objects, start.layers);
+  assert.deepEqual(iso.hideLayers, ['toes'], 'so Isolate turns them off again');
+  assert.deepEqual(iso.hide, ['b1']);
+
+  // Isolate, then Isolate another node: b1 was hidden by the first, and is shown again before the second works out its own.
+  const afterIso = objects.map((o) => (o.id === 'b1' ? { ...o, hidden: true } : o));
+  const again = asPutBack(afterIso, duringShow, { layers: before, changed: iso });
+  assert.equal(again.objects.find((o) => o.id === 'b1').hidden, false);
+  assert.deepEqual(isolation(['b1'], again.objects, again.layers).hide, ['a1'], 'the second hides a1, and b1 is its own');
+  assert.equal(asPutBack(objects, before, null).layers, before, 'nothing alone: the screen as it is');
 });

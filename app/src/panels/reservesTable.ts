@@ -146,3 +146,23 @@ export function isolation(
     unhide: objects.filter((o) => ids.has(o.id) && o.hidden).map((o) => o.id),
   };
 }
+
+/**
+ * The layers and objects as they'll be once what's alone on screen is put back: each layer's tick as it was before, and
+ * what Isolate hid shown and what it showed hidden again. Isolate or Show pressed while the other is on puts it back first
+ * and works from this, not from the screen it's leaving.
+ */
+export function asPutBack<O extends { id: string; hidden: boolean }, L extends { id: string; visible: boolean }>(
+  objects: O[],
+  layers: L[],
+  alone: { layers: { id: string; visible: boolean }[]; changed: Isolation | null } | null,
+): { objects: O[]; layers: L[] } {
+  if (!alone) return { objects, layers };
+  const was = new Map(alone.layers.map((l) => [l.id, l.visible]));
+  const shown = new Set(alone.changed?.hide ?? []);
+  const hidden = new Set(alone.changed?.unhide ?? []);
+  return {
+    layers: layers.map((l) => (was.has(l.id) && was.get(l.id) !== l.visible ? { ...l, visible: was.get(l.id)! } : l)),
+    objects: objects.map((o) => (shown.has(o.id) ? { ...o, hidden: false } : hidden.has(o.id) ? { ...o, hidden: true } : o)),
+  };
+}
