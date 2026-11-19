@@ -164,6 +164,11 @@ export class StringLayer {
   private trailDone = false;
   /** The pick waiting is a string's points (`pickString`), which a right click finishes as Enter does. */
   private stringPick = false;
+  /**
+   * A tool is asking what to work on (decision 0092): clicks, Ctrl-clicks and boxes pick as ever, and a right click (or
+   * the tool's button) says that's all, true; Esc says stop, false.
+   */
+  private gathering: ((done: boolean) => void) | null = null;
   /** Measuring, ended by a right click: the line stays read out until the next click starts a new one. */
   private measureEnded = false;
   selected: string | null = null;
@@ -280,6 +285,37 @@ export class StringLayer {
     return new Promise((resolve) => {
       this.wanted = resolve;
     });
+  }
+
+  /**
+   * A tool asks what to work on (decision 0092): what's picked as ever, by clicks, Ctrl-clicks and boxes, until a right
+   * click or the tool's button says that's all (true), or Esc says stop (false). Asking again, or for a point, ends it.
+   */
+  pickObjects(prompt: string): Promise<boolean> {
+    this.finishPick(null);
+    this.endGathering(false);
+    if (this.mode !== 'select') this.actions.toSelect();
+    this.actions.status(prompt);
+    return new Promise((resolve) => {
+      this.gathering = resolve;
+    });
+  }
+
+  /** What's picked is all the tool asked for: as a right click. */
+  finishObjects(): void {
+    this.endGathering(true);
+  }
+
+  /** Whatever a tool is waiting on, a click or what to work on, let go, as when it's put down. */
+  cancelPicks(): void {
+    this.finishPick(null);
+    this.endGathering(false);
+  }
+
+  private endGathering(done: boolean): void {
+    const gathering = this.gathering;
+    this.gathering = null;
+    gathering?.(done);
   }
 
   /** Two clicks, with a line following the cursor from the first. Null if either is cancelled. */
@@ -938,6 +974,8 @@ export class StringLayer {
    * until the next click starts another. In Select, with nothing being added to, it opens the menu for what's picked.
    */
   private async rightClick(x: number, y: number): Promise<void> {
+    // A tool asking what to work on: that's all, and no menu (decision 0092).
+    if (this.gathering && !this.wanted) return this.endGathering(true);
     if (this.wanted) {
       if (!this.stringPick || this.trail.length === 0) return;
       this.trailDone = true;
@@ -963,6 +1001,11 @@ export class StringLayer {
     if (this.wanted) {
       this.finishPick(null);
       return this.actions.status('Pick cancelled');
+    }
+    // A tool asking what to work on stops asking; what's picked stays picked (decision 0092).
+    if (this.gathering) {
+      this.endGathering(false);
+      return this.actions.status("Stopped asking: the tool's button asks again");
     }
     if (this.mode !== 'select' && this.pending.length > 0) {
       this.pending = [];

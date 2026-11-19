@@ -123,18 +123,30 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
     askedForLimit && askedForSide && ends.every((p, k) => near(p[0], E + 60) && near(p[1], N + toeY[k]) && near(p[2], 106)) && said().includes('trimmed 3 of 3 strings'),
     { asked: [askedForLimit, askedForSide], ends: ends.map((p) => [p[0] - E, p[1] - N, p[2]]) },
   );
+  // It stays loaded (decision 0092): asking what to trim next, its first step lit in the panel's list.
+  const lit = [...(panel()?.querySelectorAll<HTMLElement>('[data-slot="ask-steps"] li') ?? [])].findIndex((li) => li.dataset.now !== undefined);
+  expect('Trim stays loaded after a run: it asks what to trim next, step 1 lit', footer().includes('Pick the strings to trim') && lit === 0, { footer: footer().slice(0, 40), lit });
   await key('z', true);
   await wait(500);
   const back = await Promise.all(toes.map(async (id) => (await points(id)).at(-1)?.[0] ?? 0));
   expect('one Ctrl+Z puts all three back', back.every((x) => near(x, E + 100)), back.map((x) => x - E));
 
-  // Esc while Trim waits on its click lets it go and changes nothing.
+  // Esc steps back a prompt a press (decision 0092): from the click on the cutting string to what to trim, nothing
+  // changed; from there it stops asking.
   await pickToes();
   goButton()?.click();
   await settle();
+  const askedAgain = footer().includes('Click the string that cuts 3 strings');
   await key('Escape');
   const stillThere = await Promise.all(toes.map(async (id) => (await points(id)).length));
-  expect('Esc while Trim waits on a click lets it go, and nothing changes', footer().includes('Pick cancelled') && stillThere.every((n) => n === 3), { footer: footer().slice(0, 40), vertices: stillThere });
+  const backToWhat = footer().includes('Pick the strings to trim');
+  await key('Escape');
+  const stopped = footer().includes('Stopped asking');
+  expect(
+    'Esc at the click goes back to what to trim, nothing changed; Esc again stops asking',
+    askedAgain && backToWhat && stopped && stillThere.every((n) => n === 3),
+    { askedAgain, backToWhat, stopped, footer: footer().slice(0, 40), vertices: stillThere },
+  );
 
   // Extend: one click on the line to run them on to.
   await useTool('extend');
@@ -151,8 +163,11 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
     { button: extendButton, ends: runOn.map((p) => [p[0] - E, p[1] - N, p[2]]) },
   );
 
-  // Keep both: split where the limit crosses them.
+  // Keep both: split where the limit crosses them. Opened with nothing picked, Trim asks what to trim first.
+  await key('Escape');
+  await key('Escape');
   await useTool('trim');
+  const askedWhat = footer().includes('Pick the strings to trim');
   await pickToes();
   await choose('What the trim keeps', 'Both, split');
   const bothButton = goButton()?.textContent?.trim() ?? '';
@@ -161,7 +176,7 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   await click([E + 60, N + 120, 100]);
   await wait(800);
   const parts = (await projectSummary()).objects.filter((o) => o.kind === 'string' && / part 2$/.test(o.name));
-  expect('Keep both splits each where the limit crosses it, a new part for each', bothButton === 'Split 3 strings at a string' && parts.length === 3, { button: bothButton, parts: parts.map((o) => o.name) });
+  expect('Keep both splits each where the limit crosses it, a new part for each', askedWhat && bothButton === 'Split 3 strings at a string' && parts.length === 3, { askedWhat, button: bothButton, parts: parts.map((o) => o.name) });
   await key('z', true);
   await wait(500);
 

@@ -1,11 +1,11 @@
 import { concealed } from '@/bridge';
 import { ArrowLeftRight, Check, MousePointerClick } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StepTarget } from '@/bridge';
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { Input } from '@/design-system/ui/input';
-import { Choice, Field, NumberInput, NumberOrBlank, resultParams, type RunReport, Select, TargetInput, type ToolAction, ToolPanel, ToolSection, useResultAs } from '@/design-system/kit';
+import { type Asker, AskSteps, Choice, Field, NumberInput, NumberOrBlank, resultParams, type RunReport, Select, TargetInput, type ToolAction, ToolPanel, ToolSection, useAsking, useResultAs } from '@/design-system/kit';
 import { choiceWords } from '@/tools';
 import { nearestString, sideOf } from './stringSide';
 import { useWorkspace } from '@/workspace/context';
@@ -27,6 +27,10 @@ import { useWorkspace } from '@/workspace/context';
  * Polygons (workstream 6): Clip keeps the parts of the strings picked inside a closed string clicked, or outside it.
  * Union, overlap or difference makes new closed strings of the closed strings picked: their union, or, with a closed
  * string clicked, their overlap with it or what's left of them less it.
+ *
+ * Clip and Trim ask for their inputs in turn (decision 0092): opened, they ask in the prompt line what to work on (the
+ * strings picked already fill that the first time), then for the string to clip to or trim by (and Trim the side to
+ * keep), run, and ask again; Esc steps back a prompt a press, and from the first stops asking, the button asking again.
  *
  * Vertices (workstream 4): with vertices picked in the view by Alt and a box, Set grade, Set elevation and Drape act on
  * them alone, the button saying how many, and add no workflow step. Densify adds a vertex every so many metres, the
@@ -70,6 +74,9 @@ const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines'
  */
 const CHANGES: readonly Mode[] = ['set_grade', 'set_elevation', 'drape', 'split', 'trim', 'extend', 'clip', 'join', 'fillet', 'smooth', 'filter', 'densify', 'vertices_at_crossings', 'reverse', 'set_closed'];
 
+/** The tools that ask for their inputs in turn (decision 0092): what to work on, then what with, then again. */
+const ASKS: readonly Mode[] = ['clip', 'trim'];
+
 /** The tools that act on the vertices picked alone, when some are (String tools plan, workstream 4). */
 const ON_VERTICES: readonly Mode[] = ['set_grade', 'set_elevation', 'drape'];
 
@@ -86,7 +93,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const firstNames = (names: string[]) => (names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', '));
 
 export function StringsPanel() {
-  const { summary, selected, selection, runRecord, clearRefusal, setSelection, pickLine, pickPoint, toolAsk, toolMode, vertexPicks } = useWorkspace();
+  const { summary, selected, selection, runRecord, clearRefusal, setSelection, pickLine, pickPoint, toolAsk, toolMode, vertexPicks, addingTo, panelsShown } = useWorkspace();
   const [mode, setMode] = useState<Mode>('offset');
   // A tool on the Strings tab, or found by Find a command, asks for one of what this does.
   useEffect(() => {
@@ -140,6 +147,11 @@ export function StringsPanel() {
   const [reach, setReach] = useState(100);
   /** Clip keeps the parts inside the closed string clicked, or outside. */
   const [clipKeep, setClipKeep] = useState<'inside' | 'outside'>('inside');
+  /**
+   * The settings as they stand now, for a run that waited on a click: a setting changed while it waited counts (decision
+   * 0092). Updated every render.
+   */
+  const settings = useRef({ keep: 'side' as 'side' | 'both', clipKeep: 'inside' as 'inside' | 'outside', result: {} as Record<string, unknown> });
   /** Union, overlap or difference: which, and what the strings made are called and where they go. */
   const [operation, setOperation] = useState<'union' | 'overlap' | 'difference'>('union');
   const [opName, setOpName] = useState('');
@@ -160,6 +172,7 @@ export function StringsPanel() {
   /** In place or as new on a layer, for the tools that change strings (decision 0091). */
   const resultAs = useResultAs();
   const changes = CHANGES.includes(mode);
+  settings.current = { keep, clipKeep, result: changes ? resultParams(resultAs) : {} };
 
   const objects = summary?.objects ?? [];
   const strings = objects.filter((o) => o.kind === 'string');
@@ -211,7 +224,7 @@ export function StringsPanel() {
   const runIt = async (command: string, params: Record<string, unknown>) => {
     setBusy(true);
     clearRefusal();
-    const outcome = await runRecord(command, { ...params, ...(changes ? resultParams(resultAs) : {}) });
+    const outcome = await runRecord(command, { ...params, ...settings.current.result });
     setBusy(false);
     setReport(outcome.record ? { notes: outcome.record.notes } : { notes: [], error: outcome.error });
     // As new, what's made is picked, ready for the next step.
@@ -291,15 +304,16 @@ export function StringsPanel() {
     return found;
   };
   /** Trim's settings with its clicks: the cutting string, then the side to keep. Null when Esc is pressed. */
-  const trimParams = async () => {
+  const trimParams = async (onStep?: (at: number) => void) => {
     const cutter = await clickString(`Click the string that cuts ${what}. Esc cancels`);
     if (!cutter) return null;
-    if (keep === 'both') return { strings: ids, by: cutter.id, keep: 'both' };
+    if (settings.current.keep === 'both') return { strings: ids, by: cutter.id, keep: 'both' };
+    onStep?.(2);
     const at = await pickPoint(`Click on the side of ${cutter.name} to keep. Esc cancels`);
     return at ? { strings: ids, by: cutter.id, keep: 'side', side: at } : null;
   };
-  const trim = async () => {
-    const params = await trimParams();
+  const trim = async (onStep?: (at: number) => void) => {
+    const params = await trimParams(onStep);
     if (!params) return;
     const outcome = await runIt('string.trim', params);
     const kept = outcome.record?.outputs.filter((o) => o.change === 'created' || o.change === 'revised').map((o) => o.id) ?? [];
@@ -313,7 +327,7 @@ export function StringsPanel() {
       setReport({ notes: [], error: `${limit.name} isn't closed, so it has no inside to clip to: close it first, or click a closed string` });
       return null;
     }
-    return { strings: ids, by: limit.id, keep: clipKeep };
+    return { strings: ids, by: limit.id, keep: settings.current.clipKeep };
   };
   const clip = async () => {
     const params = await clipParams();
@@ -342,6 +356,40 @@ export function StringsPanel() {
     if (made.length > 0) setSelection(made);
   };
   const openPicked = on.filter((o) => !o.closed).length;
+  /**
+   * Clip and Trim ask in turn (decision 0092): what to work on (the strings picked fill it the first time), then the
+   * string and, for Trim, the side, then run, and again. Esc at a click goes back to what to work on; there, it stops.
+   * The loop outlives a render, so it reads the panel as it stands through `latest`.
+   */
+  const asking = useAsking();
+  const latest = useRef({ mode, picked: picked.length, clip, trim });
+  latest.current = { mode, picked: picked.length, clip, trim };
+  const askLoop = useCallback(async (ask: Asker) => {
+    let first = true;
+    while (ask.alive()) {
+      ask.step(0);
+      const noun = latest.current.mode === 'clip' ? 'clip' : 'trim';
+      if (!(first && latest.current.picked > 0)) {
+        const done = await ask.gather(`Pick the strings to ${noun}: a click, a box or Ctrl-click. Right-click when done; Esc stops`);
+        if (!done || !ask.alive()) return;
+      }
+      first = false;
+      if (latest.current.picked === 0) continue;
+      ask.step(1);
+      if (latest.current.mode === 'clip') await latest.current.clip();
+      else await latest.current.trim(ask.step);
+    }
+  }, []);
+  // Only while the panel is the one in front of its dock: another tool's right click is its own.
+  const asks = ASKS.includes(mode) && !addingTo && panelsShown.includes('strings');
+  // Picked again from the ribbon or Find a command, it asks afresh.
+  const askedHere = toolAsk?.panel === 'strings' ? toolAsk.n : null;
+  useEffect(() => {
+    if (asks) asking.start(askLoop);
+    else asking.stop();
+  }, [asks, mode, askedHere, asking.start, asking.stop, askLoop]);
+  useEffect(() => () => asking.stop(), [asking.stop]);
+
   const extendParams = async () => {
     const to = await clickString(`Click the string to run ${what} on to. Esc cancels`);
     return to ? { strings: ids, to: to.id, reach } : null;
@@ -416,9 +464,9 @@ export function StringsPanel() {
       case 'trim':
         return {
           label: keep === 'both' ? `Split ${what} at a string` : `Trim ${what}`,
-          run: trim,
-          step: { command: 'string.trim', params: { strings: ids, keep }, ask: trimParams },
-          ready: some,
+          run: () => asking.next(askLoop),
+          step: { command: 'string.trim', params: { strings: ids, keep }, ask: () => trimParams() },
+          ready: some || asking.at === null,
           title: keep === 'both' ? 'A click on the string that cuts them: each is split where it crosses' : 'A click on the string that cuts them, then one on the side to keep, for every string picked',
         };
       case 'extend':
@@ -432,9 +480,9 @@ export function StringsPanel() {
       case 'clip':
         return {
           label: `Clip ${what}`,
-          run: clip,
+          run: () => asking.next(askLoop),
           step: { command: 'string.clip', params: { strings: ids, keep: clipKeep }, ask: clipParams },
-          ready: some,
+          ready: some || asking.at === null,
           title: `A click on the closed string to clip to: each string keeps its parts ${clipKeep} it, cut at its own heights`,
         };
       case 'polygon_boolean':
@@ -503,6 +551,10 @@ export function StringsPanel() {
     result: changes ? resultAs : undefined,
   };
 
+  const askSteps = mode === 'clip'
+    ? [{ label: 'What to clip', value: picked.length > 0 ? what : undefined }, { label: 'The closed string to clip to' }]
+    : [{ label: 'What to trim', value: picked.length > 0 ? what : undefined }, { label: keep === 'both' ? 'The string to split them at' : 'The string to trim by' }, ...(keep === 'both' ? [] : [{ label: 'The side to keep' }])];
+
   const several = mode === 'number_across' || mode === 'polygons_from_lines' || mode === 'project' || mode === 'surface_between' || mode === 'join';
   return (
     <ToolPanel title="Strings" panel="strings" summary={MODE_LINES[mode]} result={report} action={action}>
@@ -517,6 +569,8 @@ export function StringsPanel() {
           </Select>
         </Field>
       </ToolSection>
+
+      {ASKS.includes(mode) && <AskSteps steps={askSteps} at={asking.at} />}
 
       <ToolSection title={several ? 'Picked' : 'String'}>
         {mode === 'number_across' ? (
