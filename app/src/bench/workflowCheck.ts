@@ -253,6 +253,30 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
     const undoneAll = await projectSummary();
     expect('one undo takes both cases back', !undoneAll.objects.some((o) => o.layer === layerId('cut 60')) && undoneAll.objects.length === beforeCases.objects.length, { before: beforeCases.objects.length, undoneAll: undoneAll.objects.length });
 
+    // Run all cases through a pause (app review brief, 17 Nov, item 3): a pause put in as step 2, Run all cases stops
+    // in Base, the panel says 60 is still to run, and Continue runs Base on and then 60, its pieces on 'cut 60'.
+    await press(labelled('Add a pause at the end'));
+    await wait(600);
+    await press(labelled('Up', 3));
+    await wait(600);
+    expect('a pause as step 2', panelText('workflow').includes('Steps (3)'));
+    await press(buttons().find((b) => b.textContent?.trim().startsWith('Run all 2 cases')));
+    const pausedText = panelText('workflow');
+    expect('Run all cases stops at the pause in Base, and says 60 is still to run', pausedText.includes('Paused at step 2') && pausedText.includes('Still to run: 60'), pausedText.slice(-300));
+    const carryOn = buttons().find((b) => b.textContent?.trim() === 'Continue from step 3, then 60');
+    expect('Continue says it runs 60 after Base', carryOn !== undefined, buttons().map((b) => b.textContent?.trim()).filter((t) => t?.startsWith('Continue')));
+    await press(carryOn);
+    const carried = await projectSummary();
+    const cut60 = carried.layers.find((l) => l.name === 'cut 60')?.id;
+    const pieces60 = carried.objects.filter((o) => o.layer === cut60 && o.kind === 'solid');
+    expect("Continue runs Base on and then 60: 60's two pieces on 'cut 60'", pieces60.length === 2 && !buttons().some((b) => b.textContent?.trim().startsWith('Continue')), pieces60.length);
+    await show(await undo());
+    await show(await undo());
+    await press(labelled('Take this step out', 2));
+    await wait(600);
+    const putBack = await projectSummary();
+    expect('two undos and the pause out put it back as it was', putBack.objects.length === beforeCases.objects.length && panelText('workflow').includes('Steps (2)'), putBack.objects.length);
+
     // The canvas (decision 0067): step 1 clicked, then a tool, opens Cut solids on By surface or RL adding after step 1, with
     // what step 1 made picked; Add puts the step in as step 2, the cut that was step 2 now step 3, its solids found as
     // what step 1 makes.

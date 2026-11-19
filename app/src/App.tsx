@@ -395,9 +395,9 @@ export default function App() {
     [show],
   );
   const runAllCases = useCallback(
-    async (workflow: string) => {
+    async (workflow: string, from?: { case: string; step: number }) => {
       try {
-        const reply = await runAllCasesCall(workflow);
+        const reply = await runAllCasesCall(workflow, from);
         show(reply.summary);
         setStatus({ text: reply.records.map(workflowWords).join(' · '), error: reply.records.some((r) => r.status === 'refused') });
         return { records: reply.records };

@@ -81,6 +81,12 @@ cases would have. If that isn't wanted, the panel says plainly which cases are s
 **Check:** the workflow bench check (`app/src/bench/workflowCheck.ts`) runs all cases through the pause and finds both
 cases' tables written in this run.
 
+Done (19 Nov, branch `app/review-fixes`): after Run all cases stops at a pause, the panel says which cases are still to run,
+and Continue reads "Continue from step N, then 50m": it runs that case on and then the cases after it, as Run all cases
+would have, stopping again at the next pause or refusal (0066's decision 5 holds). Tests: `zd-app`
+`continue_after_a_pause_runs_the_cases_after_it`, and the workflow bench check now puts a pause in as step 2, runs all
+cases, presses Continue and finds the second case's pieces.
+
 ## 4. After a run, and at the pause, the view is empty
 
 **Seen:** with Tidy after a run on (the default), the view after the full run showed only the strings and 0 triangles.

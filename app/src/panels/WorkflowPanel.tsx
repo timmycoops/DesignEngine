@@ -119,6 +119,10 @@ export function WorkflowPanel() {
     return runs[runs.length - 1] ?? null;
   }, [log, chosen, caseName]);
   const continueFrom = last?.status === 'paused' && workflow && last.at < workflow.steps.length ? last.at + 1 : null;
+  // A Run all cases that stopped at a pause: Continue carries on through that case and then the cases after it, as Run
+  // all cases would have (app review brief, 17 Nov, item 3). Held for the workflow and case that paused.
+  const [allPaused, setAllPaused] = useState<{ workflow: string; case: string; after: string[] } | null>(null);
+  const thenCases = allPaused && allPaused.workflow === chosen?.id && allPaused.case === caseName && continueFrom ? allPaused.after : [];
 
   const save = async (next: Parameters<typeof saveWorkflow>[0]) => {
     const error = await saveWorkflow(next);
@@ -142,6 +146,8 @@ export function WorkflowPanel() {
 
   const run = async (from: number) => {
     if (!chosen) return;
+    if (from > 1 && thenCases.length > 0) return runAll({ case: caseName, step: from });
+    setAllPaused(null);
     setBusy(true);
     const outcome = await runWorkflow(chosen.id, from, caseName);
     if (outcome.record && tidy) await tidyAfter(chosen.id, outcome.record);
@@ -149,19 +155,25 @@ export function WorkflowPanel() {
     setReport(outcome.record ? reportOf(outcome.record) : { notes: [], error: outcome.error });
   };
 
-  /** Base and every case, from their first steps, as one undo. */
-  const runAll = async () => {
+  /** Base and every case, from their first steps, as one undo; `from` carries on after a pause in one. */
+  const runAll = async (from?: { case: string; step: number }) => {
     if (!chosen) return;
     setBusy(true);
-    const outcome = await runAllCases(chosen.id);
+    const outcome = await runAllCases(chosen.id, from);
     const records = outcome.records ?? [];
+    const stopped = records[records.length - 1];
+    const stoppedCase = stopped?.case ?? BASE;
+    const after = stopped?.status === 'paused' ? columns.slice(columns.indexOf(stoppedCase) + 1) : [];
+    setAllPaused(after.length > 0 ? { workflow: chosen.id, case: stoppedCase, after } : null);
+    if (after.length > 0 && stoppedCase !== caseName) pickCase(stoppedCase);
     if (records.length > 0 && tidy) await tidyAfter(chosen.id, records[records.length - 1], records.map((r) => r.case));
     setBusy(false);
     if (!outcome.records) return setReport({ notes: [], error: outcome.error });
     const reports = records.map((r) => ({ case: r.case, report: reportOf(r) }));
     const failed = reports.find((r) => r.report.error);
+    const toRun = after.length > 0 ? [plainNote(`Still to run: ${after.join(', ')}. Continue runs on through ${stoppedCase}, then ${after.length === 1 ? 'it' : 'them'}`)] : [];
     setReport({
-      notes: reports.flatMap((r) => r.report.notes.map((n, k) => (k === 0 ? { ...n, text: `${r.case}: ${n.text}` } : n))),
+      notes: [...reports.flatMap((r) => r.report.notes.map((n, k) => (k === 0 ? { ...n, text: `${r.case ?? BASE}: ${n.text}` } : n))), ...toRun],
       error: failed ? `${failed.case}: ${failed.report.error}` : undefined,
     });
   };
@@ -228,7 +240,15 @@ export function WorkflowPanel() {
   const ofCase = caseName === BASE ? '' : ` of ${caseName}`;
   const action: ToolAction | undefined = chosen
     ? continueFrom
-      ? { label: `Continue${ofCase} from step ${continueFrom}`, icon: <SkipForward className="size-3.5" />, disabled: !workflow, busy, busyLabel: 'Running…', title: 'Runs on from the step after the pause', run: () => run(continueFrom) }
+      ? {
+          label: `Continue${ofCase} from step ${continueFrom}${thenCases.length > 0 ? `, then ${thenCases.join(', ')}` : ''}`,
+          icon: <SkipForward className="size-3.5" />,
+          disabled: !workflow,
+          busy,
+          busyLabel: 'Running…',
+          title: thenCases.length > 0 ? `Runs on from the step after the pause, then ${thenCases.join(', ')} from their first steps, as Run all cases would have` : 'Runs on from the step after the pause',
+          run: () => run(continueFrom),
+        }
       : {
           label: `Run ${plural(steps.filter((s) => s.on !== false && s.action.kind === 'command').length, 'step')}${ofCase}`,
           icon: <Play className="size-3.5" />,
