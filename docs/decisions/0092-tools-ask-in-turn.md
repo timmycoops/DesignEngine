@@ -31,7 +31,7 @@ Each panel words its asking its own way, and a tool does one run and stops.
 7. **The panel lists its steps.** The step it's waiting on is lit, done ones are ticked, and what fills the first step
    is named: "1 What to trim: 3 strings · 2 The string to trim by · 3 The side to keep". It's one kit part, so every
    tool reads alike.
-8. **First Clip and Trim.** The other tools that take two inputs move onto it in the next workstream: Extend, Split at
+8. **Clip and Trim first, then the rest the same day** (below). The other tools that take two inputs move onto it in the next workstream: Extend, Split at
    a click, the Cut solids modes, Between surfaces and Where surfaces meet. The Surface tools use it from the start.
    One-input tools only ever ask step 1.
 
@@ -61,3 +61,41 @@ Known limits:
 - Only Clip and Trim ask in turn so far.
 - A click on nothing at "the string to trim by" is said, and it goes back to what to trim.
 - The steps list shows the strings picked, not the string clicked, which runs at once.
+
+## Built: the rest of the two-input tools
+
+The same day (Tim: "Merge, then the rest"). They ask in turn now:
+
+- **Extend:** what to run on, then the string to run them on to.
+- **Split at a click:** the string to split, then where.
+- **Where surfaces meet:** the surface or grid to start from, then the one it meets. Two picked when it opens fill both,
+  so it runs at once.
+- **Every Cut solids mode** asks for the solids to cut, unless those picked fill it the first time or the mode takes
+  what's on show. It holds them while it asks for the rest, so a click picking something else doesn't drop them, and
+  picks them again once it has run.
+  - Cut by a surface then asks for the surface or grid to cut by, unless one is set or an RL is typed.
+  - Every cut then waits for the button or a right click, since the faces, the seam model, the bench rules and the
+    polygons are the panel's.
+- **Between surfaces** asks for the closed string around it, the top and the bottom, then makes the solid.
+
+**The button always runs with what the panel has.** Pressed while a tool asks what to work on, it means "that's all, and
+go" where the panel already holds the rest, as when Between's top and bottom are set in its lists. A right click means
+"that's all" and goes on asking. The kit tells the two apart (`gather` answers `'pressed'` or `'done'`).
+
+Faults found and fixed in building it:
+
+- When a tool started asking afresh, the prompt it let go cleared the new prompt's "asking now". It's now a token per
+  prompt.
+- A ribbon pick of another of a panel's tools briefly restarted the tool showing before the mode changed. Where
+  surfaces meet then cleared what was picked, so Contours found no surface. A ribbon pick now restarts a tool only when
+  it names the tool already showing.
+
+Checked: `--cut` gives the same as main at every step (between, strips, joined, by RL, benches, blocks).
+`--string-edits` passes 43 of 43: Extend and Split asking first with nothing picked, and Where surfaces meet running
+when opened with two picked, then asking again. `--workflow` 54, `--select` 29, `--clicks` 24 and `--shell` 62 all pass
+whole.
+
+Known limits:
+
+- Between surfaces by clicks alone isn't driven by a check yet; `--cut` makes it through its lists and the button.
+- Offset, Set grade and the other one-input tools still run on the button as before, without a steps list.

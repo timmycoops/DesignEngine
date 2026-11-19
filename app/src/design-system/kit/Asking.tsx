@@ -9,7 +9,8 @@ import { ToolSection } from './ToolPanel';
  * prompt line under the view what to work on (what's picked already fills that step the first time), then what to work
  * with (a click on a string, a point), runs, and stays loaded, asking again. Esc steps back one prompt a press: from a
  * click to what to work on, and from there it stops asking, the tool's button starting it again. The panel lists its
- * steps, the one it's waiting on lit.
+ * steps, the one it's waiting on lit. The button always runs with what the panel has: pressed while the tool asks what
+ * to work on, it's that's-all and go, where the panel has the rest.
  */
 
 /** One of a tool's steps, as its panel lists it: what it asks for, and what it has, once it has it. */
@@ -25,8 +26,8 @@ export interface Asker {
   alive: () => boolean;
   /** The step being asked for, from 0, lit in the list. */
   step: (at: number) => void;
-  /** What to work on: picks as ever until a right click or the button (true), or Esc (false). */
-  gather: (prompt: string) => Promise<boolean>;
+  /** What to work on: picks as ever until a right click ('done') or the button ('pressed'), or Esc (false). */
+  gather: (prompt: string) => Promise<'done' | 'pressed' | false>;
 }
 
 export interface Asking {
@@ -36,7 +37,7 @@ export interface Asking {
   start: (loop: (ask: Asker) => Promise<void>) => void;
   /** Stops asking and lets go of any pick waiting. */
   stop: () => void;
-  /** The tool's button: what's picked is all, at the first step; idle, start asking again. */
+  /** The tool's button: what's picked is all, wherever it asks what to work on; idle, start asking again. */
   next: (loop: (ask: Asker) => Promise<void>) => void;
 }
 
@@ -46,6 +47,12 @@ export function useAsking(): Asking {
   const [at, setAt] = useState<number | null>(null);
   const atRef = useRef<number | null>(null);
   const generation = useRef(0);
+  /**
+   * The prompt asking what to work on now, if one is, and whether the button, not a right click, said that's all. A
+   * token a prompt: one let go when the loop starts again mustn't clear the next one's (its clean-up runs after).
+   */
+  const gathering = useRef<object | null>(null);
+  const pressed = useRef(false);
   const setStep = useCallback((step: number | null) => {
     atRef.current = step;
     setAt(step);
@@ -65,7 +72,17 @@ export function useAsking(): Asking {
         step: (step) => {
           if (alive()) setStep(step);
         },
-        gather: (prompt) => pickObjects(prompt),
+        gather: async (prompt) => {
+          const token = {};
+          gathering.current = token;
+          pressed.current = false;
+          try {
+            const done = await pickObjects(prompt);
+            return done ? (pressed.current ? 'pressed' : 'done') : false;
+          } finally {
+            if (gathering.current === token) gathering.current = null;
+          }
+        },
       };
       void loop(ask).finally(() => {
         if (alive()) setStep(null);
@@ -75,8 +92,10 @@ export function useAsking(): Asking {
   );
   const next = useCallback(
     (loop: (ask: Asker) => Promise<void>) => {
-      if (atRef.current === 0) finishObjects();
-      else if (atRef.current === null) start(loop);
+      if (gathering.current !== null) {
+        pressed.current = true;
+        finishObjects();
+      } else if (atRef.current === null) start(loop);
     },
     [finishObjects, start],
   );

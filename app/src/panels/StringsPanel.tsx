@@ -28,9 +28,10 @@ import { useWorkspace } from '@/workspace/context';
  * Union, overlap or difference makes new closed strings of the closed strings picked: their union, or, with a closed
  * string clicked, their overlap with it or what's left of them less it.
  *
- * Clip and Trim ask for their inputs in turn (decision 0092): opened, they ask in the prompt line what to work on (the
- * strings picked already fill that the first time), then for the string to clip to or trim by (and Trim the side to
- * keep), run, and ask again; Esc steps back a prompt a press, and from the first stops asking, the button asking again.
+ * Clip, Trim, Extend and Split at a click ask for their inputs in turn (decision 0092): opened, they ask in the prompt
+ * line what to work on (the strings picked already fill that the first time), then for the string to clip to, trim by
+ * or run on to (and Trim the side to keep), or where to split, run, and ask again; Esc steps back a prompt a press, and
+ * from the first stops asking, the button asking again.
  *
  * Vertices (workstream 4): with vertices picked in the view by Alt and a box, Set grade, Set elevation and Drape act on
  * them alone, the button saying how many, and add no workflow step. Densify adds a vertex every so many metres, the
@@ -75,7 +76,10 @@ const MODES: readonly Mode[] = ['offset', 'number_across', 'polygons_from_lines'
 const CHANGES: readonly Mode[] = ['set_grade', 'set_elevation', 'drape', 'split', 'trim', 'extend', 'clip', 'join', 'fillet', 'smooth', 'filter', 'densify', 'vertices_at_crossings', 'reverse', 'set_closed'];
 
 /** The tools that ask for their inputs in turn (decision 0092): what to work on, then what with, then again. */
-const ASKS: readonly Mode[] = ['clip', 'trim'];
+const ASKS: readonly Mode[] = ['clip', 'trim', 'extend', 'split'];
+
+/** What each asks for first, in the prompt line. */
+const ASK_WHAT: Partial<Record<Mode, string>> = { clip: 'the strings to clip', trim: 'the strings to trim', extend: 'the strings to run on', split: 'the string to split' };
 
 /** The tools that act on the vertices picked alone, when some are (String tools plan, workstream 4). */
 const ON_VERTICES: readonly Mode[] = ['set_grade', 'set_elevation', 'drape'];
@@ -362,32 +366,40 @@ export function StringsPanel() {
    * The loop outlives a render, so it reads the panel as it stands through `latest`.
    */
   const asking = useAsking();
-  const latest = useRef({ mode, picked: picked.length, clip, trim });
-  latest.current = { mode, picked: picked.length, clip, trim };
+  /** Set after the tools' functions below, every render. */
+  const latest = useRef<{ mode: Mode; picked: number; run: (onStep: (at: number) => void) => Promise<unknown> }>({ mode, picked: 0, run: async () => undefined });
   const askLoop = useCallback(async (ask: Asker) => {
     let first = true;
     while (ask.alive()) {
       ask.step(0);
-      const noun = latest.current.mode === 'clip' ? 'clip' : 'trim';
+      const what = ASK_WHAT[latest.current.mode] ?? 'what to work on';
       if (!(first && latest.current.picked > 0)) {
-        const done = await ask.gather(`Pick the strings to ${noun}: a click, a box or Ctrl-click. Right-click when done; Esc stops`);
+        const done = await ask.gather(`Pick ${what}: a click, a box or Ctrl-click. Right-click when done; Esc stops`);
         if (!done || !ask.alive()) return;
       }
       first = false;
       if (latest.current.picked === 0) continue;
       ask.step(1);
-      if (latest.current.mode === 'clip') await latest.current.clip();
-      else await latest.current.trim(ask.step);
+      await latest.current.run(ask.step);
     }
   }, []);
   // Only while the panel is the one in front of its dock: another tool's right click is its own.
-  const asks = ASKS.includes(mode) && !addingTo && panelsShown.includes('strings');
-  // Picked again from the ribbon or Find a command, it asks afresh.
-  const askedHere = toolAsk?.panel === 'strings' ? toolAsk.n : null;
+  const asks = ASKS.includes(mode) && (mode !== 'split' || splitBy === 'click') && !addingTo && panelsShown.includes('strings');
   useEffect(() => {
     if (asks) asking.start(askLoop);
     else asking.stop();
-  }, [asks, mode, askedHere, asking.start, asking.stop, askLoop]);
+  }, [asks, mode, asking.start, asking.stop, askLoop]);
+  // Picked again from the ribbon or Find a command as this same tool, it asks afresh. Picked as another of this panel's
+  // tools, the mode changes and that starts it: the ask for another mode must not restart this one first.
+  const askedAgain = toolAsk?.panel === 'strings' && toolAsk.mode === mode ? toolAsk.n : null;
+  const seenAsk = useRef({ key: askedAgain, mode });
+  useEffect(() => {
+    const was = seenAsk.current;
+    seenAsk.current = { key: askedAgain, mode };
+    if (askedAgain !== null && askedAgain !== was.key && mode === was.mode && asks) {
+      asking.start(askLoop);
+    }
+  }, [askedAgain, mode, asks, asking.start, askLoop]);
   useEffect(() => () => asking.stop(), [asking.stop]);
 
   const extendParams = async () => {
@@ -402,6 +414,11 @@ export function StringsPanel() {
     if (!string) return;
     const point = await pickPoint(`Click on ${string.name} where it splits. Esc cancels`);
     if (point) await runIt('string.split', { string: string.id, point });
+  };
+  latest.current = {
+    mode,
+    picked: mode === 'split' ? (string ? 1 : 0) : picked.length,
+    run: (onStep) => (mode === 'clip' ? clip() : mode === 'trim' ? trim(onStep) : mode === 'extend' ? extend() : splitAtClick()),
   };
 
   /** Several strings are each graded from their first vertex to their last; From and To are for one. */
@@ -459,7 +476,7 @@ export function StringsPanel() {
         };
       case 'split':
         return splitBy === 'click'
-          ? { label: `Split ${one} at a click`, run: splitAtClick, ready: !!string, title: 'A click on the string: a vertex goes in there at its height, or it splits at a vertex within a millimetre' }
+          ? { label: `Split ${one} at a click`, run: () => asking.next(askLoop), ready: !!string || asking.at === null, title: 'A click on the string: a vertex goes in there at its height, or it splits at a vertex within a millimetre' }
           : { label: `Split ${one}`, ...calls('string.split', { string: id, at: Math.round(splitAt ?? 1) - 1 }), ready: !!string && splitAt !== null && Number.isInteger(splitAt) };
       case 'trim':
         return {
@@ -472,9 +489,9 @@ export function StringsPanel() {
       case 'extend':
         return {
           label: `Run ${what} on`,
-          run: extend,
+          run: () => asking.next(askLoop),
           step: { command: 'string.extend', params: { strings: ids, reach }, ask: extendParams },
-          ready: some && reach > 0,
+          ready: (some || asking.at === null) && reach > 0,
           title: 'A click on the string to run them on to: each runs on from its nearer end, at its own grade',
         };
       case 'clip':
@@ -553,7 +570,11 @@ export function StringsPanel() {
 
   const askSteps = mode === 'clip'
     ? [{ label: 'What to clip', value: picked.length > 0 ? what : undefined }, { label: 'The closed string to clip to' }]
-    : [{ label: 'What to trim', value: picked.length > 0 ? what : undefined }, { label: keep === 'both' ? 'The string to split them at' : 'The string to trim by' }, ...(keep === 'both' ? [] : [{ label: 'The side to keep' }])];
+    : mode === 'extend'
+      ? [{ label: 'What to run on', value: picked.length > 0 ? what : undefined }, { label: 'The string to run them on to' }]
+      : mode === 'split'
+        ? [{ label: 'The string to split', value: string?.name }, { label: 'Where it splits, clicked on it' }]
+        : [{ label: 'What to trim', value: picked.length > 0 ? what : undefined }, { label: keep === 'both' ? 'The string to split them at' : 'The string to trim by' }, ...(keep === 'both' ? [] : [{ label: 'The side to keep' }])];
 
   const several = mode === 'number_across' || mode === 'polygons_from_lines' || mode === 'project' || mode === 'surface_between' || mode === 'join';
   return (
@@ -570,7 +591,7 @@ export function StringsPanel() {
         </Field>
       </ToolSection>
 
-      {ASKS.includes(mode) && <AskSteps steps={askSteps} at={asking.at} />}
+      {ASKS.includes(mode) && (mode !== 'split' || splitBy === 'click') && <AskSteps steps={askSteps} at={asking.at} />}
 
       <ToolSection title={several ? 'Picked' : 'String'}>
         {mode === 'number_across' ? (
