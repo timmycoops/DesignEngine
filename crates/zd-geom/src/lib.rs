@@ -25,6 +25,7 @@ mod trim_in_plan;
 mod tin;
 mod project;
 mod ramp;
+mod display_levels;
 mod ray;
 mod repair;
 mod reserves;
@@ -67,6 +68,7 @@ pub use orient::{OrientLog, SITES, Separation, boundary_loops, orient_patches, o
 pub use repair::{RepairLog, closed_as_written, repair_mesh};
 pub use rule::{EdgeRule, SolidRegion};
 pub use self_union::{UnionLog, self_union};
+pub use display_levels::{DisplayLevel, DisplayLevels, FEWEST_TRIANGLES, display_levels};
 pub use ray::SurfaceRayCaster;
 pub use seam::{SeamLog, SeamSolid, build_seam_solid};
 pub use section_fill::{SectionFill, fill_between_lines, fill_section_loops};
