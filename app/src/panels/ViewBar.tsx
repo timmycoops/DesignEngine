@@ -2,12 +2,12 @@ import { createContext, useContext } from 'react';
 import { Aperture, Box, Expand, Focus, Magnet, Map as MapIcon, MousePointer2, PaintBucket, PenLine, Ruler, Scissors, StepBack, StepForward } from 'lucide-react';
 import { ToolButton } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
 import { Input } from '@/design-system/ui/input';
 import { Separator } from '@/design-system/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/design-system/ui/tooltip';
 import type { Mode } from '@/viewport/strings';
-import { FIELD_OF_VIEW_DEFAULT } from '@/viewport/Viewport';
+import { DETAIL_CHOICES, DETAIL_DEFAULT, FIELD_OF_VIEW_DEFAULT } from '@/viewport/Viewport';
 
 /** Fields of view offered on the view bar, in degrees. */
 const FIELD_OF_VIEW_CHOICES = [2, 4, 6, 10, 15, 20, 30, 45];
@@ -28,6 +28,9 @@ export interface ViewTools {
   /** The 3D field of view, in degrees. */
   fieldOfView: number;
   setFieldOfView: (degrees: number) => void;
+  /** Pixels far-off chunks may be drawn out by (decision 0097); 0 is always full detail. */
+  detail: number;
+  setDetail: (pixels: number) => void;
   sectionOpen: boolean;
   /** Starts picking a section's two points, or stops; closes an open one. */
   toggleSection: () => void;
@@ -112,7 +115,7 @@ export function ViewBar() {
               </Button>
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent>3D field of view: narrower draws the far side of the pit nearer its true size. Saved on this machine</TooltipContent>
+          <TooltipContent>3D field of view, and how much detail is drawn far off. Saved on this machine</TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="start">
           {FIELD_OF_VIEW_CHOICES.map((degrees) => (
@@ -120,6 +123,15 @@ export function ViewBar() {
               <span className="w-8 tabular-nums">{degrees}°</span>
               {degrees === FIELD_OF_VIEW_DEFAULT ? 'default' : degrees === 45 ? 'old view' : ''}
               {degrees === view.fieldOfView ? ' ✓' : ''}
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Detail far off: drawn out by at most</DropdownMenuLabel>
+          {DETAIL_CHOICES.map((pixels) => (
+            <DropdownMenuItem key={`detail-${pixels}`} onSelect={() => view.setDetail(pixels)}>
+              <span className="w-8 tabular-nums">{pixels === 0 ? 'Full' : `${pixels} px`}</span>
+              {pixels === DETAIL_DEFAULT ? 'default' : pixels === 0 ? 'every triangle, always' : 'faster, softer far off'}
+              {pixels === view.detail ? ' ✓' : ''}
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>

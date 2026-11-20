@@ -65,7 +65,7 @@ import { planPoint, SectionView } from './viewport/section';
 import { RoadLayer } from './viewport/roads';
 import { type Mode, StringLayer } from './viewport/strings';
 import { typing } from './viewport/camera';
-import { FIELD_OF_VIEW_DEFAULT, type FrameStats, Viewport } from './viewport/Viewport';
+import { DETAIL_DEFAULT, FIELD_OF_VIEW_DEFAULT, type FrameStats, triangleWords, Viewport } from './viewport/Viewport';
 import { type AddingTo, type Draft, type FieldColour, type NotebookEdit, type ViewMenuAt, type Workspace as WorkspaceState, WorkspaceContext } from './workspace/context';
 import { ALL_PANELS_KEY, isBeside, type PanelId, placeBeside, resetLayout, showPanel, toggleAllPanels, Workspace } from './workspace/Workspace';
 import { inUse, type Tool, type ToolAction, type ToolNeeds } from './tools';
@@ -152,6 +152,7 @@ export default function App() {
   const [mode, setModeState] = useState<Mode>('select');
   const [plan, setPlan] = useState(false);
   const [fieldOfView, setFieldOfView] = useState(FIELD_OF_VIEW_DEFAULT);
+  const [detail, setDetail] = useState(DETAIL_DEFAULT);
   const [snapping, setSnapping] = useState(true);
   const [sectionOpen, setSectionOpen] = useState(false);
   const [sectionStep, setSectionStep] = useState('25');
@@ -597,6 +598,7 @@ export default function App() {
       viewport = created;
       viewportRef.current = created;
       setFieldOfView(created.fieldOfView);
+      setDetail(created.detail);
       created.onPlanChange = setPlan;
       created.onStats = setStats;
       setBackend(`${created.backend} · ${created.adapter}`);
@@ -1276,6 +1278,11 @@ export default function App() {
     hasSelection: selection.length > 0,
     zoomToSelection: () => zoomTo(selection),
     zoomToExtents,
+    detail,
+    setDetail: (pixels) => {
+      viewportRef.current?.setDetail(pixels);
+      setDetail(viewportRef.current?.detail ?? pixels);
+    },
     fieldOfView,
     setFieldOfView: (degrees) => {
       viewportRef.current?.setFieldOfView(degrees);
@@ -1395,7 +1402,7 @@ export default function App() {
           </span>
           <RunGoing />
           <span className="shrink-0 text-muted-foreground tabular-nums" title={backend}>
-            {stats ? `${stats.fps.toFixed(0)} fps · ${stats.triangles.toLocaleString()} triangles` : '–'}
+            {stats ? `${stats.fps.toFixed(0)} fps · ${triangleWords(stats.drawn)} drawn of ${triangleWords(stats.triangles)}` : '–'}
           </span>
         </footer>
       </div>

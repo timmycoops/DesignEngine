@@ -8,6 +8,7 @@ import { valueColours } from './ramp';
 import { type Bands, bandsFor, colourByRl, colourByValue, NO_VALUE, type RlUniforms, setBands } from './rlColour';
 import { valueBands } from './bands';
 import { SolidFlags } from './solidFlags';
+import type { DecodedLevels } from './levels';
 
 interface GpuAdapterLike {
   limits: Record<string, number>;
@@ -26,7 +27,10 @@ interface DeviceBackend {
 export interface FrameStats {
   fps: number;
   worstFrameMs: number;
+  /** Triangles held in what's on show. */
   triangles: number;
+  /** Triangles drawn in the last frame: in view, at the version each chunk was drawn with (decision 0097). */
+  drawn: number;
 }
 
 /** `performance.now()` when a frame's render was submitted, and when the GPU reported it done. */
@@ -57,6 +61,33 @@ const MIN_FRAME_RADIUS = 25;
 /** A framed box's width on screen is this much less than the view's. */
 const FRAME_MARGIN = 1.2;
 const TAN_22_5 = Math.tan(THREE.MathUtils.degToRad(22.5));
+
+const DETAIL_KEY = 'zd.view.detail';
+/** How far, in pixels on screen, a chunk drawn coarser may look wrong far off (decision 0097); 0 is always full detail. */
+export const DETAIL_DEFAULT = 1;
+export const DETAIL_CHOICES = [0, 1, 2, 4];
+
+/** A count of triangles as the status bar says it: millions to one place, else whole. */
+export function triangleWords(n: number): string {
+  return n >= 1e6 ? `${(n / 1e6).toFixed(1)} M` : Math.round(n).toLocaleString();
+}
+
+/** The detail saved on this machine, else the default. */
+function savedDetail(): number {
+  const saved = globalThis.localStorage?.getItem(DETAIL_KEY);
+  const value = saved === null || saved === undefined ? NaN : Number(saved);
+  return DETAIL_CHOICES.includes(value) ? value : DETAIL_DEFAULT;
+}
+
+/** A drawn chunk and its coarser versions: meshes beside it in its group, sharing its vertices, one shown a frame. */
+interface ChunkDetail {
+  full: THREE.Mesh;
+  levels: THREE.Mesh[];
+  /** Each version's error (m), coarser as they go. */
+  errors: number[];
+  /** Triangles in the full chunk, then in each version. */
+  triangles: number[];
+}
 
 /** The field of view saved on this machine, else the default. */
 function savedFieldOfView(): number {
@@ -135,6 +166,12 @@ export class Viewport {
   /** The scene origin's RL, a whole metre: local z plus this is the true RL. */
   originZ = 0;
   private raycaster = new THREE.Raycaster();
+  /** Pixels a chunk far off may be drawn out by (decision 0097). */
+  private detailPixels = savedDetail();
+  /** Triangles the last frame drew, in view and at the versions chosen. */
+  private drawnTriangles = 0;
+  private readonly frustum = new THREE.Frustum();
+  private readonly viewProjection = new THREE.Matrix4();
   private resizeObserver: ResizeObserver;
 
   /** Plan view: looking straight down, north up, no perspective. */
@@ -310,6 +347,104 @@ export class Viewport {
     camera.updateProjectionMatrix();
     if (save) globalThis.localStorage?.setItem(FIELD_OF_VIEW_KEY, String(next));
     this.controls.update();
+  }
+
+  /** Pixels a chunk far off may be drawn out by; 0 always draws full detail. */
+  get detail(): number {
+    return this.detailPixels;
+  }
+
+  /** Sets the detail, one of `DETAIL_CHOICES`, and saves it on this machine unless `save` is false (the bench). */
+  setDetail(pixels: number, save = true): void {
+    if (!DETAIL_CHOICES.includes(pixels)) return;
+    this.detailPixels = pixels;
+    if (save) globalThis.localStorage?.setItem(DETAIL_KEY, String(pixels));
+  }
+
+  /** Triangles the last frame drew. */
+  get drawnTriangleCount(): number {
+    return this.drawnTriangles;
+  }
+
+  /**
+   * Puts the coarser versions of a drawn surface's chunks beside them (decision 0097): a mesh a version, sharing its
+   * chunk's vertices and material, hidden until a frame picks it. `release` frees their buffer when the surface goes.
+   * Returns how many versions went on, none if the chunks don't match (the surface has been sent again since).
+   */
+  attachLevels(group: THREE.Group, decoded: DecodedLevels, release?: () => void): number {
+    const chunks = group.children.filter((c) => !c.userData.level) as THREE.Mesh[];
+    if (!group.parent || group.userData.detail || chunks.length !== decoded.chunks.length) {
+      release?.();
+      return 0;
+    }
+    let count = 0;
+    const details: ChunkDetail[] = chunks.map((full, k) => {
+      const levels = decoded.chunks[k].map((level) => {
+        const geometry = new THREE.BufferGeometry();
+        for (const [name, attribute] of Object.entries(full.geometry.attributes)) geometry.setAttribute(name, attribute);
+        const index = new THREE.BufferAttribute(level.indices, 1);
+        index.normalized = true;
+        geometry.setIndex(index);
+        geometry.boundingBox = full.geometry.boundingBox;
+        geometry.boundingSphere = full.geometry.boundingSphere;
+        const mesh = new THREE.Mesh(geometry, full.material);
+        mesh.renderOrder = full.renderOrder;
+        mesh.visible = false;
+        mesh.userData.level = true;
+        group.add(mesh);
+        count++;
+        return mesh;
+      });
+      const triangles = [(full.geometry.index?.count ?? 0) / 3, ...decoded.chunks[k].map((l) => l.indices.length / 3)];
+      return { full, levels, errors: decoded.chunks[k].map((l) => l.error), triangles };
+    });
+    group.userData.detail = details;
+    group.userData.releaseLevels = release;
+    return count;
+  }
+
+  /**
+   * Each chunk of each surface on show drawn with the coarsest version that's out by no more than the detail in
+   * pixels, from where the camera is; and the triangles drawn counted, chunk by chunk in view.
+   */
+  private chooseDetail(): void {
+    const camera = this.camera;
+    camera.updateMatrixWorld();
+    this.frustum.setFromProjectionMatrix(this.viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    const height = this.renderer.domElement.height || 1;
+    const flat = this.flatView ? (camera as THREE.OrthographicCamera) : null;
+    const flatPerMetre = flat ? (height * flat.zoom) / (flat.top - flat.bottom) : 0;
+    const position = camera.position;
+    const perMetre = (box: THREE.Box3) => flatPerMetre || height / (2 * Math.max(box.distanceToPoint(position), this.perspective.near) * this.halfTan);
+    let drawn = 0;
+    for (const group of this.surfaces) {
+      if (!group.visible) continue;
+      const details = group.userData.detail as ChunkDetail[] | undefined;
+      if (!details) {
+        for (const child of group.children) {
+          const geometry = (child as THREE.Mesh).geometry;
+          if (geometry?.boundingBox && this.frustum.intersectsBox(geometry.boundingBox)) drawn += (geometry.index?.count ?? 0) / 3;
+        }
+        continue;
+      }
+      for (const chunk of details) {
+        const box = chunk.full.geometry.boundingBox!;
+        let pick = 0;
+        if (this.detailPixels > 0) {
+          const scale = perMetre(box);
+          for (let k = chunk.errors.length - 1; k >= 0; k--) {
+            if (chunk.errors[k] * scale <= this.detailPixels) {
+              pick = k + 1;
+              break;
+            }
+          }
+        }
+        chunk.full.visible = pick === 0;
+        chunk.levels.forEach((mesh, k) => (mesh.visible = pick === k + 1));
+        if (this.frustum.intersectsBox(box)) drawn += chunk.triangles[pick];
+      }
+    }
+    this.drawnTriangles = drawn;
   }
 
   /** tan of half the 3D field of view: half the screen height over the distance. */
@@ -528,6 +663,7 @@ export class Viewport {
     material?.dispose();
     (group.userData.flags as SolidFlags | null | undefined)?.dispose();
     (group.userData.release as (() => void) | undefined)?.();
+    (group.userData.releaseLevels as (() => void) | undefined)?.();
   }
 
   /** The local z a drawn surface spans, or null if it has nothing in it. */
@@ -594,6 +730,8 @@ export class Viewport {
     let nearest: number | null = null;
     // Not three's own raycast: it reads the index through `normalized`, which is on for the WebGPU upload.
     for (const child of group.children) {
+      // The full chunks only: a coarser version drawn far off isn't where the surface is.
+      if (child.userData.level) continue;
       const { geometry } = child as THREE.Mesh;
       if (!geometry.boundingBox || !geometry.index || !ray.intersectsBox(geometry.boundingBox)) continue;
       const corners = geometry.getAttribute('position').array;
@@ -741,6 +879,7 @@ export class Viewport {
     this.controls.update();
     for (const hook of this.cameraMoved) hook();
     this.updateClipPlanes();
+    this.chooseDetail();
     this.draw();
     const submitted = performance.now();
     this.tickStats(now);
@@ -801,7 +940,7 @@ export class Viewport {
     this.lastFrame = now;
     const elapsed = now - this.statStart;
     if (elapsed >= 500) {
-      this.onStats?.({ fps: (this.statFrames * 1000) / elapsed, worstFrameMs: this.worstFrame, triangles: this.triangleCount });
+      this.onStats?.({ fps: (this.statFrames * 1000) / elapsed, worstFrameMs: this.worstFrame, triangles: this.triangleCount, drawn: this.drawnTriangles });
       this.statFrames = 0;
       this.statStart = now;
       this.worstFrame = 0;

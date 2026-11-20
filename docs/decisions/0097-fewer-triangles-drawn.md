@@ -90,8 +90,42 @@ they add nothing to opening, which is the 10 s the decision set. On 48 cores the
 laptop the same 412 s of CPU is about a minute, during which the lidar is drawn at full detail as today. If that
 proves too slow by hand, saving them in the `.zdp` is the step decision 4 left open.
 
+**Workstream 3, drawn by the error on screen:**
+
+- Once a surface of 100,000 triangles or more is drawn at full detail, the view asks for its versions (`loadLevels`
+  in `load.ts`), one surface at a time.
+- `Viewport.attachLevels` puts each version beside its chunk in the surface's group: a mesh sharing the chunk's vertex
+  attributes and material, with an index of its own, hidden.
+  - Swapping the chunk's index for one holding every version would have left the old index buffer on the card (510 MB
+    for the large mine's lidar), so each version is a mesh of its own.
+  - Removing the surface disposes them with it and frees their buffer.
+- Every frame, `chooseDetail` shows each chunk at the coarsest version whose error, at the chunk's nearest distance from
+  the camera, is no more than the Detail in pixels (the device's own pixels; in plan, by the zoom). It also counts the
+  triangles drawn, chunk by chunk in view.
+- **Detail** is in the field-of-view menu on the view bar: Full, 1 px (default), 2 px or 4 px. It's saved on this
+  machine, as the field of view is.
+- The status bar says `56 fps · 4,272 drawn of 178,888`, in millions to one place above a million.
+- **Decision 7, kept without the move.** Picking a seam horizon (`Viewport.distanceTo`) now reads the full chunks
+  only, passing over the versions, so it's exact whatever is drawn. Seam horizons are sent as their own meshes and
+  get no versions, so moving the pick to the engine wasn't needed for it to stay right.
+
+`zd-app --bench --select`, on a made-up rolling surface of 300 by 300 nodes (178,802 triangles, 2 chunks):
+
+| Check | Result |
+|---|---|
+| Versions put on once drawn | 6 a chunk |
+| Zoomed to everything | 4,272 triangles drawn of 178,888 held, both chunks coarser |
+| The picture at 1 px against Full | 1 of 2,301 points apart by more than 24 colour steps |
+| Close in (162 m, the 6° view) | the chunk under the view drawn whole, against versions 6 and 5 far off |
+| A pick at the middle of the view | the same point at 1 px and at Full |
+| Full | every chunk whole |
+
+The other app benches pass unchanged: `--shell`, `--string-edits`, `--workflow`, `--clicks` and `--section-guide`.
+`--cut` gives the same as before.
+
 ## Known limits
 
 - A version can hold a sliver standing on three locked border vertices: it adds an edge along the border, opens no crack.
 - The error is measured at the chunk's vertices; between them the version can stand off the full surface by a little more.
 - Measuring the error is most of the CPU (about two thirds on lidar-like ground). A grid's versions aren't made yet.
+- A layer of solids gets no versions until workstream 4, and a surface under 100,000 triangles none at all.
