@@ -1,8 +1,9 @@
 import { Check } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ObjectSummary } from '@/bridge';
+import { concealed, type ObjectSummary } from '@/bridge';
 import { Input } from '@/design-system/ui/input';
-import { type Asker, AskSteps, Choice, Field, NumberInput, NumberOrBlank, type RunReport, Select, type ToolAction, ToolPanel, ToolSection, useAsking } from '@/design-system/kit';
+import { type Asker, AskSteps, Choice, Field, NumberInput, NumberOrBlank, resultParams, type RunReport, Select, type ToolAction, ToolPanel, ToolSection, useAsking, useResultAs } from '@/design-system/kit';
+import { nearestString } from './stringSide';
 import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
 
@@ -18,21 +19,28 @@ import { useWorkspace } from '@/workspace/context';
  * - Merge (workstream 2, decision 0094): the bottom of the surfaces, grids and solids picked (dug out) or their top
  *   (laid on), a solid counting by its floor or its top, as a grid at a cell size or an exact surface. It asks what to
  *   merge (what's picked already counts) and runs on a right click or the button, then asks again.
+ * - Trim in plan (workstream 3, decision 0095): the strings, surfaces, solids and grids picked, cut by a closed string
+ *   in plan, keeping the inside or the outside, each by its own kind's rule, in place or as new on a layer (0091). It
+ *   asks what to trim (what's picked already counts), then for a click on the closed string, runs, and asks again.
  *
  * While the Workflow panel is adding steps, the button adds the tool as a step instead (decision 0078).
  */
 
-type Mode = 'compare' | 'merge';
+type Mode = 'compare' | 'merge' | 'trim';
 
-const MODES: readonly Mode[] = ['compare', 'merge'];
+const MODES: readonly Mode[] = ['compare', 'merge', 'trim'];
 
 const MERGES = new Set(['surface', 'grid', 'solid']);
+const TRIMS = new Set(['string', 'surface', 'grid', 'solid']);
+
+/** A click this close to a string in plan (m) is on it. */
+const CLICK_ON_A_STRING = 2;
 const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('surfaces', MODES);
 
 const SURFACES = new Set(['surface', 'grid']);
 
 export function SurfacesPanel() {
-  const { summary, selection, runRecord, clearRefusal, toolAsk, toolMode, setSelection, addingTo, panelsShown } = useWorkspace();
+  const { summary, selection, runRecord, clearRefusal, toolAsk, toolMode, setSelection, addingTo, panelsShown, pickPoint } = useWorkspace();
   const [mode, setMode] = useState<Mode>('compare');
   useEffect(() => {
     if (toolAsk?.panel === 'surfaces' && MODES.includes(toolAsk.mode as Mode)) setMode(toolAsk.mode as Mode);
@@ -55,6 +63,10 @@ export function SurfacesPanel() {
   const [mergeCell, setMergeCell] = useState<number | null>(5);
   const [mergeName, setMergeName] = useState('');
   const [mergeLayer, setMergeLayer] = useState('merged');
+  /** Trim: what it keeps, the string it last trimmed by, and in place or as new on a layer (decision 0091). */
+  const [trimKeep, setTrimKeep] = useState<'inside' | 'outside'>('inside');
+  const [trimBy, setTrimBy] = useState<string | null>(null);
+  const resultAs = useResultAs();
   const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
 
@@ -67,6 +79,8 @@ export function SurfacesPanel() {
   const b = byId(compared) ?? (surfaces.length > 1 ? surfaces[1] : null);
   const ring = byId(inside);
   const toMerge = inOrder.filter((o) => MERGES.has(o.kind));
+  const toTrim = inOrder.filter((o) => TRIMS.has(o.kind));
+  const trimWhat = toTrim.length === 1 ? toTrim[0].name : `${toTrim.length} things`;
 
   const runIt = async (command: string, params: Record<string, unknown>) => {
     setBusy(true);
@@ -95,10 +109,57 @@ export function SurfacesPanel() {
     ...(mergeName.trim() ? { name: mergeName.trim() } : {}),
   });
 
-  /** Compare and Merge ask in turn (decision 0092). The loops outlive a render, so they read the panel through `latest`. */
+  const trimParams = (by: string, objects: string[]) => ({ objects, by, keep: trimKeep, ...resultParams(resultAs) });
+  /** A click on a closed string in the view, other than those picked to trim: what they're trimmed by. Null on Esc. */
+  const clickLimit = async (prompt: string) => {
+    // What's to be trimmed as the prompt opens: the click picks the string it lands on too.
+    const picked = new Set(latest.current.toTrim.map((o) => o.id));
+    const point = await pickPoint(prompt);
+    // The project as it stands when the click lands, not when the prompt opened: a string drawn meanwhile counts.
+    const now = latest.current.summary;
+    const origin = now?.origin;
+    if (!point || !origin) return null;
+    const others = (now?.objects ?? [])
+      .filter((o) => o.kind === 'string' && !concealed(o) && o.vertices_local && !picked.has(o.id))
+      .map((o) => ({ id: o.id, name: o.name, closed: !!o.closed, vertices: (o.vertices_local ?? []).map((v) => [v[0] + origin[0], v[1] + origin[1], v[2] + origin[2]] as const) }));
+    const found = nearestString(others, point, CLICK_ON_A_STRING);
+    if (!found) setReport({ notes: [], error: 'No string there: click on the closed string itself, not one of those picked' });
+    else if (!found.closed) setReport({ notes: [], error: `${found.name} isn't closed, so it has no inside to trim to: close it first, or click a closed string` });
+    return found?.closed ? found : null;
+  };
+
+  /** Compare, Merge and Trim ask in turn (decision 0092). The loops outlive a render, so they read the panel through `latest`. */
   const asking = useAsking();
-  const latest = useRef({ surfaces, closedStrings, compareParams, runIt, toMerge, mergeParams });
-  latest.current = { surfaces, closedStrings, compareParams, runIt, toMerge, mergeParams };
+  const latest = useRef({ summary, surfaces, closedStrings, compareParams, runIt, toMerge, mergeParams, toTrim, trimWhat, trimParams, clickLimit });
+  latest.current = { summary, surfaces, closedStrings, compareParams, runIt, toMerge, mergeParams, toTrim, trimWhat, trimParams, clickLimit };
+  const trimLoop = useCallback(
+    async (ask: Asker) => {
+      let first = true;
+      while (ask.alive()) {
+        ask.step(0);
+        setTrimBy(null);
+        const now = () => latest.current;
+        if (!(first && now().toTrim.length > 0)) {
+          const done = await ask.gather('Pick what to trim: strings, surfaces, solids or grids, a click, a box or Ctrl-click. Right-click when done; Esc stops');
+          if (!done || !ask.alive()) return;
+        }
+        first = false;
+        if (now().toTrim.length === 0) continue;
+        ask.step(1);
+        // What's picked now is what's trimmed: the click on the string picks it as well.
+        const trimming = now().toTrim.map((o) => o.id);
+        const limit = await now().clickLimit(`Click the closed string to trim ${now().trimWhat} by. Esc goes back`);
+        if (!ask.alive()) return;
+        if (!limit) continue;
+        setTrimBy(limit.id);
+        ask.step(2);
+        const outcome = await now().runIt('object.trim', now().trimParams(limit.id, trimming));
+        const kept = outcome.record?.outputs.filter((o) => o.change === 'created' || o.change === 'revised').map((o) => o.id) ?? [];
+        if (kept.length > 0) setSelection(kept);
+      }
+    },
+    [setSelection],
+  );
   const mergeLoop = useCallback(async (ask: Asker) => {
     let first = true;
     while (ask.alive()) {
@@ -160,7 +221,7 @@ export function SurfacesPanel() {
     [setSelection],
   );
   const asks = !addingTo && panelsShown.includes('surfaces');
-  const loop = mode === 'merge' ? mergeLoop : compareLoop;
+  const loop = mode === 'merge' ? mergeLoop : mode === 'trim' ? trimLoop : compareLoop;
   useEffect(() => {
     if (asks) asking.start(loop);
     else asking.stop();
@@ -177,7 +238,25 @@ export function SurfacesPanel() {
 
   const ready = !!a && !!b && a.id !== b.id && cell > 0;
   const which = keep === 'bottom' ? 'bottom' : 'top';
-  const action: ToolAction = mode === 'merge' ? {
+  const trimmedBy = byId(trimBy);
+  const action: ToolAction = mode === 'trim' ? {
+    label: toTrim.length > 0 ? `Trim ${trimWhat} to ${trimKeep} a closed string` : 'Trim in plan',
+    icon: <Check className="size-3.5" />,
+    disabled: asking.at === null ? false : toTrim.length === 0,
+    busy,
+    title: `A click on the closed string: each keeps what's ${trimKeep} it, by its own kind's rule`,
+    run: () => asking.next(trimLoop),
+    result: resultAs,
+    step: {
+      command: 'object.trim',
+      params: { objects: toTrim.map((o) => o.id), keep: trimKeep, ...resultParams(resultAs) },
+      ask: async () => {
+        const trimming = toTrim.map((o) => o.id);
+        const limit = await clickLimit(`Click the closed string to trim ${trimWhat} by. Esc cancels`);
+        return limit ? trimParams(limit.id, trimming) : null;
+      },
+    },
+  } : mode === 'merge' ? {
     label: toMerge.length >= 2 ? `Merge the ${which} of ${toMerge.length} as ${output === 'grid' ? 'a grid' : 'an exact surface'}` : 'Merge surfaces',
     icon: <Check className="size-3.5" />,
     disabled: asking.at === null ? false : toMerge.length < 2,
@@ -211,6 +290,25 @@ export function SurfacesPanel() {
 
       {mode === 'merge' && (
         <AskSteps steps={[{ label: 'The surfaces, grids and solids to merge', value: toMerge.length > 0 ? `${toMerge.length} picked` : undefined }, { label: `The ${which}, merged` }]} at={asking.at} />
+      )}
+
+      {mode === 'trim' && (
+        <AskSteps
+          steps={[
+            { label: 'What to trim', value: toTrim.length > 0 ? trimWhat : undefined },
+            { label: 'The closed string to trim by', value: asking.at !== null && asking.at > 1 ? trimmedBy?.name : undefined },
+            { label: `What's ${trimKeep} it, kept` },
+          ]}
+          at={asking.at}
+        />
+      )}
+
+      {mode === 'trim' && (
+        <ToolSection title="Settings">
+          <Field label="Keep" hint={trimKeep === 'inside' ? "What's inside: a string cut at its own heights, a surface exactly along it, a solid vertically and closed, a grid's nodes outside emptied" : "What's outside, each by the same rules"}>
+            <Choice value={trimKeep} options={['inside', 'outside'] as const} labels={{ inside: 'Inside', outside: 'Outside' }} onChange={setTrimKeep} label="What the trim keeps" />
+          </Field>
+        </ToolSection>
       )}
 
       {mode === 'compare' && <AskSteps
