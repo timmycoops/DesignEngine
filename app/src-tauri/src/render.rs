@@ -258,6 +258,66 @@ pub fn encode_grid_with(grid: &Grid, values: Option<&NodeValues<'_>>, origin: [f
     finish(out, header, triangles, bounds.map(|b| local_bounds(b, origin)), start)
 }
 
+/// The coarser versions of each chunk `encode_triangulation` makes of `mesh` (decision 0097, workstream 2), fetched by
+/// the view after it has drawn full detail, so it never waits on them. The chunks are cut again, the same way, so chunk
+/// k here is chunk k there and each version's `u16` indices point at that chunk's vertices as sent. Data: every
+/// version's indices, chunk after chunk, padded to 4 bytes; the header lists each chunk's versions with where their
+/// indices start, how many, and the error, the farthest the version lies from a vertex of the full chunk (m).
+pub fn encode_levels(mesh: &TriMesh, origin: [f64; 3], header: Value) -> Vec<u8> {
+    let start = Instant::now();
+    let threads = worker_threads();
+    let chunks = chunk_triangles_on(mesh, MAX_CHUNK_VERTICES, TARGET_CHUNK_TRIANGLES, threads);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut made: Vec<(usize, zd_geom::DisplayLevels)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads.min(chunks.len()).max(1))
+            .map(|_| {
+                let (chunks, next) = (&chunks, &next);
+                scope.spawn(move || {
+                    let mut mine = Vec::new();
+                    loop {
+                        let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(chunk) = chunks.get(k) else { return mine };
+                        let positions: Vec<[f32; 3]> = chunk.vertices.iter().map(|&v| std::array::from_fn(|a| (mesh.vertices[v as usize][a] - origin[a]) as f32)).collect();
+                        let indices: Vec<u32> = chunk.indices.iter().map(|&i| i as u32).collect();
+                        mine.push((k, zd_geom::display_levels(&positions, &indices, None)));
+                    }
+                })
+            })
+            .collect();
+        handles.into_iter().flat_map(|h| h.join().expect("making a chunk's versions doesn't panic")).collect()
+    });
+    made.sort_by_key(|(k, _)| *k);
+
+    let level_indices: usize = made.iter().flat_map(|(_, m)| &m.levels).map(|l| l.indices.len()).sum();
+    let mut out = Vec::with_capacity(level_indices * 2 + 4096 + 160 * chunks.len());
+    let mut meta = Vec::with_capacity(made.len());
+    let mut index_start = 0;
+    let (mut coarsest, mut cpu_ms) = (0usize, 0.0);
+    for (_, m) in &made {
+        let mut levels = Vec::with_capacity(m.levels.len());
+        for level in &m.levels {
+            for &i in &level.indices {
+                out.extend_from_slice(&(i as u16).to_le_bytes());
+            }
+            levels.push(json!({ "index_start": index_start, "index_count": level.indices.len(), "error": level.error }));
+            index_start += level.indices.len();
+        }
+        coarsest += m.levels.last().map_or(0, |l| l.indices.len() / 3);
+        cpu_ms += m.ms;
+        meta.push(json!({ "levels": levels }));
+    }
+    pad_to_4(&mut out);
+    let mut header = header;
+    header["kind"] = "levels".into();
+    header["chunks"] = meta.into();
+    header["level_triangles"] = (level_indices / 3).into();
+    header["coarsest_triangles"] = coarsest.into();
+    if let Some(timings) = header.get_mut("timings").and_then(|t| t.as_object_mut()) {
+        timings.insert("levels_cpu_ms".into(), cpu_ms.into());
+    }
+    finish(out, header, mesh.triangle_count(), None, start)
+}
+
 /// A chunk of a triangulation: global vertex ids and `u16` indices into them.
 #[derive(Debug, Default, PartialEq)]
 pub struct Chunk {
@@ -806,5 +866,102 @@ mod tests {
             // Cube k is from x = 100 k to 100 k + 10, scene-local.
             assert_eq!(solid, (x / 100.0).floor() as f32, "vertex {v} at x {x}");
         }
+    }
+    /// A surface of four chunks: its versions buffer has a list for each chunk the drawn buffer has, every index points
+    /// at a vertex of that chunk, the errors grow, and every edge two chunks share is in every version of each, so they
+    /// meet with no crack at any versions.
+    #[test]
+    fn each_chunks_versions_point_at_its_vertices_and_keep_its_seams() {
+        let mesh = triangulate_grid(&sample_grid(450, 450));
+        let drawn = encode_triangulation(&mesh, ORIGIN, json!({ "name": "topo", "timings": {} }));
+        let (drawn_header, _) = header_of(&drawn);
+        let chunks = drawn_header["chunks"].as_array().unwrap();
+        assert!(chunks.len() >= 4, "{} chunks", chunks.len());
+        let buf = encode_levels(&mesh, ORIGIN, json!({ "name": "topo", "timings": {} }));
+        let (header, data_end) = header_of(&buf);
+        assert_eq!(header["kind"], "levels");
+        let lists = header["chunks"].as_array().unwrap();
+        assert_eq!(lists.len(), chunks.len());
+        let u16_at = |i: usize| u16::from_le_bytes(buf[2 * i..2 * i + 2].try_into().unwrap());
+        let vertices = drawn_header["vertices"].as_u64().unwrap() as usize;
+        let drawn_u16 = |i: usize| {
+            let at = vertices * 12 + 2 * i;
+            u16::from_le_bytes(drawn[at..at + 2].try_into().unwrap())
+        };
+        // Each chunk's vertex ids in the whole mesh, to find the edges two chunks share.
+        let all = chunk_triangles(&mesh, MAX_CHUNK_VERTICES, TARGET_CHUNK_TRIANGLES);
+        let edges = |k: usize, tri: &mut dyn Iterator<Item = [u16; 3]>| -> std::collections::HashSet<(u32, u32)> {
+            let ids = &all[k].vertices;
+            tri.flat_map(|t| [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])]).map(|(a, b)| (ids[a as usize].min(ids[b as usize]), ids[a as usize].max(ids[b as usize]))).collect()
+        };
+        let full: Vec<std::collections::HashSet<(u32, u32)>> = chunks
+            .iter()
+            .enumerate()
+            .map(|(k, c)| {
+                let (s, n) = (c["index_start"].as_u64().unwrap() as usize, c["index_count"].as_u64().unwrap() as usize);
+                edges(k, &mut (s..s + n).step_by(3).map(|i| [drawn_u16(i), drawn_u16(i + 1), drawn_u16(i + 2)]))
+            })
+            .collect();
+        let mut versions = 0;
+        for (k, list) in lists.iter().enumerate() {
+            let count = chunks[k]["vertex_count"].as_u64().unwrap() as u16;
+            let shared: std::collections::HashSet<(u32, u32)> = (0..full.len()).filter(|&j| j != k).flat_map(|j| full[k].intersection(&full[j]).copied().collect::<Vec<_>>()).collect();
+            let mut error = 0.0;
+            for level in list["levels"].as_array().unwrap() {
+                let (s, n) = (level["index_start"].as_u64().unwrap() as usize, level["index_count"].as_u64().unwrap() as usize);
+                assert!(2 * (s + n) <= data_end);
+                assert!((s..s + n).all(|i| u16_at(i) < count), "chunk {k} points past its vertices");
+                let e = level["error"].as_f64().unwrap();
+                assert!(e >= error - 1e-9, "chunk {k}: {e} after {error}");
+                error = e;
+                let kept = edges(k, &mut (s..s + n).step_by(3).map(|i| [u16_at(i), u16_at(i + 1), u16_at(i + 2)]));
+                assert!(shared.is_subset(&kept), "chunk {k} lost {} edges it shares", shared.difference(&kept).count());
+                versions += 1;
+            }
+        }
+        assert!(versions >= 3 * lists.len(), "{versions} versions over {} chunks", lists.len());
+    }
+    /// Timing on the made-up large mine (`testdata/synthetic/large_mine.py --lidar 1`), named by `ZD_LARGE_MINE`: the
+    /// lidar's full chunks and then its versions, as the shell makes them. Counts and timings only.
+    #[test]
+    #[ignore]
+    fn timing_levels_on_the_large_mine() {
+        let Ok(path) = std::env::var("ZD_LARGE_MINE") else { return };
+        let t = Instant::now();
+        let session = zd_commands::Session::open(&path).unwrap();
+        println!("opened in {:.1} s", t.elapsed().as_secs_f64());
+        let project = session.project();
+        let (name, mesh) = project
+            .objects()
+            .filter_map(|o| match &o.body {
+                zd_core::Body::Surface(s) => Some((o.name.clone(), s.mesh().clone())),
+                _ => None,
+            })
+            .max_by_key(|(_, m)| m.triangle_count())
+            .unwrap();
+        let origin = mesh.bounds().unwrap().centre().map(f64::round);
+        let t = Instant::now();
+        let drawn = encode_triangulation(&mesh, origin, json!({ "name": name, "timings": {} }));
+        let drawn_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let buf = encode_levels(&mesh, origin, json!({ "name": name, "timings": {} }));
+        let levels_ms = t.elapsed().as_secs_f64() * 1e3;
+        let (header, _) = header_of(&buf);
+        let (drawn_header, _) = header_of(&drawn);
+        let chunks = header["chunks"].as_array().unwrap();
+        let versions: usize = chunks.iter().map(|c| c["levels"].as_array().unwrap().len()).sum();
+        let worst = chunks.iter().filter_map(|c| c["levels"].as_array().unwrap().last()).map(|l| l["error"].as_f64().unwrap()).fold(0.0, f64::max);
+        println!(
+            "{} triangles in {} chunks: drawn buffer {:.0} MB in {drawn_ms:.0} ms; versions {:.0} MB ({} versions, {} triangles, coarsest {}, worst coarsest error {worst:.2} m) in {levels_ms:.0} ms, {:.0} ms of CPU",
+            mesh.triangle_count(),
+            chunks.len(),
+            drawn.len() as f64 / 1e6,
+            buf.len() as f64 / 1e6,
+            versions,
+            header["level_triangles"],
+            header["coarsest_triangles"],
+            header["timings"]["levels_cpu_ms"].as_f64().unwrap()
+        );
+        assert_eq!(chunks.len(), drawn_header["chunks"].as_array().unwrap().len());
     }
 }
