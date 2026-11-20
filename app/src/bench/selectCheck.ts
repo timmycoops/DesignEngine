@@ -294,6 +294,28 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
   await key('e');
   expect('E zooms to everything', away > 100 && viewport.controls.target.distanceTo(all) < 1e-6, { before_m: Number(away.toFixed(1)), after_m: viewport.controls.target.distanceTo(all) });
 
+  // A block sunk into the ground, its top exactly on the topography, as the overburden's top is: the block shows over
+  // its whole top, not patches of it and of the ground.
+  const [x0, x1, y0, y1] = [E + 620, E + 700, N - 110, N - 40];
+  const sunk = Array.from({ length: 8 }, (_, i) => [i & 1 ? x1 : x0, (i >> 1) & 1 ? y1 : y0, (i >> 2) & 1 ? 100 : 80] as Vec3);
+  await runCommand('solid.from_mesh', { name: 'Sunk block', layer: 'sunk', vertices: sunk, triangles: faces });
+  await show(await projectSummary());
+  viewport.focusOn(local([(x0 + x1) / 2, (y0 + y1) / 2, 100]).toArray() as Vec3, 160);
+  await settle();
+  const ground = await snapshot();
+  const onTop: number[][] = [];
+  for (let i = 1; i < 8; i++) for (let j = 1; j < 8; j++) onTop.push(ground(screen([x0 + ((x1 - x0) * i) / 8, y0 + ((y1 - y0) * j) / 8, 100])));
+  const topo = [ground(screen([E + 760, N - 75, 100])), ground(screen([E + 560, N - 75, 100]))];
+  const apart = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  const mean = [0, 1, 2].map((c) => onTop.reduce((s, p) => s + p[c], 0) / onTop.length);
+  const nearestGround = Math.min(...onTop.map((p) => Math.min(...topo.map((t) => apart(p, t)))));
+  const spread = Math.max(...onTop.map((p) => apart(p, mean)));
+  expect(
+    "a block whose top lies on the topography shows over all of its top, none of the ground's",
+    apart(topo[0], topo[1]) < 6 && nearestGround > 20 && spread < 6,
+    { block: mean.map(Math.round), ground: topo, nearest_to_ground: Math.round(nearestGround), spread: Number(spread.toFixed(1)), points: onTop.length },
+  );
+
   results.failures = failures;
   return results;
 }
