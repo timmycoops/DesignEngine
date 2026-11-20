@@ -90,6 +90,7 @@ export type ToolIcon =
   | 'clip'
   | 'compare-surfaces'
   | 'merge-surfaces'
+  | 'trim-in-plan'
   | 'polygon-ops'
   | 'meet'
   | 'contours'
@@ -247,9 +248,10 @@ export const TOOLS: readonly Tool[] = [
 
   // Solids. Cut solids' six, in the order the work is done; the panel's own choice keeps its order.
   { key: 'cut', stage: 'solids', label: 'Cut solids', tip: 'into strips by faces, by a surface, grid or RL, or one between two surfaces', icon: 'cut', panel: 'cut' },
-  { key: 'surfaces', stage: 'walls', label: 'Surfaces', tip: 'work on surfaces and grids: compare them, merge them with the topography', icon: 'compare-surfaces', panel: 'surfaces' },
+  { key: 'surfaces', stage: 'walls', label: 'Surfaces', tip: 'work on surfaces and grids: compare them, merge them with the topography, trim them in plan', icon: 'compare-surfaces', panel: 'surfaces' },
   { key: 'surfaces:compare', stage: 'walls', label: 'Compare surfaces', tip: 'Cut and fill between two surfaces, exact, with a column check.', short: 'Compare', icon: 'compare-surfaces', panel: 'surfaces', mode: 'compare', command: 'surface.compare', step: { takes: 'two surfaces or grids, and a closed string or none' } },
   { key: 'surfaces:merge', stage: 'walls', label: 'Merge surfaces', tip: 'Merges surfaces, grids and solids: the bottom dug out or the top laid on.', short: 'Merge', icon: 'merge-surfaces', panel: 'surfaces', mode: 'merge', command: 'surface.merge', step: { takes: 'the surfaces, grids and solids picked' } },
+  { key: 'surfaces:trim', stage: 'walls', label: 'Trim in plan', tip: 'Trims anything picked to inside or outside a closed string.', short: 'Trim plan', icon: 'trim-in-plan', panel: 'surfaces', mode: 'trim', command: 'object.trim', step: { takes: 'the strings, surfaces, solids and grids picked, and a closed string' } },
   { key: 'cut:between', stage: 'solids', label: 'Between surfaces', tip: 'Makes one solid inside a closed string, between two surfaces.', icon: 'between', panel: 'cut', mode: 'between', command: 'solid.between_surfaces', step: { takes: 'a closed string, top and bottom' } },
   { key: 'cut:strips', stage: 'solids', label: 'Strips by faces', tip: 'Slices solids into strips by faces, from the pit out.', icon: 'strips', panel: 'cut', mode: 'strips', command: 'solid.slice_by_faces', step: { takes: 'solids and a face a strip' } },
   { key: 'cut:cut', stage: 'solids', label: 'By surface or RL', tip: 'Cuts solids by a surface, a grid or an RL.', icon: 'cut', panel: 'cut', mode: 'cut', command: 'solid.cut_by_surface', step: { takes: 'solids and a surface, grid or RL' } },
@@ -406,7 +408,7 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     '|',
     ...MOVE_TOOLS,
   ],
-  walls: ['face', 'builder', 'builder:rebuild', '|', 'strings:ramp_polygon', 'strings:set_grade', 'strings:offset', 'strings:project', 'strings:surface_between', '|', 'cut:join_faces', '|', 'surfaces:compare', 'surfaces:merge'],
+  walls: ['face', 'builder', 'builder:rebuild', '|', 'strings:ramp_polygon', 'strings:set_grade', 'strings:offset', 'strings:project', 'strings:surface_between', '|', 'cut:join_faces', '|', 'surfaces:compare', 'surfaces:merge', 'surfaces:trim'],
   solids: [
     'cut:between',
     'cut:strips',

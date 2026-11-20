@@ -681,6 +681,8 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   const gridSaid = surfacesPanel()?.textContent?.match(/the bottom of [^,]+, [^,]+, as a grid sampled at 5 m: \d+ by \d+ nodes/)?.[0] ?? '';
   await key('Escape');
   await key('Escape');
+  // The grid lies over the topography: taken away first, so the click picks the topography, not it.
+  await key('z', true);
   await pickBoth();
   [...(surfacesPanel()?.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="A grid or an exact surface"] button') ?? [])].find((b) => b.textContent?.trim() === 'An exact surface')?.click();
   await wait(300);
@@ -691,14 +693,41 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   expect(
     'Merge from the Walls row: a right click makes their bottom as a 5 m grid; picked again and the button, as an exact surface',
     mergeAsked && !!mergedGrid && gridSaid !== '' && !!mergedSurface,
-    { mergeAsked, grid: !!mergedGrid, gridSaid, surface: !!mergedSurface },
+    { mergeAsked, grid: !!mergedGrid, gridSaid, surface: !!mergedSurface, ...(mergedSurface ? {} : { panel: surfacesPanel()?.textContent?.slice(0, 600) }) },
   );
   await key('z', true);
-  await key('z', true);
   const mergedLeft = (await projectSummary()).objects.filter((o) => o.name === 'Merged bottom').length;
-  expect('two Ctrl+Z take both merges away', mergedLeft === 0, mergedLeft);
+  expect('a Ctrl+Z after each takes both merges away', mergedLeft === 0, mergedLeft);
   await key('Escape');
   await key('Escape');
+
+  // Trim in plan (Surface tools plan, workstream 3), from the Walls row: the topography and the slope picked, then a
+  // click on an 80 by 100 m square across the topography's east edge: the topography keeps its 5,000 m² inside it, the
+  // slope its 8,000 m². One Ctrl+Z puts both back.
+  await runCommand('string.create', { name: 'Trim limit', layer: 'trim limits', closed: true, points: [[E + 250, N, 100], [E + 330, N, 100], [E + 330, N + 100, 100], [E + 250, N + 100, 100]] });
+  await show(await projectSummary());
+  await settle();
+  const trimmedRevisions = async () => (await projectSummary()).objects.filter((o) => o.name === 'Topography' || o.name === 'Bench slope').map((o) => o.revision);
+  const beforeTrim = await trimmedRevisions();
+  await pickBoth();
+  document.querySelector<HTMLButtonElement>('[role="tab"][data-stage="walls"]')?.click();
+  await wait(200);
+  document.querySelector<HTMLButtonElement>('[data-slot="ribbon"] button[data-tool="surfaces:trim"]')?.click();
+  await wait(800);
+  const trimAsksString = footer().includes('Click the closed string to trim 2 things by');
+  await click([E + 250, N + 50, 100]);
+  await wait(1500);
+  const trimSaid = surfacesPanel()?.textContent ?? '';
+  expect(
+    'Trim in plan from the Walls row, the topography and the slope picked, then a click on the square: 5,000 m² and 8,000 m² kept inside it',
+    trimAsksString && trimSaid.includes("'Topography' 5,000.0 m² of 120,000.0 m² kept in plan") && trimSaid.includes("'Bench slope' 8,000.0 m² of 40,000.0 m² kept in plan"),
+    { trimAsksString, footer: footer().slice(0, 120), said: trimSaid.match(/trimmed \d+ of \d+[^;]*;[^;]*/)?.[0] ?? trimSaid.slice(0, 300) },
+  );
+  await key('Escape');
+  await key('Escape');
+  await key('z', true);
+  const afterTrim = await trimmedRevisions();
+  expect('one Ctrl+Z puts both back as they were', JSON.stringify(afterTrim) === JSON.stringify(beforeTrim), { beforeTrim, afterTrim });
 
   // Polygons (workstream 6), from the Strings row: two 100 m blocks overlapping by half and a toe at 10 % across them.
   // Clip with the toe picked and a click on Block A keeps its 100 m inside, RL 105 to 115; Union of both blocks picked

@@ -219,7 +219,12 @@ pub fn merge_to_surface(inputs: &[MergeInput], keep: Envelope) -> Result<MergedS
         }
     };
     kept.status().map_err(|e| GeomError::Manifold(e.to_string()))?;
-    let solid = from_manifold(&kept, origin);
+    Ok(MergedSurface { mesh: upper_skin(&from_manifold(&kept, origin), floor), triangles_in, ms: started.elapsed().as_secs_f64() * 1e3 })
+}
+
+/// The upper skin of a surface closed down to `floor`: its triangles facing up, above the floor. Where the surface was
+/// cut, the cut's walls face sideways and are left out.
+pub(crate) fn upper_skin(solid: &TriMesh, floor: f64) -> TriMesh {
     let skin: Vec<[u32; 3]> = solid
         .triangles
         .iter()
@@ -230,7 +235,7 @@ pub fn merge_to_surface(inputs: &[MergeInput], keep: Envelope) -> Result<MergedS
             up > 1e-9 && (a[2] + b[2] + c[2]) / 3.0 > floor + 1e-6
         })
         .collect();
-    Ok(MergedSurface { mesh: compact(&solid.vertices, skin), triangles_in, ms: started.elapsed().as_secs_f64() * 1e3 })
+    compact(&solid.vertices, skin)
 }
 
 #[cfg(test)]

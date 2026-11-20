@@ -15,6 +15,10 @@ const SAME_CUT: f64 = 1e-6;
 /// A place along a string closer to a vertex than this is that vertex (m).
 const AT_A_VERTEX: f64 = 1e-9;
 
+/// Why a clip leaves nothing of a string: it lies wholly on the side dropped.
+pub(crate) const WHOLLY_OUTSIDE: &str = "it lies wholly outside";
+pub(crate) const WHOLLY_INSIDE: &str = "it lies wholly inside";
+
 /// A point clicked this close to a vertex splits the string there, not a hair beside it (m).
 const SPLIT_AT_VERTEX: f64 = 1e-3;
 
@@ -270,7 +274,7 @@ pub fn clip_string(line: &Polyline, polygon: &Polyline, inside: bool) -> Result<
     if line.vertices.len() < if line.closed { 3 } else { 2 } {
         return Err(GeomError::InvalidInput("a string with too few vertices to clip".into()));
     }
-    cut_keeping(line, polygon, Some(if inside { 1 } else { -1 }), if inside { "it lies wholly outside" } else { "it lies wholly inside" })
+    cut_keeping(line, polygon, Some(if inside { 1 } else { -1 }), if inside { WHOLLY_OUTSIDE } else { WHOLLY_INSIDE })
 }
 
 /// The cut both a trim and a clip make: the string cut where the cutting string crosses it, and the parts on the side

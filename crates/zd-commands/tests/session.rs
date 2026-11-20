@@ -72,6 +72,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "object.move",
             "object.rename",
             "object.transform",
+            "object.trim",
             "parameters.export_csv",
             "parameters.save",
             "reserves.run",
