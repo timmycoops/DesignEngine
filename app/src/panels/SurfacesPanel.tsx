@@ -2,7 +2,7 @@ import { Check } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ObjectSummary } from '@/bridge';
 import { Input } from '@/design-system/ui/input';
-import { type Asker, AskSteps, Choice, Field, NumberInput, type RunReport, Select, type ToolAction, ToolPanel, ToolSection, useAsking } from '@/design-system/kit';
+import { type Asker, AskSteps, Choice, Field, NumberInput, NumberOrBlank, type RunReport, Select, type ToolAction, ToolPanel, ToolSection, useAsking } from '@/design-system/kit';
 import { choiceWords } from '@/tools';
 import { useWorkspace } from '@/workspace/context';
 
@@ -15,13 +15,18 @@ import { useWorkspace } from '@/workspace/context';
  *   turn (decision 0092): the surface compared against, the one compared, then a closed string or a right click for
  *   wherever both are; it runs, and asks again. Esc steps back a prompt a press. Two surfaces picked when it opens fill
  *   the first two steps. The button runs with what the panel has.
+ * - Merge (workstream 2, decision 0094): the bottom of the surfaces, grids and solids picked (dug out) or their top
+ *   (laid on), a solid counting by its floor or its top, as a grid at a cell size or an exact surface. It asks what to
+ *   merge (what's picked already counts) and runs on a right click or the button, then asks again.
  *
  * While the Workflow panel is adding steps, the button adds the tool as a step instead (decision 0078).
  */
 
-type Mode = 'compare';
+type Mode = 'compare' | 'merge';
 
-const MODES: readonly Mode[] = ['compare'];
+const MODES: readonly Mode[] = ['compare', 'merge'];
+
+const MERGES = new Set(['surface', 'grid', 'solid']);
 const { labels: MODE_LABELS, lines: MODE_LINES } = choiceWords('surfaces', MODES);
 
 const SURFACES = new Set(['surface', 'grid']);
@@ -44,6 +49,12 @@ export function SurfacesPanel() {
   const [against, setAgainst] = useState<string | null>(null);
   const [compared, setCompared] = useState<string | null>(null);
   const [inside, setInside] = useState<string | null>(null);
+  /** Merge: bottom or top, a grid or an exact surface, the grid's cell (blank: 5 m, or grids alike node by node). */
+  const [keep, setKeep] = useState<'bottom' | 'top'>('bottom');
+  const [output, setOutput] = useState<'grid' | 'surface'>('grid');
+  const [mergeCell, setMergeCell] = useState<number | null>(5);
+  const [mergeName, setMergeName] = useState('');
+  const [mergeLayer, setMergeLayer] = useState('merged');
   const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
 
@@ -55,6 +66,7 @@ export function SurfacesPanel() {
   const a = byId(against) ?? surfaces[0] ?? null;
   const b = byId(compared) ?? (surfaces.length > 1 ? surfaces[1] : null);
   const ring = byId(inside);
+  const toMerge = inOrder.filter((o) => MERGES.has(o.kind));
 
   const runIt = async (command: string, params: Record<string, unknown>) => {
     setBusy(true);
@@ -74,10 +86,33 @@ export function SurfacesPanel() {
     ...(thickness === 'on' ? { thickness: true, layer: thicknessLayer.trim() || 'thickness' } : {}),
   });
 
-  /** Compare asks in turn (decision 0092). The loop outlives a render, so it reads the panel through `latest`. */
+  const mergeParams = () => ({
+    objects: toMerge.map((o) => o.id),
+    keep,
+    output,
+    ...(output === 'grid' && mergeCell !== null ? { cell: mergeCell } : {}),
+    layer: mergeLayer.trim() || 'merged',
+    ...(mergeName.trim() ? { name: mergeName.trim() } : {}),
+  });
+
+  /** Compare and Merge ask in turn (decision 0092). The loops outlive a render, so they read the panel through `latest`. */
   const asking = useAsking();
-  const latest = useRef({ surfaces, closedStrings, compareParams, runIt });
-  latest.current = { surfaces, closedStrings, compareParams, runIt };
+  const latest = useRef({ surfaces, closedStrings, compareParams, runIt, toMerge, mergeParams });
+  latest.current = { surfaces, closedStrings, compareParams, runIt, toMerge, mergeParams };
+  const mergeLoop = useCallback(async (ask: Asker) => {
+    let first = true;
+    while (ask.alive()) {
+      ask.step(0);
+      // Started by the button with what to merge picked: the button runs with what the panel has.
+      const now = first && ask.byButton && latest.current.toMerge.length >= 2;
+      first = false;
+      const done = now ? 'pressed' : await ask.gather('Pick the surfaces, grids and solids to merge: a box or Ctrl-click. Right-click or the button to merge; Esc stops');
+      if (!done || !ask.alive()) return;
+      if (latest.current.toMerge.length < 2) continue;
+      ask.step(1);
+      await latest.current.runIt('surface.merge', latest.current.mergeParams());
+    }
+  }, []);
   const compareLoop = useCallback(
     async (ask: Asker) => {
       let first = true;
@@ -124,23 +159,33 @@ export function SurfacesPanel() {
     },
     [setSelection],
   );
-  const asks = mode === 'compare' && !addingTo && panelsShown.includes('surfaces');
+  const asks = !addingTo && panelsShown.includes('surfaces');
+  const loop = mode === 'merge' ? mergeLoop : compareLoop;
   useEffect(() => {
-    if (asks) asking.start(compareLoop);
+    if (asks) asking.start(loop);
     else asking.stop();
-  }, [asks, asking.start, asking.stop, compareLoop]);
+  }, [asks, asking.start, asking.stop, loop]);
   // Picked again from the ribbon or Find a command as this same tool, it asks afresh.
   const askedAgain = toolAsk?.panel === 'surfaces' && toolAsk.mode === mode ? toolAsk.n : null;
   const seenAsk = useRef({ key: askedAgain, mode });
   useEffect(() => {
     const was = seenAsk.current;
     seenAsk.current = { key: askedAgain, mode };
-    if (askedAgain !== null && askedAgain !== was.key && mode === was.mode && asks) asking.start(compareLoop);
-  }, [askedAgain, mode, asks, asking.start, compareLoop]);
+    if (askedAgain !== null && askedAgain !== was.key && mode === was.mode && asks) asking.start(loop);
+  }, [askedAgain, mode, asks, asking.start, loop]);
   useEffect(() => () => asking.stop(), [asking.stop]);
 
   const ready = !!a && !!b && a.id !== b.id && cell > 0;
-  const action: ToolAction = {
+  const which = keep === 'bottom' ? 'bottom' : 'top';
+  const action: ToolAction = mode === 'merge' ? {
+    label: toMerge.length >= 2 ? `Merge the ${which} of ${toMerge.length} as ${output === 'grid' ? 'a grid' : 'an exact surface'}` : 'Merge surfaces',
+    icon: <Check className="size-3.5" />,
+    disabled: asking.at === null ? false : toMerge.length < 2,
+    busy,
+    title: output === 'surface' ? 'Exact: every crest, toe and berm where they are, joined where they meet. It takes longer' : 'A grid at the cell set: fast at any size',
+    run: () => asking.next(mergeLoop),
+    step: { command: 'surface.merge', params: mergeParams() },
+  } : {
     label: a && b ? `Compare ${b.name} with ${a.name}` : 'Compare surfaces',
     icon: <Check className="size-3.5" />,
     disabled: asking.at === null ? false : !ready && asking.at !== 0 && asking.at !== 1 && asking.at !== 2,
@@ -164,7 +209,11 @@ export function SurfacesPanel() {
         </Field>
       </ToolSection>
 
-      <AskSteps
+      {mode === 'merge' && (
+        <AskSteps steps={[{ label: 'The surfaces, grids and solids to merge', value: toMerge.length > 0 ? `${toMerge.length} picked` : undefined }, { label: `The ${which}, merged` }]} at={asking.at} />
+      )}
+
+      {mode === 'compare' && <AskSteps
         steps={[
           { label: 'The surface or grid to compare against', value: a?.name },
           { label: 'The one compared', value: b?.name },
@@ -172,9 +221,31 @@ export function SurfacesPanel() {
           { label: 'Cut and fill' },
         ]}
         at={asking.at}
-      />
+      />}
 
-      <ToolSection title="Settings">
+      {mode === 'merge' && (
+        <ToolSection title="Settings">
+          <Field label="Keep" hint={keep === 'bottom' ? 'The lowest of them at each place: a pit shell or strip solids dug out of the topography, a solid by its floor' : 'The highest: a dump laid on, a solid by its top'}>
+            <Choice value={keep} options={['bottom', 'top'] as const} labels={{ bottom: 'Bottom', top: 'Top' }} onChange={setKeep} label="Keep the bottom or the top" />
+          </Field>
+          <Field label="As" hint={output === 'grid' ? 'A grid at the cell set: fast at any size' : 'Exact: every crest, toe and berm where they are, joined where they meet; it takes longer'}>
+            <Choice value={output} options={['grid', 'surface'] as const} labels={{ grid: 'A grid', surface: 'An exact surface' }} onChange={setOutput} label="A grid or an exact surface" />
+          </Field>
+          {output === 'grid' && (
+            <Field label="Cell" hint="Blank: 5 m, or, every one a grid on one lattice, that lattice node by node">
+              <NumberOrBlank value={mergeCell} onChange={setMergeCell} label="Grid cell" unit="m" blank="Its own" />
+            </Field>
+          )}
+          <Field label="Name">
+            <Input className="h-7 px-1.5 text-xs" value={mergeName} placeholder={keep === 'bottom' ? 'Merged bottom' : 'Merged top'} aria-label="Name for what's merged" onChange={(e) => setMergeName(e.target.value)} />
+          </Field>
+          <Field label="Layer">
+            <Input className="h-7 px-1.5 text-xs" value={mergeLayer} aria-label="Layer for what's merged" onChange={(e) => setMergeLayer(e.target.value)} />
+          </Field>
+        </ToolSection>
+      )}
+
+      {mode === 'compare' && <ToolSection title="Settings">
         <Field label="Column check" hint="A 2.5D column volume at this cell runs alongside the exact one; a difference beyond 0.1 % is said">
           <NumberInput value={cell} onChange={setCell} label="Column check cell" unit="m" range={{ min: 0, minIncluded: false }} />
         </Field>
@@ -186,7 +257,7 @@ export function SurfacesPanel() {
             <Input className="h-7 px-1.5 text-xs" value={thicknessLayer} aria-label="Layer for the thickness grid" onChange={(e) => setThicknessLayer(e.target.value)} />
           </Field>
         )}
-      </ToolSection>
+      </ToolSection>}
     </ToolPanel>
   );
 }

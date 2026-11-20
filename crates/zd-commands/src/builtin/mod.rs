@@ -29,6 +29,7 @@ mod reserves_run;
 mod formulas;
 mod from_surfaces;
 mod surface_compare;
+mod surface_merge;
 mod starter;
 mod measure;
 
@@ -61,6 +62,7 @@ pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, S
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
 pub use workflow::{SaveWorkflow, SaveWorkflowParams, WORKFLOW_LAYER};
 pub use surface_compare::{CompareSurfaces, CompareSurfacesParams};
+pub use surface_merge::{MergeKeep, MergeOutput, MergeSurfaces, MergeSurfacesParams};
 pub use from_surfaces::{Contours, ContoursParams, FromSection, FromSectionParams, Outline, OutlineParams, WhereSurfacesMeet, WhereSurfacesMeetParams};
 pub use measure::{MEASURES, Measure, MeasureParams, block_length, floor_dip, measure, plan_area};
 pub use reserves_run::{
@@ -93,6 +95,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(CreateString);
     registry.register(WhereSurfacesMeet);
     registry.register(CompareSurfaces);
+    registry.register(MergeSurfaces);
     registry.register(Contours);
     registry.register(Outline);
     registry.register(FromSection);

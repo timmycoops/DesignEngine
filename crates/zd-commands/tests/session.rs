@@ -130,6 +130,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "surface.compare",
             "surface.from_mesh",
             "surface.import",
+            "surface.merge",
             "workflow.save",
         ]
     );

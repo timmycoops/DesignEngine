@@ -26,6 +26,8 @@ export interface Asker {
   alive: () => boolean;
   /** The step being asked for, from 0, lit in the list. */
   step: (at: number) => void;
+  /** Started by the tool's button, not by opening it: what the panel has is to be run with, as the button always does. */
+  byButton: boolean;
   /** What to work on: picks as ever until a right click ('done') or the button ('pressed'), or Esc (false). */
   gather: (prompt: string) => Promise<'done' | 'pressed' | false>;
 }
@@ -33,8 +35,8 @@ export interface Asker {
 export interface Asking {
   /** The step waiting, from 0; null when it isn't asking. */
   at: number | null;
-  /** Starts the loop afresh, ending any before it. */
-  start: (loop: (ask: Asker) => Promise<void>) => void;
+  /** Starts the loop afresh, ending any before it; `byButton` when the tool's button started it. */
+  start: (loop: (ask: Asker) => Promise<void>, byButton?: boolean) => void;
   /** Stops asking and lets go of any pick waiting. */
   stop: () => void;
   /** The tool's button: what's picked is all, wherever it asks what to work on; idle, start asking again. */
@@ -63,12 +65,13 @@ export function useAsking(): Asking {
     cancelPicks();
   }, [cancelPicks, setStep]);
   const start = useCallback(
-    (loop: (ask: Asker) => Promise<void>) => {
+    (loop: (ask: Asker) => Promise<void>, byButton = false) => {
       generation.current += 1;
       const mine = generation.current;
       const alive = () => generation.current === mine;
       const ask: Asker = {
         alive,
+        byButton,
         step: (step) => {
           if (alive()) setStep(step);
         },
@@ -95,7 +98,7 @@ export function useAsking(): Asking {
       if (gathering.current !== null) {
         pressed.current = true;
         finishObjects();
-      } else if (atRef.current === null) start(loop);
+      } else if (atRef.current === null) start(loop, true);
     },
     [finishObjects, start],
   );
