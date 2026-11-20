@@ -47,7 +47,7 @@ foot named for what it does, Ctrl+Enter), `PanelHead` for a panel that isn't a t
 turn (`useAsking` and `AskSteps`, `docs/decisions/0092-tools-ask-in-turn.md`): what to work on, then what with, then it
 runs and asks again; Esc steps back a prompt a press, and it asks only while its panel is in front. The button always
 runs with what the panel has. A click on a string at a prompt picks it too, so a tool takes what it works on as
-the prompt opens, and the project as it stands when the click lands. Clip, Trim, Extend, Split at a click, Where surfaces meet, every Cut solids mode, and Compare, Merge and Trim in plan do;
+the prompt opens, and the project as it stands when the click lands. Clip, Trim, Extend, Split at a click, Where surfaces meet, every Cut solids mode, and Compare, Merge, Trim in plan and Triangulate do;
 a new tool that takes inputs asks the same way. Colours come from the theme's tokens, one meaning each: gold picked, orange `warning`, blue `edited`,
 red refused, green valid. Don't hand-roll an input, select, badge or colour a kit part covers; add to the kit instead.
 

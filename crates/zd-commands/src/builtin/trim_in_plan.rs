@@ -48,7 +48,8 @@ fn why(e: GeomError) -> String {
     }
 }
 
-fn thousands(v: f64, places: usize) -> String {
+/// A number for a sentence with thousands marked, to `places` decimals.
+pub(super) fn thousands(v: f64, places: usize) -> String {
     let text = format!("{:.*}", places, v.abs());
     let (whole, part) = text.split_once('.').map_or((text.as_str(), None), |(w, p)| (w, Some(p)));
     let mut grouped = String::new();

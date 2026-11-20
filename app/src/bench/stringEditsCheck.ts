@@ -729,6 +729,35 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   const afterTrim = await trimmedRevisions();
   expect('one Ctrl+Z puts both back as they were', JSON.stringify(afterTrim) === JSON.stringify(beforeTrim), { beforeTrim, afterTrim });
 
+  // Triangulate (Surface tools plan, workstream 4), from the Walls row: a closed string 80 by 30 m drawn at RL 100,
+  // picked, then a right click: a flat pad of 2,400 m², named for it. One Ctrl+Z takes it away.
+  await key('Escape');
+  await key('Escape');
+  await runCommand('string.create', { name: 'Pad outline', layer: 'pads', closed: true, points: [[E + 700, N, 100], [E + 780, N, 100], [E + 780, N + 30, 100], [E + 700, N + 30, 100]] });
+  await show(await projectSummary());
+  viewport.fitView();
+  await settle();
+  await click([E + 740, N, 100]);
+  document.querySelector<HTMLButtonElement>('[role="tab"][data-stage="walls"]')?.click();
+  await wait(200);
+  document.querySelector<HTMLButtonElement>('[data-slot="ribbon"] button[data-tool="surfaces:triangulate"]')?.click();
+  await wait(800);
+  const tinAsked = footer().includes('Pick the strings to triangulate');
+  await rightClick([E + 740, N + 15, 100]);
+  await wait(1500);
+  const pad = (await projectSummary()).objects.find((o) => o.name === 'Pad outline surface' && o.kind === 'surface');
+  const tinSaid = surfacesPanel()?.textContent?.match(/triangulated 'Pad outline' \(\d+ vertices\): \d+ triangles, [\d,.]+ m² in plan/)?.[0] ?? '';
+  expect(
+    "Triangulate from the Walls row, the pad's outline picked, then a right click: 'Pad outline surface', 2,400 m² in plan",
+    tinAsked && !!pad && tinSaid.endsWith('2,400.0 m² in plan'),
+    { tinAsked, pad: !!pad, said: tinSaid || (surfacesPanel()?.textContent ?? '').slice(0, 300) },
+  );
+  await key('Escape');
+  await key('Escape');
+  await key('z', true);
+  const padLeft = (await projectSummary()).objects.filter((o) => o.name === 'Pad outline surface').length;
+  expect('one Ctrl+Z takes the pad away', padLeft === 0, padLeft);
+
   // Polygons (workstream 6), from the Strings row: two 100 m blocks overlapping by half and a toe at 10 % across them.
   // Clip with the toe picked and a click on Block A keeps its 100 m inside, RL 105 to 115; Union of both blocks picked
   // makes one closed string of 15,000 m²; Overlap with Block A picked and Block B clicked, 5,000 m². Each Ctrl+Z puts it back.

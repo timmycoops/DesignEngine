@@ -132,6 +132,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "surface.from_mesh",
             "surface.import",
             "surface.merge",
+            "surface.triangulate",
             "workflow.save",
         ]
     );
