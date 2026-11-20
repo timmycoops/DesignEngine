@@ -391,6 +391,90 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
     viewport.setDetail(1, false);
   }
 
+  // Blocks (decision 0097, workstream 4): four blocks touching in a square, each a rolling top over a flat floor, 234,240
+  // triangles in one tile. The walls two share are left out while all four are drawn, and drawn once one is hidden; far
+  // off the tops thin and the picture stays the full one's; a picked block's highlight is its full detail.
+  const [bx, by, cells] = [E + 2000, N + 600, 120];
+  const blockIds: string[] = [];
+  for (const [i, j] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+    const [c0, r0] = [i * cells, j * cells];
+    const n = cells + 1;
+    const corner = (c: number, r: number, floor: boolean): Vec3 => [bx + c0 + c, by + r0 + r, floor ? 80 : 100 + 4 * Math.sin((c0 + c) / 9) * Math.cos((r0 + r) / 11) + 1.5 * Math.sin((c0 + c + r0 + r) / 5)];
+    const at = (c: number, r: number, floor: boolean) => (floor ? n * n : 0) + r * n + c;
+    const vertices: Vec3[] = [];
+    for (const floor of [false, true]) for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) vertices.push(corner(c, r, floor));
+    const faces: [number, number, number][] = [];
+    for (let r = 0; r < cells; r++) {
+      for (let c = 0; c < cells; c++) {
+        faces.push([at(c, r, false), at(c + 1, r, false), at(c + 1, r + 1, false)], [at(c, r, false), at(c + 1, r + 1, false), at(c, r + 1, false)]);
+        faces.push([at(c, r, true), at(c + 1, r + 1, true), at(c + 1, r, true)], [at(c, r, true), at(c, r + 1, true), at(c + 1, r + 1, true)]);
+      }
+    }
+    // The border anticlockwise from above; each side's diagonal runs from its lower-numbered end's top, so two blocks
+    // sharing a side have the same two triangles there.
+    const ring: [number, number][] = [];
+    for (let k = 0; k < cells; k++) ring.push([k, 0]);
+    for (let k = 0; k < cells; k++) ring.push([cells, k]);
+    for (let k = cells; k > 0; k--) ring.push([k, cells]);
+    for (let k = cells; k > 0; k--) ring.push([0, k]);
+    for (let k = 0; k < ring.length; k++) {
+      const [p, q] = [ring[k], ring[(k + 1) % ring.length]];
+      const [tp, tq, fp, fq] = [at(p[0], p[1], false), at(q[0], q[1], false), at(p[0], p[1], true), at(q[0], q[1], true)];
+      const lower = p[0] + c0 + 1e4 * (p[1] + r0) < q[0] + c0 + 1e4 * (q[1] + r0);
+      if (lower) faces.push([tp, fp, fq], [tp, fq, tq]);
+      else faces.push([tp, fp, tq], [tq, fp, fq]);
+    }
+    blockIds.push((await runCommand('solid.from_mesh', { name: `Rolling block ${blockIds.length + 1}`, layer: 'rolling blocks', vertices, triangles: faces })).record.outputs[0].id);
+  }
+  await show(await projectSummary());
+  const tileOf = () => viewport.content.children.find((g) => g.name === 'rolling blocks') as THREE.Group | undefined;
+  for (let k = 0; k < 150 && !tileOf()?.userData.detail; k++) await wait(100);
+  const tile = tileOf();
+  const wallMeshes = (tile?.children ?? []).filter((c) => c.userData.shared);
+  type BlockDetail = { full: THREE.Mesh; levels: THREE.Mesh[] }[];
+  const tileDetail = tile?.userData.detail as BlockDetail | undefined;
+  expect('a tile of blocks sends the walls they share apart, and gets coarser versions', wallMeshes.length > 0 && !!tileDetail && tileDetail.some((c) => c.levels.length >= 2), { shared_chunks: wallMeshes.length, versions: tileDetail?.map((c) => c.levels.length) });
+  if (tile && tileDetail) {
+    viewport.setDetail(0, false);
+    viewport.focusOn(local([bx + cells, by + cells, 100]).toArray() as Vec3, 900);
+    await settle();
+    const fullDrawn = viewport.drawnTriangleCount;
+    expect('with every block drawn, the walls they share are not', wallMeshes.every((m) => !m.visible));
+    await show(await setObjectsVisible([blockIds[0]], false));
+    await settle();
+    const hiddenDrawn = viewport.drawnTriangleCount;
+    expect('one block hidden, the walls they share are drawn, so its neighbours show their sides', wallMeshes.every((m) => m.visible) && hiddenDrawn > fullDrawn, { before: fullDrawn, with_one_hidden: hiddenDrawn });
+    await show(await setObjectsVisible([blockIds[0]], true));
+    await settle();
+    expect('shown again, the shared walls go', wallMeshes.every((m) => !m.visible));
+    const full = await snapshot();
+    viewport.setDetail(1, false);
+    await settle();
+    const thinned = viewport.drawnTriangleCount;
+    const coarse = await snapshot();
+    const rect = canvas.getBoundingClientRect();
+    let [looked, differ] = [0, 0];
+    for (let i = 1; i < 60; i++) {
+      for (let j = 1; j < 40; j++) {
+        const at: [number, number] = [rect.left + (rect.width * i) / 60, rect.top + (rect.height * j) / 40];
+        const [a, b] = [coarse(at), full(at)];
+        looked++;
+        if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) > 24) differ++;
+      }
+    }
+    expect('the blocks far off draw fewer triangles, the picture the full one, near enough', thinned < fullDrawn / 2 && differ / looked < 0.02, { full: fullDrawn, at_1_px: thinned, points: looked, differ });
+    await click(screen([bx + cells * 1.5, by + cells * 0.5, 100]));
+    await settle();
+    const highlights = viewport.content.children.filter((g) => g.name === 'rolling blocks selected');
+    const full_chunks = tile.children.filter((c) => !c.userData.level).length;
+    expect(
+      "a picked block's highlight is drawn from full detail and the shared walls, not a coarser version",
+      selection().includes(blockIds[1]) && highlights.length === 1 && highlights[0].children.length === full_chunks,
+      { picked: selection().map((id) => blockIds.indexOf(id)), highlight_meshes: highlights.map((g) => g.children.length), full_chunks },
+    );
+    await key('Escape');
+  }
+
   results.failures = failures;
   return results;
 }

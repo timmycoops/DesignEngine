@@ -66,4 +66,6 @@ red refused, green valid. Don't hand-roll an input, select, badge or colour a ki
   pixels (the field-of-view menu: Full, 1 px default, 2, 4); close in, full detail. Versions are extra meshes beside
   their chunk, sharing its vertices. Anything that reads drawn triangles (as `distanceTo` does) passes over
   `userData.level` meshes; picks, snaps and sections are engine-side and never see them
-  (`docs/decisions/0097-fewer-triangles-drawn.md`).
+  (`docs/decisions/0097-fewer-triangles-drawn.md`). A tile of solids sends the walls two of them share as chunks marked
+  `shared`, drawn only while one of the tile's solids is hidden or the layer is seen through; its versions lock every
+  block edge, and a picked block's highlight uses the full chunks and the shared walls.

@@ -123,9 +123,48 @@ proves too slow by hand, saving them in the `.zdp` is the step decision 4 left o
 The other app benches pass unchanged: `--shell`, `--string-edits`, `--workflow`, `--clicks` and `--section-guide`.
 `--cut` gives the same as before.
 
+**Workstream 4, blocks:**
+
+- **Shared walls sent apart.** `render::split_shared_walls` finds every triangle two solids of a tile both have, the
+  same three corners to the bit, as two blocks cut by one polygon have along their side. Each triangle is
+  fingerprinted, the fingerprints sorted, and only matching ones compared corner by corner.
+  - `encode_solids` sends those walls as a part of their own, after the rest, their chunks marked `shared`.
+  - The view draws them only when a solid of the tile is hidden (as filtered off or isolated is), or the layer is seen
+    through. `SolidFlags.hiddenCount` is counted again whenever the table changes.
+- **Versions for a tile of solids.** `stage_layer_levels(layer, tile)` makes them after the tile is drawn
+  (`encode_solid_levels`).
+  - Every corner of an edge where the surface turns by more than 60° is locked: where a top meets a wall, a wall a floor.
+    So blocks still meet and a picked block's outline stays exact. Tops, floors, walls and faces thin between those
+    corners.
+  - The shared walls' chunks get no versions.
+  - The plan first said walls stay whole (every corner of a triangle steeper than 45° locked). On the large mine that
+    left the coarsest at 44.0 M triangles; locking only the creases takes it to 37.7 M.
+- **A picked block's highlight** is drawn from the full chunks and the shared walls, never a coarser version.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `the_walls_two_solids_share_are_sent_apart` (zd-app) | Two 10 m cubes touching and a third apart: the face between the two, 2 triangles from each, is sent apart on its own chunk after the rest; the other 32 stay; every shared corner on x = 10 | Exact |
+| `block_versions_thin_the_tops_and_keep_the_walls` (zd-app) | Two blocks side by side, each a rolling 61 by 61 node top over a flat floor: the shared side's 240 triangles found; every version of every other chunk keeps every corner of every wall; the coarsest a quarter of the indices or fewer; the shared chunk has no versions | Exact |
+| `zd-app --bench --select` | Four touching blocks of 58,560 triangles each in one tile: the shared walls on one chunk, hidden while all four are drawn, drawn when one is hidden and gone when it's shown again; versions on every other chunk; zoomed out at 1 px, 20,102 triangles drawn against 411,122 at Full, the picture differing at 4 of 2,301 points; a picked block's highlight on the 5 full chunks | — |
+
+On the large mine's '9 blocks' (`timing_block_levels_on_the_large_mine`, ignored, `ZD_LARGE_MINE`), release build, 48 cores:
+
+| What | Number |
+|---|---|
+| Blocks | 103.6 M triangles in 40 tiles |
+| Shared walls | 15.7 M (15.2 %), split out in 7.3 s over all 40 tiles, about 180 ms a tile when it's sent |
+| Versions | 28.9 s for all 40 tiles one after another (200 s of CPU) |
+| Coarsest, with the shared walls left out | 37.7 M triangles |
+
+Most of the blocks are small (coal and interburden blocks average under 200 triangles), and nearly every corner of one is
+an edge of it: 78 to 84 % of their corners are locked. So a far-off block can't thin much without moving its outline.
+Workstream 5 measures what the view does with that.
+
 ## Known limits
 
 - A version can hold a sliver standing on three locked border vertices: it adds an edge along the border, opens no crack.
 - The error is measured at the chunk's vertices; between them the version can stand off the full surface by a little more.
 - Measuring the error is most of the CPU (about two thirds on lidar-like ground). A grid's versions aren't made yet.
-- A layer of solids gets no versions until workstream 4, and a surface under 100,000 triangles none at all.
+- A surface or tile under 100,000 triangles gets no versions.
+- Walls two blocks share across a tile's edge (1 km squares by each block's middle) aren't found: they stay with the rest.
+- A far-off block keeps every corner of its edges, so a layer of many small blocks thins least.

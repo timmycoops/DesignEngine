@@ -32,6 +32,8 @@ export class SolidFlags {
   readonly bandCount = uniform(1);
   /** How many are selected, as last set. */
   selectedCount = 0;
+  /** How many are hidden, as last set: the walls two solids share are drawn only when one is (decision 0097). */
+  hiddenCount = 0;
 
   constructor(readonly ids: readonly string[]) {
     this.index = new Map(ids.map((id, k) => [id, k]));
@@ -79,7 +81,12 @@ export class SolidFlags {
   /** Ends a pass: an unchanged table isn't sent to the GPU again. Returns whether it changed. */
   end(): boolean {
     this.selectedCount = this.counting;
-    if (this.changed) this.texture.needsUpdate = true;
+    if (this.changed) {
+      this.texture.needsUpdate = true;
+      let hidden = 0;
+      for (let k = 0; k < this.ids.length; k++) if (this.data[4 * k] !== 0) hidden++;
+      this.hiddenCount = hidden;
+    }
     return this.changed;
   }
 

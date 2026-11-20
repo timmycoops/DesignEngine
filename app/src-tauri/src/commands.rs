@@ -19,7 +19,7 @@ use zd_geom::{SectionPlane, StackHorizon, SurfaceRayCaster, stack_issue_nodes, t
 use zd_io::{check_links as check_grid_links, list_deswik_layers, list_spry, read_stack_grids};
 
 use crate::changes::{ProjectChanges, changes, changes_after_hiding};
-use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_levels, encode_section, encode_solids, encode_triangulation};
+use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_levels, encode_section, encode_solid_levels, encode_solids, encode_triangulation};
 use crate::selection;
 use crate::section::{SectionCut, add_selected, pick_on_section, section_groups, snap_on_section};
 use crate::shared::post_shared_buffer;
@@ -1174,6 +1174,31 @@ pub async fn stage_layer_solids(layer: LayerId, tile: [i64; 2], state: State<'_,
     })
     .await?;
     Ok(stage(&state, buffer, name, "triangulation", triangles, String::new(), serde_json::json!({ "encode": encode_ms })))
+}
+
+/// Makes the coarser versions of a tile of a layer's solids (decision 0097, workstream 4) and holds them to be fetched,
+/// after the tile is drawn at full detail. Chunk k is chunk k of what `stage_layer_solids` sent for the tile; block
+/// walls stay as they are, and the shared walls' chunks have no versions.
+#[tauri::command]
+pub async fn stage_layer_levels(layer: LayerId, tile: [i64; 2], state: State<'_, AppState>) -> Result<StagedMesh, String> {
+    let app = state.app.clone();
+    let (solids, name, origin) = {
+        let mut app = app.lock().unwrap();
+        let origin = app.origin().unwrap_or([0.0; 3]);
+        let AppInner { session, tiles, .. } = &mut *app;
+        let project = session.project();
+        let name = project.layer(layer).ok_or("no such layer")?.name.clone();
+        (tile_solids(project, tiles, TileId { layer, col: tile[0], row: tile[1] }), name, origin)
+    };
+    let header = serde_json::json!({ "id": 0, "name": name, "timings": {} });
+    let (buffer, triangles, encode_ms) = blocking(move || {
+        let t = Instant::now();
+        let meshes: Vec<Arc<TriMesh>> = solids.into_iter().map(|(_, m)| m).collect();
+        let triangles = meshes.iter().map(|m| m.triangle_count()).sum();
+        (encode_solid_levels(&meshes, origin, header), triangles, ms(t))
+    })
+    .await?;
+    Ok(stage(&state, buffer, name, "levels", triangles, String::new(), serde_json::json!({ "encode": encode_ms })))
 }
 
 /// The box round these objects together, world coordinates, for zoom to selection. `None` if none has a place.
