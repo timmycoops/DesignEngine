@@ -218,6 +218,8 @@ export interface StagedMesh {
 /** Encodes a drawn object's geometry for fetching. */
 export const stageObject = (id: string) => invoke<StagedMesh>('stage_object', { id });
 export const stageLayerSolids = (layer: string, tile: [number, number]) => invoke<StagedMesh>('stage_layer_solids', { layer, tile });
+/** The coarser versions of a drawn surface's chunks, made after it's drawn (decision 0097); decode with `decodeLevels`. */
+export const stageLevels = (id: string) => invoke<Omit<StagedMesh, 'kind'> & { kind: 'levels' }>('stage_levels', { id });
 /** The selected solids on show as one mesh, to light up over their layers'. */
 /** The box round these objects together, world coordinates, for zoom to selection; null if none has a place. */
 export const objectsBounds = (objects: string[]) => invoke<[Vec3, Vec3] | null>('objects_bounds', { objects });

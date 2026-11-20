@@ -19,7 +19,7 @@ use zd_geom::{SectionPlane, StackHorizon, SurfaceRayCaster, stack_issue_nodes, t
 use zd_io::{check_links as check_grid_links, list_deswik_layers, list_spry, read_stack_grids};
 
 use crate::changes::{ProjectChanges, changes, changes_after_hiding};
-use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_section, encode_solids, encode_triangulation};
+use crate::render::{NodeValues, encode_grid, encode_grid_with, encode_levels, encode_section, encode_solids, encode_triangulation};
 use crate::selection;
 use crate::section::{SectionCut, add_selected, pick_on_section, section_groups, snap_on_section};
 use crate::shared::post_shared_buffer;
@@ -1119,6 +1119,35 @@ pub async fn stage_object(id: ObjectId, state: State<'_, AppState>) -> Result<St
     })
     .await?;
     Ok(stage(&state, buffer, name, kind, triangles, String::new(), serde_json::json!({ "encode": encode_ms })))
+}
+
+/// Makes the coarser versions of a drawn surface's chunks (decision 0097, workstream 2) and holds them to be fetched,
+/// after the surface is drawn at full detail, so the view never waits on them. Chunk k is chunk k of what
+/// `stage_object` sent. A grid's versions aren't made yet: it's refused, and drawn at full detail as before.
+#[tauri::command]
+pub async fn stage_levels(id: ObjectId, state: State<'_, AppState>) -> Result<StagedMesh, String> {
+    let app = state.app.clone();
+    let (geometry, name, origin) = {
+        let mut app = app.lock().unwrap();
+        let origin = app.origin().unwrap_or([0.0; 3]);
+        let object = app.session.project().object(id).ok_or("no such object")?.clone();
+        if !is_drawn_surface(&object) {
+            return Err(format!("'{}' is not drawn as a surface", object.name));
+        }
+        (object.body.clone(), object.name.clone(), origin)
+    };
+    let header = serde_json::json!({ "id": 0, "name": name, "timings": {} });
+    let (buffer, triangles, encode_ms) = blocking(move || {
+        let t = Instant::now();
+        let mesh = match &geometry {
+            Body::Surface(s) => s.mesh(),
+            Body::Solid(s) => s.mesh(),
+            _ => return Err("only a triangulated surface or solid has coarser versions yet".to_string()),
+        };
+        Ok((encode_levels(mesh, origin, header), mesh.triangle_count(), ms(t)))
+    })
+    .await??;
+    Ok(stage(&state, buffer, name, "levels", triangles, String::new(), serde_json::json!({ "encode": encode_ms })))
 }
 
 /// Encodes a tile of a layer's solids as one mesh for the viewport and holds it to be fetched: a pit's tens of

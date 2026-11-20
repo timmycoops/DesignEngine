@@ -31,7 +31,9 @@ drawing moves no click, snap, cut or volume. The one exception was picking a sea
 4. **When they're made.** In the shell, the first time a chunk is sent, on all cores, full detail drawn first so the view
    never waits; kept in memory for the session, not saved. If making them adds more than about 10 s to opening the large
    mine, they're saved in the `.zdp` as display data, decided then with the numbers.
-5. **On the card,** every version of every chunk, so nothing arrives late as the view moves.
+5. **On the card,** every version of every chunk, so nothing arrives late as the view moves. (The plan said this adds
+   about a third; measured on the large mine it's about half as much again, 505 MB of indices beside the lidar's 1,024 MB,
+   since every version shares its chunk's vertices and only the indices are added.)
 6. **The status bar** shows triangles drawn this frame beside those held: `60 fps · 4.2 M drawn of 188 M`.
 7. **Picking a seam horizon** moves to the engine, a ray cast on the seam grids as every other pick is.
 
@@ -61,7 +63,35 @@ chunk's versions: 49,728 triangles (0.315 m), 24,864 (0.505 m), 12,430 (0.576 m)
 1,552 (1.155 m), 904 (7.747 m). At that rate the 85 M-triangle lidar takes about 15 s on 48 cores; workstream 2 measures
 it on the large mine and settles decision 4 with the number.
 
+**Workstream 2, sent with each chunk:** `render::encode_levels` cuts a mesh into the same chunks
+`encode_triangulation` does (chunking doesn't depend on the thread count) and makes each chunk's versions, a chunk to a
+core in turn. Its buffer is every version's `u16` indices, chunk after chunk, then a header listing each chunk's versions
+with where their indices start, how many and the error. The shell's `stage_levels(id)` makes it for a surface or a solid
+and holds it to be fetched as any render buffer is; a grid is refused and drawn at full detail as before. The view reads
+it with `decodeLevels` (`app/src/viewport/levels.ts`, views onto the buffer, no copying). Nothing draws with it until
+workstream 3.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `each_chunks_versions_point_at_its_vertices_and_keep_its_seams` (zd-app) | A 450 by 450 node grid surface in at least 4 chunks: a list of versions for every chunk the drawn buffer has, every index inside its chunk, the errors growing, every edge two chunks share in every version of each | Exact |
+| `levels.test.mjs` | A buffer laid out as the shell writes it reads back chunk by chunk, versions, indices and errors; another kind is refused | Exact |
+
+On the large mine's 1 m lidar (`timing_levels_on_the_large_mine`, ignored, `ZD_LARGE_MINE`), release build, 48 cores:
+
+| What | Number |
+|---|---|
+| Lidar | 84,800,000 triangles in 864 chunks |
+| Drawn buffer | 1,024 MB in 683 ms |
+| Versions | 5,728 of them, 84,040,594 triangles, 505 MB, in 9,778 ms (412 s of CPU) |
+| Coarsest | 1,061,978 triangles for the whole lidar, the worst chunk 18.98 m out |
+
+Decision 4 stands as agreed: the versions stay in memory and aren't saved. They're made after full detail is drawn, so
+they add nothing to opening, which is the 10 s the decision set. On 48 cores they arrive about 10 s later. On an 8-core
+laptop the same 412 s of CPU is about a minute, during which the lidar is drawn at full detail as today. If that
+proves too slow by hand, saving them in the `.zdp` is the step decision 4 left open.
+
 ## Known limits
 
 - A version can hold a sliver standing on three locked border vertices: it adds an edge along the border, opens no crack.
 - The error is measured at the chunk's vertices; between them the version can stand off the full surface by a little more.
+- Measuring the error is most of the CPU (about two thirds on lidar-like ground). A grid's versions aren't made yet.
