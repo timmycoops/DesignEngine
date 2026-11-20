@@ -96,3 +96,58 @@ const ONE_THREAD_BELOW: usize = 2_000;
 pub(crate) fn worker_threads(triangles: usize) -> usize {
     if triangles < ONE_THREAD_BELOW { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()) }
 }
+
+/// `work` on each of `0..count`, at most `at_once` at a time, the results in order. For work that holds a lot of memory
+/// each, as a Manifold boolean on a large solid: started all at once, a hundred of them run the machine out of memory,
+/// and Manifold spreads each one across the cores anyway.
+pub(crate) fn at_most<R: Send>(count: usize, at_once: usize, work: impl Fn(usize) -> R + Sync) -> Vec<R> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let next = AtomicUsize::new(0);
+    let (next, work) = (&next, &work);
+    let mut done: Vec<(usize, R)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..at_once.clamp(1, count.max(1)))
+            .map(|_| {
+                scope.spawn(move || {
+                    let mut mine = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        if i >= count {
+                            return mine;
+                        }
+                        mine.push((i, work(i)));
+                    }
+                })
+            })
+            .collect();
+        handles.into_iter().flat_map(|h| h.join().expect("work run in turns doesn't panic")).collect()
+    });
+    done.sort_by_key(|(i, _)| *i);
+    done.into_iter().map(|(_, r)| r).collect()
+}
+
+#[cfg(test)]
+mod at_most_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use super::at_most;
+
+    /// Forty jobs three at a time: never more than three running, every one run once, the results in order.
+    #[test]
+    fn work_runs_at_most_so_many_at_a_time_and_comes_back_in_order() {
+        let (running, most, runs) = (AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0));
+        let out = at_most(40, 3, |i| {
+            let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+            most.fetch_max(now, Ordering::SeqCst);
+            runs.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(2));
+            running.fetch_sub(1, Ordering::SeqCst);
+            i * 10
+        });
+        assert_eq!(out, (0..40).map(|i| i * 10).collect::<Vec<_>>());
+        assert_eq!(runs.load(Ordering::SeqCst), 40);
+        assert!(most.load(Ordering::SeqCst) <= 3, "{} at once", most.load(Ordering::SeqCst));
+        assert!(at_most(0, 4, |i| i).is_empty());
+        assert_eq!(at_most(5, 0, |i| i), vec![0, 1, 2, 3, 4], "none at once is one at a time");
+    }
+}
