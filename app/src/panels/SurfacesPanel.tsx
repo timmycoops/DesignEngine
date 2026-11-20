@@ -22,13 +22,16 @@ import { useWorkspace } from '@/workspace/context';
  * - Trim in plan (workstream 3, decision 0095): the strings, surfaces, solids and grids picked, cut by a closed string
  *   in plan, keeping the inside or the outside, each by its own kind's rule, in place or as new on a layer (0091). It
  *   asks what to trim (what's picked already counts), then for a click on the closed string, runs, and asks again.
+ * - Triangulate (workstream 4, decision 0096): one surface through the strings picked, each segment kept as an edge,
+ *   bounded by the outermost closed strings or, with none closed, the hull with no edge along it over the longest set.
+ *   It asks for the strings (what's picked already counts) and runs on a right click or the button, then asks again.
  *
  * While the Workflow panel is adding steps, the button adds the tool as a step instead (decision 0078).
  */
 
-type Mode = 'compare' | 'merge' | 'trim';
+type Mode = 'compare' | 'merge' | 'trim' | 'triangulate';
 
-const MODES: readonly Mode[] = ['compare', 'merge', 'trim'];
+const MODES: readonly Mode[] = ['compare', 'merge', 'trim', 'triangulate'];
 
 const MERGES = new Set(['surface', 'grid', 'solid']);
 const TRIMS = new Set(['string', 'surface', 'grid', 'solid']);
@@ -67,6 +70,10 @@ export function SurfacesPanel() {
   const [trimKeep, setTrimKeep] = useState<'inside' | 'outside'>('inside');
   const [trimBy, setTrimBy] = useState<string | null>(null);
   const resultAs = useResultAs();
+  /** Triangulate: the longest hull edge kept with no closed string, and the surface's name and layer. */
+  const [longest, setLongest] = useState(200);
+  const [tinName, setTinName] = useState('');
+  const [tinLayer, setTinLayer] = useState('triangulated');
   const [report, setReport] = useState<RunReport>({ notes: [] });
   const [busy, setBusy] = useState(false);
 
@@ -81,6 +88,8 @@ export function SurfacesPanel() {
   const toMerge = inOrder.filter((o) => MERGES.has(o.kind));
   const toTrim = inOrder.filter((o) => TRIMS.has(o.kind));
   const trimWhat = toTrim.length === 1 ? toTrim[0].name : `${toTrim.length} things`;
+  const toTriangulate = inOrder.filter((o) => o.kind === 'string');
+  const anyClosed = toTriangulate.some((o) => o.closed);
 
   const runIt = async (command: string, params: Record<string, unknown>) => {
     setBusy(true);
@@ -109,6 +118,12 @@ export function SurfacesPanel() {
     ...(mergeName.trim() ? { name: mergeName.trim() } : {}),
   });
 
+  const tinParams = () => ({
+    strings: toTriangulate.map((o) => o.id),
+    longest,
+    layer: tinLayer.trim() || 'triangulated',
+    ...(tinName.trim() ? { name: tinName.trim() } : {}),
+  });
   const trimParams = (by: string, objects: string[]) => ({ objects, by, keep: trimKeep, ...resultParams(resultAs) });
   /** A click on a closed string in the view, other than those picked to trim: what they're trimmed by. Null on Esc. */
   const clickLimit = async (prompt: string) => {
@@ -130,8 +145,22 @@ export function SurfacesPanel() {
 
   /** Compare, Merge and Trim ask in turn (decision 0092). The loops outlive a render, so they read the panel through `latest`. */
   const asking = useAsking();
-  const latest = useRef({ summary, surfaces, closedStrings, compareParams, runIt, toMerge, mergeParams, toTrim, trimWhat, trimParams, clickLimit });
-  latest.current = { summary, surfaces, closedStrings, compareParams, runIt, toMerge, mergeParams, toTrim, trimWhat, trimParams, clickLimit };
+  const latest = useRef({ summary, surfaces, closedStrings, compareParams, runIt, toMerge, mergeParams, toTrim, trimWhat, trimParams, clickLimit, toTriangulate, tinParams });
+  latest.current = { summary, surfaces, closedStrings, compareParams, runIt, toMerge, mergeParams, toTrim, trimWhat, trimParams, clickLimit, toTriangulate, tinParams };
+  const tinLoop = useCallback(async (ask: Asker) => {
+    let first = true;
+    while (ask.alive()) {
+      ask.step(0);
+      // Started by the button with strings picked: the button runs with what the panel has.
+      const now = first && ask.byButton && latest.current.toTriangulate.length > 0;
+      first = false;
+      const done = now ? 'pressed' : await ask.gather('Pick the strings to triangulate: a click, a box or Ctrl-click. Right-click or the button to make the surface; Esc stops');
+      if (!done || !ask.alive()) return;
+      if (latest.current.toTriangulate.length === 0) continue;
+      ask.step(1);
+      await latest.current.runIt('surface.triangulate', latest.current.tinParams());
+    }
+  }, []);
   const trimLoop = useCallback(
     async (ask: Asker) => {
       let first = true;
@@ -221,7 +250,7 @@ export function SurfacesPanel() {
     [setSelection],
   );
   const asks = !addingTo && panelsShown.includes('surfaces');
-  const loop = mode === 'merge' ? mergeLoop : mode === 'trim' ? trimLoop : compareLoop;
+  const loop = mode === 'merge' ? mergeLoop : mode === 'trim' ? trimLoop : mode === 'triangulate' ? tinLoop : compareLoop;
   useEffect(() => {
     if (asks) asking.start(loop);
     else asking.stop();
@@ -239,7 +268,16 @@ export function SurfacesPanel() {
   const ready = !!a && !!b && a.id !== b.id && cell > 0;
   const which = keep === 'bottom' ? 'bottom' : 'top';
   const trimmedBy = byId(trimBy);
-  const action: ToolAction = mode === 'trim' ? {
+  const tinWhat = toTriangulate.length === 1 ? toTriangulate[0].name : `${toTriangulate.length} strings`;
+  const action: ToolAction = mode === 'triangulate' ? {
+    label: toTriangulate.length > 0 ? `Triangulate ${tinWhat}` : 'Triangulate',
+    icon: <Check className="size-3.5" />,
+    disabled: asking.at === null ? false : toTriangulate.length === 0,
+    busy,
+    title: 'One surface through every vertex at its RL, each segment kept as an edge',
+    run: () => asking.next(tinLoop),
+    step: { command: 'surface.triangulate', params: tinParams() },
+  } : mode === 'trim' ? {
     label: toTrim.length > 0 ? `Trim ${trimWhat} to ${trimKeep} a closed string` : 'Trim in plan',
     icon: <Check className="size-3.5" />,
     disabled: asking.at === null ? false : toTrim.length === 0,
@@ -290,6 +328,24 @@ export function SurfacesPanel() {
 
       {mode === 'merge' && (
         <AskSteps steps={[{ label: 'The surfaces, grids and solids to merge', value: toMerge.length > 0 ? `${toMerge.length} picked` : undefined }, { label: `The ${which}, merged` }]} at={asking.at} />
+      )}
+
+      {mode === 'triangulate' && (
+        <AskSteps steps={[{ label: 'The strings to triangulate', value: toTriangulate.length > 0 ? tinWhat : undefined }, { label: 'The surface through them' }]} at={asking.at} />
+      )}
+
+      {mode === 'triangulate' && (
+        <ToolSection title="Settings">
+          <Field label="Longest edge" hint={anyClosed ? 'Not used: the outermost closed strings picked bound the surface' : 'With no closed string picked, the hull is peeled back wherever an edge along it is longer than this'}>
+            <NumberInput value={longest} onChange={setLongest} label="Longest hull edge" unit="m" range={{ min: 0, minIncluded: false }} />
+          </Field>
+          <Field label="Name">
+            <Input className="h-7 px-1.5 text-xs" value={tinName} placeholder={toTriangulate.length === 1 ? `${toTriangulate[0].name} surface` : 'Triangulated'} aria-label="Name for the surface" onChange={(e) => setTinName(e.target.value)} />
+          </Field>
+          <Field label="Layer">
+            <Input className="h-7 px-1.5 text-xs" value={tinLayer} aria-label="Layer for the surface" onChange={(e) => setTinLayer(e.target.value)} />
+          </Field>
+        </ToolSection>
       )}
 
       {mode === 'trim' && (

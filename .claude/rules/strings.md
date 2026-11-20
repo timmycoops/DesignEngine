@@ -48,4 +48,7 @@ ramps by hand, measure), 0083 (cut strings by strings).
   Trim in plan (`object.trim`, 0095) cuts strings, surfaces, solids and grids by a closed string, inside or outside,
   each by its own rule: a string as Clip, a surface exactly along the string at its own heights, a solid vertically and
   closed, a grid's nodes on the side dropped emptied (never filled); anything wholly on the side dropped refuses the
-  run, as Clip does. Triangulate joins it as it's built.
+  run, as Clip does. Triangulate (`surface.triangulate`, 0096) makes one new surface through the strings picked on
+  spade's constrained Delaunay, every vertex at its own RL and every segment an edge, no point added but where strings
+  cross at one height; bounded by the outermost closed strings (one alone is a pad) or the hull peeled back past a
+  longest edge (200 m); strings crossing or touching in plan at heights over 1 mm apart are refused, each place listed.
