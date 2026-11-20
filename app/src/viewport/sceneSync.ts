@@ -145,6 +145,9 @@ export class SceneSync {
       return seam(o.kind) ? `${o.geometry_key}#${this.horizons.get(id) ?? ''}#${this.variables.get(id) ?? ''}` : o.geometry_key;
     };
     const on = (o: ObjectSummary) => (layers.get(o.layer)?.visible ?? true) && !concealed(o);
+    // Coarser versions are asked for once everything here is drawn at full detail, so making them doesn't hold up the
+    // rest of the project's first frame (decision 0097).
+    const later: (() => void)[] = [];
     // Before anything loads, so a surface's first frame has its bands on round RLs.
     this.viewport.originZ = summary.origin?.[2] ?? 0;
     for (const [id, shown] of this.shown) {
@@ -197,7 +200,10 @@ export class SceneSync {
         const byRl = lookOf(summary.display, object.id).colouring === 'by_rl';
         group = (await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined, byRl })).group;
         // Its coarser versions to draw far off, when the shell has made them (decision 0097); full detail meanwhile.
-        if (staged.kind === 'triangulation') void loadLevels(this.viewport, group, () => stageLevels(object.id), staged.triangles);
+        if (staged.kind === 'triangulation') {
+          const [drawn, triangles] = [group, staged.triangles];
+          later.push(() => void loadLevels(this.viewport, drawn, () => stageLevels(object.id), triangles));
+        }
       }
       group.visible = on(object);
       this.shown.set(object.id, { key: keyOf(object.id)!, group, seam: view });
@@ -216,7 +222,7 @@ export class SceneSync {
       const staged = await stageLayerSolids(tile.layer, tile.tile);
       const group = (await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined, byRl: false })).group;
       // The tile's coarser versions, block walls kept, when the shell has made them (decision 0097, workstream 4).
-      void loadLevels(this.viewport, group, () => stageLayerLevels(tile.layer, tile.tile), staged.triangles);
+      later.push(() => void loadLevels(this.viewport, group, () => stageLayerLevels(tile.layer, tile.tile), staged.triangles));
       return group;
     });
     stale.forEach((tile, k) => {
@@ -239,6 +245,7 @@ export class SceneSync {
     this.reportSeams(summary);
     this.restyle(summary);
     this.light(summary);
+    for (const ask of later) ask();
     return loaded;
   }
 

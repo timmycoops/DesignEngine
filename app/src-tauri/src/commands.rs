@@ -1688,6 +1688,8 @@ pub struct BenchConfig {
     /// With `--dataflow <project.zdp>`, a project holding a parameter table, a dataflow and a results table opened, each
     /// clicked in the Layers panel and what Properties shows read back (decision 0072).
     dataflow: Option<String>,
+    /// A big project to open and orbit at Full and at 1 px (decision 0097, workstream 5).
+    lod: Option<String>,
 }
 
 /// Present when the app was started with `--bench`: the viewport then runs Checks 1, 3 and 4
@@ -1743,6 +1745,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         section_guide: args.iter().any(|a| a == "--section-guide"),
         workflow: args.iter().any(|a| a == "--workflow"),
         dataflow: args.iter().position(|a| a == "--dataflow").and_then(|i| args.get(i + 1)).cloned(),
+        lod: args.iter().position(|a| a == "--lod").and_then(|i| args.get(i + 1)).cloned(),
     })
 }
 

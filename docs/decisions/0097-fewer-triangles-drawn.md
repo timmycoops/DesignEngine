@@ -160,6 +160,50 @@ Most of the blocks are small (coal and interburden blocks average under 200 tria
 an edge of it: 78 to 84 % of their corners are locked. So a far-off block can't thin much without moving its outline.
 Workstream 5 measures what the view does with that.
 
+**Workstream 5, at scale.** `zd-app --bench --lod <project>` (`app/src/bench/lodCheck.ts`) opens a project as Tim
+would, waits for every surface and tile of solids of 100,000 triangles or more to have its versions, and orbits it as
+Phase 0 did, 8 s at Full and 8 s at 1 px. Then, at three distances, it compares the picture at 1 px with Full and a pick
+at the middle of the view.
+
+The view now asks for versions only once a project change has been drawn whole, so making them never competes with the
+first frame. Measured, that made no difference here (94.4 s to first frame with it, 98.2 s without).
+
+On the made-up large mine, `Large mine 1m.zdp` (the 1 m lidar, 140,220 blocks, everything shown), release build, 48 cores,
+WebGPU, canvas 2400 by 1362:
+
+| | Full | 1 px |
+|---|---|---|
+| Mean fps round the orbit | 43.0 | **59.4** |
+| p95 frame | 36.0 ms | 20.1 ms |
+| Frames over 33 ms | 44 of 344 | 2 of 474 |
+| Triangles drawn a frame, mean (most) | 24.7 M (49.8 M) | 8.0 M (27.0 M) |
+
+Held: 188.4 M triangles. From open to the first frame takes 94 s. The versions are all on 81 s after that, all 39 big
+surfaces and tiles. Drawing everything at full detail meanwhile, as before.
+
+| View | Drawn at 1 px | Drawn at Full | Picture apart (of 3,871 points) | Pick at the middle |
+|---|---|---|---|---|
+| Everything | 26.6 M | 172.7 M | 12 | the same point |
+| A quarter across | 18.1 M | 79.1 M | 15 | the same point |
+| Close in (300 m) | 2.7 M | 3.3 M | 0 | the same point |
+
+So the aim is met: the large mine orbits at 59 fps with everything shown, and looks the same as full detail.
+
+Splitting the shared walls adds about 1 s to opening: 93.5 s to first frame with the split turned off.
+
+Phase 0's bench (`zd-app --bench`, Check 1) now runs at Full, as Phase 0 measured it, and its copies draw the full chunks
+only. Against a build from before this decision's view changes (c691cbc), it's the same:
+
+| Scene | This build | Before |
+|---|---|---|
+| Real size, 24.3 M | 60.0 fps | 60.0 fps |
+| 2 x tiled, 48.5 M | 60.0 fps | 60.0 fps |
+| 3 x tiled, 72.8 M | 59.8 fps | 59.8 fps |
+| 5 x tiled, 121.4 M | 59.3 fps | 59.3 fps |
+
+Both are faster than `bench/RESULTS.md`'s 2026-10-30 figures (22.8 fps at 121 M), so this machine's card or driver has
+moved on since Phase 0. Nothing was made slower here.
+
 ## Known limits
 
 - A version can hold a sliver standing on three locked border vertices: it adds an edge along the border, opens no crack.
