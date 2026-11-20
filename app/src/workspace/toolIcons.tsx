@@ -79,6 +79,7 @@ import type { Tool, ToolIcon } from '@/tools';
 const ICONS: Record<ToolIcon, LucideIcon> = {
   clip: Crop,
   'compare-surfaces': Diff,
+  'merge-surfaces': Merge,
   'polygon-ops': SquaresUnite,
   meet: GitMerge,
   contours: Mountain,

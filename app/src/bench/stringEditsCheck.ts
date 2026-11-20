@@ -663,6 +663,43 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   await key('Escape');
   await key('Escape');
 
+  // Merge surfaces (Surface tools plan, workstream 2), from the Walls row: the topography and the slope picked, a right
+  // click: their bottom as a 5 m grid. Picked again, as an exact surface. Two Ctrl+Z put both back.
+  const pickBoth = async () => {
+    await click([E - 80, N - 80, 100]);
+    await click([E + 350, N + 50, 110], true);
+  };
+  await pickBoth();
+  document.querySelector<HTMLButtonElement>('[role="tab"][data-stage="walls"]')?.click();
+  await wait(200);
+  document.querySelector<HTMLButtonElement>('[data-slot="ribbon"] button[data-tool="surfaces:merge"]')?.click();
+  await wait(800);
+  const mergeAsked = footer().includes('Pick the surfaces, grids and solids to merge');
+  await rightClick([E + 250, N + 100, 100]);
+  await wait(1500);
+  const mergedGrid = (await projectSummary()).objects.find((o) => o.name === 'Merged bottom' && o.kind === 'grid');
+  const gridSaid = surfacesPanel()?.textContent?.match(/the bottom of [^,]+, [^,]+, as a grid sampled at 5 m: \d+ by \d+ nodes/)?.[0] ?? '';
+  await key('Escape');
+  await key('Escape');
+  await pickBoth();
+  [...(surfacesPanel()?.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="A grid or an exact surface"] button') ?? [])].find((b) => b.textContent?.trim() === 'An exact surface')?.click();
+  await wait(300);
+  // Picked again while it asks: the button merges what's picked.
+  [...(surfacesPanel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].at(-1)?.click();
+  await wait(2000);
+  const mergedSurface = (await projectSummary()).objects.find((o) => o.name === 'Merged bottom' && o.kind === 'surface');
+  expect(
+    'Merge from the Walls row: a right click makes their bottom as a 5 m grid; picked again and the button, as an exact surface',
+    mergeAsked && !!mergedGrid && gridSaid !== '' && !!mergedSurface,
+    { mergeAsked, grid: !!mergedGrid, gridSaid, surface: !!mergedSurface },
+  );
+  await key('z', true);
+  await key('z', true);
+  const mergedLeft = (await projectSummary()).objects.filter((o) => o.name === 'Merged bottom').length;
+  expect('two Ctrl+Z take both merges away', mergedLeft === 0, mergedLeft);
+  await key('Escape');
+  await key('Escape');
+
   // Polygons (workstream 6), from the Strings row: two 100 m blocks overlapping by half and a toe at 10 % across them.
   // Clip with the toe picked and a click on Block A keeps its 100 m inside, RL 105 to 115; Union of both blocks picked
   // makes one closed string of 15,000 m²; Overlap with Block A picked and Block B clicked, 5,000 m². Each Ctrl+Z puts it back.
