@@ -36,6 +36,9 @@ import { PointMark } from './markers';
 import { cursorLabel, measureWords } from './measure';
 import type { Viewport } from './Viewport';
 
+/** How much farther than the surface under the cursor a string may lie and still be turned about (m). */
+const PIVOT_STRING_TOLERANCE = 1;
+
 export type Mode = 'select' | 'draw' | 'section' | 'measure';
 
 export interface StringActions {
@@ -1241,6 +1244,23 @@ export class StringLayer {
   /** What a drag or the wheel works on at a screen point: a string near it, else the surface under it. */
   async pick(x: number, y: number): Promise<Vec3 | null> {
     return (this.snapToStrings(x, y) ?? (await this.actions.snap(x, y)))?.local ?? null;
+  }
+
+  /**
+   * What the view turns and zooms about under the cursor (decision 0044, 2): a string near the cursor or the surface
+   * or solid under it, whichever is nearer the camera. Strings draw over everything, so a toe draped on a seam floor
+   * hundreds of metres down shows under the cursor; turning about it would swing the ground you clicked away. A string
+   * on the surface, or above it, still wins, within a metre: not a share of the distance, since from across a 10 km lease
+   * at a narrow field of view a hundredth is hundreds of metres, enough to swing the ground clicked a hundred pixels.
+   */
+  async pivot(x: number, y: number): Promise<Vec3 | null> {
+    const string = this.snapToStrings(x, y);
+    const surface = await this.actions.snap(x, y);
+    if (!string || !surface) return (string ?? surface)?.local ?? null;
+    const eye = this.viewport.camera.position;
+    const away = (p: Vec3) => Math.hypot(p[0] - eye.x, p[1] - eye.y, p[2] - eye.z);
+    const [s, g] = [away(string.local), away(surface.local)];
+    return s <= g + PIVOT_STRING_TOLERANCE ? string.local : surface.local;
   }
 
   /** A string's vertex, crossing or segment near the cursor, in that order, or null. */

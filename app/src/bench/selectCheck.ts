@@ -391,6 +391,25 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
     viewport.setDetail(1, false);
   }
 
+  // The pivot (decision 0044, 2): a string drawn deep under the topography shows under the cursor, as strings draw over
+  // everything, but the view turns about the ground there, the nearer; a string on the ground is turned about itself.
+  const deep = (await runCommand('string.create', { name: 'Deep toe', layer: 'toes', closed: false, points: [[E + 300, N - 100, 20], [E + 500, N - 100, 20]] })).record.outputs[0].id;
+  const onGround = (await runCommand('string.create', { name: 'Ground line', layer: 'toes', closed: false, points: [[E + 300, N - 50, 100], [E + 500, N - 50, 100]] })).record.outputs[0].id;
+  await show(await projectSummary());
+  viewport.focusOn(local([E + 400, N - 75, 100]).toArray() as Vec3, 400);
+  await settle();
+  const deepAt = screen([E + 410, N - 100, 20]);
+  const groundAt = screen([E + 410, N - 50, 100]);
+  const underDeep = await viewport.pickPoint?.(deepAt[0], deepAt[1]);
+  const underGround = await viewport.pickPoint?.(groundAt[0], groundAt[1]);
+  expect(
+    'a press over a string deep under the ground turns about the ground; over a string on the ground, about the string',
+    !!underDeep && Math.abs(underDeep[2] + origin[2] - 100) < 1e-6 && !!underGround && Math.abs(underGround[1] + origin[1] - (N - 50)) < 1e-6 && Math.abs(underGround[2] + origin[2] - 100) < 1e-6,
+    { deep: underDeep && Number((underDeep[2] + origin[2]).toFixed(3)), ground: underGround && [Number((underGround[1] + origin[1] - N).toFixed(3)), Number((underGround[2] + origin[2]).toFixed(3))] },
+  );
+  void deep;
+  void onGround;
+
   // Blocks (decision 0097, workstream 4): four blocks touching in a square, each a rolling top over a flat floor, 234,240
   // triangles in one tile. The walls two share are left out while all four are drawn, and drawn once one is hidden; far
   // off the tops thin and the picture stays the full one's; a picked block's highlight is its full detail.

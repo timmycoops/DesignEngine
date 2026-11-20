@@ -893,8 +893,18 @@ export class Viewport {
     this.renderer.domElement.remove();
   }
 
+  /** `performance.now()` until which frames aren't drawn: a turn or zoom waiting for its pick (camera.ts). */
+  private heldUntil = 0;
+
+  holdFrames(ms: number): void {
+    this.heldUntil = ms > 0 ? performance.now() + ms : 0;
+  }
+
   private frame = (): void => {
     const now = performance.now();
+    // Held: nothing moves while the pick comes back, and a frame of thousands of chunks would keep the page from
+    // taking the pick's answer for several frames.
+    if (now < this.heldUntil) return;
     for (const hook of this.beforeRender) hook(now);
     this.controls.update();
     for (const hook of this.cameraMoved) hook();
