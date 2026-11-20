@@ -55,6 +55,7 @@ starlark_derive = "=0.14.2"
 allocative = "0.3.6"
 anyhow = "1"
 spade = "2.15.1"
+meshopt = "0.7.0"
 
 # Starlark without serde_json's `arbitrary_precision`, which it asks for and Cargo would turn on across the whole build,
 # breaking every untagged or flattened number the app reads (decision 0077; vendor/starlark/ZOVLYN.md).
