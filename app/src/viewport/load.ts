@@ -1,5 +1,5 @@
 // Fetches a staged render buffer, decodes it and adds it to the viewport, timing each step.
-import { decodeMesh, fetchMesh, stageLevels, type StagedMesh, type Transport } from '../bridge';
+import { decodeMesh, fetchMesh, type StagedLevels, type StagedMesh, type Transport } from '../bridge';
 import { decodeLevels } from './levels';
 import type { Viewport } from './Viewport';
 import type * as THREE from 'three/webgpu';
@@ -53,12 +53,12 @@ let levelsQueue: Promise<unknown> = Promise.resolve();
  * detail, so the view never waits on them. Resolves to how many versions went on: none if the surface is too small,
  * has gone, or was sent again meanwhile, or the shell has none for it.
  */
-export function loadLevels(viewport: Viewport, group: THREE.Group, id: string, triangles: number): Promise<number> {
+export function loadLevels(viewport: Viewport, group: THREE.Group, stage: () => Promise<StagedLevels>, triangles: number): Promise<number> {
   if (triangles < LEVELS_FROM_TRIANGLES) return Promise.resolve(0);
   const next = levelsQueue.then(async () => {
     if (!group.parent) return 0;
     try {
-      const staged = await stageLevels(id);
+      const staged = await stage();
       const fetched = await fetchMesh(staged.handle);
       return viewport.attachLevels(group, decodeLevels(fetched.buffer), fetched.release);
     } catch {

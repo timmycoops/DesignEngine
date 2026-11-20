@@ -13,6 +13,8 @@ interface ChunkMeta {
   index_count: number;
   min: Vec3;
   max: Vec3;
+  /** The walls two solids share (decision 0097): drawn only when a solid of the tile is hidden or it's seen through. */
+  shared?: boolean;
 }
 
 interface TileMeta {
@@ -55,6 +57,8 @@ export interface ChunkGeometry {
   values?: Uint16Array;
   /** A layer's solids: which solid each vertex is of, by its place in `MeshHeader.solids`. */
   solids?: Float32Array;
+  /** The walls two solids share: inside while both are drawn (decision 0097). */
+  shared?: boolean;
 }
 
 export interface DecodedMesh {
@@ -88,6 +92,7 @@ function decodeTriangulation(buffer: ArrayBuffer, header: MeshHeader): ChunkGeom
     min: c.min,
     max: c.max,
     solids: solids?.subarray(c.vertex_start, c.vertex_start + c.vertex_count),
+    shared: c.shared,
   }));
 }
 
@@ -219,7 +224,10 @@ export interface StagedMesh {
 export const stageObject = (id: string) => invoke<StagedMesh>('stage_object', { id });
 export const stageLayerSolids = (layer: string, tile: [number, number]) => invoke<StagedMesh>('stage_layer_solids', { layer, tile });
 /** The coarser versions of a drawn surface's chunks, made after it's drawn (decision 0097); decode with `decodeLevels`. */
-export const stageLevels = (id: string) => invoke<Omit<StagedMesh, 'kind'> & { kind: 'levels' }>('stage_levels', { id });
+export const stageLevels = (id: string) => invoke<StagedLevels>('stage_levels', { id });
+/** The coarser versions of a tile of a layer's solids, block walls kept as they are (decision 0097, workstream 4). */
+export const stageLayerLevels = (layer: string, tile: [number, number]) => invoke<StagedLevels>('stage_layer_levels', { layer, tile });
+export type StagedLevels = Omit<StagedMesh, 'kind'> & { kind: 'levels' };
 /** The selected solids on show as one mesh, to light up over their layers'. */
 /** The box round these objects together, world coordinates, for zoom to selection; null if none has a place. */
 export const objectsBounds = (objects: string[]) => invoke<[Vec3, Vec3] | null>('objects_bounds', { objects });

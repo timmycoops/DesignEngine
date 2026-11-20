@@ -419,16 +419,26 @@ export class Viewport {
     let drawn = 0;
     for (const group of this.surfaces) {
       if (!group.visible) continue;
+      // The walls two solids share are inside while both are drawn: shown when one of the tile's solids is hidden, or
+      // the layer is seen through.
+      const flags = group.userData.flags as SolidFlags | null | undefined;
+      const walls = !flags || flags.hiddenCount > 0 || !!group.userData.seeThrough;
       const details = group.userData.detail as ChunkDetail[] | undefined;
       if (!details) {
         for (const child of group.children) {
+          if (child.userData.shared) child.visible = walls;
           const geometry = (child as THREE.Mesh).geometry;
-          if (geometry?.boundingBox && this.frustum.intersectsBox(geometry.boundingBox)) drawn += (geometry.index?.count ?? 0) / 3;
+          if (child.visible && geometry?.boundingBox && this.frustum.intersectsBox(geometry.boundingBox)) drawn += (geometry.index?.count ?? 0) / 3;
         }
         continue;
       }
       for (const chunk of details) {
         const box = chunk.full.geometry.boundingBox!;
+        if (chunk.full.userData.shared) {
+          chunk.full.visible = walls;
+          if (walls && this.frustum.intersectsBox(box)) drawn += chunk.triangles[0];
+          continue;
+        }
         let pick = 0;
         if (this.detailPixels > 0) {
           const scale = perMetre(box);
@@ -613,6 +623,8 @@ export class Viewport {
       geometry.boundingSphere = geometry.boundingBox.getBoundingSphere(new THREE.Sphere());
       const mesh = new THREE.Mesh(geometry, material);
       mesh.renderOrder = over ? OVER_ORDER : 0;
+      // The walls two solids share: shown each frame only when one of the tile's solids is hidden (chooseDetail).
+      if (chunk.shared) mesh.userData.shared = true;
       group.add(mesh);
     }
     this.surfaces.push(group);
@@ -634,7 +646,9 @@ export class Viewport {
     flags.onlySelected(material);
     const over = new THREE.Group();
     over.name = `${group.name} selected`;
+    // Full detail and the shared walls, so a picked solid shows whole with its outline exact; not the coarser versions.
     for (const child of group.children) {
+      if (child.userData.level) continue;
       const mesh = new THREE.Mesh((child as THREE.Mesh).geometry, material);
       mesh.renderOrder = OVER_ORDER;
       over.add(mesh);

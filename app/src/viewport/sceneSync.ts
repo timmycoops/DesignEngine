@@ -7,7 +7,7 @@
 // table beside the mesh, never the mesh (decision 0060). Anything else hidden on its own is only switched off. How each one looks (by RL or its layer's colour, and how see-through) is
 // uniforms on its material, so a change of look never refetches anything.
 import * as THREE from 'three/webgpu';
-import { concealed, type Contours, layerOpacityOf, lookOf, type ObjectSummary, type ProjectSummary, type StagedHorizon, stageLayerSolids, stageObject, stageSeamHorizon } from '../bridge';
+import { concealed, type Contours, layerOpacityOf, lookOf, type ObjectSummary, type ProjectSummary, type StagedHorizon, stageLayerLevels, stageLayerSolids, stageLevels, stageObject, stageSeamHorizon } from '../bridge';
 import { colourOf, loadLevels, loadStaged, SELECTED } from './load';
 import type { SolidFlags } from './solidFlags';
 import { type Bands, bandsFor } from './rlColour';
@@ -197,7 +197,7 @@ export class SceneSync {
         const byRl = lookOf(summary.display, object.id).colouring === 'by_rl';
         group = (await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined, byRl })).group;
         // Its coarser versions to draw far off, when the shell has made them (decision 0097); full detail meanwhile.
-        if (staged.kind === 'triangulation') void loadLevels(this.viewport, group, object.id, staged.triangles);
+        if (staged.kind === 'triangulation') void loadLevels(this.viewport, group, () => stageLevels(object.id), staged.triangles);
       }
       group.visible = on(object);
       this.shown.set(object.id, { key: keyOf(object.id)!, group, seam: view });
@@ -214,7 +214,10 @@ export class SceneSync {
     const fetched = await inTurns(stale, TILES_AT_ONCE, async (tile) => {
       const layer = layers.get(tile.layer);
       const staged = await stageLayerSolids(tile.layer, tile.tile);
-      return (await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined, byRl: false })).group;
+      const group = (await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined, byRl: false })).group;
+      // The tile's coarser versions, block walls kept, when the shell has made them (decision 0097, workstream 4).
+      void loadLevels(this.viewport, group, () => stageLayerLevels(tile.layer, tile.tile), staged.triangles);
+      return group;
     });
     stale.forEach((tile, k) => {
       const group = fetched[k];

@@ -66,6 +66,7 @@ fn main() {
             commands::spry_contents,
             commands::stage_object,
             commands::stage_levels,
+            commands::stage_layer_levels,
             commands::stage_layer_solids,
             commands::objects_bounds,
             commands::solids_under,

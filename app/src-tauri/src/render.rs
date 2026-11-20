@@ -85,28 +85,130 @@ pub fn encode_triangulation(mesh: &TriMesh, origin: [f64; 3], header: Value) -> 
 }
 
 /// A layer's solids as one triangulation, each vertex saying which solid it's of: the number of the solid in `ids`,
-/// whose meshes `meshes` are, in the same order.
+/// whose meshes `meshes` are, in the same order. The walls two of them share (the same triangle in both) are sent as a
+/// part of their own after the rest, their chunks marked `shared`: the view draws them only when a solid of the tile is
+/// hidden or the layer is seen through, since otherwise they're inside and never seen (decision 0097, workstream 4).
 pub fn encode_solids(ids: &[ObjectId], meshes: &[Arc<TriMesh>], origin: [f64; 3], header: Value) -> Vec<u8> {
-    let mesh = crate::state::joined_meshes(meshes);
-    let mut solid_of = Vec::with_capacity(mesh.vertices.len());
-    for (k, m) in meshes.iter().enumerate() {
-        solid_of.extend(std::iter::repeat_n(k as u32, m.vertices.len()));
-    }
+    let parts = split_shared_walls(meshes);
     let mut header = header;
     header["solids"] = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().into();
-    encode_triangulation_of(&mesh, Some(&solid_of), origin, header)
+    header["shared_triangles"] = parts.walls.triangle_count().into();
+    encode_parts(&[Part { mesh: &parts.outer, solid_of: Some(&parts.outer_of), shared: false }, Part { mesh: &parts.walls, solid_of: Some(&parts.walls_of), shared: true }], origin, header)
+}
+
+/// A tile's solids split in two: the walls two of them share, and the rest.
+pub struct SolidParts {
+    /// Every triangle not shared with another solid, each vertex saying which solid it's of in `outer_of`.
+    pub outer: TriMesh,
+    pub outer_of: Vec<u32>,
+    /// Every triangle another solid has too (the same three corners, to the bit), with `walls_of` likewise.
+    pub walls: TriMesh,
+    pub walls_of: Vec<u32>,
+}
+
+/// Splits solids' triangles into the walls two of them share and the rest. A triangle is shared when another solid
+/// has one with the same three corners exactly, as two blocks cut from one solid by one polygon do along their side;
+/// one only nearly the same is left with the rest, drawn as now. Each triangle is fingerprinted on its own thread's
+/// share of the solids, the fingerprints sorted, and only triangles whose fingerprints match are compared corner by
+/// corner.
+pub fn split_shared_walls(meshes: &[Arc<TriMesh>]) -> SolidParts {
+    let corners = |m: &TriMesh, tri: &[u32; 3]| {
+        let mut c = tri.map(|v| m.vertices[v as usize].map(f64::to_bits));
+        c.sort_unstable();
+        c
+    };
+    let fingerprint = |c: &[[u64; 3]; 3]| c.iter().flatten().fold(0x243F_6A88_85A3_08D3_u64, |h, &x| (h ^ x).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29));
+    // (fingerprint, solid, triangle), every triangle of every solid.
+    let threads = worker_threads().min(meshes.len()).max(1);
+    let per = meshes.len().div_ceil(threads).max(1);
+    let mut all: Vec<(u64, u32, u32)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = meshes
+            .chunks(per)
+            .enumerate()
+            .map(|(g, group)| {
+                scope.spawn(move || {
+                    let mut mine = Vec::with_capacity(group.iter().map(|m| m.triangles.len()).sum());
+                    for (j, m) in group.iter().enumerate() {
+                        let k = (g * per + j) as u32;
+                        for (i, tri) in m.triangles.iter().enumerate() {
+                            mine.push((fingerprint(&corners(m, tri)), k, i as u32));
+                        }
+                    }
+                    mine
+                })
+            })
+            .collect();
+        handles.into_iter().flat_map(|h| h.join().expect("fingerprinting a solid's triangles doesn't panic")).collect()
+    });
+    all.sort_unstable();
+    let mut shared: Vec<Vec<bool>> = meshes.iter().map(|m| vec![false; m.triangles.len()]).collect();
+    let mut run = 0;
+    while run < all.len() {
+        let mut end = run + 1;
+        while end < all.len() && all[end].0 == all[run].0 {
+            end += 1;
+        }
+        if end - run > 1 {
+            for a in run..end {
+                let (_, ka, ia) = all[a];
+                let ca = corners(&meshes[ka as usize], &meshes[ka as usize].triangles[ia as usize]);
+                if (run..end).any(|b| all[b].1 != ka && corners(&meshes[all[b].1 as usize], &meshes[all[b].1 as usize].triangles[all[b].2 as usize]) == ca) {
+                    shared[ka as usize][ia as usize] = true;
+                }
+            }
+        }
+        run = end;
+    }
+    let mut parts = SolidParts { outer: TriMesh::default(), outer_of: Vec::new(), walls: TriMesh::default(), walls_of: Vec::new() };
+    for (k, m) in meshes.iter().enumerate() {
+        let (mut in_outer, mut in_walls) = (vec![u32::MAX; m.vertices.len()], vec![u32::MAX; m.vertices.len()]);
+        for (i, tri) in m.triangles.iter().enumerate() {
+            let (mesh, of, map) = if shared[k][i] { (&mut parts.walls, &mut parts.walls_of, &mut in_walls) } else { (&mut parts.outer, &mut parts.outer_of, &mut in_outer) };
+            let made = tri.map(|v| {
+                if map[v as usize] == u32::MAX {
+                    map[v as usize] = mesh.vertices.len() as u32;
+                    mesh.vertices.push(m.vertices[v as usize]);
+                    of.push(k as u32);
+                }
+                map[v as usize]
+            });
+            mesh.triangles.push(made);
+        }
+    }
+    parts
+}
+
+/// A part of a triangulation to encode: its mesh, which solid each vertex is of, and whether it's the walls solids share.
+struct Part<'a> {
+    mesh: &'a TriMesh,
+    solid_of: Option<&'a [u32]>,
+    shared: bool,
 }
 
 fn encode_triangulation_of(mesh: &TriMesh, solid_of: Option<&[u32]>, origin: [f64; 3], header: Value) -> Vec<u8> {
+    encode_parts(&[Part { mesh, solid_of, shared: false }], origin, header)
+}
+
+/// The parts' chunks, part after part: chunk k of what's sent is chunk k here.
+fn chunks_of_parts<'a>(parts: &[Part<'a>], threads: usize) -> Vec<(&'a TriMesh, Chunk, usize)> {
+    parts
+        .iter()
+        .enumerate()
+        .flat_map(|(p, part)| chunk_triangles_on(part.mesh, MAX_CHUNK_VERTICES, TARGET_CHUNK_TRIANGLES, threads).into_iter().map(move |c| (part.mesh, c, p)))
+        .collect()
+}
+
+fn encode_parts(parts: &[Part], origin: [f64; 3], header: Value) -> Vec<u8> {
     let start = Instant::now();
     let threads = worker_threads();
-    let chunks = chunk_triangles_on(mesh, MAX_CHUNK_VERTICES, TARGET_CHUNK_TRIANGLES, threads);
+    let chunks = chunks_of_parts(parts, threads);
 
-    let vertex_total: usize = chunks.iter().map(|c| c.vertices.len()).sum();
-    let index_total: usize = chunks.iter().map(|c| c.indices.len()).sum();
+    let vertex_total: usize = chunks.iter().map(|c| c.1.vertices.len()).sum();
+    let index_total: usize = chunks.iter().map(|c| c.1.indices.len()).sum();
+    let with_solids = parts.iter().any(|p| p.solid_of.is_some());
     // One zeroed allocation with room for the header, so appending it never reallocates.
     let data_len = vertex_total * 12 + index_total * 2;
-    let solids_len = if solid_of.is_some() { vertex_total * 4 + 4 } else { 0 };
+    let solids_len = if with_solids { vertex_total * 4 + 4 } else { 0 };
     let mut out = vec![0u8; data_len + solids_len + 4096 + 320 * chunks.len()];
     out.truncate(data_len);
 
@@ -114,39 +216,44 @@ fn encode_triangulation_of(mesh: &TriMesh, solid_of: Option<&[u32]>, origin: [f6
     // can fill them without coordination.
     let (mut positions, mut indices) = out.split_at_mut(vertex_total * 12);
     let mut jobs = Vec::with_capacity(chunks.len());
-    for chunk in &chunks {
+    for (mesh, chunk, _) in &chunks {
         let (p, rest) = positions.split_at_mut(chunk.vertices.len() * 12);
         let (i, rest_i) = indices.split_at_mut(chunk.indices.len() * 2);
         positions = rest;
         indices = rest_i;
-        jobs.push(WriteJob { chunk, positions: p, indices: i, bounds: None });
+        jobs.push(WriteJob { mesh, chunk, positions: p, indices: i, bounds: None });
     }
     let per_thread = jobs.len().div_ceil(threads).max(1);
     std::thread::scope(|scope| {
         for group in jobs.chunks_mut(per_thread) {
-            scope.spawn(move || group.iter_mut().for_each(|job| job.write(mesh, origin)));
+            scope.spawn(move || group.iter_mut().for_each(|job| job.write(origin)));
         }
     });
 
     let mut meta = Vec::with_capacity(jobs.len());
     let (mut vertex_start, mut index_start) = (0, 0);
-    for job in &jobs {
+    for (job, (_, _, p)) in jobs.iter().zip(&chunks) {
         let bounds = job.bounds.expect("chunks are never empty");
-        meta.push(json!({
+        let mut m = json!({
             "vertex_start": vertex_start,
             "vertex_count": job.chunk.vertices.len(),
             "index_start": index_start,
             "index_count": job.chunk.indices.len(),
             "min": bounds.min,
             "max": bounds.max,
-        }));
+        });
+        if parts[*p].shared {
+            m["shared"] = true.into();
+        }
+        meta.push(m);
         vertex_start += job.chunk.vertices.len();
         index_start += job.chunk.indices.len();
     }
     drop(jobs);
     pad_to_4(&mut out);
-    if let Some(solid_of) = solid_of {
-        for chunk in &chunks {
+    if with_solids {
+        for (_, chunk, p) in &chunks {
+            let solid_of = parts[*p].solid_of.expect("every part of a layer's solids says which solid");
             for &v in &chunk.vertices {
                 out.extend_from_slice(&(solid_of[v as usize] as f32).to_le_bytes());
             }
@@ -157,7 +264,9 @@ fn encode_triangulation_of(mesh: &TriMesh, solid_of: Option<&[u32]>, origin: [f6
     header["kind"] = "triangulation".into();
     header["vertices"] = vertex_total.into();
     header["chunks"] = meta.into();
-    finish(out, header, mesh.triangle_count(), mesh.bounds().map(|b| local_bounds(b, origin)), start)
+    let triangles = parts.iter().map(|p| p.mesh.triangle_count()).sum();
+    let bounds = parts.iter().filter_map(|p| p.mesh.bounds()).reduce(|a, b| Aabb { min: std::array::from_fn(|k| a.min[k].min(b.min[k])), max: std::array::from_fn(|k| a.max[k].max(b.max[k])) });
+    finish(out, header, triangles, bounds.map(|b| local_bounds(b, origin)), start)
 }
 
 pub fn encode_grid(grid: &Grid, origin: [f64; 3], header: Value) -> Vec<u8> {
@@ -265,21 +374,88 @@ pub fn encode_grid_with(grid: &Grid, values: Option<&NodeValues<'_>>, origin: [f
 /// indices start, how many, and the error, the farthest the version lies from a vertex of the full chunk (m).
 pub fn encode_levels(mesh: &TriMesh, origin: [f64; 3], header: Value) -> Vec<u8> {
     let start = Instant::now();
+    let chunks = chunks_of_parts(&[Part { mesh, solid_of: None, shared: false }], worker_threads());
+    let jobs: Vec<LevelJob> = chunks.iter().map(|(m, c, _)| LevelJob { mesh: m, chunk: c, locked: None }).collect();
+    levels_buffer(&jobs, mesh.triangle_count(), origin, header, start)
+}
+
+/// The coarser versions of the chunks `encode_solids` makes of a tile's solids (decision 0097, workstream 4): chunk k
+/// here is chunk k there. Each block's edges stay as they are, so blocks still meet and a picked block's outline is
+/// exact: every corner of an edge where the surface turns by more than 60° is locked (where a top meets a wall, a wall
+/// a floor), and tops, floors, walls and faces thin between them. The shared walls' chunks get no versions.
+pub fn encode_solid_levels(meshes: &[Arc<TriMesh>], origin: [f64; 3], header: Value) -> Vec<u8> {
+    let start = Instant::now();
+    let parts = split_shared_walls(meshes);
+    let locked = creased_corners(&parts.outer);
+    let chunks = chunks_of_parts(&[Part { mesh: &parts.outer, solid_of: None, shared: false }, Part { mesh: &parts.walls, solid_of: None, shared: true }], worker_threads());
+    let jobs: Vec<LevelJob> = chunks.iter().map(|(m, c, p)| LevelJob { mesh: m, chunk: c, locked: (*p == 0).then_some(locked.as_slice()) }).collect();
+    let mut buf_header = header;
+    buf_header["walls_without_versions"] = chunks.iter().filter(|c| c.2 == 1).count().into();
+    levels_buffer(&jobs, parts.outer.triangle_count() + parts.walls.triangle_count(), origin, buf_header, start)
+}
+
+/// The corners of every edge of `mesh` where it turns by more than 60°: a block's edges, which its versions keep where
+/// they are. Edges are found by sorting each triangle's three, not by a map, for speed on a tile of millions.
+pub fn creased_corners(mesh: &TriMesh) -> Vec<bool> {
+    let normal = |tri: &[u32; 3]| {
+        let [a, b, c] = tri.map(|v| mesh.vertices[v as usize]);
+        let (u, w) = ([b[0] - a[0], b[1] - a[1], b[2] - a[2]], [c[0] - a[0], c[1] - a[1], c[2] - a[2]]);
+        [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]
+    };
+    let mut edges: Vec<(u32, u32, u32)> = Vec::with_capacity(3 * mesh.triangles.len());
+    for (t, tri) in mesh.triangles.iter().enumerate() {
+        for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
+            edges.push((a.min(b), a.max(b), t as u32));
+        }
+    }
+    edges.sort_unstable();
+    let mut locked = vec![false; mesh.vertices.len()];
+    for pair in edges.windows(2) {
+        let ((a, b, s), (c, d, u)) = (pair[0], pair[1]);
+        if (a, b) != (c, d) {
+            continue;
+        }
+        let (n, m) = (normal(&mesh.triangles[s as usize]), normal(&mesh.triangles[u as usize]));
+        let dot = n[0] * m[0] + n[1] * m[1] + n[2] * m[2];
+        let lengths = ((n[0] * n[0] + n[1] * n[1] + n[2] * n[2]) * (m[0] * m[0] + m[1] * m[1] + m[2] * m[2])).sqrt();
+        if dot < 0.5 * lengths {
+            locked[a as usize] = true;
+            locked[b as usize] = true;
+        }
+    }
+    locked
+}
+
+/// One chunk to make versions of: none when `locked` is `None` for a part that gets none, as the shared walls.
+struct LevelJob<'a> {
+    mesh: &'a TriMesh,
+    chunk: &'a Chunk,
+    /// Vertices of the whole part that mustn't move, by its vertex numbers; a surface's chunks lock only their border.
+    locked: Option<&'a [bool]>,
+}
+
+fn levels_buffer(jobs: &[LevelJob], triangles: usize, origin: [f64; 3], header: Value, start: Instant) -> Vec<u8> {
     let threads = worker_threads();
-    let chunks = chunk_triangles_on(mesh, MAX_CHUNK_VERTICES, TARGET_CHUNK_TRIANGLES, threads);
     let next = std::sync::atomic::AtomicUsize::new(0);
+    let surface = jobs.iter().all(|j| j.locked.is_none());
     let mut made: Vec<(usize, zd_geom::DisplayLevels)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..threads.min(chunks.len()).max(1))
+        let handles: Vec<_> = (0..threads.min(jobs.len()).max(1))
             .map(|_| {
-                let (chunks, next) = (&chunks, &next);
+                let next = &next;
                 scope.spawn(move || {
                     let mut mine = Vec::new();
                     loop {
                         let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(chunk) = chunks.get(k) else { return mine };
+                        let Some(job) = jobs.get(k) else { return mine };
+                        if !surface && job.locked.is_none() {
+                            mine.push((k, zd_geom::DisplayLevels { levels: Vec::new(), ms: 0.0 }));
+                            continue;
+                        }
+                        let (mesh, chunk) = (job.mesh, job.chunk);
                         let positions: Vec<[f32; 3]> = chunk.vertices.iter().map(|&v| std::array::from_fn(|a| (mesh.vertices[v as usize][a] - origin[a]) as f32)).collect();
                         let indices: Vec<u32> = chunk.indices.iter().map(|&i| i as u32).collect();
-                        mine.push((k, zd_geom::display_levels(&positions, &indices, None)));
+                        let locks: Option<Vec<bool>> = job.locked.map(|l| chunk.vertices.iter().map(|&v| l[v as usize]).collect());
+                        mine.push((k, zd_geom::display_levels(&positions, &indices, locks.as_deref())));
                     }
                 })
             })
@@ -289,11 +465,11 @@ pub fn encode_levels(mesh: &TriMesh, origin: [f64; 3], header: Value) -> Vec<u8>
     made.sort_by_key(|(k, _)| *k);
 
     let level_indices: usize = made.iter().flat_map(|(_, m)| &m.levels).map(|l| l.indices.len()).sum();
-    let mut out = Vec::with_capacity(level_indices * 2 + 4096 + 160 * chunks.len());
+    let mut out = Vec::with_capacity(level_indices * 2 + 4096 + 160 * jobs.len());
     let mut meta = Vec::with_capacity(made.len());
     let mut index_start = 0;
     let (mut coarsest, mut cpu_ms) = (0usize, 0.0);
-    for (_, m) in &made {
+    for ((_, m), job) in made.iter().zip(jobs) {
         let mut levels = Vec::with_capacity(m.levels.len());
         for level in &m.levels {
             for &i in &level.indices {
@@ -302,7 +478,7 @@ pub fn encode_levels(mesh: &TriMesh, origin: [f64; 3], header: Value) -> Vec<u8>
             levels.push(json!({ "index_start": index_start, "index_count": level.indices.len(), "error": level.error }));
             index_start += level.indices.len();
         }
-        coarsest += m.levels.last().map_or(0, |l| l.indices.len() / 3);
+        coarsest += m.levels.last().map_or(job.chunk.indices.len() / 3, |l| l.indices.len() / 3);
         cpu_ms += m.ms;
         meta.push(json!({ "levels": levels }));
     }
@@ -315,7 +491,7 @@ pub fn encode_levels(mesh: &TriMesh, origin: [f64; 3], header: Value) -> Vec<u8>
     if let Some(timings) = header.get_mut("timings").and_then(|t| t.as_object_mut()) {
         timings.insert("levels_cpu_ms".into(), cpu_ms.into());
     }
-    finish(out, header, mesh.triangle_count(), None, start)
+    finish(out, header, triangles, None, start)
 }
 
 /// A chunk of a triangulation: global vertex ids and `u16` indices into them.
@@ -327,6 +503,7 @@ pub struct Chunk {
 
 /// One chunk's share of the output buffer, filled on a worker thread.
 struct WriteJob<'a> {
+    mesh: &'a TriMesh,
     chunk: &'a Chunk,
     positions: &'a mut [u8],
     indices: &'a mut [u8],
@@ -334,7 +511,8 @@ struct WriteJob<'a> {
 }
 
 impl WriteJob<'_> {
-    fn write(&mut self, mesh: &TriMesh, origin: [f64; 3]) {
+    fn write(&mut self, origin: [f64; 3]) {
+        let mesh = self.mesh;
         let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
         let (positions, _) = self.positions.as_chunks_mut::<12>();
         for (&v, out) in self.chunk.vertices.iter().zip(positions) {
@@ -963,5 +1141,154 @@ mod tests {
             header["timings"]["levels_cpu_ms"].as_f64().unwrap()
         );
         assert_eq!(chunks.len(), drawn_header["chunks"].as_array().unwrap().len());
+    }
+    /// Two cubes side by side sharing a face: the face's four triangles, two from each cube, go in the shared part, marked
+    /// on their chunks; the other twenty stay with the rest.
+    #[test]
+    fn the_walls_two_solids_share_are_sent_apart() {
+        let cube = |x: f64| {
+            let v = (0..8).map(|i| [ORIGIN[0] + x + (i & 1) as f64 * 10.0, ORIGIN[1] + (i >> 1 & 1) as f64 * 10.0, ORIGIN[2] + (i >> 2) as f64 * 10.0]).collect();
+            let t = vec![[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]];
+            Arc::new(TriMesh::new(v, t))
+        };
+        let meshes = [cube(0.0), cube(10.0), cube(100.0)];
+        let parts = split_shared_walls(&meshes);
+        assert_eq!((parts.outer.triangle_count(), parts.walls.triangle_count()), (32, 4));
+        let mut of: Vec<u32> = parts.walls_of.clone();
+        of.dedup();
+        assert_eq!(of, vec![0, 1], "two walls' corners from each of the two cubes that touch");
+        assert!(parts.walls.vertices.iter().all(|p| p[0] == ORIGIN[0] + 10.0), "every shared corner on the face between them");
+        let ids = [ObjectId::new(), ObjectId::new(), ObjectId::new()];
+        let buf = encode_solids(&ids, &meshes, ORIGIN, json!({ "name": "blocks" }));
+        let (header, _) = header_of(&buf);
+        let chunks = header["chunks"].as_array().unwrap();
+        let count = |shared: bool| chunks.iter().filter(|c| c["shared"].as_bool().unwrap_or(false) == shared).map(|c| c["index_count"].as_u64().unwrap() / 3).sum::<u64>();
+        assert_eq!((count(false), count(true)), (32, 4));
+        assert_eq!((header["triangles"].as_u64(), header["shared_triangles"].as_u64()), (Some(36), Some(4)));
+        assert!(chunks.last().unwrap()["shared"].as_bool().unwrap(), "the shared part comes after the rest");
+    }
+
+    /// Two blocks side by side, each a rolling top over a flat floor with walls between: their versions thin the tops,
+    /// keep every corner of every wall in every version, and give the shared wall's chunk none.
+    #[test]
+    fn block_versions_thin_the_tops_and_keep_the_walls() {
+        let n = 61;
+        let top = |x: f64, y: f64| 120.0 + 3.0 * (x / 17.0).sin() * (y / 13.0).cos();
+        let block = |x0: f64| {
+            let at = |c: usize, r: usize| [ORIGIN[0] + x0 + c as f64, ORIGIN[1] + r as f64];
+            let mut v: Vec<[f64; 3]> = Vec::new();
+            for floor in [false, true] {
+                for r in 0..n {
+                    for c in 0..n {
+                        let [x, y] = at(c, r);
+                        v.push([x, y, if floor { 100.0 } else { top(x - ORIGIN[0], y - ORIGIN[1]) }]);
+                    }
+                }
+            }
+            let id = |c: usize, r: usize, floor: bool| (r * n + c + if floor { n * n } else { 0 }) as u32;
+            let mut tris = Vec::new();
+            for floor in [false, true] {
+                for r in 0..n - 1 {
+                    for c in 0..n - 1 {
+                        tris.push([id(c, r, floor), id(c + 1, r, floor), id(c + 1, r + 1, floor)]);
+                        tris.push([id(c, r, floor), id(c + 1, r + 1, floor), id(c, r + 1, floor)]);
+                    }
+                }
+            }
+            // Walls along the border, each edge's diagonal from its lower end, so two blocks sharing a side share its triangles.
+            let mut border: Vec<((usize, usize), (usize, usize))> = Vec::new();
+            for k in 0..n - 1 {
+                border.extend([((k, 0), (k + 1, 0)), ((k, n - 1), (k + 1, n - 1)), ((0, k), (0, k + 1)), ((n - 1, k), (n - 1, k + 1))]);
+            }
+            for ((pc, pr), (qc, qr)) in border {
+                let (tp, tq, fp, fq) = (id(pc, pr, false), id(qc, qr, false), id(pc, pr, true), id(qc, qr, true));
+                tris.push([tp, fp, fq]);
+                tris.push([tp, fq, tq]);
+            }
+            Arc::new(TriMesh::new(v, tris))
+        };
+        let meshes = [block(0.0), block(60.0)];
+        let parts = split_shared_walls(&meshes);
+        assert_eq!(parts.walls.triangle_count(), 2 * 2 * (n - 1), "the side the two blocks share, from each");
+        let drawn = encode_solids(&[ObjectId::new(), ObjectId::new()], &meshes, ORIGIN, json!({ "name": "blocks", "timings": {} }));
+        let levels = encode_solid_levels(&meshes, ORIGIN, json!({ "name": "blocks", "timings": {} }));
+        let (dh, _) = header_of(&drawn);
+        let (lh, _) = header_of(&levels);
+        let vertices = dh["vertices"].as_u64().unwrap() as usize;
+        let drawn_index = |i: usize| u16_at(&drawn, vertices * 12 + 2 * i) as usize;
+        let level_index = |i: usize| u16_at(&levels, 2 * i) as usize;
+        let chunks = dh["chunks"].as_array().unwrap();
+        let lists = lh["chunks"].as_array().unwrap();
+        assert_eq!(chunks.len(), lists.len());
+        let mut thinned = 0;
+        for (chunk, list) in chunks.iter().zip(lists) {
+            let versions = list["levels"].as_array().unwrap();
+            if chunk["shared"].as_bool().unwrap_or(false) {
+                assert!(versions.is_empty(), "a shared wall's chunk has no versions");
+                continue;
+            }
+            let (vs, is, ic) = (chunk["vertex_start"].as_u64().unwrap() as usize, chunk["index_start"].as_u64().unwrap() as usize, chunk["index_count"].as_u64().unwrap() as usize);
+            let at = |v: usize| [0, 1, 2].map(|k| f32_at(&drawn, 3 * (vs + v) + k) as f64);
+            let mut wall = std::collections::HashSet::new();
+            for i in (is..is + ic).step_by(3) {
+                let [a, b, c] = [drawn_index(i), drawn_index(i + 1), drawn_index(i + 2)];
+                let [pa, pb, pc] = [at(a), at(b), at(c)];
+                let (u, w) = ([pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]], [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]]);
+                let nz = u[0] * w[1] - u[1] * w[0];
+                let nn = ((u[1] * w[2] - u[2] * w[1]).powi(2) + (u[2] * w[0] - u[0] * w[2]).powi(2) + nz * nz).sqrt();
+                if nz.abs() < 0.7 * nn {
+                    wall.extend([a, b, c]);
+                }
+            }
+            for version in versions {
+                let (s, c) = (version["index_start"].as_u64().unwrap() as usize, version["index_count"].as_u64().unwrap() as usize);
+                let kept: std::collections::HashSet<usize> = (s..s + c).map(level_index).collect();
+                assert!(wall.is_subset(&kept), "a version dropped {} wall corners", wall.difference(&kept).count());
+            }
+            if !versions.is_empty() {
+                let last = versions.last().unwrap()["index_count"].as_u64().unwrap() as usize;
+                assert!(last * 4 <= ic, "the coarsest version keeps {} of {} indices", last, ic);
+                thinned += 1;
+            }
+        }
+        assert!(thinned >= 1);
+    }
+    /// Timing on the made-up large mine's blocks (`ZD_LARGE_MINE`): each 1 km tile of '9 blocks' split and its versions
+    /// made, as the shell does a tile at a time. Counts and timings only.
+    #[test]
+    #[ignore]
+    fn timing_block_levels_on_the_large_mine() {
+        let Ok(path) = std::env::var("ZD_LARGE_MINE") else { return };
+        let session = zd_commands::Session::open(&path).unwrap();
+        let project = session.project();
+        let layer = project.layers().iter().find(|l| l.name == "9 blocks").map(|l| l.id).unwrap();
+        let mut tiles: std::collections::BTreeMap<[i64; 2], Vec<Arc<TriMesh>>> = Default::default();
+        for o in project.objects().filter(|o| o.layer == layer) {
+            if let zd_core::Body::Solid(s) = &o.body {
+                let mesh = Arc::new(s.mesh().clone());
+                tiles.entry(crate::state::Tiles::place(&mesh)).or_default().push(mesh);
+            }
+        }
+        let origin = [650_000.0, 7_450_000.0, 0.0];
+        let (mut held, mut shared, mut coarsest, mut split_ms, mut levels_ms, mut cpu_ms) = (0usize, 0usize, 0usize, 0.0, 0.0, 0.0);
+        for meshes in tiles.values() {
+            let t = Instant::now();
+            let parts = split_shared_walls(meshes);
+            split_ms += t.elapsed().as_secs_f64() * 1e3;
+            held += parts.outer.triangle_count() + parts.walls.triangle_count();
+            shared += parts.walls.triangle_count();
+            let t = Instant::now();
+            let buf = encode_solid_levels(meshes, origin, json!({ "name": "blocks", "timings": {} }));
+            levels_ms += t.elapsed().as_secs_f64() * 1e3;
+            let (header, _) = header_of(&buf);
+            coarsest += header["coarsest_triangles"].as_u64().unwrap() as usize;
+            cpu_ms += header["timings"]["levels_cpu_ms"].as_f64().unwrap();
+        }
+        println!(
+            "{} tiles, {held} triangles: {shared} shared ({:.1} %), split in {split_ms:.0} ms; versions in {levels_ms:.0} ms ({:.0} s of CPU); coarsest {coarsest} triangles with the shared walls left out",
+            tiles.len(),
+            100.0 * shared as f64 / held as f64,
+            cpu_ms / 1e3
+        );
     }
 }
