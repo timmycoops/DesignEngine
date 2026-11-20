@@ -102,3 +102,29 @@ topography. A face covers a strip of ground, so it has to be closed to one side.
   strips adding up within 0.00001 m³, in 0.4 s (Grid toe to RLs, 40,000 face triangles) to 2.5 s (Every horizon, 412,000).
   Grid ramps is refused for a face crossing itself, and RL switchbacks for strip 3's switchback box at RL 80 reaching strip
   4's berm, where the two faces meet: both faults of the designs, not the slice.
+
+## At scale (20 November 2026)
+
+A made-up mine 10 km by 3 km (`testdata/synthetic/large_mine.py`: 20 seams, 500 m deep at the final highwall, a lidar
+topography) found the slice running out of memory. To order the strips from the pit out, it takes the whole solid
+through one boolean a face, and it started them all at once: 50 faces on a 15 M-triangle pit (2 m lidar) peaked at
+72 GB, and on a 60 M-triangle pit (1 m lidar) it ran a 256 GB machine out of memory, which ended the process with no
+message.
+
+They now run a few at a time: as many as keep 60 M of the solid's triangles in booleans at once, at least one and at most a
+core each (`booleans_at_once` in `strips.rs`, `at_most` in `lib.rs`). Manifold spreads each boolean across the cores, so
+little is lost. On the 15 M-triangle pit, 51 pieces every time, adding up to the same 7,097,475,728.371 m³:
+
+| At once | Booleans | Whole slice | Peak memory |
+|---|---|---|---|
+| All 50 (before) | 24 s | 85 s | 72 GB |
+| 8 | 25 s | 89 s | 32 GB |
+| 4 (now, at 15 M triangles) | 29 s | 92 s | 24 GB |
+| 2 | 40 s | 101 s | 18 GB |
+| 1 | 57 s | 117 s | 18 GB |
+
+On the 60 M-triangle pit (1 m lidar), one at a time, the 50 strips slice in 362 s, peaking no higher than making the pit
+had (72 GB); the whole mine then builds through to 140,220 blocks in 18 minutes, a 5.9 GB project.
+
+`work_runs_at_most_so_many_at_a_time_and_comes_back_in_order` (zd-geom) checks the turns: forty jobs three at a time,
+never more than three running, each run once, the results in order. The slice's own tests are unchanged.

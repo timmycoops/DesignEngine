@@ -11,7 +11,19 @@ use manifold_csg::{CrossSection, JoinType, Manifold, triangulate_polygons};
 use zd_core::{MeshValidity, TriMesh};
 
 use crate::cut::{TinyEdges, from_manifold, join_tiny_edges, to_manifold};
-use crate::{GeomError, RepairLog, Side, boundary_loops, close_surface_to_halfspace, orient_upward, repair_mesh};
+use crate::{GeomError, RepairLog, Side, at_most, boundary_loops, close_surface_to_halfspace, orient_upward, repair_mesh};
+
+/// The solid's triangles a slice holds in booleans at once, across all of them. A face's boolean on the whole solid
+/// holds about 2 GB while it runs on a 15 M-triangle pit, and Manifold spreads each across the cores: all 50 of a large
+/// pit's faces at once peaked at 72 GB there for 24 s of booleans, four at once at 24 GB for 29 s, and on a 60 M-triangle
+/// pit all at once ran a 256 GB machine out of memory.
+const SOLID_TRIANGLES_AT_ONCE: usize = 60_000_000;
+
+/// How many of the faces' booleans run at once on a solid of `triangles`: at least one, at most a core each.
+fn booleans_at_once(triangles: usize) -> usize {
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    (SOLID_TRIANGLES_AT_ONCE / triangles.max(1)).clamp(1, cores)
+}
 
 /// A gap closed all round by the faces being joined, filled.
 #[derive(Debug, Clone, PartialEq)]
@@ -637,22 +649,12 @@ pub fn slice_solid_by_faces_watched(solid: &TriMesh, faces: &[&TriMesh], mut go_
     if !shorts.is_empty() {
         return Err(SliceRefusal::Short(shorts));
     }
-    let closed: Vec<Result<(Manifold, FaceCut), SliceRefusal>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = plans
-            .iter()
-            .enumerate()
-            .map(|(face, plan)| {
-                let prepared = &prepared;
-                let triangles = faces[face].triangle_count();
-                scope.spawn(move || {
-                    let behind = behind_face(plan, prepared.z_low, prepared.z_high).map_err(|error| SliceRefusal::Face { face, error })?;
-                    let front = prepared.solid_m.difference(&behind);
-                    front.status().map_err(|e| SliceRefusal::Face { face, error: GeomError::Manifold(e.to_string()) })?;
-                    Ok((behind, FaceCut { front: front.volume(), triangles }))
-                })
-            })
-            .collect();
-        handles.into_iter().map(|h| h.join().expect("a face's half-space doesn't panic")).collect()
+    // What's in front of each face, to slice from the pit out: a boolean on the whole solid a face, a few at a time.
+    let closed: Vec<Result<(Manifold, FaceCut), SliceRefusal>> = at_most(plans.len(), booleans_at_once(solid.triangle_count()), |face| {
+        let behind = behind_face(&plans[face], prepared.z_low, prepared.z_high).map_err(|error| SliceRefusal::Face { face, error })?;
+        let front = prepared.solid_m.difference(&behind);
+        front.status().map_err(|e| SliceRefusal::Face { face, error: GeomError::Manifold(e.to_string()) })?;
+        Ok((behind, FaceCut { front: front.volume(), triangles: faces[face].triangle_count() }))
     });
     let solid_m = &prepared.solid_m;
     let mut halves = Vec::with_capacity(faces.len());
