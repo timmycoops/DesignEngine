@@ -37,6 +37,7 @@ import { checkProject } from './projectCheck';
 import { checkRamp } from './rampCheck';
 import { checkRampStart } from './rampStartCheck';
 import { checkSelect } from './selectCheck';
+import { checkLod } from './lodCheck';
 import { checkShell } from './shellCheck';
 import { checkWorkflow } from './workflowCheck';
 import type { DockviewApi } from 'dockview-react';
@@ -85,7 +86,9 @@ export async function runChecks(
   viewport.setFieldOfView(FIELD_OF_VIEW_DEFAULT, false);
 
   try {
-    if (config.section_guide) {
+    if (config.lod) {
+      results.lod = await checkLod(viewport, config.lod, log, show);
+    } else if (config.section_guide) {
       results.section_guide = await checkSectionGuide(viewport, log, show, section, strings, !!config.pictures);
     } else if (config.pictures && !config.shell && !config.dataflow) {
       const take = config.palettes ? takePalettePictures : takePictures;
@@ -122,7 +125,10 @@ export async function runChecks(
       results.load = await loadSurfaces(viewport, config.surfaces, log, config.opacity);
       results.opacity = config.opacity ?? 1;
       viewport.fitView();
+      // At Full, as Phase 0 measured it: every triangle drawn, the card's own speed (decision 0097).
+      viewport.setDetail(0, false);
       results.check1 = await checkViewport(viewport, config, log);
+      viewport.setDetail(1, false);
       results.check3 = await checkTransfer(viewport, config.transfer_cells, log);
       results.check4 = await checkDrag(viewport, tool, config.drag_updates, log);
     }
@@ -1930,7 +1936,7 @@ async function checkViewport(viewport: Viewport, config: BenchConfig, log: (line
 }
 
 /** One full turn around the scene while zooming in and out twice; returns frame-interval stats. */
-async function orbit(viewport: Viewport, seconds: number): Promise<FrameSummary> {
+export async function orbit(viewport: Viewport, seconds: number): Promise<FrameSummary> {
   const box = viewport.bounds;
   const centre = box.getCenter(new THREE.Vector3());
   const radius = box.getSize(new THREE.Vector3()).length() / 2;

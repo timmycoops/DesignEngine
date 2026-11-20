@@ -774,9 +774,15 @@ export class Viewport {
       for (let k = 1; k < n; k++) {
         const offset = new THREE.Vector3((k % columns) * size.x * 1.05, Math.floor(k / columns) * size.y * 1.05, 0);
         for (const s of this.surfaces) {
-          // Cloned chunk meshes share the original geometry and material.
+          // Cloned chunk meshes share the original geometry and material: the full chunks only, drawn whole, so the
+          // copies measure the card on every triangle (a copy isn't given coarser versions, decision 0097).
           const copy = new THREE.Group();
-          for (const child of s.children) copy.add((child as THREE.Mesh).clone());
+          for (const child of s.children) {
+            if (child.userData.level) continue;
+            const mesh = (child as THREE.Mesh).clone();
+            mesh.visible = !child.userData.shared;
+            copy.add(mesh);
+          }
           copy.position.copy(offset);
           copy.userData.triangles = s.userData.triangles;
           this.copies.push(copy);

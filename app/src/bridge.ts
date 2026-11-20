@@ -1419,6 +1419,8 @@ export interface BenchConfig {
   cut: boolean;
   /** With `--section-guide`, the dashed line from a section's first point to the cursor, on a made-up topography. */
   section_guide: boolean;
+  /** With `--lod <project>`, a big project opened and orbited at Full and at 1 px (decision 0097). */
+  lod: string | null;
 }
 
 /** Saves a PNG data URL of the viewport as `<name>.png` in the `--pictures` folder. Bench only. */
