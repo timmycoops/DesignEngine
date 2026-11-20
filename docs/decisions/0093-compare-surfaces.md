@@ -73,3 +73,23 @@ Known limits:
   area inside a coarse cell can show more difference than the 0.1 % the warning allows; a finer cell closes it.
 - The thickness grid is drawn as a grid at its values' RLs (near 0). Seen in plan, coloured by its own range, it reads as
   an isopach.
+
+## In section (Surface tools plan, workstream 5, 2026-11-20)
+
+The plan's last workstream checked that what the surface tools make draws in section as any surface does, and fixed only
+what the check found.
+
+- **The check:** `what_the_surface_tools_make_draws_in_section` (zd-app) uses the pit's toe and crest. It triangulates
+  them (0096), merges them with a level topography as an exact surface and as a 5 m grid (0094), trims the topography to
+  outside the crest as new (0095), and makes Compare's thickness grid. Cut east to west along the pit's middle, each is
+  the line it should be, to 1e-6 m in length and 1e-9 m in RL:
+  - the pit: 100 m of floor and two 45° batters, 128.28 m long, lowest at RL 90;
+  - the merged surface and the merged grid: that and 140 m of topography each side, 408.28 m. The grid is exact, its
+    nodes on the crest, the toe and the section, and the section running along its cell edges draws each once;
+  - the trimmed topography: 280 m at RL 100.
+- **What it found:** the thickness grid was drawn in section at its values as if they were RLs, a line near RL 0 far below
+  the pit. It now carries `role: thickness`. A section leaves out a grid with that role (`holds_rls` in
+  `app/src-tauri/src/state.rs`). It's still drawn in the view, coloured by its value, as decision 1 asked.
+  `inside_a_string_with_the_thickness_grid` checks the role.
+- **Nothing else needed changing.** In the app, `--section-guide` gives 11 of 11, and `--cut` the same as before.
+

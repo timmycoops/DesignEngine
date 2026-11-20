@@ -76,6 +76,8 @@ fn inside_a_string_with_the_thickness_grid() {
     let object = s.project().object(grid[0]).unwrap();
     assert_eq!(object.name, "Pit design less Topography");
     assert_eq!(s.project().layer(object.layer).unwrap().name, "isopach");
+    // It holds thicknesses, not RLs, and says so: drawn coloured by value, never cut in a section.
+    assert_eq!(object.attributes.get("role"), Some(&zd_core::AttrValue::Text("thickness".into())));
     let Body::Grid(g) = &object.body else { panic!("a grid") };
     let at = |x: f64, y: f64| g.z[g.index(((E + x - g.origin[0]) / g.cell_size[0]).round() as usize, ((N + y - g.origin[1]) / g.cell_size[1]).round() as usize)];
     assert!((at(100.5, 100.5) + 5.0).abs() < 1e-9, "the floor 5 m below RL 95: {}", at(100.5, 100.5));

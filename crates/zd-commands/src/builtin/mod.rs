@@ -63,7 +63,7 @@ pub use string::{
 pub use strips::{JoinFaces, JoinFacesParams, SliceByFaces, SliceByFacesParams, SolidBetween, SolidBetweenParams, check_slice};
 pub use surface::{ImportSurface, ImportSurfaceParams, MeshParams, SurfaceFromMesh};
 pub use workflow::{SaveWorkflow, SaveWorkflowParams, WORKFLOW_LAYER};
-pub use surface_compare::{CompareSurfaces, CompareSurfacesParams};
+pub use surface_compare::{CompareSurfaces, CompareSurfacesParams, THICKNESS_ROLE};
 pub use surface_merge::{MergeKeep, MergeOutput, MergeSurfaces, MergeSurfacesParams};
 pub use trim_in_plan::{TrimInPlan, TrimInPlanParams};
 pub use surface_triangulate::{TriangulateStrings, TriangulateStringsParams};
