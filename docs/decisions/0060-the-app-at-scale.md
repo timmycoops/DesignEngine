@@ -195,6 +195,24 @@ Bringing a deleted layer back fetches all 100 tiles, where before it was one mes
 
 What's left of a hide is mostly the app: the panels take the whole project again after every change.
 
+## A solid lying on a surface (20 November 2026)
+
+Opened in the app, the made-up large mine (`testdata/synthetic/large_mine.py`, 1 m lidar, 140,220 blocks) showed its
+blocks and the lidar in patches of each, changing as the view moved: every overburden block's top is the lidar itself,
+and two things in one place tie in the depth buffer. Every coal pit has this, its overburden's top being the topography,
+and a coal block's floor lies on its seam grid the same way.
+
+A layer's solids are now drawn a hair nearer than they are (`polygonOffset` on their material in `Viewport.addMesh`: the
+slope of each triangle across a pixel and two of the depth buffer's least steps, signed for the reversed depth buffer),
+so where a solid lies on a surface, the solid shows. A copy drawn over everything is left as it was.
+
+`zd-app --bench --select` checks it: a block from RL 80 to 100 sunk in the RL 100 topography, read back at 49 points over
+its top. Each is the block's colour, 142 apart from the ground's, spread under 1. With the offset taken off, all 49 were
+the ground's.
+
+The same view ran at 12 fps on 188 million triangles: the lidar's 85 million and the blocks'. That wants fewer triangles
+drawn (a coarser lidar further off, the walls between blocks left out), which is a plan of its own.
+
 ## Still to come
 
 Nothing in this item. The panels taking the whole project after a change, and timing box select and frames during a
