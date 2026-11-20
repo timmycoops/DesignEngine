@@ -316,6 +316,81 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
     { block: mean.map(Math.round), ground: topo, nearest_to_ground: Math.round(nearestGround), spread: Number(spread.toFixed(1)), points: onTop.length },
   );
 
+  // Drawn far off with fewer triangles (decision 0097): a rolling surface of 178,802 triangles, big enough for coarser
+  // versions. Far off it draws fewer than it holds, and the picture is the full one's; close in, the chunk under the
+  // camera is full detail; a pick lands where it does at full detail; Full draws every triangle.
+  const [gx, gy, side] = [E + 1500, N + 600, 300];
+  const vertices: Vec3[] = [];
+  for (let r = 0; r < side; r++) for (let c = 0; c < side; c++) vertices.push([gx + c, gy + r, 95 + 6 * Math.sin(c / 23) * Math.cos(r / 31) + 2 * Math.sin((c + r) / 11)]);
+  const rollingTriangles: [number, number, number][] = [];
+  for (let r = 0; r < side - 1; r++) {
+    for (let c = 0; c < side - 1; c++) {
+      const at = (cc: number, rr: number) => rr * side + cc;
+      rollingTriangles.push([at(c, r), at(c + 1, r), at(c + 1, r + 1)], [at(c, r), at(c + 1, r + 1), at(c, r + 1)]);
+    }
+  }
+  await runCommand('surface.from_mesh', { name: 'Rolling ground', layer: 'ground', vertices, triangles: rollingTriangles });
+  await show(await projectSummary());
+  const rolling = viewport.content.children.find((g) => g.name === 'Rolling ground');
+  type Detail = { full: THREE.Mesh; levels: THREE.Mesh[]; errors: number[]; triangles: number[] }[];
+  for (let k = 0; k < 100 && !rolling?.userData.detail; k++) await wait(100);
+  const detail = rolling?.userData.detail as Detail | undefined;
+  expect('a big surface gets coarser versions once drawn', !!detail && detail.every((c) => c.levels.length >= 3), detail && { chunks: detail.length, versions: detail.map((c) => c.levels.length) });
+  if (detail) {
+    viewport.setDetail(1, false);
+    viewport.fitView();
+    await settle();
+    const held = viewport.triangleCount;
+    const drawnFar = viewport.drawnTriangleCount;
+    const coarse = detail.filter((c) => !c.full.visible).length;
+    // Which version each chunk is drawn with: 0 the full chunk, k its k-th coarser version.
+    const shown = () => detail.map((c) => (c.full.visible ? 0 : c.levels.findIndex((l) => l.visible) + 1));
+    const farShown = shown();
+    expect('zoomed to everything, it draws far fewer triangles than it holds', drawnFar < held / 3 && coarse > 0, { held, drawn: drawnFar, chunks_coarser: coarse, of: detail.length });
+    const status = document.body.textContent?.match(/\d+ fps · [\d.,]+ (?:M )?drawn of [\d.,]+(?: M)?/)?.[0] ?? null;
+    expect('the status bar says drawn of held', status !== null, status);
+    const coarsePicture = await snapshot();
+    viewport.setDetail(0, false);
+    await settle();
+    const fullPicture = await snapshot();
+    expect('at Full every chunk is drawn whole', detail.every((c) => c.full.visible && c.levels.every((l) => !l.visible)) && viewport.drawnTriangleCount >= drawnFar);
+    const rect = canvas.getBoundingClientRect();
+    let [looked, differ] = [0, 0];
+    for (let i = 1; i < 60; i++) {
+      for (let j = 1; j < 40; j++) {
+        const at: [number, number] = [rect.left + (rect.width * i) / 60, rect.top + (rect.height * j) / 40];
+        const [a, b] = [coarsePicture(at), fullPicture(at)];
+        looked++;
+        if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) > 24) differ++;
+      }
+    }
+    expect('the picture at 1 px is the full picture, near enough', differ / looked < 0.02, { points: looked, differ });
+    const middle = local([gx + side / 2, gy + side / 2, 95]);
+    viewport.focusOn(middle.toArray() as Vec3, 30);
+    viewport.setDetail(1, false);
+    await settle();
+    // Close in, the chunk under the view is drawn finer than far off, and out by at most the pixel.
+    const k = detail.findIndex((c) => c.full.geometry.boundingBox!.containsPoint(new THREE.Vector3(middle.x, middle.y, c.full.geometry.boundingBox!.min.z)));
+    const closeShown = shown();
+    const distance = k < 0 ? 0 : detail[k].full.geometry.boundingBox!.distanceToPoint(viewport.camera.position);
+    const perMetre = canvas.height / (2 * distance * Math.tan(THREE.MathUtils.degToRad(viewport.fieldOfView / 2)));
+    const outBy = k < 0 || closeShown[k] === 0 ? 0 : detail[k].errors[closeShown[k] - 1] * perMetre;
+    expect(
+      'close in, the chunk under the view is drawn finer, out by at most a pixel',
+      k >= 0 && closeShown[k] < farShown[k] && outBy <= 1,
+      { far: farShown, close: closeShown, distance_m: Math.round(distance), out_by_px: Number(outBy.toFixed(2)) },
+    );
+    viewport.fitView();
+    await settle();
+    const centre: [number, number] = [rect.left + rect.width / 2, rect.top + rect.height / 2];
+    const coarsePick = await viewport.pickPoint?.(centre[0], centre[1]);
+    viewport.setDetail(0, false);
+    await settle();
+    const fullPick = await viewport.pickPoint?.(centre[0], centre[1]);
+    expect('a pick lands on the same point whatever is drawn', !!coarsePick && !!fullPick && coarsePick.every((v, k) => v === fullPick[k]), { coarse: coarsePick, full: fullPick });
+    viewport.setDetail(1, false);
+  }
+
   results.failures = failures;
   return results;
 }

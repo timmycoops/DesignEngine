@@ -62,3 +62,8 @@ red refused, green valid. Don't hand-roll an input, select, badge or colour a ki
 - A layer's solids are drawn a hair nearer than they are (a depth offset), so where a solid lies on a surface, as the
   overburden's top on the topography or a block's floor on its seam grid, the solid shows and not patches of both
   (`docs/decisions/0060-the-app-at-scale.md`).
+- Far off, a big surface's chunks are drawn with coarser versions, each the coarsest out by no more than the Detail in
+  pixels (the field-of-view menu: Full, 1 px default, 2, 4); close in, full detail. Versions are extra meshes beside
+  their chunk, sharing its vertices. Anything that reads drawn triangles (as `distanceTo` does) passes over
+  `userData.level` meshes; picks, snaps and sections are engine-side and never see them
+  (`docs/decisions/0097-fewer-triangles-drawn.md`).

@@ -8,7 +8,7 @@
 // uniforms on its material, so a change of look never refetches anything.
 import * as THREE from 'three/webgpu';
 import { concealed, type Contours, layerOpacityOf, lookOf, type ObjectSummary, type ProjectSummary, type StagedHorizon, stageLayerSolids, stageObject, stageSeamHorizon } from '../bridge';
-import { colourOf, loadStaged, SELECTED } from './load';
+import { colourOf, loadLevels, loadStaged, SELECTED } from './load';
 import type { SolidFlags } from './solidFlags';
 import { type Bands, bandsFor } from './rlColour';
 import { bandOf } from './bands';
@@ -196,6 +196,8 @@ export class SceneSync {
         }
         const byRl = lookOf(summary.display, object.id).colouring === 'by_rl';
         group = (await loadStaged(this.viewport, staged, { colour: layer ? colourOf(layer.colour) : undefined, byRl })).group;
+        // Its coarser versions to draw far off, when the shell has made them (decision 0097); full detail meanwhile.
+        if (staged.kind === 'triangulation') void loadLevels(this.viewport, group, object.id, staged.triangles);
       }
       group.visible = on(object);
       this.shown.set(object.id, { key: keyOf(object.id)!, group, seam: view });
