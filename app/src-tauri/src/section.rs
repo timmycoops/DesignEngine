@@ -15,7 +15,7 @@ use zd_geom::{
 };
 use zd_io::{StackGrids, read_stack_grids};
 
-use crate::state::{AppInner, geometry_key, is_drawn_surface, joined_meshes, layer_solids, solid_layer_keys};
+use crate::state::{AppInner, geometry_key, holds_rls, joined_meshes, layer_solids, solid_layer_keys};
 
 /// Two ends of a segment, in mine grid coordinates.
 pub type Segment = CutSegment;
@@ -203,7 +203,7 @@ fn section_inputs(app: &mut AppInner) -> Result<Arc<SectionInputs>, String> {
                 let mesh = keep(object.id.to_string(), stamp, &mut || Ok(s.mesh_arc().clone()))?;
                 meshes.push((object.layer, "surface", Some(object.id), mesh));
             }
-            Body::Grid(g) if is_drawn_surface(object) => {
+            Body::Grid(g) if holds_rls(object) => {
                 let mesh = keep(object.id.to_string(), stamp, &mut || Ok(Arc::new(triangulate_grid(g))))?;
                 meshes.push((object.layer, "surface", Some(object.id), mesh));
             }
@@ -540,5 +540,42 @@ mod tests {
         let groups = section_groups(&mut app, &plane, 1.0, true).unwrap();
         assert!(!Arc::ptr_eq(&first, &app.section_meshes.values().next().unwrap().1), "made again when a solid is added");
         assert!((length(&groups[0].segments) - 80.0).abs() < 1e-9);
+    }
+
+    /// Surface tools plan, workstream 5: what Triangulate, Merge, Trim in plan and Compare make draws in section as any
+    /// surface does. The pit's toe (100 m at RL 90) and crest (120 m at RL 100) triangulated; merged with a level
+    /// topography at RL 100 as an exact surface and as a 5 m grid; the topography trimmed to outside the crest; and the
+    /// thickness grid of the topography less the pit. Cut east to west along the pit's middle, each is the line it should
+    /// be: the pit 100 m of floor and two 45° batters of 14.14 m (128.28 m); the merged surface and grid that and 140 m of
+    /// topography each side (408.28 m), the grid exactly, its nodes on the crest, toe and section; the trimmed topography
+    /// 280 m at RL 100. The thickness grid holds a thickness, not an RL, so it isn't drawn.
+    #[test]
+    fn what_the_surface_tools_make_draws_in_section() {
+        let mut s = Session::with_builtins();
+        let made = |s: &mut Session, command: &str, params: serde_json::Value| -> ObjectId {
+            let record = s.run(command, params).unwrap();
+            record.outputs.iter().find(|o| o.change == zd_core::ChangeKind::Created).expect("made").id
+        };
+        let square = |half: f64, rl: f64| [[-half, -half], [half, -half], [half, half], [-half, half]].map(|[x, y]| [E + 100.0 + x, N + 100.0 + y, rl]).to_vec();
+        let toe = made(&mut s, "string.create", json!({ "name": "Toe", "layer": "toes", "points": square(50.0, 90.0), "closed": true }));
+        let crest = made(&mut s, "string.create", json!({ "name": "Crest", "layer": "crests", "points": square(60.0, 100.0), "closed": true }));
+        let topo = made(&mut s, "surface.from_mesh", json!({ "name": "Topography", "layer": "surfaces", "vertices": [[E - 100.0, N - 100.0, 100.0], [E + 300.0, N - 100.0, 100.0], [E + 300.0, N + 300.0, 100.0], [E - 100.0, N + 300.0, 100.0]], "triangles": [[0, 1, 2], [0, 2, 3]] }));
+        let pit = made(&mut s, "surface.triangulate", json!({ "strings": [toe, crest] }));
+        let merged = made(&mut s, "surface.merge", json!({ "objects": [topo, pit], "output": "surface" }));
+        let merged_grid = made(&mut s, "surface.merge", json!({ "objects": [topo, pit], "cell": 5.0, "layer": "merged grids" }));
+        let trimmed = made(&mut s, "object.trim", json!({ "objects": [topo], "by": crest, "keep": "outside", "result": { "as_new": true, "layer": "trimmed" } }));
+        let thickness = made(&mut s, "surface.compare", json!({ "surface": topo, "with": pit, "cell": 1.0, "thickness": true, "layer": "thickness" }));
+        let mut app = AppInner::new(s, None);
+        let plane = SectionPlane::through([E - 100.0, N + 100.0], [E + 300.0, N + 100.0]).unwrap();
+        let groups = section_groups(&mut app, &plane, 1.0, true).unwrap();
+        let of = |id: ObjectId| groups.iter().filter(|g| g.object == Some(id)).flat_map(|g| g.segments.iter().copied()).collect::<Vec<Segment>>();
+        let lowest = |segments: &[Segment]| segments.iter().flat_map(|[p, q]| [p[2], q[2]]).fold(f64::INFINITY, f64::min);
+        let pit_line = 100.0 + 2.0 * 200f64.sqrt();
+        for (id, what, expected, low) in [(pit, "the pit", pit_line, 90.0), (merged, "the merged surface", pit_line + 280.0, 90.0), (merged_grid, "the merged grid", pit_line + 280.0, 90.0), (trimmed, "the trimmed topography", 280.0, 100.0)] {
+            let segments = of(id);
+            assert!((length(&segments) - expected).abs() < 1e-6, "{what}: {} m against {expected}", length(&segments));
+            assert!((lowest(&segments) - low).abs() < 1e-9, "{what}: lowest RL {}", lowest(&segments));
+        }
+        assert!(of(thickness).is_empty(), "the thickness grid isn't drawn in section");
     }
 }

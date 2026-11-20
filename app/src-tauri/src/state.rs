@@ -329,6 +329,12 @@ pub fn is_drawn_surface(object: &Object) -> bool {
     }
 }
 
+/// Whether an object's heights are RLs a section cuts: a drawn surface, but not a grid of thicknesses (Compare's), whose
+/// values sit far below the ground they describe.
+pub fn holds_rls(object: &Object) -> bool {
+    is_drawn_surface(object) && object.attributes.get("role") != Some(&AttrValue::Text(zd_commands::builtin::THICKNESS_ROLE.into()))
+}
+
 pub fn bounds(object: &Object) -> Option<zd_core::Aabb> {
     match &object.body {
         Body::Surface(s) => s.mesh().bounds(),

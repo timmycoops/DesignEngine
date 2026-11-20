@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use zd_core::{Attributes, Body, Change, ObjectId, ObjectKind};
+use zd_core::{AttrValue, Attributes, Body, Change, ObjectId, ObjectKind};
 use zd_geom::{COLUMN_CHECK, compare_surfaces};
 
 use super::from_surfaces::mesh_of;
@@ -43,6 +43,9 @@ pub struct CompareSurfacesParams {
     #[serde(default)]
     pub name: Option<String>,
 }
+
+/// The `role` a thickness grid carries: its values are thicknesses, not RLs.
+pub const THICKNESS_ROLE: &str = "thickness";
 
 /// A volume for a sentence, to a tenth of a cubic metre with thousands marked.
 fn bcm(v: f64) -> String {
@@ -125,7 +128,11 @@ impl Command for CompareSurfaces {
         if let Some(grid) = compared.thickness {
             let name = p.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).map_or_else(|| format!("{} less {}", b.name, a.name), str::to_string);
             said.push(format!("thickness grid '{name}' on '{}': {} m cells, {} by {}", p.layer, compared.cell, grid.cols, grid.rows));
-            changes.push(Change::Create { name, layer: p.layer.clone(), attributes: Attributes::new(), body: Body::Grid(Arc::new(grid)) });
+            // It holds a thickness, not an RL: drawn coloured by its value, but not cut in a section (Surface tools plan,
+            // workstream 5).
+            let mut attributes = Attributes::new();
+            attributes.insert("role".into(), AttrValue::Text(THICKNESS_ROLE.into()));
+            changes.push(Change::Create { name, layer: p.layer.clone(), attributes, body: Body::Grid(Arc::new(grid)) });
         }
         let mut outcome = Outcome::new(changes);
         outcome.said(said);

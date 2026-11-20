@@ -43,7 +43,7 @@ ramps by hand, measure), 0083 (cut strings by strings).
 - Surfaces against surfaces (Surface tools plan, 0093 on), in the Surfaces panel, a panel of its own: Compare gives cut
   (the second below the first) and fill, exact as the solids between them each way, with a 2.5D column check said
   beside them and a warning past 0.1 %, inside a closed string or wherever both are; a thickness grid only when
-  switched on. Merge (0094) keeps the bottom (dug out) or top (laid on) of surfaces, grids and solids, a solid by its
+  switched on (`role: thickness`: drawn coloured by value, never cut in a section). Merge (0094) keeps the bottom (dug out) or top (laid on) of surfaces, grids and solids, a solid by its
   floor or top, as a grid at a cell size (fast) or an exact surface (every crest and toe, joined where they meet).
   Trim in plan (`object.trim`, 0095) cuts strings, surfaces, solids and grids by a closed string, inside or outside,
   each by its own rule: a string as Clip, a surface exactly along the string at its own heights, a solid vertically and
