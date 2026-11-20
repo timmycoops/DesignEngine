@@ -192,3 +192,31 @@ changed yet.
   the toolbar says Plan; T back to 3D; Z and a 170 px drag in plan end at 60° from straight down, in 3D, with the point
   under the cursor at the press 0.26 px from where it was; the selection unchanged; and without Z a left drag in plan pans
   58 m and stays in plan.
+
+## The pivot on a big project (2026-11-21)
+
+Tim, on the made-up large mine (`Large mine 1m.zdp`, 188 M triangles, 140,220 blocks, the toes and pit limit on show):
+"I try and snap and it like it orbits from a different position so it doesn't feel smooth." Two causes, both measured
+with `zd-app --bench --lod` on that project:
+
+- **The string always won.** Settled here on 2026-11-05 but never built: the pick for a turn or a zoom took a string near
+  the cursor before the surface under it. Strings draw over everything, so the toes, draped on S20's floor up to 500 m
+  down, showed under the cursor across the whole pit. 2 of 15 presses across the view turned about a toe 443 m behind
+  the ground clicked. Now `StringLayer.pivot` takes both and turns about the nearer the camera. A string on the ground,
+  or above it, still wins, within 1 m. A share of the distance wasn't used: from across the lease at 6° a hundredth is
+  hundreds of metres. On the large mine, 0 of 15 now.
+- **The turn waited about 50 ms for its pick.** The page draws about 4,900 chunks a frame there, 13 ms of the main
+  thread each frame. The pick's answer from the shell queued behind three frames (a plain invoke: 1.2 ms before the
+  versions were on, 50 ms after; the ray itself takes 1.2 ms). Since nothing moves while a turn or wheel tick waits for
+  its pick, the view now holds drawing until the pick lands, for 250 ms at most (`Viewport.holdFrames`). Press to pivot:
+  3.3 ms p50, 26.6 ms the most, against about 50 ms before.
+- **The gold mark shows at the press,** as soon as the pick lands, so you see where it will turn before you move.
+
+`zd-app --bench --select` checks a string 80 m under the topography (turned about the ground above it) and one on the
+ground (turned about the string). `--lod` checks the large mine: no pivot behind what's under the cursor, press to pivot
+under 20 ms p50. `--clicks`, `--shell`, `--string-edits` and `--section-guide` pass unchanged. The orbit still runs at
+59 fps at 1 px.
+
+Still not built from this record: pan that sticks (PR 2), the fan of rays over empty space and the last pivot (the rest
+of PR 3), the orthographic switch (PR 4) and the Spry layout (PR 5). And while the page is drawing thousands of chunks,
+every other ask of the shell (a snap while drawing a string, say) still waits about 50 ms: that wants fewer draw calls.

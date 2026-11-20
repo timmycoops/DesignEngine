@@ -40,7 +40,12 @@ export interface CameraHost {
   /** What is drawn under a screen point, scene-local. */
   readonly pickPoint?: (clientX: number, clientY: number) => Promise<Vec3 | null>;
   readonly pivotMark: { show(point: THREE.Vector3, colour: number): void; hide(): void };
+  /** Holds drawing for up to `ms` (0 lets it go): nothing moves while a turn or zoom waits for its pick. */
+  holdFrames?(ms: number): void;
 }
+
+/** The longest a turn or zoom holds drawing while its pick comes back. */
+const HOLD_FOR_PICK_MS = 250;
 
 type Drag =
   | { kind: 'turn'; pointer: number; pivot: THREE.Vector3; x: number; y: number; ready: boolean; latest: [number, number] }
@@ -128,14 +133,20 @@ export class CameraController {
     if (kind === 'turn') {
       const turn: Drag = { kind, pointer: e.pointerId, pivot: this.target.clone(), x: e.clientX, y: e.clientY, ready: false, latest: [e.clientX, e.clientY] };
       this.drag = turn;
-      // Over empty space it keeps the view's centre. The pick takes about a millisecond, and the turn
-      // waits for it, so the first move never turns about the wrong point.
+      // Over empty space it keeps the view's centre. The turn waits for its pick, so the first move never
+      // turns about the wrong point; drawing holds meanwhile, since nothing moves, so the pick comes back at
+      // once even on a scene that keeps the page busy drawing. The gold mark shows where it will turn as soon
+      // as the pick lands, before the first move.
+      this.host.holdFrames?.(HOLD_FOR_PICK_MS);
       const pick = this.host.pickPoint?.(e.clientX, e.clientY) ?? Promise.resolve(null);
       void pick.then((hit) => {
+        this.host.holdFrames?.(0);
         if (hit) turn.pivot.set(...hit);
         turn.ready = true;
+        if (this.drag !== turn) return;
+        this.host.pivotMark.show(turn.pivot, PIVOT_MARK_COLOUR);
         const [x, y] = turn.latest;
-        if (this.drag === turn && (x !== turn.x || y !== turn.y)) this.turnTo(turn, x, y);
+        if (x !== turn.x || y !== turn.y) this.turnTo(turn, x, y);
       });
       return;
     }
@@ -239,7 +250,9 @@ export class CameraController {
     }
     const wheel = { scale, x: e.clientX, y: e.clientY };
     this.wheel = wheel;
+    this.host.holdFrames?.(HOLD_FOR_PICK_MS);
     void this.host.pickPoint(e.clientX, e.clientY).then((hit) => {
+      this.host.holdFrames?.(0);
       this.wheel = null;
       if (hit) this.settleDepth(new THREE.Vector3(...hit));
       this.zoomBy(wheel.scale, this.ndc(wheel.x, wheel.y));

@@ -1,9 +1,10 @@
 // `--lod <project>`: a big project drawn with fewer triangles far off (decision 0097, workstream 5). It opens the
 // project as Tim would, waits for every big surface and tile of solids to have its coarser versions, then orbits it as
 // Phase 0 did, at Full and at 1 px, counting the frames and the triangles drawn. Then, at three distances, the picture
-// at 1 px against Full, and a pick at the middle of the view at each. Made-up data only: counts and timings.
+// at 1 px against Full, and a pick at the middle of the view at each; and the orbit's pivot: picks at 15 points, and a press
+// timed to its gold mark (decision 0044). Made-up data only: counts and timings.
 import * as THREE from 'three/webgpu';
-import { openProject, type ProjectSummary } from '../bridge';
+import { benchConfig, openProject, type ProjectSummary, snapRay } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
 import { orbit } from './runChecks';
 
@@ -31,12 +32,103 @@ export async function checkLod(viewport: Viewport, path: string, log: (line: str
   await settle();
   const drawnAt = performance.now();
   results.open_to_first_frame_s = Number(((drawnAt - opened) / 1000).toFixed(1));
+  // Picks for the pivot at 15 points across the view: how long each takes, and how far the point picked lies in depth
+  // from the surface or solid under the cursor (a string snapped instead lies elsewhere).
+  const picks = async () => {
+    const rect = canvas.getBoundingClientRect();
+    const out: { ms: number; off_surface_m: number | null; behind_m: number | null }[] = [];
+    const rayMs: number[] = [];
+    for (let i = 1; i <= 5; i++) {
+      for (let j = 1; j <= 3; j++) {
+        const [x, y] = [rect.left + (rect.width * i) / 6, rect.top + (rect.height * j) / 4];
+        const t0 = performance.now();
+        const hit = await viewport.pickPoint?.(x, y);
+        const ms = performance.now() - t0;
+        const [nx, ny] = viewport.clientToNdc(x, y);
+        const ray = viewport.rayFromNdc(nx, ny);
+        const t1 = performance.now();
+        const under = await snapRay(ray.origin, ray.direction);
+        rayMs.push(performance.now() - t1);
+        const off = hit && under ? Math.hypot(hit[0] - under.local[0], hit[1] - under.local[1], hit[2] - under.local[2]) : null;
+        const eye = viewport.camera.position;
+        const away = (p: number[]) => Math.hypot(p[0] - eye.x, p[1] - eye.y, p[2] - eye.z);
+        const behind = hit && under ? away(hit) - away(under.local) : null;
+        out.push({ ms: Number(ms.toFixed(1)), off_surface_m: off === null ? null : Number(off.toFixed(1)), behind_m: behind === null ? null : Number(behind.toFixed(1)) });
+      }
+    }
+    const ms = out.map((p) => p.ms).sort((a, b) => a - b);
+    rayMs.sort((a, b) => a - b);
+    const plain: number[] = [];
+    for (let k = 0; k < 9; k++) {
+      const t2 = performance.now();
+      await benchConfig();
+      plain.push(performance.now() - t2);
+    }
+    plain.sort((a, b) => a - b);
+    return { plain_invoke_p50_ms: Number(plain[4].toFixed(1)), ray_p50_ms: Number(rayMs[7].toFixed(1)), p50_ms: ms[Math.floor(ms.length / 2)], max_ms: ms[ms.length - 1], on_a_string_off_the_surface: out.filter((p) => (p.off_surface_m ?? 0) > 5).length, behind_what_is_under_it: out.filter((p) => (p.behind_m ?? 0) > 1).length, worst_behind_m: Math.max(...out.map((p) => p.behind_m ?? 0)), of: out.length, worst_off_m: Math.max(...out.map((p) => p.off_surface_m ?? 0)) };
+  };
+  const cpu = () => {
+    const times: number[] = [];
+    for (let k = 0; k < 10; k++) {
+      const t0 = performance.now();
+      viewport.draw();
+      times.push(performance.now() - t0);
+    }
+    times.sort((a, b) => a - b);
+    return Number(times[5].toFixed(1));
+  };
+  results.picks_while_versions_are_made = await picks();
+  results.draw_cpu_ms_before_versions = cpu();
+  let before = 0;
+  viewport.scene.traverse(() => before++);
+  results.objects_before_versions = before;
   const big = () => viewport.content.children.filter((g) => g.visible && (g.userData.triangles as number) >= THINNED_FROM);
   for (let k = 0; k < 1200 && big().some((g) => !g.userData.detail); k++) await wait(250);
   const groups = big();
   results.versions_after_drawn_s = Number(((performance.now() - drawnAt) / 1000).toFixed(1));
   expect('every big surface and tile of solids on show gets its versions', groups.length > 0 && groups.every((g) => !!g.userData.detail), { big: groups.length, with_versions: groups.filter((g) => g.userData.detail).length });
   results.held_triangles = viewport.triangleCount;
+  viewport.fitView();
+  await settle();
+  results.picks_after = await picks();
+  // A press to turn, as Tim would: from the press to the gold mark showing where it will turn, at 15 points.
+  const presses = async () => {
+    const rect = canvas.getBoundingClientRect();
+    const mark = viewport.pivotMark as unknown as { show: (...a: unknown[]) => void };
+    const show = mark.show.bind(mark);
+    let shownAt = 0;
+    mark.show = (...a: unknown[]) => {
+      shownAt = performance.now();
+      show(...a);
+    };
+    const times: number[] = [];
+    for (let i = 1; i <= 5; i++) {
+      for (let j = 1; j <= 3; j++) {
+        const [x, y] = [rect.left + (rect.width * i) / 6, rect.top + (rect.height * j) / 4];
+        shownAt = 0;
+        const t0 = performance.now();
+        canvas.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, button: 0, buttons: 1, pointerId: 7, bubbles: true, pointerType: 'mouse' }));
+        for (let k = 0; k < 400 && shownAt === 0; k++) await wait(1);
+        times.push(shownAt ? shownAt - t0 : 1e9);
+        canvas.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, button: 0, buttons: 0, pointerId: 7, bubbles: true, pointerType: 'mouse' }));
+        await settle();
+      }
+    }
+    mark.show = show;
+    times.sort((a, b) => a - b);
+    return { p50_ms: Number(times[7].toFixed(1)), max_ms: Number(times[14].toFixed(1)) };
+  };
+  results.press_to_pivot = await presses();
+  const after = results.picks_after as { behind_what_is_under_it: number };
+  const press = results.press_to_pivot as { p50_ms: number };
+  expect('a press turns about what is nearest the camera under the cursor, never a string far behind it', after.behind_what_is_under_it === 0, after);
+  expect('the turn knows its pivot soon after the press, drawing held while it waits', press.p50_ms < 20, press);
+  let meshes = 0;
+  viewport.scene.traverse(() => meshes++);
+  results.draw_cpu_ms = { objects: meshes, at_1px: (viewport.setDetail(1, false), cpu()), at_full: (viewport.setDetail(0, false), cpu()) };
+  viewport.setDetail(1, false);
+  const detail = viewport.content.children.map((g) => g.userData.detail as { levels: unknown[] }[] | undefined).filter((d) => !!d);
+  results.chunks = { with_versions: detail.reduce((n, d) => n + d!.length, 0), version_meshes: detail.reduce((n, d) => n + d!.reduce((m, c) => m + c.levels.length, 0), 0) };
 
   // Frames and triangles drawn round the orbit, at Full and at 1 px.
   const orbitAt = async (pixels: number) => {

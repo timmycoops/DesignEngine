@@ -643,7 +643,7 @@ export default function App() {
       strings.onVertices = setVertexPicks;
       section.mapShows = [strings.lines];
       section.onUnfilled = (count) => setStatus({ text: `${count === 1 ? 'A closed loop' : `${count} closed loops`} in this section could not be filled: the lines show as cut` });
-      created.pickPoint = (x, y) => strings.pick(x, y);
+      created.pickPoint = (x, y) => strings.pivot(x, y);
       stringsRef.current = strings;
       roadsRef.current = new RoadLayer(created);
       detach = strings.attach();

@@ -212,3 +212,7 @@ moved on since Phase 0. Nothing was made slower here.
 - A surface or tile under 100,000 triangles gets no versions.
 - Walls two blocks share across a tile's edge (1 km squares by each block's middle) aren't found: they stay with the rest.
 - A far-off block keeps every corner of its edges, so a layer of many small blocks thins least.
+- Drawing the large mine takes about 13 ms of the page's main thread a frame, for about 4,900 chunks in view whether
+  drawn whole or coarser: the draw calls, not the triangles. While it draws, an ask of the shell waits about 50 ms. A
+  turn and a wheel zoom now hold drawing for their pick (0044, 21 November); fewer, bigger chunks far off would cut the
+  rest.
