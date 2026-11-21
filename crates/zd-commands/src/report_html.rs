@@ -58,7 +58,8 @@ pub fn page(r: &Report) -> String {
     let mut h = String::with_capacity(64 * 1024 + r.cases.iter().map(|c| c.blocks.len() * 400).sum::<usize>());
     let (date, time) = civil(r.made_unix_ms, r.utc_offset_minutes);
     let _ = write!(h, "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{} · report</title><style>{STYLE}</style></head><body><div class=\"wrap\">", esc(&r.workflow));
-    let _ = write!(h, "<div class=\"mut\">Zovlyn Pit Design · workflow report</div><h1>{}</h1>", esc(&r.workflow));
+    let licensed = zd_io::licence_stamp().map(|s| format!(" · {}", esc(&s))).unwrap_or_default();
+    let _ = write!(h, "<div class=\"mut\">Zovlyn Pit Design · workflow report{licensed}</div><h1>{}</h1>", esc(&r.workflow));
     let ran: Vec<String> = r.cases.iter().map(|c| match &c.ran {
         Some(ran) => format!("{} ran {} in {:.1} s", c.name, when(ran.at_unix_ms, r.utc_offset_minutes), ran.ms / 1000.0),
         None => format!("{} not run", c.name),

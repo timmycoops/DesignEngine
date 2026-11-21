@@ -14,6 +14,7 @@ mod error;
 mod mesh_files;
 mod seam;
 mod spry;
+mod stamp;
 mod store;
 mod string_csv;
 mod text;
@@ -37,6 +38,7 @@ pub use seam::{
 #[cfg(feature = "spry-fixtures")]
 pub use spry::fixtures as spry_fixtures;
 pub use spry::{NODE_LEVELS, SPRY_LEVELS, SpryContents, SpryLayer, SpryLog, SpryMesh, SpryProject, SpryRead, SpryString, SprySolidField, list_spry, read_spry, unpack_spry_blob};
+pub use stamp::{licence_stamp, set_licence_stamp};
 pub use store::{Opened, ProjectStore, SaveReport, StoreError};
 pub use value_match::{Tolerance, ValueMatch, parse_value_match, read_value_match};
 pub use string_csv::{CsvLog, CsvString, CsvStrings, format_csv_strings, parse_csv_strings, read_csv_strings, write_csv_strings};

@@ -280,7 +280,27 @@ fn zd(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("CommandError", py.get_type::<CommandError>())?;
     m.add("ProjectError", py.get_type::<ProjectError>())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add_function(wrap_pyfunction!(licence, m)?)?;
+    #[cfg(not(feature = "every-module"))]
+    apply_licence(&zd_licence::check_this_machine());
     Ok(())
+}
+
+/// The licence this machine holds (decision 0098): `import zd` runs the modules a licence turns on only if it lists
+/// Python; otherwise only the Viewer's commands run.
+#[cfg(not(feature = "every-module"))]
+fn apply_licence(status: &zd_licence::Status) {
+    use zd_commands::modules::{set_licence_stamp, set_modules_on};
+    let on: Vec<zd_commands::Module> = if status.has("python") { status.modules.iter().filter_map(|m| zd_commands::Module::from_name(m)).collect() } else { Vec::new() };
+    set_modules_on(on);
+    set_licence_stamp(status.stamp());
+}
+
+/// What this machine's licence says, where it stands, the modules on and this machine's code, as a dict.
+#[pyfunction]
+fn licence(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    let status = serde_json::to_value(zd_licence::check_this_machine()).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    to_py(py, &status)
 }
 
 fn object_id(id: &str) -> PyResult<ObjectId> {

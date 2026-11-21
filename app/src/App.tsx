@@ -51,7 +51,9 @@ import { concealed,
   type Vec3,
   withLayerOpacity,
   withLooks,
+  licenceStatus,
 } from './bridge';
+import { LICENCE_CHANGED, licenceWarning } from './licence';
 import { runChecks } from './bench/runChecks';
 import { type Bands, valueBands } from './viewport/bands';
 import { lookAt, RunGoing, ShowNote } from './design-system/kit';
@@ -159,6 +161,14 @@ export default function App() {
   const [snapping, setSnapping] = useState(true);
   /** Snap indexes being built: till they're in, a press can't find what's under it (a 1 m lidar takes a while). */
   const [indexing, setIndexing] = useState(0);
+  /** The licence's word for the status bar (decision 0098): none while it simply runs. */
+  const [licenceWord, setLicenceWord] = useState<string | null>(null);
+  useEffect(() => {
+    const read = () => licenceStatus().then((s) => setLicenceWord(licenceWarning(s)), () => setLicenceWord(null));
+    read();
+    window.addEventListener(LICENCE_CHANGED, read);
+    return () => window.removeEventListener(LICENCE_CHANGED, read);
+  }, []);
   const [sectionOpen, setSectionOpen] = useState(false);
   const [sectionStep, setSectionStep] = useState('25');
   const [sectionFill, setSectionFill] = useState(true);
@@ -1429,6 +1439,16 @@ export default function App() {
             {status.text}
           </span>
           <RunGoing />
+          {licenceWord && (
+            <button
+              type="button"
+              className="shrink-0 text-warning hover:underline"
+              title="Opens the Licence panel: who this copy is licensed to, its modules and dates, and this machine's code"
+              onClick={() => dockRef.current && showPanel(dockRef.current, 'licence')}
+            >
+              {licenceWord}
+            </button>
+          )}
           {indexing > 0 && (
             <span
               className="shrink-0 text-warning"

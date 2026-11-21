@@ -3,6 +3,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { type LogPart, LogStore, ProjectStore } from './projectStore';
 import { running, waitingOn } from './running';
+import type { LicenceStatus } from './licence';
 
 export type Vec3 = [number, number, number];
 
@@ -1446,3 +1447,12 @@ export const exitApp = () => invoke<void>('exit_app');
 
 /** Whether closing, or starting or opening another project, would lose work: runs since the last save or open, or a run going. */
 export const projectUnsaved = () => invoke<boolean>('project_unsaved');
+
+/** Where this copy's licence stands (decision 0098). */
+export const licenceStatus = () => invoke<LicenceStatus>('licence_status');
+
+/** Puts a licence file on this machine and applies it; refused with the reason if it isn't one this version trusts. */
+export const loadLicence = (path: string) => invoke<LicenceStatus>('load_licence', { path });
+
+/** Every command's module by name. */
+export const commandModules = () => invoke<Record<string, string>>('command_modules');

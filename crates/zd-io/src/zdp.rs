@@ -103,6 +103,9 @@ struct Manifest {
     /// Where each seam model's grid folders were when this was saved, as given and from the file (stage 4).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     links: Vec<FolderLink>,
+    /// Which licence the copy that saved it ran under, if it had one (decision 0098): a line of text, never a lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    licence: Option<String>,
     /// Every entry but the manifest, in the order written.
     entries: Vec<EntryInfo>,
 }
@@ -461,6 +464,7 @@ pub(crate) fn finish_entries(tables: Tables, run_log: &str, links: Vec<FolderLin
         hidden: tables.hidden,
         display: tables.display,
         links,
+        licence: crate::licence_stamp(),
         entries: entries.iter().map(|e| EntryInfo { name: e.name.clone(), bytes: e.bytes.len() as u64, fnv1a: format!("{:016x}", e.fnv) }).collect(),
     };
     entries.push(Encoded::new(MANIFEST.to_string(), serde_json::to_vec_pretty(&manifest).map_err(|e| StoreError::Format(e.to_string()))?));

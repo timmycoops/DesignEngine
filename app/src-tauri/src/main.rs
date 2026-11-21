@@ -3,6 +3,7 @@
 
 mod changes;
 mod commands;
+mod licence;
 mod render;
 mod section;
 mod selection;
@@ -13,6 +14,8 @@ mod synthetic;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 fn main() {
+    // The licence is read before anything runs (decision 0098): without one, the app is the Viewer.
+    licence::check();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(state::AppState::default())
@@ -90,6 +93,9 @@ fn main() {
             commands::write_picture,
             commands::project_unsaved,
             commands::exit_app,
+            licence::licence_status,
+            licence::load_licence,
+            licence::command_modules,
         ])
         .on_window_event(|window, event| {
             // Closing with work unsaved, or a run going, asks first (app review brief, 17 Nov, item 1): the window

@@ -63,8 +63,30 @@ anywhere; 10 days before the end warns, the day after is grace with 13 days left
 a week behind the newest day seen is the Viewer, a day behind isn't; no file is the Viewer; calendar days against known
 counts (2000-03-01 is day 11,017). All exact.
 
+**The app and Python (PR 2, `licence/app`).**
+
+- The shell reads the licence before anything runs, and again when one is loaded, and hands the engine the modules on
+  and the stamp (`app/src-tauri/src/licence.rs`): `licence_status`, `load_licence`, `command_modules`.
+- **Licence** is a tool on the Project row, its panel in the tool dock: where the licence stands, who it's licensed to,
+  the licence and its dates, the modules (those not in it struck through), this machine's code with a copy button, and
+  Load licence file…, which puts the file in `%APPDATA%\Zovlyn` once it's one this version trusts. The status bar says
+  so when a licence is ending, in grace or missing (Viewer only), and a click opens the panel.
+- `import zd` reads the same licence: with Python in it, the licence's modules; without, the Viewer's commands only.
+  `zd.licence()` gives where it stands. CI builds the bindings with `--features every-module`, as its machines hold no
+  licence; a wheel for anyone else is built without it.
+- Stamps: `ZD-0001, licensed to …` in each `.zdp` manifest (`licence`) and in each report's header, while a licence is
+  running; none in the Viewer. Held in `zd-io` as the host sets it, a line of text and never a lock.
+
+Tests: the manifest has no `licence` with no stamp and has the stamp once set (`tests/modules.rs`); a status's stamp,
+none in the Viewer (`zd-licence`); the licence's module names are the engine's (`zd-app`); the status bar's and the
+panel's words for each standing (`app/tests/licence.test.mjs`). By hand in Python on Tim's machine: ZD-0001 runs every
+module; with no licence found, `string.create` is refused naming Design and nothing changes.
+
 ## Known limits
 
 - A licence's dates are UTC: one issued on a morning in Queensland says the day before.
 - The newest day seen is a plain file a user can delete; it's a guard against a clock wound back, not a lock.
 - Seats aren't counted: a licence tied to one shared Windows Server covers everyone logged in to it.
+- Tools aren't marked in the tool list by the module they need: one outside the licence is refused when it runs, naming
+  its module. `command_modules` is there for marking them.
+- The exe isn't code-signed, so it can't check its own signature yet (decision 8).

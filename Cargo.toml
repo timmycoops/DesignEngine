@@ -28,6 +28,7 @@ zd-io = { path = "crates/zd-io" }
 zd-commands = { path = "crates/zd-commands" }
 zd-reserves = { path = "crates/zd-reserves" }
 zd-script = { path = "crates/zd-script" }
+zd-licence = { path = "crates/zd-licence" }
 manifold-csg = "0.4.1"
 serde = { version = "1", features = ["derive"] }
 # The locked Parquet/Arrow layer for the project store; only the Arrow bridge and Snappy codec.

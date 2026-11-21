@@ -14,9 +14,15 @@ crate-type = ["cdylib"]
 test = false
 doctest = false
 
+[features]
+# Every module on, with no licence read: for CI, whose machines hold no licence (decision 0098). A wheel for anyone else
+# is built without it.
+every-module = []
+
 [dependencies]
 zd-core.workspace = true
 zd-commands.workspace = true
+zd-licence.workspace = true
 serde_json.workspace = true
 # One wheel for every CPython from 3.10 on (the stable ABI).
 pyo3 = { version = "0.30.1", features = ["abi3-py310"] }

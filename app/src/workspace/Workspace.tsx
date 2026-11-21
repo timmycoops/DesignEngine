@@ -29,6 +29,7 @@ import { DataflowView } from '@/panels/DataflowPanel';
 import { Parameters } from '@/panels/ParametersPanel';
 import { WorkflowPanel } from '@/panels/WorkflowPanel';
 import { SurfacesPanel } from '@/panels/SurfacesPanel';
+import { LicencePanel } from '@/panels/LicencePanel';
 import { type Dock, type PanelId, PANELS, TOOL_DOCK_WIDTH } from './panels';
 
 /** What each panel draws. A panel in the list with nothing to draw doesn't compile. */
@@ -51,6 +52,7 @@ const components: Record<PanelId | 'viewport', () => ReactNode> = {
   restable: ReservesTable,
   notebook: DataflowView,
   params: Parameters,
+  licence: LicencePanel,
 };
 
 /** The key that hides every panel, so the viewport fills the window, and brings them back. */
