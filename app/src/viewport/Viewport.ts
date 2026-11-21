@@ -1,6 +1,7 @@
 // Full-window three.js viewport on WebGPURenderer (falls back to WebGL2 by itself).
 // The scene is in local coordinates: offsets from the shell's scene origin, so f32 is enough.
 import * as THREE from 'three/webgpu';
+import { cameraPosition, positionLocal } from 'three/tsl';
 import type { DecodedMesh, Vec3 } from '../bridge';
 import { CameraController } from './camera';
 import { PointMark } from './markers';
@@ -73,6 +74,22 @@ export function triangleWords(n: number): string {
 }
 
 /** The detail saved on this machine, else the default. */
+const STRINGS_OVER_KEY = 'zd.view.stringsOver';
+/**
+ * How much nearer a string is drawn than it is, as a share of its distance from the camera, while strings are hidden
+ * behind what's in front of them: enough that a string lying on a solid or surface shows on it, not in patches.
+ */
+const STRING_NEARER = 0.0005;
+
+/** Whether strings are drawn over everything, as saved on this machine; by default they're hidden behind what's in front. */
+function savedStringsOver(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(STRINGS_OVER_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 function savedDetail(): number {
   const saved = globalThis.localStorage?.getItem(DETAIL_KEY);
   const value = saved === null || saved === undefined ? NaN : Number(saved);
@@ -354,6 +371,42 @@ export class Viewport {
   /** Pixels a chunk far off may be drawn out by; 0 always draws full detail. */
   get detail(): number {
     return this.detailPixels;
+  }
+
+  /** Strings and polygons drawn over everything, not hidden behind the solids and surfaces in front of them. */
+  get stringsOver(): boolean {
+    return this.stringsOverAll;
+  }
+  private stringsOverAll = savedStringsOver();
+
+  /** Draws strings over everything or hides them behind what's in front, and saves it on this machine unless `save` is false. */
+  setStringsOver(on: boolean, save = true): void {
+    this.stringsOverAll = on;
+    this.scene.traverse((o) => {
+      if (!o.userData.stringLine) return;
+      const material = (o as THREE.LineSegments).material as THREE.Material;
+      material.depthTest = !on;
+      material.needsUpdate = true;
+    });
+    if (save) {
+      try {
+        globalThis.localStorage?.setItem(STRINGS_OVER_KEY, String(on));
+      } catch {
+        // Not saved: it still holds for this run.
+      }
+    }
+  }
+
+  /**
+   * The lines of a string layer or a road: hidden behind the solids and surfaces in front of them, a hair nearer than they
+   * are so one lying on a solid or surface shows; or over everything, as `setStringsOver` says.
+   */
+  stringLines(geometry: THREE.BufferGeometry, colour = 0xffffff): THREE.LineSegments {
+    const material = new THREE.LineBasicNodeMaterial({ color: colour, depthTest: !this.stringsOverAll });
+    material.positionNode = positionLocal.add(cameraPosition.sub(positionLocal).mul(STRING_NEARER));
+    const lines = new THREE.LineSegments(geometry, material);
+    lines.userData.stringLine = true;
+    return lines;
   }
 
   /** Sets the detail, one of `DETAIL_CHOICES`, and saves it on this machine unless `save` is false (the bench). */

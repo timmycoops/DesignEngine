@@ -615,7 +615,7 @@ export class StringLayer {
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const lines = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ depthTest: false }));
+    const lines = this.viewport.stringLines(geometry);
     lines.renderOrder = 10;
     lines.frustumCulled = false;
     this.group.add(lines);
@@ -749,8 +749,8 @@ export class StringLayer {
     if (Math.hypot(e.clientX - box.x, e.clientY - box.y) <= CLICK_SLOP_PX) {
       // Alt+click with no drag inserts a vertex, as it always has.
       if (box.vertices) return void this.insertAt(e.clientX, e.clientY);
-      const string = this.stringAt(e.clientX, e.clientY);
-      return string ? this.actions.choose(string, true) : this.actions.pick(e.clientX, e.clientY, true);
+      const [x, y] = [e.clientX, e.clientY];
+      return void this.seenStringAt(x, y).then((string) => (string ? this.actions.choose(string, true) : this.actions.pick(x, y, true)));
     }
     if (box.vertices) return this.pickVertices(box.x, box.y, e.clientX, e.clientY, e.ctrlKey || e.metaKey);
     const [ax, ay] = this.viewport.clientToNdc(box.x, box.y);
@@ -965,12 +965,13 @@ export class StringLayer {
       return;
     }
     if (e.altKey && this.selected) return this.insertAt(e.clientX, e.clientY);
-    const string = this.stringAt(e.clientX, e.clientY);
-    const add = e.ctrlKey || e.metaKey;
-    if (!string) return this.actions.pick(e.clientX, e.clientY, add);
-    this.actions.choose(string, add);
-    const design = this.shown.get(string)?.design;
-    if (design && !add) this.actions.status(designLineMessage(design, this.designNames.get(design.design)));
+    const [x, y, add] = [e.clientX, e.clientY, e.ctrlKey || e.metaKey];
+    void this.seenStringAt(x, y).then((string) => {
+      if (!string) return this.actions.pick(x, y, add);
+      this.actions.choose(string, add);
+      const design = this.shown.get(string)?.design;
+      if (design && !add) this.actions.status(designLineMessage(design, this.designNames.get(design.design)));
+    });
   }
 
   /**
@@ -987,7 +988,7 @@ export class StringLayer {
       return this.finishPick(null);
     }
     if (this.mode === 'draw') return this.finishDrawing();
-    if (this.mode === 'select') return this.actions.menu(x, y, this.stringAt(x, y));
+    if (this.mode === 'select') return void this.seenStringAt(x, y).then((string) => this.actions.menu(x, y, string));
     if (this.mode === 'measure' && this.pending.length > 1 && !this.measureEnded) {
       this.measureEnded = true;
       this.actions.status(`${measureWords(this.pending.map((h) => h.world))}. Click to start another`);
@@ -1482,6 +1483,21 @@ export class StringLayer {
       }
     }
     return lineToPick([...near.values()], this.selected, PICK_PX);
+  }
+
+  /**
+   * The string a click picks, if it can be seen there: while strings are hidden behind what's in front of them, one behind
+   * the solid or surface under the cursor (by more than a metre) isn't picked, and the click goes to what's in front.
+   */
+  private async seenStringAt(x: number, y: number): Promise<string | null> {
+    const string = this.stringAt(x, y);
+    if (!string || this.viewport.stringsOver || this.section) return string;
+    const on = this.snapToStrings(x, y)?.local;
+    const surface = await this.actions.snap(x, y);
+    if (!on || !surface) return string;
+    const eye = this.viewport.camera.position;
+    const away = (p: Vec3) => Math.hypot(p[0] - eye.x, p[1] - eye.y, p[2] - eye.z);
+    return away(on) <= away(surface.local) + PIVOT_STRING_TOLERANCE ? string : null;
   }
 
   /** Refuses an edit to a line a face design made, saying why and what to do: true if it was one. */

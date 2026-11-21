@@ -155,6 +155,7 @@ export default function App() {
   const [plan, setPlan] = useState(false);
   const [fieldOfView, setFieldOfView] = useState(FIELD_OF_VIEW_DEFAULT);
   const [detail, setDetail] = useState(DETAIL_DEFAULT);
+  const [stringsOver, setStringsOver] = useState(false);
   const [snapping, setSnapping] = useState(true);
   /** Snap indexes being built: till they're in, a press can't find what's under it (a 1 m lidar takes a while). */
   const [indexing, setIndexing] = useState(0);
@@ -615,6 +616,7 @@ export default function App() {
       viewportRef.current = created;
       setFieldOfView(created.fieldOfView);
       setDetail(created.detail);
+      setStringsOver(created.stringsOver);
       created.onPlanChange = setPlan;
       created.onStats = setStats;
       setBackend(`${created.backend} · ${created.adapter}`);
@@ -1303,6 +1305,11 @@ export default function App() {
     setDetail: (pixels) => {
       viewportRef.current?.setDetail(pixels);
       setDetail(viewportRef.current?.detail ?? pixels);
+    },
+    stringsOver,
+    setStringsOver: (on) => {
+      viewportRef.current?.setStringsOver(on);
+      setStringsOver(on);
     },
     fieldOfView,
     setFieldOfView: (degrees) => {

@@ -31,6 +31,9 @@ export interface ViewTools {
   /** Pixels far-off chunks may be drawn out by (decision 0097); 0 is always full detail. */
   detail: number;
   setDetail: (pixels: number) => void;
+  /** Strings and polygons drawn over everything; by default they're hidden behind the solids and surfaces in front. */
+  stringsOver: boolean;
+  setStringsOver: (on: boolean) => void;
   sectionOpen: boolean;
   /** Starts picking a section's two points, or stops; closes an open one. */
   toggleSection: () => void;
@@ -115,7 +118,7 @@ export function ViewBar() {
               </Button>
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent>3D field of view, and how much detail is drawn far off. Saved on this machine</TooltipContent>
+          <TooltipContent>3D field of view, how much detail is drawn far off, and whether strings show through solids. Saved on this machine</TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="start">
           {FIELD_OF_VIEW_CHOICES.map((degrees) => (
@@ -134,6 +137,14 @@ export function ViewBar() {
               {pixels === view.detail ? ' ✓' : ''}
             </DropdownMenuItem>
           ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Strings and polygons</DropdownMenuLabel>
+          <DropdownMenuItem onSelect={() => view.setStringsOver(false)}>
+            Hidden behind solids and surfaces{view.stringsOver ? '' : ' ✓'}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => view.setStringsOver(true)}>
+            Over everything{view.stringsOver ? ' ✓' : ''}
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <Separator orientation="vertical" className="mx-0.5 h-5" />

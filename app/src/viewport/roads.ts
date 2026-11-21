@@ -38,7 +38,7 @@ export class RoadLayer {
       const points = (edge.vertices_local ?? []).map((p) => new THREE.Vector3(...p));
       if (points.length < 2) continue;
       const geometry = new THREE.BufferGeometry().setFromPoints(points.slice(1).flatMap((p, k) => [points[k], p]));
-      const line = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: rampColour(name), depthTest: false }));
+      const line = this.viewport.stringLines(geometry, new THREE.Color(rampColour(name)).getHex());
       line.renderOrder = 9;
       line.frustumCulled = false;
       this.group.add(line);

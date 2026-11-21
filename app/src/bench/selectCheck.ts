@@ -433,7 +433,29 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
     !!underDeep && Math.abs(underDeep[2] + origin[2] - 100) < 1e-6 && !!underGround && Math.abs(underGround[1] + origin[1] - (N - 50)) < 1e-6 && Math.abs(underGround[2] + origin[2] - 100) < 1e-6,
     { deep: underDeep && Number((underDeep[2] + origin[2]).toFixed(3)), ground: underGround && [Number((underGround[1] + origin[1] - N).toFixed(3)), Number((underGround[2] + origin[2]).toFixed(3))] },
   );
-  void deep;
+
+  // Strings hidden behind what's in front of them, by default (Tim, 21 November: seeing strings and polygons through the
+  // solids was confusing): the deep toe doesn't show through the ground, the line on the ground does, and a click over
+  // the deep toe picks what's in front of it. With Over everything, the deep toe shows through.
+  const beside = (at: [number, number]) => [at[0] + 14, at[1]] as [number, number];
+  const showsAt = async () => {
+    const picture = await snapshot();
+    const apart = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    return { deep: apart(picture(deepAt), picture(beside(deepAt))) > 20, ground: apart(picture(groundAt), picture(beside(groundAt))) > 20 };
+  };
+  viewport.setStringsOver(false, false);
+  const behind = await showsAt();
+  await click(deepAt);
+  const clickedDeep = selection().includes(deep);
+  await key('Escape');
+  viewport.setStringsOver(true, false);
+  const over = await showsAt();
+  viewport.setStringsOver(false, false);
+  expect(
+    'strings are hidden behind the ground by default, a string on the ground shows, and a click over a hidden one picks what is in front; over everything, the deep one shows',
+    !behind.deep && behind.ground && !clickedDeep && over.deep && over.ground,
+    { behind, clicked_the_hidden_toe: clickedDeep, over },
+  );
   void onGround;
 
   // Blocks (decision 0097, workstream 4): four blocks touching in a square, each a rolling top over a flat floor, 234,240
