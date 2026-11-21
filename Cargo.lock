@@ -6070,6 +6070,7 @@ dependencies = [
  "zd-core",
  "zd-geom",
  "zd-io",
+ "zd-licence",
 ]
 
 [[package]]
@@ -6146,6 +6147,7 @@ dependencies = [
  "serde_json",
  "zd-commands",
  "zd-core",
+ "zd-licence",
 ]
 
 [[package]]

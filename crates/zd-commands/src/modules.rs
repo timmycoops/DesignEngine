@@ -10,6 +10,9 @@ use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
 
+/// Which licence this copy runs under, written in each project's manifest and on each report; the host sets it.
+pub use zd_io::{licence_stamp, set_licence_stamp};
+
 /// A part of the app a licence turns on. The Viewer is always on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

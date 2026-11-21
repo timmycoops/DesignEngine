@@ -160,6 +160,21 @@ pub struct Status {
     pub path: Option<String>,
 }
 
+impl Status {
+    /// The line written on reports and in project manifests while a licence is running: none in the Viewer.
+    pub fn stamp(&self) -> Option<String> {
+        match (&self.state, &self.licence) {
+            (State::Viewer { .. }, _) | (_, None) => None,
+            (_, Some(l)) => Some(format!("{}, licensed to {}", l.licence, l.licensed_to)),
+        }
+    }
+
+    /// Whether a module, by name, is on.
+    pub fn has(&self, module: &str) -> bool {
+        self.modules.iter().any(|m| m == module)
+    }
+}
+
 /// Checks a licence file's text (none if there's no file) for this machine, today, given the newest day the app has
 /// seen on it.
 pub fn check(text: Option<&str>, keys: Keys<'_>, machine: &str, today: Day, last_seen: Option<Day>) -> Status {
@@ -339,6 +354,8 @@ mod tests {
         let status = check_on(&text, "2026-11-22", None);
         assert_eq!(status.state, State::Current { days_left: Some(220) });
         assert_eq!(status.modules, ["viewer", "design", "solids"]);
+        assert_eq!(status.stamp().as_deref(), Some("ZD-0001, licensed to Example Coal Pty Ltd"));
+        assert!(status.has("solids") && !status.has("python"));
     }
 
     #[test]
@@ -400,6 +417,7 @@ mod tests {
         let none = check(None, keys, MACHINE, day("2026-11-22"), None);
         assert!(reason(&none).starts_with("No licence"));
         assert_eq!(none.modules, ["viewer"]);
+        assert_eq!(none.stamp(), None);
         assert!(reason(&check(Some("hello"), keys, MACHINE, day("2026-11-22"), None)).contains("isn't a licence"));
     }
 

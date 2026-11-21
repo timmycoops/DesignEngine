@@ -25,6 +25,7 @@ export type ToolIcon =
   | 'open'
   | 'save'
   | 'save-as'
+  | 'licence'
   | 'undo'
   | 'redo'
   | 'import'
@@ -199,6 +200,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'project.open', stage: 'project', label: 'Open a project', tip: 'Opens a .zdp project file', short: 'Open', icon: 'open', action: 'project.open', menu: { in: 'open', at: 1, name: 'A project (.zdp)…' } },
   { key: 'project.open_folder', stage: 'project', label: 'Open an older project folder', tip: 'Opens a .zdproj folder, which saves as a .zdp beside it', icon: 'open', action: 'project.open_folder', menu: { in: 'open', at: 2, name: 'An older project folder (.zdproj)…' } },
   { key: 'project.save_as', stage: 'project', label: 'Save as', tip: 'Saves the project as another .zdp file', short: 'Save as', icon: 'save-as', action: 'project.save_as' },
+  { key: 'licence', stage: 'project', label: 'Licence', tip: "Who this copy is licensed to, the modules it runs, and this machine's code", short: 'Licence', icon: 'licence', panel: 'licence' },
   { key: 'import.surfaces', stage: 'project', label: 'Import surfaces', tip: 'Vulcan .00t, DXF 3DFACE or polyface, or an XYZ or CSV grid', command: 'surface.import', action: 'import.surfaces', menu: { in: 'import', at: 1, name: 'Surfaces…' } },
   { key: 'import.strings', stage: 'project', label: 'Import strings', tip: 'DXF polylines and lines, or CSV with x, y and z columns', command: 'string.import', action: 'import.strings', menu: { in: 'import', at: 3, name: 'Strings…' } },
   { key: 'import.deswik', stage: 'project', label: 'Import a Deswik drawing', tip: 'Layers of a Deswik drawing: strings with their projection details, surfaces and solids', command: 'deswik.import', action: 'import.deswik', menu: { in: 'import', at: 8, name: 'Deswik drawing (.dcf)…', rule: true } },
@@ -378,7 +380,7 @@ const EXPORT_MENU: RowMenu ={ label: 'Export', icon: 'export', tip: 'Strings, su
  * Walls the string tools a ramp is made from by hand (decision 0079): Set grade, Offset and Project.
  */
 export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
-  project: ['project.new', OPEN_MENU, 'project.save_as', '|', IMPORT_MENU, EXPORT_MENU, '|', 'seam.relink'],
+  project: ['project.new', OPEN_MENU, 'project.save_as', '|', IMPORT_MENU, EXPORT_MENU, '|', 'seam.relink', '|', 'licence'],
   strings: [
     'strings:offset',
     'strings:number_across',

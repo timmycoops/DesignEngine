@@ -1,8 +1,10 @@
 //! Commands by module, and a run refused when its module is off (decision 0098). One test, in its own file: the
 //! modules on are the process's, so nothing else may run beside it.
 
+use std::io::Read;
+
 use serde_json::json;
-use zd_commands::modules::{is_on, modules_on, set_every_module_on, set_modules_on};
+use zd_commands::modules::{is_on, modules_on, set_every_module_on, set_licence_stamp, set_modules_on};
 use zd_commands::{Code, CommandError, Module, Registry, Session};
 
 #[test]
@@ -43,4 +45,21 @@ fn a_command_runs_only_while_its_module_is_on() {
 
     set_every_module_on();
     assert!(Module::ALL.into_iter().all(is_on));
+
+    // The licence the copy runs under is written in the project's manifest; none, nothing is.
+    let dir = std::env::temp_dir().join(format!("zd-licence-stamp-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let manifest = |s: &mut Session, name: &str| -> serde_json::Value {
+        let path = dir.join(name);
+        s.save(&path).unwrap();
+        let mut zip = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+        let mut text = String::new();
+        zip.by_name("manifest.json").unwrap().read_to_string(&mut text).unwrap();
+        serde_json::from_str(&text).unwrap()
+    };
+    assert_eq!(manifest(&mut s, "none.zdp").get("licence"), None);
+    set_licence_stamp(Some("ZD-0001, licensed to Example Coal Pty Ltd".into()));
+    assert_eq!(manifest(&mut s, "stamped.zdp")["licence"], "ZD-0001, licensed to Example Coal Pty Ltd");
+    set_licence_stamp(None);
+    let _ = std::fs::remove_dir_all(&dir);
 }
