@@ -251,3 +251,10 @@ centre, the worst 256 px from the cursor, 3.9 ms p50 and 50 ms the most; press t
 indexed. `zd-geom` tests: pieces hit what one index hits on 2,000 rays (with and without passing over triangles), a ray
 down lands on a plane, and the timing (ignored). `zd-app` test: a fan over a square hole turns about its nearest
 edge. Not yet tried by hand.
+
+Then, on `Large mine 2m.zdp`: "when i have just a seam model open the snap to orbit doesn't work". A seam model's
+horizon is drawn from its grids on disk, not from an object of the project, so nothing was indexed under it. Its roof,
+the surface drawn, is now indexed when the horizon is staged, kept under the model's own key (so it goes when the model
+changes and is passed over while hidden). `--lod` checks a press in the middle of a seam model shown alone: it turns
+about the roof right under the cursor (0 px). On the 2 m mine, snapping was ready 2.8 s after drawing, and 0 of 40 presses
+over nothing near something turned about the centre.

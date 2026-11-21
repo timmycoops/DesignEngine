@@ -100,12 +100,14 @@ const LIT = 0.15;
 /** A copy drawn over everything comes after the opaque surfaces and the see-through ones, which sort below 1. */
 const OVER_ORDER = 20;
 /**
- * How much nearer a layer's solids are drawn than they are, so a solid lying on a surface shows and the surface doesn't:
- * by the slope of each triangle across a pixel, and in the depth buffer's least steps. Enough to settle a tie; a solid
- * within about a pixel's depth under a surface shows through it too.
+ * How much farther surfaces and grids are drawn than they are, so a solid lying on a surface shows and the surface
+ * doesn't: by the slope of each triangle across a pixel, and in the depth buffer's least steps. Enough to settle a tie; a
+ * solid within about a pixel's depth under a surface shows through it too. It's the surfaces that move, not the solids:
+ * moved nearer by slope, a block's floor seen edge-on came through the wall of the block beside it, in dashes along the
+ * seams (Tim, 21 November, on the large mine).
  */
-const SOLID_NEARER_SLOPE = 1;
-const SOLID_NEARER_UNITS = 2;
+const SURFACE_FARTHER_SLOPE = 1;
+const SURFACE_FARTHER_UNITS = 2;
 
 /** How a drawn surface looks; see `Viewport.setLook`. */
 export interface SurfaceLook {
@@ -578,14 +580,15 @@ export class Viewport {
     group.userData.meanZ = weight > 0 ? decoded.chunks.reduce((sum, c) => sum + ((c.min[2] + c.max[2]) / 2) * c.indices.length, 0) / weight : 0;
     // A layer's solids: a table of which are hidden and selected, read by the shader (decision 0060).
     const flags = decoded.header.solids ? new SolidFlags(decoded.header.solids) : null;
-    // A layer's solids are drawn a hair nearer than they are, so where one lies on a surface it's the solid that shows:
-    // the overburden's top is the topography and a coal block's floor its seam grid, and two things in one place
-    // otherwise show in patches of each, changing as the view moves.
-    if (flags && !over) {
-      const nearer = this.renderer.reversedDepthBuffer ? 1 : -1;
+    // Surfaces and grids are drawn a hair farther than they are, so where a solid lies on one it's the solid that
+    // shows: the overburden's top is the topography and a coal block's floor its seam grid, and two things in one place
+    // otherwise show in patches of each, changing as the view moves. Solids are drawn where they are, so one solid's
+    // faces never come through another's.
+    if (!flags && !over) {
+      const farther = this.renderer.reversedDepthBuffer ? -1 : 1;
       material.polygonOffset = true;
-      material.polygonOffsetFactor = nearer * SOLID_NEARER_SLOPE;
-      material.polygonOffsetUnits = nearer * SOLID_NEARER_UNITS;
+      material.polygonOffsetFactor = farther * SURFACE_FARTHER_SLOPE;
+      material.polygonOffsetUnits = farther * SURFACE_FARTHER_UNITS;
     }
     if (flags && material instanceof THREE.MeshStandardNodeMaterial) flags.hideHidden(material);
     group.userData.flags = flags;

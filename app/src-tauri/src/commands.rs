@@ -1336,12 +1336,12 @@ pub struct IssueMarker {
 /// its grids per node where it holds coal, to check its blocks by eye against (decision 0061, workstream 6).
 #[tauri::command]
 pub async fn stage_seam_horizon(id: ObjectId, horizon: Option<String>, variable: Option<String>, state: State<'_, AppState>) -> Result<StagedHorizon, String> {
-    let (model, name, origin) = {
+    let (model, name, origin, key) = {
         let mut app = state.app.lock().unwrap();
         let origin = app.origin().unwrap_or([0.0; 3]);
         let object = app.session.project().object(id).ok_or("no such object")?.clone();
         let Body::SeamModel(model) = &object.body else { return Err(format!("'{}' is not a seam model", object.name)) };
-        (model.clone(), object.name.clone(), origin)
+        (model.clone(), object.name.clone(), origin, geometry_key(&object.body))
     };
     let code = match horizon {
         Some(code) => code,
@@ -1350,7 +1350,7 @@ pub async fn stage_seam_horizon(id: ObjectId, horizon: Option<String>, variable:
     let title = name.clone();
     let coloured_by = variable.clone();
     let horizons = model.horizons.iter().map(|h| HorizonChoice { code: h.code.clone(), material: h.material.clone(), working: h.working, variables: h.grids.keys().cloned().collect() }).collect();
-    let (buffer, triangles, staged_horizon, encode_ms) = blocking(move || -> Result<_, String> {
+    let (buffer, triangles, staged_horizon, encode_ms, caster) = blocking(move || -> Result<_, String> {
         let t = Instant::now();
         let index = model.horizons.iter().position(|h| h.code == code).ok_or_else(|| format!("no horizon '{code}' in the model"))?;
         let grids = read_stack_grids(&model).map_err(|e| e.to_string())?;
@@ -1411,9 +1411,19 @@ pub async fn stage_seam_horizon(id: ObjectId, horizon: Option<String>, variable:
         let buffer = encode_grid_with(roof, Some(&values), origin, header);
         let triangles = 2 * (roof.cols - 1) * (roof.rows - 1);
         let horizon = (code, thickness_max, thickness.iter().filter(|t| !t.is_nan()).count(), roof.z.len(), flags.iter().filter(|&&f| f).count(), markers, grids.changed, range);
-        Ok((buffer, triangles, horizon, ms(t)))
+        // The roof drawn is what a press on the model snaps and turns about (decision 0044): its index, as for a grid.
+        let caster = SurfaceRayCaster::new(&triangulate_grid(roof)).ok();
+        Ok((buffer, triangles, horizon, ms(t), caster))
     })
     .await??;
+    // Kept with the model's own key, so it goes when the model changes or is deleted, and is passed over while hidden.
+    {
+        let mut app = state.app.lock().unwrap();
+        match caster {
+            Some(caster) => app.casters.insert(id, (key, Arc::new(caster))),
+            None => app.casters.remove(&id),
+        };
+    }
     let (code, thickness_max, coal_nodes, nodes, flagged_nodes, markers, changed, value_range) = staged_horizon;
     let log = if changed.is_empty() { String::new() } else { format!("{} grid file(s) changed since the model was built", changed.len()) };
     let staged = stage(&state, buffer, format!("{name} {code}"), "grid", triangles, log, serde_json::json!({ "read_and_encode": encode_ms }));

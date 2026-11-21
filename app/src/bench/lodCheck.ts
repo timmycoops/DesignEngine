@@ -4,7 +4,7 @@
 // at 1 px against Full, and a pick at the middle of the view at each; and the orbit's pivot: picks at 15 points, and a press
 // timed to its gold mark (decision 0044). Made-up data only: counts and timings.
 import * as THREE from 'three/webgpu';
-import { benchConfig, lastSnapIndex, openProject, type ProjectSummary, setLayerVisible, snapRay } from '../bridge';
+import { benchConfig, lastSnapIndex, openProject, type ProjectSummary, setLayerVisible, snapRay, writePicture } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
 import { orbit } from './runChecks';
 
@@ -36,6 +36,39 @@ export async function checkLod(viewport: Viewport, path: string, log: (line: str
   results.open_to_first_frame_s = Number(((drawnAt - opened) / 1000).toFixed(1));
   // Built once the project is drawn, so the time it can't snap after opening (decision 0044, 21 November).
   results.snap_index = index && { s: Number((index.ms / 1000).toFixed(1)), pieces: index.surfaces, triangles: index.triangles };
+  // With `--pictures <folder>` as well: only the blocks on show, the corner of the block field from outside and low, near
+  // and far, at Full and at 1 px once the versions are made, saved as PNGs; nothing else is checked.
+  if ((await benchConfig())?.pictures) {
+    let shown = project;
+    for (const l of project.layers) if (l.visible !== /blocks/i.test(l.name)) shown = await setLayerVisible(l.id, !l.visible);
+    await show(shown);
+    const big = () => viewport.content.children.filter((g) => g.visible && (g.userData.triangles as number) >= THINNED_FROM);
+    for (let k = 0; k < 1200 && big().some((g) => !g.userData.detail); k++) await wait(250);
+    viewport.fitView();
+    await settle();
+    const centre = viewport.bounds.getCenter(new THREE.Vector3());
+    const saved: string[] = [];
+    // `distance` is as at a 45° field of view (`focusOn`); the point looked at is where a ray from that side meets the blocks.
+    for (const [name, distance, up] of [['near', 150, 0.3], ['far', 600, 0.15], ['low', 300, 0.05]] as const) {
+      const side = new THREE.Vector3(-0.35, -1, up).normalize();
+      const from = centre.clone().addScaledVector(side, 1e5);
+      const onBlocks = await snapRay([from.x, from.y, from.z], [-side.x, -side.y, -side.z]);
+      const target = onBlocks ? new THREE.Vector3(...onBlocks.local) : centre;
+      for (const pixels of [0, 1]) {
+        viewport.setDetail(pixels, false);
+        viewport.camera.position.copy(target).addScaledVector(side, 1e5);
+        viewport.focusOn([target.x, target.y, target.z], distance);
+        await settle();
+        for (let i = 0; i < 20; i++) await viewport.nextFrame();
+        viewport.draw();
+        saved.push(await writePicture(`blocks-${name}-${pixels ? '1px' : 'full'}`, canvas.toDataURL('image/png')));
+      }
+    }
+    viewport.setDetail(1, false);
+    results.pictures = saved;
+    results.failures = failures;
+    return results;
+  }
   // Picks for the pivot at 15 points across the view: how long each takes, and how far the point picked lies in depth
   // from the surface or solid under the cursor (a string snapped instead lies elsewhere).
   const picks = async () => {
@@ -240,6 +273,30 @@ export async function checkLod(viewport: Viewport, path: string, log: (line: str
     await show(await setLayerVisible(hiddenLayer.id, false));
     results.a_hidden_layer_shown = { pieces: shown?.surfaces, triangles: shown?.triangles, s };
     expect('a layer hidden at opening is indexed for snapping when it is shown', (shown?.triangles ?? 0) > 0, results.a_hidden_layer_shown);
+  }
+
+  // A seam model on its own (Tim, 21 November: "when i have just a seam model open the snap to orbit doesn't work"): its
+  // horizon is drawn from its grids, not an object of the project, and a press in the middle of it turns about its roof.
+  const geology = project.layers.find((l) => project.objects.some((o) => o.layer === l.id && o.kind === 'seam_model'));
+  if (geology) {
+    let alone = project;
+    for (const l of project.layers) alone = await setLayerVisible(l.id, l.id === geology.id);
+    await show(alone);
+    viewport.fitView();
+    await settle();
+    const rect = canvas.getBoundingClientRect();
+    const [x, y] = [rect.left + rect.width / 2, rect.top + rect.height / 2];
+    // The horizon is staged once the layer shows; give it up to 20 s.
+    let hit = await viewport.pickPoint?.(x, y);
+    for (let k = 0; k < 200 && !hit; k++) {
+      await wait(100);
+      hit = await viewport.pickPoint?.(x, y);
+    }
+    const [sx, sy] = hit ? viewport.projectToClient(new THREE.Vector3(...hit)) : [NaN, NaN];
+    const off = hit ? Math.hypot(sx - x, sy - y) : null;
+    results.a_seam_model_alone = { picked: !!hit, px_from_cursor: off === null ? null : Number(off.toFixed(2)) };
+    expect('a seam model on its own: a press in the middle turns about its roof under the cursor', off !== null && off < 1, results.a_seam_model_alone);
+    for (const l of project.layers) await setLayerVisible(l.id, l.visible);
   }
   results.failures = failures;
   return results;
