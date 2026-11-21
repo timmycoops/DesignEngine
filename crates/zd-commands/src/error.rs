@@ -2,7 +2,7 @@ use std::fmt;
 
 use zd_core::{MeshValidity, ObjectId, ObjectKind, ProjectError};
 
-use crate::Code;
+use crate::{Code, Module};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommandError {
@@ -24,6 +24,8 @@ pub enum CommandError {
     Cancelled,
     /// The project changed while the run read it, so its changes weren't applied (decision 0060).
     Changed,
+    /// The command's module isn't on in this copy's licence (decision 0098).
+    NotLicensed { command: String, module: Module },
 }
 
 impl fmt::Display for CommandError {
@@ -47,6 +49,9 @@ impl fmt::Display for CommandError {
             CommandError::Store(message) => write!(f, "project store: {message}"),
             CommandError::Cancelled => write!(f, "cancelled; nothing was changed"),
             CommandError::Changed => write!(f, "the project changed while this ran, so nothing was changed; run it again"),
+            CommandError::NotLicensed { command, module } => {
+                write!(f, "'{command}' is in {}, which this copy's licence doesn't cover; nothing was changed", module.title())
+            }
         }
     }
 }
@@ -69,6 +74,7 @@ impl CommandError {
             CommandError::Store(_) => Code::RefusedStore,
             CommandError::Cancelled => Code::RefusedCancelled,
             CommandError::Changed => Code::RefusedChanged,
+            CommandError::NotLicensed { .. } => Code::RefusedNotLicensed,
         }
     }
 }

@@ -1,0 +1,21 @@
+[package]
+name = "zd-licence"
+description = "Licence files for the Zovlyn Pit Design Engine: signed by Zovlyn, checked on the machine (decision 0098)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+# Licences are signed with Ed25519 (decision 0098, agreed by Tim 2026-11-22). sha2 was already in the build.
+ed25519-dalek = "2.2"
+sha2 = "0.10"
+# Only for making a signing key (`zdlic keygen`); already in the build through other crates.
+getrandom = "0.3"
+
+[[bin]]
+name = "zdlic"
+path = "src/bin/zdlic.rs"

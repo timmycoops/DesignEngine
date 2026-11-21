@@ -23,6 +23,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 | Triangulation | `spade` or Manifold's constrained Delaunay |
 | Wall offsets | Straight skeleton on wall planes in `zd-geom` (each segment's plane set by its batter, hips where planes meet); a berm is the conditioned crest moved out and registered back on the grid; no offset-then-repair (`docs/decisions/0023-wall-step.md`) |
 | Planar offsets | Clipper2 or Manifold `CrossSection` for plain 2D offsets |
+| Licences | A `.zdlic` file signed with Ed25519 (`ed25519-dalek`), checked on the machine by `zd-licence`; the engine knows only each command's module (`docs/decisions/0098-licences.md`) |
 | Display detail | meshoptimizer via the `meshopt` crate, for the coarser versions the view draws far off; never for data (`docs/decisions/0097-fewer-triangles-drawn.md`) |
 | Viewport | three.js with `WebGPURenderer` (auto WebGL2 fallback) |
 | Interface | React + TypeScript, shadcn/ui, Tailwind, dockview, TanStack Table, React Flow (`@xyflow/react`) for node graphs (`docs/decisions/0067-workflow-canvas.md`), `cmdk` for Find a command (`docs/decisions/0076-docks-and-workflow-tabs.md`), CodeMirror 6 for the formula editor (`docs/decisions/0077-formulas-in-starlark.md`) |
@@ -124,6 +125,7 @@ crates/zd-io         DXF/CSV/OMF import-export, zips and folders of solids, Parq
 crates/zd-reserves   reserves dataflow: block columns, units, labels, splits, fields that add up (0070); benches joined by in situ share, put back at writes (0071)
 crates/zd-script     formulas a planner edits, in Starlark: checked on save, run on units, traced line by line (0077)
 crates/zd-py         PyO3 bindings (Phase 1)
+crates/zd-licence    licence files: signed, checked on the machine, the modules they turn on; `zdlic` issues them (0098)
 app/src-tauri        Tauri shell, command bridge, binary transfer
 app/src              React: viewport/, panels/, forms/, design-system/
 bench/               Phase 0 stress tests + timing harness

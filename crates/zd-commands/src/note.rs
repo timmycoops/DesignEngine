@@ -63,6 +63,7 @@ codes! {
     RefusedStore = "refused.store", "The project file couldn't be opened or saved";
     RefusedCancelled = "refused.cancelled", "Cancelled by whoever started it, with nothing applied";
     RefusedChanged = "refused.changed", "The project changed while the run read it, so nothing was applied";
+    RefusedNotLicensed = "refused.not_licensed", "The command's module isn't on in this copy's licence";
 
     WallNoHeight = "wall.no_height", "A wall or berm whose target is on or past its line, so it has no height there";
     WallNoTarget = "wall.no_target", "A wall with no target under it, so the gap was bridged";

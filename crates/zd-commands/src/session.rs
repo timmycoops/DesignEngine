@@ -184,6 +184,10 @@ impl RunJob {
         let RunJob { registry, project, generation, control, clock, mut record } = self;
         let made = (|| {
             let command = registry.get(&record.command).ok_or_else(|| CommandError::UnknownCommand(record.command.clone()))?;
+            // A module the licence doesn't cover refuses the run before it reads anything (decision 0098).
+            if let Some(module) = registry.module_of(&record.command).filter(|m| !crate::modules::is_on(*m)) {
+                return Err(CommandError::NotLicensed { command: record.command.clone(), module });
+            }
             let inputs = Inputs::new(&project, control.clone());
             // In place or as new (decision 0091): the command reads its own parameters; `result` is the session's.
             let (own, result) = take_result(&record.params)?;
