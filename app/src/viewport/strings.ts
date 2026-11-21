@@ -45,6 +45,8 @@ export interface StringActions {
   /** Runs an engine command; resolves true if it succeeded. */
   run(name: string, params: Record<string, unknown>): Promise<boolean>;
   snap(clientX: number, clientY: number): Promise<SnapHit | null>;
+  /** Over empty space: the nearest surface or solid to the cursor on screen, by a fan of rays round it (decision 0044). */
+  snapNear?(clientX: number, clientY: number): Promise<SnapHit | null>;
   /** The surface straight below a scene-local plan position, if any. */
   snapDown(x: number, y: number): Promise<SnapHit | null>;
   /** A line in the status bar; `error` shows it as a refusal. */
@@ -1256,6 +1258,8 @@ export class StringLayer {
   async pivot(x: number, y: number): Promise<Vec3 | null> {
     const string = this.snapToStrings(x, y);
     const surface = await this.actions.snap(x, y);
+    // Nothing under the cursor, as past the edge of the topography: the nearest thing to it on screen.
+    if (!string && !surface) return (await this.actions.snapNear?.(x, y))?.local ?? null;
     if (!string || !surface) return (string ?? surface)?.local ?? null;
     const eye = this.viewport.camera.position;
     const away = (p: Vec3) => Math.hypot(p[0] - eye.x, p[1] - eye.y, p[2] - eye.z);

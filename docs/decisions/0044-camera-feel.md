@@ -220,3 +220,41 @@ under 20 ms p50. `--clicks`, `--shell`, `--string-edits` and `--section-guide` p
 Still not built from this record: pan that sticks (PR 2), the fan of rays over empty space and the last pivot (the rest
 of PR 3), the orthographic switch (PR 4) and the Spry layout (PR 5). And while the page is drawing thousands of chunks,
 every other ask of the shell (a snap while drawing a string, say) still waits about 50 ms: that wants fewer draw calls.
+
+## The edge of the topography, and a snap index that comes late (2026-11-21)
+
+Tim, the same day, trying the fix above: "when i go try and Snap and orbit on the edge of the topo surface it
+essentially defaults to spinning from the centre and a random rl", then a while later "it has changed and recognises
+the surface now". Two causes:
+
+- **The snap index wasn't in yet.** It was built once the project was drawn, every surface and tile of solids on its own
+  thread at once, hidden ones too (425 M triangles on the large mine, 188 M of them on show), and none went in until
+  all were done: 66 s on this machine's four cores, while a press found nothing and turned about the view's centre,
+  wherever its RL happened to be. Parry builds a BVH on one thread: a 1 m lidar's 85 M triangles take 25 s.
+  - A big surface's index is now built in pieces by plan position, about 4 M triangles each
+    (`zd_geom::PIECE_TRIANGLES`), side by side on every core: the 85 M triangles in 2.9 s, rays as quick. A cast goes
+    through the pieces in the order the ray reaches their boxes and stops once the next box is past the best hit; it
+    hits what one index hits, naming the same triangle.
+  - Only what's on show is indexed, surfaces before solids, a few at a time on the cores, each going in as soon as it's
+    built, after every change; a layer shown later is indexed then (0.3 s for a hidden layer of 5.6 M triangles on the
+    large mine). Snapping is ready 6.7 s after the large mine is drawn, against 66 s.
+  - While it isn't, the status bar says "Snapping getting ready…" (after a quarter of a second, so a quick change
+    doesn't flicker it).
+- **Over nothing, the view's centre.** This record's fan of rays is now built: with nothing under the cursor, rays in
+  rings 8, 16, 32, 64, 128 and 256 px round it (8 a ring, then 16 and 32 in the outer two, so they're no more than
+  about 50 px apart), cast in one ask of the shell (`snap_rays`), the first ring with a hit giving its hit nearest the
+  camera; with none, the last point turned about while it's in view; else the view's centre. Strings aren't in the fan:
+  one within the snap distance is taken first, as before.
+
+`zd-app --bench --lod` on the large mine: 40 presses over nothing within 200 px of something, none turned about the
+centre, the worst 256 px from the cursor, 3.9 ms p50 and 50 ms the most; press to pivot 6 ms p50; a hidden layer shown
+indexed. `zd-geom` tests: pieces hit what one index hits on 2,000 rays (with and without passing over triangles), a ray
+down lands on a plane, and the timing (ignored). `zd-app` test: a fan over a square hole turns about its nearest
+edge. Not yet tried by hand.
+
+Then, on `Large mine 2m.zdp`: "when i have just a seam model open the snap to orbit doesn't work". A seam model's
+horizon is drawn from its grids on disk, not from an object of the project, so nothing was indexed under it. Its roof,
+the surface drawn, is now indexed when the horizon is staged, kept under the model's own key (so it goes when the model
+changes and is passed over while hidden). `--lod` checks a press in the middle of a seam model shown alone: it turns
+about the roof right under the cursor (0 px). On the 2 m mine, snapping was ready 2.8 s after drawing, and 0 of 40 presses
+over nothing near something turned about the centre.

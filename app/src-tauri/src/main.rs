@@ -82,6 +82,7 @@ fn main() {
             commands::fetch_mesh_ipc,
             commands::build_snap_index,
             commands::snap_ray,
+            commands::snap_rays,
             commands::section_snap,
             commands::section_pick,
             commands::bench_config,

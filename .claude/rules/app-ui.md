@@ -18,7 +18,7 @@ Workflow canvas, Face design). A new panel names its dock in `PANELS` (`app/src/
 through `showPanel`; it never adds a column or a row of its own, and the view keeps its room. The view has no tab strip,
 and its own tools (Select, Draw, Measure, Snap, 3D or Plan, the zooms, the field of view, Section and its step and fill)
 are on the view bar over it (`app/src/panels/ViewBar.tsx`): a new view tool goes there, through `ViewTools`, never on the
-toolbar, and nothing drawn over the view may sit behind the bar. A turn or wheel zoom works about `StringLayer.pivot`: a string near the cursor or the surface under it, whichever is nearer the camera (a string within 1 m of the surface wins), and the view holds drawing while that pick comes back (`docs/decisions/0044-camera-feel.md`). Measure (M) reads the distance, RL difference, grade and
+toolbar, and nothing drawn over the view may sit behind the bar. A turn or wheel zoom works about `StringLayer.pivot`: a string near the cursor or the surface under it, whichever is nearer the camera (a string within 1 m of the surface wins); over nothing, the nearest thing on screen by a fan of rays (`snap_rays`, `viewport/pivot.ts`), else the last pivot while it's in view, else the view's centre; and the view holds drawing while that pick comes back (`docs/decisions/0044-camera-feel.md`). Only what's on show is indexed for snapping, after every change, a big surface in pieces across the cores, and the status bar says so while it's getting ready. Measure (M) reads the distance, RL difference, grade and
 bearing between clicks from the points' world coordinates, and makes nothing
 (`docs/decisions/0079-project-ramps-by-hand-and-measure.md`). In the view, left clicks add points and a right click
 finishes (a right drag pans); Esc takes back one thing a press, nearest first, from a tool panel's box too, and says
@@ -59,8 +59,9 @@ red refused, green valid. Don't hand-roll an input, select, badge or colour a ki
   still takes it (`docs/decisions/0026-one-layer-tree.md`). So is how it looks: surfaces and grids colour by RL in
   bands on round RLs, in the shader, over each one's own range by default, or in the layer's colour; and an opacity per
   object and per layer, which multiply (`docs/decisions/0043-colour-by-rl-and-opacity.md`).
-- A layer's solids are drawn a hair nearer than they are (a depth offset), so where a solid lies on a surface, as the
-  overburden's top on the topography or a block's floor on its seam grid, the solid shows and not patches of both
+- Surfaces and grids are drawn a hair farther than they are (a depth offset), so where a solid lies on a surface, as
+  the overburden's top on the topography or a block's floor on its seam grid, the solid shows and not patches of both.
+  Solids are drawn where they are: pulled nearer, one block's floor came through the next one's wall
   (`docs/decisions/0060-the-app-at-scale.md`).
 - Far off, a big surface's chunks are drawn with coarser versions, each the coarsest out by no more than the Detail in
   pixels (the field-of-view menu: Full, 1 px default, 2, 4); close in, full detail. Versions are extra meshes beside

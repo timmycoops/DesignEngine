@@ -10,6 +10,7 @@
 // out of plan into 3D about the point under the cursor.
 import * as THREE from 'three/webgpu';
 import type { Vec3 } from '../bridge';
+import { inView } from './pivot';
 
 const PIVOT_MARK_COLOUR = 0xffd23f;
 /** How close a turn comes to looking straight up or down, in radians. */
@@ -63,6 +64,8 @@ export class CameraController {
   private turnKey = false;
 
   private drag: Drag | null = null;
+  /** The last point a turn went about: a press over nothing turns about it again while it's in view (decision 0044). */
+  private lastPivot: THREE.Vector3 | null = null;
   /** Wheel ticks waiting on a pick: their zoom scales multiply, and the latest cursor is used. */
   private wheel: { scale: number; x: number; y: number } | null = null;
   private readonly canvas: HTMLCanvasElement;
@@ -133,7 +136,8 @@ export class CameraController {
     if (kind === 'turn') {
       const turn: Drag = { kind, pointer: e.pointerId, pivot: this.target.clone(), x: e.clientX, y: e.clientY, ready: false, latest: [e.clientX, e.clientY] };
       this.drag = turn;
-      // Over empty space it keeps the view's centre. The turn waits for its pick, so the first move never
+      // Over empty space it turns about the nearest thing to the cursor (the pick's fan of rays), else the last point
+      // turned about while it's in view, else the view's centre. The turn waits for its pick, so the first move never
       // turns about the wrong point; drawing holds meanwhile, since nothing moves, so the pick comes back at
       // once even on a scene that keeps the page busy drawing. The gold mark shows where it will turn as soon
       // as the pick lands, before the first move.
@@ -142,6 +146,8 @@ export class CameraController {
       void pick.then((hit) => {
         this.host.holdFrames?.(0);
         if (hit) turn.pivot.set(...hit);
+        else if (this.lastPivot && inView(this.lastPivot.clone().project(this.host.camera))) turn.pivot.copy(this.lastPivot);
+        this.lastPivot = turn.pivot.clone();
         turn.ready = true;
         if (this.drag !== turn) return;
         this.host.pivotMark.show(turn.pivot, PIVOT_MARK_COLOUR);

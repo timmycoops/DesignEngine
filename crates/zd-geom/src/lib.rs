@@ -69,7 +69,7 @@ pub use repair::{RepairLog, closed_as_written, repair_mesh};
 pub use rule::{EdgeRule, SolidRegion};
 pub use self_union::{UnionLog, self_union};
 pub use display_levels::{DisplayLevel, DisplayLevels, FEWEST_TRIANGLES, display_levels};
-pub use ray::SurfaceRayCaster;
+pub use ray::{PIECE_TRIANGLES, SurfaceRayCaster};
 pub use seam::{SeamLog, SeamSolid, build_seam_solid};
 pub use section_fill::{SectionFill, fill_between_lines, fill_section_loops};
 pub use section_snap::{CutSegment, SectionSnap, SectionSnapKind, snap_to_section};
@@ -102,7 +102,7 @@ pub(crate) fn worker_threads(triangles: usize) -> usize {
 /// `work` on each of `0..count`, at most `at_once` at a time, the results in order. For work that holds a lot of memory
 /// each, as a Manifold boolean on a large solid: started all at once, a hundred of them run the machine out of memory,
 /// and Manifold spreads each one across the cores anyway.
-pub(crate) fn at_most<R: Send>(count: usize, at_once: usize, work: impl Fn(usize) -> R + Sync) -> Vec<R> {
+pub fn at_most<R: Send>(count: usize, at_once: usize, work: impl Fn(usize) -> R + Sync) -> Vec<R> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let next = AtomicUsize::new(0);
     let (next, work) = (&next, &work);

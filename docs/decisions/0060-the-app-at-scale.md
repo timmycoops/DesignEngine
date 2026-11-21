@@ -210,6 +210,14 @@ so where a solid lies on a surface, the solid shows. A copy drawn over everythin
 its top. Each is the block's colour, 142 apart from the ground's, spread under 1. With the offset taken off, all 49 were
 the ground's.
 
+**Changed 2026-11-21: surfaces farther, not solids nearer.** On `Large mine 2m.zdp` Tim saw light dashes along the
+seams on the block field's outer wall. Pulled nearer by the slope of each triangle, a block's floor or roof inside the
+field, seen edge-on, came nearer than the wall in front of it where the two meet. Pictures of the 2 m mine (`--lod`
+with `--pictures`) showed the same flecks across the block tops with the old offset, and none with the new. Now surfaces
+and grids are drawn a hair farther instead, by the same amounts, so a solid lying on one still shows, and solids are
+drawn where they are. The sunk-block check passes as before (142 apart, spread 0.9), and `--select` adds two blocks
+stacked on one layer, their long wall seen far off and low, with the join read at 73 points: all wall.
+
 The same view ran at 12 fps on 188 million triangles: the lidar's 85 million and the blocks'. That wants fewer triangles
 drawn (a coarser lidar further off, the walls between blocks left out), which is a plan of its own.
 

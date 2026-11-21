@@ -316,6 +316,32 @@ export async function checkSelect(viewport: Viewport, log: (line: string) => voi
     { block: mean.map(Math.round), ground: topo, nearest_to_ground: Math.round(nearestGround), spread: Number(spread.toFixed(1)), points: onTop.length },
   );
 
+  // Two blocks stacked on one layer, the upper one's floor split on the other diagonal from the lower one's roof (so both
+  // are drawn, as seam-cut blocks' are), their long south wall seen from far off and low: along the join the wall shows,
+  // never the floor or roof inside it (Tim, 21 November: dashes along the seams on the large mine's block walls).
+  {
+    const [sx0, sx1, sy0, sy1] = [E + 2600, E + 3000, N - 1500, N - 1460];
+    const box = (z0: number, z1: number) => Array.from({ length: 8 }, (_, i) => [i & 1 ? sx1 : sx0, (i >> 1) & 1 ? sy1 : sy0, (i >> 2) & 1 ? z1 : z0] as Vec3);
+    const otherFloor = [[0, 2, 1], [1, 2, 3], ...faces.slice(2)];
+    await runCommand('solid.from_mesh', { name: 'Lower block', layer: 'stack', vertices: box(0, 60), triangles: faces });
+    await runCommand('solid.from_mesh', { name: 'Upper block', layer: 'stack', vertices: box(60, 100), triangles: otherFloor });
+    await show(await projectSummary());
+    const target = local([(sx0 + sx1) / 2, sy0, 60]);
+    viewport.camera.position.copy(target.clone().add(new THREE.Vector3(-0.8, -1, 0.05).normalize().multiplyScalar(3000)));
+    viewport.controls.target.copy(target);
+    viewport.controls.update();
+    await settle();
+    const wall = await snapshot();
+    const apart = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    let [looked, through] = [0, 0];
+    for (let x = sx0 + 20; x <= sx1 - 20; x += 5) {
+      const [below, on, above] = [57, 60, 63].map((z) => wall(screen([x, sy0, z])));
+      looked++;
+      if (apart(on, below) > 20 && apart(on, above) > 20) through++;
+    }
+    expect('a wall of stacked blocks seen far off and low shows the wall along the join, not the floor or roof inside it', looked > 0 && through <= 1, { looked, through });
+  }
+
   // Drawn far off with fewer triangles (decision 0097): a rolling surface of 178,802 triangles, big enough for coarser
   // versions. Far off it draws fewer than it holds, and the picture is the full one's; close in, the chunk under the
   // camera is full detail; a pick lands where it does at full detail; Full draws every triangle.
