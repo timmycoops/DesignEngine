@@ -126,7 +126,7 @@ fn starter(content: serde_json::Value) -> serde_json::Value {
 
 fn session() -> Session {
     let mut registry = Registry::with_builtins();
-    registry.register(Tag);
+    registry.register(zd_commands::Module::Design, Tag);
     Session::new(registry)
 }
 

@@ -47,7 +47,7 @@ impl Command for Reports {
 
 fn session() -> (Session, ObjectId) {
     let mut registry = Registry::with_builtins();
-    registry.register(Reports);
+    registry.register(zd_commands::Module::Design, Reports);
     let mut s = Session::new(registry);
     let made = s.run("string.create", json!({ "name": "toe", "layer": "toes", "points": [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]] })).unwrap();
     let toe = made.outputs[0].id;

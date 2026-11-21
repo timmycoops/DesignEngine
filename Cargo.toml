@@ -7,6 +7,7 @@ members = [
     "crates/zd-commands",
     "crates/zd-reserves",
     "crates/zd-script",
+    "crates/zd-licence",
     "crates/zd-py",
     "bench",
     "app/src-tauri",

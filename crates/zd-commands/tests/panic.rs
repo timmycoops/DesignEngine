@@ -27,7 +27,7 @@ impl Command for Panics {
 #[test]
 fn a_panic_refuses_the_run_and_changes_nothing() {
     let mut registry = Registry::with_builtins();
-    registry.register(Panics);
+    registry.register(zd_commands::Module::Design, Panics);
     let mut s = Session::new(registry);
     s.run("string.create", json!({ "name": "toe", "layer": "toes", "points": [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]] })).unwrap();
     let before: Vec<_> = s.project().objects().map(|o| (o.id, o.revision)).collect();
