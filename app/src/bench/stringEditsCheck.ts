@@ -29,6 +29,9 @@ export async function checkStringEdits(viewport: Viewport, log: (line: string) =
   const canvas = viewport.renderer.domElement;
   const results: Record<string, unknown> = {};
   const failures: string[] = [];
+  // Strings over everything: some lines here lie under the ground (one at RL 50), and these checks click them to pick
+  // them; hidden behind the ground, as they are by default, a click there picks the ground (`--select` checks that).
+  viewport.setStringsOver(true, false);
   const expect = (what: string, ok: boolean, detail?: unknown) => {
     results[what] = detail === undefined ? ok : { ok, detail };
     if (!ok) failures.push(what);

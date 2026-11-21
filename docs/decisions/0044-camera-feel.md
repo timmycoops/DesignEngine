@@ -258,3 +258,21 @@ the surface drawn, is now indexed when the horizon is staged, kept under the mod
 changes and is passed over while hidden). `--lod` checks a press in the middle of a seam model shown alone: it turns
 about the roof right under the cursor (0 px). On the 2 m mine, snapping was ready 2.8 s after drawing, and 0 of 40 presses
 over nothing near something turned about the centre.
+
+## Strings hidden behind what's in front, by default (2026-11-21)
+
+Tim: "By default lets make objects the same with a toggle to alter. It makes it slightly confusing for me to see the
+strings/Polygons through the solid." Strings, polygons and roads were drawn with no depth test, over everything. Now
+they're hidden behind the solids and surfaces in front of them, like any other object, drawn a hair nearer than they
+are (a twentieth of a percent of their distance from the camera) so one lying on a solid or surface shows on it. The
+field-of-view menu has the toggle, Strings and polygons: Hidden behind solids and surfaces (the default) or Over
+everything, saved on this machine. What the view draws to work with stays over everything: the picked string, its
+handles, the string being drawn, the section guide.
+
+A click picks what it can see: a string behind the solid or surface under the cursor, by more than a metre, isn't
+picked, and the click goes to what's in front (a select click, a Ctrl-click and the right-click menu). The turn already
+went about the nearer of the two.
+
+`--select` checks a toe 80 m under the ground and a line on it: by default the toe doesn't show and the line does, a
+click over the toe doesn't pick it; over everything, the toe shows. `--string-edits` clicks lines under its ground to
+pick them, so it runs with strings over everything. `--clicks`, `--section-guide`, `--measure` and `--shell` pass.
