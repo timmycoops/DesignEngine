@@ -4,7 +4,7 @@
 // at 1 px against Full, and a pick at the middle of the view at each; and the orbit's pivot: picks at 15 points, and a press
 // timed to its gold mark (decision 0044). Made-up data only: counts and timings.
 import * as THREE from 'three/webgpu';
-import { benchConfig, openProject, type ProjectSummary, snapRay } from '../bridge';
+import { benchConfig, lastSnapIndex, openProject, type ProjectSummary, setLayerVisible, snapRay } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
 import { orbit } from './runChecks';
 
@@ -28,10 +28,14 @@ export async function checkLod(viewport: Viewport, path: string, log: (line: str
   };
 
   const opened = performance.now();
-  await show(await openProject(path));
+  const project = await openProject(path);
+  await show(project);
+  const index = lastSnapIndex;
   await settle();
   const drawnAt = performance.now();
   results.open_to_first_frame_s = Number(((drawnAt - opened) / 1000).toFixed(1));
+  // Built once the project is drawn, so the time it can't snap after opening (decision 0044, 21 November).
+  results.snap_index = index && { s: Number((index.ms / 1000).toFixed(1)), pieces: index.surfaces, triangles: index.triangles };
   // Picks for the pivot at 15 points across the view: how long each takes, and how far the point picked lies in depth
   // from the surface or solid under the cursor (a string snapped instead lies elsewhere).
   const picks = async () => {
@@ -119,6 +123,43 @@ export async function checkLod(viewport: Viewport, path: string, log: (line: str
     return { p50_ms: Number(times[7].toFixed(1)), max_ms: Number(times[14].toFixed(1)) };
   };
   results.press_to_pivot = await presses();
+  // Presses over nothing near the edge of what's drawn (Tim, 21 November: "on the edge of the topo surface it
+  // essentially defaults to spinning from the centre and a random RL"). Points 40 px apart over the view; each that hits
+  // nothing but has a point that hits within 200 px should turn about something on screen within the fan's last ring,
+  // never the view's centre.
+  const edges = async () => {
+    const rect = canvas.getBoundingClientRect();
+    const step = 40;
+    const grid: { x: number; y: number; hit: boolean }[] = [];
+    for (let x = rect.left + step / 2; x < rect.right; x += step) {
+      for (let y = rect.top + step / 2; y < rect.bottom; y += step) {
+        const ray = viewport.rayFromNdc(...viewport.clientToNdc(x, y));
+        grid.push({ x, y, hit: !!(await snapRay(ray.origin, ray.direction)) });
+      }
+    }
+    const near = grid.filter((p) => !p.hit && grid.some((q) => q.hit && Math.hypot(q.x - p.x, q.y - p.y) <= 200));
+    const out: { ms: number; px: number | null }[] = [];
+    for (const p of near.filter((_, i) => i % Math.max(1, Math.floor(near.length / 40)) === 0)) {
+      const t0 = performance.now();
+      const hit = await viewport.pickPoint?.(p.x, p.y);
+      const ms = performance.now() - t0;
+      const [sx, sy] = hit ? viewport.projectToClient(new THREE.Vector3(...hit)) : [NaN, NaN];
+      out.push({ ms, px: hit ? Math.hypot(sx - p.x, sy - p.y) : null });
+    }
+    const ms = out.map((o) => o.ms).sort((a, b) => a - b);
+    return {
+      points: grid.length,
+      over_nothing_near_something: near.length,
+      pressed: out.length,
+      turned_about_nothing: out.filter((o) => o.px === null).length,
+      worst_px: Number(Math.max(0, ...out.map((o) => o.px ?? 0)).toFixed(0)),
+      p50_ms: ms.length ? Number(ms[Math.floor(ms.length / 2)].toFixed(1)) : null,
+      max_ms: ms.length ? Number(ms[ms.length - 1].toFixed(1)) : null,
+    };
+  };
+  const edge = await edges();
+  results.presses_over_nothing = edge;
+  expect('a press over nothing near the edge turns about the nearest thing on screen, not the view centre', edge.pressed > 0 && edge.turned_about_nothing === 0 && edge.worst_px <= 260, edge);
   const after = results.picks_after as { behind_what_is_under_it: number };
   const press = results.press_to_pivot as { p50_ms: number };
   expect('a press turns about what is nearest the camera under the cursor, never a string far behind it', after.behind_what_is_under_it === 0, after);
@@ -188,6 +229,18 @@ export async function checkLod(viewport: Viewport, path: string, log: (line: str
   }
   results.views = views;
   viewport.setDetail(1, false);
+
+  // Only what's on show is indexed for snapping: a layer hidden at opening is indexed when it's shown, then hidden again.
+  const hiddenLayer = project.layers.find((l) => !l.visible && project.objects.some((o) => o.layer === l.id && (o.kind === 'surface' || o.kind === 'grid' || o.kind === 'solid')));
+  if (hiddenLayer) {
+    const t0 = performance.now();
+    await show(await setLayerVisible(hiddenLayer.id, true));
+    const shown = lastSnapIndex;
+    const s = Number(((performance.now() - t0) / 1000).toFixed(1));
+    await show(await setLayerVisible(hiddenLayer.id, false));
+    results.a_hidden_layer_shown = { pieces: shown?.surfaces, triangles: shown?.triangles, s };
+    expect('a layer hidden at opening is indexed for snapping when it is shown', (shown?.triangles ?? 0) > 0, results.a_hidden_layer_shown);
+  }
   results.failures = failures;
   return results;
 }

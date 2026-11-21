@@ -1469,10 +1469,13 @@ pub struct SnapIndex {
     triangles: usize,
 }
 
-/// Builds the snap index for every drawn surface and layer of solids whose geometry has none yet,
-/// one thread each, and drops indexes of objects and layers that are gone.
+/// Builds the snap index for every drawn surface and layer of solids whose geometry has none yet, and drops indexes of
+/// objects and layers that are gone. With `shown` (as the app asks after every change), only what's on show: a layer
+/// shown later is indexed then. Else that first, then the rest. Surfaces go before solids, so the ground snaps first, a
+/// few at a time on the cores (a big surface splits across them itself, `zd_geom::PIECE_TRIANGLES`); each goes in as
+/// soon as it's built.
 #[tauri::command]
-pub async fn build_snap_index(state: State<'_, AppState>) -> Result<SnapIndex, String> {
+pub async fn build_snap_index(shown: Option<bool>, state: State<'_, AppState>) -> Result<SnapIndex, String> {
     enum Source {
         Mesh(ObjectId, usize, Arc<TriMesh>),
         Grid(ObjectId, usize, Arc<zd_core::Grid>),
@@ -1482,7 +1485,7 @@ pub async fn build_snap_index(state: State<'_, AppState>) -> Result<SnapIndex, S
         Object(ObjectId, usize, SurfaceRayCaster),
         Layer(TileId, String, SolidCaster),
     }
-    let pending: Vec<Source> = {
+    let pending: Vec<(bool, Source)> = {
         let mut app = state.app.lock().unwrap();
         let live: std::collections::HashSet<ObjectId> = app.session.project().objects().map(|o| o.id).collect();
         app.casters.retain(|id, _| live.contains(id));
@@ -1490,58 +1493,61 @@ pub async fn build_snap_index(state: State<'_, AppState>) -> Result<SnapIndex, S
         app.solid_casters.retain(|tile, _| keys.contains_key(tile));
         // Each tile whose index is missing or stale, with its solids: only the tiles that changed are built again.
         let stale: Vec<(TileId, String)> = keys.iter().filter(|(tile, key)| app.solid_casters.get(tile).is_none_or(|(built, _)| built != *key)).map(|(t, k)| (*t, k.clone())).collect();
-        let tiles: Vec<Source> = {
+        let tiles: Vec<(bool, Source)> = {
             let AppInner { session, tiles, .. } = &mut *app;
-            stale.into_iter().map(|(tile, key)| Source::Solids(tile, key, tile_solids(session.project(), tiles, tile))).collect()
+            let project = session.project();
+            stale.into_iter().map(|(tile, key)| (project.layer(tile.layer).is_some_and(|l| l.visible), Source::Solids(tile, key, tile_solids(project, tiles, tile)))).collect()
         };
         let project = app.session.project();
+        let on_show = |o: &zd_core::Object| !project.is_concealed(o.id) && project.layer(o.layer).is_some_and(|l| l.visible);
         let objects = project
             .objects()
             .filter(|o| is_drawn_surface(o) && !matches!(o.body, Body::Solid(_)))
             .filter(|o| app.casters.get(&o.id).is_none_or(|(key, _)| *key != geometry_key(&o.body)))
-            .map(|o| match &o.body {
-                Body::Surface(s) => Source::Mesh(o.id, geometry_key(&o.body), s.mesh_arc().clone()),
-                Body::Grid(g) => Source::Grid(o.id, geometry_key(&o.body), g.clone()),
-                Body::Solid(_) | Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) | Body::ParameterTable(_) | Body::Dataflow(_) | Body::Table(_) => unreachable!("only drawn surfaces are snapped to one by one"),
+            .map(|o| {
+                let source = match &o.body {
+                    Body::Surface(s) => Source::Mesh(o.id, geometry_key(&o.body), s.mesh_arc().clone()),
+                    Body::Grid(g) => Source::Grid(o.id, geometry_key(&o.body), g.clone()),
+                    Body::Solid(_) | Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) | Body::ParameterTable(_) | Body::Dataflow(_) | Body::Table(_) => unreachable!("only drawn surfaces are snapped to one by one"),
+                };
+                (on_show(o), source)
             });
-        objects.chain(tiles).collect()
+        // On show first, then surfaces before solids; a stable sort, so the order is otherwise kept.
+        let mut pending: Vec<(bool, Source)> = objects.chain(tiles).filter(|(on, _)| *on || shown != Some(true)).collect();
+        pending.sort_by_key(|(on, source)| (!*on, matches!(source, Source::Solids(..))));
+        pending
     };
     let surfaces = pending.len();
     let t = Instant::now();
-    let built = blocking(move || {
-        std::thread::scope(|scope| {
-            let handles: Vec<_> = pending
-                .into_iter()
-                .map(|source| {
-                    scope.spawn(move || {
-                        let triangles = c_triangles(&source);
-                        let built = match source {
-                            Source::Mesh(id, key, mesh) => SurfaceRayCaster::new(&mesh).map(|c| Built::Object(id, key, c)),
-                            Source::Grid(id, key, grid) => SurfaceRayCaster::new(&triangulate_grid(&grid)).map(|c| Built::Object(id, key, c)),
-                            Source::Solids(layer, key, solids) => SolidCaster::new(&solids).map(|c| Built::Layer(layer, key, c)),
-                        };
-                        built.map(|b| (b, triangles))
-                    })
-                })
-                .collect();
-            handles.into_iter().map(|h| h.join().expect("snap index thread").map_err(|e| e.to_string())).collect::<Result<Vec<_>, _>>()
+    let shared = state.app.clone();
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let triangles = blocking(move || {
+        zd_geom::at_most(pending.len(), cores, |i| {
+            let (_, source) = &pending[i];
+            let triangles = c_triangles(source);
+            let built = match source {
+                Source::Mesh(id, key, mesh) => SurfaceRayCaster::new(mesh).map(|c| Built::Object(*id, *key, c)),
+                Source::Grid(id, key, grid) => SurfaceRayCaster::new(&triangulate_grid(grid)).map(|c| Built::Object(*id, *key, c)),
+                Source::Solids(layer, key, solids) => SolidCaster::new(solids).map(|c| Built::Layer(*layer, key.clone(), c)),
+            }
+            .map_err(|e| e.to_string())?;
+            // In at once, so a press over it turns about it while the rest are still being indexed.
+            let mut app = shared.lock().unwrap();
+            match built {
+                Built::Object(id, key, caster) => {
+                    app.casters.insert(id, (key, Arc::new(caster)));
+                }
+                Built::Layer(tile, key, caster) => {
+                    app.solid_casters.insert(tile, (key, Arc::new(caster)));
+                }
+            }
+            Ok::<_, String>(triangles)
         })
+        .into_iter()
+        .sum::<Result<usize, _>>()
     })
     .await??;
-    let ms = ms(t);
-    let triangles = built.iter().map(|b| b.1).sum();
-    let mut app = state.app.lock().unwrap();
-    for (index, _) in built {
-        match index {
-            Built::Object(id, key, caster) => {
-                app.casters.insert(id, (key, Arc::new(caster)));
-            }
-            Built::Layer(tile, key, caster) => {
-                app.solid_casters.insert(tile, (key, Arc::new(caster)));
-            }
-        }
-    }
-    return Ok(SnapIndex { ms, surfaces, triangles });
+    return Ok(SnapIndex { ms: ms(t), surfaces, triangles });
 
     fn c_triangles(source: &Source) -> usize {
         match source {
@@ -1575,7 +1581,20 @@ pub async fn snap_ray(origin: [f64; 3], direction: [f64; 3], state: State<'_, Ap
 }
 
 fn snap_along(origin: [f64; 3], direction: [f64; 3], state: &AppState) -> Option<SnapHit> {
-    let (scene_origin, objects, layers, hidden) = {
+    Snappable::of(state)?.cast(origin, direction)
+}
+
+/// What a ray snaps to: the drawn surfaces and layers of solids with an index that matches what they are now, taken
+/// under the lock once, so a fan of rays casts without it.
+struct Snappable {
+    scene_origin: [f64; 3],
+    objects: Vec<(ObjectId, Arc<SurfaceRayCaster>)>,
+    layers: Vec<Arc<SolidCaster>>,
+    hidden: Arc<std::collections::HashSet<ObjectId>>,
+}
+
+impl Snappable {
+    fn of(state: &AppState) -> Option<Snappable> {
         let mut app = state.app.lock().unwrap();
         let scene_origin = app.origin()?;
         let project = app.session.project();
@@ -1589,21 +1608,37 @@ fn snap_along(origin: [f64; 3], direction: [f64; 3], state: &AppState) -> Option
             })
             .collect();
         let layers: Vec<Arc<SolidCaster>> = app.solid_casters.iter().filter(|(tile, (key, _))| app.solid_keys.get(tile) == Some(key) && project.layer(tile.layer).is_some_and(|l| l.visible)).map(|(_, (_, caster))| caster.clone()).collect();
-        (scene_origin, objects, layers, project.concealed().clone())
-    };
-    let from = [origin[0] + scene_origin[0], origin[1] + scene_origin[1], origin[2] + scene_origin[2]];
-    let on_objects = objects.iter().filter_map(|(id, c)| c.cast(from, direction).map(|hit| (Some(*id), hit)));
-    let on_solids = layers.iter().filter_map(|c| c.cast(from, direction, &hidden).map(|(id, hit)| (Some(id), hit)));
-    on_objects
-        .chain(on_solids)
-        .min_by(|a, b| distance_sq(from, a.1).total_cmp(&distance_sq(from, b.1)))
-        .map(|(object, world)| SnapHit {
-            local: [world[0] - scene_origin[0], world[1] - scene_origin[1], world[2] - scene_origin[2]],
+        Some(Snappable { scene_origin, objects, layers, hidden: project.concealed().clone() })
+    }
+
+    /// Nearest hit along a ray from `origin` (scene-local).
+    fn cast(&self, origin: [f64; 3], direction: [f64; 3]) -> Option<SnapHit> {
+        let o = self.scene_origin;
+        let from = [origin[0] + o[0], origin[1] + o[1], origin[2] + o[2]];
+        let on_objects = self.objects.iter().filter_map(|(id, c)| c.cast(from, direction).map(|hit| (Some(*id), hit)));
+        let on_solids = self.layers.iter().filter_map(|c| c.cast(from, direction, &self.hidden).map(|(id, hit)| (Some(id), hit)));
+        on_objects.chain(on_solids).min_by(|a, b| distance_sq(from, a.1).total_cmp(&distance_sq(from, b.1))).map(|(object, world)| SnapHit {
+            local: [world[0] - o[0], world[1] - o[1], world[2] - o[2]],
             world,
             object,
             kind: None,
             label: None,
         })
+    }
+}
+
+/// Over empty space, the nearest thing to the cursor (decision 0044): `rings` of rays from `origin` (scene-local), in
+/// order out from the cursor. The first ring with a hit gives its hit nearest the camera, with the ring's number; rings
+/// further out aren't cast. None in any ring gives none.
+#[tauri::command]
+pub async fn snap_rays(origin: [f64; 3], rings: Vec<Vec<[f64; 3]>>, state: State<'_, AppState>) -> Result<Option<(usize, SnapHit)>, String> {
+    let Some(snappable) = Snappable::of(&state) else { return Ok(None) };
+    Ok(nearest_in_rings(&rings, |direction| snappable.cast(origin, direction).map(|hit| (distance_sq(origin, hit.local), hit))))
+}
+
+/// The first ring in which `cast` hits anything, and its hit with the least distance.
+fn nearest_in_rings<H>(rings: &[Vec<[f64; 3]>], cast: impl Fn([f64; 3]) -> Option<(f64, H)>) -> Option<(usize, H)> {
+    rings.iter().enumerate().find_map(|(ring, directions)| directions.iter().filter_map(|d| cast(*d)).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, hit)| (ring, hit)))
 }
 
 /// Where a cursor at distance `along` and `rl` on the section snaps to the last cut, if anywhere near.
@@ -1825,6 +1860,31 @@ mod tests {
 
     use super::*;
     use crate::changes::changes;
+
+    /// A fan of rays over a square hole in a flat surface (decision 0044): a press over the hole turns about the hole's
+    /// nearest edge. The surface is RL 0 with a hole x, y in (-10, 10), the eye 100 m above (4, 0), so the east edge is
+    /// nearest, and rays in rings of 8 landing 2, 7, 12 and 20 m out on the ground. Every ray of the 2 m ring falls in
+    /// the hole; of the 7 m ring only the east one lands on the ground, at (11, 0): within 1e-9 m.
+    #[test]
+    fn a_fan_over_a_hole_turns_about_its_nearest_edge() {
+        // Four rectangles round the hole, from -50 to 50.
+        let mut vertices = Vec::new();
+        let mut triangles = Vec::new();
+        for [x0, y0, x1, y1] in [[-50.0, -50.0, 50.0, -10.0], [-50.0, 10.0, 50.0, 50.0], [-50.0, -10.0, -10.0, 10.0], [10.0, -10.0, 50.0, 10.0]] {
+            let n = vertices.len() as u32;
+            vertices.extend([[x0, y0, 0.0], [x1, y0, 0.0], [x1, y1, 0.0], [x0, y1, 0.0]]);
+            triangles.extend([[n, n + 1, n + 2], [n, n + 2, n + 3]]);
+        }
+        let caster = SurfaceRayCaster::new(&TriMesh::new(vertices, triangles)).unwrap();
+        let eye = [4.0, 0.0, 100.0];
+        let ring = |r: f64| (0..8).map(|i| (i as f64) * std::f64::consts::TAU / 8.0).map(|a| [r * a.cos(), r * a.sin(), -eye[2]]).collect::<Vec<_>>();
+        let rings = [ring(2.0), ring(7.0), ring(12.0), ring(20.0)];
+        let (n, hit) = nearest_in_rings(&rings, |d| caster.cast(eye, d).map(|h| (distance_sq(eye, h), h))).expect("a hit in some ring");
+        assert_eq!(n, 1, "the ring at 7 m reaches past the east edge; the ring at 2 m is all over the hole");
+        assert!((hit[0] - 11.0).abs() < 1e-9 && hit[1].abs() < 1e-9 && hit[2].abs() < 1e-9, "{hit:?}");
+        // All over the hole, nothing: the caller falls back to the last pivot.
+        assert!(nearest_in_rings(&[ring(1.0), ring(3.0)], |d| caster.cast(eye, d).map(|h| (distance_sq(eye, h), h))).is_none());
+    }
 
     /// Run all cases carried on after a pause (app review brief, 17 Nov, item 3): the case that paused from the step
     /// after the pause, then every case after it from step 1; with nothing to carry on from, every case from step 1.

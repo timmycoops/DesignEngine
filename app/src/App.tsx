@@ -46,6 +46,7 @@ import { concealed,
   setLooks,
   setObjectsVisible,
   snapRay,
+  snapRays,
   undo,
   type Vec3,
   withLayerOpacity,
@@ -60,6 +61,7 @@ import { ExportSolidsDialog, type SolidExportOptions } from './panels/ExportSoli
 import { type NotASolid, RepairDialog } from './panels/RepairDialog';
 import { type ViewTools, ViewToolsContext } from './panels/ViewBar';
 import { IssueMarkers } from './viewport/markers';
+import { fanRings } from './viewport/pivot';
 import { type RlShown, type SeamShown, SceneSync } from './viewport/sceneSync';
 import { planPoint, SectionView } from './viewport/section';
 import { RoadLayer } from './viewport/roads';
@@ -154,6 +156,8 @@ export default function App() {
   const [fieldOfView, setFieldOfView] = useState(FIELD_OF_VIEW_DEFAULT);
   const [detail, setDetail] = useState(DETAIL_DEFAULT);
   const [snapping, setSnapping] = useState(true);
+  /** Snap indexes being built: till they're in, a press can't find what's under it (a 1 m lidar takes a while). */
+  const [indexing, setIndexing] = useState(0);
   const [sectionOpen, setSectionOpen] = useState(false);
   const [sectionStep, setSectionStep] = useState('25');
   const [sectionFill, setSectionFill] = useState(true);
@@ -334,9 +338,21 @@ export default function App() {
     if (!sync || !viewport) return;
     const first = sync.count === 0;
     return sync.apply(next).then(async (loaded) => {
-      if (loaded === 0) return;
-      if (first) viewport.fitView();
-      await buildSnapIndex();
+      if (loaded > 0 && first) viewport.fitView();
+      // Only what's on show is indexed for snapping, after every change, so a layer shown later is indexed then (a 1 m
+      // lidar in about 3 s on four cores) and nothing hidden holds the cores while the view makes its coarser versions.
+      // The status bar says so when it takes more than a moment.
+      let said = false;
+      const slow = setTimeout(() => {
+        said = true;
+        setIndexing((n) => n + 1);
+      }, 250);
+      try {
+        await buildSnapIndex(true);
+      } finally {
+        clearTimeout(slow);
+        if (said) setIndexing((n) => n - 1);
+      }
     });
   }, []);
 
@@ -618,6 +634,11 @@ export default function App() {
           const [nx, ny] = created.clientToNdc(x, y);
           const ray = created.rayFromNdc(nx, ny);
           return snapRay(ray.origin, ray.direction);
+        },
+        snapNear: async (x, y) => {
+          const rays = fanRings(x, y).map((ring) => ring.map(([px, py]) => created.rayFromNdc(...created.clientToNdc(px, py))));
+          const near = rays[0]?.[0] ? await snapRays(rays[0][0].origin, rays.map((ring) => ring.map((r) => r.direction))) : null;
+          return near?.[1] ?? null;
         },
         snapDown: (x, y) => snapRay([x, y, 1e6], [0, 0, -1]),
         status: (text, error) => setStatus({ text, error }),
@@ -1401,6 +1422,14 @@ export default function App() {
             {status.text}
           </span>
           <RunGoing />
+          {indexing > 0 && (
+            <span
+              className="shrink-0 text-warning"
+              title="The surfaces and solids just drawn are being indexed for snapping. Each snaps as soon as it's in; till then a turn over it goes about the last point turned about, or the view's centre."
+            >
+              Snapping getting ready…
+            </span>
+          )}
           <span className="shrink-0 text-muted-foreground tabular-nums" title={backend}>
             {stats ? `${stats.fps.toFixed(0)} fps · ${triangleWords(stats.drawn)} drawn of ${triangleWords(stats.triangles)}` : '–'}
           </span>

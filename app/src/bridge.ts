@@ -1344,7 +1344,14 @@ export interface SnapIndex {
   triangles: number;
 }
 
-export const buildSnapIndex = () => invoke<SnapIndex>('build_snap_index');
+/** The last snap index of what's on show, for the benches: how long a project just drawn couldn't snap. */
+export let lastSnapIndex: SnapIndex | null = null;
+/** With `shown`, only what's on show; else that first, then what's hidden. */
+export const buildSnapIndex = (shown = false) =>
+  invoke<SnapIndex>('build_snap_index', { shown }).then((index) => {
+    if (shown) lastSnapIndex = index;
+    return index;
+  });
 
 export interface SnapHit {
   /** Offset from the scene origin, for drawing. */
@@ -1363,6 +1370,11 @@ export interface SnapHit {
 }
 
 export const snapRay = (origin: Vec3, direction: Vec3) => invoke<SnapHit | null>('snap_ray', { origin, direction });
+/**
+ * Over empty space, the nearest thing to the cursor (decision 0044): rings of rays from one origin, nearest the cursor
+ * first. The first ring with a hit gives its number and its hit nearest the camera.
+ */
+export const snapRays = (origin: Vec3, rings: Vec3[][]) => invoke<[number, SnapHit] | null>('snap_rays', { origin, rings });
 
 /** Where a cursor at a distance along the section and an RL snaps to the last cut, if anywhere near. */
 export const sectionPick = (along: number, rl: number, reach: number) => invoke<string | null>('section_pick', { along, rl, reach });
