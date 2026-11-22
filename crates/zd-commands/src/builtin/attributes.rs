@@ -241,14 +241,107 @@ impl Command for RemoveColumn {
         let Body::Table(table) = &object.body else {
             return Err(CommandError::WrongKind { id: p.table, expected: ObjectKind::Table, found: object.kind() });
         };
-        let at = table.columns.iter().position(|c| c.name == p.column).ok_or_else(|| CommandError::Invalid(format!("{} has no column {}", object.name, p.column)))?;
-        if table.columns[at].kind == ColumnKind::Written {
-            return Err(CommandError::Invalid(format!("{} was written by the run: only a column entered by hand comes out", p.column)));
-        }
         let mut t: Table = (**table).clone();
-        t.columns.remove(at);
+        if let Some(at) = t.calculated.iter().position(|c| c.name == p.column) {
+            t.calculated.remove(at);
+        } else {
+            let at = table.columns.iter().position(|c| c.name == p.column).ok_or_else(|| CommandError::Invalid(format!("{} has no column {}", object.name, p.column)))?;
+            if table.columns[at].kind == ColumnKind::Written {
+                return Err(CommandError::Invalid(format!("{} was written by the run: only a column entered by hand, or calculated, comes out", p.column)));
+            }
+            t.columns.remove(at);
+        }
         let mut out = Outcome::new(vec![Change::Revise { id: object.id, base: object.revision, name: None, layer: None, attributes: None, body: Some(Body::Table(Arc::new(t))) }]);
         out.notes.push(Note::info(format!("{}: {} taken out", object.name, p.column)));
+        Ok(out)
+    }
+}
+
+/// `table.calculate`: a calculated column put on a table, or one there changed (decision 6 of 0099): a formula setting
+/// the column on each row, how a group adds it up, and the parameter tables it reads. Its formula is checked against the
+/// table first, every problem said with its line; a name a column of values has is refused. Nothing is worked out
+/// here: the grid works it out when it's shown.
+pub struct CalculateInTable;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalculateParams {
+    pub table: ObjectId,
+    pub column: zd_core::CalculatedColumn,
+    /// The column it replaces, where it's renamed; none for a new one or one keeping its name.
+    #[serde(default)]
+    pub replaces: Option<String>,
+}
+
+impl Command for CalculateInTable {
+    type Params = CalculateParams;
+    const NAME: &'static str = "table.calculate";
+
+    fn spec(&self) -> CommandSpec {
+        CommandSpec {
+            name: Self::NAME,
+            summary: "Put a calculated column on a table: a formula on each row, and how a group adds it up",
+            inputs: vec![Field::new("table", FieldType::Text, "Id of a results table")],
+            params: vec![
+                Field::new("column", FieldType::Text, "Its name, unit, script, how it adds up and the parameter tables it reads"),
+                Field::new("replaces", FieldType::Text, "The calculated column it replaces, where renamed"),
+            ],
+            outputs: vec![],
+        }
+    }
+
+    fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
+        let object = inputs.object(p.table)?;
+        let Body::Table(table) = &object.body else {
+            return Err(CommandError::WrongKind { id: p.table, expected: ObjectKind::Table, found: object.kind() });
+        };
+        let c = &p.column;
+        let name = c.name.trim();
+        if name.is_empty() {
+            return Err(CommandError::Invalid("the calculated column needs a name".into()));
+        }
+        if table.column(name).is_some() {
+            return Err(CommandError::Invalid(format!("{name} is a column of the table's values already: name the calculated column something else")));
+        }
+        if let zd_core::CalcAddUp::WeightedBy { column } = &c.adds
+            && !matches!(table.column(column).map(|t| &t.values), Some(ColumnValues::Number(_)))
+        {
+            return Err(CommandError::Invalid(format!("{name} is weighted by {column}, which isn't a column of numbers in the table")));
+        }
+        // Its parameter tables read as the run reads them: each an object of the project, recorded as an input.
+        let mut tables = Vec::new();
+        for &id in &c.parameters {
+            match &inputs.object(id)?.body {
+                Body::ParameterTable(t) => tables.push((id, t.clone())),
+                _ => return Err(CommandError::Invalid("a calculated column reads parameter tables only".into())),
+            }
+        }
+        let lookup = |id: ObjectId| tables.iter().find(|(t, _)| *t == id).map(|(_, t)| t.clone());
+        let checked = crate::table_calc::check(table, c, &lookup);
+        if !checked.problems.is_empty() {
+            let said: Vec<String> = checked.problems.iter().map(|p| match p.line {
+                Some(l) => format!("line {l}: {}", p.message),
+                None => p.message.clone(),
+            }).collect();
+            return Err(CommandError::Invalid(format!("{name}: {}", said.join("; "))));
+        }
+        let mut t: Table = (**table).clone();
+        let mut column = c.clone();
+        column.name = name.to_string();
+        let old = p.replaces.as_deref().unwrap_or(name);
+        let made = match t.calculated.iter().position(|d| d.name == old) {
+            Some(at) => {
+                t.calculated[at] = column;
+                "changed"
+            }
+            None => {
+                t.calculated.push(column);
+                "put on"
+            }
+        };
+        t.check().map_err(CommandError::Invalid)?;
+        let mut out = Outcome::new(vec![Change::Revise { id: object.id, base: object.revision, name: None, layer: None, attributes: None, body: Some(Body::Table(Arc::new(t))) }]);
+        out.notes.push(Note::info(format!("{}: the calculated column {name} {made}", object.name)));
         Ok(out)
     }
 }

@@ -175,12 +175,53 @@ Timing, release build, on the demo pit's 50m table (3,027 leaves, every field): 
 | `tableGrid.test.mjs` | a CSV's columns from its header, units left off, a quoted comma kept; the likely key | exact |
 | `zd-app --bench --dataflow` (demo pit) | three Base blocks by name take `checked`, "no such block" in the file only, undone; one leaf by strip, block, seam and bench takes a period of 4 months, undone; in Objects, a CSV chosen shows "1 of 1 record matched 1 solid" and Update 1 value sets zone east, undone | exact |
 
+## Built: workstream 5, calculated columns
+
+- **A table keeps its calculated columns** (`zd_core::CalculatedColumn`): a name, a unit, a script, how a group adds it
+  up (`CalcAddUp`: from its inputs, sum, largest, smallest, or weighted by a column) and the parameter tables its `p`
+  reads. They're kept as scripts with the table (the `.zdp` keeps them beside its columns' headers), worked out when
+  shown, never stored as numbers, and Run again keeps them.
+- **The formula is a dataflow formula on a row** (`table_calc.rs`, 0077's engine unchanged): `def formula(row, p):`
+  setting the column on the row, `row.strip_ratio = row["Insitu\\Waste\\volume"] / row["Insitu\\Coal\\volume"]`. It
+  reads the table's numbers by column (the folder names in brackets), its words (`row.seam`), and its parameter tables,
+  a row's values the first row of them that fits its words. It's checked against the table as it's typed, every problem
+  on its line, and one that never sets its column is said.
+- **How a group adds it up:** from its inputs, the formula is worked again on the group, each number it reads added up
+  by that column's own rule and each word kept where every row has the same, so a strip's ratio is its waste over its
+  coal. Otherwise each row's value is summed, the largest, the smallest, or averaged weighted by a column.
+- **A row it stops on** (dividing by an empty coal, words where a number is) has no value, and the rest go on; the
+  grid says how many and the first, with its line. Rows are run 256 at a time, and only a batch the formula stops in a
+  row at a time.
+- **The grid** (`grid_with`) works out each calculated column it shows or sorts by over the leaves the filter keeps.
+  Its head is in italics with ƒ to open it and a cross to take it out.
+- **`table.calculate`** puts a calculated column on a table or changes one (renamed through `replaces`), checking it
+  first; a name a column of values has, a weight that isn't a column of numbers, and every problem with its line are
+  refused. `table.remove_column` takes one out.
+- **The app:** **+ Calculated** in a reserves table's Grid opens its editor: name, unit, how a group adds it up, the
+  formula in the script box with its problems on their lines as it's typed, **Run on** the picked leaf line by line,
+  and **Copy for AI** and **Explain**, which carry the table's names and this formula, never a value. A new column's
+  `p` reads the parameter tables its table's dataflow reads.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_ratio_adds_up_from_the_group_s_own_inputs_not_its_rows` (made-up table) | blocks at 100/10 and 300/50: 10 and 6, strip 1 400/60 = 6.67, not 8; the total 450/60; strip 2, no coal, nothing, said with its row and line | 1e-12 |
+| `a_test_on_each_row_is_added_up_by_its_rule` | tonnes where ash is under 12, summed: 10; ash weighted by tonnes (10 × 10 + 20 × 50) / 60; the largest 20 | 1e-12 |
+| `a_row_s_parameters_are_the_first_row_that_fits_its_words` | a price of $80 for U and $60 otherwise: 800 + 4,000 = 4,800 | exact |
+| `a_formula_is_checked_and_traced_as_the_dataflow_s_are` | a name the table hasn't, on line 2; a formula that never sets its column; the names given; traced on B2, line 2 sets 6; on B3 it stops at line 2 | exact |
+| `rows_a_formula_stops_on_leave_the_rest_their_values` | 600 rows, every third with no coal: 200 stop, the first said, the other 400 their own value across batches | exact |
+| `a_calculated_column_is_put_on_a_table_and_kept_through_run_again` (made-up strip) | B1's strip ratio 55,000 / 50,500; a clashing name and a bad formula refused; kept through Run again; taken out and back with one undo | 1e-9 |
+| the `.zdp` round trip | a calculated column comes back with its script and rule | exact |
+| `tableGrid.test.mjs` | a new column's starter formula; Copy for AI's names, rule and script, no value | exact |
+| `zd-app --bench --dataflow` (demo pit) | a waste-to-coal column on Base: every strip's and the pit's is its own waste over coal (worst 0), the leaves with no coal said; traced on a leaf it sets itself; one undo takes it off | 1e-12 |
+
 ## Known limits
 
 - Entered values carry through Run again into the same table; a fresh reserves run makes a new table without them.
 - A paste fills one column, down from the cell pasted into.
 - Update records reads CSV only; an Excel file would need a new dependency.
 - A file can't add a record the target hasn't: a row, or an object.
+- Calculated columns are on reserves tables only; the Objects view has none yet. A calculated column can't read another.
+- A calculated column has no worked examples of its own yet, as a dataflow formula's are.
 - Every block runs on what's saved, not on the Parameters tab's unsaved edits, as the block shown does (0082).
 - Objects' numeric attributes other than the density have no rule, so a group shows none for them: qualities on blocks
   add up only once a reserves run has given them one.

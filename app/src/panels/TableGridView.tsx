@@ -28,6 +28,7 @@ export function TableGrid({
   editable,
   onEdit,
   onRemove,
+  onEditCalc,
 }: {
   grid: Grid;
   sort: Sort;
@@ -43,8 +44,10 @@ export function TableGrid({
   editable?: (row: GridRow, column: GridColumn) => boolean;
   /** Cells typed or pasted in a column: each leaf row and what was typed, in one go. */
   onEdit?: (column: GridColumn, cells: { row: GridRow; text: string }[]) => void;
-  /** An entered column taken out. */
+  /** An entered or calculated column taken out. */
   onRemove?: (column: GridColumn) => void;
+  /** A calculated column's formula opened (decision 6). */
+  onEditCalc?: (column: GridColumn) => void;
 }) {
   // A column pasted from this leaf down: it and the leaves after it, as shown, one value each.
   const pasteDown = (from: GridRow, column: GridColumn, text: string) => {
@@ -67,7 +70,7 @@ export function TableGrid({
                 key={c.name}
                 data-col={c.name}
                 title={`${columnTip(c)}. Click to sort each group's rows by it`}
-                className={cn('min-w-24 cursor-pointer border-b border-border px-2 py-1 text-right font-medium whitespace-nowrap select-none hover:text-foreground', c.kind === 'entered' && 'text-edited')}
+                className={cn('min-w-24 cursor-pointer border-b border-border px-2 py-1 text-right font-medium whitespace-nowrap select-none hover:text-foreground', c.kind === 'entered' && 'text-edited', c.kind === 'calculated' && 'italic')}
                 data-kind={c.kind}
                 onClick={() => onSort(c.name)}
               >
@@ -76,12 +79,26 @@ export function TableGrid({
                   {c.label}
                   {c.unit && <span className="font-normal text-muted-foreground">{unitLabel(c.unit)}</span>}
                   {sort?.column === c.name && (sort.descending ? <ChevronDown className="size-3" /> : <ChevronUp className="size-3" />)}
-                  {c.kind === 'entered' && onRemove && (
+                  {c.kind === 'calculated' && onEditCalc && (
+                    <button
+                      type="button"
+                      className="rounded px-0.5 font-serif text-muted-foreground not-italic hover:bg-accent hover:text-foreground"
+                      aria-label={`Open the calculated column ${c.name}`}
+                      title="A calculated column: its formula and how a group adds it up"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditCalc(c);
+                      }}
+                    >
+                      ƒ
+                    </button>
+                  )}
+                  {(c.kind === 'entered' || c.kind === 'calculated') && onRemove && (
                     <button
                       type="button"
                       className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                      aria-label={`Take the entered column ${c.name} out`}
-                      title="Take this entered column out of the table (one undo puts it back)"
+                      aria-label={`Take the ${c.kind} column ${c.name} out`}
+                      title={`Take this ${c.kind} column out of the table (one undo puts it back)`}
                       onClick={(e) => {
                         e.stopPropagation();
                         onRemove(c);

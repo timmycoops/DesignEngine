@@ -14,6 +14,7 @@ use zd_core::{AttrValue, Body, ColumnValues, ObjectId, Project, Table, TableColu
 use zd_reserves::AddUp;
 
 use crate::reserves_view::{add_up_column, children_of, levels, natural, rows_fitting};
+use crate::table_calc::{self, Calc, ParameterLookup};
 
 /// The most leaf rows a grid gives; past that the rest are counted in [`Grid::cut`], and a group is opened to see them.
 pub const GRID_LEAVES: usize = 5_000;
@@ -58,8 +59,11 @@ pub struct GridColumn {
     pub unit: String,
     pub text: bool,
     pub add_up: Option<AddUp>,
-    /// Written by a run, or entered by a person (decision 2): only an entered column's cells are typed in.
+    /// Written by a run, entered by a person, or calculated (decisions 2 and 6): only an entered column's cells are typed in.
     pub kind: zd_core::ColumnKind,
+    /// A calculated column's script and how it adds up, for its editor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calculated: Option<zd_core::CalculatedColumn>,
 }
 
 /// A cell: a number or words.
@@ -117,24 +121,67 @@ pub struct Grid {
     pub leaves: usize,
     /// Leaf rows under open groups left out past the limit.
     pub cut: usize,
+    /// What working out its calculated columns said: a formula that doesn't compile, rows it stopped on.
+    pub said: Vec<String>,
 }
 
 fn grid_column(c: &TableColumn) -> GridColumn {
     let mut parts: Vec<String> = c.name.split('\\').map(str::to_string).collect();
     let label = parts.pop().unwrap_or_default();
-    GridColumn { name: c.name.clone(), label, folders: parts, unit: c.unit.clone(), text: matches!(c.values, ColumnValues::Text(_)), add_up: c.add_up.clone(), kind: c.kind }
+    GridColumn { name: c.name.clone(), label, folders: parts, unit: c.unit.clone(), text: matches!(c.values, ColumnValues::Text(_)), add_up: c.add_up.clone(), kind: c.kind, calculated: None }
+}
+
+fn calc_column(c: &zd_core::CalculatedColumn) -> GridColumn {
+    let mut parts: Vec<String> = c.name.split('\\').map(str::to_string).collect();
+    let label = parts.pop().unwrap_or_default();
+    GridColumn { name: c.name.clone(), label, folders: parts, unit: c.unit.clone(), text: false, add_up: None, kind: zd_core::ColumnKind::Calculated, calculated: Some(c.clone()) }
 }
 
 /// The table as a grid: a total row, a subtotal a group of each `group` column under its parent, and the leaves under
 /// each innermost group that's open (under the total when there's no group), past the limit counted, not given.
 pub fn grid(table: &Table, ask: &GridAsk) -> Result<Grid, String> {
+    grid_with(table, ask, &|_| None)
+}
+
+/// [`grid`] with the table's calculated columns worked out (decision 6), their parameter tables found by `lookup`. Each
+/// calculated column shown is worked on every leaf the filter keeps, a group's value its own rule's.
+pub fn grid_with(table: &Table, ask: &GridAsk, lookup: ParameterLookup<'_>) -> Result<Grid, String> {
     table.check()?;
-    let every: Vec<GridColumn> = table.columns.iter().map(grid_column).collect();
+    let fitting = rows_fitting(table, &ask.when);
+    let levels = levels(table);
+    let mut every: Vec<GridColumn> = table.columns.iter().map(grid_column).collect();
+    every.extend(table.calculated.iter().map(calc_column));
     let groups: Vec<String> = every.iter().filter(|c| c.text && !c.name.contains('\\')).map(|c| c.name.clone()).collect();
+    // The calculated columns asked for, shown or sorted by, worked on the leaves kept; one that can't is said, empty.
+    let wanted = |n: &str| ask.columns.is_empty() || ask.columns.iter().any(|c| c == n) || ask.sort.as_ref().is_some_and(|s| s.column == n);
+    let label = |r: usize| {
+        let words: Vec<String> = levels.iter().map(|l| word_at(table, l, r)).filter(|w| !w.is_empty()).collect();
+        if words.is_empty() { format!("row {}", r + 1) } else { words.join(" ") }
+    };
+    let mut virtuals: Vec<TableColumn> = Vec::new();
+    let mut calcs: Vec<(String, Calc<'_>, Vec<Option<f64>>)> = Vec::new();
+    let mut said = Vec::new();
+    for c in table.calculated.iter().filter(|c| wanted(&c.name)) {
+        match table_calc::compile(table, c, lookup) {
+            Ok(calc) => {
+                let (values, stops) = table_calc::leaf_values(table, &calc, &fitting, &label);
+                if stops.stopped > 0 {
+                    said.push(format!("{}: no value on {} row{}, {}", c.name, stops.stopped, if stops.stopped == 1 { "" } else { "s" }, stops.first.unwrap_or_default()));
+                }
+                virtuals.push(TableColumn::number(&c.name, &c.unit, values.clone()));
+                calcs.push((c.name.clone(), calc, values));
+            }
+            Err(problems) => {
+                said.push(format!("{}: {}", c.name, problems.iter().map(|p| p.to_string()).collect::<Vec<_>>().join("; ")));
+                virtuals.push(TableColumn::number(&c.name, &c.unit, vec![None; table.rows()]));
+            }
+        }
+    }
+    let find = |n: &str| table.column(n).or_else(|| virtuals.iter().find(|v| v.name == n));
     let shown: Vec<&TableColumn> = if ask.columns.is_empty() {
-        table.columns.iter().collect()
+        table.columns.iter().chain(virtuals.iter()).collect()
     } else {
-        ask.columns.iter().map(|n| table.column(n).ok_or_else(|| format!("the table has no column {n}"))).collect::<Result<_, _>>()?
+        ask.columns.iter().map(|n| find(n).ok_or_else(|| format!("the table has no column {n}"))).collect::<Result<_, _>>()?
     };
     let mut group_words = Vec::new();
     for g in &ask.group {
@@ -145,22 +192,23 @@ pub fn grid(table: &Table, ask: &GridAsk) -> Result<Grid, String> {
         }
     }
     let sort = match &ask.sort {
-        Some(s) => Some((table.column(&s.column).ok_or_else(|| format!("the table has no column {} to sort by", s.column))?, s.descending)),
+        Some(s) => Some((find(&s.column).ok_or_else(|| format!("the table has no column {} to sort by", s.column))?, s.descending)),
         None => None,
     };
-    let levels = levels(table);
-    let fitting = rows_fitting(table, &ask.when);
     let open: BTreeSet<&Vec<String>> = ask.open.iter().collect();
-    let mut build = Build { table, shown: &shown, group: &ask.group, words: &group_words, levels: &levels, sort, open, budget: ask.limit.unwrap_or(GRID_LEAVES), cut: 0, rows: Vec::new() };
+    let mut build = Build { table, shown: &shown, calcs: &calcs, group: &ask.group, words: &group_words, levels: &levels, sort, open, budget: ask.limit.unwrap_or(GRID_LEAVES), cut: 0, rows: Vec::new() };
     build.rows.push(GridRow { kind: RowKind::Total, path: Vec::new(), label: "All".into(), depth: 0, leaves: fitting.len(), open: true, row: None, words: None, cells: build.cells(&fitting) });
     build.under(Vec::new(), &fitting);
     let (rows, cut) = (build.rows, build.cut);
-    Ok(Grid { columns: shown.iter().map(|c| grid_column(c)).collect(), every, groups, levels, rows, leaves: fitting.len(), cut })
+    let columns = shown.iter().map(|c| table.calculated.iter().find(|d| d.name == c.name && table.column(&c.name).is_none()).map_or_else(|| grid_column(c), calc_column)).collect();
+    Ok(Grid { columns, every, groups, levels, rows, leaves: fitting.len(), cut, said })
 }
 
 struct Build<'a> {
     table: &'a Table,
     shown: &'a [&'a TableColumn],
+    /// The calculated columns worked out: a group's value is its own rule's, not a stored column's.
+    calcs: &'a [(String, Calc<'a>, Vec<Option<f64>>)],
     group: &'a [String],
     words: &'a [Vec<String>],
     levels: &'a [String],
@@ -177,6 +225,9 @@ impl Build<'_> {
         self.shown
             .iter()
             .map(|c| match &c.values {
+                ColumnValues::Number(_) if let Some((_, calc, values)) = self.calcs.iter().find(|(n, _, _)| *n == c.name) => {
+                    table_calc::group_value(self.table, calc, leaves, values).map(Cell::Number)
+                }
                 ColumnValues::Number(_) => add_up_column(self.table, &c.name, leaves).map(Cell::Number),
                 ColumnValues::Text(v) => {
                     let mut words = leaves.iter().map(|&i| v[i].as_deref().unwrap_or(""));
@@ -359,7 +410,7 @@ pub fn objects_table(project: &Project, ids: &[ObjectId], density: Option<&str>)
         };
         columns.push(column);
     }
-    Table { columns }
+    Table { columns, calculated: Vec::new() }
 }
 
 #[cfg(test)]
@@ -379,6 +430,7 @@ mod tests {
                 TableColumn::adding("Insitu\\Coal\\rd", "t/m3", AddUp::Volume, n(&[1.4, 1.6, 1.5, 1.3])),
                 TableColumn::adding("Insitu\\Coal\\ash", "%", AddUp::Mass { density: "rd".into() }, n(&[10.0, 20.0, 15.0, 12.0])),
             ],
+            calculated: Vec::new(),
         }
     }
 

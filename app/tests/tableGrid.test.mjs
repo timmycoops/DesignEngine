@@ -2,7 +2,7 @@
 // with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cellText, changedWords, csvColumns, gridCsv, groupsKept, likelyKey, nextSort, pastedLines, readEntry, toggleOpen } from '../src/panels/tableGrid.ts';
+import { calcForAi, cellText, changedWords, csvColumns, gridCsv, groupsKept, likelyKey, nextSort, pastedLines, readEntry, starterScript, toggleOpen } from '../src/panels/tableGrid.ts';
 
 test('a group closed closes every group under it', () => {
   let open = toggleOpen([], ['3']);
@@ -78,4 +78,21 @@ test("a CSV's columns are its header's names, units left off, a quoted comma kep
   assert.deepEqual(csvColumns('\uFEFFblock,seam,rd (t/m3),"note, long"\r\nB1,U,1.4,x\r\n'), ['block', 'seam', 'rd', 'note, long']);
   assert.deepEqual(csvColumns('\n\nstrip,zone\n3,east'), ['strip', 'zone']);
   assert.deepEqual(likelyKey(['Block', 'seam', 'rd'], ['pit', 'strip', 'block', 'seam', 'bench']), ['Block', 'seam']);
+});
+
+test('a new calculated column starts with a formula that sets it on the row', () => {
+  assert.match(starterScript('strip_ratio'), /\n    row\.strip_ratio = 0\n$/);
+  assert.match(starterScript('ROM ratio'), /\n    row\["ROM ratio"\] = 0\n$/);
+  assert.match(starterScript('x'), /^def formula\(row, p\):/);
+});
+
+test('Copy for AI carries the names, the rule and the script, never a value', () => {
+  const names = { fields: [['Insitu\\Coal\\tonnes', 't']], labels: ['strip', 'seam'], parameters: [['price', '$/t', false]] };
+  const text = calcForAi('# How formulas are written', names, { name: 'strip_ratio', unit: 'm3/t', script: 'def formula(row):\n    row.strip_ratio = 1\n', adds: { by: 'from_inputs' } }, 'write');
+  assert.ok(text.startsWith('# How formulas are written'));
+  assert.ok(text.includes('Columns (numbers): Insitu\\Coal\\tonnes (t)'));
+  assert.ok(text.includes('Words: strip, seam'));
+  assert.ok(text.includes('Parameter columns: price ($/t)'));
+  assert.ok(text.includes("`strip_ratio` in m3/t, worked again on a group's own inputs"));
+  assert.ok(text.includes('row.strip_ratio = 1'));
 });

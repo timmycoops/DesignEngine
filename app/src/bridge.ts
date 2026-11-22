@@ -617,9 +617,36 @@ export interface GridColumn {
   unit: string;
   text: boolean;
   add_up: AddUp | null;
-  /** Written by a run, or entered by a person: only an entered column's cells are typed in (decision 2). */
-  kind: 'written' | 'entered';
+  /** Written by a run, entered by a person, or calculated: only an entered column's cells are typed in (decision 2). */
+  kind: 'written' | 'entered' | 'calculated';
+  /** A calculated column's script and rule, for its editor (decision 6). */
+  calculated?: CalculatedColumn;
 }
+
+/** How a calculated column adds up over a group (decision 6): from the group's own inputs, or its rows' values by a rule. */
+export type CalcAddUp = { by: 'from_inputs' | 'sum' | 'max' | 'min' } | { by: 'weighted_by'; column: string };
+
+/** A column worked out from each row by a formula, `def formula(row, p): row.name = …`, kept as its script. */
+export interface CalculatedColumn {
+  name: string;
+  unit?: string;
+  script: string;
+  adds: CalcAddUp;
+  /** The parameter tables its `p` reads, by id, in order. */
+  parameters?: string[];
+}
+
+/** A calculated column checked against its table: each problem on its line, and the names it may use (no values). */
+export interface CalcCheck {
+  problems: { message: string; line: number | null }[];
+  names: { fields: [string, string][]; labels: string[]; parameters: [string, string, boolean][] };
+}
+
+export const calcCheck = (object: string, column: CalculatedColumn) => invoke<CalcCheck>('calc_check', { object, column });
+/** A calculated column traced on one row of its table, line by line; nothing kept. */
+export const calcTrace = (object: string, column: CalculatedColumn, row: number, label: string) => invoke<FormulaTrace>('calc_trace', { object, column, row, label });
+/** The parameter tables a reserves table's dataflow reads, by id and name. */
+export const calcParameters = (object: string) => invoke<[string, string][]>('calc_parameters', { object });
 
 /** One row of a grid: the total, a group's subtotal, or a leaf (a row of the table). */
 export interface GridRow {
@@ -645,6 +672,8 @@ export interface Grid {
   leaves: number;
   /** Leaf rows left out past the limit. */
   cut: number;
+  /** What working out its calculated columns said: a formula that doesn't compile, rows it stopped on. */
+  said: string[];
 }
 
 export type GridSource = { of: 'table'; table: string } | { of: 'objects'; objects: string[]; density: string | null };

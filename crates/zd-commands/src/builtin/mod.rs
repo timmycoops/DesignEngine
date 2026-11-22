@@ -79,7 +79,7 @@ pub use starter::{DISCARDED, RENAMED_FIELDS, TONNES_AD_PER_M3, renamed_from_olde
 pub use zd_script::REFERENCE as FORMULA_REFERENCE;
 pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_formula_steps, check_formula_steps_flagging, declared as formula_declared};
 pub use dataflow::{DATAFLOW_LAYER, ExportParameters, PARAMETERS_LAYER, SaveDataflow, SaveParameters};
-pub use attributes::{AttributeCell, EnterInTable, EnterParams, Entry, RemoveColumn, RemoveColumnParams, SetAttributes, SetAttributesParams, TableCell};
+pub use attributes::{AttributeCell, CalculateInTable, CalculateParams, EnterInTable, EnterParams, Entry, RemoveColumn, RemoveColumnParams, SetAttributes, SetAttributesParams, TableCell};
 pub use update_records::{RecordChange, RecordsMode, RecordsReport, RecordsTarget, UpdateRecords, UpdateRecordsParams, match_records};
 
 use crate::{CommandError, Module, Registry};
@@ -178,6 +178,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(Module::Reserves, EnterInTable);
     registry.register(Module::Reserves, RemoveColumn);
     registry.register(Module::Reserves, UpdateRecords);
+    registry.register(Module::Reserves, CalculateInTable);
 }
 
 fn finite(point: &[f64; 3]) -> Result<(), CommandError> {

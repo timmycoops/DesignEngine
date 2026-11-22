@@ -754,7 +754,7 @@ pub async fn table_grid(source: GridSource, ask: zd_commands::table_grid::GridAs
         let project = app.session.project();
         match source {
             GridSource::Table { table } => match &project.object(table).ok_or("no such object")?.body {
-                zd_core::Body::Table(t) => zd_commands::table_grid::grid(t, &ask),
+                zd_core::Body::Table(t) => zd_commands::table_grid::grid_with(t, &ask, &|id| parameter_table(project, id)),
                 _ => Err("not a table".to_string()),
             },
             GridSource::Objects { objects, density } => zd_commands::table_grid::grid(&zd_commands::table_grid::objects_table(project, &objects, density.as_deref()), &ask),
@@ -771,6 +771,67 @@ pub async fn records_preview(params: zd_commands::builtin::UpdateRecordsParams, 
     blocking(move || {
         let app = app.lock().unwrap();
         zd_commands::builtin::match_records(app.session.project(), &params).map(|(report, _)| report).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
+/// A parameter table of the project, by id: what a calculated column's `p` reads.
+fn parameter_table(project: &zd_core::Project, id: ObjectId) -> Option<Arc<zd_core::ParameterTable>> {
+    match &project.object(id)?.body {
+        zd_core::Body::ParameterTable(t) => Some(t.clone()),
+        _ => None,
+    }
+}
+
+fn results_table(project: &zd_core::Project, id: ObjectId) -> Result<Arc<zd_core::Table>, String> {
+    match &project.object(id).ok_or("no such object")?.body {
+        zd_core::Body::Table(t) => Ok(t.clone()),
+        _ => Err("not a table".to_string()),
+    }
+}
+
+/// A calculated column as edited, checked against its table (Tables and scripts plan, decision 6): each problem on its
+/// line, and the names it may use. Nothing is kept.
+#[tauri::command]
+pub async fn calc_check(object: ObjectId, column: zd_core::CalculatedColumn, state: State<'_, AppState>) -> Result<zd_commands::table_calc::CalcCheck, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let table = results_table(project, object)?;
+        Ok(zd_commands::table_calc::check(&table, &column, &|id| parameter_table(project, id)))
+    })
+    .await?
+}
+
+/// A calculated column as edited, traced on one row of its table, line by line. Nothing is kept.
+#[tauri::command]
+pub async fn calc_trace(object: ObjectId, column: zd_core::CalculatedColumn, row: usize, label: String, state: State<'_, AppState>) -> Result<zd_commands::builtin::FormulaTraceView, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let table = results_table(project, object)?;
+        if row >= table.rows() {
+            return Err(format!("the table has {} rows", table.rows()));
+        }
+        let lookup = |id| parameter_table(project, id);
+        let calc = zd_commands::table_calc::compile(&table, &column, &lookup).map_err(|p| p.iter().map(|p| p.to_string()).collect::<Vec<_>>().join("; "))?;
+        Ok(zd_commands::table_calc::trace_row(&table, &calc, row, &label))
+    })
+    .await?
+}
+
+/// The parameter tables a reserves table's dataflow reads, by id and name: what a new calculated column's `p` reads.
+#[tauri::command]
+pub async fn calc_parameters(object: ObjectId, state: State<'_, AppState>) -> Result<Vec<(ObjectId, String)>, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let Ok(p) = zd_commands::builtin::rerun_params(project, app.session.log(), object, &[]) else { return Ok(Vec::new()) };
+        let Some(zd_core::Body::Dataflow(flow)) = project.object(p.dataflow).map(|o| &o.body) else { return Ok(Vec::new()) };
+        Ok(flow.parameters.iter().filter_map(|&id| project.object(id).map(|o| (id, o.name.clone()))).collect())
     })
     .await?
 }

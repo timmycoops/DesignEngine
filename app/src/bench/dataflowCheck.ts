@@ -4,7 +4,7 @@
 // Filtering plan L4), and what Properties shows read back.
 import { EditorView } from '@codemirror/view';
 import type { DockviewApi } from 'dockview-react';
-import { concealed, objectDetails, objectsAttributes, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesChanged, reservesColumn, reservesNodeOf, reservesRerunParams, reservesSolids, reservesStepGrid, reservesTree, recordsPreview, runCommand, solidsTable, tableGrid, undo, writePicture } from '../bridge';
+import { calcTrace, concealed, objectDetails, objectsAttributes, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesChanged, reservesColumn, reservesNodeOf, reservesRerunParams, reservesSolids, reservesStepGrid, reservesTree, recordsPreview, runCommand, solidsTable, tableGrid, undo, writePicture } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
 import { windowPicture } from './windowPicture';
 import { showPanel } from '../workspace/Workspace';
@@ -483,6 +483,31 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     const periods = period.rows.filter((r) => r.kind === 'leaf' && r.cells[0] !== null).map((r) => [(r.words ?? []).join(' '), r.cells[0]] as const);
     const months = period.columns[0]?.unit;
     await undo();
+    // A calculated column (decision 6): waste over coal by volume, from each group's own inputs. Every strip's is its
+    // own waste volume over its coal volume, the total the pit's; traced on a leaf it sets itself; one undo takes it off.
+    const ratioScript = 'def formula(row):\n    row.waste_to_coal = row["Insitu\\\\Waste\\\\volume"] / row["Insitu\\\\Coal\\\\volume"]\n';
+    const ratioColumn = { name: 'waste_to_coal', unit: 'm3/m3', script: ratioScript, adds: { by: 'from_inputs' as const } };
+    await runCommand('table.calculate', { table: baseTable.id, column: ratioColumn });
+    started = performance.now();
+    const byStripCalc = await tableGrid({ of: 'table', table: baseTable.id }, { group: ['pit', 'strip'], open: [['Pit']], columns: ['waste_to_coal', 'Insitu\\Waste\\volume', 'Insitu\\Coal\\volume'] });
+    const calcMs = performance.now() - started;
+    const calcRows = byStripCalc.rows.filter((r) => r.kind !== 'leaf');
+    const calcWorst = calcRows.reduce((w, r) => {
+      const [ratio, waste, coal] = r.cells as (number | null)[];
+      return ratio === null || waste === null || coal === null || coal === 0 ? Infinity : Math.max(w, Math.abs(ratio - waste / coal) / Math.abs(waste / coal));
+    }, 0);
+    const leafRow = (await tableGrid({ of: 'table', table: baseTable.id }, { columns: [], limit: 1 })).rows.find((r) => r.kind === 'leaf');
+    const traced = leafRow && leafRow.row !== null ? await calcTrace(baseTable.id, ratioColumn, leafRow.row, 'a leaf') : null;
+    await undo();
+    const calcGone = (await tableGrid({ of: 'table', table: baseTable.id }, { columns: [], limit: 1 })).every.every((c) => c.name !== 'waste_to_coal');
+    expect("a calculated waste-to-coal column: every strip's is its own waste over its coal, traced on a leaf it sets itself, one undo takes it off", calcRows.length > 2 && calcWorst <= 1e-12 && !!traced?.sets.some(([k]) => k === 'waste_to_coal') && calcGone, {
+      rows: calcRows.length,
+      worst: calcWorst,
+      said: byStripCalc.said,
+      traced: traced?.sets ?? null,
+      gone: calcGone,
+      ms: Math.round(calcMs),
+    });
     expect('a CSV by strip, block, seam and bench enters a period in months on that one leaf, and undoes', leafReport.targets === 1 && leafReport.changed === 1 && periods.length === 1 && periods[0][1] === 4 && months === 'months', { report: { targets: leafReport.targets, changed: leafReport.changed }, periods, unit: months });
 
     // A block's attribute typed in Objects (decision 4): a double-click opens the box, Enter keeps it, one undo puts it back.

@@ -1316,7 +1316,7 @@ pub fn units_at_step(project: &zd_core::Project, log: &[crate::LogEntry], table:
         table_columns.push(TableColumn { name: f.name.clone(), unit: unit_of_kind(f.kind).to_string(), add_up: Some(f.add_up.clone()), kind: zd_core::ColumnKind::Written, values: zd_core::ColumnValues::Number(v) });
     }
     let step_name = if step == 0 { "as input".to_string() } else { prepared.steps[step - 1].0.clone() };
-    Ok(StepUnits { step: step_name, upper, columns: columns.len(), stopped, table: Table { columns: table_columns } })
+    Ok(StepUnits { step: step_name, upper, columns: columns.len(), stopped, table: Table { columns: table_columns, calculated: Vec::new() } })
 }
 
 /// A table's column made ready to run: the dataflow prepared with the table's own run's parameters, the column's key,
@@ -2766,7 +2766,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
     for (name, words) in [("run", when.to_string()), ("dataflow", prepared.audit_dataflow.clone()), ("parameters", prepared.audit_tables.clone())] {
         columns.push(TableColumn::text(&format!("Summary\\Audit\\{name}"), leaves.iter().map(|_| Some(words.clone()).filter(|w| !w.is_empty())).collect()));
     }
-    Table { columns }
+    Table { columns, calculated: Vec::new() }
 }
 
 /// The table's balance (decision 0086): coal, waste and the two together, each with its volume at every stage, what
@@ -2969,7 +2969,7 @@ pub(crate) fn merge_rerun(old: &Table, new: &Table, upper: &[String], case: &str
             TableColumn { name: like.name.clone(), unit: newest.unit.clone(), add_up: newest.add_up.clone(), kind: like.kind, values }
         })
         .collect();
-    (Table { columns }, lost)
+    (Table { columns, calculated: old.calculated.clone() }, lost)
 }
 
 /// What a reserves table was made from that has changed since (decision 4 of 0099): its blocks revised since the run

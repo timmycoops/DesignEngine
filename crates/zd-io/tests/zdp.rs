@@ -249,6 +249,15 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
             // A column a planner entered (decision 0099): its kind comes back with it.
             TableColumn::text("comment", vec![Some("dragline first".into()), None, None]).entered(),
         ],
+        calculated: vec![zd_core::CalculatedColumn {
+            name: "ash_doubled".into(),
+            unit: "%".into(),
+            script: "def formula(row):
+    row.ash_doubled = row.ash * 2
+".into(),
+            adds: zd_core::CalcAddUp::WeightedBy { column: "volume".into() },
+            parameters: vec![],
+        }],
     };
     p.apply(RunId::new(), vec![Change::Create { name: "assumptions".into(), layer: "parameters".into(), attributes: Attributes::new(), body: Body::ParameterTable(Arc::new(parameters)) }])
         .unwrap();
@@ -282,6 +291,8 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
     assert!(volume[2].unwrap().is_sign_negative(), "minus zero kept");
     assert_eq!(t.column("comment").unwrap().kind, zd_core::ColumnKind::Entered, "an entered column stays entered");
     assert_eq!(t.column("ash").unwrap().kind, zd_core::ColumnKind::Written);
+    assert_eq!(t.calculated.len(), 1, "a calculated column comes back with its script and rule");
+    assert_eq!(t.calculated[0].adds, zd_core::CalcAddUp::WeightedBy { column: "volume".into() });
     let Body::Dataflow(d) = &named(&back, "reserves").body else { panic!("a dataflow") };
     assert_eq!(d.parameters, [table_id]);
     let id = named(&p, "Base in situ").id;

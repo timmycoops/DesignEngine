@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, Columns3, Download, FileUp, Focus, MousePointerSquareDashed, Palette } from 'lucide-react';
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { ReservesBalance } from './ReservesBalanceView';
-import { type Breakdown, type ChangedSince, type Grid, type GridColumn, type GridRow, reservesBreakdown, reservesChanged, reservesFilterRows, reservesNodeOf, reservesRerunParams, reservesSolids, reservesTree, type ReservesNode, tableGrid } from '@/bridge';
+import { type Breakdown, type CalculatedColumn, type ChangedSince, type Grid, type GridColumn, type GridRow, reservesBreakdown, reservesChanged, reservesFilterRows, reservesNodeOf, reservesRerunParams, reservesSolids, reservesTree, type ReservesNode, tableGrid } from '@/bridge';
 import { type When, whenText } from '@/filters';
 import { Choice, Field, FilterInput, GroupBy, IconButton, ObjectMenu } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
@@ -12,6 +12,7 @@ import { asPutBack, breakdownCsv, cellText, fieldRows, type Isolation, isolation
 import { fmt } from './format';
 import { TableGrid } from './TableGridView';
 import { UpdateRecords } from './UpdateRecords';
+import { CalculatedEditor } from './CalculatedEditor';
 import { changedWords, type Entry, gridCsv, groupsKept, nextSort, readEntry, type Sort, toggleOpen as toggleGroup } from './tableGrid';
 
 /**
@@ -137,6 +138,10 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
   const [rerunning, setRerunning] = useState(false);
   /** Update records from a CSV into the table's entered columns, its strip open under the head (decision 5). */
   const [updating, setUpdating] = useState(false);
+  /** A calculated column open in its editor (decision 6): the one changed, or a new one. */
+  const [calcOpen, setCalcOpen] = useState<{ editing: CalculatedColumn | null } | null>(null);
+  /** The leaf picked in the grid, by its row: what a calculated column's formula runs on. */
+  const [pickedRow, setPickedRow] = useState<{ row: number; label: string } | null>(null);
   /**
    * What's on screen alone, and what to put back: the table's layers (Show), or a node's solids (Isolate its solids) with
    * what it hid or showed. One at a time: a press of either puts the last back first.
@@ -262,7 +267,7 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
   // The grid (Tables and scripts plan, decision 1): the fields the Breakdown shows, as columns, over every leaf the
   // filter keeps, grouped and added up in the engine by each field's own rule.
   // The entered columns follow the run's fields (decision 2): the grid's last answer lists them.
-  const enteredKey = (grid?.every ?? []).filter((c) => c.kind === 'entered').map((c) => c.name).join('\u0001');
+  const enteredKey = (grid?.every ?? []).filter((c) => c.kind === 'entered' || c.kind === 'calculated').map((c) => c.name).join('\u0001');
   const gridColumns = useMemo(() => [...rows.flatMap((r) => (r.kind === 'field' ? [r.key] : [])), ...(enteredKey ? enteredKey.split('\u0001') : [])], [rows, enteredKey]);
   const levelsNow = breakdown?.levels ?? [];
   const groupBy = group ?? levelsNow.slice(0, -1);
@@ -293,6 +298,7 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
       setNode(r.words);
       setOpen([]);
       setLeaf(r.words);
+      if (r.row !== null) setPickedRow({ row: r.row, label: r.words.filter((w) => w).join(' ') });
     } else if (groupIsLevels) {
       setNode(r.path);
       setOpen([]);
@@ -504,6 +510,14 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
               }}
             />
             <div className="mt-3 flex flex-col gap-1" data-slot="add-column">
+              <button
+                type="button"
+                className="self-start text-muted-foreground hover:text-foreground hover:underline"
+                title="A column worked out from each leaf by a formula, as the dataflow's formulas are: a strip ratio, a value, a test on each leaf. Worked out when shown, never kept as numbers"
+                onClick={() => setCalcOpen({ editing: null })}
+              >
+                + Calculated
+              </button>
               {adding === null ? (
                 <button
                   type="button"
@@ -642,6 +656,23 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
             The first {fmt(breakdown.columns.length - 1)} of {fmt(breakdown.columns.length - 1 + breakdown.hidden)} leaves shown: pick a strip or block for the rest. The total holds them all.
           </div>
         )}
+        {view === 'grid' && calcOpen && table && (
+          <CalculatedEditor
+            key={calcOpen.editing?.name ?? '+'}
+            table={table.id}
+            numbers={(grid?.every ?? []).filter((c) => !c.text && c.kind !== 'calculated').map((c) => c.name)}
+            editing={calcOpen.editing}
+            picked={pickedRow}
+            onClose={() => setCalcOpen(null)}
+          />
+        )}
+        {view === 'grid' && grid && grid.said.length > 0 && (
+          <div className="px-2 py-1 text-warning" data-slot="grid-said">
+            {grid.said.map((s) => (
+              <div key={s}>{s}</div>
+            ))}
+          </div>
+        )}
         {view === 'grid' && grid && (
           <div className="min-h-0 flex-1" data-slot="reserves-grid">
             <TableGrid
@@ -655,6 +686,7 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
               editable={(r, c) => r.kind === 'leaf' && c.kind === 'entered'}
               onEdit={(c, cells) => void enter(c, cells)}
               onRemove={(c) => void removeColumn(c)}
+              onEditCalc={(c) => c.calculated && setCalcOpen({ editing: c.calculated })}
             />
           </div>
         )}
