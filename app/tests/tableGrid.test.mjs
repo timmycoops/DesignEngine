@@ -2,7 +2,7 @@
 // with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cellText, gridCsv, groupsKept, nextSort, toggleOpen } from '../src/panels/tableGrid.ts';
+import { cellText, changedWords, gridCsv, groupsKept, nextSort, pastedLines, readEntry, toggleOpen } from '../src/panels/tableGrid.ts';
 
 test('a group closed closes every group under it', () => {
   let open = toggleOpen([], ['3']);
@@ -51,4 +51,25 @@ test('the grid as CSV keeps exact values and says each row', () => {
 
 test('group-by columns the table no longer has drop out', () => {
   assert.deepEqual(groupsKept(['strip', 'pit', 'seam'], ['strip', 'block', 'seam']), ['strip', 'seam']);
+});
+
+test('a typed value is read for its column: blank is nothing, words stay words, a number must be one', () => {
+  assert.deepEqual(readEntry('  ', true), { value: null });
+  assert.deepEqual(readEntry('1,234.5', true), { value: 1234.5 });
+  assert.deepEqual(readEntry('-0.25', true), { value: -0.25 });
+  assert.deepEqual(readEntry('soon', true), { error: "soon isn't a number" });
+  assert.deepEqual(readEntry(' dragline first ', false), { value: 'dragline first' });
+  assert.deepEqual(readEntry('12', false), { value: '12' });
+});
+
+test('a pasted column is a value a line, a spreadsheet row cut to its first cell', () => {
+  assert.deepEqual(pastedLines('1.4\r\n1.5\r\n'), ['1.4', '1.5']);
+  assert.deepEqual(pastedLines('a\tb\nc\td'), ['a', 'c']);
+  assert.deepEqual(pastedLines('one'), ['one']);
+});
+
+test("what's changed since a table's run is said in a line", () => {
+  assert.equal(changedWords({ blocks: 0, others: [], gone: 0 }), '');
+  assert.equal(changedWords({ blocks: 2, others: [], gone: 0 }), "2 blocks changed since this table's run");
+  assert.equal(changedWords({ blocks: 1, others: ['Reserves assumptions'], gone: 3 }), "1 block, Reserves assumptions and 3 inputs deleted changed since this table's run");
 });

@@ -38,7 +38,10 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
   and a reserves table (a row a leaf) are both a `Table`, seen in the Tables tab's grid, `table_grid::grid`: grouped by
   any word column, every subtotal `add_up_column` over the group's leaves, as the Breakdown and the report add up. The
   Dataflow tab's Every block is a step's units for every column as such a table (`units_at_step`, run on demand from
-  what's saved, never kept). Its
+  what's saved, never kept). A column is written by a run or entered by a person (`ColumnKind`, `made` in JSON):
+  `table.enter` and `table.remove_column` touch entered columns only, Run again keeps them by each leaf's key and
+  says any whose leaf is gone, and `object.set_attributes` types blocks' attributes; the reserves run behind a table
+  is found by `table_run`, as its latest revision may be an entry. Its
   workstreams 2 to 9 (entered and calculated columns, update records, table and object scripts, a dataflow from any
   table) build on it.
 

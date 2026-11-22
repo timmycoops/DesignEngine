@@ -110,9 +110,46 @@ Timing, release build, on the demo pit's 50m table (3,027 leaves, every field): 
 | `every_block_at_a_step_is_each_column_s_units_at_it` (`reserves_run.rs`, the made-up strip) | As input, 9 units and B1, B2 90,000 m³ each; after `join_benches`, 10 units (B2's U benches one unit, an underburden a column), 280,000 m³, B2's U 70,000 m³; each block's units, by horizon and bench, the same as its own column opened at that step; past the last step refused | 1e-9 relative |
 | `zd-app --bench --dataflow` (demo pit, Base) | As input, 1,815 units of 90 blocks, 76,003,157.44 m³, the blocks' own volumes, in 47 ms; at `working_sections`, blocks 3 B1 and 4 B2 have the same units and volume as their own columns (7 each), in 39 ms; Every block in the tab shows "After rom_dilution: 2,671 units of 90 blocks", and This block brings Before and After back | 1e-9 relative |
 
+## Built: workstream 3, entered columns and blocks' attributes
+
+- **A column says what made it** (`zd_core::ColumnKind`): written by a run, or entered by a person. It's kept in the
+  `.zdp` with the column (as `made` in JSON, where `kind` is the values' own tag), and an entered column of words is
+  no level of the table.
+- **`table.enter`** enters values in a table's own column, made if it isn't there (numbers where every value given is
+  one, or words when asked). A column the run wrote is refused, so is words in a column of numbers and a row past the
+  table's. **`table.remove_column`** takes an entered column out; a written one is refused.
+- **Run again keeps them** (`merge_rerun`): an entered column's values on the leaves run again are found by each
+  leaf's key (its case and its levels' words). A value whose leaf the run no longer makes is said with its value
+  (`reserves.entered_lost`), never dropped silently.
+- **`object.set_attributes`** sets attributes on objects, every object revised once in one run, one undo; geometry,
+  name, layer and a solid's volume as they were. Nothing takes an attribute away; the object's own name, layer, kind,
+  volume and tonnes aren't attributes to type.
+- **Changed since this run** (`changed_since`): the blocks revised since the reserves run that last wrote the table,
+  and anything else it read, by name. A table's latest revision may now be an entry, not a run, so Open its column,
+  Every block and Run again find that reserves run by walking back through the log (`table_run`).
+- **The app:**
+  - The kit gains `EditableCell`: a double-click (or Enter) types, Enter or Tab keeps, Esc puts it back, and a column
+    pasted from a spreadsheet goes down the rows shown from there, in one run.
+  - **Objects:** every attribute's cells are typed or pasted, in the list and the grouped grid. **+ Attribute** adds
+    a column to type into. A value is read for its attribute: numbers for a column of numbers, a number where a new
+    one reads as one.
+  - **A reserves table's Grid:** entered columns follow the run's fields, their heads blue with a cross to take one
+    out, and their leaves' cells are typed or pasted. **+ Column** makes one, of numbers or words. A line says what has
+    changed since the table's run, with **Run again** (every block, on what's saved).
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `entered_values_are_kept_by_their_leaf_when_the_table_runs_again` (made-up strip) | a comment on B1 U and B2 L and a period on B1 L stay on those leaves when B1 runs again; Open its column still opens after an entry; with B1's L and U-L blocks deleted, "1 entered value on leaves this run no longer makes, not kept: Base Pit 3 B1 L: period = 2", the rest kept | exact |
+| `a_written_column_is_never_typed_over` | entering in `Insitu\Coal\volume` refused; words in a column of numbers refused; row 100 of 6 refused; a written column can't be taken out; an entered one comes out and one undo puts it back | exact |
+| `attributes_typed_in_the_grid_revise_their_blocks_only` | three cells on two blocks: "2 values set, 1 taken away on 2 objects", each revised once, mesh and volume as they were; two blocks changed since the run; one undo puts both back; `volume` refused | exact |
+| `a_table_holds_together_or_is_refused` (zd-core), the `.zdp` round trip (zd-io) | an entered column comes back entered through JSON and through the project file | exact |
+| `tableGrid.test.mjs` | a value read for its column, a pasted block cut to a value a line, what's changed said in a line | exact |
+| `zd-app --bench --dataflow` (demo pit) | two blocks' attributes set: two blocks changed since the run, none after one undo; a comment on two leaves stays on them when the whole table runs again, and two undos take it out; B99 typed in block 1_B1_OB_110's `block` cell in Objects is set, and one undo puts B1 back | exact |
+
 ## Known limits
 
-- The grid is a view: nothing in it is edited yet (workstreams 3 and 4).
+- Entered values carry through Run again into the same table; a fresh reserves run makes a new table without them.
+- A paste fills one column, down from the cell pasted into.
 - Every block runs on what's saved, not on the Parameters tab's unsaved edits, as the block shown does (0082).
 - Objects' numeric attributes other than the density have no rule, so a group shows none for them: qualities on blocks
   add up only once a reserves run has given them one.

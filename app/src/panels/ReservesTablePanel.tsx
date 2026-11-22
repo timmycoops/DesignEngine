@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, Columns3, Download, Focus, MousePointerSquareDashed, Palette } from 'lucide-react';
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { ReservesBalance } from './ReservesBalanceView';
-import { type Breakdown, type Grid, type GridRow, reservesBreakdown, reservesFilterRows, reservesNodeOf, reservesSolids, reservesTree, type ReservesNode, tableGrid } from '@/bridge';
+import { type Breakdown, type ChangedSince, type Grid, type GridColumn, type GridRow, reservesBreakdown, reservesChanged, reservesFilterRows, reservesNodeOf, reservesRerunParams, reservesSolids, reservesTree, type ReservesNode, tableGrid } from '@/bridge';
 import { type When, whenText } from '@/filters';
 import { Choice, Field, FilterInput, GroupBy, IconButton, ObjectMenu } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
@@ -11,7 +11,7 @@ import { useWorkspace } from '@/workspace/context';
 import { asPutBack, breakdownCsv, cellText, fieldRows, type Isolation, isolation, nodeForLeaf, samePath, startsWith, unitLabel } from './reservesTable';
 import { fmt } from './format';
 import { TableGrid } from './TableGridView';
-import { gridCsv, groupsKept, nextSort, type Sort, toggleOpen as toggleGroup } from './tableGrid';
+import { changedWords, type Entry, gridCsv, groupsKept, nextSort, readEntry, type Sort, toggleOpen as toggleGroup } from './tableGrid';
 
 /**
  * The reserves table (decision 0075, workstream 5a of 0070), the fields as rows as Tim asked: a node picked in the tree on
@@ -99,7 +99,7 @@ const keyOf = (path: string[]) => path.join('\u0001');
  * the head of the side column; `onDeleted` says the table went from its menu.
  */
 export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string; picker: ReactNode; onDeleted: () => void }) {
-  const { summary, selection, setSelection, openNotebook, followInNotebook, colourBlocksByField, fieldColoured, zoomTo, setObjectsVisible, setLayersVisible, setReservesFilter } = useWorkspace();
+  const { summary, selection, setSelection, openNotebook, followInNotebook, colourBlocksByField, fieldColoured, zoomTo, setObjectsVisible, setLayersVisible, setReservesFilter, runRecord } = useWorkspace();
   const last = selection[selection.length - 1] ?? null;
   const table = useMemo(() => (summary?.objects ?? []).find((o) => o.kind === 'table' && o.id === tableId) ?? null, [summary, tableId]);
 
@@ -129,6 +129,11 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
   const [gridOpen, setGridOpen] = useState<string[][]>([]);
   const [gridSort, setGridSort] = useState<Sort>(null);
   const [grid, setGrid] = useState<Grid | null>(null);
+  /** A new entered column being named (decision 2): its name and whether it holds words. */
+  const [adding, setAdding] = useState<{ name: string; words: boolean } | null>(null);
+  /** What the table was made from that has changed since its run (decision 4), and Run again going. */
+  const [changed, setChanged] = useState<ChangedSince | null>(null);
+  const [rerunning, setRerunning] = useState(false);
   /**
    * What's on screen alone, and what to put back: the table's layers (Show), or a node's solids (Isolate its solids) with
    * what it hid or showed. One at a time: a press of either puts the last back first.
@@ -253,7 +258,9 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
 
   // The grid (Tables and scripts plan, decision 1): the fields the Breakdown shows, as columns, over every leaf the
   // filter keeps, grouped and added up in the engine by each field's own rule.
-  const gridColumns = useMemo(() => rows.flatMap((r) => (r.kind === 'field' ? [r.key] : [])), [rows]);
+  // The entered columns follow the run's fields (decision 2): the grid's last answer lists them.
+  const enteredKey = (grid?.every ?? []).filter((c) => c.kind === 'entered').map((c) => c.name).join('\u0001');
+  const gridColumns = useMemo(() => [...rows.flatMap((r) => (r.kind === 'field' ? [r.key] : [])), ...(enteredKey ? enteredKey.split('\u0001') : [])], [rows, enteredKey]);
   const levelsNow = breakdown?.levels ?? [];
   const groupBy = group ?? levelsNow.slice(0, -1);
   const groupKey = groupBy.join('\u0001');
@@ -289,6 +296,57 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
       setLeaf(null);
     }
   };
+  // What's changed since the run, asked again whenever the project changes.
+  useEffect(() => {
+    let live = true;
+    if (!table) return setChanged(null);
+    void reservesChanged(table.id)
+      .then((c) => live && setChanged(c))
+      .catch(() => live && setChanged(null));
+    return () => {
+      live = false;
+    };
+  }, [tableKey, summary]);
+  const runAgain = async () => {
+    if (!table) return;
+    setRerunning(true);
+    try {
+      const reply = await runRecord('reserves.run', await reservesRerunParams(table.id, []));
+      setSaid(reply.error ?? 'Every block run again into the table: one undo puts it back');
+    } catch (e) {
+      setSaid(String(e));
+    } finally {
+      setRerunning(false);
+    }
+  };
+  /** Values typed or pasted in an entered column, each read for it; one run enters them all. */
+  const enter = async (c: GridColumn, cells: { row: GridRow; text: string }[]) => {
+    if (!table) return;
+    const read: { row: number; value: Entry }[] = [];
+    for (const { row, text } of cells) {
+      if (row.row === null) continue;
+      const r = readEntry(text, !c.text);
+      if ('error' in r) return setError(`${c.name}: ${r.error}`);
+      read.push({ row: row.row, value: r.value });
+    }
+    const reply = await runRecord('table.enter', { table: table.id, column: c.name, cells: read });
+    setError(reply.error ?? null);
+  };
+  const addColumn = async () => {
+    if (!table || !adding) return;
+    const name = adding.name.trim();
+    setAdding(null);
+    if (!name) return;
+    const reply = await runRecord('table.enter', { table: table.id, column: name, words: adding.words, cells: [] });
+    setError(reply.error ?? null);
+  };
+  const removeColumn = async (c: GridColumn) => {
+    if (!table) return;
+    const reply = await runRecord('table.remove_column', { table: table.id, column: c.name });
+    setError(reply.error ?? null);
+    if (!reply.error) setSaid(`${c.name} taken out: one undo puts it back`);
+  };
+  const changedLine = changed ? changedWords(changed) : '';
   const rowLit = (r: GridRow) => (r.kind === 'leaf' ? !!r.words && samePath(r.words, node) : groupIsLevels && r.kind === 'group' && samePath(r.path, node));
   // The fields of numbers by their folders, offered as the filter's typed (`ROM\Coal\ash`): never ticked, each leaf's its own.
   const fieldColumns = (breakdown?.fields ?? []).filter((f) => !f.words).map((f) => `${f.column}\t${f.unit}`).join('\n');
@@ -442,6 +500,34 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
                 setGridOpen([]);
               }}
             />
+            <div className="mt-3 flex flex-col gap-1" data-slot="add-column">
+              {adding === null ? (
+                <button
+                  type="button"
+                  className="self-start text-muted-foreground hover:text-foreground hover:underline"
+                  title="A column of your own beside the run's: typed or pasted on each leaf, kept by the leaf when the table runs again. The run's own numbers are never typed over"
+                  onClick={() => setAdding({ name: '', words: false })}
+                >
+                  + Column
+                </button>
+              ) : (
+                <>
+                  <input
+                    autoFocus
+                    aria-label="The new column's name"
+                    placeholder="name, Enter"
+                    className="h-6 rounded-md border border-input bg-input/30 px-1.5 text-xs outline-none"
+                    value={adding.name}
+                    onChange={(e) => setAdding({ ...adding, name: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') setAdding(null);
+                      if (e.key === 'Enter') void addColumn();
+                    }}
+                  />
+                  <Choice value={adding.words ? 'words' : 'numbers'} options={['numbers', 'words'] as const} labels={{ numbers: 'Numbers', words: 'Words' }} onChange={(v) => setAdding({ ...adding, words: v === 'words' })} label="What the new column holds" />
+                </>
+              )}
+            </div>
           </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-auto py-1" role="tree" aria-label="Levels">
@@ -528,6 +614,14 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
           </span>
         </div>
         {error && <div className="px-2 py-1 text-destructive">{error}</div>}
+        {changedLine && (
+          <div className="flex items-center gap-2 px-2 py-1 text-warning" data-slot="table-changed">
+            <span>{changedLine}: its numbers may not be theirs until it runs again.</span>
+            <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={rerunning} title="Run the reserves dataflow again for every block into this table, on what's saved: the table's next revision, one undo" onClick={() => void runAgain()}>
+              {rerunning ? 'Running…' : 'Run again'}
+            </Button>
+          </div>
+        )}
         {view !== 'grid' && breakdown && breakdown.hidden > 0 && (
           <div className="px-2 py-1 text-warning">
             The first {fmt(breakdown.columns.length - 1)} of {fmt(breakdown.columns.length - 1 + breakdown.hidden)} leaves shown: pick a strip or block for the rest. The total holds them all.
@@ -543,6 +637,9 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
               onRow={pickRow}
               lit={rowLit}
               rowWords={['leaf', 'leaves']}
+              editable={(r, c) => r.kind === 'leaf' && c.kind === 'entered'}
+              onEdit={(c, cells) => void enter(c, cells)}
+              onRemove={(c) => void removeColumn(c)}
             />
           </div>
         )}

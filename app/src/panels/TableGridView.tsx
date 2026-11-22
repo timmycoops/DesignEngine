@@ -1,15 +1,20 @@
-import { ChevronDown, ChevronRight, ChevronUp } from 'lucide-react';
-import type { Grid, GridRow } from '@/bridge';
+import { ChevronDown, ChevronRight, ChevronUp, X } from 'lucide-react';
+import type { Grid, GridColumn, GridRow } from '@/bridge';
+import { EditableCell } from '@/design-system/kit';
 import { ROW_HEIGHT, useRowWindow } from '@/design-system/DataTable';
 import { cn } from 'cn';
 import { fmt } from './format';
-import { cellText, columnTip, heldText, type Sort } from './tableGrid';
+import { cellText, columnTip, heldText, pastedLines, type Sort } from './tableGrid';
 import { unitLabel } from './reservesTable';
 
 /**
  * Any table as a grid (Tables and scripts plan, decision 1): the total, a row a group with its subtotal (each added up
  * by the column's own rule, in the engine), and the leaves of the groups opened. A header sorts each group's rows by it;
  * only the rows on screen are drawn, so thousands cost no more than a screenful.
+ *
+ * Where the panel says a leaf's cell can be typed in (decisions 2 and 4: an attribute, an entered column), a double-click
+ * types it and a pasted column fills the leaves below in the order shown; `onEdit` gets every cell at once, one run.
+ * An entered column's head is blue, with a cross to take it out where `onRemove` is given.
  */
 export function TableGrid({
   grid,
@@ -20,6 +25,9 @@ export function TableGrid({
   lit,
   rowWords,
   empty,
+  editable,
+  onEdit,
+  onRemove,
 }: {
   grid: Grid;
   sort: Sort;
@@ -31,7 +39,21 @@ export function TableGrid({
   /** What a row holds, in the words for one and many ("block", "blocks"). */
   rowWords: [string, string];
   empty?: string;
+  /** Whether a leaf's cell in this column can be typed in. */
+  editable?: (row: GridRow, column: GridColumn) => boolean;
+  /** Cells typed or pasted in a column: each leaf row and what was typed, in one go. */
+  onEdit?: (column: GridColumn, cells: { row: GridRow; text: string }[]) => void;
+  /** An entered column taken out. */
+  onRemove?: (column: GridColumn) => void;
 }) {
+  // A column pasted from this leaf down: it and the leaves after it, as shown, one value each.
+  const pasteDown = (from: GridRow, column: GridColumn, text: string) => {
+    if (!onEdit) return;
+    const lines = pastedLines(text);
+    const start = grid.rows.indexOf(from);
+    const targets = grid.rows.slice(start).filter((r) => r.kind === 'leaf' && (editable?.(r, column) ?? false)).slice(0, lines.length);
+    onEdit(column, targets.map((row, i) => ({ row, text: lines[i] })));
+  };
   const { scroller, first, last, onScroll } = useRowWindow(grid.rows.length, true);
   return (
     <div ref={scroller} onScroll={onScroll} className="h-full overflow-auto" data-slot="table-grid">
@@ -45,7 +67,8 @@ export function TableGrid({
                 key={c.name}
                 data-col={c.name}
                 title={`${columnTip(c)}. Click to sort each group's rows by it`}
-                className="min-w-24 cursor-pointer border-b border-border px-2 py-1 text-right font-medium whitespace-nowrap select-none hover:text-foreground"
+                className={cn('min-w-24 cursor-pointer border-b border-border px-2 py-1 text-right font-medium whitespace-nowrap select-none hover:text-foreground', c.kind === 'entered' && 'text-edited')}
+                data-kind={c.kind}
                 onClick={() => onSort(c.name)}
               >
                 <span className="inline-flex items-center gap-0.5">
@@ -53,6 +76,20 @@ export function TableGrid({
                   {c.label}
                   {c.unit && <span className="font-normal text-muted-foreground">{unitLabel(c.unit)}</span>}
                   {sort?.column === c.name && (sort.descending ? <ChevronDown className="size-3" /> : <ChevronUp className="size-3" />)}
+                  {c.kind === 'entered' && onRemove && (
+                    <button
+                      type="button"
+                      className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                      aria-label={`Take the entered column ${c.name} out`}
+                      title="Take this entered column out of the table (one undo puts it back)"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRemove(c);
+                      }}
+                    >
+                      <X className="size-3" />
+                    </button>
+                  )}
                 </span>
               </th>
             ))}
@@ -92,11 +129,29 @@ export function TableGrid({
                 <td className={cn('border-b border-border/40 px-2 py-px text-right text-muted-foreground', r.kind === 'total' && 'bg-muted/50')} title={heldText(r, rowWords[0], rowWords[1])}>
                   {r.kind === 'leaf' ? '' : fmt(r.leaves)}
                 </td>
-                {r.cells.map((v, k) => (
-                  <td key={grid.columns[k].name} className={cn('border-b border-border/40 px-2 py-px text-right whitespace-nowrap', r.kind === 'total' && 'bg-muted/50', r.kind === 'leaf' && 'text-muted-foreground', picked && 'text-primary')}>
-                    {cellText(v, grid.columns[k].unit)}
-                  </td>
-                ))}
+                {r.cells.map((v, k) => {
+                  const c = grid.columns[k];
+                  const typed = r.kind === 'leaf' && !!onEdit && (editable?.(r, c) ?? false);
+                  return (
+                    <td
+                      key={c.name}
+                      className={cn('border-b border-border/40 px-2 py-px text-right whitespace-nowrap', r.kind === 'total' && 'bg-muted/50', r.kind === 'leaf' && 'text-muted-foreground', c.kind === 'entered' && 'text-edited', picked && 'text-primary')}
+                    >
+                      {typed ? (
+                        <EditableCell
+                          shown={cellText(v, c.unit)}
+                          raw={v === null ? '' : String(v)}
+                          numeric={!c.text}
+                          label={`${c.name} of ${r.label}`}
+                          onCommit={(text) => onEdit?.(c, [{ row: r, text }])}
+                          onPasteLines={(text) => pasteDown(r, c, text)}
+                        />
+                      ) : (
+                        cellText(v, c.unit)
+                      )}
+                    </td>
+                  );
+                })}
               </tr>
             );
           })}

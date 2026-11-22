@@ -6,6 +6,7 @@ export { IconButton, RoadBadge, StatusBadge } from './badges';
 export { CellInput, Choice, Field, NumberInput, NumberOrBlank, Select, TargetInput, TargetOptions } from './fields';
 export { MENU_LIT, MENU_SURFACE } from './Select';
 export { FilterInput } from './FilterInput';
+export { EditableCell } from './EditableCell';
 export { GroupBy } from './GroupBy';
 export { type Range, readNumber, showNumber } from './number';
 export { type ResultAs, resultParams, type RunReport, RunResult, type ToolAction, ToolPanel, ToolSection, useResultAs } from './ToolPanel';

@@ -70,7 +70,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "object.delete",
             "object.delete_many",
             "object.move",
-            "object.rename",
+            "object.rename", "object.set_attributes",
             "object.transform",
             "object.trim",
             "parameters.export_csv",
@@ -132,7 +132,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "surface.from_mesh",
             "surface.import",
             "surface.merge",
-            "surface.triangulate",
+            "surface.triangulate", "table.enter", "table.remove_column",
             "workflow.save",
         ]
     );

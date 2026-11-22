@@ -58,6 +58,8 @@ pub struct GridColumn {
     pub unit: String,
     pub text: bool,
     pub add_up: Option<AddUp>,
+    /// Written by a run, or entered by a person (decision 2): only an entered column's cells are typed in.
+    pub kind: zd_core::ColumnKind,
 }
 
 /// A cell: a number or words.
@@ -120,7 +122,7 @@ pub struct Grid {
 fn grid_column(c: &TableColumn) -> GridColumn {
     let mut parts: Vec<String> = c.name.split('\\').map(str::to_string).collect();
     let label = parts.pop().unwrap_or_default();
-    GridColumn { name: c.name.clone(), label, folders: parts, unit: c.unit.clone(), text: matches!(c.values, ColumnValues::Text(_)), add_up: c.add_up.clone() }
+    GridColumn { name: c.name.clone(), label, folders: parts, unit: c.unit.clone(), text: matches!(c.values, ColumnValues::Text(_)), add_up: c.add_up.clone(), kind: c.kind }
 }
 
 /// The table as a grid: a total row, a subtotal a group of each `group` column under its parent, and the leaves under

@@ -953,7 +953,7 @@ pub fn read_project(input: &(impl Container + Sync)) -> Result<ReadProject, Stor
                             .iter()
                             .map(|h| {
                                 let values = if h.text { ColumnValues::Text(values.strs_opt(&h.name)?) } else { ColumnValues::Number(values.f64s_opt(&h.name)?) };
-                                Ok(TableColumn { name: h.name.clone(), unit: h.unit.clone(), add_up: h.add_up.clone(), values })
+                                Ok(TableColumn { name: h.name.clone(), unit: h.unit.clone(), add_up: h.add_up.clone(), kind: h.kind, values })
                             })
                             .collect::<Result<Vec<_>, StoreError>>()?;
                         if columns.first().is_some_and(|c: &TableColumn| c.values.len() != values.rows()) {

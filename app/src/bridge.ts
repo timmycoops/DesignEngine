@@ -617,6 +617,8 @@ export interface GridColumn {
   unit: string;
   text: boolean;
   add_up: AddUp | null;
+  /** Written by a run, or entered by a person: only an entered column's cells are typed in (decision 2). */
+  kind: 'written' | 'entered';
 }
 
 /** One row of a grid: the total, a group's subtotal, or a leaf (a row of the table). */
@@ -655,6 +657,15 @@ export interface GridAsk {
   sort?: { column: string; descending: boolean } | null;
   limit?: number;
 }
+
+/** What a reserves table was made from that has changed since its run (Tables and scripts plan, decision 4). */
+export interface ChangedSince {
+  blocks: number;
+  others: string[];
+  gone: number;
+}
+
+export const reservesChanged = (object: string) => invoke<ChangedSince>('reserves_changed', { object });
 
 /** Any table as a grid, grouped and added up by each column's own rule (Tables and scripts plan, decision 1). */
 export const tableGrid = (source: GridSource, ask: GridAsk) => invoke<Grid>('table_grid', { source, ask });

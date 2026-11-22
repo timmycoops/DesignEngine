@@ -3,6 +3,7 @@
 //! from DXF and CSV, objects out to DXF and CSV. Deswik drawings in (decision 0036), Spry projects in (decision 0039),
 //! and closed surfaces an import couldn't make solids fixed by repair (decision 0040).
 
+mod attributes;
 mod benches;
 mod blocks;
 mod build;
@@ -71,12 +72,13 @@ pub use from_surfaces::{Contours, ContoursParams, FromSection, FromSectionParams
 pub use measure::{MEASURES, Measure, MeasureParams, block_length, floor_dip, measure, plan_area};
 pub use reserves_run::{
     ColumnSteps, FormulaTraceView, ParamRead, StepKind, TraceLineView, column_trace, formula_trace, OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, StepWrite, UNDERBURDEN_THICKNESS, UnitView, Working, dataflow_starter, preston_sanders,
-    reserves_preview, rerun_params, table_column, StepUnits, units_at_step, Unsaved,
+    reserves_preview, rerun_params, table_column, StepUnits, units_at_step, ChangedSince, changed_since, Unsaved,
 };
 pub use starter::{DISCARDED, RENAMED_FIELDS, TONNES_AD_PER_M3, renamed_from_older, starter_formulas, with_starter_formulas};
 pub use zd_script::REFERENCE as FORMULA_REFERENCE;
 pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_formula_steps, check_formula_steps_flagging, declared as formula_declared};
 pub use dataflow::{DATAFLOW_LAYER, ExportParameters, PARAMETERS_LAYER, SaveDataflow, SaveParameters};
+pub use attributes::{AttributeCell, EnterInTable, EnterParams, Entry, RemoveColumn, RemoveColumnParams, SetAttributes, SetAttributesParams, TableCell};
 
 use crate::{CommandError, Module, Registry};
 
@@ -108,6 +110,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(Module::Design, TransformObjects);
     registry.register(Module::Design, CopyObjects);
     registry.register(Module::Design, RenameObject);
+    registry.register(Module::Design, SetAttributes);
     registry.register(Module::Design, DeleteObject);
     registry.register(Module::Design, CreateString);
     registry.register(Module::Design, WhereSurfacesMeet);
@@ -170,6 +173,8 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(Module::Reserves, SaveParameters);
     registry.register(Module::Reserves, SaveDataflow);
     registry.register(Module::Reserves, RunReserves);
+    registry.register(Module::Reserves, EnterInTable);
+    registry.register(Module::Reserves, RemoveColumn);
 }
 
 fn finite(point: &[f64; 3]) -> Result<(), CommandError> {

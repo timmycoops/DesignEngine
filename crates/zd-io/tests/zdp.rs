@@ -246,6 +246,8 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
             TableColumn::text("seam", vec![Some("U".into()), None, Some(String::new())]),
             TableColumn::adding("volume", "m3", AddUp::Sum, vec![Some(1234.5), None, Some(-0.0)]),
             TableColumn::number("ash", "%", vec![Some(f64::NAN), Some(12.25), None]),
+            // A column a planner entered (decision 0099): its kind comes back with it.
+            TableColumn::text("comment", vec![Some("dragline first".into()), None, None]).entered(),
         ],
     };
     p.apply(RunId::new(), vec![Change::Create { name: "assumptions".into(), layer: "parameters".into(), attributes: Attributes::new(), body: Body::ParameterTable(Arc::new(parameters)) }])
@@ -278,6 +280,8 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
     let Body::Table(t) = &named(&back, "Base in situ").body else { panic!("a table") };
     let zd_core::ColumnValues::Number(volume) = &t.column("volume").unwrap().values else { panic!("numbers") };
     assert!(volume[2].unwrap().is_sign_negative(), "minus zero kept");
+    assert_eq!(t.column("comment").unwrap().kind, zd_core::ColumnKind::Entered, "an entered column stays entered");
+    assert_eq!(t.column("ash").unwrap().kind, zd_core::ColumnKind::Written);
     let Body::Dataflow(d) = &named(&back, "reserves").body else { panic!("a dataflow") };
     assert_eq!(d.parameters, [table_id]);
     let id = named(&p, "Base in situ").id;

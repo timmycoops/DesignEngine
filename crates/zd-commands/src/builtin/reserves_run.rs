@@ -1313,7 +1313,7 @@ pub fn units_at_step(project: &zd_core::Project, log: &[crate::LogEntry], table:
         if names.contains(&f.name.as_str()) {
             continue;
         }
-        table_columns.push(TableColumn { name: f.name.clone(), unit: unit_of_kind(f.kind).to_string(), add_up: Some(f.add_up.clone()), values: zd_core::ColumnValues::Number(v) });
+        table_columns.push(TableColumn { name: f.name.clone(), unit: unit_of_kind(f.kind).to_string(), add_up: Some(f.add_up.clone()), kind: zd_core::ColumnKind::Written, values: zd_core::ColumnValues::Number(v) });
     }
     let step_name = if step == 0 { "as input".to_string() } else { prepared.steps[step - 1].0.clone() };
     Ok(StepUnits { step: step_name, upper, columns: columns.len(), stopped, table: Table { columns: table_columns } })
@@ -1339,11 +1339,11 @@ fn open_column(project: &zd_core::Project, log: &[crate::LogEntry], get: &dyn Fn
     let Body::Table(t) = &object.body else {
         return Err(CommandError::WrongKind { id: table, expected: ObjectKind::Table, found: object.kind() });
     };
-    let record = run_of(log, object.provenance).ok_or_else(|| CommandError::Invalid(format!("{} wasn't made by a reserves run in this project's log, so its columns can't be run again", object.name)))?;
+    let record = table_run(log, object).ok_or_else(|| CommandError::Invalid(format!("{} wasn't made by a reserves run in this project's log, so its columns can't be run again", object.name)))?;
     let p: RunReservesParams = serde_json::from_value(record.params.clone()).map_err(|e| CommandError::Invalid(format!("the run that made {} can't be read again: {e}", object.name)))?;
     // The run that last wrote this node's column (decision 0085): what it's read against for what has changed since. A
     // node's words start with its column's, so they're checked against what each run again took.
-    let wrote = run_for_column(log, object.provenance, node).unwrap_or(record);
+    let wrote = run_for_column(log, record.run, node).unwrap_or(record);
     let mut p: RunReservesParams = if std::ptr::eq(wrote, record) { p } else { serde_json::from_value(wrote.params.clone()).map_err(|e| CommandError::Invalid(format!("the run that made {} can't be read again: {e}", object.name)))? };
     let record = wrote;
     let mut changed: Vec<String> = Vec::new();
@@ -2717,7 +2717,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
             // summary shows neither.
             // So is a block's dip (decision 0086): the Reserves table tab adds these up by block.
             let across = if matches!(f.kind, FieldKind::Thickness | FieldKind::Area | FieldKind::Length) || f.name == "dip" { None } else { Some(f.add_up.clone()) };
-            push(TableColumn { name: format!("{folder}\\{}", f.name), unit: unit_of_field(f).to_string(), add_up: across, values: zd_core::ColumnValues::Number(value(i)) });
+            push(TableColumn { name: format!("{folder}\\{}", f.name), unit: unit_of_field(f).to_string(), add_up: across, kind: zd_core::ColumnKind::Written, values: zd_core::ColumnValues::Number(value(i)) });
         }
         let tonnes = |d: usize| added.iter().map(|a| a.as_ref().map(|a| a[v] * a[d]).filter(|x| x.is_finite())).collect::<Vec<_>>();
         let named = |n: &str| format!("{folder}\\{n}");
@@ -2897,23 +2897,35 @@ fn into_table(out: &mut Outcome, object: &Arc<Object>, prepared: &Prepared, p: &
         return Err(CommandError::Invalid(format!("no block of {} ran, so nothing was run again", object.name)));
     };
     let case = crate::reserves_view::case_of(&object.attributes);
-    let merged = merge_rerun(old, &new, &prepared.upper, &case, &p.only);
+    let (merged, lost) = merge_rerun(old, &new, &prepared.upper, &case, &p.only);
     let kept = merged.rows() - new.rows();
     out.changes = vec![Change::Revise { id: object.id, base: object.revision, name: None, layer: None, attributes: None, body: Some(Body::Table(Arc::new(merged))) }];
     let under = if p.only.is_empty() { "every block".to_string() } else { p.only.join(" › ") };
     out.notes.push(Note::info(format!("{}: {under} run again, {} lea{} written, {kept} kept as they were", object.name, new.rows(), if new.rows() == 1 { "f" } else { "ves" })));
+    // Values a person entered on a leaf the run no longer makes: said with each value, never dropped silently (0099).
+    if !lost.is_empty() {
+        out.notes.push(Note::warning(Code::ReservesEnteredLost, format!("{} entered value{} on leaves this run no longer makes, not kept: {}", lost.len(), plural(lost.len()), lost.join("; "))));
+    }
     Ok(())
 }
 
 /// `old` with its rows of `case` whose levels above the seam start with `only` taken out and `new`'s rows added after the
-/// rest; columns by name, `old`'s first then any only `new` has, a value missing on either side left empty.
-pub(crate) fn merge_rerun(old: &Table, new: &Table, upper: &[String], case: &str, only: &[String]) -> Table {
+/// rest; columns by name, `old`'s first then any only `new` has, a value missing on either side left empty. A column a
+/// person entered (decision 2 of 0099) keeps its values on the rows run again, matched by each row's key, its case and
+/// its levels' words; a value whose leaf the run no longer makes is given back as `leaf: column = value`.
+pub(crate) fn merge_rerun(old: &Table, new: &Table, upper: &[String], case: &str, only: &[String]) -> (Table, Vec<String>) {
     let word = |t: &Table, name: &str, r: usize| match t.column(name).map(|c| &c.values) {
         Some(zd_core::ColumnValues::Text(v)) => v[r].clone().unwrap_or_default(),
         _ => String::new(),
     };
     let rerun = |r: usize| word(old, "case", r) == case && only.iter().zip(upper).all(|(w, level)| word(old, level, r) == *w);
     let keep: Vec<usize> = (0..old.rows()).filter(|&r| !rerun(r)).collect();
+    // Each row's key: its case and its levels' words, the run's levels (an entered column is none of them).
+    let levels = crate::reserves_view::levels(new);
+    let key = |t: &Table, r: usize| std::iter::once(word(t, "case", r)).chain(levels.iter().map(|l| word(t, l, r))).collect::<Vec<_>>();
+    let old_at: BTreeMap<Vec<String>, usize> = (0..old.rows()).filter(|&r| rerun(r)).map(|r| (key(old, r), r)).collect();
+    let new_at: Vec<Option<usize>> = (0..new.rows()).map(|r| old_at.get(&key(new, r)).copied()).collect();
+    let mut lost = Vec::new();
     let mut names: Vec<&TableColumn> = old.columns.iter().collect();
     names.extend(new.columns.iter().filter(|c| old.column(&c.name).is_none()));
     let columns = names
@@ -2921,40 +2933,109 @@ pub(crate) fn merge_rerun(old: &Table, new: &Table, upper: &[String], case: &str
         .map(|like| {
             let from_old = old.column(&like.name);
             let from_new = new.column(&like.name);
+            let entered = !like.kind.is_written();
+            // A row run again: the run's value, or for an entered column the value its key had before.
+            let source = |r: usize| if entered { new_at[r].map(|o| (from_old, o)) } else { Some((from_new, r)) };
+            if entered {
+                let taken: std::collections::BTreeSet<usize> = new_at.iter().flatten().copied().collect();
+                for (k, &r) in &old_at {
+                    let value = match from_old.map(|c| &c.values) {
+                        Some(zd_core::ColumnValues::Number(v)) => v[r].map(|x| x.to_string()),
+                        Some(zd_core::ColumnValues::Text(v)) => v[r].clone(),
+                        None => None,
+                    };
+                    if let Some(value) = value.filter(|_| !taken.contains(&r)) {
+                        lost.push(format!("{}: {} = {value}", k.iter().filter(|w| !w.is_empty()).cloned().collect::<Vec<_>>().join(" "), like.name));
+                    }
+                }
+            }
             let values = match &like.values {
                 zd_core::ColumnValues::Number(_) => {
                     let get = |c: Option<&TableColumn>, r: usize| match c.map(|c| &c.values) {
                         Some(zd_core::ColumnValues::Number(v)) => v[r],
                         _ => None,
                     };
-                    zd_core::ColumnValues::Number(keep.iter().map(|&r| get(from_old, r)).chain((0..new.rows()).map(|r| get(from_new, r))).collect())
+                    zd_core::ColumnValues::Number(keep.iter().map(|&r| get(from_old, r)).chain((0..new.rows()).map(|r| source(r).and_then(|(c, at)| get(c, at)))).collect())
                 }
                 zd_core::ColumnValues::Text(_) => {
                     let get = |c: Option<&TableColumn>, r: usize| match c.map(|c| &c.values) {
                         Some(zd_core::ColumnValues::Text(v)) => v[r].clone(),
                         _ => None,
                     };
-                    zd_core::ColumnValues::Text(keep.iter().map(|&r| get(from_old, r)).chain((0..new.rows()).map(|r| get(from_new, r))).collect())
+                    zd_core::ColumnValues::Text(keep.iter().map(|&r| get(from_old, r)).chain((0..new.rows()).map(|r| source(r).and_then(|(c, at)| get(c, at)))).collect())
                 }
             };
             let newest = from_new.unwrap_or(like);
-            TableColumn { name: like.name.clone(), unit: newest.unit.clone(), add_up: newest.add_up.clone(), values }
+            TableColumn { name: like.name.clone(), unit: newest.unit.clone(), add_up: newest.add_up.clone(), kind: like.kind, values }
         })
         .collect();
-    Table { columns }
+    (Table { columns }, lost)
+}
+
+/// What a reserves table was made from that has changed since (decision 4 of 0099): its blocks revised since the run
+/// that last wrote the table read them (an attribute typed in the grid, a block cut again), anything else it read by
+/// name (its dataflow, a parameter table, the seam model), and how many of its inputs are gone. Nothing runs again by
+/// itself (rule 4): the Tables tab says so, with Run again (0085).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ChangedSince {
+    pub blocks: usize,
+    pub others: Vec<String>,
+    pub gone: usize,
+}
+
+impl ChangedSince {
+    pub fn is_empty(&self) -> bool {
+        self.blocks == 0 && self.others.is_empty() && self.gone == 0
+    }
+}
+
+pub fn changed_since(project: &zd_core::Project, log: &[crate::LogEntry], table: ObjectId) -> Result<ChangedSince, CommandError> {
+    let object = project.object(table).ok_or(CommandError::MissingObject(table))?;
+    let record = table_run(log, object).ok_or_else(|| CommandError::Invalid(format!("{} wasn't made by a reserves run in this project's log", object.name)))?;
+    let mut changed = ChangedSince::default();
+    for input in &record.inputs {
+        if input.id == table {
+            continue;
+        }
+        match project.object(input.id) {
+            Some(o) if o.revision != input.revision => {
+                if matches!(o.body, Body::Solid(_)) {
+                    changed.blocks += 1;
+                } else {
+                    changed.others.push(o.name.clone());
+                }
+            }
+            None => changed.gone += 1,
+            _ => {}
+        }
+    }
+    Ok(changed)
 }
 
 /// The settings to run a reserves table's blocks under `only` again into it (decision 0085): its own run's, read from the
 /// log as the column view reads them, the blocks still there, the table and the run that last wrote it named.
 pub fn rerun_params(project: &zd_core::Project, log: &[crate::LogEntry], table: ObjectId, only: &[String]) -> Result<RunReservesParams, CommandError> {
     let object = project.object(table).ok_or(CommandError::MissingObject(table))?;
-    let record = run_of(log, object.provenance).ok_or_else(|| CommandError::Invalid(format!("{} wasn't made by a reserves run in this project's log, so it can't be run again", object.name)))?;
+    let record = table_run(log, object).ok_or_else(|| CommandError::Invalid(format!("{} wasn't made by a reserves run in this project's log, so it can't be run again", object.name)))?;
     let mut p: RunReservesParams = serde_json::from_value(record.params.clone()).map_err(|e| CommandError::Invalid(format!("the run that made {} can't be read again: {e}", object.name)))?;
     p.blocks.retain(|id| project.object(*id).is_some());
     p.table = Some(table);
     p.only = only.to_vec();
-    p.previous = Some(object.provenance);
+    p.previous = Some(record.run);
     Ok(p)
+}
+
+/// The reserves run that last wrote a table: the run its revision came from, or where a person has since entered values
+/// in it (decision 2 of 0099), the last reserves run before that which made or revised it.
+fn table_run<'a>(log: &'a [crate::LogEntry], object: &Object) -> Option<&'a crate::RunRecord> {
+    if let Some(record) = run_of(log, object.provenance) {
+        return Some(record);
+    }
+    let at = log.iter().position(|e| matches!(e, crate::LogEntry::Run(r) if r.run == object.provenance)).unwrap_or(log.len());
+    log[..at].iter().rev().find_map(|e| match e {
+        crate::LogEntry::Run(r) if r.command == RunReserves::NAME && r.outputs.iter().any(|o| o.id == object.id) => Some(r),
+        _ => None,
+    })
 }
 
 /// The reserves run with this id in the log.
