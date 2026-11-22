@@ -2436,3 +2436,44 @@ fn a_csv_updates_a_table_s_entered_columns_on_its_leaves() {
     let (report, _) = match_records(s.project(), &into("block,seam,Insitu\\Coal\\volume\nB1,U,1\n", RecordsMode::Update)).unwrap();
     assert!(report.refused[0].contains("written by the run"), "{:?}", report.refused);
 }
+
+/// A calculated column on a reserves table (Tables and scripts plan, decision 6): B1's strip ratio from its own inputs,
+/// its waste over its coal, (50,000 + 5,000) m³ over (28,000 + 22,500) t. A name a column of values has, and a formula
+/// that doesn't compile, are refused with why; Run again keeps the column; taken out, one undo puts it back.
+#[test]
+fn a_calculated_column_is_put_on_a_table_and_kept_through_run_again() {
+    use zd_commands::table_grid::{Cell, GridAsk, grid};
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "in_situ", "join_benches"]);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let script = "def formula(row):\n    row.strip_ratio = row[\"Insitu\\\\Waste\\\\volume\"] / row[\"Insitu\\\\Coal\\\\tonnes\"]\n";
+    let column = json!({ "name": "strip_ratio", "unit": "m3/t", "script": script, "adds": { "by": "from_inputs" } });
+    let put = s.run("table.calculate", json!({ "table": id, "column": column })).unwrap();
+    assert_eq!(put.messages, ["Reserves Base: the calculated column strip_ratio put on"]);
+    let ratio_of = |s: &Session, block: &str| {
+        let g = grid(&table(s, id), &GridAsk { group: vec!["block".into()], columns: vec!["strip_ratio".into()], ..Default::default() }).unwrap();
+        g.rows.iter().find(|r| r.label == block).and_then(|r| match r.cells[0] {
+            Some(Cell::Number(x)) => Some(x),
+            _ => None,
+        })
+    };
+    assert!(close(ratio_of(&s, "B1").unwrap(), 55_000.0 / 50_500.0), "{:?}", ratio_of(&s, "B1"));
+
+    let clash = s.run("table.calculate", json!({ "table": id, "column": { "name": "block", "script": script, "adds": { "by": "sum" } } })).unwrap_err();
+    assert!(clash.to_string().contains("a column of the table's values already"), "{clash}");
+    let bad = s.run("table.calculate", json!({ "table": id, "column": { "name": "x", "script": "def formula(row):\n    row.x = row.no_such\n", "adds": { "by": "sum" } } })).unwrap_err();
+    assert!(bad.to_string().contains("line 2"), "{bad}");
+
+    let column_words = |block: &str| ["Pit", "3", block].map(String::from).to_vec();
+    let p = rerun_params(s.project(), s.log(), id, &column_words("B1")).unwrap();
+    s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+    assert_eq!(table(&s, id).calculated.len(), 1, "Run again keeps it");
+    assert!(close(ratio_of(&s, "B1").unwrap(), 55_000.0 / 50_500.0));
+
+    s.run("table.remove_column", json!({ "table": id, "column": "strip_ratio" })).unwrap();
+    assert!(table(&s, id).calculated.is_empty());
+    s.undo();
+    assert_eq!(table(&s, id).calculated.len(), 1, "one undo puts it back");
+}

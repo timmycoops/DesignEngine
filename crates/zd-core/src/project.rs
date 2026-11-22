@@ -969,6 +969,7 @@ mod tests {
                     TableColumn::text("bench", t(&["100", "110", "", ""])),
                     TableColumn { name: "Insitu\\Coal\\volume".into(), unit: "m3".into(), add_up: None, kind: crate::ColumnKind::Written, values: ColumnValues::Number(coal.map(Some).to_vec()) },
                 ],
+                calculated: Vec::new(),
             }))
         };
         let solid = || Body::Solid(Solid::new(TriMesh::new(vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], vec![[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]])).unwrap());

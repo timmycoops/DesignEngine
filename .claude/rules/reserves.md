@@ -5,8 +5,8 @@ paths:
   - "crates/zd-geom/src/reserves.rs"
   - "crates/zd-core/src/{dataflow,parameters,table,leaves,workflow}.rs"
   - "crates/zd-commands/src/builtin/{reserves_run,dataflow,formulas,starter,interrogate,compare,measure,workflow}.rs"
-  - "crates/zd-commands/src/{reserves_view,table_grid,workflow,workflow_run,report,report_html}.rs"
-  - "app/src/panels/{Reserves,Dataflow,Parameters,Formula,ColumnSteps,StepPane,BlockTable,Tables,TableGrid,Workflow}*"
+  - "crates/zd-commands/src/{reserves_view,table_grid,table_calc,workflow,workflow_run,report,report_html}.rs"
+  - "app/src/panels/{Reserves,Dataflow,Parameters,Formula,ColumnSteps,StepPane,BlockTable,Tables,TableGrid,Calculated,UpdateRecords,Workflow}*"
   - "app/src/panels/{reserves,dataflow,parameters,formula,columnSteps,notebook,blockTable,tableGrid,workflow}*"
 ---
 
@@ -42,7 +42,10 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
   `table.enter` and `table.remove_column` touch entered columns only, Run again keeps them by each leaf's key and
   says any whose leaf is gone, and `object.set_attributes` types blocks' attributes; the reserves run behind a table
   is found by `table_run`, as its latest revision may be an entry. `table.update_records` takes a CSV matched on key
-  columns into objects' attributes or a table's entered columns, its report (`match_records`) shown first. Its
+  columns into objects' attributes or a table's entered columns, its report (`match_records`) shown first. A table's
+  calculated columns (`CalculatedColumn`, `table_calc.rs`) are dataflow formulas on a row, `def formula(row, p):`,
+  kept as scripts and worked out by `grid_with`, a group from its inputs or its rows by a rule; `table.calculate` puts
+  one on. Its
   workstreams 2 to 9 (entered and calculated columns, update records, table and object scripts, a dataflow from any
   table) build on it.
 

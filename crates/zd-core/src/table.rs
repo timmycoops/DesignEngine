@@ -34,6 +34,9 @@ pub enum ColumnKind {
     #[default]
     Written,
     Entered,
+    /// Worked out from the row when shown (decision 6): a table's grid says a calculated column is one. A column of
+    /// values is never calculated; its script is a [`CalculatedColumn`].
+    Calculated,
 }
 
 impl ColumnKind {
@@ -96,10 +99,44 @@ pub struct ColumnHeader {
     pub kind: ColumnKind,
 }
 
-/// A table: columns of one length, names unique.
+/// How a calculated column adds up over a group of rows (Tables and scripts plan, decision 6).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "by")]
+pub enum CalcAddUp {
+    /// Worked again on the group's own inputs, each added up by its rule: a ratio's way, so a strip's strip ratio is its
+    /// waste over its coal, never an average of its blocks'.
+    FromInputs,
+    /// Worked on each row, then summed: a test on each leaf (tonnes where ash is under 12).
+    Sum,
+    /// Worked on each row, then the largest.
+    Max,
+    /// Worked on each row, then the smallest.
+    Min,
+    /// Worked on each row, then averaged weighted by a column of the table (a quality by its tonnes).
+    WeightedBy { column: String },
+}
+
+/// A column worked out from each row by a script, when it's shown, never kept as numbers (decision 6): a formula that
+/// sets the column on the row, `def formula(row, p): row.strip_ratio = …`, reading the row's columns, its words, and the
+/// parameter tables it names, by the row's words.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalculatedColumn {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub unit: String,
+    pub script: String,
+    pub adds: CalcAddUp,
+    /// The parameter tables `p` reads, in order: a row's value is the first row of them that fits its words.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<crate::ObjectId>,
+}
+
+/// A table: columns of one length, names unique, and the columns worked out from them.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Table {
     pub columns: Vec<TableColumn>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calculated: Vec<CalculatedColumn>,
 }
 
 impl Table {
@@ -115,6 +152,14 @@ impl Table {
             }
             if c.values.len() != rows {
                 return Err(format!("the column {} has {} values for {rows} rows", c.name, c.values.len()));
+            }
+        }
+        for (i, c) in self.calculated.iter().enumerate() {
+            if c.name.trim().is_empty() {
+                return Err("a calculated column has no name".into());
+            }
+            if self.column(&c.name).is_some() || self.calculated[..i].iter().any(|d| d.name == c.name) {
+                return Err(format!("the column {} is named twice", c.name));
             }
         }
         Ok(())
@@ -145,6 +190,7 @@ mod tests {
                 TableColumn::text("seam", vec![Some("U".into()), Some("L".into())]),
                 TableColumn::number("volume", "m3", vec![Some(100.0), None]),
             ],
+            calculated: Vec::new(),
         };
         t.check().unwrap();
         assert_eq!(t.rows(), 2);

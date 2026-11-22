@@ -108,3 +108,46 @@ export function csvColumns(text: string): string[] {
 
 /** The file's columns likely to be its key, the ones the target has by name: a table's levels, a block's cut words. */
 export const likelyKey = (columns: readonly string[], keys: readonly string[]) => columns.filter((c) => keys.some((k) => k.toLowerCase() === c.toLowerCase()));
+
+/** A new calculated column's formula to start from: it sets the column on the row (decision 6). */
+export function starterScript(name: string): string {
+  const field = /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? `row.${name}` : `row[${JSON.stringify(name)}]`;
+  return `def formula(row, p):\n    # Read the row's columns by name, row["Insitu\\\\Coal\\\\tonnes"], its words (row.seam) and p's parameters.\n    ${field} = 0\n`;
+}
+
+/**
+ * A calculated column for an AI to write or explain (decision 6, as 0077's Copy for AI): how formulas are written, the
+ * table's names and units, its words, the parameters, and this column's rule and script. Names only, never a value.
+ */
+export function calcForAi(
+  reference: string,
+  names: { fields: [string, string][]; labels: string[]; parameters: [string, string, boolean][] } | null,
+  column: { name: string; unit?: string; script: string; adds: { by: string; column?: string } },
+  ask: 'write' | 'explain',
+): string {
+  const adds: Record<string, string> = {
+    from_inputs: "worked again on a group's own inputs, each added up by its rule (a ratio's way)",
+    sum: "worked on each row, then summed",
+    max: 'worked on each row, then the largest',
+    min: 'worked on each row, then the smallest',
+    weighted_by: `worked on each row, then averaged weighted by ${column.adds.column ?? 'a column'}`,
+  };
+  const lines = [
+    reference.trim(),
+    '',
+    '## This table',
+    'A calculated column is a formula on each row of a results table: `def formula(row, p):`, setting the column on the row. A row has no section, column or block: only its columns, its words and p.',
+    `Columns (numbers): ${(names?.fields ?? []).map(([n, u]) => (u ? `${n} (${u})` : n)).join(', ')}`,
+    `Words: ${(names?.labels ?? []).join(', ')}`,
+    `Parameter columns: ${(names?.parameters ?? []).map(([n, u, w]) => `${n}${w ? ' (words)' : u ? ` (${u})` : ''}`).join(', ') || 'none'}`,
+    '',
+    '## This column',
+    `\`${column.name}\`${column.unit ? ` in ${column.unit}` : ''}, ${adds[column.adds.by] ?? column.adds.by}.`,
+    '```python',
+    column.script.trimEnd(),
+    '```',
+    '',
+    ask === 'write' ? 'Write the formula for what I describe below, as Starlark in the form above. Read columns with a folder by brackets.' : 'Explain what this formula does, line by line, in a mine planner\'s words.',
+  ];
+  return lines.join('\n');
+}

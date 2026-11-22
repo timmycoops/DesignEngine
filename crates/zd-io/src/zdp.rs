@@ -290,6 +290,9 @@ enum Placed {
 struct TableAt {
     entry: String,
     columns: Vec<ColumnHeader>,
+    /// Its calculated columns (decision 0099): scripts, not values, so they're kept here, not in its Parquet entry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    calculated: Vec<zd_core::CalculatedColumn>,
 }
 
 #[derive(Clone)]
@@ -540,7 +543,7 @@ fn place_bodies(objects: &[Arc<Object>]) -> Result<Placement, StoreError> {
                 if !entry.is_empty() {
                     grid_jobs.push(Job { name: entry.clone(), key: None, work: Work::Table { table: table.clone() } });
                 }
-                let at = TableAt { entry, columns: table.headers() };
+                let at = TableAt { entry, columns: table.headers(), calculated: table.calculated.clone() };
                 Placed::Json(serde_json::to_string(&at).map_err(|e| StoreError::Format(e.to_string()))?)
             }
         };
@@ -961,7 +964,7 @@ pub fn read_project(input: &(impl Container + Sync)) -> Result<ReadProject, Stor
                         }
                         columns
                         };
-                        Body::Table(Arc::new(ResultsTable { columns }))
+                        Body::Table(Arc::new(ResultsTable { columns, calculated: at.calculated }))
                     }
                     _ => Body::Workflow(Arc::new(serde_json::from_str::<Workflow>(json).map_err(bad)?)),
                 }
