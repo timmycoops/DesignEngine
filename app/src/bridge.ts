@@ -1302,6 +1302,8 @@ export interface DataflowStep {
   on?: boolean;
   settings?: Record<string, string>;
   formula?: { when?: Record<string, string>; script: string; tests?: FormulaTest[] };
+  /** A table script step (decision 0099, workstream 7): `def run(t, p):` on the case's table after the final writes. */
+  table?: { script: string };
 }
 
 /** A formula as edited, checked (decision 0077, 7d). */

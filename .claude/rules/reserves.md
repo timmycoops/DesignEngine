@@ -4,9 +4,9 @@ paths:
   - "crates/zd-script/**"
   - "crates/zd-geom/src/reserves.rs"
   - "crates/zd-core/src/{dataflow,parameters,table,leaves,workflow}.rs"
-  - "crates/zd-commands/src/builtin/{reserves_run,dataflow,formulas,starter,interrogate,compare,measure,workflow}.rs"
+  - "crates/zd-commands/src/builtin/{reserves_run,dataflow,formulas,starter,interrogate,compare,measure,workflow,table_script,scripts}.rs"
   - "crates/zd-commands/src/{reserves_view,table_grid,table_calc,workflow,workflow_run,report,report_html}.rs"
-  - "app/src/panels/{Reserves,Dataflow,Parameters,Formula,ColumnSteps,StepPane,BlockTable,Tables,TableGrid,Calculated,UpdateRecords,Workflow}*"
+  - "app/src/panels/{Reserves,Dataflow,Parameters,Formula,ColumnSteps,StepPane,BlockTable,Tables,TableGrid,Calculated,UpdateRecords,Workflow,TableStep,ProjectScript}*"
   - "app/src/panels/{reserves,dataflow,parameters,formula,columnSteps,notebook,blockTable,tableGrid,workflow}*"
 ---
 
@@ -46,7 +46,10 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
   calculated columns (`CalculatedColumn`, `table_calc.rs`) are dataflow formulas on a row, `def formula(row, p):`,
   kept as scripts and worked out by `grid_with`, a group from its inputs or its rows by a rule; `table.calculate` puts
   one on. A `Script` object is Starlark loaded by name, `load("name", "f")`; a dataflow and a calculated column keep
-  the ids of the scripts they load (`bind_loads` on save), so a run reads and records their revisions. Its
+  the ids of the scripts they load (`bind_loads` on save), so a run reads and records their revisions. A table script,
+  `def run(t, p):`, works on a whole table through Rust calls (`t.group`, `t.where`, `t.join`, `t.total`,
+  `zd_script::TableWork`, `GridWork`): as a task, `table.script` (a new table, or entered columns on its own rows), or
+  as a dataflow step after `final` (`DataflowStep.table`), its columns the run's own, run on the whole table every run. Its
   workstreams 2 to 9 (entered and calculated columns, update records, table and object scripts, a dataflow from any
   table) build on it.
 

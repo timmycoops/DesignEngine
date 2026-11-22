@@ -61,6 +61,19 @@ pub struct DataflowStep {
     pub settings: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub formula: Option<FormulaStep>,
+    /// A table script step (decision 11 of 0099): run on the case's table after the final writes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableStep>,
+}
+
+/// A table script step's own part (the Build Plan's "Tables and scripts plan", decision 11): Starlark defining
+/// `def run(t, p):`, run on the case's reserves table once the final writes are done. The columns it gives back that the
+/// table hasn't are the run's own, written again each time the dataflow runs, so a ratio or summary every case needs is
+/// worked the same way every case and every month.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TableStep {
+    pub script: String,
 }
 
 /// A formula step's own parts (decision 0077): the units it runs on, its Starlark, and its known answers.
@@ -102,7 +115,12 @@ pub struct FormulaTest {
 
 impl DataflowStep {
     pub fn on(step: &str) -> Self {
-        DataflowStep { step: step.to_string(), on: true, settings: BTreeMap::new(), formula: None }
+        DataflowStep { step: step.to_string(), on: true, settings: BTreeMap::new(), formula: None, table: None }
+    }
+
+    /// A table script step of this name (decision 11 of 0099), run on the case's table after the final writes.
+    pub fn table_script(step: &str, script: &str) -> Self {
+        DataflowStep { table: Some(TableStep { script: script.to_string() }), ..DataflowStep::on(step) }
     }
 
     /// A formula step of this name, running this script on every unit.
@@ -196,6 +214,19 @@ impl Dataflow {
             }
             if self.steps[..i].iter().any(|t| t.step == s.step) {
                 return Err(format!("the step {} is listed twice", s.step));
+            }
+            if let Some(t) = &s.table {
+                if s.formula.is_some() {
+                    return Err(format!("the step {} is both a formula and a table script: make them two steps", s.step));
+                }
+                if t.script.trim().is_empty() {
+                    return Err(format!("the table script step {} has no script", s.step));
+                }
+                if !s.settings.is_empty() {
+                    return Err(format!("the table script step {} has settings: a script reads what it needs itself", s.step));
+                }
+            } else if self.steps[..i].iter().any(|t| t.table.is_some()) {
+                return Err(format!("the step {} comes after a table script step: table scripts run last, after the final writes", s.step));
             }
             if let Some(f) = &s.formula {
                 if f.script.trim().is_empty() {

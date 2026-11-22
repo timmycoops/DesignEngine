@@ -165,6 +165,7 @@ codes! {
     ReservesUnbalanced = "reserves.unbalanced", "Columns whose volume a reserves run didn't keep: what came out isn't what went in, by block";
     ReservesEnteredLost = "reserves.entered_lost", "Values a person entered in a reserves table on leaves a run again no longer makes, each with its value: not kept, never dropped silently";
     ReservesOutOfRange = "reserves.out_of_range", "Blocks thicker or wider than a reserves run's maximums";
+    ReservesTableScriptStopped = "reserves.table_script_stopped", "A reserves run's table script step that stopped, or gave back rows that aren't the table's, and why: its columns left off";
     WorkflowPicked = "workflow.picked", "A workflow step's input that is the objects as picked, as no rule finds them";
     ObjectSolidsDeleted = "object.solids_deleted", "Solids deleted, with their volume, so a report can account for it";
 }

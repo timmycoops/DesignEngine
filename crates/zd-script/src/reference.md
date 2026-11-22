@@ -236,3 +236,100 @@ def formula(unit, p):
             unit[field] = getattr(p, name)
             print(field + " given its default")
 ```
+
+# Writing a table script
+
+A table script works on a whole table at once: a reserves table, one imported, or one another script made. It's
+Starlark too, `def run(t, p):`, and gives back a table. Use it to sum up by strip and seam, to work ratios on those sums,
+to join another table (a Vulcan or Minex export for a reconciliation, a yield lookup), or to lay a table out as a
+schedule input. It reads numbers; it never moves material between units, and never writes over a number a run wrote.
+
+The work is the engine's: filtering, grouping, joining and adding up are calls on the table, done in Rust, so a table of
+140,000 rows is never walked a row at a time. Write the script as a few such calls, then a list made from whole columns
+where you need one of your own.
+
+## Its shape
+
+```py
+# Strip ratio by strip and seam: waste BCM over coal tonnes, from each group's own sums.
+def run(t):
+    s = t.group(["strip", "seam"])
+    waste, coal = s["ROM\\Waste\\volume"], s["ROM\\Coal\\tonnes"]
+    ratio = [w / c if w != None and c else None for w, c in zip(waste, coal)]
+    return s.with_column("strip_ratio", ratio, unit="bcm/t", adds="ratio of ROM\\Waste\\volume per ROM\\Coal\\tonnes")
+```
+
+- `run` is called once, with the table it's run on. Leave `p` out (`def run(t):`) when it reads no parameters; `p.name`
+  reads a parameter table's value for the table as a whole (its first row that fits no words in particular).
+- It returns a table: `t` itself, one made from it, or `new_table(...)`. A `return` with nothing is refused.
+- A column's name is its folder path, `"ROM\\Coal\\tonnes"`, with each `\` doubled inside a string.
+
+## What a table does
+
+Each of these gives a new table; `t` itself never changes.
+
+| Call | What it gives |
+|---|---|
+| `t["ROM\\Coal\\tonnes"]` | the column as a list, `None` where a row has no value |
+| `len(t)`, `t.rows`, `t.columns`, `t.name`, `t.unit("ash")` | its size, its column names, its name, a column's unit |
+| `t.where({"seam": "U, M", "Insitu\\Coal\\thickness": "<0.3"})`, `t.where(material="coal")` | the rows a filter keeps, in the grid's words (lists, ranges `1-5`, `<`, `>`) |
+| `t.group(["strip", "seam"])` | a row a group, in the grid's order (seams in the stack's order, B2 before B10): each number added up by its own rule (tonnes summed, RD by volume, ash by tonnes, a ratio of its sums), words where the group agrees |
+| `t.total("ROM\\Coal\\tonnes")` | one number, added up over every row by its rule |
+| `t.join(other, on=["strip", "block", "seam"], prefix="vulcan ", how="left")` | each row with the other's columns beside it, matched on the `on` words; `how="outer"` adds the other's unmatched rows at the end |
+| `t.with_column("name", values, unit="t", adds="sum")` | a column added, or one of its own replaced: a value a row |
+| `t.select([...])`, `t.drop([...])`, `t.rename({"old": "new"})` | its columns chosen, dropped or renamed |
+| `t.sort("ROM\\Coal\\tonnes", descending=True)` | its rows in a column's order |
+| `t.row(0)` | one row as a dict of its columns |
+| `table("Vulcan check")` | another table of the project, by its name |
+| `new_table({"block": blocks, "tonnes": tonnes}, units={"tonnes": "t"}, adds={"tonnes": "sum"}, name="check")` | a table from lists, all as long |
+
+`adds` says how a number adds up in a group: `"sum"`, `"max"`, `"min"`, `"volume"` (averaged by the `volume` beside it),
+`"mass of rd"` (averaged by volume × that density), or `"ratio of <column> per <column>"`. A number with no rule is left
+empty in a group, and the run says so. The formula library (`in_situ_rd`, `weighted`, `round`, …) works here too.
+
+## How it runs
+
+- **As a task**, `table.script`, on a table: a new table of its own (a summary, a reconciliation, a schedule input), or
+  with `into: columns` its new columns put on the table it ran on, kept by each row's key. Columns go on a table only
+  if the script kept its rows: grouped, sorted or filtered, it makes a new table instead.
+- **As a step of the dataflow**, after `final`: it runs on the case's table each time the dataflow runs, and the
+  columns it adds are the run's own, written again by the next run. What every case and every month needs goes here.
+- **As a workflow step**, after the reserves run that makes its table.
+
+A script never writes over a column the run wrote or a person entered; the run refuses it, naming the column.
+
+## Examples
+
+**A reconciliation against another package's export** (a task):
+
+```py
+# Blocks whose in situ coal differs from Vulcan's by more than the tolerance, and blocks only one of them has.
+def run(t, p):
+    ours = t.group("block")
+    j = ours.join(table("Vulcan check").group("block"), on="block", prefix="vulcan ", how="outer")
+    blocks, diffs, why = [], [], []
+    for b, a, v in zip(j["block"], j["Insitu\\Coal\\tonnes"], j["vulcan Insitu\\Coal\\tonnes"]):
+        if a == None or v == None:
+            blocks.append(b)
+            diffs.append(None)
+            why.append("in one only")
+        elif abs(a - v) > p.tolerance:
+            blocks.append(b)
+            diffs.append(v - a)
+            why.append("differs")
+    return new_table({"block": blocks, "difference": diffs, "why": why}, units={"difference": "t"}, name="Vulcan differences")
+```
+
+**Each leaf's share of its strip's coal** (a dataflow step after `final`, or a task with `into: columns`):
+
+```py
+# A leaf's ROM coal tonnes over its strip's: each strip's shares add to 1.
+def run(t):
+    strips = t.group("strip")
+    whole = {s: c for s, c in zip(strips["strip"], strips["ROM\\Coal\\tonnes"])}
+    share = []
+    for s, c in zip(t["strip"], t["ROM\\Coal\\tonnes"]):
+        total = whole.get(s)
+        share.append(c / total if c != None and total else None)
+    return t.with_column("strip_coal_share", share, adds="sum")
+```

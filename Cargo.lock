@@ -6166,6 +6166,8 @@ dependencies = [
  "serde_json",
  "starlark",
  "starlark_derive",
+ "zd-core",
+ "zd-reserves",
 ]
 
 [[package]]

@@ -98,7 +98,10 @@ pub fn check_formula_steps_flagging(dataflow: &Dataflow, built_in: &[&str], decl
     let mut compiled = Vec::new();
     for (i, s) in dataflow.steps.iter().enumerate() {
         let Some(f) = &s.formula else {
-            last_built_in = Some(s.step.as_str());
+            // A table script step isn't a stage of the column: it runs on the table once the run is done (0099).
+            if s.table.is_none() {
+                last_built_in = Some(s.step.as_str());
+            }
             continue;
         };
         if built_in.contains(&s.step.as_str()) {

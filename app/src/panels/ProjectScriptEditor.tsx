@@ -1,7 +1,7 @@
-import { Bot } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Bot, Play } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { formulaReference, type ObjectSummary, objectDetails, scriptCheck } from '@/bridge';
-import { Field, PanelHead, ScriptEditor } from '@/design-system/kit';
+import { Choice, Field, PanelHead, ScriptEditor, Select } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { useWorkspace } from '@/workspace/context';
@@ -24,7 +24,7 @@ def by_tonnes(values, tonnes):
  * to it by name when it's saved, and a run names the revision it read.
  */
 export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary | null; onSaved: (id: string) => void }) {
-  const { runRecord } = useWorkspace();
+  const { runRecord, summary, select, openPanel } = useWorkspace();
   const [name, setName] = useState(object?.name ?? 'qualities');
   const [note, setNote] = useState('');
   const [source, setSource] = useState(object ? '' : STARTER);
@@ -32,6 +32,13 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
   const [problems, setProblems] = useState<{ message: string; line: number | null }[]>([]);
   const [said, setSaid] = useState<{ error?: string; text?: string }>({});
   const [reference, setReference] = useState('');
+  // What's saved, so a table script runs only as saved (decision 0099, workstream 7).
+  const [savedSource, setSavedSource] = useState<string | null>(null);
+  const [runOn, setRunOn] = useState('');
+  const [into, setInto] = useState<'new' | 'columns'>('new');
+  const isTable = /^\s*def\s+run\s*\(/m.test(source);
+  const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table'), [summary]);
+  const on = tables.some((t) => t.id === runOn) ? runOn : (tables[tables.length - 1]?.id ?? '');
 
   useEffect(() => {
     void formulaReference().then(setReference);
@@ -40,6 +47,7 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
     void objectDetails(object.id).then((d) => {
       if (!live || d.measures.kind !== 'script') return;
       setSource(d.measures.script.source);
+      setSavedSource(d.measures.script.source);
       setNote(d.measures.script.note ?? '');
       setLoaded(true);
     });
@@ -67,14 +75,27 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
     if (outcome.error) return setSaid({ error: outcome.error });
     const made = outcome.record?.outputs?.[0]?.id ?? object?.id;
     setSaid({ text: `${name.trim()} saved: what loads it reads it as it is now` });
+    setSavedSource(source);
     if (made) onSaved(made);
+  };
+  // A table script run as a task, `table.script`, as saved: a new table shown in the Tables tab, or columns on this one.
+  const runTable = async () => {
+    if (!object || !on) return;
+    const outcome = await runRecord('table.script', { table: on, script: object.id, into });
+    if (outcome.error) return setSaid({ error: outcome.error });
+    const made = outcome.record?.outputs?.[0]?.id ?? on;
+    setSaid({ text: outcome.record?.messages?.join('; ') || 'Ran' });
+    select(made);
+    openPanel('restable');
   };
   const copy = () => {
     const text = [
       reference.trim(),
       '',
       '## This script',
-      `A script of the project named \`${name.trim()}\`: functions a formula or a calculated column loads, \`load("${name.trim()}", "function")\`. It has no unit or row of its own.`,
+      isTable
+        ? `A table script of the project named \`${name.trim()}\`: \`def run(t, p):\` run on a whole table, giving back a table.`
+        : `A script of the project named \`${name.trim()}\`: functions a formula or a calculated column loads, \`load("${name.trim()}", "function")\`. It has no unit or row of its own.`,
       note ? `What it's for: ${note}` : '',
       '```python',
       source.trimEnd(),
@@ -107,6 +128,31 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
           </Button>
         </span>
       </div>
+      {isTable && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1" data-slot="run-table-script">
+          <Field label="Run on">
+            <Select className="w-56" value={on} aria-label="The table it runs on" onChange={(e) => setRunOn(e.target.value)}>
+              {tables.length === 0 && <option value="">no tables yet</option>}
+              {tables.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Choice value={into} options={['new', 'columns'] as const} labels={{ new: 'New table', columns: 'Columns on it' }} label="Where its table goes" onChange={setInto} />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 px-2 text-xs"
+            disabled={!object || !on || source !== savedSource || problems.length > 0}
+            onClick={() => void runTable()}
+            title={!object || source !== savedSource ? 'Save it first: a table script runs as saved' : 'Run it on the table: one run, recorded, one undo'}
+          >
+            <Play className="size-3.5" /> Run
+          </Button>
+        </div>
+      )}
       <ScriptEditor value={source} onChange={setSource} problems={problems} label="The script's Starlark" className="min-h-40 flex-1" />
       {problems.length > 0 && (
         <div className="text-destructive" data-slot="script-problems">
