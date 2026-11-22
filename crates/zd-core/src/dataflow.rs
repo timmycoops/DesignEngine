@@ -174,11 +174,15 @@ pub struct Dataflow {
     /// The project's scripts its formulas load (decision 0099), bound by name when it's saved: a run reads them by id.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scripts: Vec<ObjectId>,
+    /// The parameter tables its scripts look up by name (Schedule quantities plan, decision 1), bound when it's saved: a
+    /// run reads them by id and records their revisions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lookups: Vec<ObjectId>,
 }
 
 impl Default for Dataflow {
     fn default() -> Self {
-        Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new(), scripts: Vec::new() }
+        Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new() }
     }
 }
 
@@ -265,6 +269,7 @@ mod tests {
             steps: vec![DataflowStep::on("initialise"), DataflowStep { on: false, ..DataflowStep::on("in_situ") }],
             parameters: vec![ObjectId::new()],
             scripts: Vec::new(),
+            lookups: Vec::new(),
         }
     }
 

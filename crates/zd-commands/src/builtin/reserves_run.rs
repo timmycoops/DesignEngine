@@ -484,7 +484,7 @@ impl Command for RunReserves {
             into_table(&mut out, &object, &prepared, p)?;
         }
         // The table script steps, on the whole table each time: one run again is worked on every row (decision 11).
-        super::table_script::run_table_steps(&mut out, &prepared.table_steps, &prepared.tables, &super::table_script::tables_by_name(inputs.objects()));
+        super::table_script::run_table_steps(&mut out, &prepared.table_steps, &prepared.tables, &super::table_script::tables_by_name(inputs.objects()), &prepared.declared.lookups);
         Ok(out)
     }
 }
@@ -538,6 +538,13 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     let table_refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
     let mut declared = formulas::declared(&fields, &table_refs);
     declared.libraries = super::libraries_of(&|id| get(id).ok(), &dataflow.scripts).map_err(CommandError::Invalid)?;
+    // The tables its scripts look up by name (Schedule quantities plan, decision 1): read by id, so the run records them.
+    let named = super::lookups_by_id(&|id| get(id).ok(), &dataflow.lookups).map_err(CommandError::Invalid)?;
+    for &id in &dataflow.lookups {
+        let object = get(id)?;
+        audit_tables.push(format!("{} r{} (looked up)", object.name, object.revision));
+    }
+    declared.lookups = Arc::new(zd_script::Lookups { own: tables.clone(), named });
     let mut failing: Vec<String> = Vec::new();
     let mut compiled: BTreeMap<usize, Arc<zd_script::Formula>> =
         formulas::check_formula_steps_flagging(dataflow, &built_in, &declared, flagging.then_some(&mut failing)).map_err(CommandError::Invalid)?.into_iter().map(|(i, f)| (i, Arc::new(f))).collect();
@@ -3292,7 +3299,7 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
     let row = |material: &str| ParameterRow { when: [("material".to_string(), material.to_string())].into(), values: BTreeMap::new() };
     let default = ParameterRow { when: BTreeMap::new(), values: [("underburden_thickness".to_string(), ParamValue::Number(UNDERBURDEN_THICKNESS))].into() };
     let table = ParameterTable { filters: vec!["material".into(), "seam".into()], columns, rows: vec![row("waste"), row("coal"), default] };
-    let mut dataflow = Dataflow { levels: zd_core::default_levels(), fields, steps, parameters: Vec::new(), scripts: Vec::new() };
+    let mut dataflow = Dataflow { levels: zd_core::default_levels(), fields, steps, parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new() };
     super::with_starter_formulas(&mut dataflow);
     (table, dataflow)
 }

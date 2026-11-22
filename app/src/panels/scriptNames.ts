@@ -52,6 +52,29 @@ export function useParameterColumns(tables: string[]): ScriptName[] {
   return columns;
 }
 
+/** The project's parameter tables, each with its columns and the keys its rows filter on, for `lookup("…")`. */
+export function useParameterTables(): { name: string; columns: ScriptName[]; filters: string[] }[] {
+  const { summary } = useWorkspace();
+  const ids = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'parameter_table').map((o) => `${o.id}@${o.revision}`), [summary]);
+  const [tables, setTables] = useState<{ name: string; columns: ScriptName[]; filters: string[] }[]>([]);
+  const key = ids.join(',');
+  useEffect(() => {
+    let live = true;
+    void Promise.all(ids.map((i) => objectDetails(i.split('@')[0]).catch(() => null))).then((all) => {
+      if (!live) return;
+      setTables(
+        all.flatMap((d) =>
+          d?.measures.kind === 'parameter_table' ? [{ name: d.name, columns: d.measures.parameters.columns.map((c) => ({ name: c.name, unit: c.text ? 'words' : c.unit })), filters: d.measures.parameters.filters }] : [],
+        ),
+      );
+    });
+    return () => {
+      live = false;
+    };
+  }, [key]);
+  return tables;
+}
+
 /** The reference's part for a kind of script: a table script's own section, or how formulas and their functions are written. */
 export function guideFor(reference: string, table: boolean): string {
   const at = reference.indexOf('# Writing a table script');

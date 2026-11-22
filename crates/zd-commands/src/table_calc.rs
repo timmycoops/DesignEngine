@@ -39,7 +39,7 @@ pub fn declared(table: &Table, column: &CalculatedColumn, parameters: &[Arc<Para
             }
         }
     }
-    Declared { fields, labels, parameters: params, libraries: Default::default() }
+    Declared { fields, labels, parameters: params, libraries: Default::default(), lookups: Default::default() }
 }
 
 /// A calculated column ready to work out: its formula compiled against the table, its parameter tables, and the
@@ -69,6 +69,8 @@ pub fn compile<'a>(table: &Table, column: &'a CalculatedColumn, lookup: Paramete
     let parameters = parameter_tables(column, lookup).map_err(|e| vec![Problem { message: e, line: None, unit: None }])?;
     let mut names = declared(table, column, &parameters);
     names.libraries = crate::builtin::libraries_of(&|id| lookup(id), &column.scripts).map_err(|e| vec![Problem { message: e, line: None, unit: None }])?;
+    let named = crate::builtin::lookups_by_id(&|id| lookup(id), &column.lookups).map_err(|e| vec![Problem { message: e, line: None, unit: None }])?;
+    names.lookups = Arc::new(zd_script::Lookups { own: parameters.clone(), named });
     let formula = Formula::compile(&column.script, names)?;
     let numbers: Vec<&str> = table.columns.iter().filter(|c| matches!(c.values, ColumnValues::Number(_))).map(|c| c.name.as_str()).collect();
     let mut reads: Vec<String> = formula.fields_read().into_iter().filter(|f| numbers.contains(&f.as_str())).collect();
@@ -330,7 +332,7 @@ mod tests {
     }
 
     fn calc(name: &str, script: &str, adds: CalcAddUp) -> CalculatedColumn {
-        CalculatedColumn { name: name.into(), unit: String::new(), script: script.into(), adds, parameters: Vec::new(), scripts: Vec::new() }
+        CalculatedColumn { name: name.into(), unit: String::new(), script: script.into(), adds, parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new() }
     }
 
     const RATIO: &str = "def formula(row):\n    row.strip_ratio = row[\"Insitu\\\\Waste\\\\volume\"] / row[\"Insitu\\\\Coal\\\\tonnes\"]\n";
@@ -438,7 +440,7 @@ mod batch_tests {
             ],
             calculated: Vec::new(),
         };
-        let c = CalculatedColumn { name: "ratio".into(), unit: String::new(), script: "def formula(row):\n    row.ratio = row.waste / row.coal\n".into(), adds: CalcAddUp::Sum, parameters: Vec::new(), scripts: Vec::new() };
+        let c = CalculatedColumn { name: "ratio".into(), unit: String::new(), script: "def formula(row):\n    row.ratio = row.waste / row.coal\n".into(), adds: CalcAddUp::Sum, parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new() };
         let none = |_: ObjectId| -> Option<Arc<zd_core::Object>> { None };
         let calc = compile(&t, &c, &none).unwrap();
         let (values, said) = leaf_values(&t, &calc, &rows, &|r| format!("B{r}"));

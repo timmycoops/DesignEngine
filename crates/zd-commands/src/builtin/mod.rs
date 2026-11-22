@@ -81,7 +81,7 @@ pub use starter::{DISCARDED, RENAMED_FIELDS, TONNES_AD_PER_M3, renamed_from_olde
 pub use zd_script::REFERENCE as FORMULA_REFERENCE;
 pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, check_formula_with, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_formula_steps, check_formula_steps_flagging, declared as formula_declared};
 pub use dataflow::{DATAFLOW_LAYER, ExportParameters, PARAMETERS_LAYER, SaveDataflow, SaveParameters};
-pub use scripts::{SCRIPTS_LAYER, SaveScript, SaveScriptParams, bind_loads, libraries_of};
+pub use scripts::{SCRIPTS_LAYER, SaveScript, SaveScriptParams, bind_loads, bind_lookups, libraries_of, lookups_by_id};
 pub use table_script::{GridWork, RunTableScript, ScriptInto, TABLES_LAYER, TableScriptParams, check_table_script, check_table_steps, compile_table_script};
 pub use zd_script::{Libraries as ScriptLibraries, check_library, help as script_help};
 pub use attributes::{AttributeCell, CalculateInTable, CalculateParams, EnterInTable, EnterParams, Entry, RemoveColumn, RemoveColumnParams, SetAttributes, SetAttributesParams, TableCell};

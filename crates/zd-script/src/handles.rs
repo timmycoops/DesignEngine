@@ -251,6 +251,9 @@ pub(crate) struct Params {
     pub values: Values,
     #[allocative(skip)]
     pub log: Option<Log>,
+    /// The tables `p.at(...)` reads (Schedule quantities plan, decision 1).
+    #[allocative(skip)]
+    pub lookups: Option<Arc<crate::Lookups>>,
 }
 starlark_simple_value!(Params);
 
@@ -262,6 +265,11 @@ impl fmt::Display for Params {
 
 #[starlark_value(type = "parameters")]
 impl<'v> StarlarkValue<'v> for Params {
+    fn get_methods() -> Option<&'static starlark::environment::Methods> {
+        starlark::methods_static!(PARAMS_METHODS = params_methods);
+        Some(PARAMS_METHODS.methods())
+    }
+
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         let value = find(&self.values, attribute)?.clone();
         note(&self.log, Event::Read { what: format!("p.{attribute}"), value: value.clone() });
@@ -274,5 +282,31 @@ impl<'v> StarlarkValue<'v> for Params {
 
     fn dir_attr(&self) -> Vec<String> {
         self.values.iter().map(|(k, _)| k.clone()).collect()
+    }
+}
+
+/// `p.at(seam="U", thickness=x)` (Schedule quantities plan, decision 1): the parameters from the script's own tables, read
+/// in order, for the keys given and only those, as `lookup` reads one table by name.
+#[starlark::starlark_module]
+fn params_methods(builder: &mut starlark::environment::MethodsBuilder) {
+    fn at<'v>(this: &Params, #[starlark(kwargs)] keys: starlark::values::dict::UnpackDictEntries<String, Value<'v>>) -> anyhow::Result<Params> {
+        let keys = crate::lookups::keys_of(&keys.entries)?;
+        let lookups = this.lookups.clone().unwrap_or_default();
+        let refs: Vec<&zd_core::ParameterTable> = lookups.own.iter().map(|t| t.as_ref()).collect();
+        let mut values: Vec<(String, ScriptValue)> = Vec::new();
+        for t in &lookups.own {
+            for c in &t.columns {
+                if values.iter().any(|(n, _)| n.eq_ignore_ascii_case(&c.name)) {
+                    continue;
+                }
+                if let Some(found) = zd_core::ParameterTable::lookup_in(&refs, &keys, &c.name) {
+                    values.push((c.name.clone(), crate::lookups::script_value(found.value)));
+                }
+            }
+        }
+        if let Some(log) = &this.log {
+            log.lock().expect("trace log").push(Event::Read { what: format!("p.at({})", crate::lookups::keys_words(&keys)), value: ScriptValue::Text(format!("{} values", values.len())) });
+        }
+        Ok(Params { values: Arc::new(values), log: this.log.clone(), lookups: this.lookups.clone() })
     }
 }

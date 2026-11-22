@@ -258,6 +258,7 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
             adds: zd_core::CalcAddUp::WeightedBy { column: "volume".into() },
             parameters: vec![],
             scripts: vec![],
+            lookups: vec![],
         }],
     };
     p.apply(RunId::new(), vec![Change::Create { name: "assumptions".into(), layer: "parameters".into(), attributes: Attributes::new(), body: Body::ParameterTable(Arc::new(parameters)) }])
@@ -274,6 +275,7 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
         steps: vec![DataflowStep::on("initialise"), DataflowStep { on: false, ..DataflowStep::on("in_situ") }],
         parameters: vec![table_id],
         scripts: vec![],
+        lookups: vec![],
     };
     p.apply(
         RunId::new(),

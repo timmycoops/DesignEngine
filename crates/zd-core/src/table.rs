@@ -132,6 +132,9 @@ pub struct CalculatedColumn {
     /// The project's scripts its formula loads, bound by name when it's put on the table.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scripts: Vec<crate::ObjectId>,
+    /// The parameter tables its formula looks up by name (Schedule quantities plan, decision 1), bound when it's put on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lookups: Vec<crate::ObjectId>,
 }
 
 /// A table: columns of one length, names unique, and the columns worked out from them.

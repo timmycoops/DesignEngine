@@ -44,6 +44,8 @@ export interface ScriptNames {
   columns?: ScriptName[];
   /** The project's scripts, for `load("…")`. */
   scripts?: string[];
+  /** The project's parameter tables, for `lookup("…", "…", key=…)` (Schedule quantities plan, decision 1). */
+  tables?: { name: string; columns: ScriptName[]; filters: string[] }[];
   calls?: ScriptCalls | null;
 }
 
@@ -69,8 +71,21 @@ export function scriptCompletions(names: () => ScriptNames) {
     const { handle, p } = handles(ctx.state.doc.toString(), n.kind);
     const calls = n.calls;
 
+    // lookup("…"): the project's parameter tables; then the table's columns; then the keys it filters on.
+    let m = /lookup\(\s*"([^"]*)$/.exec(before);
+    if (m) return { from: ctx.pos - m[1].length, options: (n.tables ?? []).map((t) => ({ label: t.name, type: 'namespace', detail: 'parameter table', info: `columns: ${t.columns.map((c) => c.name).join(', ') || 'none'}\nfilters: ${t.filters.join(', ') || 'none'}` })), validFor: /^[^"]*$/ };
+    m = /lookup\(\s*"([^"]+)"\s*,\s*"([^"]*)$/.exec(before);
+    if (m) {
+      const t = (n.tables ?? []).find((x) => x.name === m![1]);
+      return t ? { from: ctx.pos - m[2].length, options: t.columns.map((c) => named(c, 'property')), validFor: /^[^"]*$/ } : null;
+    }
+    m = /lookup\(\s*"([^"]+)"\s*,\s*"[^"]*"\s*(?:,[^()]*)?,\s*(\w*)$/.exec(before);
+    if (m) {
+      const t = (n.tables ?? []).find((x) => x.name === m![1]);
+      if (t) return { from: ctx.pos - m[2].length, options: [...t.filters.map((f) => ({ label: `${f}=`, type: 'variable', detail: 'key' })), { label: 'default=', type: 'keyword', detail: 'where no row fits' }], validFor: /^\w*=?$/ };
+    }
     // load("…"): the project's scripts.
-    let m = /load\(\s*"([^"]*)$/.exec(before);
+    m = /load\(\s*"([^"]*)$/.exec(before);
     if (m) return { from: ctx.pos - m[1].length, options: (n.scripts ?? []).map((s) => ({ label: s, type: 'namespace', detail: 'script' })), validFor: /^[^"]*$/ };
     // x["…"]: a formula's fields and labels by name, or a table's columns.
     m = /(\w+)((?:\.\w+)*)\[\s*"([^"]*)$/.exec(before);

@@ -14,7 +14,8 @@ paths:
 
 Moved from CLAUDE.md's object model and reserves conventions. The short form of the conventions stays in CLAUDE.md.
 Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections, ROM, the reserves table, formulas), 0082
-(live workings), 0084 to 0086 (dataflow view, run again, fields), 0090 (filter in the view), 0099 (tables and scripts).
+(live workings), 0084 to 0086 (dataflow view, run again, fields), 0090 (filter in the view), 0099 (tables and scripts), 0101
+(schedule quantities).
 
 - `ParameterTable`: assumptions any tool reads (reserves settings now; dragline, haulage, equipment later): filter
   columns (the bench rules' syntax) and value columns with units, read top down, each value from the first row that fits
@@ -49,7 +50,9 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
   the ids of the scripts they load (`bind_loads` on save), so a run reads and records their revisions. A table script,
   `def run(t, p):`, works on a whole table through Rust calls (`t.group`, `t.where`, `t.join`, `t.total`,
   `zd_script::TableWork`, `GridWork`): as a task, `table.script` (a new table, or entered columns on its own rows), or
-  as a dataflow step after `final` (`DataflowStep.table`), its columns the run's own, run on the whole table every run. Its
+  as a dataflow step after `final` (`DataflowStep.table`), its columns the run's own, run on the whole table every run. A script
+  reads a parameter by any keys with `lookup("Rates", "col", key=…)` or `p.at(key=…)` (0101); the tables it names are
+  bound by name on save (`Dataflow.lookups`, `CalculatedColumn.lookups`) and read by id, so a run records them. Its
   workstreams 2 to 9 (entered and calculated columns, update records, table and object scripts, a dataflow from any
   table) build on it.
 

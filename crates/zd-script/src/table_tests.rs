@@ -75,6 +75,7 @@ fn run(script: &str) -> Result<TableRan, Problem> {
         tables: vec![("Base".into(), Arc::new(blocks())), ("Vulcan".into(), Arc::new(vulcan()))],
         parameters: values([("tolerance", ScriptValue::Number(1.0))]),
         work: Arc::new(Sums),
+        lookups: Default::default(),
     })
 }
 
@@ -200,6 +201,6 @@ fn every_table_script_in_the_reference_compiles_and_the_shares_add_to_one() {
         columns: vec![TableColumn::text("strip", w(&["1", "1", "2"])), TableColumn::adding("ROM\\Coal\\tonnes", "t", AddUp::Sum, vec![Some(10.0), Some(30.0), Some(5.0)])],
         calculated: Vec::new(),
     };
-    let ran = TableScript::compile(share, Default::default()).unwrap().run(TableInput { name: "Base".into(), table: Arc::new(t), tables: Vec::new(), parameters: values([]), work: Arc::new(Sums) }).unwrap();
+    let ran = TableScript::compile(share, Default::default()).unwrap().run(TableInput { name: "Base".into(), table: Arc::new(t), tables: Vec::new(), parameters: values([]), work: Arc::new(Sums), lookups: Default::default() }).unwrap();
     assert_eq!(numbers(&ran.table, "strip_coal_share"), [Some(0.25), Some(0.75), Some(1.0)]);
 }

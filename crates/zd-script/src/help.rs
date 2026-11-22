@@ -49,6 +49,7 @@ pub const LIBRARY_CALLS: &[Call] = &[
     call("round", "round(x, digits)", "a number rounded to `digits` decimals (none: a whole number)"),
     call("sqrt", "sqrt(x)", "the square root; refused for a negative number"),
     call("clamp", "clamp(x, low, high)", "a number held between low and high"),
+    call("lookup", "lookup(\"Rates\", \"bcm_per_hour\", equipment=\"DL1\", bench_height=unit.thickness, default=0)", "a parameter table's value by its name and the keys given: the first row that fits them; default= where none does"),
 ];
 
 /// What a formula's unit holds besides its fields (decision 0077): read only, each a set of values.
@@ -109,7 +110,7 @@ mod tests {
             }
         }
         let script = TableScript::compile("def run(t):\n    print(\",\".join(sorted(dir(t))))\n    return t\n", Default::default()).unwrap();
-        let ran = script.run(TableInput { name: "t".into(), table: Arc::new(zd_core::Table::default()), tables: Vec::new(), parameters: values([]), work: Arc::new(NoWork) }).unwrap();
+        let ran = script.run(TableInput { name: "t".into(), table: Arc::new(zd_core::Table::default()), tables: Vec::new(), parameters: values([]), work: Arc::new(NoWork), lookups: Default::default() }).unwrap();
         let mut offered: Vec<&str> = TABLE_CALLS.iter().map(|c| c.name).collect();
         offered.sort_unstable();
         assert_eq!(ran.said, [offered.join(",")]);

@@ -171,16 +171,20 @@ impl Command for SaveDataflow {
         // The scripts its formulas load, bound by name to the project's (decision 0099): kept by id, read by the run.
         let sources: Vec<&str> = d.steps.iter().filter_map(|s| s.formula.as_ref().map(|f| f.script.as_str()).or(s.table.as_ref().map(|t| t.script.as_str()))).collect();
         let (scripts, libraries) = super::bind_loads(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
-        for &id in &scripts {
+        // The tables its scripts look up by name (Schedule quantities plan, decision 1), kept by id like its scripts.
+        let (lookups, named) = super::bind_lookups(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
+        for &id in scripts.iter().chain(&lookups) {
             inputs.object(id)?;
         }
         let mut declared = super::formula_declared(&engine_fields, &refs);
         declared.libraries = libraries;
+        declared.lookups = std::sync::Arc::new(zd_script::Lookups { own: tables.clone(), named });
         let formulas = super::check_formula_steps(d, &built_in, &declared).map_err(CommandError::Invalid)?.len();
         // Table script steps (decision 11 of 0099) compile too, and sit after the final writes.
         super::check_table_steps(d, &built_in, &declared.libraries).map_err(CommandError::Invalid)?;
         let mut bound = d.clone();
         bound.scripts = scripts;
+        bound.lookups = lookups;
         let d = &bound;
         // A setting no table has a column for can never be given: said now, not block by block at the run.
         let mut notes = Vec::new();

@@ -132,3 +132,44 @@ impl Command for SaveScript {
         Ok(out)
     }
 }
+
+/// Parameter tables by the names scripts look them up by.
+pub type NamedTables = Vec<(String, Arc<zd_core::ParameterTable>)>;
+
+/// The parameter tables `sources` look up by name (the Build Plan's "Schedule quantities plan", decision 1): their ids,
+/// in the order first named, and the tables by name for the script. A name no parameter table of the project has is
+/// refused.
+pub fn bind_lookups<'a>(objects: impl IntoIterator<Item = &'a Arc<Object>>, sources: &[&str]) -> Result<(Vec<ObjectId>, NamedTables), String> {
+    let tables: Vec<(&str, ObjectId, &Arc<zd_core::ParameterTable>)> = objects
+        .into_iter()
+        .filter_map(|o| match &o.body {
+            Body::ParameterTable(t) => Some((o.name.as_str(), o.id, t)),
+            _ => None,
+        })
+        .collect();
+    let mut ids = Vec::new();
+    let mut named = Vec::new();
+    for name in sources.iter().flat_map(|s| zd_core::lookups_in(s)) {
+        if named.iter().any(|(n, _): &(String, _)| *n == name) {
+            continue;
+        }
+        let Some(&(_, id, t)) = tables.iter().find(|(n, _, _)| *n == name) else {
+            return Err(format!("can't look up {name}: the project has no parameter table of that name"));
+        };
+        ids.push(id);
+        named.push((name, t.clone()));
+    }
+    Ok((ids, named))
+}
+
+/// The parameter tables a dataflow or calculated column looks up, read by id: each by its name, for the script. One since
+/// deleted is said.
+pub fn lookups_by_id(get: &dyn Fn(ObjectId) -> Option<Arc<Object>>, ids: &[ObjectId]) -> Result<NamedTables, String> {
+    let mut out = Vec::with_capacity(ids.len());
+    for &id in ids {
+        let object = get(id).ok_or("it looks up a parameter table since deleted")?;
+        let Body::ParameterTable(t) = &object.body else { return Err(format!("{} isn't a parameter table", object.name)) };
+        out.push((object.name.clone(), t.clone()));
+    }
+    Ok(out)
+}
