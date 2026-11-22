@@ -1256,6 +1256,15 @@ async function checkPan(viewport: Viewport, point: THREE.Vector3) {
   return { dragged_px: 500, point_off_cursor_px: atDefault, point_off_cursor_px_at_45: at45 };
 }
 
+/**
+ * A button by its name: the one whose aria-label is `name`, as the view bar's icon buttons are named (0076), else the
+ * first whose text includes it.
+ */
+function findButton(name: string): HTMLButtonElement | undefined {
+  const all = [...document.querySelectorAll('button')];
+  return all.find((b) => b.getAttribute('aria-label') === name) ?? all.find((b) => b.textContent?.includes(name));
+}
+
 /** Draws through the real toolbar, canvas and key: a click snaps, S, then a click lands on the plane. */
 async function checkSnapSwitch(viewport: Viewport) {
   const canvas = viewport.renderer.domElement;
@@ -1263,7 +1272,7 @@ async function checkSnapSwitch(viewport: Viewport) {
   const settle = async () => {
     for (let i = 0; i < 6; i++) await viewport.nextFrame();
   };
-  const button = (label: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.includes(label));
+  const button = (label: string) => findButton(label);
   const screen = () => document.body.innerText;
   const key = (name: string) => window.dispatchEvent(new KeyboardEvent('keydown', { key: name }));
   const click = async (x: number, y: number) => {
@@ -1365,7 +1374,7 @@ async function checkStringPick(viewport: Viewport, show: Show) {
   };
   const fromVertex = await turnFrom(points[1]);
   const fromSegment = await turnFrom(middle);
-  const button = (name: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.includes(name));
+  const button = (name: string) => findButton(name);
   button('Draw string')?.click();
   await settle();
   const overVertex = await label(points[1]);
@@ -1386,7 +1395,7 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   const settle = async () => {
     for (let i = 0; i < 6; i++) await viewport.nextFrame();
   };
-  const button = (name: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.includes(name));
+  const button = (name: string) => findButton(name);
   const click = async (x: number, y: number) => {
     for (const type of ['pointerdown', 'pointerup']) {
       canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons: 1, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
