@@ -276,3 +276,17 @@ went about the nearer of the two.
 `--select` checks a toe 80 m under the ground and a line on it: by default the toe doesn't show and the line does, a
 click over the toe doesn't pick it; over everything, the toe shows. `--string-edits` clicks lines under its ground to
 pick them, so it runs with strings over everything. `--clicks`, `--section-guide`, `--measure` and `--shell` pass.
+
+## Pan that sticks (PR 2, 2026-11-22)
+
+Section 4 built, more simply than the plane through the grabbed point: a pan only slides the camera, so every point keeps
+its depth, and a pixel measured at the grabbed point's depth (not the target's) moves that point exactly with the cursor.
+A right drag in perspective picks what's under the cursor at the press (`StringLayer.pivot`, the fan of rays over
+nothing) and waits for it as a turn does, drawing held meanwhile; with no pick it pans at the target's depth as before.
+Plan, section and, later, orthographic 3D need no pick: a pixel is the same at every depth there.
+
+`zd-app --bench --solids` on the store bench's 43,000 made-up blocks (4.6 M triangles, release app, WebGPU), a 500 px
+right drag with its press and first move sent at once: the grabbed point 2e-11 px off the cursor at 6° and 7e-12 px at
+45° (against 23.9 px for 200 px at 45° on PIT B before). Turn drift 9e-13 px and zoom drift 0.94 px, unchanged; orbit
+60 fps. The bench's snap switch and string checks now find the view bar's Draw button by its name (it lost its words in
+0076), so they draw again: all four snap switch checks pass.
