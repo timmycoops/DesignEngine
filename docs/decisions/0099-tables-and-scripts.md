@@ -140,7 +140,7 @@ Timing, release build, on the demo pit's 50m table (3,027 leaves, every field): 
 | Test | Known answer | Tolerance |
 |---|---|---|
 | `entered_values_are_kept_by_their_leaf_when_the_table_runs_again` (made-up strip) | a comment on B1 U and B2 L and a period on B1 L stay on those leaves when B1 runs again; Open its column still opens after an entry; with B1's L and U-L blocks deleted, "1 entered value on leaves this run no longer makes, not kept: Base Pit 3 B1 L: period = 2", the rest kept | exact |
-| `a_written_column_is_never_typed_over` | entering in `Insitu\Coalolume` refused; words in a column of numbers refused; row 100 of 6 refused; a written column can't be taken out; an entered one comes out and one undo puts it back | exact |
+| `a_written_column_is_never_typed_over` | entering in `Insitu\Coal\volume` refused; words in a column of numbers refused; row 100 of 6 refused; a written column can't be taken out; an entered one comes out and one undo puts it back | exact |
 | `attributes_typed_in_the_grid_revise_their_blocks_only` | three cells on two blocks: "2 values set, 1 taken away on 2 objects", each revised once, mesh and volume as they were; two blocks changed since the run; one undo puts both back; `volume` refused | exact |
 | `a_table_holds_together_or_is_refused` (zd-core), the `.zdp` round trip (zd-io) | an entered column comes back entered through JSON and through the project file | exact |
 | `tableGrid.test.mjs` | a value read for its column, a pasted block cut to a value a line, what's changed said in a line | exact |
