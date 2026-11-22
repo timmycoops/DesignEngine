@@ -1468,7 +1468,8 @@ fn a_loss_is_rom_waste_where_it_went() {
 
 /// No waste below B: 10 m of underburden goes under it, and B's floor dilution of 0.1 m (500 m³) comes from it. ROM coal B
 /// takes it, 15,500 m³, and it's reported as out-of-model volume on B's leaf; the rest of the underburden is never
-/// written.
+/// written. B, the lowest record, is where it's accounted (Tim, 22 November: "just the lowest record but with ROM waste
+/// component"): its balance's coal from outside is the 500 m³, the block balances, and no record is without a seam.
 #[test]
 fn underburden_taken_into_rom_is_out_of_model_volume() {
     let mut s = session();
@@ -1480,6 +1481,12 @@ fn underburden_taken_into_rom_is_out_of_model_volume() {
     assert!(close(at_seam(&t, Some("B"), "Summary\\Out of model\\volume"), 500.0));
     assert!(close(total(&t, "ROM\\Coal\\volume") + total(&t, "ROM\\Waste\\volume"), 100_000.0 + 500.0), "the blocks and the underburden taken");
     assert!(notes_of(&record, Code::ReservesUnderburden).iter().any(|n| n == "1 unit underburden taken into ROM coal, out of model, 500.0 m3"), "{:?}", notes_of(&record, Code::ReservesUnderburden));
+    assert!(texts(&t, "seam").iter().all(|w| w.as_deref().is_some_and(|w| !w.is_empty())), "no record without a seam: {:?}", texts(&t, "seam"));
+    assert!(close(at_seam(&t, Some("B"), "Summary\\Balance\\Coal\\from_outside"), 500.0), "from outside on the lowest record");
+    for part in ["Coal", "Waste", "Total"] {
+        let off = total(&t, &format!("Summary\\Balance\\{part}\\unaccounted_rom"));
+        assert!(off.abs() < 1e-6, "{part}: the block balances, off {off}");
+    }
 }
 
 /// Section A-B (A ash 10 %, B ash 12 %, the parting between): with aggregate_sections yes, A's and B's ROM coal carry the

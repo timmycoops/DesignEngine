@@ -2390,7 +2390,7 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
                     }
                 }
             });
-            for (p, share) in onto {
+            for &(p, share) in &onto {
                 let scaled: Vec<f64> = values.iter().enumerate().map(|(f, x)| if run.column.fields().is_summed(f) { x * share } else { *x }).collect();
                 pieces.extend(place(run, &scaled, p, "ROM\\Coal", &texts));
                 pieces.extend(place(run, &scaled, p, "Scheduled\\Coal", &texts));
@@ -2401,9 +2401,14 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
             if out_of_model {
                 run.said.count("underburden taken into ROM coal, out of model".into(), u.value(v));
             }
-            // Waste ending in ROM coal moved to coal; the underburden came from outside the model (decision 0086).
+            // Waste ending in ROM coal moved to coal; the underburden came from outside the model (decision 0086). The
+            // underburden has no record of its own (no seam, never written): what came in from outside is said on the
+            // records it went into as ROM coal's rock, the lowest coal for floor dilution, so each record balances.
             if out_of_model {
-                moves.extend(place(run, u.values(), m, "from_outside", &[]));
+                for &(p, share) in &onto {
+                    let scaled: Vec<f64> = u.values().iter().enumerate().map(|(f, x)| if run.column.fields().is_summed(f) { x * share } else { *x }).collect();
+                    moves.extend(place(run, &scaled, p, "from_outside", &[]));
+                }
             } else if !is_coal(u) {
                 moves.extend(place(run, u.values(), m, "to_coal", &[]));
             }
