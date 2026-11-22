@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { Aperture, Box, Cone, Cuboid, Expand, Focus, Magnet, Map as MapIcon, MousePointer2, PaintBucket, PenLine, Ruler, Scissors, StepBack, StepForward } from 'lucide-react';
 import { ToolButton } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
@@ -8,6 +8,7 @@ import { Separator } from '@/design-system/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/design-system/ui/tooltip';
 import type { Mode } from '@/viewport/strings';
 import { DETAIL_CHOICES, DETAIL_DEFAULT, FIELD_OF_VIEW_DEFAULT } from '@/viewport/Viewport';
+import { VIEW_CONTROLS_CHANGED, viewKeyLabel } from '@/viewport/viewControls';
 
 /** Fields of view offered on the view bar, in degrees. */
 const FIELD_OF_VIEW_CHOICES = [2, 4, 6, 10, 15, 20, 30, 45];
@@ -47,6 +48,19 @@ export interface ViewTools {
   setSectionStep: (text: string) => void;
   sectionFill: boolean;
   setSectionFill: (on: boolean) => void;
+  /** Opens View controls: Spry's mouse layout or ours, and the view's keys. */
+  openViewControls: () => void;
+}
+
+/** The view's keys as set (0044), named for the tips, and drawn again when they change. */
+function useViewKeys() {
+  const [, setChanged] = useState(0);
+  useEffect(() => {
+    const changed = () => setChanged((n) => n + 1);
+    window.addEventListener(VIEW_CONTROLS_CHANGED, changed);
+    return () => window.removeEventListener(VIEW_CONTROLS_CHANGED, changed);
+  }, []);
+  return { turn: viewKeyLabel('turn'), selection: viewKeyLabel('selection'), extents: viewKeyLabel('extents'), plan: viewKeyLabel('plan'), orthographic: viewKeyLabel('orthographic') };
 }
 
 export const ViewToolsContext = createContext<ViewTools | null>(null);
@@ -58,6 +72,7 @@ export const ViewToolsContext = createContext<ViewTools | null>(null);
  */
 export function ViewBar() {
   const view = useContext(ViewToolsContext);
+  const keys = useViewKeys();
   if (!view) return null;
   const { mode, plan, snapping, sectionOpen } = view;
   return (
@@ -100,7 +115,7 @@ export function ViewBar() {
       </ToolButton>
       <Separator orientation="vertical" className="mx-0.5 h-5" />
       <ToolButton
-        tip={plan ? 'Back to the 3D view (T). Or hold Z and drag to tilt up out of plan' : 'Plan view (T): straight down, north up; left-drag pans; the wheel zooms where the cursor is'}
+        tip={plan ? `Back to the 3D view (${keys.plan}). Or hold ${keys.turn} and drag to tilt up out of plan` : `Plan view (${keys.plan}): straight down, north up; the wheel zooms where the cursor is`}
         active={plan}
         className="px-2"
         onClick={view.togglePlan}
@@ -108,7 +123,7 @@ export function ViewBar() {
         {plan ? <MapIcon /> : <Box />} {plan ? 'Plan' : '3D'}
       </ToolButton>
       <ToolButton
-        tip={view.orthographic ? 'Orthographic (P): no perspective, a metre the same size near and far. Press for perspective' : 'Perspective (P). Press for orthographic: no perspective, a metre the same size near and far'}
+        tip={view.orthographic ? `Orthographic (${keys.orthographic}): no perspective, a metre the same size near and far. Press for perspective` : `Perspective (${keys.orthographic}). Press for orthographic: no perspective, a metre the same size near and far`}
         active={view.orthographic}
         disabled={plan || sectionOpen}
         className="px-2"
@@ -117,10 +132,10 @@ export function ViewBar() {
       >
         {view.orthographic ? <Cuboid /> : <Cone />} {view.orthographic ? 'Ortho' : 'Persp'}
       </ToolButton>
-      <ToolButton size="icon-sm" tip="Zoom to what's selected (F), from the way you're looking" aria-label="Zoom to what's selected" disabled={!view.hasSelection || sectionOpen} onClick={view.zoomToSelection}>
+      <ToolButton size="icon-sm" tip={`Zoom to what's selected (${keys.selection}), from the way you're looking`} aria-label="Zoom to what's selected" disabled={!view.hasSelection || sectionOpen} onClick={view.zoomToSelection}>
         <Focus />
       </ToolButton>
-      <ToolButton size="icon-sm" tip="Zoom to everything (E, or Shift+F)" aria-label="Zoom to everything" disabled={sectionOpen} onClick={view.zoomToExtents}>
+      <ToolButton size="icon-sm" tip={`Zoom to everything (${keys.extents}, or Shift+${keys.selection})`} aria-label="Zoom to everything" disabled={sectionOpen} onClick={view.zoomToExtents}>
         <Expand />
       </ToolButton>
       <DropdownMenu>
@@ -132,7 +147,7 @@ export function ViewBar() {
               </Button>
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent>3D field of view, how much detail is drawn far off, and whether strings show through solids. Saved on this machine</TooltipContent>
+          <TooltipContent>3D field of view, how much detail is drawn far off, whether strings show through solids, and the mouse layout and keys. Saved on this machine</TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="start">
           {FIELD_OF_VIEW_CHOICES.map((degrees) => (
@@ -159,6 +174,8 @@ export function ViewBar() {
           <DropdownMenuItem onSelect={() => view.setStringsOver(true)}>
             Over everything{view.stringsOver ? ' ✓' : ''}
           </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={view.openViewControls}>View controls: mouse layout and keys…</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <Separator orientation="vertical" className="mx-0.5 h-5" />

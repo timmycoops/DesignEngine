@@ -3,7 +3,7 @@
  * as a tab in the tool dock on the right, beside Properties, and a table as a tab in the results dock under the view.
  * Kept free of React, so the tool list and the tests can read it.
  */
-export type PanelId = 'layers' | 'properties' | 'strings' | 'from_surfaces' | 'surfaces' | 'move' | 'builder' | 'cut' | 'reserves' | 'workflow' | 'runlog' | 'blocks' | 'restable' | 'notebook' | 'params' | 'canvas' | 'face' | 'licence';
+export type PanelId = 'layers' | 'properties' | 'strings' | 'from_surfaces' | 'surfaces' | 'move' | 'builder' | 'cut' | 'reserves' | 'workflow' | 'runlog' | 'blocks' | 'restable' | 'notebook' | 'params' | 'canvas' | 'face' | 'licence' | 'viewcontrols';
 
 export type Dock = 'left' | 'tools' | 'results';
 
@@ -26,6 +26,7 @@ export const PANELS: readonly { id: PanelId; title: string; dock: Dock; size: nu
   { id: 'reserves', title: 'Reserves', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'workflow', title: 'Workflow', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'licence', title: 'Licence', dock: 'tools', size: TOOL_DOCK_WIDTH },
+  { id: 'viewcontrols', title: 'View controls', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'runlog', title: 'Run log', dock: 'results', size: 200 },
   { id: 'blocks', title: 'Objects table', dock: 'results', size: 320 },
   { id: 'restable', title: 'Reserves table', dock: 'results', size: 400 },

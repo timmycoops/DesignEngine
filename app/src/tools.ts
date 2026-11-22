@@ -87,6 +87,7 @@ export type ToolIcon =
   | 'zoom-selection'
   | 'zoom-all'
   | 'orthographic'
+  | 'view-controls'
   | 'section'
   | 'measure'
   | 'clip'
@@ -316,6 +317,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'view.zoom_selection', stage: 'always', label: "Zoom to what's selected", tip: "From the way you're looking", icon: 'zoom-selection', shortcut: 'F', action: 'view.zoom_selection' },
   { key: 'view.zoom_all', stage: 'always', label: 'Zoom to everything', tip: 'The whole project in the view', icon: 'zoom-all', shortcut: 'E', action: 'view.zoom_all' },
   { key: 'view.section', stage: 'always', label: 'Section', tip: 'Pick two points for a true vertical slice, or close the one open', icon: 'section', shortcut: '2', action: 'view.section' },
+  { key: 'viewcontrols', stage: 'always', label: 'View controls', tip: "How the mouse and keys move the view: Spry's mouse layout or ours, and the view's keys", icon: 'view-controls', panel: 'viewcontrols' },
   { key: 'view.measure', stage: 'always', label: 'Measure distance', tip: 'The distance, RL difference, grade and bearing between clicks; click on for a running total', icon: 'measure', shortcut: 'M', action: 'view.measure' },
 ];
 

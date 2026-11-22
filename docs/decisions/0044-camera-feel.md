@@ -314,3 +314,37 @@ for when the view goes back to 3D.
 the switch, into plan and back, and back to perspective; in orthographic a turn's drift 1e-12 px, a 500 px pan's 2e-13
 px, a wheel zoom's 0.37 px; 12.74 % of the view's pixels drawn against 12.76 % in perspective (at 6° the two nearly
 match); orbit 60 fps.
+
+## Spry's layout and the keys (PR 5, 2026-11-22)
+
+Section 7 built, with three changes from the plan:
+
+- **A panel, not a dialog.** View controls is a panel in the tool dock (`viewcontrols`, decision 0076's way, as Licence
+  is), opened from the field-of-view menu (View controls: mouse layout and keys…) or Find a command (mouse, Spry). The
+  kit has no dialog, and adding one would be a new dependency.
+- **The keys are six, not five:** hold to turn (Z), hold to pan (Space), zoom to what's selected (F, Shift+F zooms to
+  everything as before), zoom to everything (E), plan or 3D (T) and orthographic or perspective (P). They work anywhere
+  but a text box or a list, as T and F did from 2026-11-09, not only over the view.
+- **Spry's left drag is the selection box,** as Shift and a left drag is in ours: 0050's box came after this record's
+  "left drag does nothing there". A left press let go without a drag is the click it always was.
+
+| | Spry's layout | Ours (the default) |
+|---|---|---|
+| Turn about the cursor | Middle, then left as well; or hold the turn key and left | Left drag; or hold the turn key and left |
+| Pan (sticks) | Middle drag, middle and right, right drag; or hold the pan key and left | Right drag (left in plan and section); or hold the pan key and left |
+| Select | Left click, left drag a box | Left click, Shift and a left drag a box |
+| Zoom | Wheel | Wheel, middle drag |
+
+Right drag still pans in Spry's layout, so a right click still finishes (0080). Letting go of the left with the middle
+still held goes back to panning. The hold keys work in both layouts. A new key is refused, saying why, if it's another
+view key, Enter, Esc, Backspace, Delete, Tab, [ or ], any tool's shortcut, or the first letter of a two-letter one (N, for
+NS). The view bar's tips, Find a command and the menus name the keys as set. Saved on this machine
+(`zd.view.controls`); a saved set that now clashes falls back to the default keys.
+
+`zd-app --bench --solids` on the 43,000 made-up blocks, by the real canvas and keys, in Spry's layout: a 360 px middle
+drag leaves the point grabbed 2e-11 px off the cursor; middle then left turns (the camera swung 31 km round) with the
+point 6e-10 px from where it was; a left drag shows the box and moves the view 0 m; with the turn key moved to X, X and a
+left drag turn the same; S, N, F and Enter are refused, each saying what has it, and J is taken; the controls are put
+back. `--select`, `--clicks`, `--string-edits`, `--measure` and `--section-guide` pass every check (118); `--shell`
+passes 59 of 60, the one left a tip opened by focus, which can't open while the window isn't in front. Still to do: Tim's side by side
+with Spry on PIT B, the constants tuned from it, and this record to accepted.

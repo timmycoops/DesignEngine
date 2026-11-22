@@ -44,6 +44,7 @@ import {
   MountainSnow,
   Move,
   MoveUpRight,
+  Mouse,
   MousePointer2,
   PackageOpen,
   PackagePlus,
@@ -157,6 +158,7 @@ const ICONS: Record<ToolIcon, LucideIcon> = {
   'zoom-selection': Focus,
   'zoom-all': Expand,
   orthographic: Axis3d,
+  'view-controls': Mouse,
   section: Scissors,
   measure: Ruler,
 };

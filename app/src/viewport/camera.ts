@@ -3,22 +3,22 @@
 // work on what is under the cursor too (decision 0044). A turn, a pan in perspective and a wheel tick
 // each wait for their pick, so none starts about the wrong point.
 //
-// 3D: left drag turns about the point under the cursor, right drag pans with the point grabbed staying
-// under the cursor, middle drag dollies, and the wheel zooms towards the cursor. Plan and section: left or right drag pans, the wheel zooms about the
-// cursor; neither turns. Holding Z (Spry's hold to turn) makes a left drag turn in plan too: the view tilts
-// out of plan into 3D about the point under the cursor.
+// Our mouse layout, in 3D: left drag turns about the point under the cursor, right drag pans with the point grabbed
+// staying under the cursor, middle drag dollies, and the wheel zooms towards the cursor. Plan and section: left or
+// right drag pans, the wheel zooms about the cursor; neither turns. Spry's layout: middle or right drag pans, middle
+// then left turns, and a left drag is the selection box's. In either, holding the turn key (Z) makes a left drag turn,
+// in plan too (the view tilts out of plan into 3D), and holding the pan key (Space) makes it pan. The layout and keys
+// are in viewControls.ts.
 import * as THREE from 'three/webgpu';
 import type { Vec3 } from '../bridge';
 import { inView } from './pivot';
+import { viewControls } from './viewControls';
 
 const PIVOT_MARK_COLOUR = 0xffd23f;
 /** How close a turn comes to looking straight up or down, in radians. */
 const TURN_LIMIT = 0.01;
 /** A wheel tick of 100 (one notch in most browsers) moves 5 % of the way to what is under the cursor. */
 const ZOOM_PER_HUNDRED = 0.95;
-
-/** The key held to turn about the cursor with a left drag, in plan too (Spry's). */
-export const TURN_KEY = 'z';
 
 /** A key typed into a text box or a list, where a letter isn't a shortcut. */
 export function typing(target: EventTarget | null): boolean {
@@ -52,7 +52,8 @@ export interface CameraHost {
 const HOLD_FOR_PICK_MS = 250;
 
 type Drag =
-  | { kind: 'turn'; pointer: number; pivot: THREE.Vector3; x: number; y: number; ready: boolean; latest: [number, number] }
+  /** `chord`: started by Spry's middle and left, so letting the left go pans again. */
+  | { kind: 'turn'; pointer: number; pivot: THREE.Vector3; x: number; y: number; ready: boolean; latest: [number, number]; chord: boolean }
   /** `grabbed`: the point under the cursor at the press, which stays under it (null pans at the target's depth). */
   | { kind: 'pan'; pointer: number; grabbed: THREE.Vector3 | null; x: number; y: number; ready: boolean; latest: [number, number] }
   | { kind: 'dolly'; pointer: number; x: number; y: number; ndc: [number, number] };
@@ -62,11 +63,12 @@ export class CameraController {
   readonly target = new THREE.Vector3();
   /** Off while something else owns the pointer, such as a vertex being dragged. */
   enabled = true;
-  /** The turn key is held: a left drag turns, in plan too. Others that take a left press leave it to the camera. */
-  get turnHeld(): boolean {
-    return this.turnKey;
+  /** The turn or pan key is held: a left press is the camera's. Others that take a left press leave it to the camera. */
+  get viewKeyHeld(): boolean {
+    return this.turnKey || this.panKey;
   }
   private turnKey = false;
+  private panKey = false;
 
   private drag: Drag | null = null;
   /** The last point a turn went about: a press over nothing turns about it again while it's in view (decision 0044). */
@@ -110,83 +112,132 @@ export class CameraController {
   private noMenu = (e: Event): void => e.preventDefault();
 
   private keyDown = (e: KeyboardEvent): void => {
-    if (e.key.toLowerCase() !== TURN_KEY || e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return;
-    this.holdTurn(true);
+    if (e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return;
+    const key = e.key.toLowerCase();
+    const { turn, pan } = viewControls().keys;
+    if (key !== turn && key !== pan) return;
+    // Space would also press a button that has the focus, or scroll: it's the view's while held.
+    if (key === ' ') e.preventDefault();
+    this.hold(key === turn ? 'turn' : 'pan', true);
   };
 
   private keyUp = (e: KeyboardEvent): void => {
-    if (e.key.toLowerCase() === TURN_KEY) this.holdTurn(false);
+    const key = e.key.toLowerCase();
+    const { turn, pan } = viewControls().keys;
+    if (key === ' ' && (key === turn || key === pan) && !typing(e.target)) e.preventDefault();
+    if (key === turn) this.hold('turn', false);
+    if (key === pan) this.hold('pan', false);
   };
 
-  /** The window lost the focus with the key down: its key-up never comes. */
-  private letGo = (): void => this.holdTurn(false);
+  /** The window lost the focus with a key down: its key-up never comes. */
+  private letGo = (): void => {
+    this.hold('turn', false);
+    this.hold('pan', false);
+  };
 
-  private holdTurn(held: boolean): void {
-    if (held === this.turnKey) return;
-    this.turnKey = held;
-    this.canvas.style.cursor = held ? 'grab' : '';
+  private hold(which: 'turn' | 'pan', held: boolean): void {
+    if (which === 'turn') this.turnKey = held;
+    else this.panKey = held;
+    this.canvas.style.cursor = this.turnKey || this.panKey ? 'grab' : '';
+  }
+
+  /**
+   * What a press does, by the mouse layout (decision 0044, section 7). Either layout: the turn key and a left drag turn
+   * (out of plan too), the pan key and a left drag pan. Ours: left turns (pans in plan and section), right pans, middle
+   * dollies. Spry's: middle or right pans, and left is the click's or the selection box's; middle and then left turns.
+   */
+  private kindOf(button: number): Drag['kind'] | null {
+    const flat = this.host.flatView;
+    if (button === 0 && this.panKey) return 'pan';
+    if (button === 0 && this.turnKey) return flat ? 'pan' : 'turn';
+    if (viewControls().layout === 'spry') return button === 1 || button === 2 ? 'pan' : null;
+    return button === 1 ? 'dolly' : button === 2 || (button === 0 && flat) ? 'pan' : button === 0 ? 'turn' : null;
   }
 
   private pointerDown = (e: PointerEvent): void => {
     if (!this.enabled || this.drag) return;
     // Turning from plan: into 3D first, looking straight down, so the pick and the turn are in the view turned.
-    if (e.button === 0 && this.turnKey && this.host.planView && !this.host.sectionView) this.host.tiltFromPlan();
-    const flat = this.host.flatView;
-    const kind = e.button === 1 ? 'dolly' : e.button === 2 || (e.button === 0 && flat) ? 'pan' : e.button === 0 ? 'turn' : null;
+    if (e.button === 0 && this.turnKey && !this.panKey && this.host.planView && !this.host.sectionView) this.host.tiltFromPlan();
+    const kind = this.kindOf(e.button);
     if (!kind) return;
+    // A middle press would start the browser's autoscroll.
+    if (e.button === 1) e.preventDefault();
     try {
       this.canvas.setPointerCapture(e.pointerId);
     } catch {
       // A pointer the browser no longer knows: the drag still works while the cursor stays on the canvas.
     }
-    if (kind === 'turn') {
-      const turn: Drag = { kind, pointer: e.pointerId, pivot: this.target.clone(), x: e.clientX, y: e.clientY, ready: false, latest: [e.clientX, e.clientY] };
-      this.drag = turn;
-      // Over empty space it turns about the nearest thing to the cursor (the pick's fan of rays), else the last point
-      // turned about while it's in view, else the view's centre. The turn waits for its pick, so the first move never
-      // turns about the wrong point; drawing holds meanwhile, since nothing moves, so the pick comes back at
-      // once even on a scene that keeps the page busy drawing. The gold mark shows where it will turn as soon
-      // as the pick lands, before the first move.
-      this.host.holdFrames?.(HOLD_FOR_PICK_MS);
-      const pick = this.host.pickPoint?.(e.clientX, e.clientY) ?? Promise.resolve(null);
-      void pick.then((hit) => {
-        this.host.holdFrames?.(0);
-        if (hit) turn.pivot.set(...hit);
-        else if (this.lastPivot && inView(this.lastPivot.clone().project(this.host.camera))) turn.pivot.copy(this.lastPivot);
-        this.lastPivot = turn.pivot.clone();
-        turn.ready = true;
-        if (this.drag !== turn) return;
-        this.host.pivotMark.show(turn.pivot, PIVOT_MARK_COLOUR);
-        const [x, y] = turn.latest;
-        if (x !== turn.x || y !== turn.y) this.turnTo(turn, x, y);
-      });
-      return;
-    }
-    if (kind === 'pan') {
-      const pan: Drag = { kind, pointer: e.pointerId, grabbed: null, x: e.clientX, y: e.clientY, ready: true, latest: [e.clientX, e.clientY] };
-      this.drag = pan;
-      // In perspective a pan sticks to the point grabbed (0044): it pans at that point's depth, so it needs the pick
-      // first, waited for as a turn's is. In plan and section, and in orthographic 3D, a pixel is the same at every
-      // depth: no pick.
-      if (!(this.host.camera instanceof THREE.PerspectiveCamera) || !this.host.pickPoint) return;
-      pan.ready = false;
-      this.host.holdFrames?.(HOLD_FOR_PICK_MS);
-      void this.host.pickPoint(e.clientX, e.clientY).then((hit) => {
-        this.host.holdFrames?.(0);
-        if (hit) pan.grabbed = new THREE.Vector3(...hit);
-        pan.ready = true;
-        if (this.drag !== pan) return;
-        const [x, y] = pan.latest;
-        if (x !== pan.x || y !== pan.y) this.panTo(pan, x, y);
-      });
-      return;
-    }
+    if (kind === 'turn') return this.startTurn(e.pointerId, e.clientX, e.clientY);
+    if (kind === 'pan') return this.startPan(e.pointerId, e.clientX, e.clientY);
     this.drag = { kind, pointer: e.pointerId, x: e.clientX, y: e.clientY, ndc: this.ndc(e.clientX, e.clientY) };
   };
+
+  private startTurn(pointer: number, x: number, y: number, chord = false): void {
+    const turn: Drag = { kind: 'turn', pointer, pivot: this.target.clone(), x, y, ready: false, latest: [x, y], chord };
+    this.drag = turn;
+    // Over empty space it turns about the nearest thing to the cursor (the pick's fan of rays), else the last point
+    // turned about while it's in view, else the view's centre. The turn waits for its pick, so the first move never
+    // turns about the wrong point; drawing holds meanwhile, since nothing moves, so the pick comes back at
+    // once even on a scene that keeps the page busy drawing. The gold mark shows where it will turn as soon
+    // as the pick lands, before the first move.
+    this.host.holdFrames?.(HOLD_FOR_PICK_MS);
+    const pick = this.host.pickPoint?.(x, y) ?? Promise.resolve(null);
+    void pick.then((hit) => {
+      this.host.holdFrames?.(0);
+      if (hit) turn.pivot.set(...hit);
+      else if (this.lastPivot && inView(this.lastPivot.clone().project(this.host.camera))) turn.pivot.copy(this.lastPivot);
+      this.lastPivot = turn.pivot.clone();
+      turn.ready = true;
+      if (this.drag !== turn) return;
+      this.host.pivotMark.show(turn.pivot, PIVOT_MARK_COLOUR);
+      const [lx, ly] = turn.latest;
+      if (lx !== turn.x || ly !== turn.y) this.turnTo(turn, lx, ly);
+    });
+  }
+
+  private startPan(pointer: number, x: number, y: number): void {
+    const pan: Drag = { kind: 'pan', pointer, grabbed: null, x, y, ready: true, latest: [x, y] };
+    this.drag = pan;
+    // In perspective a pan sticks to the point grabbed (0044): it pans at that point's depth, so it needs the pick
+    // first, waited for as a turn's is. In plan and section, and in orthographic 3D, a pixel is the same at every
+    // depth: no pick.
+    if (!(this.host.camera instanceof THREE.PerspectiveCamera) || !this.host.pickPoint) return;
+    pan.ready = false;
+    this.host.holdFrames?.(HOLD_FOR_PICK_MS);
+    void this.host.pickPoint(x, y).then((hit) => {
+      this.host.holdFrames?.(0);
+      if (hit) pan.grabbed = new THREE.Vector3(...hit);
+      pan.ready = true;
+      if (this.drag !== pan) return;
+      const [lx, ly] = pan.latest;
+      if (lx !== pan.x || ly !== pan.y) this.panTo(pan, lx, ly);
+    });
+  }
+
+  /**
+   * Spry's chord: with the middle button held (a pan), pressing the left as well turns about the point under the
+   * cursor, out of plan too; letting the left go pans again. A browser sends a second button's press as a move.
+   */
+  private chord(e: PointerEvent, drag: Drag): boolean {
+    if (e.button < 0 || viewControls().layout !== 'spry') return false;
+    const [middle, left] = [(e.buttons & 4) !== 0, (e.buttons & 1) !== 0];
+    if (drag.kind === 'pan' && middle && left && !this.host.sectionView) {
+      if (this.host.planView) this.host.tiltFromPlan();
+      this.startTurn(drag.pointer, e.clientX, e.clientY, true);
+      return true;
+    }
+    if (drag.kind === 'turn' && drag.chord && middle && !left) {
+      this.host.pivotMark.hide();
+      this.startPan(drag.pointer, e.clientX, e.clientY);
+      return true;
+    }
+    return false;
+  }
 
   private pointerMove = (e: PointerEvent): void => {
     const drag = this.drag;
     if (!drag || e.pointerId !== drag.pointer || !this.enabled) return;
+    if (this.chord(e, drag)) return;
     if (drag.kind === 'turn') {
       drag.latest = [e.clientX, e.clientY];
       if (drag.ready) this.turnTo(drag, e.clientX, e.clientY);

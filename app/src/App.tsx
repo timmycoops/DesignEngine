@@ -53,6 +53,7 @@ import { concealed,
   withLooks,
   licenceStatus,
 } from './bridge';
+import { isViewKey } from './viewport/viewControls';
 import { LICENCE_CHANGED, licenceWarning } from './licence';
 import { runChecks } from './bench/runChecks';
 import { type Bands, valueBands } from './viewport/bands';
@@ -1116,15 +1117,16 @@ export default function App() {
       if (e.target instanceof HTMLInputElement) return;
       if (sectionOpen && (e.key === '[' || e.key === ']')) return stepSection(e.key === ']' ? 1 : -1);
       const plain = !(e.ctrlKey || e.metaKey || e.altKey) && !typing(e.target);
-      if (e.key.toLowerCase() === 'f' && plain) {
+      // The view's keys, as set in View controls (0044): F, Shift+F, T, P and E by default.
+      if (plain && isViewKey(e, 'selection')) {
         e.preventDefault();
         return e.shiftKey ? zoomToExtents() : zoomToSelection();
       }
-      if (e.key.toLowerCase() === 't' && plain && !e.shiftKey) {
+      if (plain && !e.shiftKey && isViewKey(e, 'plan')) {
         e.preventDefault();
         return togglePlan();
       }
-      if (e.key.toLowerCase() === 'p' && plain && !e.shiftKey) {
+      if (plain && !e.shiftKey && isViewKey(e, 'orthographic')) {
         e.preventDefault();
         return toggleOrthographic();
       }
@@ -1140,7 +1142,7 @@ export default function App() {
         e.preventDefault();
         return toggleMeasure();
       }
-      if (e.key.toLowerCase() === 'e' && plain && !e.shiftKey) {
+      if (plain && !e.shiftKey && isViewKey(e, 'extents')) {
         e.preventDefault();
         return zoomToExtents();
       }
@@ -1323,6 +1325,7 @@ export default function App() {
     togglePlan,
     orthographic,
     toggleOrthographic,
+    openViewControls: () => dockRef.current && showPanel(dockRef.current, 'viewcontrols'),
     hasSelection: selection.length > 0,
     zoomToSelection: () => zoomTo(selection),
     zoomToExtents,

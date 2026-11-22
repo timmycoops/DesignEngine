@@ -8,6 +8,7 @@ import { ALWAYS_ROW, panelTool, type RowItem, type RowMenu, ROWS, rowName, type 
 import { PANELS } from './panels';
 import { BarTool, RowMenuItems, RowToolItem, type ToolUse } from './ToolMenu';
 import { IconNamed } from './toolIcons';
+import { toolShortcut } from '@/viewport/viewControls';
 
 export type StageId = Exclude<Stage, 'always'>;
 
@@ -234,7 +235,7 @@ export function Ribbon({ projectName, projectPath, stage, onStage, onFind, use }
               {['panels.hide', 'panels.reset'].map((key) => (
                 <DropdownMenuItem key={key} data-tool={key} onSelect={() => use.run(toolByKey(key)!)}>
                   {toolByKey(key)!.label}
-                  {toolByKey(key)!.shortcut && <DropdownMenuShortcut>{toolByKey(key)!.shortcut}</DropdownMenuShortcut>}
+                  {toolShortcut(toolByKey(key)!) && <DropdownMenuShortcut>{toolShortcut(toolByKey(key)!)}</DropdownMenuShortcut>}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
