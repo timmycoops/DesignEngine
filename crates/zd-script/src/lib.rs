@@ -16,6 +16,7 @@ mod check;
 mod handles;
 pub mod library;
 pub mod help;
+mod lookups;
 mod tables;
 
 use std::cell::RefCell;
@@ -31,6 +32,7 @@ use starlark::values::{OwnedFrozenValue, Value, ValueLike};
 use starlark::PrintHandler;
 
 pub use handles::Event;
+pub use lookups::Lookups;
 pub use tables::{TableWork, add_up_from_words};
 
 /// How to write a formula, for the formula panel and for an AI asked to write one (decision 0077, 7d and 7e).
@@ -90,6 +92,18 @@ pub struct Declared {
     pub labels: Vec<String>,
     pub parameters: Vec<FieldDecl>,
     pub libraries: Libraries,
+    /// The parameter tables it may look up (Schedule quantities plan, decision 1): its own for `p.at`, and those named
+    /// in `lookup("…")`, found by name.
+    pub lookups: Arc<Lookups>,
+}
+
+/// What a script's run carries for the functions that need it: the tables it looks up, the trace's log, and a table
+/// script's tables.
+#[derive(starlark::any::ProvidesStaticType)]
+pub(crate) struct ScriptRun {
+    pub lookups: Arc<Lookups>,
+    pub log: Option<handles::Log>,
+    pub tables: Option<tables::TableRun>,
 }
 
 impl Declared {
@@ -192,6 +206,7 @@ fn globals() -> Globals {
     GlobalsBuilder::extended_by(&[LibraryExtension::StructType, LibraryExtension::Map, LibraryExtension::Filter, LibraryExtension::Print, LibraryExtension::Json])
         .with(library::library)
         .with(tables::table_globals)
+        .with(lookups::lookup_globals)
         .build()
 }
 
@@ -414,7 +429,7 @@ impl Formula {
         let heap = eval.heap();
         let unit = heap.alloc(self.unit_handle(column, u, log.clone()));
         let result = if self.takes_p {
-            let p = heap.alloc(Params { values: column.units[u].parameters.clone(), log });
+            let p = heap.alloc(Params { values: column.units[u].parameters.clone(), log, lookups: Some(self.declared.lookups.clone()) });
             eval.eval_function(f, &[unit, p], &[])
         } else {
             eval.eval_function(f, &[unit], &[])
@@ -431,8 +446,10 @@ impl Formula {
             // SAFETY: the formula's function was frozen when it compiled; handing this module's frozen heap a reference
             // to the heap it lives on keeps it alive for as long as the module, which outlives every call made here.
             let f = unsafe { self.function.owned_frozen_value(module.frozen_heap()) }.to_value();
+            let context = ScriptRun { lookups: self.declared.lookups.clone(), log: None, tables: None };
             let mut eval = Evaluator::new(&module);
             eval.set_print_handler(&said);
+            eval.extra = Some(&context);
             let mut out = Vec::with_capacity(units.len());
             for &u in units {
                 let sets = self.call(&mut eval, f, column, u, None)?;
@@ -467,10 +484,12 @@ impl Formula {
         let said = Said::default();
         let mut sets = Vec::new();
         let loader = ProjectLoader::new(&self.declared.libraries, &self.globals);
+        let context = ScriptRun { lookups: self.declared.lookups.clone(), log: Some(log.clone()), tables: None };
         let stopped = Module::with_temp_heap(|module| -> Option<Problem> {
             let mut eval = Evaluator::new(&module);
             eval.set_print_handler(&said);
             eval.set_loader(&loader);
+            eval.extra = Some(&context);
             // The hook is set before the formula is loaded, so its statements are compiled to call it.
             eval.before_stmt_for_dap(BeforeStmtFunc::from_dyn(Box::new(Watch(snapshots.clone()))));
             let ast = AstModule::parse(FILE, self.source.clone(), &Dialect::Standard).expect("it compiled before");
@@ -530,6 +549,8 @@ pub struct TableInput {
     pub tables: Vec<(String, Arc<zd_core::Table>)>,
     pub parameters: Values,
     pub work: Arc<dyn TableWork>,
+    /// The parameter tables it may look up: those `p` reads, and those named in `lookup("…")`.
+    pub lookups: Arc<Lookups>,
 }
 
 /// What a table script gave back: its table, what it printed and what the engine said of it (a column with no rule, a
@@ -584,7 +605,7 @@ impl TableScript {
     /// Runs the script on its table. What it gives back must be a table; anything it stops on is said with its line.
     pub fn run(&self, input: TableInput) -> Result<TableRan, Problem> {
         let notes: tables::Notes = Arc::default();
-        let context = tables::TableRun { work: input.work.clone(), tables: input.tables, read: Mutex::default(), notes: notes.clone() };
+        let context = ScriptRun { lookups: input.lookups.clone(), log: None, tables: Some(tables::TableRun { work: input.work.clone(), tables: input.tables, read: Mutex::default(), notes: notes.clone() }) };
         let said = Said::default();
         let table = Module::with_temp_heap(|module| -> Result<zd_core::Table, Problem> {
             // SAFETY: as `Formula::run`: the function was frozen when it compiled, and this module's frozen heap keeps a
@@ -596,7 +617,7 @@ impl TableScript {
             let heap = eval.heap();
             let t = heap.alloc(tables::TableHandle { name: input.name.clone(), table: input.table.clone(), work: input.work.clone(), notes: notes.clone() });
             let result = if self.takes_p {
-                let p = heap.alloc(Params { values: input.parameters.clone(), log: None });
+                let p = heap.alloc(Params { values: input.parameters.clone(), log: None, lookups: Some(input.lookups.clone()) });
                 eval.eval_function(f, &[t, p], &[])
             } else {
                 eval.eval_function(f, &[t], &[])
@@ -611,7 +632,7 @@ impl TableScript {
                 }),
             }
         })?;
-        let read = std::mem::take(&mut *context.read.lock().expect("read"));
+        let read = context.tables.as_ref().map(|t| std::mem::take(&mut *t.read.lock().expect("read"))).unwrap_or_default();
         let notes = std::mem::take(&mut *notes.lock().expect("notes"));
         Ok(TableRan { table, said: said.take(), notes, read })
     }

@@ -95,6 +95,30 @@ on their own basis**, settings by their largest or smallest.
 - `print(…)`: said after a run with the step's name, counted over the units that printed it.
 - `fail("why")`: stops the block, said with the line. Use it for data that can't be reserved.
 
+## Looking up a parameter by any value
+
+`p` reads each parameter from the first row that fits the block's attributes. To read a row by anything else, the
+unit's worked values, its labels, or keys of your own, look it up:
+
+- `lookup("Rates", "bcm_per_hour", equipment="DL1", bench_height=unit.thickness)`: the first row of the parameter table
+  named `Rates` that fits every key given, as rows are matched everywhere: a list (`U, M`), a range (`10-15`), a
+  comparison (`<0.3`), blank for any. A row filtering on something not given doesn't fit. Give `default=0` for a value
+  where no row fits; without one, the block stops and says the table and the keys.
+- `p.at(seam="U", thickness=unit.thickness).dilution`: the same over the dataflow's own parameter tables, in their
+  order, for the keys given and only those.
+
+Name the table in quotes, as written in the project: it's found by name when the dataflow is saved, kept by its id, and
+each run names the revision it read. A traced unit shows each lookup's table, row and value.
+
+```python
+# Dragline hours by bench height: the rate from the Rates table, the unit's own thickness as the key.
+def formula(unit):
+    if unit.material.lower() != "waste":
+        return
+    rate = lookup("Rates", "bcm_per_hour", equipment="DL1", bench_height=unit.thickness, default=0)
+    unit.hours = unit.volume / rate if rate else None
+```
+
 Starlark is Python with no `while`, no recursion, no `import`, no `try`, no classes, no files and no network, so every
 formula ends and gives the same answer every run. Strings, lists, dicts, `for`, `if`, comprehensions and functions work
 as in Python.

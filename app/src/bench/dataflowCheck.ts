@@ -552,12 +552,14 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     await wait(600);
     const columnsOffered = await offeredAt('def run(t):\n    return t["ROM');
     const libraryOffered = await offeredAt('def run(t):\n    x = in_si');
+    const tablesOffered = await offeredAt('def run(t):\n    x = lookup("');
     const guide = document.querySelector('[data-slot="project-script"] [data-slot="script-guide"] summary')?.textContent ?? '';
     await offeredAt(starterSource);
-    expect('a table script box offers t.\'s calls, t["…"]\'s columns and the library by name, and its guide is the table scripts\'', ['group', 'where', 'join', 'total', 'with_column'].every((c) => tableCalls.includes(c)) && columnsOffered.some((c) => c.startsWith('ROM\\\\Coal\\\\')) && libraryOffered.includes('in_situ_rd') && guide === 'How table scripts are written', {
+    expect('a table script box offers t.\'s calls, t["…"]\'s columns and the library by name, and its guide is the table scripts\'', ['group', 'where', 'join', 'total', 'with_column'].every((c) => tableCalls.includes(c)) && columnsOffered.some((c) => c.startsWith('ROM\\\\Coal\\\\')) && libraryOffered.includes('in_situ_rd') && tablesOffered.length > 0 && guide === 'How table scripts are written', {
       calls: tableCalls.slice(0, 20),
       columns: columnsOffered.slice(0, 5),
       library: libraryOffered.slice(0, 5),
+      lookupTables: tablesOffered.length,
       guide,
     });
     expect('a script loaded by a calculated column gives every strip its own waste over coal; + New script opens one that checks clean', scriptRows.length > 2 && scriptWorst <= 1e-12 && starterOpen && starterProblems === '', {

@@ -5,7 +5,7 @@ import { Choice, Field, PanelHead, ScriptEditor, Select } from '@/design-system/
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { useWorkspace } from '@/workspace/context';
-import { guideFor, useProjectScripts, useTableColumns } from './scriptNames';
+import { guideFor, useParameterTables, useProjectScripts, useTableColumns } from './scriptNames';
 
 const STARTER = `# Functions a formula or a calculated column loads by this script's name:
 #   load("qualities", "by_tonnes")
@@ -42,6 +42,7 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
   const on = tables.some((t) => t.id === runOn) ? runOn : (tables[tables.length - 1]?.id ?? '');
   const columns = useTableColumns(isTable ? on : null);
   const scripts = useProjectScripts().filter((s) => s !== name.trim());
+  const parameterTables = useParameterTables();
 
   useEffect(() => {
     void formulaReference().then(setReference);
@@ -156,7 +157,7 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
           </Button>
         </div>
       )}
-      <ScriptEditor value={source} onChange={setSource} problems={problems} label="The script's Starlark" className="min-h-40 flex-1" names={{ kind: isTable ? 'table' : 'library', columns, scripts }} />
+      <ScriptEditor value={source} onChange={setSource} problems={problems} label="The script's Starlark" className="min-h-40 flex-1" names={{ kind: isTable ? 'table' : 'library', columns, scripts, tables: parameterTables }} />
       {problems.length > 0 && (
         <div className="text-destructive" data-slot="script-problems">
           {problems.map((p, i) => (

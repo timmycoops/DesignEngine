@@ -48,7 +48,6 @@ fn note(notes: &Notes, what: String) {
 
 /// The run a table script is part of, for `table()` and `new_table()`: the project's tables it may read by name and the
 /// engine's work.
-#[derive(ProvidesStaticType)]
 pub(crate) struct TableRun {
     pub work: Arc<dyn TableWork>,
     pub tables: Vec<(String, Arc<Table>)>,
@@ -506,7 +505,7 @@ fn table_methods(builder: &mut MethodsBuilder) {
 }
 
 fn run_of<'a>(eval: &'a Evaluator<'_, '_, '_>) -> anyhow::Result<&'a TableRun> {
-    eval.extra.and_then(|e| e.downcast_ref::<TableRun>()).ok_or_else(|| anyhow::anyhow!("tables are read only by a table script, `def run(t, p):`"))
+    crate::lookups::lookups_of(eval).and_then(|r| r.tables.as_ref()).ok_or_else(|| anyhow::anyhow!("tables are read only by a table script, `def run(t, p):`"))
 }
 
 /// The table functions every script can call; only a table script has tables to give them.

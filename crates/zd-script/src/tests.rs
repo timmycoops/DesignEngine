@@ -26,6 +26,7 @@ fn declared() -> Declared {
         labels: vec!["seam".into(), "material".into(), "bench".into()],
         parameters: vec![FieldDecl::number("insitu_ash_cutoff", "%"), FieldDecl::number("rom_ash_cutoff", "%"), FieldDecl::text("loader")],
         libraries: Default::default(),
+        lookups: Default::default(),
     }
 }
 
@@ -157,13 +158,14 @@ fn a_unit_reads_its_rom_section_s_coal() {
 #[test]
 fn every_example_in_the_reference_compiles() {
     let names = Declared {
-        fields: ["volume", "thickness", "area", "rd", "rd_is", "rd_rom", "tonnes_ad_per_m3", "mad", "mis", "mrom", "ash", "ash_is", "discarded"]
+        fields: ["volume", "thickness", "area", "rd", "rd_is", "rd_rom", "tonnes_ad_per_m3", "mad", "mis", "mrom", "ash", "ash_is", "discarded", "hours"]
             .iter()
             .map(|n| FieldDecl::number(n, ""))
             .collect(),
         labels: vec!["seam".into(), "material".into(), "bench".into(), "became".into()],
         parameters: vec![FieldDecl::number("insitu_ash_cutoff", "%")],
         libraries: Default::default(),
+        lookups: Default::default(),
     };
     let blocks: Vec<&str> = REFERENCE.split("```python").skip(1).map(|b| b.split("```").next().unwrap_or("")).collect();
     assert!(blocks.len() >= 7, "{} examples", blocks.len());
@@ -179,7 +181,7 @@ fn every_example_in_the_reference_compiles() {
         assert!(keys.iter().all(|k| ["name", "unit", "block", "parameters", "rom_coal", "expect", "stops"].contains(k)), "{keys:?}");
     }
     // The first runs: Preston and Sanders at RD 1.4, Mad 3, Mis 8 is 135.8 ÷ 99, as its worked example says.
-    let f = Formula::compile(blocks[1], names.clone()).expect("densities");
+    let f = Formula::compile(blocks.iter().find(|b| b.contains("# In situ density")).expect("the densities example"), names.clone()).expect("densities");
     let col = ColumnInput {
         units: vec![UnitInput { fields: values([("material", t("coal")), ("rd", n(1.4)), ("mad", n(3.0)), ("mis", n(8.0))]), block: values([]), parameters: values([]), section: None, rom_coal: None }],
         ..ColumnInput::default()

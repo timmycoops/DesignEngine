@@ -315,11 +315,13 @@ impl Command for CalculateInTable {
             }
         }
         let (scripts, _) = super::bind_loads(inputs.objects(), &[c.script.as_str()]).map_err(CommandError::Invalid)?;
-        for &id in &scripts {
+        let (lookups, _) = super::bind_lookups(inputs.objects(), &[c.script.as_str()]).map_err(CommandError::Invalid)?;
+        for &id in scripts.iter().chain(&lookups) {
             inputs.object(id)?;
         }
         let mut c = c.clone();
         c.scripts = scripts;
+        c.lookups = lookups;
         let c = &c;
         let lookup = |id: ObjectId| inputs.object(id).ok().cloned();
         let checked = crate::table_calc::check(table, c, &lookup);

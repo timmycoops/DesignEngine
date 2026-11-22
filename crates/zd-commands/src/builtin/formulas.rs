@@ -49,6 +49,7 @@ pub fn declared(fields: &Fields, tables: &[&ParameterTable]) -> Declared {
         labels: LABELS.iter().map(|l| l.to_string()).collect(),
         parameters,
         libraries: Default::default(),
+        lookups: Default::default(),
     }
 }
 
@@ -212,14 +213,15 @@ pub struct FormulaReport {
 /// Checks the formula step at `index` of a dataflow as edited, against its fields and parameter tables: where it sits,
 /// its name, every problem compiling it with its line, and each of its known answers.
 pub fn check_formula(d: &Dataflow, tables: &[&ParameterTable], index: usize, built_in: &[&str]) -> Result<FormulaReport, String> {
-    check_formula_with(d, tables, index, built_in, Default::default())
+    check_formula_with(d, tables, index, built_in, Default::default(), Vec::new())
 }
 
 /// [`check_formula`] with the project's scripts it may load (decision 0099).
-pub fn check_formula_with(d: &Dataflow, tables: &[&ParameterTable], index: usize, built_in: &[&str], libraries: zd_script::Libraries) -> Result<FormulaReport, String> {
+pub fn check_formula_with(d: &Dataflow, tables: &[&ParameterTable], index: usize, built_in: &[&str], libraries: zd_script::Libraries, named: Vec<(String, std::sync::Arc<ParameterTable>)>) -> Result<FormulaReport, String> {
     let fields = d.engine_fields()?;
     let mut declared = declared(&fields, tables);
     declared.libraries = libraries;
+    declared.lookups = std::sync::Arc::new(zd_script::Lookups { own: tables.iter().map(|t| std::sync::Arc::new((*t).clone())).collect(), named });
     let names = FormulaNames {
         fields: declared.fields.iter().map(|f| (f.name.clone(), f.unit.clone())).collect(),
         labels: declared.labels.clone(),

@@ -4,7 +4,7 @@ import { type DataflowStep, formulaReference, scriptCheck } from '@/bridge';
 import { CellInput, IconButton, PanelHead, ScriptEditor, StatusBadge } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { useWorkspace } from '@/workspace/context';
-import { guideFor, useParameterColumns, useProjectScripts, useTableColumns } from './scriptNames';
+import { guideFor, useParameterColumns, useParameterTables, useProjectScripts, useTableColumns } from './scriptNames';
 
 /** A new table script step's script (decision 0099, workstream 7): each leaf's share of its strip's ROM coal. */
 export const TABLE_STEP_TEMPLATE = `# Runs on the case's table after the final writes: the columns it adds are the run's own.
@@ -45,6 +45,7 @@ export function TableStepEditor({
   const columns = useTableColumns(newest);
   const parameters = useParameterColumns(parameterTables);
   const scripts = useProjectScripts();
+  const lookupTables = useParameterTables();
   const script = step.table?.script ?? '';
   const [problems, setProblems] = useState<{ message: string; line: number | null }[]>([]);
   const [said, setSaid] = useState<string | null>(null);
@@ -90,7 +91,7 @@ export function TableStepEditor({
         </span>
       </div>
       <PanelHead line="Runs on the case's table after the final writes: the columns it adds are the run's own" more="Grouping, joins and adding up are the table's own calls, done in Rust: t.group, t.where, t.join, t.total, t.with_column. A script never writes over a column the run wrote; that's refused, naming it." />
-      <ScriptEditor value={script} onChange={(s) => onStep({ ...step, table: { script: s } })} problems={problems} label="The table script's Starlark" className="min-h-40 flex-1" names={{ kind: 'table', columns, parameters, scripts }} />
+      <ScriptEditor value={script} onChange={(s) => onStep({ ...step, table: { script: s } })} problems={problems} label="The table script's Starlark" className="min-h-40 flex-1" names={{ kind: 'table', columns, parameters, scripts, tables: lookupTables }} />
       {problems.length > 0 ? (
         <div className="text-destructive" data-slot="table-step-problems">
           {problems.map((p, i) => (

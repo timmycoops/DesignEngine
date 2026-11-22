@@ -781,16 +781,18 @@ pub async fn records_preview(params: zd_commands::builtin::UpdateRecordsParams, 
 /// A calculated column as edited, its formula's loads bound to the project's scripts by name (decision 0099).
 fn bound_column(project: &zd_core::Project, mut column: zd_core::CalculatedColumn) -> Result<zd_core::CalculatedColumn, String> {
     column.scripts = zd_commands::builtin::bind_loads(project.objects(), &[column.script.as_str()])?.0;
+    column.lookups = zd_commands::builtin::bind_lookups(project.objects(), &[column.script.as_str()])?.0;
     Ok(column)
 }
 
 /// A dataflow as edited, its formulas' loads bound to the project's scripts by name (decision 0099), so an edit can
 /// load a script before it's saved; and those scripts, for the loader.
 fn bound(project: &zd_core::Project, mut d: zd_core::Dataflow) -> Result<(zd_core::Dataflow, zd_commands::builtin::ScriptLibraries), String> {
-    let sources: Vec<String> = d.steps.iter().filter_map(|s| s.formula.as_ref().map(|f| f.script.clone())).collect();
+    let sources: Vec<String> = d.steps.iter().filter_map(|s| s.formula.as_ref().map(|f| f.script.clone()).or(s.table.as_ref().map(|t| t.script.clone()))).collect();
     let refs: Vec<&str> = sources.iter().map(String::as_str).collect();
     let (ids, libraries) = zd_commands::builtin::bind_loads(project.objects(), &refs)?;
     d.scripts = ids;
+    d.lookups = zd_commands::builtin::bind_lookups(project.objects(), &refs)?.0;
     Ok((d, libraries))
 }
 
@@ -1137,7 +1139,9 @@ pub async fn formula_check(content: zd_core::Dataflow, index: usize, state: Stat
             Ok((_, libraries)) => libraries,
             Err(_) => Default::default(),
         };
-        zd_commands::builtin::check_formula_with(&content, &refs, index, &built_in, libraries)
+        // The tables it looks up by name, so its worked examples can look them up as a run does.
+        let named = zd_commands::builtin::bind_lookups(project.objects(), &content.steps.iter().filter_map(|s| s.formula.as_ref().map(|f| f.script.as_str())).collect::<Vec<_>>()).map(|(_, named)| named).unwrap_or_default();
+        zd_commands::builtin::check_formula_with(&content, &refs, index, &built_in, libraries, named)
     })
     .await?
 }

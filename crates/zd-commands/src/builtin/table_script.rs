@@ -195,7 +195,8 @@ impl Command for RunTableScript {
             _ => return Err(CommandError::Invalid("name a script of the project, or write one in: one or the other".into())),
         };
         let (loaded, libraries) = super::bind_loads(inputs.objects(), &[source.as_str()]).map_err(CommandError::Invalid)?;
-        for id in loaded {
+        let (looked_up, named) = super::bind_lookups(inputs.objects(), &[source.as_str()]).map_err(CommandError::Invalid)?;
+        for id in loaded.into_iter().chain(looked_up) {
             inputs.object(id)?;
         }
         let script = compile_table_script(&source, libraries).map_err(|e| CommandError::Invalid(format!("{script_name}: {e}")))?;
@@ -215,6 +216,7 @@ impl Command for RunTableScript {
                 tables: tables.iter().map(|(n, _, t)| (n.clone(), t.clone())).collect(),
                 parameters: table_parameters(&parameter_tables),
                 work: Arc::new(GridWork),
+                lookups: Arc::new(zd_script::Lookups { own: parameter_tables.clone(), named }),
             })
             .map_err(|problem| CommandError::Invalid(format!("{script_name} stopped: {problem}")))?;
         // The tables it read by name are its inputs too.
@@ -300,7 +302,7 @@ pub fn check_table_steps(dataflow: &zd_core::Dataflow, built_in: &[&str], librar
 /// A dataflow's table script steps run on each table a reserves run made or ran again into, in order: each one's new
 /// columns put on the table as the run's own (written, so the next run writes them again). A step that stops, or gives
 /// back a table that doesn't keep the rows, is said and its columns left off; the table still stands.
-pub(crate) fn run_table_steps(out: &mut Outcome, steps: &[(String, Arc<TableScript>)], parameters: &[Arc<ParameterTable>], project: &[(String, Arc<Table>)]) {
+pub(crate) fn run_table_steps(out: &mut Outcome, steps: &[(String, Arc<TableScript>)], parameters: &[Arc<ParameterTable>], project: &[(String, Arc<Table>)], lookups: &Arc<zd_script::Lookups>) {
     if steps.is_empty() {
         return;
     }
@@ -317,7 +319,7 @@ pub(crate) fn run_table_steps(out: &mut Outcome, steps: &[(String, Arc<TableScri
         let mut current: Table = (**table).clone();
         for (step, script) in steps {
             let ran: Result<TableRan, String> = script
-                .run(TableInput { name: name.clone(), table: Arc::new(current.clone()), tables: project.to_vec(), parameters: p.clone(), work: Arc::new(GridWork) })
+                .run(TableInput { name: name.clone(), table: Arc::new(current.clone()), tables: project.to_vec(), parameters: p.clone(), work: Arc::new(GridWork), lookups: lookups.clone() })
                 .map_err(|problem| problem.to_string());
             match ran.and_then(|r| columns_onto(&current, &r.table, ColumnKind::Written).map(|(t, added)| (t, added, r))) {
                 Ok((t, added, r)) => {

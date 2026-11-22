@@ -210,6 +210,8 @@ pub(crate) fn names(source: &str, declared: &Declared, unit: &str, p: Option<&st
         {
             if c.set {
                 say(c.line, format!("`{head}.{name}`: parameters are read, never set"));
+            } else if name == "at" {
+                // `p.at(...)`: the parameters for the keys given (Schedule quantities plan, decision 1).
             } else if !declared.parameters.iter().any(|q| &q.name == name) {
                 say(c.line, format!("`{head}.{name}` isn't a parameter column of this dataflow's tables{}", did_you_mean(name, declared.parameters.iter().map(|q| q.name.as_str()))));
             }

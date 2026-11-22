@@ -369,3 +369,82 @@ fn a_script_and_what_loads_it_are_checked() {
     let twice = s.run("script.save", json!({ "name": "maths", "source": "x = 1\n" })).unwrap_err();
     assert!(twice.to_string().contains("a script named maths already"), "{twice}");
 }
+
+/// A formula step looks up a parameter table by name with the unit's own worked values as keys (Schedule quantities
+/// plan, decision 1): an ash factor by seam thickness, 0 to 3.5 m at 0.9 and 3.5 to 10 m at 1.1. B1's U, 4 m thick, takes
+/// 1.1: ash 10 gives 11; its L, 3 m, takes 0.9: ash 20 gives 18. The dataflow keeps the table's id, bound by name; the
+/// run names its revision among its inputs and in the table's audit; revised, the next run reads it as it is.
+#[test]
+fn a_formula_step_looks_up_a_table_by_the_unit_s_own_values() {
+    let mut s = session();
+    let ids = blocks(&mut s);
+    let factors = created(&s.run("parameters.save", json!({ "name": "Factors", "csv": "when material,when thickness,factor\ncoal,0-3.5,0.9\ncoal,3.5-10,1.1\n" })).unwrap())[0];
+    let script = "def formula(unit):\n    unit.ash2 = unit.ash * lookup(\"Factors\", \"factor\", material=unit.material, thickness=unit.thickness)\n";
+    let steps = json!([{ "step": "initialise" }, { "step": "by_thickness", "formula": { "when": { "material": "coal" }, "script": script } }, { "step": "in_situ" }]);
+    let saved = save(&mut s, steps).unwrap();
+    let flow = created(&saved)[0];
+    let Body::Dataflow(d) = &s.project().object(flow).unwrap().body else { panic!("a dataflow") };
+    assert_eq!(d.lookups, [factors], "bound by name, kept by id");
+    let record = run(&mut s, flow, &ids);
+    assert!(record.inputs.iter().any(|i| i.id == factors && i.revision == 1), "the run names the table's revision");
+    let t = table(&s, created(&record)[0]);
+    assert!(close(value(&t, leaf(&t, "B1", "U", None), "Insitu\\Coal\\ash2").unwrap(), 11.0));
+    assert!(close(value(&t, leaf(&t, "B1", "L", None), "Insitu\\Coal\\ash2").unwrap(), 18.0));
+    let audit = texts(&t, "Summary\\Audit\\parameters");
+    assert!(audit.iter().flatten().any(|a| a.contains("Factors r1 (looked up)")), "{audit:?}");
+
+    s.run("parameters.save", json!({ "table": factors, "name": "Factors", "csv": "when material,when thickness,factor\ncoal,0-3.5,0.5\ncoal,3.5-10,1.5\n" })).unwrap();
+    let record = run(&mut s, flow, &ids);
+    assert!(record.inputs.iter().any(|i| i.id == factors && i.revision == 2));
+    let t = table(&s, created(&record)[0]);
+    assert!(close(value(&t, leaf(&t, "B1", "U", None), "Insitu\\Coal\\ash2").unwrap(), 15.0));
+}
+
+/// What a lookup can't do, said: a table the project hasn't refuses the dataflow when it's saved; a key no row fits stops
+/// the block and says the table and keys; a calculated column and a table script bind and look up the same way.
+#[test]
+fn a_lookup_is_bound_by_name_or_refused() {
+    let mut s = session();
+    let ids = blocks(&mut s);
+    let missing = "def formula(unit):\n    unit.ash2 = lookup(\"Haulage\", \"km\", seam=unit.seam)\n";
+    let steps = json!([{ "step": "initialise" }, { "step": "haul", "formula": { "script": missing } }, { "step": "in_situ" }]);
+    let e = save(&mut s, steps).unwrap_err().to_string();
+    assert!(e.contains("can't look up Haulage: the project has no parameter table of that name"), "{e}");
+
+    s.run("parameters.save", json!({ "name": "Haulage", "csv": "when seam,km\nU,2.5\n" })).unwrap();
+    let steps = json!([{ "step": "initialise" }, { "step": "haul", "formula": { "when": { "material": "coal" }, "script": missing } }, { "step": "in_situ" }]);
+    let flow = created(&save(&mut s, steps).unwrap())[0];
+    let record = run(&mut s, flow, &ids);
+    // L has no row, so a column with L stops at the step, said with the table and the key: here, every column.
+    let stopped: Vec<&str> = record.notes.iter().map(|n| n.text.as_str()).filter(|t| t.contains("no row of Haulage gives km for seam L")).collect();
+    assert!(!stopped.is_empty(), "{:?}", record.notes);
+    assert!(created(&record).is_empty(), "no column ran through");
+    // Given a row for L, every column runs.
+    let Body::Dataflow(d) = &s.project().object(flow).unwrap().body else { panic!("a dataflow") };
+    let haulage = d.lookups[0];
+    s.run("parameters.save", json!({ "table": haulage, "name": "Haulage", "csv": "when seam,km
+U,2.5
+L,4
+" })).unwrap();
+    let record = run(&mut s, flow, &ids);
+
+    // A calculated column looks it up by its row's words; a table script by a group's.
+    let tid = created(&record)[0];
+    let calc = "def formula(row):\n    row.km = lookup(\"Haulage\", \"km\", seam=row.seam, default=0)\n";
+    s.run("table.calculate", json!({ "table": tid, "column": { "name": "km", "script": calc, "adds": { "by": "max" } } })).unwrap();
+    let t = table(&s, tid);
+    assert_eq!(t.calculated[0].lookups.len(), 1, "the column keeps the table's id");
+    let script = "def run(t):\n    s = t.group(\"seam\")\n    return s.with_column(\"km\", [lookup(\"Haulage\", \"km\", seam=w, default=0) for w in s[\"seam\"]]).select([\"seam\", \"km\"])\n";
+    let ran = s.run("table.script", json!({ "table": tid, "source": script })).unwrap();
+    let made = table(&s, created(&ran)[0]);
+    let km = match &made.column("km").unwrap().values {
+        ColumnValues::Number(v) => v.clone(),
+        _ => panic!("numbers"),
+    };
+    let seams = match &made.column("seam").unwrap().values {
+        ColumnValues::Text(v) => v.clone(),
+        _ => panic!("words"),
+    };
+    let at = |w: &str| seams.iter().position(|s| s.as_deref() == Some(w)).map(|i| km[i]);
+    assert_eq!((at("U"), at("L")), (Some(Some(2.5)), Some(Some(4.0))), "{seams:?} {km:?}");
+}
