@@ -5,8 +5,9 @@ Read this first in every session. Decisions here are locked; do not re-argue the
 ## What this is
 
 A fast, modern 3D design and coal reserves tool for open-pit coal mines: highwall, endwall and lowwall face
-projection, ramps, surfaces, strip and block layout, block solids and reserves interrogation. It works alongside
-Deswik and Spry and replaces neither; scheduling stays in Spry. Owner: Tim (Zovlyn Pty Ltd), an experienced
+projection, ramps, surfaces, strip and block layout, block solids, reserves interrogation and medium to long-term
+scheduling with a coal blender. It works alongside Deswik and Spry and replaces neither; short-term scheduling stays in
+Spry. Owner: Tim (Zovlyn Pty Ltd), an experienced
 mine planner — use correct mining terms (toe, crest, batter, berm, highwall, lowwall, endwall,
 strip, block, seam, parting, roof, floor, base of weathering, subcrop, interburden, strip ratio).
 
@@ -33,6 +34,7 @@ Priorities, in order: **correctness of geometry and volumes**, **speed**, **feel
 | Zips | `zip` crate, deflate only (`docs/decisions/0019-solids-by-the-thousand.md`) |
 | Deswik XML | `quick-xml` and `base64` (`docs/decisions/0036-deswik-drawings.md`) |
 | Formulas | Starlark (`starlark` crate 0.14.2, patched in `vendor/starlark` to leave serde_json's `arbitrary_precision` off) in `zd-script`: the arithmetic and tests a site edits, kept in the dataflow; what moves material between units stays built in (`docs/decisions/0077-formulas-in-starlark.md`) |
+| Scheduling | `zd-sched`: HiGHS through the `highs` crate for the blender's linear programmes, `rayon` for cases in parallel, `rust_xlsxwriter` for Excel output, `chrono` direct, Apache ECharts for charts and Gantts, each added when its workstream lands (`docs/decisions/0100-scheduler.md`) |
 
 ## Engine rules (non-negotiable)
 
@@ -87,7 +89,9 @@ rule file named before planning work on a type, even when no code has been read 
 
 - Seam dip below 30° and normal faults only, with fault blocks as separate domains. Reverse faults,
   thrusts and overturned seams wait for v2 (the incumbents switch methods there too).
-- No scheduling, spoil design, drill and blast, or underground.
+- Scheduling is medium to long term only (months to years, `docs/decisions/0100-scheduler.md`): short-term
+  operational scheduling, detailed haul networks and dumps stay in Spry.
+- No spoil design, drill and blast design, or underground.
 
 ## Reserves conventions
 
@@ -179,7 +183,8 @@ Docks round the view, every tool listed once in `app/src/tools.ts`, every tool p
 
 **Between phases: Phase 3 is closed, and what comes next is not yet agreed.** The proposed order is on the
 "Review 10 Nov" tab of the Build Plan doc; ask Tim before starting any of it. PIT A's seam grids are a load test
-only: judge seam work on PIT B, which holds the only real coal seam models.
+only: judge seam work on PIT B, which holds the only real coal seam models. The scheduler (0100) is agreed but not
+started: stage A waits for the Phase 4 gate, stage B for the Phase 5 gate with Tables ws3 and ws5.
 
 The Phase 3 gate (walls and ramps) was closed as it stands on 2026-11-10
 (`docs/decisions/0053-phase3-closed-as-it-stands.md`), with roads on grids, the measured match with Deswik, the merge
