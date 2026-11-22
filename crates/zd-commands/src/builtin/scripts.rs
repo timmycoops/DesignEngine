@@ -173,3 +173,42 @@ pub fn lookups_by_id(get: &dyn Fn(ObjectId) -> Option<Arc<Object>>, ids: &[Objec
     }
     Ok(out)
 }
+
+/// The curves `sources` read checked against the project's parameter tables (Schedule quantities plan, decision 2): each
+/// named table holds no two rows with the same filters at one `x`. Said with the table and its rows.
+pub fn check_curves<'a>(objects: impl IntoIterator<Item = &'a Arc<Object>>, sources: &[&str]) -> Result<(), String> {
+    let tables: Vec<(&str, &Arc<zd_core::ParameterTable>)> = objects
+        .into_iter()
+        .filter_map(|o| match &o.body {
+            Body::ParameterTable(t) => Some((o.name.as_str(), t)),
+            _ => None,
+        })
+        .collect();
+    for (name, x) in sources.iter().flat_map(|s| zd_core::curves_in(s)) {
+        if let Some((_, t)) = tables.iter().find(|(n, _)| *n == name) {
+            t.check_curve(&x).map_err(|why| format!("{name} as a curve on {x}: {why}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Every script of the project that reads `table` as a curve, with the `x` it reads it on and what holds it: a
+/// dataflow's steps, a table's calculated columns, a script of the project. A parameter table being saved is checked
+/// against each (decision 2 of the Schedule quantities plan).
+pub fn curve_readers<'a>(objects: impl IntoIterator<Item = &'a Arc<Object>>, table: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for o in objects {
+        let sources: Vec<&str> = match &o.body {
+            Body::Dataflow(d) => d.steps.iter().filter_map(|s| s.formula.as_ref().map(|f| f.script.as_str()).or(s.table.as_ref().map(|t| t.script.as_str()))).collect(),
+            Body::Table(t) => t.calculated.iter().map(|c| c.script.as_str()).collect(),
+            Body::Script(s) => vec![s.source.as_str()],
+            _ => continue,
+        };
+        for (name, x) in sources.iter().flat_map(|s| zd_core::curves_in(s)) {
+            if name == table && !out.iter().any(|(_, seen): &(String, String)| *seen == x) {
+                out.push((o.name.clone(), x));
+            }
+        }
+    }
+    out
+}

@@ -207,6 +207,7 @@ fn globals() -> Globals {
         .with(library::library)
         .with(tables::table_globals)
         .with(lookups::lookup_globals)
+        .with(lookups::curve_globals)
         .build()
 }
 

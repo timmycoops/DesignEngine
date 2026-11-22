@@ -50,6 +50,7 @@ pub const LIBRARY_CALLS: &[Call] = &[
     call("sqrt", "sqrt(x)", "the square root; refused for a negative number"),
     call("clamp", "clamp(x, low, high)", "a number held between low and high"),
     call("lookup", "lookup(\"Rates\", \"bcm_per_hour\", equipment=\"DL1\", bench_height=unit.thickness, default=0)", "a parameter table's value by its name and the keys given: the first row that fits them; default= where none does"),
+    call("interpolate", "interpolate(\"Yield curve\", unit.ash, x=\"ash\", y=\"yield\", seam=unit.seam, ends=\"hold\")", "a curve read off a parameter table: the rows that fit the keys in order of x, linear between; outside them refused, or the end held with ends=\"hold\""),
 ];
 
 /// What a formula's unit holds besides its fields (decision 0077): read only, each a set of values.

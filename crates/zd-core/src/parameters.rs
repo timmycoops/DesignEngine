@@ -80,6 +80,28 @@ pub struct ParameterRow {
     pub values: BTreeMap<String, ParamValue>,
 }
 
+/// A row's value in a column, its name as written, else case aside.
+fn value<'a>(row: &'a ParameterRow, column: &str) -> Option<&'a ParamValue> {
+    row.values.get(column).or_else(|| row.values.iter().find(|(k, _)| k.eq_ignore_ascii_case(column)).map(|(_, v)| v))
+}
+
+/// How a curve treats a value outside its rows (Schedule quantities plan, decision 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CurveEnds {
+    /// Outside the curve is refused, saying the value and the curve's range.
+    Refuse,
+    /// Outside the curve takes the nearer end's value.
+    Hold,
+}
+
+/// A value read off a curve: the `y` there, and the rows either side it was worked between (the same row twice at a
+/// point, or at a held end).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OnCurve {
+    pub y: f64,
+    pub rows: (usize, usize),
+}
+
 /// Where a value was found: the table (its place in the list read), the row and the value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Found<'a> {
@@ -162,6 +184,65 @@ impl ParameterTable {
             let value = row.values.get(column).or_else(|| row.values.iter().find(|(k, _)| k.eq_ignore_ascii_case(column)).map(|(_, v)| v))?;
             filter_fits(&row.when, attributes).then_some((i, value))
         })
+    }
+
+    /// The `y` column read off as a curve against the `x` column at `at` (Schedule quantities plan, decision 2): the rows
+    /// that fit `keys`, in order of `x`, linear between the two either side. Outside the rows it's refused, or the nearer
+    /// end's value is held. Two fitting rows at one `x`, or an `x` or `y` that isn't a number, are refused.
+    pub fn interpolate(&self, keys: &Attributes, x: &str, y: &str, at: f64, ends: CurveEnds) -> Result<OnCurve, String> {
+        for column in [x, y] {
+            match self.column(column) {
+                None => return Err(format!("the curve has no column {column}")),
+                Some(c) if c.text => return Err(format!("{column} holds words, and a curve is read off numbers")),
+                Some(_) => {}
+            }
+        }
+        let mut points: Vec<(f64, f64, usize)> = Vec::new();
+        for (i, row) in self.rows.iter().enumerate() {
+            if !filter_fits(&row.when, keys) {
+                continue;
+            }
+            let (Some(ParamValue::Number(px)), Some(ParamValue::Number(py))) = (value(row, x), value(row, y)) else { continue };
+            if let Some(&(_, _, j)) = points.iter().find(|(qx, _, _)| *qx == *px) {
+                return Err(format!("rows {} and {} are both at {x} {px}: a curve has one row a point", j + 1, i + 1));
+            }
+            points.push((*px, *py, i));
+        }
+        points.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let (Some(&first), Some(&last)) = (points.first(), points.last()) else {
+            return Err(format!("no row gives both {x} and {y}"));
+        };
+        if !at.is_finite() {
+            return Err(format!("{at} isn't a number to read off the curve"));
+        }
+        if at < first.0 || at > last.0 {
+            let end = if at < first.0 { first } else { last };
+            return match ends {
+                CurveEnds::Hold => Ok(OnCurve { y: end.1, rows: (end.2, end.2) }),
+                CurveEnds::Refuse => Err(format!("{x} {at} is outside the curve's {} to {}", first.0, last.0)),
+            };
+        }
+        let at_or_above = points.iter().position(|p| p.0 >= at).expect("within the range");
+        let hi = points[at_or_above];
+        if hi.0 == at {
+            return Ok(OnCurve { y: hi.1, rows: (hi.2, hi.2) });
+        }
+        let lo = points[at_or_above - 1];
+        Ok(OnCurve { y: lo.1 + (at - lo.0) * (hi.1 - lo.1) / (hi.0 - lo.0), rows: (lo.2, hi.2) })
+    }
+
+    /// Whether the table reads as a curve against `x`: no two rows with the same filters at the same `x` (checked when
+    /// the table, or what reads it as a curve, is saved).
+    pub fn check_curve(&self, x: &str) -> Result<(), String> {
+        let mut seen: Vec<(&BTreeMap<String, String>, f64, usize)> = Vec::new();
+        for (i, row) in self.rows.iter().enumerate() {
+            let Some(ParamValue::Number(at)) = value(row, x) else { continue };
+            if let Some(&(_, _, j)) = seen.iter().find(|(when, px, _)| **when == row.when && *px == *at) {
+                return Err(format!("rows {} and {} have the same filters at {x} {at}: a curve has one row a point", j + 1, i + 1));
+            }
+            seen.push((&row.when, *at, i));
+        }
+        Ok(())
     }
 
     /// The rows of each table in turn, the first table's first: a case's or a step's own rows read before the rest.
@@ -368,5 +449,49 @@ mod tests {
         t.rows[0].when.insert("pit".into(), "A".into());
         assert!(t.check().unwrap_err().contains("isn't one of the table's filters"));
         assert!(ParameterTable::from_csv("a,b\n1,2,3\n").unwrap_err().contains("3 cells"));
+    }
+}
+
+#[cfg(test)]
+mod curve_tests {
+    use super::*;
+    use crate::AttrValue;
+
+    /// A yield curve for seam U: ash 10 % at 80 % yield, 20 % at 60 %; and L's own, ash 10 % at 70 %, 30 % at 50 %.
+    fn yield_curve() -> ParameterTable {
+        ParameterTable::from_csv("when seam,ash (%),yield (%)\nU,20,60\nU,10,80\nL,10,70\nL,30,50\n").unwrap()
+    }
+
+    fn seam(s: &str) -> Attributes {
+        [("seam".to_string(), AttrValue::Text(s.into()))].into_iter().collect()
+    }
+
+    /// The plan's known answer: ash 15 % reads 70 % between U's rows (given out of order); ash 25 % is refused naming 10
+    /// to 20, or held at 60 %; ash 10 % is the row's own 80 %; L reads its own curve.
+    #[test]
+    fn a_curve_is_read_linearly_between_its_rows() {
+        let t = yield_curve();
+        let at = |s: &str, x: f64, ends| t.interpolate(&seam(s), "ash", "yield", x, ends);
+        let on = at("U", 15.0, CurveEnds::Refuse).unwrap();
+        assert!((on.y - 70.0).abs() < 1e-12);
+        assert_eq!(on.rows, (1, 0), "between row 2 (ash 10) and row 1 (ash 20)");
+        assert_eq!(at("U", 25.0, CurveEnds::Refuse).unwrap_err(), "ash 25 is outside the curve's 10 to 20");
+        assert_eq!(at("U", 25.0, CurveEnds::Hold).unwrap().y, 60.0);
+        assert_eq!(at("U", 5.0, CurveEnds::Hold).unwrap().y, 80.0);
+        assert_eq!(at("U", 10.0, CurveEnds::Refuse).unwrap(), OnCurve { y: 80.0, rows: (1, 1) });
+        assert!((at("L", 25.0, CurveEnds::Refuse).unwrap().y - 55.0).abs() < 1e-12);
+        assert_eq!(at("M", 15.0, CurveEnds::Refuse).unwrap_err(), "no row gives both ash and yield");
+        assert_eq!(t.interpolate(&seam("U"), "ash", "moisture", 15.0, CurveEnds::Refuse).unwrap_err(), "the curve has no column moisture");
+    }
+
+    /// Two rows at one ash with the same filters aren't a curve: refused when it's read, and by the check run when it's
+    /// saved; the same ash for two seams is two curves, and fine.
+    #[test]
+    fn two_rows_at_one_point_are_refused() {
+        let twice = ParameterTable::from_csv("when seam,ash (%),yield (%)\nU,10,80\nU,10,78\nL,10,70\n").unwrap();
+        assert_eq!(twice.check_curve("ash").unwrap_err(), "rows 1 and 2 have the same filters at ash 10: a curve has one row a point");
+        assert_eq!(twice.interpolate(&seam("U"), "ash", "yield", 10.0, CurveEnds::Refuse).unwrap_err(), "rows 1 and 2 are both at ash 10: a curve has one row a point");
+        assert!(yield_curve().check_curve("ash").is_ok());
+        assert_eq!(twice.interpolate(&seam("L"), "ash", "yield", 10.0, CurveEnds::Refuse).unwrap().y, 70.0);
     }
 }

@@ -316,6 +316,7 @@ impl Command for CalculateInTable {
         }
         let (scripts, _) = super::bind_loads(inputs.objects(), &[c.script.as_str()]).map_err(CommandError::Invalid)?;
         let (lookups, _) = super::bind_lookups(inputs.objects(), &[c.script.as_str()]).map_err(CommandError::Invalid)?;
+        super::check_curves(inputs.objects(), &[c.script.as_str()]).map_err(CommandError::Invalid)?;
         for &id in scripts.iter().chain(&lookups) {
             inputs.object(id)?;
         }

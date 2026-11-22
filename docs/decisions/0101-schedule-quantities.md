@@ -64,9 +64,36 @@ Five workstreams, in that order.
 | `a_lookup_is_bound_by_name_or_refused` (formula_steps.rs) | a table the project hasn't refuses the dataflow; a seam no row gives stops its columns, said; a calculated column keeps the table's id; a table script by seam gives U 2.5 km and L 4 | exact |
 | `zd-app --bench --dataflow` (demo pit) | inside `lookup("` the demo's parameter tables are offered | exact |
 
+## Built: workstream 2, curves
+
+- **`interpolate("Yield curve", unit.ash, x="ash", y="yield", seam=unit.seam, ends="hold")`** (`zd-script`'s
+  `lookups.rs`, the maths in `ParameterTable::interpolate`): the rows fitting the keys that give both columns, in order
+  of `x`, the `y` worked linearly between the two either side; on a row, that row's `y`. Outside the rows it's refused
+  (`Yield curve: ash 25 is outside the curve's 10 to 20`), or with `ends="hold"` the nearer end's `y`. A value that isn't
+  a number, a column the table hasn't, a column of words, and a curve no row of which fits are said. A traced unit shows
+  `interpolate Yield curve rows 2 to 1: yield at ash 15 (seam U)` and the value.
+- **Bound as lookups are**: `interpolate("…")` names a table as `lookup("…")` does (`zd_core::lookups_in`), so it's kept
+  by id on the dataflow or column and recorded by revision.
+- **One row a point, checked when saved** (`ParameterTable::check_curve`, `zd_core::curves_in`, `check_curves`,
+  `curve_readers`): two rows with the same filters at one `x` are refused when a dataflow, calculated column or table
+  script reading the table as a curve is saved, and when the table itself is saved while anything reads it as a curve,
+  naming what reads it. The same `x` under different filters is two curves, and fine. A table is known as a curve by
+  what reads it: a parameter table has no mark of its own.
+- **The editors** offer the project's parameter tables inside `interpolate("`, the table's columns inside `x="` and
+  `y="`, and `x=`, `y=`, `ends=` and its keys after a comma. The reference gains "Reading a curve".
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_curve_is_read_linearly_between_its_rows` (zd-core) | U: ash 10 % at 80 %, 20 % at 60 %, given out of order: ash 15 reads 70 between rows 2 and 1; 25 refused naming 10 to 20, held 60; 5 held 80; 10 is row 2's 80; L's own curve at 25 reads 55 | 1e-12 |
+| `two_rows_at_one_point_are_refused` (zd-core) | two U rows at ash 10 refused by the check and when read; L at ash 10 under its own filter fine | exact |
+| `curves_and_lookups_are_read_off_the_source` (zd-core) | the tables and the curve's `x` read off a formula, a comment and `my_lookup` passed over | exact |
+| `a_formula_step_reads_a_curve` (formula_steps.rs) | ash 5 % at 90 %, 15 % at 70 %: B1's U (ash 10) reads 80; its L (ash 20) held at 70, or its block stopped and said; the table refused with two rows at ash 5 while Reserves reads it, naming Reserves; a dataflow reading such a table as a curve refused | 1e-9 |
+
 ## Known limits
 
 - A table named by a name worked out as the script runs (`lookup(name, …)`) isn't bound when it's saved, so it isn't
   found: name it in quotes.
 - `p.at` reads the keys given only, not the block's attributes as `p` does: give every key its rows filter on.
 - A lookup's row isn't yet listed in the notebook's settings beside a built-in step's; it's in the formula's trace.
+- A curve's `x` written as a name worked out as the script runs (`x=column`) isn't checked when saved, only when read.
+- A curve is linear between its rows; no smoothing.

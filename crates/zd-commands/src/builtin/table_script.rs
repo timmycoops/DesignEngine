@@ -196,6 +196,7 @@ impl Command for RunTableScript {
         };
         let (loaded, libraries) = super::bind_loads(inputs.objects(), &[source.as_str()]).map_err(CommandError::Invalid)?;
         let (looked_up, named) = super::bind_lookups(inputs.objects(), &[source.as_str()]).map_err(CommandError::Invalid)?;
+        super::check_curves(inputs.objects(), &[source.as_str()]).map_err(CommandError::Invalid)?;
         for id in loaded.into_iter().chain(looked_up) {
             inputs.object(id)?;
         }

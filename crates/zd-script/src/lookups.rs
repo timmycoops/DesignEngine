@@ -135,6 +135,48 @@ pub(crate) fn lookup_globals(builder: &mut GlobalsBuilder) {
     }
 }
 
+/// A curve read in a script (Schedule quantities plan, decision 2): `interpolate("Yield curve", unit.ash, x="ash",
+/// y="yield", seam=unit.seam)`, the rows that fit the keys in order of `x`, linear between; `ends="hold"` holds the end
+/// value outside them, else outside is refused.
+#[starlark_module]
+pub(crate) fn curve_globals(builder: &mut GlobalsBuilder) {
+    fn interpolate<'v>(
+        table: &str,
+        at: Value<'v>,
+        #[starlark(require = named)] x: &str,
+        #[starlark(require = named)] y: &str,
+        #[starlark(require = named, default = "refuse")] ends: &str,
+        #[starlark(kwargs)] keys: UnpackDictEntries<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<f64> {
+        let run = lookups_of(eval).ok_or_else(|| anyhow::anyhow!("interpolate reads the parameter tables of a dataflow, a calculated column or a table script"))?;
+        let Some((name, t)) = run.lookups.named(table) else {
+            anyhow::bail!("no parameter table named {table} is read here: name it in quotes, interpolate(\"{table}\", …), and save, so it's found by name");
+        };
+        let ends = match ends {
+            "refuse" => zd_core::CurveEnds::Refuse,
+            "hold" => zd_core::CurveEnds::Hold,
+            other => anyhow::bail!("ends is \"refuse\" (the default) or \"hold\", not {other}"),
+        };
+        let value = if let Some(i) = at.unpack_i32() {
+            f64::from(i)
+        } else if let Some(v) = at.downcast_ref::<starlark::values::float::StarlarkFloat>() {
+            v.0
+        } else if at.is_none() {
+            anyhow::bail!("no {x} to read {name} at (None)");
+        } else {
+            anyhow::bail!("{name} is read at a number of {x}, not {}", at.to_repr());
+        };
+        let keys = keys_of(&keys.entries)?;
+        let on = t.interpolate(&keys, x, y, value, ends).map_err(|why| anyhow::anyhow!("{name}: {why}{}", if keys.is_empty() { String::new() } else { format!(" (for {})", keys_words(&keys)) }))?;
+        if let Some(log) = &run.log {
+            let rows = if on.rows.0 == on.rows.1 { format!("row {}", on.rows.0 + 1) } else { format!("rows {} to {}", on.rows.0 + 1, on.rows.1 + 1) };
+            log.lock().expect("trace log").push(Event::Read { what: format!("interpolate {name} {rows}: {y} at {x} {value}{}", if keys.is_empty() { String::new() } else { format!(" ({})", keys_words(&keys)) }), value: ScriptValue::Number(on.y) });
+        }
+        Ok(on.y)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;

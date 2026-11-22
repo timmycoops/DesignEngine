@@ -72,8 +72,19 @@ export function scriptCompletions(names: () => ScriptNames) {
     const calls = n.calls;
 
     // lookup("…"): the project's parameter tables; then the table's columns; then the keys it filters on.
-    let m = /lookup\(\s*"([^"]*)$/.exec(before);
+    let m = /(?:lookup|interpolate)\(\s*"([^"]*)$/.exec(before);
     if (m) return { from: ctx.pos - m[1].length, options: (n.tables ?? []).map((t) => ({ label: t.name, type: 'namespace', detail: 'parameter table', info: `columns: ${t.columns.map((c) => c.name).join(', ') || 'none'}\nfilters: ${t.filters.join(', ') || 'none'}` })), validFor: /^[^"]*$/ };
+    // interpolate("…", value, x="…", y="…"): the curve's columns; then its keys, x=, y= and ends=.
+    m = /interpolate\(\s*"([^"]+)"[^()]*\b[xy]\s*=\s*"([^"]*)$/.exec(before);
+    if (m) {
+      const t = (n.tables ?? []).find((x) => x.name === m![1]);
+      return t ? { from: ctx.pos - m[2].length, options: t.columns.map((c) => named(c, 'property')), validFor: /^[^"]*$/ } : null;
+    }
+    m = /interpolate\(\s*"([^"]+)"\s*,[^()]*,\s*(\w*)$/.exec(before);
+    if (m) {
+      const t = (n.tables ?? []).find((x) => x.name === m![1]);
+      if (t) return { from: ctx.pos - m[2].length, options: [...['x=', 'y='].map((k) => ({ label: k, type: 'keyword', detail: 'column' })), { label: 'ends=', type: 'keyword', detail: '"refuse" or "hold"' }, ...t.filters.map((f) => ({ label: `${f}=`, type: 'variable', detail: 'key' }))], validFor: /^\w*=?$/ };
+    }
     m = /lookup\(\s*"([^"]+)"\s*,\s*"([^"]*)$/.exec(before);
     if (m) {
       const t = (n.tables ?? []).find((x) => x.name === m![1]);

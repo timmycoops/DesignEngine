@@ -71,6 +71,11 @@ impl Command for SaveParameters {
             }
             _ => return Err(CommandError::Invalid("give the table one way: its rows, CSV text or a CSV file".into())),
         };
+        // A table read as a curve somewhere holds no two rows with the same filters at one x (Schedule quantities plan,
+        // decision 2): said with what reads it.
+        for (reader, x) in super::curve_readers(inputs.objects(), &p.name) {
+            table.check_curve(&x).map_err(|why| CommandError::Invalid(format!("{reader} reads {} as a curve on {x}: {why}", p.name)))?;
+        }
         let body = Body::ParameterTable(Arc::new(table.clone()));
         let change = match p.table {
             Some(id) => {
@@ -173,6 +178,7 @@ impl Command for SaveDataflow {
         let (scripts, libraries) = super::bind_loads(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
         // The tables its scripts look up by name (Schedule quantities plan, decision 1), kept by id like its scripts.
         let (lookups, named) = super::bind_lookups(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
+        super::check_curves(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
         for &id in scripts.iter().chain(&lookups) {
             inputs.object(id)?;
         }
