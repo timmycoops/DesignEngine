@@ -448,3 +448,36 @@ L,4
     let at = |w: &str| seams.iter().position(|s| s.as_deref() == Some(w)).map(|i| km[i]);
     assert_eq!((at("U"), at("L")), (Some(Some(2.5)), Some(Some(4.0))), "{seams:?} {km:?}");
 }
+
+/// A formula step reads a yield curve by each seam's ash (Schedule quantities plan, decision 2): ash 5 % at 90 % and 15 %
+/// at 70 %. B1's U, ash 10, reads 80; its L, ash 20, is past the curve, so `ends="hold"` gives 70 and without it the
+/// block stops, said. A dataflow reading a table with two rows at one ash isn't saved; nor is the table, saved with two
+/// rows at one ash while a dataflow reads it as a curve.
+#[test]
+fn a_formula_step_reads_a_curve() {
+    let mut s = session();
+    let ids = blocks(&mut s);
+    let curve = created(&s.run("parameters.save", json!({ "name": "Yield curve", "csv": "ash (%),yield (%)\n15,70\n5,90\n" })).unwrap())[0];
+    let held = "def formula(unit):\n    unit.ash2 = interpolate(\"Yield curve\", unit.ash, x=\"ash\", y=\"yield\", ends=\"hold\")\n";
+    let steps = |script: &str| json!([{ "step": "initialise" }, { "step": "yield", "formula": { "when": { "material": "coal" }, "script": script } }, { "step": "in_situ" }]);
+    let flow = created(&save(&mut s, steps(held)).unwrap())[0];
+    let Body::Dataflow(d) = &s.project().object(flow).unwrap().body else { panic!("a dataflow") };
+    assert_eq!(d.lookups, [curve], "bound by name, kept by id");
+    let record = run(&mut s, flow, &ids);
+    let t = table(&s, created(&record)[0]);
+    assert!(close(value(&t, leaf(&t, "B1", "U", None), "Insitu\\Coal\\ash2").unwrap(), 80.0));
+    assert!(close(value(&t, leaf(&t, "B1", "L", None), "Insitu\\Coal\\ash2").unwrap(), 70.0), "held at the end");
+
+    let refused = "def formula(unit):\n    unit.ash2 = interpolate(\"Yield curve\", unit.ash, x=\"ash\", y=\"yield\")\n";
+    let flow = created(&save(&mut s, steps(refused)).unwrap())[0];
+    let record = run(&mut s, flow, &ids);
+    assert!(record.notes.iter().any(|n| n.text.contains("Yield curve: ash 20 is outside the curve's 5 to 15")), "{:?}", record.notes);
+
+    // Two rows at ash 5: the table isn't saved while a dataflow reads it as a curve, naming the dataflow.
+    let e = s.run("parameters.save", json!({ "table": curve, "name": "Yield curve", "csv": "ash (%),yield (%)\n15,70\n5,90\n5,88\n" })).unwrap_err().to_string();
+    assert!(e.contains("Reserves reads Yield curve as a curve on ash: rows 2 and 3 have the same filters at ash 5"), "{e}");
+    // Saved under another name no one reads as a curve, it's a plain table; a dataflow reading that as a curve isn't saved.
+    s.run("parameters.save", json!({ "name": "Twice", "csv": "ash (%),yield (%)\n5,90\n5,88\n" })).unwrap();
+    let e = save(&mut s, steps("def formula(unit):\n    unit.ash2 = interpolate(\"Twice\", unit.ash, x=\"ash\", y=\"yield\")\n")).unwrap_err().to_string();
+    assert!(e.contains("Twice as a curve on ash: rows 1 and 2 have the same filters at ash 5"), "{e}");
+}

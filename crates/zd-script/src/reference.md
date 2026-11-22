@@ -110,6 +110,19 @@ unit's worked values, its labels, or keys of your own, look it up:
 Name the table in quotes, as written in the project: it's found by name when the dataflow is saved, kept by its id, and
 each run names the revision it read. A traced unit shows each lookup's table, row and value.
 
+## Reading a curve
+
+Yield against ash or cut-point, dilution against dip, productivity against haul distance: a curve is a parameter table
+with a row a point, read between its rows:
+
+- `interpolate("Yield curve", unit.ash, x="ash", y="yield", seam=unit.seam)`: the rows that fit the keys (here, the
+  seam's own curve), in order of their `x` column, and the `y` worked linearly between the two either side of the
+  value. A value on a row gives that row's `y`.
+- Outside the rows it's refused, saying the value and the curve's range, unless `ends="hold"`, which takes the nearer
+  end's `y`.
+- A curve has one row a point: two rows with the same filters at one `x` are refused when the table is saved (while
+  anything reads it as a curve) and when what reads it is saved. Write `x="…"` in quotes so it's checked.
+
 ```python
 # Dragline hours by bench height: the rate from the Rates table, the unit's own thickness as the key.
 def formula(unit):

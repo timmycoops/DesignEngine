@@ -51,7 +51,8 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
   `def run(t, p):`, works on a whole table through Rust calls (`t.group`, `t.where`, `t.join`, `t.total`,
   `zd_script::TableWork`, `GridWork`): as a task, `table.script` (a new table, or entered columns on its own rows), or
   as a dataflow step after `final` (`DataflowStep.table`), its columns the run's own, run on the whole table every run. A script
-  reads a parameter by any keys with `lookup("Rates", "col", key=…)` or `p.at(key=…)` (0101); the tables it names are
+  reads a parameter by any keys with `lookup("Rates", "col", key=…)` or `p.at(key=…)`, and a curve with
+  `interpolate("Yield curve", x_value, x="ash", y="yield", key=…)`, one row a point (0101); the tables it names are
   bound by name on save (`Dataflow.lookups`, `CalculatedColumn.lookups`) and read by id, so a run records them. Its
   workstreams 2 to 9 (entered and calculated columns, update records, table and object scripts, a dataflow from any
   table) build on it.
