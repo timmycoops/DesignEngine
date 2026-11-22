@@ -25,6 +25,7 @@ fn declared() -> Declared {
         ],
         labels: vec!["seam".into(), "material".into(), "bench".into()],
         parameters: vec![FieldDecl::number("insitu_ash_cutoff", "%"), FieldDecl::number("rom_ash_cutoff", "%"), FieldDecl::text("loader")],
+        libraries: Default::default(),
     }
 }
 
@@ -162,6 +163,7 @@ fn every_example_in_the_reference_compiles() {
             .collect(),
         labels: vec!["seam".into(), "material".into(), "bench".into(), "became".into()],
         parameters: vec![FieldDecl::number("insitu_ash_cutoff", "%")],
+        libraries: Default::default(),
     };
     let blocks: Vec<&str> = REFERENCE.split("```python").skip(1).map(|b| b.split("```").next().unwrap_or("")).collect();
     assert!(blocks.len() >= 7, "{} examples", blocks.len());
@@ -372,4 +374,57 @@ def formula(u):
 "#;
     let g = Formula::compile(more, declared()).expect("compiles");
     assert_eq!(g.fields_read(), ["share", "thickness", "volume"]);
+}
+
+/// Scripts of the project (decision 0099, workstream 6): a formula loads a function by the script's name, a script loads
+/// another, and what can't be loaded is refused with why.
+#[test]
+fn a_formula_loads_its_functions_from_the_project_s_scripts() {
+    let libs = |pairs: &[(&str, &str)]| std::sync::Arc::new(pairs.iter().map(|(n, s)| (n.to_string(), s.to_string())).collect::<Vec<_>>());
+    let with = |libraries: Libraries| Declared { libraries, ..declared() };
+    let doubling = "def doubled(x):\n    return x * 2\n";
+    // `ash2` is the ash doubled, by a function the project's script `maths` gives through `helpers`.
+    let helpers = "load(\"maths\", \"doubled\")\ndef twice_ash(unit):\n    return doubled(unit.ash_ad)\n";
+    let formula = "load(\"helpers\", \"twice_ash\")\ndef formula(unit):\n    unit.ash_ad = twice_ash(unit)\n";
+    let f = Formula::compile(formula, with(libs(&[("maths", doubling), ("helpers", helpers)]))).expect("it loads");
+    let sets = f.run(&column(), &[0]).unwrap();
+    assert_eq!(sets[0].get("ash_ad"), Some(&ScriptValue::Number(24.0)));
+    // Traced through the loaded function: the formula's own lines, and what it set.
+    let trace = f.trace(&column(), 0);
+    assert!(trace.stopped.is_none(), "{:?}", trace.stopped);
+    assert_eq!(trace.sets, [("ash_ad".to_string(), ScriptValue::Number(24.0))]);
+
+    let refused = |source: &str, libraries: Libraries| Formula::compile(source, with(libraries)).err().map(|p| p[0].message.clone()).unwrap_or_default();
+    assert!(refused(formula, libs(&[("maths", doubling)])).contains("can't load helpers: the project has no script of that name"));
+    let looping = refused(formula, libs(&[("helpers", "load(\"helpers2\", \"x\")\n"), ("helpers2", "load(\"helpers\", \"twice_ash\")\nx = 1\n")]));
+    assert!(looping.contains("helpers loads itself, through helpers → helpers2 → helpers"), "{looping}");
+
+    // A script checked on its own, its problem on its line.
+    assert!(check_library("maths", doubling, &libs(&[])).is_ok());
+    let wrong = check_library("maths", "def doubled(x):\n    return x * 2\ny = undefined_name\n", &libs(&[])).unwrap_err();
+    assert_eq!(wrong[0].line, Some(3), "{:?}", wrong);
+    assert!(check_library("helpers", helpers, &libs(&[])).unwrap_err()[0].message.contains("can't load maths"));
+}
+
+/// The app's starter script for a new script of the project (ProjectScriptEditor.tsx's STARTER, kept the same) checks
+/// clean as a library, and its `by_tonnes` adds 10 % and 20 % up over 1 t and 3 t to 17.5 %.
+#[test]
+fn the_app_s_starter_script_checks_clean() {
+    let starter = r#"# Functions a formula or a calculated column loads by this script's name:
+#   load("qualities", "by_tonnes")
+def by_tonnes(values, tonnes):
+    total = 0.0
+    weighed = 0.0
+    for v, t in zip(values, tonnes):
+        total += t
+        weighed += v * t
+    return weighed / total if total else None
+"#;
+    assert!(check_library("qualities", starter, &std::sync::Arc::new(Vec::new())).is_ok());
+    let libs = std::sync::Arc::new(vec![("qualities".to_string(), starter.to_string())]);
+    let f = Formula::compile("load(\"qualities\", \"by_tonnes\")
+def formula(unit):
+    unit.ash_ad = by_tonnes([10.0, 20.0], [1.0, 3.0])
+", Declared { libraries: libs, ..declared() }).unwrap();
+    assert_eq!(f.run(&column(), &[0]).unwrap()[0].get("ash_ad"), Some(&ScriptValue::Number(17.5)));
 }

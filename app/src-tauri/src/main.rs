@@ -57,6 +57,7 @@ fn main() {
             commands::calc_check,
             commands::calc_trace,
             commands::calc_parameters,
+            commands::script_check,
             commands::reserves_step_grid,
             commands::reserves_tree,
             commands::reserves_breakdown,

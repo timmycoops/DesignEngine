@@ -336,7 +336,7 @@ fn bounds(body: &Body) -> Option<[[f64; 3]; 2]> {
             let far = [g.origin[0] + (g.cols - 1) as f64 * g.cell_size[0], g.origin[1] + (g.rows - 1) as f64 * g.cell_size[1]];
             Some([[g.origin[0], g.origin[1], lo], [far[0], far[1], hi]])
         }
-        Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) | Body::ParameterTable(_) | Body::Dataflow(_) | Body::Table(_) => None,
+        Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) | Body::ParameterTable(_) | Body::Dataflow(_) | Body::Table(_) | Body::Script(_) => None,
     }
 }
 
@@ -379,6 +379,7 @@ fn measures(body: &Body) -> Value {
         Body::Workflow(w) => json!({ "workflow": **w }),
         Body::ParameterTable(table) => json!({ "parameters": **table, "csv": table.to_csv() }),
         Body::Dataflow(d) => json!({ "dataflow": **d }),
+        Body::Script(s) => json!({ "script": **s }),
         // Columns by name, each a list of its values (None where there's none), and their units.
         Body::Table(table) => json!({
             "rows": table.rows(),

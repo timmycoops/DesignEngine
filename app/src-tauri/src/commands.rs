@@ -100,6 +100,8 @@ pub enum Measures {
     /// A parameter table and the same as CSV (decision 0072).
     ParameterTable { parameters: zd_core::ParameterTable, csv: String },
     Dataflow { dataflow: zd_core::Dataflow },
+    /// A script's Starlark (Tables and scripts plan, decision 9).
+    Script { script: zd_core::Script },
     /// A results table's size, its columns, and its rows added up by write point, horizon and bench (decision 0072).
     Table { rows: usize, columns: Vec<zd_core::ColumnHeader>, figures: zd_commands::report::ReservesFigures },
 }
@@ -142,6 +144,7 @@ fn measure(body: &Body) -> Measures {
         Body::Workflow(w) => Measures::Workflow { workflow: (**w).clone() },
         Body::ParameterTable(t) => Measures::ParameterTable { parameters: (**t).clone(), csv: t.to_csv() },
         Body::Dataflow(d) => Measures::Dataflow { dataflow: (**d).clone() },
+        Body::Script(s) => Measures::Script { script: (**s).clone() },
         Body::Table(t) => Measures::Table { rows: t.rows(), columns: t.headers(), figures: zd_commands::report::reserves_figures("", t) },
     }
 }
@@ -610,7 +613,7 @@ pub async fn layer_attributes(layer: LayerId, state: State<'_, AppState>) -> Res
     let under: std::collections::HashSet<LayerId> = project.layers().iter().filter(|l| l.name == name || l.name.strip_prefix(name.as_str()).is_some_and(|rest| rest.starts_with('\\'))).map(|l| l.id).collect();
     Ok(project
         .objects()
-        .filter(|o| under.contains(&o.layer) && !matches!(o.kind(), zd_core::ObjectKind::FaceDesign | zd_core::ObjectKind::Workflow | zd_core::ObjectKind::ParameterTable | zd_core::ObjectKind::Dataflow | zd_core::ObjectKind::Table))
+        .filter(|o| under.contains(&o.layer) && !matches!(o.kind(), zd_core::ObjectKind::FaceDesign | zd_core::ObjectKind::Workflow | zd_core::ObjectKind::ParameterTable | zd_core::ObjectKind::Dataflow | zd_core::ObjectKind::Table | zd_core::ObjectKind::Script))
         .map(|o| o.attributes.clone())
         .collect())
 }
@@ -754,7 +757,7 @@ pub async fn table_grid(source: GridSource, ask: zd_commands::table_grid::GridAs
         let project = app.session.project();
         match source {
             GridSource::Table { table } => match &project.object(table).ok_or("no such object")?.body {
-                zd_core::Body::Table(t) => zd_commands::table_grid::grid_with(t, &ask, &|id| parameter_table(project, id)),
+                zd_core::Body::Table(t) => zd_commands::table_grid::grid_with(t, &ask, &|id| project.object(id).cloned()),
                 _ => Err("not a table".to_string()),
             },
             GridSource::Objects { objects, density } => zd_commands::table_grid::grid(&zd_commands::table_grid::objects_table(project, &objects, density.as_deref()), &ask),
@@ -775,12 +778,45 @@ pub async fn records_preview(params: zd_commands::builtin::UpdateRecordsParams, 
     .await?
 }
 
-/// A parameter table of the project, by id: what a calculated column's `p` reads.
-fn parameter_table(project: &zd_core::Project, id: ObjectId) -> Option<Arc<zd_core::ParameterTable>> {
-    match &project.object(id)?.body {
-        zd_core::Body::ParameterTable(t) => Some(t.clone()),
-        _ => None,
-    }
+/// A calculated column as edited, its formula's loads bound to the project's scripts by name (decision 0099).
+fn bound_column(project: &zd_core::Project, mut column: zd_core::CalculatedColumn) -> Result<zd_core::CalculatedColumn, String> {
+    column.scripts = zd_commands::builtin::bind_loads(project.objects(), &[column.script.as_str()])?.0;
+    Ok(column)
+}
+
+/// A dataflow as edited, its formulas' loads bound to the project's scripts by name (decision 0099), so an edit can
+/// load a script before it's saved; and those scripts, for the loader.
+fn bound(project: &zd_core::Project, mut d: zd_core::Dataflow) -> Result<(zd_core::Dataflow, zd_commands::builtin::ScriptLibraries), String> {
+    let sources: Vec<String> = d.steps.iter().filter_map(|s| s.formula.as_ref().map(|f| f.script.clone())).collect();
+    let refs: Vec<&str> = sources.iter().map(String::as_str).collect();
+    let (ids, libraries) = zd_commands::builtin::bind_loads(project.objects(), &refs)?;
+    d.scripts = ids;
+    Ok((d, libraries))
+}
+
+/// A script as edited, checked as a library against the project's other scripts (decision 0099): its problems, each on
+/// its line. Nothing is kept.
+#[tauri::command]
+pub async fn script_check(name: String, source: String, script: Option<ObjectId>, state: State<'_, AppState>) -> Result<Vec<zd_commands::builtin::FormulaProblem>, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let others: Vec<(String, String)> = app
+            .session
+            .project()
+            .objects()
+            .filter(|o| Some(o.id) != script)
+            .filter_map(|o| match &o.body {
+                zd_core::Body::Script(s) => Some((o.name.clone(), s.source.clone())),
+                _ => None,
+            })
+            .collect();
+        Ok(match zd_commands::builtin::check_library(name.trim(), &source, &Arc::new(others)) {
+            Ok(()) => Vec::new(),
+            Err(problems) => problems.into_iter().map(|p| zd_commands::builtin::FormulaProblem { message: p.message, line: p.line }).collect(),
+        })
+    })
+    .await?
 }
 
 fn results_table(project: &zd_core::Project, id: ObjectId) -> Result<Arc<zd_core::Table>, String> {
@@ -799,7 +835,8 @@ pub async fn calc_check(object: ObjectId, column: zd_core::CalculatedColumn, sta
         let app = app.lock().unwrap();
         let project = app.session.project();
         let table = results_table(project, object)?;
-        Ok(zd_commands::table_calc::check(&table, &column, &|id| parameter_table(project, id)))
+        let column = bound_column(project, column)?;
+        Ok(zd_commands::table_calc::check(&table, &column, &|id| project.object(id).cloned()))
     })
     .await?
 }
@@ -815,7 +852,8 @@ pub async fn calc_trace(object: ObjectId, column: zd_core::CalculatedColumn, row
         if row >= table.rows() {
             return Err(format!("the table has {} rows", table.rows()));
         }
-        let lookup = |id| parameter_table(project, id);
+        let column = bound_column(project, column)?;
+        let lookup = |id: ObjectId| project.object(id).cloned();
         let calc = zd_commands::table_calc::compile(&table, &column, &lookup).map_err(|p| p.iter().map(|p| p.to_string()).collect::<Vec<_>>().join("; "))?;
         Ok(zd_commands::table_calc::trace_row(&table, &calc, row, &label))
     })
@@ -911,6 +949,7 @@ pub async fn reserves_column(
     let app = state.app.clone();
     blocking(move || {
         let app = app.lock().unwrap();
+        let dataflow = dataflow.map(|d| bound(app.session.project(), d).map(|(d, _)| d)).transpose()?;
         let unsaved = unsaved(dataflow, tables);
         zd_commands::builtin::table_column(app.session.project(), app.session.log(), object, &node, &unsaved).map_err(|e| e.to_string())
     })
@@ -970,6 +1009,7 @@ pub async fn reserves_column_trace(
     let app = state.app.clone();
     blocking(move || {
         let app = app.lock().unwrap();
+        let dataflow = dataflow.map(|d| bound(app.session.project(), d).map(|(d, _)| d)).transpose()?;
         let unsaved = unsaved(dataflow, tables);
         zd_commands::builtin::column_trace(app.session.project(), app.session.log(), object, &node, step, unit, &unsaved).map_err(|e| e.to_string())
     })
@@ -1064,7 +1104,10 @@ pub async fn dataflow_check(content: zd_core::Dataflow, state: State<'_, AppStat
         let refs: Vec<&zd_core::ParameterTable> = tables.iter().map(|t| &**t).collect();
         let fields = content.engine_fields()?;
         let built_in: Vec<&str> = zd_commands::builtin::STEPS.iter().map(|(n, _)| *n).collect();
-        zd_commands::builtin::check_formula_steps(&content, &built_in, &zd_commands::builtin::formula_declared(&fields, &refs)).map(|_| ())
+        let (content, libraries) = bound(project, content)?;
+        let mut declared = zd_commands::builtin::formula_declared(&fields, &refs);
+        declared.libraries = libraries;
+        zd_commands::builtin::check_formula_steps(&content, &built_in, &declared).map(|_| ())
     })
     .await?
 }
@@ -1087,7 +1130,12 @@ pub async fn formula_check(content: zd_core::Dataflow, index: usize, state: Stat
             .collect();
         let refs: Vec<&zd_core::ParameterTable> = tables.iter().map(|t| &**t).collect();
         let built_in: Vec<&str> = zd_commands::builtin::STEPS.iter().map(|(n, _)| *n).collect();
-        zd_commands::builtin::check_formula(&content, &refs, index, &built_in)
+        // A load of a name the project hasn't is said on the formula, as any problem is.
+        let libraries = match bound(project, content.clone()) {
+            Ok((_, libraries)) => libraries,
+            Err(_) => Default::default(),
+        };
+        zd_commands::builtin::check_formula_with(&content, &refs, index, &built_in, libraries)
     })
     .await?
 }
@@ -1106,6 +1154,7 @@ pub async fn formula_trace(content: zd_core::Dataflow, step: String, solid: Obje
         let model = project.objects().find(|o| matches!(o.body, zd_core::Body::SeamModel(_))).map(|o| o.id).ok_or("the project has no seam model to put the column in order")?;
         let p = zd_commands::builtin::RunReservesParams { dataflow: ObjectId::new(), blocks, model: Some(model), stack: Vec::new(), layer: "trace".into(), parameters: None, name: String::new(), table: None, only: Vec::new(), previous: None };
         let get = |id: ObjectId| project.object(id).cloned().ok_or(zd_commands::CommandError::MissingObject(id));
+        let (content, _) = bound(project, content)?;
         zd_commands::builtin::formula_trace(&get, &std::sync::Arc::new(content), &p, &step, solid).map_err(|e| e.to_string())
     })
     .await?
@@ -1263,7 +1312,7 @@ pub async fn stage_object(id: ObjectId, state: State<'_, AppState>) -> Result<St
                 let buffer = encode_grid(g, origin, header);
                 (buffer, "grid", 2 * (g.cols - 1) * (g.rows - 1))
             }
-            Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) | Body::ParameterTable(_) | Body::Dataflow(_) | Body::Table(_) => unreachable!("only drawn surfaces are staged"),
+            Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) | Body::ParameterTable(_) | Body::Dataflow(_) | Body::Table(_) | Body::Script(_) => unreachable!("only drawn surfaces are staged"),
         };
         (buffer, kind, triangles, ms(t))
     })
@@ -1668,7 +1717,7 @@ pub async fn build_snap_index(shown: Option<bool>, state: State<'_, AppState>) -
                 let source = match &o.body {
                     Body::Surface(s) => Source::Mesh(o.id, geometry_key(&o.body), s.mesh_arc().clone()),
                     Body::Grid(g) => Source::Grid(o.id, geometry_key(&o.body), g.clone()),
-                    Body::Solid(_) | Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) | Body::ParameterTable(_) | Body::Dataflow(_) | Body::Table(_) => unreachable!("only drawn surfaces are snapped to one by one"),
+                    Body::Solid(_) | Body::String(_) | Body::SeamModel(_) | Body::FaceDesign(_) | Body::Workflow(_) | Body::ParameterTable(_) | Body::Dataflow(_) | Body::Table(_) | Body::Script(_) => unreachable!("only drawn surfaces are snapped to one by one"),
                 };
                 (on_show(o), source)
             });

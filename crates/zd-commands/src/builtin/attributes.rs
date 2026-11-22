@@ -308,15 +308,20 @@ impl Command for CalculateInTable {
         {
             return Err(CommandError::Invalid(format!("{name} is weighted by {column}, which isn't a column of numbers in the table")));
         }
-        // Its parameter tables read as the run reads them: each an object of the project, recorded as an input.
-        let mut tables = Vec::new();
+        // Its parameter tables read as the run reads them, each recorded as an input; the scripts it loads bound by name.
         for &id in &c.parameters {
-            match &inputs.object(id)?.body {
-                Body::ParameterTable(t) => tables.push((id, t.clone())),
-                _ => return Err(CommandError::Invalid("a calculated column reads parameter tables only".into())),
+            if !matches!(inputs.object(id)?.body, Body::ParameterTable(_)) {
+                return Err(CommandError::Invalid("a calculated column reads parameter tables only".into()));
             }
         }
-        let lookup = |id: ObjectId| tables.iter().find(|(t, _)| *t == id).map(|(_, t)| t.clone());
+        let (scripts, _) = super::bind_loads(inputs.objects(), &[c.script.as_str()]).map_err(CommandError::Invalid)?;
+        for &id in &scripts {
+            inputs.object(id)?;
+        }
+        let mut c = c.clone();
+        c.scripts = scripts;
+        let c = &c;
+        let lookup = |id: ObjectId| inputs.object(id).ok().cloned();
         let checked = crate::table_calc::check(table, c, &lookup);
         if !checked.problems.is_empty() {
             let said: Vec<String> = checked.problems.iter().map(|p| match p.line {

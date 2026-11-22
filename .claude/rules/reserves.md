@@ -45,7 +45,8 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
   columns into objects' attributes or a table's entered columns, its report (`match_records`) shown first. A table's
   calculated columns (`CalculatedColumn`, `table_calc.rs`) are dataflow formulas on a row, `def formula(row, p):`,
   kept as scripts and worked out by `grid_with`, a group from its inputs or its rows by a rule; `table.calculate` puts
-  one on. Its
+  one on. A `Script` object is Starlark loaded by name, `load("name", "f")`; a dataflow and a calculated column keep
+  the ids of the scripts they load (`bind_loads` on save), so a run reads and records their revisions. Its
   workstreams 2 to 9 (entered and calculated columns, update records, table and object scripts, a dataflow from any
   table) build on it.
 

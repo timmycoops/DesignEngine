@@ -12,7 +12,7 @@ const concealed = (o: ObjectSummary) => o.hidden || !!o.filtered;
  * What isn't drawn has no place in the tree (Filtering plan, L4): a face design, workflow, parameter table, dataflow or
  * reserves table is found in the list its own tab or panel has, with Rename and Delete there.
  */
-export const IN_TREE = (o: ObjectSummary) => !['face_design', 'workflow', 'parameter_table', 'dataflow', 'table'].includes(o.kind);
+export const IN_TREE = (o: ObjectSummary) => !['face_design', 'workflow', 'parameter_table', 'dataflow', 'table', 'script'].includes(o.kind);
 
 /** What a layer holds, by kind, in this order: the words for one and for several. */
 const KINDS: { kind: ObjectKind; drawn?: boolean; one: string; many: string }[] = [

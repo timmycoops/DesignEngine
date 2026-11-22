@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Crossings, Dataflow, FaceDesign, Grid, LayerId, MeshValidity, ObjectId, ParameterTable, RunId, SeamModel, Table, TriMesh, Workflow};
+use crate::{Crossings, Dataflow, FaceDesign, Grid, LayerId, MeshValidity, ObjectId, ParameterTable, RunId, Script, SeamModel, Table, TriMesh, Workflow};
 
 /// What kind of thing an object is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -18,6 +18,7 @@ pub enum ObjectKind {
     ParameterTable,
     Dataflow,
     Table,
+    Script,
 }
 
 /// A string: ordered f64 vertices, open or closed.
@@ -203,6 +204,8 @@ pub enum Body {
     Dataflow(Arc<Dataflow>),
     /// A table of results: what a dataflow run makes, a table a case (decision 0072).
     Table(Arc<Table>),
+    /// Starlark a formula, a calculated column or another script loads by its name (decision 0099).
+    Script(Arc<Script>),
 }
 
 impl Body {
@@ -218,6 +221,7 @@ impl Body {
             Body::ParameterTable(_) => ObjectKind::ParameterTable,
             Body::Dataflow(_) => ObjectKind::Dataflow,
             Body::Table(_) => ObjectKind::Table,
+            Body::Script(_) => ObjectKind::Script,
         }
     }
 }

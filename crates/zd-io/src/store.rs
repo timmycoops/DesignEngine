@@ -156,6 +156,7 @@ enum StoredBody {
     ParameterTable { table: ParameterTable },
     Dataflow { dataflow: Dataflow },
     Table { table: Table },
+    Script { script: zd_core::Script },
 }
 
 /// Files already on disk for a shared mesh or grid, so a later save can point at them again.
@@ -269,6 +270,7 @@ impl ProjectStore {
                 StoredBody::ParameterTable { table } => Body::ParameterTable(Arc::new(table)),
                 StoredBody::Dataflow { dataflow } => Body::Dataflow(Arc::new(dataflow)),
                 StoredBody::Table { table } => Body::Table(Arc::new(table)),
+                StoredBody::Script { script } => Body::Script(Arc::new(script)),
             };
             objects.push(Object {
                 id: stored.id,
@@ -325,6 +327,7 @@ impl ProjectStore {
                 Body::ParameterTable(table) => StoredBody::ParameterTable { table: (**table).clone() },
                 Body::Dataflow(dataflow) => StoredBody::Dataflow { dataflow: (**dataflow).clone() },
                 Body::Table(table) => StoredBody::Table { table: (**table).clone() },
+                Body::Script(script) => StoredBody::Script { script: (**script).clone() },
             };
             stored.push(StoredObject {
                 id: object.id,

@@ -4,6 +4,7 @@
 //! and closed surfaces an import couldn't make solids fixed by repair (decision 0040).
 
 mod attributes;
+mod scripts;
 mod update_records;
 mod benches;
 mod blocks;
@@ -77,8 +78,10 @@ pub use reserves_run::{
 };
 pub use starter::{DISCARDED, RENAMED_FIELDS, TONNES_AD_PER_M3, renamed_from_older, starter_formulas, with_starter_formulas};
 pub use zd_script::REFERENCE as FORMULA_REFERENCE;
-pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_formula_steps, check_formula_steps_flagging, declared as formula_declared};
+pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, check_formula_with, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_formula_steps, check_formula_steps_flagging, declared as formula_declared};
 pub use dataflow::{DATAFLOW_LAYER, ExportParameters, PARAMETERS_LAYER, SaveDataflow, SaveParameters};
+pub use scripts::{SCRIPTS_LAYER, SaveScript, SaveScriptParams, bind_loads, libraries_of};
+pub use zd_script::{Libraries as ScriptLibraries, check_library};
 pub use attributes::{AttributeCell, CalculateInTable, CalculateParams, EnterInTable, EnterParams, Entry, RemoveColumn, RemoveColumnParams, SetAttributes, SetAttributesParams, TableCell};
 pub use update_records::{RecordChange, RecordsMode, RecordsReport, RecordsTarget, UpdateRecords, UpdateRecordsParams, match_records};
 
@@ -179,6 +182,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(Module::Reserves, RemoveColumn);
     registry.register(Module::Reserves, UpdateRecords);
     registry.register(Module::Reserves, CalculateInTable);
+    registry.register(Module::Reserves, SaveScript);
 }
 
 fn finite(point: &[f64; 3]) -> Result<(), CommandError> {

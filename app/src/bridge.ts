@@ -296,7 +296,7 @@ export interface Layer {
   visible: boolean;
 }
 
-export type ObjectKind = 'string' | 'surface' | 'solid' | 'grid' | 'seam_model' | 'face_design' | 'workflow' | 'parameter_table' | 'dataflow' | 'table';
+export type ObjectKind = 'string' | 'surface' | 'solid' | 'grid' | 'seam_model' | 'face_design' | 'workflow' | 'parameter_table' | 'dataflow' | 'table' | 'script';
 
 export interface ObjectSummary {
   id: string;
@@ -647,6 +647,9 @@ export const calcCheck = (object: string, column: CalculatedColumn) => invoke<Ca
 export const calcTrace = (object: string, column: CalculatedColumn, row: number, label: string) => invoke<FormulaTrace>('calc_trace', { object, column, row, label });
 /** The parameter tables a reserves table's dataflow reads, by id and name. */
 export const calcParameters = (object: string) => invoke<[string, string][]>('calc_parameters', { object });
+
+/** A script of the project as edited, checked as a library against the others (decision 9): its problems, each on its line. */
+export const scriptCheck = (name: string, source: string, script: string | null) => invoke<{ message: string; line: number | null }[]>('script_check', { name, source, script });
 
 /** One row of a grid: the total, a group's subtotal, or a leaf (a row of the table). */
 export interface GridRow {
@@ -1261,6 +1264,7 @@ export type Measures =
   | { kind: 'workflow'; workflow: Workflow }
   | { kind: 'parameter_table'; parameters: ParameterTable; csv: string }
   | { kind: 'dataflow'; dataflow: Dataflow }
+  | { kind: 'script'; script: { source: string; note?: string } }
   | { kind: 'table'; rows: number; columns: { name: string; unit?: string; text?: boolean; add_up?: AddUp }[]; figures: { writes: WriteFigures[] } };
 
 /** How a field adds up over units or rows (decision 0070, point 4). */

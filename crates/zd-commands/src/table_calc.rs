@@ -17,8 +17,8 @@ use crate::builtin::{FormulaTraceView, TraceLineView};
 use crate::builtin::FormulaProblem;
 use crate::reserves_view::add_up_column;
 
-/// The parameter tables a calculated column reads, by id.
-pub type ParameterLookup<'a> = &'a dyn Fn(ObjectId) -> Option<Arc<ParameterTable>>;
+/// The project's objects a calculated column reads, by id: its parameter tables and the scripts it loads.
+pub type ParameterLookup<'a> = &'a dyn Fn(ObjectId) -> Option<Arc<zd_core::Object>>;
 
 /// The names a calculated column's formula is given: every number column of the table, and the column itself, which it
 /// sets; every word column as a label; and its parameter tables' columns.
@@ -39,7 +39,7 @@ pub fn declared(table: &Table, column: &CalculatedColumn, parameters: &[Arc<Para
             }
         }
     }
-    Declared { fields, labels, parameters: params }
+    Declared { fields, labels, parameters: params, libraries: Default::default() }
 }
 
 /// A calculated column ready to work out: its formula compiled against the table, its parameter tables, and the
@@ -54,13 +54,22 @@ pub struct Calc<'a> {
 
 /// Its parameter tables, by the ids it names; one gone is said.
 pub fn parameter_tables(column: &CalculatedColumn, lookup: ParameterLookup<'_>) -> Result<Vec<Arc<ParameterTable>>, String> {
-    column.parameters.iter().map(|&id| lookup(id).ok_or_else(|| format!("{} reads a parameter table since deleted", column.name))).collect()
+    column
+        .parameters
+        .iter()
+        .map(|&id| match lookup(id).map(|o| o.body.clone()) {
+            Some(zd_core::Body::ParameterTable(t)) => Ok(t),
+            _ => Err(format!("{} reads a parameter table since deleted", column.name)),
+        })
+        .collect()
 }
 
 /// The formula compiled against the table: every problem with its line, any one refusing it.
 pub fn compile<'a>(table: &Table, column: &'a CalculatedColumn, lookup: ParameterLookup<'_>) -> Result<Calc<'a>, Vec<Problem>> {
     let parameters = parameter_tables(column, lookup).map_err(|e| vec![Problem { message: e, line: None, unit: None }])?;
-    let formula = Formula::compile(&column.script, declared(table, column, &parameters))?;
+    let mut names = declared(table, column, &parameters);
+    names.libraries = crate::builtin::libraries_of(&|id| lookup(id), &column.scripts).map_err(|e| vec![Problem { message: e, line: None, unit: None }])?;
+    let formula = Formula::compile(&column.script, names)?;
     let numbers: Vec<&str> = table.columns.iter().filter(|c| matches!(c.values, ColumnValues::Number(_))).map(|c| c.name.as_str()).collect();
     let mut reads: Vec<String> = formula.fields_read().into_iter().filter(|f| numbers.contains(&f.as_str())).collect();
     // A name read in a way the source scan can't see (built up in a loop): every number column, to be safe.
@@ -321,12 +330,12 @@ mod tests {
     }
 
     fn calc(name: &str, script: &str, adds: CalcAddUp) -> CalculatedColumn {
-        CalculatedColumn { name: name.into(), unit: String::new(), script: script.into(), adds, parameters: Vec::new() }
+        CalculatedColumn { name: name.into(), unit: String::new(), script: script.into(), adds, parameters: Vec::new(), scripts: Vec::new() }
     }
 
     const RATIO: &str = "def formula(row):\n    row.strip_ratio = row[\"Insitu\\\\Waste\\\\volume\"] / row[\"Insitu\\\\Coal\\\\tonnes\"]\n";
 
-    fn none(_: ObjectId) -> Option<Arc<ParameterTable>> {
+    fn none(_: ObjectId) -> Option<Arc<zd_core::Object>> {
         None
     }
 
@@ -375,7 +384,8 @@ mod tests {
         let mut t = made_up();
         let prices = Arc::new(ParameterTable::from_csv("when seam,price ($/t)\nU,80\n,60\n").unwrap());
         let id = ObjectId::new();
-        let lookup = |asked: ObjectId| (asked == id).then(|| prices.clone());
+        let object = Arc::new(zd_core::Object { id, revision: 1, name: "prices".into(), layer: zd_core::LayerId::new(), provenance: zd_core::RunId::new(), attributes: Default::default(), body: zd_core::Body::ParameterTable(prices) });
+        let lookup = |asked: ObjectId| (asked == id).then(|| object.clone());
         let mut value = calc("value", "def formula(row, p):\n    row.value = row[\"Insitu\\\\Coal\\\\tonnes\"] * p.price\n", CalcAddUp::Sum);
         value.parameters = vec![id];
         t.calculated.push(value);
@@ -428,8 +438,8 @@ mod batch_tests {
             ],
             calculated: Vec::new(),
         };
-        let c = CalculatedColumn { name: "ratio".into(), unit: String::new(), script: "def formula(row):\n    row.ratio = row.waste / row.coal\n".into(), adds: CalcAddUp::Sum, parameters: Vec::new() };
-        let none = |_: ObjectId| None;
+        let c = CalculatedColumn { name: "ratio".into(), unit: String::new(), script: "def formula(row):\n    row.ratio = row.waste / row.coal\n".into(), adds: CalcAddUp::Sum, parameters: Vec::new(), scripts: Vec::new() };
+        let none = |_: ObjectId| -> Option<Arc<zd_core::Object>> { None };
         let calc = compile(&t, &c, &none).unwrap();
         let (values, said) = leaf_values(&t, &calc, &rows, &|r| format!("B{r}"));
         assert_eq!(said.stopped, 200);
