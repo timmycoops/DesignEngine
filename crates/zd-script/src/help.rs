@@ -36,6 +36,8 @@ pub const TABLE_CALLS: &[Call] = &[
 pub const TABLE_GLOBALS: &[Call] = &[
     call("table", "table(\"Vulcan check\")", "another table of the project, by its name"),
     call("new_table", "new_table({\"block\": blocks, \"tonnes\": tonnes}, units={\"tonnes\": \"t\"}, adds={\"tonnes\": \"sum\"}, name=\"check\")", "a table made from lists, a column each, all as long"),
+    call("check", "check(\"waste processes\", t[\"ROM\\\\Waste\\\\dragline_bcm\"], t[\"ROM\\\\Waste\\\\truck_bcm\"], equals=t[\"ROM\\\\Waste\\\\volume\"], tolerance=0.01)", "a mine's own check: the parts added up on every leaf against equals, the difference written to Summary\\Checks\\<name>, each leaf out by more than the tolerance named"),
+    call("required", "required(\"ROM\\\\Waste\\\\dragline_bcm\", material=\"waste\", seam=\"U, M\")", "every leaf (of that material, and the filter's) has a value in the column; each with none named and counted in Summary\\Checks"),
 ];
 
 /// The library every script has (decision 0077), written once in Rust.

@@ -335,6 +335,22 @@ empty in a group, and the run says so. The formula library (`in_situ_rd`, `weigh
 
 A script never writes over a column the run wrote or a person entered; the run refuses it, naming the column.
 
+## A mine's own checks
+
+The stages (Imported, Insitu, ROM, Scheduled) are checked by the engine's balance on every block. Which processes a
+mine has, and what they add back to, are the mine's own: write them as a table script step after `final`, with two
+helpers so every site's checks read the same.
+
+| Call | What it checks |
+|---|---|
+| `check("waste processes", t["ROM\\Waste\\dragline_bcm"], t["ROM\\Waste\\truck_bcm"], equals=t["ROM\\Waste\\volume"], tolerance=0.01)` | the parts added up on every leaf against `equals` (a leaf with no value counts it as 0): the difference goes to `Summary\Checks\waste processes\difference`, 1 on each leaf out by more than the tolerance to `…\leaves out`, and the run names each leaf out |
+| `required("ROM\\Waste\\dragline_bcm", material="waste", seam="U, M")` | every leaf of that material (its stage's `Waste\volume` above 0; ROM's where the column has no folder) that the filter keeps has a value: 1 on each with none to `Summary\Checks\dragline_bcm on waste\leaves missing`, so the Summary counts them, and the run names each |
+
+A part or `equals` is a column's values (`t["…"]`, or a list worked out a row each) or its name. Both are worked out on
+the table `run` gives back, so a column the script adds can be checked, and the checks' columns go on that table. Each
+check has its own name (`required` takes `name=` where the default would repeat). The Reserves table's Balance view shows
+every check under the stages, holding or off.
+
 ## Examples
 
 **A reconciliation against another package's export** (a task):
@@ -369,4 +385,16 @@ def run(t):
         total = whole.get(s)
         share.append(c / total if c != None and total else None)
     return t.with_column("strip_coal_share", share, adds="sum")
+```
+
+**A mine's process checks** (a dataflow step after `final`):
+
+```py
+# Dragline, truck and shovel and dozer push take all the ROM waste; every waste leaf has a dragline volume; ROM coal is
+# all mined.
+def run(t):
+    check("waste processes", "ROM\\Waste\\dragline_bcm", "ROM\\Waste\\truck_bcm", "ROM\\Waste\\doze_bcm", equals="ROM\\Waste\\volume", tolerance=0.01)
+    check("coal mined", "ROM\\Coal\\coal_mined_t", equals="ROM\\Coal\\tonnes", tolerance=0.1)
+    required("ROM\\Waste\\dragline_bcm", material="waste")
+    return t
 ```

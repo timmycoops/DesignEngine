@@ -430,3 +430,10 @@ def formula(unit):
 ", Declared { libraries: libs, ..declared() }).unwrap();
     assert_eq!(f.run(&column(), &[0]).unwrap()[0].get("ash_ad"), Some(&ScriptValue::Number(17.5)));
 }
+
+#[test]
+fn checks_are_a_table_script_s_only() {
+    let f = Formula::compile("def formula(unit):\n    check(\"x\", [1], equals=[1])\n", declared()).expect("compiles");
+    let m = format!("{:?}", f.run(&column(), &[0]).expect_err("refused"));
+    assert!(m.contains("called in a table script"), "{m}");
+}

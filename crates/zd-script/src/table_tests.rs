@@ -204,3 +204,102 @@ fn every_table_script_in_the_reference_compiles_and_the_shares_add_to_one() {
     let ran = TableScript::compile(share, Default::default()).unwrap().run(TableInput { name: "Base".into(), table: Arc::new(t), tables: Vec::new(), parameters: values([]), work: Arc::new(Sums), lookups: Default::default() }).unwrap();
     assert_eq!(numbers(&ran.table, "strip_coal_share"), [Some(0.25), Some(0.75), Some(1.0)]);
 }
+
+/// Strip 1's four leaves: U and L of B1 and B2, as a reserves table holds them; waste removed by dragline and truck and
+/// shovel, B2 U's truck volume planted 100 m³ short, and pre-strip on B1 U only. B2 L's coal leaf has no waste.
+fn processes() -> Table {
+    let w = |v: &[&str]| v.iter().map(|s| Some(s.to_string())).collect::<Vec<_>>();
+    let n = |v: &[Option<f64>]| v.to_vec();
+    Table {
+        columns: vec![
+            TableColumn::text("case", w(&["Base", "Base", "Base", "Base"])),
+            TableColumn::text("strip", w(&["1", "1", "1", "1"])),
+            TableColumn::text("block", w(&["B1", "B1", "B2", "B2"])),
+            TableColumn::text("seam", w(&["U", "L", "U", "L"])),
+            TableColumn::adding("ROM\\Waste\\volume", "m3", AddUp::Sum, n(&[Some(1000.0), Some(2000.0), Some(1500.0), None])),
+            TableColumn::adding("ROM\\Waste\\dragline_bcm", "m3", AddUp::Sum, n(&[Some(600.0), Some(1200.0), Some(900.0), None])),
+            TableColumn::adding("ROM\\Waste\\truck_bcm", "m3", AddUp::Sum, n(&[Some(400.0), Some(800.0), Some(500.0), None])),
+            TableColumn::adding("ROM\\Waste\\prestrip_bcm", "m3", AddUp::Sum, n(&[Some(50.0), None, None, None])),
+            TableColumn::adding("ROM\\Coal\\tonnes", "t", AddUp::Sum, n(&[Some(80.0), Some(90.0), Some(70.0), Some(60.0)])),
+        ],
+        calculated: Vec::new(),
+    }
+}
+
+fn run_on(table: Table, script: &str) -> Result<TableRan, Problem> {
+    let s = TableScript::compile(script, Default::default()).map_err(|p| p.into_iter().next().expect("a problem"))?;
+    s.run(TableInput { name: "Base".into(), table: Arc::new(table), tables: Vec::new(), parameters: values([]), work: Arc::new(Sums), lookups: Default::default() })
+}
+
+#[test]
+fn a_mine_s_check_names_only_the_leaf_out() {
+    let ran = run_on(
+        processes(),
+        r#"
+def run(t, p):
+    check("waste processes", t["ROM\\Waste\\dragline_bcm"], "ROM\\Waste\\truck_bcm", equals=t["ROM\\Waste\\volume"], tolerance=0.01)
+    return t
+"#,
+    )
+    .expect("runs");
+    let d = numbers(&ran.table, "Summary\\Checks\\waste processes\\difference");
+    assert_eq!(d.len(), 4);
+    for (i, want) in [Some(0.0), Some(0.0), Some(-100.0), None].iter().enumerate() {
+        match (d[i], want) {
+            (Some(x), Some(y)) => assert!((x - y).abs() < 1e-9, "leaf {i}: {x} for {y}"),
+            (x, y) => assert_eq!(x, *y, "leaf {i}"),
+        }
+    }
+    assert_eq!(ran.table.column("Summary\\Checks\\waste processes\\difference").expect("difference").unit, "m3");
+    assert_eq!(numbers(&ran.table, "Summary\\Checks\\waste processes\\leaves out"), vec![Some(0.0), Some(0.0), Some(1.0), Some(0.0)]);
+    assert_eq!(ran.checks.len(), 1, "{:?}", ran.checks);
+    assert!(ran.checks[0].contains("1 leaf out by more than 0.01: 1 B2 U by -100"), "{}", ran.checks[0]);
+    assert!(!ran.checks[0].contains("B1"), "only B2 U is named: {}", ran.checks[0]);
+
+    // Within the tolerance it holds, and nothing is said.
+    let ran = run_on(processes(), "def run(t):\n    check(\"waste processes\", \"ROM\\\\Waste\\\\dragline_bcm\", \"ROM\\\\Waste\\\\truck_bcm\", equals=\"ROM\\\\Waste\\\\volume\", tolerance=100)\n    return t\n").expect("runs");
+    assert!(ran.checks.is_empty(), "{:?}", ran.checks);
+    assert_eq!(numbers(&ran.table, "Summary\\Checks\\waste processes\\leaves out"), vec![Some(0.0); 4]);
+}
+
+#[test]
+fn required_names_each_leaf_of_the_material_with_no_value() {
+    let ran = run_on(
+        processes(),
+        "def run(t):\n    required(\"ROM\\\\Waste\\\\prestrip_bcm\", material=\"waste\")\n    required(\"ROM\\\\Waste\\\\dragline_bcm\", name=\"dragline on U\", seam=\"U\")\n    return t\n",
+    )
+    .expect("runs");
+    // B1 L and B2 U hold waste and have no pre-strip; B2 L holds none, so it isn't asked.
+    let missing = numbers(&ran.table, "Summary\\Checks\\prestrip_bcm on waste\\leaves missing");
+    assert_eq!(missing, vec![Some(0.0), Some(1.0), Some(1.0), Some(0.0)]);
+    assert_eq!(missing.iter().flatten().sum::<f64>(), 2.0, "counted 2 in the Summary");
+    assert_eq!(ran.checks.len(), 1, "{:?}", ran.checks);
+    assert!(ran.checks[0].contains("2 waste leaves with no ROM\\Waste\\prestrip_bcm: 1 B1 L, 1 B2 U"), "{}", ran.checks[0]);
+    assert_eq!(numbers(&ran.table, "Summary\\Checks\\dragline on U\\leaves missing"), vec![Some(0.0); 4]);
+
+    // A field no leaf has a value for has no column: missing on every leaf, and said, as it may be misspelt.
+    let ran = run_on(processes(), "def run(t):\n    required(\"ROM\\\\Waste\\\\dragline_bc\")\n    return t\n").expect("runs");
+    assert!(ran.checks[0].contains("4 leaves with no ROM\\Waste\\dragline_bc (the table has no column ROM\\Waste\\dragline_bc; did you mean `ROM\\Waste\\dragline_bcm`?)"), "{}", ran.checks[0]);
+}
+
+#[test]
+fn a_check_s_mistakes_are_said() {
+    let said = |script: &str| run_on(processes(), script).expect_err("refused").message;
+    let m = said("def run(t):\n    check(\"a\\\\b\", \"ROM\\\\Waste\\\\volume\", equals=\"ROM\\\\Waste\\\\volume\")\n    return t\n");
+    assert!(m.contains("no \\ in it"), "{m}");
+    let m = said("def run(t):\n    check(\"waste\", equals=\"ROM\\\\Waste\\\\volume\")\n    return t\n");
+    assert!(m.contains("no parts"), "{m}");
+    let m = said("def run(t):\n    check(\"waste\", \"ROM\\\\Waste\\\\volume\", equals=\"ROM\\\\Waste\\\\volume\")\n    required(\"ROM\\\\Waste\\\\volume\", name=\"waste\")\n    return t\n");
+    assert!(m.contains("named waste already"), "{m}");
+    let m = said("def run(t):\n    check(\"waste\", [1, 2], equals=\"ROM\\\\Waste\\\\volume\")\n    return t\n");
+    assert!(m.contains("2 values for the 4 rows"), "{m}");
+    let m = said("def run(t):\n    check(\"waste\", \"ROM\\\\Waste\\\\dragline\", equals=\"ROM\\\\Waste\\\\volume\")\n    return t\n");
+    assert!(m.contains("no column ROM\\Waste\\dragline"), "{m}");
+    let m = said("def run(t):\n    check(\"waste\", \"ROM\\\\Waste\\\\volume\", equals=\"ROM\\\\Waste\\\\volume\", tolerance=-1)\n    return t\n");
+    assert!(m.contains("0 or more"), "{m}");
+    let m = said("def run(t):\n    required(\"ROM\\\\Waste\\\\volume\", material=\"spoil\")\n    return t\n");
+    assert!(m.contains("ROM\\spoil\\volume"), "{m}");
+    // A grouped table is another table: the check is worked out on what run gives back.
+    let m = said("def run(t):\n    check(\"waste\", t[\"ROM\\\\Waste\\\\volume\"], equals=\"ROM\\\\Waste\\\\volume\")\n    return t.group(\"block\")\n");
+    assert!(m.contains("4 values for the 2 rows of the table run gives back"), "{m}");
+}

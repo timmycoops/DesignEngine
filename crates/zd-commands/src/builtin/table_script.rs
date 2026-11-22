@@ -229,6 +229,7 @@ impl Command for RunTableScript {
         ran.table.check().map_err(|e| CommandError::Invalid(format!("{script_name} gave back a table that doesn't hold together: {e}")))?;
         let mut notes: Vec<Note> = ran.said.iter().map(|s| Note::info(format!("{script_name} said: {s}"))).collect();
         notes.extend(ran.notes.iter().map(|n| Note::info(n.clone())));
+        notes.extend(ran.checks.iter().map(|c| Note::warning(Code::TableCheckOut, format!("{script_name}: {c}"))));
         let (change, message) = match p.into {
             ScriptInto::New => {
                 let name = if p.name.trim().is_empty() { format!("{} {script_name}", object.name) } else { p.name.trim().to_string() };
@@ -327,6 +328,7 @@ pub(crate) fn run_table_steps(out: &mut Outcome, steps: &[(String, Arc<TableScri
                     current = t;
                     notes.extend(r.said.iter().map(|s| Note::info(format!("{step} said: {s}"))));
                     notes.extend(r.notes.iter().map(|n| Note::info(format!("{step}: {n}"))));
+                    notes.extend(r.checks.iter().map(|c| Note::warning(Code::TableCheckOut, format!("{label}: {step}: {c}"))));
                     if !added.is_empty() {
                         notes.push(Note::info(format!("{label}: {step} wrote {}", added.join(", "))));
                     }
