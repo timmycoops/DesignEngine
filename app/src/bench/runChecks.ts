@@ -1218,29 +1218,51 @@ async function checkFieldOfView(viewport: Viewport) {
 }
 
 /**
- * A right-drag pan of 200 px from `point`: how far that point ends up from the cursor. Panning still
- * moves at the target's depth, so it is not on the cursor yet; 0044 makes it stick.
+ * A right-drag pan of 500 px from `point`: how far that point ends up from the cursor, at the default field of
+ * view and at 45°, where a pan at the target's depth left it 23.9 px off on PIT B (0044). It sticks: below 0.5 px.
+ * The press and first moves go at once, so the pan has to wait for its pick. Then the view is put back.
  */
 async function checkPan(viewport: Viewport, point: THREE.Vector3) {
   const canvas = viewport.renderer.domElement;
-  const [x, y] = viewport.projectToClient(point);
   const [position, target] = [viewport.camera.position.clone(), viewport.controls.target.clone()];
-  const send = (type: string, dx: number, dy: number) =>
-    canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 2, buttons: 2, clientX: x + dx, clientY: y + dy, pointerId: 1, pointerType: 'mouse' }));
-  send('pointerdown', 0, 0);
-  for (let k = 1; k <= 10; k++) {
-    send('pointermove', 16 * k, 12 * k);
+  const panOnce = async () => {
+    const [x, y] = viewport.projectToClient(point);
+    const send = (type: string, dx: number, dy: number) =>
+      canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 2, buttons: 2, clientX: x + dx, clientY: y + dy, pointerId: 1, pointerType: 'mouse' }));
+    send('pointerdown', 0, 0);
+    send('pointermove', 8, 6);
+    for (let k = 1; k <= 10; k++) {
+      send('pointermove', 40 * k, 30 * k);
+      await viewport.nextFrame();
+    }
+    send('pointerup', 400, 300);
     await viewport.nextFrame();
-  }
-  send('pointerup', 160, 120);
+    const [px, py] = viewport.projectToClient(point);
+    return Math.hypot(px - (x + 400), py - (y + 300));
+  };
+  const atDefault = await panOnce();
+  viewport.camera.position.copy(position);
+  viewport.controls.target.copy(target);
+  viewport.controls.update();
+  viewport.setFieldOfView(45, false);
   await viewport.nextFrame();
-  const [px, py] = viewport.projectToClient(point);
+  const at45 = await panOnce();
   // Back to where it was, so the checks after this one see the same view as before.
+  viewport.setFieldOfView(FIELD_OF_VIEW_DEFAULT, false);
   viewport.camera.position.copy(position);
   viewport.controls.target.copy(target);
   viewport.controls.update();
   await viewport.nextFrame();
-  return { dragged_px: 200, point_off_cursor_px: Math.hypot(px - (x + 160), py - (y + 120)) };
+  return { dragged_px: 500, point_off_cursor_px: atDefault, point_off_cursor_px_at_45: at45 };
+}
+
+/**
+ * A button by its name: the one whose aria-label is `name`, as the view bar's icon buttons are named (0076), else the
+ * first whose text includes it.
+ */
+function findButton(name: string): HTMLButtonElement | undefined {
+  const all = [...document.querySelectorAll('button')];
+  return all.find((b) => b.getAttribute('aria-label') === name) ?? all.find((b) => b.textContent?.includes(name));
 }
 
 /** Draws through the real toolbar, canvas and key: a click snaps, S, then a click lands on the plane. */
@@ -1250,7 +1272,7 @@ async function checkSnapSwitch(viewport: Viewport) {
   const settle = async () => {
     for (let i = 0; i < 6; i++) await viewport.nextFrame();
   };
-  const button = (label: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.includes(label));
+  const button = (label: string) => findButton(label);
   const screen = () => document.body.innerText;
   const key = (name: string) => window.dispatchEvent(new KeyboardEvent('keydown', { key: name }));
   const click = async (x: number, y: number) => {
@@ -1352,7 +1374,7 @@ async function checkStringPick(viewport: Viewport, show: Show) {
   };
   const fromVertex = await turnFrom(points[1]);
   const fromSegment = await turnFrom(middle);
-  const button = (name: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.includes(name));
+  const button = (name: string) => findButton(name);
   button('Draw string')?.click();
   await settle();
   const overVertex = await label(points[1]);
@@ -1373,7 +1395,7 @@ async function checkSection(viewport: Viewport, section: SectionView | null, sum
   const settle = async () => {
     for (let i = 0; i < 6; i++) await viewport.nextFrame();
   };
-  const button = (name: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.includes(name));
+  const button = (name: string) => findButton(name);
   const click = async (x: number, y: number) => {
     for (const type of ['pointerdown', 'pointerup']) {
       canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, buttons: 1, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));

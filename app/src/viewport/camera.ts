@@ -1,11 +1,10 @@
 // The camera controller: every pointer and wheel input that moves the 3D, plan and section cameras.
 // It replaces three's OrbitControls, whose orbit we had already overridden, so that pan and zoom can
-// work on what is under the cursor too (decision 0044). This first version handles as OrbitControls
-// did, with one change: a turn or a wheel tick waits for its pick, so it never starts about the wrong
-// point.
+// work on what is under the cursor too (decision 0044). A turn, a pan in perspective and a wheel tick
+// each wait for their pick, so none starts about the wrong point.
 //
-// 3D: left drag turns about the point under the cursor, right drag pans, middle drag dollies, and the
-// wheel zooms towards the cursor. Plan and section: left or right drag pans, the wheel zooms about the
+// 3D: left drag turns about the point under the cursor, right drag pans with the point grabbed staying
+// under the cursor, middle drag dollies, and the wheel zooms towards the cursor. Plan and section: left or right drag pans, the wheel zooms about the
 // cursor; neither turns. Holding Z (Spry's hold to turn) makes a left drag turn in plan too: the view tilts
 // out of plan into 3D about the point under the cursor.
 import * as THREE from 'three/webgpu';
@@ -50,7 +49,9 @@ const HOLD_FOR_PICK_MS = 250;
 
 type Drag =
   | { kind: 'turn'; pointer: number; pivot: THREE.Vector3; x: number; y: number; ready: boolean; latest: [number, number] }
-  | { kind: 'pan' | 'dolly'; pointer: number; x: number; y: number; ndc: [number, number] };
+  /** `grabbed`: the point under the cursor at the press, which stays under it (null pans at the target's depth). */
+  | { kind: 'pan'; pointer: number; grabbed: THREE.Vector3 | null; x: number; y: number; ready: boolean; latest: [number, number] }
+  | { kind: 'dolly'; pointer: number; x: number; y: number; ndc: [number, number] };
 
 export class CameraController {
   /** The point the camera looks at. Strings use its RL for the working plane. */
@@ -156,6 +157,25 @@ export class CameraController {
       });
       return;
     }
+    if (kind === 'pan') {
+      const pan: Drag = { kind, pointer: e.pointerId, grabbed: null, x: e.clientX, y: e.clientY, ready: true, latest: [e.clientX, e.clientY] };
+      this.drag = pan;
+      // In perspective a pan sticks to the point grabbed (0044): it pans at that point's depth, so it needs the pick
+      // first, waited for as a turn's is. In plan and section, and in orthographic 3D, a pixel is the same at every
+      // depth: no pick.
+      if (!(this.host.camera instanceof THREE.PerspectiveCamera) || !this.host.pickPoint) return;
+      pan.ready = false;
+      this.host.holdFrames?.(HOLD_FOR_PICK_MS);
+      void this.host.pickPoint(e.clientX, e.clientY).then((hit) => {
+        this.host.holdFrames?.(0);
+        if (hit) pan.grabbed = new THREE.Vector3(...hit);
+        pan.ready = true;
+        if (this.drag !== pan) return;
+        const [x, y] = pan.latest;
+        if (x !== pan.x || y !== pan.y) this.panTo(pan, x, y);
+      });
+      return;
+    }
     this.drag = { kind, pointer: e.pointerId, x: e.clientX, y: e.clientY, ndc: this.ndc(e.clientX, e.clientY) };
   };
 
@@ -167,12 +187,22 @@ export class CameraController {
       if (drag.ready) this.turnTo(drag, e.clientX, e.clientY);
       return;
     }
-    const [dx, dy] = [e.clientX - drag.x, e.clientY - drag.y];
+    if (drag.kind === 'pan') {
+      drag.latest = [e.clientX, e.clientY];
+      if (drag.ready) this.panTo(drag, e.clientX, e.clientY);
+      return;
+    }
+    const dy = e.clientY - drag.y;
     drag.x = e.clientX;
     drag.y = e.clientY;
-    if (drag.kind === 'pan') this.pan(dx, dy);
-    else if (dy !== 0) this.zoomBy(zoomScale(dy), drag.ndc);
+    if (dy !== 0) this.zoomBy(zoomScale(dy), drag.ndc);
   };
+
+  private panTo(pan: Extract<Drag, { kind: 'pan' }>, x: number, y: number): void {
+    this.pan(x - pan.x, y - pan.y, pan.grabbed);
+    pan.x = x;
+    pan.y = y;
+  }
 
   private pointerUp = (e: PointerEvent): void => {
     if (!this.drag || e.pointerId !== this.drag.pointer) return;
@@ -213,10 +243,12 @@ export class CameraController {
   }
 
   /**
-   * Slides the camera and target across the screen by a drag of `dx`, `dy` pixels. In 3D a pixel is
-   * measured at the target's depth; in plan and section a pixel is the same everywhere.
+   * Slides the camera and target across the screen by a drag of `dx`, `dy` pixels. In perspective a pixel
+   * is measured at the depth of `grabbed` (the target's when there is none): the camera only slides, so
+   * that depth never changes and the point grabbed stays exactly under the cursor, near or far (0044).
+   * In plan, section and orthographic 3D a pixel is the same everywhere.
    */
-  private pan(dx: number, dy: number): void {
+  private pan(dx: number, dy: number, grabbed: THREE.Vector3 | null = null): void {
     const camera = this.host.camera;
     camera.updateMatrix();
     const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
@@ -224,7 +256,10 @@ export class CameraController {
     let across: number;
     let along: number;
     if (camera instanceof THREE.PerspectiveCamera) {
-      const metresPerPixel = (2 * camera.position.distanceTo(this.target) * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / (this.canvas.clientHeight || 1);
+      const forward = camera.getWorldDirection(new THREE.Vector3());
+      const grabbedDepth = grabbed ? grabbed.clone().sub(camera.position).dot(forward) : 0;
+      const depth = grabbedDepth > 0 ? grabbedDepth : this.target.clone().sub(camera.position).dot(forward);
+      const metresPerPixel = (2 * depth * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / (this.canvas.clientHeight || 1);
       across = dx * metresPerPixel;
       along = dy * metresPerPixel;
     } else {
