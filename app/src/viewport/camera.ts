@@ -28,8 +28,12 @@ export function typing(target: EventTarget | null): boolean {
 /** What the controller needs from the viewport. */
 export interface CameraHost {
   readonly renderer: { readonly domElement: HTMLCanvasElement };
-  /** The camera in use: the 3D one, the plan one or the section one. */
+  /** The camera in use: the 3D one (perspective or orthographic), the plan one or the section one. What a move is measured by. */
   readonly camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
+  /** The camera a move works on: `camera`, except in orthographic 3D, where it's the 3D camera the orthographic one copies. */
+  readonly rig: THREE.PerspectiveCamera | THREE.OrthographicCamera;
+  /** Puts `camera` where `rig` says, after a move (orthographic 3D); nothing otherwise. */
+  syncCamera?(): void;
   /** Plan or section: a view that pans with the left button and does not turn. */
   readonly flatView: boolean;
   /** Plan, and not a section, which is never turned. */
@@ -87,7 +91,8 @@ export class CameraController {
 
   /** Points the camera at the target; run every frame, and after moving either by hand. */
   update(): void {
-    this.host.camera.lookAt(this.target);
+    this.host.rig.lookAt(this.target);
+    this.host.syncCamera?.();
   }
 
   dispose(): void {
@@ -229,7 +234,7 @@ export class CameraController {
    * pivot where it is on screen; the camera does not jump to look at it.
    */
   private turnAbout(pivot: THREE.Vector3, yaw: number, raise: number): void {
-    const camera = this.host.camera;
+    const camera = this.host.rig;
     const forward = camera.getWorldDirection(new THREE.Vector3());
     const right = forward.clone().cross(camera.up).normalize();
     const fromAbove = forward.angleTo(camera.up.clone().negate());
@@ -250,9 +255,10 @@ export class CameraController {
    */
   private pan(dx: number, dy: number, grabbed: THREE.Vector3 | null = null): void {
     const camera = this.host.camera;
-    camera.updateMatrix();
-    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
-    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+    const rig = this.host.rig;
+    rig.updateMatrix();
+    const right = new THREE.Vector3().setFromMatrixColumn(rig.matrix, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(rig.matrix, 1);
     let across: number;
     let along: number;
     if (camera instanceof THREE.PerspectiveCamera) {
@@ -267,7 +273,7 @@ export class CameraController {
       along = (dy * (camera.top - camera.bottom)) / camera.zoom / (this.canvas.clientHeight || 1);
     }
     const offset = right.multiplyScalar(-across).add(up.multiplyScalar(along));
-    camera.position.add(offset);
+    rig.position.add(offset);
     this.target.add(offset);
     this.update();
   }
@@ -278,7 +284,8 @@ export class CameraController {
     const delta = wheelDelta(e);
     if (delta === 0) return;
     const scale = zoomScale(delta);
-    if (this.host.flatView || !this.host.pickPoint) {
+    // With no perspective a wheel scales the view about the cursor: no depth to find.
+    if (!(this.host.camera instanceof THREE.PerspectiveCamera) || !this.host.pickPoint) {
       this.zoomBy(scale, this.ndc(e.clientX, e.clientY));
       return;
     }
@@ -312,14 +319,27 @@ export class CameraController {
   }
 
   /**
-   * Zooms by `scale` towards the screen point `ndc` (below 1 is in). In 3D the camera moves along
-   * the ray through that point by the share of its distance to the target; in plan and section the
-   * view scales about it, so what is under the cursor stays there.
+   * Zooms by `scale` towards the screen point `ndc` (below 1 is in). In perspective the camera moves along
+   * the ray through that point by the share of its distance to the target; with no perspective (plan,
+   * section, orthographic 3D) the view scales about it, so what is under the cursor stays there.
    */
   private zoomBy(scale: number, [nx, ny]: [number, number]): void {
     const camera = this.host.camera;
+    const rig = this.host.rig;
     const distance = camera.position.distanceTo(this.target);
-    if (camera instanceof THREE.PerspectiveCamera) {
+    if (rig !== camera) {
+      // Orthographic 3D: its scale is the 3D camera's distance to the target, so that closes in along the line of
+      // sight, then both slide across the screen so what is under the cursor stays.
+      const before = new THREE.Vector3(nx, ny, 0).unproject(camera);
+      rig.position.sub(this.target).multiplyScalar(scale).add(this.target);
+      this.host.syncCamera?.();
+      const after = new THREE.Vector3(nx, ny, 0).unproject(camera);
+      const forward = rig.getWorldDirection(new THREE.Vector3());
+      const slide = before.sub(after);
+      slide.addScaledVector(forward, -slide.dot(forward));
+      rig.position.add(slide);
+      this.target.add(slide);
+    } else if (camera instanceof THREE.PerspectiveCamera) {
       const along = new THREE.Vector3(nx, ny, 0.5).unproject(camera).sub(camera.position).normalize();
       const nearer = distance * scale;
       camera.position.addScaledVector(along, distance - nearer);

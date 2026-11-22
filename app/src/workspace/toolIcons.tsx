@@ -1,5 +1,6 @@
 import {
   ArrowLeftRight,
+  Axis3d,
   Crop,
   Diff,
   SquaresUnite,
@@ -155,6 +156,7 @@ const ICONS: Record<ToolIcon, LucideIcon> = {
   plan: MapIcon,
   'zoom-selection': Focus,
   'zoom-all': Expand,
+  orthographic: Axis3d,
   section: Scissors,
   measure: Ruler,
 };

@@ -86,6 +86,7 @@ export type ToolIcon =
   | 'plan'
   | 'zoom-selection'
   | 'zoom-all'
+  | 'orthographic'
   | 'section'
   | 'measure'
   | 'clip'
@@ -133,6 +134,7 @@ export type ToolAction =
   | 'view.draw'
   | 'view.snap'
   | 'view.plan'
+  | 'view.orthographic'
   | 'view.zoom_selection'
   | 'view.zoom_all'
   | 'view.section'
@@ -310,6 +312,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'view.draw', stage: 'always', label: 'Draw string', tip: 'Draw a new string: snaps to string vertices and segments, then surfaces; right-click finishes', icon: 'draw', shortcut: 'NS', action: 'view.draw' },
   { key: 'view.snap', stage: 'always', label: 'Snap', tip: 'Turns snap on, or off', icon: 'snap', shortcut: 'S', action: 'view.snap' },
   { key: 'view.plan', stage: 'always', label: 'Plan or 3D', tip: 'Plan view, straight down and north up, or back to 3D', icon: 'plan', shortcut: 'T', action: 'view.plan' },
+  { key: 'view.orthographic', stage: 'always', label: 'Orthographic or perspective', tip: 'The 3D view with no perspective, a metre the same size near and far, or back to perspective', icon: 'orthographic', shortcut: 'P', action: 'view.orthographic' },
   { key: 'view.zoom_selection', stage: 'always', label: "Zoom to what's selected", tip: "From the way you're looking", icon: 'zoom-selection', shortcut: 'F', action: 'view.zoom_selection' },
   { key: 'view.zoom_all', stage: 'always', label: 'Zoom to everything', tip: 'The whole project in the view', icon: 'zoom-all', shortcut: 'E', action: 'view.zoom_all' },
   { key: 'view.section', stage: 'always', label: 'Section', tip: 'Pick two points for a true vertical slice, or close the one open', icon: 'section', shortcut: '2', action: 'view.section' },

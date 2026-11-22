@@ -1169,6 +1169,111 @@ async function checkCamera(viewport: Viewport) {
     zoom: { drift_px: Math.hypot(wx - zx, wy - zy), from_m: turnedDistance, to_m: viewport.camera.position.distanceTo(point) },
     pan: await checkPan(viewport, point),
     field_of_view: await checkFieldOfView(viewport),
+    orthographic: await checkOrthographic(viewport, point),
+  };
+}
+
+/**
+ * The share of the view's pixels that show something, not the background: that a view draws at all, counted on a copy
+ * a fifth the size. A count only, so it's safe on any data.
+ */
+async function drawnShare(viewport: Viewport): Promise<number> {
+  await viewport.nextFrame();
+  viewport.draw();
+  const canvas = viewport.renderer.domElement;
+  const image = new Image();
+  image.src = canvas.toDataURL('image/png');
+  await image.decode();
+  const small = document.createElement('canvas');
+  [small.width, small.height] = [Math.max(1, Math.round(canvas.width / 5)), Math.max(1, Math.round(canvas.height / 5))];
+  const context = small.getContext('2d');
+  if (!context) return NaN;
+  context.drawImage(image, 0, 0, small.width, small.height);
+  const { data } = context.getImageData(0, 0, small.width, small.height);
+  const background = new THREE.Color(viewport.scene.background as THREE.Color).getHex();
+  const [br, bg, bb] = [(background >> 16) & 255, (background >> 8) & 255, background & 255];
+  let drawn = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (Math.abs(data[i] - br) + Math.abs(data[i + 1] - bg) + Math.abs(data[i + 2] - bb) > 24) drawn++;
+  }
+  return drawn / (data.length / 4);
+}
+
+/**
+ * The orthographic 3D switch (0044 PR 4): the target keeps its size on screen through it and back (scale_off below 0.01),
+ * and in orthographic 3D a turn about `point`, a 500 px pan from it and a wheel zoom on it each keep it under the cursor;
+ * into plan and back from orthographic keeps the scale too. By the real canvas and the P key. Then the view is put back.
+ */
+async function checkOrthographic(viewport: Viewport, point: THREE.Vector3) {
+  const canvas = viewport.renderer.domElement;
+  const [position, target] = [viewport.camera.position.clone(), viewport.controls.target.clone()];
+  const settle = async () => {
+    for (let i = 0; i < 4; i++) await viewport.nextFrame();
+  };
+  const drag = async (button: number, dx: number, dy: number) => {
+    const [x, y] = viewport.projectToClient(point);
+    const send = (type: string, k: number) =>
+      canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button, buttons: button === 2 ? 2 : 1, clientX: x + dx * k, clientY: y + dy * k, pointerId: 1, pointerType: 'mouse' }));
+    send('pointerdown', 0);
+    for (let k = 1; k <= 10; k++) {
+      send('pointermove', k / 10);
+      await viewport.nextFrame();
+    }
+    send('pointerup', 1);
+    await settle();
+    const [px, py] = viewport.projectToClient(point);
+    return Math.hypot(px - (x + (button === 2 ? dx : 0)), py - (y + (button === 2 ? dy : 0)));
+  };
+  const before = viewport.pixelSize(target);
+  const drawnInPerspective = await drawnShare(viewport);
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p' }));
+  await settle();
+  const switched = viewport.orthographic3D && viewport.camera instanceof THREE.OrthographicCamera;
+  const atSwitch = viewport.pixelSize(target);
+  const drawnInOrthographic = await drawnShare(viewport);
+  const turn = await drag(0, 120, 60);
+  const pan = await drag(2, 400, 300);
+  const [zx, zy] = viewport.projectToClient(point);
+  for (let k = 0; k < 6; k++) {
+    canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: zx, clientY: zy, deltaY: -120 }));
+    await viewport.nextFrame();
+  }
+  await settle();
+  const [wx, wy] = viewport.projectToClient(point);
+  const zoomedBy = before / viewport.pixelSize(viewport.controls.target);
+  const planBefore = viewport.pixelSize(viewport.controls.target);
+  viewport.setPlanView(true);
+  await settle();
+  const inPlan = viewport.pixelSize(viewport.controls.target);
+  viewport.setPlanView(false);
+  await settle();
+  const outOfPlan = viewport.pixelSize(viewport.controls.target);
+  const stillOrthographic = viewport.camera instanceof THREE.OrthographicCamera;
+  const sizeBeforeBack = viewport.pixelSize(viewport.controls.target);
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p' }));
+  await settle();
+  const back = !viewport.orthographic3D && viewport.camera instanceof THREE.PerspectiveCamera;
+  const atBack = viewport.pixelSize(viewport.controls.target);
+  // Put back, and the setting as it was saved (the key saved it).
+  viewport.setOrthographic3D(false);
+  viewport.camera.position.copy(position);
+  viewport.controls.target.copy(target);
+  viewport.controls.update();
+  await settle();
+  return {
+    p_switched_to_orthographic: switched,
+    scale_off_at_switch: Math.abs(atSwitch / before - 1),
+    drawn_share_perspective: drawnInPerspective,
+    drawn_share_orthographic: drawnInOrthographic,
+    turn_drift_px: turn,
+    pan_point_off_cursor_px: pan,
+    zoom_drift_px: Math.hypot(wx - zx, wy - zy),
+    zoomed_in_by: zoomedBy,
+    plan_scale_off: Math.abs(inPlan / planBefore - 1),
+    back_from_plan_scale_off: Math.abs(outOfPlan / planBefore - 1),
+    back_from_plan_still_orthographic: stillOrthographic,
+    p_back_to_perspective: back,
+    scale_off_back: Math.abs(atBack / sizeBeforeBack - 1),
   };
 }
 
