@@ -2,7 +2,7 @@
 // with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cellText, changedWords, gridCsv, groupsKept, nextSort, pastedLines, readEntry, toggleOpen } from '../src/panels/tableGrid.ts';
+import { cellText, changedWords, csvColumns, gridCsv, groupsKept, likelyKey, nextSort, pastedLines, readEntry, toggleOpen } from '../src/panels/tableGrid.ts';
 
 test('a group closed closes every group under it', () => {
   let open = toggleOpen([], ['3']);
@@ -72,4 +72,10 @@ test("what's changed since a table's run is said in a line", () => {
   assert.equal(changedWords({ blocks: 0, others: [], gone: 0 }), '');
   assert.equal(changedWords({ blocks: 2, others: [], gone: 0 }), "2 blocks changed since this table's run");
   assert.equal(changedWords({ blocks: 1, others: ['Reserves assumptions'], gone: 3 }), "1 block, Reserves assumptions and 3 inputs deleted changed since this table's run");
+});
+
+test("a CSV's columns are its header's names, units left off, a quoted comma kept", () => {
+  assert.deepEqual(csvColumns('\uFEFFblock,seam,rd (t/m3),"note, long"\r\nB1,U,1.4,x\r\n'), ['block', 'seam', 'rd', 'note, long']);
+  assert.deepEqual(csvColumns('\n\nstrip,zone\n3,east'), ['strip', 'zone']);
+  assert.deepEqual(likelyKey(['Block', 'seam', 'rd'], ['pit', 'strip', 'block', 'seam', 'bench']), ['Block', 'seam']);
 });

@@ -4,6 +4,7 @@
 //! and closed surfaces an import couldn't make solids fixed by repair (decision 0040).
 
 mod attributes;
+mod update_records;
 mod benches;
 mod blocks;
 mod build;
@@ -79,6 +80,7 @@ pub use zd_script::REFERENCE as FORMULA_REFERENCE;
 pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_formula_steps, check_formula_steps_flagging, declared as formula_declared};
 pub use dataflow::{DATAFLOW_LAYER, ExportParameters, PARAMETERS_LAYER, SaveDataflow, SaveParameters};
 pub use attributes::{AttributeCell, EnterInTable, EnterParams, Entry, RemoveColumn, RemoveColumnParams, SetAttributes, SetAttributesParams, TableCell};
+pub use update_records::{RecordChange, RecordsMode, RecordsReport, RecordsTarget, UpdateRecords, UpdateRecordsParams, match_records};
 
 use crate::{CommandError, Module, Registry};
 
@@ -175,6 +177,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(Module::Reserves, RunReserves);
     registry.register(Module::Reserves, EnterInTable);
     registry.register(Module::Reserves, RemoveColumn);
+    registry.register(Module::Reserves, UpdateRecords);
 }
 
 fn finite(point: &[f64; 3]) -> Result<(), CommandError> {

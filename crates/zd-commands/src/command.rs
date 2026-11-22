@@ -143,6 +143,12 @@ impl<'a> Inputs<'a> {
     }
 
     /// The name of an object's layer (display state, so reading it is not an input).
+    /// The project as the run reads it: for work that matches many objects by what they are, as update records does.
+    /// Each object it takes is still read through [`Inputs::object`], so the run records it.
+    pub(crate) fn project(&self) -> &'a Project {
+        self.project
+    }
+
     pub fn layer_name(&self, object: &Object) -> String {
         self.project.layer(object.layer).map(|l| l.name.clone()).unwrap_or_default()
     }

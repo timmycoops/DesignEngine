@@ -53,6 +53,7 @@ fn main() {
             commands::solids_table,
             commands::table_grid,
             commands::reserves_changed,
+            commands::records_preview,
             commands::reserves_step_grid,
             commands::reserves_tree,
             commands::reserves_breakdown,

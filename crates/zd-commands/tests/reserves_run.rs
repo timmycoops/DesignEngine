@@ -2355,3 +2355,84 @@ fn attributes_typed_in_the_grid_revise_their_blocks_only() {
     }
     assert!(s.run("object.set_attributes", json!({ "cells": [{ "object": a, "attribute": "volume", "value": 1.0 }] })).unwrap_err().to_string().contains("the object's own"));
 }
+
+/// Update records into objects (Tables and scripts plan, decision 5): a CSV matched on block and horizon. B1's U takes
+/// an RD and a note, B2's L row is blank so changes nothing, and B9 is in the file only. The report before the run says
+/// exactly what the run writes; one undo puts it back.
+#[test]
+fn a_csv_updates_blocks_matched_on_their_key() {
+    use zd_commands::builtin::{RecordsMode, RecordsTarget, UpdateRecordsParams, match_records};
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let csv = "block,horizon,rd (t/m3),note\nB1,U,1.45,resampled\nB2,L,,\nB9,U,1.5,x\n";
+    let p = UpdateRecordsParams { target: RecordsTarget::Objects { objects: ids.clone() }, csv: csv.into(), key: vec!["block".into(), "horizon".into()], mode: RecordsMode::Update };
+    let (report, changes) = match_records(s.project(), &p).unwrap();
+    assert!(report.refused.is_empty(), "{:?}", report.refused);
+    assert_eq!((report.rows, report.matched, report.targets, report.target_only), (3, 2, 2, 7));
+    assert_eq!((report.file_only.clone(), report.changed, changes.len()), (vec!["B9 U".to_string()], 2, 1));
+    let said: Vec<(String, String, Option<String>, Option<String>)> = report.changes.iter().map(|c| (c.record.clone(), c.column.clone(), c.old.clone(), c.new.clone())).collect();
+    assert_eq!(said, [("3_B1_U".into(), "rd".into(), Some("1.4".into()), Some("1.45".into())), ("3_B1_U".into(), "note".into(), None, Some("resampled".into()))]);
+
+    let run = s.run("table.update_records", serde_json::to_value(&p).unwrap()).unwrap();
+    assert_eq!(run.messages, ["2 of 3 records matched 2 objects; 2 values changed", "1 record in the file only: B9 U"]);
+    let u = ids.iter().copied().find(|&b| s.project().object(b).unwrap().name == "3_B1_U").unwrap();
+    let a = s.project().object(u).unwrap().attributes.clone();
+    assert_eq!((a.get("rd"), a.get("note")), (Some(&zd_core::AttrValue::Number(1.45)), Some(&zd_core::AttrValue::Text("resampled".into()))));
+    s.undo();
+    assert_eq!(s.project().object(u).unwrap().attributes.get("rd"), Some(&zd_core::AttrValue::Number(1.4)), "one undo");
+}
+
+/// A key wider than one block (decision 5): `block` alone matches each horizon of the block, 4 of B1's and 5 of B2's;
+/// `strip` written `03` matches the blocks' strip 3, a number read as one.
+#[test]
+fn a_record_s_key_matches_every_object_that_has_it() {
+    use zd_commands::builtin::{RecordsMode, RecordsTarget, UpdateRecordsParams, match_records};
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let by = |csv: &str, key: &[&str]| UpdateRecordsParams { target: RecordsTarget::Objects { objects: ids.clone() }, csv: csv.into(), key: key.iter().map(|k| k.to_string()).collect(), mode: RecordsMode::Update };
+    let (report, _) = match_records(s.project(), &by("block,period\nB1,1\nB2,2\n", &["block"])).unwrap();
+    assert_eq!((report.matched, report.targets, report.target_only, report.changed), (2, 9, 0, 9));
+    let (report, _) = match_records(s.project(), &by("strip,zone\n03,east\n", &["strip"])).unwrap();
+    assert_eq!((report.matched, report.targets, report.changed), (1, 9, 9));
+    // Refused, every reason said, nothing written: a key twice, a key not in the file, a solid's own volume.
+    let (report, changes) = match_records(s.project(), &by("block,volume\nB1,1\nB1,2\n", &["block", "seam"])).unwrap();
+    assert!(changes.is_empty());
+    assert_eq!(report.refused, ["the file has no column seam to match on", "1 key is in the file more than once: B1", "volume is the object's own, not an attribute the file can set"]);
+    let err = s.run("table.update_records", serde_json::to_value(by("block,volume\nB1,1\nB1,2\n", &["block"])).unwrap()).unwrap_err();
+    assert!(err.to_string().contains("more than once"), "{err}");
+}
+
+/// Update records into a reserves table (decision 5): matched on block and seam, a period in months and a comment made
+/// entered columns; B7 in the file only. Replace clears what the file leaves out; a unit that isn't the column's, and a
+/// column the run wrote, are refused.
+#[test]
+fn a_csv_updates_a_table_s_entered_columns_on_its_leaves() {
+    use zd_commands::builtin::{RecordsMode, RecordsTarget, UpdateRecordsParams, match_records};
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "in_situ", "join_benches"]);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let into = |csv: &str, mode: RecordsMode| UpdateRecordsParams { target: RecordsTarget::Table { table: id }, csv: csv.into(), key: vec!["block".into(), "seam".into()], mode };
+    let first = into("block,seam,period (months),comment\nB1,U,2,dragline first\nB2,L,3,\nB7,U,1,\n", RecordsMode::Update);
+    let (report, _) = match_records(s.project(), &first).unwrap();
+    assert_eq!((report.matched, report.targets, report.target_only, report.changed), (2, 2, 4, 3));
+    assert_eq!(report.file_only, ["B7 U"]);
+    assert_eq!(report.changes[0].record, "Pit 3 B1 U");
+    s.run("table.update_records", serde_json::to_value(&first).unwrap()).unwrap();
+    let t = table(&s, id);
+    let period = t.column("period").unwrap();
+    assert_eq!((period.unit.as_str(), period.kind), ("months", zd_core::ColumnKind::Entered));
+    assert_eq!(entered_at(&t, "period", "B1", "U").as_deref(), Some("2"));
+    assert_eq!(entered_at(&t, "period", "B2", "L").as_deref(), Some("3"));
+    assert_eq!(entered_at(&t, "comment", "B1", "U").as_deref(), Some("dragline first"));
+
+    let (report, _) = match_records(s.project(), &into("block,seam,period (months)\nB1,U,5\n", RecordsMode::Replace)).unwrap();
+    let said: Vec<(String, Option<String>, Option<String>)> = report.changes.iter().map(|c| (c.record.clone(), c.old.clone(), c.new.clone())).collect();
+    assert_eq!(said, [("Pit 3 B1 U".into(), Some("2".into()), Some("5".into())), ("Pit 3 B2 L".into(), Some("3".into()), None)], "replace clears what the file leaves out");
+
+    let (report, _) = match_records(s.project(), &into("block,seam,period (days)\nB1,U,1\n", RecordsMode::Update)).unwrap();
+    assert_eq!(report.refused, ["the file's period is in days, the table's in months"]);
+    let (report, _) = match_records(s.project(), &into("block,seam,Insitu\\Coal\\volume\nB1,U,1\n", RecordsMode::Update)).unwrap();
+    assert!(report.refused[0].contains("written by the run"), "{:?}", report.refused);
+}

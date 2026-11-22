@@ -85,3 +85,26 @@ export function changedWords(c: { blocks: number; others: string[]; gone: number
   const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
   return `${list} changed since this table's run`;
 }
+
+/**
+ * A CSV's columns by name, from its header row: commas between them, double quotes around one holding a comma, a unit
+ * in brackets after a name left off (`rd (t/m3)` is `rd`), as update records reads them (decision 5).
+ */
+export function csvColumns(text: string): string[] {
+  const first = text.replace(/^\uFEFF/, '').split(/\r?\n/).find((l) => l.trim() !== '') ?? '';
+  const cells: string[] = [''];
+  let quoted = false;
+  for (let i = 0; i < first.length; i++) {
+    const c = first[i];
+    if (c === '"' && quoted && first[i + 1] === '"') {
+      cells[cells.length - 1] += '"';
+      i++;
+    } else if (c === '"') quoted = !quoted;
+    else if (c === ',' && !quoted) cells.push('');
+    else cells[cells.length - 1] += c;
+  }
+  return cells.map((h) => h.trim().replace(/\s*\([^()]*\)$/, '')).filter((h) => h !== '');
+}
+
+/** The file's columns likely to be its key, the ones the target has by name: a table's levels, a block's cut words. */
+export const likelyKey = (columns: readonly string[], keys: readonly string[]) => columns.filter((c) => keys.some((k) => k.toLowerCase() === c.toLowerCase()));

@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Columns3, Download, Focus, MousePointerSquareDashed, Palette } from 'lucide-react';
+import { ChevronDown, ChevronRight, Columns3, Download, FileUp, Focus, MousePointerSquareDashed, Palette } from 'lucide-react';
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { ReservesBalance } from './ReservesBalanceView';
 import { type Breakdown, type ChangedSince, type Grid, type GridColumn, type GridRow, reservesBreakdown, reservesChanged, reservesFilterRows, reservesNodeOf, reservesRerunParams, reservesSolids, reservesTree, type ReservesNode, tableGrid } from '@/bridge';
@@ -11,6 +11,7 @@ import { useWorkspace } from '@/workspace/context';
 import { asPutBack, breakdownCsv, cellText, fieldRows, type Isolation, isolation, nodeForLeaf, samePath, startsWith, unitLabel } from './reservesTable';
 import { fmt } from './format';
 import { TableGrid } from './TableGridView';
+import { UpdateRecords } from './UpdateRecords';
 import { changedWords, type Entry, gridCsv, groupsKept, nextSort, readEntry, type Sort, toggleOpen as toggleGroup } from './tableGrid';
 
 /**
@@ -134,6 +135,8 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
   /** What the table was made from that has changed since its run (decision 4), and Run again going. */
   const [changed, setChanged] = useState<ChangedSince | null>(null);
   const [rerunning, setRerunning] = useState(false);
+  /** Update records from a CSV into the table's entered columns, its strip open under the head (decision 5). */
+  const [updating, setUpdating] = useState(false);
   /**
    * What's on screen alone, and what to put back: the table's layers (Show), or a node's solids (Isolate its solids) with
    * what it hid or showed. One at a time: a press of either puts the last back first.
@@ -611,9 +614,21 @@ export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string;
             <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={!breakdown} title={view === 'grid' ? 'The grid as shown, its groups and the leaves opened, as CSV, exact values' : "This node's breakdown as CSV, exact values"} onClick={saveCsv}>
               <Download className="size-3.5" /> CSV
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn('h-6 px-2 text-xs', updating && 'border-primary/70 text-primary')}
+              title="Enter values on the table's leaves from a CSV, matched on its levels (block and seam, say), into columns of your own: what it matches and changes shown first. The run's own numbers are never written over"
+              onClick={() => setUpdating((u) => !u)}
+            >
+              <FileUp className="size-3.5" /> Update records…
+            </Button>
           </span>
         </div>
         {error && <div className="px-2 py-1 text-destructive">{error}</div>}
+        {updating && table && (
+          <UpdateRecords target={{ of: 'table', table: table.id }} keys={[...levelsNow, 'case']} what={['leaf', 'leaves']} onClose={() => setUpdating(false)} />
+        )}
         {changedLine && (
           <div className="flex items-center gap-2 px-2 py-1 text-warning" data-slot="table-changed">
             <span>{changedLine}: its numbers may not be theirs until it runs again.</span>

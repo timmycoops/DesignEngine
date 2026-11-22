@@ -146,10 +146,41 @@ Timing, release build, on the demo pit's 50m table (3,027 leaves, every field): 
 | `tableGrid.test.mjs` | a value read for its column, a pasted block cut to a value a line, what's changed said in a line | exact |
 | `zd-app --bench --dataflow` (demo pit) | two blocks' attributes set: two blocks changed since the run, none after one undo; a comment on two leaves stays on them when the whole table runs again, and two undos take it out; B99 typed in block 1_B1_OB_110's `block` cell in Objects is set, and one undo puts B1 back | exact |
 
+## Built: workstream 4, update records
+
+- **The engine** (`builtin/update_records.rs`): `match_records` reads a CSV (a header row, `name (unit)` where a column
+  has a unit, then a record a row) and matches it on the key columns picked to objects or to a table's rows. A key is
+  compared as words, a number as one (`03`, `3` and `3.0` the same). An object's key column is its name, its layer or
+  an attribute; a table's, its column of that name. A record whose key several objects share sets them all (a block's
+  every horizon by `block` alone).
+- **The report** says, before anything is written: records and how many matched, the objects or rows they matched,
+  those matched by none, the keys in the file only, and each value that would change with its old and new (the first
+  200, all counted). It refuses, with every reason, a key the file hasn't, a key twice in the file, a solid's own name,
+  layer, kind, volume or tonnes, a column the run wrote, a unit that isn't the column's, and words in a column of
+  numbers. Nothing is written while it refuses.
+- **`table.update_records`** writes what the report showed, one run, one undo: objects' attributes, or a table's entered
+  columns, made where they aren't there with the file's unit. **Update** takes the file's values where a record matches,
+  a blank cell leaving a value as it is; **Replace** replaces the file's columns, so a blank cell or a record the file
+  hasn't is cleared. It says what matched and what's in the file only.
+- **The app:** **Update records…** in the Tables tab, for Objects (the rows shown) and for a reserves table. The CSV is
+  chosen, its columns ticked to match on (those the table has by name ticked first: a table's levels, a block's cut
+  words), Update or Replace, the report shown as it's worked out, and **Update N values** writes it. A refusal shows
+  why, the button off.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_csv_updates_blocks_matched_on_their_key` (made-up strip) | by block and horizon: 2 of 3 records matched 2 objects, 7 matched by none, B9 U in the file only; 3_B1_U's rd 1.4 → 1.45 and note → resampled, B2 L's blank row changing nothing; the run says so and one undo puts it back | exact |
+| `a_record_s_key_matches_every_object_that_has_it` | `block` alone: 2 records, 9 objects; strip `03` matches strip 3's 9; refused together: no `seam` column, B1 twice, `volume` | exact |
+| `a_csv_updates_a_table_s_entered_columns_on_its_leaves` | by block and seam: 2 leaves, 4 by none, B7 U in the file only, 3 values; period in months and comment made entered; Replace clears B2 L's period; days against months refused; a written column refused | exact |
+| `tableGrid.test.mjs` | a CSV's columns from its header, units left off, a quoted comma kept; the likely key | exact |
+| `zd-app --bench --dataflow` (demo pit) | three Base blocks by name take `checked`, "no such block" in the file only, undone; one leaf by strip, block, seam and bench takes a period of 4 months, undone; in Objects, a CSV chosen shows "1 of 1 record matched 1 solid" and Update 1 value sets zone east, undone | exact |
+
 ## Known limits
 
 - Entered values carry through Run again into the same table; a fresh reserves run makes a new table without them.
 - A paste fills one column, down from the cell pasted into.
+- Update records reads CSV only; an Excel file would need a new dependency.
+- A file can't add a record the target hasn't: a row, or an object.
 - Every block runs on what's saved, not on the Parameters tab's unsaved edits, as the block shown does (0082).
 - Objects' numeric attributes other than the density have no rule, so a group shows none for them: qualities on blocks
   add up only once a reserves run has given them one.

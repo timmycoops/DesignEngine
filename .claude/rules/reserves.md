@@ -41,7 +41,8 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
   what's saved, never kept). A column is written by a run or entered by a person (`ColumnKind`, `made` in JSON):
   `table.enter` and `table.remove_column` touch entered columns only, Run again keeps them by each leaf's key and
   says any whose leaf is gone, and `object.set_attributes` types blocks' attributes; the reserves run behind a table
-  is found by `table_run`, as its latest revision may be an entry. Its
+  is found by `table_run`, as its latest revision may be an entry. `table.update_records` takes a CSV matched on key
+  columns into objects' attributes or a table's entered columns, its report (`match_records`) shown first. Its
   workstreams 2 to 9 (entered and calculated columns, update records, table and object scripts, a dataflow from any
   table) build on it.
 

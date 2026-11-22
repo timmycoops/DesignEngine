@@ -667,6 +667,32 @@ export interface ChangedSince {
 
 export const reservesChanged = (object: string) => invoke<ChangedSince>('reserves_changed', { object });
 
+/** What a CSV updates (Tables and scripts plan, decision 5): objects' attributes, or a table's entered columns. */
+export type RecordsTarget = { of: 'objects'; objects: string[] } | { of: 'table'; table: string };
+
+export interface UpdateRecordsParams {
+  target: RecordsTarget;
+  csv: string;
+  key: string[];
+  mode: 'update' | 'replace';
+}
+
+/** What a CSV matches and would change, before anything is written. */
+export interface RecordsReport {
+  columns: string[];
+  rows: number;
+  matched: number;
+  targets: number;
+  file_only: string[];
+  file_only_count: number;
+  target_only: number;
+  changes: { record: string; column: string; old: string | null; new: string | null }[];
+  changed: number;
+  refused: string[];
+}
+
+export const recordsPreview = (params: UpdateRecordsParams) => invoke<RecordsReport>('records_preview', { params });
+
 /** Any table as a grid, grouped and added up by each column's own rule (Tables and scripts plan, decision 1). */
 export const tableGrid = (source: GridSource, ask: GridAsk) => invoke<Grid>('table_grid', { source, ask });
 

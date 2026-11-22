@@ -763,6 +763,18 @@ pub async fn table_grid(source: GridSource, ask: zd_commands::table_grid::GridAs
     .await?
 }
 
+/// A CSV matched to objects or a table (Tables and scripts plan, decision 5): what matches and what would change, before
+/// anything is written. The run (`table.update_records`) matches the same way.
+#[tauri::command]
+pub async fn records_preview(params: zd_commands::builtin::UpdateRecordsParams, state: State<'_, AppState>) -> Result<zd_commands::builtin::RecordsReport, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        zd_commands::builtin::match_records(app.session.project(), &params).map(|(report, _)| report).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
 /// What a reserves table was made from that has changed since its run (Tables and scripts plan, decision 4): blocks
 /// revised (an attribute typed in a table), and anything else it read, by name. Nothing runs again by itself.
 #[tauri::command]
