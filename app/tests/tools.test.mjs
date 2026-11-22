@@ -83,7 +83,7 @@ test('every stage has a row of tools that exist, named in words', () => {
   // Open is a menu on the row: a project, or an older project folder.
   assert.deepEqual(ROWS.project.filter((i) => typeof i !== 'string').map((m) => m.label), ['Open', 'Import', 'Export']);
   assert.deepEqual(names('geology'), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology']);
-  assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Reserves table', 'Dataflow', 'Compare', 'Compare', 'Report']);
+  assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Tables', 'Dataflow', 'Compare', 'Compare', 'Report']);
   assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Ramp', 'Set grade', 'Offset', 'Project', 'Surface between', 'Join faces', 'Compare', 'Merge', 'Trim plan', 'Triangulate']);
   assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Clip', 'Union', 'Join', 'Round corners', 'Smooth', 'Filter', 'Densify', 'At crossings', 'Reverse', 'Close', 'Where they meet', 'Contours', 'Outline', 'Section strings', 'Move', 'Rotate', 'Mirror']);
 });
@@ -126,7 +126,7 @@ test("a stage's tools are on its row, but for the few reached another way", () =
 test('every tool on the old one row is one click from its stage, and every import and export from Project', () => {
   const opens = (stage, panel) => ROWS[stage].some((item) => typeof item === 'string' && item !== '|' && toolByKey(item).panel === panel);
   assert.ok(opens('walls', 'face') && opens('walls', 'builder'));
-  assert.ok(opens('solids', 'cut') && opens('solids', 'blocks'));
+  assert.ok(opens('solids', 'cut') && opens('solids', 'restable'));
   assert.ok(opens('reserves', 'reserves') && opens('reserves', 'restable') && opens('reserves', 'params'));
   assert.deepEqual(ALWAYS_ROW, ['workflow']);
   const project = new Set(rowTools('project').map((t) => t.key));
@@ -138,7 +138,8 @@ test('every tool on the old one row is one click from its stage, and every impor
 });
 
 test("the tool in use is its panel's own, or the one for what the panel is set to", () => {
-  assert.ok(inUse(toolByKey('blocks'), undefined));
+  assert.ok(inUse(toolByKey('restable'), undefined));
+  assert.ok(inUse(toolByKey('restable:objects'), 'objects') && !inUse(toolByKey('restable:objects'), 'reserves'), 'Objects table is in use while the Tables tab shows the objects');
   assert.ok(inUse(toolByKey('cut:seams'), 'seams'));
   assert.ok(!inUse(toolByKey('cut:seams'), 'strips'));
   assert.ok(!inUse(toolByKey('cut:join_faces'), 'strips'), 'Join faces opens Cut solids at strips, but is not the strips tool');

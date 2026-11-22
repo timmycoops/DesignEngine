@@ -736,6 +736,33 @@ pub async fn solids_table(objects: Vec<ObjectId>, state: State<'_, AppState>) ->
     .await?
 }
 
+/// What a grid is of (Tables and scripts plan, decision 1): a table object, or objects as a table, a row an object.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "snake_case", tag = "of")]
+pub enum GridSource {
+    Table { table: ObjectId },
+    Objects { objects: Vec<ObjectId>, density: Option<String> },
+}
+
+/// Any table as a grid: grouped by its word columns, each group added up by every column's own rule, the leaves of the
+/// groups opened.
+#[tauri::command]
+pub async fn table_grid(source: GridSource, ask: zd_commands::table_grid::GridAsk, state: State<'_, AppState>) -> Result<zd_commands::table_grid::Grid, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        match source {
+            GridSource::Table { table } => match &project.object(table).ok_or("no such object")?.body {
+                zd_core::Body::Table(t) => zd_commands::table_grid::grid(t, &ask),
+                _ => Err("not a table".to_string()),
+            },
+            GridSource::Objects { objects, density } => zd_commands::table_grid::grid(&zd_commands::table_grid::objects_table(project, &objects, density.as_deref()), &ask),
+        }
+    })
+    .await?
+}
+
 /// A reserves table's tree of levels (decision 0075): every node with how many leaves are under it.
 #[tauri::command]
 pub async fn reserves_tree(object: ObjectId, when: Option<std::collections::BTreeMap<String, String>>, state: State<'_, AppState>) -> Result<zd_commands::reserves_view::TreeNode, String> {

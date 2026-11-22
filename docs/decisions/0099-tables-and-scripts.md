@@ -1,0 +1,97 @@
+# 0099 — Tables and scripts: one table concept, editing, update records, scripts beyond the dataflow
+
+Date: 2026-11-22 · Status: accepted (Tim, 2026-11-22: "Agree all 12", on the Build Plan's "Tables and scripts plan" tab)
+
+## Why
+
+Tim, 22 November:
+
+> The Reserves table we have built is a great start but at the moment i find it a little clunky with how the data is in
+> the dataflow and how you have to load up the column to see it. I also thinking the scripting capability of the
+> starlark language shoudl allow us to do more without the dataflows themselves. Im thinking we shoudl be able to edit
+> fields in the table, import data into it - update records, calculated fields / Starlark with scripts etc on top of the
+> dataflows.
+
+And, on the plan as first drafted: "At the moment we have a Object table and a reserves table as well. Will we combine
+this into a table thats the same logical concept?"
+
+Before this, every view of the reserves data was one node or one block at a time: the Reserves table broke down a node
+(0075), the Dataflow tab opened a block's column (0084). The Objects table (0069) showed blocks' attributes and edited
+nothing; no command set an attribute; a rerun replaced a results table whole; and Starlark ran only as a dataflow step at
+four fixed stages (0077).
+
+## Decision
+
+The twelve decisions of the plan tab, as agreed:
+
+1. **One table concept, one grid.** A table is rows with a key and columns. The blocks table (a row a solid, its
+   attributes a live view, nothing copied) and a reserves table (a row a leaf, kept as Parquet) are the same concept,
+   seen in one grid: grouped by any word column, a subtotal a group added up by each column's own rule, filtered in
+   0088's words. A Tables tab lists every table; a reserves table keeps Breakdown and Balance beside its Grid.
+2. **Three kinds of column:** written by a run (read only), entered (typed or imported, kept by the row's key across
+   reruns), and calculated (Starlark on the row, worked when shown).
+3. **A number a run wrote is never typed over.** A reserve is changed through its inputs, a parameter row, a calculated
+   column or a formula step, so every tonne traces to a rule.
+4. **Blocks' attributes are edited in the grid**, each change an `object.set_attributes` run, one undo, mesh and volume
+   untouched; a results table whose blocks changed says so, with Run again (0085). This changes 0069's "never by typing
+   into a cell": typing becomes a command run.
+5. **Update records from a CSV** by key, with a match report before anything is written.
+6. **Calculated columns**, added up from a subtotal's own inputs (a ratio) or per leaf then by a rule.
+7. **Table scripts** on whole tables (`table.script`), grouping, joins and add-ups in Rust.
+8. **Object scripts** (`object.script`) that set attributes only.
+9. **Scripts as project objects**, `load()` among the project's own scripts.
+10. **Every block at a step** in the Dataflow tab, run on demand.
+11. **A script runs three ways**: as a task, as a dataflow step (a new stage after the final writes for table scripts),
+    or as a workflow step. What must be the same every case goes in the dataflow; a one-off runs as a task.
+12. **A dataflow reads any table** through a field mapping; with no solids, its volumes are said to be imported, not of
+    record (CLAUDE.md rule 9).
+
+Nine workstreams, in the plan tab's order: 1 one table, one grid; 2 every block at a step; 3 entered columns and
+attributes; 4 update records; 5 calculated columns; 6 scripts as objects; 7 table scripts; 8 object scripts; 9 a
+dataflow from any table.
+
+## Built: workstream 1, one table, one grid
+
+Tim chose one Tables tab over keeping the two tabs (22 November).
+
+- **The engine** (`crates/zd-commands/src/table_grid.rs`):
+  - `grid(table, ask)`: the total, a subtotal a group of each word column grouped by (a seam in the stack's order, a
+    bench top down by RL, anything else in natural order, B2 before B10), and the leaves under each innermost group
+    opened, past 5,000 counted, not given. Every number subtotal is `add_up_column` over the group's leaves, the add-up
+    the Breakdown and the report use; a word column shows its word where every leaf agrees. Siblings sort by any
+    column, groups by their subtotals. A leaf is labelled by its levels' words that aren't grouped by ("U 130" under a
+    strip and block), or its name.
+  - `objects_table(project, ids, density)`: objects as a table, a row an object: `name`, `layer`, `kind`, a solid's own
+    `volume` (summed), then every attribute, numbers where every value is one. With a density, it adds up by volume and
+    `tonnes` (volume × it, summed) follows `volume`.
+- **The shell:** `table_grid`, given a table object or a list of objects and a density.
+- **The app:**
+  - The Reserves table tab is now **Tables** (the same tab, so a saved layout keeps it), with a **Table** list at its
+    head: Objects, then each reserves table. The toolbar's Objects table opens it on Objects (key
+    `restable:objects`); its Tables tool on a reserves table. A layout saved with the old Objects table tab drops that tab
+    as it opens.
+  - Objects keeps everything the Objects table did and gains **Group by**: grouped, the rows shown come from the
+    engine's objects table, volume and tonnes summed and the density by volume.
+  - A reserves table gains **Grid** beside Breakdown and Balance, remembered on the machine. Group by sits in the side
+    column in place of the tree, the table's levels but the last at first. Its columns are the fields Breakdown shows
+    (Main fields or Every field, folded folders left out). A leaf or a group picked is the node shown, so Select and
+    Isolate its solids and the Dataflow tab follow it. CSV saves the grid as shown.
+  - The kit gains `GroupBy`; the grid is `TableGridView.tsx`, its logic in `tableGrid.ts`.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `table_grid` unit tests, a made-up table of two strips and three blocks | Strip 1: 600 m³, RD by volume 920 ÷ 600, ash by tonnes 15,500 ÷ 920; its strip word kept, its two blocks' not; an open strip's leaves labelled "B1 U", "B1 L", "B10 U"; groups sorted by volume (ties in natural order); 2 of 4 leaves given past a limit of 2, 2 counted; a filter of seam U to 700 m³; a number column or a missing column refused to group by | 1e-12 |
+| `the_grid_s_subtotals_are_the_breakdown_s_nodes` (`reserves_run.rs`, the made-up strip run to `join_benches`) | Grouped by pit, strip, block and seam, every group open: each group's every field equals the Breakdown's node at the same words, over 100 subtotals; B2's U leaves labelled "row 3", "18", "16" | exact |
+| `the_blocks_as_a_table_add_up_their_volumes_and_tonnes` | The strip's 9 blocks: 180,000 m³ and 103,000 t by `rd`; coal 70,000 m³, 103,000 t, RD 103,000 ÷ 70,000; waste 110,000 m³ with no RD or tonnes | 1e-9 relative |
+| `tableGrid.test.mjs` | Opening and closing groups (a group closed closes those under it), sorting up, down and back, cells to their unit, CSV exact | exact |
+| `zd-app --bench --dataflow` on the demo pit | The 50m table by pit and strip: every strip's every field the Breakdown's strip node; Base's blocks by material: coal's volume its solids' own volumes added; the Tables tab draws the grid grouped and lists Objects | 1e-12 relative |
+
+Timing, release build, on the demo pit's 50m table (3,027 leaves, every field): grouped by pit and strip with Pit open,
+56 ms from the app, against 1,788 subtotals checked equal to the Breakdown's.
+
+## Known limits
+
+- The grid is a view: nothing in it is edited yet (workstreams 3 and 4).
+- Objects' numeric attributes other than the density have no rule, so a group shows none for them: qualities on blocks
+  add up only once a reserves run has given them one.
+- Past 5,000 leaf rows under open groups, the rest are counted, not shown.

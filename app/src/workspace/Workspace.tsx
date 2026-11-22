@@ -23,8 +23,7 @@ import { RunLogPanel } from '@/panels/RunLogPanel';
 import { StringsPanel } from '@/panels/StringsPanel';
 import { ViewportPanel } from '@/panels/ViewportPanel';
 import { WorkflowCanvas } from '@/panels/WorkflowCanvas';
-import { BlockTable } from '@/panels/BlockTablePanel';
-import { ReservesTable } from '@/panels/ReservesTablePanel';
+import { TablesPanel } from '@/panels/TablesPanel';
 import { DataflowView } from '@/panels/DataflowPanel';
 import { Parameters } from '@/panels/ParametersPanel';
 import { WorkflowPanel } from '@/panels/WorkflowPanel';
@@ -34,7 +33,7 @@ import { ViewControlsPanel } from '@/panels/ViewControlsPanel';
 import { type Dock, type PanelId, PANELS, TOOL_DOCK_WIDTH } from './panels';
 
 /** What each panel draws. A panel in the list with nothing to draw doesn't compile. */
-const components: Record<PanelId | 'viewport', () => ReactNode> = {
+const components: Record<PanelId | 'viewport' | (typeof RETIRED)[number], () => ReactNode> = {
   viewport: ViewportPanel,
   layers: LayersPanel,
   properties: PropertiesPanel,
@@ -49,13 +48,20 @@ const components: Record<PanelId | 'viewport', () => ReactNode> = {
   reserves: ReservesPanel,
   workflow: WorkflowPanel,
   canvas: WorkflowCanvas,
-  blocks: BlockTable,
-  restable: ReservesTable,
+  restable: TablesPanel,
+  // A tab no longer made, drawn as nothing until a saved layout's copy of it is closed.
+  blocks: () => null,
   notebook: DataflowView,
   params: Parameters,
   licence: LicencePanel,
   viewcontrols: ViewControlsPanel,
 };
+
+/**
+ * Tabs a layout saved before may hold that the app no longer has: the Objects table, now Objects in the Tables tab
+ * (Tables and scripts plan, decision 1). Opened from a saved layout, each is closed at once, the rest kept as saved.
+ */
+const RETIRED = ['blocks'] as const;
 
 /** The key that hides every panel, so the viewport fills the window, and brings them back. */
 export const ALL_PANELS_KEY = '`';
@@ -249,6 +255,7 @@ function restoreLayout(api: DockviewApi) {
     const saved = localStorage.getItem(LAYOUT_KEY);
     if (saved) {
       api.fromJSON(JSON.parse(saved));
+      for (const id of RETIRED) api.getPanel(id)?.api.close();
       // A layout saved before a tab was renamed (the Notebook, now Dataflow) keeps its old title: today's names.
       for (const p of PANELS) {
         const shown = api.getPanel(p.id);

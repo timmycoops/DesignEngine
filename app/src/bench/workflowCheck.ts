@@ -328,7 +328,10 @@ export async function checkWorkflow(_viewport: Viewport, log: (line: string) => 
 
     // The block table (decision 0069): the two pieces on 'cut' listed at their own volumes and added up; filtered to the
     // piece below RL 40; deleted from the table in one run, and one undo brings it back.
-    showPanel(api, 'blocks');
+    // The Objects table is Objects in the Tables tab (Tables and scripts plan, decision 1).
+    showPanel(api, 'restable');
+    await wait(400);
+    choose('Table', 'objects');
     await wait(800);
     choose('Layer of solids', layerId('cut') ?? '');
     await wait(1000);

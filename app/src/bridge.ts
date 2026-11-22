@@ -609,6 +609,56 @@ export const objectsAttributes = (objects: string[]) => invoke<Record<string, bo
 /** Each solid's own volume and every attribute, in the order asked, for the block table; null volume if it's gone. */
 export const solidsTable = (objects: string[]) => invoke<{ volume: number | null; attributes: Record<string, boolean | number | string> }[]>('solids_table', { objects });
 
+/** A column of a grid (Tables and scripts plan, decision 1): its full name, last part, folders, unit and rule. */
+export interface GridColumn {
+  name: string;
+  label: string;
+  folders: string[];
+  unit: string;
+  text: boolean;
+  add_up: AddUp | null;
+}
+
+/** One row of a grid: the total, a group's subtotal, or a leaf (a row of the table). */
+export interface GridRow {
+  kind: 'total' | 'group' | 'leaf';
+  path: string[];
+  label: string;
+  depth: number;
+  leaves: number;
+  open: boolean;
+  row: number | null;
+  /** A leaf's words for the table's levels, top down. */
+  words: string[] | null;
+  cells: (number | string | null)[];
+}
+
+/** A table as a grid: the columns shown, every column, what it can be grouped by, and its rows. */
+export interface Grid {
+  columns: GridColumn[];
+  every: GridColumn[];
+  groups: string[];
+  levels: string[];
+  rows: GridRow[];
+  leaves: number;
+  /** Leaf rows left out past the limit. */
+  cut: number;
+}
+
+export type GridSource = { of: 'table'; table: string } | { of: 'objects'; objects: string[]; density: string | null };
+
+export interface GridAsk {
+  when?: Record<string, string>;
+  group?: string[];
+  open?: string[][];
+  columns?: string[];
+  sort?: { column: string; descending: boolean } | null;
+  limit?: number;
+}
+
+/** Any table as a grid, grouped and added up by each column's own rule (Tables and scripts plan, decision 1). */
+export const tableGrid = (source: GridSource, ask: GridAsk) => invoke<Grid>('table_grid', { source, ask });
+
 /** A node of a reserves table's tree of levels (decision 0075): its level values, label, leaves under it and children. */
 export interface ReservesNode {
   path: string[];

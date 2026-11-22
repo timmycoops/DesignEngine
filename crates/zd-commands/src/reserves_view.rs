@@ -96,7 +96,7 @@ fn level_words(table: &Table, levels: &[String]) -> Vec<Vec<String>> {
 
 /// A node's children at `level`: each value with the leaves holding it. A seam keeps the stack's order, as the run wrote
 /// it, top down; a bench goes top down by its RL; any other level in natural order (B2 before B10).
-fn children_of(level: &str, words: &[String], leaves: &[usize]) -> Vec<(String, Vec<usize>)> {
+pub(crate) fn children_of(level: &str, words: &[String], leaves: &[usize]) -> Vec<(String, Vec<usize>)> {
     let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
     for &i in leaves {
         match groups.iter_mut().find(|(w, _)| *w == words[i]) {

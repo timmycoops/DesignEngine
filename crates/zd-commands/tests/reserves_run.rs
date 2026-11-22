@@ -2115,3 +2115,73 @@ fn a_dataflow_saved_with_rd_adt_opens_renamed_and_gives_the_same_table() {
     drop(t);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Any table as a grid (Tables and scripts plan, decision 1): grouped by the table's own levels with every group open,
+/// each group's subtotal is the Breakdown's node at the same words, field by field, both being `add_up_column` over the
+/// same leaves.
+#[test]
+fn the_grid_s_subtotals_are_the_breakdown_s_nodes() {
+    use zd_commands::reserves_view::{breakdown, levels};
+    use zd_commands::table_grid::{Cell, GridAsk, RowKind, grid};
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "in_situ", "join_benches"]);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let group: Vec<String> = levels(&t).into_iter().take(4).collect();
+    assert_eq!(group, ["pit", "strip", "block", "seam"]);
+    // Every group open: each path of the tree, found by opening level by level.
+    let mut open: Vec<Vec<String>> = Vec::new();
+    for _ in 0..group.len() {
+        let g = grid(&t, &GridAsk { group: group.clone(), open: open.clone(), ..Default::default() }).unwrap();
+        open = g.rows.iter().filter(|r| r.kind == RowKind::Group).map(|r| r.path.clone()).collect();
+    }
+    let g = grid(&t, &GridAsk { group: group.clone(), open: open.clone(), ..Default::default() }).unwrap();
+    assert_eq!(g.rows.iter().filter(|r| r.kind == RowKind::Leaf).count(), 6, "every leaf shown under its seam");
+    let mut checked = 0;
+    for row in g.rows.iter().filter(|r| r.kind != RowKind::Leaf) {
+        let b = breakdown(&t, &row.path, &[]).unwrap();
+        for (c, cell) in g.columns.iter().zip(&row.cells) {
+            let Some(field) = b.fields.iter().find(|f| f.column == c.name && f.words.is_none()) else { continue };
+            let mine = match cell {
+                Some(Cell::Number(x)) => Some(*x),
+                _ => None,
+            };
+            assert_eq!(mine, field.values[0], "{} at {:?}", c.name, row.path);
+            checked += 1;
+        }
+    }
+    assert!(checked > 100, "{checked} subtotals checked");
+    // B2's U benches under their seam, labelled by what isn't grouped: the bench, or the strip's words for B2's unbenched U.
+    let under_u: Vec<&str> = g.rows.iter().filter(|r| r.kind == RowKind::Leaf && r.path == ["Pit", "3", "B2", "U"]).map(|r| r.label.as_str()).collect();
+    assert_eq!(under_u, ["row 3", "18", "16"]);
+}
+
+/// The blocks as a table (decision 1): a row a solid, its own volume summed, RD added up by volume over the blocks that
+/// have one, and tonnes by it. By material: coal 70,000 m³ and 28,000 + 14,000 + 16,000 + 2 × 22,500 = 103,000 t;
+/// waste 110,000 m³ with no RD.
+#[test]
+fn the_blocks_as_a_table_add_up_their_volumes_and_tonnes() {
+    use zd_commands::table_grid::{Cell, GridAsk, grid, objects_table};
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let t = objects_table(s.project(), &ids, Some("rd"));
+    assert_eq!(t.rows(), 9, "B1 four horizons; B2 five, its U as two benches");
+    let names: Vec<&str> = t.columns.iter().take(6).map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["name", "layer", "kind", "volume", "tonnes", "strip"]);
+    let g = grid(&t, &GridAsk { group: vec!["material".into()], columns: vec!["volume".into(), "tonnes".into(), "rd".into()], ..Default::default() }).unwrap();
+    let n = |c: &Option<Cell>| match c {
+        Some(Cell::Number(x)) => Some(*x),
+        _ => None,
+    };
+    let rows: Vec<(&str, Option<f64>, Option<f64>)> = g.rows.iter().map(|r| (r.label.as_str(), n(&r.cells[0]), n(&r.cells[1]))).collect();
+    assert_eq!(rows.len(), 3);
+    assert!(close(rows[0].1.unwrap(), 180_000.0) && close(rows[0].2.unwrap(), 103_000.0), "{rows:?}");
+    let coal = g.rows.iter().find(|r| r.label == "coal").unwrap();
+    assert!(close(n(&coal.cells[0]).unwrap(), 70_000.0) && close(n(&coal.cells[1]).unwrap(), 103_000.0));
+    assert!(close(n(&coal.cells[2]).unwrap(), 103_000.0 / 70_000.0), "RD by volume");
+    let waste = g.rows.iter().find(|r| r.label == "waste").unwrap();
+    assert!(close(n(&waste.cells[0]).unwrap(), 110_000.0) && waste.cells[1].is_none() && waste.cells[2].is_none());
+    // Strip is a number on every block: a column of numbers, nothing to group by.
+    assert!(!g.groups.contains(&"strip".to_string()) && g.groups.contains(&"block".to_string()));
+}
