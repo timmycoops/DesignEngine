@@ -183,6 +183,7 @@ impl Command for SaveDataflow {
             inputs.object(id)?;
         }
         let mut declared = super::formula_declared(&engine_fields, &refs);
+        super::declare_words(&mut declared, &d.words);
         declared.libraries = libraries;
         declared.lookups = std::sync::Arc::new(zd_script::Lookups { own: tables.clone(), named });
         let formulas = super::check_formula_steps(d, &built_in, &declared).map_err(CommandError::Invalid)?.len();

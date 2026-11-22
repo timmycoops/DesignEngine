@@ -276,6 +276,7 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
         parameters: vec![table_id],
         scripts: vec![],
         lookups: vec![],
+        words: vec![],
     };
     p.apply(
         RunId::new(),

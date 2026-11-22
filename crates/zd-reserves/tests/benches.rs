@@ -290,3 +290,28 @@ fn demo_pit_sized_columns_join_and_write_by_bench_quickly() {
     println!("90 columns, {units} bench units joined, split and written as {rows} rows by bench: {ms:.1} ms");
     assert_eq!(rows, 90 * 24);
 }
+
+/// Words on units (Waste allocation plan, decision 2): a piece split off keeps its unit's words; a join keeps a word its
+/// benches agree on and joins those that differ, each once, in order.
+#[test]
+fn words_follow_a_split_and_a_join() {
+    let mut c = column();
+    // OB's two benches: 110 dragline, 100 poststrip, both zone 1. cu's three and cl: coal, no zone.
+    let names: Vec<String> = c.units().iter().map(|u| c.origins()[u.origin as usize].name.clone()).collect();
+    for at in 0..c.len() {
+        let (process, zone) = if names[at].ends_with("OB 110") { ("Dragline", "Zone 1") } else if names[at].contains("OB") { ("Poststrip", "Zone 1") } else { ("Coal", "") };
+        c.unit_mut(at).set_word("process", Some(process.into()));
+        c.unit_mut(at).set_word("zone", Some(zone.into()));
+    }
+    assert_eq!(c.units()[0].word("zone"), Some("Zone 1"));
+    assert!(c.units().iter().any(|u| u.word("zone").is_none()), "an empty word is none");
+    c.join_benches();
+    let ob = &c.units()[0];
+    assert_eq!(ob.word("process"), Some("Dragline; Poststrip"), "{:?}", ob.words);
+    assert_eq!(ob.word("zone"), Some("Zone 1"), "agreed, once");
+    assert_eq!(c.units()[1].word("process"), Some("Coal"));
+    let split = c.split(1, Amount::Thickness(0.5), End::Top).unwrap();
+    assert_eq!(c.units()[split.piece].words, c.units()[split.rest.unwrap()].words, "the piece keeps its unit's words");
+    c.unit_mut(split.piece).set_word("process", None);
+    assert_eq!(c.units()[split.piece].word("process"), None);
+}

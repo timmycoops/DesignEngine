@@ -53,6 +53,12 @@ pub fn declared(fields: &Fields, tables: &[&ParameterTable]) -> Declared {
     }
 }
 
+/// A dataflow's word fields declared to its formulas as fields of words (Waste allocation plan, decision 2): read and
+/// set as `unit.process`, words or None.
+pub fn declare_words(declared: &mut Declared, words: &[zd_core::WordField]) {
+    declared.fields.extend(words.iter().map(|w| FieldDecl::text(&w.name)));
+}
+
 pub fn param_value(v: &ParamValue) -> ScriptValue {
     match v {
         ParamValue::Number(n) => ScriptValue::Number(*n),
@@ -220,6 +226,7 @@ pub fn check_formula(d: &Dataflow, tables: &[&ParameterTable], index: usize, bui
 pub fn check_formula_with(d: &Dataflow, tables: &[&ParameterTable], index: usize, built_in: &[&str], libraries: zd_script::Libraries, named: Vec<(String, std::sync::Arc<ParameterTable>)>) -> Result<FormulaReport, String> {
     let fields = d.engine_fields()?;
     let mut declared = declared(&fields, tables);
+    declare_words(&mut declared, &d.words);
     declared.libraries = libraries;
     declared.lookups = std::sync::Arc::new(zd_script::Lookups { own: tables.iter().map(|t| std::sync::Arc::new((*t).clone())).collect(), named });
     let names = FormulaNames {

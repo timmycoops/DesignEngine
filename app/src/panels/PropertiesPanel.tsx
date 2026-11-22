@@ -495,6 +495,11 @@ function DataflowView({ flow }: { flow: Dataflow }) {
       <Section title="Fields">
         <CellTable headers={['Field', 'Kind', 'Adds up', 'From']} rows={flow.fields.map((f) => [f.name, f.kind, addUpWords(f.add_up), fromWords(f)])} />
       </Section>
+      {(flow.words ?? []).length > 0 && (
+        <Section title="Word fields">
+          <CellTable headers={['Field', 'From']} rows={(flow.words ?? []).map((w) => [w.name, w.from === 'attribute' ? `attribute ${w.attribute ?? ''}` : w.from === 'parameter' ? `parameter column ${w.column ?? ''}` : 'worked by a step'])} />
+        </Section>
+      )}
     </>
   );
 }
