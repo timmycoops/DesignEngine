@@ -303,6 +303,29 @@ export function withFrom<F extends FlowField>(f: F, from: FromChoice): F {
   return { ...rest, from } as F;
 }
 
+/** Where a word field's words come from (Waste allocation plan, decision 2): a block attribute, a parameter column, or a
+ * step. */
+export const WORD_FROMS = ['worked', 'attribute', 'parameter'] as const satisfies readonly FromChoice[];
+
+type Word = { name: string; from: (typeof WORD_FROMS)[number]; attribute?: string; column?: string };
+
+/** A word field with where it comes from changed: an attribute or parameter column named after the field until set. */
+export function wordFrom<W extends Word>(w: W, from: Word['from']): W {
+  const { attribute: _a, column: _c, ...rest } = w;
+  if (from === 'attribute') return { ...rest, from, attribute: w.attribute ?? w.column ?? w.name } as W;
+  if (from === 'parameter') return { ...rest, from, column: w.column ?? w.attribute ?? w.name } as W;
+  return { ...rest, from } as W;
+}
+
+/** A name for a new word field no other has: process, then process_2 and on. */
+export function newWordName(words: { name: string }[]): string {
+  const taken = new Set(words.map((w) => w.name.toLowerCase()));
+  if (!taken.has('process')) return 'process';
+  let n = 2;
+  while (taken.has(`process_${n}`)) n++;
+  return `process_${n}`;
+}
+
 /** A field with how it adds up changed: by tonnes names a density field, the first of the dataflow's if it had none. */
 export function withAddUp<F extends FlowField>(f: F, by: AddUpChoice, densities: string[]): F {
   if (by === 'mass') return { ...f, add_up: { by, density: f.add_up.density ?? densities[0] ?? 'rd' } };

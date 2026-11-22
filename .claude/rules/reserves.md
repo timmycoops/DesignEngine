@@ -15,7 +15,7 @@ paths:
 Moved from CLAUDE.md's object model and reserves conventions. The short form of the conventions stays in CLAUDE.md.
 Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections, ROM, the reserves table, formulas), 0082
 (live workings), 0084 to 0086 (dataflow view, run again, fields), 0090 (filter in the view), 0099 (tables and scripts), 0101
-(schedule quantities).
+(schedule quantities), 0102 (waste allocation).
 
 - `ParameterTable`: assumptions any tool reads (reserves settings now; dragline, haulage, equipment later): filter
   columns (the bench rules' syntax) and value columns with units, read top down, each value from the first row that fits
@@ -53,7 +53,7 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
   as a dataflow step after `final` (`DataflowStep.table`), its columns the run's own, run on the whole table every run. A script
   reads a parameter by any keys with `lookup("Rates", "col", key=…)` or `p.at(key=…)`, and a curve with
   `interpolate("Yield curve", x_value, x="ash", y="yield", key=…)`, one row a point (0101); the tables it names are
-  bound by name on save (`Dataflow.lookups`, `CalculatedColumn.lookups`) and read by id, so a run records them. A mine's own process checks are a table script step after `final` calling `check(name, parts…, equals=, tolerance=)` and `required(column, material=)`, written to `Summary\Checks\<name>` on the table it gives back, each leaf out named (`table.check_out`) and shown in the Balance view (0101); the stages stay built in and balanced (0086). Its
+  bound by name on save (`Dataflow.lookups`, `CalculatedColumn.lookups`) and read by id, so a run records them. A mine's own process checks are a table script step after `final` calling `check(name, parts…, equals=, tolerance=)` and `required(column, material=)`, written to `Summary\Checks\<name>` on the table it gives back, each leaf out named (`table.check_out`) and shown in the Balance view (0101); the stages stay built in and balanced (0086). A dataflow's word fields (`Dataflow.words`, 0102) are words each unit carries (a process, a method, a zone): from a block attribute, a parameter column or a step, kept by a split, joined `a; b` by a join, set by formulas, and written as words columns beside the numbers under each folder, a leaf's units' words joined; the Waste allocation plan (0102) fills Spry's `Scheduled` sections from them. Its
   workstreams 2 to 9 (entered and calculated columns, update records, table and object scripts, a dataflow from any
   table) build on it.
 

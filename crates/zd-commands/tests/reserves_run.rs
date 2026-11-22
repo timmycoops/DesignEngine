@@ -2748,3 +2748,68 @@ fn a_table_script_step_runs_on_the_whole_table_when_a_block_runs_again() {
     let shares: f64 = numbers(&t, "coal_share").iter().flatten().sum();
     assert!((shares - 1.0).abs() < 1e-12, "worked on every row, not B1's alone: {shares}");
 }
+
+/// Word fields (Waste allocation plan, decision 2, workstream 1). The strip's blocks with no bench level, so B2's two U
+/// benches (18 and 16, 10,000 m³ each) share one leaf: a formula sets `process` Dragline on bench 18 and Poststrip on
+/// bench 16 (none on B1's unbenched U); a later formula reads each unit's own to work its dragline volume. The leaf's
+/// process reads `Dragline; Poststrip`, its dragline volume 10,000 m³; a word from a block attribute and one from a
+/// parameter column are carried; the notebook shows each unit's words; a number set on a word field stops the block.
+#[test]
+fn word_fields_are_set_by_formulas_and_written_by_leaf() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": "when material,rd (t/m3),method\nwaste,2.3,Strip\ncoal,,Strip\n" })).unwrap())[0];
+    let set = "def formula(unit):\n    if unit.bench == \"18\":\n        unit.process = \"Dragline\"\n    elif unit.bench != None:\n        unit.process = \"Poststrip\"\n";
+    let read = "def formula(unit):\n    unit.dragline_volume = unit.volume if unit.process == \"Dragline\" else 0\n";
+    let content = |set: &str| {
+        json!({
+            "levels": [{ "attribute": "pit", "default": "Pit" }, { "attribute": "strip" }, { "attribute": "block" }, { "attribute": "seam" }],
+            "fields": [
+                { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
+                { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
+                { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
+                { "name": "dragline_volume", "kind": "other", "add_up": { "by": "sum" }, "from": "worked" },
+            ],
+            "words": [
+                { "name": "process", "from": "worked" },
+                { "name": "method", "from": "parameter", "column": "method" },
+                { "name": "cut_as", "from": "attribute", "attribute": "horizon" },
+            ],
+            "steps": [
+                { "step": "initialise" },
+                { "step": "set_process", "formula": { "script": set } },
+                { "step": "dragline_volume", "formula": { "script": read } },
+                { "step": "in_situ" },
+            ],
+            "parameters": [assumptions],
+        })
+    };
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Words", "content": content(set) })).unwrap())[0];
+    let id = created(&s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap())[0];
+    let t = table(&s, id);
+    let row = |block: &str, seam: &str| (0..t.rows()).find(|&r| texts(&t, "block")[r].as_deref() == Some(block) && texts(&t, "seam")[r].as_deref() == Some(seam)).expect("the leaf");
+    let (b2, b1) = (row("B2", "U"), row("B1", "U"));
+    assert_eq!(texts(&t, "Insitu\\Coal\\process")[b2].as_deref(), Some("Dragline; Poststrip"));
+    assert_eq!(texts(&t, "Insitu\\Coal\\process")[b1], None, "B1's U has no bench, so no process");
+    assert!((value(&t, b2, "Insitu\\Coal\\dragline_volume").unwrap() - 10_000.0).abs() < TOLERANCE, "bench 18's own volume");
+    assert!(value(&t, b1, "Insitu\\Coal\\dragline_volume").unwrap().abs() < TOLERANCE);
+    assert_eq!(texts(&t, "Insitu\\Coal\\method")[b2].as_deref(), Some("Strip"), "from the parameter column");
+    assert_eq!(texts(&t, "Insitu\\Coal\\cut_as")[b2].as_deref(), Some("U"), "from the block's attribute");
+    assert_eq!(texts(&t, "Imported\\Coal\\cut_as")[b2].as_deref(), Some("U"), "carried from the start");
+    assert!(t.column("Imported\\Coal\\process").is_none(), "worked, so no leaf has one as imported");
+
+    // The notebook's view of the column after the formula: each unit's own words.
+    let p: RunReservesParams = serde_json::from_value(json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let project = s.project();
+    let get = |id| project.object(id).cloned().ok_or(CommandError::MissingObject(id));
+    let views = reserves_preview(&get, &p, "Base", &["Pit".to_string(), "3".to_string(), "B2".to_string()]).unwrap();
+    let after = views.iter().find(|v| v.step == "set_process").expect("the step's view");
+    let words: Vec<Option<&str>> = after.units.iter().filter(|u| u.horizon == "U").map(|u| u.words.get("process").map(String::as_str)).collect();
+    assert!(words.contains(&Some("Dragline")) && words.contains(&Some("Poststrip")), "{words:?}");
+
+    // A number on a word field: said, and the block stopped.
+    let numbered = created(&s.run("dataflow.save", json!({ "name": "Numbered", "content": content("def formula(unit):\n    unit.process = 3\n") })).unwrap())[0];
+    let record = s.run("reserves.run", json!({ "dataflow": numbered, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    assert!(record.notes.iter().any(|n| n.text.contains("holds words")), "{:?}", record.notes);
+}
+

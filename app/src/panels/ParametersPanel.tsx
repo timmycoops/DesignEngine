@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Braces, Copy, CopyPlus, Plus, Save, Table2, Trash2, Undo2, X } from 'lucide-react';
 import { type ClipboardEvent, type KeyboardEvent, useEffect, useMemo, useState } from 'react';
-import { type Dataflow, dataflowCheck, objectDetails, type ObjectSummary, type ParameterTable, type ParametersPicked, parametersCheck, parametersPicked } from '@/bridge';
+import { type Dataflow, dataflowCheck, type WordField, objectDetails, type ObjectSummary, type ParameterTable, type ParametersPicked, parametersCheck, parametersPicked } from '@/bridge';
 import { CellInput, Choice, IconButton, ObjectMenu, Select, StatusBadge } from '@/design-system/kit';
 import { ProjectScriptEditor } from './ProjectScriptEditor';
 import { Button } from '@/design-system/ui/button';
@@ -31,8 +31,11 @@ import {
   parseClipboard,
   setCell,
   toGrid,
+  newWordName,
   withAddUp,
   withFrom,
+  WORD_FROMS,
+  wordFrom,
 } from './parametersGrid';
 import { FormulaEditor } from './FormulaEditor';
 import { TABLE_STEP_TEMPLATE, TableStepEditor } from './TableStepEditor';
@@ -527,6 +530,8 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
     setSaid(null);
   };
   const setField = (i: number, f: FlowField) => set({ fields: flow.fields.map((g, j) => (j === i ? f : g)) });
+  const words = flow.words ?? [];
+  const setWord = (i: number, w: WordField) => set({ words: words.map((v, j) => (j === i ? w : v)) });
   const fieldEdited = (f: FlowField) => !saved.fields.some((g) => same(g, f));
   const save = async () => {
     if (!edited || engineWhy) return;
@@ -817,6 +822,49 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
           </table>
           <Button variant="outline" size="sm" className="mt-1 h-6 px-2 text-xs" onClick={() => set({ fields: [...flow.fields, { name: 'new_field', kind: 'quality', add_up: { by: 'volume' }, from: 'attribute', attribute: 'new_field' }] })}>
             <Plus className="size-3.5" /> Field
+          </Button>
+          <div className="mt-3 mb-0.5 font-semibold">Word fields</div>
+          <p className="mb-1 text-muted-foreground">Words each unit carries (a process, a method, a zone), set by a step's script and written beside the numbers; a leaf whose units differ shows them joined.</p>
+          {words.length > 0 && (
+            <table className="border-separate border-spacing-0" data-slot="dataflow-words">
+              <thead>
+                <tr>
+                  <th className={head}>Field</th>
+                  <th className={head}>From</th>
+                  <th className={head} />
+                </tr>
+              </thead>
+              <tbody>
+                {words.map((w, i) => (
+                  <tr key={i} data-word={w.name}>
+                    <td className="w-40 border-b border-border px-0.5">
+                      <CellInput value={w.name} label={`Word field ${i + 1}: name`} onChange={(name) => setWord(i, { ...w, name })} />
+                    </td>
+                    <td className="border-b border-border px-0.5 whitespace-nowrap">
+                      <span className="flex items-center gap-1">
+                        <Select value={w.from} aria-label={`${w.name}: where its words come from`} onChange={(e) => setWord(i, wordFrom(w, e.target.value as WordField['from']))}>
+                          {WORD_FROMS.map((a) => (
+                            <option key={a} value={a}>
+                              {FROM_LABELS[a]}
+                            </option>
+                          ))}
+                        </Select>
+                        {w.from === 'attribute' && <CellInput className="w-28" value={w.attribute ?? ''} label={`${w.name}: the attribute`} onChange={(attribute) => setWord(i, { ...w, attribute })} />}
+                        {w.from === 'parameter' && <CellInput className="w-28" value={w.column ?? ''} label={`${w.name}: the parameter column`} onChange={(column) => setWord(i, { ...w, column })} />}
+                      </span>
+                    </td>
+                    <td className="border-b border-border whitespace-nowrap">
+                      <IconButton label="Take this word field out" className="size-5" onClick={() => set({ words: words.filter((_, j) => j !== i) })}>
+                        <Trash2 />
+                      </IconButton>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <Button variant="outline" size="sm" className="mt-1 h-6 px-2 text-xs" onClick={() => set({ words: [...words, { name: newWordName(words), from: 'worked' }] })}>
+            <Plus className="size-3.5" /> Word field
           </Button>
         </section>
         )}

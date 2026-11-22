@@ -14,7 +14,7 @@ mod fields;
 use std::fmt;
 
 pub use column::{
-    Amount, Became, BecameKind, Bench, BenchRow, Column, ColumnKey, End, Join, JoinedBench, Labels, Origin, Split, Unit, UnitId, add_up_values,
+    Amount, Became, BecameKind, Bench, BenchRow, Column, ColumnKey, End, Join, JoinedBench, Labels, Origin, Split, Unit, UnitId, add_up_values, joined_words,
 };
 pub use fields::{AddUp, Field, FieldKind, Fields};
 

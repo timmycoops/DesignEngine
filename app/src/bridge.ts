@@ -811,6 +811,8 @@ export interface ColumnUnit {
   rom: string | null;
   /** A value a field; null where it has none. */
   values: Record<string, number | null>;
+  /** Its words by word field (Waste allocation plan, decision 2); left out where it has none. */
+  words?: Record<string, string>;
 }
 
 /** A parameter a built-in step read for a unit (decision 0081): what it found, and the table (its place in `tables`) and row. */
@@ -1275,8 +1277,18 @@ export interface Dataflow {
   /** The reserves table's levels top down (decision 0074): those above `seam` make a column. */
   levels?: { attribute: string; default?: string }[];
   fields: { name: string; kind: string; add_up: AddUp; from: string; attribute?: string; column?: string }[];
+  /** Fields of words (Waste allocation plan, decision 2): a process, a method, a zone, set by a step's script. */
+  words?: WordField[];
   steps: DataflowStep[];
   parameters: string[];
+}
+
+/** A field of words on each unit: from a block attribute, a parameter column, or worked by a step. */
+export interface WordField {
+  name: string;
+  from: 'attribute' | 'parameter' | 'worked';
+  attribute?: string;
+  column?: string;
 }
 
 /** A value a formula's worked example gives or expects. */

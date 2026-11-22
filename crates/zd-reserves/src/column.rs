@@ -8,6 +8,7 @@
 //! working sections, loss and dilution see the whole seam; `by_bench` puts any units back on the benches by those shares
 //! at a write, as Spry's Import to ROM does.
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -143,9 +144,46 @@ pub struct Unit {
     pub rom: Option<Labels>,
     pub became: Option<Became>,
     values: Vec<f64>,
+    /// Its words by word field (the Waste allocation plan, decision 2): a process, a method, a zone. A piece split off
+    /// keeps them; a join keeps a word its benches agree on, and joins those that differ (`Dragline; Poststrip`).
+    pub words: BTreeMap<String, String>,
+}
+
+/// Words from several units as one: each word field's words in order, each once, joined by `; `.
+pub fn joined_words<'a>(units: impl IntoIterator<Item = &'a BTreeMap<String, String>>) -> BTreeMap<String, String> {
+    let mut out: BTreeMap<String, String> = BTreeMap::new();
+    for words in units {
+        for (field, word) in words {
+            let held = out.entry(field.clone()).or_default();
+            if held.is_empty() {
+                *held = word.clone();
+            } else if !held.split("; ").any(|w| w == word) {
+                held.push_str("; ");
+                held.push_str(word);
+            }
+        }
+    }
+    out
 }
 
 impl Unit {
+    /// A word field's word, none where it has none.
+    pub fn word(&self, field: &str) -> Option<&str> {
+        self.words.get(field).map(String::as_str).filter(|w| !w.is_empty())
+    }
+
+    /// Sets a word field's word; none, or empty, clears it.
+    pub fn set_word(&mut self, field: &str, word: Option<String>) {
+        match word.filter(|w| !w.is_empty()) {
+            Some(w) => {
+                self.words.insert(field.to_string(), w);
+            }
+            None => {
+                self.words.remove(field);
+            }
+        }
+    }
+
     pub fn value(&self, field: usize) -> f64 {
         self.values[field]
     }
@@ -293,7 +331,7 @@ impl Column {
         let id = self.take_id();
         self.origins.push(origin);
         let origin = (self.origins.len() - 1) as u32;
-        self.units.push(Unit { id, origin, stack, bench, joined: None, in_situ, section: None, rom: None, became: None, values });
+        self.units.push(Unit { id, origin, stack, bench, joined: None, in_situ, section: None, rom: None, became: None, values, words: BTreeMap::new() });
         Ok(id)
     }
 
@@ -352,6 +390,7 @@ impl Column {
                 rom: None,
                 became: None,
                 values,
+                words: joined_words(parts.iter().map(|u| &u.words)),
             });
             joined += 1;
         }

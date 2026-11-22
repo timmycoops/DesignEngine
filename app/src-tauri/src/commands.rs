@@ -1110,6 +1110,7 @@ pub async fn dataflow_check(content: zd_core::Dataflow, state: State<'_, AppStat
         let built_in: Vec<&str> = zd_commands::builtin::STEPS.iter().map(|(n, _)| *n).collect();
         let (content, libraries) = bound(project, content)?;
         let mut declared = zd_commands::builtin::formula_declared(&fields, &refs);
+        zd_commands::builtin::declare_words(&mut declared, &content.words);
         declared.libraries = libraries;
         zd_commands::builtin::check_formula_steps(&content, &built_in, &declared).map(|_| ())
     })

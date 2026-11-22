@@ -40,6 +40,26 @@ pub struct DataflowField {
     pub source: FieldSource,
 }
 
+/// A field of words on each unit (the Build Plan's "Waste allocation plan", decision 2): a process, a method, a zone, a
+/// drill type. It starts from a block attribute or a parameter column of words, or empty; a step's script reads and sets
+/// it; a split piece keeps it; and the table carries it as a words column beside the numbers, a leaf whose units differ
+/// showing them joined (`Dragline; Poststrip`). It doesn't add up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WordField {
+    pub name: String,
+    #[serde(flatten)]
+    pub source: FieldSource,
+}
+
+impl WordField {
+    pub fn new(name: &str, source: FieldSource) -> Self {
+        WordField { name: name.to_string(), source }
+    }
+}
+
+/// The words a unit carries that a word field can't take as its name: what the run already labels it by.
+pub const UNIT_LABELS: [&str; 7] = ["seam", "horizon", "material", "bench", "became", "section", "rom"];
+
 fn yes() -> bool {
     true
 }
@@ -178,15 +198,45 @@ pub struct Dataflow {
     /// run reads them by id and records their revisions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lookups: Vec<ObjectId>,
+    /// Its fields of words (Waste allocation plan, decision 2), carried by each unit beside the number fields.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<WordField>,
 }
 
 impl Default for Dataflow {
     fn default() -> Self {
-        Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new() }
+        Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new(), words: Vec::new() }
     }
 }
 
 impl Dataflow {
+    /// Whether its word fields hold together: each named once, not as a number field or a unit's own label, and coming
+    /// from a block attribute, a parameter column or a step, as words do.
+    pub fn check_words(&self) -> Result<(), String> {
+        for (i, w) in self.words.iter().enumerate() {
+            let name = w.name.trim();
+            if name.is_empty() {
+                return Err(format!("word field {} has no name", i + 1));
+            }
+            if name != w.name {
+                return Err(format!("the word field {:?} has spaces at its ends", w.name));
+            }
+            if self.words[..i].iter().any(|v| v.name.eq_ignore_ascii_case(name)) {
+                return Err(format!("the word field {name} is listed twice"));
+            }
+            if self.fields.iter().any(|f| f.field.name.eq_ignore_ascii_case(name)) {
+                return Err(format!("{name} is a number field and a word field: give one another name"));
+            }
+            if UNIT_LABELS.iter().any(|l| l.eq_ignore_ascii_case(name)) {
+                return Err(format!("{name} is what the run labels a unit by already: give the word field another name"));
+            }
+            if !matches!(w.source, FieldSource::Attribute { .. } | FieldSource::Parameter { .. } | FieldSource::Worked) {
+                return Err(format!("the word field {name} comes from a block attribute, a parameter column or a step, not a solid's measure"));
+            }
+        }
+        Ok(())
+    }
+
     /// How many of the levels make a column: those above `seam`, else all but the last.
     pub fn column_levels(&self) -> usize {
         self.levels.iter().position(|l| l.attribute.eq_ignore_ascii_case("seam")).unwrap_or(self.levels.len().saturating_sub(1))
@@ -201,6 +251,7 @@ impl Dataflow {
     /// Whether the dataflow holds together: its fields, and its steps named, each once.
     pub fn check(&self) -> Result<(), String> {
         self.engine_fields()?;
+        self.check_words()?;
         if self.levels.is_empty() {
             return Err("the dataflow has no levels".into());
         }
@@ -270,7 +321,31 @@ mod tests {
             parameters: vec![ObjectId::new()],
             scripts: Vec::new(),
             lookups: Vec::new(),
+            words: Vec::new(),
         }
+    }
+
+    /// Word fields (Waste allocation plan, decision 2): saved and read back; each named once, not as a number field or a
+    /// unit's own label, and from an attribute, a parameter or a step.
+    #[test]
+    fn word_fields_hold_together() {
+        let mut d = dataflow();
+        d.words = vec![WordField::new("process", FieldSource::Worked), WordField::new("method", FieldSource::Parameter { column: "method".into() }), WordField::new("pit_area", FieldSource::Attribute { attribute: "area_code".into() })];
+        d.check().unwrap();
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains(r#""words":[{"name":"process","from":"worked"}"#), "{json}");
+        assert_eq!(serde_json::from_str::<Dataflow>(&json).unwrap(), d);
+        assert!(!serde_json::to_string(&dataflow()).unwrap().contains("words"), "none written where it has none");
+        let said = |words: Vec<WordField>| {
+            let mut e = dataflow();
+            e.words = words;
+            e.check().unwrap_err()
+        };
+        assert!(said(vec![WordField::new("process", FieldSource::Worked), WordField::new("Process", FieldSource::Worked)]).contains("listed twice"));
+        assert!(said(vec![WordField::new("rd", FieldSource::Worked)]).contains("a number field and a word field"));
+        assert!(said(vec![WordField::new("seam", FieldSource::Worked)]).contains("labels a unit by already"));
+        assert!(said(vec![WordField::new("process", FieldSource::Volume)]).contains("not a solid's measure"));
+        assert!(said(vec![WordField::new(" process", FieldSource::Worked)]).contains("spaces at its ends"));
     }
 
     #[test]

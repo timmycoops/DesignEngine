@@ -63,6 +63,7 @@ export function detailOf(u: ColumnUnit): string {
   if (u.became) parts.push(u.became.replace(/_/g, ' '));
   if (u.section) parts.push(`section ${u.section}`);
   if (u.rom) parts.push(`ROM ${u.rom}`);
+  for (const [field, word] of Object.entries(u.words ?? {})) parts.push(`${field} ${word}`);
   return parts.join(' · ');
 }
 

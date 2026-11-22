@@ -19,8 +19,10 @@ import {
   parseClipboard,
   setCell,
   toGrid,
+  newWordName,
   withAddUp,
   withFrom,
+  wordFrom,
 } from '../src/panels/parametersGrid.ts';
 
 // As the engine's CSV test: seam U in strips 1-5 has a 30 % cut-off; U and M a waste RD of 2.4; the default row below.
@@ -124,4 +126,14 @@ test('a dataflow field changes where it comes from and how it adds up', () => {
   assert.deepEqual(withFrom(ash, 'worked'), { name: 'ash', kind: 'quality', add_up: { by: 'volume' }, from: 'worked' });
   assert.deepEqual(withAddUp(ash, 'mass', ['rd', 'rd_is']).add_up, { by: 'mass', density: 'rd' });
   assert.deepEqual(withAddUp({ ...ash, add_up: { by: 'mass', density: 'rd_is' } }, 'sum', ['rd']).add_up, { by: 'sum' });
+});
+
+// Word fields (Waste allocation plan, decision 2): where the words come from, and a new one's name.
+test('a word field takes its attribute or parameter column from its name; a new one is process, then process_2', () => {
+  const w = { name: 'method', from: 'worked' };
+  assert.deepEqual(wordFrom(w, 'attribute'), { name: 'method', from: 'attribute', attribute: 'method' });
+  assert.deepEqual(wordFrom(wordFrom(w, 'attribute'), 'parameter'), { name: 'method', from: 'parameter', column: 'method' });
+  assert.deepEqual(wordFrom({ name: 'method', from: 'parameter', column: 'Method' }, 'worked'), { name: 'method', from: 'worked' });
+  assert.equal(newWordName([]), 'process');
+  assert.equal(newWordName([{ name: 'Process' }, { name: 'process_2' }]), 'process_3');
 });

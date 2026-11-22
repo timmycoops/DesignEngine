@@ -537,6 +537,7 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     let built_in: Vec<&str> = STEPS.iter().map(|(n, _)| *n).collect();
     let table_refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
     let mut declared = formulas::declared(&fields, &table_refs);
+    formulas::declare_words(&mut declared, &dataflow.words);
     declared.libraries = super::libraries_of(&|id| get(id).ok(), &dataflow.scripts).map_err(CommandError::Invalid)?;
     // The tables its scripts look up by name (Schedule quantities plan, decision 1): read by id, so the run records them.
     let named = super::lookups_by_id(&|id| get(id).ok(), &dataflow.lookups).map_err(CommandError::Invalid)?;
@@ -596,6 +597,37 @@ fn parameter(tables: &[Arc<ParameterTable>], attributes: &Attributes, column: &s
         ParamValue::Number(n) => Some(*n),
         ParamValue::Text(t) => t.trim().parse().ok(),
     })
+}
+
+/// A unit's words as the table's words columns under `folder` (`ROM\Waste\process`), a word field each it has a word
+/// for (Waste allocation plan, decision 2).
+fn word_texts(u: &Unit, folder: &str) -> Vec<(String, String)> {
+    u.words.iter().filter(|(_, w)| !w.is_empty()).map(|(field, word)| (format!("{folder}\\{field}"), word.clone())).collect()
+}
+
+/// A block's words as it becomes a unit (Waste allocation plan, decision 2): from its attribute (else the parameter
+/// tables' column of the field's name), from a parameter column, or none for one a step works out.
+fn block_words(prepared: &Prepared, object: &Object) -> BTreeMap<String, String> {
+    let refs: Vec<&ParameterTable> = prepared.tables.iter().map(|t| t.as_ref()).collect();
+    let param = |column: &str| {
+        ParameterTable::lookup_in(&refs, &object.attributes, column).map(|f| match f.value {
+            ParamValue::Number(n) => format!("{n}"),
+            ParamValue::Text(t) => t.trim().to_string(),
+        })
+    };
+    prepared
+        .dataflow
+        .words
+        .iter()
+        .filter_map(|w| {
+            let word = match &w.source {
+                FieldSource::Attribute { attribute } => attribute_ci(&object.attributes, attribute).map(attribute_word).filter(|a| !a.is_empty()).or_else(|| param(&w.name)),
+                FieldSource::Parameter { column } => param(column),
+                _ => None,
+            }?;
+            (!word.is_empty()).then(|| (w.name.clone(), word))
+        })
+        .collect()
 }
 
 /// The bench a block is, from what the bench cut wrote (decision 0071): its label and floor, the ground below the levels
@@ -771,6 +803,9 @@ pub struct UnitView {
     pub rom: Option<String>,
     /// Each field's value by name.
     pub values: BTreeMap<String, f64>,
+    /// Its words by word field (Waste allocation plan, decision 2).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub words: BTreeMap<String, String>,
 }
 
 fn view(run: &ColumnRun<'_>, step: &str, said: Vec<String>) -> StepView {
@@ -794,6 +829,7 @@ fn view(run: &ColumnRun<'_>, step: &str, said: Vec<String>) -> StepView {
             section: u.section.as_ref().map(|s| format!("{} {} {}", s.id.map_or(String::new(), |i| i.to_string()), s.material, s.seam).trim().to_string()),
             rom: u.rom.as_ref().map(|s| format!("{} {} {}", s.id.map_or(String::new(), |i| i.to_string()), s.material, s.seam).trim().to_string()),
             values: fields.list().iter().zip(u.values()).map(|(f, v)| (f.name.clone(), *v)).collect(),
+            words: u.words.clone(),
         })
         .collect();
     StepView { step: step.to_string(), units, said, kind: StepKind::Input, rule: String::new(), when: BTreeMap::new(), source: None, fits: Vec::new(), reads: Vec::new(), workings: Vec::new(), writes: Vec::new(), fields_read: Vec::new() }
@@ -873,6 +909,8 @@ fn begin_column<'a>(prepared: &'a Prepared, key: &ColumnKey, blocks: &[Arc<Objec
         }
         let origin = Origin { object: object.id.to_string(), name: object.name.clone() };
         column.push_bench_input(origin, stack, labels, bench, values).map_err(|e| stop(e.to_string()))?;
+        let last = column.len() - 1;
+        column.unit_mut(last).words = block_words(prepared, object);
         attributes.push(object.attributes.clone());
         if let Body::Solid(solid) = &object.body {
             block_area = block_area.max(plan_area(solid.mesh()));
@@ -924,6 +962,16 @@ fn run_formula(run: &mut ColumnRun<'_>, formula: &zd_script::Formula, step: &Dat
     let volume = fields.volume();
     for done in out {
         for (field, value) in done.sets {
+            // A word field (Waste allocation plan, decision 2) takes words, or None to clear it.
+            if run.dataflow.words.iter().any(|w| w.name == field) {
+                let word = match value {
+                    ScriptValue::Text(t) => Some(t),
+                    ScriptValue::None => None,
+                    ScriptValue::Number(x) => return Err(format!("it sets the word field {field} to a number ({x}) on {}: give it words", run.name_of(done.unit))),
+                };
+                run.column.unit_mut(done.unit).set_word(&field, word);
+                continue;
+            }
             let i = fields.at(&field).map_err(|e| e.to_string())?;
             if i == volume {
                 return Err(format!("it sets {field} on {}: the volume is of record, and moving material is a built-in step's work", run.name_of(done.unit)));
@@ -994,6 +1042,7 @@ fn formula_input(run: &ColumnRun<'_>, step: &DataflowStep, declared: &zd_script:
         .map(|(at, u)| {
             let mut values = numbers(u.values());
             values.extend(unit_labels(u).into_iter().map(|(k, v)| (k.to_string(), v.map_or(ScriptValue::None, ScriptValue::Text))));
+            values.extend(run.dataflow.words.iter().map(|w| (w.name.clone(), u.word(&w.name).map_or(ScriptValue::None, |x| ScriptValue::Text(x.to_string())))));
             UnitInput { fields: Arc::new(values), block: blocks[u.origin as usize].clone(), parameters: params[u.origin as usize].clone(), section: section_of[at], rom_coal: rom_of[at] }
         })
         .collect();
@@ -1294,6 +1343,8 @@ pub fn units_at_step(project: &zd_core::Project, log: &[crate::LogEntry], table:
     let words = ["seam", "horizon", "material", "bench", "became", "section", "rom"];
     let mut text: Vec<Vec<Option<String>>> = vec![Vec::new(); upper.len() + 1 + words.len()];
     let mut numbers: Vec<Vec<Option<f64>>> = vec![Vec::new(); fields.len()];
+    let word_fields: Vec<String> = prepared.dataflow.words.iter().map(|w| w.name.clone()).collect();
+    let mut word_values: Vec<Vec<Option<String>>> = vec![Vec::new(); word_fields.len()];
     let mut stopped = Vec::new();
     for ((key, _), units) in columns.iter().zip(ran) {
         let units = match units {
@@ -1317,10 +1368,15 @@ pub fn units_at_step(project: &zd_core::Project, log: &[crate::LogEntry], table:
             for (f, column) in fields.iter().zip(numbers.iter_mut()) {
                 column.push(u.values.get(&f.name).copied().filter(|v| v.is_finite()));
             }
+            for (w, column) in word_fields.iter().zip(word_values.iter_mut()) {
+                column.push(u.words.get(w).cloned().filter(|w| !w.is_empty()));
+            }
         }
     }
     let names: Vec<&str> = upper.iter().map(String::as_str).chain(std::iter::once("name")).chain(words).collect();
     let mut table_columns: Vec<TableColumn> = names.iter().zip(text).map(|(n, v)| TableColumn::text(n, v)).collect();
+    // Its word fields after its labels (Waste allocation plan, decision 2).
+    table_columns.extend(word_fields.iter().zip(word_values).map(|(n, v)| TableColumn::text(n, v)));
     for (f, v) in fields.iter().zip(numbers) {
         // A field named as a label (a dataflow with a `seam` field) keeps the label's column; its numbers are left out.
         if names.contains(&f.name.as_str()) {
@@ -2311,9 +2367,15 @@ fn rom(_: &mut ColumnRun<'_>, _: &DataflowStep) -> Result<(), String> {
 }
 
 /// Where a piece goes in the reserves table: onto the leaves of `onto`, a joined unit's benches by their in situ shares
-/// (Spry's reinstated benches), its summed fields shared out, under `folder`.
-fn place(run: &ColumnRun<'_>, values: &[f64], onto: usize, folder: &str, texts: &[(String, String)]) -> Vec<Piece> {
+/// (Spry's reinstated benches), its summed fields shared out, under `folder`, with the words of the unit `from` it is
+/// (Waste allocation plan, decision 2) beside its numbers. A move between coal and waste (`to_coal`, a folder of no
+/// parts) and a Summary folder take no words.
+fn place(run: &ColumnRun<'_>, values: &[f64], from: usize, onto: usize, folder: &str, texts: &[(String, String)]) -> Vec<Piece> {
     let fields = run.column.fields();
+    let mut texts = texts.to_vec();
+    if folder.contains('\\') && !folder.starts_with("Summary") {
+        texts.extend(word_texts(&run.column.units()[from], folder));
+    }
     let u = &run.column.units()[onto];
     let shares: Vec<(u32, f64)> = match u.joined {
         Some(j) => run.column.joins()[j as usize].benches.iter().map(|b| (b.origin, b.share)).collect(),
@@ -2325,7 +2387,7 @@ fn place(run: &ColumnRun<'_>, values: &[f64], onto: usize, folder: &str, texts: 
             let attributes = &run.attributes[origin as usize];
             let leaf = run.lower.iter().map(|l| attribute_ci(attributes, l).map(attribute_word).unwrap_or_default()).collect();
             let values = values.iter().enumerate().map(|(f, x)| if fields.is_summed(f) { x * share } else { *x }).collect();
-            Piece { folder: folder.to_string(), unit: u.id, leaf, values, texts: texts.to_vec() }
+            Piece { folder: folder.to_string(), unit: u.id, leaf, values, texts: texts.clone() }
         })
         .collect()
 }
@@ -2404,10 +2466,10 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
             });
             for &(p, share) in &onto {
                 let scaled: Vec<f64> = values.iter().enumerate().map(|(f, x)| if run.column.fields().is_summed(f) { x * share } else { *x }).collect();
-                pieces.extend(place(run, &scaled, p, "ROM\\Coal", &texts));
-                pieces.extend(place(run, &scaled, p, "Scheduled\\Coal", &texts));
+                pieces.extend(place(run, &scaled, m, p, "ROM\\Coal", &texts));
+                pieces.extend(place(run, &scaled, m, p, "Scheduled\\Coal", &texts));
                 if out_of_model {
-                    pieces.extend(place(run, &scaled, p, "Summary\\Out of model", &[]));
+                    pieces.extend(place(run, &scaled, m, p, "Summary\\Out of model", &[]));
                 }
             }
             if out_of_model {
@@ -2419,10 +2481,10 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
             if out_of_model {
                 for &(p, share) in &onto {
                     let scaled: Vec<f64> = u.values().iter().enumerate().map(|(f, x)| if run.column.fields().is_summed(f) { x * share } else { *x }).collect();
-                    moves.extend(place(run, &scaled, p, "from_outside", &[]));
+                    moves.extend(place(run, &scaled, m, p, "from_outside", &[]));
                 }
             } else if !is_coal(u) {
-                moves.extend(place(run, u.values(), m, "to_coal", &[]));
+                moves.extend(place(run, u.values(), m, m, "to_coal", &[]));
             }
             if plies.contains(&m) {
                 let mut clean = values.clone();
@@ -2435,7 +2497,7 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
                     let at = if clean_average { format!(", at the section's coal average ({} or {} yes)", step.setting("clean_coal_average"), step.setting("aggregate_sections")) } else { String::new() };
                     Line::sum("clean coal", format!("{}{at}", run.words_of(m)), clean[v], "m³").then("ROM\\Clean coal")
                 });
-                pieces.extend(place(run, &clean, m, "ROM\\Clean coal", &texts));
+                pieces.extend(place(run, &clean, m, m, "ROM\\Clean coal", &texts));
             }
         }
     }
@@ -2460,8 +2522,8 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
         if last_coal.is_some_and(|c| i > c) && !is_coal(u) {
             let summed: Vec<f64> = u.values().iter().enumerate().map(|(f, x)| if run.column.fields().is_summed(f) { -x } else { *x }).collect();
             run.work(&[u.id], || Line::sum("out of model", format!("{}, model waste below the last coal", run.words_of(i)), -u.value(v), "m³").then("not mined: taken as underburden, netted off Summary\\Out of model"));
-            moves.extend(place(run, u.values(), i, "not_mined", &[]));
-            pieces.extend(place(run, &summed, i, "Summary\\Out of model", &[]));
+            moves.extend(place(run, u.values(), i, i, "not_mined", &[]));
+            pieces.extend(place(run, &summed, i, i, "Summary\\Out of model", &[]));
             run.said.count("model waste below the last coal taken as underburden, out of model".into(), u.value(v));
             continue;
         }
@@ -2480,11 +2542,11 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
         });
         // Coal ending in ROM waste moved to waste: losses, thin and high ROM ash coal, discarded coal (decision 0086).
         if is_coal(u) {
-            moves.extend(place(run, u.values(), i, "to_waste", &[]));
+            moves.extend(place(run, u.values(), i, i, "to_waste", &[]));
         }
         let values = u.values().to_vec();
-        pieces.extend(place(run, &values, onto, "ROM\\Waste", &[]));
-        pieces.extend(place(run, &values, onto, "Scheduled\\Waste", &[]));
+        pieces.extend(place(run, &values, i, onto, "ROM\\Waste", &[]));
+        pieces.extend(place(run, &values, i, onto, "Scheduled\\Waste", &[]));
     }
     run.rows.extend(pieces);
     run.moves.extend(moves);
@@ -2597,7 +2659,8 @@ fn write_pieces(run: &mut ColumnRun<'_>, folder: impl Fn(&Unit) -> Option<String
         let Some(top) = folder(u) else { continue };
         // A folder of its own (Loss\Thin) as named; a stage gets the material below it.
         let folder = if top.contains('\\') { top } else { format!("{top}\\{}", title(&u.in_situ.material)) };
-        let texts = texts(u);
+        let mut texts = texts(u);
+        texts.extend(word_texts(u, &folder));
         let shares: Vec<(u32, f64)> = match u.joined {
             Some(j) => run.column.joins()[j as usize].benches.iter().map(|b| (b.origin, b.share)).collect(),
             None => vec![(u.origin, 1.0)],
@@ -3299,7 +3362,7 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
     let row = |material: &str| ParameterRow { when: [("material".to_string(), material.to_string())].into(), values: BTreeMap::new() };
     let default = ParameterRow { when: BTreeMap::new(), values: [("underburden_thickness".to_string(), ParamValue::Number(UNDERBURDEN_THICKNESS))].into() };
     let table = ParameterTable { filters: vec!["material".into(), "seam".into()], columns, rows: vec![row("waste"), row("coal"), default] };
-    let mut dataflow = Dataflow { levels: zd_core::default_levels(), fields, steps, parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new() };
+    let mut dataflow = Dataflow { levels: zd_core::default_levels(), fields, steps, parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new(), words: Vec::new() };
     super::with_starter_formulas(&mut dataflow);
     (table, dataflow)
 }
