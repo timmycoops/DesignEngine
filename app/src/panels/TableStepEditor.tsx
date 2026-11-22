@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { type DataflowStep, formulaReference, scriptCheck } from '@/bridge';
 import { CellInput, IconButton, PanelHead, ScriptEditor, StatusBadge } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
+import { useWorkspace } from '@/workspace/context';
+import { guideFor, useParameterColumns, useProjectScripts, useTableColumns } from './scriptNames';
 
 /** A new table script step's script (decision 0099, workstream 7): each leaf's share of its strip's ROM coal. */
 export const TABLE_STEP_TEMPLATE = `# Runs on the case's table after the final writes: the columns it adds are the run's own.
@@ -21,7 +23,28 @@ def run(t):
  * p):`, checked as it's typed, each problem on its line. It runs on the case's table once the final writes are done, every
  * run; the columns it adds are the run's own. Saved with the dataflow.
  */
-export function TableStepEditor({ step, saved, onStep, onRemove, onClose }: { step: DataflowStep; saved?: DataflowStep; onStep: (s: DataflowStep) => void; onRemove: () => void; onClose: () => void }) {
+export function TableStepEditor({
+  step,
+  saved,
+  parameterTables,
+  onStep,
+  onRemove,
+  onClose,
+}: {
+  step: DataflowStep;
+  saved?: DataflowStep;
+  /** The dataflow's parameter tables, whose columns `p` reads. */
+  parameterTables: string[];
+  onStep: (s: DataflowStep) => void;
+  onRemove: () => void;
+  onClose: () => void;
+}) {
+  const { summary } = useWorkspace();
+  // The columns offered for t["…"] are the newest table's: what a run of this dataflow writes, near enough.
+  const newest = (summary?.objects ?? []).filter((o) => o.kind === 'table').at(-1)?.id ?? null;
+  const columns = useTableColumns(newest);
+  const parameters = useParameterColumns(parameterTables);
+  const scripts = useProjectScripts();
   const script = step.table?.script ?? '';
   const [problems, setProblems] = useState<{ message: string; line: number | null }[]>([]);
   const [said, setSaid] = useState<string | null>(null);
@@ -67,7 +90,7 @@ export function TableStepEditor({ step, saved, onStep, onRemove, onClose }: { st
         </span>
       </div>
       <PanelHead line="Runs on the case's table after the final writes: the columns it adds are the run's own" more="Grouping, joins and adding up are the table's own calls, done in Rust: t.group, t.where, t.join, t.total, t.with_column. A script never writes over a column the run wrote; that's refused, naming it." />
-      <ScriptEditor value={script} onChange={(s) => onStep({ ...step, table: { script: s } })} problems={problems} label="The table script's Starlark" className="min-h-40 flex-1" />
+      <ScriptEditor value={script} onChange={(s) => onStep({ ...step, table: { script: s } })} problems={problems} label="The table script's Starlark" className="min-h-40 flex-1" names={{ kind: 'table', columns, parameters, scripts }} />
       {problems.length > 0 ? (
         <div className="text-destructive" data-slot="table-step-problems">
           {problems.map((p, i) => (
@@ -78,6 +101,10 @@ export function TableStepEditor({ step, saved, onStep, onRemove, onClose }: { st
         <span className="text-ok">Checks clean: it runs when the dataflow is saved and run.</span>
       )}
       {said && <span className="text-muted-foreground">{said}</span>}
+      <details className="shrink-0 text-muted-foreground" data-slot="script-guide">
+        <summary className="cursor-pointer">How table scripts are written</summary>
+        <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs">{guideFor(reference, true)}</pre>
+      </details>
     </div>
   );
 }

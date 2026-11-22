@@ -6,6 +6,7 @@ import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
+import { formulaNames, useProjectScripts } from './scriptNames';
 import { calcForAi, starterScript } from './tableGrid';
 
 type By = CalcAddUp['by'];
@@ -35,6 +36,7 @@ export function CalculatedEditor({
   onClose: () => void;
 }) {
   const { runRecord } = useWorkspace();
+  const scripts = useProjectScripts();
   const [name, setName] = useState(editing?.name ?? 'strip_ratio');
   const [unit, setUnit] = useState(editing?.unit ?? '');
   const [by, setBy] = useState<By>(editing?.adds.by ?? 'from_inputs');
@@ -129,7 +131,7 @@ export function CalculatedEditor({
           </button>
         </span>
       </div>
-      <ScriptEditor value={script} onChange={setScript} problems={problems} ran={ran} label="The calculated column's formula" className="max-h-56 min-h-28" />
+      <ScriptEditor value={script} onChange={setScript} problems={problems} ran={ran} label="The calculated column's formula" className="max-h-56 min-h-28" names={formulaNames(check?.names, scripts)} />
       {problems.length > 0 && (
         <div className="text-destructive" data-slot="calculated-problems">
           {problems.map((p, i) => (

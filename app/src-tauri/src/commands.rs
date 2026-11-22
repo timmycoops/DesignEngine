@@ -1168,6 +1168,21 @@ pub fn formula_reference() -> &'static str {
     zd_commands::builtin::FORMULA_REFERENCE
 }
 
+/// What a script can call, for the script editors' completions and hover help: each list of calls with how each is
+/// called and what it gives (zd-script's `help`, tested against what runs them).
+#[tauri::command]
+pub fn script_help() -> serde_json::Value {
+    use zd_commands::builtin::script_help as h;
+    let list = |calls: &[h::Call]| calls.iter().map(|c| serde_json::json!({ "name": c.name, "signature": c.signature, "what": c.what })).collect::<Vec<_>>();
+    serde_json::json!({
+        "table": list(h::TABLE_CALLS),
+        "tableGlobals": list(h::TABLE_GLOBALS),
+        "library": list(h::LIBRARY_CALLS),
+        "unitParts": list(h::UNIT_PARTS),
+        "starlark": list(h::STARLARK),
+    })
+}
+
 /// The solids a reserves table's node was made from (decision 0075): every solid of the table's case on a leaf the table
 /// holds, under the node, and with `when` on a leaf the table's filter keeps (decision 0090). To select or isolate them.
 #[tauri::command]

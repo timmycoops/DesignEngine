@@ -287,6 +287,26 @@ Decision 11's "a script runs three ways" lands with the table scripts it runs (w
 | `a_table_script_step_runs_on_the_whole_table_when_a_block_runs_again` | after B1 runs again, the shares over the whole table still add to 1 | 1e-12 |
 | `zd-app --bench --dataflow` (demo pit) | a table script grouping Base by pit and strip gives each strip the grid's subtotals, and undoes | 1e-9 relative |
 
+## Built: help while a script is typed
+
+Tim, 22 November, asked for autocomplete or help writing scripts. Every script box (a dataflow's formula, a calculated
+column, a script of the project, a table script step) now offers, as it's typed or on Ctrl+Space:
+
+- after `t.`, a table's calls; after `unit.` or `row.`, the fields, labels and parts; after `p.`, the parameter columns;
+- inside `t["`, the table's columns (the one picked to run on, or the newest), each `\` doubled as a string needs; inside
+  `load("`, the project's scripts;
+- by name, the library, Starlark's own functions, a table script's `table` and `new_table`, and the script's own names.
+
+A call under the pointer says how it's called and what it gives, and the script and table step editors have the guide,
+opened at their kind's section. The calls come from the engine (`zd_script::help`, served by the shell's `script_help`),
+tested against what runs them: `dir(t)` names exactly the table calls offered, and every function offered compiles. It
+uses `@codemirror/autocomplete` 6.20.4 (CodeMirror 6, the locked editor; Tim agreed, 22 November).
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `the_table_calls_offered_are_the_table_s_own`, `the_functions_offered_are_there` (zd-script) | the calls offered are exactly the table's, and every function offered is there | exact |
+| `zd-app --bench --dataflow` (demo pit) | in a new script made a table script, `t.` offers group, where, join, total and with_column; `t["ROM` offers the table's `ROM\\…` columns; `in_si` offers in_situ_rd; the guide is the table scripts' | exact |
+
 ## Known limits
 
 - Entered values carry through Run again into the same table; a fresh reserves run makes a new table without them.

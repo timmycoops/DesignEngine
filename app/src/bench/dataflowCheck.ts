@@ -2,6 +2,7 @@
 // 0073), read as Tim would see them. The project (the demo pit saved by testdata/synthetic/workflow_demo.py, its
 // dataflow the starter's) is opened, each object picked in its own tab's list (the layer tree has no row for them,
 // Filtering plan L4), and what Properties shows read back.
+import { completionStatus, currentCompletions, startCompletion } from '@codemirror/autocomplete';
 import { EditorView } from '@codemirror/view';
 import type { DockviewApi } from 'dockview-react';
 import { calcTrace, concealed, objectDetails, objectsAttributes, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesChanged, reservesColumn, reservesNodeOf, reservesRerunParams, reservesSolids, reservesStepGrid, reservesTree, recordsPreview, runCommand, solidsTable, tableGrid, undo, writePicture } from '../bridge';
@@ -527,7 +528,38 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     for (let k = 0; k < 50 && !document.querySelector('[data-slot="project-script"]'); k++) await wait(100);
     await wait(800);
     const starterOpen = !!document.querySelector('[data-slot="project-script"]');
+    const starterSource = (() => {
+      const box = document.querySelector<HTMLElement>('[data-slot="project-script"] .cm-editor');
+      const view = box ? EditorView.findFromDOM(box) : null;
+      return view?.state.doc.toString() ?? '';
+    })();
     const starterProblems = document.querySelector('[data-slot="script-problems"]')?.textContent ?? '';
+    // Completions (decision 0099): in the new script's box made a table script, `t.` offers the table's calls and
+    // `t["` the newest table's columns, each `\` doubled; the guide opens at the table script's section.
+    const offeredAt = async (source: string) => {
+      const box = document.querySelector<HTMLElement>('[data-slot="project-script"] .cm-editor');
+      const view = box ? EditorView.findFromDOM(box) : null;
+      if (!view) return [] as string[];
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: source }, selection: { anchor: source.length } });
+      view.focus();
+      for (let k = 0; k < 30 && completionStatus(view.state) !== null; k++) await wait(50);
+      startCompletion(view);
+      for (let k = 0; k < 60 && completionStatus(view.state) !== 'active'; k++) await wait(50);
+      return currentCompletions(view.state).map((c) => c.label);
+    };
+    await wait(600);
+    const tableCalls = await offeredAt('def run(t):\n    return t.');
+    await wait(600);
+    const columnsOffered = await offeredAt('def run(t):\n    return t["ROM');
+    const libraryOffered = await offeredAt('def run(t):\n    x = in_si');
+    const guide = document.querySelector('[data-slot="project-script"] [data-slot="script-guide"] summary')?.textContent ?? '';
+    await offeredAt(starterSource);
+    expect('a table script box offers t.\'s calls, t["…"]\'s columns and the library by name, and its guide is the table scripts\'', ['group', 'where', 'join', 'total', 'with_column'].every((c) => tableCalls.includes(c)) && columnsOffered.some((c) => c.startsWith('ROM\\\\Coal\\\\')) && libraryOffered.includes('in_situ_rd') && guide === 'How table scripts are written', {
+      calls: tableCalls.slice(0, 20),
+      columns: columnsOffered.slice(0, 5),
+      library: libraryOffered.slice(0, 5),
+      guide,
+    });
     expect('a script loaded by a calculated column gives every strip its own waste over coal; + New script opens one that checks clean', scriptRows.length > 2 && scriptWorst <= 1e-12 && starterOpen && starterProblems === '', {
       rows: scriptRows.length,
       worst: scriptWorst,

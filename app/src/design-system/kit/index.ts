@@ -18,3 +18,4 @@ export { RunGoing, useRunning } from './RunGoing';
 export { ToolButton } from './ToolButton';
 export { type Asker, type AskStep, AskSteps, useAsking } from './Asking';
 export { ScriptEditor, type ScriptProblem } from './ScriptEditor';
+export type { ScriptName, ScriptNames } from './scriptCompletions';
