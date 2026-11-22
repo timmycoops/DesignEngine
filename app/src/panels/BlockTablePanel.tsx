@@ -2,7 +2,7 @@ import { Download, EyeOff, MousePointerSquareDashed, Scan, Trash2 } from 'lucide
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { concealed, type Grid, type GridRow, type ObjectKind, solidsTable, tableGrid } from '@/bridge';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
-import { Choice, Field, FilterInput, GroupBy, NumberInput, Select } from '@/design-system/kit';
+import { Choice, EditableCell, Field, FilterInput, GroupBy, NumberInput, Select } from '@/design-system/kit';
 import type { When } from '@/filters';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
@@ -11,7 +11,7 @@ import { attributeColumns, csvOf, densityColumns, filterable, shownRows, type So
 import { fmt, kindLabel } from './format';
 import { IN_TREE } from './layerTree';
 import { TableGrid } from './TableGridView';
-import { gridCsv, groupsKept, nextSort, type Sort, toggleOpen } from './tableGrid';
+import { type Entry, gridCsv, groupsKept, nextSort, pastedLines, readEntry, type Sort, toggleOpen } from './tableGrid';
 
 /**
  * The Objects table (decision 0069 as the block table; Filtering plan, L5): objects as rows, solids by default, each
@@ -24,6 +24,9 @@ import { gridCsv, groupsKept, nextSort, type Sort, toggleOpen } from './tableGri
  * Grouped (Tables and scripts plan, decision 1), the rows shown are a table like any other: a subtotal a group, the
  * volume and tonnes summed and the density added up by volume, in the engine, as a reserves table's are. `picker` is the
  * Tables tab's Table list, at the head of the row of controls.
+ *
+ * An attribute's cells are typed in, or a column pasted down them (decision 4): each change is one
+ * `object.set_attributes` run, one undo, the solid's mesh and volume as they were. + Attribute adds a column to type.
  */
 
 type Take = 'layer' | 'picked' | 'shown';
@@ -56,6 +59,9 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
   const [open, setOpen] = useState<string[][]>([]);
   const [sort, setSort] = useState<Sort>(null);
   const [grid, setGrid] = useState<Grid | null>(null);
+  /** Attributes added to type in, before any object has one. */
+  const [extra, setExtra] = useState<string[]>([]);
+  const [naming, setNaming] = useState<string | null>(null);
   const [said, setSaid] = useState<{ error?: string; text?: string }>({});
 
   const solids = useMemo(() => (summary?.objects ?? []).filter((o) => IN_TREE(o) && (kind === 'all' || o.kind === kind)), [summary, kind]);
@@ -103,7 +109,30 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
     // `key` stands for `taken`: the same solids at the same revisions read the same.
   }, [key, layerName]);
 
-  const columns = useMemo(() => attributeColumns(rows), [rows]);
+  const columns = useMemo(() => {
+    const have = attributeColumns(rows);
+    return [...have, ...extra.filter((k) => !have.some((c) => c.key === k)).map((key) => ({ key, numeric: false }))];
+  }, [rows, extra]);
+  const numericOf = useMemo(() => new Map(columns.map((c) => [c.key, c.numeric && rows.some((r) => typeof r.attributes[c.key] === 'number')])), [columns, rows]);
+  /**
+   * Values typed or pasted, each read for its attribute: a column of numbers takes numbers; one of words, words; a new
+   * one, a number where it reads as one. One run sets them all.
+   */
+  const setAttributes = async (key: string, cells: { id: string; text: string }[]) => {
+    if (OWN.has(key) || cells.length === 0) return;
+    const numeric = numericOf.get(key) ?? false;
+    const fresh = !rows.some((r) => key in r.attributes);
+    const read: { object: string; attribute: string; value: Entry }[] = [];
+    for (const c of cells) {
+      const asNumber = readEntry(c.text, true);
+      const r = numeric ? asNumber : fresh && 'value' in asNumber ? asNumber : readEntry(c.text, false);
+      if ('error' in r) return setSaid({ error: `${key}: ${r.error}` });
+      read.push({ object: c.id, attribute: key, value: r.value });
+    }
+    const outcome = await runRecord('object.set_attributes', { cells: read });
+    if (outcome.error) return setSaid({ error: outcome.error });
+    setSaid({ text: `${outcome.record?.messages?.[0] ?? 'Set'}; one undo puts them back` });
+  };
   const withVolume = kind === 'solid' || (kind === 'all' && rows.some((r) => Number.isFinite(r.volume)));
   const densities = useMemo(() => densityColumns(columns), [columns]);
   const rd = density && densities.includes(density) ? density : (densities[0] ?? null);
@@ -145,14 +174,33 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
           header: col.key,
           cell: (c) => {
             const v = c.row.original.attributes[col.key];
-            if (v === undefined) return null;
-            return typeof v === 'number' ? <span className="block text-right tabular-nums">{Number.isInteger(v) ? String(v) : fmt(v, 3)}</span> : String(v);
+            const shown = v === undefined ? '' : typeof v === 'number' ? (Number.isInteger(v) ? String(v) : fmt(v, 3)) : String(v);
+            if (OWN.has(col.key)) return typeof v === 'number' ? <span className="block text-right tabular-nums">{shown}</span> : shown;
+            return (
+              <EditableCell
+                shown={shown}
+                raw={v === undefined ? '' : String(v)}
+                numeric={typeof v === 'number'}
+                label={`${col.key} of ${c.row.original.name}`}
+                onCommit={(text) => void setAttributes(col.key, [{ id: c.row.original.id, text }])}
+                onPasteLines={(text) => {
+                  // Down the rows as they're shown, sorted or not, from this one.
+                  const order = c.table.getRowModel().rows.map((r) => r.original.id);
+                  const from = order.indexOf(c.row.original.id);
+                  const lines = pastedLines(text);
+                  void setAttributes(
+                    col.key,
+                    order.slice(from, from + lines.length).map((id, i) => ({ id, text: lines[i] })),
+                  );
+                }}
+              />
+            );
           },
         }),
       ),
       ...(take === 'layer' ? [] : [helper.accessor('layer', { header: 'Layer' })]),
     ],
-    [columns, take, kind, kinds, withVolume],
+    [columns, take, kind, kinds, withVolume, numericOf, rows],
   );
 
   const deleteShown = async () => {
@@ -198,6 +246,28 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
           <Field label="Under" hint="Only rows under this volume; 0 for any">
             <NumberInput value={under} onChange={setUnder} label="Volume under" unit="m³" width="w-24" />
           </Field>
+        )}
+        {naming === null ? (
+          <button type="button" className="whitespace-nowrap text-muted-foreground hover:text-foreground hover:underline" title="A new attribute to type in for these objects" onClick={() => setNaming('')}>
+            + Attribute
+          </button>
+        ) : (
+          <input
+            autoFocus
+            aria-label="The new attribute's name"
+            placeholder="name, Enter"
+            className="h-6 w-28 rounded-md border border-input bg-input/30 px-1.5 text-xs outline-none"
+            value={naming}
+            onChange={(e) => setNaming(e.target.value)}
+            onBlur={() => setNaming(null)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setNaming(null);
+              if (e.key !== 'Enter') return;
+              const name = naming.trim();
+              if (name && !OWN.has(name)) setExtra((x) => (x.includes(name) ? x : [...x, name]));
+              setNaming(null);
+            }}
+          />
         )}
         <GroupBy
           value={groupBy}
@@ -282,6 +352,16 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
                 return id !== null && picked.has(id);
               }}
               rowWords={[one, many]}
+              editable={(r, c) => r.kind === 'leaf' && !OWN.has(c.name)}
+              onEdit={(c, cells) =>
+                void setAttributes(
+                  c.name,
+                  cells.flatMap(({ row, text }) => {
+                    const id = idOf(row);
+                    return id ? [{ id, text }] : [];
+                  }),
+                )
+              }
             />
           )
         ) : (

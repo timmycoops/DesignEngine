@@ -967,7 +967,7 @@ mod tests {
                     TableColumn::text("block", t(&["B1", "B1", "B1", "B2"])),
                     TableColumn::text("seam", t(&["U", "U", "L", "U"])),
                     TableColumn::text("bench", t(&["100", "110", "", ""])),
-                    TableColumn { name: "Insitu\\Coal\\volume".into(), unit: "m3".into(), add_up: None, values: ColumnValues::Number(coal.map(Some).to_vec()) },
+                    TableColumn { name: "Insitu\\Coal\\volume".into(), unit: "m3".into(), add_up: None, kind: crate::ColumnKind::Written, values: ColumnValues::Number(coal.map(Some).to_vec()) },
                 ],
             }))
         };

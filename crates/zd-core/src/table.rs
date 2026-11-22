@@ -26,7 +26,23 @@ impl ColumnValues {
     }
 }
 
-/// One column: its name, its unit, how it adds up over rows, and its values.
+/// What made a column (Tables and scripts plan, decision 2): a run, which replaces it when it runs again; or a person,
+/// typed or imported, kept by each row's key when the run runs again (`docs/decisions/0099-tables-and-scripts.md`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColumnKind {
+    #[default]
+    Written,
+    Entered,
+}
+
+impl ColumnKind {
+    pub fn is_written(&self) -> bool {
+        *self == ColumnKind::Written
+    }
+}
+
+/// One column: its name, its unit, how it adds up over rows, what made it, and its values.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableColumn {
     pub name: String,
@@ -36,22 +52,31 @@ pub struct TableColumn {
     /// knowing it; none for a label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_up: Option<AddUp>,
+    /// Written by a run, or entered by a person. Named `made` in JSON: `kind` is the values' own tag (numbers or words).
+    #[serde(rename = "made", default, skip_serializing_if = "ColumnKind::is_written")]
+    pub kind: ColumnKind,
     #[serde(flatten)]
     pub values: ColumnValues,
 }
 
 impl TableColumn {
     pub fn number(name: &str, unit: &str, values: Vec<Option<f64>>) -> Self {
-        TableColumn { name: name.to_string(), unit: unit.to_string(), add_up: None, values: ColumnValues::Number(values) }
+        TableColumn { name: name.to_string(), unit: unit.to_string(), add_up: None, kind: ColumnKind::Written, values: ColumnValues::Number(values) }
     }
 
     /// A number column that adds up by a rule.
     pub fn adding(name: &str, unit: &str, add_up: AddUp, values: Vec<Option<f64>>) -> Self {
-        TableColumn { name: name.to_string(), unit: unit.to_string(), add_up: Some(add_up), values: ColumnValues::Number(values) }
+        TableColumn { name: name.to_string(), unit: unit.to_string(), add_up: Some(add_up), kind: ColumnKind::Written, values: ColumnValues::Number(values) }
     }
 
     pub fn text(name: &str, values: Vec<Option<String>>) -> Self {
-        TableColumn { name: name.to_string(), unit: String::new(), add_up: None, values: ColumnValues::Text(values) }
+        TableColumn { name: name.to_string(), unit: String::new(), add_up: None, kind: ColumnKind::Written, values: ColumnValues::Text(values) }
+    }
+
+    /// The column marked as entered by a person (decision 2 of 0099).
+    pub fn entered(mut self) -> Self {
+        self.kind = ColumnKind::Entered;
+        self
     }
 }
 
@@ -67,6 +92,8 @@ pub struct ColumnHeader {
     pub text: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_up: Option<AddUp>,
+    #[serde(default, skip_serializing_if = "ColumnKind::is_written")]
+    pub kind: ColumnKind,
 }
 
 /// A table: columns of one length, names unique.
@@ -103,7 +130,7 @@ impl Table {
 
     /// The columns' names, units and kinds.
     pub fn headers(&self) -> Vec<ColumnHeader> {
-        self.columns.iter().map(|c| ColumnHeader { name: c.name.clone(), unit: c.unit.clone(), text: matches!(c.values, ColumnValues::Text(_)), add_up: c.add_up.clone() }).collect()
+        self.columns.iter().map(|c| ColumnHeader { name: c.name.clone(), unit: c.unit.clone(), text: matches!(c.values, ColumnValues::Text(_)), add_up: c.add_up.clone(), kind: c.kind }).collect()
     }
 }
 
@@ -121,9 +148,15 @@ mod tests {
         };
         t.check().unwrap();
         assert_eq!(t.rows(), 2);
-        assert_eq!(t.headers()[1], ColumnHeader { name: "volume".into(), unit: "m3".into(), text: false, add_up: None });
+        assert_eq!(t.headers()[1], ColumnHeader { name: "volume".into(), unit: "m3".into(), text: false, add_up: None, kind: ColumnKind::Written });
         let json = serde_json::to_string(&t).unwrap();
         assert_eq!(serde_json::from_str::<Table>(&json).unwrap(), t);
+        // An entered column says so beside its values' own kind, and comes back entered.
+        let mut entered = t.clone();
+        entered.columns.push(TableColumn::text("comment", vec![Some("first".into()), None]).entered());
+        let json = serde_json::to_string(&entered).unwrap();
+        assert!(json.contains(r#""made":"entered""#), "{json}");
+        assert_eq!(serde_json::from_str::<Table>(&json).unwrap(), entered);
         let mut short = t.clone();
         short.columns.push(TableColumn::number("rd", "t/m3", vec![Some(1.5)]));
         assert!(short.check().unwrap_err().contains("1 values for 2 rows"));

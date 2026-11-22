@@ -4,7 +4,7 @@
 // Filtering plan L4), and what Properties shows read back.
 import { EditorView } from '@codemirror/view';
 import type { DockviewApi } from 'dockview-react';
-import { concealed, objectDetails, objectsAttributes, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesColumn, reservesNodeOf, reservesSolids, reservesStepGrid, reservesTree, solidsTable, tableGrid, undo, writePicture } from '../bridge';
+import { concealed, objectDetails, objectsAttributes, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesChanged, reservesColumn, reservesNodeOf, reservesRerunParams, reservesSolids, reservesStepGrid, reservesTree, runCommand, solidsTable, tableGrid, undo, writePicture } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
 import { windowPicture } from './windowPicture';
 import { showPanel } from '../workspace/Workspace';
@@ -433,6 +433,89 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
       }),
     );
     expect('Every block at working_sections: a block\'s units are its own column\'s there', sections > 0 && atSections.step === 'working_sections' && matches.every((m) => m.ok), { matches, ms: Math.round(sectionsMs), columns: atSections.columns });
+
+    // Entered values and blocks' attributes (Tables and scripts plan, decisions 2 to 4). Two blocks' attributes set in one
+    // run: the table says two blocks changed since its run; one undo and it says nothing.
+    const two = ids.slice(0, 2);
+    await runCommand('object.set_attributes', { cells: two.map((object) => ({ object, attribute: 'checked', value: 'yes' })) });
+    const changedTwo = await reservesChanged(baseTable.id);
+    await undo();
+    const changedNone = await reservesChanged(baseTable.id);
+    // The demo's dataflow was renamed as it opened (0077, 7c), so it has changed since the table's run either way.
+    expect("two blocks' attributes set: the table says two blocks changed since its run, and after one undo none", changedTwo.blocks === 2 && changedNone.blocks === 0 && changedNone.others.join() === changedTwo.others.join(), { set: changedTwo, undone: changedNone });
+    // A comment entered on two leaves stays on them when the whole table runs again; two undos put it all back.
+    const leaves = await tableGrid({ of: 'table', table: baseTable.id }, { columns: ['Insitu\\Coal\\volume'], limit: 3 });
+    const picked = leaves.rows.filter((r) => r.kind === 'leaf').slice(0, 2);
+    await runCommand('table.enter', { table: baseTable.id, column: 'comment', words: true, cells: picked.map((r, i) => ({ row: r.row, value: `leaf ${i + 1}` })) });
+    const wordsOf = (r: { words: string[] | null }) => (r.words ?? []).join(' ');
+    const want = new Map(picked.map((r, i) => [wordsOf(r), `leaf ${i + 1}`]));
+    await runCommand('reserves.run', await reservesRerunParams(baseTable.id, []));
+    const after = await tableGrid({ of: 'table', table: baseTable.id }, { columns: ['comment'], limit: 100_000 });
+    const found = after.rows.filter((r) => r.kind === 'leaf' && r.cells[0] !== null).map((r) => [wordsOf(r), r.cells[0]] as const);
+    const kept = found.length === 2 && found.every(([w, c]) => want.get(w) === c);
+    const entered = after.columns[0]?.kind;
+    await undo();
+    await undo();
+    const gone = (await tableGrid({ of: 'table', table: baseTable.id }, { columns: [], limit: 1 })).every.every((c) => c.name !== 'comment');
+    expect('a comment entered on two leaves stays on them when the table runs again; two undos take it out', kept && entered === 'entered' && gone, { found, entered, gone });
+
+    // A block's attribute typed in Objects (decision 4): a double-click opens the box, Enter keeps it, one undo puts it back.
+    showPanel(api, 'restable');
+    for (let k = 0; k < 50 && !document.querySelector('select[aria-label="Table"]'); k++) await wait(100);
+    const list = document.querySelector<HTMLSelectElement>('select[aria-label="Table"]');
+    const tableWas = list?.value ?? '';
+    if (list) {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(list, 'objects');
+      list.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    const objectsPanel = () => document.querySelector<HTMLElement>('[data-tool-panel="blocks"]');
+    // The Base blocks' layer, not whichever layer of solids comes first.
+    for (let k = 0; k < 50 && !objectsPanel()?.querySelector('select[aria-label="Layer of solids"]'); k++) await wait(100);
+    const blocksLayer = (await projectSummary()).objects.find((o) => o.id === ids[0])?.layer ?? '';
+    const layerList = objectsPanel()?.querySelector<HTMLSelectElement>('select[aria-label="Layer of solids"]');
+    if (layerList && blocksLayer) {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(layerList, blocksLayer);
+      layerList.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    const cellOf = () => objectsPanel()?.querySelector<HTMLElement>('[data-slot="cell-editable"][aria-label^="block of "]') ?? null;
+    for (let k = 0; k < 50 && !cellOf(); k++) await wait(100);
+    const cell = cellOf();
+    const blockName = cell?.getAttribute('aria-label')?.replace(/^block of /, '').replace(/: double-click to type$/, '') ?? '';
+    cell?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await wait(100);
+    const box = objectsPanel()?.querySelector<HTMLInputElement>('[data-slot="cell-input"]');
+    if (box) {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(box, 'B99');
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    }
+    // A solid's attributes are the engine's; the summary doesn't carry them.
+    const typedId = (await projectSummary()).objects.find((o) => o.name === blockName)?.id ?? '';
+    const blockOf = async () => (typedId ? (await objectsAttributes([typedId]))[0]?.block : undefined);
+    let typedValue = await blockOf();
+    for (let k = 0; k < 50 && typedValue !== 'B99'; k++) {
+      await wait(100);
+      typedValue = await blockOf();
+    }
+    await undo();
+    const backValue = await blockOf();
+    const shownCells = objectsPanel()?.querySelectorAll('[data-slot="cell-editable"]').length ?? 0;
+    const firstCell = objectsPanel()?.querySelector('[data-slot="cell-editable"]')?.getAttribute('aria-label') ?? null;
+    // The list is drawn again with Objects: found again to go back.
+    const listNow = document.querySelector<HTMLSelectElement>('select[aria-label="Table"]');
+    if (listNow && tableWas) {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(listNow, tableWas);
+      listNow.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    for (let k = 0; k < 50 && !document.querySelector('[data-tool-panel="reserves-table"]'); k++) await wait(100);
+    expect("a block's attribute typed in Objects is set on it, and one undo puts it back", !!box && typedValue === 'B99' && backValue !== 'B99' && !!backValue, {
+      block: blockName,
+      typed: typedValue,
+      back: backValue,
+      box: !!box,
+      cells: shownCells,
+      first: firstCell,
+    });
   }
   await checkParameters(summary, api, expect, show, picture);
   await checkFormulas(expect, picture, api);

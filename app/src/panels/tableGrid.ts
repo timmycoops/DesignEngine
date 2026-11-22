@@ -55,3 +55,33 @@ export function gridCsv(grid: Grid): string {
 
 /** Group-by columns kept only where the table still has them, in the order picked. */
 export const groupsKept = (group: readonly string[], groups: readonly string[]) => group.filter((g) => groups.includes(g));
+
+/** A value typed in a cell: a number, words or nothing. */
+export type Entry = number | string | null;
+
+/**
+ * What's typed in a cell, read for its column (Tables and scripts plan, decision 2): blank is nothing; in a column of
+ * numbers, a number (commas between thousands allowed) or refused with why; in a column of words, the words.
+ */
+export function readEntry(text: string, numeric: boolean): { value: Entry } | { error: string } {
+  const t = text.trim();
+  if (t === '') return { value: null };
+  if (!numeric) return { value: t };
+  const n = Number(t.replace(/,(?=\d{3}(\D|$))/g, ''));
+  return Number.isFinite(n) ? { value: n } : { error: `${t} isn't a number` };
+}
+
+/** A block of cells pasted: one value a line, a spreadsheet's row cut to its first cell. */
+export function pastedLines(text: string): string[] {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  return lines.map((l) => l.split('\t')[0]);
+}
+
+/** What's changed since a table's run, in words; empty when nothing has (decision 4). */
+export function changedWords(c: { blocks: number; others: string[]; gone: number }): string {
+  const parts = [...(c.blocks ? [`${fmt(c.blocks)} block${c.blocks === 1 ? '' : 's'}`] : []), ...c.others, ...(c.gone ? [`${fmt(c.gone)} input${c.gone === 1 ? '' : 's'} deleted`] : [])];
+  if (parts.length === 0) return '';
+  const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `${list} changed since this table's run`;
+}

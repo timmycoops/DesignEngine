@@ -2242,3 +2242,116 @@ fn every_block_at_a_step_is_each_column_s_units_at_it() {
     // Past the last step is refused.
     assert!(units_at_step(s.project(), s.log(), id, last + 1, &unsaved).is_err());
 }
+
+/// A value in a column the planner entered, on a block's seam leaf (no bench), as words, for the assertions below.
+fn entered_at(t: &Table, column: &str, block: &str, seam: &str) -> Option<String> {
+    let r = leaf(t, block, seam, None);
+    match &t.column(column)?.values {
+        ColumnValues::Text(v) => v[r].clone(),
+        ColumnValues::Number(v) => v[r].map(|x| x.to_string()),
+    }
+}
+
+/// Entered columns (Tables and scripts plan, decisions 2 and 3): a comment and a period typed on three leaves stay on
+/// those leaves when B1 runs again, found by each leaf's key; a word column entered is no level. With B1's L and U-L
+/// blocks taken away, B1 has no L leaf: its period is said with its value, not kept, and never dropped silently.
+#[test]
+fn entered_values_are_kept_by_their_leaf_when_the_table_runs_again() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "in_situ", "join_benches"]);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let t = table(&s, id);
+    let (b1u, b1l, b2l) = (leaf(&t, "B1", "U", None), leaf(&t, "B1", "L", None), leaf(&t, "B2", "L", None));
+    s.run("table.enter", json!({ "table": id, "column": "comment", "cells": [{ "row": b1u, "value": "dragline first" }, { "row": b2l, "value": "check the floor" }] })).unwrap();
+    let said = s.run("table.enter", json!({ "table": id, "column": "period", "unit": "", "cells": [{ "row": b1l, "value": 2.0 }] })).unwrap();
+    assert_eq!(said.messages, ["Reserves Base: 1 value entered in period"]);
+    let t = table(&s, id);
+    assert_eq!(t.column("comment").unwrap().kind, zd_core::ColumnKind::Entered);
+    assert_eq!(zd_commands::reserves_view::levels(&t), ["pit", "strip", "block", "seam", "bench"], "a comment is no level");
+
+    let column = |block: &str| ["Pit", "3", block].map(String::from).to_vec();
+    // The table's latest revision is the entry, not a run: its column still opens on the run that wrote it.
+    assert!(table_column(s.project(), s.log(), id, &column("B2"), &Unsaved::default()).unwrap().changed.is_empty());
+    let p = rerun_params(s.project(), s.log(), id, &column("B1")).unwrap();
+    assert_eq!(p.previous, Some(record.run), "read against the reserves run, not the entry");
+    s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+    let t = table(&s, id);
+    assert_eq!(entered_at(&t, "comment", "B1", "U").as_deref(), Some("dragline first"));
+    assert_eq!(entered_at(&t, "comment", "B2", "L").as_deref(), Some("check the floor"));
+    assert_eq!(entered_at(&t, "period", "B1", "L").as_deref(), Some("2"));
+    assert_eq!(entered_at(&t, "comment", "B1", "L"), None);
+
+    // B1's L and the waste above it gone: B1 has no L leaf, so its period has nowhere to go.
+    for name in ["3_B1_L", "3_B1_U-L"] {
+        let block = ids.iter().copied().find(|&b| s.project().object(b).unwrap().name == name).unwrap();
+        s.run("object.delete", json!({ "object": block })).unwrap();
+    }
+    let p = rerun_params(s.project(), s.log(), id, &column("B1")).unwrap();
+    let again = s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+    let lost: Vec<&str> = again.notes.iter().filter(|n| n.code == Some(Code::ReservesEnteredLost)).map(|n| n.text.as_str()).collect();
+    assert_eq!(lost, ["1 entered value on leaves this run no longer makes, not kept: Base Pit 3 B1 L: period = 2"]);
+    let t = table(&s, id);
+    assert_eq!(entered_at(&t, "comment", "B1", "U").as_deref(), Some("dragline first"), "the rest kept");
+}
+
+/// A number a run wrote is never typed over (decision 3): entering in a written column is refused, as are words in a
+/// column of numbers and taking a written column out. An entered column comes out, and one undo puts it back.
+#[test]
+fn a_written_column_is_never_typed_over() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "in_situ"]);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let err = s.run("table.enter", json!({ "table": id, "column": "Insitu\\Coal\\volume", "cells": [{ "row": 0, "value": 1.0 }] })).unwrap_err();
+    assert!(err.to_string().contains("written by the run"), "{err}");
+    s.run("table.enter", json!({ "table": id, "column": "period", "cells": [{ "row": 0, "value": 3.0 }] })).unwrap();
+    let err = s.run("table.enter", json!({ "table": id, "column": "period", "cells": [{ "row": 1, "value": "soon" }] })).unwrap_err();
+    assert!(err.to_string().contains("holds numbers"), "{err}");
+    let err = s.run("table.enter", json!({ "table": id, "column": "period", "cells": [{ "row": 99, "value": 1.0 }] })).unwrap_err();
+    assert!(err.to_string().contains("not a row 100"), "{err}");
+    assert!(s.run("table.remove_column", json!({ "table": id, "column": "block" })).unwrap_err().to_string().contains("written by the run"));
+    s.run("table.remove_column", json!({ "table": id, "column": "period" })).unwrap();
+    assert!(table(&s, id).column("period").is_none());
+    s.undo();
+    assert!(table(&s, id).column("period").is_some(), "one undo puts it back");
+}
+
+/// Blocks' attributes typed in the grid (decision 4): three cells on two blocks in one run, each block revised once, its
+/// mesh and volume as they were; the table's run says two blocks changed since; one undo puts both back. A solid's own
+/// volume isn't an attribute to type.
+#[test]
+fn attributes_typed_in_the_grid_revise_their_blocks_only() {
+    use zd_commands::builtin::changed_since;
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "in_situ"]);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    assert!(changed_since(s.project(), s.log(), id).unwrap().is_empty());
+    let (a, b) = (ids[1], ids[ids.len() - 1]);
+    let before: Vec<_> = [a, b].iter().map(|&o| s.project().object(o).unwrap().clone()).collect();
+    let run = s
+        .run("object.set_attributes", json!({ "cells": [{ "object": a, "attribute": "rd", "value": 1.45 }, { "object": a, "attribute": "note", "value": "resampled" }, { "object": b, "attribute": "ash", "value": null }] }))
+        .unwrap();
+    assert_eq!(run.messages, ["2 values set, 1 taken away on 2 objects"]);
+    for (o, was) in [a, b].iter().zip(&before) {
+        let now = s.project().object(*o).unwrap();
+        assert_eq!(now.revision, was.revision + 1);
+        let (Body::Solid(x), Body::Solid(y)) = (&now.body, &was.body) else { panic!("solids") };
+        assert!(x.mesh().vertices == y.mesh().vertices && x.mesh().triangles == y.mesh().triangles && x.volume() == y.volume(), "the mesh and volume as they were");
+    }
+    let a_now = &s.project().object(a).unwrap().attributes;
+    assert_eq!(a_now.get("rd"), Some(&zd_core::AttrValue::Number(1.45)));
+    assert_eq!(a_now.get("note"), Some(&zd_core::AttrValue::Text("resampled".into())));
+    assert!(!s.project().object(b).unwrap().attributes.contains_key("ash"));
+    let changed = changed_since(s.project(), s.log(), id).unwrap();
+    assert_eq!((changed.blocks, changed.others.len(), changed.gone), (2, 0, 0));
+    s.undo();
+    for (o, was) in [a, b].iter().zip(&before) {
+        assert_eq!(s.project().object(*o).unwrap().attributes, was.attributes, "one undo puts both back");
+    }
+    assert!(s.run("object.set_attributes", json!({ "cells": [{ "object": a, "attribute": "volume", "value": 1.0 }] })).unwrap_err().to_string().contains("the object's own"));
+}

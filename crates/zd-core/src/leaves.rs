@@ -6,12 +6,13 @@ use std::collections::{BTreeMap, HashSet};
 
 use crate::{AttrValue, Attributes, BASE_CASE, ColumnValues, ObjectId, Table, attribute_ci, attribute_word, list_fits};
 
-/// The table's level columns, top down: its text columns outside any folder, but the case it's of.
+/// The table's level columns, top down: its text columns outside any folder, but the case it's of and any a person
+/// entered (a comment is no level).
 pub fn levels(table: &Table) -> Vec<String> {
     table
         .columns
         .iter()
-        .filter(|c| !c.name.contains('\\') && !c.name.eq_ignore_ascii_case("case") && matches!(c.values, ColumnValues::Text(_)))
+        .filter(|c| !c.name.contains('\\') && !c.name.eq_ignore_ascii_case("case") && c.kind.is_written() && matches!(c.values, ColumnValues::Text(_)))
         .map(|c| c.name.clone())
         .collect()
 }

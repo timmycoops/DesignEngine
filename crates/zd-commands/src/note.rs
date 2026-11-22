@@ -163,6 +163,7 @@ codes! {
     ReservesDefaulted = "reserves.defaulted", "Values a reserves run gave their defaults, by field and why";
     ReservesFormulaSaid = "reserves.formula_said", "What a reserves run's formula steps printed, by step, with the units and their volume";
     ReservesUnbalanced = "reserves.unbalanced", "Columns whose volume a reserves run didn't keep: what came out isn't what went in, by block";
+    ReservesEnteredLost = "reserves.entered_lost", "Values a person entered in a reserves table on leaves a run again no longer makes, each with its value: not kept, never dropped silently";
     ReservesOutOfRange = "reserves.out_of_range", "Blocks thicker or wider than a reserves run's maximums";
     WorkflowPicked = "workflow.picked", "A workflow step's input that is the objects as picked, as no rule finds them";
     ObjectSolidsDeleted = "object.solids_deleted", "Solids deleted, with their volume, so a report can account for it";

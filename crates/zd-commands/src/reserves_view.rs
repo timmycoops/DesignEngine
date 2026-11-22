@@ -725,9 +725,9 @@ mod tests {
     #[test]
     fn thickness_area_and_length_add_up_by_block() {
         let mut t = table();
-        t.columns.push(TableColumn { name: "ROM\\Coal\\thickness".into(), unit: "m".into(), add_up: None, values: ColumnValues::Number(n(&[3.0, 2.0, 1.5, 4.0])) });
-        t.columns.push(TableColumn { name: "ROM\\Coal\\area".into(), unit: "m2".into(), add_up: None, values: ColumnValues::Number(n(&[1_000.0, 1_000.0, 1_200.0, 3_000.0])) });
-        t.columns.push(TableColumn { name: "ROM\\Coal\\length".into(), unit: "m".into(), add_up: None, values: ColumnValues::Number(n(&[100.0, 100.0, 100.0, 120.0])) });
+        t.columns.push(TableColumn { name: "ROM\\Coal\\thickness".into(), unit: "m".into(), add_up: None, kind: zd_core::ColumnKind::Written, values: ColumnValues::Number(n(&[3.0, 2.0, 1.5, 4.0])) });
+        t.columns.push(TableColumn { name: "ROM\\Coal\\area".into(), unit: "m2".into(), add_up: None, kind: zd_core::ColumnKind::Written, values: ColumnValues::Number(n(&[1_000.0, 1_000.0, 1_200.0, 3_000.0])) });
+        t.columns.push(TableColumn { name: "ROM\\Coal\\length".into(), unit: "m".into(), add_up: None, kind: zd_core::ColumnKind::Written, values: ColumnValues::Number(n(&[100.0, 100.0, 100.0, 120.0])) });
         let at = |name: &str, leaves: &[usize]| add_up_column(&t, &format!("ROM\\Coal\\{name}"), leaves);
         assert_eq!(at("thickness", &[1]), Some(2.0), "a bench its own");
         assert_eq!((at("thickness", &[0, 1]), at("area", &[0, 1])), (Some(5.0), Some(1_000.0)), "U in B10, its benches stacked");
@@ -743,9 +743,9 @@ mod tests {
     #[test]
     fn width_and_dip_are_a_block_s_own_area_weighted_above() {
         let mut t = table();
-        t.columns.push(TableColumn { name: "ROM\\Coal\\area".into(), unit: "m2".into(), add_up: None, values: ColumnValues::Number(n(&[1_000.0, 1_000.0, 1_200.0, 3_000.0])) });
-        t.columns.push(TableColumn { name: "ROM\\Coal\\width".into(), unit: "m".into(), add_up: None, values: ColumnValues::Number(n(&[50.0, 50.0, 50.0, 30.0])) });
-        t.columns.push(TableColumn { name: "ROM\\Coal\\dip".into(), unit: "deg".into(), add_up: None, values: ColumnValues::Number(n(&[4.0, 4.0, 4.0, 8.0])) });
+        t.columns.push(TableColumn { name: "ROM\\Coal\\area".into(), unit: "m2".into(), add_up: None, kind: zd_core::ColumnKind::Written, values: ColumnValues::Number(n(&[1_000.0, 1_000.0, 1_200.0, 3_000.0])) });
+        t.columns.push(TableColumn { name: "ROM\\Coal\\width".into(), unit: "m".into(), add_up: None, kind: zd_core::ColumnKind::Written, values: ColumnValues::Number(n(&[50.0, 50.0, 50.0, 30.0])) });
+        t.columns.push(TableColumn { name: "ROM\\Coal\\dip".into(), unit: "deg".into(), add_up: None, kind: zd_core::ColumnKind::Written, values: ColumnValues::Number(n(&[4.0, 4.0, 4.0, 8.0])) });
         let at = |name: &str, leaves: &[usize]| add_up_column(&t, &format!("ROM\\Coal\\{name}"), leaves).unwrap();
         assert_eq!((at("width", &[0, 1, 2]), at("dip", &[0, 1, 2])), (50.0, 4.0), "B10 its own");
         assert!((at("width", &[0, 1, 2, 3]) - (50.0 * 1_200.0 + 30.0 * 3_000.0) / 4_200.0).abs() < 1e-12);

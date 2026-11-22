@@ -763,6 +763,18 @@ pub async fn table_grid(source: GridSource, ask: zd_commands::table_grid::GridAs
     .await?
 }
 
+/// What a reserves table was made from that has changed since its run (Tables and scripts plan, decision 4): blocks
+/// revised (an attribute typed in a table), and anything else it read, by name. Nothing runs again by itself.
+#[tauri::command]
+pub async fn reserves_changed(object: ObjectId, state: State<'_, AppState>) -> Result<zd_commands::builtin::ChangedSince, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        zd_commands::builtin::changed_since(app.session.project(), app.session.log(), object).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
 /// A reserves table's tree of levels (decision 0075): every node with how many leaves are under it.
 #[tauri::command]
 pub async fn reserves_tree(object: ObjectId, when: Option<std::collections::BTreeMap<String, String>>, state: State<'_, AppState>) -> Result<zd_commands::reserves_view::TreeNode, String> {
