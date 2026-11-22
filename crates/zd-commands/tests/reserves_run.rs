@@ -2152,9 +2152,24 @@ fn the_grid_s_subtotals_are_the_breakdown_s_nodes() {
         }
     }
     assert!(checked > 100, "{checked} subtotals checked");
-    // B2's U benches under their seam, labelled by what isn't grouped: the bench, or the strip's words for B2's unbenched U.
+    // B2's U benches under their seam, labelled by what isn't grouped: the bench, or for B2's unbenched U, which has
+    // nothing of its own left, its full words, never a row number.
     let under_u: Vec<&str> = g.rows.iter().filter(|r| r.kind == RowKind::Leaf && r.path == ["Pit", "3", "B2", "U"]).map(|r| r.label.as_str()).collect();
-    assert_eq!(under_u, ["row 3", "18", "16"]);
+    assert_eq!(under_u, ["Pit 3 B2 U", "18", "16"]);
+    // Grouped by every level, bench too: each bench is the leaf itself, no group over a row repeating it, and no
+    // label is a row number.
+    let mut all = group.clone();
+    all.push("bench".into());
+    let mut open_all: Vec<Vec<String>> = Vec::new();
+    for _ in 0..all.len() {
+        let g = grid(&t, &GridAsk { group: all.clone(), open: open_all.clone(), ..Default::default() }).unwrap();
+        open_all = g.rows.iter().filter(|r| r.kind == RowKind::Group).map(|r| r.path.clone()).collect();
+    }
+    let g = grid(&t, &GridAsk { group: all, open: open_all, ..Default::default() }).unwrap();
+    let benches: Vec<(&str, usize)> = g.rows.iter().filter(|r| r.kind == RowKind::Leaf && r.path == ["Pit", "3", "B2", "U"]).map(|r| (r.label.as_str(), r.depth)).collect();
+    assert_eq!(benches, [("18", 5), ("16", 5), ("(none)", 5)], "the benches are the leaves, at the bench depth, none last");
+    assert_eq!(g.rows.iter().filter(|r| r.kind == RowKind::Leaf).count(), 6, "every leaf once");
+    assert!(g.rows.iter().all(|r| !r.label.starts_with("row ")), "no row numbers");
 }
 
 /// The blocks as a table (decision 1): a row a solid, its own volume summed, RD added up by volume over the blocks that
