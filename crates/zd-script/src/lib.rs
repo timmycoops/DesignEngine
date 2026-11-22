@@ -15,6 +15,7 @@
 mod check;
 mod handles;
 pub mod library;
+pub mod help;
 mod tables;
 
 use std::cell::RefCell;

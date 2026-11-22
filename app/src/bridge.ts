@@ -1377,6 +1377,26 @@ export const formulaTrace = (content: Dataflow, step: string, solid: string) => 
 /** How to write a formula: the panel's help and what Copy for AI hands over. */
 export const formulaReference = () => invoke<string>('formula_reference');
 
+/** A call a script can make: its name, how it's called, what it gives. */
+export interface ScriptCall {
+  name: string;
+  signature: string;
+  what: string;
+}
+
+/** What a script can call, for the editors' completions and hover help (the engine's lists, tested against what runs). */
+export interface ScriptHelp {
+  table: ScriptCall[];
+  tableGlobals: ScriptCall[];
+  library: ScriptCall[];
+  unitParts: ScriptCall[];
+  starlark: ScriptCall[];
+}
+
+let helpAsked: Promise<ScriptHelp> | null = null;
+/** Asked for once a session: it never changes while the app runs. */
+export const scriptHelp = () => (helpAsked ??= invoke<ScriptHelp>('script_help'));
+
 /** Saved steps run again in one go (decision 0065), and its cases (decision 0066). */
 export interface Workflow {
   steps: WorkflowStep[];

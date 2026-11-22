@@ -5,6 +5,7 @@ import { Choice, Field, PanelHead, ScriptEditor, Select } from '@/design-system/
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { useWorkspace } from '@/workspace/context';
+import { guideFor, useProjectScripts, useTableColumns } from './scriptNames';
 
 const STARTER = `# Functions a formula or a calculated column loads by this script's name:
 #   load("qualities", "by_tonnes")
@@ -39,6 +40,8 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
   const isTable = /^\s*def\s+run\s*\(/m.test(source);
   const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table'), [summary]);
   const on = tables.some((t) => t.id === runOn) ? runOn : (tables[tables.length - 1]?.id ?? '');
+  const columns = useTableColumns(isTable ? on : null);
+  const scripts = useProjectScripts().filter((s) => s !== name.trim());
 
   useEffect(() => {
     void formulaReference().then(setReference);
@@ -153,7 +156,7 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
           </Button>
         </div>
       )}
-      <ScriptEditor value={source} onChange={setSource} problems={problems} label="The script's Starlark" className="min-h-40 flex-1" />
+      <ScriptEditor value={source} onChange={setSource} problems={problems} label="The script's Starlark" className="min-h-40 flex-1" names={{ kind: isTable ? 'table' : 'library', columns, scripts }} />
       {problems.length > 0 && (
         <div className="text-destructive" data-slot="script-problems">
           {problems.map((p, i) => (
@@ -162,6 +165,10 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
         </div>
       )}
       {said.error ? <span className="text-destructive">{said.error}</span> : said.text ? <span className="text-ok">{said.text}</span> : null}
+      <details className="shrink-0 text-muted-foreground" data-slot="script-guide">
+        <summary className="cursor-pointer">{isTable ? 'How table scripts are written' : 'How formulas and their functions are written'}</summary>
+        <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs">{guideFor(reference, isTable)}</pre>
+      </details>
     </div>
   );
 }

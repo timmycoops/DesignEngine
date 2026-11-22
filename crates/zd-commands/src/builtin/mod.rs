@@ -83,7 +83,7 @@ pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResul
 pub use dataflow::{DATAFLOW_LAYER, ExportParameters, PARAMETERS_LAYER, SaveDataflow, SaveParameters};
 pub use scripts::{SCRIPTS_LAYER, SaveScript, SaveScriptParams, bind_loads, libraries_of};
 pub use table_script::{GridWork, RunTableScript, ScriptInto, TABLES_LAYER, TableScriptParams, check_table_script, check_table_steps, compile_table_script};
-pub use zd_script::{Libraries as ScriptLibraries, check_library};
+pub use zd_script::{Libraries as ScriptLibraries, check_library, help as script_help};
 pub use attributes::{AttributeCell, CalculateInTable, CalculateParams, EnterInTable, EnterParams, Entry, RemoveColumn, RemoveColumnParams, SetAttributes, SetAttributesParams, TableCell};
 pub use update_records::{RecordChange, RecordsMode, RecordsReport, RecordsTarget, UpdateRecords, UpdateRecordsParams, match_records};
 

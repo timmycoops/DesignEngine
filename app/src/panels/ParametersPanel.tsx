@@ -722,6 +722,7 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
               key={tableAt}
               step={flow.steps[tableAt]}
               saved={saved.steps.find((s) => s.step === flow.steps[tableAt].step)}
+              parameterTables={flow.parameters}
               onStep={(s) => set({ steps: flow.steps.map((t, j) => (j === tableAt ? s : t)) })}
               onRemove={() => (set({ steps: flow.steps.filter((_, j) => j !== tableAt) }), setTableAt(null))}
               onClose={() => setTableAt(null)}

@@ -72,6 +72,7 @@ fn main() {
             commands::formula_check,
             commands::formula_trace,
             commands::formula_reference,
+            commands::script_help,
             commands::reserves_node_of,
             commands::deswik_layers,
             commands::spry_contents,

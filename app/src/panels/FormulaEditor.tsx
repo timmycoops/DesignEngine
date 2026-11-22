@@ -6,6 +6,7 @@ import { CellInput, IconButton, ScriptEditor, StatusBadge } from '@/design-syste
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
+import { formulaNames, useProjectScripts } from './scriptNames';
 
 /**
  * A formula step edited (decision 0077, 7d): its name and filter, its Starlark in a script box with each problem on its
@@ -32,6 +33,7 @@ export function FormulaEditor({
   onClose: () => void;
 }) {
   const { summary, selection, notebookOf, runInNotebook } = useWorkspace();
+  const scripts = useProjectScripts();
   const step = flow.steps[index];
   const formula = step.formula ?? { script: '' };
   const [report, setReport] = useState<FormulaReport | null>(null);
@@ -155,6 +157,7 @@ export function FormulaEditor({
             ran={trace?.lines.map((l) => l.line) ?? []}
             label={`The ${step.step} formula`}
             className="min-h-72 flex-1"
+            names={formulaNames(report?.names, scripts)}
           />
           {checkWhy && <div className="text-destructive">{checkWhy}</div>}
           {report?.problems.map((p, i) => (
