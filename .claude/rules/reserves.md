@@ -5,16 +5,16 @@ paths:
   - "crates/zd-geom/src/reserves.rs"
   - "crates/zd-core/src/{dataflow,parameters,table,leaves,workflow}.rs"
   - "crates/zd-commands/src/builtin/{reserves_run,dataflow,formulas,starter,interrogate,compare,measure,workflow}.rs"
-  - "crates/zd-commands/src/{reserves_view,workflow,workflow_run,report,report_html}.rs"
-  - "app/src/panels/{Reserves,Dataflow,Parameters,Formula,ColumnSteps,StepPane,BlockTable,Workflow}*"
-  - "app/src/panels/{reserves,dataflow,parameters,formula,columnSteps,notebook,blockTable,workflow}*"
+  - "crates/zd-commands/src/{reserves_view,table_grid,workflow,workflow_run,report,report_html}.rs"
+  - "app/src/panels/{Reserves,Dataflow,Parameters,Formula,ColumnSteps,StepPane,BlockTable,Tables,TableGrid,Workflow}*"
+  - "app/src/panels/{reserves,dataflow,parameters,formula,columnSteps,notebook,blockTable,tableGrid,workflow}*"
 ---
 
 # Reserves: parameter tables, dataflows, tables, formulas
 
 Moved from CLAUDE.md's object model and reserves conventions. The short form of the conventions stays in CLAUDE.md.
 Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections, ROM, the reserves table, formulas), 0082
-(live workings), 0084 to 0086 (dataflow view, run again, fields), 0090 (filter in the view).
+(live workings), 0084 to 0086 (dataflow view, run again, fields), 0090 (filter in the view), 0099 (tables and scripts).
 
 - `ParameterTable`: assumptions any tool reads (reserves settings now; dragline, haulage, equipment later): filter
   columns (the bench rules' syntax) and value columns with units, read top down, each value from the first row that fits
@@ -34,6 +34,11 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
   and a Summary: the balance of coal and waste from Imported through Insitu and ROM to Scheduled with what moved between
   them, each check zero for every block, ratios as ratios of sums (`AddUp::Ratio`) and an audit
   (`docs/decisions/0086-reserves-fields.md`).
+- One table concept (`docs/decisions/0099-tables-and-scripts.md`): the blocks (a row a solid, `table_grid::objects_table`)
+  and a reserves table (a row a leaf) are both a `Table`, seen in the Tables tab's grid, `table_grid::grid`: grouped by
+  any word column, every subtotal `add_up_column` over the group's leaves, as the Breakdown and the report add up. Its
+  workstreams 2 to 9 (entered and calculated columns, update records, table and object scripts, a dataflow from any
+  table) build on it.
 
 ## Reserves conventions
 

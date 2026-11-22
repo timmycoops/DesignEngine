@@ -4,7 +4,7 @@
 // Filtering plan L4), and what Properties shows read back.
 import { EditorView } from '@codemirror/view';
 import type { DockviewApi } from 'dockview-react';
-import { concealed, objectDetails, objectsAttributes, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, undo, writePicture } from '../bridge';
+import { concealed, objectDetails, objectsAttributes, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, solidsTable, tableGrid, undo, writePicture } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
 import { windowPicture } from './windowPicture';
 import { showPanel } from '../workspace/Workspace';
@@ -52,7 +52,7 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
       showPanel(api, 'restable');
       let pick: HTMLSelectElement | null = null;
       for (let k = 0; k < 50 && !pick; k++) {
-        pick = document.querySelector<HTMLSelectElement>('[data-tool-panel="reserves-table"] select[aria-label="Reserves table"]');
+        pick = document.querySelector<HTMLSelectElement>('select[aria-label="Table"]');
         if (!pick) await wait(100);
       }
       if (!pick) return null;
@@ -115,14 +115,16 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
   const fiftyTable = tables.find((t) => t.name === 'Reserves 50m');
   const panel = () => document.querySelector<HTMLElement>('[data-tool-panel="reserves-table"]');
   for (let k = 0; k < 50 && !panel(); k++) await wait(100);
-  const pick = panel()?.querySelector<HTMLSelectElement>('select[aria-label="Reserves table"]');
+  const pick = panel()?.querySelector<HTMLSelectElement>('select[aria-label="Table"]');
   if (pick && baseTable) {
     // React reads a select's value through its own setter.
     Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(pick, baseTable.id);
     pick.dispatchEvent(new Event('change', { bubbles: true }));
   }
-  // Across is remembered on the machine: Children first, whatever the last session left.
+  // Across and the view are remembered on the machine: the Breakdown by Children first, whatever the last session left.
   for (let k = 0; k < 50 && !panel()?.querySelector('button'); k++) await wait(100);
+  [...(panel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent === 'Breakdown')?.click();
+  await wait(100);
   [...(panel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent === 'Children')?.click();
   const nodeRow = (path: string) => panel()?.querySelector<HTMLElement>(`[data-slot="reserves-node"][data-path="${path}"]`) ?? null;
   for (let k = 0; k < 50 && !nodeRow('Pit > 3'); k++) await wait(100);
@@ -339,6 +341,65 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     const sum = vol ? pit.columns.reduce((s, c, i) => (c.depth === 1 ? s + (vol.values[i] ?? 0) : s), 0) : NaN;
     expect('the pit equals its strips added up', !!vol && Math.abs((vol.values[0] ?? 0) - sum) <= 1e-9 * Math.abs(sum), { pit: vol?.values[0], strips: sum });
     expect('the 50m table opens in under 200 ms and a block in under 100 ms', treeMs + pitMs < 200 && blockMs < 100, { leaves: tree.leaves, treeMs: Math.round(treeMs), pitMs: Math.round(pitMs), blockMs: Math.round(blockMs) });
+
+    // The Tables tab (Tables and scripts plan, decision 1): the table as a grid by pit and strip, each strip's subtotal
+    // the Breakdown's strip node, field by field, both the engine's add-up of the same leaves.
+    t = performance.now();
+    const byStrip = await tableGrid({ of: 'table', table: fiftyTable.id }, { group: ['pit', 'strip'], open: [['Pit']] });
+    const gridMs = performance.now() - t;
+    const strips = byStrip.rows.filter((r) => r.kind === 'group' && r.depth === 2);
+    let checked = 0;
+    let worst = 0;
+    for (const s of strips) {
+      const b = await reservesBreakdown(fiftyTable.id, s.path, []);
+      byStrip.columns.forEach((c, k) => {
+        const f = b.fields.find((x) => x.column === c.name && !x.words);
+        const mine = s.cells[k];
+        if (!f || typeof mine === 'string') return;
+        const theirs = f.values[0];
+        checked += 1;
+        if (mine === null || theirs === null) worst = mine === theirs ? worst : Infinity;
+        else worst = Math.max(worst, Math.abs(mine - theirs) / Math.max(1, Math.abs(theirs)));
+      });
+    }
+    expect("the grid's strips are the Breakdown's strip nodes, every field", strips.length > 1 && checked > strips.length * 20 && worst <= 1e-12, { strips: strips.length, checked, worst, gridMs: Math.round(gridMs) });
+  }
+  if (baseTable) {
+    // Objects as a table: the Base case's blocks by material, coal's volume their solids' own volumes added.
+    const ids = await reservesSolids(baseTable.id, []);
+    const own = await solidsTable(ids);
+    const coal = own.reduce((s, r) => (r.attributes.material === 'coal' ? s + (r.volume ?? 0) : s), 0);
+    const coalCount = own.filter((r) => r.attributes.material === 'coal').length;
+    const byMaterial = await tableGrid({ of: 'objects', objects: ids, density: 'rd' }, { group: ['material'], columns: ['volume', 'tonnes'] });
+    const coalRow = byMaterial.rows.find((r) => r.kind === 'group' && r.label === 'coal');
+    const gridCoal = typeof coalRow?.cells[0] === 'number' ? coalRow.cells[0] : NaN;
+    expect("Objects by material: coal is its blocks' own volumes added, and counts them", !!coalRow && coalRow.leaves === coalCount && Math.abs(gridCoal - coal) <= 1e-9 * coal && typeof byMaterial.rows[0].cells[1] === 'number', {
+      blocks: ids.length,
+      coal: coalCount,
+      grid: gridCoal,
+      solids: coal,
+    });
+    // In the tab: Grid draws the leaves grouped; the Table list goes to Objects and back.
+    showPanel(api, 'restable');
+    for (let k = 0; k < 50 && !panel(); k++) await wait(100);
+    const press = (words: string) => [...(panel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent === words)?.click();
+    press('Grid');
+    const grouped = () => panel()?.querySelectorAll('[data-slot="reserves-grid"] tr[data-row="group"]').length ?? 0;
+    for (let k = 0; k < 50 && grouped() === 0; k++) await wait(100);
+    const groupsShown = grouped();
+    press('Breakdown');
+    const pickTable = (id: string) => {
+      const list = document.querySelector<HTMLSelectElement>('select[aria-label="Table"]');
+      if (!list) return;
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(list, id);
+      list.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    pickTable('objects');
+    for (let k = 0; k < 50 && !document.querySelector('[data-tool-panel="blocks"]'); k++) await wait(100);
+    const objectsShown = !!document.querySelector('[data-tool-panel="blocks"]');
+    pickTable(baseTable.id);
+    for (let k = 0; k < 50 && !panel(); k++) await wait(100);
+    expect('the Tables tab draws the reserves table as a grid, grouped, and lists Objects too', groupsShown > 0 && objectsShown && !!panel(), { groups: groupsShown, objects: objectsShown });
   }
   await checkParameters(summary, api, expect, show, picture);
   await checkFormulas(expect, picture, api);
@@ -839,7 +900,7 @@ async function checkRunAgain(summary: ProjectSummary, expect: Expect, show: Show
   // The Reserves table tab beside (decision 0086, workstream 2): the node's Balance, a row a stage with every check
   // holding; and back on Breakdown, its coal's thickness shown, which no add-up rule gave before.
   const rt = () => document.querySelector<HTMLElement>('[data-tool-panel="reserves-table"]');
-  pressIn(nb(), 'Reserves table beside');
+  pressIn(nb(), 'Tables beside');
   for (let k = 0; k < 50 && !rt(); k++) await wait(100);
   pressIn(rt(), 'Balance');
   const balance = () => rt()?.querySelector<HTMLElement>('[data-slot="reserves-balance"]') ?? null;
@@ -847,7 +908,7 @@ async function checkRunAgain(summary: ProjectSummary, expect: Expect, show: Show
   const stages = [...(balance()?.querySelectorAll<HTMLElement>('tr[data-kind="stage"]') ?? [])].map((r) => r.dataset.balance);
   const checks = [...(balance()?.querySelectorAll<HTMLElement>('tr[data-kind="check"]') ?? [])].map((r) => r.dataset.holds);
   // The Reserves table as a tab again, in front, filling the window for its picture.
-  pressIn(nb(), 'Reserves table as a tab');
+  pressIn(nb(), 'Tables as a tab');
   await wait(300);
   showPanel(api, 'restable');
   await wait(300);
@@ -912,7 +973,7 @@ async function checkBeside(expect: Expect, api: DockviewApi) {
   showPanel(api, 'notebook');
   for (let k = 0; k < 50 && !nb(); k++) await wait(100);
   press('Parameters beside');
-  press('Reserves table beside');
+  press('Tables beside');
   await wait(400);
   const apart = new Set([group('notebook'), group('params'), group('restable')]).size === 3;
   expect('Parameters beside and Reserves table beside put each in its own half beside the Dataflow tab, all three in sight', apart && !!nb() && !!rt() && !!document.querySelector('[data-tool-panel="parameters"]'));
@@ -929,7 +990,7 @@ async function checkBeside(expect: Expect, api: DockviewApi) {
   expect('the Dataflow tab follows a block picked in the Reserves table beside it, with no press of Open its column', !!other && shown() === want, { was, now: shown() });
 
   press('Parameters as a tab');
-  press('Reserves table as a tab');
+  press('Tables as a tab');
   await wait(400);
   expect('pressed again, they go back as tabs behind the Dataflow tab', group('params') === group('notebook') && group('restable') === group('notebook'));
 }

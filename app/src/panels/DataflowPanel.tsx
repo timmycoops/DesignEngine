@@ -66,7 +66,7 @@ function editsFor(column: ColumnSteps, drafts: Record<string, Draft>) {
 /** The tabs a planner reads beside the Dataflow tab: the parameters its steps read, and the table whose block it follows. */
 const BESIDE: readonly { id: PanelId; title: string }[] = [
   { id: 'params', title: 'Parameters' },
-  { id: 'restable', title: 'Reserves table' },
+  { id: 'restable', title: 'Tables' },
 ];
 
 export function DataflowView() {

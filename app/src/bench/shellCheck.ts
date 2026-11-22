@@ -162,7 +162,7 @@ export async function checkShell(
       Builder: ['walls', 'builder'],
       Face: ['walls', 'face'],
       Reserves: ['reserves', 'reserves'],
-      Blocks: ['solids', 'blocks'],
+      Blocks: ['solids', 'restable:objects'],
       'Reserves table': ['reserves', 'restable'],
       Parameters: ['reserves', 'params'],
       Workflow: ['', 'workflow'],
@@ -199,18 +199,18 @@ export async function checkShell(
     });
 
     await tool('Blocks');
-    const blocksHeight = api.getPanel('blocks')?.group.api.height ?? 0;
+    const blocksHeight = api.getPanel('restable')?.group.api.height ?? 0;
     await tool('Reserves table');
     await tool('Parameters');
     await tool('Face');
     showPanel(api, 'canvas');
     await settle();
     const tables = size();
-    expect('the tables and Face design are tabs in one row under the view', tabs('runlog').length === 6 && ['blocks', 'restable', 'params', 'face', 'canvas'].every((id) => tabs('runlog').includes(id as PanelId)) && tables.width === open.width, {
+    expect('the tables and Face design are tabs in one row under the view', tabs('runlog').length === 5 && ['restable', 'params', 'face', 'canvas'].every((id) => tabs('runlog').includes(id as PanelId)) && tables.width === open.width, {
       tabs: tabs('runlog'),
       view: tables,
     });
-    expect('the results dock grows to the height a table asks for, and no further', blocksHeight === 320 && (api.getPanel('runlog')?.group.api.height ?? 0) === 400, { with_block_table: blocksHeight, with_them_all: api.getPanel('runlog')?.group.api.height });
+    expect('the results dock grows to the height a table asks for, and no further', blocksHeight === 400 && (api.getPanel('runlog')?.group.api.height ?? 0) === 400, { with_tables: blocksHeight, with_them_all: api.getPanel('runlog')?.group.api.height });
 
     // A tool closed, its dock minimised, and the tool asked for from the toolbar.
     await closeTab('builder');
@@ -237,7 +237,7 @@ export async function checkShell(
     await key('`');
     const viewOnly = size();
     await key('`');
-    expect('` with a table filling the window gives the window to the view, and ` again brings everything back', viewOnly.width >= window.innerWidth - 8 && Math.abs(size().width - tables.width) <= 10 && tabs('runlog').length === 6, { view_only: viewOnly, back: size() });
+    expect('` with a table filling the window gives the window to the view, and ` again brings everything back', viewOnly.width >= window.innerWidth - 8 && Math.abs(size().width - tables.width) <= 10 && tabs('runlog').length === 5, { view_only: viewOnly, back: size() });
 
     // A dock with nothing left in it goes, and the view takes its room; opened again, the view gives it back.
     const layers = width('layers');
@@ -356,7 +356,7 @@ export async function checkShell(
     const projectWas = ['A project (.zdp)…', 'An older project folder (.zdproj)…'];
     const importWas = ['Surfaces…', 'Vulcan grid…', 'Strings…', 'Solids', 'Deswik drawing (.dcf)…', 'Spry project (.spry)…', 'Suggest a stack definition (CSV)…', 'Build and check from a definition…', 'Relink geology…'];
     const exportWas = ['Selected to DXF…', 'Selected strings to CSV…', 'Selected solids to a zip…', 'Everything visible to DXF…', 'Visible strings to CSV…', 'Visible solids to a zip…'];
-    const panelsWas = ['Layers', 'Properties', 'Strings', 'Strings from surfaces', 'Surfaces', 'Move and copy', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Licence', 'View controls', 'Run log', 'Objects table', 'Reserves table', 'Dataflow', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
+    const panelsWas = ['Layers', 'Properties', 'Strings', 'Strings from surfaces', 'Surfaces', 'Move and copy', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Licence', 'View controls', 'Run log', 'Tables', 'Dataflow', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
     const reads = (menu: { words: string }[], was: string[]) => menu.map((m) => m.words).join('|') === was.join('|');
     expect('the Open, Import, Export and Panels menus read as they should, what needs a selection off without one', reads(projectMenu, projectWas) && reads(importMenu, importWas) && reads(exportMenu, exportWas) && reads(panelsMenu, panelsWas) && exportMenu.map((m) => m.off).join() === 'true,true,true,false,false,false', {
       project: projectMenu.map((m) => m.words),
@@ -380,12 +380,12 @@ export async function checkShell(
     [...(api.getPanel('cut')?.group.element.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="What to do"] button') ?? [])].find((b) => b.textContent?.trim() === 'By benches')?.click();
     await settle();
     const litBenches = lit();
-    await clickTool('blocks');
+    await clickTool('restable:objects');
     const litBlocks = lit();
     document.querySelector<HTMLButtonElement>('button[aria-label^="Minimise Run log"]')?.click();
     await settle();
     const litMinimised = lit();
-    expect("the tool in use is lit: Cut solids' as its choice changes, the Block table's until its dock is minimised", litAtStart.length === 0 && litSeams.join() === 'cut:seams' && litBenches.join() === 'cut:benches' && litBlocks.join() === 'cut:benches,blocks' && litMinimised.join() === 'cut:benches', {
+    expect("the tool in use is lit: Cut solids' as its choice changes, the Block table's until its dock is minimised", litAtStart.length === 0 && litSeams.join() === 'cut:seams' && litBenches.join() === 'cut:benches' && litBlocks.join() === 'cut:benches,restable:objects' && litMinimised.join() === 'cut:benches', {
       at_start: litAtStart,
       by_seams: litSeams,
       by_benches_picked_in_the_panel: litBenches,
@@ -961,7 +961,7 @@ export async function checkShell(
     await key('Escape');
     resetLayout(api);
     await settle();
-    const everyPanel = ['strings', 'builder', 'cut', 'reserves', 'workflow', 'blocks', 'restable', 'params', 'canvas', 'face'] as const;
+    const everyPanel = ['strings', 'builder', 'cut', 'reserves', 'workflow', 'restable', 'params', 'canvas', 'face'] as const;
     for (const id of everyPanel) showPanel(api, id);
     await settle();
     const toFront = async (id: PanelId) => {
@@ -1071,7 +1071,7 @@ export async function checkShell(
         saved.push(path);
       };
       await picture('docks-default', 'project', []);
-      await picture('docks-solids', 'solids', ['builder', 'reserves'], ['cut:seams', 'blocks']);
+      await picture('docks-solids', 'solids', ['builder', 'reserves'], ['cut:seams', 'restable:objects']);
       await picture('docks-walls', 'walls', ['cut'], ['builder', 'face']);
       await picture('docks-reserves', 'reserves', ['cut', 'params'], ['reserves', 'restable']);
       await picture('ribbon-strings', 'strings', [], ['strings:offset']);

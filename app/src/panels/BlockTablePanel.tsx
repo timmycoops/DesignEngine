@@ -1,8 +1,8 @@
 import { Download, EyeOff, MousePointerSquareDashed, Scan, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
-import { concealed, type ObjectKind, solidsTable } from '@/bridge';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { concealed, type Grid, type GridRow, type ObjectKind, solidsTable, tableGrid } from '@/bridge';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
-import { Choice, Field, FilterInput, NumberInput, Select } from '@/design-system/kit';
+import { Choice, Field, FilterInput, GroupBy, NumberInput, Select } from '@/design-system/kit';
 import type { When } from '@/filters';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
@@ -10,6 +10,8 @@ import { useWorkspace } from '@/workspace/context';
 import { attributeColumns, csvOf, densityColumns, filterable, shownRows, type SolidRow, totalsOf } from './blockTable';
 import { fmt, kindLabel } from './format';
 import { IN_TREE } from './layerTree';
+import { TableGrid } from './TableGridView';
+import { gridCsv, groupsKept, nextSort, type Sort, toggleOpen } from './tableGrid';
 
 /**
  * The Objects table (decision 0069 as the block table; Filtering plan, L5): objects as rows, solids by default, each
@@ -18,6 +20,10 @@ import { IN_TREE } from './layerTree';
  * show. A click on a row picks it; Select shown picks every row the filter keeps, Zoom to and Hide shown act on them in
  * the view, and Delete shown deletes them in one run, one undo, as at a pause to take off what's under 50 bcm. The
  * totals add up what's shown: how many, their volume and, by a density column, tonnes.
+ *
+ * Grouped (Tables and scripts plan, decision 1), the rows shown are a table like any other: a subtotal a group, the
+ * volume and tonnes summed and the density added up by volume, in the engine, as a reserves table's are. `picker` is the
+ * Tables tab's Table list, at the head of the row of controls.
  */
 
 type Take = 'layer' | 'picked' | 'shown';
@@ -32,7 +38,10 @@ const KIND_WORDS: Record<Kind, [string, string]> = { solid: ['solid', 'solids'],
 
 const helper = columnHelper<SolidRow>();
 
-export function BlockTable() {
+/** Columns the engine's objects table keeps for itself: an attribute of one of these names isn't a column of its own. */
+const OWN = new Set(['name', 'layer', 'kind', 'volume', 'tonnes']);
+
+export function BlockTable({ picker }: { picker?: ReactNode }) {
   const { summary, selection, setSelection, runRecord, zoomTo, setObjectsVisible } = useWorkspace();
   const [kind, setKind] = useState<Kind>('solid');
   const [take, setTake] = useState<Take>('layer');
@@ -43,6 +52,10 @@ export function BlockTable() {
   const [density, setDensity] = useState<string | null>(null);
   const [rows, setRows] = useState<SolidRow[]>([]);
   const [confirming, setConfirming] = useState(false);
+  const [group, setGroup] = useState<string[]>([]);
+  const [open, setOpen] = useState<string[][]>([]);
+  const [sort, setSort] = useState<Sort>(null);
+  const [grid, setGrid] = useState<Grid | null>(null);
   const [said, setSaid] = useState<{ error?: string; text?: string }>({});
 
   const solids = useMemo(() => (summary?.objects ?? []).filter((o) => IN_TREE(o) && (kind === 'all' || o.kind === kind)), [summary, kind]);
@@ -99,6 +112,28 @@ export function BlockTable() {
   const totals = useMemo(() => totalsOf(shown, rd), [shown, rd]);
   const picked = useMemo(() => new Set(selection), [selection]);
 
+  // Grouped: the rows shown as the engine's objects table, added up a group at a time.
+  const groupOptions = useMemo(() => ['layer', ...(kind === 'all' ? ['kind'] : []), ...columns.filter((c) => !c.numeric && !OWN.has(c.key)).map((c) => c.key)], [columns, kind]);
+  const groupBy = groupsKept(group, groupOptions);
+  const shownKey = shown.map((r) => r.id).join(',');
+  const gridColumns = useMemo(() => [...(withVolume ? ['volume'] : []), ...(withVolume && rd ? ['tonnes'] : []), ...columns.filter((c) => !OWN.has(c.key)).map((c) => c.key)], [withVolume, rd, columns]);
+  useEffect(() => {
+    if (groupBy.length === 0 || shown.length === 0) return setGrid(null);
+    let live = true;
+    // A moment after the last change, so typing in the filter doesn't ask the engine at every key.
+    const timer = setTimeout(() => {
+      void tableGrid({ of: 'objects', objects: shown.map((r) => r.id), density: rd }, { group: groupBy, open, columns: gridColumns, sort })
+        .then((g) => live && setGrid(g))
+        .catch((e) => live && setSaid({ error: String(e) }));
+    }, 150);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+    // `shownKey` stands for the rows shown.
+  }, [shownKey, groupBy.join('\u0001'), open, sort, gridColumns.join('\u0001'), rd]);
+  const idOf = (r: GridRow) => (r.row === null ? null : (shown[r.row]?.id ?? null));
+
   const tableColumns = useMemo(
     () => [
       helper.accessor('name', { header: 'Name', cell: (c) => <span title={c.getValue()}>{c.getValue()}</span> }),
@@ -131,7 +166,7 @@ export function BlockTable() {
 
   const saveCsv = () => {
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([csvOf(shown, columns)], { type: 'text/csv' }));
+    link.href = URL.createObjectURL(new Blob([grid && groupBy.length > 0 ? gridCsv(grid) : csvOf(shown, columns)], { type: 'text/csv' }));
     link.download = `${take === 'layer' ? (layerName.get(layer ?? '') ?? many) : take === 'picked' ? `picked ${many}` : `${many} on show`}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
@@ -140,6 +175,7 @@ export function BlockTable() {
   return (
     <div className="flex h-full min-h-0 flex-col text-xs" data-tool-panel="blocks">
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1">
+        {picker}
         <Field label="Of">
           <Choice value={kind} options={KINDS} labels={KIND_LABELS} onChange={setKind} label="Which kind of object" />
         </Field>
@@ -163,6 +199,14 @@ export function BlockTable() {
             <NumberInput value={under} onChange={setUnder} label="Volume under" unit="m³" width="w-24" />
           </Field>
         )}
+        <GroupBy
+          value={groupBy}
+          options={groupOptions}
+          onChange={(next) => {
+            setGroup(next);
+            setOpen([]);
+          }}
+        />
         {densities.length > 0 && (
           <Field label="Density">
             <Select value={rd ?? ''} aria-label="Density column" onChange={(e) => setDensity(e.target.value)}>
@@ -222,6 +266,25 @@ export function BlockTable() {
         {said.error ? <span className="w-full text-destructive">{said.error}</span> : said.text ? <span className="w-full text-ok">{said.text}</span> : null}
       </div>
       <div className="min-h-0 flex-1">
+        {groupBy.length > 0 ? (
+          grid && (
+            <TableGrid
+              grid={grid}
+              sort={sort}
+              onSort={(c) => setSort((s) => nextSort(s, c))}
+              onToggle={(p) => setOpen((o) => toggleOpen(o, p))}
+              onRow={(r) => {
+                const id = idOf(r);
+                if (id) setSelection([id]);
+              }}
+              lit={(r) => {
+                const id = idOf(r);
+                return id !== null && picked.has(id);
+              }}
+              rowWords={[one, many]}
+            />
+          )
+        ) : (
         <DataTable
           data={shown}
           columns={tableColumns}
@@ -231,6 +294,7 @@ export function BlockTable() {
           empty={take === 'picked' ? `Pick ${many} in the view to list them` : `No ${many} to list`}
           windowed={[undefined, ...(kind === 'all' ? ['6rem'] : []), ...(withVolume ? ['7rem'] : []), ...columns.map(() => '6rem'), ...(take === 'layer' ? [] : ['8rem'])]}
         />
+        )}
       </div>
     </div>
   );

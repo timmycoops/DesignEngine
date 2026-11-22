@@ -1,15 +1,17 @@
 import { ChevronDown, ChevronRight, Columns3, Download, Focus, MousePointerSquareDashed, Palette } from 'lucide-react';
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { ReservesBalance } from './ReservesBalanceView';
-import { type Breakdown, reservesBreakdown, reservesFilterRows, reservesNodeOf, reservesSolids, reservesTree, type ReservesNode } from '@/bridge';
+import { type Breakdown, type Grid, type GridRow, reservesBreakdown, reservesFilterRows, reservesNodeOf, reservesSolids, reservesTree, type ReservesNode, tableGrid } from '@/bridge';
 import { type When, whenText } from '@/filters';
-import { Choice, Field, FilterInput, IconButton, ObjectMenu, Select } from '@/design-system/kit';
+import { Choice, Field, FilterInput, GroupBy, IconButton, ObjectMenu } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { Checkbox } from '@/design-system/ui/checkbox';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { asPutBack, breakdownCsv, cellText, fieldRows, type Isolation, isolation, nodeForLeaf, samePath, startsWith, unitLabel } from './reservesTable';
 import { fmt } from './format';
+import { TableGrid } from './TableGridView';
+import { gridCsv, groupsKept, nextSort, type Sort, toggleOpen as toggleGroup } from './tableGrid';
 
 /**
  * The reserves table (decision 0075, workstream 5a of 0070), the fields as rows as Tim asked: a node picked in the tree on
@@ -31,10 +33,29 @@ type Across = 'children' | 'leaves';
 const ACROSS: readonly Across[] = ['children', 'leaves'];
 const ACROSS_LABELS: Record<Across, string> = { children: 'Children', leaves: 'Leaves' };
 
-// The node as fields down the side and children across, or as its balance of coal and waste (decision 0086).
-type View = 'fields' | 'balance';
-const VIEWS: readonly View[] = ['fields', 'balance'];
-const VIEW_LABELS: Record<View, string> = { fields: 'Breakdown', balance: 'Balance' };
+// The table as a grid of its leaves grouped (Tables and scripts plan, decision 1), the node as fields down the side and
+// children across, or as its balance of coal and waste (decision 0086).
+type View = 'grid' | 'fields' | 'balance';
+const VIEWS: readonly View[] = ['grid', 'fields', 'balance'];
+const VIEW_LABELS: Record<View, string> = { grid: 'Grid', fields: 'Breakdown', balance: 'Balance' };
+const VIEW_KEY = 'zd.reservesTable.view.v1';
+
+function readView(): View {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    return v === 'grid' || v === 'balance' ? v : 'fields';
+  } catch {
+    return 'fields';
+  }
+}
+
+function writeView(view: View) {
+  try {
+    localStorage.setItem(VIEW_KEY, view);
+  } catch {
+    // Storage unavailable: the Breakdown again next time.
+  }
+}
 
 const FOLDED_KEY = 'zd.reservesTable.folded.v1';
 const ACROSS_KEY = 'zd.reservesTable.across.v1';
@@ -73,16 +94,14 @@ function writeFolded(folded: Set<string>) {
 
 const keyOf = (path: string[]) => path.join('\u0001');
 
-export function ReservesTable() {
+/**
+ * One reserves table in the Tables tab (Tables and scripts plan, decision 1): `picker` is the tab's Table list, shown at
+ * the head of the side column; `onDeleted` says the table went from its menu.
+ */
+export function ReservesTable({ tableId, picker, onDeleted }: { tableId: string; picker: ReactNode; onDeleted: () => void }) {
   const { summary, selection, setSelection, openNotebook, followInNotebook, colourBlocksByField, fieldColoured, zoomTo, setObjectsVisible, setLayersVisible, setReservesFilter } = useWorkspace();
-  const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table'), [summary]);
-  const [tableId, setTableId] = useState<string | null>(null);
-  // A table picked anywhere is the one shown.
   const last = selection[selection.length - 1] ?? null;
-  useEffect(() => {
-    if (last && tables.some((t) => t.id === last)) setTableId(last);
-  }, [last, tables]);
-  const table = tables.find((t) => t.id === tableId) ?? tables[tables.length - 1] ?? null;
+  const table = useMemo(() => (summary?.objects ?? []).find((o) => o.kind === 'table' && o.id === tableId) ?? null, [summary, tableId]);
 
   const [tree, setTree] = useState<ReservesNode | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set([keyOf([])]));
@@ -100,7 +119,16 @@ export function ReservesTable() {
     writeAcross(a);
   };
   const [said, setSaid] = useState<string | null>(null);
-  const [view, setView] = useState<View>('fields');
+  const [view, setViewState] = useState<View>(readView);
+  const setView = (v: View) => {
+    setViewState(v);
+    writeView(v);
+  };
+  /** The grid: grouped by (the table's levels but its last until picked), groups opened, the sort, and what came back. */
+  const [group, setGroup] = useState<string[] | null>(null);
+  const [gridOpen, setGridOpen] = useState<string[][]>([]);
+  const [gridSort, setGridSort] = useState<Sort>(null);
+  const [grid, setGrid] = useState<Grid | null>(null);
   /**
    * What's on screen alone, and what to put back: the table's layers (Show), or a node's solids (Isolate its solids) with
    * what it hid or showed. One at a time: a press of either puts the last back first.
@@ -160,6 +188,7 @@ export function ReservesTable() {
       setNode([]);
       setOpen([]);
       setLeaf(null);
+      setGridOpen([]);
     }
     if (!table) return;
     void reservesTree(table.id, when).then((t) => {
@@ -221,6 +250,46 @@ export function ReservesTable() {
   }, [last, follow, tableKey, breakdown !== null]);
 
   const rows = useMemo(() => (breakdown ? fieldRows(breakdown, fields === 'all', folded) : []), [breakdown, fields, folded]);
+
+  // The grid (Tables and scripts plan, decision 1): the fields the Breakdown shows, as columns, over every leaf the
+  // filter keeps, grouped and added up in the engine by each field's own rule.
+  const gridColumns = useMemo(() => rows.flatMap((r) => (r.kind === 'field' ? [r.key] : [])), [rows]);
+  const levelsNow = breakdown?.levels ?? [];
+  const groupBy = group ?? levelsNow.slice(0, -1);
+  const groupKey = groupBy.join('\u0001');
+  const gridOpenKey = gridOpen.map(keyOf).join('|');
+  const gridColumnsKey = gridColumns.join('\u0001');
+  const gridSortKey = gridSort ? `${gridSort.column}|${gridSort.descending}` : '';
+  useEffect(() => {
+    if (view !== 'grid' || !table || !breakdown) return;
+    let live = true;
+    void tableGrid({ of: 'table', table: table.id }, { when, group: groupBy, open: gridOpen, columns: gridColumns, sort: gridSort })
+      .then((g) => {
+        if (!live) return;
+        setGrid(g);
+        setError(null);
+      })
+      .catch((e) => live && setError(String(e)));
+    return () => {
+      live = false;
+    };
+    // The keys stand for the lists they're made from.
+  }, [view, tableKey, whenKey, groupKey, gridOpenKey, gridSortKey, gridColumnsKey, breakdown !== null]);
+  // Grouped by the table's levels from the top, a group's words are a node of the tree: picking it shows that node.
+  const groupIsLevels = groupBy.every((g, i) => levelsNow[i] === g);
+  const pickRow = (r: GridRow) => {
+    setSaid(null);
+    if (r.kind === 'leaf' && r.words) {
+      setNode(r.words);
+      setOpen([]);
+      setLeaf(r.words);
+    } else if (groupIsLevels) {
+      setNode(r.path);
+      setOpen([]);
+      setLeaf(null);
+    }
+  };
+  const rowLit = (r: GridRow) => (r.kind === 'leaf' ? !!r.words && samePath(r.words, node) : groupIsLevels && r.kind === 'group' && samePath(r.path, node));
   // The fields of numbers by their folders, offered as the filter's typed (`ROM\Coal\ash`): never ticked, each leaf's its own.
   const fieldColumns = (breakdown?.fields ?? []).filter((f) => !f.words).map((f) => `${f.column}\t${f.unit}`).join('\n');
   const fieldNames = useMemo(
@@ -325,15 +394,14 @@ export function ReservesTable() {
   const saveCsv = () => {
     if (!breakdown || !table) return;
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([breakdownCsv(breakdown)], { type: 'text/csv' }));
-    link.download = `${table.name}${node.length ? ` ${node.join(' ')}` : ''}${whenKey ? ` where ${whenKey.replace(/[\\/:*?"<>|]/g, ' ')}` : ''}.csv`;
+    const byGrid = view === 'grid' && grid !== null;
+    link.href = URL.createObjectURL(new Blob([byGrid ? gridCsv(grid) : breakdownCsv(breakdown)], { type: 'text/csv' }));
+    link.download = `${table.name}${byGrid ? (groupBy.length ? ` by ${groupBy.join(' ')}` : '') : node.length ? ` ${node.join(' ')}` : ''}${whenKey ? ` where ${whenKey.replace(/[\\/:*?"<>|]/g, ' ')}` : ''}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
   };
 
-  if (tables.length === 0) {
-    return <div className="p-3 text-xs text-muted-foreground">No reserves table yet: run a reserves dataflow (Reserves, or the workflow's reserves step) and its table shows here.</div>;
-  }
+  if (!table) return null;
 
   // A column is a block: the levels above the seam. A node at a block or below it opens its block's column.
   const seamAt = breakdown ? breakdown.levels.findIndex((l) => l.toLowerCase() === 'seam') : -1;
@@ -344,18 +412,8 @@ export function ReservesTable() {
     <div className="flex h-full min-h-0 text-xs" data-tool-panel="reserves-table">
       <div className="flex w-52 shrink-0 flex-col border-r border-border">
         <div className="flex items-center gap-1 border-b border-border px-2 py-1">
-          <Select
-            value={table?.id ?? ''}
-            aria-label="Reserves table"
-            onChange={(e) => setTableId(e.target.value)}
-          >
-            {tables.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </Select>
-          <ObjectMenu object={table} what="reserves table" onDeleted={() => setTableId(null)} />
+          {picker}
+          <ObjectMenu object={table} what="reserves table" onDeleted={onDeleted} />
         </div>
         {tableLayers.length > 0 && (
           <div className="flex items-center gap-1 border-b border-border px-2 py-1" data-slot="reserves-layers">
@@ -373,9 +431,23 @@ export function ReservesTable() {
             </Button>
           </div>
         )}
-        <div className="min-h-0 flex-1 overflow-auto py-1" role="tree" aria-label="Levels">
-          {tree && <TreeRow n={tree} depth={0} node={node} leaf={leaf} expanded={expanded} setExpanded={setExpanded} show={show} />}
-        </div>
+        {view === 'grid' ? (
+          <div className="min-h-0 flex-1 overflow-auto p-2">
+            <GroupBy
+              vertical
+              value={groupBy}
+              options={(grid?.groups ?? levelsNow).filter((g) => g !== 'case')}
+              onChange={(next) => {
+                setGroup(groupsKept(next, grid?.groups ?? levelsNow));
+                setGridOpen([]);
+              }}
+            />
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1 overflow-auto py-1" role="tree" aria-label="Levels">
+            {tree && <TreeRow n={tree} depth={0} node={node} leaf={leaf} expanded={expanded} setExpanded={setExpanded} show={show} />}
+          </div>
+        )}
       </div>
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-1" data-slot="reserves-filter">
@@ -412,13 +484,15 @@ export function ReservesTable() {
               </Fragment>
             ))}
           </span>
-          <Choice value={view} options={VIEWS} labels={VIEW_LABELS} onChange={setView} label="The node's fields, or its balance of coal and waste from Imported to Scheduled" />
+          <Choice value={view} options={VIEWS} labels={VIEW_LABELS} onChange={setView} label="Every leaf as a grid, grouped; the node's fields broken down; or its balance of coal and waste from Imported to Scheduled" />
           <Field label="Fields">
             <Choice value={fields} options={FIELDS} labels={FIELD_LABELS} onChange={setFields} label="Which fields" />
           </Field>
-          <Field label="Across">
-            <Choice value={across} options={ACROSS} labels={ACROSS_LABELS} onChange={setAcross} label="Across the node: its children, or every leaf top of the stack to the bottom" />
-          </Field>
+          {view !== 'grid' && (
+            <Field label="Across">
+              <Choice value={across} options={ACROSS} labels={ACROSS_LABELS} onChange={setAcross} label="Across the node: its children, or every leaf top of the stack to the bottom" />
+            </Field>
+          )}
           <Choice value={follow} options={FOLLOWS} labels={FOLLOW_LABELS} onChange={setFollow} label="Follow a solid picked in the view" />
           <span className="ml-auto flex items-center gap-1">
             {said && <span className="text-ok">{said}</span>}
@@ -448,18 +522,31 @@ export function ReservesTable() {
             >
               <Focus className="size-3.5" /> {alone?.key === isolatedKey ? 'Show what was shown' : 'Isolate its solids'}
             </Button>
-            <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={!breakdown} title="This node's breakdown as CSV, exact values" onClick={saveCsv}>
+            <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={!breakdown} title={view === 'grid' ? 'The grid as shown, its groups and the leaves opened, as CSV, exact values' : "This node's breakdown as CSV, exact values"} onClick={saveCsv}>
               <Download className="size-3.5" /> CSV
             </Button>
           </span>
         </div>
         {error && <div className="px-2 py-1 text-destructive">{error}</div>}
-        {breakdown && breakdown.hidden > 0 && (
+        {view !== 'grid' && breakdown && breakdown.hidden > 0 && (
           <div className="px-2 py-1 text-warning">
             The first {fmt(breakdown.columns.length - 1)} of {fmt(breakdown.columns.length - 1 + breakdown.hidden)} leaves shown: pick a strip or block for the rest. The total holds them all.
           </div>
         )}
-        <div className="min-h-0 flex-1 overflow-auto">
+        {view === 'grid' && grid && (
+          <div className="min-h-0 flex-1" data-slot="reserves-grid">
+            <TableGrid
+              grid={grid}
+              sort={gridSort}
+              onSort={(c) => setGridSort((s) => nextSort(s, c))}
+              onToggle={(p) => setGridOpen((o) => toggleGroup(o, p))}
+              onRow={pickRow}
+              lit={rowLit}
+              rowWords={['leaf', 'leaves']}
+            />
+          </div>
+        )}
+        <div className={cn('min-h-0 flex-1 overflow-auto', view === 'grid' && 'hidden')}>
           {breakdown && view === 'balance' && <ReservesBalance fields={breakdown.fields} node={crumbs.map((c) => c.label).join(' › ')} />}
           {breakdown && view === 'fields' && (
             <table className="border-separate border-spacing-0 tabular-nums" data-slot="reserves-breakdown">

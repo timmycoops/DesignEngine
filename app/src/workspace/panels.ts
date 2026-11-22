@@ -3,7 +3,7 @@
  * as a tab in the tool dock on the right, beside Properties, and a table as a tab in the results dock under the view.
  * Kept free of React, so the tool list and the tests can read it.
  */
-export type PanelId = 'layers' | 'properties' | 'strings' | 'from_surfaces' | 'surfaces' | 'move' | 'builder' | 'cut' | 'reserves' | 'workflow' | 'runlog' | 'blocks' | 'restable' | 'notebook' | 'params' | 'canvas' | 'face' | 'licence' | 'viewcontrols';
+export type PanelId = 'layers' | 'properties' | 'strings' | 'from_surfaces' | 'surfaces' | 'move' | 'builder' | 'cut' | 'reserves' | 'workflow' | 'runlog' | 'restable' | 'notebook' | 'params' | 'canvas' | 'face' | 'licence' | 'viewcontrols';
 
 export type Dock = 'left' | 'tools' | 'results';
 
@@ -28,8 +28,9 @@ export const PANELS: readonly { id: PanelId; title: string; dock: Dock; size: nu
   { id: 'licence', title: 'Licence', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'viewcontrols', title: 'View controls', dock: 'tools', size: TOOL_DOCK_WIDTH },
   { id: 'runlog', title: 'Run log', dock: 'results', size: 200 },
-  { id: 'blocks', title: 'Objects table', dock: 'results', size: 320 },
-  { id: 'restable', title: 'Reserves table', dock: 'results', size: 400 },
+  // Every table, the objects and each reserves table (Tables and scripts plan, decision 1). Kept the Reserves table's id,
+  // so a saved layout finds it.
+  { id: 'restable', title: 'Tables', dock: 'results', size: 400 },
   { id: 'notebook', title: 'Dataflow', dock: 'results', size: 480 },
   { id: 'params', title: 'Parameters', dock: 'results', size: 400 },
   { id: 'canvas', title: 'Workflow canvas', dock: 'results', size: 400 },
