@@ -832,6 +832,44 @@ pub async fn reserves_column(
     .await?
 }
 
+/// Every block of a reserves table's case at one step, as a grid (Tables and scripts plan, decision 10): what the
+/// Dataflow tab shows for one block, for all of them, grouped and added up by each field's own rule.
+#[derive(Serialize)]
+pub struct StepGrid {
+    #[serde(flatten)]
+    units: zd_commands::builtin::StepUnits,
+    grid: zd_commands::table_grid::Grid,
+}
+
+/// The step's units for every block, run on what's saved (`step` steps, 0 for the columns as input), then grouped. The
+/// units are kept between asks while the project and the step stay the same, so opening or sorting a group doesn't run
+/// every block again; nothing goes in the project.
+#[tauri::command]
+pub async fn reserves_step_grid(object: ObjectId, step: usize, ask: zd_commands::table_grid::GridAsk, state: State<'_, AppState>) -> Result<StepGrid, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let mut app = app.lock().unwrap();
+        let project = app.session.project();
+        // The project as it stands: every object at its revision, and the log, which an edit to anything a run reads adds to.
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for o in project.objects() {
+            std::hash::Hash::hash(&(o.id, o.revision), &mut hasher);
+        }
+        let key = format!("{object}|{step}|{}|{}", std::hash::Hasher::finish(&hasher), app.session.log().len());
+        let units = match &app.step_units {
+            Some((k, units)) if *k == key => units.clone(),
+            _ => {
+                let units = Arc::new(zd_commands::builtin::units_at_step(project, app.session.log(), object, step, &zd_commands::builtin::Unsaved::default()).map_err(|e| e.to_string())?);
+                app.step_units = Some((key, units.clone()));
+                units
+            }
+        };
+        let grid = zd_commands::table_grid::grid(&units.table, &ask)?;
+        Ok(StepGrid { units: (*units).clone(), grid })
+    })
+    .await?
+}
+
 /// A notebook cell's formula traced on one unit (decision 0081): the column run up to the step (1, the first after the
 /// column as input), the formula traced on the unit with that id as it stands there. Nothing is kept.
 #[tauri::command]
