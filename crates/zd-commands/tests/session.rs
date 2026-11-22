@@ -133,7 +133,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "surface.from_mesh",
             "surface.import",
             "surface.merge",
-            "surface.triangulate", "table.calculate", "table.enter", "table.remove_column", "table.update_records",
+            "surface.triangulate", "table.calculate", "table.enter", "table.remove_column", "table.script", "table.update_records",
             "workflow.save",
         ]
     );

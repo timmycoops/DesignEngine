@@ -535,6 +535,35 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
       open: starterOpen,
       problems: starterProblems,
     });
+    // A table script (decision 0099, workstream 7) grouping Base by pit and strip, run as a task: each strip's numbers
+    // equal the grid's strip subtotals (the Breakdown's, checked above), and one undo takes the new table away.
+    const scriptStarted = performance.now();
+    const scripted = await runCommand('table.script', { table: baseTable.id, source: 'def run(t):\n    return t.group(["pit", "strip"])\n', name: 'Base by strip (check)' });
+    const scriptMs = performance.now() - scriptStarted;
+    const madeId = scripted.record.outputs?.[0]?.id ?? '';
+    const strips = await tableGrid({ of: 'table', table: baseTable.id }, { group: ['pit', 'strip'], open: [['Pit']] });
+    const made = await tableGrid({ of: 'table', table: madeId }, {});
+    const stripAt = made.columns.findIndex((c) => c.name === 'strip');
+    const madeAt = (strip: string) => made.rows.find((r) => r.kind === 'leaf' && r.cells[stripAt] === strip);
+    let scriptStripWorst = 0;
+    let scriptCompared = 0;
+    for (const r of strips.rows.filter((r) => r.kind === 'group' && r.depth === 2)) {
+      const row = madeAt(r.label);
+      if (!row) {
+        scriptStripWorst = Infinity;
+        continue;
+      }
+      strips.columns.forEach((c, i) => {
+        const want = r.cells[i];
+        const at = made.columns.findIndex((m) => m.name === c.name);
+        const got = at >= 0 ? row.cells[at] : null;
+        if (typeof want !== 'number' || typeof got !== 'number') return;
+        scriptCompared++;
+        scriptStripWorst = Math.max(scriptStripWorst, Math.abs(got - want) / Math.max(1, Math.abs(want)));
+      });
+    }
+    await undo();
+    expect('a table script grouping Base by strip gives each strip the grid\'s subtotals, and undoes', scriptCompared > 100 && scriptStripWorst <= 1e-9, { compared: scriptCompared, worst: scriptStripWorst, ms: Math.round(scriptMs), rows: made.rows.length });
     showPanel(api, 'restable');
     expect('a CSV by strip, block, seam and bench enters a period in months on that one leaf, and undoes', leafReport.targets === 1 && leafReport.changed === 1 && periods.length === 1 && periods[0][1] === 4 && months === 'months', { report: { targets: leafReport.targets, changed: leafReport.changed }, periods, unit: months });
 

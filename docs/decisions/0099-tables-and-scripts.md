@@ -234,8 +234,7 @@ Timing, release build, on the demo pit's 50m table (3,027 leaves, every field): 
   Its editor: the name a load asks for, what it's for, the Starlark checked against the project's other scripts as it's
   typed, Copy for AI, and Save. Properties shows a script's Starlark.
 
-Decision 11's "a script runs three ways" lands with the table scripts it runs (workstream 7): until then a script is
-loaded by formulas and calculated columns.
+Decision 11's "a script runs three ways" lands with the table scripts it runs (workstream 7, below).
 
 | Test | Known answer | Tolerance |
 |---|---|---|
@@ -246,6 +245,47 @@ loaded by formulas and calculated columns.
 | `a_script_and_what_loads_it_are_checked` | a load of a missing script refuses the dataflow; a script's problem on line 3; two of one name refused | exact |
 | `a_calculated_column_loads_a_project_script` (reserves_run.rs) | the strip ratio by a loaded `ratio`: B1 55,000 / 50,500, the column keeping the script's id | 1e-9 |
 | `zd-app --bench --dataflow` (demo pit) | a script loaded by a calculated column on Base gives every strip its own waste over coal; + New script in the Parameters tab opens one that checks clean | 1e-12 |
+
+## Built: workstream 7, table scripts
+
+- **A table script** is Starlark defining `def run(t, p):`, given a table and giving one back (`zd_script::TableScript`,
+  compiled once, checked with every problem on its line). `t` is a read-only handle; each call makes a new table in
+  Rust: `t.where(...)` in the grid's filter words (0088), `t.group([...])` in the grid's order with each number added up
+  by its own rule (`add_up_column`, as every subtotal is), `t.total(column)`, `t.join(other, on=..., prefix=...,
+  how="left"|"outer")`, `t.with_column(name, values, unit=..., adds=...)`, `t.select`, `t.drop`, `t.rename`, `t.sort`,
+  `t.row(i)`, `t[column]` as a list. `table("name")` reads another table of the project; `new_table({...})` makes one
+  from lists. `adds` is in words: `sum`, `max`, `min`, `volume`, `mass of rd`, `ratio of <column> per <column>`. A
+  number with no rule is empty in a group, and the run says so; a join's unmatched rows and repeated keys are said too.
+  The engine's work comes in through `zd_script::TableWork` (`GridWork` in zd-commands: the grid's add-up and order).
+- **As a task, `table.script`**: a script of the project by id, or one written in, on a table, with the parameter tables
+  `p` reads (the first row that fits no words in particular). `into: new` (the default) makes a table of its own on the
+  `tables` layer, named for the table and the script; `into: columns` puts its new columns on the table it ran on as
+  entered columns, one undo, and is refused if it sorted, filtered or grouped the rows, or changed a column the run
+  wrote or a person entered (decision 3). The run records the table, the script and what it loads, the parameter tables
+  and every table it read by name.
+- **As a dataflow step**: a step with a `table` script (`zd_core::TableStep`) sits after `final`, nothing but table
+  steps after it, never with a built-in's name; `dataflow.save` compiles it and binds what it loads. `reserves.run` runs
+  each one on every table it makes or runs again into, on the whole table (a block run again is worked over every row),
+  its new columns the run's own (written, so the next run writes them again). One that stops, or gives back other rows,
+  is said (`reserves.table_script_stopped`) and its columns left off; the table still stands.
+- **As a workflow step**: any command is one (0065), so `table.script` after the reserves run that makes its table.
+- **The app**: a script of the project that defines `run` has **Run on** (a table), **New table** or **Columns on it**,
+  and **Run**, as saved; the result opens in the Tables tab. The Parameters tab's dataflow steps list table steps with
+  their own mark, **+ Add a table script after final**, and an editor beside them checked as it's typed. Copy for AI
+  hands over the reference, now with a **Writing a table script** section, and the script.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_table_script_groups_and_works_a_ratio_from_the_sums` (zd-script) | strip 1's ratio 400 / 60 from its sums, not the average 8; strip 2 with no coal None | 1e-12 |
+| `a_join_lists_each_difference_beyond_tolerance` (zd-script) | against a made-up Vulcan export with three planted differences: B2 by 2 t, B3 only ours, B4 only theirs, exactly those; B1 agrees | exact |
+| `filters_sorts_totals_and_rows_are_rust_s`, `a_table_script_s_mistakes_are_said` (zd-script) | filter, sort, total 60, a row; each mistake in words with its line | exact |
+| `every_table_script_in_the_reference_compiles_and_the_shares_add_to_one` (zd-script) | each reference example compiles; shares 0.25, 0.75 and 1 | exact |
+| `a_table_script_grouped_by_block_equals_the_breakdown_s_blocks` | every number of each block's row equals the Breakdown's block node (volume, RD by volume, ash by tonnes) | 1e-9 relative |
+| `a_table_script_puts_columns_on_its_own_table_or_is_refused` | leaf shares of the coal add to 1, entered, one undo; sorted rows and a run's column refused, nothing written | 1e-12 |
+| `a_project_script_reads_another_table_and_a_parameter` | a reconciliation of two runs of the same blocks finds no block over 0.5 m³; the run lists both tables, the parameter table and the script | exact |
+| `a_dataflow_s_table_script_step_writes_its_columns_after_final` | the step's ROM shares add to 1, written by the run; before final, not compiling, or a built-in's name refused at save; one that stops said, the table made | 1e-12 |
+| `a_table_script_step_runs_on_the_whole_table_when_a_block_runs_again` | after B1 runs again, the shares over the whole table still add to 1 | 1e-12 |
+| `zd-app --bench --dataflow` (demo pit) | a table script grouping Base by pit and strip gives each strip the grid's subtotals, and undoes | 1e-9 relative |
 
 ## Known limits
 
@@ -261,3 +301,8 @@ loaded by formulas and calculated columns.
 - Objects' numeric attributes other than the density have no rule, so a group shows none for them: qualities on blocks
   add up only once a reserves run has given them one.
 - Past 5,000 leaf rows under open groups, the rest are counted, not shown.
+- A table script reads `p` for the table as a whole; a parameter by each group's words is worked in the script.
+- A table script isn't traced line by line yet, as a formula is; it prints, and each problem has its line.
+- A table a script made has no levels of its own, so Select its solids and Run again don't apply to it.
+- `into: columns` from a task makes entered columns, kept by key across Run again but not worked again; a column that
+  must follow every run goes in the dataflow as a table script step.

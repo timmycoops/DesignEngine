@@ -811,8 +811,10 @@ pub async fn script_check(name: String, source: String, script: Option<ObjectId>
                 _ => None,
             })
             .collect();
-        Ok(match zd_commands::builtin::check_library(name.trim(), &source, &Arc::new(others)) {
-            Ok(()) => Vec::new(),
+        let others = Arc::new(others);
+        Ok(match zd_commands::builtin::check_library(name.trim(), &source, &others) {
+            // A table script (decision 0099, workstream 7) is checked as one too: `def run(t, p):` and what it calls.
+            Ok(()) => zd_commands::builtin::check_table_script(&source, others),
             Err(problems) => problems.into_iter().map(|p| zd_commands::builtin::FormulaProblem { message: p.message, line: p.line }).collect(),
         })
     })

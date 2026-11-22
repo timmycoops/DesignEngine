@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Braces, Copy, CopyPlus, Plus, Save, Trash2, Undo2, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Braces, Copy, CopyPlus, Plus, Save, Table2, Trash2, Undo2, X } from 'lucide-react';
 import { type ClipboardEvent, type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import { type Dataflow, dataflowCheck, objectDetails, type ObjectSummary, type ParameterTable, type ParametersPicked, parametersCheck, parametersPicked } from '@/bridge';
 import { CellInput, Choice, IconButton, ObjectMenu, Select, StatusBadge } from '@/design-system/kit';
@@ -35,6 +35,7 @@ import {
   withFrom,
 } from './parametersGrid';
 import { FormulaEditor } from './FormulaEditor';
+import { TABLE_STEP_TEMPLATE, TableStepEditor } from './TableStepEditor';
 import { FORMULA_TEMPLATE } from './formulaText';
 
 /** The built-in steps a formula step may follow (decision 0077): as the engine's FORMULA_STAGES. */
@@ -471,6 +472,7 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
   const [engineWhy, setEngineWhy] = useState<string | null>(null);
   const [said, setSaid] = useState<{ text: string; tone: 'ok' | 'refused' } | null>(null);
   const [formulaAt, setFormulaAt] = useState<number | null>(null);
+  const [tableAt, setTableAt] = useState<number | null>(null);
   // A formula asked for by name opens once the dataflow is read.
   const flowRead = flow !== null;
   useEffect(() => {
@@ -540,7 +542,16 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
     let name = 'formula';
     for (let n = 2; flow.steps.some((s) => s.step === name); n++) name = `formula_${n}`;
     set({ steps: [...flow.steps.slice(0, at + 1), { step: name, formula: { script: FORMULA_TEMPLATE } }, ...flow.steps.slice(at + 1)] });
+    setTableAt(null);
     setFormulaAt(at + 1);
+  };
+  // A new table script step at the end, after final and any table script there, opened (decision 0099, workstream 7).
+  const addTableStep = () => {
+    let name = 'table_script';
+    for (let n = 2; flow.steps.some((s) => s.step === name); n++) name = `table_script_${n}`;
+    set({ steps: [...flow.steps, { step: name, table: { script: TABLE_STEP_TEMPLATE } }] });
+    setFormulaAt(null);
+    setTableAt(flow.steps.length);
   };
   const head = 'border-b border-border px-1 py-0.5 text-left font-medium text-muted-foreground';
 
@@ -633,6 +644,23 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
               const settings = Object.entries(s.settings ?? {});
               const setStep = (change: Partial<typeof s>) => set({ steps: flow.steps.map((t, j) => (j === i ? { ...t, ...change } : t)) });
               const setSettings = (pairs: [string, string][]) => setStep({ settings: Object.fromEntries(pairs) });
+              if (s.table) {
+                // A table script step (decision 0099, workstream 7): opened on the right, run on the case's table last.
+                return (
+                  <div key={i} className={cn('mb-1 flex items-center gap-1 rounded-sm', tableAt === i && 'bg-selection')} data-step={s.step} data-table-step="yes">
+                    <Choice value={s.on === false ? 'off' : 'on'} options={['on', 'off'] as const} label={`${s.step} on or off`} onChange={(v) => setStep({ on: v === 'on' ? undefined : false })} />
+                    <button
+                      type="button"
+                      className={cn('flex min-w-0 flex-1 items-center gap-1 truncate text-left hover:underline', s.on === false && 'text-muted-foreground line-through', !same(saved.steps[i], s) && 'text-edited')}
+                      onClick={() => (setFormulaAt(null), setTableAt(i))}
+                      title="Open this table script"
+                    >
+                      <Table2 className="size-3.5 shrink-0 text-muted-foreground" />
+                      {s.step.replaceAll('_', ' ')}
+                    </button>
+                  </div>
+                );
+              }
               if (s.formula) {
                 // A formula step (decision 0077): opened in the formula editor on the right.
                 return (
@@ -641,7 +669,7 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
                     <button
                       type="button"
                       className={cn('flex min-w-0 flex-1 items-center gap-1 truncate text-left hover:underline', s.on === false && 'text-muted-foreground line-through', !same(saved.steps[i], s) && 'text-edited')}
-                      onClick={() => setFormulaAt(i)}
+                      onClick={() => (setTableAt(null), setFormulaAt(i))}
                       title="Open this formula"
                     >
                       <Braces className="size-3.5 shrink-0 text-muted-foreground" />
@@ -681,9 +709,25 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
                 ))}
               </Select>
             )}
+            {flow.steps.some((s) => s.step === 'final' && !s.formula && !s.table) && (
+              <button type="button" data-slot="add-table-step" className="mt-1 block w-full py-0.5 text-left text-muted-foreground hover:bg-accent hover:text-foreground" onClick={addTableStep} title="A table script run on the case's table after the final writes, every run: its columns are the run's own">
+                + Add a table script after final
+              </button>
+            )}
           </section>
         </div>
-        {formulaAt !== null && flow.steps[formulaAt]?.formula ? (
+        {tableAt !== null && flow.steps[tableAt]?.table ? (
+          <section className="min-w-0 flex-1">
+            <TableStepEditor
+              key={tableAt}
+              step={flow.steps[tableAt]}
+              saved={saved.steps.find((s) => s.step === flow.steps[tableAt].step)}
+              onStep={(s) => set({ steps: flow.steps.map((t, j) => (j === tableAt ? s : t)) })}
+              onRemove={() => (set({ steps: flow.steps.filter((_, j) => j !== tableAt) }), setTableAt(null))}
+              onClose={() => setTableAt(null)}
+            />
+          </section>
+        ) : formulaAt !== null && flow.steps[formulaAt]?.formula ? (
           <section className="min-w-0 flex-1">
             <FormulaEditor
               flow={flow}

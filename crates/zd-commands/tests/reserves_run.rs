@@ -2524,3 +2524,167 @@ fn a_calculated_column_loads_a_project_script() {
     let b1 = g.rows.iter().find(|r| r.label == "B1").unwrap();
     assert!(matches!(b1.cells[0], Some(Cell::Number(x)) if close(x, 55_000.0 / 50_500.0)), "{:?} {:?}", b1.cells, g.said);
 }
+
+// Table scripts (Tables and scripts plan, decisions 7 and 11, 0099): a task, a dataflow step, the same script each way.
+
+/// A table script's numbers by name, on its row `r`.
+fn script_value(t: &Table, r: usize, name: &str) -> Option<f64> {
+    numbers(t, name)[r]
+}
+
+/// The test pit's table grouped by block in a table script: every number of each block's row equals the Reserves table's
+/// block node in the Breakdown, added up by the same rules (volume summed, RD by volume, ash by tonnes), to 1e-9.
+#[test]
+fn a_table_script_grouped_by_block_equals_the_breakdown_s_blocks() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "in_situ", "join_benches"]);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let t = table(&s, id);
+    let script = "def run(t):\n    print(len(t), \"leaves\")\n    return t.group([\"pit\", \"strip\", \"block\"])\n";
+    let ran = s.run("table.script", json!({ "table": id, "source": script, "name": "By block" })).unwrap();
+    let by_block = table(&s, created(&ran)[0]);
+    assert_eq!(texts(&by_block, "block"), [Some("B1".into()), Some("B2".into())]);
+    assert_eq!(s.project().object(created(&ran)[0]).unwrap().name, "By block");
+    assert!(ran.notes.iter().any(|n| n.text == format!("script said: {} leaves", t.rows())), "{:?}", ran.notes);
+    let mut compared = 0;
+    for r in 0..by_block.rows() {
+        let node = ["Pit".to_string(), "3".to_string(), texts(&by_block, "block")[r].clone().unwrap()];
+        let b = zd_commands::reserves_view::breakdown(&t, &node, &[]).unwrap();
+        for f in b.fields.iter().filter(|f| f.words.is_none()) {
+            let (Some(want), Some(got)) = (f.values[0], script_value(&by_block, r, &f.column)) else { continue };
+            assert!((got - want).abs() <= 1e-9 * want.abs().max(1.0), "{} {}: {got} against {want}", node[2], f.column);
+            compared += 1;
+        }
+    }
+    assert!(compared > 20, "{compared} numbers compared");
+    // The run read the table it ran on.
+    assert!(ran.inputs.iter().any(|i| i.id == id));
+}
+
+/// Columns put on the table it ran on: entered, one undo, kept by key; a table whose rows it sorted, or a run's number it
+/// changed, is refused before anything is written.
+#[test]
+fn a_table_script_puts_columns_on_its_own_table_or_is_refused() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "in_situ", "join_benches"]);
+    let id = created(&s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap())[0];
+    let before = table(&s, id);
+    let share = "def run(t):\n    v = t[\"Insitu\\\\Coal\\\\volume\"]\n    whole = t.total(\"Insitu\\\\Coal\\\\volume\")\n    return t.with_column(\"coal_share\", [x / whole if x != None else None for x in v], adds=\"sum\")\n";
+    s.run("table.script", json!({ "table": id, "source": share, "into": "columns" })).unwrap();
+    let after = table(&s, id);
+    assert_eq!(after.rows(), before.rows());
+    let column = after.column("coal_share").unwrap();
+    assert_eq!(column.kind, zd_core::ColumnKind::Entered);
+    let shares: f64 = numbers(&after, "coal_share").iter().flatten().sum();
+    assert!((shares - 1.0).abs() < 1e-12, "every leaf's share of the coal adds to 1: {shares}");
+    s.undo().unwrap();
+    assert!(table(&s, id).column("coal_share").is_none(), "one undo takes it off");
+
+    let sorted = "def run(t):\n    return t.sort(\"Insitu\\\\Coal\\\\volume\", descending=True).with_column(\"x\", [1] * len(t))\n";
+    let e = s.run("table.script", json!({ "table": id, "source": sorted, "into": "columns" })).unwrap_err().to_string();
+    assert!(e.contains("it sorted, filtered or grouped the rows"), "{e}");
+    let over = "def run(t):\n    return t.with_column(\"Insitu\\\\Coal\\\\volume\", [0] * len(t))\n";
+    let e = s.run("table.script", json!({ "table": id, "source": over, "into": "columns" })).unwrap_err().to_string();
+    assert!(e.contains("which the run wrote"), "{e}");
+    let wrong = "def run(t):\n    return t.group(\"panel\")\n";
+    let e = s.run("table.script", json!({ "table": id, "source": wrong })).unwrap_err().to_string();
+    assert!(e.contains("line 2") && e.contains("no column panel"), "{e}");
+    assert_eq!(table(&s, id), before, "nothing written by a refusal");
+}
+
+/// A script of the project run on a table, reading another table by name and a parameter: the run names the script, the
+/// table it read and the parameter table among its inputs.
+#[test]
+fn a_project_script_reads_another_table_and_a_parameter() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "in_situ", "join_benches"]);
+    let id = created(&s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves", "name": "Ours" })).unwrap())[0];
+    let other = created(&s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves", "name": "Theirs" })).unwrap())[0];
+    let tolerance = created(&s.run("parameters.save", json!({ "name": "check", "csv": "tolerance (m3)\n0.5\n" })).unwrap())[0];
+    let source = "def run(t, p):\n    j = t.group(\"block\").join(table(\"Theirs\").group(\"block\"), on=\"block\", prefix=\"theirs \")\n    d = [abs(a - b) > p.tolerance for a, b in zip(j[\"Insitu\\\\Coal\\\\volume\"], j[\"theirs Insitu\\\\Coal\\\\volume\"])]\n    return j.with_column(\"differs\", [\"yes\" if x else \"no\" for x in d]).select([\"block\", \"differs\"])\n";
+    let script = created(&s.run("script.save", json!({ "name": "reconcile", "source": source })).unwrap())[0];
+    let ran = s.run("table.script", json!({ "table": id, "script": script, "parameters": [tolerance] })).unwrap();
+    let made = table(&s, created(&ran)[0]);
+    assert_eq!(texts(&made, "differs"), [Some("no".into()), Some("no".into())], "the same blocks the same way");
+    assert_eq!(s.project().object(created(&ran)[0]).unwrap().name, "Ours reconcile");
+    for read in [id, other, tolerance, script] {
+        assert!(ran.inputs.iter().any(|i| i.id == read), "{read} among the inputs");
+    }
+}
+
+/// A dataflow's table script step, after final: its column written on the case's table by the run, worked on the whole
+/// table again when one block runs again; placed before final, or failing to compile, the dataflow isn't saved; one that
+/// stops is said and its column left off, the table still made.
+#[test]
+fn a_dataflow_s_table_script_step_writes_its_columns_after_final() {
+    let mut s = session();
+    let ids: Vec<ObjectId> = loss_column(&mut s).into_iter().collect();
+    let share = "def run(t):\n    v = t[\"ROM\\\\Coal\\\\volume\"]\n    whole = t.total(\"ROM\\\\Coal\\\\volume\")\n    return t.with_column(\"rom_share\", [x / whole if x != None else None for x in v], adds=\"sum\")\n";
+    let mut steps = final_steps();
+    steps.as_array_mut().unwrap().push(json!({ "step": "shares", "table": { "script": share } }));
+    let flow = flow(&mut s, steps, &dilution_csv([0.0; 4], [0.0; 4], ""));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let t = table(&s, id);
+    let column = t.column("rom_share").expect("the step's column");
+    assert_eq!(column.kind, zd_core::ColumnKind::Written, "the run's own");
+    let shares: f64 = numbers(&t, "rom_share").iter().flatten().sum();
+    assert!((shares - 1.0).abs() < 1e-12, "{shares}");
+    assert!(record.notes.iter().any(|n| n.text.ends_with("shares wrote rom_share")), "{:?}", record.notes);
+
+    // Before final, or not Starlark that compiles: the dataflow isn't saved.
+    let Body::Dataflow(saved) = &s.project().object(flow).unwrap().body else { panic!("a dataflow") };
+    let saved = (**saved).clone();
+    let with = |at: Option<usize>, step: zd_core::DataflowStep| {
+        let mut d = saved.clone();
+        d.steps.retain(|s| s.table.is_none());
+        match at {
+            Some(i) => d.steps.insert(d.steps.iter().position(|s| s.step == "final").unwrap() - i, step),
+            None => d.steps.push(step),
+        }
+        d
+    };
+    let early = with(Some(0), zd_core::DataflowStep::table_script("shares", share));
+    let e = s.run("dataflow.save", json!({ "name": "early", "content": early })).unwrap_err().to_string();
+    assert!(e.contains("comes after a table script step"), "{e}");
+    let broken = with(None, zd_core::DataflowStep::table_script("shares", "def run(t):\n    return t.group(\n"));
+    let e = s.run("dataflow.save", json!({ "name": "broken", "content": broken })).unwrap_err().to_string();
+    assert!(e.contains("the table script step shares"), "{e}");
+    let built_in_name = with(None, zd_core::DataflowStep::table_script("rom", share));
+    let e = s.run("dataflow.save", json!({ "name": "named", "content": built_in_name })).unwrap_err().to_string();
+    assert!(e.contains("listed twice") || e.contains("built-in step's name"), "{e}");
+
+    // A step that stops on this table: said, its column left off, the table made.
+    let mut stops = final_steps();
+    stops.as_array_mut().unwrap().push(json!({ "step": "stops", "table": { "script": "def run(t):\n    return t.group(\"panel\")\n" } }));
+    let flow = flow_named(&mut s, "stops", stops);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    assert!(t.rows() > 0);
+    assert!(notes_of(&record, Code::ReservesTableScriptStopped).iter().any(|n| n.contains("the table script step stops stopped") && n.contains("no column panel")), "{:?}", record.notes);
+}
+
+/// A dataflow of the loss column's fields with these steps, saved under its own name.
+fn flow_named(s: &mut Session, _name: &str, steps: serde_json::Value) -> ObjectId {
+    flow(s, steps, &dilution_csv([0.0; 4], [0.0; 4], ""))
+}
+
+/// One block run again (0085): the table script step works on the whole table again, so the shares still add to 1.
+#[test]
+fn a_table_script_step_runs_on_the_whole_table_when_a_block_runs_again() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let share = "def run(t):\n    v = t[\"Insitu\\\\Coal\\\\volume\"]\n    whole = t.total(\"Insitu\\\\Coal\\\\volume\")\n    return t.with_column(\"coal_share\", [x / whole if x != None else None for x in v], adds=\"sum\")\n";
+    let steps = json!([{ "step": "initialise" }, { "step": "in_situ" }, { "step": "join_benches" }, { "step": "rom" }, { "step": "final" }, { "step": "shares", "table": { "script": share } }]);
+    let flow = flow(&mut s, steps, "when material,when seam,rd (t/m3),ash_cutoff (%)\nwaste,,2.3,\n,,,35\n");
+    let id = created(&s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap())[0];
+    let p = rerun_params(s.project(), s.log(), id, &["Pit".to_string(), "3".to_string(), "B1".to_string()]).unwrap();
+    s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+    let t = table(&s, id);
+    let shares: f64 = numbers(&t, "coal_share").iter().flatten().sum();
+    assert!((shares - 1.0).abs() < 1e-12, "worked on every row, not B1's alone: {shares}");
+}

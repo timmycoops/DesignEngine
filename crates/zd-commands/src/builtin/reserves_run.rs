@@ -409,6 +409,8 @@ pub(crate) struct Prepared {
     tables: Vec<Arc<ParameterTable>>,
     horizons: Vec<String>,
     steps: Vec<(String, StepRun, DataflowStep)>,
+    /// Its table script steps, run on each table the run makes once its columns are done (decision 11 of 0099).
+    table_steps: Vec<(String, Arc<zd_script::TableScript>)>,
     /// What the dataflow's formulas may use.
     declared: zd_script::Declared,
     /// The attributes of the levels above the seam, which make a column, and of those below it, which make a leaf.
@@ -481,6 +483,8 @@ impl Command for RunReserves {
         if let Some(object) = into {
             into_table(&mut out, &object, &prepared, p)?;
         }
+        // The table script steps, on the whole table each time: one run again is worked on every row (decision 11).
+        super::table_script::run_table_steps(&mut out, &prepared.table_steps, &prepared.tables, &super::table_script::tables_by_name(inputs.objects()));
         Ok(out)
     }
 }
@@ -538,7 +542,8 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     let mut compiled: BTreeMap<usize, Arc<zd_script::Formula>> =
         formulas::check_formula_steps_flagging(dataflow, &built_in, &declared, flagging.then_some(&mut failing)).map_err(CommandError::Invalid)?.into_iter().map(|(i, f)| (i, Arc::new(f))).collect();
     let mut steps = Vec::new();
-    for (i, s) in dataflow.steps.iter().enumerate().filter(|(_, s)| s.on) {
+    let table_steps = super::check_table_steps(dataflow, &built_in, &declared.libraries).map_err(CommandError::Invalid)?;
+    for (i, s) in dataflow.steps.iter().enumerate().filter(|(_, s)| s.on && s.table.is_none()) {
         if let Some(f) = compiled.remove(&i) {
             steps.push((s.step.clone(), StepRun::Formula(f), s.clone()));
             continue;
@@ -574,7 +579,7 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     }
     let audit_tables = audit_tables.join("; ");
     let audit_dataflow = format!("{name} as edited");
-    Ok(Prepared { name: name.to_string(), failing, dataflow: dataflow.clone(), fields, tables, horizons, steps, declared, upper, lower, columns, unplaced, audit_dataflow, audit_tables })
+    Ok(Prepared { name: name.to_string(), failing, dataflow: dataflow.clone(), fields, tables, horizons, steps, table_steps, declared, upper, lower, columns, unplaced, audit_dataflow, audit_tables })
 }
 
 /// A value from the parameter tables, read in order.

@@ -13,6 +13,9 @@ starlark.workspace = true
 starlark_derive.workspace = true
 allocative.workspace = true
 anyhow.workspace = true
+# Table scripts (decision 0099, workstream 7) work on the engine's own tables, their add-up rules and filters.
+zd-core.workspace = true
+zd-reserves.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

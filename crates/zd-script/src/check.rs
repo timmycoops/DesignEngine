@@ -128,10 +128,16 @@ pub(crate) fn chains(source: &str) -> Vec<Chain> {
 
 /// The names a formula's function takes: `def formula(unit, p):` gives ("unit", Some("p")).
 pub(crate) fn signature(source: &str) -> Option<(usize, String, Option<String>)> {
+    signature_of(source, "formula")
+}
+
+/// A function's line and its first two parameters' names, as [`signature`] reads `formula`'s: a table script's `run`.
+pub(crate) fn signature_of(source: &str, function: &str) -> Option<(usize, String, Option<String>)> {
     let text = blank_comments_and_strings(source);
+    let head = format!("def {function}");
     for (n, l) in text.lines().enumerate() {
         let t = l.trim_start();
-        if let Some(rest) = t.strip_prefix("def formula") {
+        if let Some(rest) = t.strip_prefix(head.as_str()).filter(|r| r.trim_start().starts_with('(')) {
             let rest = rest.trim_start();
             let inside = rest.strip_prefix('(')?.split(')').next()?;
             let names: Vec<String> = inside.split(',').map(|s| s.trim().split('=').next().unwrap_or("").trim().to_string()).filter(|s| !s.is_empty()).collect();

@@ -15,6 +15,7 @@
 mod check;
 mod handles;
 pub mod library;
+mod tables;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -29,6 +30,7 @@ use starlark::values::{OwnedFrozenValue, Value, ValueLike};
 use starlark::PrintHandler;
 
 pub use handles::Event;
+pub use tables::{TableWork, add_up_from_words};
 
 /// How to write a formula, for the formula panel and for an AI asked to write one (decision 0077, 7d and 7e).
 pub const REFERENCE: &str = include_str!("reference.md");
@@ -188,6 +190,7 @@ const FILE: &str = "formula.star";
 fn globals() -> Globals {
     GlobalsBuilder::extended_by(&[LibraryExtension::StructType, LibraryExtension::Map, LibraryExtension::Filter, LibraryExtension::Print, LibraryExtension::Json])
         .with(library::library)
+        .with(tables::table_globals)
         .build()
 }
 
@@ -284,6 +287,8 @@ fn problem(e: &starlark::Error, unit: Option<usize>) -> Problem {
         message = format!("no parameter row gives `{name}` for this unit; read it with getattr(p, \"{name}\", default) where it may be missing");
     } else if let Some(name) = message.strip_prefix("Object of type `unit` has no attribute `").and_then(|r| r.split('`').next()) {
         message = format!("`{name}` isn't a field of this dataflow");
+    } else if let Some(name) = message.strip_prefix("Object of type `table` has no attribute `").and_then(|r| r.split('`').next()) {
+        message = format!("a table has no `{name}`: it has rows, columns, name, t[\"column\"], where, group, total, join, select, drop, rename, with_column, sort, row and unit");
     }
     Problem { message, line, unit }
 }
@@ -500,6 +505,117 @@ impl Formula {
     }
 }
 
+/// A table script compiled (the Build Plan's "Tables and scripts plan", decisions 7 and 11): Starlark defining
+/// `def run(t, p):`, given a table and giving one back. It runs as a task (`table.script`), as a dataflow step after the
+/// final writes, or as a workflow step, the same script each way.
+pub struct TableScript {
+    source: String,
+    takes_p: bool,
+    _module: FrozenModule,
+    function: OwnedFrozenValue,
+}
+
+impl fmt::Debug for TableScript {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TableScript").field("lines", &self.source.lines().count()).field("takes_p", &self.takes_p).finish()
+    }
+}
+
+/// What a table script is run on: its table and name, the project's tables `table("name")` may read, the parameters `p`
+/// gives, and the engine's work.
+pub struct TableInput {
+    pub name: String,
+    pub table: Arc<zd_core::Table>,
+    pub tables: Vec<(String, Arc<zd_core::Table>)>,
+    pub parameters: Values,
+    pub work: Arc<dyn TableWork>,
+}
+
+/// What a table script gave back: its table, what it printed and what the engine said of it (a column with no rule, a
+/// join's unmatched rows), and the project's tables it read by name.
+#[derive(Debug, Clone)]
+pub struct TableRan {
+    pub table: zd_core::Table,
+    pub said: Vec<String>,
+    pub notes: Vec<String>,
+    pub read: Vec<String>,
+}
+
+/// Whether a script is a table script: it defines `run`.
+pub fn is_table_script(source: &str) -> bool {
+    check::signature_of(source, "run").is_some()
+}
+
+impl TableScript {
+    /// Parses, loads and checks a table script. Every problem is said with its line; any one refuses it.
+    pub fn compile(source: &str, libraries: Libraries) -> Result<TableScript, Vec<Problem>> {
+        let source = source.replace("\r\n", "\n");
+        let globals = globals();
+        let ast = AstModule::parse(FILE, source.clone(), &Dialect::Standard).map_err(|e| vec![problem(&e, None)])?;
+        let takes_p = match check::signature_of(&source, "run") {
+            None => return Err(vec![Problem { message: "a table script defines its function as `def run(t, p):` (p only where it reads parameters), and gives back a table".into(), line: None, unit: None }]),
+            Some((line, t, _)) if t.is_empty() => return Err(vec![Problem { message: "`run` takes the table, and the parameters where it reads them: `def run(t, p):`".into(), line: Some(line), unit: None }]),
+            Some((_, _, p)) => p.is_some(),
+        };
+        let loader = ProjectLoader::new(&libraries, &globals);
+        let module = Module::with_temp_heap(|module| -> Result<FrozenModule, Problem> {
+            {
+                let said = Said::default();
+                let mut eval = Evaluator::new(&module);
+                eval.set_print_handler(&said);
+                eval.set_loader(&loader);
+                eval.eval_module(ast, &globals).map_err(|e| problem(&e, None))?;
+            }
+            module.freeze().map_err(|e| Problem { message: format!("{e:?}"), line: None, unit: None })
+        })
+        .map_err(|p| vec![p])?;
+        let Some(function) = module.get("run").ok().filter(|f| f.value().get_type() == "function") else {
+            return Err(vec![Problem { message: "`run` isn't a function: a table script defines `def run(t, p):`".into(), line: None, unit: None }]);
+        };
+        Ok(TableScript { source, takes_p, _module: module, function })
+    }
+
+    /// The script as written.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Runs the script on its table. What it gives back must be a table; anything it stops on is said with its line.
+    pub fn run(&self, input: TableInput) -> Result<TableRan, Problem> {
+        let notes: tables::Notes = Arc::default();
+        let context = tables::TableRun { work: input.work.clone(), tables: input.tables, read: Mutex::default(), notes: notes.clone() };
+        let said = Said::default();
+        let table = Module::with_temp_heap(|module| -> Result<zd_core::Table, Problem> {
+            // SAFETY: as `Formula::run`: the function was frozen when it compiled, and this module's frozen heap keeps a
+            // reference to the heap it lives on for as long as the module, which outlives the call made here.
+            let f = unsafe { self.function.owned_frozen_value(module.frozen_heap()) }.to_value();
+            let mut eval = Evaluator::new(&module);
+            eval.set_print_handler(&said);
+            eval.extra = Some(&context);
+            let heap = eval.heap();
+            let t = heap.alloc(tables::TableHandle { name: input.name.clone(), table: input.table.clone(), work: input.work.clone(), notes: notes.clone() });
+            let result = if self.takes_p {
+                let p = heap.alloc(Params { values: input.parameters.clone(), log: None });
+                eval.eval_function(f, &[t, p], &[])
+            } else {
+                eval.eval_function(f, &[t], &[])
+            };
+            let given = result.map_err(|e| problem(&e, None))?;
+            match given.downcast_ref::<tables::TableHandle>() {
+                Some(h) => Ok((*h.table).clone()),
+                None => Err(Problem {
+                    message: format!("run gives back a table (return t, or one made from it), not {}", if given.is_none() { "nothing: is a return missing?".to_string() } else { given.get_type().to_string() }),
+                    line: None,
+                    unit: None,
+                }),
+            }
+        })?;
+        let read = std::mem::take(&mut *context.read.lock().expect("read"));
+        let notes = std::mem::take(&mut *notes.lock().expect("notes"));
+        Ok(TableRan { table, said: said.take(), notes, read })
+    }
+}
+
 /// The locals as a statement was about to run.
 struct Snapshot {
     line: usize,
@@ -535,3 +651,6 @@ fn show(v: Value<'_>) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod table_tests;
