@@ -53,7 +53,7 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
   as a dataflow step after `final` (`DataflowStep.table`), its columns the run's own, run on the whole table every run. A script
   reads a parameter by any keys with `lookup("Rates", "col", key=…)` or `p.at(key=…)`, and a curve with
   `interpolate("Yield curve", x_value, x="ash", y="yield", key=…)`, one row a point (0101); the tables it names are
-  bound by name on save (`Dataflow.lookups`, `CalculatedColumn.lookups`) and read by id, so a run records them. Its
+  bound by name on save (`Dataflow.lookups`, `CalculatedColumn.lookups`) and read by id, so a run records them. A mine's own process checks are a table script step after `final` calling `check(name, parts…, equals=, tolerance=)` and `required(column, material=)`, written to `Summary\Checks\<name>` on the table it gives back, each leaf out named (`table.check_out`) and shown in the Balance view (0101); the stages stay built in and balanced (0086). Its
   workstreams 2 to 9 (entered and calculated columns, update records, table and object scripts, a dataflow from any
   table) build on it.
 

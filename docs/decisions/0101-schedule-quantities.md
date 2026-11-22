@@ -89,6 +89,39 @@ Five workstreams, in that order.
 | `curves_and_lookups_are_read_off_the_source` (zd-core) | the tables and the curve's `x` read off a formula, a comment and `my_lookup` passed over | exact |
 | `a_formula_step_reads_a_curve` (formula_steps.rs) | ash 5 % at 90 %, 15 % at 70 %: B1's U (ash 10) reads 80; its L (ash 20) held at 70, or its block stopped and said; the table refused with two rows at ash 5 while Reserves reads it, naming Reserves; a dataflow reading such a table as a curve refused | 1e-9 |
 
+## Built: workstream 3, each mine's checks
+
+- **`check(name, parts…, equals=, tolerance=)`** (`zd-script`'s `checks.rs`): each part and `equals` a column's values
+  (`t["…"]`, or a list worked out a row each) or its name. Asked as the script runs, worked out on the table `run` gives
+  back, so a column the script adds can be checked: on every leaf the parts added up (a leaf with no value counts it as
+  0) less `equals` go to `Summary\Checks\<name>\difference` in `equals`'s unit, and 1 where it's out by more than the
+  tolerance to `…\leaves out`, both adding up by sum, so a node's count is its leaves out. A leaf none of them has a
+  value on has no difference.
+- **`required(column, material=, name=, **filter)`**: every leaf the filter keeps (the grid's words, `seam="U, M"`) and
+  of the material has a value in the column; 1 on each with none to `Summary\Checks\<name>\leaves missing`. A leaf is of
+  a material by its own `material` word where the table has one (the blocks), else by its stage's
+  `<stage>\<Material>\volume` above 0, the stage the column's first folder, ROM where it has none. A reserves table has
+  no column for a field no leaf has a value for, so such a column is missing everywhere and said, with "did you mean".
+- **Said by leaf**: each check out gives a warning, `table.check_out`, naming every leaf out by its levels' words and how
+  far (`check waste processes: 1 leaf out by more than 0.01: 1 B2 U by -100`), the first ten and how many more; from a
+  dataflow's step and from `table.script` alike.
+- **Refused, with why**: a name with `\` in it or used twice, a check with no parts, a tolerance below 0, a list not as
+  long as the table given back (a grouped table is another table), a column that isn't there or holds words, a material
+  the table can't tell, and either called outside a table script.
+- **Shown**: the Reserves table's Balance view lists the node's checks under the stages, each one's difference and its
+  leaves out or missing, holding or off. The editors offer `check` and `required` with the table functions, the table's
+  columns inside their quotes, and `equals=`, `tolerance=`, `material=` and `name=` after a comma. The reference gains
+  "A mine's own checks" and an example.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_mine_s_check_names_only_the_leaf_out` (zd-script) | dragline + truck against ROM waste on four leaves, B2 U's truck 100 m³ short: differences 0, 0, -100 and none (a coal-only leaf); leaves out 0, 0, 1, 0; only B2 U said; held at a tolerance of 100, nothing said | 1e-9 |
+| `required_names_each_leaf_of_the_material_with_no_value` (zd-script) | pre-strip on B1 U only: B1 L and B2 U said and counted 2, B2 L (no waste) not asked; a filter to seam U; a misspelt column said with "did you mean" | exact |
+| `a_check_s_mistakes_are_said` (zd-script) | each refusal above, with its words | exact |
+| `checks_are_a_table_script_s_only` (zd-script) | `check` in a formula refused | exact |
+| `a_mine_s_checks_run_as_a_step_after_final` (reserves_run.rs) | the loss column run with a check step: waste 60 % dragline, 40 % truck, the first waste leaf 100 m³ short; that leaf's difference -100, every other 0, one leaf out, only it named; pre-strip on the first only, the other waste leaves counted; the columns the run's own, in m³ | 1e-9 |
+| `the mine's checks` (app, reservesBalance.test.mjs) | the Balance view reads each check's difference, unit and leaves, holding where none are out | exact |
+
 ## Known limits
 
 - A table named by a name worked out as the script runs (`lookup(name, …)`) isn't bound when it's saved, so it isn't
@@ -97,3 +130,6 @@ Five workstreams, in that order.
 - A lookup's row isn't yet listed in the notebook's settings beside a built-in step's; it's in the formula's trace.
 - A curve's `x` written as a name worked out as the script runs (`x=column`) isn't checked when saved, only when read.
 - A curve is linear between its rows; no smoothing.
+- A check's difference adds up over a node by sum, so a node's difference can net to 0 with leaves out either way; its
+  leaves out count says so, and the Balance view marks it off by that count, not the difference.
+- The notebook doesn't yet show a table script step's checks; they're in the run's notes and the Balance view.

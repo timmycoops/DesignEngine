@@ -53,6 +53,8 @@ pub(crate) struct TableRun {
     pub tables: Vec<(String, Arc<Table>)>,
     pub read: Mutex<Vec<String>>,
     pub notes: Notes,
+    /// The checks it asked, `check()` and `required()`, worked out on the table it gives back.
+    pub checks: Mutex<Vec<crate::checks::Asked>>,
 }
 
 /// A table as a script holds it: read only; every method makes a new one.
@@ -143,7 +145,7 @@ fn names(v: Value<'_>, what: &str) -> anyhow::Result<Vec<String>> {
 }
 
 /// A filter's words: `{"seam": "U, M", "Insitu\\Coal\\thickness": "<0.3"}`, a number as its words.
-fn filter_words<'v>(pairs: impl IntoIterator<Item = (String, Value<'v>)>) -> anyhow::Result<BTreeMap<String, String>> {
+pub(crate) fn filter_words<'v>(pairs: impl IntoIterator<Item = (String, Value<'v>)>) -> anyhow::Result<BTreeMap<String, String>> {
     let mut out = BTreeMap::new();
     for (k, v) in pairs {
         let words = if let Some(s) = v.unpack_str() {

@@ -2668,6 +2668,66 @@ fn a_dataflow_s_table_script_step_writes_its_columns_after_final() {
     assert!(notes_of(&record, Code::ReservesTableScriptStopped).iter().any(|n| n.contains("the table script step stops stopped") && n.contains("no column panel")), "{:?}", record.notes);
 }
 
+/// A mine's own checks in a table script step after final (0101, workstream 3): waste split 60 % to dragline and 40 % to
+/// truck and shovel, the first waste leaf's truck volume planted 100 m³ short, and pre-strip on that leaf only. The check
+/// is 0 on every leaf but that one's -100, which alone is named; every other waste leaf is said to have no pre-strip and
+/// counted; the columns are the run's own.
+#[test]
+fn a_mine_s_checks_run_as_a_step_after_final() {
+    let mut s = session();
+    let ids: Vec<ObjectId> = loss_column(&mut s).into_iter().collect();
+    let checks = r#"
+def run(t):
+    w = t["ROM\\Waste\\volume"]
+    first = [i for i in range(len(w)) if w[i] != None and w[i] > 0][0]
+    drag = [x * 0.6 if x != None else None for x in w]
+    truck = [x * 0.4 - (100 if i == first else 0) if x != None else None for i, x in enumerate(w)]
+    prestrip = [5 if i == first else None for i in range(len(w))]
+    t = t.with_column("drag", drag, unit="m3", adds="sum").with_column("truck", truck, unit="m3", adds="sum")
+    t = t.with_column("prestrip", prestrip, unit="m3", adds="sum")
+    check("waste processes", "drag", "truck", equals="ROM\\Waste\\volume", tolerance=0.01)
+    required("prestrip", material="waste")
+    return t
+"#;
+    let mut steps = final_steps();
+    steps.as_array_mut().unwrap().push(json!({ "step": "checks", "table": { "script": checks } }));
+    let flow = flow(&mut s, steps, &dilution_csv([0.0; 4], [0.0; 4], ""));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let waste = numbers(&t, "ROM\\Waste\\volume");
+    let with_waste: Vec<usize> = (0..t.rows()).filter(|&r| waste[r].is_some_and(|x| x > 0.0)).collect();
+    assert!(with_waste.len() >= 2, "the loss column has {} waste leaves", with_waste.len());
+    let first = with_waste[0];
+
+    let difference = numbers(&t, "Summary\\Checks\\waste processes\\difference");
+    for r in 0..t.rows() {
+        let want = if r == first { -100.0 } else { 0.0 };
+        match difference[r] {
+            Some(d) => assert!((d - want).abs() < 1e-9, "leaf {r}: {d} for {want}"),
+            None => assert!(waste[r].is_none(), "leaf {r} has waste but no difference"),
+        }
+    }
+    let out: f64 = numbers(&t, "Summary\\Checks\\waste processes\\leaves out").iter().flatten().sum();
+    assert_eq!(out, 1.0, "one leaf out");
+    let column = t.column("Summary\\Checks\\waste processes\\difference").unwrap();
+    assert_eq!(column.kind, zd_core::ColumnKind::Written, "the run's own");
+    assert_eq!(column.unit, "m3");
+
+    let missing: f64 = numbers(&t, "Summary\\Checks\\prestrip on waste\\leaves missing").iter().flatten().sum();
+    assert_eq!(missing, (with_waste.len() - 1) as f64, "every waste leaf but the first");
+
+    let said = notes_of(&record, Code::TableCheckOut);
+    assert_eq!(said.len(), 2, "{said:?}");
+    let leaf = |r: usize| ["strip", "block", "seam"].iter().filter_map(|l| texts(&t, l)[r].clone()).collect::<Vec<_>>().join(" ");
+    let check = said.iter().find(|n| n.contains("check waste processes")).expect("the check said");
+    assert!(check.contains("checks: check waste processes: 1 leaf out by more than 0.01") && check.contains(&format!("{} by -100", leaf(first))), "{check}");
+    for &r in &with_waste[1..] {
+        assert!(!check.contains(&format!("{} by", leaf(r))), "only the first is out: {check}");
+    }
+    let required = said.iter().find(|n| n.contains("required prestrip on waste")).expect("required said");
+    assert!(required.contains(&format!("{} waste {} with no prestrip", with_waste.len() - 1, if with_waste.len() == 2 { "leaf" } else { "leaves" })), "{required}");
+}
+
 /// A dataflow of the loss column's fields with these steps, saved under its own name.
 fn flow_named(s: &mut Session, _name: &str, steps: serde_json::Value) -> ObjectId {
     flow(s, steps, &dilution_csv([0.0; 4], [0.0; 4], ""))

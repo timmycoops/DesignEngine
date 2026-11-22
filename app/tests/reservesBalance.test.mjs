@@ -2,7 +2,7 @@
 // change each part, every check holding. Run with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { balanceRows, hasBalance } from '../src/panels/reservesBalance.ts';
+import { balanceRows, hasBalance, mineChecks } from '../src/panels/reservesBalance.ts';
 
 const f = (part, name, value) => ({ column: `Summary\\Balance\\${part}\\${name}`, folders: ['Summary', 'Balance', part], name, unit: 'm3', values: [value], words: null });
 // The 4c column, dilution only: coal 25,000 and waste 95,000 in; 1,760 to coal; 19,500 not mined.
@@ -33,4 +33,24 @@ test("a check that doesn't hold is said; a table made before the balance has non
   const off = fields.map((x) => (x.column === 'Summary\\Balance\\Coal\\unaccounted_rom' ? { ...x, values: [5] } : x));
   assert.equal(balanceRows(off).find((r) => r.key === 'unaccounted_rom').holds, false, '5 m³ of 120,000 is past 1e-6');
   assert.ok(hasBalance(fields) && !hasBalance([{ column: 'ROM\\Coal\\volume', values: [1] }]));
+});
+
+// A mine's own checks (decision 0101, workstream 3): the waste processes 100 m³ short on one leaf, pre-strip missing on
+// two waste leaves, a coal check holding.
+test("the mine's checks: each one's difference and its leaves out or missing", () => {
+  const c = (name, part, value, unit = '') => ({ column: `Summary\\Checks\\${name}\\${part}`, folders: ['Summary', 'Checks', name], name: part, unit, values: [value], words: null });
+  const checks = mineChecks([
+    ...fields,
+    c('waste processes', 'difference', -100, 'm3'),
+    c('waste processes', 'leaves out', 1),
+    c('prestrip on waste', 'leaves missing', 2),
+    c('coal mined', 'difference', 0, 't'),
+    c('coal mined', 'leaves out', 0),
+  ]);
+  assert.deepEqual(checks.map((x) => [x.name, x.kind, x.difference, x.unit, x.leaves, x.holds]), [
+    ['waste processes', 'adds', -100, 'm3', 1, false],
+    ['prestrip on waste', 'required', null, '', 2, false],
+    ['coal mined', 'adds', 0, 't', 0, true],
+  ]);
+  assert.deepEqual(mineChecks(fields), [], 'none without a check step');
 });

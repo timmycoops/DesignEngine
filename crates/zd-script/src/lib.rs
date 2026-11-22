@@ -16,6 +16,7 @@ mod check;
 mod handles;
 pub mod library;
 pub mod help;
+mod checks;
 mod lookups;
 mod tables;
 
@@ -206,6 +207,7 @@ fn globals() -> Globals {
     GlobalsBuilder::extended_by(&[LibraryExtension::StructType, LibraryExtension::Map, LibraryExtension::Filter, LibraryExtension::Print, LibraryExtension::Json])
         .with(library::library)
         .with(tables::table_globals)
+        .with(checks::check_globals)
         .with(lookups::lookup_globals)
         .with(lookups::curve_globals)
         .build()
@@ -562,6 +564,8 @@ pub struct TableRan {
     pub said: Vec<String>,
     pub notes: Vec<String>,
     pub read: Vec<String>,
+    /// What its checks found out of line (`check()`, `required()`), a line a check, each leaf out named.
+    pub checks: Vec<String>,
 }
 
 /// Whether a script is a table script: it defines `run`.
@@ -606,9 +610,9 @@ impl TableScript {
     /// Runs the script on its table. What it gives back must be a table; anything it stops on is said with its line.
     pub fn run(&self, input: TableInput) -> Result<TableRan, Problem> {
         let notes: tables::Notes = Arc::default();
-        let context = ScriptRun { lookups: input.lookups.clone(), log: None, tables: Some(tables::TableRun { work: input.work.clone(), tables: input.tables, read: Mutex::default(), notes: notes.clone() }) };
+        let context = ScriptRun { lookups: input.lookups.clone(), log: None, tables: Some(tables::TableRun { work: input.work.clone(), tables: input.tables, read: Mutex::default(), notes: notes.clone(), checks: Mutex::default() }) };
         let said = Said::default();
-        let table = Module::with_temp_heap(|module| -> Result<zd_core::Table, Problem> {
+        let mut table = Module::with_temp_heap(|module| -> Result<zd_core::Table, Problem> {
             // SAFETY: as `Formula::run`: the function was frozen when it compiled, and this module's frozen heap keeps a
             // reference to the heap it lives on for as long as the module, which outlives the call made here.
             let f = unsafe { self.function.owned_frozen_value(module.frozen_heap()) }.to_value();
@@ -635,7 +639,9 @@ impl TableScript {
         })?;
         let read = context.tables.as_ref().map(|t| std::mem::take(&mut *t.read.lock().expect("read"))).unwrap_or_default();
         let notes = std::mem::take(&mut *notes.lock().expect("notes"));
-        Ok(TableRan { table, said: said.take(), notes, read })
+        let asked = context.tables.as_ref().map(|t| std::mem::take(&mut *t.checks.lock().expect("checks"))).unwrap_or_default();
+        let checks = checks::work_out(&mut table, &asked).map_err(|message| Problem { message, line: None, unit: None })?;
+        Ok(TableRan { table, said: said.take(), notes, read, checks })
     }
 }
 

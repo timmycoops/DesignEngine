@@ -95,6 +95,17 @@ export function scriptCompletions(names: () => ScriptNames) {
       const t = (n.tables ?? []).find((x) => x.name === m![1]);
       if (t) return { from: ctx.pos - m[2].length, options: [...t.filters.map((f) => ({ label: `${f}=`, type: 'variable', detail: 'key' })), { label: 'default=', type: 'keyword', detail: 'where no row fits' }], validFor: /^\w*=?$/ };
     }
+    // check(…) and required(…) in a table script (decision 0101, workstream 3): a column's name in quotes is the table's;
+    // after a comma, their own words.
+    if (n.kind === 'table') {
+      const cols = () => (n.columns ?? []).map((c) => named({ name: inString(c.name), unit: c.unit }, 'property'));
+      m = /\brequired\(\s*"([^"]*)$/.exec(before) ?? /\bcheck\(\s*"[^"]*"\s*,(?:[^()]*?,)?\s*(?:equals\s*=\s*)?"([^"]*)$/.exec(before);
+      if (m) return { from: ctx.pos - m[1].length, options: cols(), validFor: /^[^"]*$/ };
+      m = /\brequired\(\s*"[^"]*"\s*(?:,[^()]*)?,\s*(\w*)$/.exec(before);
+      if (m) return { from: ctx.pos - m[1].length, options: [{ label: 'material=', type: 'keyword', detail: '"coal" or "waste"' }, { label: 'name=', type: 'keyword', detail: "the check's name" }], validFor: /^\w*=?$/ };
+      m = /\bcheck\(\s*"[^"]*"\s*,[^()]*,\s*(\w+)$/.exec(before);
+      if (m) return { from: ctx.pos - m[1].length, options: [{ label: 'equals=', type: 'keyword', detail: 'what the parts add to' }, { label: 'tolerance=', type: 'keyword', detail: 'how far out a leaf may be' }], validFor: /^\w*=?$/ };
+    }
     // load("…"): the project's scripts.
     m = /load\(\s*"([^"]*)$/.exec(before);
     if (m) return { from: ctx.pos - m[1].length, options: (n.scripts ?? []).map((s) => ({ label: s, type: 'namespace', detail: 'script' })), validFor: /^[^"]*$/ };

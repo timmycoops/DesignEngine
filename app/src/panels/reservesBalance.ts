@@ -23,6 +23,50 @@ export interface BalanceRow {
 const at = (fields: BreakdownField[], column: number) => (part: string, name: string): number | null =>
   fields.find((f) => f.column === `Summary\\Balance\\${part}\\${name}`)?.values[column] ?? null;
 
+/** A mine's own check (decision 0101, workstream 3), from its `Summary\Checks\<name>` columns. */
+export interface MineCheck {
+  name: string;
+  /** `check()`: parts against equals; `required()`: a value on every leaf of a material. */
+  kind: 'adds' | 'required';
+  /** The parts less equals, added up over the node; none for a required. */
+  difference: number | null;
+  unit: string;
+  /** Leaves out of tolerance, or missing a value, under the node. */
+  leaves: number | null;
+  holds: boolean;
+}
+
+const CHECKS = 'Summary\\Checks\\';
+
+/** The node's checks (or one of its columns across), in the order the script asked them. */
+export function mineChecks(fields: BreakdownField[], column = 0): MineCheck[] {
+  const out: MineCheck[] = [];
+  for (const f of fields) {
+    if (!f.column.startsWith(CHECKS)) continue;
+    const rest = f.column.slice(CHECKS.length);
+    const at = rest.lastIndexOf('\\');
+    if (at < 0) continue;
+    const name = rest.slice(0, at);
+    const part = rest.slice(at + 1);
+    const kind = part === 'leaves missing' ? 'required' : 'adds';
+    let c = out.find((x) => x.name === name);
+    if (!c) {
+      c = { name, kind, difference: null, unit: '', leaves: null, holds: true };
+      out.push(c);
+    }
+    const v = f.values[column] ?? null;
+    if (part === 'difference') {
+      c.difference = v;
+      c.unit = f.unit;
+    } else if (part === 'leaves out' || part === 'leaves missing') {
+      c.kind = kind;
+      c.leaves = v;
+      c.holds = (v ?? 0) === 0;
+    }
+  }
+  return out;
+}
+
 /** Whether the table has a balance at all: a table made before decision 0086 hasn't, until it's run again. */
 export const hasBalance = (fields: BreakdownField[]) => fields.some((f) => f.column.startsWith('Summary\\Balance\\'));
 
