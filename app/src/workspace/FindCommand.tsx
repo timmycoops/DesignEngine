@@ -3,6 +3,7 @@ import { Search } from 'lucide-react';
 import { findGroups, findScore, type Tool, toolByKey } from '@/tools';
 import type { ToolUse } from './ToolMenu';
 import { ToolPicture } from './toolIcons';
+import { toolShortcut } from '@/viewport/viewControls';
 
 /**
  * Find a command (decision 0076): every tool in the tool list, a stage at a time, found by typing words from its name,
@@ -57,7 +58,7 @@ export function FindCommand({ open, onOpenChange, use }: { open: boolean; onOpen
                 </span>
                 <span className="shrink-0 font-medium">{tool.label}</span>
                 <span className="min-w-0 flex-1 truncate text-muted-foreground">{tool.tip.charAt(0).toUpperCase() + tool.tip.slice(1)}</span>
-                {tool.shortcut && <kbd className="shrink-0 rounded border px-1 text-[10px] text-muted-foreground">{tool.shortcut}</kbd>}
+                {toolShortcut(tool) && <kbd className="shrink-0 rounded border px-1 text-[10px] text-muted-foreground">{toolShortcut(tool)}</kbd>}
               </Command.Item>
             ))}
           </Command.Group>

@@ -356,7 +356,7 @@ export async function checkShell(
     const projectWas = ['A project (.zdp)…', 'An older project folder (.zdproj)…'];
     const importWas = ['Surfaces…', 'Vulcan grid…', 'Strings…', 'Solids', 'Deswik drawing (.dcf)…', 'Spry project (.spry)…', 'Suggest a stack definition (CSV)…', 'Build and check from a definition…', 'Relink geology…'];
     const exportWas = ['Selected to DXF…', 'Selected strings to CSV…', 'Selected solids to a zip…', 'Everything visible to DXF…', 'Visible strings to CSV…', 'Visible solids to a zip…'];
-    const panelsWas = ['Layers', 'Properties', 'Strings', 'Strings from surfaces', 'Surfaces', 'Move and copy', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Licence', 'Run log', 'Objects table', 'Reserves table', 'Dataflow', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
+    const panelsWas = ['Layers', 'Properties', 'Strings', 'Strings from surfaces', 'Surfaces', 'Move and copy', 'Builder', 'Cut solids', 'Reserves', 'Workflow', 'Licence', 'View controls', 'Run log', 'Objects table', 'Reserves table', 'Dataflow', 'Parameters', 'Workflow canvas', 'Face design', 'Hide every panel, or bring them back`', 'Reset layout'];
     const reads = (menu: { words: string }[], was: string[]) => menu.map((m) => m.words).join('|') === was.join('|');
     expect('the Open, Import, Export and Panels menus read as they should, what needs a selection off without one', reads(projectMenu, projectWas) && reads(importMenu, importWas) && reads(exportMenu, exportWas) && reads(panelsMenu, panelsWas) && exportMenu.map((m) => m.off).join() === 'true,true,true,false,false,false', {
       project: projectMenu.map((m) => m.words),
@@ -1011,9 +1011,11 @@ export async function checkShell(
     // A tooltip opens on its own delay: waited for, not read after one pause (this check failed now and then on that).
     for (let k = 0; k < 20 && !document.querySelector('[data-slot="tooltip-content"]'); k++) await wait(100);
     const tip = document.querySelector('[data-slot="tooltip-content"]')?.textContent ?? '';
+    const tipsOpen = [...document.querySelectorAll('[data-slot="tooltip-content"]')].map((t) => (t.textContent ?? '').slice(0, 60));
+    const focused = `${document.activeElement?.tagName ?? ''} ${document.activeElement?.getAttribute('data-slot') ?? ''} ${document.activeElement?.getAttribute('aria-label') ?? ''}`;
     mark?.blur();
     await settle();
-    expect('the rest of what a tool does is in a tip at the end of the line', !!mark && tip.includes('Rebuild from here') && (lineOf('builder')?.title ?? '').includes('Rebuild from here'), { tip: tip.slice(0, 140) });
+    expect('the rest of what a tool does is in a tip at the end of the line', !!mark && tip.includes('Rebuild from here') && (lineOf('builder')?.title ?? '').includes('Rebuild from here'), { tip: tip.slice(0, 140), tips_open: tipsOpen, focused, mark_found: !!mark, window_has_focus: document.hasFocus() });
 
     await toFront('cut');
     const choice = groupOf('cut')?.querySelector<HTMLElement>('[role="group"][aria-label="What to do"]');

@@ -45,6 +45,7 @@ import { PolylineTool } from '../viewport/PolylineTool';
 import type { SectionView } from '../viewport/section';
 import type { StringLayer } from '../viewport/strings';
 import { FIELD_OF_VIEW_DEFAULT, type Viewport } from '../viewport/Viewport';
+import { keyClash, setViewControls, viewControls } from '../viewport/viewControls';
 
 interface FrameSummary {
   frames: number;
@@ -1170,6 +1171,110 @@ async function checkCamera(viewport: Viewport) {
     pan: await checkPan(viewport, point),
     field_of_view: await checkFieldOfView(viewport),
     orthographic: await checkOrthographic(viewport, point),
+    spry_layout: await checkSpryLayout(viewport, point),
+  };
+}
+
+/**
+ * Spry's mouse layout and a changed key (0044 PR 5), by the real canvas: a middle drag pans with the point grabbed under
+ * the cursor; middle and then left turns about it; a left drag draws the selection box and moves nothing; with the turn
+ * key changed to X, X held and a left drag turns. Keys that clash are refused. The controls and the view are put back.
+ */
+async function checkSpryLayout(viewport: Viewport, point: THREE.Vector3) {
+  const canvas = viewport.renderer.domElement;
+  const box = canvas.getBoundingClientRect();
+  const was = structuredClone(viewControls());
+  const [position, target] = [viewport.camera.position.clone(), viewport.controls.target.clone()];
+  const settle = async () => {
+    for (let i = 0; i < 4; i++) await viewport.nextFrame();
+  };
+  const putBack = async () => {
+    viewport.camera.position.copy(position);
+    viewport.controls.target.copy(target);
+    viewport.controls.update();
+    await settle();
+  };
+  const send = (type: string, x: number, y: number, button: number, buttons: number) =>
+    canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button, buttons, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' }));
+  setViewControls({ layout: 'spry', keys: was.keys });
+
+  // Middle drag: a pan that sticks.
+  let [x, y] = viewport.projectToClient(point);
+  send('pointerdown', x, y, 1, 4);
+  for (let k = 1; k <= 10; k++) {
+    send('pointermove', x + 30 * k, y + 20 * k, -1, 4);
+    await viewport.nextFrame();
+  }
+  send('pointerup', x + 300, y + 200, 1, 0);
+  await settle();
+  let [px, py] = viewport.projectToClient(point);
+  const middlePan = Math.hypot(px - (x + 300), py - (y + 200));
+  await putBack();
+
+  // Middle, then left as well: a turn about the point under the cursor.
+  [x, y] = viewport.projectToClient(point);
+  send('pointerdown', x, y, 1, 4);
+  send('pointermove', x, y, 0, 5);
+  await settle();
+  for (let k = 1; k <= 10; k++) {
+    send('pointermove', x + 12 * k, y + 6 * k, -1, 5);
+    await viewport.nextFrame();
+  }
+  const turnedFrom = viewport.camera.position.distanceTo(position);
+  send('pointerup', x + 120, y + 60, 0, 0);
+  await settle();
+  [px, py] = viewport.projectToClient(point);
+  const chordTurn = { drift_px: Math.hypot(px - x, py - y), camera_moved_m: turnedFrom };
+  await putBack();
+
+  // A left drag in a corner: the selection box, and the view doesn't move.
+  const [bx, by] = [box.left + 30, box.top + 60];
+  send('pointerdown', bx, by, 0, 1);
+  for (let k = 1; k <= 5; k++) {
+    send('pointermove', bx + 12 * k, by + 8 * k, -1, 1);
+    await viewport.nextFrame();
+  }
+  const outline = document.querySelector<HTMLElement>('.select-box');
+  const boxShown = !!outline && !outline.hidden;
+  send('pointerup', bx + 60, by + 40, 0, 0);
+  await settle();
+  const leftDrag = { box_shown: boxShown, view_moved_m: viewport.camera.position.distanceTo(position), box_gone_after: !document.querySelector('.select-box') };
+
+  // The turn key changed to X: X held and a left drag turn.
+  setViewControls({ layout: 'spry', keys: { ...was.keys, turn: 'x' } });
+  [x, y] = viewport.projectToClient(point);
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x' }));
+  send('pointerdown', x, y, 0, 1);
+  await settle();
+  for (let k = 1; k <= 10; k++) {
+    send('pointermove', x + 12 * k, y + 6 * k, -1, 1);
+    await viewport.nextFrame();
+  }
+  const xTurned = viewport.camera.position.distanceTo(position);
+  send('pointerup', x + 120, y + 60, 0, 0);
+  window.dispatchEvent(new KeyboardEvent('keyup', { key: 'x' }));
+  await settle();
+  [px, py] = viewport.projectToClient(point);
+  const changedKey = { camera_moved_m: xTurned, drift_px: Math.hypot(px - x, py - y) };
+
+  const controls = viewControls();
+  const refused = {
+    s_snap: keyClash('turn', 's', controls),
+    n_starts_ns: keyClash('turn', 'n', controls),
+    f_zoom_to_selection: keyClash('plan', 'f', controls),
+    enter: keyClash('pan', 'enter', controls),
+  };
+  const allowed_j = keyClash('turn', 'j', controls) === null;
+  setViewControls(was);
+  await putBack();
+  return {
+    middle_pan_point_off_cursor_px: middlePan,
+    middle_then_left_turn: chordTurn,
+    left_drag: leftDrag,
+    turn_key_x: changedKey,
+    refused,
+    allowed_j,
+    put_back: JSON.stringify(viewControls()) === JSON.stringify(was),
   };
 }
 

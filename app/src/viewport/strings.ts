@@ -31,6 +31,7 @@ import * as THREE from 'three/webgpu';
 import type { Layer, ProjectSummary, SnapHit, Vec3 } from '../bridge';
 import { type DesignLine, designLineMessage, lineToPick, type NearLine } from './designLines';
 import { typing } from './camera';
+import { viewControls } from './viewControls';
 import { colourOf, SELECTED } from './load';
 import { PointMark } from './markers';
 import { cursorLabel, measureWords } from './measure';
@@ -201,7 +202,8 @@ export class StringLayer {
   /** Where the right button went down: let up within a few pixels it's a click, which finishes; dragged, it panned. */
   private rightDown: { x: number; y: number } | null = null;
   /** A box being dragged out with Shift held, from where the button went down. */
-  private boxing: { pointer: number; x: number; y: number; outline: HTMLElement; vertices: boolean } | null = null;
+  /** `plain`: a left press in Spry's layout, so a press let go without a drag is an ordinary click. */
+  private boxing: { pointer: number; x: number; y: number; outline: HTMLElement; vertices: boolean; plain: boolean } | null = null;
   private latest: { x: number; y: number } | null = null;
   private inFlight = false;
   private layers = new Map<string, Layer>();
@@ -655,8 +657,8 @@ export class StringLayer {
   private pointerDown(e: PointerEvent): void {
     if (e.button === 2) this.rightDown = { x: e.clientX, y: e.clientY };
     if (e.button !== 0) return;
-    // The turn key held: the press is the camera's, to turn, and not a click, a box or a vertex drag.
-    if (this.viewport.controls.turnHeld) return;
+    // The turn or pan key held: the press is the camera's, and not a click, a box or a vertex drag.
+    if (this.viewport.controls.viewKeyHeld) return;
     if (e.altKey && this.mode === 'select' && !this.wanted && !this.section && (this.selected || this.marked.size > 0)) return this.startBox(e, true);
     if (e.shiftKey && this.mode === 'select' && !this.wanted && !this.section) return this.startBox(e, false);
     if (this.mode === 'select' && !this.wanted && this.picks.size > 0) {
@@ -684,6 +686,8 @@ export class StringLayer {
         return;
       }
     }
+    // Spry's layout: a left drag is a selection box, as Shift and a drag is in ours; let go without a drag, a click.
+    if (viewControls().layout === 'spry' && this.mode === 'select' && !this.wanted && !this.section) return this.startBox(e, false, true);
     this.down = { x: e.clientX, y: e.clientY };
   }
 
@@ -710,12 +714,12 @@ export class StringLayer {
    * Shift and a left drag draw a box that selects what lies wholly inside it, in 3D or plan; the view doesn't turn
    * or pan meanwhile. Not on a section, where what's drawn is the cut.
    */
-  private startBox(e: PointerEvent, vertices: boolean): void {
+  private startBox(e: PointerEvent, vertices: boolean, plain = false): void {
     const canvas = this.viewport.renderer.domElement;
     this.boxing?.outline.remove();
     const outline = Object.assign(document.createElement('div'), { className: vertices ? 'select-box vertex-box' : 'select-box', hidden: true });
     canvas.parentElement?.append(outline);
-    this.boxing = { pointer: e.pointerId, x: e.clientX, y: e.clientY, outline, vertices };
+    this.boxing = { pointer: e.pointerId, x: e.clientX, y: e.clientY, outline, vertices, plain };
     try {
       canvas.setPointerCapture(e.pointerId);
     } catch {
@@ -747,6 +751,11 @@ export class StringLayer {
       // Already released.
     }
     if (Math.hypot(e.clientX - box.x, e.clientY - box.y) <= CLICK_SLOP_PX) {
+      // A plain press let go where it went down: the click it would have been in our layout.
+      if (box.plain) {
+        this.down = { x: box.x, y: box.y };
+        return void this.pointerUp(e);
+      }
       // Alt+click with no drag inserts a vertex, as it always has.
       if (box.vertices) return void this.insertAt(e.clientX, e.clientY);
       const [x, y] = [e.clientX, e.clientY];

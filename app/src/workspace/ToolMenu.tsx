@@ -3,6 +3,7 @@ import { ToolButton } from '@/design-system/kit';
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from '@/design-system/ui/dropdown-menu';
 import { type MenuId, menuTools, menuWords, type RowMenu, rowName, tipOf, type Tool, toolByKey, type ToolNeeds } from '@/tools';
 import { ToolPicture } from './toolIcons';
+import { toolShortcut } from '@/viewport/viewControls';
 
 /** How the toolbar uses a tool: carries it out, says how many of what it needs there are (none: it's off), and whether it's the one in use. */
 export interface ToolUse {
@@ -20,7 +21,7 @@ function Item({ tool, use, words }: { tool: Tool; use: ToolUse; words?: string }
       {tool.menu?.heading && <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">{tool.menu.heading}</DropdownMenuLabel>}
       <DropdownMenuItem title={tool.tip} disabled={count === 0} data-tool={tool.key} onSelect={() => use.run(tool)}>
         <ToolPicture tool={tool} /> {words ?? menuWords(tool, count)}
-        {tool.shortcut && <DropdownMenuShortcut>{tool.shortcut}</DropdownMenuShortcut>}
+        {toolShortcut(tool) && <DropdownMenuShortcut>{toolShortcut(tool)}</DropdownMenuShortcut>}
       </DropdownMenuItem>
     </>
   );

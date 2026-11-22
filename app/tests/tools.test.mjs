@@ -264,7 +264,8 @@ test('Find a command matches whole words typed, a name first, then a stage or co
   assert.deepEqual(found('no such tool'), []);
   assert.equal(found('').length, TOOLS.length, 'nothing typed: every tool');
   // Nothing from scattered letters: "spry" is Spry, not strip or every tool with those letters somewhere.
-  assert.ok(found('spry').every((key) => ['import.spry', 'reserves', 'reserves:compare'].includes(key)), found('spry').join());
+  assert.ok(found('spry').every((key) => ['import.spry', 'reserves', 'reserves:compare', 'viewcontrols'].includes(key)), found('spry').join());
+  assert.equal(found('mouse')[0], 'viewcontrols', "Spry's mouse layout or ours, found by the word");
 });
 
 test('the canvas lists the tools that add a step, as the list has them', () => {
