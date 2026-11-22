@@ -36,7 +36,10 @@ In `crates/zd-commands/src/builtin/reserves_run.rs`:
 - **The moves.** `final` sets each unit's in situ material against where it ends: coal ending in ROM waste moved to
   waste (losses, thin and high ROM ash coal, discarded coal), waste ending in ROM coal moved to coal (dilution, partings
   in a section), the underburden in ROM coal came from outside, and waste below the last coal isn't mined. Each is a
-  piece on the unit's own leaves (`Ran.moves`).
+  piece on the unit's own leaves (`Ran.moves`), except the underburden's: it has no record of its own, so what came in
+  from outside is said on the coal it went into, the lowest coal's record for floor dilution (Tim, 22 November 2026:
+  "just the lowest record but with ROM waste component. ROM coal is both coal and rock"). Before, it made a leaf with no
+  seam that held only the from-outside volume.
 - **The balance** (`balance_columns`): each stage's volume per leaf from the pieces that stage wrote (`Imported`, `Small
   volume`, `Insitu`, `ROM`, `Scheduled`; coal, and every other material as waste), the moves beside them, and three
   checks a part:
