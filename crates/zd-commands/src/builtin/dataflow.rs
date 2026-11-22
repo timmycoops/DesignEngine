@@ -168,7 +168,18 @@ impl Command for SaveDataflow {
         let engine_fields = d.engine_fields().map_err(CommandError::Invalid)?;
         let refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
         let built_in: Vec<&str> = super::STEPS.iter().map(|(n, _)| *n).collect();
-        let formulas = super::check_formula_steps(d, &built_in, &super::formula_declared(&engine_fields, &refs)).map_err(CommandError::Invalid)?.len();
+        // The scripts its formulas load, bound by name to the project's (decision 0099): kept by id, read by the run.
+        let sources: Vec<&str> = d.steps.iter().filter_map(|s| s.formula.as_ref().map(|f| f.script.as_str())).collect();
+        let (scripts, libraries) = super::bind_loads(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
+        for &id in &scripts {
+            inputs.object(id)?;
+        }
+        let mut declared = super::formula_declared(&engine_fields, &refs);
+        declared.libraries = libraries;
+        let formulas = super::check_formula_steps(d, &built_in, &declared).map_err(CommandError::Invalid)?.len();
+        let mut bound = d.clone();
+        bound.scripts = scripts;
+        let d = &bound;
         // A setting no table has a column for can never be given: said now, not block by block at the run.
         let mut notes = Vec::new();
         for f in &d.fields {

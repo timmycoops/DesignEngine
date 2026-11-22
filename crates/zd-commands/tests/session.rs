@@ -76,6 +76,7 @@ fn registry_lists_every_builtin_with_a_spec() {
             "parameters.export_csv",
             "parameters.save",
             "reserves.run",
+            "script.save",
             "seam.build_model",
             "seam.relink",
             "seam.suggest_definition",

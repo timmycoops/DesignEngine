@@ -2477,3 +2477,28 @@ fn a_calculated_column_is_put_on_a_table_and_kept_through_run_again() {
     s.undo();
     assert_eq!(table(&s, id).calculated.len(), 1, "one undo puts it back");
 }
+
+/// A calculated column that loads a project script (decision 9): the strip ratio worked by `ratio` in the script
+/// `waste`, bound by name when it's put on the table and read by id, B1's 55,000 / 50,500 as before.
+#[test]
+fn a_calculated_column_loads_a_project_script() {
+    use zd_commands::table_calc::ParameterLookup;
+    use zd_commands::table_grid::{Cell, GridAsk, grid_with};
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "in_situ", "join_benches"]);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let made = s.run("script.save", json!({ "name": "waste", "source": "def ratio(waste, coal):\n    return waste / coal\n" })).unwrap();
+    let script = created(&made)[0];
+    let formula = "load(\"waste\", \"ratio\")\ndef formula(row):\n    row.strip_ratio = ratio(row[\"Insitu\\\\Waste\\\\volume\"], row[\"Insitu\\\\Coal\\\\tonnes\"])\n";
+    s.run("table.calculate", json!({ "table": id, "column": { "name": "strip_ratio", "script": formula, "adds": { "by": "from_inputs" } } })).unwrap();
+    let t = table(&s, id);
+    assert_eq!(t.calculated[0].scripts, [script], "bound by name, kept by id");
+    let project = s.project();
+    let lookup = |o: ObjectId| project.object(o).cloned();
+    let lookup: ParameterLookup<'_> = &lookup;
+    let g = grid_with(&t, &GridAsk { group: vec!["block".into()], columns: vec!["strip_ratio".into()], ..Default::default() }, lookup).unwrap();
+    let b1 = g.rows.iter().find(|r| r.label == "B1").unwrap();
+    assert!(matches!(b1.cells[0], Some(Cell::Number(x)) if close(x, 55_000.0 / 50_500.0)), "{:?} {:?}", b1.cells, g.said);
+}

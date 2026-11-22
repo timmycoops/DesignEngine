@@ -16,12 +16,14 @@ mod check;
 mod handles;
 pub mod library;
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use starlark::codemap::FileSpanRef;
 use starlark::environment::{FrozenModule, Globals, GlobalsBuilder, LibraryExtension, Module};
-use starlark::eval::{BeforeStmtFunc, BeforeStmtFuncDyn, Evaluator};
+use starlark::eval::{BeforeStmtFunc, BeforeStmtFuncDyn, Evaluator, FileLoader};
 use starlark::syntax::{AstModule, Dialect};
 use starlark::values::{OwnedFrozenValue, Value, ValueLike};
 use starlark::PrintHandler;
@@ -74,13 +76,17 @@ impl FieldDecl {
     }
 }
 
+/// The project's scripts a formula may load (decision 0099, workstream 6): each its name and its Starlark.
+pub type Libraries = Arc<Vec<(String, String)>>;
+
 /// The names a dataflow gives its formulas: the fields a unit carries (which a formula may set), the labels it reads
-/// but never sets (seam, material, bench), and the columns of its parameter tables.
+/// but never sets (seam, material, bench), the columns of its parameter tables, and the scripts it may load by name.
 #[derive(Debug, Clone, Default)]
 pub struct Declared {
     pub fields: Vec<FieldDecl>,
     pub labels: Vec<String>,
     pub parameters: Vec<FieldDecl>,
+    pub libraries: Libraries,
 }
 
 impl Declared {
@@ -185,6 +191,86 @@ fn globals() -> Globals {
         .build()
 }
 
+/// `load("name", "f")` among the project's scripts (decision 0099, workstream 6): each script loaded once a run, with the
+/// same library as a formula, and able to load others. A name the project hasn't, or a script that loads itself (on
+/// its own or through others), is refused. Never a file, the network or an import.
+struct ProjectLoader<'a> {
+    libraries: &'a Libraries,
+    globals: &'a Globals,
+    loading: RefCell<Vec<String>>,
+    loaded: RefCell<HashMap<String, FrozenModule>>,
+}
+
+impl<'a> ProjectLoader<'a> {
+    fn new(libraries: &'a Libraries, globals: &'a Globals) -> Self {
+        ProjectLoader { libraries, globals, loading: RefCell::default(), loaded: RefCell::default() }
+    }
+}
+
+impl FileLoader for ProjectLoader<'_> {
+    fn load(&self, path: &str) -> starlark::Result<FrozenModule> {
+        if let Some(m) = self.loaded.borrow().get(path) {
+            return Ok(m.clone());
+        }
+        let fail = |why: String| starlark::Error::new_other(anyhow::anyhow!(why));
+        let Some((_, source)) = self.libraries.iter().find(|(name, _)| name == path) else {
+            return Err(fail(format!("can't load {path}: the project has no script of that name")));
+        };
+        if self.loading.borrow().iter().any(|n| n == path) {
+            let chain = self.loading.borrow().join(" → ");
+            return Err(fail(format!("{path} loads itself, through {chain} → {path}")));
+        }
+        self.loading.borrow_mut().push(path.to_string());
+        let source = source.replace("\r\n", "\n");
+        let frozen = AstModule::parse(&format!("{path}.star"), source, &Dialect::Standard)
+            .map_err(|e| fail(format!("the script {path}: {}", first_line(&e))))
+            .and_then(|ast| {
+                Module::with_temp_heap(|module| {
+                    {
+                        let said = Said::default();
+                        let mut eval = Evaluator::new(&module);
+                        eval.set_print_handler(&said);
+                        eval.set_loader(self);
+                        eval.eval_module(ast, self.globals).map_err(|e| fail(format!("the script {path}: {}", first_line(&e))))?;
+                    }
+                    module.freeze().map_err(|e| fail(format!("the script {path}: {e:?}")))
+                })
+            });
+        self.loading.borrow_mut().pop();
+        let frozen = frozen?;
+        self.loaded.borrow_mut().insert(path.to_string(), frozen.clone());
+        Ok(frozen)
+    }
+}
+
+/// A Starlark error's own line: its message, and where in its script.
+fn first_line(e: &starlark::Error) -> String {
+    let full = format!("{e}");
+    let headline = full.lines().find(|l| l.starts_with("error:")).or_else(|| full.lines().find(|l| !l.trim().is_empty())).unwrap_or("").trim_start_matches("error:").trim().to_string();
+    let at = full.lines().filter_map(|l| l.split_once(".star:")).filter_map(|(_, rest)| rest.split(':').next()?.trim().parse::<usize>().ok()).next_back();
+    match at {
+        Some(line) => format!("line {line}: {headline}"),
+        None => headline,
+    }
+}
+
+/// A script of the project checked as a library (decision 0099, workstream 6): it parses, and everything it loads is
+/// there, loads cleanly and doesn't load it back. Every problem is said with its line.
+pub fn check_library(name: &str, source: &str, libraries: &Libraries) -> Result<(), Vec<Problem>> {
+    let source = source.replace("\r\n", "\n");
+    let mut others: Vec<(String, String)> = libraries.iter().filter(|(n, _)| n != name).cloned().collect();
+    others.push((name.to_string(), source.clone()));
+    let libraries: Libraries = Arc::new(others);
+    let globals = globals();
+    let loader = ProjectLoader::new(&libraries, &globals);
+    loader.load(name).map(|_| ()).map_err(|e| {
+        let message = format!("{e}");
+        let message = message.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim_start_matches("error:").trim().to_string();
+        let line = message.strip_prefix(&format!("the script {name}: line ")).and_then(|r| r.split(':').next()?.parse().ok());
+        vec![Problem { message, line, unit: None }]
+    })
+}
+
 /// A Starlark error as a planner reads it: its message without the "error:" prefix, our words for a missing parameter
 /// or field, and its line in the formula.
 fn problem(e: &starlark::Error, unit: Option<usize>) -> Problem {
@@ -259,11 +345,13 @@ impl Formula {
                 p.is_some()
             }
         };
+        let loader = ProjectLoader::new(&declared.libraries, &globals);
         let loaded = Module::with_temp_heap(|module| -> Result<FrozenModule, Problem> {
             {
                 let said = Said::default();
                 let mut eval = Evaluator::new(&module);
                 eval.set_print_handler(&said);
+                eval.set_loader(&loader);
                 eval.eval_module(ast, &globals).map_err(|e| problem(&e, None))?;
             }
             module.freeze().map_err(|e| Problem { message: format!("{e:?}"), line: None, unit: None })
@@ -372,9 +460,11 @@ impl Formula {
         let log: handles::Log = Arc::default();
         let said = Said::default();
         let mut sets = Vec::new();
+        let loader = ProjectLoader::new(&self.declared.libraries, &self.globals);
         let stopped = Module::with_temp_heap(|module| -> Option<Problem> {
             let mut eval = Evaluator::new(&module);
             eval.set_print_handler(&said);
+            eval.set_loader(&loader);
             // The hook is set before the formula is loaded, so its statements are compiled to call it.
             eval.before_stmt_for_dap(BeforeStmtFunc::from_dyn(Box::new(Watch(snapshots.clone()))));
             let ast = AstModule::parse(FILE, self.source.clone(), &Dialect::Standard).expect("it compiled before");

@@ -620,6 +620,14 @@ function Measurements({ d }: { d: ObjectDetails }) {
     }
     case 'dataflow':
       return <DataflowView flow={m.dataflow} />;
+    case 'script':
+      return (
+        <Section title="Script">
+          {m.script.note && <p className="px-3 py-1 text-xs text-muted-foreground">{m.script.note}</p>}
+          <pre className="mx-3 my-1 overflow-auto rounded bg-muted/40 p-2 font-mono text-[11px]">{m.script.source}</pre>
+          <p className="px-3 py-1 text-xs text-muted-foreground">Loaded by its name, load("name", "function"); edited in the Parameters tab.</p>
+        </Section>
+      );
     case 'table':
       return (
         <>

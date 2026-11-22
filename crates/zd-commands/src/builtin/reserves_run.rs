@@ -532,7 +532,8 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     }
     let built_in: Vec<&str> = STEPS.iter().map(|(n, _)| *n).collect();
     let table_refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
-    let declared = formulas::declared(&fields, &table_refs);
+    let mut declared = formulas::declared(&fields, &table_refs);
+    declared.libraries = super::libraries_of(&|id| get(id).ok(), &dataflow.scripts).map_err(CommandError::Invalid)?;
     let mut failing: Vec<String> = Vec::new();
     let mut compiled: BTreeMap<usize, Arc<zd_script::Formula>> =
         formulas::check_formula_steps_flagging(dataflow, &built_in, &declared, flagging.then_some(&mut failing)).map_err(CommandError::Invalid)?.into_iter().map(|(i, f)| (i, Arc::new(f))).collect();
@@ -3281,7 +3282,7 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
     let row = |material: &str| ParameterRow { when: [("material".to_string(), material.to_string())].into(), values: BTreeMap::new() };
     let default = ParameterRow { when: BTreeMap::new(), values: [("underburden_thickness".to_string(), ParamValue::Number(UNDERBURDEN_THICKNESS))].into() };
     let table = ParameterTable { filters: vec!["material".into(), "seam".into()], columns, rows: vec![row("waste"), row("coal"), default] };
-    let mut dataflow = Dataflow { levels: zd_core::default_levels(), fields, steps, parameters: Vec::new() };
+    let mut dataflow = Dataflow { levels: zd_core::default_levels(), fields, steps, parameters: Vec::new(), scripts: Vec::new() };
     super::with_starter_formulas(&mut dataflow);
     (table, dataflow)
 }

@@ -214,6 +214,39 @@ Timing, release build, on the demo pit's 50m table (3,027 leaves, every field): 
 | `tableGrid.test.mjs` | a new column's starter formula; Copy for AI's names, rule and script, no value | exact |
 | `zd-app --bench --dataflow` (demo pit) | a waste-to-coal column on Base: every strip's and the pit's is its own waste over coal (worst 0), the leaves with no coal said; traced on a leaf it sets itself; one undo takes it off | 1e-12 |
 
+## Built: workstream 6, scripts as objects
+
+- **A script is an object of the project** (`zd_core::Script`, `Body::Script`, kind `script`): a name, a line on what
+  it's for, and its Starlark, kept in the `.zdp` (and the older folder store) as any object is, revised and undone.
+- **`load("name", "function")` among the project's scripts** (`zd-script`'s loader): a formula, a calculated column
+  or a script loads another by its name, which may load others in turn; each is loaded once a run, with the same library
+  as a formula. A name the project hasn't is refused (`can't load x: the project has no script of that name`), as is a
+  script that loads itself, its chain said (`helpers loads itself, through helpers → helpers2 → helpers`). Still no
+  files, network, clock or imports.
+- **What loads one keeps its id**: a dataflow's and a calculated column's `scripts`, bound by name from their `load`
+  lines when they're saved (`bind_loads`, through the scripts those load too). A run reads them by id, so the run records
+  each script's revision among its inputs; a script revised, the next run reads it as it is. A dataflow or column edited
+  but not saved is bound the same way, so the Dataflow tab's live run, a formula's check and its trace all load it.
+- **`script.save`** makes a script or its next revision, checked first as a library (`check_library`: it parses, and
+  what it loads is there and loads cleanly), every problem on its line; two scripts of one name are refused, as a load
+  couldn't tell them apart.
+- **The app:** a **Scripts** list in the Parameters tab, under Parameter tables and Dataflows, with **+ New script**.
+  Its editor: the name a load asks for, what it's for, the Starlark checked against the project's other scripts as it's
+  typed, Copy for AI, and Save. Properties shows a script's Starlark.
+
+Decision 11's "a script runs three ways" lands with the table scripts it runs (workstream 7): until then a script is
+loaded by formulas and calculated columns.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_formula_loads_its_functions_from_the_project_s_scripts` (zd-script) | `twice_ash` through `helpers` and `maths` doubles 12 to 24, traced through the loaded function; a missing script and a self-load refused with their words; a script's problem on line 3 | exact |
+| `the_app_s_starter_script_checks_clean` (zd-script) | the app's starter script checks clean, and `by_tonnes` adds 10 % and 20 % over 1 t and 3 t to 17.5 % | exact |
+| `a_script_s_loads_are_read_off_its_source` (zd-core) | `qualities` and `limits` read from its `load` lines, a commented one passed over | exact |
+| `a_formula_step_loads_a_project_script_and_the_run_records_its_revision` (formula_steps.rs) | ash2 = 10 × 2 + 35 = 55 by a loaded function; the dataflow keeps the script's id; the run names revision 1; revised, the next run gives 56 and names revision 2 | 1e-9 |
+| `a_script_and_what_loads_it_are_checked` | a load of a missing script refuses the dataflow; a script's problem on line 3; two of one name refused | exact |
+| `a_calculated_column_loads_a_project_script` (reserves_run.rs) | the strip ratio by a loaded `ratio`: B1 55,000 / 50,500, the column keeping the script's id | 1e-9 |
+| `zd-app --bench --dataflow` (demo pit) | a script loaded by a calculated column on Base gives every strip its own waste over coal; + New script in the Parameters tab opens one that checks clean | 1e-12 |
+
 ## Known limits
 
 - Entered values carry through Run again into the same table; a fresh reserves run makes a new table without them.
@@ -222,6 +255,8 @@ Timing, release build, on the demo pit's 50m table (3,027 leaves, every field): 
 - A file can't add a record the target hasn't: a row, or an object.
 - Calculated columns are on reserves tables only; the Objects view has none yet. A calculated column can't read another.
 - A calculated column has no worked examples of its own yet, as a dataflow formula's are.
+- A load names a script by its name: renaming a script means editing what loads it, and saving that again.
+- Nothing lists what loads a script yet; deleting one that's loaded is said when what loads it next runs.
 - Every block runs on what's saved, not on the Parameters tab's unsaved edits, as the block shown does (0082).
 - Objects' numeric attributes other than the density have no rule, so a group shows none for them: qualities on blocks
   add up only once a reserves run has given them one.

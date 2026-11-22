@@ -153,11 +153,14 @@ pub struct Dataflow {
     /// Parameter table objects, read in this order: a value comes from the first that gives it.
     #[serde(default)]
     pub parameters: Vec<ObjectId>,
+    /// The project's scripts its formulas load (decision 0099), bound by name when it's saved: a run reads them by id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<ObjectId>,
 }
 
 impl Default for Dataflow {
     fn default() -> Self {
-        Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new() }
+        Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new(), scripts: Vec::new() }
     }
 }
 
@@ -230,6 +233,7 @@ mod tests {
             ],
             steps: vec![DataflowStep::on("initialise"), DataflowStep { on: false, ..DataflowStep::on("in_situ") }],
             parameters: vec![ObjectId::new()],
+            scripts: Vec::new(),
         }
     }
 

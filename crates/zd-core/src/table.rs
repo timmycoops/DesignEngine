@@ -129,6 +129,9 @@ pub struct CalculatedColumn {
     /// The parameter tables `p` reads, in order: a row's value is the first row of them that fits its words.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parameters: Vec<crate::ObjectId>,
+    /// The project's scripts its formula loads, bound by name when it's put on the table.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<crate::ObjectId>,
 }
 
 /// A table: columns of one length, names unique, and the columns worked out from them.

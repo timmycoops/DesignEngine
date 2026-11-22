@@ -508,6 +508,34 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
       gone: calcGone,
       ms: Math.round(calcMs),
     });
+    // A script of the project (decision 9) loaded by a calculated column: every strip's ratio its own waste over coal;
+    // in the Parameters tab, + New script opens one whose starter checks clean. Two undos take it all off.
+    await runCommand('script.save', { name: 'waste', source: 'def ratio(w, c):\n    return w / c if c else None\n' });
+    const loadingColumn = { name: 'by_script', script: 'load("waste", "ratio")\ndef formula(row):\n    row.by_script = ratio(row["Insitu\\\\Waste\\\\volume"], row["Insitu\\\\Coal\\\\volume"])\n', adds: { by: 'from_inputs' as const } };
+    await runCommand('table.calculate', { table: baseTable.id, column: loadingColumn });
+    const byScript = await tableGrid({ of: 'table', table: baseTable.id }, { group: ['pit', 'strip'], open: [['Pit']], columns: ['by_script', 'Insitu\\Waste\\volume', 'Insitu\\Coal\\volume'] });
+    const scriptRows = byScript.rows.filter((r) => r.kind !== 'leaf');
+    const scriptWorst = scriptRows.reduce((w, r) => {
+      const [ratio, waste, coal] = r.cells as (number | null)[];
+      return ratio === null || waste === null || !coal ? Infinity : Math.max(w, Math.abs(ratio - waste / coal) / Math.abs(waste / coal));
+    }, 0);
+    await undo();
+    await undo();
+    showPanel(api, 'params');
+    for (let k = 0; k < 50 && !document.querySelector('[data-slot="new-script"]'); k++) await wait(100);
+    document.querySelector<HTMLButtonElement>('[data-slot="new-script"]')?.click();
+    for (let k = 0; k < 50 && !document.querySelector('[data-slot="project-script"]'); k++) await wait(100);
+    await wait(800);
+    const starterOpen = !!document.querySelector('[data-slot="project-script"]');
+    const starterProblems = document.querySelector('[data-slot="script-problems"]')?.textContent ?? '';
+    expect('a script loaded by a calculated column gives every strip its own waste over coal; + New script opens one that checks clean', scriptRows.length > 2 && scriptWorst <= 1e-12 && starterOpen && starterProblems === '', {
+      rows: scriptRows.length,
+      worst: scriptWorst,
+      said: byScript.said.map((x) => x.slice(0, 80)),
+      open: starterOpen,
+      problems: starterProblems,
+    });
+    showPanel(api, 'restable');
     expect('a CSV by strip, block, seam and bench enters a period in months on that one leaf, and undoes', leafReport.targets === 1 && leafReport.changed === 1 && periods.length === 1 && periods[0][1] === 4 && months === 'months', { report: { targets: leafReport.targets, changed: leafReport.changed }, periods, unit: months });
 
     // A block's attribute typed in Objects (decision 4): a double-click opens the box, Enter keeps it, one undo puts it back.

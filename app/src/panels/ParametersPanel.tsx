@@ -2,6 +2,7 @@ import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Braces, Copy, CopyPlus, Plus
 import { type ClipboardEvent, type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import { type Dataflow, dataflowCheck, objectDetails, type ObjectSummary, type ParameterTable, type ParametersPicked, parametersCheck, parametersPicked } from '@/bridge';
 import { CellInput, Choice, IconButton, ObjectMenu, Select, StatusBadge } from '@/design-system/kit';
+import { ProjectScriptEditor } from './ProjectScriptEditor';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
@@ -47,7 +48,10 @@ const FORMULA_STAGES = ['initialise', 'join_benches', 'working_sections', 'rom_d
  * rows it fits and, in gold, the cell each value comes from. Saving never reruns the reserves: a new answer is a new run.
  */
 
-const isEditable = (o: ObjectSummary) => o.kind === 'parameter_table' || o.kind === 'dataflow';
+const isEditable = (o: ObjectSummary) => o.kind === 'parameter_table' || o.kind === 'dataflow' || o.kind === 'script';
+
+/** A new script being written, before it's saved (decision 0099). */
+const NEW_SCRIPT = 'new-script';
 
 export function Parameters() {
   const { summary, selection, toolAsk } = useWorkspace();
@@ -74,15 +78,23 @@ export function Parameters() {
       setOpenCell({ row: Number(row), column: column.join(':'), n: toolAsk.n });
     }
   }, [toolAsk]);
-  const object = objects.find((o) => o.id === id) ?? objects.find((o) => o.kind === 'parameter_table') ?? objects[0] ?? null;
+  const object = id === NEW_SCRIPT ? null : (objects.find((o) => o.id === id) ?? objects.find((o) => o.kind === 'parameter_table') ?? objects[0] ?? null);
 
-  if (!object) {
-    return <div className="p-3 text-xs text-muted-foreground">No parameter tables or dataflows in this project yet. They're made from Python (parameters.save, dataflow.save, or the starter dataflow) and edited here.</div>;
+  if (!object && id !== NEW_SCRIPT) {
+    return (
+      <div className="space-y-2 p-3 text-xs text-muted-foreground">
+        <button type="button" className="text-foreground hover:underline" onClick={() => setId(NEW_SCRIPT)}>
+          + New script
+        </button>
+        <div>No parameter tables, dataflows or scripts in this project yet. Tables and dataflows are made from Python (parameters.save, dataflow.save, or the starter dataflow) and edited here.</div>
+      </div>
+    );
   }
   const tables = objects.filter((o) => o.kind === 'parameter_table');
   const flows = objects.filter((o) => o.kind === 'dataflow');
+  const scripts = objects.filter((o) => o.kind === 'script');
   const item = (o: ObjectSummary) => (
-    <div key={o.id} className={cn('flex items-center pr-1 hover:bg-accent', o.id === object.id && 'bg-selection text-primary')}>
+    <div key={o.id} className={cn('flex items-center pr-1 hover:bg-accent', o.id === object?.id && 'bg-selection text-primary')}>
       <button
         type="button"
         data-slot="parameters-item"
@@ -93,7 +105,7 @@ export function Parameters() {
       >
         {o.name}
       </button>
-      {o.id === object.id && <ObjectMenu object={o} what={o.kind === 'dataflow' ? 'dataflow' : 'parameter table'} onDeleted={() => setId(null)} />}
+      {o.id === object?.id && <ObjectMenu object={o} what={o.kind === 'dataflow' ? 'dataflow' : o.kind === 'script' ? 'script' : 'parameter table'} onDeleted={() => setId(null)} />}
     </div>
   );
   return (
@@ -103,9 +115,16 @@ export function Parameters() {
         {tables.length ? tables.map(item) : <div className="px-3 text-muted-foreground">none</div>}
         <div className="mt-2 px-2 py-0.5 font-semibold text-muted-foreground">Dataflows</div>
         {flows.length ? flows.map(item) : <div className="px-3 text-muted-foreground">none</div>}
+        <div className="mt-2 px-2 py-0.5 font-semibold text-muted-foreground" title="Starlark a dataflow's formula or a calculated column loads by its name: load(&quot;name&quot;, &quot;function&quot;)">Scripts</div>
+        {scripts.map(item)}
+        <button type="button" data-slot="new-script" className={cn('block w-full py-0.5 pl-3 text-left text-muted-foreground hover:bg-accent hover:text-foreground', id === NEW_SCRIPT && 'bg-selection text-primary')} onClick={() => setId(NEW_SCRIPT)}>
+          + New script
+        </button>
       </div>
       <div className="flex min-w-0 flex-1 flex-col">
-        {object.kind === 'parameter_table' ? (
+        {!object || object.kind === 'script' ? (
+          <ProjectScriptEditor key={object ? `${object.id}@${object.revision}` : NEW_SCRIPT} object={object} onSaved={setId} />
+        ) : object.kind === 'parameter_table' ? (
           <TableEditor key={`${object.id}@${object.revision}`} object={object} onMade={setId} openCell={openCell} />
         ) : (
           <DataflowEditor key={`${object.id}@${object.revision}`} object={object} tables={tables} openStep={openStep} />

@@ -323,3 +323,49 @@ fn a_formula_is_traced_on_a_picked_solid_s_unit() {
     let l = ids.iter().copied().find(|&id| project.object(id).unwrap().name == "3_B1_L").unwrap();
     assert!(!formula_trace(&get, &d, &p, "double_ash", l).unwrap().fits, "L is outside the filter");
 }
+
+/// A formula step that loads a project script (Tables and scripts plan, decision 9): `doubled_plus` written once in the
+/// script `ash`, the step's ash2 = 10 × 2 + 35 = 55. Saving the dataflow binds the script by name; the run reads it by
+/// id and records its revision. The script revised to add 1 more, the dataflow saved again as it was gives 56.
+#[test]
+fn a_formula_step_loads_a_project_script_and_the_run_records_its_revision() {
+    let mut s = session();
+    let ids = blocks(&mut s);
+    let made = s.run("script.save", json!({ "name": "ash", "source": "def doubled_plus(x, k):\n    return x * 2 + k\n" })).unwrap();
+    assert_eq!(made.messages, ["the script ash saved"]);
+    let script = created(&made)[0];
+    let loading = "load(\"ash\", \"doubled_plus\")\ndef formula(unit, p):\n    unit.ash2 = doubled_plus(unit.ash, p.ash_cutoff)\n";
+    let steps = json!([{ "step": "initialise" }, { "step": "double_ash", "formula": { "when": { "material": "coal", "seam": "U" }, "script": loading } }, { "step": "in_situ" }]);
+    let saved = save(&mut s, steps.clone()).unwrap();
+    let flow = created(&saved)[0];
+    let Body::Dataflow(d) = &s.project().object(flow).unwrap().body else { panic!("a dataflow") };
+    assert_eq!(d.scripts, [script], "bound by name, kept by id");
+    let record = run(&mut s, flow, &ids);
+    assert!(record.inputs.iter().any(|i| i.id == script && i.revision == 1), "the run names the script's revision");
+    let t = table(&s, created(&record)[0]);
+    assert!(close(value(&t, leaf(&t, "B1", "U", None), "Insitu\\Coal\\ash2").unwrap(), 55.0));
+
+    // The script revised: a run reads it as it is now.
+    s.run("script.save", json!({ "script": script, "name": "ash", "source": "def doubled_plus(x, k):\n    return x * 2 + k + 1\n" })).unwrap();
+    let record = run(&mut s, flow, &ids);
+    assert!(record.inputs.iter().any(|i| i.id == script && i.revision == 2));
+    let t = table(&s, created(&record)[0]);
+    assert!(close(value(&t, leaf(&t, "B1", "U", None), "Insitu\\Coal\\ash2").unwrap(), 56.0));
+}
+
+/// What a script can't be, said with why (decision 9): a load of a name the project hasn't refuses the dataflow; a
+/// script whose Starlark doesn't run is refused on its line; two of one name are refused; a calculated column binds the
+/// scripts it loads too.
+#[test]
+fn a_script_and_what_loads_it_are_checked() {
+    let mut s = session();
+    let _ = blocks(&mut s);
+    let steps = json!([{ "step": "initialise" }, { "step": "double_ash", "formula": { "script": "load(\"nowhere\", \"f\")\ndef formula(unit):\n    unit.ash2 = f(unit.ash)\n" } }, { "step": "in_situ" }]);
+    let err = save(&mut s, steps).unwrap_err();
+    assert!(err.to_string().contains("can't load nowhere: the project has no script of that name"), "{err}");
+    let bad = s.run("script.save", json!({ "name": "maths", "source": "def f(x):\n    return x\ny = nothing_here\n" })).unwrap_err();
+    assert!(bad.to_string().contains("line 3"), "{bad}");
+    s.run("script.save", json!({ "name": "maths", "source": "def f(x):\n    return x\n" })).unwrap();
+    let twice = s.run("script.save", json!({ "name": "maths", "source": "x = 1\n" })).unwrap_err();
+    assert!(twice.to_string().contains("a script named maths already"), "{twice}");
+}

@@ -537,6 +537,7 @@ fn place_bodies(objects: &[Arc<Object>]) -> Result<Placement, StoreError> {
             Body::Workflow(workflow) => Placed::Json(serde_json::to_string(&**workflow).map_err(|e| StoreError::Format(e.to_string()))?),
             Body::ParameterTable(table) => Placed::Json(serde_json::to_string(&**table).map_err(|e| StoreError::Format(e.to_string()))?),
             Body::Dataflow(dataflow) => Placed::Json(serde_json::to_string(&**dataflow).map_err(|e| StoreError::Format(e.to_string()))?),
+            Body::Script(script) => Placed::Json(serde_json::to_string(&**script).map_err(|e| StoreError::Format(e.to_string()))?),
             Body::Table(table) => {
                 // A table with no columns has no values to keep, and Parquet holds none.
                 let entry = if table.columns.is_empty() { String::new() } else { format!("tables/{}-r{}.parquet", object.id, object.revision) };
@@ -565,6 +566,7 @@ fn kind_name(body: &Body) -> &'static str {
         Body::ParameterTable(_) => "parameter_table",
         Body::Dataflow(_) => "dataflow",
         Body::Table(_) => "table",
+        Body::Script(_) => "script",
     }
 }
 
@@ -937,7 +939,7 @@ pub fn read_project(input: &(impl Container + Sync)) -> Result<ReadProject, Stor
                 };
                 Body::Grid(grid)
             }
-            kind @ ("seam_model" | "face_design" | "workflow" | "parameter_table" | "dataflow" | "table") => {
+            kind @ ("seam_model" | "face_design" | "workflow" | "parameter_table" | "dataflow" | "table" | "script") => {
                 let json = body[row].as_deref().ok_or_else(|| needs(row, "body"))?;
                 let bad = |e: serde_json::Error| StoreError::Format(format!("{OBJECTS}: {kind} '{}': {e}", names[row]));
                 match kind {
@@ -945,6 +947,7 @@ pub fn read_project(input: &(impl Container + Sync)) -> Result<ReadProject, Stor
                     "face_design" => Body::FaceDesign(Arc::new(serde_json::from_str::<FaceDesign>(json).map_err(bad)?)),
                     "parameter_table" => Body::ParameterTable(Arc::new(serde_json::from_str::<ParameterTable>(json).map_err(bad)?)),
                     "dataflow" => Body::Dataflow(Arc::new(serde_json::from_str::<Dataflow>(json).map_err(bad)?)),
+                    "script" => Body::Script(Arc::new(serde_json::from_str::<zd_core::Script>(json).map_err(bad)?)),
                     "table" => {
                         let at: TableAt = serde_json::from_str(json).map_err(bad)?;
                         let columns = if at.columns.is_empty() {
@@ -1094,7 +1097,8 @@ pub fn project_differences(a: &Project, b: &Project) -> Vec<String> {
             (Body::Workflow(p), Body::Workflow(q)) => p == q,
             (Body::ParameterTable(p), Body::ParameterTable(q)) => p == q,
             (Body::Dataflow(p), Body::Dataflow(q)) => p == q,
-            (Body::Table(p), Body::Table(q)) => p.columns.len() == q.columns.len() && p.columns.iter().zip(&q.columns).all(|(a, b)| same_column(a, b)),
+            (Body::Table(p), Body::Table(q)) => p.columns.len() == q.columns.len() && p.columns.iter().zip(&q.columns).all(|(a, b)| same_column(a, b)) && p.calculated == q.calculated,
+            (Body::Script(p), Body::Script(q)) => p == q,
             _ => false,
         };
         if !same {

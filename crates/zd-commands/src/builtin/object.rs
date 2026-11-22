@@ -275,6 +275,7 @@ fn kind_words(kind: ObjectKind) -> &'static str {
         ObjectKind::ParameterTable => "parameter table",
         ObjectKind::Dataflow => "dataflow",
         ObjectKind::Table => "table",
+        ObjectKind::Script => "script",
     }
 }
 

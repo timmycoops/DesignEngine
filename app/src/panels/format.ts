@@ -28,6 +28,7 @@ export const kindLabel: Record<ObjectKind, string> = {
   parameter_table: 'Parameter table',
   dataflow: 'Dataflow',
   table: 'Table',
+  script: 'Script',
 };
 
 /** Coloured by RL or its layer's colour on its own: surfaces and elevation grids. A solid goes by its layer. */
