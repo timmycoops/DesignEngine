@@ -290,3 +290,27 @@ right drag with its press and first move sent at once: the grabbed point 2e-11 p
 45° (against 23.9 px for 200 px at 45° on PIT B before). Turn drift 9e-13 px and zoom drift 0.94 px, unchanged; orbit
 60 fps. The bench's snap switch and string checks now find the view bar's Draw button by its name (it lost its words in
 0076), so they draw again: all four snap switch checks pass.
+
+## Orthographic 3D (PR 4, 2026-11-22)
+
+Section 6 built. **Ortho** on the view bar beside 3D/Plan (Persp while off), and **P**, which no other shortcut uses or
+starts with; saved on this machine (`zd.view.orthographic`); off in plan and a section, which are flat anyway, and kept
+for when the view goes back to 3D.
+
+- **One rig.** The 3D (perspective) camera stays the one every move works on: `Viewport.rig`. In orthographic 3D the
+  camera drawn with, `orthographic3d`, copies it after every move (`Viewport.syncCamera`, called from
+  `CameraController.update`): the same way, at the same target, its half height the rig's distance to the target times
+  tan of half the field of view, so the target is one size on screen either way, and it stands well back (the distance
+  plus four scene radii), so nothing is behind it. Fit, zoom to selection, focus, the field of view, T and Z keep working
+  on the rig unchanged. The field of view still sets how far back the rig stands; in orthographic it changes nothing on
+  screen.
+- **Zoom** with no perspective scales the view about the cursor: the rig closes in along its line of sight by the wheel's
+  share, then rig and target slide across the screen so what's under the cursor stays. No pick, so no depth to find.
+  A turn picks and turns as in perspective; a pan needs no pick.
+- **`flatView` split.** It still means plan or section (left drag pans, no turn). `noPerspective` (plan, section or
+  orthographic 3D) is what level of detail, `pixelSize`, string reach and clip planes now ask.
+
+`zd-app --bench --solids` on the 43,000 made-up blocks, by the real P key and canvas: scale at the target off by 0 through
+the switch, into plan and back, and back to perspective; in orthographic a turn's drift 1e-12 px, a 500 px pan's 2e-13
+px, a wheel zoom's 0.37 px; 12.74 % of the view's pixels drawn against 12.76 % in perspective (at 6° the two nearly
+match); orbit 60 fps.

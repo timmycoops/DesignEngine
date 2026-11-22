@@ -106,6 +106,17 @@ interface ChunkDetail {
   triangles: number[];
 }
 
+const ORTHOGRAPHIC_KEY = 'zd.view.orthographic';
+
+/** Whether the 3D view is orthographic, as saved on this machine; perspective by default. */
+function savedOrthographic(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(ORTHOGRAPHIC_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 /** The field of view saved on this machine, else the default. */
 function savedFieldOfView(): number {
   const saved = Number(globalThis.localStorage?.getItem(FIELD_OF_VIEW_KEY));
@@ -199,6 +210,15 @@ export class Viewport {
   /** The section view: flat too, square onto a vertical plane with RL up. */
   readonly sectionCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100_000);
   private sectioned = false;
+  /**
+   * The 3D view with no perspective (0044): it copies the 3D camera after every move (`syncCamera`), looking the same way
+   * at the same target, its half height the 3D camera's distance to the target times tan of half the field of view, so the
+   * target keeps its size on screen through a switch. The 3D camera stays the one every move works on (`rig`).
+   */
+  readonly orthographic3d = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100_000);
+  private ortho3d = savedOrthographic();
+  /** The 3D view went orthographic or back to perspective, by the view bar or the key. */
+  onOrthographicChange?: (on: boolean) => void;
   /** The view's centre before a section, to come back to. */
   private beforeSection = new THREE.Vector3();
   /** The 3D view's direction from its target, kept while in plan view. */
@@ -215,6 +235,7 @@ export class Viewport {
   ) {
     this.orthographic.up.set(0, 1, 0);
     this.sectionCamera.up.set(0, 0, 1);
+    this.orthographic3d.up.set(0, 0, 1);
     this.scene.background = new THREE.Color(0x161e29);
     this.scene.add(new THREE.HemisphereLight(0xdfe8f2, 0x3a3a30, 1.4));
     const sun = new THREE.DirectionalLight(0xffffff, 1.8);
@@ -259,8 +280,13 @@ export class Viewport {
     return new Viewport(renderer, camera, backend, adapterName, host);
   }
 
-  /** The camera in use: the 3D one, the plan one or the section one. */
+  /** The camera in use: the 3D one (perspective or orthographic), the plan one or the section one. */
   get camera(): THREE.PerspectiveCamera | THREE.OrthographicCamera {
+    return this.sectioned ? this.sectionCamera : this.plan ? this.orthographic : this.ortho3d ? this.orthographic3d : this.perspective;
+  }
+
+  /** The camera a move works on: the one in use, except in orthographic 3D, where it's the 3D camera the orthographic one copies. */
+  get rig(): THREE.PerspectiveCamera | THREE.OrthographicCamera {
     return this.sectioned ? this.sectionCamera : this.plan ? this.orthographic : this.perspective;
   }
 
@@ -268,9 +294,57 @@ export class Viewport {
     return this.plan;
   }
 
-  /** A view with no perspective: plan or section. A pixel measures the same everywhere in it. */
+  /** Plan or section: a view that pans with the left button and doesn't turn. */
   get flatView(): boolean {
     return this.plan || this.sectioned;
+  }
+
+  /** No perspective: plan, section or orthographic 3D. A pixel measures the same everywhere in it. */
+  get noPerspective(): boolean {
+    return this.plan || this.sectioned || this.ortho3d;
+  }
+
+  /** The 3D view is orthographic (it may be in plan or a section just now). */
+  get orthographic3D(): boolean {
+    return this.ortho3d;
+  }
+
+  /**
+   * Switches the 3D view between perspective and orthographic, keeping the target the same size on screen, and saves it on
+   * this machine unless `save` is false (the bench). Plan and section are flat either way.
+   */
+  setOrthographic3D(on: boolean, save = true): void {
+    if (on === this.ortho3d) return;
+    this.ortho3d = on;
+    this.controls.update();
+    if (save) {
+      try {
+        globalThis.localStorage?.setItem(ORTHOGRAPHIC_KEY, String(on));
+      } catch {
+        // Not saved: it still holds for this run.
+      }
+    }
+    this.onOrthographicChange?.(on);
+  }
+
+  /**
+   * Puts the orthographic 3D camera where the 3D camera says: the same way, at the same target, at the same scale there,
+   * and well back, so nothing in the scene is behind it. Run after every move (`CameraController.update`).
+   */
+  syncCamera(): void {
+    if (!this.ortho3d || this.plan || this.sectioned) return;
+    const rig = this.perspective;
+    const target = this.controls.target;
+    rig.updateMatrixWorld();
+    const distance = rig.position.distanceTo(target);
+    const half = distance * this.halfTan;
+    const camera = this.orthographic3d;
+    Object.assign(camera, { left: -half * rig.aspect, right: half * rig.aspect, top: half, bottom: -half, zoom: 1 });
+    const forward = rig.getWorldDirection(new THREE.Vector3());
+    camera.position.copy(target).addScaledVector(forward, -(distance + this.sceneRadius * 4));
+    camera.quaternion.copy(rig.quaternion);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
   }
 
   get sectionView(): boolean {
@@ -467,7 +541,7 @@ export class Viewport {
     camera.updateMatrixWorld();
     this.frustum.setFromProjectionMatrix(this.viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     const height = this.renderer.domElement.height || 1;
-    const flat = this.flatView ? (camera as THREE.OrthographicCamera) : null;
+    const flat = this.noPerspective ? (camera as THREE.OrthographicCamera) : null;
     const flatPerMetre = flat ? (height * flat.zoom) / (flat.top - flat.bottom) : 0;
     const position = camera.position;
     const perMetre = (box: THREE.Box3) => flatPerMetre || height / (2 * Math.max(box.distanceToPoint(position), this.perspective.near) * this.halfTan);
@@ -563,7 +637,7 @@ export class Viewport {
   /** World units per screen pixel at `p`: keeps handles and markers one size on screen. */
   pixelSize(p: THREE.Vector3): number {
     const h = this.renderer.domElement.clientHeight || 1;
-    if (this.flatView) {
+    if (this.noPerspective) {
       const flat = this.camera as THREE.OrthographicCamera;
       return (flat.top - flat.bottom) / flat.zoom / h;
     }
@@ -1008,7 +1082,7 @@ export class Viewport {
   /** Near and far planes follow the orbit distance; the reversed depth buffer keeps precision. */
   private updateClipPlanes(): void {
     const distance = this.camera.position.distanceTo(this.controls.target);
-    if (this.flatView) {
+    if (this.noPerspective) {
       const flat = this.camera as THREE.OrthographicCamera;
       flat.near = 0.1;
       flat.far = distance + this.sceneRadius * 6;

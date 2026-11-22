@@ -238,7 +238,7 @@ test('Find a command lists every tool once, under its own name, a stage at a tim
   assert.ok(findWords(toolByKey('import.solids')).includes('A zip or files…'));
   assert.ok(findWords(toolByKey('workflow')).includes('Always there'));
   // The view's tools are in the list for it, each with its key.
-  assert.deepEqual(TOOLS.filter((t) => t.key.startsWith('view.')).map((t) => `${t.label} ${t.shortcut ?? ''}`.trim()), ['Select', 'Draw string NS', 'Snap S', 'Plan or 3D T', "Zoom to what's selected F", 'Zoom to everything E', 'Section 2', 'Measure distance M']);
+  assert.deepEqual(TOOLS.filter((t) => t.key.startsWith('view.')).map((t) => `${t.label} ${t.shortcut ?? ''}`.trim()), ['Select', 'Draw string NS', 'Snap S', 'Plan or 3D T', 'Orthographic or perspective P', "Zoom to what's selected F", 'Zoom to everything E', 'Section 2', 'Measure distance M']);
 });
 
 test('Find a command matches whole words typed, a name first, then a stage or command, then what a tool does', () => {

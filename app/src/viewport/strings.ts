@@ -1192,8 +1192,8 @@ export class StringLayer {
     const { origin: o, direction: d } = viewport.rayFromNdc(...viewport.clientToNdc(x, y));
     // What a pixel measures: the same everywhere in plan, growing with distance in 3D.
     const eye = viewport.camera.position;
-    const flat = viewport.flatView ? viewport.pixelSize(eye) : 0;
-    const perMetre = viewport.flatView ? 0 : viewport.pixelSize(new THREE.Vector3(eye.x + d[0], eye.y + d[1], eye.z + d[2]));
+    const flat = viewport.noPerspective ? viewport.pixelSize(eye) : 0;
+    const perMetre = viewport.noPerspective ? 0 : viewport.pixelSize(new THREE.Vector3(eye.x + d[0], eye.y + d[1], eye.z + d[2]));
     return this.runs.filter(({ shown, centre, radius }) => {
       if (!shown.visible) return false;
       const [wx, wy, wz] = [centre.x - o[0], centre.y - o[1], centre.z - o[2]];

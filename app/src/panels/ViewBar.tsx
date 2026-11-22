@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { Aperture, Box, Expand, Focus, Magnet, Map as MapIcon, MousePointer2, PaintBucket, PenLine, Ruler, Scissors, StepBack, StepForward } from 'lucide-react';
+import { Aperture, Box, Cone, Cuboid, Expand, Focus, Magnet, Map as MapIcon, MousePointer2, PaintBucket, PenLine, Ruler, Scissors, StepBack, StepForward } from 'lucide-react';
 import { ToolButton } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/design-system/ui/dropdown-menu';
@@ -12,7 +12,7 @@ import { DETAIL_CHOICES, DETAIL_DEFAULT, FIELD_OF_VIEW_DEFAULT } from '@/viewpor
 /** Fields of view offered on the view bar, in degrees. */
 const FIELD_OF_VIEW_CHOICES = [2, 4, 6, 10, 15, 20, 30, 45];
 
-/** What the view bar shows and does. App owns the state, as it does the keys that do the same (T, F, E, 2, [, ], S). */
+/** What the view bar shows and does. App owns the state, as it does the keys that do the same (T, P, F, E, 2, [, ], S). */
 export interface ViewTools {
   mode: Mode;
   setMode: (mode: Mode) => void;
@@ -21,6 +21,9 @@ export interface ViewTools {
   /** Looking straight down, north up. */
   plan: boolean;
   togglePlan: () => void;
+  /** The 3D view has no perspective: a metre the same size near and far. */
+  orthographic: boolean;
+  toggleOrthographic: () => void;
   /** Something is selected to zoom to. */
   hasSelection: boolean;
   zoomToSelection: () => void;
@@ -49,7 +52,8 @@ export interface ViewTools {
 export const ViewToolsContext = createContext<ViewTools | null>(null);
 
 /**
- * The view's own tools, on the view (decision 0076): Select, Draw, Measure and Snap, 3D or Plan, the zooms, the field of
+ * The view's own tools, on the view (decision 0076): Select, Draw, Measure and Snap, 3D or Plan, perspective or
+ * orthographic, the zooms, the field of
  * view and Section, with the section's step and fill beside it while one is open. Every one has a key, said in its tip.
  */
 export function ViewBar() {
@@ -102,6 +106,16 @@ export function ViewBar() {
         onClick={view.togglePlan}
       >
         {plan ? <MapIcon /> : <Box />} {plan ? 'Plan' : '3D'}
+      </ToolButton>
+      <ToolButton
+        tip={view.orthographic ? 'Orthographic (P): no perspective, a metre the same size near and far. Press for perspective' : 'Perspective (P). Press for orthographic: no perspective, a metre the same size near and far'}
+        active={view.orthographic}
+        disabled={plan || sectionOpen}
+        className="px-2"
+        aria-label={view.orthographic ? 'Orthographic' : 'Perspective'}
+        onClick={view.toggleOrthographic}
+      >
+        {view.orthographic ? <Cuboid /> : <Cone />} {view.orthographic ? 'Ortho' : 'Persp'}
       </ToolButton>
       <ToolButton size="icon-sm" tip="Zoom to what's selected (F), from the way you're looking" aria-label="Zoom to what's selected" disabled={!view.hasSelection || sectionOpen} onClick={view.zoomToSelection}>
         <Focus />

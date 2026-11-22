@@ -155,6 +155,7 @@ export default function App() {
   const [status, setStatus] = useState<Status>({ text: 'Open a project or import a surface to start.' });
   const [mode, setModeState] = useState<Mode>('select');
   const [plan, setPlan] = useState(false);
+  const [orthographic, setOrthographic] = useState(false);
   const [fieldOfView, setFieldOfView] = useState(FIELD_OF_VIEW_DEFAULT);
   const [detail, setDetail] = useState(DETAIL_DEFAULT);
   const [stringsOver, setStringsOver] = useState(false);
@@ -628,6 +629,8 @@ export default function App() {
       setDetail(created.detail);
       setStringsOver(created.stringsOver);
       created.onPlanChange = setPlan;
+      setOrthographic(created.orthographic3D);
+      created.onOrthographicChange = setOrthographic;
       created.onStats = setStats;
       setBackend(`${created.backend} · ${created.adapter}`);
       markersRef.current = new IssueMarkers(created);
@@ -1082,6 +1085,12 @@ export default function App() {
     viewport.setPlanView(!viewport.planView);
   };
 
+  /** The 3D view orthographic or back to perspective (P, or the view bar); in plan or a section it's kept for the 3D view. */
+  const toggleOrthographic = () => {
+    const viewport = viewportRef.current;
+    if (viewport) viewport.setOrthographic3D(!viewport.orthographic3D);
+  };
+
   /** Section (2, or the view bar): picking its two points starts, or stops if it had started; an open one closes. */
   const toggleSection = () => {
     if (sectionOpen) return closeSection();
@@ -1114,6 +1123,10 @@ export default function App() {
       if (e.key.toLowerCase() === 't' && plain && !e.shiftKey) {
         e.preventDefault();
         return togglePlan();
+      }
+      if (e.key.toLowerCase() === 'p' && plain && !e.shiftKey) {
+        e.preventDefault();
+        return toggleOrthographic();
       }
       if (e.key === ALL_PANELS_KEY && plain) {
         e.preventDefault();
@@ -1308,6 +1321,8 @@ export default function App() {
     toggleSnapping: () => stringsRef.current?.toggleSnapping(),
     plan,
     togglePlan,
+    orthographic,
+    toggleOrthographic,
     hasSelection: selection.length > 0,
     zoomToSelection: () => zoomTo(selection),
     zoomToExtents,
@@ -1389,6 +1404,7 @@ export default function App() {
     'view.draw': () => setMode('draw'),
     'view.snap': () => stringsRef.current?.toggleSnapping(),
     'view.plan': togglePlan,
+    'view.orthographic': toggleOrthographic,
     'view.zoom_selection': zoomToSelection,
     'view.zoom_all': zoomToExtents,
     'view.section': toggleSection,
