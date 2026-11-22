@@ -40,7 +40,7 @@ pub struct AttributeCell {
 }
 
 /// Attributes an object's own measures or the cut own: the grid shows them, but they're not typed over.
-const NOT_TYPED: [&str; 5] = ["name", "layer", "kind", "volume", "tonnes"];
+pub(crate) const NOT_TYPED: [&str; 5] = ["name", "layer", "kind", "volume", "tonnes"];
 
 impl Command for SetAttributes {
     type Params = SetAttributesParams;

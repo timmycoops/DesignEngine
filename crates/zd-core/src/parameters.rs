@@ -265,7 +265,7 @@ impl ParameterTable {
 }
 
 /// One CSV line's cells: commas split them, double quotes hold commas, `""` in quotes is a quote.
-fn csv_cells(line: &str) -> Vec<String> {
+pub fn csv_cells(line: &str) -> Vec<String> {
     let mut cells = vec![String::new()];
     let mut quoted = false;
     let mut chars = line.chars().peekable();

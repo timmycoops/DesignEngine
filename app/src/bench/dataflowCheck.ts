@@ -4,7 +4,7 @@
 // Filtering plan L4), and what Properties shows read back.
 import { EditorView } from '@codemirror/view';
 import type { DockviewApi } from 'dockview-react';
-import { concealed, objectDetails, objectsAttributes, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesChanged, reservesColumn, reservesNodeOf, reservesRerunParams, reservesSolids, reservesStepGrid, reservesTree, runCommand, solidsTable, tableGrid, undo, writePicture } from '../bridge';
+import { concealed, objectDetails, objectsAttributes, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesChanged, reservesColumn, reservesNodeOf, reservesRerunParams, reservesSolids, reservesStepGrid, reservesTree, recordsPreview, runCommand, solidsTable, tableGrid, undo, writePicture } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
 import { windowPicture } from './windowPicture';
 import { showPanel } from '../workspace/Workspace';
@@ -459,6 +459,32 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     const gone = (await tableGrid({ of: 'table', table: baseTable.id }, { columns: [], limit: 1 })).every.every((c) => c.name !== 'comment');
     expect('a comment entered on two leaves stays on them when the table runs again; two undos take it out', kept && entered === 'entered' && gone, { found, entered, gone });
 
+    // Update records (decision 5). Three Base blocks by name take an attribute, a fourth name in the file only; then a
+    // reserves leaf by block and seam takes a period in months. Each report is what its run writes; undone.
+    const named = (await projectSummary()).objects.filter((o) => ids.slice(0, 3).includes(o.id));
+    const byName = { target: { of: 'objects' as const, objects: ids }, csv: `name,checked\n${named.map((o) => `${o.name},yes`).join('\n')}\nno such block,yes\n`, key: ['name'], mode: 'update' as const };
+    const nameReport = await recordsPreview(byName);
+    const nameRun = await runCommand('table.update_records', byName);
+    const checked = (await objectsAttributes(named.map((o) => o.id))).map((a) => a.checked);
+    await undo();
+    const unchecked = (await objectsAttributes(named.map((o) => o.id))).map((a) => a.checked);
+    expect('a CSV by name sets an attribute on three blocks, says the fourth name is in the file only, and undoes', nameReport.matched === 3 && nameReport.targets === 3 && nameReport.changed === 3 && nameReport.file_only.join() === 'no such block' && checked.every((c) => c === 'yes') && unchecked.every((c) => c === undefined), {
+      report: { matched: nameReport.matched, targets: nameReport.targets, changed: nameReport.changed, fileOnly: nameReport.file_only },
+      said: nameRun.record.messages,
+      checked,
+    });
+    const leaf = (await tableGrid({ of: 'table', table: baseTable.id }, { columns: [], limit: 1 })).rows.find((r) => r.kind === 'leaf');
+    const levels = (await tableGrid({ of: 'table', table: baseTable.id }, { columns: [], limit: 1 })).levels;
+    const at = (level: string) => leaf?.words?.[levels.indexOf(level)] ?? '';
+    const byLeaf = { target: { of: 'table' as const, table: baseTable.id }, csv: `strip,block,seam,bench,period (months)\n${at('strip')},${at('block')},${at('seam')},${at('bench')},4\n`, key: ['strip', 'block', 'seam', 'bench'], mode: 'update' as const };
+    const leafReport = await recordsPreview(byLeaf);
+    await runCommand('table.update_records', byLeaf);
+    const period = await tableGrid({ of: 'table', table: baseTable.id }, { columns: ['period'], limit: 100_000 });
+    const periods = period.rows.filter((r) => r.kind === 'leaf' && r.cells[0] !== null).map((r) => [(r.words ?? []).join(' '), r.cells[0]] as const);
+    const months = period.columns[0]?.unit;
+    await undo();
+    expect('a CSV by strip, block, seam and bench enters a period in months on that one leaf, and undoes', leafReport.targets === 1 && leafReport.changed === 1 && periods.length === 1 && periods[0][1] === 4 && months === 'months', { report: { targets: leafReport.targets, changed: leafReport.changed }, periods, unit: months });
+
     // A block's attribute typed in Objects (decision 4): a double-click opens the box, Enter keeps it, one undo puts it back.
     showPanel(api, 'restable');
     for (let k = 0; k < 50 && !document.querySelector('select[aria-label="Table"]'); k++) await wait(100);
@@ -499,6 +525,29 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     }
     await undo();
     const backValue = await blockOf();
+    // Update records in the tab: a CSV chosen, the report shown, the button writes it; one undo puts it back.
+    [...(objectsPanel()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => b.textContent?.trim() === 'Update records…')?.click();
+    for (let k = 0; k < 50 && !objectsPanel()?.querySelector('input[aria-label="The CSV to update from"]'); k++) await wait(100);
+    const fileInput = objectsPanel()?.querySelector<HTMLInputElement>('input[aria-label="The CSV to update from"]');
+    if (fileInput) {
+      const dt = new DataTransfer();
+      dt.items.add(new File([`name,zone\n${blockName},east\n`], 'records.csv', { type: 'text/csv' }));
+      fileInput.files = dt.files;
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    const recordsReport = () => objectsPanel()?.querySelector('[data-slot="records-report"]')?.textContent ?? '';
+    for (let k = 0; k < 50 && !recordsReport(); k++) await wait(100);
+    const reportText = recordsReport();
+    [...(objectsPanel()?.querySelectorAll<HTMLButtonElement>('[data-slot="update-records"] button') ?? [])].find((b) => b.textContent?.startsWith('Update 1 value'))?.click();
+    let zone = typedId ? (await objectsAttributes([typedId]))[0]?.zone : undefined;
+    for (let k = 0; k < 50 && zone !== 'east'; k++) {
+      await wait(100);
+      zone = typedId ? (await objectsAttributes([typedId]))[0]?.zone : undefined;
+    }
+    await undo();
+    const zoneBack = typedId ? (await objectsAttributes([typedId]))[0]?.zone : undefined;
+    expect('Update records in Objects: a CSV chosen, its report says 1 record matched 1 solid, and its button sets the value; one undo', reportText.startsWith('1 of 1 record matched 1 solid') && zone === 'east' && zoneBack === undefined, { report: reportText.slice(0, 120), zone, back: zoneBack });
+
     const shownCells = objectsPanel()?.querySelectorAll('[data-slot="cell-editable"]').length ?? 0;
     const firstCell = objectsPanel()?.querySelector('[data-slot="cell-editable"]')?.getAttribute('aria-label') ?? null;
     // The list is drawn again with Objects: found again to go back.

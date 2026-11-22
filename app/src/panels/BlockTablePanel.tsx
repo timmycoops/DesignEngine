@@ -1,4 +1,4 @@
-import { Download, EyeOff, MousePointerSquareDashed, Scan, Trash2 } from 'lucide-react';
+import { Download, EyeOff, FileUp, MousePointerSquareDashed, Scan, Trash2 } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { concealed, type Grid, type GridRow, type ObjectKind, solidsTable, tableGrid } from '@/bridge';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
@@ -6,10 +6,12 @@ import { Choice, EditableCell, Field, FilterInput, GroupBy, NumberInput, Select 
 import type { When } from '@/filters';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
+import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { attributeColumns, csvOf, densityColumns, filterable, shownRows, type SolidRow, totalsOf } from './blockTable';
 import { fmt, kindLabel } from './format';
 import { IN_TREE } from './layerTree';
+import { UpdateRecords } from './UpdateRecords';
 import { TableGrid } from './TableGridView';
 import { type Entry, gridCsv, groupsKept, nextSort, pastedLines, readEntry, type Sort, toggleOpen } from './tableGrid';
 
@@ -62,6 +64,8 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
   /** Attributes added to type in, before any object has one. */
   const [extra, setExtra] = useState<string[]>([]);
   const [naming, setNaming] = useState<string | null>(null);
+  /** Update records from a CSV, its strip open under the head (decision 5). */
+  const [updating, setUpdating] = useState(false);
   const [said, setSaid] = useState<{ error?: string; text?: string }>({});
 
   const solids = useMemo(() => (summary?.objects ?? []).filter((o) => IN_TREE(o) && (kind === 'all' || o.kind === kind)), [summary, kind]);
@@ -332,9 +336,27 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
           <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={shown.length === 0} title="The rows shown as CSV, exact values" onClick={saveCsv}>
             <Download className="size-3.5" /> CSV
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className={cn('h-6 px-2 text-xs', updating && 'border-primary/70 text-primary')}
+            disabled={shown.length === 0}
+            title="Set attributes on the rows shown from a CSV, matched on key columns (block, or strip, block and seam), with what it matches and changes shown first"
+            onClick={() => setUpdating((u) => !u)}
+          >
+            <FileUp className="size-3.5" /> Update records…
+          </Button>
         </span>
         {said.error ? <span className="w-full text-destructive">{said.error}</span> : said.text ? <span className="w-full text-ok">{said.text}</span> : null}
       </div>
+      {updating && (
+        <UpdateRecords
+          target={{ of: 'objects', objects: shown.map((r) => r.id) }}
+          keys={['name', 'pit', 'strip', 'block', 'seam', 'horizon', 'bench', 'material', 'case']}
+          what={[one, many]}
+          onClose={() => setUpdating(false)}
+        />
+      )}
       <div className="min-h-0 flex-1">
         {groupBy.length > 0 ? (
           grid && (
