@@ -1226,6 +1226,99 @@ pub fn column_trace(project: &zd_core::Project, log: &[crate::LogEntry], table: 
     Ok(view)
 }
 
+/// Every block of a reserves table's case at one step (Tables and scripts plan, decision 10): what the Dataflow tab shows
+/// for one block, for all of them at once, as a table to group and add up.
+#[derive(Debug, Clone, Serialize)]
+pub struct StepUnits {
+    /// The step the units are after: `as input` for none.
+    pub step: String,
+    /// The levels above the seam, which make a column: the table's first columns.
+    pub upper: Vec<String>,
+    /// Block columns run to the step.
+    pub columns: usize,
+    /// Columns that stopped before the step, each with why: their units aren't in the table.
+    pub stopped: Vec<String>,
+    /// A row a unit: its column's words, its name, its labels, then each field with its unit and how it adds up.
+    #[serde(skip)]
+    pub table: Table,
+}
+
+/// Every column of a reserves table's case run through its dataflow to `step` (how many steps, 0 for the columns as
+/// input), with the settings of the run that made the table, read from the log as Open its column reads them; the units
+/// after it as a table. Run on demand and never kept: on what's saved, or `unsaved` as edited. A column that stops on
+/// the way is said, and the rest go on.
+pub fn units_at_step(project: &zd_core::Project, log: &[crate::LogEntry], table: ObjectId, step: usize, unsaved: &Unsaved) -> Result<StepUnits, CommandError> {
+    let object = project.object(table).ok_or(CommandError::MissingObject(table))?;
+    if !matches!(object.body, Body::Table(_)) {
+        return Err(CommandError::WrongKind { id: table, expected: ObjectKind::Table, found: object.kind() });
+    }
+    let mut p = rerun_params(project, log, table, &[])?;
+    p.table = None;
+    p.previous = None;
+    let get = unsaved.reader(project)?;
+    let prepared = match &unsaved.dataflow {
+        Some(edited) => prepare_flow(&get(p.dataflow)?.name, edited, &get, &p, true)?,
+        None => prepare(&get, &p)?,
+    };
+    if step > prepared.steps.len() {
+        return Err(CommandError::Invalid(format!("the dataflow runs {} steps, not {step}", prepared.steps.len())));
+    }
+    let case = crate::reserves_view::case_of(&object.attributes);
+    let columns: Vec<(&ColumnKey, &Vec<Arc<Object>>)> = prepared.columns.iter().filter(|(k, _)| k.case == case).collect();
+    let ran = super::in_parallel(&columns, |(key, blocks)| -> Result<Vec<UnitView>, String> {
+        let (mut run, _) = begin_column(&prepared, key, blocks).map_err(|s| s.why)?;
+        for (name, s, settings) in &prepared.steps[..step] {
+            let done = match s {
+                StepRun::BuiltIn(f) => f(&mut run, settings),
+                StepRun::Formula(f) => run_formula(&mut run, f, settings, &prepared.declared),
+            };
+            done.map_err(|why| format!("{} at {name}: {why}", key.words()))?;
+        }
+        Ok(view(&run, "", Vec::new()).units)
+    });
+    let fields = prepared.fields.list();
+    let upper = prepared.upper.clone();
+    let words = ["seam", "horizon", "material", "bench", "became", "section", "rom"];
+    let mut text: Vec<Vec<Option<String>>> = vec![Vec::new(); upper.len() + 1 + words.len()];
+    let mut numbers: Vec<Vec<Option<f64>>> = vec![Vec::new(); fields.len()];
+    let mut stopped = Vec::new();
+    for ((key, _), units) in columns.iter().zip(ran) {
+        let units = match units {
+            Ok(units) => units,
+            Err(why) => {
+                stopped.push(why);
+                continue;
+            }
+        };
+        for u in units {
+            let bench = u.bench.clone().unwrap_or_default();
+            let name = [key.path.join(" "), u.horizon.clone(), bench.clone(), u.became.clone().unwrap_or_default()].into_iter().filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ");
+            let labels = [Some(u.seam.clone()), Some(u.horizon.clone()), Some(u.material.clone()), u.bench.clone(), u.became.clone(), u.section.clone(), u.rom.clone()];
+            for (i, w) in key.path.iter().enumerate() {
+                text[i].push(Some(w.clone()));
+            }
+            text[upper.len()].push(Some(name));
+            for (k, w) in labels.into_iter().enumerate() {
+                text[upper.len() + 1 + k].push(w.filter(|w| !w.is_empty()));
+            }
+            for (f, column) in fields.iter().zip(numbers.iter_mut()) {
+                column.push(u.values.get(&f.name).copied().filter(|v| v.is_finite()));
+            }
+        }
+    }
+    let names: Vec<&str> = upper.iter().map(String::as_str).chain(std::iter::once("name")).chain(words).collect();
+    let mut table_columns: Vec<TableColumn> = names.iter().zip(text).map(|(n, v)| TableColumn::text(n, v)).collect();
+    for (f, v) in fields.iter().zip(numbers) {
+        // A field named as a label (a dataflow with a `seam` field) keeps the label's column; its numbers are left out.
+        if names.contains(&f.name.as_str()) {
+            continue;
+        }
+        table_columns.push(TableColumn { name: f.name.clone(), unit: unit_of_kind(f.kind).to_string(), add_up: Some(f.add_up.clone()), values: zd_core::ColumnValues::Number(v) });
+    }
+    let step_name = if step == 0 { "as input".to_string() } else { prepared.steps[step - 1].0.clone() };
+    Ok(StepUnits { step: step_name, upper, columns: columns.len(), stopped, table: Table { columns: table_columns } })
+}
+
 /// A table's column made ready to run: the dataflow prepared with the table's own run's parameters, the column's key,
 /// the tables read by name, and what has changed since the table was made.
 struct OpenedColumn {

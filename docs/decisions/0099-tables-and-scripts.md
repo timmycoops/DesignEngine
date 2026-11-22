@@ -89,9 +89,31 @@ Tim chose one Tables tab over keeping the two tabs (22 November).
 Timing, release build, on the demo pit's 50m table (3,027 leaves, every field): grouped by pit and strip with Pit open,
 56 ms from the app, against 1,788 subtotals checked equal to the Breakdown's.
 
+## Built: workstream 2, every block at a step
+
+- **The engine** (`reserves_run.rs`): `units_at_step(project, log, table, step, unsaved)` runs every column of the
+  table's case through its dataflow to the step (0 for the columns as input), with the settings of the run that made
+  the table, read from the log as Open its column reads them, the columns across the cores. The units after it become a
+  table: a row a unit, its column's words (the levels above the seam), a name, its labels (seam, horizon, material,
+  bench, what it became, its working section and ROM section), then every field with its unit and the dataflow's own
+  rule, so the grid adds them up as the run would. A column that stops on the way is said, and the rest go on. Nothing
+  is kept in the project.
+- **The shell:** `reserves_step_grid`, the units grouped as the Tables tab's grid. It keeps the last step's units while
+  the project and the step stay the same, so opening or sorting a group doesn't run every block again.
+- **The app:** the Dataflow tab's head has **This block | Every block**. Every block puts the grid in Before and
+  After's place beside the step pane: the picked step's units for every block, grouped by the levels above the seam
+  at first, the fields After shows (those the step reads and changes), All fields the rest. It runs on what's saved,
+  and says so. A unit picked opens its block's column, back on This block.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `every_block_at_a_step_is_each_column_s_units_at_it` (`reserves_run.rs`, the made-up strip) | As input, 9 units and B1, B2 90,000 m³ each; after `join_benches`, 10 units (B2's U benches one unit, an underburden a column), 280,000 m³, B2's U 70,000 m³; each block's units, by horizon and bench, the same as its own column opened at that step; past the last step refused | 1e-9 relative |
+| `zd-app --bench --dataflow` (demo pit, Base) | As input, 1,815 units of 90 blocks, 76,003,157.44 m³, the blocks' own volumes, in 47 ms; at `working_sections`, blocks 3 B1 and 4 B2 have the same units and volume as their own columns (7 each), in 39 ms; Every block in the tab shows "After rom_dilution: 2,671 units of 90 blocks", and This block brings Before and After back | 1e-9 relative |
+
 ## Known limits
 
 - The grid is a view: nothing in it is edited yet (workstreams 3 and 4).
+- Every block runs on what's saved, not on the Parameters tab's unsaved edits, as the block shown does (0082).
 - Objects' numeric attributes other than the density have no rule, so a group shows none for them: qualities on blocks
   add up only once a reserves run has given them one.
 - Past 5,000 leaf rows under open groups, the rest are counted, not shown.

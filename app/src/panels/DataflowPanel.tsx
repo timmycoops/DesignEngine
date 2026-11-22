@@ -1,13 +1,14 @@
 import { RotateCw } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import { type ColumnSteps, type Dataflow, type ParameterTable, reservesColumn, reservesColumnTrace, reservesRerunParams } from '@/bridge';
-import { Select } from '@/design-system/kit';
+import { Choice, Select } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { type Draft, useWorkspace } from '@/workspace/context';
 import type { PanelId } from '@/workspace/panels';
 import { ColumnStepsView } from './ColumnStepsView';
 import { unitWords } from './columnSteps';
+import { DataflowEveryBlock } from './DataflowEveryBlock';
 import { DataflowGraph } from './DataflowGraph';
 import { DataflowStrip } from './DataflowStrip';
 import { UnitTable } from './DataflowTables';
@@ -70,7 +71,7 @@ const BESIDE: readonly { id: PanelId; title: string }[] = [
 ];
 
 export function DataflowView() {
-  const { summary, notebookOf, openTool, placeBeside, isBeside, drafts, runRecord } = useWorkspace();
+  const { summary, notebookOf, openTool, openNotebook, placeBeside, isBeside, drafts, runRecord } = useWorkspace();
   // Bumped as a tab is put beside or back, so the buttons say which way they go next.
   const [, setLaidOut] = useState(0);
   const table = useMemo(() => (notebookOf ? (summary?.objects ?? []).find((o) => o.id === notebookOf.table) : undefined), [summary, notebookOf]);
@@ -89,6 +90,8 @@ export function DataflowView() {
   const [picked, setPicked] = useState(0);
   const [graph, setGraph] = useState(false);
   const [all, setAll] = useState(false);
+  // The picked step for every block of the table at once, in a grid (Tables and scripts plan, decision 10).
+  const [every, setEvery] = useState<'one' | 'every'>('one');
   // Run again into the table (decision 0085): how much, whether it's running, and what it said.
   const [range, setRange] = useState<RerunRange>('block');
   const [rerun, setRerun] = useState<{ running: boolean; said: string | null; refused: boolean }>({ running: false, said: null, refused: false });
@@ -279,6 +282,15 @@ export function DataflowView() {
             {column.case} · {column.dataflow}
           </span>
         )}
+        {column && (
+          <Choice
+            value={every}
+            options={['one', 'every'] as const}
+            labels={{ one: 'This block', every: 'Every block' }}
+            onChange={setEvery}
+            label="The picked step's units for this block, before and after it; or after it for every block of the table, grouped and added up"
+          />
+        )}
         {column && focus && (
           <label className="flex items-center gap-1">
             <span className="text-muted-foreground">Follow</span>
@@ -376,8 +388,24 @@ export function DataflowView() {
               onSetting={(t, row, name) => openTool('params', `cell:${t}:${row}:${name}`)}
             />
           </div>
-          <UnitTable side="before" column={column} at={at} table={tables} followed={into?.id ?? null} onFollow={(u) => setFocus(focusOf(u))} />
-          <UnitTable side="after" column={column} at={at} table={tables} followed={outOf?.id ?? null} onFollow={(u) => setFocus(focusOf(u))} all={all} onAll={setAll} />
+          {every === 'every' ? (
+            <div className="col-span-2 flex min-h-0 flex-col">
+              <DataflowEveryBlock
+                table={table.id}
+                column={column}
+                at={at}
+                onOpen={(words) => {
+                  setEvery('one');
+                  openNotebook(table.id, words);
+                }}
+              />
+            </div>
+          ) : (
+            <>
+              <UnitTable side="before" column={column} at={at} table={tables} followed={into?.id ?? null} onFollow={(u) => setFocus(focusOf(u))} />
+              <UnitTable side="after" column={column} at={at} table={tables} followed={outOf?.id ?? null} onFollow={(u) => setFocus(focusOf(u))} all={all} onAll={setAll} />
+            </>
+          )}
         </div>
       )}
     </div>

@@ -52,6 +52,7 @@ fn main() {
             commands::objects_attributes,
             commands::solids_table,
             commands::table_grid,
+            commands::reserves_step_grid,
             commands::reserves_tree,
             commands::reserves_breakdown,
             commands::reserves_solids,

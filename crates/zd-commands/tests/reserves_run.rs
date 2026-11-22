@@ -2185,3 +2185,60 @@ fn the_blocks_as_a_table_add_up_their_volumes_and_tonnes() {
     // Strip is a number on every block: a column of numbers, nothing to group by.
     assert!(!g.groups.contains(&"strip".to_string()) && g.groups.contains(&"block".to_string()));
 }
+
+/// Every block at a step (Tables and scripts plan, decision 10): each column of the table's case run to a step, its
+/// units a table. As input, the strip's 9 blocks, 180,000 m³; after `join_benches`, B2's two U benches are one unit of
+/// 20,000 m³, and each column has its underburden (50,000 m³ from the model), 10 units and 280,000 m³. Unit for unit,
+/// the same as each block's column opened on its own (Open its column) at the same step.
+#[test]
+fn every_block_at_a_step_is_each_column_s_units_at_it() {
+    use zd_commands::builtin::units_at_step;
+    use zd_commands::table_grid::{Cell, GridAsk, RowKind, grid};
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "in_situ", "join_benches"]);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let unsaved = Unsaved::default();
+
+    let input = units_at_step(s.project(), s.log(), id, 0, &unsaved).unwrap();
+    assert_eq!(input.step, "as input");
+    assert_eq!(input.upper, ["pit", "strip", "block"]);
+    assert_eq!((input.columns, input.stopped.len(), input.table.rows()), (2, 0, 9));
+    let by_block = grid(&input.table, &GridAsk { group: vec!["block".into()], columns: vec!["volume".into()], ..Default::default() }).unwrap();
+    let volumes: Vec<(&str, Option<Cell>)> = by_block.rows.iter().map(|r| (r.label.as_str(), r.cells[0].clone())).collect();
+    assert_eq!(volumes, [("All", Some(Cell::Number(180_000.0))), ("B1", Some(Cell::Number(90_000.0))), ("B2", Some(Cell::Number(90_000.0)))]);
+
+    let opened = table_column(s.project(), s.log(), id, &["Pit".into(), "3".into(), "B2".into()], &unsaved).unwrap();
+    let last = opened.steps.len() - 1;
+    assert_eq!(opened.steps[last].step, "join_benches");
+    let joined = units_at_step(s.project(), s.log(), id, last, &unsaved).unwrap();
+    assert_eq!(joined.step, "join_benches");
+    // B2's U benches are one unit now, and each column has the underburden under its last coal, 50,000 m³ added from the
+    // model (0077, decision 7): five units a block.
+    assert_eq!(joined.table.rows(), 10, "B2's U benches joined, an underburden a column");
+    let g = grid(&joined.table, &GridAsk { group: vec!["block".into(), "seam".into()], open: vec![vec!["B2".into()]], columns: vec!["volume".into(), "rd".into()], ..Default::default() }).unwrap();
+    assert!(matches!(g.rows[0].cells[0], Some(Cell::Number(v)) if close(v, 180_000.0 + 2.0 * 50_000.0)), "the blocks and two underburdens");
+    // B2's U: its OB and the joined coal, 70,000 m³; the coal alone at RD 1.5 by volume.
+    let u = g.rows.iter().find(|r| r.kind == RowKind::Group && r.path == ["B2", "U"]).unwrap();
+    assert!(matches!(u.cells[0], Some(Cell::Number(v)) if close(v, 70_000.0)), "{:?}", u.cells);
+
+    // Unit for unit, each block's column at the same step.
+    for block in ["B1", "B2"] {
+        let column = table_column(s.project(), s.log(), id, &["Pit".into(), "3".into(), block.into()], &unsaved).unwrap();
+        let mut theirs: Vec<(String, f64)> = column.steps[last].units.iter().map(|u| (format!("{} {}", u.horizon, u.bench.clone().unwrap_or_default()).trim().to_string(), u.values["volume"])).collect();
+        let ColumnValues::Text(blocks) = &joined.table.column("block").unwrap().values else { panic!("words") };
+        let ColumnValues::Text(horizons) = &joined.table.column("horizon").unwrap().values else { panic!("words") };
+        let ColumnValues::Text(benches) = &joined.table.column("bench").unwrap().values else { panic!("words") };
+        let ColumnValues::Number(volume) = &joined.table.column("volume").unwrap().values else { panic!("numbers") };
+        let mut mine: Vec<(String, f64)> = (0..joined.table.rows())
+            .filter(|&r| blocks[r].as_deref() == Some(block))
+            .map(|r| (format!("{} {}", horizons[r].clone().unwrap_or_default(), benches[r].clone().unwrap_or_default()).trim().to_string(), volume[r].unwrap()))
+            .collect();
+        theirs.sort_by(|a, b| a.0.cmp(&b.0));
+        mine.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(mine, theirs, "{block}");
+    }
+    // Past the last step is refused.
+    assert!(units_at_step(s.project(), s.log(), id, last + 1, &unsaved).is_err());
+}

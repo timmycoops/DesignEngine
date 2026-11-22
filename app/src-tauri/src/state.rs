@@ -56,6 +56,9 @@ pub struct AppInner {
     pub log_session: u64,
     /// The run going, if one is: one at a time, and nothing else changes the project until it ends (decision 0060).
     pub running: Option<Running>,
+    /// Every block of a reserves table at a step (Tables and scripts plan, decision 10), with what it was run on: kept
+    /// while the Dataflow tab's Every block opens and sorts its groups.
+    pub step_units: Option<(String, Arc<zd_commands::builtin::StepUnits>)>,
 }
 
 /// A run going off the lock: what it is, since when, and how to watch and stop it.
@@ -96,7 +99,7 @@ fn next_log_session() -> u64 {
 impl AppInner {
     pub fn new(session: Session, path: Option<PathBuf>) -> Self {
         let locked_by = session.locked_by();
-        AppInner { session, path, locked_by, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), tiles: Tiles::default(), section_meshes: SectionMeshes::new(), section_inputs: None, section_cut: None, sent: Sent::default(), log_session: next_log_session(), running: None }
+        AppInner { session, path, locked_by, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), tiles: Tiles::default(), section_meshes: SectionMeshes::new(), section_inputs: None, section_cut: None, sent: Sent::default(), log_session: next_log_session(), running: None, step_units: None }
     }
 
     pub fn handle(&mut self) -> u32 {

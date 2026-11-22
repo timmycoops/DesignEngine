@@ -36,7 +36,9 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
   (`docs/decisions/0086-reserves-fields.md`).
 - One table concept (`docs/decisions/0099-tables-and-scripts.md`): the blocks (a row a solid, `table_grid::objects_table`)
   and a reserves table (a row a leaf) are both a `Table`, seen in the Tables tab's grid, `table_grid::grid`: grouped by
-  any word column, every subtotal `add_up_column` over the group's leaves, as the Breakdown and the report add up. Its
+  any word column, every subtotal `add_up_column` over the group's leaves, as the Breakdown and the report add up. The
+  Dataflow tab's Every block is a step's units for every column as such a table (`units_at_step`, run on demand from
+  what's saved, never kept). Its
   workstreams 2 to 9 (entered and calculated columns, update records, table and object scripts, a dataflow from any
   table) build on it.
 

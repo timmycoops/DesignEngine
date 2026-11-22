@@ -4,7 +4,7 @@
 // Filtering plan L4), and what Properties shows read back.
 import { EditorView } from '@codemirror/view';
 import type { DockviewApi } from 'dockview-react';
-import { concealed, objectDetails, objectsAttributes, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesNodeOf, reservesSolids, reservesTree, solidsTable, tableGrid, undo, writePicture } from '../bridge';
+import { concealed, objectDetails, objectsAttributes, openProject, projectSummary, type ProjectSummary, type ReservesNode, reservesBreakdown, reservesColumn, reservesNodeOf, reservesSolids, reservesStepGrid, reservesTree, solidsTable, tableGrid, undo, writePicture } from '../bridge';
 import type { Viewport } from '../viewport/Viewport';
 import { windowPicture } from './windowPicture';
 import { showPanel } from '../workspace/Workspace';
@@ -400,6 +400,39 @@ export async function checkDataflow(path: string, log: (line: string) => void, s
     pickTable(baseTable.id);
     for (let k = 0; k < 50 && !panel(); k++) await wait(100);
     expect('the Tables tab draws the reserves table as a grid, grouped, and lists Objects too', groupsShown > 0 && objectsShown && !!panel(), { groups: groupsShown, objects: objectsShown });
+
+    // Every block at a step (Tables and scripts plan, decision 10). As input, every block's units add up to the blocks'
+    // own volumes; at working_sections, a block's units are its own column's at that step, Open its column's.
+    let started = performance.now();
+    const asInput = await reservesStepGrid(baseTable.id, 0, { columns: ['volume'] });
+    const inputMs = performance.now() - started;
+    const allVolume = own.reduce((s, r) => s + (r.volume ?? 0), 0);
+    const inputVolume = typeof asInput.grid.rows[0].cells[0] === 'number' ? asInput.grid.rows[0].cells[0] : NaN;
+    expect("Every block as input: the Base blocks' own volumes, a unit a block", asInput.stopped.length === 0 && asInput.grid.leaves === ids.length && Math.abs(inputVolume - allVolume) <= 1e-9 * allVolume, {
+      units: asInput.grid.leaves,
+      blocks: ids.length,
+      grid: inputVolume,
+      solids: allVolume,
+      columns: asInput.columns,
+      ms: Math.round(inputMs),
+    });
+    const blocksTo = [['Pit', '3', 'B1'], ['Pit', '4', 'B2']];
+    const one = await reservesColumn(baseTable.id, blocksTo[0]);
+    const sections = one.steps.findIndex((x) => x.step === 'working_sections');
+    started = performance.now();
+    const atSections = await reservesStepGrid(baseTable.id, sections, { group: ['pit', 'strip', 'block'], open: [['Pit'], ['Pit', '3'], ['Pit', '4'], ...blocksTo], columns: ['volume'] });
+    const sectionsMs = performance.now() - started;
+    const matches = await Promise.all(
+      blocksTo.map(async (path) => {
+        const theirs = (await reservesColumn(baseTable.id, path)).steps[sections].units;
+        const mine = atSections.grid.rows.filter((r) => r.kind === 'leaf' && r.path.join('>') === path.join('>'));
+        const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+        const theirVolume = sum(theirs.map((u) => u.values.volume ?? 0));
+        const myVolume = sum(mine.map((r) => (typeof r.cells[0] === 'number' ? r.cells[0] : 0)));
+        return { block: path.join(' '), units: [mine.length, theirs.length], volume: [myVolume, theirVolume], ok: mine.length === theirs.length && Math.abs(myVolume - theirVolume) <= 1e-9 * Math.max(1, theirVolume) };
+      }),
+    );
+    expect('Every block at working_sections: a block\'s units are its own column\'s there', sections > 0 && atSections.step === 'working_sections' && matches.every((m) => m.ok), { matches, ms: Math.round(sectionsMs), columns: atSections.columns });
   }
   await checkParameters(summary, api, expect, show, picture);
   await checkFormulas(expect, picture, api);
@@ -577,6 +610,17 @@ async function checkColumn(panel: () => HTMLElement | null, expect: Expect, pict
   buttonIn(nb(), 'Dataflow')?.click();
   for (let k = 0; k < 50 && !pane(); k++) await wait(100);
   expect('Dataflow goes back to the strip and the step pane, the step still picked', pane()?.dataset.step === 'rom_dilution' && !!strip());
+
+  // Every block (Tables and scripts plan, decision 10): the picked step for every block in the grid, grouped by block;
+  // This block puts Before and After back.
+  buttonIn(nb(), 'Every block')?.click();
+  const everyGroups = () => nb()?.querySelectorAll('[data-slot="every-block"] tr[data-row="group"]').length ?? 0;
+  for (let k = 0; k < 100 && everyGroups() === 0; k++) await wait(100);
+  const everySaid = nb()?.querySelector('[data-slot="every-block-said"]')?.textContent ?? '';
+  const everyShown = everyGroups();
+  buttonIn(nb(), 'This block')?.click();
+  for (let k = 0; k < 50 && !before(); k++) await wait(100);
+  expect('Every block shows the picked step for every block, grouped; This block brings Before and After back', everyShown > 0 && everySaid.startsWith('After rom_dilution') && !!before() && !!after(), { groups: everyShown, said: everySaid });
 
   // A formula's Edit opens it in the Parameters tab.
   await pick('densities');

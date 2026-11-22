@@ -659,6 +659,22 @@ export interface GridAsk {
 /** Any table as a grid, grouped and added up by each column's own rule (Tables and scripts plan, decision 1). */
 export const tableGrid = (source: GridSource, ask: GridAsk) => invoke<Grid>('table_grid', { source, ask });
 
+/** Every block of a reserves table's case at one step (Tables and scripts plan, decision 10), as a grid. */
+export interface StepGrid {
+  /** The step the units are after: `as input` for none. */
+  step: string;
+  /** The levels above the seam, which make a column. */
+  upper: string[];
+  /** Block columns run to the step. */
+  columns: number;
+  /** Columns that stopped before the step, each with why. */
+  stopped: string[];
+  grid: Grid;
+}
+
+/** The units after `step` steps (0, the columns as input) for every block of the table's case, run on what's saved. */
+export const reservesStepGrid = (object: string, step: number, ask: GridAsk) => invoke<StepGrid>('reserves_step_grid', { object, step, ask });
+
 /** A node of a reserves table's tree of levels (decision 0075): its level values, label, leaves under it and children. */
 export interface ReservesNode {
   path: string[];
