@@ -261,11 +261,21 @@ impl Build<'_> {
                 let descending = self.sort.is_some_and(|s| s.1);
                 children.sort_by(|a, b| order(a.2[k].as_ref(), b.2[k].as_ref(), descending));
             }
+            let innermost = depth + 1 == self.group.len();
             for (word, under, cells) in children {
                 let mut p = path.clone();
                 p.push(word.clone());
                 let open = self.open.contains(&p);
                 let label = if word.is_empty() { "(none)".to_string() } else { word };
+                // Grouped down to one leaf with nothing of its own left to say (every level grouped by, bench and all):
+                // the group is the leaf, picked and typed in as one, not a group over a row that repeats it.
+                if innermost && under.len() == 1 && self.own_words(under[0]).is_none() && self.budget > 0 {
+                    let row = under[0];
+                    let words: Vec<String> = self.levels.iter().map(|l| word_at(self.table, l, row)).collect();
+                    self.budget -= 1;
+                    self.rows.push(GridRow { kind: RowKind::Leaf, path: path.clone(), label, depth: depth + 1, leaves: 1, open: false, row: Some(row), words: Some(words), cells: self.leaf_cells(row) });
+                    continue;
+                }
                 self.rows.push(GridRow { kind: RowKind::Group, path: p.clone(), label, depth: depth + 1, leaves: under.len(), open, row: None, words: None, cells });
                 if open {
                     self.under(p, &under);
@@ -295,11 +305,22 @@ impl Build<'_> {
     /// A leaf's label: its name where the table has one (a row an object); else its levels' words that aren't grouped by,
     /// "3 B1 U 130" under the total, "U 130" under a strip and block.
     fn leaf_label(&self, row: usize, words: &[String]) -> String {
-        if let Some(ColumnValues::Text(v)) = self.table.column("name").map(|c| &c.values) {
-            return v[row].clone().unwrap_or_default();
+        if let Some(own) = self.own_words(row) {
+            return own;
         }
-        let label: Vec<&str> = self.levels.iter().zip(words).filter(|(l, w)| !w.is_empty() && !self.group.contains(l)).map(|(_, w)| w.as_str()).collect();
-        if label.is_empty() { format!("row {}", row + 1) } else { label.join(" ") }
+        // Nothing of its own left (its groups say it all): its full words, never a row number a planner can't read.
+        let all: Vec<&str> = words.iter().filter(|w| !w.is_empty()).map(String::as_str).collect();
+        if all.is_empty() { format!("row {}", row + 1) } else { all.join(" ") }
+    }
+
+    /// What a leaf has to say for itself under its groups: its name where the table has one (a row an object), else its
+    /// levels' words that aren't grouped by; none when its groups say it all.
+    fn own_words(&self, row: usize) -> Option<String> {
+        if let Some(ColumnValues::Text(v)) = self.table.column("name").map(|c| &c.values) {
+            return v[row].clone().filter(|n| !n.is_empty());
+        }
+        let label: Vec<String> = self.levels.iter().filter(|l| !self.group.contains(l)).map(|l| word_at(self.table, l, row)).filter(|w| !w.is_empty()).collect();
+        (!label.is_empty()).then(|| label.join(" "))
     }
 }
 
