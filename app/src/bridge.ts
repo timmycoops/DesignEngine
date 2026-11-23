@@ -321,6 +321,8 @@ export interface ObjectSummary {
   /** String vertices, offset from the scene origin. Strings only: other rows leave it out. */
   vertices_local?: Vec3[] | null;
   closed?: boolean | null;
+  /** The table holding the Objects table's calculated columns (Table setup plan, decision 9): never listed as a table. */
+  objects_own?: boolean;
 }
 
 export interface ProjectSummary {
@@ -652,11 +654,13 @@ export interface CalcCheck {
   names: { fields: [string, string][]; labels: string[]; parameters: [string, string, boolean][] };
 }
 
-export const calcCheck = (object: string, column: CalculatedColumn) => invoke<CalcCheck>('calc_check', { object, column });
+/** `object` null: the Objects table (Table setup plan, decision 9). */
+export const calcCheck = (object: string | null, column: CalculatedColumn) => invoke<CalcCheck>('calc_check', { object, column });
 /** A calculated column traced on one row of its table, line by line; nothing kept. */
-export const calcTrace = (object: string, column: CalculatedColumn, row: number, label: string) => invoke<FormulaTrace>('calc_trace', { object, column, row, label });
+/** On the Objects table (`object` null), traced on `solid`'s row. */
+export const calcTrace = (object: string | null, column: CalculatedColumn, row: number, label: string, solid: string | null = null) => invoke<FormulaTrace>('calc_trace', { object, column, row, label, solid });
 /** The parameter tables a reserves table's dataflow reads, by id and name. */
-export const calcParameters = (object: string) => invoke<[string, string][]>('calc_parameters', { object });
+export const calcParameters = (object: string | null) => invoke<[string, string][]>('calc_parameters', { object });
 
 /** A script of the project as edited, checked as a library against the others (decision 9): its problems, each on its line. */
 export const scriptCheck = (name: string, source: string, script: string | null) => invoke<{ message: string; line: number | null }[]>('script_check', { name, source, script });
@@ -1457,6 +1461,14 @@ export interface SetupView {
   add_on_choices: SetupNamed[];
 }
 export const tableSetupView = (table: string) => invoke<SetupView>('table_setup_view', { table });
+
+/** The Objects table's calculated columns (Table setup plan, decision 9) worked out on these objects: a value each. */
+export interface ObjectsCalculated {
+  columns: CalculatedColumn[];
+  values: (number | null)[][];
+  said: { column: string; stopped: number; first: string | null }[];
+}
+export const objectsCalculated = (objects: string[]) => invoke<ObjectsCalculated>('objects_calculated', { objects });
 /** The engine's check of a parameter table as edited, before it's saved: resolves, or rejects with why. */
 export const parametersCheck = (content: ParameterTable) => invoke<null>('parameters_check', { content });
 /** The engine's check of a dataflow as edited, before it's saved. */

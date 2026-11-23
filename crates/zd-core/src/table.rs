@@ -221,6 +221,10 @@ pub struct Table {
     /// What fills it, for a reserves table (Table setup plan, decision 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup: Option<TableSetup>,
+    /// The Objects table's own (Table setup plan, decision 9): a table of no rows holding only the calculated columns
+    /// the Objects table shows, one a project, kept as any table is so each change is a revision and undone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub objects: bool,
 }
 
 impl Table {
@@ -276,6 +280,7 @@ mod tests {
             ],
             calculated: Vec::new(),
             setup: None,
+            objects: false,
         };
         t.check().unwrap();
         assert_eq!(t.rows(), 2);

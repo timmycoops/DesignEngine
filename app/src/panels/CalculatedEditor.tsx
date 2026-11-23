@@ -26,23 +26,28 @@ export function CalculatedEditor({
   picked,
   onClose,
 }: {
-  table: string;
+  /** The reserves table; null, the Objects table (Table setup plan, decision 9): a formula on each solid's row. */
+  table: string | null;
   /** The table's number columns, for Weighted by. */
   numbers: string[];
   /** The column changed, or none for a new one. */
   editing: CalculatedColumn | null;
-  /** The leaf to trace on: its row and its words. */
-  picked: { row: number; label: string } | null;
+  /** The leaf to trace on: its row and its words; on the Objects table, the solid. */
+  picked: { row: number; label: string; solid?: string } | null;
   onClose: () => void;
 }) {
-  const { runRecord } = useWorkspace();
+  const { runRecord, summary } = useWorkspace();
   const scripts = useProjectScripts();
   const parameterTables = useParameterTables();
-  const [name, setName] = useState(editing?.name ?? 'strip_ratio');
+  const first = table ? 'strip_ratio' : 'coal_tonnes';
+  const [name, setName] = useState(editing?.name ?? first);
   const [unit, setUnit] = useState(editing?.unit ?? '');
   const [by, setBy] = useState<By>(editing?.adds.by ?? 'from_inputs');
   const [weight, setWeight] = useState<string>(editing?.adds.by === 'weighted_by' ? editing.adds.column : (numbers[0] ?? ''));
-  const [script, setScript] = useState(editing?.script ?? starterScript('strip_ratio'));
+  const [script, setScript] = useState(editing?.script ?? (table ? starterScript(first) : `def formula(row, p):
+    # A solid's row of the Objects table: its attributes and measures, worked when shown, never stored.
+    row.${first} = row.volume * row.rd
+`));
   const [parameters, setParameters] = useState<string[]>(editing?.parameters ?? []);
   const [check, setCheck] = useState<CalcCheck | null>(null);
   const [trace, setTrace] = useState<FormulaTrace | null>(null);
@@ -72,9 +77,9 @@ export function CalculatedEditor({
   }, [table, column]);
 
   const run = async () => {
-    if (!picked) return setSaid({ error: 'Pick a leaf in the grid to run the formula on it' });
+    if (!picked) return setSaid({ error: table ? 'Pick a leaf in the grid to run the formula on it' : 'Pick a solid in the grid to run the formula on it' });
     try {
-      setTrace(await calcTrace(table, column, picked.row, picked.label));
+      setTrace(await calcTrace(table, column, picked.row, picked.label, picked.solid ?? null));
       setSaid({});
     } catch (e) {
       setTrace(null);
@@ -82,13 +87,17 @@ export function CalculatedEditor({
     }
   };
   const save = async () => {
-    const outcome = await runRecord('table.calculate', { table, column, replaces: editing && editing.name !== column.name ? editing.name : null });
+    const replaces = editing && editing.name !== column.name ? editing.name : null;
+    const outcome = await runRecord('table.calculate', table ? { table, column, replaces } : { objects: true, column, replaces });
     if (outcome.error) return setSaid({ error: outcome.error });
     onClose();
   };
   const remove = async () => {
     if (!editing) return;
-    const outcome = await runRecord('table.remove_column', { table, column: editing.name });
+    // The Objects table's columns are kept in its own table (decision 9).
+    const holder = table ?? summary?.objects.find((o) => o.objects_own)?.id;
+    if (!holder) return;
+    const outcome = await runRecord('table.remove_column', { table: holder, column: editing.name });
     if (outcome.error) return setSaid({ error: outcome.error });
     onClose();
   };

@@ -1,8 +1,8 @@
 import { Download, EyeOff, FileUp, MousePointerSquareDashed, Scan, Trash2 } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
-import { concealed, type Grid, type GridRow, type ObjectKind, solidsTable, tableGrid } from '@/bridge';
+import { type CalculatedColumn, concealed, type Grid, type GridRow, type ObjectKind, type ObjectsCalculated, objectsCalculated, solidsTable, tableGrid } from '@/bridge';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
-import { Choice, EditableCell, Field, FilterInput, GroupBy, NumberInput, Select } from '@/design-system/kit';
+import { Choice, EditableCell, Field, FilterInput, GroupBy, NumberInput, ScriptEditor, Select } from '@/design-system/kit';
 import type { When } from '@/filters';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
@@ -12,6 +12,7 @@ import { attributeColumns, csvOf, densityColumns, filterable, shownRows, type So
 import { fmt, kindLabel } from './format';
 import { IN_TREE } from './layerTree';
 import { UpdateRecords } from './UpdateRecords';
+import { CalculatedEditor } from './CalculatedEditor';
 import { TableGrid } from './TableGridView';
 import { type Entry, gridCsv, groupsKept, nextSort, pastedLines, readEntry, type Sort, toggleOpen } from './tableGrid';
 
@@ -46,6 +47,12 @@ const helper = columnHelper<SolidRow>();
 /** Columns the engine's objects table keeps for itself: an attribute of one of these names isn't a column of its own. */
 const OWN = new Set(['name', 'layer', 'kind', 'volume', 'tonnes']);
 
+/** An object script to start from (Table setup plan, decision 10): what it sets becomes each block's attribute. */
+const STARTER_OBJECT_SCRIPT = `def formula(row, p):
+    # What it sets becomes the block's attribute: words where the line gives words, else a number.
+    row.process = "dragline" if row.horizon == "OB" else "loader"
+`;
+
 export function BlockTable({ picker }: { picker?: ReactNode }) {
   const { summary, selection, setSelection, runRecord, zoomTo, setObjectsVisible } = useWorkspace();
   const [kind, setKind] = useState<Kind>('solid');
@@ -67,6 +74,11 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
   /** Update records from a CSV, its strip open under the head (decision 5). */
   const [updating, setUpdating] = useState(false);
   const [said, setSaid] = useState<{ error?: string; text?: string }>({});
+  /** The Objects table's calculated columns (Table setup plan, decision 9): worked out on the rows, never stored. */
+  const [calc, setCalc] = useState<{ ids: string[]; of: ObjectsCalculated } | null>(null);
+  const [calcOpen, setCalcOpen] = useState<{ editing: CalculatedColumn | null } | null>(null);
+  /** An object script (decision 10), being written, run on the solids shown. */
+  const [scripting, setScripting] = useState<string | null>(null);
 
   const solids = useMemo(() => (summary?.objects ?? []).filter((o) => IN_TREE(o) && (kind === 'all' || o.kind === kind)), [summary, kind]);
   const [one, many] = KIND_WORDS[kind];
@@ -113,6 +125,31 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
     // `key` stands for `taken`: the same solids at the same revisions read the same.
   }, [key, layerName]);
 
+  // The calculated columns' values on the solids taken, again whenever they or the Objects table's own change.
+  const ownRevision = summary?.objects.find((o) => o.objects_own)?.revision ?? 0;
+  useEffect(() => {
+    let live = true;
+    const ids = taken.filter((o) => o.kind === 'solid').map((o) => o.id);
+    if (ids.length === 0) {
+      setCalc(null);
+      return;
+    }
+    void objectsCalculated(ids)
+      .then((of) => live && setCalc({ ids, of }))
+      .catch(() => live && setCalc(null));
+    return () => {
+      live = false;
+    };
+  }, [key, ownRevision]);
+  const calcOf = useMemo(() => {
+    const at = new Map((calc?.ids ?? []).map((id, k) => [id, k]));
+    return (id: string, column: number): number | null => {
+      const k = at.get(id);
+      return k === undefined ? null : (calc?.of.values[column]?.[k] ?? null);
+    };
+  }, [calc]);
+  const calcColumns = useMemo(() => calc?.of.columns ?? [], [calc]);
+
   const columns = useMemo(() => {
     const have = attributeColumns(rows);
     return [...have, ...extra.filter((k) => !have.some((c) => c.key === k)).map((key) => ({ key, numeric: false }))];
@@ -149,7 +186,10 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
   const groupOptions = useMemo(() => ['layer', ...(kind === 'all' ? ['kind'] : []), ...columns.filter((c) => !c.numeric && !OWN.has(c.key)).map((c) => c.key)], [columns, kind]);
   const groupBy = groupsKept(group, groupOptions);
   const shownKey = shown.map((r) => r.id).join(',');
-  const gridColumns = useMemo(() => [...(withVolume ? ['volume'] : []), ...(withVolume && rd ? ['tonnes'] : []), ...columns.filter((c) => !OWN.has(c.key)).map((c) => c.key)], [withVolume, rd, columns]);
+  const gridColumns = useMemo(
+    () => [...(withVolume ? ['volume'] : []), ...(withVolume && rd ? ['tonnes'] : []), ...columns.filter((c) => !OWN.has(c.key)).map((c) => c.key), ...(kind === 'solid' ? calcColumns.map((c) => c.name) : [])],
+    [withVolume, rd, columns, kind, calcColumns],
+  );
   useEffect(() => {
     if (groupBy.length === 0 || shown.length === 0) return setGrid(null);
     let live = true;
@@ -202,10 +242,34 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
           },
         }),
       ),
+      // The Objects table's calculated columns (decision 9): worked out, read only, ƒ in the head to open the formula.
+      ...(kind === 'solid'
+        ? calcColumns.map((cc, k) =>
+            helper.accessor((r) => calcOf(r.id, k) ?? Number.NEGATIVE_INFINITY, {
+              id: `c:${cc.name}`,
+              header: () => (
+                <button type="button" className="italic hover:underline" title={`${cc.name}: calculated on each solid's row, never stored; open its formula`} onClick={() => setCalcOpen({ editing: cc })}>
+                  ƒ {cc.name}
+                </button>
+              ),
+              cell: (c) => {
+                const v = calcOf(c.row.original.id, k);
+                return <span className="block text-right italic tabular-nums">{v === null ? '' : fmt(v, 3)}</span>;
+              },
+            }),
+          )
+        : []),
       ...(take === 'layer' ? [] : [helper.accessor('layer', { header: 'Layer' })]),
     ],
-    [columns, take, kind, kinds, withVolume, numericOf, rows],
+    [columns, take, kind, kinds, withVolume, numericOf, rows, calcColumns, calcOf],
   );
+
+  // The solid picked last, to run a calculated column's formula on, line by line.
+  const pickedSolid = useMemo(() => {
+    const id = selection[selection.length - 1];
+    const r = id ? rows.find((x) => x.id === id) : undefined;
+    return r ? { row: 0, label: r.name, solid: r.id } : null;
+  }, [selection, rows]);
 
   const deleteShown = async () => {
     setConfirming(false);
@@ -272,6 +336,21 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
               setNaming(null);
             }}
           />
+        )}
+        {kind === 'solid' && (
+          <>
+            <button type="button" className="whitespace-nowrap text-muted-foreground hover:text-foreground hover:underline" title="A column worked out on each solid's row by a formula, never stored: tonnes as volume by RD, a waste class from ash" onClick={() => setCalcOpen({ editing: null })}>
+              + Calculated
+            </button>
+            <button
+              type="button"
+              className="whitespace-nowrap text-muted-foreground hover:text-foreground hover:underline"
+              title="An object script on the solids shown: def formula(row, p), what it sets becoming their attributes, one undo"
+              onClick={() => setScripting((s) => (s === null ? STARTER_OBJECT_SCRIPT : null))}
+            >
+              Run a script on blocks…
+            </button>
+          </>
         )}
         <GroupBy
           value={groupBy}
@@ -357,6 +436,27 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
           onClose={() => setUpdating(false)}
         />
       )}
+      {calcOpen && (
+        <CalculatedEditor
+          key={calcOpen.editing?.name ?? '+'}
+          table={null}
+          numbers={['volume', ...(rd ? ['tonnes'] : []), ...columns.filter((c) => c.numeric && !OWN.has(c.key)).map((c) => c.key)]}
+          editing={calcOpen.editing}
+          picked={pickedSolid}
+          onClose={() => setCalcOpen(null)}
+        />
+      )}
+      {calc && calc.of.said.length > 0 && kind === 'solid' && (
+        <div className="px-2 py-1 text-warning" data-slot="objects-calc-said">
+          {calc.of.said.map((s) => (
+            <div key={s.column}>
+              {s.column}: no value on {fmt(s.stopped)} solid{s.stopped === 1 ? '' : 's'}
+              {s.first ? `, the first ${s.first}` : ''}
+            </div>
+          ))}
+        </div>
+      )}
+      {scripting !== null && <ObjectScriptStrip source={scripting} onChange={setScripting} ids={shown.filter((r) => kinds.get(r.id) === 'solid').map((r) => r.id)} onClose={() => setScripting(null)} />}
       <div className="min-h-0 flex-1">
         {groupBy.length > 0 ? (
           grid && (
@@ -374,7 +474,8 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
                 return id !== null && picked.has(id);
               }}
               rowWords={[one, many]}
-              editable={(r, c) => r.kind === 'leaf' && !OWN.has(c.name)}
+              editable={(r, c) => r.kind === 'leaf' && !OWN.has(c.name) && c.kind !== 'calculated'}
+              onEditCalc={(c) => c.calculated && setCalcOpen({ editing: c.calculated })}
               onEdit={(c, cells) =>
                 void setAttributes(
                   c.name,
@@ -397,6 +498,37 @@ export function BlockTable({ picker }: { picker?: ReactNode }) {
           windowed={[undefined, ...(kind === 'all' ? ['6rem'] : []), ...(withVolume ? ['7rem'] : []), ...columns.map(() => '6rem'), ...(take === 'layer' ? [] : ['8rem'])]}
         />
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * An object script (Table setup plan, decision 10) on the solids shown: `def formula(row, p):` on each one's row of the
+ * Objects table, what it sets becoming its attributes, words or a number; never its name, layer, volume or geometry. One
+ * run, one undo; a reserves table made before then says its blocks have changed.
+ */
+function ObjectScriptStrip({ source, onChange, ids, onClose }: { source: string; onChange: (s: string) => void; ids: string[]; onClose: () => void }) {
+  const { runRecord } = useWorkspace();
+  const [said, setSaid] = useState<{ error?: string; text?: string }>({});
+  const [running, setRunning] = useState(false);
+  const run = async () => {
+    setRunning(true);
+    const outcome = await runRecord('object.script', { objects: ids, source });
+    setRunning(false);
+    setSaid(outcome.error ? { error: outcome.error } : { text: `${outcome.record?.messages?.[0] ?? 'Done'}; one undo puts them back` });
+  };
+  return (
+    <div className="shrink-0 space-y-1 border-b border-border px-2 py-1" data-slot="object-script">
+      <ScriptEditor value={source} onChange={onChange} label="Object script" className="max-h-48" />
+      <div className="flex items-center gap-2">
+        <Button size="sm" className="h-6 px-2 text-xs" disabled={running || ids.length === 0} onClick={() => void run()} title="Run it on every solid shown, one run: each it changes revised once">
+          {running ? 'Running…' : `Run on the ${fmt(ids.length)} solid${ids.length === 1 ? '' : 's'} shown`}
+        </Button>
+        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onClose}>
+          Close
+        </Button>
+        {said.error ? <span className="text-destructive">{said.error}</span> : said.text ? <span className="text-ok">{said.text}</span> : null}
       </div>
     </div>
   );

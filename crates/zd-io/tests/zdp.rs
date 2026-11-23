@@ -272,7 +272,10 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
             parameters: None,
             sources: [("dip".to_string(), zd_core::FieldSource::Parameter { column: "design_dip".into() })].into(),
         }),
+        objects: false,
     };
+    // The Objects table's own calculated columns (Table setup plan, decision 9): a table of no rows, marked.
+    let objects_own = Table { columns: vec![], calculated: results.calculated.clone(), setup: None, objects: true };
     p.apply(RunId::new(), vec![Change::Create { name: "assumptions".into(), layer: "parameters".into(), attributes: Attributes::new(), body: Body::ParameterTable(Arc::new(parameters)) }])
         .unwrap();
     let table_id = named(&p, "assumptions").id;
@@ -298,6 +301,7 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
         vec![
             Change::Create { name: "reserves".into(), layer: "dataflows".into(), attributes: Attributes::new(), body: Body::Dataflow(Arc::new(dataflow)) },
             Change::Create { name: "Base in situ".into(), layer: "reserves".into(), attributes: Attributes::new(), body: Body::Table(Arc::new(results)) },
+            Change::Create { name: "Objects".into(), layer: "tables".into(), attributes: Attributes::new(), body: Body::Table(Arc::new(objects_own)) },
             Change::Create { name: "empty".into(), layer: "reserves".into(), attributes: Attributes::new(), body: Body::Table(Arc::new(Table::default())) },
         ],
     )

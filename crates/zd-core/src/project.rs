@@ -971,6 +971,7 @@ mod tests {
                 ],
                 calculated: Vec::new(),
                 setup: None,
+                objects: false,
             }))
         };
         let solid = || Body::Solid(Solid::new(TriMesh::new(vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], vec![[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]])).unwrap());

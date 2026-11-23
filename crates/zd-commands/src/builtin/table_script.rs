@@ -30,8 +30,13 @@ pub struct RunTableScript;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TableScriptParams {
-    /// The table it runs on, `t`.
-    pub table: ObjectId,
+    /// The table it runs on, `t`; none with `objects`.
+    #[serde(default)]
+    pub table: Option<ObjectId>,
+    /// Run on the Objects table (Table setup plan, decision 10): a row a solid, its calculated columns worked out. Gives
+    /// a table of its own; an object script sets attributes.
+    #[serde(default)]
+    pub objects: bool,
     /// A script of the project, by id; or `source`, the script written in.
     #[serde(default)]
     pub script: Option<ObjectId>,
@@ -122,7 +127,9 @@ pub(crate) fn table_parameters(tables: &[Arc<ParameterTable>]) -> Values {
 fn project_tables<'a>(objects: impl Iterator<Item = &'a Arc<Object>>) -> Vec<(String, ObjectId, Arc<Table>)> {
     let mut out: Vec<(String, ObjectId, Arc<Table>)> = Vec::new();
     for o in objects {
+        // The Objects table's own holds only its calculated columns: `table("Objects")` reads the Objects table itself.
         if let Body::Table(t) = &o.body
+            && !t.objects
             && !out.iter().any(|(n, _, _)| *n == o.name)
         {
             out.push((o.name.clone(), o.id, t.clone()));
@@ -179,9 +186,31 @@ impl Command for RunTableScript {
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let object = inputs.object(p.table)?;
-        let Body::Table(table) = &object.body else {
-            return Err(CommandError::WrongKind { id: p.table, expected: ObjectKind::Table, found: object.kind() });
+        let project = inputs.project();
+        // The Objects table (decision 10 of 0103): every solid read, and its own calculated columns.
+        let objects_table;
+        let (name, held, table): (String, Option<&Arc<Object>>, &Arc<Table>) = match (p.table, p.objects) {
+            (_, true) => {
+                if p.into == ScriptInto::Columns {
+                    return Err(CommandError::Invalid("the Objects table's rows are the design: a table script on it gives a table of its own, and an object script (object.script) sets attributes".into()));
+                }
+                for o in project.objects().filter(|o| matches!(o.body, Body::Solid(_))) {
+                    inputs.object(o.id)?;
+                }
+                if let Some(own) = crate::objects_own::objects_own(project) {
+                    inputs.object(own.id)?;
+                }
+                objects_table = Arc::new(crate::objects_own::objects_rows(project));
+                (crate::objects_own::OBJECTS_OWN.to_string(), None, &objects_table)
+            }
+            (Some(id), false) => {
+                let object = inputs.object(id)?;
+                let Body::Table(table) = &object.body else {
+                    return Err(CommandError::WrongKind { id, expected: ObjectKind::Table, found: object.kind() });
+                };
+                (object.name.clone(), Some(object), table)
+            }
+            (None, false) => return Err(CommandError::Invalid("name the table it runs on, or run it on the Objects table (objects)".into())),
         };
         let (source, script_name) = match (&p.script, &p.source) {
             (Some(id), None) => {
@@ -209,10 +238,15 @@ impl Command for RunTableScript {
             };
             parameter_tables.push(t.clone());
         }
-        let tables = project_tables(inputs.objects());
+        let mut tables = project_tables(inputs.objects());
+        let reads_objects = crate::objects_own::reads_objects(&source);
+        if reads_objects && !p.objects {
+            tables.retain(|(n, _, _)| n != crate::objects_own::OBJECTS_OWN);
+            tables.push((crate::objects_own::OBJECTS_OWN.to_string(), ObjectId::default(), Arc::new(crate::objects_own::objects_rows(project))));
+        }
         let ran = script
             .run(TableInput {
-                name: object.name.clone(),
+                name: name.clone(),
                 table: table.clone(),
                 tables: tables.iter().map(|(n, _, t)| (n.clone(), t.clone())).collect(),
                 parameters: table_parameters(&parameter_tables),
@@ -221,8 +255,14 @@ impl Command for RunTableScript {
             })
             .map_err(|problem| CommandError::Invalid(format!("{script_name} stopped: {problem}")))?;
         // The tables it read by name are its inputs too.
-        for name in &ran.read {
-            if let Some((_, id, _)) = tables.iter().find(|(n, _, _)| n == name) {
+        for read in &ran.read {
+            if read == crate::objects_own::OBJECTS_OWN && reads_objects {
+                for o in project.objects().filter(|o| matches!(o.body, Body::Solid(_))) {
+                    inputs.object(o.id)?;
+                }
+                continue;
+            }
+            if let Some((_, id, _)) = tables.iter().find(|(n, _, _)| n == read) {
                 inputs.object(*id)?;
             }
         }
@@ -232,11 +272,13 @@ impl Command for RunTableScript {
         notes.extend(ran.checks.iter().map(|c| Note::warning(Code::TableCheckOut, format!("{script_name}: {c}"))));
         let (change, message) = match p.into {
             ScriptInto::New => {
-                let name = if p.name.trim().is_empty() { format!("{} {script_name}", object.name) } else { p.name.trim().to_string() };
-                let message = format!("{name}: {} rows, {} columns, from {} by {script_name}", ran.table.rows(), ran.table.columns.len(), object.name);
+                let from = &name;
+                let name = if p.name.trim().is_empty() { format!("{from} {script_name}") } else { p.name.trim().to_string() };
+                let message = format!("{name}: {} rows, {} columns, from {from} by {script_name}", ran.table.rows(), ran.table.columns.len());
                 (Change::Create { name, layer: p.layer.clone(), attributes: Default::default(), body: Body::Table(Arc::new(ran.table)) }, message)
             }
             ScriptInto::Columns => {
+                let object = held.expect("columns go on a table of the project");
                 let (merged, added) = columns_onto(table, &ran.table, ColumnKind::Entered).map_err(|e| CommandError::Invalid(format!("{script_name}: {e}")))?;
                 let message = format!("{}: {} column{} from {script_name}{}", object.name, added.len(), if added.len() == 1 { "" } else { "s" }, if added.is_empty() { String::new() } else { format!(", {}", added.join(", ")) });
                 (Change::Revise { id: object.id, base: object.revision, name: None, layer: None, attributes: None, body: Some(Body::Table(Arc::new(merged))) }, message)

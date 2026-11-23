@@ -431,7 +431,7 @@ pub fn objects_table(project: &Project, ids: &[ObjectId], density: Option<&str>)
         };
         columns.push(column);
     }
-    Table { columns, calculated: Vec::new(), setup: None }
+    Table { columns, calculated: Vec::new(), setup: None, objects: false }
 }
 
 #[cfg(test)]
@@ -453,6 +453,7 @@ mod tests {
             ],
             calculated: Vec::new(),
             setup: None,
+            objects: false,
         }
     }
 

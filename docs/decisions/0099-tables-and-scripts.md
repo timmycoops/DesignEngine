@@ -313,7 +313,8 @@ uses `@codemirror/autocomplete` 6.20.4 (CodeMirror 6, the locked editor; Tim agr
 - A paste fills one column, down from the cell pasted into.
 - Update records reads CSV only; an Excel file would need a new dependency.
 - A file can't add a record the target hasn't: a row, or an object.
-- Calculated columns are on reserves tables only; the Objects view has none yet. A calculated column can't read another.
+- A calculated column can't read another. (The Objects table's own came with 0103, workstream 6; so did object
+  scripts, `object.script`.)
 - A calculated column has no worked examples of its own yet, as a dataflow formula's are.
 - A load names a script by its name: renaming a script means editing what loads it, and saving that again.
 - Nothing lists what loads a script yet; deleting one that's loaded is said when what loads it next runs.

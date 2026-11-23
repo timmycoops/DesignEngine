@@ -342,6 +342,7 @@ Each of these gives a new table; `t` itself never changes.
 | `t.sort("ROM\\Coal\\tonnes", descending=True)` | its rows in a column's order |
 | `t.row(0)` | one row as a dict of its columns |
 | `table("Vulcan check")` | another table of the project, by its name |
+| `table("Objects")` | the Objects table: a row a solid, its attributes, volume and tonnes by `rd`, and the Objects table's calculated columns worked out |
 | `new_table({"block": blocks, "tonnes": tonnes}, units={"tonnes": "t"}, adds={"tonnes": "sum"}, name="check")` | a table from lists, all as long |
 
 `adds` says how a number adds up in a group: `"sum"`, `"max"`, `"min"`, `"volume"` (averaged by the `volume` beside it),
@@ -358,6 +359,27 @@ empty in a group, and the run says so. The formula library (`in_situ_rd`, `weigh
 - **As a workflow step**, after the reserves run that makes its table.
 
 A script never writes over a column the run wrote or a person entered; the run refuses it, naming the column.
+
+- **On the Objects table**, `table.script` with `objects: true`: every solid's row, giving a table of its own (sums by
+  strip and seam, design checks, a join to a Vulcan export of the blocks). It never puts columns on the Objects table.
+
+## Object scripts
+
+An object script sets the blocks' own attributes, as a formula on each block's row of the Objects table:
+`def formula(row, p):`, run by `object.script` on blocks named, or on every solid of some layers that fits a filter.
+What it sets becomes the block's attribute: words where the line gives words (a quoted value, `str(...)`, another word
+column), else a number. It reads the row's attributes, `volume` and `tonnes`, and `p` by the block's attributes.
+
+```
+def formula(row, p):
+    row.material = "waste" if row.horizon in ["OB", "IB"] else "coal"
+    row.discard = 1 if row.ash > p.ash_limit else 0
+```
+
+It never sets `name`, `layer`, `kind`, `volume` or `tonnes`, and never touches geometry. Each block it changes is
+revised once, all in one undo; a block it stops on stops the run, and nothing is written. A calculated column on the
+Objects table is the same formula worked out when shown and never stored: use one where the value follows the design,
+an object script where the block should carry it.
 
 ## A mine's own checks
 

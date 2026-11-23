@@ -593,6 +593,7 @@ mod tests {
             ],
             calculated: Vec::new(),
             setup: None,
+            objects: false,
         }
     }
 
@@ -613,6 +614,7 @@ mod tests {
             ],
             calculated: Vec::new(),
             setup: None,
+            objects: false,
         };
         let words = |node: &[&str], column: &str| {
             let node: Vec<String> = node.iter().map(|w| w.to_string()).collect();

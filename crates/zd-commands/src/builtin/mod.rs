@@ -41,6 +41,7 @@ mod waste_allocation;
 mod table_setup;
 mod read_by;
 mod setup_view;
+mod object_script;
 mod measure;
 
 pub use benches::{BENCH_FLOOR, BENCH_TOP, BENCHED_FROM, BenchEnd, BenchRule, CutByBenches, CutByBenchesParams, rule_for};
@@ -84,6 +85,7 @@ pub use reserves_run::{
 pub use read_by::{ColumnRead, ReadBy, Reader, read_by};
 pub use setup_view::{BlocksView, FieldView, Named, SetupStep, SetupView, TableRead, setup_view};
 pub use table_setup::{SaveTableSetup, SaveTableSetupParams};
+pub use object_script::{ObjectScript, ObjectScriptParams};
 pub use waste_allocation::{ADD_ON as WASTE_ALLOCATION_ADD_ON, PROCESSES as WASTE_PROCESSES, schedule_fields as waste_schedule_fields, tables as waste_allocation_tables, waste_allocation_add_on};
 pub use starter::{DISCARDED, RENAMED_FIELDS, TONNES_AD_PER_M3, renamed_from_older, starter_formulas, with_starter_formulas};
 pub use zd_script::REFERENCE as FORMULA_REFERENCE;
@@ -187,6 +189,7 @@ pub fn register_all(registry: &mut Registry) {
     // Reserves: parameters, dataflows and their formulas, reserves runs.
     registry.register(Module::Reserves, SaveParameters);
     registry.register(Module::Reserves, SaveTableSetup);
+    registry.register(Module::Reserves, ObjectScript);
     registry.register(Module::Reserves, SaveDataflow);
     registry.register(Module::Reserves, RunReserves);
     registry.register(Module::Reserves, EnterInTable);

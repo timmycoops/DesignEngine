@@ -499,7 +499,20 @@ impl Command for RunReserves {
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let started = Instant::now();
-        let mut prepared = prepare(&|id| inputs.object(id).cloned(), p)?;
+        // The Objects table's calculated columns (Table setup plan, decision 9) taken as attributes the blocks haven't.
+        let calculated = crate::objects_own::blocks_with_calculated(inputs.project(), &p.blocks);
+        let own = if calculated.is_empty() { None } else { crate::objects_own::objects_own(inputs.project()).map(|o| inputs.object(o.id)).transpose()? };
+        let mut prepared = prepare(&|id| match calculated.get(&id) {
+            Some(o) => {
+                inputs.object(id)?;
+                Ok(o.clone())
+            }
+            None => inputs.object(id).cloned(),
+        }, p)?;
+        if let Some(o) = own {
+            let was = std::mem::take(&mut prepared.audit_tables);
+            prepared.audit_tables = [was, format!("{} r{} (calculated columns)", o.name, o.revision)].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("; ");
+        }
         // Run again into a table (decision 0085): only its case's blocks under `only`.
         let into = match p.table {
             Some(id) => {
@@ -534,7 +547,12 @@ impl Command for RunReserves {
             into_table(&mut out, &object, &prepared, p)?;
         }
         // The table script steps, on the whole table each time: one run again is worked on every row (decision 11).
-        super::table_script::run_table_steps(&mut out, &prepared.table_steps, &prepared.tables, &super::table_script::tables_by_name(inputs.objects()), &prepared.declared.lookups);
+        // `table("Objects")` in a table step reads the Objects table, worked out only where a step names it (0103, 10).
+        let mut by_name = super::table_script::tables_by_name(inputs.objects());
+        if prepared.dataflow.steps.iter().filter(|s| s.table.is_some()).filter_map(|s| s.script()).any(crate::objects_own::reads_objects) {
+            by_name.push((crate::objects_own::OBJECTS_OWN.to_string(), Arc::new(crate::objects_own::objects_rows(inputs.project()))));
+        }
+        super::table_script::run_table_steps(&mut out, &prepared.table_steps, &prepared.tables, &by_name, &prepared.declared.lookups);
         Ok(out)
     }
 }
@@ -1645,7 +1663,8 @@ pub fn units_at_step(project: &zd_core::Project, log: &[crate::LogEntry], table:
     let mut p = rerun_params(project, log, table, &[])?;
     p.table = None;
     p.previous = None;
-    let get = unsaved.reader(project)?;
+    let read = unsaved.reader(project)?;
+    let get = crate::objects_own::with_calculated(project, &p.blocks, &read);
     let prepared = match &unsaved.dataflow {
         Some(edited) => prepare_flow(&get(p.dataflow)?.name, edited, &get, &p, true)?,
         None => prepare(&get, &p)?,
@@ -1710,7 +1729,7 @@ pub fn units_at_step(project: &zd_core::Project, log: &[crate::LogEntry], table:
         table_columns.push(TableColumn { name: f.name.clone(), unit: unit_of_kind(f.kind).to_string(), add_up: Some(f.add_up.clone()), kind: zd_core::ColumnKind::Written, values: zd_core::ColumnValues::Number(v) });
     }
     let step_name = if step == 0 { "as input".to_string() } else { prepared.steps[step - 1].0.clone() };
-    Ok(StepUnits { step: step_name, upper, columns: columns.len(), stopped, table: Table { columns: table_columns, calculated: Vec::new(), setup: None } })
+    Ok(StepUnits { step: step_name, upper, columns: columns.len(), stopped, table: Table { columns: table_columns, calculated: Vec::new(), setup: None, objects: false } })
 }
 
 /// A table's column made ready to run: the dataflow prepared with the table's own run's parameters, the column's key,
@@ -1758,6 +1777,8 @@ fn open_column(project: &zd_core::Project, log: &[crate::LogEntry], get: &dyn Fn
     }
     p.blocks.retain(|id| project.object(*id).is_some());
     let saved = get(p.dataflow)?;
+    let calculated = crate::objects_own::with_calculated(project, &p.blocks, get);
+    let get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError> = &calculated;
     let prepared = match dataflow {
         Some(edited) => prepare_flow(&saved.name, edited, get, &p, true)?,
         None => prepare(get, &p)?,
@@ -3189,7 +3210,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
     for (name, words) in [("run", when.to_string()), ("dataflow", prepared.audit_dataflow.clone()), ("parameters", prepared.audit_tables.clone())] {
         columns.push(TableColumn::text(&format!("Summary\\Audit\\{name}"), leaves.iter().map(|_| Some(words.clone()).filter(|w| !w.is_empty())).collect()));
     }
-    Table { columns, calculated: Vec::new(), setup: None }
+    Table { columns, calculated: Vec::new(), setup: None, objects: false }
 }
 
 /// A leaf's pieces by the folder they were written to.
@@ -3438,7 +3459,7 @@ pub(crate) fn merge_rerun(old: &Table, new: &Table, upper: &[String], case: &str
             TableColumn { name: like.name.clone(), unit: newest.unit.clone(), add_up: newest.add_up.clone(), kind: like.kind, values }
         })
         .collect();
-    (Table { columns, calculated: old.calculated.clone(), setup: old.setup.clone() }, lost)
+    (Table { columns, calculated: old.calculated.clone(), setup: old.setup.clone(), objects: old.objects }, lost)
 }
 
 /// What a reserves table was made from that has changed since (decision 4 of 0099): its blocks revised since the run

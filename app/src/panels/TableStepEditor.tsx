@@ -41,7 +41,7 @@ export function TableStepEditor({
 }) {
   const { summary } = useWorkspace();
   // The columns offered for t["…"] are the newest table's: what a run of this dataflow writes, near enough.
-  const newest = (summary?.objects ?? []).filter((o) => o.kind === 'table').at(-1)?.id ?? null;
+  const newest = (summary?.objects ?? []).filter((o) => o.kind === 'table' && !o.objects_own).at(-1)?.id ?? null;
   const columns = useTableColumns(newest);
   const parameters = useParameterColumns(parameterTables);
   const scripts = useProjectScripts();
