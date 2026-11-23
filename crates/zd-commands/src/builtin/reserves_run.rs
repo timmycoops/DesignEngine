@@ -141,6 +141,9 @@ pub struct RunReservesParams {
     /// With `table`: the run that wrote the table before, so a block not run again is read against its own run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<zd_core::RunId>,
+    /// The add-on dataflows to run with it, in order (Table setup plan, decision 2); none given, the dataflow's own list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_ons: Option<Vec<ObjectId>>,
 }
 
 /// What a step writes (decision 0074): a piece of a unit on a leaf of the reserves table, under a folder. The leaf is
@@ -456,6 +459,10 @@ pub(crate) struct Prepared {
     unplaced: Vec<(String, String)>,
     /// What the run read, for the table's audit (decision 0086): the dataflow and its parameter tables at their revisions.
     audit_dataflow: String,
+    /// The add-ons run with the dataflow, each `name rN`, for the audit (Table setup plan, decision 2).
+    audit_add_ons: Vec<String>,
+    /// Which add-on each of the run's steps came from, by step name; a step of the main dataflow has none.
+    step_from: BTreeMap<String, ObjectId>,
     audit_tables: String,
 }
 
@@ -515,7 +522,7 @@ impl Command for RunReserves {
         let when = if p.table.is_some() { format!("{}, run again", utc_words(now)) } else { utc_words(now) };
         // What fills each table it makes (Table setup plan, decision 1): kept with the table, so Run again runs it.
         let objects: Vec<&Arc<Object>> = inputs.objects().collect();
-        let setup = zd_core::TableSetup { dataflow: p.dataflow, blocks: zd_core::BlockPick::of_blocks(objects.iter().copied(), &p.blocks), model: p.model, stack: p.stack.clone(), parameters: p.parameters.clone() };
+        let setup = zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons.clone(), blocks: zd_core::BlockPick::of_blocks(objects.iter().copied(), &p.blocks), model: p.model, stack: p.stack.clone(), parameters: p.parameters.clone() };
         let mut out = outcome(&prepared, p, ran, stopped, started, &when, &setup);
         if let Some(object) = into {
             into_table(&mut out, &object, &prepared, p)?;
@@ -533,7 +540,7 @@ pub(crate) fn prepare(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError
         return Err(CommandError::WrongKind { id: p.dataflow, expected: ObjectKind::Dataflow, found: flow.kind() });
     };
     let mut prepared = prepare_flow(&flow.name, dataflow, get, p, false)?;
-    prepared.audit_dataflow = format!("{} r{}", flow.name, flow.revision);
+    prepared.audit_dataflow = std::iter::once(format!("{} r{}", flow.name, flow.revision)).chain(prepared.audit_add_ons.iter().cloned()).collect::<Vec<_>>().join(" + ");
     Ok(prepared)
 }
 
@@ -541,6 +548,32 @@ pub(crate) fn prepare(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError
 ///
 /// With `flagging`, a dataflow being edited: a formula's worked example that fails is kept in `failing`, not refused.
 pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>, p: &RunReservesParams, flagging: bool) -> Result<Prepared, CommandError> {
+    if dataflow.add_on {
+        return Err(CommandError::Invalid(format!("{name} is an add-on: it runs with a main dataflow that lists it, or a table whose setup does")));
+    }
+    // Its add-ons put in at their stage (Table setup plan, decision 2): the run's own list, else the dataflow's.
+    let add_on_ids = p.add_ons.clone().unwrap_or_else(|| dataflow.add_ons.clone());
+    let mut audit_add_ons = Vec::new();
+    let mut step_from = BTreeMap::new();
+    let dataflow: Arc<Dataflow> = if add_on_ids.is_empty() {
+        dataflow.clone()
+    } else {
+        let mut add_ons: Vec<(String, Arc<Dataflow>)> = Vec::new();
+        for &id in &add_on_ids {
+            let object = get(id)?;
+            let Body::Dataflow(a) = &object.body else {
+                return Err(CommandError::WrongKind { id, expected: ObjectKind::Dataflow, found: object.kind() });
+            };
+            audit_add_ons.push(format!("{} r{}", object.name, object.revision));
+            for s in &a.steps {
+                step_from.insert(s.step.clone(), id);
+            }
+            add_ons.push((object.name.clone(), a.clone()));
+        }
+        let pairs: Vec<(&str, &Dataflow)> = add_ons.iter().map(|(n, d)| (n.as_str(), d.as_ref())).collect();
+        Arc::new(dataflow.with_add_ons(&pairs).map_err(CommandError::Invalid)?)
+    };
+    let dataflow = &dataflow;
     dataflow.check().map_err(CommandError::Invalid)?;
     let fields = Arc::new(dataflow.engine_fields().map_err(CommandError::Invalid)?);
     let mut tables = Vec::new();
@@ -630,7 +663,7 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     }
     let audit_tables = audit_tables.join("; ");
     let audit_dataflow = format!("{name} as edited");
-    Ok(Prepared { name: name.to_string(), failing, dataflow: dataflow.clone(), fields, tables, horizons, steps, table_steps, declared, upper, lower, columns, unplaced, audit_dataflow, audit_tables })
+    Ok(Prepared { name: name.to_string(), failing, dataflow: dataflow.clone(), fields, tables, horizons, steps, table_steps, declared, upper, lower, columns, unplaced, audit_dataflow, audit_tables, audit_add_ons, step_from })
 }
 
 /// A value from the parameter tables, read in order.
@@ -754,6 +787,9 @@ fn unit_of(prepared: &Prepared, object: &Object) -> Result<(u32, Labels, Option<
 #[derive(Debug, Clone, Serialize)]
 pub struct StepView {
     pub step: String,
+    /// The add-on dataflow it came from (Table setup plan, decision 2), where it isn't the main dataflow's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dataflow: Option<ObjectId>,
     pub units: Vec<UnitView>,
     /// What the step said of this column, in the run's words (none for the column as input).
     pub said: Vec<String>,
@@ -887,7 +923,7 @@ fn view(run: &ColumnRun<'_>, step: &str, said: Vec<String>) -> StepView {
             words: u.words.clone(),
         })
         .collect();
-    StepView { step: step.to_string(), units, said, kind: StepKind::Input, rule: String::new(), when: BTreeMap::new(), source: None, fits: Vec::new(), reads: Vec::new(), workings: Vec::new(), writes: Vec::new(), fields_read: Vec::new() }
+    StepView { step: step.to_string(), dataflow: None, units, said, kind: StepKind::Input, rule: String::new(), when: BTreeMap::new(), source: None, fits: Vec::new(), reads: Vec::new(), workings: Vec::new(), writes: Vec::new(), fields_read: Vec::new() }
 }
 
 /// One column: its blocks made units, then each step in turn. With `preview`, the column after each step, with what
@@ -916,6 +952,7 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
         done.map_err(|why| stop(format!("{} at {name}: {why}", key.words())))?;
         if let (Some(p), Some(before)) = (preview.as_deref_mut(), before) {
             let mut cell = view(&run, name, run.said.since(&before));
+            cell.dataflow = prepared.step_from.get(name).copied();
             cell.fits = fits;
             cell.reads = run.reads.as_ref().map(|r| std::mem::take(&mut *r.borrow_mut())).unwrap_or_default();
             cell.workings = run.workings.as_ref().map(|w| std::mem::take(&mut *w.borrow_mut())).unwrap_or_default();
@@ -3439,6 +3476,7 @@ pub fn rerun_params(project: &zd_core::Project, log: &[crate::LogEntry], table: 
         table: Some(table),
         only: only.to_vec(),
         previous: record.map(|r| r.run),
+        add_ons: setup.add_ons,
     })
 }
 
@@ -3454,7 +3492,7 @@ pub fn setup_of(project: &zd_core::Project, log: &[crate::LogEntry], table: Obje
     let p: RunReservesParams = serde_json::from_value(record.params.clone()).map_err(|e| CommandError::Invalid(format!("the run that made {} can't be read again: {e}", object.name)))?;
     let blocks: Vec<ObjectId> = p.blocks.into_iter().filter(|id| project.object(*id).is_some()).collect();
     let all: Vec<&Arc<Object>> = project.objects().collect();
-    Ok(zd_core::TableSetup { dataflow: p.dataflow, blocks: zd_core::BlockPick::of_blocks(all.iter().copied(), &blocks), model: p.model, stack: p.stack, parameters: p.parameters })
+    Ok(zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons, blocks: zd_core::BlockPick::of_blocks(all.iter().copied(), &blocks), model: p.model, stack: p.stack, parameters: p.parameters })
 }
 
 /// The reserves run that last wrote a table: the run its revision came from, or where a person has since entered values
@@ -3714,7 +3752,7 @@ pub fn dataflow_starter(model: &zd_core::SeamModel) -> (ParameterTable, Dataflow
     let row = |material: &str| ParameterRow { when: [("material".to_string(), material.to_string())].into(), values: BTreeMap::new() };
     let default = ParameterRow { when: BTreeMap::new(), values: [("underburden_thickness".to_string(), ParamValue::Number(UNDERBURDEN_THICKNESS))].into() };
     let table = ParameterTable { filters: vec!["material".into(), "seam".into()], columns, rows: vec![row("waste"), row("coal"), default] };
-    let mut dataflow = Dataflow { levels: zd_core::default_levels(), fields, steps, parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new(), words: Vec::new() };
+    let mut dataflow = Dataflow { levels: zd_core::default_levels(), fields, steps, ..Dataflow::default() };
     super::with_starter_formulas(&mut dataflow);
     (table, dataflow)
 }

@@ -65,10 +65,43 @@ Objects table's formulas and scripts.
 | `zdp` round trip (zd-io) | a table's setup saved and read back | exact |
 | The demo pit (`workflow_demo.py`, built before setups, run by hand) | Base and 50m, their setups filled from their runs (one layer each, the seam model), run again from them: 1,436 and 2,847 rows, 455 columns each, every value the same but `Summary\Audit\run`, the run's time | exact |
 
+## Built: workstream 2, add-on dataflows
+
+- **An add-on** (`Dataflow.add_on`): a dataflow of only fields, words, parameter tables and its own formula, allocation
+  and table script steps; no built-in step and no add-ons of its own (`check_add_on`). Saved on its own: its tables
+  there, its loads and lookups bound, its allocation and table scripts compiled and its formulas parsed; a formula is
+  checked against a main dataflow's names when one listing it is saved or run. Run on its own, it's refused.
+- **A main dataflow lists its add-ons** (`Dataflow.add_ons`), in order; a table's setup may give its own list
+  (`TableSetup.add_ons`), and so may a run (`reserves.run`'s `add_ons`). Saving a main dataflow checks it with its add-ons
+  put in; one listing a dataflow that isn't an add-on, or itself, is refused.
+- **Put in at their stage** (`Dataflow::with_add_ons`): formula and allocation steps before `final`, after the main's own
+  there, so after `rom`; table scripts last; fields, words, parameter tables, scripts and lookups after the main's. A field
+  or word both have must be the same; a step name both have is refused. The run, Open its column, Every block at a step
+  and Run again all put them in the same way (`prepare_flow`).
+- **Recorded:** the audit names each add-on with its revision (`Reserves r3 + Waste allocation r2`), and the run reads
+  them, so a table says when an add-on has changed since. A notebook cell from an add-on carries its id, so Edit opens
+  the add-on.
+- **Waste allocation is an add-on** (`waste_allocation_add_on`), made once: Add waste allocation saves its tables and
+  the Waste allocation add-on where the project hasn't them (a site's edited ones kept), then the dataflow saved listing
+  it. Its quantities on the known-answer column and the demo pit are as before.
+- **The Parameters tab:** a main dataflow's **Add-ons**, in order, added, moved and taken out; an add-on says what it is,
+  hides the levels, and adds allocations before its table scripts.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `two_tables_share_one_add_on_and_an_edit_to_it_reaches_both` (reserves_run.rs) | the plan's case: one Waste allocation add-on listed by two tables' setups, Topsoil 2,500 m³ on A's leaf in each; its loose ground edited once (topsoil and freedig taken together): both, run again from their setups, Topsoil 25,000 and Freedig 0, Excavator 25,000 and Dragline 150,000 as before; the audit names the add-on; the main dataflow's revision unchanged | 1e-9 |
+| `an_add_on_runs_only_with_a_main_dataflow` (reserves_run.rs) | run on its own refused; a built-in step in an add-on refused; a main listing a main refused; a step name clash refused | exact |
+| `waste_allocation_is_an_add_on_that_goes_in_where_it_belongs` (zd-commands) | 39 fields, 5 words, 7 steps; put in between rom and final, the check last; twice and without rom refused | exact |
+| `add_waste_allocation_fills_each_process_on_a_waste_interval_of_two_horizons` (reserves_run.rs) | as in 0102, through the add-on; the dataflow lists it and its own steps are untouched | 1e-9 |
+| The demo pit (by hand) | every leaf's primes add to its scheduled waste (largest difference 3.6e-11 m³), coal mining to its coal, a process on every waste leaf; 245 ms | 1e-9 relative |
+
 ## Known limits
 
-- The setup holds one dataflow (add-ons are workstream 2), the dataflow's own parameter tables (the table's own list is
-  workstream 4) and no field overrides yet (workstream 3).
+- The setup holds the dataflow's own parameter tables (the table's own list is workstream 4) and no field overrides yet
+  (workstream 3).
+- An add-on's unsaved edits aren't run live in the notebook (the live run takes the main dataflow as edited): save it
+  to see them.
+- A dataflow made by Add waste allocation before add-ons (0102, workstream 5) keeps its steps in it; it runs as it did.
 - A setup is seen and changed from Python or `table.setup` for now; the Setup tab is workstream 5.
 - A setup filled from an older run keeps that run's own rows and model; a table made outside a reserves run (a table
   script's) has none.

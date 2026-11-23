@@ -263,6 +263,7 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
         // A reserves table's setup (Table setup plan, decision 1) comes back with it.
         setup: Some(zd_core::TableSetup {
             dataflow: zd_core::ObjectId::new(),
+            add_ons: Some(vec![zd_core::ObjectId::new()]),
             blocks: zd_core::BlockPick { filter: [("seam".to_string(), "U, M".to_string())].into(), ..Default::default() },
             model: None,
             stack: vec!["OB".into(), "U".into()],
@@ -285,6 +286,8 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
         scripts: vec![],
         lookups: vec![],
         words: vec![],
+        add_on: false,
+        add_ons: Vec::new(),
     };
     p.apply(
         RunId::new(),

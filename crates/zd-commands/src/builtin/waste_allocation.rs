@@ -235,58 +235,47 @@ pub fn schedule_fields() -> Vec<String> {
     PROCESSES.iter().flat_map(|p| QUANTITIES.iter().map(move |q| format!("Waste\\{p}\\{q}"))).chain(OTHER_FIELDS.iter().map(|f| f.to_string())).collect()
 }
 
-/// The dataflow with waste allocation added: the schedule and word fields it hasn't, the allocation steps before
-/// `final`, the check step last, and the settings table read after its own. Refused where it has no `rom` and `final`,
-/// or has one of the steps already. Gives back what was added, in words.
-pub fn with_waste_allocation(d: &mut Dataflow, settings: ObjectId) -> Result<Vec<String>, String> {
-    let has = |name: &str| d.steps.iter().any(|s| s.step == name && s.is_built_in());
-    if !has("rom") || !has("final") {
-        return Err("waste allocation goes after rom and before final, and the dataflow hasn't both".into());
+/// The add-on's name in the project: made once, kept where a site has one, every dataflow and table that lists it running
+/// the same steps (Table setup plan, decision 2).
+pub const ADD_ON: &str = "Waste allocation";
+
+/// The template's waste allocation as an add-on (Table setup plan, decision 2): its schedule and word fields, its six
+/// allocation steps and the check step, and the settings table, read as `p`. It runs with any main dataflow that has
+/// `rom` and `final`, its allocation steps before `final` and its check after.
+pub fn waste_allocation_add_on(settings: ObjectId) -> Dataflow {
+    Dataflow {
+        fields: schedule_fields().iter().map(|name| DataflowField { field: Field::new(name, FieldKind::Other, AddUp::Sum), source: FieldSource::Worked }).collect(),
+        words: WORDS.iter().map(|name| WordField::new(name, FieldSource::Worked)).collect(),
+        steps: STEPS.iter().map(|(name, script)| DataflowStep::allocation(name, script)).chain(std::iter::once(DataflowStep::table_script(CHECK_STEP, CHECKS))).collect(),
+        parameters: vec![settings],
+        add_on: true,
+        ..Dataflow::default()
     }
-    if let Some(s) = d.steps.iter().find(|s| scripts().iter().any(|(n, _)| *n == s.step)) {
-        return Err(format!("the dataflow has a step {} already: waste allocation is added once", s.step));
-    }
-    let mut added = Vec::new();
-    let mut fields = 0;
-    for name in schedule_fields() {
-        if !d.fields.iter().any(|f| f.field.name == name) {
-            d.fields.push(DataflowField { field: Field::new(&name, FieldKind::Other, AddUp::Sum), source: FieldSource::Worked });
-            fields += 1;
-        }
-    }
-    added.push(format!("{fields} schedule fields"));
-    let mut words = 0;
-    for name in WORDS {
-        if !d.words.iter().any(|w| w.name == name) {
-            d.words.push(WordField::new(name, FieldSource::Worked));
-            words += 1;
-        }
-    }
-    added.push(format!("{words} word fields"));
-    let at = d.steps.iter().position(|s| s.step == "final" && s.is_built_in()).expect("final, checked above");
-    for (k, (name, script)) in STEPS.iter().enumerate() {
-        d.steps.insert(at + k, DataflowStep::allocation(name, script));
-    }
-    d.steps.push(DataflowStep::table_script(CHECK_STEP, CHECKS));
-    added.push(format!("{} allocation steps and a check step", STEPS.len()));
-    if !d.parameters.contains(&settings) {
-        d.parameters.push(settings);
-    }
-    Ok(added)
 }
 
 impl crate::Session {
-    /// Adds waste allocation to a dataflow (the Waste allocation plan, decision 7): its four parameter tables saved where
-    /// the project hasn't one of that name (one it has is kept, as a site edited it), then the dataflow saved with the
-    /// fields, steps and checks added. A run each, each undone on its own. Gives back the tables' ids, settings first.
-    pub fn add_waste_allocation(&mut self, dataflow: ObjectId) -> Result<Vec<ObjectId>, CommandError> {
+    /// Adds waste allocation to a main dataflow (the Waste allocation plan, decision 7, made an add-on by the Table setup
+    /// plan, decision 2): its four parameter tables and the Waste allocation add-on saved where the project hasn't one of
+    /// that name (one it has is kept, as a site edited it), then the dataflow saved listing the add-on, so every table it
+    /// makes runs it. A run each, each undone on its own. Gives back the tables' ids, settings first, and the add-on's.
+    pub fn add_waste_allocation(&mut self, dataflow: ObjectId) -> Result<(Vec<ObjectId>, ObjectId), CommandError> {
         let object = self.project().object(dataflow).cloned().ok_or(CommandError::MissingObject(dataflow))?;
         let Body::Dataflow(d) = &object.body else {
             return Err(CommandError::WrongKind { id: dataflow, expected: ObjectKind::Dataflow, found: object.kind() });
         };
         let mut d = (**d).clone();
         // Checked before anything is saved, so a refusal leaves the project as it was.
-        with_waste_allocation(&mut d.clone(), ObjectId::new()).map_err(CommandError::Invalid)?;
+        if d.add_on {
+            return Err(CommandError::Invalid(format!("{} is an add-on: add waste allocation to a main dataflow", object.name)));
+        }
+        if let Some(s) = d.steps.iter().find(|s| scripts().iter().any(|(n, _)| *n == s.step)) {
+            return Err(CommandError::Invalid(format!("{} has a step {} already: waste allocation is added once", object.name, s.step)));
+        }
+        let listed = d.add_ons.iter().filter_map(|id| self.project().object(*id)).any(|o| o.name == ADD_ON);
+        if listed {
+            return Err(CommandError::Invalid(format!("{} runs the {ADD_ON} add-on already: it's added once", object.name)));
+        }
+        d.with_add_ons(&[(ADD_ON, &waste_allocation_add_on(ObjectId::new()))]).map_err(CommandError::Invalid)?;
         let made = |record: RunRecord| record.outputs.iter().find(|o| o.change == zd_core::ChangeKind::Created).map(|o| o.id).ok_or_else(|| CommandError::Invalid("nothing was made".into()));
         let mut ids = Vec::new();
         for (name, csv) in tables() {
@@ -297,9 +286,14 @@ impl crate::Session {
             };
             ids.push(id);
         }
-        with_waste_allocation(&mut d, ids[0]).map_err(CommandError::Invalid)?;
+        let kept = self.project().objects().find(|o| o.name == ADD_ON && matches!(&o.body, Body::Dataflow(a) if a.add_on)).map(|o| o.id);
+        let add_on = match kept {
+            Some(id) => id,
+            None => made(self.run("dataflow.save", serde_json::json!({ "name": ADD_ON, "content": waste_allocation_add_on(ids[0]) }))?)?,
+        };
+        d.add_ons.push(add_on);
         self.run("dataflow.save", serde_json::json!({ "dataflow": dataflow.to_string(), "name": object.name, "content": d }))?;
-        Ok(ids)
+        Ok((ids, add_on))
     }
 }
 
@@ -334,32 +328,30 @@ mod tests {
         }
     }
 
-    /// The fields, words and steps go in once, before final and after it; a second time is refused, as is a dataflow
-    /// without rom and final.
+    /// The add-on holds together, and put into a main dataflow its fields, words and steps go in where they belong,
+    /// before final and after it; a dataflow without rom and final can't take it.
     #[test]
-    fn waste_allocation_is_added_once_where_it_belongs() {
+    fn waste_allocation_is_an_add_on_that_goes_in_where_it_belongs() {
+        let settings = ObjectId::new();
+        let a = waste_allocation_add_on(settings);
+        a.check().unwrap();
+        assert_eq!((a.fields.len(), a.words.len(), a.steps.len()), (39, 5, 7));
         let mut d = Dataflow {
-            levels: zd_core::default_levels(),
             fields: vec![
                 DataflowField { field: Field::new("volume", FieldKind::Volume, AddUp::Sum), source: FieldSource::Volume },
                 DataflowField { field: Field::new("thickness", FieldKind::Thickness, AddUp::Sum), source: FieldSource::Thickness },
             ],
             steps: ["initialise", "rom", "final"].iter().map(|s| DataflowStep::on(s)).collect(),
-            parameters: Vec::new(),
-            scripts: Vec::new(),
-            lookups: Vec::new(),
-            words: Vec::new(),
+            ..Dataflow::default()
         };
-        let settings = ObjectId::new();
-        let said = with_waste_allocation(&mut d, settings).unwrap();
-        assert_eq!(said, ["39 schedule fields", "5 word fields", "6 allocation steps and a check step"]);
-        let names: Vec<&str> = d.steps.iter().map(|s| s.step.as_str()).collect();
+        let merged = d.with_add_ons(&[(ADD_ON, &a)]).unwrap();
+        let names: Vec<&str> = merged.steps.iter().map(|s| s.step.as_str()).collect();
         assert_eq!(names, ["initialise", "rom", "loose_ground", "short_term_overrides", "dragline_system", "excavator_partings_wedge", "blasting", "waste_quantities", "final", "waste_checks"]);
-        assert_eq!(d.parameters, [settings]);
-        d.check().unwrap();
-        assert!(with_waste_allocation(&mut d, settings).unwrap_err().contains("has a step loose_ground already"));
+        assert_eq!(merged.parameters, [settings]);
+        merged.check().unwrap();
+        assert!(merged.with_add_ons(&[(ADD_ON, &a)]).unwrap_err().contains("has the name of a step already run"));
         d.steps.retain(|s| s.step != "rom");
-        assert!(with_waste_allocation(&mut d, settings).unwrap_err().contains("hasn't both"));
+        assert!(d.with_add_ons(&[(ADD_ON, &a)]).unwrap_err().contains("no rom before final"));
         for (name, csv) in tables() {
             zd_core::ParameterTable::from_csv(&csv).unwrap_or_else(|e| panic!("{name}: {e}"));
         }

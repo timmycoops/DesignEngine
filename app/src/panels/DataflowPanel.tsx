@@ -385,7 +385,7 @@ export function DataflowView() {
               summary={summaries[at]}
               focus={focus}
               trace={trace}
-              onEdit={step.kind === 'formula' || step.kind === 'allocation' ? () => openTool('params', `formula:${column.dataflow_id}:${step.step}`) : undefined}
+              onEdit={step.kind === 'formula' || step.kind === 'allocation' ? () => openTool('params', `formula:${step.dataflow ?? column.dataflow_id}:${step.step}`) : undefined}
               onWhole={() => setWhole(at)}
               edited={!!against && stepChanged(against, column, at)}
               onSetting={(t, row, name) => openTool('params', `cell:${t}:${row}:${name}`)}

@@ -194,11 +194,12 @@ impl PySession {
 
     /// Adds waste allocation to a dataflow (the Waste allocation plan, decision 7): its four parameter tables, where the
     /// project hasn't one of that name, then the dataflow saved with the schedule fields, allocation steps and checks
-    /// added. Gives back the tables' ids, the settings table first.
+    /// added as the Waste allocation add-on the dataflow lists (Table setup plan, decision 2). Gives back
+    /// `{"tables": [ids, settings first], "add_on": id}`.
     fn add_waste_allocation(&mut self, py: Python<'_>, dataflow: &str) -> PyResult<Py<PyAny>> {
         let id = object_id(dataflow)?;
-        let tables = py.detach(|| self.inner.add_waste_allocation(id)).map_err(|e| CommandError::new_err(e.to_string()))?;
-        to_py(py, &json!(tables.iter().map(|t| t.to_string()).collect::<Vec<_>>()))
+        let (tables, add_on) = py.detach(|| self.inner.add_waste_allocation(id)).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &json!({ "tables": tables.iter().map(|t| t.to_string()).collect::<Vec<_>>(), "add_on": add_on.to_string() }))
     }
 
     /// One block's column after each of a dataflow's steps (decision 0072): `params` as `reserves.run` takes them, the block

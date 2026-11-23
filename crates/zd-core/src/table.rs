@@ -188,6 +188,9 @@ impl BlockPick {
 #[serde(deny_unknown_fields)]
 pub struct TableSetup {
     pub dataflow: crate::ObjectId,
+    /// The add-on dataflows run with it, in order (decision 2); none, the dataflow's own list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_ons: Option<Vec<crate::ObjectId>>,
     pub blocks: BlockPick,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<crate::ObjectId>,
