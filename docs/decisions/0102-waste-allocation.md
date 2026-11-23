@@ -69,8 +69,40 @@ Five workstreams, in that order: words, schedule fields, allocation steps, sever
 | `word_fields_are_set_by_formulas_and_written_by_leaf` (reserves_run.rs) | B2's two U benches (10,000 m³ each) on one leaf set Dragline and Poststrip: the leaf reads `Dragline; Poststrip`, its dragline volume 10,000 m³ worked from each unit's own word; a parameter column's `Strip` and an attribute's `U` carried, from Imported on; a worked word has no Imported column; the notebook's units show their own; a number on the word field refused | 1e-9 |
 | `a word field takes its attribute or parameter column...` (app) | the Fields editor's word field helpers | exact |
 
+## Built: workstream 2, schedule fields
+
+- **A field named with a folder is a schedule field** (`zd_core::is_schedule_field`): `Waste\Dragline\Prime Volume`, a
+  number or a word field. Checked when the dataflow is saved (`check_schedule_fields`): every folder words with no spaces
+  at its ends, not starting at `Scheduled` (it's written there already), and never the unit's own volume or thickness,
+  which every stage writes. A schedule number field is kind `other`; its table unit comes from its last name where its
+  kind has none (a volume m³, a thickness m, tonnes t).
+- **Written under Scheduled only**: as `Scheduled\Waste\Dragline\Prime Volume`, a leaf's Scheduled pieces, coal and
+  waste, added up by the field's rule. Imported, Insitu, loss and dilution, ROM, clean coal and the Summary take none,
+  and the balance is the stages' volumes as before. A word schedule field goes beside it the same way.
+- **Set by a formula** by its name in square brackets, `unit["Waste\\Dragline\\Prime Volume"] = prime` (the handle took
+  names so already).
+- **Placed onto another leaf**: `unit.place_onto("Waste\\Drill and Blast\\Volume", x, seam=…, bench=…)` writes the value
+  on the leaf of the block those levels name (a level not named is the unit's own), not the unit's; it sets nothing on
+  the unit. Only a field named with a folder that adds up by sum is placed; a level that isn't one below the column stops
+  the block, naming the levels. `final` writes each where the column has something scheduled on that leaf, keeping the
+  leaf's own spelling; one onto a leaf with nothing scheduled lands nowhere, said with its block and never written, so
+  no leaf is made for it. A joined unit's value is shared over its benches by their in situ shares. The trace shows each
+  placing (`Event::Placed`) and `final`'s workings say where it went.
+- **Shown**: the Reserves table tab's Breakdown has each section under Scheduled as `Waste › Dragline`; the reference
+  and the editor's suggestions have `place_onto`.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `schedule_fields_hold_together` (zd-core) | a number and a word schedule field save; an empty folder, spaces at a folder's end, a name from `Scheduled`, the unit's volume named so refused | exact |
+| `a_schedule_field_is_placed_onto_another_leaf` (zd-script) | 300 m³ × 0.5 placed as 150 onto seam L, bench `110`; traced; a plain field, a word field, an unknown field and words refused | exact |
+| `schedule_fields_are_written_under_scheduled_by_process_and_placed_onto_a_leaf` (reserves_run.rs) | the loss column's OB, 50,000 m³ of ROM waste on seam A's leaf, 0.8 dragline with rehandle 0.2 and swell 0.3, all from an allocation row: Prime 40,000 m³, Rehandle 8,000, Total 48,000, Swelled 52,000 under `Scheduled\Waste\Dragline` on A's leaf, Method `Strip`, none of them outside Scheduled; the other 10,000 m³ placed onto seam B's leaf as drill and blast, none on A's, 10,000 in all; the balance unchanged; `final`'s workings name the leaf; onto seam Z said and not written; `zone=` stops the block | 1e-9 |
+| `schedule fields show under Scheduled, a section a process` (app) | the Breakdown's rows and values | exact |
+
 ## Known limits
 
 - A formula's worked examples (its known answers) expect numbers only; a word it sets is checked by running it.
 - The Dataflow tab's Before and After show a unit's words in its description, not as columns of their own.
 - `p` doesn't match parameter rows on a unit's words yet; `lookup("…", key=unit.process)` does.
+- The editor suggests plain field names after `unit.`; a schedule field is typed in square brackets.
+- The Balance view checks the stages, not the sections: that each process's prime volumes add to Scheduled waste is a
+  mine's check (0101), which the starter (workstream 5) adds.

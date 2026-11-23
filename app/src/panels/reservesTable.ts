@@ -101,7 +101,8 @@ export function fieldRows(b: Breakdown, all: boolean, folded: ReadonlySet<string
     }
     for (const sub of subs) {
       const key = `${top}\\${sub}`;
-      rows.push({ kind: 'folder', key, label: sub, depth: 1 });
+      // A schedule field's section (Waste allocation plan, decision 5) reads `Waste › Dragline`.
+      rows.push({ kind: 'folder', key, label: sub.split('\\').join(' › '), depth: 1 });
       if (folded.has(key)) continue;
       for (const f of here.filter((f) => f.folders.slice(1).join('\\') === sub)) rows.push(fieldRow(f, 2));
     }

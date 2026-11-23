@@ -178,6 +178,20 @@ pub struct ColumnRun<'a> {
     /// What moved between coal and waste, for the table's balance (decision 0086).
     moves: Vec<Piece>,
     finalised: bool,
+    /// What formulas placed onto other leaves of the column (Waste allocation plan, decision 5), written by `final` where
+    /// the leaf has something scheduled on it.
+    placed: Vec<Placement>,
+}
+
+/// A schedule field's value placed onto a leaf of the column (`unit.place_onto`, Waste allocation plan, decision 5): the
+/// unit that placed it, the field, the leaf (the levels below the column, as a piece's) and the value, a joined unit's
+/// shared by its benches' in situ shares.
+#[derive(Debug, Clone)]
+struct Placement {
+    unit: UnitId,
+    field: usize,
+    leaf: Vec<String>,
+    value: f64,
 }
 
 /// A line of a built-in step's arithmetic for a unit, as the notebook shows it (decision 0082): what was worked out or
@@ -391,6 +405,8 @@ struct Ran {
     moves: Vec<Piece>,
     /// Whether `final` ran, so ROM and Scheduled were written and the balance can be read.
     finalised: bool,
+    /// Schedule fields placed onto other leaves (Waste allocation plan, decision 5), each where `final` found its leaf.
+    placed: Vec<Placement>,
     key: ColumnKey,
     rows: Vec<Piece>,
     said: Said,
@@ -601,8 +617,18 @@ fn parameter(tables: &[Arc<ParameterTable>], attributes: &Attributes, column: &s
 
 /// A unit's words as the table's words columns under `folder` (`ROM\Waste\process`), a word field each it has a word
 /// for (Waste allocation plan, decision 2).
+/// A word field named with a folder is a schedule field (decision 5), written as `Scheduled\<its name>` beside the unit's
+/// Scheduled pieces and nowhere else.
 fn word_texts(u: &Unit, folder: &str) -> Vec<(String, String)> {
-    u.words.iter().filter(|(_, w)| !w.is_empty()).map(|(field, word)| (format!("{folder}\\{field}"), word.clone())).collect()
+    u.words
+        .iter()
+        .filter(|(_, w)| !w.is_empty())
+        .filter_map(|(field, word)| match zd_core::is_schedule_field(field) {
+            false => Some((format!("{folder}\\{field}"), word.clone())),
+            true if folder.starts_with("Scheduled\\") => Some((format!("Scheduled\\{field}"), word.clone())),
+            true => None,
+        })
+        .collect()
 }
 
 /// A block's words as it becomes a unit (Waste allocation plan, decision 2): from its attribute (else the parameter
@@ -888,7 +914,8 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
         }
     }
     let imbalance = input_volume - (run.column.balance()[volume] - run.added_volume);
-    Ok(Ran { moves: run.moves, finalised: run.finalised, key: key.clone(), rows: run.rows, said: run.said, imbalance, input_volume })
+    let placed = if run.finalised { run.placed } else { Vec::new() };
+    Ok(Ran { moves: run.moves, finalised: run.finalised, placed, key: key.clone(), rows: run.rows, said: run.said, imbalance, input_volume })
 }
 
 /// A column's blocks made units, its imported rows written: ready for its steps. Gives back its input volume too.
@@ -933,6 +960,7 @@ fn begin_column<'a>(prepared: &'a Prepared, key: &ColumnKey, blocks: &[Arc<Objec
         workings: None,
         moves: Vec::new(),
         finalised: false,
+        placed: Vec::new(),
     };
     for name in &mismatched {
         run.said.name("whose volume isn't its solid's (measured before it was cut again?)", name);
@@ -983,12 +1011,74 @@ fn run_formula(run: &mut ColumnRun<'_>, formula: &zd_script::Formula, step: &Dat
             };
             run.column.unit_mut(done.unit).set(i, x);
         }
+        for placed in &done.placed {
+            place_onto(run, done.unit, placed)?;
+        }
         let v = run.column.units()[done.unit].value(volume);
         for text in done.said {
             run.said.count(format!("printed by {}: {text}", step.step), v);
         }
     }
     Ok(())
+}
+
+/// A schedule field a formula placed onto another leaf of the column (Waste allocation plan, decision 5): the leaf is the
+/// unit's own with the levels it named put in, each named level one below the column; a joined unit's value is shared
+/// over its benches by their in situ shares, as its own pieces are. Only a field that adds up by sum moves to another leaf.
+fn place_onto(run: &mut ColumnRun<'_>, at: usize, placed: &zd_script::Placed) -> Result<(), String> {
+    let fields = run.column.fields();
+    let field = fields.at(&placed.field).map_err(|e| e.to_string())?;
+    if !fields.is_summed(field) {
+        return Err(format!("it places {} onto another leaf from {}, but it doesn't add up by sum: only a sum moves to another leaf", placed.field, run.name_of(at)));
+    }
+    let mut named: Vec<(usize, String)> = Vec::new();
+    for (level, word) in &placed.onto {
+        let Some(l) = run.lower.iter().position(|m| m.eq_ignore_ascii_case(level)) else {
+            return Err(format!("it places {} onto {level}={word}, but {level} isn't a level below the column ({})", placed.field, run.lower.join(", ")));
+        };
+        named.push((l, word.clone()));
+    }
+    let u = &run.column.units()[at];
+    let shares: Vec<(u32, f64)> = match u.joined {
+        Some(j) => run.column.joins()[j as usize].benches.iter().map(|b| (b.origin, b.share)).collect(),
+        None => vec![(u.origin, 1.0)],
+    };
+    let unit = u.id;
+    for (origin, share) in shares {
+        let attributes = &run.attributes[origin as usize];
+        let mut leaf: Vec<String> = run.lower.iter().map(|l| attribute_ci(attributes, l).map(attribute_word).unwrap_or_default()).collect();
+        for (l, word) in &named {
+            leaf[*l] = word.clone();
+        }
+        run.placed.push(Placement { unit, field, leaf, value: placed.value * share });
+    }
+    Ok(())
+}
+
+/// Where `final` writes what formulas placed (Waste allocation plan, decision 5): each onto its leaf where the column has
+/// something scheduled there, that leaf's own spelling kept; one onto a leaf with nothing scheduled lands nowhere and is
+/// said with its block, never written.
+fn land_placements(run: &mut ColumnRun<'_>, pieces: &[Piece]) {
+    let scheduled: Vec<&Vec<String>> = pieces.iter().filter(|p| p.folder.starts_with("Scheduled\\")).map(|p| &p.leaf).collect();
+    let same = |a: &[String], b: &[String]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.trim().eq_ignore_ascii_case(y.trim()));
+    let placed = std::mem::take(&mut run.placed);
+    for mut p in placed {
+        if let Some(leaf) = scheduled.iter().find(|l| same(l, &p.leaf)) {
+            p.leaf = (*leaf).clone();
+            if let Some(at) = run.column.position(p.unit) {
+                let name = run.column.fields().list()[p.field].name.clone();
+                let words: Vec<String> = run.lower.iter().zip(&p.leaf).filter(|(_, w)| !w.is_empty()).map(|(l, w)| format!("{l} {w}")).collect();
+                let value = p.value;
+                run.work(&[p.unit], || Line::sum("placed", format!("{} {name}", run.words_of(at)), value, "").then(format!("Scheduled\\{name}, on the leaf {}", words.join(", "))));
+            }
+            run.placed.push(p);
+        } else {
+            let name = run.column.fields().list()[p.field].name.clone();
+            let words: Vec<String> = run.lower.iter().zip(&p.leaf).filter(|(_, w)| !w.is_empty()).map(|(l, w)| format!("{l} {w}")).collect();
+            let block = run.column.position(p.unit).map(|at| run.name_of(at)).unwrap_or_default();
+            run.said.name(&format!("{name} placed onto {}, a leaf with nothing scheduled on it: not written", words.join(", ")), &block);
+        }
+    }
 }
 
 /// What a formula step is handed for a column: every unit top down, with its fields, labels, block, parameters, working
@@ -2548,6 +2638,7 @@ fn final_step(run: &mut ColumnRun<'_>, step: &DataflowStep) -> Result<(), String
         pieces.extend(place(run, &values, i, onto, "ROM\\Waste", &[]));
         pieces.extend(place(run, &values, i, onto, "Scheduled\\Waste", &[]));
     }
+    land_placements(run, &pieces);
     run.rows.extend(pieces);
     run.moves.extend(moves);
     run.finalised = true;
@@ -2718,7 +2809,8 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
     let fields = prepared.fields.list();
     // The leaves in the order they were first written, and what each holds.
     // A leaf: its key (case and level values), each folder's pieces' values, and its words by column.
-    type Leaf = (Vec<String>, BTreeMap<String, Vec<Vec<f64>>>, BTreeMap<String, String>, BTreeMap<String, f64>);
+    // And what formulas placed on it by schedule field (Waste allocation plan, decision 5).
+    type Leaf = (Vec<String>, BTreeMap<String, Vec<Vec<f64>>>, BTreeMap<String, String>, BTreeMap<String, f64>, BTreeMap<usize, f64>);
     let mut leaves: Vec<Leaf> = Vec::new();
     let mut at: BTreeMap<Vec<String>, usize> = BTreeMap::new();
     let mut folders: Vec<String> = Vec::new();
@@ -2729,7 +2821,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
             key.extend(r.key.path.iter().cloned());
             key.extend(piece.leaf.iter().cloned());
             let i = *at.entry(key.clone()).or_insert_with(|| {
-                leaves.push((key, BTreeMap::new(), BTreeMap::new(), BTreeMap::new()));
+                leaves.push((key, BTreeMap::new(), BTreeMap::new(), BTreeMap::new(), BTreeMap::new()));
                 leaves.len() - 1
             });
             if !folders.contains(&piece.folder) {
@@ -2756,10 +2848,20 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
             key.extend(r.key.path.iter().cloned());
             key.extend(piece.leaf.iter().cloned());
             let i = *at.entry(key.clone()).or_insert_with(|| {
-                leaves.push((key, BTreeMap::new(), BTreeMap::new(), BTreeMap::new()));
+                leaves.push((key, BTreeMap::new(), BTreeMap::new(), BTreeMap::new(), BTreeMap::new()));
                 leaves.len() - 1
             });
             *leaves[i].3.entry(piece.folder.clone()).or_default() += piece.values[v];
+        }
+        for p in &r.placed {
+            let mut key = vec![r.key.case.clone()];
+            key.extend(r.key.path.iter().cloned());
+            key.extend(p.leaf.iter().cloned());
+            let i = *at.entry(key.clone()).or_insert_with(|| {
+                leaves.push((key, BTreeMap::new(), BTreeMap::new(), BTreeMap::new(), BTreeMap::new()));
+                leaves.len() - 1
+            });
+            *leaves[i].4.entry(p.field).or_default() += p.value;
         }
     }
     let mut columns = vec![TableColumn::text("case", leaves.iter().map(|l| Some(l.0[0].clone())).collect())];
@@ -2792,6 +2894,10 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
         let waste_out = folder == "ROM\\Waste" || folder == "Scheduled\\Waste";
         for (i, f) in fields.iter().enumerate() {
             if waste_out && matches!(f.kind, FieldKind::Quality | FieldKind::Moisture | FieldKind::MoistureFactor) {
+                continue;
+            }
+            // A schedule field is written under Scheduled only, by its own name (Waste allocation plan, decision 5).
+            if zd_core::is_schedule_field(&f.name) {
                 continue;
             }
             // A thickness adds down a column and an area is a column's largest; across leaves neither adds up, so a
@@ -2835,6 +2941,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
             }
         }
     }
+    columns.extend(schedule_columns(prepared, &leaves.iter().map(|l| (&l.1, &l.4)).collect::<Vec<_>>()));
     for column in &text_columns {
         columns.push(TableColumn::text(column, leaves.iter().map(|l| l.2.get(column).cloned().filter(|w| !w.is_empty())).collect()));
     }
@@ -2848,6 +2955,48 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
         columns.push(TableColumn::text(&format!("Summary\\Audit\\{name}"), leaves.iter().map(|_| Some(words.clone()).filter(|w| !w.is_empty())).collect()));
     }
     Table { columns, calculated: Vec::new() }
+}
+
+/// A leaf's pieces by the folder they were written to.
+type Folders = BTreeMap<String, Vec<Vec<f64>>>;
+
+/// The schedule fields' columns (Waste allocation plan, decision 5): each field named with a folder written once, as
+/// `Scheduled\<its name>` (`Scheduled\Waste\Dragline\Prime Volume`), a leaf's Scheduled pieces, coal and waste, added up
+/// by the field's rule, with what formulas placed onto the leaf added in. A leaf with nothing scheduled and nothing placed
+/// has none; a field no leaf has a value for has no column.
+fn schedule_columns(prepared: &Prepared, leaves: &[(&Folders, &BTreeMap<usize, f64>)]) -> Vec<TableColumn> {
+    let fields = prepared.fields.list();
+    let mut columns = Vec::new();
+    for (i, f) in fields.iter().enumerate().filter(|(_, f)| zd_core::is_schedule_field(&f.name)) {
+        let values: Vec<Option<f64>> = leaves
+            .iter()
+            .map(|(folders, placed)| {
+                let pieces: Vec<&[f64]> = folders.iter().filter(|(folder, _)| folder.starts_with("Scheduled\\")).flat_map(|(_, p)| p.iter().map(Vec::as_slice)).collect();
+                let own = (!pieces.is_empty()).then(|| zd_reserves::add_up_values(&prepared.fields, &pieces)[i]).filter(|x| x.is_finite());
+                match (own, placed.get(&i)) {
+                    (Some(x), Some(p)) => Some(x + p),
+                    (None, Some(p)) => Some(*p),
+                    (own, None) => own,
+                }
+            })
+            .collect();
+        if values.iter().any(Option::is_some) {
+            columns.push(TableColumn { name: format!("Scheduled\\{}", f.name), unit: unit_of_schedule_field(f).to_string(), add_up: Some(f.add_up.clone()), kind: zd_core::ColumnKind::Written, values: zd_core::ColumnValues::Number(values) });
+        }
+    }
+    columns
+}
+
+/// A schedule field's unit in the table: its kind's, or for a field of no kind of its own (`other`), what its last name
+/// says, as Spry's sections name them: a volume in m³, a thickness in m, tonnes in t.
+fn unit_of_schedule_field(f: &zd_reserves::Field) -> &'static str {
+    let last = f.name.rsplit('\\').next().unwrap_or_default().to_ascii_lowercase();
+    match unit_of_field(f) {
+        "" if last.contains("volume") => "m3",
+        "" if last.contains("thickness") => "m",
+        "" if last.contains("tonnes") => "t",
+        unit => unit,
+    }
 }
 
 /// The table's balance (decision 0086): coal, waste and the two together, each with its volume at every stage, what

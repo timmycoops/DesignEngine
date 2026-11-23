@@ -203,6 +203,12 @@ pub struct Dataflow {
     pub words: Vec<WordField>,
 }
 
+/// Whether a field is a schedule field (Waste allocation plan, decision 5): named with a folder, `Waste\Dragline\Prime
+/// Volume`, and written as `Scheduled\Waste\Dragline\Prime Volume` only.
+pub fn is_schedule_field(name: &str) -> bool {
+    name.contains('\\')
+}
+
 impl Default for Dataflow {
     fn default() -> Self {
         Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new(), words: Vec::new() }
@@ -237,6 +243,29 @@ impl Dataflow {
         Ok(())
     }
 
+    /// Whether its schedule fields hold together (Waste allocation plan, decision 5): a field named with a folder,
+    /// `Waste\Dragline\Prime Volume`, is written under `Scheduled` only, so each part of its name is words, it doesn't
+    /// start at `Scheduled`, and it isn't the unit's volume or thickness, which every stage writes.
+    pub fn check_schedule_fields(&self) -> Result<(), String> {
+        let names = self.fields.iter().map(|f| (f.field.name.as_str(), Some(f.field.kind))).chain(self.words.iter().map(|w| (w.name.as_str(), None)));
+        for (name, kind) in names.filter(|(n, _)| is_schedule_field(n)) {
+            let parts: Vec<&str> = name.split('\\').collect();
+            if parts.iter().any(|p| p.trim().is_empty()) {
+                return Err(format!("the schedule field {name} has an empty folder: name it as Waste\\Dragline\\Prime Volume"));
+            }
+            if parts.iter().any(|p| p.trim() != *p) {
+                return Err(format!("the schedule field {name} has spaces at the ends of a folder"));
+            }
+            if parts[0].eq_ignore_ascii_case("Scheduled") {
+                return Err(format!("{name} is written under Scheduled already: name it from below, {}", parts[1..].join("\\")));
+            }
+            if matches!(kind, Some(zd_reserves::FieldKind::Volume | zd_reserves::FieldKind::Thickness)) {
+                return Err(format!("{name} is the unit's own volume or thickness, which every stage writes: a schedule field is another kind (other), worked or read from the volume"));
+            }
+        }
+        Ok(())
+    }
+
     /// How many of the levels make a column: those above `seam`, else all but the last.
     pub fn column_levels(&self) -> usize {
         self.levels.iter().position(|l| l.attribute.eq_ignore_ascii_case("seam")).unwrap_or(self.levels.len().saturating_sub(1))
@@ -252,6 +281,7 @@ impl Dataflow {
     pub fn check(&self) -> Result<(), String> {
         self.engine_fields()?;
         self.check_words()?;
+        self.check_schedule_fields()?;
         if self.levels.is_empty() {
             return Err("the dataflow has no levels".into());
         }
@@ -346,6 +376,34 @@ mod tests {
         assert!(said(vec![WordField::new("seam", FieldSource::Worked)]).contains("labels a unit by already"));
         assert!(said(vec![WordField::new("process", FieldSource::Volume)]).contains("not a solid's measure"));
         assert!(said(vec![WordField::new(" process", FieldSource::Worked)]).contains("spaces at its ends"));
+    }
+
+    /// Schedule fields (Waste allocation plan, decision 5): a number field and a word field named with folders hold
+    /// together; an empty folder, spaces at a folder's ends, a name starting at Scheduled, and the unit's own volume named
+    /// so are each refused.
+    #[test]
+    fn schedule_fields_hold_together() {
+        let schedule = |name: &str, kind: FieldKind| field(name, kind, AddUp::Sum, FieldSource::Worked);
+        let mut d = dataflow();
+        d.fields.push(schedule("Waste\\Dragline\\Prime Volume", FieldKind::Other));
+        d.words.push(WordField::new("Waste\\Dragline\\Method", FieldSource::Worked));
+        d.check().unwrap();
+        assert!(is_schedule_field("Waste\\Dragline\\Prime Volume") && !is_schedule_field("volume"));
+        let said = |name: &str, kind: FieldKind| {
+            let mut e = dataflow();
+            e.fields.push(schedule(name, kind));
+            e.check().unwrap_err()
+        };
+        assert!(said("Waste\\\\Prime Volume", FieldKind::Other).contains("an empty folder"), "{}", said("Waste\\\\Prime Volume", FieldKind::Other));
+        assert!(said("Waste\\ Dragline\\Prime Volume", FieldKind::Other).contains("spaces at the ends"));
+        assert!(said("Scheduled\\Waste\\Dragline\\Prime Volume", FieldKind::Other).contains("name it from below, Waste\\Dragline\\Prime Volume"));
+        let mut e = dataflow();
+        e.fields.retain(|f| f.field.kind != FieldKind::Volume);
+        e.fields.insert(0, schedule("Waste\\Dragline\\volume", FieldKind::Volume));
+        assert!(e.check().unwrap_err().contains("own volume or thickness"));
+        let mut e = dataflow();
+        e.words.push(WordField::new("\\Method", FieldSource::Worked));
+        assert!(e.check().unwrap_err().contains("an empty folder"));
     }
 
     #[test]
