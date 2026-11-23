@@ -935,6 +935,7 @@ mod tests {
                 TableColumn::adding("Loss\\Thin\\volume", "m3", AddUp::Sum, n(&[f64::NAN, f64::NAN, 500.0])),
             ],
             calculated: Vec::new(),
+            setup: None,
         };
         let f = reserves_figures("Reserves Base", &table);
         assert_eq!(f.writes.iter().map(|w| w.write.as_str()).collect::<Vec<_>>(), ["Insitu", "Loss"]);

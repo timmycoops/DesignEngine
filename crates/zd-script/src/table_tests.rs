@@ -52,6 +52,7 @@ fn blocks() -> Table {
             TableColumn::adding("coal", "t", AddUp::Sum, n(&[10.0, 50.0, 0.0])),
         ],
         calculated: Vec::new(),
+        setup: None,
     }
 }
 
@@ -64,6 +65,7 @@ fn vulcan() -> Table {
             TableColumn::number("coal", "t", vec![Some(10.0), Some(52.0), Some(7.0)]),
         ],
         calculated: Vec::new(),
+        setup: None,
     }
 }
 
@@ -200,6 +202,7 @@ fn every_table_script_in_the_reference_compiles_and_the_shares_add_to_one() {
     let t = Table {
         columns: vec![TableColumn::text("strip", w(&["1", "1", "2"])), TableColumn::adding("ROM\\Coal\\tonnes", "t", AddUp::Sum, vec![Some(10.0), Some(30.0), Some(5.0)])],
         calculated: Vec::new(),
+        setup: None,
     };
     let ran = TableScript::compile(share, Default::default()).unwrap().run(TableInput { name: "Base".into(), table: Arc::new(t), tables: Vec::new(), parameters: values([]), work: Arc::new(Sums), lookups: Default::default() }).unwrap();
     assert_eq!(numbers(&ran.table, "strip_coal_share"), [Some(0.25), Some(0.75), Some(1.0)]);
@@ -223,6 +226,7 @@ fn processes() -> Table {
             TableColumn::adding("ROM\\Coal\\tonnes", "t", AddUp::Sum, n(&[Some(80.0), Some(90.0), Some(70.0), Some(60.0)])),
         ],
         calculated: Vec::new(),
+        setup: None,
     }
 }
 

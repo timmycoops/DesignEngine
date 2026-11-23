@@ -328,6 +328,7 @@ mod tests {
                 TableColumn::number("Insitu\\Coal\\ash", "%", n(&[10.0, 20.0, 15.0])),
             ],
             calculated: Vec::new(),
+            setup: None,
         }
     }
 
@@ -439,6 +440,7 @@ mod batch_tests {
                 TableColumn::number("coal", "m3", rows.iter().map(|&r| if r % 3 == 2 { None } else { Some(2.0) }).collect()),
             ],
             calculated: Vec::new(),
+            setup: None,
         };
         let c = CalculatedColumn { name: "ratio".into(), unit: String::new(), script: "def formula(row):\n    row.ratio = row.waste / row.coal\n".into(), adds: CalcAddUp::Sum, parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new() };
         let none = |_: ObjectId| -> Option<Arc<zd_core::Object>> { None };

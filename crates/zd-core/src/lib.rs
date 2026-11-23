@@ -37,6 +37,6 @@ pub use object::{AttrValue, Attributes, Body, Layer, Object, ObjectKind, ObjectR
 pub use parameters::{Found, Given, Graded, GradedKey, OnGrid, ParamValue, Picked, ParameterRow, ParameterTable, ValueColumn, csv_cells, CurveEnds, OnCurve};
 pub use project::{Applied, AppliedChange, Change, ChangeKind, Project, ProjectError};
 pub use seam::{Fingerprint, GridLink, Horizon, IssueKind, Lattice, SeamModel, StackIssue, blank_no_seam, blank_no_thickness, grid_holes, moved_path, relative_path, same_path};
-pub use table::{CalcAddUp, CalculatedColumn, ColumnHeader, ColumnKind, ColumnValues, Table, TableColumn};
+pub use table::{BlockPick, CalcAddUp, CalculatedColumn, ColumnHeader, ColumnKind, ColumnValues, Table, TableColumn, TableSetup};
 pub use validity::{CrossingCheck, Crossings, MeshValidity, is_zero_area};
 pub use workflow::{BASE_CASE, Case, InputRule, LastRun, Source, StepAction, Workflow, WorkflowStep};
