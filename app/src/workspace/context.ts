@@ -124,6 +124,8 @@ export interface Workspace {
   runWorkflow: (workflow: string, from: number, workflowCase?: string) => Promise<{ record?: WorkflowRecord; error?: string }>;
   /** Runs every case of a workflow, Base first, as one undo (decision 0066). */
   runAllCases: (workflow: string, from?: { case: string; step: number }) => Promise<{ records?: WorkflowRecord[]; error?: string }>;
+  /** Adds waste allocation to a saved dataflow (Waste allocation plan, decision 7); the refusal, if any. */
+  addWasteAllocation: (dataflow: string) => Promise<{ error?: string }>;
   /** Captures runs from the run log as a new workflow, and opens the Workflow panel on it. */
   captureWorkflow: (name: string, runs: string[]) => Promise<{ record?: RunRecord; error?: string }>;
   /** The workflow and case the Workflow panel and the canvas show (decision 0067); a null id is the last one made. */

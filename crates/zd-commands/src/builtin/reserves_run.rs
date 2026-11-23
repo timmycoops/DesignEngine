@@ -1161,6 +1161,22 @@ fn place_onto(run: &mut ColumnRun<'_>, at: usize, placed: &zd_script::Placed) ->
     if !fields.is_summed(field) {
         return Err(format!("it places {} onto another leaf from {}, but it doesn't add up by sum: only a sum moves to another leaf", placed.field, run.name_of(at)));
     }
+    // Onto the leaves another unit of the column is written on (an allocation's `unit=`), by its benches' shares.
+    if let Some(id) = placed.unit {
+        let unit = run.column.units()[at].id;
+        let onto = run.column.position(id).ok_or_else(|| format!("it places {} onto a unit that's gone from the column", placed.field))?;
+        let u = &run.column.units()[onto];
+        let shares: Vec<(u32, f64)> = match u.joined {
+            Some(j) => run.column.joins()[j as usize].benches.iter().map(|b| (b.origin, b.share)).collect(),
+            None => vec![(u.origin, 1.0)],
+        };
+        for (origin, share) in shares {
+            let attributes = &run.attributes[origin as usize];
+            let leaf: Vec<String> = run.lower.iter().map(|l| attribute_ci(attributes, l).map(attribute_word).unwrap_or_default()).collect();
+            run.placed.push(Placement { unit, field, leaf, value: placed.value * share });
+        }
+        return Ok(());
+    }
     let mut named: Vec<(usize, String)> = Vec::new();
     for (level, word) in &placed.onto {
         let Some(l) = run.lower.iter().position(|m| m.eq_ignore_ascii_case(level)) else {

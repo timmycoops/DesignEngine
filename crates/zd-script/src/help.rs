@@ -76,6 +76,9 @@ pub const COLUMN_CALLS: &[Call] = &[
     call("before", "column.before(unit)", "the unit above this one; None for the first"),
     call("group_while", "column.group_while(\"process\", \"zone\", units=column.waste())", "runs of neighbouring units with the same values of these fields, words or labels: a list of lists"),
     call("total", "column.total(\"volume\", units=[a, b])", "a field over units (every unit by default) added up by its own rule"),
+    call("intervals", "for interval in column.intervals():", "the waste intervals between the coal sections, top down, each a list of its units; ends=\"coal\" the coal sections"),
+    call("take_from_top", "topsoil = column.take_from_top(interval, p.topsoil_thickness)", "a thickness off the top of these units, across as many as it needs, the last split: the pieces taken, top down"),
+    call("take_from_bottom", "zone = column.take_from_bottom(interval, p.zone_thickness)", "a thickness off the bottom of these units, across as many as it needs, the last split: the pieces taken, top down"),
     call("name", "column.name", "the column's words: Pit/3/B1"),
     call("block", "column.block.strip", "the column's own attributes, its levels above the seam"),
 ];

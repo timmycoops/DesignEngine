@@ -3166,3 +3166,101 @@ fn a_dragline_system_reads_its_factors_nearest_on_dip_and_between_on_zone_thickn
     let primes: f64 = ["Excavator", "Dragline", "Dozer Push"].iter().map(|p| at(&format!("Scheduled\\Waste\\{p}\\Prime Volume"))).sum();
     assert!((primes - 300_000.0).abs() < 1e-9, "the primes add to ROM waste: {primes}");
 }
+
+const STARTER_STACK: [&str; 6] = ["WEATH", "OB", "A", "AB", "B", "below B"];
+
+/// One block, 100 m by 50 m (5,000 m²): weathered 8 m over fresh overburden 42 m, the waste interval over A coal 2 m a
+/// run of two horizons; AB, a 2 m parting; B coal 3 m; waste below B, which isn't mined.
+fn starter_column(s: &mut Session) -> Vec<ObjectId> {
+    let rows: [(&str, f64, f64, &str, &str); 6] =
+        [("WEATH", 92.0, 100.0, "waste", "A"), ("OB", 50.0, 92.0, "waste", "A"), ("A", 48.0, 50.0, "coal", "A"), ("AB", 46.0, 48.0, "waste", "B"), ("B", 43.0, 46.0, "coal", "B"), ("below B", 39.0, 43.0, "waste", "")];
+    let ids = rows
+        .iter()
+        .map(|&(h, z0, z1, material, seam)| {
+            let mut a = json!({ "strip": 1.0, "block": "B1", "horizon": h, "material": material, "seam": seam });
+            if material == "coal" {
+                a["rd"] = json!(1.4);
+                a["ash"] = json!(10.0);
+            }
+            box_solid(s, &format!("1_B1_{h}"), 0.0, (z0, z1), a)
+        })
+        .collect::<Vec<_>>();
+    s.run("solid.measure", json!({ "solids": ids })).unwrap();
+    ids
+}
+
+/// Add waste allocation (Waste allocation plan, workstream 5) on a dataflow, run on the two-horizon column with the
+/// starter's default rows: topsoil 0.5 m, freedig 4.5 m, a 40 m system of two zones over at least 10 m of burden at a
+/// dip of 12°, partings to 3 m, a 2 m wedge, drilled where 3 m or more, rehandle 0 and swell 1.25 but the dragline's.
+///
+/// - The interval over A, WEATH and OB, 50 m (250,000 m³): Topsoil 2,500 m³ and Freedig 22,500 off WEATH's top; the
+///   system takes 40 m of the 45 m left from the bottom, across OB, in two 20 m zones. Zone 1 (100,000): Cast 20,000,
+///   Dozer Push 20,000, Dragline 60,000 with rehandle 60,000 × 0.8 ÷ 0.6 − 60,000 = 20,000. Zone 2: Dragline 90,000 with
+///   rehandle 90,000 × 1.2 ÷ 0.9 − 90,000 = 30,000, Poststrip 10,000. The 5 m left, WEATH's last 3 m and OB's top 2 m,
+///   isn't over coal: Excavator 25,000. Blasted from WEATH, its 225,000 of drill and blast on A's leaf.
+/// - AB, 2 m between A and B: Partings 10,000, ripped (under 3 m).
+/// - Coal: mining A 10,000 and B 15,000; each section's volume exposed on the waste above it, on its leaf.
+/// - Every leaf's primes add to its scheduled waste and its coal mining to its coal (the checks' differences 0); every
+///   waste leaf has a process.
+#[test]
+fn add_waste_allocation_fills_each_process_on_a_waste_interval_of_two_horizons() {
+    let mut s = session();
+    let ids = starter_column(&mut s);
+    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let content = json!({
+        "fields": [
+            { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
+            { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
+            { "name": "area", "kind": "area", "add_up": { "by": "max" }, "from": "plan_area" },
+            { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
+            { "name": "ash", "kind": "quality", "add_up": { "by": "mass", "density": "rd" }, "from": "attribute", "attribute": "ash" },
+        ],
+        "steps": final_steps(),
+        "parameters": [assumptions],
+    });
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0];
+    let tables = s.add_waste_allocation(flow).unwrap();
+    assert_eq!(tables.len(), 4);
+    let again = s.add_waste_allocation(flow).unwrap_err();
+    assert!(again.to_string().contains("has a step loose_ground already"), "{again}");
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STARTER_STACK, "layer": "reserves" })).unwrap();
+    let said = serde_json::to_string(&record.notes).unwrap();
+    assert!(!said.contains("left out"), "{said}");
+    let t = table(&s, created(&record)[0]);
+    let at = |seam: &str, path: &str| at_seam(&t, Some(seam), path);
+    let want = [
+        ("A", "Waste\\Topsoil\\Prime Volume", 2_500.0),
+        ("A", "Waste\\Freedig\\Prime Volume", 22_500.0),
+        ("A", "Waste\\Cast\\Prime Volume", 20_000.0),
+        ("A", "Waste\\Dozer Push\\Prime Volume", 20_000.0),
+        ("A", "Waste\\Dragline\\Prime Volume", 150_000.0),
+        ("A", "Waste\\Dragline\\Rehandle Volume", 50_000.0),
+        ("A", "Waste\\Dragline\\Total Volume", 200_000.0),
+        ("A", "Waste\\Dragline\\Swelled Volume", 250_000.0),
+        ("A", "Waste\\Poststrip\\Prime Volume", 10_000.0),
+        ("A", "Waste\\Excavator\\Prime Volume", 25_000.0),
+        ("A", "Waste\\Excavator\\Swelled Volume", 31_250.0),
+        ("A", "Waste\\Drill and Blast\\Volume", 225_000.0),
+        ("A", "Coal\\Mining\\Volume", 10_000.0),
+        ("A", "Coal\\Exposed\\Volume", 10_000.0),
+        ("B", "Waste\\Partings\\Prime Volume", 10_000.0),
+        ("B", "Coal\\Mining\\Volume", 15_000.0),
+        ("B", "Coal\\Exposed\\Volume", 15_000.0),
+    ];
+    for (seam, field, value) in want {
+        let got = at(seam, &format!("Scheduled\\{field}"));
+        assert!((got - value).abs() <= 1e-9 * value, "{seam} {field}: {got} for {value}");
+    }
+    assert_eq!(at("B", "Scheduled\\Waste\\Drill and Blast\\Volume"), 0.0, "AB is ripped");
+    assert!((at("A", "Scheduled\\Waste\\volume") - 250_000.0).abs() < 1e-9 && (at("B", "Scheduled\\Waste\\volume") - 10_000.0).abs() < 1e-9);
+    // The checks: every difference 0, no leaf out or missing a process.
+    let checks: Vec<&zd_core::TableColumn> = t.columns.iter().filter(|c| c.name.starts_with("Summary\\Checks\\")).collect();
+    assert!(checks.iter().any(|c| c.name == "Summary\\Checks\\waste processes\\difference"), "{:?}", checks.iter().map(|c| &c.name).collect::<Vec<_>>());
+    for c in checks {
+        if let zd_core::ColumnValues::Number(v) = &c.values {
+            assert!(v.iter().flatten().all(|x| x.abs() <= 1e-6), "{}: {v:?}", c.name);
+        }
+    }
+    let a_row = texts(&t, "seam").iter().position(|s| s.as_deref() == Some("A")).unwrap();
+    assert_eq!(texts(&t, "Scheduled\\Waste\\process")[a_row].as_deref(), Some("Topsoil; Freedig; Excavator; Dragline; Poststrip; Cast; Dozer Push"), "top down: zone 2 above zone 1");
+}

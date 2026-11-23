@@ -37,6 +37,7 @@ mod surface_merge;
 mod trim_in_plan;
 mod surface_triangulate;
 mod starter;
+mod waste_allocation;
 mod measure;
 
 pub use benches::{BENCH_FLOOR, BENCH_TOP, BENCHED_FROM, BenchEnd, BenchRule, CutByBenches, CutByBenchesParams, rule_for};
@@ -77,6 +78,7 @@ pub use reserves_run::{
     ColumnSteps, FormulaTraceView, ParamRead, StepKind, TraceLineView, column_trace, formula_trace, OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, StepWrite, UNDERBURDEN_THICKNESS, UnitView, Working, dataflow_starter, preston_sanders,
     reserves_preview, rerun_params, table_column, StepUnits, units_at_step, ChangedSince, changed_since, Unsaved,
 };
+pub use waste_allocation::{PROCESSES as WASTE_PROCESSES, schedule_fields as waste_schedule_fields, tables as waste_allocation_tables, with_waste_allocation};
 pub use starter::{DISCARDED, RENAMED_FIELDS, TONNES_AD_PER_M3, renamed_from_older, starter_formulas, with_starter_formulas};
 pub use zd_script::REFERENCE as FORMULA_REFERENCE;
 pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, check_formula_with, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_allocation_steps, check_formula_steps, check_formula_steps_flagging, declare_words, declared as formula_declared};

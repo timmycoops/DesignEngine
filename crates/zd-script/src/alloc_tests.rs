@@ -201,3 +201,49 @@ fn the_allocation_calls_offered_are_there() {
     let all_true = |n: usize| format!("[{}]", vec!["True"; n].join(", "));
     assert_eq!(a.said, [all_true(column.len()), all_true(unit.len())]);
 }
+
+/// A waste interval of two units over coal (WEATH 8 m over OB 42 m, 3,000 m²), then IB below: the interval is the run
+/// of both, and the coal's its own.
+fn two_horizons() -> AllocationInput {
+    let mut c = Column::new(ColumnKey::new("Base", &["5", "B1"]), fields());
+    for (stack, name, material, t) in [(0, "WEATH", "waste", 8.0), (1, "OB", "waste", 42.0), (2, "A", "coal", 2.0), (3, "IB", "waste", 10.0)] {
+        let origin = Origin { object: format!("solid-{name}"), name: format!("5_B1_{name}") };
+        c.push_input(origin, stack, Labels::new(material, name), vec![t * 3_000.0, t, 3_000.0, N]).unwrap();
+    }
+    let ends: HashMap<u32, Ends> = c.units().iter().map(|u| (u.id, if u.in_situ.material == "coal" { Ends::Coal } else { Ends::Waste })).collect();
+    AllocationInput { column: c, ends, ..input(0.5) }
+}
+
+/// The waste interval over A is WEATH and OB, 50 m. Forty-five metres off its bottom takes OB whole (126,000 m³) and the
+/// bottom 3 m of WEATH (9,000 m³), leaving WEATH's top 5 m; then 1 m off its top (3,000 m³), 4 m left. Every piece adds back
+/// exactly; asking more than the units hold is refused.
+#[test]
+fn a_thickness_is_taken_across_the_units_of_a_waste_interval() {
+    let script = r#"
+def allocate(column, p):
+    intervals = column.intervals()
+    print([[u.seam for u in i] for i in intervals], [[u.seam for u in i] for i in column.intervals(ends="coal")])
+    zone = column.take_from_bottom(intervals[0], 45)
+    for u in zone:
+        u.process = "Dragline"
+    left = [u for u in intervals[0] if u not in zone]
+    top = column.take_from_top(left, 1)
+    top[0].process = "Topsoil"
+    print(len(zone), column.total("thickness", units=zone), column.total("volume", units=left))
+"#;
+    let a = Allocation::compile(script, declared()).unwrap().run(two_horizons()).unwrap();
+    assert_eq!(a.said[0], r#"[["WEATH", "OB"], ["IB"]] [["A"]]"#);
+    assert_eq!(a.said[1], "2 45.0 12000.0", "WEATH after its top metre went: 4 m");
+    let got = by_process(&a);
+    let want = [("Topsoil", 3_000.0, 1.0), ("", 12_000.0, 4.0), ("Dragline", 9_000.0, 3.0), ("Dragline", 126_000.0, 42.0), ("", 6_000.0, 2.0), ("", 30_000.0, 10.0)];
+    assert_eq!(got.len(), want.len(), "{got:?}");
+    for ((p, v, t), (wp, wv, wt)) in got.iter().zip(want) {
+        assert_eq!(p, wp);
+        assert!((v - wv).abs() <= 1e-9 * wv && (t - wt).abs() <= 1e-9 * wt, "{p}: {v} m3, {t} m against {wv}, {wt}");
+    }
+    let weath: f64 = got[..3].iter().map(|g| g.1).sum();
+    assert!((weath - 24_000.0).abs() <= 1e-9, "WEATH's pieces add back: {weath}");
+    assert_eq!(a.splits.iter().map(|s| s.how.as_str()).collect::<Vec<_>>(), ["thickness 3 off the bottom", "thickness 1 off the top"]);
+    let refused = Allocation::compile("def allocate(column, p):\n    column.take_from_top(column.intervals()[0], 60)\n", declared()).unwrap().run(two_horizons()).unwrap_err().message;
+    assert_eq!(refused, "take_from_top asks 60 m of units 50 m thick");
+}

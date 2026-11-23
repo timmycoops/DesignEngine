@@ -270,6 +270,54 @@ fn column_methods(builder: &mut starlark::environment::MethodsBuilder) {
         Ok(heap.alloc(AllocList(lists)))
     }
 
+    /// The runs of neighbouring units that end in ROM waste, top down, each a list of its units in order: the waste
+    /// intervals between the coal sections, a unit or several (two waste horizons, a discarded thin coal between them, a
+    /// loss mined with the waste). `ends="coal"` gives the ROM coal sections' runs the same way.
+    fn intervals<'v>(this: &ColumnHandle, #[starlark(require = named, default = "waste")] ends: &str, heap: Heap<'v>) -> anyhow::Result<Value<'v>> {
+        let want = match ends {
+            "waste" => Ends::Waste,
+            "coal" => Ends::Coal,
+            other => anyhow::bail!("intervals ends in \"waste\" (the default) or \"coal\", not {other:?}"),
+        };
+        let runs: Vec<Vec<Option<UnitId>>> = {
+            let s = this.run.lock();
+            let mut runs: Vec<Vec<Option<UnitId>>> = Vec::new();
+            let mut current: Vec<Option<UnitId>> = Vec::new();
+            for u in s.column.units() {
+                if s.ends.get(&u.id) == Some(&want) {
+                    current.push(Some(u.id));
+                } else if !current.is_empty() {
+                    runs.push(std::mem::take(&mut current));
+                }
+            }
+            if !current.is_empty() {
+                runs.push(current);
+            }
+            runs
+        };
+        let lists: Vec<Value<'v>> = runs.into_iter().map(|r| this.run.list(r, heap)).collect();
+        Ok(heap.alloc(AllocList(lists)))
+    }
+
+    /// A thickness taken off the top of these units, across as many as it needs, the one it ends in split: the pieces
+    /// taken, top down. Each piece is the column's own split, so the pieces and what's left add back exactly. More than
+    /// the units hold is refused, saying how thick they are.
+    fn take_from_top<'v>(this: &ColumnHandle, #[starlark(require = pos)] units: UnpackList<Value<'v>>, #[starlark(require = pos)] thickness: Value<'v>, heap: Heap<'v>) -> anyhow::Result<Value<'v>> {
+        let ids = this.run.ids_of(&units.items, "take_from_top's units")?;
+        let taken = take_thickness(&this.run, &ids, number(thickness, "take_from_top")?, End::Top, "take_from_top")?;
+        note(&this.run.log, Event::Read { what: format!("take_from_top {} m", figure(number(thickness, "take_from_top")?)), value: ScriptValue::Text(format!("{} pieces", taken.len())) });
+        Ok(this.run.list(taken.into_iter().map(Some), heap))
+    }
+
+    /// A thickness taken off the bottom of these units, across as many as it needs, as `take_from_top` from the top: a
+    /// dragline system's zones from the bottom up, a wedge over the coal.
+    fn take_from_bottom<'v>(this: &ColumnHandle, #[starlark(require = pos)] units: UnpackList<Value<'v>>, #[starlark(require = pos)] thickness: Value<'v>, heap: Heap<'v>) -> anyhow::Result<Value<'v>> {
+        let ids = this.run.ids_of(&units.items, "take_from_bottom's units")?;
+        let taken = take_thickness(&this.run, &ids, number(thickness, "take_from_bottom")?, End::Bottom, "take_from_bottom")?;
+        note(&this.run.log, Event::Read { what: format!("take_from_bottom {} m", figure(number(thickness, "take_from_bottom")?)), value: ScriptValue::Text(format!("{} pieces", taken.len())) });
+        Ok(this.run.list(taken.into_iter().map(Some), heap))
+    }
+
     /// A number field over units (every unit by default) added up by its own rule: a volume summed, a quality averaged
     /// by its weight. None where no unit has a value.
     fn total<'v>(
@@ -295,6 +343,54 @@ fn column_methods(builder: &mut starlark::environment::MethodsBuilder) {
 }
 
 use starlark::values::none::NoneOr;
+
+/// `thickness` taken off the top or bottom of these units in the column's order, whole units first and the one it ends
+/// in split there; the pieces taken, top down. Each split is noted as `split_thickness` notes one.
+fn take_thickness(run: &Run, ids: &[UnitId], asked: f64, end: End, call: &str) -> anyhow::Result<Vec<UnitId>> {
+    let mut s = run.lock();
+    let thickness = s.column.fields().thickness();
+    let mut order: Vec<(usize, UnitId)> = ids.iter().map(|&id| s.at(id).map(|at| (at, id))).collect::<anyhow::Result<_>>()?;
+    order.sort_unstable();
+    order.dedup();
+    let held: f64 = order.iter().map(|&(at, _)| s.column.units()[at].value(thickness)).filter(|t| t.is_finite()).sum();
+    if asked < 0.0 {
+        anyhow::bail!("{call} can't take {asked} m");
+    }
+    if asked > held * (1.0 + 1e-12) + 1e-12 {
+        anyhow::bail!("{call} asks {} m of units {} m thick", figure(asked), figure(held));
+    }
+    if end == End::Bottom {
+        order.reverse();
+    }
+    let mut left = asked;
+    let mut taken: Vec<UnitId> = Vec::new();
+    for (_, id) in order {
+        if left <= 0.0 {
+            break;
+        }
+        let at = s.at(id)?;
+        let has = s.column.units()[at].value(thickness);
+        let has = if has.is_finite() { has } else { 0.0 };
+        if has <= left * (1.0 + 1e-12) {
+            taken.push(id);
+            left -= has;
+            continue;
+        }
+        let split = s.column.split(at, Amount::Thickness(left), end).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let piece = s.column.units()[split.piece].id;
+        let pieces = match end {
+            End::Top => vec![Some(piece), Some(id)],
+            End::Bottom => vec![Some(id), Some(piece)],
+        };
+        let side = if end == End::Top { "top" } else { "bottom" };
+        settle(&mut s, id, format!("thickness {} off the {side}", figure(left)), &pieces);
+        taken.push(piece);
+        left = 0.0;
+    }
+    let mut placed: Vec<(usize, UnitId)> = taken.iter().map(|&id| s.at(id).map(|at| (at, id))).collect::<anyhow::Result<_>>()?;
+    placed.sort_unstable();
+    Ok(placed.into_iter().map(|(_, id)| id).collect())
+}
 
 fn ending(run: &Run, ends: Ends) -> Vec<Option<UnitId>> {
     let s = run.lock();
@@ -407,9 +503,19 @@ fn alloc_unit_methods(builder: &mut starlark::environment::MethodsBuilder) {
     }
 
     /// As a formula's `unit.place_onto` (decision 5): a schedule field's value written on the leaf of the block these
-    /// levels name, not the unit's own.
+    /// levels name, not the unit's own; or, with `unit=top`, on the leaves another unit of the column is written on,
+    /// shared by its benches as its own pieces are (a blast's drill and blast on its top unit's leaves).
     fn place_onto<'v>(this: &AllocUnit, #[starlark(require = pos)] field: &str, #[starlark(require = pos)] value: Value<'v>, #[starlark(kwargs)] leaf: starlark::values::dict::UnpackDictEntries<String, Value<'v>>) -> anyhow::Result<NoneType> {
-        let Some(placed) = crate::handles::placed(&this.run.declared, field, value, &leaf.entries)? else { return Ok(NoneType) };
+        let onto_unit = match leaf.entries.iter().find(|(k, _)| k == "unit") {
+            Some((_, v)) => Some(this.run.id_of(*v, "place_onto's unit=")?),
+            None => None,
+        };
+        let levels: Vec<(String, Value<'v>)> = leaf.entries.iter().filter(|(k, _)| k != "unit").cloned().collect();
+        if onto_unit.is_some() && !levels.is_empty() {
+            anyhow::bail!("place_onto goes on a unit's leaves (unit=) or on the levels named, not both");
+        }
+        let Some(mut placed) = crate::handles::placed(&this.run.declared, field, value, &levels)? else { return Ok(NoneType) };
+        placed.unit = onto_unit;
         note(&this.run.log, Event::Placed { field: placed.field.clone(), value: placed.value, onto: placed.onto.clone() });
         this.run.lock().placed.push((this.id, placed));
         Ok(NoneType)

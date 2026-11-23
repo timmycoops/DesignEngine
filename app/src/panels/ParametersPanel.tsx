@@ -470,7 +470,7 @@ function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMa
 type FlowField = Dataflow['fields'][number];
 
 function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; tables: ObjectSummary[]; openStep: { step: string; n: number } | null }) {
-  const { runRecord, setDraft } = useWorkspace();
+  const { runRecord, setDraft, addWasteAllocation } = useWorkspace();
   const [saved, setSaved] = useState<Dataflow | null>(null);
   const [flow, setFlow] = useState<Dataflow | null>(null);
   const [engineWhy, setEngineWhy] = useState<string | null>(null);
@@ -565,6 +565,19 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
     setTableAt(null);
     setFormulaAt(null);
     setAllocationAt(at);
+  };
+  // The template's waste allocation added to the saved dataflow (Waste allocation plan, decision 7), then read again.
+  const hasAllocation = flow.steps.some((s) => s.step === 'loose_ground' && s.allocation);
+  const addAllocationSet = async () => {
+    if (edited) return setSaid({ text: 'Save or discard your edits first: waste allocation is added to the saved dataflow.', tone: 'refused' });
+    const done = await addWasteAllocation(object.id);
+    if (done.error) return setSaid({ text: done.error, tone: 'refused' });
+    const d = await objectDetails(object.id);
+    if (d.measures.kind === 'dataflow') {
+      setSaved(d.measures.dataflow);
+      setFlow(d.measures.dataflow);
+    }
+    setSaid({ text: 'Added waste allocation: four parameter tables (Waste allocation settings, Dragline factors, Waste processes, Short term overrides), the schedule fields, six allocation steps and the checks. Each is yours to edit.', tone: 'ok' });
   };
   // A new table script step at the end, after final and any table script there, opened (decision 0099, workstream 7).
   const addTableStep = () => {
@@ -751,6 +764,11 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
             {flow.steps.some((s) => s.step === 'rom' && !s.formula) && flow.steps.some((s) => s.step === 'final' && !s.formula && !s.table) && (
               <button type="button" data-slot="add-allocation-step" className="mt-1 block w-full py-0.5 text-left text-muted-foreground hover:bg-accent hover:text-foreground" onClick={addAllocation} title="An allocation script run on each block column after rom, before the final writes: it splits units and fills each process's schedule fields">
                 + Add an allocation before final
+              </button>
+            )}
+            {!hasAllocation && flow.steps.some((s) => s.step === 'rom' && !s.formula) && flow.steps.some((s) => s.step === 'final' && !s.formula && !s.table) && (
+              <button type="button" data-slot="add-waste-allocation" className="mt-1 block w-full py-0.5 text-left text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => void addAllocationSet()} title="The template's waste allocation in one go: its parameter tables with default rows, a schedule field section a process, six allocation steps after rom and the checks after final, each a script you can edit">
+                + Add waste allocation (the template)
               </button>
             )}
             {flow.steps.some((s) => s.step === 'final' && !s.formula && !s.table) && (
