@@ -2910,3 +2910,211 @@ fn schedule_fields_are_written_under_scheduled_by_process_and_placed_onto_a_leaf
     assert!(record.notes.iter().any(|n| n.text.contains("zone=B, but zone isn't a level below the column (seam, bench)")), "{:?}", record.notes);
 }
 
+
+/// One block, 100 m by 50 m (5,000 m²): `ob` m of overburden over A coal 2 m over 4 m of waste below, which isn't
+/// mined (model waste below the last coal).
+fn allocation_column(s: &mut Session, ob: f64) -> Vec<ObjectId> {
+    let rows: [(&str, f64, f64, &str, &str); 3] = [("OB", 42.0, 42.0 + ob, "waste", "A"), ("A", 40.0, 42.0, "coal", "A"), ("below A", 36.0, 40.0, "waste", "")];
+    let ids = rows
+        .iter()
+        .map(|&(h, z0, z1, material, seam)| {
+            let mut a = json!({ "strip": 1.0, "block": "B1", "horizon": h, "material": material, "seam": seam });
+            if material == "coal" {
+                a["rd"] = json!(1.4);
+                a["ash"] = json!(10.0);
+            }
+            box_solid(s, &format!("1_B1_{h}"), 0.0, (z0, z1), a)
+        })
+        .collect::<Vec<_>>();
+    s.run("solid.measure", json!({ "solids": ids })).unwrap();
+    ids
+}
+
+const ALLOCATION_STACK: [&str; 3] = ["OB", "A", "below A"];
+
+/// A dataflow with an allocation step after `rom`: its schedule fields (a prime volume a process, and the dragline's
+/// rehandle), the word fields `process` and `zone`, and a parameter table of the allocation's own settings.
+fn allocation_flow(s: &mut Session, name: &str, script: &str, settings: &str) -> (ObjectId, ObjectId) {
+    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let settings = created(&s.run("parameters.save", json!({ "name": format!("{name} settings"), "csv": settings })).unwrap())[0];
+    let schedule = |n: &str| json!({ "name": format!("Waste\\{n}"), "kind": "other", "add_up": { "by": "sum" }, "from": "worked" });
+    let mut steps = final_steps();
+    let at = steps.as_array().unwrap().iter().position(|s| s["step"] == "final").unwrap();
+    steps.as_array_mut().unwrap().insert(at, json!({ "step": "allocate", "allocation": { "script": script } }));
+    let content = json!({
+        "fields": [
+            { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
+            { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
+            { "name": "area", "kind": "area", "add_up": { "by": "max" }, "from": "plan_area" },
+            { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
+            { "name": "ash", "kind": "quality", "add_up": { "by": "mass", "density": "rd" }, "from": "attribute", "attribute": "ash" },
+            schedule("Topsoil\\Prime Volume"), schedule("Freedig\\Prime Volume"), schedule("Wedge\\Prime Volume"), schedule("Excavator\\Prime Volume"),
+            schedule("Cast\\Prime Volume"), schedule("Dozer Push\\Prime Volume"), schedule("Dragline\\Prime Volume"), schedule("Dragline\\Rehandle Volume"),
+        ],
+        "words": [{ "name": "process", "from": "worked" }, { "name": "zone", "from": "worked" }],
+        "steps": steps,
+        "parameters": [assumptions, settings],
+    });
+    (created(&s.run("dataflow.save", json!({ "name": name, "content": starter(content) })).unwrap())[0], settings)
+}
+
+/// Spry's loose ground and wedge, every thickness from the column's own parameter row (decision 8): topsoil then freedig
+/// off the top of each waste over coal, a wedge off its bottom, the rest Excavator, each a prime volume of its process.
+const LOOSE_GROUND: &str = r#"def allocate(column, p):
+    for u in column.waste():
+        below = column.after(u)
+        if below == None or below.material != "coal":
+            u.process = "Excavator"
+            u["Waste\\Excavator\\Prime Volume"] = u.volume
+            continue
+        topsoil, freedig, rest = u.split_thickness(p.topsoil_thickness, p.freedig_thickness)
+        excavator, wedge = rest.split_thickness(rest.thickness - p.wedge_thickness)
+        for piece, process in [(topsoil, "Topsoil"), (freedig, "Freedig"), (excavator, "Excavator"), (wedge, "Wedge")]:
+            piece.process = process
+            piece["Waste\\" + process + "\\Prime Volume"] = piece.volume
+"#;
+
+/// Allocation steps (Waste allocation plan, workstream 3, decisions 1, 3, 4 and 8). OB, 30 m over A coal (150,000 m³):
+/// topsoil 0.5 m, freedig 4.5 m and a 3 m wedge from the settings row give Topsoil 2,500 m³, Freedig 22,500, Wedge
+/// 15,000 and Excavator 110,000 under `Scheduled\Waste` on A's leaf, adding to its 150,000 of ROM waste; the waste
+/// below A, never mined, is no unit of the allocation's. The notebook's cell is the allocation, its splits worked and
+/// each setting traced to the settings table's row; traced, the column's lines ran. The row changed to 1 m of topsoil,
+/// the same script gives Topsoil 5,000 and Excavator 107,500.
+#[test]
+fn an_allocation_step_splits_the_column_and_fills_each_process_from_the_parameter_rows() {
+    let mut s = session();
+    let ids = allocation_column(&mut s, 30.0);
+    let row = |topsoil: f64| format!("topsoil_thickness (m),freedig_thickness (m),wedge_thickness (m)\n{topsoil},4.5,3\n");
+    let (flow, settings) = allocation_flow(&mut s, "Allocation", LOOSE_GROUND, &row(0.5));
+    let run = |s: &mut Session| {
+        let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": ALLOCATION_STACK, "layer": "reserves" })).unwrap();
+        created(&record)[0]
+    };
+    let id = run(&mut s);
+    let t = table(&s, id);
+    let at = |path: &str| at_seam(&t, Some("A"), path);
+    for (process, want) in [("Topsoil", 2_500.0), ("Freedig", 22_500.0), ("Wedge", 15_000.0), ("Excavator", 110_000.0)] {
+        let got = at(&format!("Scheduled\\Waste\\{process}\\Prime Volume"));
+        assert!((got - want).abs() <= 1e-9 * want, "{process}: {got} for {want}");
+    }
+    let primes: f64 = ["Topsoil", "Freedig", "Wedge", "Excavator"].iter().map(|p| at(&format!("Scheduled\\Waste\\{p}\\Prime Volume"))).sum();
+    assert!((at("ROM\\Waste\\volume") - 150_000.0).abs() < 1e-9 && (primes - 150_000.0).abs() < 1e-9, "the primes add back to ROM waste: {primes}");
+    let a_row = texts(&t, "seam").iter().position(|s| s.as_deref() == Some("A")).unwrap();
+    assert_eq!(texts(&t, "Scheduled\\Waste\\process")[a_row].as_deref(), Some("Topsoil; Freedig; Excavator; Wedge"));
+
+    // The notebook: the allocation's cell, its splits worked, each setting traced to its table and row.
+    let node: Vec<String> = ["Pit", "1", "B1"].map(String::from).to_vec();
+    let opened = table_column(s.project(), s.log(), id, &node, &Unsaved::default()).unwrap();
+    let k = opened.steps.iter().position(|c| c.step == "allocate").unwrap();
+    let cell = &opened.steps[k];
+    assert_eq!(cell.kind, StepKind::Allocation);
+    assert!(cell.source.as_deref().is_some_and(|src| src.contains("split_thickness")));
+    assert_eq!(cell.units.len(), opened.steps[k - 1].units.len() + 3, "OB in four pieces");
+    assert!(cell.workings.iter().any(|w| w.what == "split" && w.sum.contains("thickness 0.5, 4.5")), "{:?}", cell.workings);
+    let table_at = opened.tables.iter().position(|n| n == "Allocation settings").unwrap();
+    let read = cell.reads.iter().find(|r| r.column == "topsoil_thickness").expect("the topsoil read traced");
+    assert_eq!((read.table, read.row, read.value), (Some(table_at), Some(0), Some(0.5)));
+    assert_eq!(opened.table_ids[table_at], Some(settings));
+    let trace = column_trace(s.project(), s.log(), id, &node, k, cell.units[0].id, &Unsaved::default()).unwrap();
+    assert!(trace.stopped.is_none() && trace.lines.iter().any(|l| l.text.starts_with("topsoil, freedig, rest = u.split_thickness")), "{:?}", trace.stopped);
+    assert!(trace.reads.iter().any(|(k, v)| k == "p.topsoil_thickness" && v == "0.5"), "{:?}", trace.reads);
+
+    // The row changed, not the script.
+    s.run("parameters.save", json!({ "table": settings.to_string(), "name": "Allocation settings", "csv": row(1.0) })).unwrap();
+    let again = run(&mut s);
+    let t = table(&s, again);
+    for (process, want) in [("Topsoil", 5_000.0), ("Freedig", 22_500.0), ("Wedge", 15_000.0), ("Excavator", 107_500.0)] {
+        let got = at_seam(&t, Some("A"), &format!("Scheduled\\Waste\\{process}\\Prime Volume"));
+        assert!((got - want).abs() <= 1e-9 * want, "{process} with 1 m of topsoil: {got} for {want}");
+    }
+}
+
+/// The dragline system: zone counts, thicknesses and each zone's method factors from parameter rows, the factors looked
+/// up by zone; the script holds the order and the logic.
+const DRAGLINE_SYSTEM: &str = r#"def allocate(column, p):
+    for u in column.waste():
+        below = column.after(u)
+        if below == None or below.material != "coal" or u.thickness < p.min_burden:
+            u.process = "Excavator"
+            u["Waste\\Excavator\\Prime Volume"] = u.volume
+            continue
+        zones = int(p.zones)
+        top = max(u.thickness - p.system_max, 0)
+        pieces = u.split_thickness(*([top] + [p.zone_thickness] * (zones - 1)))
+        if pieces[0] != None:
+            pieces[0].process = "Excavator"
+            pieces[0]["Waste\\Excavator\\Prime Volume"] = pieces[0].volume
+        for k, zone in enumerate(pieces[1:]):
+            n = zones - k
+            zone.zone = "Zone %d" % n
+            f = lambda name: lookup("Method factors", name, zone=n)
+            cast, dozer, dragline = zone.split_shares([f("cast"), f("dozer"), f("dragline")])
+            for piece, process in [(cast, "Cast"), (dozer, "Dozer Push"), (dragline, "Dragline")]:
+                if piece != None:
+                    piece.process = process
+                    piece["Waste\\" + process + "\\Prime Volume"] = piece.volume
+            prime = dragline.volume
+            dragline["Waste\\Dragline\\Rehandle Volume"] = prime * f("dragline_total") / f("dragline") * f("adjust") - prime
+"#;
+
+/// The plan's dragline case (workstream 3): 60 m of waste over A coal, 300,000 m³; a system maximum of 50 m in two
+/// zones of 25 m, a minimum burden of 10 m. The top 10 m is Excavator, 50,000 m³. Zone 1, the bottom 25 m (125,000 m³):
+/// cast 0.2, dozer 0.3, dragline 0.5 with a total factor 0.7, so Cast 25,000, Dozer Push 37,500, Dragline 62,500 and
+/// rehandle 62,500 × 0.7 ÷ 0.5 − 62,500 = 25,000. Zone 2, the 25 m above: dragline 1, total 1.5, so Dragline 125,000 and
+/// rehandle 62,500. On A's leaf: Dragline 187,500, its rehandle 87,500, zones `Zone 2; Zone 1`; the primes add to the
+/// 300,000 of ROM waste.
+#[test]
+fn a_dragline_system_splits_its_zones_by_method_factors_looked_up_by_zone() {
+    let mut s = session();
+    let ids = allocation_column(&mut s, 60.0);
+    created(&s.run("parameters.save", json!({ "name": "Method factors", "csv": "when zone,cast,dozer,dragline,dragline_total,adjust\n1,0.2,0.3,0.5,0.7,1\n2,0,0,1,1.5,1\n" })).unwrap());
+    let system = "min_burden (m),system_max (m),zones,zone_thickness (m)\n10,50,2,25\n";
+    let (flow, _) = allocation_flow(&mut s, "Dragline", DRAGLINE_SYSTEM, system);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": ALLOCATION_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let at = |path: &str| at_seam(&t, Some("A"), path);
+    for (field, want) in [
+        ("Excavator\\Prime Volume", 50_000.0),
+        ("Cast\\Prime Volume", 25_000.0),
+        ("Dozer Push\\Prime Volume", 37_500.0),
+        ("Dragline\\Prime Volume", 187_500.0),
+        ("Dragline\\Rehandle Volume", 87_500.0),
+    ] {
+        let got = at(&format!("Scheduled\\Waste\\{field}"));
+        assert!((got - want).abs() <= 1e-9 * want, "{field}: {got} for {want}");
+    }
+    let primes: f64 = ["Excavator", "Cast", "Dozer Push", "Dragline"].iter().map(|p| at(&format!("Scheduled\\Waste\\{p}\\Prime Volume"))).sum();
+    assert!((primes - 300_000.0).abs() < 1e-9 && (at("ROM\\Waste\\volume") - 300_000.0).abs() < 1e-9, "the primes add to ROM waste: {primes}");
+    let a_row = texts(&t, "seam").iter().position(|s| s.as_deref() == Some("A")).unwrap();
+    assert_eq!(texts(&t, "Scheduled\\Waste\\zone")[a_row].as_deref(), Some("Zone 2; Zone 1"));
+}
+
+/// Where an allocation step may sit and what it may do (decisions 1 and 4): after rom and before final only, its
+/// script defining `allocate`; a split asking for more than the unit holds stops the block, said with the unit.
+#[test]
+fn an_allocation_step_sits_between_rom_and_final_and_a_bad_split_stops_the_block() {
+    let mut s = session();
+    let ids = allocation_column(&mut s, 30.0);
+    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let flow_with = |steps: serde_json::Value| {
+        json!({
+            "fields": [
+                { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
+                { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
+                { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
+            ],
+            "steps": steps,
+            "parameters": [assumptions],
+        })
+    };
+    let alloc = |script: &str| json!({ "step": "allocate", "allocation": { "script": script } });
+    let early = s.run("dataflow.save", json!({ "name": "Early", "content": flow_with(json!([{ "step": "initialise" }, alloc("def allocate(column):\n    pass\n"), { "step": "rom" }, { "step": "final" }])) })).unwrap_err();
+    assert!(early.to_string().contains("the allocation step allocate sits after initialise: an allocation step goes after rom, before the final writes"), "{early}");
+    let wrong = s.run("dataflow.save", json!({ "name": "Wrong", "content": flow_with(json!([{ "step": "initialise" }, { "step": "rom" }, alloc("def formula(unit):\n    pass\n"), { "step": "final" }])) })).unwrap_err();
+    assert!(wrong.to_string().contains("the allocation step allocate: an allocation step defines its function as `def allocate(column, p):`"), "{wrong}");
+    let greedy = "def allocate(column):\n    column.waste()[0].split_thickness(40)\n";
+    let flow = created(&s.run("dataflow.save", json!({ "name": "Greedy", "content": flow_with(json!([{ "step": "initialise" }, { "step": "rom" }, alloc(greedy), { "step": "final" }])) })).unwrap())[0];
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": ALLOCATION_STACK, "layer": "reserves" })).unwrap();
+    let said = serde_json::to_string(&record.notes).unwrap();
+    assert!(said.contains("split_thickness asks 40 m of A waste, which is 30 m thick"), "{said}");
+}

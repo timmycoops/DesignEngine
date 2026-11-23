@@ -37,7 +37,7 @@ pub struct Placed {
 
 pub(crate) type Log = Arc<Mutex<Vec<Event>>>;
 
-fn note(log: &Option<Log>, event: Event) {
+pub(crate) fn note(log: &Option<Log>, event: Event) {
     if let Some(log) = log {
         log.lock().expect("trace log").push(event);
     }
@@ -89,34 +89,41 @@ starlark_simple_value!(Unit);
 #[starlark::starlark_module]
 fn unit_methods(builder: &mut starlark::environment::MethodsBuilder) {
     fn place_onto<'v>(this: &Unit, #[starlark(require = pos)] field: &str, #[starlark(require = pos)] value: Value<'v>, #[starlark(kwargs)] leaf: starlark::values::dict::UnpackDictEntries<String, Value<'v>>) -> anyhow::Result<starlark::values::none::NoneType> {
-        let Some(declared) = this.declared.fields.iter().find(|f| f.name == field) else {
-            anyhow::bail!("`{field}` isn't a field of this dataflow{}", crate::check::did_you_mean(field, this.declared.fields.iter().map(|f| f.name.as_str())));
-        };
-        if !field.contains('\\') {
-            anyhow::bail!("`{field}` isn't a schedule field: only a field named with a folder (`Waste\\\\Drill and Blast\\\\Volume`) is placed onto another leaf");
-        }
-        let value = match from_starlark(value, declared.kind).map_err(|why| anyhow::anyhow!("`{field}` {why}"))? {
-            ScriptValue::Number(x) => x,
-            ScriptValue::None => return Ok(starlark::values::none::NoneType),
-            ScriptValue::Text(_) => anyhow::bail!("`{field}` holds words: words aren't placed onto another leaf, only numbers that add up"),
-        };
-        let mut onto = Vec::with_capacity(leaf.entries.len());
-        for (level, word) in &leaf.entries {
-            let word = if let Some(s) = word.unpack_str() {
-                s.to_string()
-            } else if let Some(i) = word.unpack_i32() {
-                i.to_string()
-            } else if let Some(x) = word.downcast_ref::<starlark::values::float::StarlarkFloat>() {
-                format!("{}", x.0)
-            } else {
-                anyhow::bail!("`{level}=` names a leaf in words or a number, not {}", word.to_repr());
-            };
-            onto.push((level.clone(), word));
-        }
-        note(&this.log, Event::Placed { field: field.to_string(), value, onto: onto.clone() });
-        this.placed.lock().expect("placed").push(Placed { field: field.to_string(), value, onto });
+        let Some(placed) = placed(&this.declared, field, value, &leaf.entries)? else { return Ok(starlark::values::none::NoneType) };
+        note(&this.log, Event::Placed { field: placed.field.clone(), value: placed.value, onto: placed.onto.clone() });
+        this.placed.lock().expect("placed").push(placed);
         Ok(starlark::values::none::NoneType)
     }
+}
+
+/// A value to place onto another leaf, checked: a schedule field of numbers, the leaf's levels in words. None placed for
+/// a value of None.
+pub(crate) fn placed(declared: &Declared, field: &str, value: Value<'_>, leaf: &[(String, Value<'_>)]) -> anyhow::Result<Option<Placed>> {
+    let Some(decl) = declared.fields.iter().find(|f| f.name == field) else {
+        anyhow::bail!("`{field}` isn't a field of this dataflow{}", crate::check::did_you_mean(field, declared.fields.iter().map(|f| f.name.as_str())));
+    };
+    if !field.contains('\\') {
+        anyhow::bail!("`{field}` isn't a schedule field: only a field named with a folder (`Waste\\\\Drill and Blast\\\\Volume`) is placed onto another leaf");
+    }
+    let value = match from_starlark(value, decl.kind).map_err(|why| anyhow::anyhow!("`{field}` {why}"))? {
+        ScriptValue::Number(x) => x,
+        ScriptValue::None => return Ok(None),
+        ScriptValue::Text(_) => anyhow::bail!("`{field}` holds words: words aren't placed onto another leaf, only numbers that add up"),
+    };
+    let mut onto = Vec::with_capacity(leaf.len());
+    for (level, word) in leaf {
+        let word = if let Some(s) = word.unpack_str() {
+            s.to_string()
+        } else if let Some(i) = word.unpack_i32() {
+            i.to_string()
+        } else if let Some(x) = word.downcast_ref::<starlark::values::float::StarlarkFloat>() {
+            format!("{}", x.0)
+        } else {
+            anyhow::bail!("`{level}=` names a leaf in words or a number, not {}", word.to_repr());
+        };
+        onto.push((level.clone(), word));
+    }
+    Ok(Some(Placed { field: field.to_string(), value, onto }))
 }
 
 impl fmt::Display for Unit {
@@ -257,11 +264,11 @@ pub(crate) fn from_starlark(v: Value<'_>, kind: Kind) -> Result<ScriptValue, Str
 /// Read-only values: a unit's working section or column added up, its block's attributes, the unit above.
 #[derive(Debug, ProvidesStaticType, NoSerialize, StarlarkPagablePanic, Allocative)]
 pub(crate) struct Parts {
-    kind: &'static str,
+    pub kind: &'static str,
     #[allocative(skip)]
-    values: Option<Values>,
+    pub values: Option<Values>,
     #[allocative(skip)]
-    log: Option<Log>,
+    pub log: Option<Log>,
 }
 starlark_simple_value!(Parts);
 
@@ -310,8 +317,15 @@ pub(crate) struct Params {
     /// The tables `p.at(...)` reads (Schedule quantities plan, decision 1).
     #[allocative(skip)]
     pub lookups: Option<Arc<crate::Lookups>>,
+    /// Where an allocation step notes each parameter it read, and whose they were (a unit's, or the column's): what the
+    /// notebook traces to its table and row (Waste allocation plan, decision 8).
+    #[allocative(skip)]
+    pub reads: Option<(Reads, Option<u32>)>,
 }
 starlark_simple_value!(Params);
+
+/// The parameters an allocation step read: whose (a unit's id, or none for the column's own) and the name.
+pub(crate) type Reads = Arc<Mutex<Vec<(Option<u32>, String)>>>;
 
 impl fmt::Display for Params {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -329,6 +343,13 @@ impl<'v> StarlarkValue<'v> for Params {
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         let value = find(&self.values, attribute)?.clone();
         note(&self.log, Event::Read { what: format!("p.{attribute}"), value: value.clone() });
+        if let Some((reads, whose)) = &self.reads {
+            let mut reads = reads.lock().expect("reads");
+            let read = (*whose, attribute.to_string());
+            if !reads.contains(&read) {
+                reads.push(read);
+            }
+        }
         Some(to_starlark(&value, heap))
     }
 
@@ -363,6 +384,6 @@ fn params_methods(builder: &mut starlark::environment::MethodsBuilder) {
         if let Some(log) = &this.log {
             log.lock().expect("trace log").push(Event::Read { what: format!("p.at({})", crate::lookups::keys_words(&keys)), value: ScriptValue::Text(format!("{} values", values.len())) });
         }
-        Ok(Params { values: Arc::new(values), log: this.log.clone(), lookups: this.lookups.clone() })
+        Ok(Params { values: Arc::new(values), log: this.log.clone(), lookups: this.lookups.clone(), reads: None })
     }
 }

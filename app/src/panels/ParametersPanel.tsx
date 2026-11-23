@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Braces, Copy, CopyPlus, Plus, Save, Table2, Trash2, Undo2, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Braces, Copy, CopyPlus, Plus, Save, Split, Table2, Trash2, Undo2, X } from 'lucide-react';
 import { type ClipboardEvent, type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import { type Dataflow, dataflowCheck, type WordField, objectDetails, type ObjectSummary, type ParameterTable, type ParametersPicked, parametersCheck, parametersPicked } from '@/bridge';
 import { CellInput, Choice, IconButton, ObjectMenu, Select, StatusBadge } from '@/design-system/kit';
@@ -39,6 +39,7 @@ import {
 } from './parametersGrid';
 import { FormulaEditor } from './FormulaEditor';
 import { TABLE_STEP_TEMPLATE, TableStepEditor } from './TableStepEditor';
+import { ALLOCATION_STEP_TEMPLATE, AllocationStepEditor } from './AllocationStepEditor';
 import { FORMULA_TEMPLATE } from './formulaText';
 
 /** The built-in steps a formula step may follow (decision 0077): as the engine's FORMULA_STAGES. */
@@ -476,12 +477,15 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
   const [said, setSaid] = useState<{ text: string; tone: 'ok' | 'refused' } | null>(null);
   const [formulaAt, setFormulaAt] = useState<number | null>(null);
   const [tableAt, setTableAt] = useState<number | null>(null);
-  // A formula asked for by name opens once the dataflow is read.
+  const [allocationAt, setAllocationAt] = useState<number | null>(null);
+  // A formula or allocation step asked for by name opens once the dataflow is read.
   const flowRead = flow !== null;
   useEffect(() => {
     if (!openStep || !flow) return;
     const at = flow.steps.findIndex((s) => s.step === openStep.step && s.formula);
     if (at >= 0) setFormulaAt(at);
+    const allocation = flow.steps.findIndex((s) => s.step === openStep.step && s.allocation);
+    if (allocation >= 0) (setFormulaAt(null), setAllocationAt(allocation));
   }, [openStep, flowRead]);
 
   useEffect(() => {
@@ -548,7 +552,19 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
     for (let n = 2; flow.steps.some((s) => s.step === name); n++) name = `formula_${n}`;
     set({ steps: [...flow.steps.slice(0, at + 1), { step: name, formula: { script: FORMULA_TEMPLATE } }, ...flow.steps.slice(at + 1)] });
     setTableAt(null);
+    setAllocationAt(null);
     setFormulaAt(at + 1);
+  };
+  // A new allocation step before final, after rom and anything already between them, opened (Waste allocation plan, 1).
+  const addAllocation = () => {
+    const at = flow.steps.findIndex((s) => s.step === 'final' && !s.formula && !s.table && !s.allocation);
+    if (at < 0) return;
+    let name = 'allocation';
+    for (let n = 2; flow.steps.some((s) => s.step === name); n++) name = `allocation_${n}`;
+    set({ steps: [...flow.steps.slice(0, at), { step: name, allocation: { script: ALLOCATION_STEP_TEMPLATE } }, ...flow.steps.slice(at)] });
+    setTableAt(null);
+    setFormulaAt(null);
+    setAllocationAt(at);
   };
   // A new table script step at the end, after final and any table script there, opened (decision 0099, workstream 7).
   const addTableStep = () => {
@@ -556,6 +572,7 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
     for (let n = 2; flow.steps.some((s) => s.step === name); n++) name = `table_script_${n}`;
     set({ steps: [...flow.steps, { step: name, table: { script: TABLE_STEP_TEMPLATE } }] });
     setFormulaAt(null);
+    setAllocationAt(null);
     setTableAt(flow.steps.length);
   };
   const head = 'border-b border-border px-1 py-0.5 text-left font-medium text-muted-foreground';
@@ -657,10 +674,27 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
                     <button
                       type="button"
                       className={cn('flex min-w-0 flex-1 items-center gap-1 truncate text-left hover:underline', s.on === false && 'text-muted-foreground line-through', !same(saved.steps[i], s) && 'text-edited')}
-                      onClick={() => (setFormulaAt(null), setTableAt(i))}
+                      onClick={() => (setFormulaAt(null), setAllocationAt(null), setTableAt(i))}
                       title="Open this table script"
                     >
                       <Table2 className="size-3.5 shrink-0 text-muted-foreground" />
+                      {s.step.replaceAll('_', ' ')}
+                    </button>
+                  </div>
+                );
+              }
+              if (s.allocation) {
+                // An allocation step (Waste allocation plan, decision 4): opened on the right, run on each column after rom.
+                return (
+                  <div key={i} className={cn('mb-1 flex items-center gap-1 rounded-sm', allocationAt === i && 'bg-selection')} data-step={s.step} data-allocation="yes">
+                    <Choice value={s.on === false ? 'off' : 'on'} options={['on', 'off'] as const} label={`${s.step} on or off`} onChange={(v) => setStep({ on: v === 'on' ? undefined : false })} />
+                    <button
+                      type="button"
+                      className={cn('flex min-w-0 flex-1 items-center gap-1 truncate text-left hover:underline', s.on === false && 'text-muted-foreground line-through', !same(saved.steps[i], s) && 'text-edited')}
+                      onClick={() => (setFormulaAt(null), setTableAt(null), setAllocationAt(i))}
+                      title="Open this allocation step"
+                    >
+                      <Split className="size-3.5 shrink-0 text-muted-foreground" />
                       {s.step.replaceAll('_', ' ')}
                     </button>
                   </div>
@@ -674,7 +708,7 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
                     <button
                       type="button"
                       className={cn('flex min-w-0 flex-1 items-center gap-1 truncate text-left hover:underline', s.on === false && 'text-muted-foreground line-through', !same(saved.steps[i], s) && 'text-edited')}
-                      onClick={() => (setTableAt(null), setFormulaAt(i))}
+                      onClick={() => (setTableAt(null), setAllocationAt(null), setFormulaAt(i))}
                       title="Open this formula"
                     >
                       <Braces className="size-3.5 shrink-0 text-muted-foreground" />
@@ -714,6 +748,11 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
                 ))}
               </Select>
             )}
+            {flow.steps.some((s) => s.step === 'rom' && !s.formula) && flow.steps.some((s) => s.step === 'final' && !s.formula && !s.table) && (
+              <button type="button" data-slot="add-allocation-step" className="mt-1 block w-full py-0.5 text-left text-muted-foreground hover:bg-accent hover:text-foreground" onClick={addAllocation} title="An allocation script run on each block column after rom, before the final writes: it splits units and fills each process's schedule fields">
+                + Add an allocation before final
+              </button>
+            )}
             {flow.steps.some((s) => s.step === 'final' && !s.formula && !s.table) && (
               <button type="button" data-slot="add-table-step" className="mt-1 block w-full py-0.5 text-left text-muted-foreground hover:bg-accent hover:text-foreground" onClick={addTableStep} title="A table script run on the case's table after the final writes, every run: its columns are the run's own">
                 + Add a table script after final
@@ -721,7 +760,19 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
             )}
           </section>
         </div>
-        {tableAt !== null && flow.steps[tableAt]?.table ? (
+        {allocationAt !== null && flow.steps[allocationAt]?.allocation ? (
+          <section className="min-w-0 flex-1">
+            <AllocationStepEditor
+              key={allocationAt}
+              flow={flow}
+              step={flow.steps[allocationAt]}
+              saved={saved.steps.find((s) => s.step === flow.steps[allocationAt].step)}
+              onStep={(s) => set({ steps: flow.steps.map((t, j) => (j === allocationAt ? s : t)) })}
+              onRemove={() => (set({ steps: flow.steps.filter((_, j) => j !== allocationAt) }), setAllocationAt(null))}
+              onClose={() => setAllocationAt(null)}
+            />
+          </section>
+        ) : tableAt !== null && flow.steps[tableAt]?.table ? (
           <section className="min-w-0 flex-1">
             <TableStepEditor
               key={tableAt}

@@ -87,7 +87,7 @@ export function DataflowGraph({ column, quiet, picked, unit, onPick }: { column:
       const most = Math.max(0, ...these.map((s) => s.writes.length));
       these.forEach((s, j) => {
         const x = j * (STEP_W + GAP_X);
-        nodes.push({ id: `step:${s.at}`, type: 'step', position: { x, y }, data: { label: s.at === 0 ? s.name : stepLabel(s.name), formula: s.kind === 'formula', quiet: s.quiet, picked: picked === s.at }, draggable: false });
+        nodes.push({ id: `step:${s.at}`, type: 'step', position: { x, y }, data: { label: s.at === 0 ? s.name : stepLabel(s.name), formula: s.kind === 'formula' || s.kind === 'allocation', quiet: s.quiet, picked: picked === s.at }, draggable: false });
         s.writes.forEach((w, k) => {
           const id = `wrote:${s.at}:${w.folder}`;
           nodes.push({ id, type: 'write', position: { x: x + 12, y: y + 52 + k * WRITE_H }, data: { label: `${w.folder} ${volumeShort(w.volume)}`, title: writeTip(w), lit: false }, draggable: false, selectable: false });

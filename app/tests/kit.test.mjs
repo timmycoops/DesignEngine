@@ -48,3 +48,13 @@ test('the status line counts what to look at', () => {
   assert.equal(lookAt([plainNote('made'), warning]), '1 warning');
   assert.equal(lookAt([plainNote('made')]), '');
 });
+
+// Waste allocation plan, workstream 3: the reference's allocation part is its own, and a table script's guide stops
+// before it.
+test("an allocation step's guide is the reference's allocation part", async () => {
+  const { allocationGuide, guideFor } = await import('../src/panels/scriptGuide.ts');
+  const reference = '# Writing a reserves formula\nf\n# Writing a table script\nt\n# Writing an allocation script\na\n';
+  assert.equal(allocationGuide(reference), '# Writing an allocation script\na');
+  assert.equal(guideFor(reference, true), '# Writing a table script\nt');
+  assert.equal(guideFor(reference, false), '# Writing a reserves formula\nf');
+});

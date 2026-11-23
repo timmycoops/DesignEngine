@@ -65,6 +65,28 @@ pub const UNIT_PARTS: &[Call] = &[
     call("place_onto", "unit.place_onto(\"Waste\\\\Drill and Blast\\\\Volume\", x, seam=unit.blasting_seam, bench=unit.blasting_bench)", "a schedule field's value written on another leaf of the block (the levels named, the rest the unit's own), not the unit's; where that leaf has nothing scheduled it's said and not written"),
 ];
 
+/// What an allocation step's column offers (Waste allocation plan, decision 4): its units and the calls that read them.
+pub const COLUMN_CALLS: &[Call] = &[
+    call("units", "column.units", "every unit of the column, top down"),
+    call("waste", "column.waste()", "the units that end in ROM waste, top down: waste, losses and discarded coal"),
+    call("coal", "column.coal()", "the units that end in a ROM coal section, top down: its coal, partings and dilution"),
+    call("after", "column.after(unit)", "the unit below this one; None for the last"),
+    call("before", "column.before(unit)", "the unit above this one; None for the first"),
+    call("group_while", "column.group_while(\"process\", \"zone\", units=column.waste())", "runs of neighbouring units with the same values of these fields, words or labels: a list of lists"),
+    call("total", "column.total(\"volume\", units=[a, b])", "a field over units (every unit by default) added up by its own rule"),
+    call("name", "column.name", "the column's words: Pit/3/B1"),
+    call("block", "column.block.strip", "the column's own attributes, its levels above the seam"),
+];
+
+/// What a unit of an allocation step offers besides its fields, words and labels (decisions 3 and 5).
+pub const ALLOCATION_UNIT: &[Call] = &[
+    call("split_thickness", "top, rest = unit.split_thickness(p.topsoil_thickness)", "pieces of these thicknesses off the top, then the rest; a list one longer than asked, a piece of nothing None; the pieces add back to the unit exactly"),
+    call("split_shares", "cast, dozer, dragline = unit.split_shares([0.2, 0.3, 0.5])", "the unit split by volume shares adding to 1, in order; a share of 0 None; the last piece is what's left, so they add back exactly"),
+    call("place_onto", "unit.place_onto(\"Waste\\\\Drill and Blast\\\\Volume\", x, seam=unit.blasting_seam)", "a schedule field's value written on another leaf of the block, not the unit's"),
+    call("block", "unit.block.strip", "its block's attributes"),
+    call("p", "unit.p.min_burden", "the parameters for the unit, by its block's attributes"),
+];
+
 /// Starlark's own functions and words a script uses most, offered as they're typed.
 pub const STARLARK: &[Call] = &[
     call("len", "len(x)", "how many items, or a table's rows"),

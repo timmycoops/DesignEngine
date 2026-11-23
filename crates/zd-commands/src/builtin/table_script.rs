@@ -284,7 +284,7 @@ pub(crate) fn columns_onto(base: &Table, given: &Table, kind: ColumnKind) -> Res
 /// step's name. Every problem is said with its step and line.
 pub fn check_table_steps(dataflow: &zd_core::Dataflow, built_in: &[&str], libraries: &Libraries) -> Result<Vec<(String, Arc<TableScript>)>, String> {
     let mut out = Vec::new();
-    let last_built_in = dataflow.steps.iter().rposition(|s| s.formula.is_none() && s.table.is_none());
+    let last_built_in = dataflow.steps.iter().rposition(|s| s.is_built_in());
     for (i, s) in dataflow.steps.iter().enumerate() {
         let Some(t) = &s.table else { continue };
         if built_in.contains(&s.step.as_str()) {
@@ -349,6 +349,13 @@ pub(crate) fn tables_by_name<'a>(objects: impl Iterator<Item = &'a Arc<Object>>)
 /// A script as edited, checked as a table script where it defines `run` (the app's editors): its problems, each on its
 /// line; none for a script of functions only, which `check_library` checks.
 pub fn check_table_script(source: &str, libraries: Libraries) -> Vec<super::FormulaProblem> {
+    // An allocation step's script (Waste allocation plan, decision 4) is checked as one: `def allocate(column, p):`.
+    if zd_script::is_allocation_script(source) {
+        return match zd_script::Allocation::compile(source, zd_script::Declared { libraries, ..Default::default() }) {
+            Ok(_) => Vec::new(),
+            Err(problems) => problems.into_iter().map(|p| super::FormulaProblem { message: p.message, line: p.line }).collect(),
+        };
+    }
     if !zd_script::is_table_script(source) {
         return Vec::new();
     }

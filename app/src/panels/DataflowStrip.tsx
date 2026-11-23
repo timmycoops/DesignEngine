@@ -44,15 +44,16 @@ export function DataflowStrip({
               data-strip-step={s.at === 0 ? 'as input' : s.name}
               aria-pressed={picked === s.at}
               onClick={() => onPick(s.at)}
-              title={`${s.at === 0 ? 'The column as input, the blocks as read' : `${stepLabel(s.name)}, ${s.kind === 'formula' ? 'a formula' : 'built in'}`}${s.quiet ? ': changed nothing in this column' : ''}. Click to pick it.`}
+              title={`${s.at === 0 ? 'The column as input, the blocks as read' : `${stepLabel(s.name)}, ${s.kind === 'formula' ? 'a formula' : s.kind === 'allocation' ? 'an allocation on the column' : 'built in'}`}${s.quiet ? ': changed nothing in this column' : ''}. Click to pick it.`}
               className={cn(
                 'flex flex-col items-center gap-0.5 rounded-md border px-2 py-1 hover:border-primary',
-                picked === s.at ? 'border-primary bg-selection text-primary ring-1 ring-primary' : s.kind === 'formula' ? 'border-dashed border-muted-foreground' : 'border-border',
+                picked === s.at ? 'border-primary bg-selection text-primary ring-1 ring-primary' : s.kind === 'formula' || s.kind === 'allocation' ? 'border-dashed border-muted-foreground' : 'border-border',
                 s.quiet && picked !== s.at && 'text-muted-foreground',
               )}
             >
               <span className={cn(!s.quiet && 'font-medium')}>
                 {s.kind === 'formula' && <span className="text-muted-foreground">ƒ </span>}
+                {s.kind === 'allocation' && <span className="text-muted-foreground">⇶ </span>}
                 {s.at === 0 ? s.name : stepLabel(s.name)}
               </span>
               {s.writes.length > 0 && (

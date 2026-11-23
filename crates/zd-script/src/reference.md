@@ -406,3 +406,90 @@ def run(t):
     required("ROM\\Waste\\dragline_bcm", material="waste")
     return t
 ```
+
+# Writing an allocation script
+
+An allocation step works on a whole block column at once, after `rom` and before the final writes: Spry's waste
+allocation, a column (pit, strip, block) at a time. It's Starlark, `def allocate(column, p):`, run once on each column.
+Use it to split the waste into what each process digs (topsoil and freedig off the top, a dragline system's zones from
+the bottom up, a wedge over each coal), to set each piece's words (`process`, `zone`) and to fill each process's
+schedule fields (`Waste\Dragline\Prime Volume`), which are written under `Scheduled` only.
+
+The splitting is the engine's: a split is the column's own, done in Rust, so the pieces add back to the unit exactly and
+the balance holds. A script never sets a unit's volume: it splits the unit to share it.
+
+**Every number comes from a parameter row.** Thicknesses, limits, factors, rehandle and swell are read from the
+dataflow's parameter tables (`p` for the column, `unit.p` for a unit, `lookup("Table", "column", key=…)` for any table by
+its keys), never written in the script: the script holds the order and the logic, and each read is traced in the
+notebook to its table and row.
+
+## Its shape
+
+```star
+# Topsoil then freedig off the top of each waste over coal, a wedge off its bottom, the rest Excavator.
+def allocate(column, p):
+    for u in column.waste():
+        below = column.after(u)
+        if below == None or below.material != "coal":
+            u.process = "Excavator"
+            u["Waste\\Excavator\\Prime Volume"] = u.volume
+            continue
+        topsoil, freedig, rest = u.split_thickness(p.topsoil_thickness, p.freedig_thickness)
+        excavator, wedge = rest.split_thickness(rest.thickness - p.wedge_thickness)
+        for piece, process in [(topsoil, "Topsoil"), (freedig, "Freedig"), (excavator, "Excavator"), (wedge, "Wedge")]:
+            piece.process = process
+            piece["Waste\\" + process + "\\Prime Volume"] = piece.volume
+```
+
+## What the column gives
+
+- `column.units`: every unit, top down. `column.waste()`: those that end in ROM waste (waste, losses, discarded coal);
+  `column.coal()`: those in a ROM coal section (its coal, partings and dilution). Small volumes, the underburden left and
+  waste below the last coal aren't mined, and are in neither.
+- `column.after(u)`, `column.before(u)`: the unit below or above, None at the ends.
+- `column.group_while("process", "zone", units=column.waste())`: runs of neighbouring units with the same values, a list
+  of lists (a blast is a run of waste with one blasting horizon).
+- `column.total("volume", units=[a, b])`: a field over units added up by its own rule.
+- `column.name` (`Pit/3/B1`) and `column.block.strip`: the column's words and its own attributes.
+
+## What a unit gives
+
+- Its fields, words and labels as a formula's: `u.volume`, `u.thickness`, `u.process`, `u.seam`, `u.material`,
+  `u.bench`, `u.became`; a schedule field by its name in square brackets, `u["Waste\\Dragline\\Prime Volume"]`. Set a
+  field or word the same way; a label isn't set.
+- `u.split_thickness(2, 5)`: pieces of 2 m and 5 m off the top, then the rest: a list one longer than asked. A piece of
+  0 m, or the rest when nothing is left, is None. Asking for more than the unit holds stops the column, saying how thick
+  it is.
+- `u.split_shares([0.2, 0.3, 0.5])`: the unit split by volume shares adding to 1, in order; a share of 0 is None. The
+  last piece is what's left, so the pieces add back exactly.
+- Each piece takes the unit's labels and words; its volume, thickness and other summed fields are shared, and every
+  other value kept. A piece written by `final` goes on the unit's leaf, as the unit would have.
+- `u.place_onto("Waste\\Drill and Blast\\Volume", x, seam=…, bench=…)`: a schedule field's value written on another
+  leaf of the block, as a formula's.
+- `u.block.strip`: its block's attributes. `u.p.min_burden`: the parameters by its block's attributes.
+
+## Examples
+
+```star
+# A dragline system: the zones from the bottom up, each split by its method's factors looked up by zone.
+def allocate(column, p):
+    for u in column.waste():
+        below = column.after(u)
+        if below == None or below.material != "coal" or u.thickness < p.min_burden:
+            u.process = "Excavator"
+            continue
+        zones = int(p.zones)
+        top = max(u.thickness - p.system_max, 0)
+        pieces = u.split_thickness(*([top] + [p.zone_thickness] * (zones - 1)))
+        if pieces[0] != None:
+            pieces[0].process = "Excavator"
+        for k, zone in enumerate(pieces[1:]):
+            n = zones - k
+            zone.zone = "Zone %d" % n
+            f = lambda name: lookup("Method factors", name, zone=n)
+            cast, dozer, dragline = zone.split_shares([f("cast"), f("dozer"), f("dragline")])
+            for piece, process in [(cast, "Cast"), (dozer, "Dozer Push"), (dragline, "Dragline")]:
+                if piece != None:
+                    piece.process = process
+                    piece["Waste\\" + process + "\\Prime Volume"] = piece.volume
+```

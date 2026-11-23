@@ -79,7 +79,7 @@ pub use reserves_run::{
 };
 pub use starter::{DISCARDED, RENAMED_FIELDS, TONNES_AD_PER_M3, renamed_from_older, starter_formulas, with_starter_formulas};
 pub use zd_script::REFERENCE as FORMULA_REFERENCE;
-pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, check_formula_with, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_formula_steps, check_formula_steps_flagging, declare_words, declared as formula_declared};
+pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, check_formula_with, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_allocation_steps, check_formula_steps, check_formula_steps_flagging, declare_words, declared as formula_declared};
 pub use dataflow::{DATAFLOW_LAYER, ExportParameters, PARAMETERS_LAYER, SaveDataflow, SaveParameters};
 pub use scripts::{NamedTables, SCRIPTS_LAYER, SaveScript, SaveScriptParams, bind_loads, bind_lookups, check_curves, curve_readers, libraries_of, lookups_by_id};
 pub use table_script::{GridWork, RunTableScript, ScriptInto, TABLES_LAYER, TableScriptParams, check_table_script, check_table_steps, compile_table_script};

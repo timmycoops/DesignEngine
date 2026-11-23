@@ -788,7 +788,7 @@ fn bound_column(project: &zd_core::Project, mut column: zd_core::CalculatedColum
 /// A dataflow as edited, its formulas' loads bound to the project's scripts by name (decision 0099), so an edit can
 /// load a script before it's saved; and those scripts, for the loader.
 fn bound(project: &zd_core::Project, mut d: zd_core::Dataflow) -> Result<(zd_core::Dataflow, zd_commands::builtin::ScriptLibraries), String> {
-    let sources: Vec<String> = d.steps.iter().filter_map(|s| s.formula.as_ref().map(|f| f.script.clone()).or(s.table.as_ref().map(|t| t.script.clone()))).collect();
+    let sources: Vec<String> = d.steps.iter().filter_map(|s| s.script().map(String::from)).collect();
     let refs: Vec<&str> = sources.iter().map(String::as_str).collect();
     let (ids, libraries) = zd_commands::builtin::bind_loads(project.objects(), &refs)?;
     d.scripts = ids;
@@ -1141,7 +1141,7 @@ pub async fn formula_check(content: zd_core::Dataflow, index: usize, state: Stat
             Err(_) => Default::default(),
         };
         // The tables it looks up by name, so its worked examples can look them up as a run does.
-        let named = zd_commands::builtin::bind_lookups(project.objects(), &content.steps.iter().filter_map(|s| s.formula.as_ref().map(|f| f.script.as_str())).collect::<Vec<_>>()).map(|(_, named)| named).unwrap_or_default();
+        let named = zd_commands::builtin::bind_lookups(project.objects(), &content.steps.iter().filter_map(|s| s.script()).collect::<Vec<_>>()).map(|(_, named)| named).unwrap_or_default();
         zd_commands::builtin::check_formula_with(&content, &refs, index, &built_in, libraries, named)
     })
     .await?
@@ -1184,6 +1184,8 @@ pub fn script_help() -> serde_json::Value {
         "tableGlobals": list(h::TABLE_GLOBALS),
         "library": list(h::LIBRARY_CALLS),
         "unitParts": list(h::UNIT_PARTS),
+        "column": list(h::COLUMN_CALLS),
+        "allocationUnit": list(h::ALLOCATION_UNIT),
         "starlark": list(h::STARLARK),
     })
 }

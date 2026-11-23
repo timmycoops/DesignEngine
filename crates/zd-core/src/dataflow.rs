@@ -84,6 +84,19 @@ pub struct DataflowStep {
     /// A table script step (decision 11 of 0099): run on the case's table after the final writes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table: Option<TableStep>,
+    /// An allocation step (Waste allocation plan, decisions 1, 3 and 4): run on each column's units after `rom`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allocation: Option<AllocationStep>,
+}
+
+/// An allocation step's own part (the Waste allocation plan, decisions 1, 3 and 4): Starlark defining
+/// `def allocate(column, p):`, run once on each block column's units after `rom` and before `final`. It may split a unit
+/// by thickness from the top or by volume shares (the pieces adding back to it exactly), set fields and words on each,
+/// and place schedule fields onto other leaves; the grouping and splitting are done in Rust.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AllocationStep {
+    pub script: String,
 }
 
 /// A table script step's own part (the Build Plan's "Tables and scripts plan", decision 11): Starlark defining
@@ -135,7 +148,22 @@ pub struct FormulaTest {
 
 impl DataflowStep {
     pub fn on(step: &str) -> Self {
-        DataflowStep { step: step.to_string(), on: true, settings: BTreeMap::new(), formula: None, table: None }
+        DataflowStep { step: step.to_string(), on: true, settings: BTreeMap::new(), formula: None, table: None, allocation: None }
+    }
+
+    /// An allocation step of this name (Waste allocation plan, decision 4), run on each column after `rom`.
+    pub fn allocation(step: &str, script: &str) -> Self {
+        DataflowStep { allocation: Some(AllocationStep { script: script.to_string() }), ..DataflowStep::on(step) }
+    }
+
+    /// Its script, for a formula, table script or allocation step; none for a built-in step.
+    pub fn script(&self) -> Option<&str> {
+        self.formula.as_ref().map(|f| f.script.as_str()).or(self.table.as_ref().map(|t| t.script.as_str())).or(self.allocation.as_ref().map(|a| a.script.as_str()))
+    }
+
+    /// Whether it's a built-in step, named for what the engine does: no script of its own.
+    pub fn is_built_in(&self) -> bool {
+        self.script().is_none()
     }
 
     /// A table script step of this name (decision 11 of 0099), run on the case's table after the final writes.
@@ -300,6 +328,17 @@ impl Dataflow {
             if self.steps[..i].iter().any(|t| t.step == s.step) {
                 return Err(format!("the step {} is listed twice", s.step));
             }
+            if let Some(a) = &s.allocation {
+                if s.formula.is_some() || s.table.is_some() {
+                    return Err(format!("the step {} is an allocation step and a formula or table script too: make them steps of their own", s.step));
+                }
+                if a.script.trim().is_empty() {
+                    return Err(format!("the allocation step {} has no script", s.step));
+                }
+                if !s.settings.is_empty() {
+                    return Err(format!("the allocation step {} has settings: its script reads what it needs from the parameters", s.step));
+                }
+            }
             if let Some(t) = &s.table {
                 if s.formula.is_some() {
                     return Err(format!("the step {} is both a formula and a table script: make them two steps", s.step));
@@ -425,5 +464,30 @@ mod tests {
         let mut d = dataflow();
         d.steps.push(DataflowStep::on("initialise"));
         assert!(d.check().unwrap_err().contains("listed twice"));
+    }
+
+    /// An allocation step (Waste allocation plan, decision 4) saves with its script and reads back; with no script, with
+    /// settings, or as a formula too, it's refused.
+    #[test]
+    fn an_allocation_step_holds_together() {
+        let mut d = dataflow();
+        d.steps.push(DataflowStep::allocation("loose_ground", "def allocate(column, p):
+    pass
+"));
+        d.check().unwrap();
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains(r#""step":"loose_ground","allocation":{"script":"#), "{json}");
+        assert_eq!(serde_json::from_str::<Dataflow>(&json).unwrap(), d);
+        assert!(d.steps.last().is_some_and(|s| !s.is_built_in() && s.script().is_some_and(|x| x.contains("allocate"))));
+        let refused = |change: fn(&mut DataflowStep)| {
+            let mut e = d.clone();
+            change(e.steps.last_mut().unwrap());
+            e.check().unwrap_err()
+        };
+        assert!(refused(|s| s.allocation.as_mut().unwrap().script = " ".into()).contains("has no script"));
+        assert!(refused(|s| _ = s.settings.insert("x".into(), "y".into())).contains("has settings"));
+        assert!(refused(|s| s.formula = DataflowStep::formula("f", "def formula(unit):
+    pass
+").formula).contains("a formula or table script too"));
     }
 }

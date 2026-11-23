@@ -11,7 +11,7 @@
 //! unit from the parameter tables by the attributes of the block it came from, and what it changed is counted and said. The engineering steps (working sections to clean coal) come in 0070's workstreams
 //! 3 and 4.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -45,6 +45,8 @@ type StepFn = fn(&mut ColumnRun<'_>, &DataflowStep) -> Result<(), String>;
 pub(crate) enum StepRun {
     BuiltIn(StepFn),
     Formula(Arc<zd_script::Formula>),
+    /// An allocation step's script, compiled once (Waste allocation plan, decision 4).
+    Allocation(Arc<zd_script::Allocation>),
 }
 
 /// The origin an added unit carries in place of a block: ground outside the model, the underburden (decision 0073).
@@ -166,6 +168,8 @@ pub struct ColumnRun<'a> {
     rows: Vec<Piece>,
     /// The attributes of the levels below the column, top down: what a piece's leaf is read from.
     lower: &'a [String],
+    /// The attributes of the levels above the seam, top down, which make the column: what its own parameters are read by.
+    upper: &'a [String],
     said: Said,
     /// Volume added from outside the model (the underburden), kept out of the column's balance to its blocks.
     added_volume: f64,
@@ -345,19 +349,33 @@ impl ColumnRun<'_> {
     fn lookup(&self, at: usize, column: &str) -> Option<ParamValue> {
         let refs: Vec<&ParameterTable> = self.tables.iter().map(|t| t.as_ref()).collect();
         let found = ParameterTable::lookup_in(&refs, &self.attributes[self.column.units()[at].origin as usize], column);
+        self.note_read(self.column.units()[at].id, column, found.as_ref());
+        found.map(|f| f.value.clone())
+    }
+
+    /// A parameter an allocation step read by the column's own attributes (its levels above the seam), traced in the
+    /// notebook as a unit's are, on the unit given (the column's top one).
+    fn lookup_for_column(&self, unit: Option<UnitId>, attributes: &Attributes, column: &str) {
+        let Some(unit) = unit else { return };
+        let refs: Vec<&ParameterTable> = self.tables.iter().map(|t| t.as_ref()).collect();
+        let found = ParameterTable::lookup_in(&refs, attributes, column);
+        self.note_read(unit, column, found.as_ref());
+    }
+
+    /// Notes a parameter read, when the column is opened as a notebook: what it found, and the table and row.
+    fn note_read(&self, unit: UnitId, column: &str, found: Option<&zd_core::Found<'_>>) {
         if let Some(reads) = &self.reads {
             let (value, text) = match found.as_ref().map(|f| f.value) {
                 Some(ParamValue::Number(n)) => (Some(*n), None),
                 Some(ParamValue::Text(t)) => (t.trim().parse().ok(), Some(t.trim().to_string())),
                 None => (None, None),
             };
-            let read = ParamRead { unit: self.column.units()[at].id, column: column.to_string(), value, text, table: found.as_ref().map(|f| f.table), row: found.as_ref().map(|f| f.row) };
+            let read = ParamRead { unit, column: column.to_string(), value, text, table: found.map(|f| f.table), row: found.map(|f| f.row) };
             let mut reads = reads.borrow_mut();
             if !reads.contains(&read) {
                 reads.push(read);
             }
         }
-        found.map(|f| f.value.clone())
     }
 
     /// Writes a working line on each of these units, when the column is opened as a notebook; in a run nothing is made.
@@ -565,11 +583,17 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     let mut failing: Vec<String> = Vec::new();
     let mut compiled: BTreeMap<usize, Arc<zd_script::Formula>> =
         formulas::check_formula_steps_flagging(dataflow, &built_in, &declared, flagging.then_some(&mut failing)).map_err(CommandError::Invalid)?.into_iter().map(|(i, f)| (i, Arc::new(f))).collect();
+    let mut allocations: BTreeMap<usize, Arc<zd_script::Allocation>> =
+        formulas::check_allocation_steps(dataflow, &built_in, &declared).map_err(CommandError::Invalid)?.into_iter().map(|(i, a)| (i, Arc::new(a))).collect();
     let mut steps = Vec::new();
     let table_steps = super::check_table_steps(dataflow, &built_in, &declared.libraries).map_err(CommandError::Invalid)?;
     for (i, s) in dataflow.steps.iter().enumerate().filter(|(_, s)| s.on && s.table.is_none()) {
         if let Some(f) = compiled.remove(&i) {
             steps.push((s.step.clone(), StepRun::Formula(f), s.clone()));
+            continue;
+        }
+        if let Some(a) = allocations.remove(&i) {
+            steps.push((s.step.clone(), StepRun::Allocation(a), s.clone()));
             continue;
         }
         let Some(f) = step_fn(&s.step) else {
@@ -809,6 +833,8 @@ pub enum StepKind {
     Input,
     BuiltIn,
     Formula,
+    /// An allocation step (Waste allocation plan, decision 4): its script on the whole column.
+    Allocation,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -880,13 +906,10 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
         let written = run.rows.len();
         let fits: Vec<UnitId> = match (preview.is_some(), step) {
             (true, StepRun::Formula(_)) => formula_fits(&run, settings).into_iter().map(|at| run.column.units()[at].id).collect(),
-            (true, StepRun::BuiltIn(_)) => run.column.units().iter().map(|u| u.id).collect(),
+            (true, StepRun::BuiltIn(_) | StepRun::Allocation(_)) => run.column.units().iter().map(|u| u.id).collect(),
             _ => Vec::new(),
         };
-        let done = match step {
-            StepRun::BuiltIn(f) => f(&mut run, settings),
-            StepRun::Formula(f) => run_formula(&mut run, f, settings, &prepared.declared),
-        };
+        let done = run_step(&mut run, step, settings, &prepared.declared);
         done.map_err(|why| stop(format!("{} at {name}: {why}", key.words())))?;
         if let (Some(p), Some(before)) = (preview.as_deref_mut(), before) {
             let mut cell = view(&run, name, run.said.since(&before));
@@ -903,6 +926,10 @@ fn run_column(prepared: &Prepared, key: &ColumnKey, blocks: &[Arc<Object>], mut 
                     cell.source = f.map(|f| f.script.clone());
                     // A formula's own reads are in its trace; what its fields' parameters gave isn't the step's.
                     cell.reads.clear();
+                }
+                StepRun::Allocation(_) => {
+                    cell.kind = StepKind::Allocation;
+                    cell.source = settings.allocation.as_ref().map(|a| a.script.clone());
                 }
                 StepRun::BuiltIn(_) => {
                     cell.kind = StepKind::BuiltIn;
@@ -953,6 +980,7 @@ fn begin_column<'a>(prepared: &'a Prepared, key: &ColumnKey, blocks: &[Arc<Objec
         dataflow: &prepared.dataflow,
         rows: Vec::new(),
         lower: &prepared.lower,
+        upper: &prepared.upper,
         said: Said::default(),
         added_volume: 0.0,
         block_area,
@@ -1022,6 +1050,108 @@ fn run_formula(run: &mut ColumnRun<'_>, formula: &zd_script::Formula, step: &Dat
     Ok(())
 }
 
+/// A step of the column, whatever kind: a built-in step, a formula on its units, or an allocation script on the column.
+fn run_step(run: &mut ColumnRun<'_>, step: &StepRun, settings: &DataflowStep, declared: &zd_script::Declared) -> Result<(), String> {
+    match step {
+        StepRun::BuiltIn(f) => f(run, settings),
+        StepRun::Formula(f) => run_formula(run, f, settings, declared),
+        StepRun::Allocation(a) => run_allocation(run, a, settings, declared, false).map(|_| ()),
+    }
+}
+
+/// Where each unit ends once `final` writes it (Waste allocation plan, decision 4), as `final` decides: a member of a ROM
+/// coal section ends in ROM coal; the rest ends in ROM waste, but for small volumes, the underburden left outside the
+/// model and model waste below the last coal, which aren't mined.
+fn ends_of(run: &ColumnRun<'_>) -> HashMap<UnitId, zd_script::Ends> {
+    let mut ends = HashMap::new();
+    for s in sections_of(run).iter().filter(|s| s.coal) {
+        for at in rom_members(run, s.id) {
+            ends.insert(run.column.units()[at].id, zd_script::Ends::Coal);
+        }
+    }
+    let last_coal = (0..run.column.len()).rev().find(|&i| {
+        let u = &run.column.units()[i];
+        is_coal(u) && !run.is_out_of_model(u)
+    });
+    for (i, u) in run.column.units().iter().enumerate() {
+        if ends.contains_key(&u.id) || run.is_out_of_model(u) || u.became.as_ref().is_some_and(|b| b.kind == BecameKind::SmallVolume) {
+            continue;
+        }
+        if last_coal.is_some_and(|c| i > c) && !is_coal(u) {
+            continue;
+        }
+        ends.insert(u.id, zd_script::Ends::Waste);
+    }
+    ends
+}
+
+/// The column's own attributes: its levels above the seam (pit, strip, block), what its parameters `p` are read by.
+fn column_attributes(run: &ColumnRun<'_>) -> Attributes {
+    let mut attributes = Attributes::new();
+    for (level, word) in run.upper.iter().zip(&run.column.key.path) {
+        attributes.insert(level.clone(), AttrValue::Text(word.clone()));
+    }
+    attributes
+}
+
+/// An allocation step on a column (Waste allocation plan, decisions 1, 3 and 4): the script given the column's units,
+/// where each ends, each block's attributes and parameters and the column's own; the column it leaves taken as the run's.
+/// Each split is said and, in the notebook, worked on its pieces; each value placed goes to `final`; each parameter it
+/// read is traced to its table and row. With `trace`, the run traced line by line, given back.
+fn run_allocation(run: &mut ColumnRun<'_>, allocation: &zd_script::Allocation, step: &DataflowStep, declared: &zd_script::Declared, trace: bool) -> Result<Option<zd_script::Trace>, String> {
+    let tables: Vec<&ParameterTable> = run.tables.iter().map(|t| t.as_ref()).collect();
+    let column_attributes = column_attributes(run);
+    let input = zd_script::AllocationInput {
+        column: run.column.clone(),
+        name: run.column.key.words(),
+        blocks: run.attributes.iter().map(formulas::block_values).collect(),
+        parameters: run.attributes.iter().map(|a| formulas::parameter_values(&tables, declared, a)).collect(),
+        column_block: formulas::block_values(&column_attributes),
+        column_parameters: formulas::parameter_values(&tables, declared, &column_attributes),
+        ends: ends_of(run),
+    };
+    let (done, traced) = if trace {
+        let (t, done) = allocation.trace(input);
+        match done {
+            Some(done) => (done, Some(t)),
+            None => return Ok(Some(t)),
+        }
+    } else {
+        (allocation.run(input).map_err(|p| p.to_string())?, None)
+    };
+    let v = run.column.fields().volume();
+    run.column = done.column;
+    for split in &done.splits {
+        let made: Vec<UnitId> = split.pieces.iter().flatten().copied().collect();
+        let Some(at) = made.iter().find_map(|&id| run.column.position(id)) else { continue };
+        let volume: f64 = made.iter().filter_map(|&id| run.column.position(id)).map(|at| run.column.units()[at].value(v)).sum();
+        run.said.count(format!("split by {} into {} pieces", step.step, made.len()), volume);
+        run.work(&made, || {
+            let pieces: Vec<String> = made.iter().filter_map(|&id| run.column.position(id)).map(|at| format!("{} m³", vol(run.column.units()[at].value(v)))).collect();
+            Line::sum("split", format!("{} by {}: {}", run.words_of(at), split.how, pieces.join(" + ")), volume, "m³").then(format!("{} pieces, adding back to the unit", made.len()))
+        });
+    }
+    for (unit, placed) in &done.placed {
+        let at = run.column.position(*unit).ok_or("a unit went missing")?;
+        place_onto(run, at, placed)?;
+    }
+    for text in &done.said {
+        let column = run.column.key.words();
+        run.said.name(&format!("printed by {}: {text}", step.step), &column);
+    }
+    if run.reads.is_some() {
+        let top = run.column.units().first().map(|u| u.id);
+        for (whose, name) in &done.read {
+            match whose.and_then(|id| run.column.position(id)) {
+                Some(at) => {
+                    run.lookup(at, name);
+                }
+                None => run.lookup_for_column(top, &column_attributes, name),
+            }
+        }
+    }
+    Ok(traced)
+}
 /// A schedule field a formula placed onto another leaf of the column (Waste allocation plan, decision 5): the leaf is the
 /// unit's own with the levels it named put in, each named level one below the column; a joined unit's value is shared
 /// over its benches by their in situ shares, as its own pieces are. Only a field that adds up by sum moves to another leaf.
@@ -1189,14 +1319,14 @@ pub fn formula_trace(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>
     let mut traced = None;
     for (name, s, settings) in &prepared.steps {
         if name == step {
-            let StepRun::Formula(f) = s else { return Err(CommandError::Invalid(format!("{step} isn't a formula step"))) };
-            traced = Some((f.clone(), settings.clone()));
+            match s {
+                StepRun::Formula(f) => traced = Some((f.clone(), settings.clone())),
+                StepRun::Allocation(a) => return allocation_trace(&mut run, &prepared, a, settings),
+                StepRun::BuiltIn(_) => return Err(CommandError::Invalid(format!("{step} isn't a formula step"))),
+            }
             break;
         }
-        let done = match s {
-            StepRun::BuiltIn(f) => f(&mut run, settings),
-            StepRun::Formula(f) => run_formula(&mut run, f, settings, &prepared.declared),
-        };
+        let done = run_step(&mut run, s, settings, &prepared.declared);
         done.map_err(|why| CommandError::Invalid(format!("{} at {name}: {why}", key.words())))?;
     }
     let (formula, settings) = traced.ok_or_else(|| CommandError::Invalid(format!("{step} isn't a step the dataflow runs (is it off?)")))?;
@@ -1230,6 +1360,26 @@ fn trace_at(run: &ColumnRun<'_>, prepared: &Prepared, formula: &zd_script::Formu
         said: trace.said,
         stopped: trace.stopped.map(|p| super::formulas::FormulaProblem { message: p.message, line: p.line }),
     }
+}
+
+/// An allocation step traced on a column brought up to it (Waste allocation plan, decision 4): the whole column's run, line
+/// by line, as the notebook shows a formula's on a unit; what it read, set and printed, and where it stopped.
+fn allocation_trace(run: &mut ColumnRun<'_>, prepared: &Prepared, allocation: &zd_script::Allocation, settings: &DataflowStep) -> Result<FormulaTraceView, CommandError> {
+    let block = run.column.key.words();
+    let units = run.column.len();
+    let trace = run_allocation(run, allocation, settings, &prepared.declared, true).map_err(CommandError::Invalid)?.expect("traced");
+    let show = |v: &zd_script::ScriptValue| v.to_string();
+    Ok(FormulaTraceView {
+        block,
+        unit: format!("the column, {units} units"),
+        fits: true,
+        before: Vec::new(),
+        lines: trace.lines.into_iter().map(|l| TraceLineView { line: l.line, text: l.text, values: l.values }).collect(),
+        reads: trace.events.iter().filter_map(|e| match e { zd_script::Event::Read { what, value } => Some((what.clone(), show(value))), _ => None }).collect(),
+        sets: trace.sets.iter().map(|(k, v)| (k.clone(), show(v))).collect(),
+        said: trace.said,
+        stopped: trace.stopped.map(|p| super::formulas::FormulaProblem { message: p.message, line: p.line }),
+    })
 }
 
 /// The column after each of the dataflow's steps, for one block: the canvas's before and after (decision 0072, point 7).
@@ -1356,15 +1506,19 @@ pub fn column_trace(project: &zd_core::Project, log: &[crate::LogEntry], table: 
     let opened = open_column(project, log, &get, table, node, unsaved.dataflow.as_ref())?;
     let prepared = &opened.prepared;
     let (name, s, settings) = step.checked_sub(1).and_then(|i| prepared.steps.get(i)).ok_or_else(|| CommandError::Invalid(format!("the dataflow runs {} steps, not {step}", prepared.steps.len())))?;
-    let StepRun::Formula(formula) = s else { return Err(CommandError::Invalid(format!("{name} is built in, not a formula: it has no lines to trace"))) };
+    if matches!(s, StepRun::BuiltIn(_)) {
+        return Err(CommandError::Invalid(format!("{name} is built in, not a formula: it has no lines to trace")));
+    }
     let (mut run, _) = begin_column(prepared, &opened.key, &prepared.columns[&opened.key]).map_err(|s| CommandError::Invalid(s.why))?;
     for (name, s, settings) in &prepared.steps[..step - 1] {
-        let done = match s {
-            StepRun::BuiltIn(f) => f(&mut run, settings),
-            StepRun::Formula(f) => run_formula(&mut run, f, settings, &prepared.declared),
-        };
+        let done = run_step(&mut run, s, settings, &prepared.declared);
         done.map_err(|why| CommandError::Invalid(format!("{} at {name}: {why}", opened.key.words())))?;
     }
+    let formula = match s {
+        StepRun::Formula(f) => f,
+        StepRun::Allocation(a) => return allocation_trace(&mut run, prepared, a, settings),
+        StepRun::BuiltIn(_) => unreachable!("refused above"),
+    };
     let at = run.column.position(unit).ok_or_else(|| CommandError::Invalid(format!("the column has no unit {unit} at {name}")))?;
     let mut view = trace_at(&run, prepared, formula, settings, at);
     // A unit the step's filter leaves out isn't run on, so no line ran for it: the cell says so, and shows none.
@@ -1420,10 +1574,7 @@ pub fn units_at_step(project: &zd_core::Project, log: &[crate::LogEntry], table:
     let ran = super::in_parallel(&columns, |(key, blocks)| -> Result<Vec<UnitView>, String> {
         let (mut run, _) = begin_column(&prepared, key, blocks).map_err(|s| s.why)?;
         for (name, s, settings) in &prepared.steps[..step] {
-            let done = match s {
-                StepRun::BuiltIn(f) => f(&mut run, settings),
-                StepRun::Formula(f) => run_formula(&mut run, f, settings, &prepared.declared),
-            };
+            let done = run_step(&mut run, s, settings, &prepared.declared);
             done.map_err(|why| format!("{} at {name}: {why}", key.words()))?;
         }
         Ok(view(&run, "", Vec::new()).units)

@@ -12,6 +12,7 @@
 //! on one unit to show what it read, the values of each line as it ran, and what it set. Starlark has no files, network,
 //! clock, randomness or imports, so the same formula on the same units always gives the same answer.
 
+mod alloc;
 mod check;
 mod handles;
 pub mod library;
@@ -32,6 +33,7 @@ use starlark::syntax::{AstModule, Dialect};
 use starlark::values::{OwnedFrozenValue, Value, ValueLike};
 use starlark::PrintHandler;
 
+pub use alloc::{Allocated, AllocationInput, Ends, SplitMade};
 pub use handles::{Event, Placed};
 pub use lookups::Lookups;
 pub use tables::{TableWork, add_up_from_words};
@@ -438,7 +440,7 @@ impl Formula {
         let heap = eval.heap();
         let unit = heap.alloc(self.unit_handle(column, u, log.clone()));
         let result = if self.takes_p {
-            let p = heap.alloc(Params { values: column.units[u].parameters.clone(), log, lookups: Some(self.declared.lookups.clone()) });
+            let p = heap.alloc(Params { values: column.units[u].parameters.clone(), log, lookups: Some(self.declared.lookups.clone()), reads: None });
             eval.eval_function(f, &[unit, p], &[])
         } else {
             eval.eval_function(f, &[unit], &[])
@@ -515,22 +517,165 @@ impl Formula {
                 Err(p) => Some(p),
             }
         });
-        let snapshots = std::mem::take(&mut *snapshots.lock().expect("snapshots"));
-        let source: Vec<&str> = self.source.lines().collect();
-        let lines = snapshots
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                // What this line gave: the names that changed by the next statement in the same function.
-                let next = snapshots[i + 1..].iter().take_while(|n| n.depth >= s.depth).find(|n| n.depth == s.depth);
-                let values = next
-                    .map(|n| n.locals.iter().filter(|(k, v)| s.locals.iter().find(|(k2, _)| k2 == k).is_none_or(|(_, v2)| v2 != v)).cloned().collect())
-                    .unwrap_or_default();
-                TraceLine { line: s.line, text: source.get(s.line - 1).map(|t| t.trim().to_string()).unwrap_or_default(), values }
-            })
-            .collect();
+        let lines = traced_lines(&self.source, std::mem::take(&mut *snapshots.lock().expect("snapshots")));
         let events = std::mem::take(&mut *log.lock().expect("log"));
         Trace { lines, events, said: said.take(), sets, stopped }
+    }
+}
+
+/// The lines that ran, from the snapshots taken before each statement: each with the names it gave a value.
+fn traced_lines(source: &str, snapshots: Vec<Snapshot>) -> Vec<TraceLine> {
+    let source: Vec<&str> = source.lines().collect();
+    snapshots
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            // What this line gave: the names that changed by the next statement in the same function.
+            let next = snapshots[i + 1..].iter().take_while(|n| n.depth >= s.depth).find(|n| n.depth == s.depth);
+            let values = next
+                .map(|n| n.locals.iter().filter(|(k, v)| s.locals.iter().find(|(k2, _)| k2 == k).is_none_or(|(_, v2)| v2 != v)).cloned().collect())
+                .unwrap_or_default();
+            TraceLine { line: s.line, text: source.get(s.line - 1).map(|t| t.trim().to_string()).unwrap_or_default(), values }
+        })
+        .collect()
+}
+
+/// An allocation step compiled (the Waste allocation plan, decisions 3 and 4): Starlark defining
+/// `def allocate(column, p):`, run once on a block column's units after `rom`. It reads and sets the units' fields and
+/// words, splits units by thickness from the top or by volume shares (in Rust, the pieces adding back exactly), and
+/// places schedule fields onto other leaves; `p` is the column's parameters, `unit.p` a unit's.
+pub struct Allocation {
+    source: String,
+    declared: Arc<Declared>,
+    takes_p: bool,
+    globals: Globals,
+    _module: FrozenModule,
+    function: OwnedFrozenValue,
+}
+
+impl fmt::Debug for Allocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Allocation").field("lines", &self.source.lines().count()).field("takes_p", &self.takes_p).finish()
+    }
+}
+
+/// Whether a script is an allocation script: it defines `allocate`.
+pub fn is_allocation_script(source: &str) -> bool {
+    check::signature_of(source, "allocate").is_some()
+}
+
+impl Allocation {
+    /// Parses, loads and checks an allocation script. Every problem is said with its line; any one refuses it.
+    pub fn compile(source: &str, declared: Declared) -> Result<Allocation, Vec<Problem>> {
+        let source = source.replace("\r\n", "\n");
+        let declared = Arc::new(declared);
+        let globals = globals();
+        let ast = AstModule::parse(FILE, source.clone(), &Dialect::Standard).map_err(|e| vec![problem(&e, None)])?;
+        let takes_p = match check::signature_of(&source, "allocate") {
+            None => return Err(vec![Problem { message: "an allocation step defines its function as `def allocate(column, p):` (p only where it reads the column's parameters)".into(), line: None, unit: None }]),
+            Some((line, c, _)) if c.is_empty() => return Err(vec![Problem { message: "`allocate` takes the column, and the parameters where it reads them: `def allocate(column, p):`".into(), line: Some(line), unit: None }]),
+            Some((_, _, p)) => p.is_some(),
+        };
+        let loader = ProjectLoader::new(&declared.libraries, &globals);
+        let module = Module::with_temp_heap(|module| -> Result<FrozenModule, Problem> {
+            {
+                let said = Said::default();
+                let mut eval = Evaluator::new(&module);
+                eval.set_print_handler(&said);
+                eval.set_loader(&loader);
+                eval.eval_module(ast, &globals).map_err(|e| problem(&e, None))?;
+            }
+            module.freeze().map_err(|e| Problem { message: format!("{e:?}"), line: None, unit: None })
+        })
+        .map_err(|p| vec![p])?;
+        let Some(function) = module.get("allocate").ok().filter(|f| f.value().get_type() == "function") else {
+            return Err(vec![Problem { message: "`allocate` isn't a function: an allocation step defines `def allocate(column, p):`".into(), line: None, unit: None }]);
+        };
+        Ok(Allocation { source, declared, takes_p, globals, _module: module, function })
+    }
+
+    /// The script as written.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    fn begin(&self, input: AllocationInput, log: Option<handles::Log>) -> alloc::Run {
+        let state = alloc::State { column: input.column, ends: input.ends, blocks: input.blocks, parameters: input.parameters, splits: Vec::new(), placed: Vec::new() };
+        alloc::Run {
+            state: Arc::new(Mutex::new(state)),
+            declared: self.declared.clone(),
+            log,
+            reads: Arc::default(),
+            name: input.name,
+            column_block: input.column_block,
+            column_parameters: input.column_parameters,
+        }
+    }
+
+    fn call<'v>(&self, eval: &mut Evaluator<'v, '_, '_>, f: Value<'v>, run: &alloc::Run) -> Result<(), Problem> {
+        let heap = eval.heap();
+        let column = heap.alloc(alloc::ColumnHandle { run: run.clone() });
+        let result = if self.takes_p {
+            let p = heap.alloc(Params { values: run.column_parameters.clone(), log: run.log.clone(), lookups: Some(self.declared.lookups.clone()), reads: Some((run.reads.clone(), None)) });
+            eval.eval_function(f, &[column, p], &[])
+        } else {
+            eval.eval_function(f, &[column], &[])
+        };
+        result.map(|_| ()).map_err(|e| problem(&e, None))
+    }
+
+    fn done(run: alloc::Run, said: Vec<String>) -> Allocated {
+        let mut s = run.state.lock().expect("allocation column");
+        let read = std::mem::take(&mut *run.reads.lock().expect("reads"));
+        Allocated { column: s.column.clone(), splits: std::mem::take(&mut s.splits), placed: std::mem::take(&mut s.placed), said, read }
+    }
+
+    /// Runs the script on a column. The first problem stops it, said with its line.
+    pub fn run(&self, input: AllocationInput) -> Result<Allocated, Problem> {
+        let said = Said::default();
+        let run = self.begin(input, None);
+        Module::with_temp_heap(|module| {
+            // SAFETY: as `Formula::run`: the function was frozen when it compiled, and this module's frozen heap keeps a
+            // reference to the heap it lives on for as long as the module, which outlives the call made here.
+            let f = unsafe { self.function.owned_frozen_value(module.frozen_heap()) }.to_value();
+            let context = ScriptRun { lookups: self.declared.lookups.clone(), log: None, tables: None };
+            let mut eval = Evaluator::new(&module);
+            eval.set_print_handler(&said);
+            eval.extra = Some(&context);
+            self.call(&mut eval, f, &run)
+        })?;
+        Ok(Self::done(run, said.take()))
+    }
+
+    /// Runs the script on a column and shows it: every line that ran in order with the values it gave, what it read and
+    /// set, what it printed and where it stopped; with what it left the column as, where it ran through.
+    pub fn trace(&self, input: AllocationInput) -> (Trace, Option<Allocated>) {
+        let snapshots: Arc<Mutex<Vec<Snapshot>>> = Arc::default();
+        let log: handles::Log = Arc::default();
+        let said = Said::default();
+        let run = self.begin(input, Some(log.clone()));
+        let loader = ProjectLoader::new(&self.declared.libraries, &self.globals);
+        let context = ScriptRun { lookups: self.declared.lookups.clone(), log: Some(log.clone()), tables: None };
+        let stopped = Module::with_temp_heap(|module| -> Option<Problem> {
+            let mut eval = Evaluator::new(&module);
+            eval.set_print_handler(&said);
+            eval.set_loader(&loader);
+            eval.extra = Some(&context);
+            eval.before_stmt_for_dap(BeforeStmtFunc::from_dyn(Box::new(Watch(snapshots.clone()))));
+            let ast = AstModule::parse(FILE, self.source.clone(), &Dialect::Standard).expect("it compiled before");
+            if let Err(e) = eval.eval_module(ast, &self.globals) {
+                return Some(problem(&e, None));
+            }
+            snapshots.lock().expect("snapshots").clear();
+            let f = module.get("allocate").expect("it compiled before");
+            self.call(&mut eval, f, &run).err()
+        });
+        let lines = traced_lines(&self.source, std::mem::take(&mut *snapshots.lock().expect("snapshots")));
+        let events = std::mem::take(&mut *log.lock().expect("log"));
+        let sets = events.iter().filter_map(|e| match e { Event::Set { field, value } => Some((field.clone(), value.clone())), _ => None }).collect();
+        let said = said.take();
+        let allocated = stopped.is_none().then(|| Self::done(run, said.clone()));
+        (Trace { lines, events, said, sets, stopped }, allocated)
     }
 }
 
@@ -628,7 +773,7 @@ impl TableScript {
             let heap = eval.heap();
             let t = heap.alloc(tables::TableHandle { name: input.name.clone(), table: input.table.clone(), work: input.work.clone(), notes: notes.clone() });
             let result = if self.takes_p {
-                let p = heap.alloc(Params { values: input.parameters.clone(), log: None, lookups: Some(input.lookups.clone()) });
+                let p = heap.alloc(Params { values: input.parameters.clone(), log: None, lookups: Some(input.lookups.clone()), reads: None });
                 eval.eval_function(f, &[t, p], &[])
             } else {
                 eval.eval_function(f, &[t], &[])
@@ -678,7 +823,10 @@ fn show(v: Value<'_>) -> String {
     if let Some(u) = v.downcast_ref::<Unit>() {
         return u.to_string();
     }
-    if v.downcast_ref::<Parts>().is_some() || v.downcast_ref::<Params>().is_some() {
+    if let Some(u) = v.downcast_ref::<alloc::AllocUnit>() {
+        return u.to_string();
+    }
+    if v.downcast_ref::<Parts>().is_some() || v.downcast_ref::<Params>().is_some() || v.downcast_ref::<alloc::ColumnHandle>().is_some() {
         return v.to_string();
     }
     v.to_repr()
@@ -689,3 +837,6 @@ mod tests;
 
 #[cfg(test)]
 mod table_tests;
+
+#[cfg(test)]
+mod alloc_tests;

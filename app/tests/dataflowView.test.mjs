@@ -197,3 +197,11 @@ test("ROM's clean coal is in the tip but not added to ROM's volume again (decisi
   ]);
   assert.deepEqual(rom.map((w) => [w.folder, w.volume, w.parts.length]), [['ROM', 150, 3]]);
 });
+
+// Waste allocation plan, workstream 3: an allocation step runs on the whole column, and each setting it read is traced to
+// its table and row, so the graph wires its tables as a built-in step's.
+test("an allocation step's tables are wired as a built-in step's", () => {
+  const allocation = step('allocate', [1], { kind: 'allocation', reads: [read(1, 'topsoil_thickness', 1, 0), read(2, 'wedge_thickness', 1, 0)] });
+  assert.deepEqual(tablesRead(allocation), [1]);
+  assert.deepEqual(tablesRead(step('densities', [1], { kind: 'formula', reads: [read(1, 'mad', 0, 0)] })), [], "a formula's reads are in its trace");
+});

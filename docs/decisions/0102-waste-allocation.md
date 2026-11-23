@@ -98,11 +98,64 @@ Five workstreams, in that order: words, schedule fields, allocation steps, sever
 | `schedule_fields_are_written_under_scheduled_by_process_and_placed_onto_a_leaf` (reserves_run.rs) | the loss column's OB, 50,000 m³ of ROM waste on seam A's leaf, 0.8 dragline with rehandle 0.2 and swell 0.3, all from an allocation row: Prime 40,000 m³, Rehandle 8,000, Total 48,000, Swelled 52,000 under `Scheduled\Waste\Dragline` on A's leaf, Method `Strip`, none of them outside Scheduled; the other 10,000 m³ placed onto seam B's leaf as drill and blast, none on A's, 10,000 in all; the balance unchanged; `final`'s workings name the leaf; onto seam Z said and not written; `zone=` stops the block | 1e-9 |
 | `schedule fields show under Scheduled, a section a process` (app) | the Breakdown's rows and values | exact |
 
+## Built: workstream 3, allocation steps
+
+- **An allocation step** (`DataflowStep.allocation`, `zd_core::AllocationStep`): a step of its own name holding
+  Starlark that defines `def allocate(column, p):`, run once on each block column. Checked when the dataflow is saved
+  (`check_allocation_steps`): it sits after `rom` and before `final` (a formula step may follow it there), never takes a
+  built-in step's name, has no settings, and compiles. A step that is a formula or table script too is refused.
+- **The column, in Rust** (`zd_script::Allocation`, the `column` and `unit` handles in `alloc.rs`): the script works
+  on the run's own column, so a split is the column's split. `column.units` top down; `column.waste()` and
+  `column.coal()`, the units that end in ROM waste and in a ROM coal section, as `final` decides (small volumes, the
+  underburden left and waste below the last coal end in neither); `column.after(u)` and `column.before(u)`;
+  `column.group_while("process", "zone", units=…)`, runs of neighbours with the same values; `column.total(field,
+  units=…)`, added up by the field's rule; `column.name` and `column.block`.
+- **Splits** (decision 3): `u.split_thickness(0.5, 4.5)` takes pieces of those thicknesses off the top and gives the
+  rest; `u.split_shares([0.2, 0.3, 0.5])` splits by volume shares adding to 1, the last piece what's left. A piece of
+  nothing is None. Each piece keeps the unit's labels, words and ending, its summed fields shared and the rest kept, so
+  the pieces add back to the unit exactly and the balance holds. More than the unit holds, shares not adding to 1, or a
+  negative share stop the column, said with the unit. A split puts its pieces in the unit's place, so the plan's
+  `column.replace` isn't needed. Each split is counted (`split by <step> into n pieces`) and worked in the notebook on
+  its pieces (`OB waste by thickness 0.5, 4.5: 2,500 m³ + 22,500 m³ + …`).
+- **Sets and placings**: a unit's fields and words are set as a formula's (`u.process = "Wedge"`,
+  `u["Waste\\Wedge\\Prime Volume"] = u.volume`); the volume is of record and never set, and a label isn't set.
+  `u.place_onto(...)` works as a formula's (workstream 2).
+- **Every setting from a row** (decision 8): `p` is the column's parameters, read by its levels above the seam; `u.p` a
+  unit's, by its block's attributes; `lookup(...)` any table by its keys. Each parameter read through `p` or `u.p` is
+  traced in the notebook to its table and row, as a built-in step's are; `lookup` reads are in the trace.
+- **Shown**: the Parameters tab's Steps has **+ Add an allocation before final**, each allocation step a row opened in
+  its own editor on the right (checked as it's typed, completions for `column.` and a unit's calls, Copy for AI, the
+  reference's allocation part). The Dataflow tab marks the step ⇶, shows its script with the lines that ran (traced on
+  the whole column, whichever unit is followed), every setting it read with its table and row, and its splits under
+  Workings; the graph wires the tables it read. The reference has a section, "Writing an allocation script", whose
+  examples are compiled by a test.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `loose_ground_and_a_wedge_are_split_off_by_thickness_and_add_back_exactly` (zd-script) | the plan's 30 m waste unit of 3,000 m² over coal: topsoil 0.5 m, freedig 4.5 m, wedge 3 m from the column's row give Topsoil 1,500 m³, Freedig 13,500, Excavator 66,000, Wedge 9,000; OB's pieces add to 90,000; the splits and the reads noted | 1e-9 |
+| `a_changed_parameter_row_changes_the_split_and_not_the_script` (zd-script) | the same unit with 1 m of topsoil: Topsoil 3,000, Freedig 13,500, Excavator 64,500, Wedge 9,000 | 1e-9 |
+| `shares_split_a_unit_in_order_and_the_last_piece_is_the_rest` (zd-script) | 90,000 m³ by 0.2, 0, 0.3, 0.5: Cast 18,000, None, Dozer Push 27,000, Dragline 45,000, adding to 90,000 exactly; runs grouped by process; a total of two pieces 45,000 | 1e-9, exact sum |
+| `what_an_allocation_script_may_not_do_is_refused_with_why` (zd-script) | too thick a split, shares not adding to 1, a negative share, the volume set, a label set, words as a number, an unknown name grouped by, `after` given a number, a script without `allocate` | exact |
+| `an_allocation_traced_shows_its_lines_reads_sets_and_the_column_it_left` (zd-script) | the split line ran, `p.topsoil` read, the topsoil piece's process set | exact |
+| `the_allocation_calls_offered_are_there`, `every_allocation_script_in_the_reference_compiles` (zd-script) | every call the editor offers exists; every reference example compiles | exact |
+| `an_allocation_step_holds_together` (zd-core) | saved and read back; no script, settings, or a formula too refused | exact |
+| `an_allocation_step_splits_the_column_and_fills_each_process_from_the_parameter_rows` (reserves_run.rs) | 30 m of OB over A coal, 5,000 m²: Topsoil 2,500 m³, Freedig 22,500, Wedge 15,000, Excavator 110,000 under `Scheduled\Waste\<process>\Prime Volume` on A's leaf, adding to its 150,000 of ROM waste; the leaf's process `Topsoil; Freedig; Excavator; Wedge`; the waste below A not taken; the notebook cell an allocation with OB in four pieces, the split worked, `topsoil_thickness` traced to the settings table's row 1; traced, the split line ran; the row changed to 1 m, Topsoil 5,000 and Excavator 107,500 | 1e-9 |
+| `a_dragline_system_splits_its_zones_by_method_factors_looked_up_by_zone` (reserves_run.rs) | the plan's dragline case on 60 m of waste (300,000 m³): a 50 m system in two 25 m zones; Excavator 50,000; zone 1 Cast 25,000, Dozer Push 37,500, Dragline 62,500 with rehandle 62,500 × 0.7 ÷ 0.5 − 62,500 = 25,000; zone 2 Dragline 125,000 with rehandle 62,500; on A's leaf Dragline 187,500, rehandle 87,500, zones `Zone 2; Zone 1`; the primes add to the 300,000 of ROM waste | 1e-9 |
+| `an_allocation_step_sits_between_rom_and_final_and_a_bad_split_stops_the_block` (reserves_run.rs) | an allocation after initialise refused, one without `allocate` refused, a split of 40 m of a 30 m unit stops the block naming it | exact |
+| app: `an allocation step's tables are wired…`, `an allocation step's guide…` | the graph wires the tables an allocation read; the editor's guide is the reference's allocation part | exact |
+
+Not timed: an allocation runs one Starlark call a column, as a formula step does a unit; it hasn't been run on the
+large test pits.
+
 ## Known limits
 
 - A formula's worked examples (its known answers) expect numbers only; a word it sets is checked by running it.
 - The Dataflow tab's Before and After show a unit's words in its description, not as columns of their own.
 - `p` doesn't match parameter rows on a unit's words yet; `lookup("…", key=unit.process)` does.
 - The editor suggests plain field names after `unit.`; a schedule field is typed in square brackets.
+- An allocation step's `p` is read by the column's levels above the seam only: a row filtered on a seam or bench
+  doesn't fit it; read those by `u.p` or `lookup`. A `lookup` read is in the trace, not traced to its row.
+- An allocation's Dataflow tab cell shows the column's lines; Before and After show the pieces as units, their words in
+  each unit's description.
 - The Balance view checks the stages, not the sections: that each process's prime volumes add to Scheduled waste is a
   mine's check (0101), which the starter (workstream 5) adds.

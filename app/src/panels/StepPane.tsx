@@ -53,7 +53,7 @@ export function StepPane({
   onSetting?: OpenSetting;
 }) {
   const cell = column.steps[at];
-  const kind = cell.kind === 'formula' ? 'formula' : cell.kind === 'built_in' ? 'built in' : 'the blocks';
+  const kind = cell.kind === 'formula' ? 'formula' : cell.kind === 'allocation' ? 'allocation, on the column' : cell.kind === 'built_in' ? 'built in' : 'the blocks';
   const unit = focus && at > 0 ? focusAt(column.steps[at - 1].units, focus) : null;
   return (
     <section className="space-y-1.5 p-2" data-slot="step-pane" data-step={cell.step}>
@@ -75,7 +75,7 @@ export function StepPane({
       </div>
       {at > 0 && <CellIn column={column} at={at} unit={unit} trace={trace} onSetting={onSetting} />}
       {at > 0 && <CellCode column={column} at={at} trace={trace} onEdit={onEdit} />}
-      {at > 0 && cell.kind === 'built_in' && <CellWorkings column={column} at={at} unit={unit} onSetting={onSetting} />}
+      {at > 0 && (cell.kind === 'built_in' || cell.kind === 'allocation') && <CellWorkings column={column} at={at} unit={unit} onSetting={onSetting} />}
       <CellOut column={column} at={at} onWhole={onWhole} />
     </section>
   );
@@ -94,6 +94,25 @@ function Row({ label, children, slot }: { label: string; children: ReactNode; sl
 function CellIn({ column, at, unit, trace, onSetting }: { column: ColumnSteps; at: number; unit: ColumnUnit | null; trace: CellTrace | null; onSetting?: OpenSetting }) {
   const cell = column.steps[at];
   const who = unit ? unitWords(unit) : 'the unit followed';
+  if (cell.kind === 'allocation') {
+    // Run on the whole column: every setting it read, each from its table and row (decision 8), and what else it read.
+    const unitOf = (name: string) => column.fields.find((f) => f.name === name)?.unit ?? '';
+    const settings = cell.reads.filter((r, i) => cell.reads.findIndex((q) => q.column === r.column && q.table === r.table && q.row === r.row) === i);
+    return (
+      <Row label="In" slot="cell-in">
+        <span className="text-muted-foreground">the column: </span>
+        {settings.length === 0 ? (
+          <span className="text-muted-foreground">no parameter read</span>
+        ) : (
+          settings.map((r, i) => {
+            const w = readWords(r, column.tables, unitOf(r.column));
+            return <Chip key={`${r.column}${i}`} name={w.name} value={w.value} from={w.from} missing={r.table === null} onOpen={opener(column, r, onSetting)} />;
+          })
+        )}
+        {trace?.state === 'failed' && <span className="text-destructive"> {trace.why}</span>}
+      </Row>
+    );
+  }
   if (cell.kind === 'formula') {
     if (!trace || trace.state === 'loading') return <Row label="In" slot="cell-in">{unit ? 'Tracing…' : `${who} isn't in the column at this step`}</Row>;
     if (trace.state === 'failed') return <Row label="In" slot="cell-in"><span className="text-destructive">{trace.why}</span></Row>;
@@ -183,7 +202,7 @@ function Linked({ text, reads, column, onSetting }: { text: string; reads: Param
 /** A formula with the lines that ran on the unit followed tinted and the values they gave; a built-in step's rule. */
 function CellCode({ column, at, trace, onEdit }: { column: ColumnSteps; at: number; trace: CellTrace | null; onEdit?: () => void }) {
   const cell = column.steps[at];
-  if (cell.kind !== 'formula' || !cell.source) {
+  if ((cell.kind !== 'formula' && cell.kind !== 'allocation') || !cell.source) {
     return (
       <Row label="Rule" slot="cell-rule">
         {cell.rule || 'built in'}

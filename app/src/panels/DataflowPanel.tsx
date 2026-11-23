@@ -174,11 +174,14 @@ export function DataflowView() {
 
   // The picked formula step traced on the unit followed, on what the column was run on; kept by run, step and unit.
   const onLive = !!live && column === live.column;
-  const wanted = column && at > 0 && column.steps[at].kind === 'formula' && into ? `${ask}|${onLive ? live!.n : 0}|${at}:${into.id}` : null;
+  // An allocation step is traced on the whole column, whichever unit is followed (Waste allocation plan, decision 4).
+  const allocation = !!column && at > 0 && column.steps[at].kind === 'allocation';
+  const traced = allocation ? (column!.steps[at - 1].units[0] ?? null) : into;
+  const wanted = column && at > 0 && (column.steps[at].kind === 'formula' || allocation) && traced ? `${ask}|${onLive ? live!.n : 0}|${at}:${allocation ? 'column' : traced.id}` : null;
   useEffect(() => {
-    if (!table || !wanted || !into || traces.has(wanted)) return;
+    if (!table || !wanted || !traced || traces.has(wanted)) return;
     setTraces((m) => new Map(m).set(wanted, { state: 'loading' }));
-    void reservesColumnTrace(table.id, node, at, into.id, onLive ? live!.dataflow : null, onLive ? live!.tables : [])
+    void reservesColumnTrace(table.id, node, at, traced.id, onLive ? live!.dataflow : null, onLive ? live!.tables : [])
       .then((trace) => setTraces((m) => new Map(m).set(wanted, { state: 'done', trace })))
       .catch((e) => setTraces((m) => new Map(m).set(wanted, { state: 'failed', why: String(e) })));
   }, [wanted]);
@@ -382,7 +385,7 @@ export function DataflowView() {
               summary={summaries[at]}
               focus={focus}
               trace={trace}
-              onEdit={step.kind === 'formula' ? () => openTool('params', `formula:${column.dataflow_id}:${step.step}`) : undefined}
+              onEdit={step.kind === 'formula' || step.kind === 'allocation' ? () => openTool('params', `formula:${column.dataflow_id}:${step.step}`) : undefined}
               onWhole={() => setWhole(at)}
               edited={!!against && stepChanged(against, column, at)}
               onSetting={(t, row, name) => openTool('params', `cell:${t}:${row}:${name}`)}

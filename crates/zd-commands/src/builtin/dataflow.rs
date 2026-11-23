@@ -174,7 +174,7 @@ impl Command for SaveDataflow {
         let refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
         let built_in: Vec<&str> = super::STEPS.iter().map(|(n, _)| *n).collect();
         // The scripts its formulas load, bound by name to the project's (decision 0099): kept by id, read by the run.
-        let sources: Vec<&str> = d.steps.iter().filter_map(|s| s.formula.as_ref().map(|f| f.script.as_str()).or(s.table.as_ref().map(|t| t.script.as_str()))).collect();
+        let sources: Vec<&str> = d.steps.iter().filter_map(|s| s.script()).collect();
         let (scripts, libraries) = super::bind_loads(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
         // The tables its scripts look up by name (Schedule quantities plan, decision 1), kept by id like its scripts.
         let (lookups, named) = super::bind_lookups(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
@@ -187,6 +187,8 @@ impl Command for SaveDataflow {
         declared.libraries = libraries;
         declared.lookups = std::sync::Arc::new(zd_script::Lookups { own: tables.clone(), named });
         let formulas = super::check_formula_steps(d, &built_in, &declared).map_err(CommandError::Invalid)?.len();
+        // Allocation steps compile too, and sit between rom and final (Waste allocation plan, decision 1).
+        super::check_allocation_steps(d, &built_in, &declared).map_err(CommandError::Invalid)?;
         // Table script steps (decision 11 of 0099) compile too, and sit after the final writes.
         super::check_table_steps(d, &built_in, &declared.libraries).map_err(CommandError::Invalid)?;
         let mut bound = d.clone();

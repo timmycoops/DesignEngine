@@ -833,7 +833,7 @@ export interface ColumnStep {
   step: string;
   units: ColumnUnit[];
   said: string[];
-  kind: 'input' | 'built_in' | 'formula';
+  kind: 'input' | 'built_in' | 'formula' | 'allocation';
   rule: string;
   when: Record<string, string>;
   source: string | null;
@@ -1316,6 +1316,8 @@ export interface DataflowStep {
   formula?: { when?: Record<string, string>; script: string; tests?: FormulaTest[] };
   /** A table script step (decision 0099, workstream 7): `def run(t, p):` on the case's table after the final writes. */
   table?: { script: string };
+  /** An allocation step (Waste allocation plan, decision 4): `def allocate(column, p):` on each column after rom. */
+  allocation?: { script: string };
 }
 
 /** A formula as edited, checked (decision 0077, 7d). */
@@ -1403,6 +1405,9 @@ export interface ScriptHelp {
   library: ScriptCall[];
   unitParts: ScriptCall[];
   starlark: ScriptCall[];
+  /** An allocation step's column and unit (Waste allocation plan, decision 4). */
+  column: ScriptCall[];
+  allocationUnit: ScriptCall[];
 }
 
 let helpAsked: Promise<ScriptHelp> | null = null;

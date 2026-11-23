@@ -105,8 +105,9 @@ pub fn check_formula_steps_flagging(dataflow: &Dataflow, built_in: &[&str], decl
     let mut compiled = Vec::new();
     for (i, s) in dataflow.steps.iter().enumerate() {
         let Some(f) = &s.formula else {
-            // A table script step isn't a stage of the column: it runs on the table once the run is done (0099).
-            if s.table.is_none() {
+            // A table script step isn't a stage of the column: it runs on the table once the run is done (0099); nor is an
+            // allocation step, which works on the column between rom and final (Waste allocation plan, decision 1).
+            if s.is_built_in() {
                 last_built_in = Some(s.step.as_str());
             }
             continue;
@@ -130,6 +131,37 @@ pub fn check_formula_steps_flagging(dataflow: &Dataflow, built_in: &[&str], decl
             None => run_tests(s, f, &formula)?,
         }
         compiled.push((i, formula));
+    }
+    Ok(compiled)
+}
+
+/// Every allocation step sits after `rom` and before the final writes, with a name of its own, and compiles against the
+/// dataflow's names (Waste allocation plan, decision 1). Said for the first that doesn't, with why.
+pub fn check_allocation_steps(dataflow: &Dataflow, built_in: &[&str], declared: &Declared) -> Result<Vec<(usize, zd_script::Allocation)>, String> {
+    let mut last_built_in: Option<&str> = None;
+    let mut compiled = Vec::new();
+    for (i, s) in dataflow.steps.iter().enumerate() {
+        let Some(a) = &s.allocation else {
+            if s.is_built_in() {
+                last_built_in = Some(s.step.as_str());
+            }
+            continue;
+        };
+        if built_in.contains(&s.step.as_str()) {
+            return Err(format!("the allocation step {} has a built-in step's name: give it its own", s.step));
+        }
+        if last_built_in != Some("rom") {
+            return Err(format!(
+                "the allocation step {} sits {}: an allocation step goes after rom, before the final writes",
+                s.step,
+                last_built_in.map_or("before any built-in step".to_string(), |b| format!("after {b}"))
+            ));
+        }
+        let allocation = zd_script::Allocation::compile(&a.script, declared.clone()).map_err(|problems| {
+            let said: Vec<String> = problems.iter().map(|p| p.to_string()).collect();
+            format!("the allocation step {}: {}", s.step, said.join("; "))
+        })?;
+        compiled.push((i, allocation));
     }
     Ok(compiled)
 }
@@ -236,7 +268,7 @@ pub fn check_formula_with(d: &Dataflow, tables: &[&ParameterTable], index: usize
     };
     let step = d.steps.get(index).ok_or_else(|| format!("the dataflow has no step {}", index + 1))?;
     let f = step.formula.as_ref().ok_or_else(|| format!("{} isn't a formula step", step.step))?;
-    let stage = d.steps[..index].iter().rev().find(|s| s.formula.is_none()).map(|s| s.step.clone());
+    let stage = d.steps[..index].iter().rev().find(|s| s.is_built_in()).map(|s| s.step.clone());
     let mut problems = Vec::new();
     if built_in.contains(&step.step.as_str()) {
         problems.push(FormulaProblem { message: format!("{} is a built-in step's name: give the formula its own", step.step), line: None });
