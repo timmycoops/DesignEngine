@@ -3118,3 +3118,51 @@ fn an_allocation_step_sits_between_rom_and_final_and_a_bad_split_stops_the_block
     let said = serde_json::to_string(&record.notes).unwrap();
     assert!(said.contains("split_thickness asks 40 m of A waste, which is 30 m thick"), "{said}");
 }
+
+/// A dragline system reading its factors off a grid (Waste allocation plan, decision 6): the share and total factor by
+/// method, the nearest dip and between the zone thicknesses either side.
+const DRAGLINE_GRID: &str = r#"def allocate(column, p):
+    for u in column.waste():
+        below = column.after(u)
+        if below == None or below.material != "coal" or u.thickness < p.min_burden:
+            u.process = "Excavator"
+            u["Waste\\Excavator\\Prime Volume"] = u.volume
+            continue
+        top, zone = u.split_thickness(max(u.thickness - p.system_max, 0))
+        if top != None:
+            top.process = "Excavator"
+            top["Waste\\Excavator\\Prime Volume"] = top.volume
+        thickness = zone.thickness
+        f = lambda name: lookup("Dragline factors", name, method=p.method, dip=nearest(p.dip), zone_thickness=between(thickness))
+        share = f("dragline")
+        dragline, dozer = zone.split_shares([share, 1 - share])
+        dragline.process = "Dragline"
+        dragline["Waste\\Dragline\\Prime Volume"] = dragline.volume
+        dragline["Waste\\Dragline\\Rehandle Volume"] = dragline.volume * f("dragline_total") / share - dragline.volume
+        dozer.process = "Dozer Push"
+        dozer["Waste\\Dozer Push\\Prime Volume"] = dozer.volume
+"#;
+
+/// The plan's several keys case (workstream 4), end to end: 60 m of waste over A coal (300,000 m³), a 50 m one-zone
+/// system at a dip of 12°. The factors grid has dips 5 and 15 and zone thicknesses 40 and 60: nearest 15, and 50 m
+/// halfway between, so the dragline share is 0.4 + 0.5 x (0.6 - 0.4) = 0.5 and the total factor 0.6 + 0.5 x 0.2 = 0.7,
+/// worked by hand. The zone's 250,000 m³: Dragline 125,000 with rehandle 125,000 x 0.7 / 0.5 - 125,000 = 50,000, Dozer
+/// Push 125,000; the top 10 m Excavator 50,000. The primes add to the 300,000 of ROM waste.
+#[test]
+fn a_dragline_system_reads_its_factors_nearest_on_dip_and_between_on_zone_thickness() {
+    let mut s = session();
+    let ids = allocation_column(&mut s, 60.0);
+    let grid = "when method,dip (deg),zone_thickness (m),dragline,dragline_total\n1 zone,5,40,0.5,0.7\n1 zone,5,60,0.7,0.9\n1 zone,15,40,0.4,0.6\n1 zone,15,60,0.6,0.8\n";
+    created(&s.run("parameters.save", json!({ "name": "Dragline factors", "csv": grid })).unwrap());
+    let system = "min_burden (m),system_max (m),dip (deg),method\n10,50,12,1 zone\n";
+    let (flow, _) = allocation_flow(&mut s, "Grid", DRAGLINE_GRID, system);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": ALLOCATION_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let at = |path: &str| at_seam(&t, Some("A"), path);
+    for (field, want) in [("Excavator\\Prime Volume", 50_000.0), ("Dragline\\Prime Volume", 125_000.0), ("Dragline\\Rehandle Volume", 50_000.0), ("Dozer Push\\Prime Volume", 125_000.0)] {
+        let got = at(&format!("Scheduled\\Waste\\{field}"));
+        assert!((got - want).abs() <= 1e-9 * want, "{field}: {got} for {want}");
+    }
+    let primes: f64 = ["Excavator", "Dragline", "Dozer Push"].iter().map(|p| at(&format!("Scheduled\\Waste\\{p}\\Prime Volume"))).sum();
+    assert!((primes - 300_000.0).abs() < 1e-9, "the primes add to ROM waste: {primes}");
+}
