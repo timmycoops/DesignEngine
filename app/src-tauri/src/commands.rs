@@ -796,7 +796,9 @@ pub async fn records_preview(params: zd_commands::builtin::UpdateRecordsParams, 
 /// A calculated column as edited, its formula's loads bound to the project's scripts by name (decision 0099).
 fn bound_column(project: &zd_core::Project, mut column: zd_core::CalculatedColumn) -> Result<zd_core::CalculatedColumn, String> {
     column.scripts = zd_commands::builtin::bind_loads(project.objects(), &[column.script.as_str()])?.0;
-    column.lookups = zd_commands::builtin::bind_lookups(project.objects(), &[column.script.as_str()])?.0;
+    let (lookups, named) = zd_commands::builtin::bind_lookups(project.objects(), &[column.script.as_str()])?;
+    column.lookups = lookups;
+    column.lookup_names = named.into_iter().map(|(n, _)| n).collect();
     Ok(column)
 }
 
@@ -807,7 +809,9 @@ fn bound(project: &zd_core::Project, mut d: zd_core::Dataflow) -> Result<(zd_cor
     let refs: Vec<&str> = sources.iter().map(String::as_str).collect();
     let (ids, libraries) = zd_commands::builtin::bind_loads(project.objects(), &refs)?;
     d.scripts = ids;
-    d.lookups = zd_commands::builtin::bind_lookups(project.objects(), &refs)?.0;
+    let (lookups, named) = zd_commands::builtin::bind_lookups(project.objects(), &refs)?;
+    d.lookups = lookups;
+    d.lookup_names = named.into_iter().map(|(n, _)| n).collect();
     Ok((d, libraries))
 }
 
@@ -1065,6 +1069,18 @@ pub struct ParametersPicked {
     picked: Option<zd_core::Picked>,
 }
 
+/// What reads a parameter table (Table setup plan, decision 4): every dataflow, add-on, reserves table and calculated
+/// column, through `p` or by name, and who reads each column, and which are shadowed by a table read before it.
+#[tauri::command]
+pub async fn parameters_read_by(table: ObjectId, state: State<'_, AppState>) -> Result<zd_commands::builtin::ReadBy, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        zd_commands::builtin::read_by(app.session.project(), table).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
 /// The tables read with a parameter table (those of the first dataflow that reads it, in its order, or it alone) and, for
 /// a picked solid, the rows it fits and the row each value comes from.
 #[tauri::command]
@@ -1178,7 +1194,7 @@ pub async fn formula_trace(content: zd_core::Dataflow, step: String, solid: Obje
         let picked = project.object(solid).ok_or("the picked solid isn't in the project")?;
         let blocks: Vec<ObjectId> = project.objects().filter(|o| o.layer == picked.layer && matches!(o.body, zd_core::Body::Solid(_))).map(|o| o.id).collect();
         let model = project.objects().find(|o| matches!(o.body, zd_core::Body::SeamModel(_))).map(|o| o.id).ok_or("the project has no seam model to put the column in order")?;
-        let p = zd_commands::builtin::RunReservesParams { dataflow: ObjectId::new(), blocks, model: Some(model), stack: Vec::new(), layer: "trace".into(), parameters: None, name: String::new(), table: None, only: Vec::new(), previous: None, add_ons: None, sources: Default::default() };
+        let p = zd_commands::builtin::RunReservesParams { dataflow: ObjectId::new(), blocks, model: Some(model), stack: Vec::new(), layer: "trace".into(), parameters: None, name: String::new(), table: None, only: Vec::new(), previous: None, add_ons: None, sources: Default::default(), tables: None };
         let get = |id: ObjectId| project.object(id).cloned().ok_or(zd_commands::CommandError::MissingObject(id));
         let (content, _) = bound(project, content)?;
         zd_commands::builtin::formula_trace(&get, &std::sync::Arc::new(content), &p, &step, solid).map_err(|e| e.to_string())

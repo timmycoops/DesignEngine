@@ -76,6 +76,10 @@ impl Command for SaveParameters {
         for (reader, x) in super::curve_readers(inputs.objects(), &p.name) {
             table.check_curve(&x).map_err(|why| CommandError::Invalid(format!("{reader} reads {} as a curve on {x}: {why}", p.name)))?;
         }
+        // A parameter table is found by its name (Table setup plan, decision 4): one name, one table.
+        if let Some(first) = inputs.objects().find(|o| o.name == p.name && matches!(o.body, Body::ParameterTable(_)) && Some(o.id) != p.table) {
+            return Err(CommandError::Invalid(format!("a parameter table named {} is there already ({}): revise it, or give this one another name", p.name, first.id)));
+        }
         let body = Body::ParameterTable(Arc::new(table.clone()));
         let change = match p.table {
             Some(id) => {
@@ -122,6 +126,7 @@ fn save_add_on(inputs: &Inputs<'_>, p: &SaveDataflowParams) -> Result<Outcome, C
     let mut bound = d.clone();
     bound.scripts = scripts;
     bound.lookups = lookups;
+    bound.lookup_names = named.into_iter().map(|(n, _)| n).collect();
     let body = Body::Dataflow(Arc::new(bound));
     let change = match p.dataflow {
         Some(id) => {
@@ -258,7 +263,7 @@ impl Command for SaveDataflow {
         let (scripts, _) = super::bind_loads(inputs.objects(), &own_sources).map_err(CommandError::Invalid)?;
         // The tables its scripts look up by name (Schedule quantities plan, decision 1), kept by id like its scripts.
         let (_, named) = super::bind_lookups(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
-        let (lookups, _) = super::bind_lookups(inputs.objects(), &own_sources).map_err(CommandError::Invalid)?;
+        let (lookups, own_named) = super::bind_lookups(inputs.objects(), &own_sources).map_err(CommandError::Invalid)?;
         super::check_curves(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
         for &id in scripts.iter().chain(&lookups) {
             inputs.object(id)?;
@@ -275,6 +280,7 @@ impl Command for SaveDataflow {
         let mut bound = own.clone();
         bound.scripts = scripts;
         bound.lookups = lookups;
+        bound.lookup_names = own_named.into_iter().map(|(n, _)| n).collect();
         let d = &bound;
         // A setting no table has a column for can never be given: said now, not block by block at the run.
         let mut notes = Vec::new();

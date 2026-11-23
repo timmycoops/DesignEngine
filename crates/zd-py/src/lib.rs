@@ -181,6 +181,14 @@ impl PySession {
         to_py(py, &serde_json::to_value(setup).map_err(|e| CommandError::new_err(e.to_string()))?)
     }
 
+    /// What reads a parameter table (Table setup plan, decision 4): `{"table", "readers": [{kind, name, id, how}],
+    /// "columns": [{column, read_by, shadowed_by}]}`.
+    fn read_by(&self, py: Python<'_>, table: &str) -> PyResult<Py<PyAny>> {
+        let id = object_id(table)?;
+        let read = zd_commands::builtin::read_by(self.inner.project(), id).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &serde_json::to_value(read).map_err(|e| CommandError::new_err(e.to_string()))?)
+    }
+
     /// Runs a reserves table again from its setup (decisions 0085, and the Table setup plan's 1 and 6): every block of
     /// its case the setup picks, or those under `only` (`["Pit", "3", "B1"]`), into the table in place. The run's record.
     #[pyo3(signature = (table, only=None))]

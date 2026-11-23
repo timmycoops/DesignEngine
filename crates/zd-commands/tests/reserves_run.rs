@@ -99,7 +99,7 @@ fn dataflow(s: &mut Session, steps: &[&str]) -> ObjectId {
 
 /// A dataflow of the usual fields, these steps (with any settings) and a parameter table from this CSV.
 fn flow(s: &mut Session, steps: serde_json::Value, csv: &str) -> ObjectId {
-    let table = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": csv })).unwrap())[0];
+    let table = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": csv })).unwrap())[0];
     let content = json!({
         "fields": [
             { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
@@ -122,6 +122,16 @@ fn starter(content: serde_json::Value) -> serde_json::Value {
     let mut d: zd_core::Dataflow = serde_json::from_value(content).unwrap();
     zd_commands::builtin::with_starter_formulas(&mut d);
     serde_json::to_value(d).unwrap()
+}
+
+/// A parameter table's name not yet taken in the project (Table setup plan, decision 4: one name, one table): `base`, else
+/// `base 2`, `base 3`.
+fn free_name(project: &zd_core::Project, base: &str) -> String {
+    let taken = |n: &str| project.objects().any(|o| o.name == n);
+    if !taken(base) {
+        return base.to_string();
+    }
+    (2..).map(|k| format!("{base} {k}")).find(|n| !taken(n)).expect("a free name")
 }
 
 fn session() -> Session {
@@ -230,7 +240,7 @@ fn the_levels_set_the_columns_and_the_leaves() {
     let mut s = session();
     let mut ids = blocks(&mut s, None);
     ids.push(box_solid(&mut s, "stray", 300.0, (12.0, 15.0), json!({ "block": "B9", "horizon": "L", "material": "coal", "seam": "L", "rd": 1.5 })));
-    let table_id = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": "when material,rd (t/m3),underburden_thickness (m)\nwaste,2.3,\n,,0\n" })).unwrap())[0];
+    let table_id = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": "when material,rd (t/m3),underburden_thickness (m)\nwaste,2.3,\n,,0\n" })).unwrap())[0];
     let content = json!({
         "levels": [{ "attribute": "pit", "default": "West" }, { "attribute": "strip" }, { "attribute": "block" }, { "attribute": "seam" }],
         "fields": [
@@ -480,7 +490,7 @@ fn preston_sanders_by_hand() {
 
 /// The usual fields, the moistures and the worked densities, every step to in situ, and a table from this CSV.
 fn moist_flow(s: &mut Session, csv: &str) -> ObjectId {
-    let table = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": csv })).unwrap())[0];
+    let table = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": csv })).unwrap())[0];
     let content = json!({
         "fields": [
             { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
@@ -1327,7 +1337,7 @@ fn a_block_whose_measured_volume_isn_t_its_solid_s_is_named() {
     let mut s = session();
     let ids = loss_column(&mut s);
     s.run("test.tag", json!({ "object": ids[1], "attributes": { "volume": 9_000.0 } })).unwrap();
-    let table_id = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": "when material,rd (t/m3),underburden_thickness (m)\nwaste,2.3,\n,,0\n" })).unwrap())[0];
+    let table_id = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": "when material,rd (t/m3),underburden_thickness (m)\nwaste,2.3,\n,,0\n" })).unwrap())[0];
     let content = json!({
         "fields": [
             { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "attribute", "attribute": "volume" },
@@ -1549,7 +1559,7 @@ fn clean_coal_takes_its_section_s_average_by_tonnes() {
 /// 0.1 m of floor dilution. Saved as `Reserves`.
 fn rom_moist_flow(s: &mut Session) -> ObjectId {
     let csv = "when material,rd (t/m3),ash_default (%),mad (%),mis (%),mrom (%),min_parting (m),ws_strip_ratio,min_coal_thickness (m),roof_loss (m),floor_loss (m),edge_loss (m),other_loss (%),roof_dilution (m),floor_dilution (m),edge_dilution (m),other_dilution (%)\nwaste,2.3,80,,,,,,,,,,,,,,\ncoal,,,3,8,10,1,0.5,0.5,0,0,0,0,0,0.1,0,0\n";
-    let table_id = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": csv })).unwrap())[0];
+    let table_id = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": csv })).unwrap())[0];
     let content = json!({
         "fields": [
             { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
@@ -2024,7 +2034,7 @@ fn the_starter_reads_each_block_s_width_dip_and_centroid() {
 fn a_run_writes_each_block_s_width_dip_and_centroid() {
     let mut s = session();
     let ids = loss_column(&mut s);
-    let table_id = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let table_id = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
     let content = json!({
         "fields": [
             { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
@@ -2758,7 +2768,7 @@ fn a_table_script_step_runs_on_the_whole_table_when_a_block_runs_again() {
 fn word_fields_are_set_by_formulas_and_written_by_leaf() {
     let mut s = session();
     let ids = blocks(&mut s, None);
-    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": "when material,rd (t/m3),method\nwaste,2.3,Strip\ncoal,,Strip\n" })).unwrap())[0];
+    let assumptions = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": "when material,rd (t/m3),method\nwaste,2.3,Strip\ncoal,,Strip\n" })).unwrap())[0];
     let set = "def formula(unit):\n    if unit.bench == \"18\":\n        unit.process = \"Dragline\"\n    elif unit.bench != None:\n        unit.process = \"Poststrip\"\n";
     let read = "def formula(unit):\n    unit.dragline_volume = unit.volume if unit.process == \"Dragline\" else 0\n";
     let content = |set: &str| {
@@ -2816,7 +2826,7 @@ fn word_fields_are_set_by_formulas_and_written_by_leaf() {
 /// A dataflow of the loss column's fields with schedule fields (Waste allocation plan, decision 5), a formula after
 /// `rom` on OB, and an allocation table giving its settings (decision 8): every number the formula uses read from a row.
 fn schedule_flow(s: &mut Session, name: &str, script: &str, allocation: &str) -> ObjectId {
-    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let assumptions = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
     let allocation = created(&s.run("parameters.save", json!({ "name": format!("{name} allocation"), "csv": allocation })).unwrap())[0];
     let schedule = |n: &str| json!({ "name": format!("Waste\\Dragline\\{n}"), "kind": "other", "add_up": { "by": "sum" }, "from": "worked" });
     let mut steps = final_steps();
@@ -2935,7 +2945,7 @@ const ALLOCATION_STACK: [&str; 3] = ["OB", "A", "below A"];
 /// A dataflow with an allocation step after `rom`: its schedule fields (a prime volume a process, and the dragline's
 /// rehandle), the word fields `process` and `zone`, and a parameter table of the allocation's own settings.
 fn allocation_flow(s: &mut Session, name: &str, script: &str, settings: &str) -> (ObjectId, ObjectId) {
-    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let assumptions = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
     let settings = created(&s.run("parameters.save", json!({ "name": format!("{name} settings"), "csv": settings })).unwrap())[0];
     let schedule = |n: &str| json!({ "name": format!("Waste\\{n}"), "kind": "other", "add_up": { "by": "sum" }, "from": "worked" });
     let mut steps = final_steps();
@@ -3095,7 +3105,7 @@ fn a_dragline_system_splits_its_zones_by_method_factors_looked_up_by_zone() {
 fn an_allocation_step_sits_between_rom_and_final_and_a_bad_split_stops_the_block() {
     let mut s = session();
     let ids = allocation_column(&mut s, 30.0);
-    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let assumptions = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
     let flow_with = |steps: serde_json::Value| {
         json!({
             "fields": [
@@ -3206,7 +3216,7 @@ fn starter_column(s: &mut Session) -> Vec<ObjectId> {
 fn add_waste_allocation_fills_each_process_on_a_waste_interval_of_two_horizons() {
     let mut s = session();
     let ids = starter_column(&mut s);
-    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let assumptions = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
     let content = json!({
         "fields": [
             { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
@@ -3339,7 +3349,7 @@ fn a_setup_is_saved_on_a_table_and_what_it_picks_is_run() {
 fn two_tables_share_one_add_on_and_an_edit_to_it_reaches_both() {
     let mut s = session();
     let ids = starter_column(&mut s);
-    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let assumptions = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
     let content = json!({
         "fields": [
             { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
@@ -3402,7 +3412,7 @@ fn an_add_on_runs_only_with_a_main_dataflow() {
     built_in.steps.insert(0, zd_core::DataflowStep::on("rom"));
     let refused = s.run("dataflow.save", json!({ "name": "Bad", "content": built_in })).unwrap_err();
     assert!(refused.to_string().contains("rom is a built-in step"), "{refused}");
-    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let assumptions = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
     let main = |add_ons: Vec<ObjectId>, own: Option<&str>| {
         let mut steps = final_steps();
         if let Some(name) = own {
@@ -3452,7 +3462,7 @@ fn two_blocks(s: &mut Session, obs: [f64; 2], dips: Option<[f64; 2]>) -> Vec<Obj
 
 /// A main dataflow for the starter: the measures and qualities, the built-in stages, the assumptions.
 fn starter_main(s: &mut Session) -> ObjectId {
-    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let assumptions = created(&s.run("parameters.save", json!({ "name": free_name(s.project(), "assumptions"), "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
     let content = json!({
         "fields": [
             { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
@@ -3555,4 +3565,76 @@ fn each_column_chooses_its_zones_by_its_own_thickness() {
     assert_eq!(words("B1", "Scheduled\\Waste\\zone").as_deref(), Some("Zone 1"));
     assert_eq!(words("B2", "Scheduled\\Waste\\method").as_deref(), Some("2 zone"));
     assert_eq!(words("B2", "Scheduled\\Waste\\zone").as_deref(), Some("Zone 2; Zone 1"));
+}
+
+/// Parameter tables per table (Table setup plan, decision 4, workstream 4). The dataflow reads `assumptions`, waste RD
+/// 2.3. A case's own table, `Case waste`, gives waste RD 2.5 and a note no step reads. The reserves table's setup set to
+/// read the case's table first, then the assumptions: run again, its waste RD is 2.5 and the dataflow is untouched. Read
+/// by: the assumptions are read by the dataflow (p, table 1 of 1) and the table (p, table 2 of 2), their `rd` shadowed by
+/// the case's table; the case's table is read by the table alone (p, table 1 of 2), its `rd` read, its note by nothing.
+#[test]
+fn a_table_reads_its_own_parameter_tables_and_read_by_says_who_reads_each_column() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let csv = |rd: f64| format!("when material,rd (t/m3),mad (%),mis (%),mrom (%),underburden_thickness (m)\nwaste,{rd},,,,0\ncoal,,3,8,10,\n");
+    let flow = moist_flow(&mut s, &csv(2.3));
+    let id = created(&s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap())[0];
+    let Body::Dataflow(d) = &s.project().object(flow).unwrap().body else { panic!("a dataflow") };
+    let assumptions = d.parameters[0];
+    let flow_revision = s.project().object(flow).unwrap().revision;
+    let case = created(&s.run("parameters.save", json!({ "name": "Case waste", "csv": "when material,rd (t/m3),note\nwaste,2.5,from the 50 m case\n" })).unwrap())[0];
+    let waste_rd = |t: &Table| -> Vec<f64> { (0..t.rows()).filter_map(|r| value(t, r, &at(WASTE, "rd"))).collect() };
+    assert!(waste_rd(&table(&s, id)).iter().all(|&rd| close(rd, 2.3)));
+
+    let mut setup = table(&s, id).setup.unwrap();
+    setup.tables = Some(vec![case, assumptions]);
+    s.run("table.setup", json!({ "table": id, "setup": setup })).unwrap();
+    let p = rerun_params(s.project(), s.log(), id, &[]).unwrap();
+    s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+    let rds = waste_rd(&table(&s, id));
+    assert!(!rds.is_empty() && rds.iter().all(|&rd| close(rd, 2.5)), "the case's table read first: {rds:?}");
+    assert_eq!(s.project().object(flow).unwrap().revision, flow_revision, "the dataflow untouched");
+
+    let base = zd_commands::builtin::read_by(s.project(), assumptions).unwrap();
+    let how: Vec<(String, String, String)> = base.readers.iter().map(|r| (r.kind.clone(), r.name.clone(), r.how.clone())).collect();
+    assert_eq!(how, [("dataflow".to_string(), "Reserves".to_string(), "p, table 1 of 1".to_string()), ("table".to_string(), "Reserves Base".to_string(), "p, table 2 of 2".to_string())]);
+    let rd = base.columns.iter().find(|c| c.column == "rd").unwrap();
+    assert_eq!(rd.shadowed_by, ["Case waste"]);
+    assert!(rd.read_by.contains(&"Reserves".to_string()), "{:?}", rd.read_by);
+    let underburden = base.columns.iter().find(|c| c.column == "underburden_thickness").unwrap();
+    assert!(!underburden.read_by.is_empty() && underburden.shadowed_by.is_empty(), "a built-in step's setting, the case's table without it");
+    let theirs = zd_commands::builtin::read_by(s.project(), case).unwrap();
+    assert_eq!(theirs.readers.iter().map(|r| r.how.as_str()).collect::<Vec<_>>(), ["p, table 1 of 2"]);
+    let col = |name: &str| theirs.columns.iter().find(|c| c.column == name).unwrap().clone();
+    assert_eq!(col("rd").read_by, ["Reserves Base"]);
+    assert!(col("note").read_by.is_empty(), "no step, field or script reads the note");
+}
+
+/// One name, one parameter table (decision 4): a second `Method factors` is refused, naming the first, as is renaming
+/// another table to it. A looked-up table renamed after its dataflow is saved is still read under the name the script
+/// uses: run again, the dragline gives the same 187,500 m³, and the audit names the table by its new name.
+#[test]
+fn a_looked_up_table_is_read_after_a_rename_and_names_are_unique() {
+    let mut s = session();
+    let ids = allocation_column(&mut s, 60.0);
+    let factors = created(&s.run("parameters.save", json!({ "name": "Method factors", "csv": "when zone,cast,dozer,dragline,dragline_total,adjust\n1,0.2,0.3,0.5,0.7,1\n2,0,0,1,1.5,1\n" })).unwrap())[0];
+    let taken = s.run("parameters.save", json!({ "name": "Method factors", "csv": "when zone,cast\n1,0.1\n" })).unwrap_err();
+    assert!(taken.to_string().contains(&format!("a parameter table named Method factors is there already ({factors})")), "{taken}");
+    let system = "min_burden (m),system_max (m),zones,zone_thickness (m)\n10,50,2,25\n";
+    let (flow, settings) = allocation_flow(&mut s, "Dragline", DRAGLINE_SYSTEM, system);
+    let renamed = s.run("object.rename", json!({ "object": settings, "name": "Method factors" })).unwrap_err();
+    assert!(renamed.to_string().contains("a parameter table named Method factors is there already"), "{renamed}");
+
+    let run = |s: &mut Session| created(&s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": ALLOCATION_STACK, "layer": "reserves" })).unwrap())[0];
+    let first = run(&mut s);
+    let dragline = |s: &Session, t: ObjectId| at_seam(&table(s, t), Some("A"), "Scheduled\\Waste\\Dragline\\Prime Volume");
+    assert!((dragline(&s, first) - 187_500.0).abs() < 1e-9);
+    s.run("object.rename", json!({ "object": factors, "name": "Dragline method factors" })).unwrap();
+    let again = run(&mut s);
+    assert!((dragline(&s, again) - 187_500.0).abs() < 1e-9, "read under the name the script uses: {}", dragline(&s, again));
+    let audit = texts(&table(&s, again), "Summary\\Audit\\parameters").into_iter().flatten().next().unwrap_or_default();
+    assert!(audit.contains("Dragline method factors r") && audit.contains("(looked up)"), "the audit names it as it's called now: {audit}");
+    let read = zd_commands::builtin::read_by(s.project(), factors).unwrap();
+    assert!(read.readers.iter().any(|r| r.name == "Dragline" && r.how == "by name"), "{:?}", read.readers);
+    assert!(read.columns.iter().find(|c| c.column == "dragline_total").unwrap().read_by.contains(&"Dragline".to_string()));
 }

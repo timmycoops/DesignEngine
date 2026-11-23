@@ -164,12 +164,14 @@ pub fn bind_lookups<'a>(objects: impl IntoIterator<Item = &'a Arc<Object>>, sour
 
 /// The parameter tables a dataflow or calculated column looks up, read by id: each by its name, for the script. One since
 /// deleted is said.
-pub fn lookups_by_id(get: &dyn Fn(ObjectId) -> Option<Arc<Object>>, ids: &[ObjectId]) -> Result<NamedTables, String> {
+pub fn lookups_by_id(get: &dyn Fn(ObjectId) -> Option<Arc<Object>>, ids: &[ObjectId], names: &[String]) -> Result<NamedTables, String> {
     let mut out = Vec::with_capacity(ids.len());
-    for &id in ids {
+    for (i, &id) in ids.iter().enumerate() {
         let object = get(id).ok_or("it looks up a parameter table since deleted")?;
         let Body::ParameterTable(t) = &object.body else { return Err(format!("{} isn't a parameter table", object.name)) };
-        out.push((object.name.clone(), t.clone()));
+        // The name the script looks it up by (Table setup plan, decision 4), so a table renamed since is still read.
+        let name = names.get(i).filter(|n| !n.is_empty()).cloned().unwrap_or_else(|| object.name.clone());
+        out.push((name, t.clone()));
     }
     Ok(out)
 }

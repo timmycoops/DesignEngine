@@ -135,6 +135,9 @@ pub struct CalculatedColumn {
     /// The parameter tables its formula looks up by name (Schedule quantities plan, decision 1), bound when it's put on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lookups: Vec<crate::ObjectId>,
+    /// The name each of `lookups` is looked up by (Table setup plan, decision 4), so a renamed table is still read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lookup_names: Vec<String>,
 }
 
 /// Which blocks a reserves table is run on (the Build Plan's "Table setup plan", decision 1): every solid on these layers
@@ -191,6 +194,10 @@ pub struct TableSetup {
     /// The add-on dataflows run with it, in order (decision 2); none, the dataflow's own list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_ons: Option<Vec<crate::ObjectId>>,
+    /// The parameter tables it reads, in order, the case's first (decision 4); none, the dataflow's own list. Its
+    /// add-ons' tables are read after them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tables: Option<Vec<crate::ObjectId>>,
     pub blocks: BlockPick,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<crate::ObjectId>,

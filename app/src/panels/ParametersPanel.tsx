@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Braces, Copy, CopyPlus, Plus, Save, Split, Table2, Trash2, Undo2, X } from 'lucide-react';
 import { type ClipboardEvent, type KeyboardEvent, useEffect, useMemo, useState } from 'react';
-import { type Dataflow, dataflowCheck, type WordField, objectDetails, type ObjectSummary, type ParameterTable, type ParametersPicked, parametersCheck, parametersPicked } from '@/bridge';
+import { type Dataflow, dataflowCheck, type WordField, objectDetails, type ObjectSummary, type ParameterTable, type ParametersPicked, parametersCheck, parametersPicked, parametersReadBy, type ReadBy } from '@/bridge';
 import { CellInput, Choice, IconButton, ObjectMenu, Select, StatusBadge } from '@/design-system/kit';
 import { ProjectScriptEditor } from './ProjectScriptEditor';
 import { Button } from '@/design-system/ui/button';
@@ -462,8 +462,58 @@ function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMa
         <p className="px-3 py-2 text-muted-foreground">
           Read left to right: each value comes from the first column that fits and holds it; a blank filter fits anything. A filter cell takes words, numbers, ranges, comparisons and nots as the bench rules do (U, 1-5, "U, M", &lt;0.3, !P). Paste cells from Excel into any cell: a line along a parameter, across the columns.
         </p>
+        <ReadByList table={object.id} revision={object.revision} />
       </div>
     </div>
+  );
+}
+
+/**
+ * What reads this parameter table (Table setup plan, decision 4): every dataflow, add-on, reserves table and calculated
+ * column, through `p` (its place in their list) or by name; then each parameter, who names it, and the tables read
+ * before this one that have it too. A parameter nothing names is marked: no built-in step, field or script reads it.
+ */
+function ReadByList({ table, revision }: { table: string; revision: number }) {
+  const { summary } = useWorkspace();
+  const [readBy, setReadBy] = useState<ReadBy | null>(null);
+  const changed = summary?.objects.map((o) => `${o.id}:${o.revision}`).join(',') ?? '';
+  useEffect(() => {
+    let live = true;
+    void parametersReadBy(table)
+      .then((r) => live && setReadBy(r))
+      .catch(() => live && setReadBy(null));
+    return () => {
+      live = false;
+    };
+  }, [table, revision, changed]);
+  if (!readBy) return null;
+  const unread = readBy.columns.filter((c) => c.read_by.length === 0);
+  const shadowed = readBy.columns.filter((c) => c.shadowed_by.length > 0);
+  return (
+    <section className="space-y-1 px-3 pb-3" data-slot="read-by">
+      <div className="font-semibold">Read by</div>
+      {readBy.readers.length === 0 ? (
+        <p className="text-muted-foreground">Nothing reads this table yet: add it to a dataflow's parameter tables, a table's setup, or look it up by name.</p>
+      ) : (
+        <ul className="space-y-0.5">
+          {readBy.readers.map((r, i) => (
+            <li key={i} data-reader={r.name}>
+              <span className="text-muted-foreground">{r.kind}</span> {r.name} <span className="text-muted-foreground">· {r.how}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {readBy.readers.length > 0 && unread.length > 0 && (
+        <p className="text-warning" data-slot="read-by-unread">
+          No step, field or script names {unread.map((c) => c.column).join(', ')}.
+        </p>
+      )}
+      {shadowed.length > 0 && (
+        <p className="text-muted-foreground" data-slot="read-by-shadowed">
+          Read first from a table before this one, where its rows fit: {shadowed.map((c) => `${c.column} (${c.shadowed_by.join(', ')})`).join('; ')}.
+        </p>
+      )}
+    </section>
   );
 }
 

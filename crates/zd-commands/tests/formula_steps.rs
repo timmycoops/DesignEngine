@@ -89,7 +89,11 @@ fn blocks(s: &mut Session) -> Vec<ObjectId> {
     ids
 }
 
+/// The assumptions table, made once: a parameter table's name is its own (Table setup plan, decision 4).
 fn table_id(s: &mut Session) -> ObjectId {
+    if let Some(o) = s.project().objects().find(|o| o.name == "assumptions") {
+        return o.id;
+    }
     created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": "when material,when seam,rd (t/m3),ash_cutoff (%)\nwaste,,2.3,\n,,,35\n" })).unwrap())[0]
 }
 
