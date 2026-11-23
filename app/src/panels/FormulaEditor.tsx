@@ -1,12 +1,13 @@
-import { Bot, Check, MessageSquareText, Play, Trash2, Waypoints, X } from 'lucide-react';
+import { Check, Play, Trash2, Waypoints, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { type Dataflow, type DataflowStep, type FormulaReport, type FormulaTest, type FormulaTrace, formulaCheck, formulaReference, formulaTrace } from '@/bridge';
-import { forAi, readWhen, whenText } from './formulaText';
+import { readWhen, whenText } from './formulaText';
 import { CellInput, IconButton, ScriptEditor, StatusBadge } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { formulaNames, useParameterTables, useProjectScripts } from './scriptNames';
+import { CopyForAi } from './CopyForAi';
 
 /**
  * A formula step edited (decision 0077, 7d): its name and filter, its Starlark in a script box with each problem on its
@@ -43,7 +44,6 @@ export function FormulaEditor({
   const [traceWhy, setTraceWhy] = useState<string | null>(null);
   const [tracing, setTracing] = useState(false);
   const [testsText, setTestsText] = useState<string | null>(null);
-  const [said, setSaid] = useState<string | null>(null);
   const [reference, setReference] = useState('');
 
   useEffect(() => {
@@ -87,8 +87,6 @@ export function FormulaEditor({
       setTracing(false);
     }
   };
-  const copy = (ask: 'write' | 'explain') =>
-    void navigator.clipboard.writeText(forAi(reference, report, step, ask)).then(() => setSaid(ask === 'write' ? 'Copied for an AI: how formulas are written, this dataflow\'s names and this formula, no values. Paste the answer back here and check it on a picked block.' : 'Copied for an AI to explain, names only, no values.'));
   const testsJson = testsText ?? JSON.stringify(formula.tests ?? [], null, 2);
   const testsWhy = (() => {
     if (testsText === null) return null;
@@ -134,12 +132,7 @@ export function FormulaEditor({
           >
             <Waypoints className="size-3.5" /> Show in Dataflow
           </Button>
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => copy('write')} title="Copy how formulas are written, this dataflow's field and parameter names, and this formula, for an AI to write or change it. Names only, never values.">
-            <Bot className="size-3.5" /> Copy for AI
-          </Button>
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => copy('explain')} title="Copy this formula for an AI to explain in plain words. Names only, never values.">
-            <MessageSquareText className="size-3.5" /> Explain
-          </Button>
+          <CopyForAi brief={{ kind: 'formula', dataflow: flowId, content: flow, source: step.formula?.script ?? '', name: step.step }} problems={report?.problems ?? []} />
           <IconButton label="Take this formula step out" className="size-6" onClick={onRemove}>
             <Trash2 />
           </IconButton>
@@ -148,7 +141,6 @@ export function FormulaEditor({
           </IconButton>
         </span>
       </div>
-      {said && <div className="text-ok">{said}</div>}
       <div className="flex min-h-0 gap-2">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <ScriptEditor

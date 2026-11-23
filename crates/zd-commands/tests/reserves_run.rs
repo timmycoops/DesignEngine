@@ -3928,3 +3928,83 @@ fn a_mapping_that_cant_hold_is_refused_before_it_runs() {
     let not_a_table = s.run("table.setup", json!({ "table": made, "setup": { "dataflow": main, "blocks": {}, "stack": ALLOCATION_STACK, "input": { "table": main, "map": { "volume": "Vol" } } } })).unwrap_err();
     assert!(not_a_table.to_string().contains("is a Dataflow, not a Table"), "{not_a_table}");
 }
+
+/// The AI script brief (decision 0104, points 1 and 2). For an object script on the starter's two blocks: the reference,
+/// what to write and its limits, every column of the Objects table with whether it's words or a number, its meaning where
+/// the engine knows it (`true_thickness` is vertical × cos dip, `seam` takes waste below) and how many rows have it; the
+/// parameter tables with their columns; the script and the ask. Never a number from the blocks, and the words a column
+/// holds only when asked. A formula's brief reads the dataflow as edited, its fields with where each starts; a fix brief
+/// lists the problems with their lines.
+#[test]
+fn a_brief_names_every_column_with_its_meaning_and_the_words_only_when_asked() {
+    use zd_commands::builtin::{BriefAsk, BriefFor, ScriptKind, brief};
+    let mut s = session();
+    let _ = two_blocks(&mut s, [40.0, 60.0], None);
+    let main = starter_main(&mut s);
+    let ask = |kind, words| BriefFor { kind: Some(kind), words, source: "def formula(row, p):\n    row.process = \"dragline\"\n".into(), ..Default::default() };
+    let b = brief(s.project(), &ask(ScriptKind::Object, false)).unwrap();
+    assert!(b.starts_with(zd_script::REFERENCE.trim().lines().next().unwrap()), "the reference first");
+    assert!(b.contains("## What to write") && b.contains("never sets name, layer, kind, volume or tonnes"));
+    let read = &b[b.find("## What it can read").unwrap()..b.find("## Parameter tables").unwrap()];
+    assert!(read.contains("| `true_thickness` | number |") && read.contains("vertical × cos dip"), "{read}");
+    assert!(read.contains("| `seam` | words |") && read.contains("waste takes the seam below it"));
+    assert!(read.contains("6 of 6"), "how many rows have it");
+    assert!(!read.contains("1.4") && !read.contains("100000"), "no value of a block: {read}");
+    assert!(!b.contains("The words each word column holds"), "words only when asked");
+    let with = brief(s.project(), &ask(ScriptKind::Object, true)).unwrap();
+    assert!(with.contains("- `horizon`: A, OB, below A"), "{}", &with[with.find("The words each").unwrap()..]);
+    assert!(b.contains("## Parameter tables") && b.contains("`assumptions"), "the parameter tables by name");
+    assert!(b.contains("row.process = \"dragline\"") && b.contains("Answer with the whole script in one ```python block"));
+
+    let Body::Dataflow(d) = &s.project().object(main).unwrap().body else { panic!("a dataflow") };
+    let mut edited = (**d).clone();
+    edited.fields.push(serde_json::from_value(json!({ "name": "strip_ratio", "kind": "other", "add_up": { "by": "max" }, "from": "worked" })).unwrap());
+    let f = brief(s.project(), &BriefFor { kind: Some(ScriptKind::Formula), dataflow: Some(main), content: Some(edited), ..Default::default() }).unwrap();
+    assert!(f.contains("| `strip_ratio` |") && f.contains("worked by a step"), "the dataflow as edited");
+    assert!(f.contains("| `rd` |") && f.contains("block attribute `rd`"));
+    let fix = brief(s.project(), &BriefFor { kind: Some(ScriptKind::Object), ask: BriefAsk::Fix, problems: vec![(Some(2), "`row.thicknes` isn't a name".into())], ..Default::default() }).unwrap();
+    assert!(fix.contains("## The check found\n- line 2: `row.thicknes` isn't a name"));
+    assert!(brief(s.project(), &BriefFor::default()).is_err(), "a kind is asked for");
+}
+
+/// Checking and trying a script without writing anything (decision 0104, point 4). An object script with a misspelt
+/// name is refused on line 2, naming the field it meant; one that holds, tried on the blocks' layer, says the blocks it
+/// would change and what it would set, and nothing is revised. A calculated column tried on A's coal row of the Objects
+/// table sets 14,000 t (10,000 m³ at 1.4); a table script tried on the Objects table gives its rows; a formula is checked
+/// against the dataflow as edited; a library's problem is on its line.
+#[test]
+fn a_script_is_checked_and_tried_without_writing_anything() {
+    use zd_commands::builtin::{BriefFor, ScriptKind, check_script, try_script};
+    let mut s = session();
+    let ids = two_blocks(&mut s, [40.0, 60.0], None);
+    let main = starter_main(&mut s);
+    let revisions: Vec<u32> = ids.iter().map(|&i| s.project().object(i).unwrap().revision).collect();
+    let on = |kind, source: &str| BriefFor { kind: Some(kind), source: source.into(), layers: vec!["blocks".into()], ..Default::default() };
+
+    let bad = check_script(s.project(), &on(ScriptKind::Object, "def formula(row, p):\n    row.process = \"dragline\" if row.thicknes > 8 else \"truck\"\n")).unwrap();
+    assert_eq!(bad.len(), 1, "{bad:?}");
+    assert_eq!(bad[0].line, Some(2));
+    assert!(bad[0].message.contains("did you mean `thickness`"), "{}", bad[0].message);
+    let tried = try_script(s.project(), &on(ScriptKind::Object, "def formula(row, p):\n    if row.material == \"waste\":\n        row.process = \"dragline\"\n"), 0).unwrap();
+    assert!(tried.problems.is_empty() && tried.said[0].contains("4 changed"), "{:?}", tried.said);
+    assert!(tried.said.iter().any(|l| l.contains("1_B1_OB: process = \"dragline\"")), "{:?}", tried.said);
+    assert_eq!(ids.iter().map(|&i| s.project().object(i).unwrap().revision).collect::<Vec<_>>(), revisions, "nothing written");
+
+    let coal = zd_commands::objects_own::solids(s.project()).iter().position(|&i| s.project().object(i).unwrap().name == "1_B1_A").unwrap();
+    let calc = BriefFor { kind: Some(ScriptKind::Calculated), objects: true, name: "coal_t".into(), source: "def formula(row):\n    row.coal_t = row.volume * row.rd\n".into(), ..Default::default() };
+    let tried = try_script(s.project(), &calc, coal).unwrap();
+    assert!(tried.said.iter().any(|l| l == "sets coal_t = 14000"), "{:?}", tried.said);
+
+    let table = BriefFor { kind: Some(ScriptKind::Table), objects: true, source: "def run(t, p):\n    return t.where(material=\"coal\").select([\"block\", \"volume\"])\n".into(), ..Default::default() };
+    let tried = try_script(s.project(), &table, 0).unwrap();
+    assert!(tried.said.iter().any(|l| l.starts_with("Objects script: 2 rows, 2 columns")), "{:?}", tried.said);
+    assert!(tried.said.iter().any(|l| l == "columns: block, volume"), "{:?}", tried.said);
+    assert_eq!(s.project().objects().filter(|o| matches!(o.body, Body::Table(_))).count(), 0, "no table made");
+
+    let Body::Dataflow(d) = &s.project().object(main).unwrap().body else { panic!("a dataflow") };
+    let formula = BriefFor { kind: Some(ScriptKind::Formula), content: Some((**d).clone()), name: "doubled".into(), source: "def formula(unit, p):\n    unit.ash = unit.ashh * 2\n".into(), ..Default::default() };
+    let problems = check_script(s.project(), &formula).unwrap();
+    assert!(problems.iter().any(|p| p.line == Some(2) && p.message.contains("ashh")), "{problems:?}");
+    let library = BriefFor { kind: Some(ScriptKind::Library), name: "helpers".into(), source: "def twice(x):\n    return x *\n".into(), ..Default::default() };
+    assert!(!check_script(s.project(), &library).unwrap().is_empty());
+}

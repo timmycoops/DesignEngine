@@ -879,6 +879,28 @@ pub async fn objects_calculated(objects: Vec<ObjectId>, state: State<'_, AppStat
     .await?
 }
 
+/// The brief an AI is handed to write a script right (decision 0104): one shape for every kind, built from the project.
+#[tauri::command]
+pub async fn script_brief(brief: zd_commands::builtin::BriefFor, state: State<'_, AppState>) -> Result<String, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        zd_commands::builtin::brief(app.session.project(), &brief).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
+/// A script checked against the project as its kind's editor checks it (decision 0104), nothing kept.
+#[tauri::command]
+pub async fn brief_check(brief: zd_commands::builtin::BriefFor, state: State<'_, AppState>) -> Result<Vec<zd_commands::builtin::FormulaProblem>, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        zd_commands::builtin::check_script(app.session.project(), &brief).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
 /// The table a calculated column is checked and traced against: a reserves table, or with none the Objects table (Table
 /// setup plan, decision 9), every solid's row, or the one solid traced on.
 fn calc_table(project: &zd_core::Project, object: Option<ObjectId>, solid: Option<ObjectId>) -> Result<Arc<zd_core::Table>, String> {

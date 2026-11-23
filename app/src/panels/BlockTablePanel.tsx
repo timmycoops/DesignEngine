@@ -1,6 +1,6 @@
 import { Download, EyeOff, FileUp, MousePointerSquareDashed, Scan, Trash2 } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
-import { type CalculatedColumn, concealed, type Grid, type GridRow, type ObjectKind, type ObjectsCalculated, objectsCalculated, solidsTable, tableGrid } from '@/bridge';
+import { briefCheck, type CalculatedColumn, concealed, type Grid, type GridRow, type ObjectKind, type ObjectsCalculated, objectsCalculated, solidsTable, tableGrid } from '@/bridge';
 import { columnHelper, DataTable } from '@/design-system/DataTable';
 import { Choice, EditableCell, Field, FilterInput, GroupBy, NumberInput, ScriptEditor, Select } from '@/design-system/kit';
 import type { When } from '@/filters';
@@ -15,6 +15,7 @@ import { UpdateRecords } from './UpdateRecords';
 import { CalculatedEditor } from './CalculatedEditor';
 import { TableGrid } from './TableGridView';
 import { type Entry, gridCsv, groupsKept, nextSort, pastedLines, readEntry, type Sort, toggleOpen } from './tableGrid';
+import { CopyForAi } from './CopyForAi';
 
 /**
  * The Objects table (decision 0069 as the block table; Filtering plan, L5): objects as rows, solids by default, each
@@ -512,6 +513,20 @@ function ObjectScriptStrip({ source, onChange, ids, onClose }: { source: string;
   const { runRecord } = useWorkspace();
   const [said, setSaid] = useState<{ error?: string; text?: string }>({});
   const [running, setRunning] = useState(false);
+  // Checked as it's typed against the solids shown, as a run would (decision 0104): each problem on its line.
+  const [problems, setProblems] = useState<{ message: string; line: number | null }[]>([]);
+  useEffect(() => {
+    let live = true;
+    const t = setTimeout(() => {
+      void briefCheck({ kind: 'object', source })
+        .then((p) => live && setProblems(p))
+        .catch((e) => live && setProblems([{ message: String(e), line: null }]));
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [source]);
   const run = async () => {
     setRunning(true);
     const outcome = await runRecord('object.script', { objects: ids, source });
@@ -520,7 +535,7 @@ function ObjectScriptStrip({ source, onChange, ids, onClose }: { source: string;
   };
   return (
     <div className="shrink-0 space-y-1 border-b border-border px-2 py-1" data-slot="object-script">
-      <ScriptEditor value={source} onChange={onChange} label="Object script" className="max-h-48" />
+      <ScriptEditor value={source} onChange={onChange} problems={problems} label="Object script" className="max-h-48" />
       <div className="flex items-center gap-2">
         <Button size="sm" className="h-6 px-2 text-xs" disabled={running || ids.length === 0} onClick={() => void run()} title="Run it on every solid shown, one run: each it changes revised once">
           {running ? 'Running…' : `Run on the ${fmt(ids.length)} solid${ids.length === 1 ? '' : 's'} shown`}
@@ -528,6 +543,7 @@ function ObjectScriptStrip({ source, onChange, ids, onClose }: { source: string;
         <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onClose}>
           Close
         </Button>
+        <CopyForAi brief={{ kind: 'object', source }} problems={problems} />
         {said.error ? <span className="text-destructive">{said.error}</span> : said.text ? <span className="text-ok">{said.text}</span> : null}
       </div>
     </div>

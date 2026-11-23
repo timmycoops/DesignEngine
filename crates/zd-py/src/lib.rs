@@ -231,6 +231,34 @@ impl PySession {
         to_py(py, &json!(views))
     }
 
+    /// The brief an AI is handed to write a script right (decision 0104): how scripts are written, what this kind may
+    /// set, every name it can read with its meaning, the parameter tables and scripts, the script and the ask, as
+    /// Markdown. Keywords as the app's: `kind` (formula, allocation, calculated, object, table, library), `dataflow`,
+    /// `table`, `objects`, `source`, `name`, `words` (the words columns hold, off unless asked), `ask`, `problems`.
+    #[pyo3(signature = (**brief))]
+    fn brief(&self, brief: Option<&Bound<'_, PyDict>>) -> PyResult<String> {
+        let b = brief_of(brief)?;
+        zd_commands::builtin::brief(self.inner.project(), &b).map_err(|e| CommandError::new_err(e.to_string()))
+    }
+
+    /// A script checked against the project as its editor checks it, nothing kept: a list of `{message, line}`, empty
+    /// where it holds. Keywords as `brief`.
+    #[pyo3(signature = (**brief))]
+    fn check_script(&self, py: Python<'_>, brief: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
+        let b = brief_of(brief)?;
+        let problems = zd_commands::builtin::check_script(self.inner.project(), &b).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &json!(problems))
+    }
+
+    /// A script tried on the project as it stands, nothing kept: `{said, problems}`. A calculated column on row `row`
+    /// line by line, an object script's sets on the first blocks, a table script's table and first rows.
+    #[pyo3(signature = (row=0, **brief))]
+    fn try_script(&self, py: Python<'_>, row: usize, brief: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
+        let b = brief_of(brief)?;
+        let tried = zd_commands::builtin::try_script(self.inner.project(), &b, row).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &json!(tried))
+    }
+
     #[pyo3(signature = (workflow, utc_offset_minutes=None))]
     fn workflow_report(&self, py: Python<'_>, workflow: &str, utc_offset_minutes: Option<i32>) -> PyResult<Py<PyAny>> {
         let id = object_id(workflow)?;
@@ -453,4 +481,13 @@ fn from_py(object: &Bound<'_, PyAny>) -> PyResult<Value> {
     options.set_item("allow_nan", false)?;
     let text: String = py.import("json")?.call_method("dumps", (object,), Some(&options))?.extract()?;
     serde_json::from_str(&text).map_err(|e| PyValueError::new_err(format!("parameters: {e}")))
+}
+
+/// A brief's keywords read as the engine's `BriefFor`.
+fn brief_of(brief: Option<&Bound<'_, PyDict>>) -> PyResult<zd_commands::builtin::BriefFor> {
+    let value = match brief {
+        Some(d) => from_py(d.as_any())?,
+        None => json!({}),
+    };
+    serde_json::from_value(value).map_err(|e| CommandError::new_err(e.to_string()))
 }

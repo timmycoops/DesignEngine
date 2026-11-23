@@ -1,9 +1,9 @@
-import { Bot, Trash2, X } from 'lucide-react';
+import { Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { type Dataflow, type DataflowStep, formulaReference, scriptCheck } from '@/bridge';
 import { CellInput, IconButton, PanelHead, ScriptEditor, StatusBadge } from '@/design-system/kit';
-import { Button } from '@/design-system/ui/button';
 import { allocationGuide, useParameterColumns, useParameterTables, useProjectScripts } from './scriptNames';
+import { CopyForAi } from './CopyForAi';
 
 /**
  * A new allocation step's script (Waste allocation plan, decisions 4 and 8): topsoil then freedig off the top of each
@@ -52,7 +52,6 @@ export function AllocationStepEditor({
   const lookupTables = useParameterTables();
   const script = step.allocation?.script ?? '';
   const [problems, setProblems] = useState<{ message: string; line: number | null }[]>([]);
-  const [said, setSaid] = useState<string | null>(null);
   const [reference, setReference] = useState('');
   const edited = JSON.stringify(saved) !== JSON.stringify(step);
   const fields = [...flow.fields.map((f) => ({ name: f.name })), ...(flow.words ?? []).map((w) => ({ name: w.name, unit: 'words' }))];
@@ -73,11 +72,6 @@ export function AllocationStepEditor({
     };
   }, [step.step, script]);
 
-  const copy = () => {
-    const names = `Its fields: ${flow.fields.map((f) => f.name).join(', ')}. Its word fields: ${(flow.words ?? []).map((w) => w.name).join(', ') || 'none'}.`;
-    const text = [allocationGuide(reference), '', '## This allocation step', `An allocation step of a reserves dataflow named \`${step.step}\`, run once on each block column after rom. ${names}`, '```py', script.trimEnd(), '```', '', 'Write or change it as I describe below, as an allocation script in this form, every number read from a parameter row.'];
-    void navigator.clipboard.writeText(text.join('\n')).then(() => setSaid('Copied for an AI: how allocation scripts are written and this step, no values'));
-  };
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-1" data-slot="allocation-step">
@@ -85,9 +79,7 @@ export function AllocationStepEditor({
         <CellInput value={step.step} label="The step's name" className="w-40 font-semibold" onChange={(name) => onStep({ ...step, step: name.trim().replaceAll(' ', '_') })} />
         {edited && <StatusBadge tone="edited">edited</StatusBadge>}
         <span className="ml-auto flex items-center gap-1">
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={copy} title="Copy how allocation scripts are written and this step for an AI: no values">
-            <Bot className="size-3.5" /> Copy for AI
-          </Button>
+          <CopyForAi brief={{ kind: 'allocation', content: flow, source: script, name: step.step }} problems={problems} />
           <IconButton label="Take this allocation step out" className="size-6" onClick={onRemove}>
             <Trash2 />
           </IconButton>
@@ -120,7 +112,6 @@ export function AllocationStepEditor({
       ) : (
         <span className="text-ok">Checks clean: it runs when the dataflow is saved and run.</span>
       )}
-      {said && <span className="text-muted-foreground">{said}</span>}
       <details className="shrink-0 text-muted-foreground" data-slot="script-guide">
         <summary className="cursor-pointer">How allocation scripts are written</summary>
         <pre className="mt-1 max-h-64 overflow-auto font-mono text-xs whitespace-pre-wrap">{allocationGuide(reference)}</pre>
