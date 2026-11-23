@@ -307,6 +307,39 @@ uses `@codemirror/autocomplete` 6.20.4 (CodeMirror 6, the locked editor; Tim agr
 | `the_table_calls_offered_are_the_table_s_own`, `the_functions_offered_are_there` (zd-script) | the calls offered are exactly the table's, and every function offered is there | exact |
 | `zd-app --bench --dataflow` (demo pit) | in a new script made a table script, `t.` offers group, where, join, total and with_column; `t["ROM` offers the table's `ROM\\…` columns; `in_si` offers in_situ_rd; the guide is the table scripts' | exact |
 
+## Built: workstream 9, a dataflow from any table
+
+Tim agreed four choices on 2026-11-24 ("Yes build them out - I agree all 4"): the mapping on the reserves table's setup
+(0103), not the dataflow; a row is one block piece, as a solid is; imported said in the run, the audit and the report;
+and `table.import` for CSVs.
+
+- **`table.import`**: a CSV read into a table of the project (`table_of_csv`), the first line naming the columns (a unit
+  in brackets), a column numbers where every filled cell is one, the rest words. Its columns are entered; one in m³,
+  BCM or tonnes adds up by summing. In the app, Import › A table (CSV)… opens it in the Tables tab.
+- **A table as the input** (`zd_core::TableInput`, `InputMap`; a run's `input`, a setup's `input`): a row a piece, its
+  columns its attributes under their own names, each mapped one under the name the run reads (`seam` from
+  `Seam_Name`). The volume comes from its column (always mapped); the thickness from a column, or the volume over a
+  plan area column; the stack from the seam model, the typed stack, or an order column (smallest on top). A piece's id
+  is the table's with its row, the same every run. The steps run as on solids: the pieces go in where the blocks did
+  (`pieces_of_table` in `prepare_flow`), so Open its column, Every block and the trace read them the same way.
+- **Refused before it runs, naming what's missing:** no volume column; a mapped column the table hasn't, or one of words
+  for the volume; a row with no volume; a horizon the stack hasn't; a piece with no material. `table.setup` keeps a
+  mapping not yet whole, so the Setup tab can finish it a column at a time, says what it lacks, and the run refuses it.
+- **Imported is said:** the run's note `reserves.imported_volumes` ("volumes imported from Deswik export r1, not
+  measured from solids"), the table's `Summary\Audit\input`, and the report's mark before its figures. A table read
+  from solids carries no such column: solids are the volume of record (rule 9).
+- **The Setup tab:** Run on, block solids or a table; with a table, the table read, its rows, and the mapping: the
+  volume, thickness, plan area and order columns, and each attribute the run reads (the levels, `horizon`, `seam`,
+  `material`, `bench`, `bench_floor`, `case`, each field's block attribute), its own name by default.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_dataflow_runs_on_a_table_through_a_mapping_and_says_its_volumes_are_imported` (reserves_run.rs) | the plan's case on made-up blocks: the same blocks as a CSV with a site's own names, imported and mapped: every Imported, Insitu and ROM total the solids' own; the run's note, the audit and the report say imported; by the file's order column with no stack, the same; kept as the setup, Run again reads the table and the Setup tab shows its 6 rows | 1e-9 relative |
+| `a_mapping_that_cant_hold_is_refused_before_it_runs` (reserves_run.rs) | the plan's case: no volume column, a column the table hasn't, words for the volume, a row with no volume, a horizon not in the stack, no material: each refused naming it; an unfinished mapping kept by `table.setup`, said in the tab, refused by Run again; a dataflow as the table refused | exact |
+| `a_csv_s_columns_are_numbers_where_every_filled_cell_is_one` (table_import.rs) | numbers and words told apart; m³ sums; a header with no rows refused | exact |
+| `zdp` round trip (zd-io) | a setup's input and mapping saved and read back | exact |
+| The demo pit (by hand, from Python) | Base's 1,815 blocks as a CSV of their attributes, imported (10 ms) and run by a mapping of volume and plan area (103 ms): Imported, Insitu and ROM coal and waste volumes and tonnes all the solids' own, largest difference 0; the run says imported | exact |
+
 ## Known limits
 
 - Entered values carry through Run again into the same table; a fresh reserves run makes a new table without them.
@@ -327,3 +360,6 @@ uses `@codemirror/autocomplete` 6.20.4 (CodeMirror 6, the locked editor; Tim agr
 - A table a script made has no levels of its own, so Select its solids and Run again don't apply to it.
 - `into: columns` from a task makes entered columns, kept by key across Run again but not worked again; a column that
   must follow every run goes in the dataflow as a table script step.
+- A table read as blocks has no solids: Show and Isolate its solids find none, and a leaf's centroid, dip and width are
+  what its columns give.
+- Only a row a piece: a table already at leaves (coal and waste side by side) goes through a table script first.

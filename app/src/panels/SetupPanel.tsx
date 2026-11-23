@@ -183,13 +183,34 @@ function RunOn({ view, save }: { view: SetupView; save: Save }) {
   const { summary } = useWorkspace();
   const layers = summary?.layers ?? [];
   const models = (summary?.objects ?? []).filter((o) => o.kind === 'seam_model');
+  // Tables it may read in place of the blocks: any of the project's, but itself and the Objects table's own.
+  const tables = (summary?.objects ?? []).filter((o) => o.kind === 'table' && !o.objects_own && o.id !== view.table.id);
   const b = view.blocks;
   const byLayers = b.named === 0;
   const filter = Object.entries(b.filter);
   const [newAttribute, setNewAttribute] = useState('');
+  const fromTable = !!view.setup.input;
   return (
     <Section title="Run on" slot="setup-run-on">
-      {byLayers ? (
+      <div className="flex items-center gap-2">
+        <Select
+          className="h-6 w-56"
+          aria-label="What the table is run on"
+          value={fromTable ? 'table' : 'blocks'}
+          onChange={(e) =>
+            void save((s) => {
+              if (e.target.value === 'blocks') delete s.input;
+              else if (tables[0]) s.input = { table: tables[0].id, map: { volume: 'volume' } };
+            }, e.target.value === 'blocks' ? 'Run on block solids' : 'Run on a table')
+          }
+        >
+          <option value="blocks">Block solids, volumes measured</option>
+          {tables.length > 0 && <option value="table">A table, volumes imported</option>}
+        </Select>
+      </div>
+      {fromTable && view.input ? (
+        <InputMapping view={view} tables={tables} save={save} />
+      ) : byLayers ? (
         <>
           <Ordered
             items={b.layers}
@@ -263,9 +284,11 @@ function RunOn({ view, save }: { view: SetupView; save: Save }) {
           </button>
         </div>
       )}
-      <div className={cn(b.picked === 0 && 'text-destructive')} data-slot="setup-picked">
-        Picks {b.picked} block{b.picked === 1 ? '' : 's'} now.
-      </div>
+      {!fromTable && (
+        <div className={cn(b.picked === 0 && 'text-destructive')} data-slot="setup-picked">
+          Picks {b.picked} block{b.picked === 1 ? '' : 's'} now.
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <span className="text-muted-foreground">Ordered by</span>
         <Select
@@ -289,6 +312,80 @@ function RunOn({ view, save }: { view: SetupView; save: Save }) {
       </div>
       {view.own_rows > 0 && <div className="text-muted-foreground">{view.own_rows} rows of its own, read before every table.</div>}
     </Section>
+  );
+}
+
+/**
+ * A table read in place of the blocks (Tables and scripts plan, decision 12): a row a piece. Which column is the volume
+ * (always), the thickness or plan area, and each attribute the run reads; one left as its own name reads the column of
+ * that name. With no solids behind it, its volumes are imported, not of record, and the run and report say so.
+ */
+function InputMapping({ view, tables, save }: { view: SetupView; tables: { id: string; name: string }[]; save: Save }) {
+  const input = view.setup.input!;
+  const shown = view.input!;
+  const numbers = shown.columns.filter(([, n]) => n).map(([c]) => c);
+  const all = shown.columns.map(([c]) => c);
+  const setMap = (edit: (m: NonNullable<TableSetup['input']>['map']) => void, what: string) =>
+    void save((s) => {
+      if (s.input) edit(s.input.map);
+    }, what);
+  const pick = (label: string, value: string | undefined, choices: string[], onPick: (v: string) => void, blank: string) => (
+    <Select className="h-6 w-44" aria-label={label} value={value ?? ''} onChange={(e) => onPick(e.target.value)}>
+      <option value="">{blank}</option>
+      {choices.map((c) => (
+        <option key={c} value={c}>
+          {c}
+        </option>
+      ))}
+    </Select>
+  );
+  const row = (label: string, control: ReactNode) => (
+    <div className="flex items-center gap-2" data-map={label}>
+      <span className="w-28 shrink-0 truncate text-muted-foreground" title={label}>
+        {label}
+      </span>
+      {control}
+    </div>
+  );
+  return (
+    <div className="space-y-0.5" data-slot="setup-input">
+      {row(
+        'table',
+        <Select className="h-6 w-44" aria-label="The table read" value={input.table} onChange={(e) => void save((s) => s.input && (s.input.table = e.target.value), 'Table read')}>
+          {tables.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </Select>,
+      )}
+      <div className="text-warning">
+        {shown.rows} rows, a row a piece: volumes imported from {shown.table.name}, not measured from solids.
+      </div>
+      {row('volume', pick('The volume column', input.map.volume, numbers, (v) => setMap((m) => (m.volume = v), 'Volume column'), 'pick a column'))}
+      {row('thickness', pick('The thickness column', input.map.thickness, numbers, (v) => setMap((m) => (v ? (m.thickness = v) : delete m.thickness), 'Thickness column'), 'volume over area'))}
+      {row('plan area', pick('The plan area column', input.map.area, numbers, (v) => setMap((m) => (v ? (m.area = v) : delete m.area), 'Plan area column'), 'volume over thickness'))}
+      {row('horizon order', pick('The order column', input.map.order, numbers, (v) => setMap((m) => (v ? (m.order = v) : delete m.order), 'Order column'), 'the model or stack'))}
+      <div className="pt-1 text-muted-foreground">What the run reads, from which column:</div>
+      {shown.reads.map((attribute) =>
+        row(
+          attribute,
+          pick(
+            `The column ${attribute} is read from`,
+            input.map.columns?.[attribute],
+            all,
+            (v) =>
+              setMap((m) => {
+                const next = { ...(m.columns ?? {}) };
+                if (v) next[attribute] = v;
+                else delete next[attribute];
+                m.columns = next;
+              }, `${attribute} column`),
+            all.some((c) => c.toLowerCase() === attribute.toLowerCase()) ? `its own: ${attribute}` : 'none in the table',
+          ),
+        ),
+      )}
+    </div>
   );
 }
 

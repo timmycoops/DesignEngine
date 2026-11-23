@@ -215,6 +215,10 @@ fn reserves(h: &mut String, c: &CaseFigures, k: usize) {
     }
     let _ = write!(h, "<h2 id=\"{}\">Reserves <span class=\"mut\" style=\"font-weight:400\">({})</span></h2>", if k == 0 { "reserves" } else { "" }, esc(&c.name));
     for (t, table) in c.reserves.iter().enumerate() {
+        // Volumes read from a table, not solids (decision 12 of 0099): said before its figures, as rule 9 asks.
+        if let Some(from) = &table.imported {
+            let _ = write!(h, "<div><span class=\"tag warn\">imported</span> {}: volumes {}, not measured from solids.</div>", esc(&table.name), esc(from));
+        }
         for (w, write) in table.writes.iter().enumerate() {
             let _ = write!(h, "<h3>{} · {}</h3>", esc(&table.name), esc(&write.write.replace('_', " ")));
             let heads: String = write.columns.iter().map(|(n, u)| format!("<th>{}{}</th>", esc(&n.replace('_', " ")), if u.is_empty() { String::new() } else { format!(" {}", esc(&u.replace("m3", "m³").replace("m2", "m²").replace("t/m3", "t/m³"))) })).collect();

@@ -184,6 +184,36 @@ impl BlockPick {
     }
 }
 
+/// A table a reserves run reads in place of block solids (the Build Plan's "Tables and scripts plan", decision 12): a row
+/// a block piece, as a solid is, its key and value columns named for the run by the mapping. With no solids behind it,
+/// its volumes are imported, not of record (engine rule 9), and the run says so.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TableInput {
+    /// The table of the project read, a row a piece.
+    pub table: crate::ObjectId,
+    pub map: InputMap,
+}
+
+/// Which of a table's columns the run reads as what (decision 12): the volume (always), the thickness or the plan area,
+/// and each attribute the dataflow reads (`seam`, `horizon`, `material`, the levels, `rd`, a quality) from a column of
+/// another name. A column not mapped is read under its own name. With no seam model or stack, `order` is a column of
+/// numbers putting the horizons in order, smallest on top.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputMap {
+    pub volume: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thickness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub area: Option<String>,
+    /// The attribute the run reads, by the table's column it comes from: `seam` from `Seam_Name`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub columns: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<String>,
+}
+
 /// What fills a reserves table (the Build Plan's "Table setup plan", decision 1): the dataflow, the blocks, the seam model
 /// that orders each column or the stack where there's none, and the table's own parameter rows, read first. Its case is
 /// the table's own. Run again runs it; every run is still logged.
@@ -209,6 +239,10 @@ pub struct TableSetup {
     /// dip from a parameter column where the dataflow reads the block's measured one.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub sources: std::collections::BTreeMap<String, crate::FieldSource>,
+    /// A table read in place of the blocks (Tables and scripts plan, decision 12): its rows are the pieces, and `blocks`
+    /// picks none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<TableInput>,
 }
 
 /// A table: columns of one length, names unique, and the columns worked out from them; a reserves table also what fills

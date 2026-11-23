@@ -181,6 +181,7 @@ test('the menus read top to bottom as they always have', () => {
     'A folder…',
     'Deswik drawing (.dcf)…',
     'Spry project (.spry)…',
+    'A table (CSV)…',
     'Suggest a stack definition (CSV)…',
     'Build and check from a definition…',
     'Relink geology…',

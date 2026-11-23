@@ -80,6 +80,20 @@ impl Command for SaveTableSetup {
                 return Err(CommandError::Invalid(format!("the setup gives a source for {name}, a field {} and its add-ons haven't", flow.name)));
             }
         }
+        // A table read in place of the blocks (decision 12 of 0099). A mapping not yet whole is kept, so the Setup tab
+        // can finish it a column at a time; what it lacks is said here and in the tab, and the run refuses it.
+        if let Some(input) = &s.input {
+            let read = inputs.object(input.table)?;
+            let Body::Table(_) = &read.body else { return Err(CommandError::WrongKind { id: input.table, expected: ObjectKind::Table, found: read.kind() }) };
+            let said = match super::reserves_run::pieces_of_table(&|id| inputs.object(id).cloned(), input) {
+                Ok((pieces, _, from)) => format!("{} rows of {from}", pieces.len()),
+                Err(e) => format!("{}, the mapping not yet whole: {e}", read.name),
+            };
+            let mut next = (**table).clone();
+            next.setup = Some(s.clone());
+            let change = Change::Revise { id: p.table, base: object.revision, name: None, layer: None, attributes: None, body: Some(Body::Table(Arc::new(next))) };
+            return Ok(Outcome::new(vec![change]).message(format!("saved {}'s setup: {said}, run by {}", object.name, flow.name)));
+        }
         let picked = s.blocks.resolve(inputs.objects());
         if picked.is_empty() {
             return Err(CommandError::Invalid("the setup picks no blocks: name their layers (and a filter), or the blocks themselves".into()));

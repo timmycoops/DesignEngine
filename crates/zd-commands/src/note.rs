@@ -166,6 +166,7 @@ codes! {
     ReservesEnteredLost = "reserves.entered_lost", "Values a person entered in a reserves table on leaves a run again no longer makes, each with its value: not kept, never dropped silently";
     ReservesOutOfRange = "reserves.out_of_range", "Blocks thicker or wider than a reserves run's maximums";
     ReservesTableScriptStopped = "reserves.table_script_stopped", "A reserves run's table script step that stopped, or gave back rows that aren't the table's, and why: its columns left off";
+    ImportedVolumes = "reserves.imported_volumes", "A reserves run read from a table, not block solids: its volumes are imported, not the volumes of record (engine rule 9)";
     TableCheckOut = "table.check_out", "A mine's own check, check() or required() in a table script, that leaves are out of: each leaf named by its levels, with how far out or what it's missing";
     WorkflowPicked = "workflow.picked", "A workflow step's input that is the objects as picked, as no rule finds them";
     ObjectSolidsDeleted = "object.solids_deleted", "Solids deleted, with their volume, so a report can account for it";

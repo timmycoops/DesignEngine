@@ -3809,3 +3809,122 @@ fn an_object_script_sets_attributes_on_blocks_in_one_undo() {
     let refused = s.run("table.script", json!({ "objects": true, "into": "columns", "source": "def run(t, p):\n    return t\n" })).unwrap_err();
     assert!(refused.to_string().contains("an object script (object.script) sets attributes"), "{refused}");
 }
+
+/// The blocks of `ids` as a CSV with a site's own column names (Tables and scripts plan, decision 12): a row a piece, its
+/// keys and values, the volume its solid's and the thickness its volume over its 100 × 50 m footprint.
+fn blocks_as_csv(s: &Session, ids: &[ObjectId]) -> String {
+    let mut csv = String::from("Piece,Strip,Blk,Horizon,Seam_Name,Mat,RD_ad,Ash,Vol (m3),Thk_m,Order\n");
+    let order = |h: &str| ALLOCATION_STACK.iter().position(|k| *k == h).unwrap();
+    for &id in ids {
+        let o = s.project().object(id).unwrap();
+        let Body::Solid(solid) = &o.body else { panic!("a solid") };
+        let word = |k: &str| o.attributes.get(k).map(zd_core::attribute_word).unwrap_or_default();
+        let h = word("horizon");
+        csv.push_str(&format!("{},{},{},{h},{},{},{},{},{},{},{}\n", o.name, word("strip"), word("block"), word("seam"), word("material"), word("rd"), word("ash"), solid.volume(), solid.volume() / 5000.0, order(&h)));
+    }
+    csv
+}
+
+/// A dataflow from any table (Tables and scripts plan, decision 12, workstream 9). The starter's two blocks run from their
+/// solids; then the same blocks as a CSV with a site's own names (`Seam_Name`, `Mat`, `Vol (m3)`, `Thk_m`, `RD_ad`) read
+/// by `table.import` and run through a mapping: every Imported, Insitu and ROM total is the solids' own, to 1e-9 of it.
+/// The run says its volumes are imported (`reserves.imported_volumes`), the table's audit says where from, and the report
+/// marks it. With no stack, the file's order column puts the horizons in order, the same again. Saved as the table's
+/// setup, Run again reads the table, and the Setup tab shows its 6 rows.
+#[test]
+fn a_dataflow_runs_on_a_table_through_a_mapping_and_says_its_volumes_are_imported() {
+    let mut s = session();
+    let ids = two_blocks(&mut s, [40.0, 60.0], None);
+    let main = starter_main(&mut s);
+    let solids = created(&s.run("reserves.run", json!({ "dataflow": main, "blocks": ids, "stack": ALLOCATION_STACK, "layer": "reserves", "name": "From solids" })).unwrap())[0];
+    let imported = created(&s.run("table.import", json!({ "name": "Deswik export", "csv": blocks_as_csv(&s, &ids) })).unwrap())[0];
+    let map = json!({ "volume": "Vol", "thickness": "Thk_m", "columns": { "strip": "Strip", "block": "Blk", "horizon": "Horizon", "seam": "Seam_Name", "material": "Mat", "rd": "RD_ad", "ash": "Ash", "name": "Piece" } });
+    let ran = s.run("reserves.run", json!({ "dataflow": main, "input": { "table": imported, "map": map }, "stack": ALLOCATION_STACK, "layer": "reserves", "name": "From the table" })).unwrap();
+    assert!(ran.notes.iter().any(|n| n.code == Some(Code::ImportedVolumes) && n.text.contains("Deswik export r1")), "{:?}", ran.notes);
+    let from_table = created(&ran)[0];
+    let (a, b) = (table(&s, solids), table(&s, from_table));
+    let mut compared = 0;
+    for c in a.columns.iter().filter(|c| c.add_up == Some(zd_reserves::AddUp::Sum) && ["Imported\\", "Insitu\\", "ROM\\"].iter().any(|f| c.name.starts_with(f))) {
+        let (x, y) = (total(&a, &c.name), total(&b, &c.name));
+        assert!((x - y).abs() <= 1e-9 * x.abs().max(1.0), "{}: {x} from solids, {y} from the table", c.name);
+        compared += 1;
+    }
+    assert!(compared >= 6, "{compared} columns compared");
+    assert!(total(&a, "ROM\\Coal\\tonnes") > 0.0);
+    let audit = texts(&b, "Summary\\Audit\\input").into_iter().flatten().next().unwrap_or_default();
+    assert_eq!(audit, "imported from Deswik export r1: volumes not of record");
+    assert!(a.column("Summary\\Audit\\input").is_none(), "solids are the volume of record: nothing to say");
+    let figures = zd_commands::report::reserves_figures("From the table", &b);
+    assert_eq!(figures.imported.as_deref(), Some("imported from Deswik export r1: volumes not of record"));
+
+    // No stack: the file's order column puts the horizons in order.
+    let mut by_order = map.clone();
+    by_order["order"] = json!("Order");
+    let ordered = created(&s.run("reserves.run", json!({ "dataflow": main, "input": { "table": imported, "map": by_order }, "layer": "reserves", "name": "By order" })).unwrap())[0];
+    assert!((total(&table(&s, ordered), "ROM\\Coal\\tonnes") - total(&a, "ROM\\Coal\\tonnes")).abs() <= 1e-9 * total(&a, "ROM\\Coal\\tonnes"));
+
+    // Kept as the table's setup: Run again reads the table, and the Setup tab shows it.
+    let p = rerun_params(s.project(), s.log(), from_table, &[]).unwrap();
+    assert!(p.blocks.is_empty() && p.input.as_ref().map(|i| i.table) == Some(imported));
+    s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+    assert!((total(&table(&s, from_table), "ROM\\Coal\\tonnes") - total(&a, "ROM\\Coal\\tonnes")).abs() <= 1e-9 * total(&a, "ROM\\Coal\\tonnes"));
+    let view = zd_commands::builtin::setup_view(s.project(), s.log(), from_table).unwrap();
+    let input = view.input.unwrap();
+    assert_eq!((input.table.name.as_str(), input.rows), ("Deswik export", 6));
+    assert!(view.problems.is_empty(), "{:?}", view.problems);
+}
+
+/// A mapping that can't hold is refused before it runs, naming what's missing (decision 12): no volume column, a column
+/// the table hasn't, a row with no volume, a horizon the stack hasn't, a piece with no material; and `table.setup`
+/// refuses the same mapping, the table as it was.
+#[test]
+fn a_mapping_that_cant_hold_is_refused_before_it_runs() {
+    let mut s = session();
+    let ids = two_blocks(&mut s, [40.0, 60.0], None);
+    let main = starter_main(&mut s);
+    let csv = blocks_as_csv(&s, &ids);
+    let imported = created(&s.run("table.import", json!({ "name": "Export", "csv": csv })).unwrap())[0];
+    let run = |s: &mut Session, map: serde_json::Value, stack: &[&str]| s.run("reserves.run", json!({ "dataflow": main, "input": { "table": imported, "map": map }, "stack": stack, "layer": "reserves" })).unwrap_err().to_string();
+    let base = json!({ "volume": "Vol", "thickness": "Thk_m", "columns": { "strip": "Strip", "block": "Blk", "horizon": "Horizon", "seam": "Seam_Name", "material": "Mat", "rd": "RD_ad", "ash": "Ash" } });
+    let mut no_volume = base.clone();
+    no_volume["volume"] = json!("");
+    assert!(run(&mut s, no_volume, &ALLOCATION_STACK).contains("the mapping names no volume column"));
+    let mut missing = base.clone();
+    missing["volume"] = json!("Volume");
+    assert!(run(&mut s, missing, &ALLOCATION_STACK).contains("reads the volume from Volume, a column Export hasn't"));
+    let mut words = base.clone();
+    words["volume"] = json!("Blk");
+    assert!(run(&mut s, words, &ALLOCATION_STACK).contains("Export's Blk, mapped as the volume, holds words"));
+    assert!(run(&mut s, base.clone(), &["OB", "A"]).contains("Export r1's horizons below A aren't in the stack (OB, A)"));
+    // A file with no column of materials mapped: each piece says it has none.
+    let no_material_csv = csv.replace(",Mat,", ",Kind,");
+    let no_material = created(&s.run("table.import", json!({ "name": "No material", "csv": no_material_csv })).unwrap())[0];
+    let mut unmapped = base.clone();
+    unmapped["columns"].as_object_mut().unwrap().remove("material");
+    let refused = s.run("reserves.run", json!({ "dataflow": main, "input": { "table": no_material, "map": unmapped }, "stack": ALLOCATION_STACK, "layer": "reserves" })).unwrap_err();
+    assert!(refused.to_string().contains("has no material: map the column that says coal or waste to material"), "{refused}");
+    // A row with its volume left blank.
+    let gap_csv: String = csv
+        .lines()
+        .enumerate()
+        .map(|(i, l)| if i == 2 { l.split(',').enumerate().map(|(k, c)| if k == 8 { "" } else { c }).collect::<Vec<_>>().join(",") } else { l.to_string() })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let gap = created(&s.run("table.import", json!({ "name": "A gap", "csv": gap_csv })).unwrap())[0];
+    let no_volume_row = s.run("reserves.run", json!({ "dataflow": main, "input": { "table": gap, "map": base }, "stack": ALLOCATION_STACK, "layer": "reserves" })).unwrap_err();
+    assert!(no_volume_row.to_string().contains("has no volume in Vol"), "{no_volume_row}");
+
+    // A setup's mapping not yet whole is kept for the Setup tab to finish, said there, and Run again refuses it.
+    let made = created(&s.run("reserves.run", json!({ "dataflow": main, "blocks": ids, "stack": ALLOCATION_STACK, "layer": "reserves" })).unwrap())[0];
+    let mut setup = table(&s, made).setup.unwrap();
+    setup.input = Some(zd_core::TableInput { table: imported, map: zd_core::InputMap { volume: "Volume".into(), ..Default::default() } });
+    let saved = s.run("table.setup", json!({ "table": made, "setup": setup })).unwrap();
+    assert!(saved.messages[0].contains("the mapping not yet whole"), "{:?}", saved.messages);
+    let view = zd_commands::builtin::setup_view(s.project(), s.log(), made).unwrap();
+    assert!(view.problems.iter().any(|p| p.contains("a column Export hasn't")), "{:?}", view.problems);
+    let p = rerun_params(s.project(), s.log(), made, &[]).unwrap();
+    let refused = s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap_err();
+    assert!(refused.to_string().contains("a column Export hasn't"), "{refused}");
+    let not_a_table = s.run("table.setup", json!({ "table": made, "setup": { "dataflow": main, "blocks": {}, "stack": ALLOCATION_STACK, "input": { "table": main, "map": { "volume": "Vol" } } } })).unwrap_err();
+    assert!(not_a_table.to_string().contains("is a Dataflow, not a Table"), "{not_a_table}");
+}

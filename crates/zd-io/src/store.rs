@@ -155,7 +155,7 @@ enum StoredBody {
     Workflow { workflow: Workflow },
     ParameterTable { table: ParameterTable },
     Dataflow { dataflow: Dataflow },
-    Table { table: Table },
+    Table { table: Box<Table> },
     Script { script: zd_core::Script },
 }
 
@@ -269,7 +269,7 @@ impl ProjectStore {
                 StoredBody::Workflow { workflow } => Body::Workflow(Arc::new(workflow)),
                 StoredBody::ParameterTable { table } => Body::ParameterTable(Arc::new(table)),
                 StoredBody::Dataflow { dataflow } => Body::Dataflow(Arc::new(dataflow)),
-                StoredBody::Table { table } => Body::Table(Arc::new(table)),
+                StoredBody::Table { table } => Body::Table(Arc::new(*table)),
                 StoredBody::Script { script } => Body::Script(Arc::new(script)),
             };
             objects.push(Object {
@@ -326,7 +326,7 @@ impl ProjectStore {
                 Body::Workflow(workflow) => StoredBody::Workflow { workflow: (**workflow).clone() },
                 Body::ParameterTable(table) => StoredBody::ParameterTable { table: (**table).clone() },
                 Body::Dataflow(dataflow) => StoredBody::Dataflow { dataflow: (**dataflow).clone() },
-                Body::Table(table) => StoredBody::Table { table: (**table).clone() },
+                Body::Table(table) => StoredBody::Table { table: Box::new((**table).clone()) },
                 Body::Script(script) => StoredBody::Script { script: (**script).clone() },
             };
             stored.push(StoredObject {
