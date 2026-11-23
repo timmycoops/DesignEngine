@@ -3220,7 +3220,7 @@ fn add_waste_allocation_fills_each_process_on_a_waste_interval_of_two_horizons()
     });
     let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0];
     let (tables, add_on) = s.add_waste_allocation(flow).unwrap();
-    assert_eq!(tables.len(), 4);
+    assert_eq!(tables.len(), 5);
     let Body::Dataflow(main) = &s.project().object(flow).unwrap().body else { panic!("a dataflow") };
     assert_eq!(main.add_ons, [add_on], "the dataflow lists the add-on");
     assert!(main.steps.iter().all(|st| st.is_built_in() || st.formula.is_some()), "its own steps untouched: the add-on holds the allocation");
@@ -3347,6 +3347,8 @@ fn two_tables_share_one_add_on_and_an_edit_to_it_reaches_both() {
             { "name": "area", "kind": "area", "add_up": { "by": "max" }, "from": "plan_area" },
             { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
             { "name": "ash", "kind": "quality", "add_up": { "by": "mass", "density": "rd" }, "from": "attribute", "attribute": "ash" },
+            { "name": "dip", "kind": "other", "add_up": { "by": "max" }, "from": "attribute", "attribute": "dip" },
+            { "name": "width", "kind": "length", "add_up": { "by": "max" }, "from": "attribute", "attribute": "width" },
         ],
         "steps": final_steps(),
         "parameters": [assumptions],
@@ -3423,4 +3425,134 @@ fn an_add_on_runs_only_with_a_main_dataflow() {
     let clash = s.run("dataflow.save", json!({ "name": "M", "content": main(vec![add_on], Some("loose_ground")) })).unwrap_err();
     assert!(clash.to_string().contains("Waste allocation's step loose_ground has the name of a step already run"), "{clash}");
     s.run("dataflow.save", json!({ "name": "M", "content": main(vec![add_on], None) })).unwrap();
+}
+
+/// Two blocks of strip 1, each 100 m by 50 m (5,000 m²): `ob` m of overburden over A coal 2 m over 4 m of waste below
+/// (not mined); B1 at x 0, B2 at x 100. With `dips`, each block's dip set after it's measured.
+fn two_blocks(s: &mut Session, obs: [f64; 2], dips: Option<[f64; 2]>) -> Vec<ObjectId> {
+    let mut ids = Vec::new();
+    for (k, (block, x)) in [("B1", 0.0), ("B2", 100.0)].into_iter().enumerate() {
+        for (h, z0, z1, material, seam) in [("OB", 42.0, 42.0 + obs[k], "waste", "A"), ("A", 40.0, 42.0, "coal", "A"), ("below A", 36.0, 40.0, "waste", "")] {
+            let mut a = json!({ "strip": 1.0, "block": block, "horizon": h, "material": material, "seam": seam });
+            if material == "coal" {
+                a["rd"] = json!(1.4);
+                a["ash"] = json!(10.0);
+            }
+            ids.push(box_solid(s, &format!("1_{block}_{h}"), x, (z0, z1), a));
+        }
+    }
+    s.run("solid.measure", json!({ "solids": ids })).unwrap();
+    if let Some(dips) = dips {
+        for (k, &id) in ids.iter().enumerate() {
+            s.run("test.tag", json!({ "object": id, "attributes": { "dip": dips[k / 3] } })).unwrap();
+        }
+    }
+    ids
+}
+
+/// A main dataflow for the starter: the measures and qualities, the built-in stages, the assumptions.
+fn starter_main(s: &mut Session) -> ObjectId {
+    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let content = json!({
+        "fields": [
+            { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
+            { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
+            { "name": "area", "kind": "area", "add_up": { "by": "max" }, "from": "plan_area" },
+            { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
+            { "name": "ash", "kind": "quality", "add_up": { "by": "mass", "density": "rd" }, "from": "attribute", "attribute": "ash" },
+        ],
+        "steps": final_steps(),
+        "parameters": [assumptions],
+    });
+    created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0]
+}
+
+/// A value on block `block`'s seam A leaf.
+fn on_block(t: &Table, block: &str, path: &str) -> f64 {
+    let (blocks, seams) = (texts(t, "block"), texts(t, "seam"));
+    (0..t.rows()).find(|&i| blocks[i].as_deref() == Some(block) && seams[i].as_deref() == Some("A")).and_then(|i| value(t, i, path)).unwrap_or(0.0)
+}
+
+/// Sources per table and the measured dip (Table setup plan, decision 3, workstream 3). B1's 40 m of OB at a measured dip
+/// of 5°, B2's 60 m at 15°; no loose ground or wedge, a 60 m system of up to two zones: B1 two 20 m zones, B2 two of 30.
+/// The site's factors grid has the dragline's share 0.4 at dip 0 and 0.5 at dip 20 with no thickness, rising 0.3 by 60 m
+/// of zone, the rest poststrip, the total factor 0.2 over the share. By hand: B1, nearest dip 0 at 20 m, 0.4 + 0.1 = 0.5,
+/// Dragline 100,000 m³ of its 200,000, rehandle 40,000; B2, nearest dip 20 at 30 m, 0.5 + 0.15 = 0.65, Dragline 195,000
+/// of 300,000, rehandle 60,000. The table set to take dip from a design dip of 25° (a parameter column) instead: B1 reads
+/// dip 20, 0.6, Dragline 120,000; B2 as before. The dataflow is untouched.
+#[test]
+fn each_column_reads_its_own_measured_dip_and_a_table_may_take_a_design_dip() {
+    let mut s = session();
+    let ids = two_blocks(&mut s, [40.0, 60.0], Some([5.0, 15.0]));
+    created(&s.run("parameters.save", json!({ "name": "Waste allocation settings", "csv": "topsoil_thickness (m),freedig_thickness (m),min_drill_thickness (m),min_burden (m),system_max (m),max_zones,partings_max_thickness (m),wedge_thickness (m),check_tolerance (m3),design_dip (deg)\n0,0,3,10,60,2,3,0,0.01,25\n" })).unwrap());
+    let mut grid = String::from("when method,when zone,dip (deg),width (m),coal_thickness (m),zone_thickness (m),cast,dozer_push,dragline,poststrip,dragline_total\n");
+    for zone in [1, 2] {
+        for (dip, base) in [(0, 0.4), (20, 0.5)] {
+            for width in [0, 200] {
+                for coal in [0, 20] {
+                    for (thickness, rise) in [(0, 0.0), (60, 0.3)] {
+                        let share: f64 = base + rise;
+                        grid.push_str(&format!("2 zone,{zone},{dip},{width},{coal},{thickness},0,0,{share},{},{}\n", 1.0 - share, share + 0.2));
+                    }
+                }
+            }
+        }
+    }
+    created(&s.run("parameters.save", json!({ "name": "Dragline factors", "csv": grid })).unwrap());
+    let main = starter_main(&mut s);
+    s.add_waste_allocation(main).unwrap();
+    let main_revision = s.project().object(main).unwrap().revision;
+    let id = created(&s.run("reserves.run", json!({ "dataflow": main, "blocks": ids, "stack": ALLOCATION_STACK, "layer": "reserves" })).unwrap())[0];
+    let t = table(&s, id);
+    let dragline = |t: &Table, b: &str| on_block(t, b, "Scheduled\\Waste\\Dragline\\Prime Volume");
+    for (block, prime, rehandle, poststrip) in [("B1", 100_000.0, 40_000.0, 100_000.0), ("B2", 195_000.0, 60_000.0, 105_000.0)] {
+        assert!((dragline(&t, block) - prime).abs() <= 1e-9 * prime, "{block}: {}", dragline(&t, block));
+        assert!((on_block(&t, block, "Scheduled\\Waste\\Dragline\\Rehandle Volume") - rehandle).abs() <= 1e-9 * rehandle, "{block} rehandle");
+        assert!((on_block(&t, block, "Scheduled\\Waste\\Poststrip\\Prime Volume") - poststrip).abs() <= 1e-9 * poststrip, "{block} poststrip");
+    }
+
+    // The table takes a design dip; the dataflow is as it was.
+    let mut setup = t.setup.clone().unwrap();
+    setup.sources.insert("dip".into(), zd_core::FieldSource::Parameter { column: "design_dip".into() });
+    s.run("table.setup", json!({ "table": id, "setup": setup })).unwrap();
+    let p = rerun_params(s.project(), s.log(), id, &[]).unwrap();
+    s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+    let t = table(&s, id);
+    assert!((dragline(&t, "B1") - 120_000.0).abs() <= 1e-9 * 120_000.0, "B1 at the design dip: {}", dragline(&t, "B1"));
+    assert!((dragline(&t, "B2") - 195_000.0).abs() <= 1e-9 * 195_000.0, "B2 as before: {}", dragline(&t, "B2"));
+    assert_eq!(s.project().object(main).unwrap().revision, main_revision, "the dataflow untouched");
+    let mut wrong = t.setup.clone().unwrap();
+    wrong.sources.insert("dipp".into(), zd_core::FieldSource::Worked);
+    s.run("table.setup", json!({ "table": id, "setup": wrong })).unwrap();
+    let p = rerun_params(s.project(), s.log(), id, &[]).unwrap();
+    let refused = s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap_err();
+    assert!(refused.to_string().contains("the setup says where dipp comes from, and Reserves has no field dipp"), "{refused}");
+}
+
+/// Each column chooses its own zones (Table setup plan, decision 3): the starter's defaults, a 40 m system of up to two
+/// zones, two needing 30 m and one 10 m. B1's 25 m of OB, less 5 m of loose ground, is a 20 m system of one zone: Cast
+/// 20,000 m³, Dozer Push 20,000, Dragline 60,000, its method `1 zone`. B2's 60 m, less 5, is a 40 m system of two 20 m
+/// zones and 15 m of Excavator (75,000): Dragline 60,000 + 90,000 = 150,000, Poststrip 10,000, method `2 zone`, zones
+/// `Zone 2; Zone 1`.
+#[test]
+fn each_column_chooses_its_zones_by_its_own_thickness() {
+    let mut s = session();
+    let ids = two_blocks(&mut s, [25.0, 60.0], None);
+    let main = starter_main(&mut s);
+    s.add_waste_allocation(main).unwrap();
+    let made = created(&s.run("reserves.run", json!({ "dataflow": main, "blocks": ids, "stack": ALLOCATION_STACK, "layer": "reserves" })).unwrap())[0];
+    let t = table(&s, made);
+    let at = |b: &str, process: &str| on_block(&t, b, &format!("Scheduled\\Waste\\{process}\\Prime Volume"));
+    for (b, process, want) in [("B1", "Cast", 20_000.0), ("B1", "Dozer Push", 20_000.0), ("B1", "Dragline", 60_000.0), ("B2", "Dragline", 150_000.0), ("B2", "Poststrip", 10_000.0), ("B2", "Excavator", 75_000.0)] {
+        assert!((at(b, process) - want).abs() <= 1e-9 * want, "{b} {process}: {}", at(b, process));
+    }
+    assert_eq!(at("B1", "Poststrip"), 0.0, "one zone, no poststrip");
+    let words = |b: &str, column: &str| {
+        let (blocks, seams, w) = (texts(&t, "block"), texts(&t, "seam"), texts(&t, column));
+        (0..t.rows()).find(|&i| blocks[i].as_deref() == Some(b) && seams[i].as_deref() == Some("A")).and_then(|i| w[i].clone())
+    };
+    assert_eq!(words("B1", "Scheduled\\Waste\\method").as_deref(), Some("1 zone"));
+    assert_eq!(words("B1", "Scheduled\\Waste\\zone").as_deref(), Some("Zone 1"));
+    assert_eq!(words("B2", "Scheduled\\Waste\\method").as_deref(), Some("2 zone"));
+    assert_eq!(words("B2", "Scheduled\\Waste\\zone").as_deref(), Some("Zone 2; Zone 1"));
 }

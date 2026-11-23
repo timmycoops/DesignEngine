@@ -268,6 +268,7 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
             model: None,
             stack: vec!["OB".into(), "U".into()],
             parameters: None,
+            sources: [("dip".to_string(), zd_core::FieldSource::Parameter { column: "design_dip".into() })].into(),
         }),
     };
     p.apply(RunId::new(), vec![Change::Create { name: "assumptions".into(), layer: "parameters".into(), attributes: Attributes::new(), body: Body::ParameterTable(Arc::new(parameters)) }])

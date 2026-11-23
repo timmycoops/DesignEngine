@@ -95,10 +95,32 @@ Objects table's formulas and scripts.
 | `add_waste_allocation_fills_each_process_on_a_waste_interval_of_two_horizons` (reserves_run.rs) | as in 0102, through the add-on; the dataflow lists it and its own steps are untouched | 1e-9 |
 | The demo pit (by hand) | every leaf's primes add to its scheduled waste (largest difference 3.6e-11 m³), coal mining to its coal, a process on every waste leaf; 245 ms | 1e-9 relative |
 
+## Built: workstream 3, sources per table
+
+- **A table's own sources** (`TableSetup.sources`, and a run's `sources`): where a field or word comes from, by its name,
+  in place of the dataflow's (the block's measure, a block attribute, a parameter column, worked by a step), put in when
+  the run is prepared. The dataflow isn't copied or changed; a name the dataflow (with its add-ons) hasn't stops the run,
+  saying so.
+- **The starter reads the model through fields:** the dragline system reads the interval's measured dip and width
+  (`column.total("dip", units=…)`), the coal thickness of the section below from the column and the zone thickness from
+  the interval, all as keys of the factors grid (dip and width nearest, coal and zone thickness between). Only settings
+  come through `p`. Add waste allocation gives the main dataflow `dip` and `width`, each the block attribute
+  `solid.measure` writes, where it hasn't them.
+- **Each column chooses its zones:** a fifth table, System methods (a row a zone count: its method and the least system
+  thickness it takes); from the settings' `max_zones` down, the first a column's system thickness reaches. The method is
+  a word on the units (`method`). The settings row no longer holds a dip, a method or a zone count.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `each_column_reads_its_own_measured_dip_and_a_table_may_take_a_design_dip` (reserves_run.rs) | the plan's case: B1's 40 m at 5°, B2's 60 m at 15°, a 60 m system of two zones, the site's grid (share 0.4 at dip 0, 0.5 at 20, rising 0.3 by 60 m of zone): B1 0.5, Dragline 100,000 m³, rehandle 40,000; B2 0.65, Dragline 195,000, rehandle 60,000; the table set to a design dip of 25°: B1 0.6, Dragline 120,000, B2 as before, the dataflow untouched; a source for a field the dataflow hasn't stops the run | 1e-9 |
+| `each_column_chooses_its_zones_by_its_own_thickness` (reserves_run.rs) | the plan's case: 25 m and 60 m of OB against a 40 m system of up to two zones: B1 one zone, Dragline 60,000, method `1 zone`; B2 two, Dragline 150,000, Poststrip 10,000, Excavator 75,000, `2 zone`, `Zone 2; Zone 1` | 1e-9 |
+| `zdp` round trip (zd-io) | a setup's sources saved and read back | exact |
+| The demo pit (by hand) | every leaf's primes to its scheduled waste (largest difference 4.5e-11 m³), coal mining to its coal, a process on every waste leaf; 252 ms | 1e-9 relative |
+
 ## Known limits
 
-- The setup holds the dataflow's own parameter tables (the table's own list is workstream 4) and no field overrides yet
-  (workstream 3).
+- The setup holds the dataflow's own parameter tables (the table's own list is workstream 4).
+- The starter's default factors are one set a zone, the same at every dip, width and thickness: a site fills its grid.
 - An add-on's unsaved edits aren't run live in the notebook (the live run takes the main dataflow as edited): save it
   to see them.
 - A dataflow made by Add waste allocation before add-ons (0102, workstream 5) keeps its steps in it; it runs as it did.

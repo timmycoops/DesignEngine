@@ -21,32 +21,46 @@ pub const QUANTITIES: [&str; 4] = ["Prime Volume", "Rehandle Volume", "Total Vol
 pub const OTHER_FIELDS: [&str; 3] = ["Waste\\Drill and Blast\\Volume", "Coal\\Mining\\Volume", "Coal\\Exposed\\Volume"];
 
 /// The words each unit carries through the allocation.
-pub const WORDS: [&str; 5] = ["process", "zone", "drill_type", "blasting_seam", "blasting_bench"];
+/// The measured fields its scripts read off the blocks (decision 3 of the Table setup plan): added to a main dataflow
+/// that hasn't them, each a block attribute `solid.measure` writes, so a table can take another source instead.
+pub const MEASURED: [(&str, FieldKind); 2] = [("dip", FieldKind::Other), ("width", FieldKind::Length)];
+
+pub const WORDS: [&str; 6] = ["process", "zone", "method", "drill_type", "blasting_seam", "blasting_bench"];
 
 /// The settings table, read as `p` by the column's own levels; the others are looked up by name.
 pub const SETTINGS: &str = "Waste allocation settings";
 pub const FACTORS: &str = "Dragline factors";
 pub const PROCESS_TABLE: &str = "Waste processes";
 pub const OVERRIDES: &str = "Short term overrides";
+pub const METHODS: &str = "System methods";
 
-/// The four tables and their default rows, each a site's to edit: one settings row; a dragline factors grid, one set of
-/// factors a zone at two dips and two zone thicknesses for a site to fill; each process's rehandle and swell; and no
-/// short-term overrides.
+/// The five tables and their default rows, each a site's to edit: one settings row; the system's methods, the most zones
+/// a column's thickness reaches choosing one; a dragline factors grid, one set of factors a zone at two dips, widths, coal
+/// thicknesses and zone thicknesses for a site to fill; each process's rehandle and swell; and no short-term overrides.
 pub fn tables() -> Vec<(&'static str, String)> {
     let processes: String = PROCESSES.iter().map(|p| format!("{p},0,1.25\n")).collect();
-    let mut factors = String::from("when method,when zone,dip (deg),zone_thickness (m),cast,dozer_push,dragline,poststrip,dragline_total\n");
-    for (zone, shares) in [(1, "0.2,0.2,0.6,0,0.8"), (2, "0,0,0.9,0.1,1.2")] {
-        for dip in [0, 30] {
-            for thickness in [0, 60] {
-                factors.push_str(&format!("2 zone,{zone},{dip},{thickness},{shares}\n"));
+    let mut factors = String::from("when method,when zone,dip (deg),width (m),coal_thickness (m),zone_thickness (m),cast,dozer_push,dragline,poststrip,dragline_total\n");
+    let zone_1 = "0.2,0.2,0.6,0,0.8";
+    let zone_2 = "0,0,0.9,0.1,1.2";
+    for (method, zones) in [("1 zone", vec![(1, zone_1)]), ("2 zone", vec![(1, zone_1), (2, zone_2)])] {
+        for (zone, shares) in zones {
+            for dip in [0, 30] {
+                for width in [0, 200] {
+                    for coal in [0, 20] {
+                        for thickness in [0, 60] {
+                            factors.push_str(&format!("{method},{zone},{dip},{width},{coal},{thickness},{shares}\n"));
+                        }
+                    }
+                }
             }
         }
     }
     vec![
         (
             SETTINGS,
-            "topsoil_thickness (m),freedig_thickness (m),min_drill_thickness (m),min_burden (m),system_max (m),zones,method,dip (deg),partings_max_thickness (m),wedge_thickness (m),check_tolerance (m3)\n0.5,4.5,3,10,40,2,2 zone,12,3,2,0.01\n".to_string(),
+            "topsoil_thickness (m),freedig_thickness (m),min_drill_thickness (m),min_burden (m),system_max (m),max_zones,partings_max_thickness (m),wedge_thickness (m),check_tolerance (m3)\n0.5,4.5,3,10,40,2,3,2,0.01\n".to_string(),
         ),
+        (METHODS, "when zones,method,min_thickness (m)\n1,1 zone,10\n2,2 zone,30\n".to_string()),
         (FACTORS, factors),
         (PROCESS_TABLE, format!("when process,rehandle,swell_factor\n{processes}")),
         (OVERRIDES, "when strip,when block,override_thickness (m),excavator,dozer_push,dragline\n".to_string()),
@@ -94,13 +108,15 @@ def allocate(column, p):
 "#;
 
 /// The dragline system by zones, from the bottom up, each split by its method's factors read off a grid.
-pub const DRAGLINE_SYSTEM: &str = r#"# The dragline system: each waste interval over coal at least the minimum burden thick, up to the system's maximum
-# thickness, in its zones from the bottom up (zone 1 the lowest), taken across the interval's units. Each zone is split
-# by its method's factors, read off Dragline factors by method and zone, nearest the dip and between the zone
-# thicknesses either side, into cast, dozer push, dragline and poststrip; the dragline's rehandle from its total factor.
+pub const DRAGLINE_SYSTEM: &str = r#"# The dragline system: on each waste interval over coal at least the minimum burden thick, the system's thickness (the
+# interval's, to the system's maximum) from the bottom up across its units. Its method is the column's own: from the
+# most zones down, the first whose minimum thickness System methods says it reaches. Each zone is split by its method's
+# factors, read off Dragline factors by method and zone, nearest the interval's measured dip and width, between the
+# coal thicknesses below and the zone thicknesses either side, into cast, dozer push, dragline and poststrip; the
+# dragline's rehandle from its total factor.
 def allocate(column, p):
     coal = column.coal()
-    zones = int(p.zones)
+    sections = column.intervals(ends="coal")
     for interval in column.intervals():
         below = column.after(interval[-1])
         units = [u for u in interval if u.process == None]
@@ -109,15 +125,30 @@ def allocate(column, p):
         thickness = column.total("thickness", units=units)
         if thickness < p.min_burden:
             continue
-        zone_thickness = min(thickness, p.system_max) / zones
+        system = min(thickness, p.system_max)
+        method = None
+        zones = 0
+        for n in range(int(p.max_zones), 0, -1):
+            need = lookup("System methods", "min_thickness", zones=n, default=-1)
+            if need >= 0 and system >= need:
+                zones = n
+                method = lookup("System methods", "method", zones=n)
+                break
+        if method == None:
+            continue
+        dip = column.total("dip", units=units)
+        width = column.total("width", units=units)
+        coal_thickness = column.total("thickness", units=[s for s in sections if s[0] == below][0])
+        zone_thickness = system / zones
         for n in range(1, zones + 1):
             if not units:
                 break
             zone = column.take_from_bottom(units, min(zone_thickness, column.total("thickness", units=units)))
             units = [u for u in units if u not in zone]
-            f = lambda name: lookup("Dragline factors", name, method=p.method, zone=n, dip=nearest(p.dip), zone_thickness=between(zone_thickness))
+            f = lambda name: lookup("Dragline factors", name, method=method, zone=n, dip=nearest(dip), width=nearest(width), coal_thickness=between(coal_thickness), zone_thickness=between(zone_thickness))
             for u in zone:
                 u.zone = "Zone %d" % n
+                u.method = method
                 cast, dozer, dragline, poststrip = u.split_shares([f("cast"), f("dozer_push"), f("dragline"), f("poststrip")])
                 for piece, process in [(cast, "Cast"), (dozer, "Dozer Push"), (dragline, "Dragline"), (poststrip, "Poststrip")]:
                     if piece != None:
@@ -292,6 +323,12 @@ impl crate::Session {
             None => made(self.run("dataflow.save", serde_json::json!({ "name": ADD_ON, "content": waste_allocation_add_on(ids[0]) }))?)?,
         };
         d.add_ons.push(add_on);
+        // The measures its scripts read, where the dataflow hasn't them: the blocks' own, a table free to take another.
+        for (name, kind) in MEASURED {
+            if !d.fields.iter().any(|f| f.field.name == name) {
+                d.fields.push(DataflowField { field: Field::new(name, kind, AddUp::Max), source: FieldSource::Attribute { attribute: name.to_string() } });
+            }
+        }
         self.run("dataflow.save", serde_json::json!({ "dataflow": dataflow.to_string(), "name": object.name, "content": d }))?;
         Ok((ids, add_on))
     }
@@ -335,7 +372,7 @@ mod tests {
         let settings = ObjectId::new();
         let a = waste_allocation_add_on(settings);
         a.check().unwrap();
-        assert_eq!((a.fields.len(), a.words.len(), a.steps.len()), (39, 5, 7));
+        assert_eq!((a.fields.len(), a.words.len(), a.steps.len()), (39, 6, 7));
         let mut d = Dataflow {
             fields: vec![
                 DataflowField { field: Field::new("volume", FieldKind::Volume, AddUp::Sum), source: FieldSource::Volume },
