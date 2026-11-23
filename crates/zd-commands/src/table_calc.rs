@@ -329,6 +329,7 @@ mod tests {
             ],
             calculated: Vec::new(),
             setup: None,
+            objects: false,
         }
     }
 
@@ -441,6 +442,7 @@ mod batch_tests {
             ],
             calculated: Vec::new(),
             setup: None,
+            objects: false,
         };
         let c = CalculatedColumn { name: "ratio".into(), unit: String::new(), script: "def formula(row):\n    row.ratio = row.waste / row.coal\n".into(), adds: CalcAddUp::Sum, parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new(), lookup_names: Vec::new() };
         let none = |_: ObjectId| -> Option<Arc<zd_core::Object>> { None };

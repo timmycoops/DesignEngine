@@ -15,6 +15,7 @@ pub mod modules;
 mod registry;
 pub mod report;
 pub mod reserves_view;
+pub mod objects_own;
 pub mod table_calc;
 pub mod table_grid;
 mod report_html;

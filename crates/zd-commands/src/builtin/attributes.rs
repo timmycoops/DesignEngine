@@ -266,7 +266,12 @@ pub struct CalculateInTable;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CalculateParams {
-    pub table: ObjectId,
+    /// The table; none with `objects`.
+    #[serde(default)]
+    pub table: Option<ObjectId>,
+    /// On the Objects table (Table setup plan, decision 9): kept in its own table, made with the first.
+    #[serde(default)]
+    pub objects: bool,
     pub column: zd_core::CalculatedColumn,
     /// The column it replaces, where it's renamed; none for a new one or one keeping its name.
     #[serde(default)]
@@ -291,10 +296,35 @@ impl Command for CalculateInTable {
     }
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
-        let object = inputs.object(p.table)?;
-        let Body::Table(table) = &object.body else {
-            return Err(CommandError::WrongKind { id: p.table, expected: ObjectKind::Table, found: object.kind() });
+        // The Objects table's own (decision 9 of 0103): checked against every solid's row, kept in its own table.
+        let project = inputs.project();
+        let own = crate::objects_own::objects_own(project);
+        let held: Option<&Arc<zd_core::Object>> = match (p.table, p.objects) {
+            (_, true) => own,
+            (Some(id), false) => Some(inputs.object(id)?),
+            (None, false) => return Err(CommandError::Invalid("name the table, or put the column on the Objects table (objects)".into())),
         };
+        let objects = p.objects || held.is_some_and(|o| matches!(&o.body, Body::Table(t) if t.objects));
+        if let Some(o) = held {
+            inputs.object(o.id)?;
+        }
+        let empty = Arc::new(Table { objects: true, ..Table::default() });
+        let holder: &Arc<Table> = match held.map(|o| &o.body) {
+            Some(Body::Table(t)) => t,
+            Some(_) => {
+                let o = held.unwrap();
+                return Err(CommandError::WrongKind { id: o.id, expected: ObjectKind::Table, found: o.kind() });
+            }
+            None => &empty,
+        };
+        let rows_table;
+        let table: &Table = if objects {
+            rows_table = Table { calculated: holder.calculated.clone(), ..crate::table_grid::objects_table(project, &crate::objects_own::solids(project), Some(crate::objects_own::OBJECTS_DENSITY)) };
+            &rows_table
+        } else {
+            holder
+        };
+        let name_of = held.map_or(crate::objects_own::OBJECTS_OWN.to_string(), |o| o.name.clone());
         let c = &p.column;
         let name = c.name.trim();
         if name.is_empty() {
@@ -334,7 +364,7 @@ impl Command for CalculateInTable {
             }).collect();
             return Err(CommandError::Invalid(format!("{name}: {}", said.join("; "))));
         }
-        let mut t: Table = (**table).clone();
+        let mut t: Table = (**holder).clone();
         let mut column = c.clone();
         column.name = name.to_string();
         let old = p.replaces.as_deref().unwrap_or(name);
@@ -349,8 +379,12 @@ impl Command for CalculateInTable {
             }
         };
         t.check().map_err(CommandError::Invalid)?;
-        let mut out = Outcome::new(vec![Change::Revise { id: object.id, base: object.revision, name: None, layer: None, attributes: None, body: Some(Body::Table(Arc::new(t))) }]);
-        out.notes.push(Note::info(format!("{}: the calculated column {name} {made}", object.name)));
+        let change = match held {
+            Some(object) => Change::Revise { id: object.id, base: object.revision, name: None, layer: None, attributes: None, body: Some(Body::Table(Arc::new(t))) },
+            None => Change::Create { name: crate::objects_own::OBJECTS_OWN.into(), layer: "tables".into(), attributes: zd_core::Attributes::new(), body: Body::Table(Arc::new(t)) },
+        };
+        let mut out = Outcome::new(vec![change]);
+        out.notes.push(Note::info(format!("{name_of}: the calculated column {name} {made}")));
         Ok(out)
     }
 }

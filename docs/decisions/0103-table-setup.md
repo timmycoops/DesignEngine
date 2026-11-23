@@ -171,6 +171,48 @@ Objects table's formulas and scripts.
 | `each_column_reads_its_own_measured_dip_and_a_table_may_take_a_design_dip` (reserves_run.rs) | as before; a source for `dipp` now refused by `table.setup`, and a run given it still stops | exact |
 | The demo pit (by hand, `setup_view` from Python) | Base and 50m, made before setups: filled from their runs, 1,815 and 3,580 blocks picked from one layer, the assumptions 53 columns read, 19 fields, 15 steps, no problems; 6 and 8 ms | exact |
 
+## Built: workstream 6, the Objects table's formulas and scripts
+
+Tim agreed the four choices on 2026-11-24 ("Agree all four"): the calculated columns kept in a table of their own; an
+object script written as a calculated column is; a calculated column taken as a field by name; table scripts reading
+`table("Objects")`.
+
+- **The Objects table's own** (`Table.objects`, `objects_own.rs`): one table object per project of no rows, named
+  Objects on the `tables` layer, holding only the calculated columns the Objects table shows. It's made by the first
+  column put on, and adding, changing or taking one out is its next revision, one undo. It's saved in the `.zdp` with
+  its mark, and never listed as a table (`objects_own` on the app's summary).
+- **Calculated columns on the Objects table** (0099's `CalculatedColumn` and engine unchanged): `def formula(row, p):`
+  on each solid's row, its attributes, `volume` and `tonnes` by `rd`, worked out when shown and never stored.
+  `table.calculate` with `objects` puts one on, checked against every solid's row; a name the Objects table has is
+  refused, as on a reserves table. The Objects grid works them out over the rows shown (`objects_table_with`), and the
+  flat list shows them read-only in italics with ƒ.
+- **Taken as a field by name:** a field whose source is the block attribute of a calculated column's name takes its
+  value where a block hasn't that attribute (`blocks_with_calculated`), so Imported takes it as it takes an attribute.
+  The run reads the Objects table's own and names it in the audit (`Objects r2 (calculated columns)`). Open its column,
+  Every block and the trace read the blocks the same way. A table's own source (workstream 3) maps one to any field.
+- **Object scripts** (`object.script`): the same formula on each block's row, what it sets becoming the block's
+  attributes. New attributes are words where the line gives words (a quoted value, `str(...)`, another word column),
+  else numbers. It runs on blocks named, or every solid of some layers that fits a filter in the bench rules' words. It
+  never sets name, layer, kind, volume or tonnes. Each block it changes is revised once, in one undo, and a reserves
+  table made before says its blocks have changed. A block it stops on stops the run, said with its line, and nothing is
+  written.
+- **Table scripts and the Objects table:** `table("Objects")` in a table script or a dataflow's table step reads every
+  solid's row with the calculated columns worked out as numbers (only for scripts that name it). `table.script` with
+  `objects` runs on it, giving a table of its own; columns onto the Objects table are refused (an object script sets
+  attributes).
+- **The app:** the Tables tab on Objects has **+ Calculated** (the reserves tables' editor, run on the picked solid line
+  by line) and **Run a script on blocks…**, run on the solids shown. Each calculated column that stops on some solids
+  says how many and the first. A project script that defines `run` can run on Objects.
+- **The reference** handed to an AI gains `table("Objects")` and a section on object scripts.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_calculated_column_on_the_objects_table_is_worked_when_shown_and_taken_as_a_field` (reserves_run.rs) | the plan's case: `coal_tonnes`, volume by RD: A's 100 × 50 × 2 m at 1.4 is 14,000 t, the OB none (4 solids without RD said); the grid shows it; `ash_twice` mapped to `ash` by the table's own source: each coal leaf's Imported ash 20 (its 10 doubled), nothing stored on the blocks, the audit naming `Objects r2`; `volume` as a name refused; undone, the Objects table's own goes | 1e-9, 1e-12 |
+| `an_object_script_sets_attributes_on_blocks_in_one_undo` (reserves_run.rs) | the plan's case on four blocks by layer and filter: `process` from the horizon (words), `discard` from ash (0 at ash 10); each revised once; the earlier reserves table says its 4 blocks changed; one undo; `volume` set, and a division by 0, refused with nothing written; `table("Objects")` grouped by block gives the coal's volume; `table.script` on Objects gives B1 and B2; columns onto it refused | exact, 1e-6 m³ |
+| `the_names_a_script_sets_are_read_off_it_words_where_its_line_gives_words` (object_script.rs) | `case` and `material` (from a word column) and `tag` (`str`) words, `discard` a number; a comparison passed over | exact |
+| `zdp` round trip (zd-io) | the Objects table's own comes back marked, with its column | exact |
+| The demo pit (by hand, from Python, 5,767 solids) | a calculated column put on 31 ms; an object script setting `process` on every solid 76 ms (5,767 changed); a table script on Objects 110 ms; Run again reading the calculated columns 129 ms | — |
+
 ## Known limits
 
 - Read by can't see a parameter a script names as it runs through `p` (`getattr(p, name)` with a worked name): the
@@ -182,6 +224,12 @@ Objects table's formulas and scripts.
 - A dataflow made by Add waste allocation before add-ons (0102, workstream 5) keeps its steps in it; it runs as it did.
 - The Setup tab hasn't an editor for the table's own parameter rows (the case's): they're shown as a count, set from
   the run or `table.setup`.
-- Built and checked by its tests and from Python on the demo pit; not yet tried in the app by hand.
+- The Setup tab and the Objects table's formulas are checked by their tests and from Python on the demo pit; not yet
+  tried in the app by hand.
+- A calculated column on the Objects table gives numbers only: a class in words is set by an object script. In a
+  table script's `table("Objects")` it has no rule to add up by, as the blocks' other numbers haven't.
+- An object script's new attribute is words or a number by the line that sets it; a line that gives words some other
+  way (a function's result) makes a number, refused when it runs. Set an existing word attribute, or use `str(...)`.
+- A calculated column can't read another, on the Objects table as on a reserves table.
 - A setup filled from an older run keeps that run's own rows and model; a table made outside a reserves run (a table
   script's) has none.

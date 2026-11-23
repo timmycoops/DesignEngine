@@ -775,7 +775,8 @@ pub async fn table_grid(source: GridSource, ask: zd_commands::table_grid::GridAs
                 zd_core::Body::Table(t) => zd_commands::table_grid::grid_with(t, &ask, &|id| project.object(id).cloned()),
                 _ => Err("not a table".to_string()),
             },
-            GridSource::Objects { objects, density } => zd_commands::table_grid::grid(&zd_commands::table_grid::objects_table(project, &objects, density.as_deref()), &ask),
+            // With the Objects table's own calculated columns (Table setup plan, decision 9), worked out as shown.
+            GridSource::Objects { objects, density } => zd_commands::table_grid::grid_with(&zd_commands::objects_own::objects_table_with(project, &objects, density.as_deref()), &ask, &|id| project.object(id).cloned()),
         }
     })
     .await?
@@ -849,15 +850,59 @@ fn results_table(project: &zd_core::Project, id: ObjectId) -> Result<Arc<zd_core
     }
 }
 
-/// A calculated column as edited, checked against its table (Tables and scripts plan, decision 6): each problem on its
-/// line, and the names it may use. Nothing is kept.
+/// The Objects table's calculated columns (Table setup plan, decision 9) and their values on these objects, worked out
+/// now and never kept: a value an object, none where the formula stopped on it, and what each said.
+#[derive(serde::Serialize)]
+pub struct ObjectsCalculated {
+    columns: Vec<zd_core::CalculatedColumn>,
+    values: Vec<Vec<Option<f64>>>,
+    said: Vec<zd_commands::table_calc::CalcSaid>,
+}
+
 #[tauri::command]
-pub async fn calc_check(object: ObjectId, column: zd_core::CalculatedColumn, state: State<'_, AppState>) -> Result<zd_commands::table_calc::CalcCheck, String> {
+pub async fn objects_calculated(objects: Vec<ObjectId>, state: State<'_, AppState>) -> Result<ObjectsCalculated, String> {
     let app = state.app.clone();
     blocking(move || {
         let app = app.lock().unwrap();
         let project = app.session.project();
-        let table = results_table(project, object)?;
+        let columns = match zd_commands::objects_own::objects_own(project).map(|o| &o.body) {
+            Some(zd_core::Body::Table(own)) => own.calculated.clone(),
+            _ => Vec::new(),
+        };
+        if columns.is_empty() {
+            return Ok(ObjectsCalculated { columns, values: Vec::new(), said: Vec::new() });
+        }
+        let (mut by_name, said) = zd_commands::objects_own::calculated_values(project, &objects);
+        let values = columns.iter().map(|c| by_name.remove(&c.name).unwrap_or_else(|| vec![None; objects.len()])).collect();
+        Ok(ObjectsCalculated { columns, values, said })
+    })
+    .await?
+}
+
+/// The table a calculated column is checked and traced against: a reserves table, or with none the Objects table (Table
+/// setup plan, decision 9), every solid's row, or the one solid traced on.
+fn calc_table(project: &zd_core::Project, object: Option<ObjectId>, solid: Option<ObjectId>) -> Result<Arc<zd_core::Table>, String> {
+    match object {
+        Some(id) => results_table(project, id),
+        None => {
+            let ids = match solid {
+                Some(id) => vec![id],
+                None => zd_commands::objects_own::solids(project),
+            };
+            Ok(Arc::new(zd_commands::table_grid::objects_table(project, &ids, Some(zd_commands::objects_own::OBJECTS_DENSITY))))
+        }
+    }
+}
+
+/// A calculated column as edited, checked against its table (Tables and scripts plan, decision 6): each problem on its
+/// line, and the names it may use. Nothing is kept.
+#[tauri::command]
+pub async fn calc_check(object: Option<ObjectId>, column: zd_core::CalculatedColumn, state: State<'_, AppState>) -> Result<zd_commands::table_calc::CalcCheck, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        let project = app.session.project();
+        let table = calc_table(project, object, None)?;
         let column = bound_column(project, column)?;
         Ok(zd_commands::table_calc::check(&table, &column, &|id| project.object(id).cloned()))
     })
@@ -866,12 +911,13 @@ pub async fn calc_check(object: ObjectId, column: zd_core::CalculatedColumn, sta
 
 /// A calculated column as edited, traced on one row of its table, line by line. Nothing is kept.
 #[tauri::command]
-pub async fn calc_trace(object: ObjectId, column: zd_core::CalculatedColumn, row: usize, label: String, state: State<'_, AppState>) -> Result<zd_commands::builtin::FormulaTraceView, String> {
+pub async fn calc_trace(object: Option<ObjectId>, column: zd_core::CalculatedColumn, row: usize, label: String, solid: Option<ObjectId>, state: State<'_, AppState>) -> Result<zd_commands::builtin::FormulaTraceView, String> {
     let app = state.app.clone();
     blocking(move || {
         let app = app.lock().unwrap();
         let project = app.session.project();
-        let table = results_table(project, object)?;
+        let table = calc_table(project, object, solid)?;
+        let row = if object.is_none() { 0 } else { row };
         if row >= table.rows() {
             return Err(format!("the table has {} rows", table.rows()));
         }
@@ -885,11 +931,13 @@ pub async fn calc_trace(object: ObjectId, column: zd_core::CalculatedColumn, row
 
 /// The parameter tables a reserves table's dataflow reads, by id and name: what a new calculated column's `p` reads.
 #[tauri::command]
-pub async fn calc_parameters(object: ObjectId, state: State<'_, AppState>) -> Result<Vec<(ObjectId, String)>, String> {
+pub async fn calc_parameters(object: Option<ObjectId>, state: State<'_, AppState>) -> Result<Vec<(ObjectId, String)>, String> {
     let app = state.app.clone();
     blocking(move || {
         let app = app.lock().unwrap();
         let project = app.session.project();
+        // The Objects table reads no dataflow's: a column's `p` is what it's given.
+        let Some(object) = object else { return Ok(Vec::new()) };
         let Ok(p) = zd_commands::builtin::rerun_params(project, app.session.log(), object, &[]) else { return Ok(Vec::new()) };
         let Some(zd_core::Body::Dataflow(flow)) = project.object(p.dataflow).map(|o| &o.body) else { return Ok(Vec::new()) };
         Ok(flow.parameters.iter().filter_map(|&id| project.object(id).map(|o| (id, o.name.clone()))).collect())

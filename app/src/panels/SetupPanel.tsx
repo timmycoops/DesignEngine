@@ -15,7 +15,7 @@ import { useWorkspace } from '@/workspace/context';
  */
 export function SetupPanel() {
   const { summary, selection, runRecord, openTool } = useWorkspace();
-  const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table'), [summary]);
+  const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table' && !o.objects_own), [summary]);
   const [pick, setPick] = useState<string | null>(null);
   const shown = tables.some((t) => t.id === pick) ? pick : (tables[tables.length - 1]?.id ?? null);
   const last = selection[selection.length - 1] ?? null;

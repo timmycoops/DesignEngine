@@ -292,9 +292,13 @@ struct TableAt {
     columns: Vec<ColumnHeader>,
     /// Its calculated columns (decision 0099): scripts, not values, so they're kept here, not in its Parquet entry.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    calculated: Vec<zd_core::CalculatedColumn>,    /// What fills it, a reserves table's setup (Table setup plan, decision 1): settings, not values.
+    calculated: Vec<zd_core::CalculatedColumn>,
+    /// What fills it, a reserves table's setup (Table setup plan, decision 1): settings, not values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     setup: Option<zd_core::TableSetup>,
+    /// The Objects table's own calculated columns' holder (Table setup plan, decision 9).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    objects: bool,
 }
 
 #[derive(Clone)]
@@ -546,7 +550,7 @@ fn place_bodies(objects: &[Arc<Object>]) -> Result<Placement, StoreError> {
                 if !entry.is_empty() {
                     grid_jobs.push(Job { name: entry.clone(), key: None, work: Work::Table { table: table.clone() } });
                 }
-                let at = TableAt { entry, columns: table.headers(), calculated: table.calculated.clone(), setup: table.setup.clone() };
+                let at = TableAt { entry, columns: table.headers(), calculated: table.calculated.clone(), setup: table.setup.clone(), objects: table.objects };
                 Placed::Json(serde_json::to_string(&at).map_err(|e| StoreError::Format(e.to_string()))?)
             }
         };
@@ -969,7 +973,7 @@ pub fn read_project(input: &(impl Container + Sync)) -> Result<ReadProject, Stor
                         }
                         columns
                         };
-                        Body::Table(Arc::new(ResultsTable { columns, calculated: at.calculated, setup: at.setup }))
+                        Body::Table(Arc::new(ResultsTable { columns, calculated: at.calculated, setup: at.setup, objects: at.objects }))
                     }
                     _ => Body::Workflow(Arc::new(serde_json::from_str::<Workflow>(json).map_err(bad)?)),
                 }
@@ -1099,7 +1103,7 @@ pub fn project_differences(a: &Project, b: &Project) -> Vec<String> {
             (Body::Workflow(p), Body::Workflow(q)) => p == q,
             (Body::ParameterTable(p), Body::ParameterTable(q)) => p == q,
             (Body::Dataflow(p), Body::Dataflow(q)) => p == q,
-            (Body::Table(p), Body::Table(q)) => p.columns.len() == q.columns.len() && p.columns.iter().zip(&q.columns).all(|(a, b)| same_column(a, b)) && p.calculated == q.calculated && p.setup == q.setup,
+            (Body::Table(p), Body::Table(q)) => p.columns.len() == q.columns.len() && p.columns.iter().zip(&q.columns).all(|(a, b)| same_column(a, b)) && p.calculated == q.calculated && p.setup == q.setup && p.objects == q.objects,
             (Body::Script(p), Body::Script(q)) => p == q,
             _ => false,
         };

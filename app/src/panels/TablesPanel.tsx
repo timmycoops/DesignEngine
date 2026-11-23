@@ -17,7 +17,7 @@ const OBJECTS = 'objects';
 
 export function TablesPanel() {
   const { summary, selection, toolAsk, toolMode } = useWorkspace();
-  const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table'), [summary]);
+  const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table' && !o.objects_own), [summary]);
   const latest = tables[tables.length - 1]?.id ?? null;
   const [pick, setPick] = useState<string | null>(null);
   const shown = pick === OBJECTS || tables.some((t) => t.id === pick) ? pick : (latest ?? OBJECTS);

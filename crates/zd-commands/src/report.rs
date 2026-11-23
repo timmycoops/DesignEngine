@@ -936,6 +936,7 @@ mod tests {
             ],
             calculated: Vec::new(),
             setup: None,
+            objects: false,
         };
         let f = reserves_figures("Reserves Base", &table);
         assert_eq!(f.writes.iter().map(|w| w.write.as_str()).collect::<Vec<_>>(), ["Insitu", "Loss"]);

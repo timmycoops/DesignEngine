@@ -24,6 +24,9 @@ def by_tonnes(values, tonnes):
  * one `script.save` run, the next revision of one already there. A dataflow or calculated column that loads it is bound
  * to it by name when it's saved, and a run names the revision it read.
  */
+
+/** Run on the Objects table (Table setup plan, decision 10), not a table of the project. */
+const OBJECTS = 'objects';
 export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary | null; onSaved: (id: string) => void }) {
   const { runRecord, summary, select, openPanel } = useWorkspace();
   const [name, setName] = useState(object?.name ?? 'qualities');
@@ -38,9 +41,10 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
   const [runOn, setRunOn] = useState('');
   const [into, setInto] = useState<'new' | 'columns'>('new');
   const isTable = /^\s*def\s+run\s*\(/m.test(source);
-  const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table'), [summary]);
-  const on = tables.some((t) => t.id === runOn) ? runOn : (tables[tables.length - 1]?.id ?? '');
-  const columns = useTableColumns(isTable ? on : null);
+  const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table' && !o.objects_own), [summary]);
+  // The Objects table too (Table setup plan, decision 10): every solid's row, its calculated columns worked out.
+  const on = runOn === OBJECTS || tables.some((t) => t.id === runOn) ? runOn : (tables[tables.length - 1]?.id ?? OBJECTS);
+  const columns = useTableColumns(isTable && on !== OBJECTS ? on : null);
   const scripts = useProjectScripts().filter((s) => s !== name.trim());
   const parameterTables = useParameterTables();
 
@@ -85,7 +89,7 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
   // A table script run as a task, `table.script`, as saved: a new table shown in the Tables tab, or columns on this one.
   const runTable = async () => {
     if (!object || !on) return;
-    const outcome = await runRecord('table.script', { table: on, script: object.id, into });
+    const outcome = await runRecord('table.script', on === OBJECTS ? { objects: true, script: object.id } : { table: on, script: object.id, into });
     if (outcome.error) return setSaid({ error: outcome.error });
     const made = outcome.record?.outputs?.[0]?.id ?? on;
     setSaid({ text: outcome.record?.messages?.join('; ') || 'Ran' });
@@ -136,7 +140,7 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1" data-slot="run-table-script">
           <Field label="Run on">
             <Select className="w-56" value={on} aria-label="The table it runs on" onChange={(e) => setRunOn(e.target.value)}>
-              {tables.length === 0 && <option value="">no tables yet</option>}
+              <option value={OBJECTS}>Objects</option>
               {tables.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
@@ -144,7 +148,7 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
               ))}
             </Select>
           </Field>
-          <Choice value={into} options={['new', 'columns'] as const} labels={{ new: 'New table', columns: 'Columns on it' }} label="Where its table goes" onChange={setInto} />
+          {on !== OBJECTS && <Choice value={into} options={['new', 'columns'] as const} labels={{ new: 'New table', columns: 'Columns on it' }} label="Where its table goes" onChange={setInto} />}
           <Button
             size="sm"
             variant="outline"

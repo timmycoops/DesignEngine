@@ -130,6 +130,9 @@ pub struct ObjectSummary {
     vertices_local: Option<Vec<[f64; 3]>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     closed: Option<bool>,
+    /// The table holding the Objects table's calculated columns (Table setup plan, decision 9): not a table to list.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    objects_own: bool,
 }
 
 fn row(project: &Project, object: &Object, origin: [f64; 3]) -> ObjectSummary {
@@ -151,6 +154,7 @@ fn row(project: &Project, object: &Object, origin: [f64; 3]) -> ObjectSummary {
         geometry_key: geometry_key(&object.body).to_string(),
         vertices_local,
         closed,
+        objects_own: matches!(&object.body, Body::Table(t) if t.objects),
     }
 }
 

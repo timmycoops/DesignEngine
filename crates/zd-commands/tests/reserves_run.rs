@@ -3704,3 +3704,108 @@ fn the_setup_tab_shows_what_fills_a_table_and_saves_each_edit() {
     .contains("a source for dipp"));
     assert_eq!(s.project().object(id).unwrap().revision, revision);
 }
+
+/// Calculated columns on the Objects table (Table setup plan, decision 9, workstream 6). On the starter's two blocks, a
+/// column `coal_tonnes`, volume by RD, is put on the Objects table, which makes its own table to hold it; worked out, A's
+/// 100 × 50 × 2 m = 10,000 m³ at 1.4 is 14,000 t; the OB, with no RD, none. A second, `ash_twice`, is mapped to the field
+/// `ash` by the table's own source (block attribute `ash_twice`): run again, each coal leaf's Imported ash is 20, its own
+/// 10 doubled, taken as an attribute is; nothing is stored on the blocks, and the audit names the Objects table. A name the
+/// Objects table has (`volume`) is refused; undone, the Objects table's own goes with its first column.
+#[test]
+fn a_calculated_column_on_the_objects_table_is_worked_when_shown_and_taken_as_a_field() {
+    let mut s = session();
+    let ids = two_blocks(&mut s, [40.0, 60.0], None);
+    let main = starter_main(&mut s);
+    let id = created(&s.run("reserves.run", json!({ "dataflow": main, "blocks": ids, "stack": ALLOCATION_STACK, "layer": "reserves" })).unwrap())[0];
+    let column = |name: &str, script: &str| json!({ "name": name, "unit": "", "script": script, "adds": { "by": "sum" } });
+    let made = s.run("table.calculate", json!({ "objects": true, "column": column("coal_tonnes", "def formula(row):\n    row.coal_tonnes = row.volume * row.rd\n") })).unwrap();
+    assert_eq!(created(&made).len(), 1, "the Objects table's own made with the first");
+    let own = zd_commands::objects_own::objects_own(s.project()).unwrap().id;
+    let refused = s.run("table.calculate", json!({ "objects": true, "column": column("volume", "def formula(row):\n    row.volume = 1\n") })).unwrap_err();
+    assert!(refused.to_string().contains("volume is a column of the table's values already"), "{refused}");
+
+    let solids = zd_commands::objects_own::solids(s.project());
+    let (values, said) = zd_commands::objects_own::calculated_values(s.project(), &solids);
+    let named = |n: &str| solids.iter().position(|&i| s.project().object(i).unwrap().name == n).unwrap();
+    assert!((values["coal_tonnes"][named("1_B1_A")].unwrap() - 14_000.0).abs() < 1e-9);
+    assert_eq!(values["coal_tonnes"][named("1_B1_OB")], None, "no RD, no tonnes");
+    assert!(said.iter().any(|c| c.column == "coal_tonnes" && c.stopped == 4), "{said:?}");
+    let grid = zd_commands::table_grid::grid_with(&zd_commands::objects_own::objects_table_with(s.project(), &solids, Some("rd")), &Default::default(), &|i| s.project().object(i).cloned()).unwrap();
+    assert!(grid.columns.iter().any(|c| c.name == "coal_tonnes"), "the grid shows it");
+
+    s.run("table.calculate", json!({ "objects": true, "column": column("ash_twice", "def formula(row):\n    row.ash_twice = row.ash * 2\n") })).unwrap();
+    let mut setup = table(&s, id).setup.unwrap();
+    setup.sources.insert("ash".into(), zd_core::FieldSource::Attribute { attribute: "ash_twice".into() });
+    s.run("table.setup", json!({ "table": id, "setup": setup })).unwrap();
+    let p = rerun_params(s.project(), s.log(), id, &[]).unwrap();
+    s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+    let t = table(&s, id);
+    for b in ["B1", "B2"] {
+        assert!((on_block(&t, b, "Imported\\Coal\\ash") - 20.0).abs() < 1e-12, "{b}: {}", on_block(&t, b, "Imported\\Coal\\ash"));
+    }
+    assert!(ids.iter().all(|&i| s.project().object(i).unwrap().attributes.get("ash_twice").is_none()), "nothing stored on the blocks");
+    let audit = texts(&t, "Summary\\Audit\\parameters").into_iter().flatten().next().unwrap_or_default();
+    assert!(audit.contains("Objects r2 (calculated columns)"), "{audit}");
+
+    for _ in 0..4 {
+        s.undo();
+    }
+    assert!(s.project().object(own).is_none(), "the Objects table's own goes with its first column");
+}
+
+/// Object scripts (Table setup plan, decision 10, workstream 6). The four blocks run on by their layer, filtered to strip
+/// 3: `process` set from the horizon (words) and `discard` from the ash (a number). Each block it changes is revised once,
+/// in one undo; a reserves table made before says its 4 blocks changed since. Setting `volume`, or a block it stops on, is
+/// refused and nothing is written. A table script reads `table("Objects")`, and runs on the Objects table itself.
+#[test]
+fn an_object_script_sets_attributes_on_blocks_in_one_undo() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = moist_flow(&mut s, "when material,rd (t/m3),mad (%),mis (%),mrom (%),underburden_thickness (m)\nwaste,2.3,,,,0\ncoal,,3,8,10,\n");
+    let id = created(&s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap())[0];
+    let revisions: Vec<u32> = ids.iter().map(|&i| s.project().object(i).unwrap().revision).collect();
+    let script = "def formula(row):\n    row.process = \"dragline\" if row.horizon == \"OB\" else \"loader\"\n    if row.material == \"coal\":\n        row.discard = 1 if row.ash > 12 else 0\n";
+    s.run("object.script", json!({ "layers": ["blocks"], "filter": { "strip": "3" }, "source": script })).unwrap();
+    let word = |s: &Session, i: ObjectId, k: &str| s.project().object(i).unwrap().attributes.get(k).cloned();
+    for (k, &i) in ids.iter().enumerate() {
+        let o = s.project().object(i).unwrap();
+        assert_eq!(o.revision, revisions[k] + 1, "{} revised once", o.name);
+        let horizon = zd_core::attribute_word(o.attributes.get("horizon").unwrap());
+        assert_eq!(word(&s, i, "process"), Some(zd_core::AttrValue::Text(if horizon == "OB" { "dragline" } else { "loader" }.into())));
+    }
+    let coal = ids.iter().copied().find(|&i| s.project().object(i).unwrap().name == "3_B1_U").unwrap();
+    assert_eq!(word(&s, coal, "discard"), Some(zd_core::AttrValue::Number(0.0)), "ash 10, kept");
+    let changed = zd_commands::builtin::changed_since(s.project(), s.log(), id).unwrap();
+    assert_eq!(changed.blocks, ids.len(), "{changed:?}");
+    s.undo();
+    assert!(ids.iter().all(|&i| word(&s, i, "process").is_none()), "one undo");
+
+    let before: Vec<u32> = ids.iter().map(|&i| s.project().object(i).unwrap().revision).collect();
+    let own = s.run("object.script", json!({ "objects": ids, "source": "def formula(row):\n    row.volume = 1\n" })).unwrap_err();
+    assert!(own.to_string().contains("sets volume, which is the block's own"), "{own}");
+    let stops = s.run("object.script", json!({ "objects": ids, "source": "def formula(row):\n    row.half = row.volume / 0\n" })).unwrap_err();
+    assert!(stops.to_string().contains("nothing was written"), "{stops}");
+    assert_eq!(ids.iter().map(|&i| s.project().object(i).unwrap().revision).collect::<Vec<_>>(), before);
+
+    // Table scripts on the Objects table: by name, and run on it.
+    let sums = "def run(t, p):\n    o = table(\"Objects\")\n    return o.where(material=\"coal\").group([\"block\"])\n";
+    let made = created(&s.run("table.script", json!({ "table": id, "source": sums })).unwrap())[0];
+    let volume = |t: &Table| match &t.column("volume").unwrap().values {
+        ColumnValues::Number(v) => v.iter().flatten().sum::<f64>(),
+        _ => panic!("numbers"),
+    };
+    let coal_volume: f64 = ids
+        .iter()
+        .filter_map(|&i| s.project().object(i))
+        .filter(|o| zd_core::attribute_word(o.attributes.get("material").unwrap()) == "coal")
+        .map(|o| match &o.body {
+            Body::Solid(solid) => solid.volume(),
+            _ => 0.0,
+        })
+        .sum();
+    assert!((volume(&table(&s, made)) - coal_volume).abs() < 1e-6, "{} {coal_volume}", volume(&table(&s, made)));
+    let on_it = created(&s.run("table.script", json!({ "objects": true, "source": "def run(t, p):\n    return t.group([\"block\"])\n" })).unwrap())[0];
+    assert_eq!(table(&s, on_it).rows(), 2, "B1 and B2");
+    let refused = s.run("table.script", json!({ "objects": true, "into": "columns", "source": "def run(t, p):\n    return t\n" })).unwrap_err();
+    assert!(refused.to_string().contains("an object script (object.script) sets attributes"), "{refused}");
+}
