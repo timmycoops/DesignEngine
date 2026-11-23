@@ -80,6 +80,18 @@ pub enum BecameKind {
 }
 
 impl BecameKind {
+    /// Its name in words, as a formula reads `unit.became` and a step's filter matches it (`high_ash_loss`).
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Loss => "loss",
+            Self::Dilution => "dilution",
+            Self::ThinLoss => "thin_loss",
+            Self::HighAshLoss => "high_ash_loss",
+            Self::SmallVolume => "small_volume",
+            Self::Discarded => "discarded",
+        }
+    }
+
     /// Whether a piece so labelled is out of the ROM: kept in the column and in its balance, never in the ROM.
     pub fn is_set_aside(self) -> bool {
         matches!(self, Self::Loss | Self::ThinLoss | Self::HighAshLoss | Self::SmallVolume)

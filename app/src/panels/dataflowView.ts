@@ -126,7 +126,7 @@ export function inputsOf(column: ColumnSteps, picked: number | null, unit: numbe
     },
   ];
   const step = picked !== null ? column.steps[picked] : undefined;
-  const reads = step && step.kind === 'built_in' ? step.reads : [];
+  const reads = step && (step.kind === 'built_in' || step.kind === 'allocation') ? step.reads : [];
   const own = unit !== null ? reads.filter((r) => r.unit === unit) : [];
   const counted = own.some((r) => r.table !== null) ? own : reads;
   column.tables.forEach((name, i) => {
@@ -147,7 +147,7 @@ export function inputsOf(column: ColumnSteps, picked: number | null, unit: numbe
 
 /** The tables a step read for any unit, by their place in `tables`: what the graph wires to it. */
 export function tablesRead(step: ColumnStep): number[] {
-  if (step.kind !== 'built_in') return [];
+  if (step.kind !== 'built_in' && step.kind !== 'allocation') return [];
   return [...new Set(step.reads.filter((r) => r.table !== null).map((r) => r.table!))].sort((a, b) => a - b);
 }
 

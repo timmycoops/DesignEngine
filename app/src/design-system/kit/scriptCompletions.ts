@@ -22,6 +22,8 @@ export interface ScriptCalls {
   library: ScriptCallInfo[];
   unitParts: ScriptCallInfo[];
   starlark: ScriptCallInfo[];
+  column?: ScriptCallInfo[];
+  allocationUnit?: ScriptCallInfo[];
 }
 
 /** A name a script reads, with its unit where it has one. */
@@ -32,8 +34,8 @@ export interface ScriptName {
 
 /** What a script box offers: its kind, the names it reads and the calls it can make. */
 export interface ScriptNames {
-  /** A formula on a unit or a row, a table script on a whole table, or functions other scripts load. */
-  kind: 'formula' | 'table' | 'library';
+  /** A formula on a unit or a row, a table script on a whole table, an allocation on a column, or functions others load. */
+  kind: 'formula' | 'table' | 'allocation' | 'library';
   /** A formula's unit or row fields, which it reads and sets. */
   fields?: ScriptName[];
   /** A unit's or row's words (seam, material, bench), read only. */
@@ -52,9 +54,10 @@ export interface ScriptNames {
 /** A name as it's written inside a Starlark string: each `\` doubled. */
 const inString = (name: string) => name.replaceAll('\\', '\\\\');
 
-/** The names `def formula(unit, p)` or `def run(t, p)` gives its handle and parameters. */
+/** The names `def formula(unit, p)`, `def run(t, p)` or `def allocate(column, p)` gives its handle and parameters. */
 function handles(doc: string, kind: ScriptNames['kind']): { handle: string | null; p: string | null } {
-  const m = new RegExp(`^\\s*def\\s+${kind === 'table' ? 'run' : 'formula'}\\s*\\(([^)]*)\\)`, 'm').exec(doc);
+  const fn = kind === 'table' ? 'run' : kind === 'allocation' ? 'allocate' : 'formula';
+  const m = new RegExp(`^\\s*def\\s+${fn}\\s*\\(([^)]*)\\)`, 'm').exec(doc);
   const args = m ? m[1].split(',').map((a) => a.split('=')[0].trim()).filter(Boolean) : [];
   return { handle: args[0] ?? null, p: args[1] ?? null };
 }
@@ -114,7 +117,10 @@ export function scriptCompletions(names: () => ScriptNames) {
     if (m) {
       const [, base, chain, typed] = m;
       let options: Completion[] = [];
-      if (n.kind === 'formula' && base === handle) {
+      if (n.kind === 'allocation' && base !== handle && base !== p && !chain) {
+        // Any other name in an allocation script may be a unit (for u in column.units): its fields and words by name.
+        options = (n.fields ?? []).map((f) => named({ name: inString(f.name), unit: f.unit }, 'property'));
+      } else if (n.kind === 'formula' && base === handle) {
         options = chain ? (n.fields ?? []).map((f) => named({ name: inString(f.name), unit: f.unit }, 'property')) : [...(n.fields ?? []).map((f) => named({ name: inString(f.name), unit: f.unit }, 'property')), ...(n.labels ?? []).map((l) => named({ name: inString(l) }, 'constant', 'words'))];
       } else if (n.kind === 'table' && base !== p) {
         options = (n.columns ?? []).map((c) => named({ name: inString(c.name), unit: c.unit }, 'property'));
@@ -132,6 +138,10 @@ export function scriptCompletions(names: () => ScriptNames) {
         const part = chain.slice(1);
         if (!part) options = [...(n.fields ?? []).filter((f) => /^\w+$/.test(f.name)).map((f) => named(f, 'property')), ...(n.labels ?? []).filter((l) => /^\w+$/.test(l)).map((l) => named({ name: l }, 'constant', 'words')), ...(calls?.unitParts ?? []).map((c) => call(c, 'namespace'))];
         else if (['section', 'column', 'above', 'rom_coal'].includes(part)) options = (n.fields ?? []).filter((f) => /^\w+$/.test(f.name)).map((f) => named(f, 'property'));
+      } else if (n.kind === 'allocation' && base === handle && !chain) {
+        options = (calls?.column ?? []).map((c) => call(c, ['units', 'name', 'block'].includes(c.name) ? 'property' : 'method'));
+      } else if (n.kind === 'allocation' && !chain && !/^\d/.test(base)) {
+        options = [...(n.fields ?? []).filter((f) => /^\w+$/.test(f.name)).map((f) => named(f, 'property')), ...(n.labels ?? []).filter((l) => /^\w+$/.test(l)).map((l) => named({ name: l }, 'constant', 'words')), ...(calls?.allocationUnit ?? []).map((c) => call(c, 'method'))];
       } else if (n.kind === 'table' && !chain && !/^\d/.test(base)) {
         // Any name a table script holds may be a table (t, s = t.group(...), j = ...): its calls.
         options = (calls?.table ?? []).map((c) => call(c, ['rows', 'columns', 'name'].includes(c.name) ? 'property' : 'method'));
@@ -172,6 +182,8 @@ export function scriptHover(names: () => ScriptNames) {
     const pool = afterDot
       ? n.kind === 'table'
         ? calls.table
+        : n.kind === 'allocation'
+          ? [...(calls.column ?? []), ...(calls.allocationUnit ?? [])]
         : n.kind === 'formula' && new RegExp(`\\b${handle}\\.$`).test(line.text.slice(0, start))
           ? calls.unitParts
           : []

@@ -199,7 +199,7 @@ pub fn curve_readers<'a>(objects: impl IntoIterator<Item = &'a Arc<Object>>, tab
     let mut out = Vec::new();
     for o in objects {
         let sources: Vec<&str> = match &o.body {
-            Body::Dataflow(d) => d.steps.iter().filter_map(|s| s.formula.as_ref().map(|f| f.script.as_str()).or(s.table.as_ref().map(|t| t.script.as_str()))).collect(),
+            Body::Dataflow(d) => d.steps.iter().filter_map(|s| s.script()).collect(),
             Body::Table(t) => t.calculated.iter().map(|c| c.script.as_str()).collect(),
             Body::Script(s) => vec![s.source.as_str()],
             _ => continue,

@@ -75,12 +75,7 @@ export function useParameterTables(): { name: string; columns: ScriptName[]; fil
   return tables;
 }
 
-/** The reference's part for a kind of script: a table script's own section, or how formulas and their functions are written. */
-export function guideFor(reference: string, table: boolean): string {
-  const at = reference.indexOf('# Writing a table script');
-  if (at < 0) return reference;
-  return (table ? reference.slice(at) : reference.slice(0, at)).trim();
-}
+export { allocationGuide, guideFor } from './scriptGuide';
 
 /** A formula's names as its check gives them: fields with units, labels, parameters (words marked). */
 export function formulaNames(names: { fields: [string, string][]; labels: string[]; parameters: [string, string, boolean][] } | null | undefined, scripts: string[]): Omit<ScriptNames, 'calls'> {
