@@ -147,6 +147,9 @@ pub struct RunReservesParams {
     /// Where a field comes from for this run, by name, in place of the dataflow's (Table setup plan, decision 3).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sources: BTreeMap<String, FieldSource>,
+    /// The parameter tables it reads, in order, in place of the dataflow's (Table setup plan, decision 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tables: Option<Vec<ObjectId>>,
 }
 
 /// What a step writes (decision 0074): a piece of a unit on a leaf of the reserves table, under a folder. The leaf is
@@ -525,7 +528,7 @@ impl Command for RunReserves {
         let when = if p.table.is_some() { format!("{}, run again", utc_words(now)) } else { utc_words(now) };
         // What fills each table it makes (Table setup plan, decision 1): kept with the table, so Run again runs it.
         let objects: Vec<&Arc<Object>> = inputs.objects().collect();
-        let setup = zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons.clone(), blocks: zd_core::BlockPick::of_blocks(objects.iter().copied(), &p.blocks), model: p.model, stack: p.stack.clone(), parameters: p.parameters.clone(), sources: p.sources.clone() };
+        let setup = zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons.clone(), tables: p.tables.clone(), blocks: zd_core::BlockPick::of_blocks(objects.iter().copied(), &p.blocks), model: p.model, stack: p.stack.clone(), parameters: p.parameters.clone(), sources: p.sources.clone() };
         let mut out = outcome(&prepared, p, ran, stopped, started, &when, &setup);
         if let Some(object) = into {
             into_table(&mut out, &object, &prepared, p)?;
@@ -556,6 +559,12 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     }
     // Its add-ons put in at their stage (Table setup plan, decision 2): the run's own list, else the dataflow's.
     let add_on_ids = p.add_ons.clone().unwrap_or_else(|| dataflow.add_ons.clone());
+    // A table's own parameter tables (Table setup plan, decision 4), in place of the dataflow's; its add-ons' after.
+    let dataflow: Arc<Dataflow> = match &p.tables {
+        Some(tables) => Arc::new(Dataflow { parameters: tables.clone(), ..(**dataflow).clone() }),
+        None => dataflow.clone(),
+    };
+    let dataflow = &dataflow;
     let mut audit_add_ons = Vec::new();
     let mut step_from = BTreeMap::new();
     let dataflow: Arc<Dataflow> = if add_on_ids.is_empty() {
@@ -629,7 +638,7 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     formulas::declare_words(&mut declared, &dataflow.words);
     declared.libraries = super::libraries_of(&|id| get(id).ok(), &dataflow.scripts).map_err(CommandError::Invalid)?;
     // The tables its scripts look up by name (Schedule quantities plan, decision 1): read by id, so the run records them.
-    let named = super::lookups_by_id(&|id| get(id).ok(), &dataflow.lookups).map_err(CommandError::Invalid)?;
+    let named = super::lookups_by_id(&|id| get(id).ok(), &dataflow.lookups, &dataflow.lookup_names).map_err(CommandError::Invalid)?;
     for &id in &dataflow.lookups {
         let object = get(id)?;
         audit_tables.push(format!("{} r{} (looked up)", object.name, object.revision));
@@ -3497,6 +3506,7 @@ pub fn rerun_params(project: &zd_core::Project, log: &[crate::LogEntry], table: 
         previous: record.map(|r| r.run),
         add_ons: setup.add_ons,
         sources: setup.sources,
+        tables: setup.tables,
     })
 }
 
@@ -3512,7 +3522,7 @@ pub fn setup_of(project: &zd_core::Project, log: &[crate::LogEntry], table: Obje
     let p: RunReservesParams = serde_json::from_value(record.params.clone()).map_err(|e| CommandError::Invalid(format!("the run that made {} can't be read again: {e}", object.name)))?;
     let blocks: Vec<ObjectId> = p.blocks.into_iter().filter(|id| project.object(*id).is_some()).collect();
     let all: Vec<&Arc<Object>> = project.objects().collect();
-    Ok(zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons, blocks: zd_core::BlockPick::of_blocks(all.iter().copied(), &blocks), model: p.model, stack: p.stack, parameters: p.parameters, sources: p.sources })
+    Ok(zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons, tables: p.tables, blocks: zd_core::BlockPick::of_blocks(all.iter().copied(), &blocks), model: p.model, stack: p.stack, parameters: p.parameters, sources: p.sources })
 }
 
 /// The reserves run that last wrote a table: the run its revision came from, or where a person has since entered values

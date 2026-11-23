@@ -117,9 +117,32 @@ Objects table's formulas and scripts.
 | `zdp` round trip (zd-io) | a setup's sources saved and read back | exact |
 | The demo pit (by hand) | every leaf's primes to its scheduled waste (largest difference 4.5e-11 m³), coal mining to its coal, a process on every waste leaf; 252 ms | 1e-9 relative |
 
+## Built: workstream 4, parameters per table
+
+- **A table's own parameter tables** (`TableSetup.tables`, and a run's `tables`): read in their order, in place of the
+  dataflow's, the case's first; its add-ons' tables after them. The dataflow is untouched.
+- **One name, one parameter table:** `parameters.save` refuses a second table of a name taken, naming the first, and
+  `object.rename` refuses renaming one to it. Add waste allocation keeps a table it finds by its name.
+- **A lookup keeps the name its script uses** (`Dataflow.lookup_names`, `CalculatedColumn.lookup_names`), bound beside
+  each table's id when saved: a table renamed since is still read under that name, and the audit says it by its new one.
+- **Read by** (`read_by`, the Parameters tab under each table's grid, `read_by` in Python): every dataflow, add-on,
+  reserves table and calculated column that reads the table, through `p` (its place in their list: `p, table 2 of 2`)
+  or by name; each parameter, who names it, and the tables read before it that have it too, read first where their rows
+  fit. A parameter is named by a built-in step's setting (as its step's settings call it), a field's parameter column or
+  own name, a field's `_default`, `_min` or `_max`, `p.name` and `getattr(p, "name")` in a script, or a lookup's column
+  in quotes; one looked up by a name the script works out counts as every column. One nothing names is marked.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_table_reads_its_own_parameter_tables_and_read_by_says_who_reads_each_column` (reserves_run.rs) | the table set to read `Case waste` (waste RD 2.5) before the assumptions (2.3): run again, waste RD 2.5, the dataflow untouched; Read by: the assumptions by the dataflow (p, 1 of 1) and the table (p, 2 of 2), `rd` shadowed by Case waste, a built-in setting read; Case waste by the table alone (p, 1 of 2), its note named by nothing | 1e-12, exact |
+| `a_looked_up_table_is_read_after_a_rename_and_names_are_unique` (reserves_run.rs) | the plan's cases: a second `Method factors` refused naming the first, a rename to it refused; renamed after saving, the dragline still 187,500 m³, the audit naming it by its new name; Read by lists the dataflow by name, its factors read | 1e-9, exact |
+| `the_parameters_a_script_reads_are_read_off_it` (zd-core) | `p.min_burden`, `u.p.dip`, `getattr(p, "rd_default")` read; a lookup's and a curve's columns; a column named as it runs, every column | exact |
+
 ## Known limits
 
-- The setup holds the dataflow's own parameter tables (the table's own list is workstream 4).
+- Read by can't see a parameter a script names as it runs through `p` (`getattr(p, name)` with a worked name): the
+  starter's `_default`, `_min` and `_max` are counted for every field for that reason.
+- A project saved before names were unique may hold two parameter tables of one name; a lookup binds the first, as it did.
 - The starter's default factors are one set a zone, the same at every dip, width and thickness: a site fills its grid.
 - An add-on's unsaved edits aren't run live in the notebook (the live run takes the main dataflow as edited): save it
   to see them.

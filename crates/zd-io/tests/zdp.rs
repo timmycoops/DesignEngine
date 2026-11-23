@@ -259,11 +259,13 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
             parameters: vec![],
             scripts: vec![],
             lookups: vec![],
+            lookup_names: Vec::new(),
         }],
         // A reserves table's setup (Table setup plan, decision 1) comes back with it.
         setup: Some(zd_core::TableSetup {
             dataflow: zd_core::ObjectId::new(),
             add_ons: Some(vec![zd_core::ObjectId::new()]),
+            tables: None,
             blocks: zd_core::BlockPick { filter: [("seam".to_string(), "U, M".to_string())].into(), ..Default::default() },
             model: None,
             stack: vec!["OB".into(), "U".into()],
@@ -286,6 +288,7 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
         parameters: vec![table_id],
         scripts: vec![],
         lookups: vec![],
+        lookup_names: Vec::new(),
         words: vec![],
         add_on: false,
         add_ons: Vec::new(),

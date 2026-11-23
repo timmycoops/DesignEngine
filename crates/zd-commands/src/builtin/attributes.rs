@@ -315,7 +315,7 @@ impl Command for CalculateInTable {
             }
         }
         let (scripts, _) = super::bind_loads(inputs.objects(), &[c.script.as_str()]).map_err(CommandError::Invalid)?;
-        let (lookups, _) = super::bind_lookups(inputs.objects(), &[c.script.as_str()]).map_err(CommandError::Invalid)?;
+        let (lookups, named) = super::bind_lookups(inputs.objects(), &[c.script.as_str()]).map_err(CommandError::Invalid)?;
         super::check_curves(inputs.objects(), &[c.script.as_str()]).map_err(CommandError::Invalid)?;
         for &id in scripts.iter().chain(&lookups) {
             inputs.object(id)?;
@@ -323,6 +323,7 @@ impl Command for CalculateInTable {
         let mut c = c.clone();
         c.scripts = scripts;
         c.lookups = lookups;
+        c.lookup_names = named.into_iter().map(|(n, _)| n).collect();
         let c = &c;
         let lookup = |id: ObjectId| inputs.object(id).ok().cloned();
         let checked = crate::table_calc::check(table, c, &lookup);

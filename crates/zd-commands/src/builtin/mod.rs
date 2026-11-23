@@ -39,6 +39,7 @@ mod surface_triangulate;
 mod starter;
 mod waste_allocation;
 mod table_setup;
+mod read_by;
 mod measure;
 
 pub use benches::{BENCH_FLOOR, BENCH_TOP, BENCHED_FROM, BenchEnd, BenchRule, CutByBenches, CutByBenchesParams, rule_for};
@@ -79,6 +80,7 @@ pub use reserves_run::{
     ColumnSteps, FormulaTraceView, ParamRead, StepKind, TraceLineView, column_trace, formula_trace, OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, StepWrite, UNDERBURDEN_THICKNESS, UnitView, Working, dataflow_starter, preston_sanders,
     reserves_preview, rerun_params, setup_of, table_column, StepUnits, units_at_step, ChangedSince, changed_since, Unsaved,
 };
+pub use read_by::{ColumnRead, ReadBy, Reader, read_by};
 pub use table_setup::{SaveTableSetup, SaveTableSetupParams};
 pub use waste_allocation::{ADD_ON as WASTE_ALLOCATION_ADD_ON, PROCESSES as WASTE_PROCESSES, schedule_fields as waste_schedule_fields, tables as waste_allocation_tables, waste_allocation_add_on};
 pub use starter::{DISCARDED, RENAMED_FIELDS, TONNES_AD_PER_M3, renamed_from_older, starter_formulas, with_starter_formulas};

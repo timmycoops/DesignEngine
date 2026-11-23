@@ -1396,6 +1396,14 @@ export interface ParametersPicked {
 }
 
 export const parametersPicked = (table: string, solid: string | null) => invoke<ParametersPicked>('parameters_picked', { table, solid });
+
+/** What reads a parameter table (Table setup plan, decision 4): each reader and how, each column and who reads it. */
+export interface ReadBy {
+  table: string;
+  readers: { kind: string; name: string; id: string; how: string }[];
+  columns: { column: string; read_by: string[]; shadowed_by: string[] }[];
+}
+export const parametersReadBy = (table: string) => invoke<ReadBy>('parameters_read_by', { table });
 /** The engine's check of a parameter table as edited, before it's saved: resolves, or rejects with why. */
 export const parametersCheck = (content: ParameterTable) => invoke<null>('parameters_check', { content });
 /** The engine's check of a dataflow as edited, before it's saved. */

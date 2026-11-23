@@ -46,6 +46,10 @@ impl Command for RenameObject {
 
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let object = inputs.object(p.object)?;
+        // A parameter table is found by its name (Table setup plan, decision 4): one name, one table.
+        if matches!(object.body, zd_core::Body::ParameterTable(_)) && inputs.objects().any(|o| o.id != object.id && o.name == p.name && matches!(o.body, zd_core::Body::ParameterTable(_))) {
+            return Err(CommandError::Invalid(format!("a parameter table named {} is there already: give {} another name", p.name, object.name)));
+        }
         Ok(Outcome::new(vec![Change::Revise {
             id: object.id,
             base: object.revision,

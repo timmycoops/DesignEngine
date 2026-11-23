@@ -226,6 +226,10 @@ pub struct Dataflow {
     /// run reads them by id and records their revisions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lookups: Vec<ObjectId>,
+    /// The name each of `lookups` is looked up by in its scripts (Table setup plan, decision 4): a renamed table is still
+    /// read under the name the script uses. Empty, or short, for one saved before: its own name then.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lookup_names: Vec<String>,
     /// Its fields of words (Waste allocation plan, decision 2), carried by each unit beside the number fields.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub words: Vec<WordField>,
@@ -246,7 +250,7 @@ pub fn is_schedule_field(name: &str) -> bool {
 
 impl Default for Dataflow {
     fn default() -> Self {
-        Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new(), words: Vec::new(), add_on: false, add_ons: Vec::new() }
+        Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new(), lookup_names: Vec::new(), words: Vec::new(), add_on: false, add_ons: Vec::new() }
     }
 }
 
@@ -377,9 +381,11 @@ impl Dataflow {
                     d.scripts.push(*id);
                 }
             }
-            for id in &a.lookups {
+            for (i, id) in a.lookups.iter().enumerate() {
                 if !d.lookups.contains(id) {
+                    d.lookup_names.resize(d.lookups.len(), String::new());
                     d.lookups.push(*id);
+                    d.lookup_names.push(a.lookup_names.get(i).cloned().unwrap_or_default());
                 }
             }
             for s in &a.steps {
@@ -501,6 +507,7 @@ mod tests {
             parameters: vec![ObjectId::new()],
             scripts: Vec::new(),
             lookups: Vec::new(),
+            lookup_names: Vec::new(),
             words: Vec::new(),
             add_on: false,
             add_ons: Vec::new(),

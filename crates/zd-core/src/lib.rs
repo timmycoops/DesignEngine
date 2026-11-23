@@ -25,7 +25,7 @@ mod workflow;
 
 pub use attributes::intern;
 pub use bounds::Aabb;
-pub use script::{Script, curves_in, loads_in, lookups_in};
+pub use script::{Script, columns_looked_up_in, curves_in, loads_in, lookups_in, parameters_read_in};
 pub use dataflow::{AllocationStep, Dataflow, DataflowField, DataflowStep, FieldSource, FormulaStep, FormulaTest, Level, TableStep, UNIT_LABELS, WordField, default_levels, is_schedule_field};
 pub use display::{Colouring, Contours, Display, Look, ReservesFilter};
 pub use face::{AzimuthSector, FaceDesign, FaceDirection, FaceLine, FaceProfile, HorizonValue, LineEdit, LineOn, MOST_TOLERANCE, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, USUAL_TURN_JOIN, WallRule, WallSide};
