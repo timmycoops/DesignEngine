@@ -62,6 +62,14 @@ What a formula sets after `initialise` is in the in situ rows; anything set late
   from.
 - `unit.column.<field>`: the whole column added up.
 - Each of these reads by a name worked out as it runs too: `unit.rom_coal[m]`, `unit.above["area"]`.
+- Schedule fields: a field named with a folder, `Waste\Dragline\Prime Volume`, is written to the reserves table under
+  `Scheduled` only (`Scheduled\Waste\Dragline\Prime Volume`), a section a process as Spry's Scheduled is laid out. Set
+  it by its name in square brackets, each backslash doubled: `unit["Waste\\Dragline\\Prime Volume"] = prime`. A word
+  field named so (`Waste\Dragline\Method`) is written there too.
+- `unit.place_onto("<schedule field>", value, seam=…, bench=…)`: the value written on another leaf of the block, not the
+  unit's own, as a blast's drill and blast volume goes on its blasting horizon's leaf. The levels named (any below the
+  column) say which leaf; one not named is the unit's own. Only a schedule field that adds up by sum is placed, and a
+  leaf with nothing scheduled on it takes nothing: that's said with the block. It sets nothing on the unit.
 - `p.<column>`: the parameters for the unit's block: each value from the first row of the dataflow's parameter tables
   that fits the block, tables read in order. A number column gives a number, a words column words (`"yes"`).
   - Reading one no row gives stops the block. Read one that may be missing with `getattr(p, "column", default)`.

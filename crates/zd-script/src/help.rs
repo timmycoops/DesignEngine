@@ -62,6 +62,7 @@ pub const UNIT_PARTS: &[Call] = &[
     call("block", "unit.block.strip", "its block's attributes"),
     call("above", "unit.above.area", "the unit above's fields; None for the top unit"),
     call("rom_coal", "unit.rom_coal.mad", "its ROM coal section's coal added up (after rom); None where it's in none"),
+    call("place_onto", "unit.place_onto(\"Waste\\\\Drill and Blast\\\\Volume\", x, seam=unit.blasting_seam, bench=unit.blasting_bench)", "a schedule field's value written on another leaf of the block (the levels named, the rest the unit's own), not the unit's; where that leaf has nothing scheduled it's said and not written"),
 ];
 
 /// Starlark's own functions and words a script uses most, offered as they're typed.

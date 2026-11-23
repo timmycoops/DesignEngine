@@ -2813,3 +2813,100 @@ fn word_fields_are_set_by_formulas_and_written_by_leaf() {
     assert!(record.notes.iter().any(|n| n.text.contains("holds words")), "{:?}", record.notes);
 }
 
+/// A dataflow of the loss column's fields with schedule fields (Waste allocation plan, decision 5), a formula after
+/// `rom` on OB, and an allocation table giving its settings (decision 8): every number the formula uses read from a row.
+fn schedule_flow(s: &mut Session, name: &str, script: &str, allocation: &str) -> ObjectId {
+    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let allocation = created(&s.run("parameters.save", json!({ "name": format!("{name} allocation"), "csv": allocation })).unwrap())[0];
+    let schedule = |n: &str| json!({ "name": format!("Waste\\Dragline\\{n}"), "kind": "other", "add_up": { "by": "sum" }, "from": "worked" });
+    let mut steps = final_steps();
+    let at = steps.as_array().unwrap().iter().position(|s| s["step"] == "final").unwrap();
+    steps.as_array_mut().unwrap().insert(at, json!({ "step": "dragline", "formula": { "when": { "horizon": "OB" }, "script": script } }));
+    let content = json!({
+        "fields": [
+            { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
+            { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
+            { "name": "area", "kind": "area", "add_up": { "by": "max" }, "from": "plan_area" },
+            { "name": "length", "kind": "length", "add_up": { "by": "max" }, "from": "attribute", "attribute": "length" },
+            { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
+            { "name": "ash", "kind": "quality", "add_up": { "by": "mass", "density": "rd" }, "from": "attribute", "attribute": "ash" },
+            { "name": "ash_cutoff", "kind": "setting", "add_up": { "by": "min" }, "from": "parameter", "column": "ash_cutoff" },
+            schedule("Prime Volume"), schedule("Rehandle Volume"), schedule("Total Volume"), schedule("Swelled Volume"),
+            { "name": "Waste\\Drill and Blast\\Volume", "kind": "other", "add_up": { "by": "sum" }, "from": "worked" },
+        ],
+        "words": [{ "name": "Waste\\Dragline\\Method", "from": "worked" }],
+        "steps": steps,
+        "parameters": [assumptions, allocation],
+    });
+    created(&s.run("dataflow.save", json!({ "name": name, "content": starter(content) })).unwrap())[0]
+}
+
+const DRAGLINE: &str = r#"def formula(unit, p):
+    prime = unit.volume * p.dragline_share
+    unit["Waste\\Dragline\\Prime Volume"] = prime
+    unit["Waste\\Dragline\\Rehandle Volume"] = prime * p.rehandle
+    unit["Waste\\Dragline\\Total Volume"] = prime * (1 + p.rehandle)
+    unit["Waste\\Dragline\\Swelled Volume"] = prime * (1 + p.swell)
+    unit["Waste\\Dragline\\Method"] = p.method
+    unit.place_onto("Waste\\Drill and Blast\\Volume", unit.volume - prime, seam=p.blast_seam)
+"#;
+
+/// Schedule fields (Waste allocation plan, decision 5, workstream 2). The loss column's OB (50,000 m³, ROM waste on seam
+/// A's leaf) is 80 % dragline by its allocation row, with 20 % rehandle and a swell of 0.3: `Scheduled\Waste\Dragline`
+/// on A's leaf holds Prime Volume 40,000 m³, Rehandle 8,000, Total 48,000 and Swelled 52,000, its Method Strip, and
+/// nothing of them anywhere but Scheduled. The rest of OB, 10,000 m³, blasts with seam B's horizon: placed onto B's leaf,
+/// `Scheduled\Waste\Drill and Blast\Volume` reads 10,000 there and none on A's. The notebook's `final` says where it
+/// went. Placed onto a seam the block hasn't, it lands nowhere: said, never written. A level that isn't one below the
+/// column stops the block.
+#[test]
+fn schedule_fields_are_written_under_scheduled_by_process_and_placed_onto_a_leaf() {
+    let mut s = session();
+    let ids = loss_column(&mut s);
+    let allocation = |seam: &str| format!("when horizon,dragline_share,rehandle,swell,blast_seam,method\nOB,0.8,0.2,0.3,{seam},Strip\n");
+    let flow = schedule_flow(&mut s, "Schedule", DRAGLINE, &allocation("B"));
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    let t = table(&s, created(&record)[0]);
+    let at = |seam: &str, path: &str| at_seam(&t, Some(seam), path);
+    for (name, want) in [("Prime Volume", 40_000.0), ("Rehandle Volume", 8_000.0), ("Total Volume", 48_000.0), ("Swelled Volume", 52_000.0)] {
+        let path = format!("Scheduled\\Waste\\Dragline\\{name}");
+        assert!((at("A", &path) - want).abs() < 1e-9, "{name}: {} for {want}", at("A", &path));
+        assert!(at("B", &path).abs() < 1e-9, "{name} on B's leaf");
+        assert_eq!(t.column(&path).unwrap().unit, "m3", "{name}'s unit from its name");
+    }
+    assert!((at("A", "ROM\\Waste\\volume") - 50_000.0).abs() < 1e-9, "the ROM waste the dragline's share is of");
+    let elsewhere: Vec<&str> = t.columns.iter().map(|c| c.name.as_str()).filter(|n| (n.contains("Dragline") || n.contains("Drill and Blast")) && !n.starts_with("Scheduled\\")).collect();
+    assert!(elsewhere.is_empty(), "schedule fields under Scheduled only: {elsewhere:?}");
+    let seams = texts(&t, "seam");
+    let row = |seam: &str| (0..t.rows()).find(|&r| seams[r].as_deref() == Some(seam)).unwrap();
+    assert_eq!(texts(&t, "Scheduled\\Waste\\Dragline\\Method")[row("A")].as_deref(), Some("Strip"));
+    assert_eq!(texts(&t, "Scheduled\\Waste\\Dragline\\Method")[row("B")], None);
+    assert!((at("B", "Scheduled\\Waste\\Drill and Blast\\Volume") - 10_000.0).abs() < 1e-9, "the blast on its horizon's leaf");
+    assert!(at("A", "Scheduled\\Waste\\Drill and Blast\\Volume").abs() < 1e-9, "not on its own");
+    let total: f64 = numbers(&t, "Scheduled\\Waste\\Drill and Blast\\Volume").iter().flatten().sum();
+    assert!((total - 10_000.0).abs() < 1e-9, "placed once: {total}");
+    // The balance is the stages' volumes: schedule fields don't change it.
+    for part in ["Coal", "Waste", "Total"] {
+        let off: f64 = numbers(&t, &format!("Summary\\Balance\\{part}\\unaccounted_scheduled")).iter().flatten().map(|x| x.abs()).sum();
+        assert!(off < 1e-6, "{part} scheduled off by {off}");
+    }
+
+    // The notebook: `final` says where the placed volume went.
+    let views = preview_of(&s, flow, &ids, &LOSS_STACK);
+    let last = views.iter().find(|v| v.step == "final").expect("final's view");
+    assert!(last.workings.iter().any(|w| w.what == "placed" && w.value == Some(10_000.0) && w.then.as_deref() == Some("Scheduled\\Waste\\Drill and Blast\\Volume, on the leaf seam B")), "{:?}", last.workings.iter().filter(|w| w.what == "placed").collect::<Vec<_>>());
+
+    // Onto a seam the block has nothing scheduled on: said, never written.
+    let nowhere = schedule_flow(&mut s, "Nowhere", DRAGLINE, &allocation("Z"));
+    let record = s.run("reserves.run", json!({ "dataflow": nowhere, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert!(record.notes.iter().any(|n| n.text.contains("Waste\\Drill and Blast\\Volume placed onto seam Z, a leaf with nothing scheduled on it: not written") && n.text.contains("1_B1_OB")), "{:?}", record.notes);
+    let t = table(&s, created(&record)[0]);
+    let total: f64 = numbers(&t, "Scheduled\\Waste\\Drill and Blast\\Volume").iter().flatten().sum();
+    assert!(total.abs() < 1e-9, "nothing written: {total}");
+    assert!(t.rows() > 0 && texts(&t, "seam").iter().all(|s| s.as_deref() != Some("Z")), "no leaf made for it");
+
+    // A level that isn't one below the column stops the block, named.
+    let zone = schedule_flow(&mut s, "Zone", &DRAGLINE.replace("seam=p.blast_seam", "zone=p.blast_seam"), &allocation("B"));
+    let record = s.run("reserves.run", json!({ "dataflow": zone, "blocks": ids, "stack": LOSS_STACK, "layer": "reserves" })).unwrap();
+    assert!(record.notes.iter().any(|n| n.text.contains("zone=B, but zone isn't a level below the column (seam, bench)")), "{:?}", record.notes);
+}
+

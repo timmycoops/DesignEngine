@@ -34,6 +34,27 @@ test('rows run by top folder then sub-folder, fields straight under a top folder
   assert.deepEqual(folded.map((r) => r.label), ['Imported', 'ROM', 'section', 'Coal']);
 });
 
+// Waste allocation plan, decision 5: schedule fields sit under Scheduled, a section a process, after its waste, each
+// section read out with its folders; a words column there shows its words.
+test('schedule fields show under Scheduled, a section a process', () => {
+  const node = {
+    ...b,
+    fields: [
+      field('Scheduled\\Waste\\volume', 'm3', [50000, 50000, null]),
+      field('Scheduled\\Waste\\Dragline\\Prime Volume', 'm3', [40000, 40000, 0]),
+      field('Scheduled\\Waste\\Dragline\\Total Volume', 'm3', [48000, 48000, 0]),
+      field('Scheduled\\Waste\\Drill and Blast\\Volume', 'm3', [10000, 0, 10000]),
+      field('Scheduled\\Waste\\Dragline\\Method', '', [null, null, null], ['Strip', 'Strip', '']),
+    ],
+  };
+  const rows = fieldRows(node, false, new Set());
+  assert.deepEqual(rows.map((r) => `${r.kind}:${r.label}`), ['folder:Scheduled', 'folder:Waste', 'field:volume', 'folder:Waste › Dragline', 'field:Prime Volume', 'field:Total Volume', 'field:Method', 'folder:Waste › Drill and Blast', 'field:Volume']);
+  const prime = rows.find((r) => r.kind === 'field' && r.key === 'Scheduled\\Waste\\Dragline\\Prime Volume');
+  assert.equal(prime.kind === 'field' && cellText(prime.field, 0), '40,000.0');
+  const method = rows.find((r) => r.kind === 'field' && r.label === 'Method');
+  assert.equal(method.kind === 'field' && cellText(method.field, 1), 'Strip');
+});
+
 // App review brief, 17 Nov, item 2: under each folder, Main fields shows the density its tonnes are on, so volume × it is
 // the tonnes shown (B1's coal, from the brief: lab RD 1.444 under Imported, in situ 1.415 under Insitu, and the ROM
 // density under ROM), never the air-dried tonnes a cubic metre, which an older table called rd_adt.

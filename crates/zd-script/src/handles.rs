@@ -21,6 +21,18 @@ pub enum Event {
     Read { what: String, value: ScriptValue },
     /// A field set.
     Set { field: String, value: ScriptValue },
+    /// A value placed onto another leaf of the block (Waste allocation plan, decision 5): the schedule field, the value
+    /// and the leaf's levels as named.
+    Placed { field: String, value: f64, onto: Vec<(String, String)> },
+}
+
+/// A value a formula placed onto another leaf of its block (`unit.place_onto(...)`, Waste allocation plan, decision 5):
+/// a schedule field, the value, and the levels below the column it named (`seam`, `bench`), each in words.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Placed {
+    pub field: String,
+    pub value: f64,
+    pub onto: Vec<(String, String)>,
 }
 
 pub(crate) type Log = Arc<Mutex<Vec<Event>>>;
@@ -64,9 +76,48 @@ pub(crate) struct Unit {
     #[allocative(skip)]
     pub sets: Mutex<Vec<(String, ScriptValue)>>,
     #[allocative(skip)]
+    pub placed: Mutex<Vec<Placed>>,
+    #[allocative(skip)]
     pub log: Option<Log>,
 }
 starlark_simple_value!(Unit);
+
+/// `unit.place_onto("Waste\\Drill and Blast\\Volume", x, seam="B", bench="2")` (Waste allocation plan, decision 5): the
+/// value written on the leaf of the unit's block those levels name, not its own, as Spry's drill and blast and coal
+/// exposed are; a level not named is the unit's own. Only a schedule field (named with a folder) is placed; the engine
+/// checks the levels and that the leaf is there.
+#[starlark::starlark_module]
+fn unit_methods(builder: &mut starlark::environment::MethodsBuilder) {
+    fn place_onto<'v>(this: &Unit, #[starlark(require = pos)] field: &str, #[starlark(require = pos)] value: Value<'v>, #[starlark(kwargs)] leaf: starlark::values::dict::UnpackDictEntries<String, Value<'v>>) -> anyhow::Result<starlark::values::none::NoneType> {
+        let Some(declared) = this.declared.fields.iter().find(|f| f.name == field) else {
+            anyhow::bail!("`{field}` isn't a field of this dataflow{}", crate::check::did_you_mean(field, this.declared.fields.iter().map(|f| f.name.as_str())));
+        };
+        if !field.contains('\\') {
+            anyhow::bail!("`{field}` isn't a schedule field: only a field named with a folder (`Waste\\\\Drill and Blast\\\\Volume`) is placed onto another leaf");
+        }
+        let value = match from_starlark(value, declared.kind).map_err(|why| anyhow::anyhow!("`{field}` {why}"))? {
+            ScriptValue::Number(x) => x,
+            ScriptValue::None => return Ok(starlark::values::none::NoneType),
+            ScriptValue::Text(_) => anyhow::bail!("`{field}` holds words: words aren't placed onto another leaf, only numbers that add up"),
+        };
+        let mut onto = Vec::with_capacity(leaf.entries.len());
+        for (level, word) in &leaf.entries {
+            let word = if let Some(s) = word.unpack_str() {
+                s.to_string()
+            } else if let Some(i) = word.unpack_i32() {
+                i.to_string()
+            } else if let Some(x) = word.downcast_ref::<starlark::values::float::StarlarkFloat>() {
+                format!("{}", x.0)
+            } else {
+                anyhow::bail!("`{level}=` names a leaf in words or a number, not {}", word.to_repr());
+            };
+            onto.push((level.clone(), word));
+        }
+        note(&this.log, Event::Placed { field: field.to_string(), value, onto: onto.clone() });
+        this.placed.lock().expect("placed").push(Placed { field: field.to_string(), value, onto });
+        Ok(starlark::values::none::NoneType)
+    }
+}
 
 impl fmt::Display for Unit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -100,6 +151,11 @@ impl Unit {
 
 #[starlark_value(type = "unit")]
 impl<'v> StarlarkValue<'v> for Unit {
+    fn get_methods() -> Option<&'static starlark::environment::Methods> {
+        starlark::methods_static!(UNIT_METHODS = unit_methods);
+        Some(UNIT_METHODS.methods())
+    }
+
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         let part = match attribute {
             "section" => Some(self.part("section", self.section.as_ref())),

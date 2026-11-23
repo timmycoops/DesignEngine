@@ -32,7 +32,7 @@ use starlark::syntax::{AstModule, Dialect};
 use starlark::values::{OwnedFrozenValue, Value, ValueLike};
 use starlark::PrintHandler;
 
-pub use handles::Event;
+pub use handles::{Event, Placed};
 pub use lookups::Lookups;
 pub use tables::{TableWork, add_up_from_words};
 
@@ -151,6 +151,8 @@ pub struct ColumnInput {
 pub struct UnitSets {
     pub unit: usize,
     pub sets: Vec<(String, ScriptValue)>,
+    /// What it placed onto other leaves of the block, in order (Waste allocation plan, decision 5).
+    pub placed: Vec<Placed>,
     pub said: Vec<String>,
 }
 
@@ -329,6 +331,9 @@ impl Said {
     }
 }
 
+/// What a formula set on a unit, in order.
+type Sets = Vec<(String, ScriptValue)>;
+
 /// A formula compiled and checked against a dataflow's names.
 pub struct Formula {
     source: String,
@@ -424,11 +429,12 @@ impl Formula {
             above: u.checked_sub(1).map(|a| column.units[a].fields.clone()),
             declared: self.declared.clone(),
             sets: Mutex::new(Vec::new()),
+            placed: Mutex::new(Vec::new()),
             log,
         }
     }
 
-    fn call<'v>(&self, eval: &mut Evaluator<'v, '_, '_>, f: Value<'v>, column: &ColumnInput, u: usize, log: Option<handles::Log>) -> Result<Vec<(String, ScriptValue)>, Problem> {
+    fn call<'v>(&self, eval: &mut Evaluator<'v, '_, '_>, f: Value<'v>, column: &ColumnInput, u: usize, log: Option<handles::Log>) -> Result<(Sets, Vec<Placed>), Problem> {
         let heap = eval.heap();
         let unit = heap.alloc(self.unit_handle(column, u, log.clone()));
         let result = if self.takes_p {
@@ -439,7 +445,7 @@ impl Formula {
         };
         result.map_err(|e| problem(&e, Some(u)))?;
         let handle = unit.downcast_ref::<Unit>().expect("a unit");
-        Ok(std::mem::take(&mut *handle.sets.lock().expect("sets")))
+        Ok((std::mem::take(&mut *handle.sets.lock().expect("sets")), std::mem::take(&mut *handle.placed.lock().expect("placed"))))
     }
 
     /// Runs the formula on some of a column's units, top down; the first problem stops the column.
@@ -455,8 +461,8 @@ impl Formula {
             eval.extra = Some(&context);
             let mut out = Vec::with_capacity(units.len());
             for &u in units {
-                let sets = self.call(&mut eval, f, column, u, None)?;
-                out.push(UnitSets { unit: u, sets, said: said.take() });
+                let (sets, placed) = self.call(&mut eval, f, column, u, None)?;
+                out.push(UnitSets { unit: u, sets, placed, said: said.take() });
             }
             Ok(out)
         })
@@ -502,7 +508,7 @@ impl Formula {
             snapshots.lock().expect("snapshots").clear();
             let f = module.get("formula").expect("it compiled before");
             match self.call(&mut eval, f, column, u, Some(log.clone())) {
-                Ok(s) => {
+                Ok((s, _)) => {
                     sets = s;
                     None
                 }

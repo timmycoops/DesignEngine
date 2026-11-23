@@ -196,6 +196,8 @@ pub(crate) fn names(source: &str, declared: &Declared, unit: &str, p: Option<&st
                     }
                 }
                 [part, ..] if part == "block" || part == "section" || part == "column" || part == "above" || part == "rom_coal" => {}
+                // `unit.place_onto(...)`: a schedule field onto another leaf (Waste allocation plan, decision 5).
+                [name] if name == "place_onto" && !c.set && !declared.is_field(name) => {}
                 [name, ..] => {
                     if c.set && declared.is_label(name) {
                         say(c.line, format!("`{unit}.{name}` is a label of the unit: a formula reads it but can't set it"));

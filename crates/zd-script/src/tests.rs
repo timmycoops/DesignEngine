@@ -437,3 +437,30 @@ fn checks_are_a_table_script_s_only() {
     let m = format!("{:?}", f.run(&column(), &[0]).expect_err("refused"));
     assert!(m.contains("called in a table script"), "{m}");
 }
+
+/// `unit.place_onto` (Waste allocation plan, decision 5): a schedule field's value placed onto the leaf the levels name,
+/// kept in order with the levels in words (a number as its digits), and traced; a field with no folder, a word field, a
+/// field the dataflow hasn't, and words as the value are refused naming the field.
+#[test]
+fn a_schedule_field_is_placed_onto_another_leaf() {
+    let mut d = declared();
+    d.fields.push(FieldDecl::number(r"Waste\Drill and Blast\Volume", "m3"));
+    d.fields.push(FieldDecl::text(r"Waste\Dragline\Method"));
+    let f = Formula::compile(r#"def formula(unit):
+    unit.place_onto("Waste\\Drill and Blast\\Volume", unit.volume * 0.5, seam="L", bench=110)
+"#, d.clone())
+    .expect("compiles");
+    let out = f.run(&column(), &[2]).expect("placed");
+    assert_eq!(out[0].placed, vec![Placed { field: r"Waste\Drill and Blast\Volume".into(), value: 150.0, onto: vec![("seam".into(), "L".into()), ("bench".into(), "110".into())] }]);
+    assert!(out[0].sets.is_empty(), "placing sets nothing on the unit");
+    let tr = f.trace(&column(), 2);
+    assert!(tr.events.iter().any(|e| matches!(e, Event::Placed { field, value, .. } if field == r"Waste\Drill and Blast\Volume" && *value == 150.0)), "{:?}", tr.events);
+    let refused = |line: &str| {
+        let f = Formula::compile(&format!("def formula(unit):\n    {line}\n"), d.clone()).expect("compiles");
+        f.run(&column(), &[2]).unwrap_err().message
+    };
+    assert!(refused(r#"unit.place_onto("share", 1, seam="L")"#).contains("isn't a schedule field"));
+    assert!(refused(r#"unit.place_onto("Waste\\Dragline\\Method", "Strip", seam="L")"#).contains("holds words"));
+    assert!(refused(r#"unit.place_onto("Waste\\Dragline\\Prime", 1, seam="L")"#).contains("isn't a field of this dataflow"));
+    assert!(refused(r#"unit.place_onto("Waste\\Drill and Blast\\Volume", "x", seam="L")"#).contains("holds numbers"));
+}
