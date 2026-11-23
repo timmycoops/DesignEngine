@@ -77,6 +77,9 @@ export function Parameters() {
       const [, flowId, step] = toolAsk.mode.split(':');
       setId(flowId);
       setOpenStep({ step, n: toolAsk.n });
+    } else if (toolAsk.mode.startsWith('show:')) {
+      // Opened from the Setup tab (Table setup plan, decision 5): the table or dataflow shown.
+      setId(toolAsk.mode.slice('show:'.length));
     } else if (toolAsk.mode.startsWith('cell:')) {
       const [, tableId, row, ...column] = toolAsk.mode.split(':');
       setId(tableId);

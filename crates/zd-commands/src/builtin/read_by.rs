@@ -63,7 +63,7 @@ pub struct ReadBy {
 /// The parameter columns a dataflow reads through `p`, with the add-ons it runs: the built-in steps' (as their settings
 /// name them), its fields' parameter columns, a field's own name where it falls back to the column of its name, each
 /// field's `_default`, `_min` and `_max` (the starter's limits), and what its scripts read.
-fn read_through_p(d: &Dataflow, add_ons: &[Arc<Dataflow>]) -> Vec<String> {
+pub(crate) fn read_through_p(d: &Dataflow, add_ons: &[Arc<Dataflow>]) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     let mut add = |n: String| {
         if !names.contains(&n) {

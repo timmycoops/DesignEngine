@@ -1051,6 +1051,18 @@ pub async fn reserves_rerun_params(object: ObjectId, only: Vec<String>, state: S
     .await?
 }
 
+/// A reserves table's setup as the Setup tab shows it (Table setup plan, decision 5): what it's run on, its dataflows and
+/// steps, each field's source, its parameter tables in order with what it reads from each. Edits go by `table.setup`.
+#[tauri::command]
+pub async fn table_setup_view(table: ObjectId, state: State<'_, AppState>) -> Result<zd_commands::builtin::SetupView, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let app = app.lock().unwrap();
+        zd_commands::builtin::setup_view(app.session.project(), app.session.log(), table).map_err(|e| e.to_string())
+    })
+    .await?
+}
+
 /// A dataflow and parameter tables as edited, for a column run on them.
 fn unsaved(dataflow: Option<zd_core::Dataflow>, tables: Option<Vec<(ObjectId, zd_core::ParameterTable)>>) -> zd_commands::builtin::Unsaved {
     zd_commands::builtin::Unsaved {

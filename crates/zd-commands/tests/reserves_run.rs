@@ -3533,8 +3533,10 @@ fn each_column_reads_its_own_measured_dip_and_a_table_may_take_a_design_dip() {
     assert_eq!(s.project().object(main).unwrap().revision, main_revision, "the dataflow untouched");
     let mut wrong = t.setup.clone().unwrap();
     wrong.sources.insert("dipp".into(), zd_core::FieldSource::Worked);
-    s.run("table.setup", json!({ "table": id, "setup": wrong })).unwrap();
-    let p = rerun_params(s.project(), s.log(), id, &[]).unwrap();
+    let saved = s.run("table.setup", json!({ "table": id, "setup": wrong })).unwrap_err();
+    assert!(saved.to_string().contains("the setup gives a source for dipp, a field Reserves and its add-ons haven't"), "{saved}");
+    let mut p = rerun_params(s.project(), s.log(), id, &[]).unwrap();
+    p.sources.insert("dipp".into(), zd_core::FieldSource::Worked);
     let refused = s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap_err();
     assert!(refused.to_string().contains("the setup says where dipp comes from, and Reserves has no field dipp"), "{refused}");
 }
@@ -3637,4 +3639,68 @@ fn a_looked_up_table_is_read_after_a_rename_and_names_are_unique() {
     let read = zd_commands::builtin::read_by(s.project(), factors).unwrap();
     assert!(read.readers.iter().any(|r| r.name == "Dragline" && r.how == "by name"), "{:?}", read.readers);
     assert!(read.columns.iter().find(|c| c.column == "dragline_total").unwrap().read_by.contains(&"Dragline".to_string()));
+}
+
+/// The Setup tab's view of a table (Table setup plan, decision 5, workstream 5). A table run by the starter with Waste
+/// allocation added: run on its blocks' one layer (all six picked), its dataflow `Reserves` and the dataflow's add-on;
+/// the add-on's allocations between `rom` and `final`, its checks last, each said to come from it; the dataflow's tables
+/// first, then the add-on's; `dip` from the block's measure. Edited as the tab edits it, each the table's next revision:
+/// its own parameter tables (`Case waste` first, its `rd` read, the assumptions' then given by it first), and a design
+/// dip from a parameter column, marked its own. An add-on that's a main dataflow, a parameter table that isn't one and a
+/// source for a field the dataflow hasn't are each refused, the table as it was.
+#[test]
+fn the_setup_tab_shows_what_fills_a_table_and_saves_each_edit() {
+    let mut s = session();
+    let ids = two_blocks(&mut s, [40.0, 60.0], None);
+    let main = starter_main(&mut s);
+    let (_, add_on) = s.add_waste_allocation(main).unwrap();
+    let id = created(&s.run("reserves.run", json!({ "dataflow": main, "blocks": ids, "stack": ALLOCATION_STACK, "layer": "reserves" })).unwrap())[0];
+    let view = zd_commands::builtin::setup_view(s.project(), s.log(), id).unwrap();
+    assert!(view.held && view.problems.is_empty(), "{:?}", view.problems);
+    assert_eq!((view.dataflow.name.as_str(), view.own_add_ons, view.own_tables), ("Reserves", false, false));
+    assert_eq!(view.add_ons.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["Waste allocation"]);
+    assert_eq!((view.blocks.layers.len(), view.blocks.named, view.blocks.picked), (1, 0, 6));
+    let step = |name: &str| view.steps.iter().position(|st| st.step == name).unwrap_or_else(|| panic!("{name}"));
+    let (dragline, rom, fin) = (step("dragline_system"), step("rom"), step("final"));
+    assert!(rom < dragline && dragline < fin, "the add-on's allocations between rom and final");
+    assert_eq!((view.steps[dragline].kind.as_str(), view.steps[dragline].from.as_str()), ("allocation", "Waste allocation"));
+    assert_eq!((view.steps[fin].kind.as_str(), view.steps[fin].from.as_str()), ("built-in", "Reserves"));
+    let last = view.steps.last().unwrap();
+    assert_eq!((last.kind.as_str(), last.from.as_str()), ("table script", "Waste allocation"));
+    assert_eq!((view.tables[0].from.as_str(), view.tables[0].table.name.as_str()), ("dataflow", "assumptions"));
+    assert!(view.tables[1..].iter().all(|t| t.from == "Waste allocation") && view.tables.len() > 1, "{:?}", view.tables.iter().map(|t| (&t.table.name, &t.from)).collect::<Vec<_>>());
+    let dip = view.fields.iter().find(|f| f.name == "dip").unwrap();
+    assert_eq!((dip.from.as_str(), dip.own.is_none()), ("Reserves", true));
+    assert!(matches!(dip.source, zd_core::FieldSource::Attribute { .. }), "{:?}", dip.source);
+    let method = view.fields.iter().find(|f| f.name == "method").unwrap();
+    assert!(method.words && method.from == "Waste allocation");
+
+    // The tab's edits: its own parameter tables, a design dip.
+    let revision = s.project().object(id).unwrap().revision;
+    let case = created(&s.run("parameters.save", json!({ "name": "Case waste", "csv": "when material,rd (t/m3)\nwaste,2.5\n" })).unwrap())[0];
+    let mut setup = view.setup.clone();
+    setup.tables = Some(vec![case, view.tables[0].table.id]);
+    setup.sources.insert("dip".into(), zd_core::FieldSource::Parameter { column: "design_dip".into() });
+    s.run("table.setup", json!({ "table": id, "setup": setup })).unwrap();
+    assert_eq!(s.project().object(id).unwrap().revision, revision + 1, "one edit, the table's next revision");
+    let view = zd_commands::builtin::setup_view(s.project(), s.log(), id).unwrap();
+    assert!(view.own_tables && view.problems.is_empty(), "{:?}", view.problems);
+    assert_eq!((view.tables[0].table.name.as_str(), view.tables[0].from.as_str(), view.tables[0].read.clone()), ("Case waste", "table", vec!["rd".to_string()]));
+    assert!(view.tables[1].shadowed.contains(&("rd".to_string(), "Case waste".to_string())), "{:?}", view.tables[1].shadowed);
+    assert_eq!(view.fields.iter().find(|f| f.name == "dip").unwrap().own, Some(zd_core::FieldSource::Parameter { column: "design_dip".into() }));
+
+    // Refused, the table as it was.
+    let revision = s.project().object(id).unwrap().revision;
+    let refuse = |s: &mut Session, change: &dyn Fn(&mut zd_core::TableSetup)| {
+        let mut wrong = view.setup.clone();
+        change(&mut wrong);
+        s.run("table.setup", json!({ "table": id, "setup": wrong })).unwrap_err().to_string()
+    };
+    assert!(refuse(&mut s, &|w| w.add_ons = Some(vec![main])).contains("Reserves is a main dataflow, not an add-on"));
+    assert!(refuse(&mut s, &|w| w.tables = Some(vec![add_on])).contains("Waste allocation isn't a parameter table"));
+    assert!(refuse(&mut s, &|w| {
+        w.sources.insert("dipp".into(), zd_core::FieldSource::Worked);
+    })
+    .contains("a source for dipp"));
+    assert_eq!(s.project().object(id).unwrap().revision, revision);
 }

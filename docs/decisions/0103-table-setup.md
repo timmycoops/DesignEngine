@@ -138,6 +138,39 @@ Objects table's formulas and scripts.
 | `a_looked_up_table_is_read_after_a_rename_and_names_are_unique` (reserves_run.rs) | the plan's cases: a second `Method factors` refused naming the first, a rename to it refused; renamed after saving, the dragline still 187,500 m³, the audit naming it by its new name; Read by lists the dataflow by name, its factors read | 1e-9, exact |
 | `the_parameters_a_script_reads_are_read_off_it` (zd-core) | `p.min_burden`, `u.p.dip`, `getattr(p, "rd_default")` read; a lookup's and a curve's columns; a column named as it runs, every column | exact |
 
+## Built: workstream 5, the Setup tab
+
+- **The Setup tab** in the results dock, beside Tables and Dataflow (the Reserves row's Setup), for the table picked
+  there or anywhere, else the latest:
+  - **Run on:** the blocks' layers (added, moved, taken out) and the filter (an attribute and its words, as the bench
+    rules take them), or the blocks named with Pick by their layers instead; how many it picks now; the seam model or
+    the stack; the rows of its own.
+  - **Dataflows:** the main dataflow, picked from the project's; its add-ons in order, the dataflow's until one is
+    changed, then the table's own, with Use the dataflow's add-ons.
+  - **Steps** in the order run, each its kind and, where it isn't the main's, the add-on it comes from; a formula or
+    allocation opens in the Parameters tab. Table scripts and calculated columns said under them.
+  - **Parameter tables** in the order read, the dataflow's until changed then the table's own (Use the dataflow's
+    tables), each opening in the Parameters tab, with the columns this table reads from it, those nothing here names
+    (orange) and those an earlier table gives first; its add-ons' tables after, as their add-on lists them; tables looked
+    up by name.
+  - **Fields:** every field and word field with where the dataflow (or its add-on) takes it from; a source of the
+    table's own picked beside it (the solid's volume, plan area or thickness, a block attribute, a parameter column,
+    worked by a step), marked blue, and the dataflow's put back by picking it again.
+  - **Run again** runs every block from the setup into the table.
+- **Every edit is `table.setup`**, the table's next revision, one undo. A table made before setups shows the one its run
+  gives and takes it as its own on the first edit.
+- **`table.setup` checks what the tab can set:** each add-on an add-on, each table a parameter table, every source a
+  field or word field the dataflow and its add-ons have, the add-ons put in as a run would; a refusal leaves the table as
+  it was. (A source for a field the dataflow hasn't was refused only when the table ran.)
+- **`setup_view`** (`setup_view.rs`, the Tauri `table_setup_view`, `setup_view` in Python): the tab's view, read only.
+  Anything that stops it putting together is listed as a problem at the tab's top.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `the_setup_tab_shows_what_fills_a_table_and_saves_each_edit` (reserves_run.rs) | the starter with Waste allocation added, on two blocks' one layer: 6 blocks picked, dataflow Reserves, add-on Waste allocation (the dataflow's); `dragline_system` an allocation from it between `rom` and `final`, its checks last; the dataflow's tables first, then the add-on's; `dip` the block's measure. Its own tables (`Case waste` first, `rd` read, the assumptions' `rd` then given first by it) and a design dip from a parameter column: one revision, the source marked its own. A main dataflow as an add-on, a dataflow as a parameter table and a source for `dipp` refused, the table as it was | exact |
+| `each_column_reads_its_own_measured_dip_and_a_table_may_take_a_design_dip` (reserves_run.rs) | as before; a source for `dipp` now refused by `table.setup`, and a run given it still stops | exact |
+| The demo pit (by hand, `setup_view` from Python) | Base and 50m, made before setups: filled from their runs, 1,815 and 3,580 blocks picked from one layer, the assumptions 53 columns read, 19 fields, 15 steps, no problems; 6 and 8 ms | exact |
+
 ## Known limits
 
 - Read by can't see a parameter a script names as it runs through `p` (`getattr(p, name)` with a worked name): the
@@ -147,6 +180,8 @@ Objects table's formulas and scripts.
 - An add-on's unsaved edits aren't run live in the notebook (the live run takes the main dataflow as edited): save it
   to see them.
 - A dataflow made by Add waste allocation before add-ons (0102, workstream 5) keeps its steps in it; it runs as it did.
-- A setup is seen and changed from Python or `table.setup` for now; the Setup tab is workstream 5.
+- The Setup tab hasn't an editor for the table's own parameter rows (the case's): they're shown as a count, set from
+  the run or `table.setup`.
+- Built and checked by its tests and from Python on the demo pit; not yet tried in the app by hand.
 - A setup filled from an older run keeps that run's own rows and model; a table made outside a reserves run (a table
   script's) has none.

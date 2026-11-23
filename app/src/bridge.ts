@@ -1404,6 +1404,59 @@ export interface ReadBy {
   columns: { column: string; read_by: string[]; shadowed_by: string[] }[];
 }
 export const parametersReadBy = (table: string) => invoke<ReadBy>('parameters_read_by', { table });
+
+/** Where a field's value comes from (decision 0070): the solid's measures, a block attribute, a parameter column, a step. */
+export type FieldSource =
+  | { from: 'volume' }
+  | { from: 'plan_area' }
+  | { from: 'thickness' }
+  | { from: 'attribute'; attribute: string }
+  | { from: 'parameter'; column: string }
+  | { from: 'worked' };
+
+/** What fills a reserves table (Table setup plan, decision 1), as `table.setup` saves it. */
+export interface TableSetup {
+  dataflow: string;
+  add_ons?: string[];
+  tables?: string[];
+  blocks: { layers?: string[]; filter?: Record<string, string>; ids?: string[] };
+  model?: string;
+  stack?: string[];
+  parameters?: ParameterTable;
+  sources?: Record<string, FieldSource>;
+}
+
+/** An object a setup names, as it is now; `missing` where it's been deleted since. */
+export interface SetupNamed {
+  id: string;
+  name: string;
+  revision: number;
+  missing?: boolean;
+}
+
+/** A reserves table's setup as the Setup tab shows it (Table setup plan, decision 5). */
+export interface SetupView {
+  table: SetupNamed;
+  held: boolean;
+  setup: TableSetup;
+  dataflow: SetupNamed;
+  add_ons: SetupNamed[];
+  own_add_ons: boolean;
+  tables: (SetupNamed & { from: string; read: string[]; unread: string[]; shadowed: [string, string][] })[];
+  own_tables: boolean;
+  looked_up: SetupNamed[];
+  blocks: { layers: [string, string][]; filter: Record<string, string>; named: number; picked: number };
+  model?: SetupNamed;
+  stack: string[];
+  own_rows: number;
+  fields: { name: string; words: boolean; source: FieldSource; from: string; own?: FieldSource }[];
+  steps: { step: string; kind: string; on: boolean; from: string }[];
+  calculated: string[];
+  problems: string[];
+  mains: SetupNamed[];
+  add_on_choices: SetupNamed[];
+}
+export const tableSetupView = (table: string) => invoke<SetupView>('table_setup_view', { table });
 /** The engine's check of a parameter table as edited, before it's saved: resolves, or rejects with why. */
 export const parametersCheck = (content: ParameterTable) => invoke<null>('parameters_check', { content });
 /** The engine's check of a dataflow as edited, before it's saved. */

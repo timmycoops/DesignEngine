@@ -75,6 +75,7 @@ export type ToolIcon =
   | 'compare'
   | 'reserves-table'
   | 'notebook'
+  | 'setup'
   | 'parameters'
   | 'report'
   | 'workflow'
@@ -287,6 +288,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'params', stage: 'reserves', label: 'Parameters', tip: 'parameter tables and dataflows edited as grids, a picked solid\'s values marked where they come from', icon: 'parameters', panel: 'params' },
   { key: 'restable', stage: 'reserves', label: 'Tables', tip: "every table: the objects, and each reserves table's leaves as a grid grouped by strip, block or seam, or a node's fields broken down from Imported to Scheduled", icon: 'reserves-table', panel: 'restable' },
   { key: 'notebook', stage: 'reserves', label: 'Dataflow', tip: "a block's column through its dataflow: its inputs and steps in a strip, what each step read and wrote, and the block's units before and after it", icon: 'notebook', panel: 'notebook' },
+  { key: 'setup', stage: 'reserves', label: 'Setup', tip: "table setup: what fills a reserves table: the blocks it runs on, its dataflows and add-ons, where each field comes from, its parameter tables in order, and Run again", icon: 'setup', panel: 'setup' },
   { key: 'workflow:report', stage: 'reserves', label: 'Report', tip: "Writes a workflow's report, every case from its latest run", icon: 'report', panel: 'workflow' },
 
   // Always there, whatever the stage.
@@ -436,7 +438,7 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     ...MOVE_TOOLS,
   ],
   geology: ['import.vulcan_grid', 'seam.suggest', 'seam.build', 'seam.relink'],
-  reserves: ['reserves', 'params', 'restable', 'notebook', 'reserves:compare', 'surfaces:compare', 'workflow:report'],
+  reserves: ['reserves', 'params', 'restable', 'notebook', 'setup', 'reserves:compare', 'surfaces:compare', 'workflow:report'],
 };
 
 /** At the right of every row, whatever the stage. */

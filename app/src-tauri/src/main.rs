@@ -26,6 +26,7 @@ fn main() {
             commands::run_workflow,
             commands::add_waste_allocation,
             commands::parameters_read_by,
+            commands::table_setup_view,
             commands::run_all_cases,
             commands::capture_workflow,
             commands::add_workflow_step,
