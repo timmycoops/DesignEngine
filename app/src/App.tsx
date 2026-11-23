@@ -979,6 +979,15 @@ export default function App() {
       }
     });
 
+  /** A CSV read in as a table of the project (Tables and scripts plan, decision 12), shown in the Tables tab. */
+  const onImportTable = () =>
+    attempt(async () => {
+      const picked = await open({ multiple: false, filters: [{ name: 'Table', extensions: ['csv'] }] });
+      if (typeof picked !== 'string') return;
+      setStatus({ text: `Reading ${picked}…` });
+      if (await run('table.import', { path: picked })) openTool('restable');
+    });
+
   /** Writes objects to a file picked in the save dialog, which has already asked before replacing one. */
   const exportObjects = (objects: ObjectSummary[], format: 'dxf' | 'csv', suggested: string) =>
     attempt(async () => {
@@ -1397,6 +1406,7 @@ export default function App() {
     'import.surfaces': onImportSurface,
     'import.vulcan_grid': onImportVulcan,
     'import.strings': onImportStrings,
+    'import.table': onImportTable,
     'import.solids': () => onImportSolids('files', false),
     'import.solids_folder': () => onImportSolids('folder', false),
     'import.solids_repaired': () => onImportSolids('files', true),

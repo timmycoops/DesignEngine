@@ -1254,7 +1254,7 @@ pub async fn formula_trace(content: zd_core::Dataflow, step: String, solid: Obje
         let picked = project.object(solid).ok_or("the picked solid isn't in the project")?;
         let blocks: Vec<ObjectId> = project.objects().filter(|o| o.layer == picked.layer && matches!(o.body, zd_core::Body::Solid(_))).map(|o| o.id).collect();
         let model = project.objects().find(|o| matches!(o.body, zd_core::Body::SeamModel(_))).map(|o| o.id).ok_or("the project has no seam model to put the column in order")?;
-        let p = zd_commands::builtin::RunReservesParams { dataflow: ObjectId::new(), blocks, model: Some(model), stack: Vec::new(), layer: "trace".into(), parameters: None, name: String::new(), table: None, only: Vec::new(), previous: None, add_ons: None, sources: Default::default(), tables: None };
+        let p = zd_commands::builtin::RunReservesParams { dataflow: ObjectId::new(), blocks, model: Some(model), stack: Vec::new(), layer: "trace".into(), parameters: None, name: String::new(), table: None, only: Vec::new(), previous: None, add_ons: None, sources: Default::default(), tables: None, input: None };
         let get = |id: ObjectId| project.object(id).cloned().ok_or(zd_commands::CommandError::MissingObject(id));
         let (content, _) = bound(project, content)?;
         zd_commands::builtin::formula_trace(&get, &std::sync::Arc::new(content), &p, &step, solid).map_err(|e| e.to_string())

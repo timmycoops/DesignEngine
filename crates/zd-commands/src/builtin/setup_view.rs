@@ -65,6 +65,17 @@ pub struct SetupStep {
     pub from: String,
 }
 
+/// The table a setup reads in place of the blocks: its rows and columns (words or numbers), for the tab's mapping.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InputView {
+    pub table: Named,
+    pub rows: usize,
+    pub columns: Vec<(String, bool)>,
+    /// The attributes the run reads off each piece, for the mapping: the dataflow's levels, `horizon`, `seam`,
+    /// `material`, `bench` and `bench_floor`, `case`, and each field's block attribute.
+    pub reads: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SetupView {
     pub table: Named,
@@ -81,6 +92,10 @@ pub struct SetupView {
     /// The tables its scripts look up by name, under the name each is read by.
     pub looked_up: Vec<Named>,
     pub blocks: BlocksView,
+    /// A table read in place of the blocks (Tables and scripts plan, decision 12): the table, its rows, and its columns
+    /// for the mapping; its volumes are imported, not of record.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<InputView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<Named>,
     pub stack: Vec<String>,
@@ -228,6 +243,11 @@ pub fn setup_view(project: &Project, log: &[crate::LogEntry], table: ObjectId) -
             problems.push(format!("the table gives a source for {name}, a field the dataflow and its add-ons haven't"));
         }
     }
+    if let Some(input) = &setup.input
+        && let Err(e) = super::reserves_run::pieces_of_table(&|id| project.object(id).cloned().ok_or(CommandError::MissingObject(id)), input)
+    {
+        problems.push(e.to_string());
+    }
     let steps = merged.steps.iter().map(|s| SetupStep { step: s.step.clone(), kind: step_kind(s).into(), on: s.on, from: from_of(Some(&s.step), None) }).collect();
 
     Ok(SetupView {
@@ -240,6 +260,24 @@ pub fn setup_view(project: &Project, log: &[crate::LogEntry], table: ObjectId) -
         own_tables,
         looked_up,
         blocks,
+        input: setup.input.as_ref().map(|i| {
+            let (rows, columns) = match project.object(i.table).map(|o| &o.body) {
+                Some(Body::Table(t)) => (t.rows(), t.columns.iter().map(|c| (c.name.clone(), matches!(c.values, zd_core::ColumnValues::Number(_)))).collect()),
+                _ => (0, Vec::new()),
+            };
+            let mut reads: Vec<String> = merged.levels.iter().map(|l| l.attribute.clone()).collect();
+            for a in ["horizon", "seam", "material", "bench", "bench_floor", "case"] {
+                reads.push(a.to_string());
+            }
+            for source in merged.fields.iter().map(|f| setup.sources.get(&f.field.name).unwrap_or(&f.source)).chain(merged.words.iter().map(|w| setup.sources.get(&w.name).unwrap_or(&w.source))) {
+                if let FieldSource::Attribute { attribute } = source {
+                    reads.push(attribute.clone());
+                }
+            }
+            let mut seen = std::collections::HashSet::new();
+            reads.retain(|r| seen.insert(r.to_ascii_lowercase()));
+            InputView { table: named(project, i.table), rows, columns, reads }
+        }),
         model: setup.model.map(|id| named(project, id)),
         stack: setup.stack.clone(),
         own_rows: setup.parameters.as_ref().map_or(0, |p| p.rows.len()),

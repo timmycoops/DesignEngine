@@ -114,7 +114,8 @@ fn default_name() -> String {
 pub struct RunReservesParams {
     pub dataflow: ObjectId,
     /// The block solids: each carries `strip`, `block`, `horizon`, `material` and `seam`, and `bench` with `bench_floor`
-    /// where it was benched; `case` where a workflow case made it.
+    /// where it was benched; `case` where a workflow case made it. None with `input`.
+    #[serde(default)]
     pub blocks: Vec<ObjectId>,
     /// The seam model whose stack orders each column; or give `stack`.
     #[serde(default)]
@@ -150,6 +151,10 @@ pub struct RunReservesParams {
     /// The parameter tables it reads, in order, in place of the dataflow's (Table setup plan, decision 4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tables: Option<Vec<ObjectId>>,
+    /// A table read in place of the blocks, a row a piece, its columns named by the mapping (Tables and scripts plan,
+    /// decision 12): its volumes are imported, not of record, and the run says so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<zd_core::TableInput>,
 }
 
 /// What a step writes (decision 0074): a piece of a unit on a leaf of the reserves table, under a folder. The leaf is
@@ -470,6 +475,96 @@ pub(crate) struct Prepared {
     /// Which add-on each of the run's steps came from, by step name; a step of the main dataflow has none.
     step_from: BTreeMap<String, ObjectId>,
     audit_tables: String,
+    /// The pieces read from a table (Tables and scripts plan, decision 12), by their ids: the volume from its column, and
+    /// the thickness or plan area where mapped. Empty where the run reads block solids.
+    imported: HashMap<ObjectId, ImportedPiece>,
+    /// The table read and its revision, for the run's words and the audit: none for block solids.
+    imported_from: Option<String>,
+}
+
+/// A row of a table read as a block piece: its volume, and its thickness or plan area where the mapping gives them.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ImportedPiece {
+    volume: f64,
+    thickness: Option<f64>,
+    area: Option<f64>,
+}
+
+/// A table's rows as pieces, each piece's volume and thickness or area by its id, and the table's name and revision.
+pub(crate) type TablePieces = (Vec<Arc<Object>>, HashMap<ObjectId, ImportedPiece>, String);
+
+/// A table's rows as block pieces (decision 12 of 0099): each row's columns its attributes under their own names, the
+/// mapped ones under the name the run reads; the volume from its column, a row without one refused, as is a mapping
+/// naming a column the table hasn't. Each piece's id is the table's with its row, so it's the same every run.
+pub(crate) fn pieces_of_table(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>, input: &zd_core::TableInput) -> Result<TablePieces, CommandError> {
+    let object = get(input.table)?;
+    let Body::Table(t) = &object.body else { return Err(CommandError::WrongKind { id: input.table, expected: ObjectKind::Table, found: object.kind() }) };
+    let map = &input.map;
+    let numbers = |what: &str, column: &str| -> Result<&Vec<Option<f64>>, CommandError> {
+        match t.column(column).map(|c| &c.values) {
+            Some(zd_core::ColumnValues::Number(v)) => Ok(v),
+            Some(_) => Err(CommandError::Invalid(format!("{}'s {column}, mapped as the {what}, holds words, not numbers", object.name))),
+            None => Err(CommandError::Invalid(format!("the mapping reads the {what} from {column}, a column {} hasn't", object.name))),
+        }
+    };
+    if map.volume.trim().is_empty() {
+        return Err(CommandError::Invalid(format!("the mapping names no volume column: say which of {}'s columns is the volume", object.name)));
+    }
+    let volume = numbers("volume", &map.volume)?;
+    let thickness = map.thickness.as_deref().map(|c| numbers("thickness", c)).transpose()?;
+    let area = map.area.as_deref().map(|c| numbers("plan area", c)).transpose()?;
+    for (attribute, column) in &map.columns {
+        if t.column(column).is_none() {
+            return Err(CommandError::Invalid(format!("the mapping reads {attribute} from {column}, a column {} hasn't", object.name)));
+        }
+    }
+    let value = |column: &str, row: usize| -> Option<AttrValue> {
+        match t.column(column).map(|c| &c.values) {
+            Some(zd_core::ColumnValues::Number(v)) => v[row].map(AttrValue::Number),
+            Some(zd_core::ColumnValues::Text(v)) => v[row].clone().filter(|w| !w.trim().is_empty()).map(|w| AttrValue::Text(w.trim().to_string())),
+            None => None,
+        }
+    };
+    let mut pieces = Vec::with_capacity(t.rows());
+    let mut imported = HashMap::with_capacity(t.rows());
+    for row in 0..t.rows() {
+        let mut attributes = Attributes::new();
+        for c in &t.columns {
+            if let Some(v) = value(&c.name, row) {
+                attributes.insert(c.name.clone(), v);
+            }
+        }
+        for (attribute, column) in &map.columns {
+            match value(column, row) {
+                Some(v) => attributes.insert(attribute.clone(), v),
+                None => attributes.remove(attribute),
+            };
+        }
+        let name = match attributes.get("name") {
+            Some(AttrValue::Text(n)) => n.clone(),
+            _ => format!("{} row {}", object.name, row + 1),
+        };
+        let v = volume[row].filter(|v| v.is_finite()).ok_or_else(|| CommandError::Invalid(format!("{name} has no volume in {}: every row of a table read as blocks gives one", map.volume)))?;
+        let id = ObjectId::from_u128(input.table.as_u128().wrapping_add(((row as u128) + 1) << 64));
+        imported.insert(id, ImportedPiece { volume: v, thickness: thickness.and_then(|t| t[row]), area: area.and_then(|a| a[row]) });
+        pieces.push(Arc::new(Object { id, revision: object.revision, name, layer: object.layer, provenance: object.provenance, attributes, body: Body::Table(Arc::new(Table::default())) }));
+    }
+    Ok((pieces, imported, format!("{} r{}", object.name, object.revision)))
+}
+
+/// The horizons top down by a table's order column (decision 12): each horizon at its smallest order, smallest first.
+fn horizons_by_order(pieces: &[Arc<Object>], input: &zd_core::TableInput) -> Option<Vec<String>> {
+    let column = input.map.order.as_deref()?;
+    let mut order: Vec<(String, f64)> = Vec::new();
+    for o in pieces {
+        let (Some(h), Some(AttrValue::Number(k))) = (attribute_ci(&o.attributes, "horizon").map(attribute_word), o.attributes.get(column)) else { continue };
+        match order.iter_mut().find(|(n, _)| *n == h) {
+            Some((_, was)) => *was = was.min(*k),
+            None => order.push((h, *k)),
+        }
+    }
+    order.sort_by(|a, b| a.1.total_cmp(&b.1));
+    Some(order.into_iter().map(|(h, _)| h).collect())
 }
 
 impl Command for RunReserves {
@@ -541,8 +636,12 @@ impl Command for RunReserves {
         let when = if p.table.is_some() { format!("{}, run again", utc_words(now)) } else { utc_words(now) };
         // What fills each table it makes (Table setup plan, decision 1): kept with the table, so Run again runs it.
         let objects: Vec<&Arc<Object>> = inputs.objects().collect();
-        let setup = zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons.clone(), tables: p.tables.clone(), blocks: zd_core::BlockPick::of_blocks(objects.iter().copied(), &p.blocks), model: p.model, stack: p.stack.clone(), parameters: p.parameters.clone(), sources: p.sources.clone() };
+        let setup = zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons.clone(), tables: p.tables.clone(), blocks: zd_core::BlockPick::of_blocks(objects.iter().copied(), &p.blocks), model: p.model, stack: p.stack.clone(), parameters: p.parameters.clone(), sources: p.sources.clone(), input: p.input.clone() };
         let mut out = outcome(&prepared, p, ran, stopped, started, &when, &setup);
+        // Read from a table (decision 12 of 0099): its volumes are imported, not of record, and the run says so.
+        if let Some(from) = &prepared.imported_from {
+            out.notes.push(crate::Note::warning(crate::Code::ImportedVolumes, format!("volumes imported from {from}, not measured from solids: they're not the volumes of record")));
+        }
         if let Some(object) = into {
             into_table(&mut out, &object, &prepared, p)?;
         }
@@ -637,7 +736,16 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
         };
         tables.push(table.clone());
     }
+    // A table read in place of the blocks (decision 12 of 0099): its rows as pieces.
+    let from_table = match &p.input {
+        Some(input) => Some(pieces_of_table(get, input)?),
+        None => None,
+    };
     let horizons: Vec<String> = match p.model {
+        None if p.stack.iter().all(|h| h.trim().is_empty()) && from_table.is_some() => {
+            let input = p.input.as_ref().expect("with from_table");
+            horizons_by_order(&from_table.as_ref().expect("given").0, input).unwrap_or_default()
+        }
         Some(id) => {
             let object = get(id)?;
             let Body::SeamModel(model) = &object.body else {
@@ -688,11 +796,38 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     let lower: Vec<String> = dataflow.levels[split..].iter().map(|l| l.attribute.clone()).collect();
     let mut columns: BTreeMap<ColumnKey, Vec<Arc<Object>>> = BTreeMap::new();
     let mut unplaced = Vec::new();
-    'blocks: for &id in &p.blocks {
-        let object = get(id)?;
-        if !matches!(object.body, Body::Solid(_)) {
-            return Err(CommandError::WrongKind { id, expected: ObjectKind::Solid, found: object.kind() });
+    let (blocks, imported, imported_from): (Vec<Arc<Object>>, HashMap<ObjectId, ImportedPiece>, Option<String>) = match from_table {
+        Some((pieces, imported, from)) => {
+            // Refused before it runs (decision 12): a piece with no material, or a horizon the stack hasn't.
+            let mut missing: Vec<String> = Vec::new();
+            for o in &pieces {
+                let h = attribute_ci(&o.attributes, "horizon").map(attribute_word).unwrap_or_default();
+                if !horizons.iter().any(|k| k.eq_ignore_ascii_case(&h)) && !missing.contains(&h) {
+                    missing.push(h);
+                }
+                if attribute_ci(&o.attributes, "material").map(attribute_word).unwrap_or_default().is_empty() {
+                    return Err(CommandError::Invalid(format!("{} has no material: map the column that says coal or waste to material", o.name)));
+                }
+            }
+            if !missing.is_empty() {
+                let named: Vec<String> = missing.iter().map(|h| if h.is_empty() { "(none)".to_string() } else { h.clone() }).collect();
+                return Err(CommandError::Invalid(format!("{from}'s horizons {} aren't in the stack ({}): map the horizon column, or give the stack", named.join(", "), horizons.join(", "))));
+            }
+            (pieces, imported, Some(from))
         }
+        None => {
+            let mut blocks = Vec::with_capacity(p.blocks.len());
+            for &id in &p.blocks {
+                let object = get(id)?;
+                if !matches!(object.body, Body::Solid(_)) {
+                    return Err(CommandError::WrongKind { id, expected: ObjectKind::Solid, found: object.kind() });
+                }
+                blocks.push(object);
+            }
+            (blocks, HashMap::new(), None)
+        }
+    };
+    'blocks: for object in blocks {
         let word = |key: &str| attribute_ci(&object.attributes, key).map(attribute_word).filter(|w| !w.is_empty());
         let mut path = Vec::with_capacity(split);
         for level in &dataflow.levels[..split] {
@@ -709,7 +844,7 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
     }
     let audit_tables = audit_tables.join("; ");
     let audit_dataflow = format!("{name} as edited");
-    Ok(Prepared { name: name.to_string(), failing, dataflow: dataflow.clone(), fields, tables, horizons, steps, table_steps, declared, upper, lower, columns, unplaced, audit_dataflow, audit_tables, audit_add_ons, step_from })
+    Ok(Prepared { name: name.to_string(), failing, dataflow: dataflow.clone(), fields, tables, horizons, steps, table_steps, declared, upper, lower, columns, unplaced, audit_dataflow, audit_tables, audit_add_ons, step_from, imported, imported_from })
 }
 
 /// A value from the parameter tables, read in order.
@@ -777,7 +912,15 @@ fn bench_of(object: &Object) -> Result<Option<Bench>, String> {
 
 /// A block as a unit: its stack place, labels, bench and a value a field.
 fn unit_of(prepared: &Prepared, object: &Object) -> Result<(u32, Labels, Option<Bench>, Vec<f64>), String> {
-    let Body::Solid(solid) = &object.body else { unreachable!("blocks are checked to be solids") };
+    // Its volume and plan area: the solid's own, or a table row's columns (decision 12 of 0099).
+    let (volume, area, thickness) = match (&object.body, prepared.imported.get(&object.id)) {
+        (Body::Solid(solid), _) => (solid.volume(), plan_area(solid.mesh()), None),
+        (_, Some(piece)) => {
+            let area = piece.area.or_else(|| piece.thickness.filter(|t| *t > 0.0).map(|t| piece.volume / t)).unwrap_or(f64::NAN);
+            (piece.volume, area, piece.thickness)
+        }
+        _ => unreachable!("blocks are solids or a table's rows"),
+    };
     let word = |key: &str| attribute_ci(&object.attributes, key).map(attribute_word).unwrap_or_default();
     let horizon = word("horizon");
     let stack = prepared
@@ -789,21 +932,17 @@ fn unit_of(prepared: &Prepared, object: &Object) -> Result<(u32, Labels, Option<
     if material.is_empty() {
         return Err(format!("{} has no material", object.name));
     }
-    let volume = solid.volume();
-    let area = plan_area(solid.mesh());
     let mut values = Vec::with_capacity(prepared.dataflow.fields.len());
     for f in &prepared.dataflow.fields {
         let summed = f.field.add_up == AddUp::Sum;
         let value = match &f.source {
             FieldSource::Volume => volume,
             FieldSource::PlanArea => area,
-            FieldSource::Thickness => {
-                if area > 0.0 {
-                    volume / area
-                } else {
-                    0.0
-                }
-            }
+            FieldSource::Thickness => match thickness {
+                Some(t) => t,
+                None if area > 0.0 => volume / area,
+                None => 0.0,
+            },
             FieldSource::Attribute { attribute } => match attribute_ci(&object.attributes, attribute) {
                 Some(AttrValue::Number(n)) => *n,
                 _ => parameter(&prepared.tables, &object.attributes, &f.field.name).unwrap_or(f64::NAN),
@@ -1054,6 +1193,9 @@ fn begin_column<'a>(prepared: &'a Prepared, key: &ColumnKey, blocks: &[Arc<Objec
         attributes.push(object.attributes.clone());
         if let Body::Solid(solid) = &object.body {
             block_area = block_area.max(plan_area(solid.mesh()));
+        } else if let Some(piece) = prepared.imported.get(&object.id) {
+            let area = piece.area.or_else(|| piece.thickness.filter(|t| *t > 0.0).map(|t| piece.volume / t)).unwrap_or(0.0);
+            block_area = block_area.max(area);
         }
     }
     let volume = prepared.fields.volume();
@@ -3207,7 +3349,12 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
         columns.extend(balance_columns(&written, &moved, v));
     }
     columns.extend(ratio_columns(&columns));
-    for (name, words) in [("run", when.to_string()), ("dataflow", prepared.audit_dataflow.clone()), ("parameters", prepared.audit_tables.clone())] {
+    let mut audit = vec![("run", when.to_string()), ("dataflow", prepared.audit_dataflow.clone()), ("parameters", prepared.audit_tables.clone())];
+    // Read from a table, not solids (decision 12 of 0099): its volumes are imported, not of record.
+    if let Some(from) = &prepared.imported_from {
+        audit.push(("input", format!("imported from {from}: volumes not of record")));
+    }
+    for (name, words) in audit {
         columns.push(TableColumn::text(&format!("Summary\\Audit\\{name}"), leaves.iter().map(|_| Some(words.clone()).filter(|w| !w.is_empty())).collect()));
     }
     Table { columns, calculated: Vec::new(), setup: None, objects: false }
@@ -3508,8 +3655,8 @@ pub fn rerun_params(project: &zd_core::Project, log: &[crate::LogEntry], table: 
     let object = project.object(table).ok_or(CommandError::MissingObject(table))?;
     let record = table_run(log, object);
     let setup = setup_of(project, log, table)?;
-    let blocks = setup.blocks.resolve(project.objects());
-    if blocks.is_empty() {
+    let blocks = if setup.input.is_some() { Vec::new() } else { setup.blocks.resolve(project.objects()) };
+    if blocks.is_empty() && setup.input.is_none() {
         return Err(CommandError::Invalid(format!("{}'s setup picks no blocks: nothing to run again", object.name)));
     }
     // The run's own settings the setup doesn't hold (the layer and the name), from the table itself.
@@ -3528,6 +3675,7 @@ pub fn rerun_params(project: &zd_core::Project, log: &[crate::LogEntry], table: 
         add_ons: setup.add_ons,
         sources: setup.sources,
         tables: setup.tables,
+        input: setup.input,
     })
 }
 
@@ -3543,7 +3691,7 @@ pub fn setup_of(project: &zd_core::Project, log: &[crate::LogEntry], table: Obje
     let p: RunReservesParams = serde_json::from_value(record.params.clone()).map_err(|e| CommandError::Invalid(format!("the run that made {} can't be read again: {e}", object.name)))?;
     let blocks: Vec<ObjectId> = p.blocks.into_iter().filter(|id| project.object(*id).is_some()).collect();
     let all: Vec<&Arc<Object>> = project.objects().collect();
-    Ok(zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons, tables: p.tables, blocks: zd_core::BlockPick::of_blocks(all.iter().copied(), &blocks), model: p.model, stack: p.stack, parameters: p.parameters, sources: p.sources })
+    Ok(zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons, tables: p.tables, blocks: zd_core::BlockPick::of_blocks(all.iter().copied(), &blocks), model: p.model, stack: p.stack, parameters: p.parameters, sources: p.sources, input: p.input })
 }
 
 /// The reserves run that last wrote a table: the run its revision came from, or where a person has since entered values

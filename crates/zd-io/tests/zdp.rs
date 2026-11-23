@@ -271,6 +271,10 @@ fn parameter_tables_dataflows_and_results_tables_come_back_exactly() {
             stack: vec!["OB".into(), "U".into()],
             parameters: None,
             sources: [("dip".to_string(), zd_core::FieldSource::Parameter { column: "design_dip".into() })].into(),
+            input: Some(zd_core::TableInput {
+                table: zd_core::ObjectId::new(),
+                map: zd_core::InputMap { volume: "Vol_m3".into(), thickness: Some("Thk_m".into()), columns: [("seam".to_string(), "Seam_Name".to_string())].into(), ..Default::default() },
+            }),
         }),
         objects: false,
     };

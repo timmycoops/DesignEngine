@@ -114,6 +114,7 @@ export type ToolAction =
   | 'import.surfaces'
   | 'import.vulcan_grid'
   | 'import.strings'
+  | 'import.table'
   | 'import.solids'
   | 'import.solids_folder'
   | 'import.solids_repaired'
@@ -208,6 +209,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'import.surfaces', stage: 'project', label: 'Import surfaces', tip: 'Vulcan .00t, DXF 3DFACE or polyface, or an XYZ or CSV grid', command: 'surface.import', action: 'import.surfaces', menu: { in: 'import', at: 1, name: 'Surfaces…' } },
   { key: 'import.strings', stage: 'project', label: 'Import strings', tip: 'DXF polylines and lines, or CSV with x, y and z columns', command: 'string.import', action: 'import.strings', menu: { in: 'import', at: 3, name: 'Strings…' } },
   { key: 'import.deswik', stage: 'project', label: 'Import a Deswik drawing', tip: 'Layers of a Deswik drawing: strings with their projection details, surfaces and solids', command: 'deswik.import', action: 'import.deswik', menu: { in: 'import', at: 8, name: 'Deswik drawing (.dcf)…', rule: true } },
+  { key: 'import.table', stage: 'project', label: 'Import a table', tip: "A CSV read in as a table: a Deswik or Vulcan reserves export, or blocks with a site's own names, to run a dataflow on by a mapping in the Setup tab", command: 'table.import', action: 'import.table', menu: { in: 'import', at: 9.5, name: 'A table (CSV)…' } },
   { key: 'import.spry', stage: 'project', label: 'Import a Spry project', tip: "Block solids named by their node paths with Spry's values, and design-layer strings and solids", command: 'spry.import', action: 'import.spry', menu: { in: 'import', at: 9, name: 'Spry project (.spry)…' } },
   { key: 'export.selected_dxf', stage: 'project', label: 'Export what is selected to DXF', tip: 'The selected strings, surfaces and solids as one DXF', action: 'export.selected_dxf', needs: 'selected-dxf', menu: { in: 'export', at: 1, name: 'Selected to DXF…' } },
   { key: 'export.selected_strings', stage: 'project', label: 'Export selected strings to CSV', tip: 'The selected strings as x, y and z rows', action: 'export.selected_strings', needs: 'selected-strings', menu: { in: 'export', at: 2, name: 'Selected strings to CSV…' } },

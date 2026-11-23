@@ -77,6 +77,9 @@ pub struct CaseFigures {
 pub struct ReservesFigures {
     pub name: String,
     pub writes: Vec<WriteFigures>,
+    /// Where its volumes were imported from a table, not measured from solids (Tables and scripts plan, decision 12).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imported: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -758,7 +761,11 @@ pub fn reserves_figures(name: &str, table: &Table) -> ReservesFigures {
             WriteFigures { write: stage, columns: fields, seams, totals, benches }
         })
         .collect();
-    ReservesFigures { name: name.to_string(), writes }
+    let imported = match table.column(r"Summary\Audit\input").map(|c| &c.values) {
+        Some(ColumnValues::Text(v)) => v.iter().flatten().next().cloned(),
+        _ => None,
+    };
+    ReservesFigures { name: name.to_string(), writes, imported }
 }
 
 fn by_bench(blocks: &[BlockRow], qualities: &[String]) -> Vec<BenchRow> {

@@ -78,13 +78,13 @@ pub struct RecordsReport {
 pub const SHOWN: usize = 200;
 
 /// The file read: its header (name and unit a column) and its rows of cells.
-struct File {
-    names: Vec<String>,
-    units: Vec<String>,
-    rows: Vec<Vec<String>>,
+pub(crate) struct File {
+    pub(crate) names: Vec<String>,
+    pub(crate) units: Vec<String>,
+    pub(crate) rows: Vec<Vec<String>>,
 }
 
-fn read_file(csv: &str) -> Result<File, String> {
+pub(crate) fn read_file(csv: &str) -> Result<File, String> {
     let text = csv.strip_prefix('\u{feff}').unwrap_or(csv);
     let mut lines = text.lines().filter(|l| !l.trim().is_empty());
     let header = csv_cells(lines.next().ok_or("the file is empty")?);

@@ -1428,6 +1428,14 @@ export interface TableSetup {
   stack?: string[];
   parameters?: ParameterTable;
   sources?: Record<string, FieldSource>;
+  /** A table read in place of the blocks (Tables and scripts plan, decision 12): a row a piece, its columns mapped. */
+  input?: TableInput;
+}
+
+/** A table read as block pieces: which column is the volume, the thickness or area, and each attribute the run reads. */
+export interface TableInput {
+  table: string;
+  map: { volume: string; thickness?: string; area?: string; columns?: Record<string, string>; order?: string };
 }
 
 /** An object a setup names, as it is now; `missing` where it's been deleted since. */
@@ -1450,6 +1458,8 @@ export interface SetupView {
   own_tables: boolean;
   looked_up: SetupNamed[];
   blocks: { layers: [string, string][]; filter: Record<string, string>; named: number; picked: number };
+  /** The table read in place of the blocks: its rows, its columns (name, numbers or not), and what the run reads. */
+  input?: { table: SetupNamed; rows: number; columns: [string, boolean][]; reads: string[] };
   model?: SetupNamed;
   stack: string[];
   own_rows: number;
