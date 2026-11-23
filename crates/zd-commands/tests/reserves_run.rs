@@ -3219,10 +3219,13 @@ fn add_waste_allocation_fills_each_process_on_a_waste_interval_of_two_horizons()
         "parameters": [assumptions],
     });
     let flow = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0];
-    let tables = s.add_waste_allocation(flow).unwrap();
+    let (tables, add_on) = s.add_waste_allocation(flow).unwrap();
     assert_eq!(tables.len(), 4);
+    let Body::Dataflow(main) = &s.project().object(flow).unwrap().body else { panic!("a dataflow") };
+    assert_eq!(main.add_ons, [add_on], "the dataflow lists the add-on");
+    assert!(main.steps.iter().all(|st| st.is_built_in() || st.formula.is_some()), "its own steps untouched: the add-on holds the allocation");
     let again = s.add_waste_allocation(flow).unwrap_err();
-    assert!(again.to_string().contains("has a step loose_ground already"), "{again}");
+    assert!(again.to_string().contains("runs the Waste allocation add-on already"), "{again}");
     let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STARTER_STACK, "layer": "reserves" })).unwrap();
     let said = serde_json::to_string(&record.notes).unwrap();
     assert!(!said.contains("left out"), "{said}");
@@ -3326,4 +3329,98 @@ fn a_setup_is_saved_on_a_table_and_what_it_picks_is_run() {
     unordered.stack.clear();
     assert!(s.run("table.setup", json!({ "table": id, "setup": unordered })).unwrap_err().to_string().contains("seam model, or by a stack"));
     assert_eq!(table(&s, id).setup.unwrap().blocks.filter.get("block").map(String::as_str), Some("B2"), "refusals leave it as saved");
+}
+
+/// Add-on dataflows (Table setup plan, decision 2, workstream 2). One Waste allocation add-on, made once, listed by two
+/// tables' setups over the two-horizon column: each has Topsoil 2,500 m³ on A's leaf. The add-on's loose ground edited
+/// once, to take topsoil and freedig together as topsoil (5 m): both tables, run again from their setups, have Topsoil
+/// 25,000 m³ and no Freedig, the rest as it was; the main dataflow's revision is untouched.
+#[test]
+fn two_tables_share_one_add_on_and_an_edit_to_it_reaches_both() {
+    let mut s = session();
+    let ids = starter_column(&mut s);
+    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let content = json!({
+        "fields": [
+            { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
+            { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
+            { "name": "area", "kind": "area", "add_up": { "by": "max" }, "from": "plan_area" },
+            { "name": "rd", "kind": "density", "add_up": { "by": "volume" }, "from": "attribute", "attribute": "rd" },
+            { "name": "ash", "kind": "quality", "add_up": { "by": "mass", "density": "rd" }, "from": "attribute", "attribute": "ash" },
+        ],
+        "steps": final_steps(),
+        "parameters": [assumptions],
+    });
+    let main = created(&s.run("dataflow.save", json!({ "name": "Reserves", "content": starter(content) })).unwrap())[0];
+    let tables: Vec<ObjectId> = zd_commands::builtin::waste_allocation_tables().into_iter().map(|(name, csv)| created(&s.run("parameters.save", json!({ "name": name, "csv": csv })).unwrap())[0]).collect();
+    let add_on = created(&s.run("dataflow.save", json!({ "name": "Waste allocation", "content": zd_commands::builtin::waste_allocation_add_on(tables[0]) })).unwrap())[0];
+    let main_revision = s.project().object(main).unwrap().revision;
+    let made: Vec<ObjectId> = ["r1", "r2"]
+        .iter()
+        .map(|layer| created(&s.run("reserves.run", json!({ "dataflow": main, "add_ons": [add_on], "blocks": ids, "stack": STARTER_STACK, "layer": layer })).unwrap())[0])
+        .collect();
+    let topsoil = |s: &Session, t: ObjectId, process: &str| at_seam(&table(s, t), Some("A"), &format!("Scheduled\\Waste\\{process}\\Prime Volume"));
+    for &t in &made {
+        assert_eq!(table(&s, t).setup.unwrap().add_ons, Some(vec![add_on]), "the table lists the add-on");
+        assert!((topsoil(&s, t, "Topsoil") - 2_500.0).abs() < 1e-9 && (topsoil(&s, t, "Freedig") - 22_500.0).abs() < 1e-9);
+    }
+    let audit = texts(&table(&s, made[0]), "Summary\\Audit\\dataflow").into_iter().flatten().next().unwrap_or_default();
+    assert!(audit.contains("Reserves r") && audit.contains("+ Waste allocation r"), "the audit names the add-on: {audit}");
+
+    // The add-on's loose ground edited once.
+    let Body::Dataflow(a) = &s.project().object(add_on).unwrap().body else { panic!("a dataflow") };
+    let mut edited = (**a).clone();
+    let loose = edited.steps.iter_mut().find(|st| st.step == "loose_ground").unwrap().allocation.as_mut().unwrap();
+    let was = r#"[("Topsoil", p.topsoil_thickness), ("Freedig", p.freedig_thickness)]"#;
+    assert!(loose.script.contains(was));
+    loose.script = loose.script.replace(was, r#"[("Topsoil", p.topsoil_thickness + p.freedig_thickness)]"#);
+    s.run("dataflow.save", json!({ "dataflow": add_on.to_string(), "name": "Waste allocation", "content": edited })).unwrap();
+    for &t in &made {
+        let p = rerun_params(s.project(), s.log(), t, &[]).unwrap();
+        s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+        assert!((topsoil(&s, t, "Topsoil") - 25_000.0).abs() < 1e-9 && topsoil(&s, t, "Freedig").abs() < 1e-9, "{}", topsoil(&s, t, "Topsoil"));
+        assert!((topsoil(&s, t, "Excavator") - 25_000.0).abs() < 1e-9 && (topsoil(&s, t, "Dragline") - 150_000.0).abs() < 1e-9, "the rest as it was");
+    }
+    assert_eq!(s.project().object(main).unwrap().revision, main_revision, "the main dataflow untouched");
+}
+
+/// What an add-on is and isn't: run on its own it's refused; one with a built-in step isn't saved; a main dataflow
+/// listing a dataflow that isn't an add-on isn't saved; one listing an add-on whose step is named as one of its own isn't
+/// either.
+#[test]
+fn an_add_on_runs_only_with_a_main_dataflow() {
+    let mut s = session();
+    let ids = starter_column(&mut s);
+    let tables: Vec<ObjectId> = zd_commands::builtin::waste_allocation_tables().into_iter().map(|(name, csv)| created(&s.run("parameters.save", json!({ "name": name, "csv": csv })).unwrap())[0]).collect();
+    let settings = tables[0];
+    let add_on = created(&s.run("dataflow.save", json!({ "name": "Waste allocation", "content": zd_commands::builtin::waste_allocation_add_on(settings) })).unwrap())[0];
+    let alone = s.run("reserves.run", json!({ "dataflow": add_on, "blocks": ids, "stack": STARTER_STACK, "layer": "r" })).unwrap_err();
+    assert!(alone.to_string().contains("is an add-on: it runs with a main dataflow"), "{alone}");
+    let mut built_in = zd_commands::builtin::waste_allocation_add_on(settings);
+    built_in.steps.insert(0, zd_core::DataflowStep::on("rom"));
+    let refused = s.run("dataflow.save", json!({ "name": "Bad", "content": built_in })).unwrap_err();
+    assert!(refused.to_string().contains("rom is a built-in step"), "{refused}");
+    let assumptions = created(&s.run("parameters.save", json!({ "name": "assumptions", "csv": dilution_csv([0.0; 4], [0.0; 4], "") })).unwrap())[0];
+    let main = |add_ons: Vec<ObjectId>, own: Option<&str>| {
+        let mut steps = final_steps();
+        if let Some(name) = own {
+            let at = steps.as_array().unwrap().len() - 1;
+            steps.as_array_mut().unwrap().insert(at, json!({ "step": name, "allocation": { "script": "def allocate(column):\n    pass\n" } }));
+        }
+        json!({
+            "fields": [
+                { "name": "volume", "kind": "volume", "add_up": { "by": "sum" }, "from": "volume" },
+                { "name": "thickness", "kind": "thickness", "add_up": { "by": "sum" }, "from": "thickness" },
+            ],
+            "steps": steps,
+            "parameters": [assumptions],
+            "add_ons": add_ons,
+        })
+    };
+    let other = created(&s.run("dataflow.save", json!({ "name": "Other", "content": main(Vec::new(), None) })).unwrap())[0];
+    let not_add_on = s.run("dataflow.save", json!({ "name": "M", "content": main(vec![other], None) })).unwrap_err();
+    assert!(not_add_on.to_string().contains("Other is a main dataflow, not an add-on"), "{not_add_on}");
+    let clash = s.run("dataflow.save", json!({ "name": "M", "content": main(vec![add_on], Some("loose_ground")) })).unwrap_err();
+    assert!(clash.to_string().contains("Waste allocation's step loose_ground has the name of a step already run"), "{clash}");
+    s.run("dataflow.save", json!({ "name": "M", "content": main(vec![add_on], None) })).unwrap();
 }

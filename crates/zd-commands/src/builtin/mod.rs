@@ -80,7 +80,7 @@ pub use reserves_run::{
     reserves_preview, rerun_params, setup_of, table_column, StepUnits, units_at_step, ChangedSince, changed_since, Unsaved,
 };
 pub use table_setup::{SaveTableSetup, SaveTableSetupParams};
-pub use waste_allocation::{PROCESSES as WASTE_PROCESSES, schedule_fields as waste_schedule_fields, tables as waste_allocation_tables, with_waste_allocation};
+pub use waste_allocation::{ADD_ON as WASTE_ALLOCATION_ADD_ON, PROCESSES as WASTE_PROCESSES, schedule_fields as waste_schedule_fields, tables as waste_allocation_tables, waste_allocation_add_on};
 pub use starter::{DISCARDED, RENAMED_FIELDS, TONNES_AD_PER_M3, renamed_from_older, starter_formulas, with_starter_formulas};
 pub use zd_script::REFERENCE as FORMULA_REFERENCE;
 pub use formulas::{FormulaNames, FormulaProblem, FormulaReport, FormulaTestResult, check_formula, check_formula_with, FORMULA_STAGES, LABELS as FORMULA_LABELS, check_allocation_steps, check_formula_steps, check_formula_steps_flagging, declare_words, declared as formula_declared};

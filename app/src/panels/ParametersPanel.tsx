@@ -470,7 +470,7 @@ function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMa
 type FlowField = Dataflow['fields'][number];
 
 function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; tables: ObjectSummary[]; openStep: { step: string; n: number } | null }) {
-  const { runRecord, setDraft, addWasteAllocation } = useWorkspace();
+  const { runRecord, setDraft, addWasteAllocation, summary } = useWorkspace();
   const [saved, setSaved] = useState<Dataflow | null>(null);
   const [flow, setFlow] = useState<Dataflow | null>(null);
   const [engineWhy, setEngineWhy] = useState<string | null>(null);
@@ -567,7 +567,20 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
     setAllocationAt(at);
   };
   // The template's waste allocation added to the saved dataflow (Waste allocation plan, decision 7), then read again.
-  const hasAllocation = flow.steps.some((s) => s.step === 'loose_ground' && s.allocation);
+  const dataflowNames = new Map((summary?.objects ?? []).filter((o) => o.kind === 'dataflow').map((o) => [o.id, o.name]));
+  const addOns = flow.add_ons ?? [];
+  const hasAllocation = flow.steps.some((s) => s.step === 'loose_ground' && s.allocation) || addOns.some((id) => dataflowNames.get(id) === 'Waste allocation');
+  // An add-on's allocation step goes before its table scripts (Table setup plan, decision 2): it runs before final.
+  const addAllocationToAddOn = () => {
+    let at = flow.steps.findIndex((s) => s.table);
+    if (at < 0) at = flow.steps.length;
+    let name = 'allocation';
+    for (let n = 2; flow.steps.some((s) => s.step === name); n++) name = `allocation_${n}`;
+    set({ steps: [...flow.steps.slice(0, at), { step: name, allocation: { script: ALLOCATION_STEP_TEMPLATE } }, ...flow.steps.slice(at)] });
+    setTableAt(null);
+    setFormulaAt(null);
+    setAllocationAt(at);
+  };
   const addAllocationSet = async () => {
     if (edited) return setSaid({ text: 'Save or discard your edits first: waste allocation is added to the saved dataflow.', tone: 'refused' });
     const done = await addWasteAllocation(object.id);
@@ -577,7 +590,7 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
       setSaved(d.measures.dataflow);
       setFlow(d.measures.dataflow);
     }
-    setSaid({ text: 'Added waste allocation: four parameter tables (Waste allocation settings, Dragline factors, Waste processes, Short term overrides), the schedule fields, six allocation steps and the checks. Each is yours to edit.', tone: 'ok' });
+    setSaid({ text: 'Added the Waste allocation add-on, which this dataflow now runs, and its four parameter tables (Waste allocation settings, Dragline factors, Waste processes, Short term overrides). Open Waste allocation to edit its steps: every table that runs it takes the edit.', tone: 'ok' });
   };
   // A new table script step at the end, after final and any table script there, opened (decision 0099, workstream 7).
   const addTableStep = () => {
@@ -612,6 +625,13 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
       )}
       <div className="flex min-h-0 flex-1 gap-4 overflow-auto p-2">
         <div className="flex w-72 shrink-0 flex-col gap-3">
+          {flow.add_on && (
+            <section data-slot="add-on-note">
+              <div className="mb-0.5 font-semibold">An add-on</div>
+              <p className="text-muted-foreground">Runs with every dataflow and table that lists it: its steps before final, its table scripts after. Its fields, words and tables join theirs.</p>
+            </section>
+          )}
+          {!flow.add_on && (
           <section>
             <div className="mb-0.5 font-semibold">Levels</div>
             <p className="mb-1 text-muted-foreground">Block attributes, top down: the reserves table's tree. Those above seam make a column.</p>
@@ -640,6 +660,7 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
               <Plus className="size-3.5" /> Level
             </Button>
           </section>
+          )}
           <section>
             <div className="mb-0.5 font-semibold">Parameter tables</div>
             <p className="mb-1 text-muted-foreground">Read in this order: a value comes from the first table that gives it, so a case's own table goes first.</p>
@@ -672,6 +693,40 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
               </Select>
             )}
           </section>
+          {!flow.add_on && (
+            <section data-slot="add-ons">
+              <div className="mb-0.5 font-semibold">Add-ons</div>
+              <p className="mb-1 text-muted-foreground">Dataflows run with this one, in order, at their stage: shared by every table that runs it, so an edit to one is made once.</p>
+              {addOns.map((id, i) => (
+                <div key={id} className="flex items-center gap-1" data-add-on={dataflowNames.get(id) ?? id}>
+                  <span className={cn('min-w-0 flex-1 truncate', !dataflowNames.has(id) && 'text-destructive', saved.add_ons?.[i] !== id && 'text-edited')}>
+                    {i + 1}. {dataflowNames.get(id) ?? 'missing'}
+                  </span>
+                  <IconButton label="Run earlier" className="size-5" onClick={() => set({ add_ons: moved(addOns, i, -1) })}>
+                    <ArrowUp />
+                  </IconButton>
+                  <IconButton label="Run later" className="size-5" onClick={() => set({ add_ons: moved(addOns, i, 1) })}>
+                    <ArrowDown />
+                  </IconButton>
+                  <IconButton label="Stop running this add-on" className="size-5" onClick={() => set({ add_ons: addOns.filter((_, j) => j !== i) })}>
+                    <X />
+                  </IconButton>
+                </div>
+              ))}
+              {[...dataflowNames.keys()].some((id) => id !== object.id && !addOns.includes(id)) && (
+                <Select className="mt-1 w-full" value="" aria-label="Run an add-on" onChange={(e) => e.target.value && set({ add_ons: [...addOns, e.target.value] })}>
+                  <option value="">Run an add-on…</option>
+                  {[...dataflowNames.entries()]
+                    .filter(([id]) => id !== object.id && !addOns.includes(id))
+                    .map(([id, name]) => (
+                      <option key={id} value={id}>
+                        {name}
+                      </option>
+                    ))}
+                </Select>
+              )}
+            </section>
+          )}
           <section>
             <div className="mb-0.5 font-semibold">Steps</div>
             <p className="mb-1 text-muted-foreground">Run in this fixed order. A setting names the field or parameter column a step reads, where it isn't the usual one.</p>
@@ -766,8 +821,13 @@ function DataflowEditor({ object, tables, openStep }: { object: ObjectSummary; t
                 + Add an allocation before final
               </button>
             )}
-            {!hasAllocation && flow.steps.some((s) => s.step === 'rom' && !s.formula) && flow.steps.some((s) => s.step === 'final' && !s.formula && !s.table) && (
-              <button type="button" data-slot="add-waste-allocation" className="mt-1 block w-full py-0.5 text-left text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => void addAllocationSet()} title="The template's waste allocation in one go: its parameter tables with default rows, a schedule field section a process, six allocation steps after rom and the checks after final, each a script you can edit">
+            {flow.add_on && (
+              <button type="button" data-slot="add-allocation-step" className="mt-1 block w-full py-0.5 text-left text-muted-foreground hover:bg-accent hover:text-foreground" onClick={addAllocationToAddOn} title="An allocation script, run before final in every dataflow that lists this add-on">
+                + Add an allocation
+              </button>
+            )}
+            {!flow.add_on && !hasAllocation && flow.steps.some((s) => s.step === 'rom' && !s.formula) && flow.steps.some((s) => s.step === 'final' && !s.formula && !s.table) && (
+              <button type="button" data-slot="add-waste-allocation" className="mt-1 block w-full py-0.5 text-left text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => void addAllocationSet()} title="The template's waste allocation as an add-on this dataflow runs: its parameter tables with default rows, a schedule field section a process, six allocation steps after rom and the checks after final, each a script you can edit, made once for the project">
                 + Add waste allocation (the template)
               </button>
             )}

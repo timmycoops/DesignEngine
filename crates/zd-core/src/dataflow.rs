@@ -229,6 +229,13 @@ pub struct Dataflow {
     /// Its fields of words (Waste allocation plan, decision 2), carried by each unit beside the number fields.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub words: Vec<WordField>,
+    /// An add-on (Table setup plan, decision 2): only fields, words, parameter tables and its own steps (formula,
+    /// allocation, table script), run with a main dataflow at their stage. It has no built-in step of its own.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub add_on: bool,
+    /// The add-ons a main dataflow runs by default, in order; a table's setup may give its own list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub add_ons: Vec<ObjectId>,
 }
 
 /// Whether a field is a schedule field (Waste allocation plan, decision 5): named with a folder, `Waste\Dragline\Prime
@@ -239,7 +246,7 @@ pub fn is_schedule_field(name: &str) -> bool {
 
 impl Default for Dataflow {
     fn default() -> Self {
-        Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new(), words: Vec::new() }
+        Dataflow { levels: default_levels(), fields: Vec::new(), steps: Vec::new(), parameters: Vec::new(), scripts: Vec::new(), lookups: Vec::new(), words: Vec::new(), add_on: false, add_ons: Vec::new() }
     }
 }
 
@@ -294,6 +301,107 @@ impl Dataflow {
         Ok(())
     }
 
+    /// Whether an add-on holds together (Table setup plan, decision 2): its fields each named once, its words and
+    /// schedule fields as a dataflow's, and its steps named once, each a formula, an allocation or a table script, the
+    /// table scripts last. It lists no add-ons of its own.
+    pub fn check_add_on(&self) -> Result<(), String> {
+        for (i, f) in self.fields.iter().enumerate() {
+            if f.field.name.trim().is_empty() {
+                return Err(format!("field {} has no name", i + 1));
+            }
+            if self.fields[..i].iter().any(|g| g.field.name == f.field.name) {
+                return Err(format!("the field {} is listed twice", f.field.name));
+            }
+        }
+        self.check_words()?;
+        self.check_schedule_fields()?;
+        if !self.add_ons.is_empty() {
+            return Err("an add-on runs with a main dataflow and lists no add-ons of its own".into());
+        }
+        let mut table_seen = false;
+        for (i, s) in self.steps.iter().enumerate() {
+            if s.step.trim().is_empty() {
+                return Err(format!("step {} has no name", i + 1));
+            }
+            if self.steps[..i].iter().any(|t| t.step == s.step) {
+                return Err(format!("the step {} is listed twice", s.step));
+            }
+            if s.is_built_in() {
+                return Err(format!("{} is a built-in step: an add-on holds formula, allocation and table script steps, and runs with a main dataflow's", s.step));
+            }
+            if s.table.is_some() {
+                table_seen = true;
+            } else if table_seen {
+                return Err(format!("the step {} comes after a table script step: table scripts run last, after the final writes", s.step));
+            }
+            if s.script().is_some_and(|x| x.trim().is_empty()) {
+                return Err(format!("the step {} has no script", s.step));
+            }
+        }
+        Ok(())
+    }
+
+    /// The main dataflow with its add-ons put in (Table setup plan, decision 2), each by its name, in order: their
+    /// formula and allocation steps before `final`, after the main's own there; their table script steps last; their
+    /// fields, words, parameter tables, scripts and lookups after the main's. A field or word both have must be the same
+    /// in both; a step name both have is refused; so is an add-on with steps before `final` on a dataflow without `rom`
+    /// and `final`.
+    pub fn with_add_ons(&self, add_ons: &[(&str, &Dataflow)]) -> Result<Dataflow, String> {
+        let mut d = self.clone();
+        d.add_ons.clear();
+        for (name, a) in add_ons {
+            if !a.add_on {
+                return Err(format!("{name} is a main dataflow, not an add-on"));
+            }
+            for f in &a.fields {
+                match d.fields.iter().find(|g| g.field.name == f.field.name) {
+                    Some(g) if g == f => {}
+                    Some(_) => return Err(format!("{name}'s field {} isn't the same as the one already there: give one another name, or make them the same", f.field.name)),
+                    None => d.fields.push(f.clone()),
+                }
+            }
+            for w in &a.words {
+                match d.words.iter().find(|v| v.name == w.name) {
+                    Some(v) if v == w => {}
+                    Some(_) => return Err(format!("{name}'s word field {} isn't the same as the one already there", w.name)),
+                    None => d.words.push(w.clone()),
+                }
+            }
+            for id in &a.parameters {
+                if !d.parameters.contains(id) {
+                    d.parameters.push(*id);
+                }
+            }
+            for id in &a.scripts {
+                if !d.scripts.contains(id) {
+                    d.scripts.push(*id);
+                }
+            }
+            for id in &a.lookups {
+                if !d.lookups.contains(id) {
+                    d.lookups.push(*id);
+                }
+            }
+            for s in &a.steps {
+                if d.steps.iter().any(|t| t.step == s.step) {
+                    return Err(format!("{name}'s step {} has the name of a step already run: give it its own", s.step));
+                }
+                if s.table.is_some() {
+                    d.steps.push(s.clone());
+                    continue;
+                }
+                let Some(at) = d.steps.iter().position(|t| t.step == "final" && t.is_built_in()) else {
+                    return Err(format!("{name}'s step {} runs before final, and the dataflow has no final", s.step));
+                };
+                if !d.steps[..at].iter().any(|t| t.step == "rom" && t.is_built_in()) {
+                    return Err(format!("{name}'s step {} runs after rom, and the dataflow has no rom before final", s.step));
+                }
+                d.steps.insert(at, s.clone());
+            }
+        }
+        Ok(d)
+    }
+
     /// How many of the levels make a column: those above `seam`, else all but the last.
     pub fn column_levels(&self) -> usize {
         self.levels.iter().position(|l| l.attribute.eq_ignore_ascii_case("seam")).unwrap_or(self.levels.len().saturating_sub(1))
@@ -307,6 +415,9 @@ impl Dataflow {
 
     /// Whether the dataflow holds together: its fields, and its steps named, each once.
     pub fn check(&self) -> Result<(), String> {
+        if self.add_on {
+            return self.check_add_on();
+        }
         self.engine_fields()?;
         self.check_words()?;
         self.check_schedule_fields()?;
@@ -391,6 +502,8 @@ mod tests {
             scripts: Vec::new(),
             lookups: Vec::new(),
             words: Vec::new(),
+            add_on: false,
+            add_ons: Vec::new(),
         }
     }
 

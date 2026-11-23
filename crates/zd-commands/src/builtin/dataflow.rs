@@ -93,6 +93,60 @@ impl Command for SaveParameters {
     }
 }
 
+/// An add-on saved (Table setup plan, decision 2): its parameter tables there, its scripts' loads and lookups bound by
+/// name, its allocation and table script steps compiled and its formulas parsed. A formula is checked against a main
+/// dataflow's names when one that lists the add-on is saved or run, where its fields are known.
+fn save_add_on(inputs: &Inputs<'_>, p: &SaveDataflowParams) -> Result<Outcome, CommandError> {
+    let d = &p.content;
+    for &id in &d.parameters {
+        let object = inputs.object(id)?;
+        if !matches!(object.body, Body::ParameterTable(_)) {
+            return Err(CommandError::WrongKind { id, expected: ObjectKind::ParameterTable, found: object.kind() });
+        }
+    }
+    let sources: Vec<&str> = d.steps.iter().filter_map(|s| s.script()).collect();
+    let (scripts, libraries) = super::bind_loads(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
+    let (lookups, named) = super::bind_lookups(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
+    super::check_curves(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
+    let said = |step: &str, problems: Vec<zd_script::Problem>| CommandError::Invalid(format!("the step {step}: {}", problems.iter().map(|p| p.to_string()).collect::<Vec<_>>().join("; ")));
+    for s in &d.steps {
+        if let Some(a) = &s.allocation {
+            let declared = zd_script::Declared { libraries: libraries.clone(), lookups: Arc::new(zd_script::Lookups { own: Vec::new(), named: named.clone() }), ..Default::default() };
+            zd_script::Allocation::compile(&a.script, declared).map_err(|e| said(&s.step, e))?;
+        } else if let Some(t) = &s.table {
+            zd_script::TableScript::compile(&t.script, libraries.clone()).map_err(|e| said(&s.step, e))?;
+        } else if let Some(f) = &s.formula {
+            zd_script::check_library(&s.step, &f.script, &libraries).map_err(|e| said(&s.step, e))?;
+        }
+    }
+    let mut bound = d.clone();
+    bound.scripts = scripts;
+    bound.lookups = lookups;
+    let body = Body::Dataflow(Arc::new(bound));
+    let change = match p.dataflow {
+        Some(id) => {
+            let object = inputs.object(id)?;
+            if !matches!(object.body, Body::Dataflow(_)) {
+                return Err(CommandError::WrongKind { id, expected: ObjectKind::Dataflow, found: object.kind() });
+            }
+            Change::Revise { id, base: object.revision, name: Some(p.name.clone()), layer: None, attributes: None, body: Some(body) }
+        }
+        None => Change::Create { name: p.name.clone(), layer: DATAFLOW_LAYER.into(), attributes: Attributes::new(), body },
+    };
+    Ok(Outcome::new(vec![change]).message(format!(
+        "saved {}, an add-on: {} field{}, {} word field{}, {} step{}, {} parameter table{}",
+        p.name,
+        d.fields.len(),
+        plural(d.fields.len()),
+        d.words.len(),
+        plural(d.words.len()),
+        d.steps.len(),
+        plural(d.steps.len()),
+        d.parameters.len(),
+        plural(d.parameters.len())
+    )))
+}
+
 /// `parameters.export_csv`: a parameter table written as CSV, to edit and save back.
 pub struct ExportParameters;
 
@@ -161,6 +215,29 @@ impl Command for SaveDataflow {
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let d = &p.content;
         d.check().map_err(CommandError::Invalid)?;
+        if d.add_on {
+            return save_add_on(inputs, p);
+        }
+        // A main dataflow's add-ons (Table setup plan, decision 2): each an add-on, and the checks below run on the
+        // dataflow with them put in at their stage, as a run puts them.
+        let mut with_add_ons: Option<zd_core::Dataflow> = None;
+        if !d.add_ons.is_empty() {
+            let mut add_ons: Vec<(String, Arc<zd_core::Dataflow>)> = Vec::new();
+            for &id in &d.add_ons {
+                let object = inputs.object(id)?;
+                let Body::Dataflow(a) = &object.body else {
+                    return Err(CommandError::WrongKind { id, expected: ObjectKind::Dataflow, found: object.kind() });
+                };
+                if Some(id) == p.dataflow {
+                    return Err(CommandError::Invalid("a dataflow can't run itself as an add-on".into()));
+                }
+                add_ons.push((object.name.clone(), a.clone()));
+            }
+            let pairs: Vec<(&str, &zd_core::Dataflow)> = add_ons.iter().map(|(n, a)| (n.as_str(), a.as_ref())).collect();
+            with_add_ons = Some(d.with_add_ons(&pairs).map_err(CommandError::Invalid)?);
+        }
+        let own = d;
+        let d = with_add_ons.as_ref().unwrap_or(own);
         let mut tables = Vec::new();
         for &id in &d.parameters {
             let object = inputs.object(id)?;
@@ -173,11 +250,15 @@ impl Command for SaveDataflow {
         let engine_fields = d.engine_fields().map_err(CommandError::Invalid)?;
         let refs: Vec<&ParameterTable> = tables.iter().map(|t| t.as_ref()).collect();
         let built_in: Vec<&str> = super::STEPS.iter().map(|(n, _)| *n).collect();
-        // The scripts its formulas load, bound by name to the project's (decision 0099): kept by id, read by the run.
+        // The scripts its formulas load, bound by name to the project's (decision 0099): kept by id, read by the run. Its
+        // own are kept; an add-on keeps its own, and they're bound here only to check the dataflow with them.
         let sources: Vec<&str> = d.steps.iter().filter_map(|s| s.script()).collect();
-        let (scripts, libraries) = super::bind_loads(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
+        let own_sources: Vec<&str> = own.steps.iter().filter_map(|s| s.script()).collect();
+        let (_, libraries) = super::bind_loads(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
+        let (scripts, _) = super::bind_loads(inputs.objects(), &own_sources).map_err(CommandError::Invalid)?;
         // The tables its scripts look up by name (Schedule quantities plan, decision 1), kept by id like its scripts.
-        let (lookups, named) = super::bind_lookups(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
+        let (_, named) = super::bind_lookups(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
+        let (lookups, _) = super::bind_lookups(inputs.objects(), &own_sources).map_err(CommandError::Invalid)?;
         super::check_curves(inputs.objects(), &sources).map_err(CommandError::Invalid)?;
         for &id in scripts.iter().chain(&lookups) {
             inputs.object(id)?;
@@ -191,7 +272,7 @@ impl Command for SaveDataflow {
         super::check_allocation_steps(d, &built_in, &declared).map_err(CommandError::Invalid)?;
         // Table script steps (decision 11 of 0099) compile too, and sit after the final writes.
         super::check_table_steps(d, &built_in, &declared.libraries).map_err(CommandError::Invalid)?;
-        let mut bound = d.clone();
+        let mut bound = own.clone();
         bound.scripts = scripts;
         bound.lookups = lookups;
         let d = &bound;

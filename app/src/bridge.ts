@@ -841,6 +841,8 @@ export interface ParamRead {
  */
 export interface ColumnStep {
   step: string;
+  /** The add-on dataflow the step came from (Table setup plan, decision 2), where it isn't the main dataflow's. */
+  dataflow?: string;
   units: ColumnUnit[];
   said: string[];
   kind: 'input' | 'built_in' | 'formula' | 'allocation';
@@ -1291,6 +1293,10 @@ export interface Dataflow {
   words?: WordField[];
   steps: DataflowStep[];
   parameters: string[];
+  /** An add-on (Table setup plan, decision 2): its fields, words, tables and steps run with a main dataflow that lists it. */
+  add_on?: boolean;
+  /** The add-ons a main dataflow runs, in order. */
+  add_ons?: string[];
 }
 
 /** A field of words on each unit: from a block attribute, a parameter column, or worked by a step. */
