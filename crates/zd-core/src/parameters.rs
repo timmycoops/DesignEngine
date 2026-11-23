@@ -102,6 +102,49 @@ pub struct OnCurve {
     pub rows: (usize, usize),
 }
 
+/// How a graded key reads its rows (Waste allocation plan, decision 6): the rows at the value nearest it, or the rows
+/// either side, weighted by how near.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Graded {
+    Nearest,
+    Between,
+}
+
+impl Graded {
+    pub fn word(self) -> &'static str {
+        match self {
+            Graded::Nearest => "nearest",
+            Graded::Between => "between",
+        }
+    }
+}
+
+/// A key read off a number column of the table, nearest or between (`dip=nearest(12)`, `zone_thickness=between(24)`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GradedKey {
+    pub name: String,
+    pub at: f64,
+    pub how: Graded,
+}
+
+/// A value read off a grid of rows: the value, and the rows it was worked from with each one's weight, adding to 1.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OnGrid {
+    pub value: f64,
+    pub rows: Vec<(usize, f64)>,
+}
+
+/// The graded keys' columns, each once, in order.
+fn graded_columns(graded: &[GradedKey]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for k in graded {
+        if !out.iter().any(|c| c.eq_ignore_ascii_case(&k.name)) {
+            out.push(k.name.clone());
+        }
+    }
+    out
+}
+
 /// Where a value was found: the table (its place in the list read), the row and the value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Found<'a> {
@@ -229,6 +272,89 @@ impl ParameterTable {
         }
         let lo = points[at_or_above - 1];
         Ok(OnCurve { y: lo.1 + (at - lo.0) * (hi.1 - lo.1) / (hi.0 - lo.0), rows: (lo.2, hi.2) })
+    }
+
+    /// The `column` read off a grid of rows (Waste allocation plan, decision 6): the rows that fit `keys` (words and
+    /// numbers matched as any row is), then each graded key in turn read off its own number column, `nearest` taking the
+    /// rows at the value nearest it (the smaller of two as near) and `between` the rows at the values either side, each
+    /// weighted by how near, so two between keys read a value off four rows. Where rows are left after every key, the
+    /// first is read, as a lookup reads. A between key outside its rows is refused, or held at the nearer end's rows; a
+    /// nearest key outside them takes the end's.
+    pub fn read_graded(&self, keys: &Attributes, graded: &[GradedKey], column: &str, ends: CurveEnds) -> Result<OnGrid, String> {
+        match self.column(column) {
+            None => return Err(format!("it has no column {column}")),
+            Some(c) if c.text => return Err(format!("{column} holds words, and a value is read between rows off numbers")),
+            Some(_) => {}
+        }
+        for g in &graded_columns(graded) {
+            match self.column(g) {
+                None => return Err(format!("it has no column {g} to read {} by", graded.iter().find(|k| &k.name == g).map_or("", |k| k.how.word()))),
+                Some(c) if c.text => return Err(format!("{g} holds words: nearest and between read a column of numbers")),
+                Some(_) => {}
+            }
+        }
+        for k in graded {
+            if !k.at.is_finite() {
+                return Err(format!("{} {} isn't a number to read {} by", k.name, k.at, k.how.word()));
+            }
+        }
+        let number = |row: &ParameterRow, c: &str| match value(row, c) {
+            Some(ParamValue::Number(x)) => Some(*x),
+            _ => None,
+        };
+        let rows: Vec<usize> = (0..self.rows.len())
+            .filter(|&i| {
+                let row = &self.rows[i];
+                filter_fits(&row.when, keys) && number(row, column).is_some() && graded.iter().all(|k| number(row, &k.name).is_some())
+            })
+            .collect();
+        if rows.is_empty() {
+            return Err(format!("no row gives {column} and {} for these keys", graded.iter().map(|k| k.name.as_str()).collect::<Vec<_>>().join(" and ")));
+        }
+        let mut weights: Vec<(usize, f64)> = Vec::new();
+        self.graded_step(&rows, graded, 1.0, ends, &mut weights)?;
+        let value = weights.iter().map(|&(r, w)| w * number(&self.rows[r], column).expect("a fitting row gives it")).sum();
+        Ok(OnGrid { value, rows: weights })
+    }
+
+    /// One graded key on these rows, then the rest on the rows it leaves, each branch with its weight.
+    fn graded_step(&self, rows: &[usize], graded: &[GradedKey], weight: f64, ends: CurveEnds, out: &mut Vec<(usize, f64)>) -> Result<(), String> {
+        let Some((k, rest)) = graded.split_first() else {
+            out.push((rows[0], weight));
+            return Ok(());
+        };
+        let at_value = |r: usize| match value(&self.rows[r], &k.name) {
+            Some(ParamValue::Number(x)) => *x,
+            _ => f64::NAN,
+        };
+        let mut values: Vec<f64> = rows.iter().map(|&r| at_value(r)).collect();
+        values.sort_by(f64::total_cmp);
+        values.dedup();
+        let (first, last) = (values[0], values[values.len() - 1]);
+        let on = |v: f64| -> Vec<usize> { rows.iter().copied().filter(|&r| at_value(r) == v).collect() };
+        // Nearest always has a nearest: only between can fall outside its rows.
+        if k.how == Graded::Between && (k.at < first || k.at > last) {
+            return match ends {
+                CurveEnds::Hold => self.graded_step(&on(if k.at < first { first } else { last }), rest, weight, ends, out),
+                CurveEnds::Refuse => Err(format!("{} {} is outside its rows' {first} to {last}", k.name, k.at)),
+            };
+        }
+        match k.how {
+            Graded::Nearest => {
+                let nearest = values.iter().copied().min_by(|a, b| (a - k.at).abs().total_cmp(&(b - k.at).abs()).then(a.total_cmp(b))).expect("a value");
+                self.graded_step(&on(nearest), rest, weight, ends, out)
+            }
+            Graded::Between => {
+                let above = values.iter().position(|v| *v >= k.at).expect("within the range");
+                if values[above] == k.at {
+                    return self.graded_step(&on(k.at), rest, weight, ends, out);
+                }
+                let (lo, hi) = (values[above - 1], values[above]);
+                let share = (k.at - lo) / (hi - lo);
+                self.graded_step(&on(lo), rest, weight * (1.0 - share), ends, out)?;
+                self.graded_step(&on(hi), rest, weight * share, ends, out)
+            }
+        }
     }
 
     /// Whether the table reads as a curve against `x`: no two rows with the same filters at the same `x` (checked when
@@ -493,5 +619,69 @@ mod curve_tests {
         assert_eq!(twice.interpolate(&seam("U"), "ash", "yield", 10.0, CurveEnds::Refuse).unwrap_err(), "rows 1 and 2 are both at ash 10: a curve has one row a point");
         assert!(yield_curve().check_curve("ash").is_ok());
         assert_eq!(twice.interpolate(&seam("L"), "ash", "yield", 10.0, CurveEnds::Refuse).unwrap().y, 70.0);
+    }
+}
+
+#[cfg(test)]
+mod grid_tests {
+    use super::*;
+    use crate::AttrValue;
+
+    /// The plan's dragline factors (Waste allocation plan, workstream 4): a 2-zone method's dragline factor by dip and zone
+    /// thickness, on a grid of four rows; a 1-zone method's on one.
+    ///
+    /// | method | dip | zone_thickness | dragline |
+    /// |--------|-----|----------------|----------|
+    /// | 2 zone | 5   | 20             | 0.50     |
+    /// | 2 zone | 5   | 30             | 0.60     |
+    /// | 2 zone | 15  | 20             | 0.40     |
+    /// | 2 zone | 15  | 30             | 0.55     |
+    /// | 1 zone | 5   | 20             | 0.90     |
+    fn factors() -> ParameterTable {
+        ParameterTable::from_csv("when method,dip (deg),zone_thickness (m),dragline\n2 zone,5,20,0.5\n2 zone,5,30,0.6\n2 zone,15,20,0.4\n2 zone,15,30,0.55\n1 zone,5,20,0.9\n").unwrap()
+    }
+
+    fn method(m: &str) -> Attributes {
+        [("method".to_string(), AttrValue::Text(m.into()))].into_iter().collect()
+    }
+
+    fn key(name: &str, at: f64, how: Graded) -> GradedKey {
+        GradedKey { name: name.into(), at, how }
+    }
+
+    /// Nearest on dip, 12 being nearer 15 than 5; between on zone thickness, 24 m being 0.4 of the way from 20 to 30:
+    /// 0.4 + 0.4 x (0.55 - 0.4) = 0.46, from rows 3 (0.6) and 4 (0.4). Both between: dip 12 is 0.7 of the way from 5 to 15,
+    /// so 0.3 x (0.5 + 0.4 x 0.1) + 0.7 x 0.46 = 0.484, from four rows whose weights add to 1.
+    #[test]
+    fn a_factor_is_read_between_two_rows_on_one_key_and_nearest_on_another() {
+        let t = factors();
+        let got = t.read_graded(&method("2 zone"), &[key("dip", 12.0, Graded::Nearest), key("zone_thickness", 24.0, Graded::Between)], "dragline", CurveEnds::Refuse).unwrap();
+        assert!((got.value - 0.46).abs() <= 1e-12, "{}", got.value);
+        assert_eq!(got.rows.iter().map(|r| r.0).collect::<Vec<_>>(), [2, 3]);
+        assert!((got.rows[0].1 - 0.6).abs() <= 1e-12 && (got.rows[1].1 - 0.4).abs() <= 1e-12, "{:?}", got.rows);
+        let both = t.read_graded(&method("2 zone"), &[key("dip", 12.0, Graded::Between), key("zone_thickness", 24.0, Graded::Between)], "dragline", CurveEnds::Refuse).unwrap();
+        assert!((both.value - 0.484).abs() <= 1e-12, "{}", both.value);
+        assert_eq!(both.rows.len(), 4);
+        assert!((both.rows.iter().map(|r| r.1).sum::<f64>() - 1.0).abs() <= 1e-12);
+        // On a row's own values, its value; the other method's one row whatever the key, nearest.
+        assert_eq!(t.read_graded(&method("2 zone"), &[key("dip", 15.0, Graded::Between), key("zone_thickness", 30.0, Graded::Between)], "dragline", CurveEnds::Refuse).unwrap().value, 0.55);
+        assert_eq!(t.read_graded(&method("1 zone"), &[key("dip", 40.0, Graded::Nearest)], "dragline", CurveEnds::Refuse).unwrap().value, 0.9);
+        // Two values as near: the smaller's rows.
+        assert_eq!(t.read_graded(&method("2 zone"), &[key("dip", 10.0, Graded::Nearest), key("zone_thickness", 20.0, Graded::Nearest)], "dragline", CurveEnds::Refuse).unwrap().value, 0.5);
+    }
+
+    /// Outside its rows a between key is refused, saying the range, or held at the nearer end; a key or column the table
+    /// hasn't, or one of words, is said.
+    #[test]
+    fn a_graded_key_outside_its_rows_is_refused_or_held() {
+        let t = factors();
+        let thick = [key("dip", 5.0, Graded::Nearest), key("zone_thickness", 35.0, Graded::Between)];
+        assert_eq!(t.read_graded(&method("2 zone"), &thick, "dragline", CurveEnds::Refuse).unwrap_err(), "zone_thickness 35 is outside its rows' 20 to 30");
+        assert_eq!(t.read_graded(&method("2 zone"), &thick, "dragline", CurveEnds::Hold).unwrap().value, 0.6);
+        assert_eq!(t.read_graded(&method("2 zone"), &[key("width", 40.0, Graded::Between)], "dragline", CurveEnds::Refuse).unwrap_err(), "it has no column width to read between by");
+        assert_eq!(t.read_graded(&method("2 zone"), &[key("dip", 5.0, Graded::Between)], "cast", CurveEnds::Refuse).unwrap_err(), "it has no column cast");
+        assert_eq!(t.read_graded(&method("3 zone"), &[key("dip", 5.0, Graded::Between)], "dragline", CurveEnds::Refuse).unwrap_err(), "no row gives dragline and dip for these keys");
+        let worded = ParameterTable::from_csv("system,dragline\nA,0.5\n").unwrap();
+        assert_eq!(worded.read_graded(&Attributes::new(), &[key("system", 1.0, Graded::Nearest)], "dragline", CurveEnds::Refuse).unwrap_err(), "system holds words: nearest and between read a column of numbers");
     }
 }

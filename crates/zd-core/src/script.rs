@@ -27,9 +27,14 @@ pub fn lookups_in(source: &str) -> Vec<String> {
 }
 
 /// The curves a script reads, each its table and `x` column as written: `interpolate("Yield curve", unit.ash, x="ash",
-/// ...)` gives ("Yield curve", "ash"), so the table can be checked as a curve when either is saved.
+/// ...)` gives ("Yield curve", "ash"), so the table can be checked as a curve when either is saved. One read with a key
+/// nearest or between (Waste allocation plan, decision 6) reads a grid, many rows at each `x`, and isn't checked so.
 pub fn curves_in(source: &str) -> Vec<(String, String)> {
-    calls_in(source, "interpolate").into_iter().filter_map(|(name, rest)| quoted_after(&rest, "x").map(|x| (name, x))).collect()
+    calls_in(source, "interpolate")
+        .into_iter()
+        .filter(|(_, rest)| !rest.contains("nearest(") && !rest.contains("between("))
+        .filter_map(|(name, rest)| quoted_after(&rest, "x").map(|x| (name, x)))
+        .collect()
 }
 
 /// A named argument's quoted value in what follows a call's first argument: `x="ash"` gives ash.
@@ -119,5 +124,7 @@ mod tests {
 ";
         assert_eq!(lookups_in(source), ["Rates", "Yield curve"]);
         assert_eq!(curves_in(source), [("Yield curve".to_string(), "ash".to_string())]);
+        // A grid read with a graded key isn't a curve to check: many rows at each x.
+        assert!(curves_in("f = interpolate(\"Factors\", t, x=\"zone_thickness\", y=\"dragline\", dip=nearest(12))").is_empty());
     }
 }

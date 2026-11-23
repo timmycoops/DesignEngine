@@ -131,6 +131,22 @@ with a row a point, read between its rows:
 - A curve has one row a point: two rows with the same filters at one `x` are refused when the table is saved (while
   anything reads it as a curve) and when what reads it is saved. Write `x="…"` in quotes so it's checked.
 
+## Reading a grid of rows
+
+Dragline factors by method, dip, pit width and zone thickness, a rate by bench height and haul distance: a parameter
+table of rows, each a point on several number columns, read nearest or between on each:
+
+- `lookup("Dragline factors", "dragline", method=unit.method, dip=nearest(unit.dip), zone_thickness=between(t))`: the
+  rows that fit the plain keys (here, the method), then each marked key read off its own column of numbers, in the order
+  written. `nearest(x)` takes the rows at the value nearest x (the smaller of two as near; outside the rows, the end's).
+  `between(x)` takes the rows at the values either side, each weighted by how near, so two `between` keys read a value
+  off four rows. On a row's own value, that row's.
+- `interpolate("Dragline factors", t, x="zone_thickness", y="dragline", method=m, dip=nearest(d))` reads the same way,
+  its own `x` between.
+- A `between` key outside its rows is refused, saying the value and the range, unless `ends="hold"` (interpolate), which
+  takes the nearer end's rows. A traced unit shows the rows read and their weights: `rows 3 (0.6), 4 (0.4)`.
+- `p.at` takes plain keys only.
+
 ```python
 # Dragline hours by bench height: the rate from the Rates table, the unit's own thickness as the key.
 def formula(unit):
@@ -464,6 +480,8 @@ def allocate(column, p):
   last piece is what's left, so the pieces add back exactly.
 - Each piece takes the unit's labels and words; its volume, thickness and other summed fields are shared, and every
   other value kept. A piece written by `final` goes on the unit's leaf, as the unit would have.
+- After a split, the unit split is its last piece (the rest): work on the pieces the split gives back, and read what
+  you need of the whole unit (`t = u.thickness`) before splitting it.
 - `u.place_onto("Waste\\Drill and Blast\\Volume", x, seam=…, bench=…)`: a schedule field's value written on another
   leaf of the block, as a formula's.
 - `u.block.strip`: its block's attributes. `u.p.min_burden`: the parameters by its block's attributes.

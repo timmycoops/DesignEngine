@@ -147,6 +147,33 @@ Five workstreams, in that order: words, schedule fields, allocation steps, sever
 Not timed: an allocation runs one Starlark call a column, as a formula step does a unit; it hasn't been run on the
 large test pits.
 
+## Built: workstream 4, several keys
+
+- **A key read nearest or between** (`zd_core::Graded`, `GradedKey`, `ParameterTable::read_graded`): `lookup` and
+  `interpolate` take keys marked `nearest(x)` or `between(x)` beside their plain ones, so a table of rows reads as a grid
+  (the template's Dragline Factors: method, dip, width, coal thickness, zone thicknesses). The plain keys filter the rows
+  as any lookup does; then each marked key, in the order written, is read off its own column of numbers. `nearest` takes
+  the rows at the value nearest it (the smaller of two as near, the end's outside them); `between` the rows at the two
+  values either side, each weighted by how near, so two `between` keys read a value off four rows. Where rows are left
+  after every key, the first is read, as a lookup reads.
+- **Outside**: a `between` key outside its rows is refused, saying the value and the range; `interpolate`'s
+  `ends="hold"` holds the nearer end's rows. `interpolate` reads its own `x` between, then the marked keys. `p.at` takes
+  plain keys only, and refuses a marked one.
+- **Traced**: a traced lookup names its rows and their weights, `lookup Dragline factors rows 3 (0.6), 4 (0.4): dragline
+  (method 2 zone, dip nearest 12, zone_thickness between 24)`.
+- **Saved**: a curve read with a marked key isn't checked as a curve on save (it has many rows at each `x`).
+- **Shown**: the reference has "Reading a grid of rows"; `nearest` and `between` are in the editors' suggestions.
+- **Found on the way**: after a split, the unit split is its last piece (the rest keeps its id), so a script reads what
+  it needs of the whole unit before splitting it. Said in the reference.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_factor_is_read_between_two_rows_on_one_key_and_nearest_on_another` (zd-core) | the plan's case: a 2-zone method's dragline factor at dip 12 (nearest, 15) and zone thickness 24 m (between 20 and 30): 0.4 + 0.4 × 0.15 = 0.46 off rows 3 and 4, weights 0.6 and 0.4; both between, 0.3 × 0.54 + 0.7 × 0.46 = 0.484 off four rows whose weights add to 1; on a row's own values its value; two as near, the smaller | 1e-12 |
+| `a_graded_key_outside_its_rows_is_refused_or_held` (zd-core) | 35 m outside 20 to 30 refused, held 0.6; a key or column the table hasn't, one of words, and no row for the keys said | exact |
+| `a_factor_is_looked_up_nearest_on_one_key_and_between_on_another` (zd-script) | 0.46 by `lookup` and by `interpolate`; the trace's rows and weights; outside refused with the keys; `p.at` and a key in words refused | 1e-12 |
+| `curves_and_lookups_are_read_off_the_source` (zd-core) | a grid read by `interpolate` isn't checked as a curve | exact |
+| `a_dragline_system_reads_its_factors_nearest_on_dip_and_between_on_zone_thickness` (reserves_run.rs) | 60 m of waste over A coal, a 50 m one-zone system at dip 12°: share 0.5 and total 0.7 off the grid, Dragline 125,000 m³ with rehandle 50,000, Dozer Push 125,000, Excavator 50,000, the primes adding to the 300,000 of ROM waste | 1e-9 |
+
 ## Known limits
 
 - A formula's worked examples (its known answers) expect numbers only; a word it sets is checked by running it.

@@ -214,6 +214,7 @@ fn globals() -> Globals {
         .with(checks::check_globals)
         .with(lookups::lookup_globals)
         .with(lookups::curve_globals)
+        .with(lookups::graded_globals)
         .build()
 }
 
