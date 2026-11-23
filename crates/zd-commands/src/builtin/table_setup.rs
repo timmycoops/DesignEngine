@@ -55,6 +55,31 @@ impl Command for SaveTableSetup {
         if let Some(rows) = &s.parameters {
             rows.check().map_err(|e| CommandError::Invalid(format!("the table's own parameter rows: {e}")))?;
         }
+        // What the Setup tab may set (decision 5): add-ons that are add-ons, parameter tables that are, sources for fields
+        // the dataflow and its add-ons have, all put together as a run would.
+        let Body::Dataflow(main) = &flow.body else { unreachable!() };
+        let mut add_ons = Vec::new();
+        for &id in s.add_ons.as_ref().unwrap_or(&main.add_ons) {
+            let a = inputs.object(id)?;
+            let Body::Dataflow(d) = &a.body else { return Err(CommandError::WrongKind { id, expected: ObjectKind::Dataflow, found: a.kind() }) };
+            if !d.add_on {
+                return Err(CommandError::Invalid(format!("{} is a main dataflow, not an add-on: a setup lists add-ons only", a.name)));
+            }
+            add_ons.push((a.name.clone(), d.clone()));
+        }
+        for &id in s.tables.iter().flatten() {
+            let t = inputs.object(id)?;
+            if !matches!(t.body, Body::ParameterTable(_)) {
+                return Err(CommandError::Invalid(format!("{} isn't a parameter table: a setup reads parameter tables only", t.name)));
+            }
+        }
+        let pairs: Vec<(&str, &zd_core::Dataflow)> = add_ons.iter().map(|(n, d)| (n.as_str(), d.as_ref())).collect();
+        let merged = main.with_add_ons(&pairs).map_err(CommandError::Invalid)?;
+        for name in s.sources.keys() {
+            if !merged.fields.iter().any(|f| &f.field.name == name) && !merged.words.iter().any(|w| &w.name == name) {
+                return Err(CommandError::Invalid(format!("the setup gives a source for {name}, a field {} and its add-ons haven't", flow.name)));
+            }
+        }
         let picked = s.blocks.resolve(inputs.objects());
         if picked.is_empty() {
             return Err(CommandError::Invalid("the setup picks no blocks: name their layers (and a filter), or the blocks themselves".into()));

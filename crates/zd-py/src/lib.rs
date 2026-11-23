@@ -189,6 +189,15 @@ impl PySession {
         to_py(py, &serde_json::to_value(read).map_err(|e| CommandError::new_err(e.to_string()))?)
     }
 
+    /// A reserves table's setup as the app's Setup tab shows it (Table setup plan, decision 5): its blocks, dataflows and
+    /// steps, each field's source (`own` where the table gives its own), its parameter tables in order with the columns
+    /// read from each, and any problems.
+    fn setup_view(&self, py: Python<'_>, table: &str) -> PyResult<Py<PyAny>> {
+        let id = object_id(table)?;
+        let view = zd_commands::builtin::setup_view(self.inner.project(), self.inner.log(), id).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &serde_json::to_value(view).map_err(|e| CommandError::new_err(e.to_string()))?)
+    }
+
     /// Runs a reserves table again from its setup (decisions 0085, and the Table setup plan's 1 and 6): every block of
     /// its case the setup picks, or those under `only` (`["Pit", "3", "B1"]`), into the table in place. The run's record.
     #[pyo3(signature = (table, only=None))]

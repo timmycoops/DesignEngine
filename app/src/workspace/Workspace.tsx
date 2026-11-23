@@ -25,6 +25,7 @@ import { ViewportPanel } from '@/panels/ViewportPanel';
 import { WorkflowCanvas } from '@/panels/WorkflowCanvas';
 import { TablesPanel } from '@/panels/TablesPanel';
 import { DataflowView } from '@/panels/DataflowPanel';
+import { SetupPanel } from '@/panels/SetupPanel';
 import { Parameters } from '@/panels/ParametersPanel';
 import { WorkflowPanel } from '@/panels/WorkflowPanel';
 import { SurfacesPanel } from '@/panels/SurfacesPanel';
@@ -52,6 +53,7 @@ const components: Record<PanelId | 'viewport' | (typeof RETIRED)[number], () => 
   // A tab no longer made, drawn as nothing until a saved layout's copy of it is closed.
   blocks: () => null,
   notebook: DataflowView,
+  setup: SetupPanel,
   params: Parameters,
   licence: LicencePanel,
   viewcontrols: ViewControlsPanel,
