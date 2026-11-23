@@ -15,7 +15,7 @@ paths:
 Moved from CLAUDE.md's object model and reserves conventions. The short form of the conventions stays in CLAUDE.md.
 Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections, ROM, the reserves table, formulas), 0082
 (live workings), 0084 to 0086 (dataflow view, run again, fields), 0090 (filter in the view), 0099 (tables and scripts), 0101
-(schedule quantities), 0102 (waste allocation).
+(schedule quantities), 0102 (waste allocation), 0103 (table setup).
 
 - `ParameterTable`: assumptions any tool reads (reserves settings now; dragline, haulage, equipment later): filter
   columns (the bench rules' syntax) and value columns with units, read top down, each value from the first row that fits
@@ -34,7 +34,7 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
   node (`docs/decisions/0072-dataflow-parameters-tables.md`, `0074-rom-and-the-reserves-table.md`); clean coal under ROM,
   and a Summary: the balance of coal and waste from Imported through Insitu and ROM to Scheduled with what moved between
   them, each check zero for every block, ratios as ratios of sums (`AddUp::Ratio`) and an audit
-  (`docs/decisions/0086-reserves-fields.md`).
+  (`docs/decisions/0086-reserves-fields.md`). A reserves table holds what fills it (`Table.setup`, `zd_core::TableSetup`, 0103): its dataflow, its blocks (`BlockPick`, by layer and filter or exact ids), its seam model or stack and its own rows; every run writes it, Run again (`rerun_params`) runs it, `setup_of` fills an older table's from its run, and `table.setup` saves one. The chain goes one way: Objects table, then the reserves table's Imported snapshot, then the setup's steps, then Scheduled, then the schedule by process; nothing writes into the objects.
 - One table concept (`docs/decisions/0099-tables-and-scripts.md`): the blocks (a row a solid, `table_grid::objects_table`)
   and a reserves table (a row a leaf) are both a `Table`, seen in the Tables tab's grid, `table_grid::grid`: grouped by
   any word column, every subtotal `add_up_column` over the group's leaves, as the Breakdown and the report add up. The

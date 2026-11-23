@@ -173,6 +173,25 @@ impl PySession {
         to_py(py, &json!({ "parameters": table, "dataflow": flow }))
     }
 
+    /// What fills a reserves table (Table setup plan, decision 1): the setup it holds, or for a table made before setups,
+    /// the one the run that made it gives. Save a changed one with `run("table.setup", table=..., setup=...)`.
+    fn table_setup(&self, py: Python<'_>, table: &str) -> PyResult<Py<PyAny>> {
+        let id = object_id(table)?;
+        let setup = zd_commands::builtin::setup_of(self.inner.project(), self.inner.log(), id).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &serde_json::to_value(setup).map_err(|e| CommandError::new_err(e.to_string()))?)
+    }
+
+    /// Runs a reserves table again from its setup (decisions 0085, and the Table setup plan's 1 and 6): every block of
+    /// its case the setup picks, or those under `only` (`["Pit", "3", "B1"]`), into the table in place. The run's record.
+    #[pyo3(signature = (table, only=None))]
+    fn run_table(&mut self, py: Python<'_>, table: &str, only: Option<Vec<String>>) -> PyResult<Py<PyAny>> {
+        let id = object_id(table)?;
+        let p = zd_commands::builtin::rerun_params(self.inner.project(), self.inner.log(), id, &only.unwrap_or_default()).map_err(|e| CommandError::new_err(e.to_string()))?;
+        let params = serde_json::to_value(&p).map_err(|e| CommandError::new_err(e.to_string()))?;
+        let record = py.detach(|| self.inner.run("reserves.run", params)).map_err(|e| CommandError::new_err(e.to_string()))?;
+        to_py(py, &serde_json::to_value(&record).map_err(|e| CommandError::new_err(e.to_string()))?)
+    }
+
     /// Adds waste allocation to a dataflow (the Waste allocation plan, decision 7): its four parameter tables, where the
     /// project hasn't one of that name, then the dataflow saved with the schedule fields, allocation steps and checks
     /// added. Gives back the tables' ids, the settings table first.

@@ -592,6 +592,7 @@ mod tests {
                 TableColumn::adding("Loss\\Roof\\volume", "m3", AddUp::Sum, n(&[f64::NAN, f64::NAN, f64::NAN, f64::NAN])),
             ],
             calculated: Vec::new(),
+            setup: None,
         }
     }
 
@@ -611,6 +612,7 @@ mod tests {
                 TableColumn::text("Working section\\id", t(&["4", "6", "2", "4", "6"])),
             ],
             calculated: Vec::new(),
+            setup: None,
         };
         let words = |node: &[&str], column: &str| {
             let node: Vec<String> = node.iter().map(|w| w.to_string()).collect();

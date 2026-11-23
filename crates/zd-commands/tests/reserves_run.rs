@@ -3264,3 +3264,66 @@ fn add_waste_allocation_fills_each_process_on_a_waste_interval_of_two_horizons()
     let a_row = texts(&t, "seam").iter().position(|s| s.as_deref() == Some("A")).unwrap();
     assert_eq!(texts(&t, "Scheduled\\Waste\\process")[a_row].as_deref(), Some("Topsoil; Freedig; Excavator; Dragline; Poststrip; Cast; Dozer Push"), "top down: zone 2 above zone 1");
 }
+
+/// What fills a table, kept with it (Table setup plan, decision 1). B1 and B2's blocks are every solid on the `blocks`
+/// layer, so the table's setup picks them by that layer, with the run's dataflow and stack. A third block, B3, added to
+/// the layer afterwards is taken up by Run again from the setup: its OB, 50,000 m³ (100 m by 50 m by 10 m), is in the
+/// table's Imported waste. Its rows for B1 and B2 are as they were.
+#[test]
+fn a_reserves_table_holds_its_setup_and_run_again_takes_up_a_new_block() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "final"]);
+    let record = s.run("reserves.run", json!({ "dataflow": flow, "blocks": ids, "stack": STACK, "layer": "reserves" })).unwrap();
+    let id = created(&record)[0];
+    let made = table(&s, id);
+    let setup = made.setup.clone().expect("a new table holds its setup");
+    let blocks_layer = s.project().object(ids[0]).unwrap().layer;
+    assert_eq!(setup.dataflow, flow);
+    assert_eq!(setup.blocks, zd_core::BlockPick { layers: vec![blocks_layer], ..Default::default() }, "every solid on the layer: picked by it");
+    assert_eq!(setup.stack, STACK.map(String::from).to_vec());
+    assert_eq!(zd_commands::builtin::setup_of(s.project(), s.log(), id).unwrap(), setup);
+
+    let waste = |t: &Table| -> f64 { (0..t.rows()).filter_map(|i| value(t, i, "Imported\\Waste\\volume")).sum() };
+    let before = waste(&made);
+    box_solid(&mut s, "3_B3_OB", 200.0, (20.0, 30.0), json!({ "strip": 3.0, "block": "B3", "horizon": "OB", "material": "waste", "seam": "U" }));
+    let p = rerun_params(s.project(), s.log(), id, &[]).unwrap();
+    assert_eq!(p.blocks.len(), ids.len() + 1, "the new block on the layer is taken up");
+    s.run("reserves.run", serde_json::to_value(&p).unwrap()).unwrap();
+    let again = table(&s, id);
+    assert!((waste(&again) - before - 50_000.0).abs() < 1e-6, "{} against {before}", waste(&again));
+    assert_eq!(again.setup, Some(setup), "Run again keeps the setup");
+}
+
+/// A run on some of a layer's blocks picks exactly those: B1's alone. `table.setup` saves a setup the table then runs
+/// (here its blocks by the layer with a filter of strip 3, block B2); one that picks no blocks, names a dataflow that
+/// isn't one, or orders columns by nothing is refused, and the table is as it was.
+#[test]
+fn a_setup_is_saved_on_a_table_and_what_it_picks_is_run() {
+    let mut s = session();
+    let ids = blocks(&mut s, None);
+    let flow = dataflow(&mut s, &["initialise", "final"]);
+    let b1: Vec<ObjectId> = ids.iter().copied().filter(|id| s.project().object(*id).unwrap().name.starts_with("3_B1")).collect();
+    let id = created(&s.run("reserves.run", json!({ "dataflow": flow, "blocks": b1, "stack": STACK, "layer": "reserves" })).unwrap())[0];
+    let setup = table(&s, id).setup.unwrap();
+    assert_eq!((setup.blocks.layers.len(), setup.blocks.ids.len()), (0, b1.len()), "some of a layer's blocks: exactly these");
+
+    let layer = s.project().object(ids[0]).unwrap().layer;
+    let mut b2 = setup.clone();
+    b2.blocks = zd_core::BlockPick { layers: vec![layer], filter: [("block".to_string(), "B2".to_string())].into(), ids: Vec::new() };
+    let saved = s.run("table.setup", json!({ "table": id, "setup": b2 })).unwrap();
+    assert!(saved.messages[0].contains("5 blocks from 1 layer"), "{:?}", saved.messages);
+    let p = rerun_params(s.project(), s.log(), id, &[]).unwrap();
+    assert_eq!(p.blocks.len(), 5, "B2's OB, two U benches, U-L and L");
+
+    let mut none = setup.clone();
+    none.blocks = zd_core::BlockPick { layers: vec![layer], filter: [("block".to_string(), "B9".to_string())].into(), ids: Vec::new() };
+    assert!(s.run("table.setup", json!({ "table": id, "setup": none })).unwrap_err().to_string().contains("picks no blocks"));
+    let mut wrong = setup.clone();
+    wrong.dataflow = id;
+    assert!(s.run("table.setup", json!({ "table": id, "setup": wrong })).is_err());
+    let mut unordered = setup.clone();
+    unordered.stack.clear();
+    assert!(s.run("table.setup", json!({ "table": id, "setup": unordered })).unwrap_err().to_string().contains("seam model, or by a stack"));
+    assert_eq!(table(&s, id).setup.unwrap().blocks.filter.get("block").map(String::as_str), Some("B2"), "refusals leave it as saved");
+}

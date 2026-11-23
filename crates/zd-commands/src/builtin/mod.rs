@@ -38,6 +38,7 @@ mod trim_in_plan;
 mod surface_triangulate;
 mod starter;
 mod waste_allocation;
+mod table_setup;
 mod measure;
 
 pub use benches::{BENCH_FLOOR, BENCH_TOP, BENCHED_FROM, BenchEnd, BenchRule, CutByBenches, CutByBenchesParams, rule_for};
@@ -76,8 +77,9 @@ pub use from_surfaces::{Contours, ContoursParams, FromSection, FromSectionParams
 pub use measure::{MEASURES, Measure, MeasureParams, block_length, floor_dip, measure, plan_area};
 pub use reserves_run::{
     ColumnSteps, FormulaTraceView, ParamRead, StepKind, TraceLineView, column_trace, formula_trace, OUT_OF_MODEL, RunReserves, RunReservesParams, STEPS, StepView, StepWrite, UNDERBURDEN_THICKNESS, UnitView, Working, dataflow_starter, preston_sanders,
-    reserves_preview, rerun_params, table_column, StepUnits, units_at_step, ChangedSince, changed_since, Unsaved,
+    reserves_preview, rerun_params, setup_of, table_column, StepUnits, units_at_step, ChangedSince, changed_since, Unsaved,
 };
+pub use table_setup::{SaveTableSetup, SaveTableSetupParams};
 pub use waste_allocation::{PROCESSES as WASTE_PROCESSES, schedule_fields as waste_schedule_fields, tables as waste_allocation_tables, with_waste_allocation};
 pub use starter::{DISCARDED, RENAMED_FIELDS, TONNES_AD_PER_M3, renamed_from_older, starter_formulas, with_starter_formulas};
 pub use zd_script::REFERENCE as FORMULA_REFERENCE;
@@ -180,6 +182,7 @@ pub fn register_all(registry: &mut Registry) {
     registry.register(Module::Solids, RelinkSeamModels);
     // Reserves: parameters, dataflows and their formulas, reserves runs.
     registry.register(Module::Reserves, SaveParameters);
+    registry.register(Module::Reserves, SaveTableSetup);
     registry.register(Module::Reserves, SaveDataflow);
     registry.register(Module::Reserves, RunReserves);
     registry.register(Module::Reserves, EnterInTable);

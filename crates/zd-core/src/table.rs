@@ -137,12 +137,76 @@ pub struct CalculatedColumn {
     pub lookups: Vec<crate::ObjectId>,
 }
 
-/// A table: columns of one length, names unique, and the columns worked out from them.
+/// Which blocks a reserves table is run on (the Build Plan's "Table setup plan", decision 1): every solid on these layers
+/// that fits the filter, in the bench rules' words, so a block added to a layer is taken up; or, where a run took only
+/// some of a layer's solids, exactly these.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockPick {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<crate::LayerId>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub filter: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ids: Vec<crate::ObjectId>,
+}
+
+impl BlockPick {
+    /// The project's solids it picks, in the project's order: exactly its ids that are still there, or every solid on its
+    /// layers that fits its filter.
+    pub fn resolve<'a>(&self, objects: impl IntoIterator<Item = &'a std::sync::Arc<crate::Object>>) -> Vec<crate::ObjectId> {
+        let solids = objects.into_iter().filter(|o| matches!(o.body, crate::Body::Solid(_)));
+        if !self.ids.is_empty() {
+            let there: Vec<crate::ObjectId> = solids.map(|o| o.id).collect();
+            return self.ids.iter().copied().filter(|id| there.contains(id)).collect();
+        }
+        solids.filter(|o| self.layers.contains(&o.layer) && crate::filter_fits(&self.filter, &o.attributes)).map(|o| o.id).collect()
+    }
+
+    /// The pick a run's blocks make: their layers where they're every solid on them, else exactly these.
+    pub fn of_blocks<'a>(objects: impl IntoIterator<Item = &'a std::sync::Arc<crate::Object>> + Clone, blocks: &[crate::ObjectId]) -> BlockPick {
+        let mut layers: Vec<crate::LayerId> = Vec::new();
+        for o in objects.clone().into_iter().filter(|o| blocks.contains(&o.id)) {
+            if !layers.contains(&o.layer) {
+                layers.push(o.layer);
+            }
+        }
+        let by_layers = BlockPick { layers, ..BlockPick::default() };
+        let mut all = by_layers.resolve(objects);
+        let mut given = blocks.to_vec();
+        all.sort_unstable();
+        given.sort_unstable();
+        given.dedup();
+        if all == given { by_layers } else { BlockPick { ids: blocks.to_vec(), ..BlockPick::default() } }
+    }
+}
+
+/// What fills a reserves table (the Build Plan's "Table setup plan", decision 1): the dataflow, the blocks, the seam model
+/// that orders each column or the stack where there's none, and the table's own parameter rows, read first. Its case is
+/// the table's own. Run again runs it; every run is still logged.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TableSetup {
+    pub dataflow: crate::ObjectId,
+    pub blocks: BlockPick,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<crate::ObjectId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stack: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<crate::ParameterTable>,
+}
+
+/// A table: columns of one length, names unique, and the columns worked out from them; a reserves table also what fills
+/// it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Table {
     pub columns: Vec<TableColumn>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub calculated: Vec<CalculatedColumn>,
+    /// What fills it, for a reserves table (Table setup plan, decision 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<TableSetup>,
 }
 
 impl Table {
@@ -197,6 +261,7 @@ mod tests {
                 TableColumn::number("volume", "m3", vec![Some(100.0), None]),
             ],
             calculated: Vec::new(),
+            setup: None,
         };
         t.check().unwrap();
         assert_eq!(t.rows(), 2);

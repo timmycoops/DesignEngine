@@ -122,7 +122,7 @@ fn take(table: &Table, rows: &[usize]) -> Table {
             ..c.clone()
         })
         .collect();
-    Table { columns, calculated: Vec::new() }
+    Table { columns, calculated: Vec::new(), setup: None }
 }
 
 /// A column's cell for Starlark.
@@ -314,7 +314,7 @@ fn table_methods(builder: &mut MethodsBuilder) {
             };
             columns.push(TableColumn { values, ..c.clone() });
         }
-        Ok(this.made(&this.name, Table { columns, calculated: Vec::new() }))
+        Ok(this.made(&this.name, Table { columns, calculated: Vec::new(), setup: None }))
     }
 
     /// A number column added up over every row by its own rule; None where no row has a value.
@@ -406,14 +406,14 @@ fn table_methods(builder: &mut MethodsBuilder) {
         if unmatched > 0 {
             note(&this.notes, format!("{unmatched} of {}'s {} rows had no row in {} with the same {}", this.name, this.table.rows(), other.name, on.join(", ")));
         }
-        Ok(this.made(&this.name, Table { columns, calculated: Vec::new() }))
+        Ok(this.made(&this.name, Table { columns, calculated: Vec::new(), setup: None }))
     }
 
     /// Only these columns, in this order.
     fn select<'v>(this: &TableHandle, columns: Value<'v>) -> anyhow::Result<TableHandle> {
         let wanted = names(columns, "select's columns")?;
         let columns = wanted.iter().map(|n| this.column(n).cloned()).collect::<anyhow::Result<Vec<_>>>()?;
-        Ok(this.made(&this.name, Table { columns, calculated: Vec::new() }))
+        Ok(this.made(&this.name, Table { columns, calculated: Vec::new(), setup: None }))
     }
 
     /// Every column but these.
@@ -423,7 +423,7 @@ fn table_methods(builder: &mut MethodsBuilder) {
             this.column(n)?;
         }
         let columns = this.table.columns.iter().filter(|c| !gone.contains(&c.name)).cloned().collect();
-        Ok(this.made(&this.name, Table { columns, calculated: Vec::new() }))
+        Ok(this.made(&this.name, Table { columns, calculated: Vec::new(), setup: None }))
     }
 
     /// Columns renamed, `{"old": "new"}`.
@@ -559,6 +559,6 @@ pub(crate) fn table_globals(builder: &mut GlobalsBuilder) {
                 anyhow::bail!("units or adds name {n}, which isn't one of the new table's columns");
             }
         }
-        Ok(TableHandle { name: name.to_string(), table: Arc::new(Table { columns: out, calculated: Vec::new() }), work: run.work.clone(), notes: run.notes.clone() })
+        Ok(TableHandle { name: name.to_string(), table: Arc::new(Table { columns: out, calculated: Vec::new(), setup: None }), work: run.work.clone(), notes: run.notes.clone() })
     }
 }

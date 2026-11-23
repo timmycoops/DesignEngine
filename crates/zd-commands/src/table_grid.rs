@@ -431,7 +431,7 @@ pub fn objects_table(project: &Project, ids: &[ObjectId], density: Option<&str>)
         };
         columns.push(column);
     }
-    Table { columns, calculated: Vec::new() }
+    Table { columns, calculated: Vec::new(), setup: None }
 }
 
 #[cfg(test)]
@@ -452,6 +452,7 @@ mod tests {
                 TableColumn::adding("Insitu\\Coal\\ash", "%", AddUp::Mass { density: "rd".into() }, n(&[10.0, 20.0, 15.0, 12.0])),
             ],
             calculated: Vec::new(),
+            setup: None,
         }
     }
 

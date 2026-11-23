@@ -513,7 +513,10 @@ impl Command for RunReserves {
         }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
         let when = if p.table.is_some() { format!("{}, run again", utc_words(now)) } else { utc_words(now) };
-        let mut out = outcome(&prepared, p, ran, stopped, started, &when);
+        // What fills each table it makes (Table setup plan, decision 1): kept with the table, so Run again runs it.
+        let objects: Vec<&Arc<Object>> = inputs.objects().collect();
+        let setup = zd_core::TableSetup { dataflow: p.dataflow, blocks: zd_core::BlockPick::of_blocks(objects.iter().copied(), &p.blocks), model: p.model, stack: p.stack.clone(), parameters: p.parameters.clone() };
+        let mut out = outcome(&prepared, p, ran, stopped, started, &when, &setup);
         if let Some(object) = into {
             into_table(&mut out, &object, &prepared, p)?;
         }
@@ -1642,7 +1645,7 @@ pub fn units_at_step(project: &zd_core::Project, log: &[crate::LogEntry], table:
         table_columns.push(TableColumn { name: f.name.clone(), unit: unit_of_kind(f.kind).to_string(), add_up: Some(f.add_up.clone()), kind: zd_core::ColumnKind::Written, values: zd_core::ColumnValues::Number(v) });
     }
     let step_name = if step == 0 { "as input".to_string() } else { prepared.steps[step - 1].0.clone() };
-    Ok(StepUnits { step: step_name, upper, columns: columns.len(), stopped, table: Table { columns: table_columns, calculated: Vec::new() } })
+    Ok(StepUnits { step: step_name, upper, columns: columns.len(), stopped, table: Table { columns: table_columns, calculated: Vec::new(), setup: None } })
 }
 
 /// A table's column made ready to run: the dataflow prepared with the table's own run's parameters, the column's key,
@@ -3121,7 +3124,7 @@ fn table_of(prepared: &Prepared, ran: &[&Ran], when: &str) -> Table {
     for (name, words) in [("run", when.to_string()), ("dataflow", prepared.audit_dataflow.clone()), ("parameters", prepared.audit_tables.clone())] {
         columns.push(TableColumn::text(&format!("Summary\\Audit\\{name}"), leaves.iter().map(|_| Some(words.clone()).filter(|w| !w.is_empty())).collect()));
     }
-    Table { columns, calculated: Vec::new() }
+    Table { columns, calculated: Vec::new(), setup: None }
 }
 
 /// A leaf's pieces by the folder they were written to.
@@ -3294,7 +3297,11 @@ fn into_table(out: &mut Outcome, object: &Arc<Object>, prepared: &Prepared, p: &
         return Err(CommandError::Invalid(format!("no block of {} ran, so nothing was run again", object.name)));
     };
     let case = crate::reserves_view::case_of(&object.attributes);
-    let (merged, lost) = merge_rerun(old, &new, &prepared.upper, &case, &p.only);
+    let (mut merged, lost) = merge_rerun(old, &new, &prepared.upper, &case, &p.only);
+    // A table made before setups (Table setup plan, decision 1) takes the one its run was made from.
+    if merged.setup.is_none() {
+        merged.setup = new.setup.clone();
+    }
     let kept = merged.rows() - new.rows();
     out.changes = vec![Change::Revise { id: object.id, base: object.revision, name: None, layer: None, attributes: None, body: Some(Body::Table(Arc::new(merged))) }];
     let under = if p.only.is_empty() { "every block".to_string() } else { p.only.join(" › ") };
@@ -3366,7 +3373,7 @@ pub(crate) fn merge_rerun(old: &Table, new: &Table, upper: &[String], case: &str
             TableColumn { name: like.name.clone(), unit: newest.unit.clone(), add_up: newest.add_up.clone(), kind: like.kind, values }
         })
         .collect();
-    (Table { columns, calculated: old.calculated.clone() }, lost)
+    (Table { columns, calculated: old.calculated.clone(), setup: old.setup.clone() }, lost)
 }
 
 /// What a reserves table was made from that has changed since (decision 4 of 0099): its blocks revised since the run
@@ -3413,13 +3420,41 @@ pub fn changed_since(project: &zd_core::Project, log: &[crate::LogEntry], table:
 /// log as the column view reads them, the blocks still there, the table and the run that last wrote it named.
 pub fn rerun_params(project: &zd_core::Project, log: &[crate::LogEntry], table: ObjectId, only: &[String]) -> Result<RunReservesParams, CommandError> {
     let object = project.object(table).ok_or(CommandError::MissingObject(table))?;
-    let record = table_run(log, object).ok_or_else(|| CommandError::Invalid(format!("{} wasn't made by a reserves run in this project's log, so it can't be run again", object.name)))?;
-    let mut p: RunReservesParams = serde_json::from_value(record.params.clone()).map_err(|e| CommandError::Invalid(format!("the run that made {} can't be read again: {e}", object.name)))?;
-    p.blocks.retain(|id| project.object(*id).is_some());
-    p.table = Some(table);
-    p.only = only.to_vec();
-    p.previous = Some(record.run);
-    Ok(p)
+    let record = table_run(log, object);
+    let setup = setup_of(project, log, table)?;
+    let blocks = setup.blocks.resolve(project.objects());
+    if blocks.is_empty() {
+        return Err(CommandError::Invalid(format!("{}'s setup picks no blocks: nothing to run again", object.name)));
+    }
+    // The run's own settings the setup doesn't hold (the layer and the name), from the table itself.
+    let name = record.and_then(|r| serde_json::from_value::<RunReservesParams>(r.params.clone()).ok()).map_or_else(|| object.name.clone(), |p| p.name);
+    Ok(RunReservesParams {
+        dataflow: setup.dataflow,
+        blocks,
+        model: setup.model,
+        stack: setup.stack,
+        layer: project.layer(object.layer).map_or_else(|| object.layer.to_string(), |l| l.name.clone()),
+        parameters: setup.parameters,
+        name,
+        table: Some(table),
+        only: only.to_vec(),
+        previous: record.map(|r| r.run),
+    })
+}
+
+/// What fills a reserves table (Table setup plan, decision 1): the setup it holds, or, for a table made before setups,
+/// the one the run that made it gives, its blocks picked by their layers where they were every solid on them.
+pub fn setup_of(project: &zd_core::Project, log: &[crate::LogEntry], table: ObjectId) -> Result<zd_core::TableSetup, CommandError> {
+    let object = project.object(table).ok_or(CommandError::MissingObject(table))?;
+    let Body::Table(t) = &object.body else { return Err(CommandError::WrongKind { id: table, expected: ObjectKind::Table, found: object.kind() }) };
+    if let Some(setup) = &t.setup {
+        return Ok(setup.clone());
+    }
+    let record = table_run(log, object).ok_or_else(|| CommandError::Invalid(format!("{} has no setup and wasn't made by a reserves run in this project's log, so it can't be run again", object.name)))?;
+    let p: RunReservesParams = serde_json::from_value(record.params.clone()).map_err(|e| CommandError::Invalid(format!("the run that made {} can't be read again: {e}", object.name)))?;
+    let blocks: Vec<ObjectId> = p.blocks.into_iter().filter(|id| project.object(*id).is_some()).collect();
+    let all: Vec<&Arc<Object>> = project.objects().collect();
+    Ok(zd_core::TableSetup { dataflow: p.dataflow, blocks: zd_core::BlockPick::of_blocks(all.iter().copied(), &blocks), model: p.model, stack: p.stack, parameters: p.parameters })
 }
 
 /// The reserves run that last wrote a table: the run its revision came from, or where a person has since entered values
@@ -3460,7 +3495,7 @@ fn run_for_column<'a>(log: &'a [crate::LogEntry], latest: zd_core::RunId, column
     Some(at)
 }
 
-fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: Vec<Stopped>, started: Instant, when: &str) -> Outcome {
+fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: Vec<Stopped>, started: Instant, when: &str, setup: &zd_core::TableSetup) -> Outcome {
     let mut cases: BTreeMap<&str, Vec<&Ran>> = BTreeMap::new();
     for r in &ran {
         cases.entry(r.key.case.as_str()).or_default().push(r);
@@ -3468,7 +3503,8 @@ fn outcome(prepared: &Prepared, p: &RunReservesParams, ran: Vec<Ran>, stopped: V
     let mut changes = Vec::new();
     let mut messages = Vec::new();
     for (case, of) in &cases {
-        let table = table_of(prepared, of, when);
+        let mut table = table_of(prepared, of, when);
+        table.setup = Some(setup.clone());
         let rows = table.rows();
         let name = p.name.replace("{dataflow}", &prepared.name).replace("{case}", case);
         // Its levels and their defaults, so a leaf can be matched to its solids as the run placed them (decision 0075).
