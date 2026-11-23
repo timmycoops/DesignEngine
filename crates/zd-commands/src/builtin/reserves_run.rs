@@ -144,6 +144,9 @@ pub struct RunReservesParams {
     /// The add-on dataflows to run with it, in order (Table setup plan, decision 2); none given, the dataflow's own list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_ons: Option<Vec<ObjectId>>,
+    /// Where a field comes from for this run, by name, in place of the dataflow's (Table setup plan, decision 3).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, FieldSource>,
 }
 
 /// What a step writes (decision 0074): a piece of a unit on a leaf of the reserves table, under a folder. The leaf is
@@ -522,7 +525,7 @@ impl Command for RunReserves {
         let when = if p.table.is_some() { format!("{}, run again", utc_words(now)) } else { utc_words(now) };
         // What fills each table it makes (Table setup plan, decision 1): kept with the table, so Run again runs it.
         let objects: Vec<&Arc<Object>> = inputs.objects().collect();
-        let setup = zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons.clone(), blocks: zd_core::BlockPick::of_blocks(objects.iter().copied(), &p.blocks), model: p.model, stack: p.stack.clone(), parameters: p.parameters.clone() };
+        let setup = zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons.clone(), blocks: zd_core::BlockPick::of_blocks(objects.iter().copied(), &p.blocks), model: p.model, stack: p.stack.clone(), parameters: p.parameters.clone(), sources: p.sources.clone() };
         let mut out = outcome(&prepared, p, ran, stopped, started, &when, &setup);
         if let Some(object) = into {
             into_table(&mut out, &object, &prepared, p)?;
@@ -572,6 +575,22 @@ pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(Ob
         }
         let pairs: Vec<(&str, &Dataflow)> = add_ons.iter().map(|(n, d)| (n.as_str(), d.as_ref())).collect();
         Arc::new(dataflow.with_add_ons(&pairs).map_err(CommandError::Invalid)?)
+    };
+    // A table's own sources (Table setup plan, decision 3): where a field comes from, in place of the dataflow's.
+    let dataflow: Arc<Dataflow> = if p.sources.is_empty() {
+        dataflow
+    } else {
+        let mut d = (*dataflow).clone();
+        for (field, source) in &p.sources {
+            if let Some(f) = d.fields.iter_mut().find(|f| f.field.name == *field) {
+                f.source = source.clone();
+            } else if let Some(w) = d.words.iter_mut().find(|w| w.name == *field) {
+                w.source = source.clone();
+            } else {
+                return Err(CommandError::Invalid(format!("the setup says where {field} comes from, and {name} has no field {field}")));
+            }
+        }
+        Arc::new(d)
     };
     let dataflow = &dataflow;
     dataflow.check().map_err(CommandError::Invalid)?;
@@ -3477,6 +3496,7 @@ pub fn rerun_params(project: &zd_core::Project, log: &[crate::LogEntry], table: 
         only: only.to_vec(),
         previous: record.map(|r| r.run),
         add_ons: setup.add_ons,
+        sources: setup.sources,
     })
 }
 
@@ -3492,7 +3512,7 @@ pub fn setup_of(project: &zd_core::Project, log: &[crate::LogEntry], table: Obje
     let p: RunReservesParams = serde_json::from_value(record.params.clone()).map_err(|e| CommandError::Invalid(format!("the run that made {} can't be read again: {e}", object.name)))?;
     let blocks: Vec<ObjectId> = p.blocks.into_iter().filter(|id| project.object(*id).is_some()).collect();
     let all: Vec<&Arc<Object>> = project.objects().collect();
-    Ok(zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons, blocks: zd_core::BlockPick::of_blocks(all.iter().copied(), &blocks), model: p.model, stack: p.stack, parameters: p.parameters })
+    Ok(zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons, blocks: zd_core::BlockPick::of_blocks(all.iter().copied(), &blocks), model: p.model, stack: p.stack, parameters: p.parameters, sources: p.sources })
 }
 
 /// The reserves run that last wrote a table: the run its revision came from, or where a person has since entered values

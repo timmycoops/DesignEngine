@@ -198,6 +198,10 @@ pub struct TableSetup {
     pub stack: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parameters: Option<crate::ParameterTable>,
+    /// Where a field comes from for this table, by the field's name, in place of the dataflow's (decision 3): a design
+    /// dip from a parameter column where the dataflow reads the block's measured one.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub sources: std::collections::BTreeMap<String, crate::FieldSource>,
 }
 
 /// A table: columns of one length, names unique, and the columns worked out from them; a reserves table also what fills

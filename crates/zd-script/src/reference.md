@@ -434,6 +434,10 @@ schedule fields (`Waste\Dragline\Prime Volume`), which are written under `Schedu
 The splitting is the engine's: a split is the column's own, done in Rust, so the pieces add back to the unit exactly and
 the balance holds. A script never sets a unit's volume: it splits the unit to share it.
 
+**A value of the model comes through its field, a setting from a parameter row.** The block's dip, width and
+thickness are fields (`u.dip`, `column.total("dip", units=interval)`), so a table can take them from somewhere else, a
+design dip for one, without the script changing.
+
 **Every number comes from a parameter row.** Thicknesses, limits, factors, rehandle and swell are read from the
 dataflow's parameter tables (`p` for the column, `unit.p` for a unit, `lookup("Table", "column", key=…)` for any table by
 its keys), never written in the script: the script holds the order and the logic, and each read is traced in the
@@ -519,11 +523,12 @@ def allocate(column, p):
         if below == None or below not in coal or thickness < p.min_burden:
             continue
         zone_thickness = min(thickness, p.system_max) / zones
+        dip = column.total("dip", units=interval)
         units = interval
         for n in range(1, zones + 1):
             zone = column.take_from_bottom(units, min(zone_thickness, column.total("thickness", units=units)))
             units = [u for u in units if u not in zone]
-            f = lambda name: lookup("Dragline factors", name, method=p.method, zone=n, dip=nearest(p.dip), zone_thickness=between(zone_thickness))
+            f = lambda name: lookup("Dragline factors", name, method=p.method, zone=n, dip=nearest(dip), zone_thickness=between(zone_thickness))
             for u in zone:
                 u.zone = "Zone %d" % n
                 cast, dozer, dragline = u.split_shares([f("cast"), f("dozer_push"), f("dragline")])
