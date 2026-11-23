@@ -174,6 +174,48 @@ large test pits.
 | `curves_and_lookups_are_read_off_the_source` (zd-core) | a grid read by `interpolate` isn't checked as a curve | exact |
 | `a_dragline_system_reads_its_factors_nearest_on_dip_and_between_on_zone_thickness` (reserves_run.rs) | 60 m of waste over A coal, a 50 m one-zone system at dip 12°: share 0.5 and total 0.7 off the grid, Dragline 125,000 m³ with rehandle 50,000, Dozer Push 125,000, Excavator 50,000, the primes adding to the 300,000 of ROM waste | 1e-9 |
 
+## Built: workstream 5, Add waste allocation, with the waste interval
+
+Tim, 23 November, on workstreams 3 and 4: the scripts had a unit's thickness standing in for the waste interval's (the
+working section's), the tests hiding it with one OB unit a column. Folded in here, as he asked. And on the aim: "people
+may adjust these concepts using a script ... we should have the ability at the end of this to make many various options
+and ideas of how to piece together a mine plan and get it ready for scheduling." So the engine's calls stay general and
+the template is one way of using them.
+
+- **The waste interval** (general calls, in Rust): `column.intervals()`, the runs of neighbouring units that end in ROM
+  waste, top down, each a list: the waste between coal sections, a unit or several (two waste horizons, a coal rejected
+  or discarded between them, a loss mined with the waste); `ends="coal"` gives the coal sections.
+  `column.take_from_top(units, t)` and `column.take_from_bottom(units, t)` take a thickness across as many units as it
+  needs, splitting the one it ends in, each split noted and worked as a split is. `u.place_onto(field, x, unit=top)`
+  places a value on the leaves another unit is written on, shared by its benches.
+- **Add waste allocation** (`zd_commands::builtin::with_waste_allocation`, `Session::add_waste_allocation`, the
+  Parameters tab's **+ Add waste allocation (the template)**, `add_waste_allocation` in Python): four parameter tables,
+  each kept where the project has one of that name (Waste allocation settings, read as `p` by the column's levels;
+  Dragline factors, a grid by method and zone, dip and zone thickness; Waste processes, rehandle and swell by process;
+  Short term overrides, empty); 36 schedule fields, a section a process (Topsoil, Freedig, Excavator, Partings, Wedge,
+  Cast, Dozer Push, Dragline, Poststrip; Prime, Rehandle, Total and Swelled Volume) and drill and blast, coal mining and
+  coal exposed; the words `process`, `zone`, `drill_type`, `blasting_seam` and `blasting_bench`; six allocation steps
+  after `rom` (`loose_ground`, `short_term_overrides`, `dragline_system`, `excavator_partings_wedge`, `blasting`,
+  `waste_quantities`) and `waste_checks` after `final`. Refused where the dataflow lacks `rom` and `final` or has the
+  steps already. The template's method rebuilt as plain scripts on the general calls, every number from a row; none of
+  its code copied.
+- **The checks** (`waste_checks`, a table script): on every leaf the processes' prime volumes add to
+  `Scheduled\Waste\volume` and coal mining to `Scheduled\Coal\volume`, within the settings row's tolerance; every
+  waste leaf has a process.
+
+| Test | Known answer | Tolerance |
+|---|---|---|
+| `a_thickness_is_taken_across_the_units_of_a_waste_interval` (zd-script) | WEATH 8 m over OB 42 m over A coal, 3,000 m²: the interval is both; 45 m off its bottom takes OB whole and WEATH's bottom 3 m (9,000 m³); 1 m off what's left's top (3,000 m³), 4 m left; the pieces add back; 60 m of 50 refused | 1e-9 |
+| `every_starter_script_reads_its_numbers_from_parameter_rows` (zd-commands) | no number in any starter script but 0 and 1 | exact |
+| `waste_allocation_is_added_once_where_it_belongs` (zd-commands) | 39 schedule fields, 5 words, the steps between rom and final and the check last; a second time and a dataflow without rom refused; the tables parse | exact |
+| `add_waste_allocation_fills_each_process_on_a_waste_interval_of_two_horizons` (reserves_run.rs) | WEATH 8 m and OB 42 m over A coal 2 m, a 2 m parting, B coal 3 m, 5,000 m², the default rows: Topsoil 2,500 m³, Freedig 22,500; a 40 m system in two 20 m zones from the bottom across OB: Cast 20,000, Dozer Push 20,000, Dragline 150,000 with rehandle 50,000 (total 200,000, swelled 250,000), Poststrip 10,000; Excavator 25,000 (swelled 31,250); drill and blast 225,000 on A's leaf; AB Partings 10,000, ripped; coal mining and exposed A 10,000, B 15,000; every check 0 | 1e-9 |
+| The demo pit (`testdata/synthetic/workflow_demo.py`, Base, run by hand) | 1,815 blocks, 90 columns, 1,436 leaves: the primes add to the scheduled waste on every leaf (largest difference 3.6e-11 m³), coal mining to the coal (0), a process on every waste leaf; no drill and blast landing nowhere | 1e-9 relative |
+
+Timing: the demo pit's Base run, 1,815 blocks, 241 ms with the starter added against 87 ms without.
+
+Found on the demo pit: a blast's drill and blast placed by seam onto the leaf of a block whose top unit was a rejected
+coal landed nowhere (the interval's units have other benches): placed now on the top unit's own leaves (`unit=`).
+
 ## Known limits
 
 - A formula's worked examples (its known answers) expect numbers only; a word it sets is checked by running it.
@@ -184,5 +226,9 @@ large test pits.
   doesn't fit it; read those by `u.p` or `lookup`. A `lookup` read is in the trace, not traced to its row.
 - An allocation's Dataflow tab cell shows the column's lines; Before and After show the pieces as units, their words in
   each unit's description.
-- The Balance view checks the stages, not the sections: that each process's prime volumes add to Scheduled waste is a
-  mine's check (0101), which the starter (workstream 5) adds.
+- The Balance view checks the stages; the sections are checked by the starter's `waste_checks`, a mine's own check
+  (0101).
+- The starter leaves out the template's additional rehandle (bridge, ramps, endwall), its extra blasting horizons
+  (first bench in a seam, first seam in a bench), its system method overrides and exclusions, and drill and blast's
+  metres, explosives and times: each a step a site adds from the same calls. Its blast is a waste interval below the
+  loose ground, drilled from its top unit.

@@ -33,6 +33,8 @@ pub struct Placed {
     pub field: String,
     pub value: f64,
     pub onto: Vec<(String, String)>,
+    /// In an allocation script, the unit whose leaves it goes on (`unit=top`), in place of levels named.
+    pub unit: Option<u32>,
 }
 
 pub(crate) type Log = Arc<Mutex<Vec<Event>>>;
@@ -123,7 +125,7 @@ pub(crate) fn placed(declared: &Declared, field: &str, value: Value<'_>, leaf: &
         };
         onto.push((level.clone(), word));
     }
-    Ok(Some(Placed { field: field.to_string(), value, onto }))
+    Ok(Some(Placed { field: field.to_string(), value, onto, unit: None }))
 }
 
 impl fmt::Display for Unit {

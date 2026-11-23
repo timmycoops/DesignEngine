@@ -451,7 +451,7 @@ fn a_schedule_field_is_placed_onto_another_leaf() {
 "#, d.clone())
     .expect("compiles");
     let out = f.run(&column(), &[2]).expect("placed");
-    assert_eq!(out[0].placed, vec![Placed { field: r"Waste\Drill and Blast\Volume".into(), value: 150.0, onto: vec![("seam".into(), "L".into()), ("bench".into(), "110".into())] }]);
+    assert_eq!(out[0].placed, vec![Placed { field: r"Waste\Drill and Blast\Volume".into(), value: 150.0, onto: vec![("seam".into(), "L".into()), ("bench".into(), "110".into())], unit: None }]);
     assert!(out[0].sets.is_empty(), "placing sets nothing on the unit");
     let tr = f.trace(&column(), 2);
     assert!(tr.events.iter().any(|e| matches!(e, Event::Placed { field, value, .. } if field == r"Waste\Drill and Blast\Volume" && *value == 150.0)), "{:?}", tr.events);

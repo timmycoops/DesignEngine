@@ -442,19 +442,27 @@ notebook to its table and row.
 ## Its shape
 
 ```star
-# Topsoil then freedig off the top of each waste over coal, a wedge off its bottom, the rest Excavator.
+# Topsoil then freedig off the top of the first waste interval; on each interval over coal a wedge off its bottom; the
+# rest Excavator. Thicknesses are the interval's, across its units.
 def allocate(column, p):
-    for u in column.waste():
-        below = column.after(u)
-        if below == None or below.material != "coal":
+    coal = column.coal()
+    for k, interval in enumerate(column.intervals()):
+        units = interval
+        if k == 0:
+            for process, thickness in [("Topsoil", p.topsoil_thickness), ("Freedig", p.freedig_thickness)]:
+                taken = column.take_from_top(units, min(thickness, column.total("thickness", units=units)))
+                for u in taken:
+                    u.process = process
+                units = [u for u in units if u not in taken]
+        below = column.after(interval[-1])
+        if units and below != None and below in coal:
+            wedge = column.take_from_bottom(units, min(p.wedge_thickness, column.total("thickness", units=units)))
+            for u in wedge:
+                u.process = "Wedge"
+            units = [u for u in units if u not in wedge]
+        for u in units:
             u.process = "Excavator"
             u["Waste\\Excavator\\Prime Volume"] = u.volume
-            continue
-        topsoil, freedig, rest = u.split_thickness(p.topsoil_thickness, p.freedig_thickness)
-        excavator, wedge = rest.split_thickness(rest.thickness - p.wedge_thickness)
-        for piece, process in [(topsoil, "Topsoil"), (freedig, "Freedig"), (excavator, "Excavator"), (wedge, "Wedge")]:
-            piece.process = process
-            piece["Waste\\" + process + "\\Prime Volume"] = piece.volume
 ```
 
 ## What the column gives
@@ -462,6 +470,12 @@ def allocate(column, p):
 - `column.units`: every unit, top down. `column.waste()`: those that end in ROM waste (waste, losses, discarded coal);
   `column.coal()`: those in a ROM coal section (its coal, partings and dilution). Small volumes, the underburden left and
   waste below the last coal aren't mined, and are in neither.
+- `column.intervals()`: the waste intervals between the coal sections, top down, each a list of its units in order:
+  a unit or several (two waste horizons over a seam, a rejected coal or a discarded thin one between them, a loss mined
+  with the waste). Work on an interval's thickness, `column.total("thickness", units=interval)`, not one unit's.
+  `column.intervals(ends="coal")` gives the coal sections the same way.
+- `column.take_from_top(units, 4.5)`, `column.take_from_bottom(units, 20)`: a thickness taken across as many of these
+  units as it needs, the one it ends in split there; the pieces taken, top down. More than they hold is refused.
 - `column.after(u)`, `column.before(u)`: the unit below or above, None at the ends.
 - `column.group_while("process", "zone", units=column.waste())`: runs of neighbouring units with the same values, a list
   of lists (a blast is a run of waste with one blasting horizon).
@@ -483,31 +497,37 @@ def allocate(column, p):
 - After a split, the unit split is its last piece (the rest): work on the pieces the split gives back, and read what
   you need of the whole unit (`t = u.thickness`) before splitting it.
 - `u.place_onto("Waste\\Drill and Blast\\Volume", x, seam=…, bench=…)`: a schedule field's value written on another
-  leaf of the block, as a formula's.
+  leaf of the block, as a formula's; or `unit=top`, on the leaves another unit is written on (a blast's top unit).
+
+**Add waste allocation** (the Parameters tab, or `add_waste_allocation` from Python) adds the template's way as six
+allocation steps (loose ground, short-term overrides, the dragline system, excavator, partings and wedge, blasting, and
+each process's quantities), a check step after `final`, four parameter tables and a schedule field section a process.
+It's one way of doing it: copy a step and change it, or write your own from these calls.
 - `u.block.strip`: its block's attributes. `u.p.min_burden`: the parameters by its block's attributes.
 
 ## Examples
 
 ```star
-# A dragline system: the zones from the bottom up, each split by its method's factors looked up by zone.
+# A dragline system: on each waste interval over coal, its zones from the bottom up across the interval's units, each
+# split by its method's factors read off a grid, nearest the dip and between the zone thicknesses.
 def allocate(column, p):
-    for u in column.waste():
-        below = column.after(u)
-        if below == None or below.material != "coal" or u.thickness < p.min_burden:
-            u.process = "Excavator"
+    coal = column.coal()
+    zones = int(p.zones)
+    for interval in column.intervals():
+        below = column.after(interval[-1])
+        thickness = column.total("thickness", units=interval)
+        if below == None or below not in coal or thickness < p.min_burden:
             continue
-        zones = int(p.zones)
-        top = max(u.thickness - p.system_max, 0)
-        pieces = u.split_thickness(*([top] + [p.zone_thickness] * (zones - 1)))
-        if pieces[0] != None:
-            pieces[0].process = "Excavator"
-        for k, zone in enumerate(pieces[1:]):
-            n = zones - k
-            zone.zone = "Zone %d" % n
-            f = lambda name: lookup("Method factors", name, zone=n)
-            cast, dozer, dragline = zone.split_shares([f("cast"), f("dozer"), f("dragline")])
-            for piece, process in [(cast, "Cast"), (dozer, "Dozer Push"), (dragline, "Dragline")]:
-                if piece != None:
-                    piece.process = process
-                    piece["Waste\\" + process + "\\Prime Volume"] = piece.volume
+        zone_thickness = min(thickness, p.system_max) / zones
+        units = interval
+        for n in range(1, zones + 1):
+            zone = column.take_from_bottom(units, min(zone_thickness, column.total("thickness", units=units)))
+            units = [u for u in units if u not in zone]
+            f = lambda name: lookup("Dragline factors", name, method=p.method, zone=n, dip=nearest(p.dip), zone_thickness=between(zone_thickness))
+            for u in zone:
+                u.zone = "Zone %d" % n
+                cast, dozer, dragline = u.split_shares([f("cast"), f("dozer_push"), f("dragline")])
+                for piece, process in [(cast, "Cast"), (dozer, "Dozer Push"), (dragline, "Dragline")]:
+                    if piece != None:
+                        piece.process = process
 ```

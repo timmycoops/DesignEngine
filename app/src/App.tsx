@@ -30,6 +30,7 @@ import { concealed,
   type ModelLinks,
   runCommand,
   runWorkflow as runWorkflowCall,
+  addWasteAllocation as addWasteAllocationCall,
   runAllCases as runAllCasesCall,
   captureWorkflow as captureWorkflowCall,
   addWorkflowStep,
@@ -422,6 +423,21 @@ export default function App() {
       } catch (e) {
         setStatus({ text: String(e), error: true });
         void runLog().then(setLog);
+        return { error: String(e) };
+      }
+    },
+    [show],
+  );
+  // Waste allocation added to a dataflow (Waste allocation plan, decision 7), shown as any run is.
+  const addWasteAllocation = useCallback(
+    async (dataflow: string) => {
+      try {
+        show(await addWasteAllocationCall(dataflow));
+        setStatus({ text: 'Added waste allocation: its parameter tables, schedule fields, allocation steps and checks' });
+        void runLog().then(setLog);
+        return {};
+      } catch (e) {
+        setStatus({ text: String(e), error: true });
         return { error: String(e) };
       }
     },
@@ -1289,6 +1305,7 @@ export default function App() {
       clearRefusal,
       runWorkflow,
       runAllCases,
+      addWasteAllocation,
       captureWorkflow,
       addingTo,
       setAddingTo,
@@ -1312,7 +1329,7 @@ export default function App() {
       viewMenu,
       closeViewMenu: () => setViewMenu(null),
     }),
-    [viewMenu, summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLayerFilter, changeReservesFilter, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, pickObjects, finishObjects, cancelPicks, vertexPicks, mode, typeVertex, openTool, toolAsk, toolMode, panelsShown, notebookOf, openNotebook, runInNotebook, drafts],
+    [viewMenu, summary, log, selected, selection, activeLayer, viewportHost, viewportMounted, select, setSelection, toggleSelected, zoomTo, setActiveLayer, setVisible, setLayersShown, setObjectsShown, changeLayerFilter, changeReservesFilter, changeLooks, changeLayerOpacity, changeContours, rlShown, run, runRecord, clearRefusal, runWorkflow, runAllCases, addWasteAllocation, captureWorkflow, addingTo, workflowPick, addStep, seamViews, colourSeamBlocks, blocksColouredBy, colourBlocksByField, fieldColoured, sectionOpen, showSeamHorizon, focusIssue, markCrossings, flyTo, frameLine, preferLines, pickPoint, pickLine, pickString, pickObjects, finishObjects, cancelPicks, vertexPicks, mode, typeVertex, openTool, toolAsk, toolMode, panelsShown, notebookOf, openNotebook, runInNotebook, drafts],
   );
 
   /** The view's own tools, for the bar on the view (decision 0076). The keys below do the same. */

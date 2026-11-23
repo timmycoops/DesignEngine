@@ -535,6 +535,16 @@ export const runWorkflow = async (workflow: string, from: number, workflowCase =
   }
 };
 
+/** Adds waste allocation to a dataflow (Waste allocation plan, decision 7): its tables, fields, steps and checks. */
+export const addWasteAllocation = async (dataflow: string): Promise<ProjectSummary> => {
+  if (!running.start('add waste allocation', performance.now())) throw new Error(waitingOn() ?? 'Waiting on a run');
+  try {
+    return await summaryAfter(await invoke<ProjectChanges>('add_waste_allocation', { dataflow }));
+  } finally {
+    running.end();
+  }
+};
+
 /** Every case of a workflow, Base first, as one undo; `from` carries on after a pause: that case from that step, then the rest. */
 export const runAllCases = async (workflow: string, from?: { case: string; step: number }): Promise<{ records: WorkflowRecord[]; summary: ProjectSummary }> => {
   if (!running.start('workflow', performance.now())) throw new Error(waitingOn() ?? 'Waiting on a run');

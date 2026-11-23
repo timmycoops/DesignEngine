@@ -222,6 +222,21 @@ pub async fn run_command(name: String, params: Value, state: State<'_, AppState>
     .await?
 }
 
+/// Adds waste allocation to a dataflow (the Waste allocation plan, decision 7): its parameter tables where the project
+/// hasn't one of that name, then the dataflow saved with the schedule fields, allocation steps and checks added. Runs
+/// each undone on its own; what changed.
+#[tauri::command]
+pub async fn add_waste_allocation(dataflow: ObjectId, state: State<'_, AppState>) -> Result<ProjectChanges, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let mut app = app.lock().unwrap();
+        app.idle()?;
+        app.session.add_waste_allocation(dataflow).map_err(|e| e.to_string())?;
+        Ok(changes(&mut app, false))
+    })
+    .await?
+}
+
 /// A workflow run's record and what it changed.
 #[derive(Serialize)]
 pub struct WorkflowReply {
