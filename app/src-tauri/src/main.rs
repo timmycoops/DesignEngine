@@ -28,6 +28,8 @@ fn main() {
             commands::parameters_read_by,
             commands::table_setup_view,
             commands::objects_calculated,
+            commands::script_brief,
+            commands::brief_check,
             commands::run_all_cases,
             commands::capture_workflow,
             commands::add_workflow_step,

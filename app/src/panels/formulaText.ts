@@ -1,4 +1,3 @@
-import type { DataflowStep, FormulaReport } from '../bridge';
 
 /**
  * The formula editor's words (decision 0077, 7d): a filter as typed and read back, a new formula's first lines, and what
@@ -29,37 +28,4 @@ def formula(unit, p):
     # unit.<field> = ...
 `;
 
-/** What Copy for AI hands over: how to write one, the dataflow's names (never a value), this formula, and a request. */
-export function forAi(reference: string, report: FormulaReport | null, step: DataflowStep, ask: 'write' | 'explain'): string {
-  const names = report?.names;
-  const fields = names ? names.fields.map(([n, u]) => (u ? `${n} (${u})` : n)).join(', ') : '';
-  const params = names ? names.parameters.map(([n, u, words]) => `${n}${words ? ' (words)' : u ? ` (${u})` : ''}`).join(', ') : '';
-  const where = whenText(step.formula?.when) || 'every unit';
-  const lines = [
-    reference.trim(),
-    '',
-    '## This dataflow',
-    `Fields: ${fields}`,
-    `Labels: ${names?.labels.join(', ') ?? 'seam, material, bench, became'}`,
-    `Parameter columns: ${params}`,
-    '',
-    '## This formula',
-    `Step \`${step.step}\`, after \`${report?.stage ?? '?'}\`, on units where ${where}.`,
-    '```python',
-    (step.formula?.script ?? '').trimEnd(),
-    '```',
-    '',
-  ];
-  if (ask === 'explain') {
-    lines.push('Explain in plain words what this formula does, line by line, for a mine planner who doesn\'t program. Say what each name is and where its value comes from.');
-  } else {
-    lines.push(
-      '## What I want',
-      '<Say what the formula should do, or paste a Spry snippet or an Excel formula here.>',
-      '',
-      'Write the whole formula, using only the names above, then its worked examples as JSON: a list of {"name", "unit": {field: value}, "parameters": {column: value}, "expect": {field: value}}. Use made-up numbers, never a client\'s.',
-    );
-  }
-  return lines.join('\n');
-}
 

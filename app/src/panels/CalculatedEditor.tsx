@@ -1,13 +1,14 @@
-import { Bot, MessageSquareText, Play, Trash2, X } from 'lucide-react';
+import { Play, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { type CalcAddUp, type CalcCheck, type CalculatedColumn, calcCheck, calcParameters, calcTrace, type FormulaTrace, formulaReference } from '@/bridge';
+import { type CalcAddUp, type CalcCheck, type CalculatedColumn, calcCheck, calcParameters, calcTrace, type FormulaTrace } from '@/bridge';
 import { Choice, Field, ScriptEditor, Select } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 import { formulaNames, useParameterTables, useProjectScripts } from './scriptNames';
-import { calcForAi, starterScript } from './tableGrid';
+import { starterScript } from './tableGrid';
+import { CopyForAi } from './CopyForAi';
 
 type By = CalcAddUp['by'];
 const BYS: readonly By[] = ['from_inputs', 'sum', 'max', 'min', 'weighted_by'];
@@ -52,10 +53,8 @@ export function CalculatedEditor({
   const [check, setCheck] = useState<CalcCheck | null>(null);
   const [trace, setTrace] = useState<FormulaTrace | null>(null);
   const [said, setSaid] = useState<{ error?: string; text?: string }>({});
-  const [reference, setReference] = useState('');
 
   useEffect(() => {
-    void formulaReference().then(setReference);
     // A new column reads the parameter tables its table's dataflow reads.
     if (!editing) void calcParameters(table).then((list) => setParameters(list.map(([id]) => id)));
   }, []);
@@ -101,10 +100,6 @@ export function CalculatedEditor({
     if (outcome.error) return setSaid({ error: outcome.error });
     onClose();
   };
-  const copy = (ask: 'write' | 'explain') =>
-    void navigator.clipboard
-      .writeText(calcForAi(reference, check?.names ?? null, column, ask))
-      .then(() => setSaid({ text: ask === 'write' ? "Copied for an AI: how formulas are written, this table's names and this formula, no values. Paste its answer back here and run it on a picked leaf." : 'Copied for an AI to explain, names only, no values.' }));
 
   const problems = check?.problems ?? [];
   const ran = trace?.lines.map((l) => l.line) ?? [];
@@ -130,12 +125,7 @@ export function CalculatedEditor({
           </Select>
         )}
         <span className="ml-auto flex items-center gap-1">
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => copy('write')} title="Copy how formulas are written, this table's names and this formula for an AI to write it: names only, never a value">
-            <Bot className="size-3.5" /> Copy for AI
-          </Button>
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => copy('explain')} title="Copy this formula for an AI to explain, names only">
-            <MessageSquareText className="size-3.5" /> Explain
-          </Button>
+          <CopyForAi brief={{ kind: 'calculated', table: table ?? undefined, objects: table === null, source: script, name: column.name }} problems={problems} />
           <button type="button" className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Close the calculated column" onClick={onClose}>
             <X className="size-3.5" />
           </button>

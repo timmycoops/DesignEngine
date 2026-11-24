@@ -1,4 +1,4 @@
-import { Bot, Play } from 'lucide-react';
+import { Play } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { formulaReference, type ObjectSummary, objectDetails, scriptCheck } from '@/bridge';
 import { Choice, Field, PanelHead, ScriptEditor, Select } from '@/design-system/kit';
@@ -6,6 +6,7 @@ import { Button } from '@/design-system/ui/button';
 import { Input } from '@/design-system/ui/input';
 import { useWorkspace } from '@/workspace/context';
 import { guideFor, useParameterTables, useProjectScripts, useTableColumns } from './scriptNames';
+import { CopyForAi } from './CopyForAi';
 
 const STARTER = `# Functions a formula or a calculated column loads by this script's name:
 #   load("qualities", "by_tonnes")
@@ -96,23 +97,6 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
     select(made);
     openPanel('restable');
   };
-  const copy = () => {
-    const text = [
-      reference.trim(),
-      '',
-      '## This script',
-      isTable
-        ? `A table script of the project named \`${name.trim()}\`: \`def run(t, p):\` run on a whole table, giving back a table.`
-        : `A script of the project named \`${name.trim()}\`: functions a formula or a calculated column loads, \`load("${name.trim()}", "function")\`. It has no unit or row of its own.`,
-      note ? `What it's for: ${note}` : '',
-      '```python',
-      source.trimEnd(),
-      '```',
-      '',
-      'Write or change the functions I describe below, as Starlark in this form.',
-    ];
-    void navigator.clipboard.writeText(text.join('\n')).then(() => setSaid({ text: 'Copied for an AI: how formulas are written and this script, no values' }));
-  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-2" data-slot="project-script">
@@ -128,9 +112,7 @@ export function ProjectScriptEditor({ object, onSaved }: { object: ObjectSummary
           load(&quot;{name.trim() || 'name'}&quot;, &quot;function&quot;)
         </span>
         <span className="ml-auto flex items-center gap-1">
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={copy} title="Copy how formulas are written and this script for an AI: no values">
-            <Bot className="size-3.5" /> Copy for AI
-          </Button>
+          <CopyForAi brief={isTable ? { kind: 'table', table: on !== OBJECTS ? on || undefined : undefined, objects: on === OBJECTS, source, name: name.trim() } : { kind: 'library', source, name: name.trim() }} problems={problems} />
           <Button size="sm" className="h-6 px-2 text-xs" disabled={problems.length > 0 || !name.trim() || !loaded} onClick={() => void save()} title="Save it: one run, its next revision; what loads it reads it as it is now">
             Save
           </Button>

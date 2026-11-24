@@ -1479,6 +1479,27 @@ export interface ObjectsCalculated {
   said: { column: string; stopped: number; first: string | null }[];
 }
 export const objectsCalculated = (objects: string[]) => invoke<ObjectsCalculated>('objects_calculated', { objects });
+
+/** What an AI brief is for (decision 0104): the kind of script, what it runs on, the script, and the ask. */
+export interface BriefFor {
+  kind: 'formula' | 'allocation' | 'calculated' | 'object' | 'table' | 'library';
+  dataflow?: string;
+  /** The dataflow as edited, its names read from it. */
+  content?: Dataflow;
+  table?: string;
+  objects?: boolean;
+  layers?: string[];
+  source?: string;
+  name?: string;
+  /** The words each word column holds (seam, horizon names): off unless asked. */
+  words?: boolean;
+  ask?: 'write' | 'explain' | 'fix';
+  problems?: [number | null, string][];
+}
+/** The brief as Markdown: how scripts are written, what this kind may set, every name with its meaning, the ask. */
+export const scriptBrief = (brief: BriefFor) => invoke<string>('script_brief', { brief });
+/** The script checked as its kind's editor checks it: each problem on its line, none where it holds. */
+export const briefCheck = (brief: BriefFor) => invoke<{ message: string; line: number | null }[]>('brief_check', { brief });
 /** The engine's check of a parameter table as edited, before it's saved: resolves, or rejects with why. */
 export const parametersCheck = (content: ParameterTable) => invoke<null>('parameters_check', { content });
 /** The engine's check of a dataflow as edited, before it's saved. */

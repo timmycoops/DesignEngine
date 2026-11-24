@@ -43,6 +43,8 @@ mod read_by;
 mod setup_view;
 mod object_script;
 mod table_import;
+mod brief;
+mod script_try;
 mod measure;
 
 pub use benches::{BENCH_FLOOR, BENCH_TOP, BENCHED_FROM, BenchEnd, BenchRule, CutByBenches, CutByBenchesParams, rule_for};
@@ -88,6 +90,8 @@ pub use setup_view::{BlocksView, FieldView, InputView, Named, SetupStep, SetupVi
 pub use table_setup::{SaveTableSetup, SaveTableSetupParams};
 pub use object_script::{ObjectScript, ObjectScriptParams};
 pub use table_import::{ImportTable, ImportTableParams, table_of_csv};
+pub use brief::{BriefAsk, BriefFor, ScriptKind, brief};
+pub use script_try::{Tried, check_script, try_script};
 pub use waste_allocation::{ADD_ON as WASTE_ALLOCATION_ADD_ON, PROCESSES as WASTE_PROCESSES, schedule_fields as waste_schedule_fields, tables as waste_allocation_tables, waste_allocation_add_on};
 pub use starter::{DISCARDED, RENAMED_FIELDS, TONNES_AD_PER_M3, renamed_from_older, starter_formulas, with_starter_formulas};
 pub use zd_script::REFERENCE as FORMULA_REFERENCE;

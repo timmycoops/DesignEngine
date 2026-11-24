@@ -2,7 +2,7 @@
 // with `pnpm test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calcForAi, cellText, changedWords, csvColumns, gridCsv, groupsKept, likelyKey, nextSort, pastedLines, readEntry, starterScript, toggleOpen } from '../src/panels/tableGrid.ts';
+import { cellText, changedWords, csvColumns, gridCsv, groupsKept, likelyKey, nextSort, pastedLines, readEntry, starterScript, toggleOpen } from '../src/panels/tableGrid.ts';
 
 test('a group closed closes every group under it', () => {
   let open = toggleOpen([], ['3']);
@@ -86,13 +86,3 @@ test('a new calculated column starts with a formula that sets it on the row', ()
   assert.match(starterScript('x'), /^def formula\(row, p\):/);
 });
 
-test('Copy for AI carries the names, the rule and the script, never a value', () => {
-  const names = { fields: [['Insitu\\Coal\\tonnes', 't']], labels: ['strip', 'seam'], parameters: [['price', '$/t', false]] };
-  const text = calcForAi('# How formulas are written', names, { name: 'strip_ratio', unit: 'm3/t', script: 'def formula(row):\n    row.strip_ratio = 1\n', adds: { by: 'from_inputs' } }, 'write');
-  assert.ok(text.startsWith('# How formulas are written'));
-  assert.ok(text.includes('Columns (numbers): Insitu\\Coal\\tonnes (t)'));
-  assert.ok(text.includes('Words: strip, seam'));
-  assert.ok(text.includes('Parameter columns: price ($/t)'));
-  assert.ok(text.includes("`strip_ratio` in m3/t, worked again on a group's own inputs"));
-  assert.ok(text.includes('row.strip_ratio = 1'));
-});

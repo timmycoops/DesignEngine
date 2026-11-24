@@ -1,10 +1,10 @@
-import { Bot, Trash2, X } from 'lucide-react';
+import { Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { type DataflowStep, formulaReference, scriptCheck } from '@/bridge';
 import { CellInput, IconButton, PanelHead, ScriptEditor, StatusBadge } from '@/design-system/kit';
-import { Button } from '@/design-system/ui/button';
 import { useWorkspace } from '@/workspace/context';
 import { guideFor, useParameterColumns, useParameterTables, useProjectScripts, useTableColumns } from './scriptNames';
+import { CopyForAi } from './CopyForAi';
 
 /** A new table script step's script (decision 0099, workstream 7): each leaf's share of its strip's ROM coal. */
 export const TABLE_STEP_TEMPLATE = `# Runs on the case's table after the final writes: the columns it adds are the run's own.
@@ -48,7 +48,6 @@ export function TableStepEditor({
   const lookupTables = useParameterTables();
   const script = step.table?.script ?? '';
   const [problems, setProblems] = useState<{ message: string; line: number | null }[]>([]);
-  const [said, setSaid] = useState<string | null>(null);
   const [reference, setReference] = useState('');
   const edited = JSON.stringify(saved) !== JSON.stringify(step);
 
@@ -68,10 +67,6 @@ export function TableStepEditor({
     };
   }, [step.step, script]);
 
-  const copy = () => {
-    const text = [reference.trim(), '', '## This table script step', `A table script step of a reserves dataflow named \`${step.step}\`, run on the case's table after the final writes.`, '```py', script.trimEnd(), '```', '', 'Write or change it as I describe below, as a table script in this form.'];
-    void navigator.clipboard.writeText(text.join('\n')).then(() => setSaid('Copied for an AI: how table scripts are written and this step, no values'));
-  };
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-1" data-slot="table-step">
@@ -79,9 +74,7 @@ export function TableStepEditor({
         <CellInput value={step.step} label="The step's name" className="w-40 font-semibold" onChange={(name) => onStep({ ...step, step: name.trim().replaceAll(' ', '_') })} />
         {edited && <StatusBadge tone="edited">edited</StatusBadge>}
         <span className="ml-auto flex items-center gap-1">
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={copy} title="Copy how table scripts are written and this step for an AI: no values">
-            <Bot className="size-3.5" /> Copy for AI
-          </Button>
+          <CopyForAi brief={{ kind: 'table', table: newest ?? undefined, source: script, name: step.step }} problems={problems} />
           <IconButton label="Take this table script step out" className="size-6" onClick={onRemove}>
             <Trash2 />
           </IconButton>
@@ -101,7 +94,6 @@ export function TableStepEditor({
       ) : (
         <span className="text-ok">Checks clean: it runs when the dataflow is saved and run.</span>
       )}
-      {said && <span className="text-muted-foreground">{said}</span>}
       <details className="shrink-0 text-muted-foreground" data-slot="script-guide">
         <summary className="cursor-pointer">How table scripts are written</summary>
         <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs">{guideFor(reference, true)}</pre>
