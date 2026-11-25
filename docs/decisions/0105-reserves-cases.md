@@ -105,6 +105,30 @@ a company library of field sets, pieces as solids, the scheduler's tables, runni
   (`test_session.py`): two strips, Haulage on strip 1, `run_case` runs both in order, 45,000 t.km on strip 1, none on
   strip 2.
 
+## Built: workstream 2, out of date
+
+- **`case_state(project, log, table)`** (`builtin/case_state.rs`): each of a case's dataflows in run order, the reserves
+  dataflow first, with its range, its last run and when, whether it's up to date and each reason it isn't. Read from
+  the run log each time, never kept; a run undone (and not redone) doesn't count. A dataflow is out of date where:
+  - it hasn't run on this table;
+  - something its last run read has changed or gone since: for the reserves dataflow, blocks revised (counted) and its
+    dataflow, add-ons, seam model and settings tables (named), as `changed_since` (0099) reads them; for a row dataflow,
+    its dataflow, settings tables, scripts and lookups (named);
+  - for the reserves dataflow, blocks added to what the setup picks since it ran (counted), or its setup changed (its
+    dataflow, seam model or stack, own rows, add-ons, sources, tables or input);
+  - for a row dataflow, its range or settings tables in the setup changed since it ran, read against the setup the last
+    `table.setup` before its run saved;
+  - a dataflow above it ran after it ("Reserves ran after it"), or is out of date itself ("Reserves is out of date").
+- **Run what's out of date**: Python's `run_case(table, out_of_date=True)` runs those out of date in order, each
+  judged after the one before it ran, so a row dataflow below a reserves dataflow just run is run too. `case_state(table)`
+  gives the state as a dict. Nothing runs by itself.
+- **Tests** (`case_dataflows.rs`, the made-up pit): through a case's life, the exact words each time: Haulage never
+  run; both up to date; Haulage's distances revised, Haulage alone out of date ("haul distances changed"); the reserves
+  run again after it ("Reserves ran after it"); a block's ash changed ("1 block changed", Haulage "Reserves is out of
+  date"), and undone, both up to date again; Haulage's range changed in the setup ("its range changed since it ran"),
+  run, and that run undone, out of date again; a block added to the layer ("1 block added to what the setup picks").
+  Python: nothing to run when up to date; a revised table runs Haulage alone; the reserves run again runs Haulage after.
+
 ## Known limits
 
 - **Not the command decision 14 named.** A row dataflow runs by `table.run_dataflow`, not `reserves.run`: a reserves
@@ -117,7 +141,10 @@ a company library of field sets, pieces as solids, the scheduler's tables, runni
   ones stay until removed.
 - **A dataflow taken off the list leaves its columns** on the table; a new dataflow wanting one of their names is
   refused as if the reserves run wrote it.
-- **Out of date isn't said yet** (workstream 2): a row dataflow's columns kept through Run again may be against old
-  numbers until it runs again.
+- **Out of date reads the log.** A project saved and opened carries its log, so the state comes back with it; a table
+  whose runs aren't in the log (made before logs were kept) says its dataflows haven't run. A block revised and then put
+  back as it was by hand, not by undo, still counts as changed.
+- **The app doesn't show it yet** (workstreams 4 to 7): the Tables tab still says what changed since the reserves run,
+  as before.
 - **The app's dataflow editor** opens a row dataflow as it opens any, with the reserves names; its own editor comes with
   the case tab.

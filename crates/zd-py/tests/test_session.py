@@ -220,6 +220,18 @@ def a_case_runs_its_dataflows_in_order():
     assert abs(by_strip["1"] - 45_000.0) < 1e-6 and by_strip["2"] is None, by_strip
     only = s.run_case(table, dataflow=haulage)
     assert [r["command"] for r in only] == ["table.run_dataflow"], "that one alone"
+    # Out of date (decision 6): both up to date; nothing to run. Haulage's distances revised: it alone is out of date,
+    # said why, and run alone. The reserves dataflow run again: Haulage after it, run too.
+    state = s.case_state(table)
+    assert [(d["name"], d["up_to_date"], d["why"]) for d in state["dataflows"]] == [("Reserves", True, []), ("Haulage", True, [])], state
+    assert s.run_case(table, out_of_date=True) == []
+    s.run("parameters.save", table=distances, name="haul distances", csv="when strip,distance (km)\n1,3\n,5\n")
+    assert s.case_state(table)["dataflows"][1]["why"] == ["haul distances changed"]
+    assert [r["command"] for r in s.run_case(table, out_of_date=True)] == ["table.run_dataflow"]
+    s.run_case(table, dataflow=reserves)
+    assert s.case_state(table)["dataflows"][1]["why"] == ["Reserves ran after it"]
+    assert [r["command"] for r in s.run_case(table, out_of_date=True)] == ["table.run_dataflow"]
+    assert all(d["up_to_date"] for d in s.case_state(table)["dataflows"])
 
 
 def main():

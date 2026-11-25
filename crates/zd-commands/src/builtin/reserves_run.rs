@@ -3508,7 +3508,7 @@ fn ratio_columns(columns: &[TableColumn]) -> Vec<TableColumn> {
 }
 
 /// A moment as the audit says it: the date and time, UTC (`2026-11-18 09:31 UTC`).
-fn utc_words(unix_ms: u64) -> String {
+pub(crate) fn utc_words(unix_ms: u64) -> String {
     let secs = unix_ms / 1000;
     let (days, rest) = ((secs / 86_400) as i64, secs % 86_400);
     // Days to a civil date (Howard Hinnant's days_from_civil, inverted).
@@ -3704,7 +3704,7 @@ pub fn setup_of(project: &zd_core::Project, log: &[crate::LogEntry], table: Obje
 
 /// The reserves run that last wrote a table: the run its revision came from, or where a person has since entered values
 /// in it (decision 2 of 0099), the last reserves run before that which made or revised it.
-fn table_run<'a>(log: &'a [crate::LogEntry], object: &Object) -> Option<&'a crate::RunRecord> {
+pub(crate) fn table_run<'a>(log: &'a [crate::LogEntry], object: &Object) -> Option<&'a crate::RunRecord> {
     if let Some(record) = run_of(log, object.provenance) {
         return Some(record);
     }
