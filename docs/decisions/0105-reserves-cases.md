@@ -129,6 +129,54 @@ a company library of field sets, pieces as solids, the scheduler's tables, runni
   run, and that run undone, out of date again; a block added to the layer ("1 block added to what the setup picks").
   Python: nothing to run when up to date; a revised table runs Haulage alone; the reserves run again runs Haulage after.
 
+## Built: workstream 3, the case at a step
+
+- **`CaseAtStep`** (`builtin/reserves_run/at_step.rs`): a reserves table's case opened at a step, every block column of
+  its case run from its blocks with the settings of the run that made the table, on what's saved or with edits not yet
+  saved (`Unsaved`: parameter tables, the dataflow). It keeps each column at the step and as it stood before it, as
+  decision 9 asks; each step runs over every column across the cores and is timed. `go_to` moves on a step at a time,
+  or back by running again from the blocks.
+- **Totals at the step** (decision 8): the units as they stand, by material and what became of them (`coal`, `coal,
+  loss (roof)`); what the steps so far have written to the table, by folder (`Loss\Roof`, `ROM\Coal`), each field added up
+  by its own rule and its tonnes worked leaf by leaf as the table works them (ROM and Scheduled by the ROM density, the
+  rest by the in situ density, else the RD); what the step said over the case (`roof loss`, 2 units, 1,000 m³); and the
+  balance, no ground made or lost: the volume in from the blocks against what the columns hold now less what came from
+  outside the model, by `reserves.unbalanced`'s tolerance, the columns off named.
+- **Run again from the first step that reads an edit** (decision 9): what each built-in step looked up is noted as it
+  runs (`ColumnRun.asked`), a script step's reads are read off its source (`p.name`, `getattr(p, "name")`, a name built
+  as it runs taken as a field's own or its `_default`, `_min` or `_max`, `dir(p)` as which settings a unit has, `p`
+  handed on as every setting), and an edit is compared column by column (a row's filters or the rows changed: every
+  column; a cell filled or cleared: which settings a unit has too). An edit the open step reads first runs that step
+  again from the columns kept before it; one read earlier, or a change to the blocks, the stack, the levels, the fields
+  or the run's setup, runs the case again from its blocks; one no step up to here reads runs nothing.
+- **`table`**: the table the case would make from the step, its columns run on to the last step and written as a
+  reserves run writes a new table, table scripts and all. Nothing is kept or saved.
+- **Measured, decision 9's switch.** The demo pit (90 columns, 1,647 units at `rom_loss`): opened at `rom_loss` in 50 ms;
+  coal roof loss 0.1 to 0.15 m reruns `rom_loss` alone, 12 to 19 ms over five edits, roof loss 166,169 to 249,253 m³;
+  on to `final` 35 to 45 ms, ROM coal 9,106,368.7 t, the plan's 9,106,369. PIT B (622 blocks, the starter and the
+  demo's made-up settings: 47 columns ran, 28 stopped, 274 units): opened in 41 ms, a rerun from `rom_loss` 7 ms median,
+  8 ms worst; the kept columns about 26 MB beside the project's 354 MB. Both well under a second and the memory small,
+  so **the whole case reruns as you type** (decision 9's pick), not the block alone. Script:
+  `testdata/synthetic/case_at_step.py` (`--counts-only` on client data).
+- **PIT B needs the held unjoined-benches fix.** On `main`, the starter's `working_sections` stops PIT B's run with a
+  panic ("plies and partings alternate") where two plies meet with no parting between them. The fix held uncommitted on
+  `reserves/allocate-by-bench` (an empty parting between them) was laid over the build for the measurement only and
+  taken off again; nothing of it is in this workstream.
+- **Python:** `session.step_case(table, step, tables=None)` opens or moves the case kept for the table (a step by name
+  or number) with `tables` as edited (`{name or id: CSV}`), each call running again from the first step a change
+  reaches, and gives the totals with what ran and from where; `step_units(table)` the units there as a table;
+  `step_table(table)` the table it would make. `units_at_step` builds its table with the same code.
+- **Tests** (`crates/zd-commands/tests/case_at_step.rs`, one block of 5,000 m² with two coal sections, the starter's
+  formulas in): at `rom_loss` roof loss 1,000 m³, floor 2,000, edge 25, other 500, 21,475 m³ of coal left, written
+  `Loss\Roof` 1,000 m³, balanced, 13 units (1e-9); roof loss 0.15 m runs `rom_loss` alone, 1,500 m³ and 20,975 m³ of
+  coal left; a dilution setting runs nothing; a parting rule runs from the blocks; the dataflow's `rom_loss` told to read
+  `floor_loss` runs `rom_loss` alone, 2,000 m³; a settings column added runs from the blocks (the starter's `dir(p)`); the
+  table from `rom_loss` at 0.15 m is the table a full run makes once 0.15 m is saved, every number column (exact), and
+  the totals at `final` are its columns added up, ROM coal tonnes too (1e-9); balanced at every step; a step back runs
+  from the blocks; a step past the last refused. Python (`test_session.py`): two strips at `small_volumes`, the minimum
+  edited to 20,000 m³ runs that step alone and sets both coal blocks aside, 30,000 m³; on to `final` runs the two steps
+  after it; the table from there has the table's rows; nothing saved.
+
 ## Known limits
 
 - **Not the command decision 14 named.** A row dataflow runs by `table.run_dataflow`, not `reserves.run`: a reserves
@@ -146,5 +194,13 @@ a company library of field sets, pieces as solids, the scheduler's tables, runni
   back as it was by hand, not by undo, still counts as changed.
 - **The app doesn't show it yet** (workstreams 4 to 7): the Tables tab still says what changed since the reserves run,
   as before.
+- **Only the step before the one open is kept.** An edit read by an earlier step runs the case again from its blocks,
+  as decision 9 has it; on PIT B and the demo that is still well under a second. A much larger mine (the 140,000-block
+  test mine) isn't measured.
+- **A script's reads are read off its source.** A name built as it runs is taken as a field's own or its limits, as
+  Read by takes it; anything else built (`getattr(p, "roof" + x)`) isn't seen, and an edit to it reruns from the step
+  that first reads something seen.
+- **Units' tonnes are in situ.** The units' groups weigh by the in situ density, as they stand mid-flow; what's written
+  under ROM and Scheduled has its tonnes on the ROM basis, as the table.
 - **The app's dataflow editor** opens a row dataflow as it opens any, with the reserves names; its own editor comes with
   the case tab.
