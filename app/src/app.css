@@ -31,6 +31,8 @@
     --color-ok: var(--ok);
     --color-warning: var(--warning);
     --color-edited: var(--edited);
+    --color-coal: var(--coal);
+    --color-waste: var(--waste);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -66,6 +68,9 @@
     /* One meaning each (UI plan): orange for a warning, apart from the gold of what's picked; blue for a line edited by hand. */
     --warning: oklch(0.74 0.16 55);
     --edited: oklch(0.74 0.12 245);
+    /* Ground in a strip log (Reserves case plan): coal near black, waste a dull brown. */
+    --coal: oklch(0.14 0.005 250);
+    --waste: oklch(0.42 0.04 60);
     --radius: 0.5rem;
 }
 

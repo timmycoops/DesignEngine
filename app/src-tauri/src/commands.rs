@@ -1087,6 +1087,69 @@ pub async fn reserves_step_grid(object: ObjectId, step: usize, ask: zd_commands:
     .await?
 }
 
+/// The Reserves case tab at a step (Reserves case plan, decisions 8 and 9): the whole case's totals there as saved, and
+/// as edited where there are unsaved edits; what the step did to each block column; the step's name.
+#[derive(Serialize)]
+pub struct CaseStepView {
+    saved: zd_commands::builtin::StepTotals,
+    now: Option<zd_commands::builtin::StepTotals>,
+    blocks: Vec<zd_commands::builtin::ColumnDid>,
+}
+
+/// A reserves table's case at step `step` (0 for its blocks as read): kept between asks, as saved and as edited
+/// (`dataflow`, `tables`, as the Dataflow tab passes them), each run again from the first step a change reaches, so a
+/// keystroke reruns only what it reaches. Nothing goes in the project.
+#[tauri::command]
+pub async fn reserves_case_step(
+    table: ObjectId,
+    step: usize,
+    dataflow: Option<zd_core::Dataflow>,
+    tables: Option<Vec<(ObjectId, zd_core::ParameterTable)>>,
+    state: State<'_, AppState>,
+) -> Result<CaseStepView, String> {
+    let app = state.app.clone();
+    blocking(move || {
+        let mut app = app.lock().unwrap();
+        let inner = &mut *app;
+        let project = inner.session.project();
+        let log = inner.session.log();
+        let dataflow = dataflow.map(|d| bound(project, d).map(|(d, _)| d)).transpose()?;
+        let edited = dataflow.is_some() || tables.as_ref().is_some_and(|t| !t.is_empty());
+        let unsaved = unsaved(dataflow, tables);
+        let none = zd_commands::builtin::Unsaved::default();
+        // The case as saved, kept for this table: run again on what's saved now (nothing runs where nothing changed).
+        let mut kept = match inner.case_kept.take() {
+            Some(mut k) if k.table == table => {
+                k.saved.rerun(project, log, &none).map_err(|e| e.to_string())?;
+                k
+            }
+            _ => crate::state::KeptCase { table, saved: zd_commands::builtin::CaseAtStep::open(project, log, table, 0, &none).map_err(|e| e.to_string())?, live: None },
+        };
+        let result = (|| -> Result<CaseStepView, String> {
+            kept.saved.go_to(step).map_err(|e| e.to_string())?;
+            if edited {
+                let mut live = match kept.live.take() {
+                    Some(mut live) => {
+                        live.rerun(project, log, &unsaved).map_err(|e| e.to_string())?;
+                        live
+                    }
+                    // The first edit: from a copy of the case as saved, so it too runs only what it reaches.
+                    None => kept.saved.edited(project, log, &unsaved).map_err(|e| e.to_string())?,
+                };
+                live.go_to(step).map_err(|e| e.to_string())?;
+                kept.live = Some(live);
+            } else {
+                kept.live = None;
+            }
+            let shown = kept.live.as_ref().unwrap_or(&kept.saved);
+            Ok(CaseStepView { saved: kept.saved.totals(), now: kept.live.as_ref().map(|l| l.totals()), blocks: shown.columns() })
+        })();
+        inner.case_kept = Some(kept);
+        result
+    })
+    .await?
+}
+
 /// A notebook cell's formula traced on one unit (decision 0081): the column run up to the step (1, the first after the
 /// column as input), the formula traced on the unit with that id as it stands there. Nothing is kept.
 #[tauri::command]
@@ -2073,6 +2136,9 @@ pub struct BenchConfig {
     /// With `--dataflow <project.zdp>`, a project holding a parameter table, a dataflow and a results table opened, each
     /// clicked in the Layers panel and what Properties shows read back (decision 0072).
     dataflow: Option<String>,
+    /// With `--case <project.zdp>`, the Reserves case tab opened on the project's first reserves table, a setting typed
+    /// and the whole case read back as it runs again (Reserves case plan, workstream 4).
+    case: Option<String>,
     /// A big project to open and orbit at Full and at 1 px (decision 0097, workstream 5).
     lod: Option<String>,
 }
@@ -2130,6 +2196,7 @@ pub fn bench_config() -> Option<BenchConfig> {
         section_guide: args.iter().any(|a| a == "--section-guide"),
         workflow: args.iter().any(|a| a == "--workflow"),
         dataflow: args.iter().position(|a| a == "--dataflow").and_then(|i| args.get(i + 1)).cloned(),
+        case: args.iter().position(|a| a == "--case").and_then(|i| args.get(i + 1)).cloned(),
         lod: args.iter().position(|a| a == "--lod").and_then(|i| args.get(i + 1)).cloned(),
     })
 }

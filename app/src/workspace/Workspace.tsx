@@ -31,6 +31,7 @@ import { WorkflowPanel } from '@/panels/WorkflowPanel';
 import { SurfacesPanel } from '@/panels/SurfacesPanel';
 import { LicencePanel } from '@/panels/LicencePanel';
 import { ViewControlsPanel } from '@/panels/ViewControlsPanel';
+import { ReservesCasePanel } from '@/panels/ReservesCasePanel';
 import { type Dock, type PanelId, PANELS, TOOL_DOCK_WIDTH } from './panels';
 
 /** What each panel draws. A panel in the list with nothing to draw doesn't compile. */
@@ -53,6 +54,7 @@ const components: Record<PanelId | 'viewport' | (typeof RETIRED)[number], () => 
   // A tab no longer made, drawn as nothing until a saved layout's copy of it is closed.
   blocks: () => null,
   notebook: DataflowView,
+  case: ReservesCasePanel,
   setup: SetupPanel,
   params: Parameters,
   licence: LicencePanel,

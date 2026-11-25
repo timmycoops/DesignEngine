@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Braces, Copy, CopyPlus, Plus, Save, Split, Table2, Trash2, Undo2, X } from 'lucide-react';
-import { type ClipboardEvent, type KeyboardEvent, useEffect, useMemo, useState } from 'react';
+import { type ClipboardEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { type Dataflow, dataflowCheck, type WordField, objectDetails, type ObjectSummary, type ParameterTable, type ParametersPicked, parametersCheck, parametersPicked, parametersReadBy, type ReadBy } from '@/bridge';
 import { CellInput, Choice, IconButton, ObjectMenu, Select, StatusBadge } from '@/design-system/kit';
 import { ProjectScriptEditor } from './ProjectScriptEditor';
@@ -34,6 +34,7 @@ import {
   newWordName,
   withAddUp,
   withFrom,
+  withTable,
   WORD_FROMS,
   wordFrom,
 } from './parametersGrid';
@@ -158,7 +159,7 @@ interface OpenCell {
 }
 
 function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMade: (id: string) => void; openCell: OpenCell | null }) {
-  const { summary, selection, runRecord, setDraft } = useWorkspace();
+  const { summary, selection, runRecord, setDraft, drafts } = useWorkspace();
   const [saved, setSaved] = useState<ParameterTable | null>(null);
   const [grid, setGrid] = useState<Grid | null>(null);
   const [savedColumns, setSavedColumns] = useState<string[]>([]);
@@ -166,20 +167,36 @@ function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMa
   const [engineWhy, setEngineWhy] = useState<string | null>(null);
   const [said, setSaid] = useState<{ text: string; tone: 'ok' | 'warning' | 'refused' } | null>(null);
   const [picked, setPicked] = useState<ParametersPicked | null>(null);
+  // The edits this grid last gave the workspace, as JSON: an edit that isn't these came from another tab.
+  const mine = useRef<string | null>(null);
+  const draft = drafts[object.id];
+  const elsewhere = draft?.kind === 'table' && draft.table ? JSON.stringify(draft.table) : null;
 
+  // The table as saved, read again when it's saved anew (from the Reserves case tab too); its edits laid on it.
   useEffect(() => {
     let live = true;
     void objectDetails(object.id).then((d) => {
       if (!live || d.measures.kind !== 'parameter_table') return;
       const g = toGrid(d.measures.parameters);
       setSaved(d.measures.parameters);
-      setGrid(g);
+      setGrid(draft?.kind === 'table' && draft.table ? withTable(g, draft.table) : g);
       setSavedColumns(g.columns.map((c) => c.key));
+      mine.current = elsewhere;
     });
     return () => {
       live = false;
     };
-  }, [object.id]);
+  }, [object.id, object.revision]);
+
+  // The same edits typed in the Reserves case tab (Reserves case plan, decision 11): the grid shows them, and put back
+  // there, it's as saved again.
+  useEffect(() => {
+    if (!saved || !grid || elsewhere === mine.current) return;
+    mine.current = elsewhere;
+    const g = toGrid(saved);
+    setSavedColumns(g.columns.map((c) => c.key));
+    setGrid(draft?.kind === 'table' && draft.table ? withTable(g, draft.table) : g);
+  }, [elsewhere]);
 
   // The last solid picked, and where it takes its values from.
   const solids = useMemo(() => new Map((summary?.objects ?? []).filter((o) => o.kind === 'solid').map((o) => [o.id, o.name])), [summary]);
@@ -232,9 +249,14 @@ function TableEditor({ object, onMade, openCell }: { object: ObjectSummary; onMa
 
   // The edits as they stand, for the Dataflow tab to run on live (decision 0082); none once saved, discarded or closed.
   useEffect(() => {
-    if (!grid || !saved || !checked || !gridEdited(grid, saved.rows.length, savedColumns)) return setDraft(object.id, null);
+    if (!grid || !saved || !checked || !gridEdited(grid, saved.rows.length, savedColumns)) {
+      mine.current = null;
+      return setDraft(object.id, null);
+    }
     const why = checked.problems[0]?.why ?? engineWhy;
-    setDraft(object.id, { kind: 'table', name: object.name, table: why ? null : checked.table, why });
+    const table = why ? null : checked.table;
+    mine.current = table ? JSON.stringify(table) : null;
+    setDraft(object.id, { kind: 'table', name: object.name, table, why });
   }, [checked, engineWhy, saved]);
   useEffect(() => () => setDraft(object.id, null), [object.id]);
 

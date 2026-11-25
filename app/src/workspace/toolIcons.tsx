@@ -146,6 +146,7 @@ const ICONS: Record<ToolIcon, LucideIcon> = {
   reserves: Sigma,
   compare: GitCompareArrows,
   'reserves-table': Sheet,
+  case: ListOrdered,
   notebook: Waypoints,
   setup: Settings2,
   parameters: SlidersHorizontal,

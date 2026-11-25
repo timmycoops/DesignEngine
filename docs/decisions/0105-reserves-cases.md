@@ -177,6 +177,46 @@ a company library of field sets, pieces as solids, the scheduler's tables, runni
   edited to 20,000 m³ runs that step alone and sets both coal blocks aside, 30,000 m³; on to `final` runs the two steps
   after it; the table from there has the table's rows; nothing saved.
 
+## Built: workstream 4, the step view
+
+- **The Reserves case tab** (`app/src/panels/ReservesCasePanel.tsx`, a tab in the results dock, a tool on the Reserves
+  row), a reserves table's case a step at a time, opened at `rom_loss` where the dataflow has it:
+  - **The band**: the dataflow open and its add-ons, the case (a table picked in it, following the one picked in the
+    project or opened in the Dataflow tab), and the balance at the step, green while no ground is made or lost, red with
+    the columns off; its steps and block columns, and how many stopped.
+  - **The inputs**: the block columns, the seam order and each settings table as a card, those the step reads lit gold,
+    one run as edited blue.
+  - **The steps by stage** (decision 10, `stagesOf`): a built-in step in its own stage; a formula in the next built-in
+    step's (the discard formula with working sections), after `rom` in ROM; an add-on's steps a stage named for it.
+    ↑ and ↓ step through them; after an edit the steps that ran again show their time.
+  - **The step**: its rule on one line (whole on hover) or its script opened in the formula panel; the fields and
+    settings it reads (settings gold) and the folders it writes; the whole case at the step against the last run (what
+    the step said it moved, then in situ coal and ROM coal in tonnes and ROM waste in BCM once written, with the change
+    and its share); then its settings by seam and ply (decision 11, `settingsGrid`): every row of each table that holds
+    any of them, in the order read, what each fits, a blank passing on, the cell that gave the followed unit its value
+    ringed gold. A cell typed is an edit, cleared passes on; Save and run the case saves the tables typed in and runs
+    the case again from its setup; Discard puts them back.
+  - **The block map and strip log** (decision 8): a row a strip, a square a block shaded by the volume the step moved
+    there (else wrote), a stopped block red, the picked block ringed; under it that block's units top down before and
+    after the step, as tall as each is thick, coal dark, waste brown, coal lost red, rock let in orange, what changed
+    named; a click follows a unit.
+- **One store of edits.** The tab's cells are the Parameters tab's unsaved edits (`drafts`, decision 0082): typed in one,
+  they show in the other (`withTable` lays them on the Parameters grid as edited), and a table saved anew is read again.
+- **Kept in the app shell** (`reserves_case_step`): the case as saved and, while there are edits, as edited, each a
+  `CaseAtStep`, run again on each ask from the first step a change reaches; the first edit starts from a copy of the case
+  as saved (`CaseAtStep::edited`), so it too runs only the step it reaches. `CaseAtStep::columns` gives each block
+  column's moved and written volume and its coal before and after, for the map.
+- **Tested.** App: the stages, the map's rows and shades, the whole case's rows and changes, a step's settings read off
+  a built-in step's reads or a script's source, the settings grid in reading order, a cell typed, cleared and added
+  (`tests/reservesCase.test.mjs`); an edit from the case tab laid on the Parameters grid as edited
+  (`tests/parametersGrid.test.mjs`). Engine: what `rom_loss` did to the made-up block (3,525 m³ moved and written, its coal
+  25,000 to 21,475 m³), and the first edit from a copy running `rom_loss` alone with the saved case left as it was
+  (`case_at_step.rs`). In the app (`zd-app --bench --case <demo.zdp> --pictures <folder>`, `bench/caseCheck.ts`): the
+  demo's Base table opens at `rom_loss` in about half a second, balanced, steps by stage, 90 blocks on the map, its
+  settings table lit; the coal roof loss typed 0.1 to 0.15 m reruns `rom_loss` alone and shows roof loss 166,169 to
+  249,253 m³ (+50.0 %) within 0.7 s of the last key (a debug build, the 330 ms wait included); discarded, as saved; at
+  `final` ROM coal 9,234,489 t.
+
 ## Known limits
 
 - **Not the command decision 14 named.** A row dataflow runs by `table.run_dataflow`, not `reserves.run`: a reserves
@@ -192,8 +232,16 @@ a company library of field sets, pieces as solids, the scheduler's tables, runni
 - **Out of date reads the log.** A project saved and opened carries its log, so the state comes back with it; a table
   whose runs aren't in the log (made before logs were kept) says its dataflows haven't run. A block revised and then put
   back as it was by hand, not by undo, still counts as changed.
-- **The app doesn't show it yet** (workstreams 4 to 7): the Tables tab still says what changed since the reserves run,
-  as before.
+- **The tab shows one dataflow, the reserves one** (workstream 4): its row dataflows, Open another dataflow, the flow
+  and the units table come in workstreams 5 and 6; New case and Copy case, and the Setup and Dataflow tabs taken out, in
+  workstream 7. The Tables tab still says what changed since the reserves run, as before.
+- **Settings typed are only the settings tables'.** A step's own settings in the dataflow (a built-in step reading
+  `roof_loss` from another column) and its script are edited in the Parameters tab, and run here as edited; Save and run
+  the case saves the tables, not the dataflow. The run's own rows (a setup's `parameters`) show, not typed in.
+- **The strip log draws by thickness.** A unit with no thickness (an area-only piece) is a hairline; its volume is in
+  its tip.
+- **Edits to a table the Parameters tab has open elsewhere.** The Parameters tab keeps the edits of the table it shows;
+  switching it to another table drops that table's edits, wherever they were typed, as it always has.
 - **Only the step before the one open is kept.** An edit read by an earlier step runs the case again from its blocks,
   as decision 9 has it; on PIT B and the demo that is still well under a second. A much larger mine (the 140,000-block
   test mine) isn't measured.

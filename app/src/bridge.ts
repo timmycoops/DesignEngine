@@ -933,6 +933,81 @@ export const reservesRerunParams = (object: string, only: string[]) => invoke<Re
 export const reservesColumnTrace = (object: string, node: string[], step: number, unit: number, dataflow: Dataflow | null = null, tables: [string, ParameterTable][] = []) =>
   invoke<FormulaTrace>('reserves_column_trace', { object, node, step, unit, dataflow, tables: tables.length ? tables : null });
 
+/** One step's time over the whole case (Reserves case plan, decision 9): 0 the blocks as read, 1 the first step. */
+export interface StepTime {
+  step: number;
+  name: string;
+  ms: number;
+}
+
+/** A group of units or a folder written, added up: each field by its own rule, its tonnes as the table works them. */
+export interface CaseTotals {
+  group: string;
+  count: number;
+  values: Record<string, number | null>;
+  tonnes: number | null;
+}
+
+/** What a step said over the case: units and volume, or a check and the blocks it names. */
+export interface SaidTotal {
+  what: string;
+  units: number;
+  volume: number | null;
+  blocks?: string[];
+}
+
+/** No ground made or lost at a step (decision 8). */
+export interface CaseBalance {
+  volume_in: number;
+  volume_now: number;
+  added: number;
+  worst: number;
+  balanced: boolean;
+  unbalanced: string[];
+}
+
+/** The whole case at a step (Reserves case plan, decisions 8 and 9). */
+export interface StepTotals {
+  table: string;
+  step: number;
+  name: string;
+  steps: string[];
+  columns: number;
+  stopped: string[];
+  fields: ColumnField[];
+  units: CaseTotals[];
+  written: CaseTotals[];
+  said: SaidTotal[];
+  balance: CaseBalance;
+  ran_from: number | null;
+  ran: StepTime[];
+  kept_mb: number;
+}
+
+/** What a step did to one block column, for the block map: the volume it moved and wrote, its coal before and after. */
+export interface ColumnDid {
+  path: string[];
+  stopped: string | null;
+  moved: number;
+  written: number;
+  coal_before: number;
+  coal_after: number;
+}
+
+/** The Reserves case tab at a step: the case as saved, as edited where there are edits, and each block column. */
+export interface CaseStepView {
+  saved: StepTotals;
+  now: StepTotals | null;
+  blocks: ColumnDid[];
+}
+
+/**
+ * A reserves table's case at step `step` (0 its blocks as read), kept between asks as saved and as edited (`dataflow`,
+ * `tables`), each run again from the first step a change reaches. Nothing goes in the project.
+ */
+export const reservesCaseStep = (table: string, step: number, dataflow: Dataflow | null = null, tables: [string, ParameterTable][] = []) =>
+  invoke<CaseStepView>('reserves_case_step', { table, step, dataflow, tables: tables.length ? tables : null });
+
 /** One folder a seam model reads its grids from, with how many of them are there (decision 0058, stage 4). */
 export interface FolderCheck {
   folder: string;
@@ -1722,6 +1797,8 @@ export interface BenchConfig {
   workflow: boolean;
   /** A project with a parameter table, a dataflow and a results table, for Properties' views of them (decision 0072). */
   dataflow: string | null;
+  /** With `--case <project.zdp>`, the Reserves case tab driven: a setting typed and the case read as it runs again. */
+  case: string | null;
   /** With `--builder`, the Builder panel driven as Tim would, from a toe up, with an edit between steps (decision 0048). */
   builder: boolean;
   /** With `--project`, Project on the Strings tab driven as Tim would, through the panel and clicks in the view (decision 0079). */

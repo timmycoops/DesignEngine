@@ -59,6 +59,16 @@ pub struct AppInner {
     /// Every block of a reserves table at a step (Tables and scripts plan, decision 10), with what it was run on: kept
     /// while the Dataflow tab's Every block opens and sorts its groups.
     pub step_units: Option<(String, Arc<zd_commands::builtin::StepUnits>)>,
+    /// A reserves table's case kept at a step for the Reserves case tab (Reserves case plan, decision 9): as saved, and
+    /// as edited while there are unsaved edits, each run again from the first step an edit reaches.
+    pub case_kept: Option<KeptCase>,
+}
+
+/// A case kept at a step: its table, the case as saved, and as edited where there are edits.
+pub struct KeptCase {
+    pub table: zd_core::ObjectId,
+    pub saved: zd_commands::builtin::CaseAtStep,
+    pub live: Option<zd_commands::builtin::CaseAtStep>,
 }
 
 /// A run going off the lock: what it is, since when, and how to watch and stop it.
@@ -99,7 +109,7 @@ fn next_log_session() -> u64 {
 impl AppInner {
     pub fn new(session: Session, path: Option<PathBuf>) -> Self {
         let locked_by = session.locked_by();
-        AppInner { session, path, locked_by, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), tiles: Tiles::default(), section_meshes: SectionMeshes::new(), section_inputs: None, section_cut: None, sent: Sent::default(), log_session: next_log_session(), running: None, step_units: None }
+        AppInner { session, path, locked_by, origin: None, staged: HashMap::new(), next_handle: 0, casters: HashMap::new(), solid_casters: HashMap::new(), solid_keys: BTreeMap::new(), tiles: Tiles::default(), section_meshes: SectionMeshes::new(), section_inputs: None, section_cut: None, sent: Sent::default(), log_session: next_log_session(), running: None, step_units: None, case_kept: None }
     }
 
     pub fn handle(&mut self) -> u32 {

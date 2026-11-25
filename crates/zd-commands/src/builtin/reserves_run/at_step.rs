@@ -112,6 +112,19 @@ fn each<T: Send, R: Send>(items: Vec<T>, work: impl Fn(T) -> R + Sync) -> Vec<R>
     crate::builtin::in_parallel(&slots, |slot| work(slot.lock().expect("a slot").take().expect("each item taken once")))
 }
 
+/// What a step did to one block column (decision 8, the block map): its words (`Pit`, `3`, `B5`), why it stopped if it
+/// did, the volume the step said it moved (its losses, its dilution), the volume it wrote to the table, and the column's
+/// coal before and after it (coal nothing has become of yet).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ColumnDid {
+    pub path: Vec<String>,
+    pub stopped: Option<String>,
+    pub moved: f64,
+    pub written: f64,
+    pub coal_before: f64,
+    pub coal_after: f64,
+}
+
 /// One step's time over the whole case, its columns across the cores.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StepTime {
@@ -574,12 +587,47 @@ impl CaseAtStep {
     /// before it; one read earlier, or a change to the blocks, the stack or the dataflow's fields, runs the case again
     /// from its blocks; one read by no step up to here runs nothing.
     pub fn rerun(&mut self, project: &zd_core::Project, log: &[crate::LogEntry], unsaved: &Unsaved) -> Result<(), CommandError> {
+        let (params, prepared, first) = self.compared(project, log, unsaved)?;
+        self.params = params;
+        self.prepared = prepared;
+        self.run_again(first);
+        Ok(())
+    }
+
+    /// The case as edited, from this one (decision 9): a copy of what's kept here run again with `unsaved` from the first
+    /// step that reads a change, so the first edit to a case runs only what it reaches too. This one is left as it is.
+    pub fn edited(&self, project: &zd_core::Project, log: &[crate::LogEntry], unsaved: &Unsaved) -> Result<CaseAtStep, CommandError> {
+        let (params, prepared, first) = self.compared(project, log, unsaved)?;
+        let mut copy = CaseAtStep {
+            table: self.table,
+            case: self.case.clone(),
+            params,
+            prepared,
+            keys: self.keys.clone(),
+            step: self.step,
+            before: self.before.clone(),
+            at: self.at.clone(),
+            asked: self.asked.clone(),
+            ran_from: None,
+            ran: Vec::new(),
+        };
+        copy.run_again(first);
+        Ok(copy)
+    }
+
+    /// The case's parameters and dataflow prepared again on what's saved now and `unsaved`, and the first step that reads
+    /// a change from what this one ran on (0 for the blocks, none for no step).
+    fn compared(&self, project: &zd_core::Project, log: &[crate::LogEntry], unsaved: &Unsaved) -> Result<(RunReservesParams, Prepared, Option<usize>), CommandError> {
         let params = case_params(project, log, self.table)?;
         let prepared = prepare_case(project, &params, unsaved)?;
         let same_params = serde_json::to_value(&params).ok() == serde_json::to_value(&self.params).ok();
         let first = if same_params { first_changed(&self.prepared, &prepared, &self.asked) } else { Some(0) };
-        self.params = params;
-        self.prepared = prepared;
+        Ok((params, prepared, first))
+    }
+
+    /// Runs again from step `first` (0 the blocks) on what's prepared now: the step open from the columns kept before
+    /// it, an earlier step from the blocks, a later one not at all.
+    fn run_again(&mut self, first: Option<usize>) {
         self.ran = Vec::new();
         self.ran_from = None;
         let step = self.step.min(self.prepared.steps.len());
@@ -602,7 +650,6 @@ impl CaseAtStep {
             Some(k) if k <= step => self.run_to(step),
             _ => {}
         }
-        Ok(())
     }
 
     /// The whole case at the step: its units by material and what became of them, what the steps so far have written by
@@ -729,6 +776,38 @@ impl CaseAtStep {
         let mut said: Vec<SaidTotal> = counts.into_iter().map(|(what, (units, v))| SaidTotal { what, units, volume: Some(v), blocks: Vec::new() }).collect();
         said.extend(named.into_iter().filter(|(_, b)| !b.is_empty()).map(|(what, blocks)| SaidTotal { what, units: blocks.len(), volume: None, blocks: blocks.into_iter().take(NAMED).collect() }));
         said
+    }
+
+    /// What the step did to each block column, for the block map (decision 8): the volume it said it moved, the volume
+    /// it wrote, and the column's coal before and after it; or why the column stopped.
+    pub fn columns(&self) -> Vec<ColumnDid> {
+        let volume = self.prepared.fields.volume();
+        let coal = |s: &ColumnState| s.column.units().iter().filter(|u| super::is_coal(u) && u.became.is_none()).map(|u| u.value(volume)).sum::<f64>() + 0.0;
+        self.keys
+            .iter()
+            .zip(&self.at)
+            .enumerate()
+            .map(|(k, (key, kept))| {
+                let path = key.path.clone();
+                let now = match kept {
+                    Ok(now) => now,
+                    Err(why) => return ColumnDid { path, stopped: Some(why.clone()), moved: 0.0, written: 0.0, coal_before: 0.0, coal_after: 0.0 },
+                };
+                let was = match self.before.get(k) {
+                    Some(Ok(b)) if self.step > 0 => Some(b),
+                    _ => None,
+                };
+                let moved = now.said.counts.iter().map(|(what, (_, v))| v - was.and_then(|w| w.said.counts.get(what)).map_or(0.0, |c| c.1)).sum::<f64>() + 0.0;
+                let from = was.map_or(0, |w| w.rows.len()).min(now.rows.len());
+                let written = now.rows[from..].iter().map(|p| p.values[volume]).filter(|v| v.is_finite()).sum::<f64>() + 0.0;
+                ColumnDid { path, stopped: None, moved, written, coal_before: coal(was.unwrap_or(now)), coal_after: coal(now) }
+            })
+            .collect()
+    }
+
+    /// The step's name by its number: `as input` for 0.
+    pub fn step_name(&self) -> String {
+        if self.step == 0 { "as input".into() } else { self.prepared.steps[self.step - 1].0.clone() }
     }
 
     /// The units at the step as a table, a row a unit (Tables and scripts plan, decision 10), from what's kept.

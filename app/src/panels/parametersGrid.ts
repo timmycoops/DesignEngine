@@ -160,6 +160,31 @@ export function addColumn(g: Grid, kind: ColumnKind): Grid {
   return { ...g, columns: [...g.columns.slice(0, at), column, ...g.columns.slice(at)] };
 }
 
+/**
+ * The grid as saved with a table as edited elsewhere laid on it (the Reserves case tab's settings, Reserves case plan,
+ * decision 11): where its filters and rows' filters line up with the grid's, each value cell as the table has it and a
+ * value column it adds put in after the rest, so what changed shows as edited; where they don't, the table as it is.
+ */
+export function withTable(g: Grid, t: ParameterTable): Grid {
+  const filters = g.columns.filter((c) => c.kind === 'filter');
+  const sameFilters = filters.length === t.filters.length && filters.every((c, i) => sameName(c.name, t.filters[i]));
+  const sameRows = g.rows.length === t.rows.length && g.rows.every((r, i) => filters.every((c) => r.cells[c.key] === get(t.rows[i].when, c.name)));
+  if (!sameFilters || !sameRows) return toGrid(t);
+  let out = g;
+  for (const c of t.columns) {
+    if (out.columns.some((x) => x.kind === 'value' && sameName(x.name, c.name))) continue;
+    out = { ...out, columns: [...out.columns, { key: key('c'), kind: 'value', name: c.name, unit: c.unit ?? '', text: !!c.text, note: c.note ?? '', was: null }] };
+  }
+  const rows = out.rows.map((r, i) => {
+    const cells = { ...r.cells };
+    for (const c of out.columns.filter((x) => x.kind === 'value')) {
+      cells[c.key] = cellOf(t.rows[i].values[c.name] ?? Object.entries(t.rows[i].values).find(([k]) => sameName(k, c.name))?.[1]);
+    }
+    return { ...r, cells };
+  });
+  return { ...out, rows };
+}
+
 export const deleteColumn = (g: Grid, column: string): Grid => ({ ...g, columns: g.columns.filter((c) => c.key !== column) });
 
 export const editColumn = (g: Grid, column: string, change: Partial<Pick<GridColumn, 'name' | 'unit' | 'text'>>): Grid => ({ ...g, columns: g.columns.map((c) => (c.key === column ? { ...c, ...change } : c)) });

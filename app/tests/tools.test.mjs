@@ -83,7 +83,7 @@ test('every stage has a row of tools that exist, named in words', () => {
   // Open is a menu on the row: a project, or an older project folder.
   assert.deepEqual(ROWS.project.filter((i) => typeof i !== 'string').map((m) => m.label), ['Open', 'Import', 'Export']);
   assert.deepEqual(names('geology'), ['Import seam grids', 'Suggest definition', 'Build seam model', 'Relink geology']);
-  assert.deepEqual(names('reserves'), ['Reserves', 'Parameters', 'Tables', 'Dataflow', 'Setup', 'Compare', 'Compare', 'Report']);
+  assert.deepEqual(names('reserves'), ['Reserves', 'Reserves case', 'Parameters', 'Tables', 'Dataflow', 'Setup', 'Compare', 'Compare', 'Report']);
   assert.deepEqual(names('walls'), ['Face design', 'Builder', 'Rebuild from here', 'Ramp', 'Set grade', 'Offset', 'Project', 'Surface between', 'Join faces', 'Compare', 'Merge', 'Trim plan', 'Triangulate']);
   assert.deepEqual(names('strings'), ['Offset', 'Number across', 'Polygons from lines', 'Set grade', 'Set elevation', 'Drape', 'Project', 'Split', 'Trim', 'Extend', 'Clip', 'Union', 'Join', 'Round corners', 'Smooth', 'Filter', 'Densify', 'At crossings', 'Reverse', 'Close', 'Where they meet', 'Contours', 'Outline', 'Section strings', 'Move', 'Rotate', 'Mirror']);
 });
