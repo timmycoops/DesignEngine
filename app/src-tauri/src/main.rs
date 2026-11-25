@@ -68,6 +68,8 @@ fn main() {
             commands::script_check,
             commands::reserves_step_grid,
             commands::reserves_case_step,
+            commands::case_state,
+            commands::row_dataflow_step,
             commands::reserves_tree,
             commands::reserves_breakdown,
             commands::reserves_solids,

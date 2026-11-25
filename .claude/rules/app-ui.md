@@ -16,7 +16,8 @@ Delete there, an object hidden or shown from the view's right-click in Select, a
 and one results dock under the view where every table opens as a tab (Run log, Tables, Reserves case, Parameters,
 Dataflow, Setup, Workflow canvas, Face design). The Reserves case tab (0105) edits settings through the same unsaved edits
 (`drafts`) as the Parameters tab, which lays another tab's edits on its grid (`withTable`); a tab that edits a parameter
-table goes through `setDraft`, never a store of its own. Tables holds every table, picked from its Table list: Objects, then each reserves table, one grid
+table goes through `setDraft`, never a store of its own. Its Open another dataflow lists the case's dataflows (`case_state`) and runs them by
+`reserves.run` and `table.run_dataflow`, as Python's `run_case` does, each its own undo; a row dataflow opens in the same tab. Tables holds every table, picked from its Table list: Objects, then each reserves table, one grid
 for both (`docs/decisions/0099-tables-and-scripts.md`). A new panel names its dock in `PANELS` (`app/src/workspace/Workspace.tsx`) and opens
 through `showPanel`; it never adds a column or a row of its own, and the view keeps its room. The view has no tab strip,
 and its own tools (Select, Draw, Measure, Snap, 3D or Plan, perspective or orthographic (P), the zooms, the field of view, Section and its step and fill)

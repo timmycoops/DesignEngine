@@ -321,3 +321,51 @@ fn no_ground_is_made_or_lost_at_any_step() {
     assert!(case.go_to(steps + 1).is_err());
     assert!(case.step_number("no such step").is_err());
 }
+
+fn flow_volume(f: &zd_commands::builtin::FlowStep, material: &str, became: Option<&str>, detail: &str) -> f64 {
+    f.groups.iter().filter(|g| g.material == material && g.became.as_deref() == became && g.detail == detail).map(|g| g.volume).sum()
+}
+
+/// The flow (decision 10): the case through every step, opened at `rom_loss` or not. The blocks bring 25,000 m³ of coal
+/// and 95,000 of waste; `rom_loss` takes 1,000 m³ roof, 2,000 floor, 25 edge and 500 other off the coal, 21,475 left;
+/// every step's units add back to the block's 120,000 m³. Roof 0.15 m: `rom_loss` and the steps after it run again,
+/// 1,500 m³ of roof loss and 20,975 left, the steps before it as they were. 1e-9.
+#[test]
+fn the_flow_carries_the_case_through_every_step() {
+    let mut s = session();
+    let (table, settings, _, _) = case(&mut s);
+    let mut case = open_at(&s, table, "rom_loss");
+    let k = case.step_number("rom_loss").unwrap();
+    let steps = case.totals().steps.len();
+    let flow = case.flow();
+    assert_eq!(flow.iter().map(|f| f.step).collect::<Vec<_>>(), (0..=steps).collect::<Vec<_>>(), "every step, the blocks first");
+    assert_eq!(flow[0].name, "as input");
+    assert_eq!(flow[k].name, "rom_loss");
+    assert!(close(flow_volume(&flow[0], "coal", None, ""), 25_000.0) && close(flow_volume(&flow[0], "waste", None, ""), 95_000.0), "{:?}", flow[0]);
+    for f in &flow {
+        let all: f64 = f.groups.iter().map(|g| g.volume).sum();
+        assert!(close(all, 120_000.0), "{}: {all} m³ {:?}", f.name, f.groups);
+        assert_eq!(f.stopped, 0);
+    }
+    let at = &flow[k];
+    assert!(close(flow_volume(at, "coal", None, ""), 21_475.0), "{:?}", at.groups);
+    for (detail, v) in [("roof", 1_000.0), ("floor", 2_000.0), ("edge", 25.0), ("other", 500.0)] {
+        assert!(close(flow_volume(at, "coal", Some("loss"), detail), v), "{detail}: {:?}", at.groups);
+    }
+    // The flow at the step is the totals' units there.
+    assert!(close(flow_volume(at, "coal", None, ""), group(&case.totals().units, "coal")));
+    // Asked again with nothing changed: the same, nothing run.
+    assert_eq!(case.flow(), flow);
+
+    case.rerun(s.project(), s.log(), &edited(settings, &csv(0.15, 1.0, 0.0))).unwrap();
+    let edited_flow = case.flow();
+    assert_eq!(&edited_flow[..k], &flow[..k], "the steps before rom_loss as they ran");
+    for f in &edited_flow[k..] {
+        assert!(close(flow_volume(f, "coal", Some("loss"), "roof"), 1_500.0) && close(flow_volume(f, "coal", None, ""), 20_975.0), "{}: {:?}", f.name, f.groups);
+    }
+    // Opened at the blocks or at the end, the same flow.
+    let mut from_start = CaseAtStep::open(s.project(), s.log(), table, 0, &Unsaved::default()).unwrap();
+    let mut at_end = CaseAtStep::open(s.project(), s.log(), table, steps, &Unsaved::default()).unwrap();
+    assert_eq!(from_start.flow(), flow);
+    assert_eq!(at_end.flow(), flow);
+}

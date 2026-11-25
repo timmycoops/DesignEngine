@@ -206,15 +206,23 @@ export function valueIn(values: Record<string, number | string>, column: string)
  * read (the run's own rows, a table gone).
  */
 export function settingsGrid(column: ColumnSteps, at: number, tables: (ParameterTable | null)[]): SettingsGrid {
-  const columns = stepSettings(column.steps[at]);
+  return gridOf(stepSettings(column.steps[at]), column.tables, column.table_ids ?? [], tables);
+}
+
+/**
+ * Settings `columns` as tables' rows are read: every row of each table (named `names`, ids `ids`, as saved or edited in
+ * `tables`) that has any of them, in the order read. A row dataflow's step's settings are its script's (workstream 6).
+ */
+export function gridOf(columns: string[], names: string[], ids: (string | null)[], tables: (ParameterTable | null)[], every = 'every block'): SettingsGrid {
   const rows: SettingsRow[] = [];
-  column.tables.forEach((name, t) => {
+  names.forEach((name, t) => {
     const table = tables[t];
     if (!table) return;
     const has = (c: string) => table.columns.some((x) => x.name.toLowerCase() === c.toLowerCase());
     if (!columns.some(has)) return;
     table.rows.forEach((r, row) => {
-      rows.push({ table: t, tableId: column.table_ids?.[t] ?? null, tableName: name, row, fits: fitsWords(r.when), values: Object.fromEntries(columns.map((c) => [c, valueIn(r.values, c)])) });
+      const fits = fitsWords(r.when);
+      rows.push({ table: t, tableId: ids[t] ?? null, tableName: name, row, fits: fits === 'every block' ? every : fits, values: Object.fromEntries(columns.map((c) => [c, valueIn(r.values, c)])) });
     });
   });
   return { columns, rows };

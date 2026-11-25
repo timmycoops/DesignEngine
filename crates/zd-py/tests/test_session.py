@@ -232,6 +232,15 @@ def a_case_runs_its_dataflows_in_order():
     assert s.case_state(table)["dataflows"][1]["why"] == ["Reserves ran after it"]
     assert [r["command"] for r in s.run_case(table, out_of_date=True)] == ["table.run_dataflow"]
     assert all(d["up_to_date"] for d in s.case_state(table)["dataflows"])
+    assert [d["tables"] for d in s.case_state(table)["dataflows"]] == [["assumptions"], ["haul distances"]]
+    # Haulage at its step (workstream 6): strip 1 at 3 km as saved, 67,500 t.km; at 4 km as edited, 90,000, not saved.
+    at = s.row_step(table, "Haulage", 1)
+    tkm = {c["field"]: c for c in at["columns"]}["tkm"]
+    assert at["rows_in_range"] + at["outside"] == s.object(table)["rows"] and tkm["before"] is None, at
+    assert abs(tkm["after"] - 67_500.0) < 1e-6 and abs(tkm["last_run"] - 67_500.0) < 1e-6, tkm
+    edited = s.row_step(table, haulage, 1, tables={"haul distances": "when strip,distance (km)\n1,4\n,5\n"})
+    assert abs({c["field"]: c for c in edited["columns"]}["tkm"]["after"] - 90_000.0) < 1e-6, edited["columns"]
+    assert "1,3" in s.object(distances)["csv"], "the edit wasn't saved"
     a_case_is_kept_at_a_step(s, table, assumptions)
 
 
@@ -259,6 +268,10 @@ def a_case_is_kept_at_a_step(s, table, assumptions):
     assert units["table"]["rows"] == 4 and units["step"] == "small_volumes", units
     totals = s.step_case(table, "final", tables={"assumptions": edit.format(20_000)})
     assert totals["ran_from"] is None and [r["name"] for r in totals["ran"]] == ["initialise", "final"], totals["ran"]
+    # The flow (decision 10): the case after every step, the blocks first, every step adding back to the 130,000 m3 in.
+    flow = s.step_flow(table)
+    assert [f["name"] for f in flow] == ["as input", "small_volumes", "initialise", "final"], [f["name"] for f in flow]
+    assert all(abs(sum(g["volume"] for g in f["groups"]) - 130_000.0) < 1e-6 for f in flow), flow
     made = s.step_table(table)
     assert made["rows"] == s.object(table)["rows"], made["rows"]
     assert "coal,,10" in s.object(assumptions)["csv"], "the edit wasn't saved"

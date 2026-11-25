@@ -371,6 +371,8 @@ fn each_dataflow_says_whether_it_s_up_to_date_and_why() {
     assert_eq!(state(&s), [ok("Reserves"), ok("Haulage")]);
     let c = zd_commands::builtin::case_state(s.project(), s.log(), id).unwrap();
     assert!(c.dataflows[1].ran.is_some() && c.dataflows[1].range.get("strip").map(String::as_str) == Some("1-6"));
+    // What each reads: its own settings tables, by name (workstream 6's Open another dataflow).
+    assert_eq!((c.dataflows[0].tables.clone(), c.dataflows[1].tables.clone()), (vec!["assumptions".to_string()], vec!["haul distances".to_string()]));
 
     // Its distances revised: Haulage alone is out of date.
     s.run("parameters.save", json!({ "table": distances, "name": "haul distances", "csv": "when strip,distance (km)\n1-3,2.5\n4-6,3\n,5\n" })).unwrap();
@@ -404,4 +406,73 @@ fn each_dataflow_says_whether_it_s_up_to_date_and_why() {
     box_solid(&mut s, "9_B1_OB", 800.0, (20.0, 30.0), json!({ "strip": 9.0, "block": "B1", "horizon": "OB", "material": "waste", "seam": "L" }));
     assert_eq!(state(&s)[0], out("Reserves", &["1 block added to what the setup picks"]));
     assert_eq!(state(&s)[1].2, ["its range changed since it ran", "Reserves is out of date"]);
+}
+
+const HAUL_IN_TWO: &str = "distance";
+
+const TKM: &str = r#"def formula(row, p):
+    row.tkm = row["Imported\\Coal\\tonnes"] * row.distance
+"#;
+
+/// Haulage in two steps: the distance, then the tonne-kilometres from it.
+fn haulage_in_two(s: &mut Session) -> (ObjectId, ObjectId) {
+    let (haul, distances) = haulage(&mut *s, HAUL);
+    let Body::Dataflow(d) = &s.project().object(haul).unwrap().body else { panic!("a dataflow") };
+    let mut content = serde_json::to_value(&**d).unwrap();
+    content["steps"] = json!([
+        { "step": HAUL_IN_TWO, "formula": { "script": "def formula(row, p):\n    row.distance = p.distance\n" } },
+        { "step": "tkm", "formula": { "script": TKM } },
+    ]);
+    s.run("dataflow.save", json!({ "dataflow": haul, "name": "Haulage", "content": content })).unwrap();
+    (haul, distances)
+}
+
+/// A row dataflow at a step (workstream 6, the Reserves case tab): Haulage on strips 1 to 6, the distance then the
+/// tonne-kilometres. Before its first step its columns are empty; after it the distances are there (3 km the largest)
+/// and no tonne-kilometres; after the second, 337,500 t.km over the range. Nothing is written to the table until it
+/// runs, and then the last run holds the same. Strips 1 to 3 edited to 4 km and not saved: 472,500 t.km. 1e-9.
+#[test]
+fn a_row_dataflow_steps_through_its_rows_before_and_after() {
+    let mut s = session();
+    let (id, _) = case(&mut s);
+    let (haul, distances) = haulage_in_two(&mut s);
+    with_rows(&mut s, id, json!([{ "dataflow": haul, "range": { "strip": "1-6" } }])).unwrap();
+    let none = zd_commands::builtin::Unsaved::default();
+    let at = |s: &Session, step: usize, unsaved: &zd_commands::builtin::Unsaved| zd_commands::builtin::row_dataflow_at_step(s.project(), id, haul, step, unsaved).unwrap();
+    let total = |v: &zd_commands::builtin::RowDataflowAtStep, field: &str| v.columns.iter().find(|c| c.field == field).unwrap().clone();
+
+    let first = at(&s, 1, &none);
+    assert_eq!(first.name, "Haulage");
+    assert_eq!(first.steps.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), [HAUL_IN_TWO, "tkm"]);
+    assert_eq!(first.rows_in_range + first.outside, table(&s, id).rows());
+    assert!(first.outside > 0 && first.rows.len() == first.rows_in_range);
+    assert_eq!(first.tables.iter().map(|(t, n)| (*t, n.as_str())).collect::<Vec<_>>(), [(distances, "haul distances")]);
+    let d = total(&first, "distance");
+    assert_eq!((d.before, d.after, d.last_run), (None, Some(3.0), None), "{d:?}");
+    assert_eq!(total(&first, "tkm").after, None);
+    assert_eq!(first.steps[0].sets, ["distance"]);
+    assert_eq!(first.steps[1].sets, ["tkm"]);
+    assert!(first.steps[1].reads.iter().any(|r| r == COAL_TONNES) && first.steps[1].reads.iter().any(|r| r == "distance"), "{:?}", first.steps[1].reads);
+    // A row's before and after, in the columns' order: empty, then its strip's distance.
+    let strip_one = first.rows.iter().find(|r| r.label.contains(" 1 ")).unwrap_or(&first.rows[0]);
+    assert_eq!(strip_one.before[0], serde_json::Value::Null);
+    assert!(strip_one.after[0].is_number(), "{strip_one:?}");
+
+    let second = at(&s, 2, &none);
+    let t = total(&second, "tkm");
+    assert_eq!(t.before, None);
+    assert!(close(t.after.unwrap(), 337_500.0), "{t:?}");
+    assert_eq!(total(&second, "distance").before, Some(3.0));
+    assert!(table(&s, id).column("Haulage\tkm").is_none(), "nothing written");
+
+    s.run("table.run_dataflow", json!({ "table": id, "dataflow": haul })).unwrap();
+    let ran = at(&s, 2, &none);
+    assert!(close(total(&ran, "tkm").last_run.unwrap(), 337_500.0));
+
+    // Strips 1 to 3 at 4 km, not saved.
+    let edited = zd_commands::builtin::Unsaved { dataflow: None, tables: vec![(distances, std::sync::Arc::new(zd_core::ParameterTable::from_csv("when strip,distance (km)\n1-3,4\n4-6,3\n,5\n").unwrap()))] };
+    let e = at(&s, 2, &edited);
+    assert!(close(total(&e, "tkm").after.unwrap(), 22_500.0 * (3.0 * 4.0 + 3.0 * 3.0)), "{:?}", total(&e, "tkm"));
+    assert!(close(total(&e, "tkm").last_run.unwrap(), 337_500.0), "the last run as it was");
+    assert!(zd_commands::builtin::row_dataflow_at_step(s.project(), id, haul, 3, &none).is_err(), "no third step");
 }

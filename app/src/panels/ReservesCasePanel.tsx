@@ -1,13 +1,17 @@
 import { Braces, Save, Undo2 } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { type CaseStepView, type ColumnSteps, type ColumnUnit, objectDetails, type ParameterTable, reservesCaseStep, reservesColumn, reservesRerunParams } from '@/bridge';
+import { type CaseState, caseState, type CaseStepView, type ColumnSteps, type ColumnUnit, type DataflowState, objectDetails, type ParameterTable, reservesCaseStep, reservesColumn, reservesRerunParams } from '@/bridge';
 import { PanelHead, Select, StatusBadge } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { type Draft, useWorkspace } from '@/workspace/context';
 import { stepLabel, unitWords } from './columnSteps';
 import { writesByFolder } from './dataflowView';
+import { CaseFlow } from './CaseFlow';
+import { rangeWords } from './flowStages';
+import { CaseSwitcher } from './CaseSwitcher';
 import { BlockMap, SettingsBySeam, StripLog, WholeCase } from './ReservesCaseParts';
+import { RowDataflowView } from './RowDataflowView';
 import { UnitsTable } from './UnitsTable';
 import { mapMeasure, settingsGrid, shadeOf, stagesOf, stepSettings, suppliedFor, withCell } from './reservesCase';
 
@@ -68,6 +72,11 @@ export function ReservesCasePanel() {
   const [liveWhy, setLiveWhy] = useState<string | null>(null);
   const [said, setSaid] = useState<{ text: string; refused: boolean } | null>(null);
   const [saving, setSaving] = useState(false);
+  // The case's dataflows and which is open (decision 4, workstream 6): none picked, its reserves dataflow.
+  const [state, setState] = useState<CaseState | null>(null);
+  const [openFlow, setOpenFlow] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [caseSaid, setCaseSaid] = useState<{ text: string; refused: boolean } | null>(null);
 
   // A new table starts again: its first step that does something, its busiest block.
   useEffect(() => {
@@ -76,13 +85,60 @@ export function ReservesCasePanel() {
     setView(null);
     setColumn(null);
     setSaid(null);
+    setOpenFlow(null);
+    setCaseSaid(null);
   }, [table?.id]);
+
+  // Whether each of the case's dataflows is up to date, read again whenever anything moves.
+  useEffect(() => {
+    if (!table) return setState(null);
+    let current = true;
+    void caseState(table.id)
+      .then((s) => current && setState(s))
+      .catch(() => current && setState(null));
+    return () => {
+      current = false;
+    };
+  }, [table?.id, changed]);
+  const openRow: DataflowState | null = state?.dataflows.find((d) => !d.reserves && d.dataflow === openFlow) ?? null;
+  const reservesState = state?.dataflows.find((d) => d.reserves) ?? null;
+  const openState = openRow ?? reservesState;
+
+  // Run one of the case's dataflows, those out of date in order (each judged after the one before it ran), or all.
+  const runCase = async (what: 'stale' | 'all' | DataflowState) => {
+    if (!table || !state) return;
+    setRunning(true);
+    setCaseSaid(null);
+    const ran: string[] = [];
+    const runOne = async (d: DataflowState) =>
+      d.reserves ? runRecord('reserves.run', await reservesRerunParams(table.id, [])) : runRecord('table.run_dataflow', { table: table.id, dataflow: d.dataflow });
+    try {
+      const order = typeof what === 'string' ? state.dataflows : [what];
+      for (const listed of order) {
+        let d = listed;
+        if (what === 'stale') {
+          const now = await caseState(table.id);
+          const it = now.dataflows.find((x) => x.dataflow === listed.dataflow);
+          if (!it || it.up_to_date) continue;
+          d = it;
+        }
+        const reply = await runOne(d);
+        if (reply.error) return setCaseSaid({ text: `${d.name}: ${reply.error}`, refused: true });
+        ran.push(d.name);
+      }
+      setCaseSaid({ text: ran.length ? `Ran ${ran.join(', then ')} on ${table.name}: each its own undo.` : 'Nothing was out of date.', refused: false });
+    } catch (e) {
+      setCaseSaid({ text: String(e), refused: true });
+    } finally {
+      setRunning(false);
+    }
+  };
 
   const edits = useMemo(() => editsOf(column, drafts), [column, drafts]);
   // The case at the step: at once for a new table, step or save; a third of a second after typing stops for an edit.
   const lastEdits = useRef<string | null>(null);
   useEffect(() => {
-    if (!table) return;
+    if (!table || openRow) return;
     if (edits?.why) return setLiveWhy(edits.why);
     const typing = (edits?.key ?? null) !== lastEdits.current;
     lastEdits.current = edits?.key ?? null;
@@ -108,7 +164,7 @@ export function ReservesCasePanel() {
       current = false;
       clearTimeout(t);
     };
-  }, [table?.id, step, edits?.key, edits?.why, changed]);
+  }, [table?.id, step, edits?.key, edits?.why, changed, !!openRow]);
 
   // The block followed: kept while the case has it, else the one the step moved most in.
   useEffect(() => {
@@ -253,9 +309,17 @@ export function ReservesCasePanel() {
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1.5" data-slot="case-band">
         <span className="text-muted-foreground">Dataflow open</span>
         <span className="text-sm font-semibold" data-slot="case-dataflow">
-          {column?.dataflow ?? '…'}
-          {addOnNames.length > 0 && <span className="font-normal text-muted-foreground"> + {addOnNames.join(', ')}</span>}
+          {openRow ? openRow.name : (column?.dataflow ?? '…')}
+          {!openRow && addOnNames.length > 0 && <span className="font-normal text-muted-foreground"> + {addOnNames.join(', ')}</span>}
+          {openRow && <span className="font-normal text-muted-foreground"> · rows, on {rangeWords(openRow)}</span>}
         </span>
+        <CaseSwitcher state={state} open={openState?.dataflow ?? null} running={running} onOpen={(d) => setOpenFlow(d.reserves ? null : d.dataflow)} onRun={(w) => void runCase(w)} />
+        {openState && !openState.up_to_date && (
+          <span className="text-warning" title={openState.why.join('; ')} data-slot="case-open-state">
+            Out of date: {openState.why[0]}
+            {openState.why.length > 1 ? ' …' : ''}
+          </span>
+        )}
         <label className="flex items-center gap-1">
           <span className="text-muted-foreground">in case</span>
           <Select className="h-6 w-44" aria-label="The reserves table whose case to show" value={table.id} onChange={(e) => setPick(e.target.value)}>
@@ -267,7 +331,8 @@ export function ReservesCasePanel() {
           </Select>
         </label>
         <span className="ml-auto flex flex-wrap items-center gap-x-3">
-          {balance &&
+          {!openRow &&
+            balance &&
             (balance.balanced ? (
               <StatusBadge tone="ok" title={`Every column at this step holds what came in from its blocks (${Math.round(balance.volume_in).toLocaleString('en-AU')} m³), to rounding`}>
                 ✓ Balanced: no ground made or lost
@@ -277,15 +342,21 @@ export function ReservesCasePanel() {
                 Out of balance: {balance.unbalanced.join('; ')}
               </StatusBadge>
             ))}
-          {shown && (
+          {!openRow && shown && (
             <span className="text-muted-foreground" data-slot="case-counts">
               {shown.steps.length} steps · {shown.columns} block columns{shown.stopped.length > 0 && ` · ${shown.stopped.length} stopped`}
             </span>
           )}
         </span>
       </div>
+      {caseSaid && (
+        <div className={cn('px-2 py-1', caseSaid.refused ? 'text-destructive' : 'text-ok')} data-slot="case-said">
+          {caseSaid.text}
+        </div>
+      )}
+      {openRow && <RowDataflowView table={table} dataflow={openRow} />}
       {/* The inputs (decision 8): the blocks, the seam order, each settings table, those the step reads lit gold. */}
-      {column && shown && (
+      {!openRow && column && shown && (
         <div className="flex shrink-0 flex-wrap gap-1.5 border-b border-border px-2 py-1.5" data-slot="case-inputs">
           <InputCard head="Blocks" body={`${shown.columns} block columns`} more={shown.stopped.length ? `${shown.stopped.length} stopped` : `${column.blocks.length} solids in this block`} lit={at === 0} />
           <InputCard head="Seam order" body={column.model ?? 'The run\'s own stack'} more={`${column.horizons} horizons`} lit={at === 0} />
@@ -296,10 +367,18 @@ export function ReservesCasePanel() {
           })}
         </div>
       )}
-      {error && <div className="px-2 py-1 text-destructive">{error}</div>}
-      {liveWhy && <div className="px-2 py-1 text-warning" data-slot="live-why">Not run on the latest edit: {liveWhy}. Showing the last that ran.</div>}
-      {!view && !error && <div className="p-3 text-muted-foreground">Running the case…</div>}
-      {view && (
+      {!openRow && error && <div className="px-2 py-1 text-destructive">{error}</div>}
+      {!openRow && liveWhy && (
+        <div className="px-2 py-1 text-warning" data-slot="live-why">
+          Not run on the latest edit: {liveWhy}. Showing the last that ran.
+        </div>
+      )}
+      {!openRow && !view && !error && <div className="p-3 text-muted-foreground">Running the case…</div>}
+      {/* The flow (decision 10): the case through every stage, as edited where there are edits. */}
+      {!openRow && view && column && (
+        <CaseFlow flow={view.now_flow ?? view.saved_flow} saved={view.now_flow ? view.saved_flow : null} stages={stages} names={steps.map((x) => x.step)} at={at} onStep={(n) => setStep(Math.max(0, n))} />
+      )}
+      {!openRow && view && (
         <div className="grid h-[28rem] shrink-0 grid-cols-[minmax(11rem,15rem)_minmax(0,1fr)_minmax(14rem,20rem)] divide-x divide-border" data-slot="case-columns">
           {/* The steps by stage (decision 10). */}
           <div className="min-h-0 overflow-auto p-2" data-slot="case-steps">
@@ -416,7 +495,7 @@ export function ReservesCasePanel() {
         </div>
       )}
       {/* The units table under the step view (decision 12). */}
-      {view && column && at !== null && block && <UnitsTable column={column} at={at} block={block} />}
+      {!openRow && view && column && at !== null && block && <UnitsTable column={column} at={at} block={block} />}
     </div>
   );
 }

@@ -125,6 +125,61 @@ pub struct ColumnDid {
     pub coal_after: f64,
 }
 
+/// Units of one material and what became of them, over the whole case at a step (decision 10, the flow): `coal` with
+/// nothing become of it, `coal` lost to `loss` (`roof`), `waste` let in as `dilution` (`roof`); how many, their volume and
+/// their in situ tonnes (none where nothing weighs).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FlowGroup {
+    pub material: String,
+    pub became: Option<String>,
+    pub detail: String,
+    pub units: usize,
+    pub volume: f64,
+    pub tonnes: Option<f64>,
+}
+
+/// The case after a step (0 for its blocks as read), its units by material and what became of them, for the flow
+/// across the Reserves case tab: the steps before the one open as they ran, those after it run on from it and not kept.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FlowStep {
+    pub step: usize,
+    pub name: String,
+    pub groups: Vec<FlowGroup>,
+    /// Block columns stopped by this step or one before it.
+    pub stopped: usize,
+}
+
+/// Units by material, what became of them and its detail.
+type ByBecame<'a> = BTreeMap<(String, Option<String>, String), Vec<&'a [f64]>>;
+
+/// The case's units after a step, by material and what became of them.
+fn flow_of(prepared: &Prepared, states: &[Kept], step: usize) -> FlowStep {
+    let volume = prepared.fields.volume();
+    let mut groups: ByBecame<'_> = BTreeMap::new();
+    let mut stopped = 0;
+    for kept in states {
+        let Ok(state) = kept else {
+            stopped += 1;
+            continue;
+        };
+        for u in state.column.units() {
+            let became = u.became.as_ref().map(|b| (format!("{:?}", b.kind).to_lowercase(), b.detail.clone()));
+            let key = (u.in_situ.material.to_lowercase(), became.as_ref().map(|b| b.0.clone()), became.map(|b| b.1).unwrap_or_default());
+            groups.entry(key).or_default().push(u.values());
+        }
+    }
+    let groups = groups
+        .into_iter()
+        .map(|((material, became, detail), values)| {
+            let tonnes = tonnes_by(prepared, None, &values).map(|d| values.iter().map(|u| u[volume] * u[d]).filter(|t| t.is_finite()).sum::<f64>() + 0.0);
+            let v = values.iter().map(|u| u[volume]).filter(|v| v.is_finite()).sum::<f64>() + 0.0;
+            FlowGroup { material, became, detail, units: values.len(), volume: v, tonnes }
+        })
+        .collect();
+    let name = if step == 0 { "as input".into() } else { prepared.steps[step - 1].0.clone() };
+    FlowStep { step, name, groups, stopped }
+}
+
 /// One step's time over the whole case, its columns across the cores.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StepTime {
@@ -471,6 +526,10 @@ pub struct CaseAtStep {
     asked: Vec<BTreeSet<String>>,
     ran_from: Option<usize>,
     ran: Vec<StepTime>,
+    /// The flow up to the step, a step at a time as each ran.
+    flow: Vec<FlowStep>,
+    /// The flow after the step, run on from it when asked; none once anything runs again.
+    flow_after: Option<Vec<FlowStep>>,
 }
 
 impl CaseAtStep {
@@ -485,7 +544,21 @@ impl CaseAtStep {
         let params = case_params(project, log, table)?;
         let prepared = prepare_case(project, &params, unsaved)?;
         let case = crate::reserves_view::case_of(&object.attributes);
-        let mut me = CaseAtStep { table, case, params, prepared, keys: Vec::new(), step: 0, before: Vec::new(), at: Vec::new(), asked: Vec::new(), ran_from: None, ran: Vec::new() };
+        let mut me = CaseAtStep {
+            table,
+            case,
+            params,
+            prepared,
+            keys: Vec::new(),
+            step: 0,
+            before: Vec::new(),
+            at: Vec::new(),
+            asked: Vec::new(),
+            ran_from: None,
+            ran: Vec::new(),
+            flow: Vec::new(),
+            flow_after: None,
+        };
         me.check_step(step)?;
         me.run_to(step);
         Ok(me)
@@ -523,6 +596,8 @@ impl CaseAtStep {
         self.ran_from = Some(0);
         self.asked = Vec::new();
         self.before = Vec::new();
+        self.flow = vec![flow_of(&self.prepared, &states, 0)];
+        self.flow_after = None;
         for i in 0..step {
             states = self.run_step(i, states, i + 1 == step);
         }
@@ -557,6 +632,9 @@ impl CaseAtStep {
             self.before = before;
         }
         self.ran.push(StepTime { step: i + 1, name: self.prepared.steps[i].0.clone(), ms: ms(started) });
+        self.flow.truncate(i + 1);
+        self.flow.push(flow_of(&self.prepared, &after, i + 1));
+        self.flow_after = None;
         after
     }
 
@@ -610,6 +688,8 @@ impl CaseAtStep {
             asked: self.asked.clone(),
             ran_from: None,
             ran: Vec::new(),
+            flow: self.flow.clone(),
+            flow_after: self.flow_after.clone(),
         };
         copy.run_again(first);
         Ok(copy)
@@ -631,6 +711,10 @@ impl CaseAtStep {
         self.ran = Vec::new();
         self.ran_from = None;
         let step = self.step.min(self.prepared.steps.len());
+        if first.is_some() {
+            // A change any step reads: the flow after the step runs on again when next asked.
+            self.flow_after = None;
+        }
         match first {
             Some(k) if k <= step && k == self.step && k > 0 => {
                 // The step open is the first to read it: again from the columns kept before it.
@@ -646,6 +730,8 @@ impl CaseAtStep {
                 self.asked[i] = asked;
                 self.ran = vec![StepTime { step: k, name: self.prepared.steps[i].0.clone(), ms: ms(started) }];
                 self.ran_from = Some(k);
+                self.flow.truncate(k);
+                self.flow.push(flow_of(&self.prepared, &self.at, k));
             }
             Some(k) if k <= step => self.run_to(step),
             _ => {}
@@ -803,6 +889,23 @@ impl CaseAtStep {
                 ColumnDid { path, stopped: None, moved, written, coal_before: coal(was.unwrap_or(now)), coal_after: coal(now) }
             })
             .collect()
+    }
+
+    /// The case through every step of its dataflow, its units by material and what became of them after each (decision
+    /// 10): up to the step as it ran, after it run on from the step's columns and not kept, again only once something
+    /// runs again. Steps after one that stops a column leave it out, counted.
+    pub fn flow(&mut self) -> Vec<FlowStep> {
+        if self.flow_after.is_none() {
+            let prepared = &self.prepared;
+            let mut states: Vec<Kept> = self.at.clone();
+            let mut after = Vec::with_capacity(prepared.steps.len().saturating_sub(self.step));
+            for i in self.step..prepared.steps.len() {
+                states = each(states, |kept| step_column(prepared, kept, i).0);
+                after.push(flow_of(prepared, &states, i + 1));
+            }
+            self.flow_after = Some(after);
+        }
+        self.flow.iter().chain(self.flow_after.iter().flatten()).cloned().collect()
     }
 
     /// The step's name by its number: `as input` for 0.

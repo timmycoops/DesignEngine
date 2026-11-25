@@ -25,6 +25,8 @@ pub struct DataflowState {
     pub ran: Option<String>,
     pub up_to_date: bool,
     pub why: Vec<String>,
+    /// The settings tables it reads, by name, in the order read.
+    pub tables: Vec<String>,
 }
 
 /// A case, a reserves table, and each of its dataflows in run order.
@@ -112,6 +114,14 @@ pub fn case_state(project: &zd_core::Project, log: &[LogEntry], table: ObjectId)
     let setup = super::setup_of(project, log, table)?;
     let undone = undone(log);
     let name_of = |id: ObjectId| project.object(id).map_or_else(|| "a dataflow since deleted".to_string(), |o| o.name.clone());
+    // A dataflow's settings tables: those the setup lists for it, else its own.
+    let tables_of = |flow: ObjectId, listed: &Option<Vec<ObjectId>>| -> Vec<String> {
+        let ids = listed.clone().unwrap_or_else(|| match project.object(flow).map(|o| &o.body) {
+            Some(Body::Dataflow(d)) => d.parameters.clone(),
+            _ => Vec::new(),
+        });
+        ids.iter().map(|&id| project.object(id).map_or_else(|| "a table since deleted".to_string(), |o| o.name.clone())).collect()
+    };
     let mut out: Vec<DataflowState> = Vec::with_capacity(1 + setup.row_dataflows.len());
     // Where each dataflow's last run is in the log, for "ran after it".
     let mut positions: Vec<Option<usize>> = Vec::new();
@@ -162,6 +172,7 @@ pub fn case_state(project: &zd_core::Project, log: &[LogEntry], table: ObjectId)
         ran: record.map(|r| super::reserves_run::utc_words(r.started_unix_ms)),
         up_to_date: why.is_empty(),
         why,
+        tables: tables_of(setup.dataflow, &setup.tables),
     });
 
     // Its row dataflows, each against its own last run and those above it.
@@ -199,6 +210,7 @@ pub fn case_state(project: &zd_core::Project, log: &[LogEntry], table: ObjectId)
             ran: last.map(|(_, r)| super::reserves_run::utc_words(r.started_unix_ms)),
             up_to_date: why.is_empty(),
             why,
+            tables: tables_of(listed.dataflow, &listed.tables),
         });
     }
     Ok(CaseState { table, name: object.name.clone(), dataflows: out })

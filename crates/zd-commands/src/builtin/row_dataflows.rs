@@ -124,10 +124,29 @@ pub fn check_case(table: &Table, flows: &[RowFlow], written: &[String]) -> Resul
     Ok(())
 }
 
-/// A row's words and numbers as attributes: what its range and a step's filter fit, and its parameter rows are matched on.
-fn row_attributes(table: &Table, row: usize) -> Attributes {
+/// The columns a row dataflow's filters can name, case aside: its range's, each formula step's and every row's of its
+/// settings tables. A row's attributes need hold only these.
+fn filter_keys(f: &RowFlow) -> std::collections::HashSet<String> {
+    let mut keys: std::collections::HashSet<String> = f.range.keys().map(|k| k.to_lowercase()).collect();
+    for s in &f.flow.steps {
+        if let Some(formula) = &s.formula {
+            keys.extend(formula.when.keys().map(|k| k.to_lowercase()));
+        }
+    }
+    for t in &f.tables {
+        keys.extend(t.filters.iter().map(|k| k.to_lowercase()));
+        for r in &t.rows {
+            keys.extend(r.when.keys().map(|k| k.to_lowercase()));
+        }
+    }
+    keys
+}
+
+/// A row's words and numbers as attributes: what its range and a step's filter fit, and its parameter rows are matched on;
+/// only the columns `keys` names (lower case), where given.
+fn row_attributes_of(table: &Table, row: usize, keys: Option<&std::collections::HashSet<String>>) -> Attributes {
     let mut a = Attributes::new();
-    for c in &table.columns {
+    for c in table.columns.iter().filter(|c| keys.is_none_or(|k| k.contains(&c.name.to_lowercase()))) {
         match &c.values {
             ColumnValues::Text(v) => {
                 if let Some(w) = v[row].as_deref().filter(|w| !w.is_empty()) {
@@ -173,6 +192,12 @@ pub struct RowsRan {
     pub stopped: Vec<(String, usize, String)>,
     pub said: Vec<String>,
     pub checks: Vec<String>,
+    /// Each formula step's reads off its source (the table's columns and the dataflow's own fields), by step.
+    #[serde(skip)]
+    pub reads: BTreeMap<String, Vec<String>>,
+    /// The fields each step set on a row, by step.
+    #[serde(skip)]
+    pub sets: BTreeMap<String, Vec<String>>,
 }
 
 /// How many rows a formula runs on at once; a batch it stops in is run again a row at a time.
@@ -195,11 +220,34 @@ fn label(table: &Table, row: usize) -> String {
 /// or a table script changing one or giving back one it doesn't list, is refused. A row a formula stops on keeps its
 /// columns empty, said with the first; the rest go on.
 pub fn run_row_flow(table: &Table, f: &RowFlow, libraries: zd_script::Libraries, lookups: Arc<zd_script::Lookups>, project_tables: &[(String, Arc<Table>)]) -> Result<(Table, RowsRan), String> {
+    run_row_flow_to(table, f, usize::MAX, libraries, lookups, project_tables)
+}
+
+/// A row dataflow run as `run_row_flow` runs it, its first `steps` steps that are on only (none: its columns empty).
+fn run_row_flow_to(table: &Table, f: &RowFlow, steps: usize, libraries: zd_script::Libraries, lookups: Arc<zd_script::Lookups>, project_tables: &[(String, Arc<Table>)]) -> Result<(Table, RowsRan), String> {
+    run_row_flow_keeping(table, f, steps, &[], libraries, lookups, project_tables).map(|(t, ran, _)| (t, ran))
+}
+
+/// Its own columns as they stood after so many steps.
+type Kept = BTreeMap<usize, Vec<TableColumn>>;
+
+/// A row dataflow run to `steps`, keeping its own columns as they stood once each of `keep` steps had run (0: empty).
+fn run_row_flow_keeping(
+    table: &Table,
+    f: &RowFlow,
+    steps: usize,
+    keep: &[usize],
+    libraries: zd_script::Libraries,
+    lookups: Arc<zd_script::Lookups>,
+    project_tables: &[(String, Arc<Table>)],
+) -> Result<(Table, RowsRan, Kept), String> {
+    let mut kept = Kept::new();
     let mut t = table.clone();
     let own: Vec<&str> = f.columns.iter().map(|(_, c)| c.as_str()).collect();
     t.columns.retain(|c| !own.contains(&c.name.as_str()));
     let n = t.rows();
-    let in_range: Vec<usize> = (0..n).filter(|&r| zd_core::filter_fits(&f.range, &row_attributes(&t, r))).collect();
+    let keys = filter_keys(f);
+    let in_range: Vec<usize> = (0..n).filter(|&r| zd_core::filter_fits(&f.range, &row_attributes_of(&t, r, Some(&keys)))).collect();
     let mut ran = RowsRan { rows: in_range.len(), outside: n - in_range.len(), ..Default::default() };
     // Its own columns, empty, numbers with their unit and rule, words after.
     let mut values: BTreeMap<String, Vec<Option<f64>>> = BTreeMap::new();
@@ -221,11 +269,17 @@ pub fn run_row_flow(table: &Table, f: &RowFlow, libraries: zd_script::Libraries,
             t.columns.push(TableColumn { name: column_of(&w.name), unit: String::new(), add_up: None, kind: ColumnKind::Written, values: ColumnValues::Text(words[&w.name].clone()) });
         }
     };
-    for s in f.flow.steps.iter().filter(|s| s.on) {
+    let snapshot = |t: &Table| t.columns.iter().filter(|c| own.contains(&c.name.as_str())).cloned().collect::<Vec<_>>();
+    let mut done = 0;
+    for s in f.flow.steps.iter().filter(|s| s.on).take(steps) {
         put(&mut t, &values, &words);
+        if keep.contains(&done) {
+            kept.insert(done, snapshot(&t));
+        }
+        done += 1;
         if let Some(formula) = &s.formula {
-            let rows: Vec<usize> = in_range.iter().copied().filter(|&r| zd_core::filter_fits(&formula.when, &row_attributes(&t, r))).collect();
-            run_formula_step(&t, f, &s.step, &formula.script, &rows, &libraries, &lookups, &mut values, &mut words, &mut ran)?;
+            let rows: Vec<usize> = in_range.iter().copied().filter(|&r| zd_core::filter_fits(&formula.when, &row_attributes_of(&t, r, Some(&keys)))).collect();
+            run_formula_step(&t, f, &s.step, &formula.script, &rows, &keys, &libraries, &lookups, &mut values, &mut words, &mut ran)?;
         } else if let Some(table_step) = &s.table {
             let script = super::table_script::compile_table_script(&table_step.script, libraries.clone()).map_err(|e| format!("the table script step {}: {e}", s.step))?;
             let r = script
@@ -261,13 +315,25 @@ pub fn run_row_flow(table: &Table, f: &RowFlow, libraries: zd_script::Libraries,
                     },
                 }
             }
+            ran.sets.insert(s.step.clone(), f.columns.iter().filter(|(_, col)| r.table.column(col).map(|c| &c.values) != t.column(col).map(|c| &c.values)).map(|(field, _)| field.clone()).collect());
             ran.said.extend(r.said.iter().map(|w| format!("{} said: {w}", s.step)));
             ran.said.extend(r.notes.iter().map(|w| format!("{}: {w}", s.step)));
             ran.checks.extend(r.checks.iter().map(|w| format!("{}: {w}", s.step)));
         }
     }
     put(&mut t, &values, &words);
-    Ok((t, ran))
+    if keep.contains(&done) {
+        kept.insert(done, snapshot(&t));
+    }
+    Ok((t, ran, kept))
+}
+
+/// `base` with these columns in place of its own of the same names.
+fn with_columns(base: &Table, columns: &[TableColumn]) -> Table {
+    let mut t = base.clone();
+    t.columns.retain(|c| !columns.iter().any(|x| x.name == c.name));
+    t.columns.extend(columns.iter().cloned());
+    t
 }
 
 /// One formula step on its rows: compiled against the table's columns and the dataflow's own fields, each row handed
@@ -279,6 +345,7 @@ fn run_formula_step(
     step: &str,
     script: &str,
     rows: &[usize],
+    keys: &std::collections::HashSet<String>,
     libraries: &zd_script::Libraries,
     lookups: &Arc<zd_script::Lookups>,
     values: &mut BTreeMap<String, Vec<Option<f64>>>,
@@ -314,7 +381,17 @@ fn run_formula_step(
         let said: Vec<String> = problems.iter().map(|p| p.to_string()).collect();
         format!("the formula step {step}: {}", said.join("; "))
     })?;
-    let read: Vec<String> = formula.fields_read();
+    // What it reads: the names read by dot off its source, and the columns named in brackets (`row["Loss\\Roof"]`), as
+    // written or with their backslashes doubled; none found, every column.
+    let mut read: Vec<String> = formula.fields_read();
+    for c in &numbers {
+        let doubled = c.name.replace('\\', "\\\\");
+        let quoted = [c.name.as_str(), doubled.as_str()].iter().any(|n| script.contains(&format!("\"{n}\"")) || script.contains(&format!("'{n}'")));
+        if quoted && !read.contains(&c.name) {
+            read.push(c.name.clone());
+        }
+    }
+    ran.reads.insert(step.to_string(), read.clone());
     let unit = |row: usize| -> UnitInput {
         let mut v: Vec<(&str, ScriptValue)> = Vec::new();
         for c in &numbers {
@@ -333,7 +410,7 @@ fn run_formula_step(
         for (name, x) in words.iter() {
             v.push((name.as_str(), x[row].clone().map_or(ScriptValue::None, ScriptValue::Text)));
         }
-        UnitInput { fields: zd_script::values(v), block: zd_script::values([]), parameters: row_parameters(&f.tables, &row_attributes(t, row)), section: None, rom_coal: None }
+        UnitInput { fields: zd_script::values(v), block: zd_script::values([]), parameters: row_parameters(&f.tables, &row_attributes_of(t, row, Some(keys))), section: None, rom_coal: None }
     };
     let input = ColumnInput { units: rows.iter().map(|&r| unit(r)).collect(), ..Default::default() };
     let mut stops = 0usize;
@@ -359,9 +436,13 @@ fn run_formula_step(
             }
         }
     }
+    let mut set: Vec<String> = Vec::new();
     for s in sets_all {
         let row = rows[s.unit];
         for (name, value) in &s.sets {
+            if !set.contains(name) {
+                set.push(name.clone());
+            }
             if let Some(column) = values.get_mut(name) {
                 column[row] = match value {
                     ScriptValue::Number(x) if x.is_finite() => Some(*x),
@@ -380,6 +461,7 @@ fn run_formula_step(
         }
         ran.said.extend(s.said.iter().map(|w| format!("{step} said: {w}")));
     }
+    ran.sets.insert(step.to_string(), set);
     if stops > 0 {
         ran.stopped.push((step.to_string(), stops, first));
     }
@@ -457,4 +539,182 @@ impl Command for RunRowDataflow {
         out.notes.extend(ran.checks.iter().map(|c| Note::warning(Code::TableCheckOut, format!("{}: {c}", f.name))));
         Ok(out)
     }
+}
+
+/// One step of a row dataflow, for the Reserves case tab: its name, a formula on each row or a table script on the table,
+/// its script, the rows its filter fits, what it reads off its source (the table's columns, the dataflow's own fields)
+/// and the fields it set on a row when last run here.
+#[derive(Debug, Clone, Serialize)]
+pub struct RowStepInfo {
+    pub name: String,
+    pub kind: &'static str,
+    pub script: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub when: BTreeMap<String, String>,
+    pub reads: Vec<String>,
+    pub sets: Vec<String>,
+}
+
+/// One of a row dataflow's columns at a step: its field and column, unit and rule, whether it holds words, and added up
+/// over the rows in its range by its rule before the step, after it, and as the table holds it from the last run.
+#[derive(Debug, Clone, Serialize)]
+pub struct RowColumnAt {
+    pub field: String,
+    pub column: String,
+    pub unit: String,
+    pub add_up: Option<zd_reserves::AddUp>,
+    pub words: bool,
+    pub before: Option<f64>,
+    pub after: Option<f64>,
+    pub last_run: Option<f64>,
+}
+
+/// A row in a row dataflow's range: its number in the table, its words, and its columns before and after the step, in
+/// the order of `columns` (a number, words, or null for empty).
+#[derive(Debug, Clone, Serialize)]
+pub struct RowAt {
+    pub row: usize,
+    pub label: String,
+    pub before: Vec<serde_json::Value>,
+    pub after: Vec<serde_json::Value>,
+}
+
+/// A case's row dataflow at a step (Reserves case plan, decisions 4 and 8, workstream 6): its steps, its range and the
+/// rows in it, each of its columns before and after the step and as the last run left it, the settings tables it reads,
+/// and what the step stopped on or said. Run on what's saved, or `unsaved` as edited (its own dataflow, its tables).
+#[derive(Debug, Clone, Serialize)]
+pub struct RowDataflowAtStep {
+    pub table: ObjectId,
+    pub dataflow: ObjectId,
+    pub name: String,
+    /// 0 for its columns empty, before its first step; 1 after its first step.
+    pub step: usize,
+    pub steps: Vec<RowStepInfo>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub range: BTreeMap<String, String>,
+    pub rows_in_range: usize,
+    pub outside: usize,
+    pub columns: Vec<RowColumnAt>,
+    pub rows: Vec<RowAt>,
+    /// Its settings tables, in the order read: id and name.
+    pub tables: Vec<(ObjectId, String)>,
+    pub stopped: Vec<String>,
+    pub said: Vec<String>,
+    pub ms: f64,
+}
+
+fn cell_of(t: &Table, column: &str, row: usize) -> serde_json::Value {
+    match t.column(column).map(|c| &c.values) {
+        Some(ColumnValues::Number(v)) => v[row].and_then(serde_json::Number::from_f64).map_or(serde_json::Value::Null, serde_json::Value::Number),
+        Some(ColumnValues::Text(v)) => v[row].clone().map_or(serde_json::Value::Null, serde_json::Value::String),
+        None => serde_json::Value::Null,
+    }
+}
+
+/// One of a case's row dataflows run on its table to step `step` (0, none) and the step before it, on what's saved or
+/// `unsaved` as edited: `unsaved.dataflow` stands for the row dataflow itself. Nothing is kept or saved.
+pub fn row_dataflow_at_step(project: &zd_core::Project, table: ObjectId, dataflow: ObjectId, step: usize, unsaved: &super::Unsaved) -> Result<RowDataflowAtStep, CommandError> {
+    let started = Instant::now();
+    let object = project.object(table).ok_or(CommandError::MissingObject(table))?;
+    let Body::Table(t) = &object.body else {
+        return Err(CommandError::WrongKind { id: table, expected: ObjectKind::Table, found: object.kind() });
+    };
+    let Some(setup) = &t.setup else {
+        return Err(CommandError::Invalid(format!("{} has no setup listing its dataflows", object.name)));
+    };
+    let Some(listed) = setup.row_dataflows.iter().find(|r| r.dataflow == dataflow) else {
+        let name = project.object(dataflow).map_or_else(|| dataflow.to_string(), |o| o.name.clone());
+        return Err(CommandError::Invalid(format!("{name} isn't one of {}'s row dataflows", object.name)));
+    };
+    let read = unsaved.reader(project)?;
+    let get = |id: ObjectId| -> Result<Arc<Object>, CommandError> {
+        let o = read(id)?;
+        Ok(match (&unsaved.dataflow, id == dataflow) {
+            (Some(edited), true) => {
+                let mut o = (*o).clone();
+                o.body = Body::Dataflow(edited.clone());
+                Arc::new(o)
+            }
+            _ => o,
+        })
+    };
+    let f = row_flow(&get, listed)?;
+    let libraries = super::libraries_of(&|id| get(id).ok(), &f.flow.scripts).map_err(|e| CommandError::Invalid(format!("{}: {e}", f.name)))?;
+    let named = super::lookups_by_id(&|id| get(id).ok(), &f.flow.lookups, &f.flow.lookup_names).map_err(|e| CommandError::Invalid(format!("{}: {e}", f.name)))?;
+    let lookups = Arc::new(zd_script::Lookups { own: f.tables.clone(), named });
+    let by_name = super::table_script::tables_by_name(project.objects());
+    let on: Vec<&zd_core::DataflowStep> = f.flow.steps.iter().filter(|s| s.on).collect();
+    if step > on.len() {
+        return Err(CommandError::Invalid(format!("{} runs {} steps, not {step}", f.name, on.len())));
+    }
+    // One run to its end, its columns kept as they stood before the step and after it.
+    let first = step.saturating_sub(1);
+    let (all, ran_all, kept) = run_row_flow_keeping(t, &f, usize::MAX, &[first, step], libraries, lookups, &by_name).map_err(|e| CommandError::Invalid(format!("{}: {e}", f.name)))?;
+    let before = with_columns(&all, &kept[&first]);
+    let after = with_columns(&all, &kept[&step]);
+    // What the steps up to this one stopped on and said.
+    let upto: Vec<&str> = on[..step].iter().map(|s| s.step.as_str()).collect();
+    let mine = |line: &str| upto.iter().any(|s| line.starts_with(&format!("{s} ")) || line.starts_with(&format!("{s}:")));
+    let ran = RowsRan {
+        stopped: ran_all.stopped.iter().filter(|(s, _, _)| upto.contains(&s.as_str())).cloned().collect(),
+        said: ran_all.said.iter().filter(|l| mine(l)).cloned().collect(),
+        ..RowsRan::default()
+    };
+    let keys = filter_keys(&f);
+    let in_range: Vec<usize> = (0..t.rows()).filter(|&r| zd_core::filter_fits(&f.range, &row_attributes_of(t, r, Some(&keys)))).collect();
+    let steps = on
+        .iter()
+        .map(|s| RowStepInfo {
+            name: s.step.clone(),
+            kind: if s.formula.is_some() { "formula" } else { "table" },
+            script: s.script().unwrap_or_default().to_string(),
+            when: s.formula.as_ref().map(|x| x.when.clone()).unwrap_or_default(),
+            reads: ran_all.reads.get(&s.step).cloned().unwrap_or_default(),
+            sets: ran_all.sets.get(&s.step).cloned().unwrap_or_default(),
+        })
+        .collect();
+    let columns: Vec<RowColumnAt> = f
+        .columns
+        .iter()
+        .map(|(field, column)| {
+            let c = all.column(column);
+            let words = matches!(c.map(|c| &c.values), Some(ColumnValues::Text(_)));
+            let total = |x: &Table| if words { None } else { crate::reserves_view::add_up_column(x, column, &in_range) };
+            RowColumnAt {
+                field: field.clone(),
+                column: column.clone(),
+                unit: c.map(|c| c.unit.clone()).unwrap_or_default(),
+                add_up: c.and_then(|c| c.add_up.clone()),
+                words,
+                before: total(&before),
+                after: total(&after),
+                last_run: if t.column(column).is_some() { total(t) } else { None },
+            }
+        })
+        .collect();
+    let rows = in_range
+        .iter()
+        .map(|&r| RowAt {
+            row: r,
+            label: label(t, r),
+            before: columns.iter().map(|c| cell_of(&before, &c.column, r)).collect(),
+            after: columns.iter().map(|c| cell_of(&after, &c.column, r)).collect(),
+        })
+        .collect();
+    Ok(RowDataflowAtStep {
+        table,
+        dataflow,
+        name: f.name.clone(),
+        step,
+        steps,
+        range: f.range.clone(),
+        rows_in_range: in_range.len(),
+        outside: t.rows() - in_range.len(),
+        columns,
+        rows,
+        tables: f.table_ids.iter().map(|&id| (id, project.object(id).map_or_else(|| id.to_string(), |o| o.name.clone()))).collect(),
+        stopped: ran.stopped.iter().map(|(s, n, first)| format!("{s} stopped on {n} row{}: {first}", if *n == 1 { "" } else { "s" })).collect(),
+        said: ran.said.clone(),
+        ms: started.elapsed().as_secs_f64() * 1000.0,
+    })
 }
