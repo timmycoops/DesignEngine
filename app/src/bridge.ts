@@ -1058,6 +1058,31 @@ export interface CaseState {
 
 export const caseState = (table: string) => invoke<CaseState>('case_state', { table });
 
+/** A case's headline figures, its table's own summary columns added up: tonnes, BCM and BCM/t; null where it hasn't one. */
+export interface CaseHeadline {
+  table: string;
+  name: string;
+  base: boolean;
+  insitu_coal: number | null;
+  rom_coal: number | null;
+  rom_waste: number | null;
+  strip_ratio: number | null;
+}
+
+/** Every reserves table's headline figures, Base marked: the first named … Base, else the first. */
+export const caseHeadlines = () => invoke<CaseHeadline[]>('case_headlines');
+
+/** The starter dataflow and its settings table from a seam model (0073), for New case with no dataflow in the project. */
+export const dataflowStarter = async (model: string, name: string): Promise<{ dataflow: string; parameters: string; summary: ProjectSummary }> => {
+  if (!running.start('make the starter dataflow', performance.now())) throw new Error(waitingOn() ?? 'Waiting on a run');
+  try {
+    const reply = await invoke<{ dataflow: string; parameters: string; changes: ProjectChanges }>('dataflow_starter', { model, name });
+    return { dataflow: reply.dataflow, parameters: reply.parameters, summary: await summaryAfter(reply.changes) };
+  } finally {
+    running.end();
+  }
+};
+
 /** One step of a row dataflow: a formula on each row or a table script, what it reads and the fields it sets. */
 export interface RowStepInfo {
   name: string;

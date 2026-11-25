@@ -23,9 +23,9 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
   values traced to their row (`docs/decisions/0075-reserves-in-the-app.md`). `Dataflow`: a reserves dataflow's fields
   (with where each value comes from), steps by name and the parameter tables it reads; a step may be a formula step, Starlark run on the units its filter fits after `initialise`, `join_benches`, `working_sections`, `rom_dilution` or `rom`, checked and its known answers run when saved, edited in the Parameters tab's formula panel and run there on a picked block line by line (`docs/decisions/0077-formulas-in-starlark.md`); a block's column opened
   step by step gives each step's units, the settings it read, its workings and what it wrote to the reserves table, a
-  folder each, for the Dataflow tab's strip, step and Before and After (`docs/decisions/0084-dataflow-view.md`), run live on the
+  folder each, shown in the Reserves case tab (the Dataflow tab's until 0105 workstream 7: `docs/decisions/0084-dataflow-view.md`), run live on the
   Parameters tab's unsaved edits, what they moved marked against the saved run (`docs/decisions/0082-live-workings.md`); Run
-  again there runs a block, its strip or every block into the table in place, `reserves.run` with `table` and `only`
+  again under the case tab's block map runs a block, its strip or every block into the table in place, `reserves.run` with `table` and `only`
   (`docs/decisions/0085-run-a-table-again.md`). `Table`: results, a table a case,
   values as Parquet in the `.zdp`, read by the HTML report and the app's Reserves table tab, fields as rows and a
   node's children across, its solids matched by the levels the table records (`docs/decisions/0075-reserves-in-the-app.md`), its leaves filter carried to the view by a tick, coal solids only if asked (`docs/decisions/0090-reserves-filter-in-the-view.md`). `reserves.run` runs a dataflow a column a pit, strip
@@ -38,8 +38,8 @@ Decisions: 0065 to 0075 and 0077 (workflows, reserves dataflow, working sections
 - One table concept (`docs/decisions/0099-tables-and-scripts.md`): the blocks (a row a solid, `table_grid::objects_table`)
   and a reserves table (a row a leaf) are both a `Table`, seen in the Tables tab's grid, `table_grid::grid`: grouped by
   any word column, every subtotal `add_up_column` over the group's leaves, as the Breakdown and the report add up. The
-  Dataflow tab's Every block is a step's units for every column as such a table (`units_at_step`, run on demand from
-  what's saved, never kept). A column is written by a run or entered by a person (`ColumnKind`, `made` in JSON):
+  units of every column at a step make such a table too (`units_at_step`, run on demand from what's saved, never kept;
+  the Dataflow tab's Every block until 0105 workstream 7, now Python's `step_units`). A column is written by a run or entered by a person (`ColumnKind`, `made` in JSON):
   `table.enter` and `table.remove_column` touch entered columns only, Run again keeps them by each leaf's key and
   says any whose leaf is gone, and `object.set_attributes` types blocks' attributes; the reserves run behind a table
   is found by `table_run`, as its latest revision may be an entry. `table.update_records` takes a CSV matched on key

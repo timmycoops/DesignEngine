@@ -71,7 +71,8 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   const blocks = document.querySelectorAll('[data-slot="map-block"]').length;
   expect('the block map has every block column', blocks === 90, blocks);
   expect('the strip log shows the picked block', !!document.querySelector('[data-slot="strip-log-after"]'));
-  const lit = [...document.querySelectorAll('[data-slot="case-input"][data-lit="yes"]')].map((e) => e.textContent);
+  const litCards = () => [...document.querySelectorAll('[data-slot="case-input"][data-lit="yes"]')].map((e) => e.textContent);
+  const lit = (await until(() => (litCards().length ? litCards() : null), 10_000)) ?? [];
   expect('the settings table rom_loss reads is lit', lit.some((t) => t?.includes('Reserves assumptions')), lit);
   await picture?.('case-rom-loss');
 
@@ -183,6 +184,21 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   expect('the field map shows what each step writes', !!map && map.includes('W'), map?.slice(0, 80));
   await unitsPicture('case-units-picked');
 
+  // From the Dataflow tab (workstream 7): rom_loss unit by unit, the unit followed's workings; and Run again on B5
+  // alone, into the table.
+  document.querySelector<HTMLElement>('[data-slot="strip-log-before"] button[aria-label^="Follow U"]')?.click();
+  await wait(300);
+  document.querySelector<HTMLElement>('[data-slot="case-unit-by-unit"] button')?.click();
+  const workings = await until(() => {
+    const w = [...document.querySelectorAll<HTMLElement>('[data-slot="case-unit-by-unit"] [data-slot="working"]')].map((e) => e.dataset.what ?? '');
+    return w.length ? w : null;
+  }, 15_000);
+  expect('rom_loss unit by unit shows the unit followed’s workings', !!workings && workings.some((w) => w.includes('loss')), workings ?? document.querySelector('[data-slot="case-unit-by-unit"]')?.textContent?.slice(0, 300));
+  document.querySelector<HTMLElement>('[data-slot="case-unit-by-unit"] button')?.click();
+  [...document.querySelectorAll<HTMLButtonElement>('[data-slot="case-run-again"] button')].find((b) => b.textContent?.trim() === 'this block')?.click();
+  const reran = await until(() => document.querySelector('[data-slot="case-said"]')?.textContent, 60_000);
+  expect('Run again on the block runs B5 alone into the table', !!reran && reran.startsWith('Pit › 3 › B5 run again into Reserves Base'), reran);
+
   // The flow (decision 10, workstream 6): the case through every stage, each stage's coal what the one before left less
   // what it took, ROM taking coal and letting rock in; a step's tick goes there.
   const stagesShown = () =>
@@ -244,7 +260,10 @@ export async function checkCase(path: string, log: (line: string) => void, show:
   expect('its range and settings are said', (row?.textContent ?? '').includes('strip 1-3') && (row?.textContent ?? '').includes('Check haul distances'), row?.textContent);
   await picture?.('case-dataflows');
   document.querySelector<HTMLButtonElement>('[data-slot="case-run-stale"]')?.click();
-  const ranSaid = await until(() => document.querySelector('[data-slot="case-said"]')?.textContent, 30_000);
+  const ranSaid = await until(() => {
+    const t = document.querySelector('[data-slot="case-said"]')?.textContent ?? '';
+    return t.startsWith('Ran ') || t.startsWith('Nothing') ? t : null;
+  }, 30_000);
   expect("Run what's out of date runs the row dataflow alone", !!ranSaid && ranSaid.startsWith('Ran Check haulage on'), ranSaid);
   const upToDate = await until(() => {
     const r = listRow('Check haulage');
@@ -284,5 +303,93 @@ export async function checkCase(path: string, log: (line: string) => void, show:
     const back = await until(() => (Math.abs(Number(tkm()?.dataset.after) - was) <= 1e-6 * Math.max(1, was) ? true : null), 15_000);
     expect('discarded, as saved again', !!back);
   } else expect('the distance setting is there to type', false);
+
+  // A way in (decision 13, workstream 7): the cases against Base; Copy case; Add a dataflow; the Setup under the band;
+  // New case; and no Dataflow or Setup tab left.
+  const tabs = [...document.querySelectorAll<HTMLElement>('.dv-tab')].map((t) => t.textContent?.trim() ?? '');
+  expect('the Dataflow and Setup tabs are gone', !tabs.includes('Dataflow') && !tabs.includes('Setup'), tabs);
+  const caseRows = () => [...document.querySelectorAll<HTMLElement>('[data-slot="case-headline"]')];
+  const rowOf = (name: string) => caseRows().find((r) => r.dataset.case === name) ?? null;
+  const figure = (name: string, field: string) => Number(rowOf(name)?.querySelector<HTMLElement>(`[data-field="${field}"]`)?.dataset.value ?? NaN);
+  await until(() => caseRows().length >= 2, 10_000);
+  expect('the cases are listed, Base marked', rowOf('Reserves Base')?.dataset.base === 'yes' && !!rowOf('Reserves 50m'), caseRows().map((r) => r.dataset.case));
+  expect("Base's ROM coal is the table's, 9,234,489 t", Math.abs(figure('Reserves Base', 'rom_coal') - 9_234_489) < 1, figure('Reserves Base', 'rom_coal'));
+  const said7 = () => document.querySelector('[data-slot="cases-said"]')?.textContent ?? '';
+  const typeIn = async (label: string, text: string) => {
+    const box = await until(() => document.querySelector<HTMLInputElement>(`input[aria-label="${CSS.escape(label)}"]`));
+    if (!box) return false;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(box, text);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    await wait(100);
+    return true;
+  };
+
+  // Copy case: Base as Check copy, sharing its settings tables; its row dataflow copied, out of date until it runs.
+  document.querySelector<HTMLElement>('[data-slot="case-copy"]')?.click();
+  await typeIn("The copy's name", 'Check copy');
+  document.querySelector<HTMLElement>('[data-slot="copy-case-make"]')?.click();
+  const copied = await until(() => rowOf('Check copy'), 90_000);
+  expect('Copy case makes Check copy from Base, its figures the same', !!copied && Math.abs(figure('Check copy', 'rom_coal') - figure('Reserves Base', 'rom_coal')) < 1e-6 * figure('Reserves Base', 'rom_coal'), { said: said7(), rom: figure('Check copy', 'rom_coal') });
+  const openNow = await until(() => rowOf('Check copy')?.classList.contains('bg-selection'), 20_000);
+  expect('the copy is the case open', !!openNow);
+  if (!document.querySelector('[data-slot="case-dataflows"]')) document.querySelector<HTMLElement>('[data-slot="case-switch"]')?.click();
+  const copiedRow = await until(
+    () => (document.querySelector('[data-slot="case-dataflows"]')?.textContent ?? '').startsWith('Check copy') && document.querySelector<HTMLElement>('[data-slot="case-dataflow-row"][data-dataflow="Check haulage"]'),
+    15_000,
+  );
+  expect("the copy keeps Base's row dataflow, out of date until it runs", copiedRow?.dataset.upToDate === 'no', copiedRow?.textContent?.slice(0, 120));
+  document.querySelector<HTMLElement>('[data-slot="case-switch"]')?.click();
+
+  // Add a dataflow: a first step to write over, after the copy's, opened.
+  document.querySelector<HTMLElement>('[data-slot="case-add-dataflow"]')?.click();
+  await typeIn("The dataflow's name", 'Check added');
+  document.querySelector<HTMLElement>('[data-slot="add-dataflow-make"]')?.click();
+  // Its steps to write: the Parameters tab opens it, checked as a row dataflow, not a reserves one.
+  const editing = await until(() => {
+    const p = document.querySelector<HTMLElement>('[data-tool-panel="parameters"]');
+    return p && (p.textContent ?? '').includes('Check added') ? p : null;
+  }, 30_000);
+  await wait(800);
+  const refused = editing?.textContent?.includes('volume field') ?? true;
+  expect('Add a dataflow opens Check added in the Parameters tab to write, with no reserves field asked for', !!editing && !refused, editing?.textContent?.slice(0, 160));
+  showPanel(api, 'case');
+  const added = await until(() => (document.querySelector('[data-slot="case-dataflow"]')?.textContent ?? '').includes('Check added') && document.querySelector('[data-slot="row-dataflow"]'), 30_000);
+  expect('Add a dataflow puts Check added after the case’s and opens it in the case', !!added, said7());
+
+  // The Setup under the band: the dataflows after the reserves one, in run order.
+  document.querySelector<HTMLElement>('[data-slot="case-setup"]')?.click();
+  const afterIt = await until(() => {
+    const items = [...document.querySelectorAll<HTMLElement>('[data-slot="setup-row-dataflows"] [data-item]')].map((e) => e.dataset.item);
+    return items.length >= 2 ? items : null;
+  }, 15_000);
+  expect("the case's Setup lists its dataflows after the reserves one, in run order", JSON.stringify(afterIt) === JSON.stringify(['Check haulage', 'Check added']), afterIt);
+  await picture?.('case-way-in');
+  document.querySelector<HTMLElement>('[data-slot="case-setup"]')?.click();
+
+  // New case: every block on the Base table's layer, the demo's reserves dataflow.
+  document.querySelector<HTMLElement>('[data-slot="case-new"]')?.click();
+  await typeIn("The new case's name", 'Check new');
+  const flowPick = await until(() => {
+    const sel = document.querySelector<HTMLSelectElement>('select[aria-label="The reserves dataflow it runs"]');
+    return sel && [...sel.options].some((o) => o.textContent === 'Reserves') ? sel : null;
+  }, 15_000);
+  const layerPick = document.querySelector<HTMLSelectElement>('select[aria-label="The layer of blocks it runs on"]');
+  const blocksLayer = [...(layerPick?.options ?? [])].find((o) => o.textContent === '9 blocks');
+  for (const [sel, value] of [
+    [layerPick, blocksLayer?.value],
+    [flowPick, [...(flowPick?.options ?? [])].find((o) => o.textContent === 'Reserves')?.value],
+  ] as const) {
+    if (!sel || !value) continue;
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(sel, value);
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await wait(300);
+  }
+  const blocksSaid = await until(() => {
+    const t = document.querySelector('[data-slot="new-case-blocks"]')?.textContent ?? '';
+    return t.startsWith('0 ') ? null : t;
+  }, 15_000);
+  document.querySelector<HTMLElement>('[data-slot="new-case-make"]')?.click();
+  const fresh = await until(() => rowOf('Check new'), 180_000);
+  expect('New case runs the dataflow on the blocks picked and lists Check new', !!fresh && figure('Check new', 'rom_coal') > 0, { blocks: blocksSaid, said: said7(), rom: figure('Check new', 'rom_coal') });
   return { ...results, failures };
 }

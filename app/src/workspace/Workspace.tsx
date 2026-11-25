@@ -24,8 +24,6 @@ import { StringsPanel } from '@/panels/StringsPanel';
 import { ViewportPanel } from '@/panels/ViewportPanel';
 import { WorkflowCanvas } from '@/panels/WorkflowCanvas';
 import { TablesPanel } from '@/panels/TablesPanel';
-import { DataflowView } from '@/panels/DataflowPanel';
-import { SetupPanel } from '@/panels/SetupPanel';
 import { Parameters } from '@/panels/ParametersPanel';
 import { WorkflowPanel } from '@/panels/WorkflowPanel';
 import { SurfacesPanel } from '@/panels/SurfacesPanel';
@@ -53,9 +51,9 @@ const components: Record<PanelId | 'viewport' | (typeof RETIRED)[number], () => 
   restable: TablesPanel,
   // A tab no longer made, drawn as nothing until a saved layout's copy of it is closed.
   blocks: () => null,
-  notebook: DataflowView,
+  notebook: () => null,
+  setup: () => null,
   case: ReservesCasePanel,
-  setup: SetupPanel,
   params: Parameters,
   licence: LicencePanel,
   viewcontrols: ViewControlsPanel,
@@ -63,9 +61,10 @@ const components: Record<PanelId | 'viewport' | (typeof RETIRED)[number], () => 
 
 /**
  * Tabs a layout saved before may hold that the app no longer has: the Objects table, now Objects in the Tables tab
- * (Tables and scripts plan, decision 1). Opened from a saved layout, each is closed at once, the rest kept as saved.
+ * (Tables and scripts plan, decision 1); the Dataflow and Setup tabs, now the Reserves case tab and its Setup (Reserves
+ * case plan, decision 8). Opened from a saved layout, each is closed at once, the rest kept as saved.
  */
-const RETIRED = ['blocks'] as const;
+const RETIRED = ['blocks', 'notebook', 'setup'] as const;
 
 /** The key that hides every panel, so the viewport fills the window, and brings them back. */
 export const ALL_PANELS_KEY = '`';

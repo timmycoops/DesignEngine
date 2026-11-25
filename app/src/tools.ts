@@ -210,7 +210,7 @@ export const TOOLS: readonly Tool[] = [
   { key: 'import.surfaces', stage: 'project', label: 'Import surfaces', tip: 'Vulcan .00t, DXF 3DFACE or polyface, or an XYZ or CSV grid', command: 'surface.import', action: 'import.surfaces', menu: { in: 'import', at: 1, name: 'Surfaces…' } },
   { key: 'import.strings', stage: 'project', label: 'Import strings', tip: 'DXF polylines and lines, or CSV with x, y and z columns', command: 'string.import', action: 'import.strings', menu: { in: 'import', at: 3, name: 'Strings…' } },
   { key: 'import.deswik', stage: 'project', label: 'Import a Deswik drawing', tip: 'Layers of a Deswik drawing: strings with their projection details, surfaces and solids', command: 'deswik.import', action: 'import.deswik', menu: { in: 'import', at: 8, name: 'Deswik drawing (.dcf)…', rule: true } },
-  { key: 'import.table', stage: 'project', label: 'Import a table', tip: "A CSV read in as a table: a Deswik or Vulcan reserves export, or blocks with a site's own names, to run a dataflow on by a mapping in the Setup tab", command: 'table.import', action: 'import.table', menu: { in: 'import', at: 9.5, name: 'A table (CSV)…' } },
+  { key: 'import.table', stage: 'project', label: 'Import a table', tip: "A CSV read in as a table: a Deswik or Vulcan reserves export, or blocks with a site's own names, to run a dataflow on by a mapping in a case's Setup (the Reserves case tab)", command: 'table.import', action: 'import.table', menu: { in: 'import', at: 9.5, name: 'A table (CSV)…' } },
   { key: 'import.spry', stage: 'project', label: 'Import a Spry project', tip: "Block solids named by their node paths with Spry's values, and design-layer strings and solids", command: 'spry.import', action: 'import.spry', menu: { in: 'import', at: 9, name: 'Spry project (.spry)…' } },
   { key: 'export.selected_dxf', stage: 'project', label: 'Export what is selected to DXF', tip: 'The selected strings, surfaces and solids as one DXF', action: 'export.selected_dxf', needs: 'selected-dxf', menu: { in: 'export', at: 1, name: 'Selected to DXF…' } },
   { key: 'export.selected_strings', stage: 'project', label: 'Export selected strings to CSV', tip: 'The selected strings as x, y and z rows', action: 'export.selected_strings', needs: 'selected-strings', menu: { in: 'export', at: 2, name: 'Selected strings to CSV…' } },
@@ -291,8 +291,6 @@ export const TOOLS: readonly Tool[] = [
   { key: 'case', stage: 'reserves', label: 'Reserves case', tip: "a reserves table's case a step at a time: the steps by stage, what each reads and does to the whole case, its settings by seam and ply to change and see the case run again, the block map and a block's strip log", icon: 'case', panel: 'case' },
   { key: 'params', stage: 'reserves', label: 'Parameters', tip: 'parameter tables and dataflows edited as grids, a picked solid\'s values marked where they come from', icon: 'parameters', panel: 'params' },
   { key: 'restable', stage: 'reserves', label: 'Tables', tip: "every table: the objects, and each reserves table's leaves as a grid grouped by strip, block or seam, or a node's fields broken down from Imported to Scheduled", icon: 'reserves-table', panel: 'restable' },
-  { key: 'notebook', stage: 'reserves', label: 'Dataflow', tip: "a block's column through its dataflow: its inputs and steps in a strip, what each step read and wrote, and the block's units before and after it", icon: 'notebook', panel: 'notebook' },
-  { key: 'setup', stage: 'reserves', label: 'Setup', tip: "table setup: what fills a reserves table: the blocks it runs on, its dataflows and add-ons, where each field comes from, its parameter tables in order, and Run again", icon: 'setup', panel: 'setup' },
   { key: 'workflow:report', stage: 'reserves', label: 'Report', tip: "Writes a workflow's report, every case from its latest run", icon: 'report', panel: 'workflow' },
 
   // Always there, whatever the stage.
@@ -442,7 +440,7 @@ export const ROWS: Record<Exclude<Stage, 'always'>, readonly RowItem[]> = {
     ...MOVE_TOOLS,
   ],
   geology: ['import.vulcan_grid', 'seam.suggest', 'seam.build', 'seam.relink'],
-  reserves: ['reserves', 'case', 'params', 'restable', 'notebook', 'setup', 'reserves:compare', 'surfaces:compare', 'workflow:report'],
+  reserves: ['reserves', 'case', 'params', 'restable', 'reserves:compare', 'surfaces:compare', 'workflow:report'],
 };
 
 /** At the right of every row, whatever the stage. */

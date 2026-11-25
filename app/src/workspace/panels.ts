@@ -3,7 +3,7 @@
  * as a tab in the tool dock on the right, beside Properties, and a table as a tab in the results dock under the view.
  * Kept free of React, so the tool list and the tests can read it.
  */
-export type PanelId = 'layers' | 'properties' | 'strings' | 'from_surfaces' | 'surfaces' | 'move' | 'builder' | 'cut' | 'reserves' | 'workflow' | 'runlog' | 'restable' | 'case' | 'notebook' | 'setup' | 'params' | 'canvas' | 'face' | 'licence' | 'viewcontrols';
+export type PanelId = 'layers' | 'properties' | 'strings' | 'from_surfaces' | 'surfaces' | 'move' | 'builder' | 'cut' | 'reserves' | 'workflow' | 'runlog' | 'restable' | 'case' | 'params' | 'canvas' | 'face' | 'licence' | 'viewcontrols';
 
 export type Dock = 'left' | 'tools' | 'results';
 
@@ -33,9 +33,6 @@ export const PANELS: readonly { id: PanelId; title: string; dock: Dock; size: nu
   { id: 'restable', title: 'Tables', dock: 'results', size: 400 },
   // A reserves table's case a step at a time (Reserves case plan, decision 8).
   { id: 'case', title: 'Reserves case', dock: 'results', size: 520 },
-  { id: 'notebook', title: 'Dataflow', dock: 'results', size: 480 },
-  // What fills a reserves table, on one page (Table setup plan, decision 5).
-  { id: 'setup', title: 'Setup', dock: 'results', size: 400 },
   { id: 'params', title: 'Parameters', dock: 'results', size: 400 },
   { id: 'canvas', title: 'Workflow canvas', dock: 'results', size: 400 },
   { id: 'face', title: 'Face design', dock: 'results', size: 400 },

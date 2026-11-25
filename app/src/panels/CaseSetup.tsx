@@ -1,28 +1,21 @@
 import { ArrowDown, ArrowUp, RotateCw, X } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { type FieldSource, reservesRerunParams, type SetupView, type TableSetup, tableSetupView } from '@/bridge';
-import { CellInput, IconButton, PanelHead, Select } from '@/design-system/kit';
+import { CellInput, FilterInput, IconButton, Select } from '@/design-system/kit';
 import { Button } from '@/design-system/ui/button';
 import { cn } from 'cn';
 import { useWorkspace } from '@/workspace/context';
 
 /**
- * The Setup tab (Table setup plan, decision 5): what fills a reserves table, on one page. What it's run on (its blocks
- * by layer and filter, its seam model or stack), its dataflow and add-ons in order, the steps they run, each field and
- * where it comes from (the table's own marked), its parameter tables in the order read with what it reads from each,
- * its table scripts and calculated columns, and Run again. Every edit is `table.setup`: the table's next revision, one
- * undo. A table made before setups shows the one its run gives, and takes it as its own on the first edit.
+ * A case's setup (Table setup plan, decision 5; in the Reserves case tab since the Reserves case plan's workstream 7,
+ * which took the Setup tab out): what fills the case's reserves table, opened from the band's Setup. What it's run on (its
+ * blocks by layer and filter, its seam model or stack), its dataflow and add-ons in order, the dataflows after it with the
+ * rows each runs on, the steps they run, each field and where it comes from (the table's own marked), its parameter tables
+ * in the order read with what it reads from each, and Run again. Every edit is `table.setup`: the table's next revision,
+ * one undo. A table made before setups shows the one its run gives, and takes it as its own on the first edit.
  */
-export function SetupPanel() {
-  const { summary, selection, runRecord, openTool } = useWorkspace();
-  const tables = useMemo(() => (summary?.objects ?? []).filter((o) => o.kind === 'table' && !o.objects_own), [summary]);
-  const [pick, setPick] = useState<string | null>(null);
-  const shown = tables.some((t) => t.id === pick) ? pick : (tables[tables.length - 1]?.id ?? null);
-  const last = selection[selection.length - 1] ?? null;
-  useEffect(() => {
-    if (last && tables.some((t) => t.id === last)) setPick(last);
-  }, [last, tables]);
-
+export function CaseSetup({ table }: { table: string }) {
+  const { summary, runRecord, openTool } = useWorkspace();
   const [view, setView] = useState<SetupView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [said, setSaid] = useState<{ text: string; refused: boolean } | null>(null);
@@ -31,14 +24,13 @@ export function SetupPanel() {
   const changed = (summary?.objects ?? []).map((o) => `${o.id}:${o.revision}`).join(',');
   useEffect(() => {
     let live = true;
-    if (!shown) return setView(null);
-    void tableSetupView(shown)
+    void tableSetupView(table)
       .then((v) => live && (setView(v), setError(null)))
       .catch((e) => live && (setView(null), setError(String(e))));
     return () => {
       live = false;
     };
-  }, [shown, changed]);
+  }, [table, changed]);
 
   const save = async (edit: (s: TableSetup) => void, what: string) => {
     if (!view) return;
@@ -60,26 +52,11 @@ export function SetupPanel() {
     }
   };
 
-  const head = <PanelHead line="What fills a reserves table: its blocks, dataflows, field sources and parameter tables; each edit its next revision" more="Run again runs the table from what's here. A table made before setups shows the one its run gives, and takes it as its own on the first edit." />;
-  if (!shown) {
-    return (
-      <div className="flex h-full flex-col text-xs">
-        {head}
-        <p className="p-3 text-muted-foreground">No reserves tables yet: run a dataflow on blocks (Reserves, or a workflow) to make one, then set it up here.</p>
-      </div>
-    );
-  }
   return (
-    <div className="flex h-full min-h-0 flex-col text-xs" data-slot="setup">
-      {head}
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b px-3">
-        <Select className="h-6 w-56" aria-label="Table" data-slot="setup-table" value={shown} onChange={(e) => setPick(e.target.value)}>
-          {tables.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </Select>
+    <div className="flex min-h-0 flex-col border-b border-border text-xs" data-slot="setup">
+      <div className="flex h-8 shrink-0 items-center gap-2 px-2">
+        <span className="font-semibold">Setup</span>
+        <span className="text-muted-foreground">what fills {view?.table.name ?? 'the case'}; each edit its next revision</span>
         <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={running || !view} onClick={() => void runAgain()} title="Run every block of the table again from this setup, into the table: its next revision, one undo">
           <RotateCw className={cn('size-3.5', running && 'animate-spin')} /> {running ? 'Running…' : 'Run again'}
         </Button>
@@ -90,9 +67,9 @@ export function SetupPanel() {
           </span>
         )}
       </div>
-      {error && <p className="p-3 text-destructive">{error}</p>}
+      {error && <p className="px-2 py-1 text-destructive">{error}</p>}
       {view && (
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="max-h-[32rem] min-h-0 overflow-auto">
           {view.problems.length > 0 && (
             <ul className="space-y-0.5 border-b px-3 py-2 text-destructive" data-slot="setup-problems">
               {view.problems.map((p) => (
@@ -103,6 +80,7 @@ export function SetupPanel() {
           <div className="grid gap-x-6 gap-y-3 p-3 lg:grid-cols-2">
             <RunOn view={view} save={save} />
             <Dataflows view={view} save={save} />
+            <RowDataflows view={view} save={save} />
             <ParameterTables view={view} save={save} open={(id) => openTool('params', `show:${id}`)} />
             <Steps view={view} edit={(flow, step) => openTool('params', `formula:${flow}:${step}`)} />
             <Fields view={view} save={save} />
@@ -110,6 +88,45 @@ export function SetupPanel() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The dataflows after the reserves one (Reserves case plan, decisions 2 and 4): in run order, each with the rows it runs
+ * on (a filter), moved up or down or taken out. Its columns stay on the table when it's taken out.
+ */
+function RowDataflows({ view, save }: { view: SetupView; save: Save }) {
+  const { summary } = useWorkspace();
+  const rows = view.setup.row_dataflows ?? [];
+  const nameOf = (id: string) => (summary?.objects ?? []).find((o) => o.id === id)?.name ?? 'a dataflow since deleted';
+  return (
+    <Section title="Dataflows after it, in run order" slot="setup-row-dataflows">
+      {rows.length === 0 && <div className="text-muted-foreground">None: Add a dataflow, beside the cases, puts one here.</div>}
+      <Ordered
+        items={rows}
+        label={(r) => nameOf(r.dataflow)}
+        onChange={(next) => void save((s) => (s.row_dataflows = next), 'Dataflows after it')}
+        render={(r, i) => (
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span>{nameOf(r.dataflow)}</span>
+            <span className="text-muted-foreground">on</span>
+            <FilterInput
+              className="w-44"
+              rows={[]}
+              value={r.range ?? {}}
+              label={`The rows ${nameOf(r.dataflow)} runs on: a filter, none for every row`}
+              onChange={(range) =>
+                void save((s) => {
+                  const list = s.row_dataflows ?? [];
+                  list[i] = { ...list[i], range: Object.keys(range).length ? range : undefined };
+                  s.row_dataflows = list;
+                }, `${nameOf(r.dataflow)}'s rows`)
+              }
+            />
+          </span>
+        )}
+      />
+    </Section>
   );
 }
 

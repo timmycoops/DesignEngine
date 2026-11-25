@@ -487,16 +487,17 @@ export default function App() {
     if (dockRef.current) showPanel(dockRef.current, panel);
     setToolAsk((was) => ({ panel, mode, n: (was?.n ?? 0) + 1 }));
   }, []);
-  // The column the Notebook tab shows (decision 0081), asked for from the Reserves table's Open its column.
+  // The case and block the Reserves case tab follows (decision 0081's column; the Dataflow tab's until the Reserves case
+  // plan, workstream 7), asked for from the Reserves table's Open in the case.
   const [notebookOf, setNotebookOf] = useState<{ table: string; node: string[]; n: number; edited: NotebookEdit | null } | null>(null);
   const openNotebook = useCallback((table: string, node: string[]) => {
-    if (dockRef.current) showPanel(dockRef.current, 'notebook');
+    if (dockRef.current) showPanel(dockRef.current, 'case');
     setNotebookOf((was) => ({ table, node, n: (was?.n ?? 0) + 1, edited: null }));
   }, []);
-  // The open notebook's column again, on a formula as edited (decision 0081, point 7); nothing to do with none open.
+  // A formula's step in the Reserves case tab, run on the formula as it's typed (decision 0081, point 7).
   const runInNotebook = useCallback((edited: NotebookEdit | null) => {
-    if (dockRef.current) showPanel(dockRef.current, 'notebook');
-    setNotebookOf((was) => (was ? { ...was, n: was.n + 1, edited } : was));
+    if (dockRef.current) showPanel(dockRef.current, 'case');
+    setNotebookOf((was) => ({ table: was?.table ?? '', node: was?.node ?? [], n: (was?.n ?? 0) + 1, edited }));
   }, []);
   // The block picked in the Reserves table: the Notebook follows it, a formula run as edited carried on to it.
   const followInNotebook = useCallback((table: string, node: string[]) => {

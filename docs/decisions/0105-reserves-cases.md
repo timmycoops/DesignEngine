@@ -297,6 +297,53 @@ a company library of field sets, pieces as solids, the scheduler's tables, runni
   (255 ms). A row's words for its filters are now read only from the columns a filter can name (the range's, a step's
   and its settings tables'), not all 455.
 
+## Built: workstream 7, a way in
+
+Tim's picks, 26 November: the Setup tab's controls go in a Setup drawer opened from the band ("A Setup drawer"), and
+Base is the case named Base, else the first made, with four headline figures ("Base + four figures").
+
+- **The cases** (`app/src/panels/CasesBar.tsx`, its sums in `newCase.ts`), under the band: every reserves table a case,
+  a row each, its in situ coal (t), ROM coal (t), ROM waste (BCM) and strip ratio (BCM/t) with each one's change against
+  Base; a click opens it. Engine: `case_headlines` reads each table's own `Summary\Ratios` columns added up over every
+  row by their rules (0086), Base the first named … Base, else the first; `case_headlines()` in Python. They sit in a
+  table of their own under the band rather than along Open another dataflow's foot: the kit's lists open over the page,
+  which closed the dataflows' list at every pick.
+- **New case**: a name, the blocks (a layer and a filter, the count shown as it's typed), the seam model and the
+  reserves dataflow, or the starter made from the seam model (0073, `dataflow_starter` now in the app shell). It runs
+  `reserves.run` on the blocks picked, then keeps the layer and filter as the setup's blocks, so Run again takes up a
+  block added to the layer. Each its own undo.
+- **Copy case**: the case open run again into a new table under a new name, its dataflows after the reserves one listed
+  as they are (out of date until they run), its settings tables shared, or copied as `<table> (<case>)` when ticked.
+- **Add a dataflow**: a row dataflow after the case's, a copy of one in the project or one field and one formula step
+  to write over (a row dataflow with no steps isn't saved), on the rows a filter picks; opened in the case tab and in
+  the Parameters tab to write. The Parameters tab now checks a row dataflow as one: `dataflow_check` leaves its steps to
+  the formula panel, and the formula panel checks a step with `check_row_formula` against the project's reserves
+  tables' columns, its own fields and its settings, with no stage; it was refused before for having no volume field.
+- **The Setup drawer** (`app/src/panels/CaseSetup.tsx`, the Setup tab's sections as they were, fixed to the case open):
+  what it runs on, its dataflow and add-ons, the dataflows after it with the rows each runs on (a filter), moved up or
+  down or taken out, its settings tables in order, the steps, the fields and where each comes from, and Run again.
+- **The Setup and Dataflow tabs taken out** (decision 8). A layout saved with them closes them as it opens. What the
+  Dataflow tab did is in the case tab: Open its column in the Reserves table is Open in the case (the case tab on that
+  table, the block picked; a block picked there followed); the formula panel's Show in Dataflow is Show in the case (that
+  step, run on the formula as typed); This step unit by unit under the step shows the unit followed's workings and a
+  formula traced on it (the Dataflow tab's step pane, `StepPane`); Run again on this block, its strip or every block is
+  under the block map. The strip, Before and After, Show as graph, Every block and the tabs beside it are gone: the flow,
+  the steps by stage, the units table and the strip log are their places.
+- **Tested.** Engine: the one-block case's headline figures, ROM waste the OB's 50,000 m³, the A-B break's 25,000 and the
+  3,525 of coal `rom_loss` takes, 78,525 BCM (the 20,000 below B's floor not mined), ROM coal 21,475 m³ at RD 1.4,
+  30,065 t, the strip ratio their quotient, a second case set against Base (`case_at_step.rs`, 1e-9); a row dataflow's
+  formulas checked against the case's columns, a misspelt field and a setting it hasn't each said
+  (`case_dataflows.rs`). Python: the headlines, Base marked. App (`tests/newCase.test.mjs`): a free name, the blocks a
+  layer and filter pick, a figure against Base. In the app (`--bench --case`, the demo, 50 checks): no Dataflow or Setup
+  tab; the cases with Base marked, its ROM coal 9,234,489 t; Copy case made Check copy with the same figures, open, its
+  row dataflow out of date until run; Add a dataflow opened Check added in the Parameters tab with nothing refused and in
+  the case tab; the Setup listing the dataflows after the reserves one in run order; New case on all 1,815 blocks of the
+  layer with the demo's dataflow; `rom_loss` unit by unit showing U's roof, floor, edge and other loss workings; Run
+  again on B5 alone into the table.
+- **The `--dataflow` bench** has its Dataflow tab parts moved to the case tab (Open in the case, unit by unit, Show in
+  the case, Run again on the block); its run stops before them, on `main` as here, at an earlier step's "Waiting on
+  object.set_attributes", so those parts aren't run yet.
+
 ## Known limits
 
 - **Not the command decision 14 named.** A row dataflow runs by `table.run_dataflow`, not `reserves.run`: a reserves
@@ -312,8 +359,11 @@ a company library of field sets, pieces as solids, the scheduler's tables, runni
 - **Out of date reads the log.** A project saved and opened carries its log, so the state comes back with it; a table
   whose runs aren't in the log (made before logs were kept) says its dataflows haven't run. A block revised and then put
   back as it was by hand, not by undo, still counts as changed.
-- **No way in yet** (workstream 7): New case, Copy case and Add a dataflow, the cases along the foot with their headline
-  figures, and the Setup and Dataflow tabs taken out. A row dataflow is added to a case in the Setup tab or Python.
+- **A case's tonnes on its own basis.** The headline figures are the table's own summary columns: a case run before
+  0086's ratios has none and shows dashes until it runs again. Base is found by name.
+- **New case takes blocks by layer and filter** on the attributes the app reads for each solid, as the bench rules
+  do; a block the filter would take on an attribute the app doesn't hold isn't in its first run, and Run again from the
+  setup takes it up.
 - **The flow is the case's units.** It shows coal and waste in play and what became of them, not what's written to the
   table: ROM coal is the coal lane at `final` with the rock let in, in situ tonnes, not the ROM density's. The flow
   after the open step runs again with each edit any step reads, the whole of it; on a much larger mine that is the
@@ -341,5 +391,6 @@ a company library of field sets, pieces as solids, the scheduler's tables, runni
   that first reads something seen.
 - **Units' tonnes are in situ.** The units' groups weigh by the in situ density, as they stand mid-flow; what's written
   under ROM and Scheduled has its tonnes on the ROM basis, as the table.
-- **The app's dataflow editor** opens a row dataflow as it opens any, with the reserves names; its own editor comes with
-  the case tab.
+- **A row dataflow's formulas are checked against every reserves table's columns** in the project, not the one case's;
+  a column only another case has passes the check and comes in empty when run on this one. Its Levels and add-ons show
+  in the Parameters tab's dataflow editor though a row dataflow has neither.

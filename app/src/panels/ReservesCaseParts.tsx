@@ -46,6 +46,7 @@ export function BlockMap({ blocks, picked, onPick }: { blocks: ColumnDid[]; pick
                     title={tip}
                     data-slot="map-block"
                     data-block={b.path.join(' ')}
+                    data-picked={pickedKey === key(b.path) ? 'yes' : 'no'}
                     onClick={() => onPick(b.path)}
                     className={cn(
                       'relative size-4 rounded-[2px] border border-border bg-muted',
