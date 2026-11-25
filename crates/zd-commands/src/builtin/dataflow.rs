@@ -139,8 +139,9 @@ fn save_add_on(inputs: &Inputs<'_>, p: &SaveDataflowParams) -> Result<Outcome, C
         None => Change::Create { name: p.name.clone(), layer: DATAFLOW_LAYER.into(), attributes: Attributes::new(), body },
     };
     Ok(Outcome::new(vec![change]).message(format!(
-        "saved {}, an add-on: {} field{}, {} word field{}, {} step{}, {} parameter table{}",
+        "saved {}, {}: {} field{}, {} word field{}, {} step{}, {} parameter table{}",
         p.name,
+        if d.rows { "a row dataflow" } else { "an add-on" },
         d.fields.len(),
         plural(d.fields.len()),
         d.words.len(),
@@ -220,7 +221,9 @@ impl Command for SaveDataflow {
     fn run(&self, inputs: &Inputs<'_>, p: &Self::Params) -> Result<Outcome, CommandError> {
         let d = &p.content;
         d.check().map_err(CommandError::Invalid)?;
-        if d.add_on {
+        // An add-on, or a row dataflow (Reserves case plan, decision 2): its scripts checked on their own here, against
+        // a main dataflow's fields or a table's columns only when it runs.
+        if d.add_on || d.rows {
             return save_add_on(inputs, p);
         }
         // A main dataflow's add-ons (Table setup plan, decision 2): each an add-on, and the checks below run on the

@@ -636,14 +636,14 @@ impl Command for RunReserves {
         let when = if p.table.is_some() { format!("{}, run again", utc_words(now)) } else { utc_words(now) };
         // What fills each table it makes (Table setup plan, decision 1): kept with the table, so Run again runs it.
         let objects: Vec<&Arc<Object>> = inputs.objects().collect();
-        let setup = zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons.clone(), tables: p.tables.clone(), blocks: zd_core::BlockPick::of_blocks(objects.iter().copied(), &p.blocks), model: p.model, stack: p.stack.clone(), parameters: p.parameters.clone(), sources: p.sources.clone(), input: p.input.clone() };
+        let setup = zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons.clone(), tables: p.tables.clone(), blocks: zd_core::BlockPick::of_blocks(objects.iter().copied(), &p.blocks), model: p.model, stack: p.stack.clone(), parameters: p.parameters.clone(), sources: p.sources.clone(), input: p.input.clone(), row_dataflows: Vec::new() };
         let mut out = outcome(&prepared, p, ran, stopped, started, &when, &setup);
         // Read from a table (decision 12 of 0099): its volumes are imported, not of record, and the run says so.
         if let Some(from) = &prepared.imported_from {
             out.notes.push(crate::Note::warning(crate::Code::ImportedVolumes, format!("volumes imported from {from}, not measured from solids: they're not the volumes of record")));
         }
         if let Some(object) = into {
-            into_table(&mut out, &object, &prepared, p)?;
+            into_table(&mut out, inputs.project(), &object, &prepared, p)?;
         }
         // The table script steps, on the whole table each time: one run again is worked on every row (decision 11).
         // `table("Objects")` in a table step reads the Objects table, worked out only where a step names it (0103, 10).
@@ -673,6 +673,9 @@ pub(crate) fn prepare(get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError
 pub(crate) fn prepare_flow(name: &str, dataflow: &Arc<Dataflow>, get: &dyn Fn(ObjectId) -> Result<Arc<Object>, CommandError>, p: &RunReservesParams, flagging: bool) -> Result<Prepared, CommandError> {
     if dataflow.add_on {
         return Err(CommandError::Invalid(format!("{name} is an add-on: it runs with a main dataflow that lists it, or a table whose setup does")));
+    }
+    if dataflow.rows {
+        return Err(CommandError::Invalid(format!("{name} is a row dataflow: it runs on a case's table rows after its reserves dataflow (table.run_dataflow), not on blocks")));
     }
     // Its add-ons put in at their stage (Table setup plan, decision 2): the run's own list, else the dataflow's.
     let add_on_ids = p.add_ons.clone().unwrap_or_else(|| dataflow.add_ons.clone());
@@ -3173,7 +3176,7 @@ fn title(material: &str) -> String {
     }
 }
 
-fn unit_of_kind(kind: FieldKind) -> &'static str {
+pub(crate) fn unit_of_kind(kind: FieldKind) -> &'static str {
     match kind {
         FieldKind::Volume => "m3",
         FieldKind::Thickness => "m",
@@ -3523,14 +3526,17 @@ fn utc_words(unix_ms: u64) -> String {
 
 /// A run again into a table (decision 0085): the table the run made for the case taken into the one given, its rows for
 /// the blocks run replaced and every other row kept, as that table's next revision.
-fn into_table(out: &mut Outcome, object: &Arc<Object>, prepared: &Prepared, p: &RunReservesParams) -> Result<(), CommandError> {
+fn into_table(out: &mut Outcome, project: &zd_core::Project, object: &Arc<Object>, prepared: &Prepared, p: &RunReservesParams) -> Result<(), CommandError> {
     let Body::Table(old) = &object.body else { unreachable!("checked as a table") };
     let made = std::mem::take(&mut out.changes);
     let Some(Change::Create { body: Body::Table(new), .. }) = made.into_iter().next() else {
         return Err(CommandError::Invalid(format!("no block of {} ran, so nothing was run again", object.name)));
     };
     let case = crate::reserves_view::case_of(&object.attributes);
-    let (mut merged, lost) = merge_rerun(old, &new, &prepared.upper, &case, &p.only);
+    // The columns the case's row dataflows write (Reserves case plan, decision 6): kept by each leaf's key, as entered
+    // values are, until those dataflows run again; never written over by this run, which doesn't make them.
+    let by_key = old.setup.as_ref().map(|s| super::row_columns_of(project, s)).unwrap_or_default();
+    let (mut merged, lost) = merge_rerun(old, &new, &prepared.upper, &case, &p.only, &by_key);
     // A table made before setups (Table setup plan, decision 1) takes the one its run was made from.
     if merged.setup.is_none() {
         merged.setup = new.setup.clone();
@@ -3549,8 +3555,9 @@ fn into_table(out: &mut Outcome, object: &Arc<Object>, prepared: &Prepared, p: &
 /// `old` with its rows of `case` whose levels above the seam start with `only` taken out and `new`'s rows added after the
 /// rest; columns by name, `old`'s first then any only `new` has, a value missing on either side left empty. A column a
 /// person entered (decision 2 of 0099) keeps its values on the rows run again, matched by each row's key, its case and
-/// its levels' words; a value whose leaf the run no longer makes is given back as `leaf: column = value`.
-pub(crate) fn merge_rerun(old: &Table, new: &Table, upper: &[String], case: &str, only: &[String]) -> (Table, Vec<String>) {
+/// its levels' words; a value whose leaf the run no longer makes is given back as `leaf: column = value`. The columns in
+/// `by_key` (a case's row dataflows') are kept by each row's key the same way, a leaf gone taking its value with it.
+pub(crate) fn merge_rerun(old: &Table, new: &Table, upper: &[String], case: &str, only: &[String], by_key: &[String]) -> (Table, Vec<String>) {
     let word = |t: &Table, name: &str, r: usize| match t.column(name).map(|c| &c.values) {
         Some(zd_core::ColumnValues::Text(v)) => v[r].clone().unwrap_or_default(),
         _ => String::new(),
@@ -3571,8 +3578,9 @@ pub(crate) fn merge_rerun(old: &Table, new: &Table, upper: &[String], case: &str
             let from_old = old.column(&like.name);
             let from_new = new.column(&like.name);
             let entered = !like.kind.is_written();
+            let keyed = entered || by_key.contains(&like.name);
             // A row run again: the run's value, or for an entered column the value its key had before.
-            let source = |r: usize| if entered { new_at[r].map(|o| (from_old, o)) } else { Some((from_new, r)) };
+            let source = |r: usize| if keyed { new_at[r].map(|o| (from_old, o)) } else { Some((from_new, r)) };
             if entered {
                 let taken: std::collections::BTreeSet<usize> = new_at.iter().flatten().copied().collect();
                 for (k, &r) in &old_at {
@@ -3691,7 +3699,7 @@ pub fn setup_of(project: &zd_core::Project, log: &[crate::LogEntry], table: Obje
     let p: RunReservesParams = serde_json::from_value(record.params.clone()).map_err(|e| CommandError::Invalid(format!("the run that made {} can't be read again: {e}", object.name)))?;
     let blocks: Vec<ObjectId> = p.blocks.into_iter().filter(|id| project.object(*id).is_some()).collect();
     let all: Vec<&Arc<Object>> = project.objects().collect();
-    Ok(zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons, tables: p.tables, blocks: zd_core::BlockPick::of_blocks(all.iter().copied(), &blocks), model: p.model, stack: p.stack, parameters: p.parameters, sources: p.sources, input: p.input })
+    Ok(zd_core::TableSetup { dataflow: p.dataflow, add_ons: p.add_ons, tables: p.tables, blocks: zd_core::BlockPick::of_blocks(all.iter().copied(), &blocks), model: p.model, stack: p.stack, parameters: p.parameters, sources: p.sources, input: p.input, row_dataflows: Vec::new() })
 }
 
 /// The reserves run that last wrote a table: the run its revision came from, or where a person has since entered values

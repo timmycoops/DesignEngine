@@ -26,7 +26,7 @@ mod workflow;
 pub use attributes::intern;
 pub use bounds::Aabb;
 pub use script::{Script, columns_looked_up_in, curves_in, loads_in, lookups_in, parameters_read_in};
-pub use dataflow::{AllocationStep, Dataflow, DataflowField, DataflowStep, FieldSource, FormulaStep, FormulaTest, Level, TableStep, UNIT_LABELS, WordField, default_levels, is_schedule_field};
+pub use dataflow::{AllocationStep, Dataflow, DataflowField, DataflowStep, FieldSource, FormulaStep, FormulaTest, Level, TableStep, UNIT_LABELS, WordField, default_levels, is_schedule_field, row_column};
 pub use display::{Colouring, Contours, Display, Look, ReservesFilter};
 pub use face::{AzimuthSector, FaceDesign, FaceDirection, FaceLine, FaceProfile, HorizonValue, LineEdit, LineOn, MOST_TOLERANCE, ProfileStep, Ramp, RampBerm, RampFixed, RampHeading, RuleValue, StepTarget, StepValue, USUAL_TURN_JOIN, WallRule, WallSide};
 pub use filters::{MEASURES, OBJECT_FIELDS, attribute_ci, attribute_word, filter_fits, filter_words, input_filter_fits, list_fits, measure, object_fits, object_list_fits, object_value};
@@ -37,6 +37,6 @@ pub use object::{AttrValue, Attributes, Body, Layer, Object, ObjectKind, ObjectR
 pub use parameters::{Found, Given, Graded, GradedKey, OnGrid, ParamValue, Picked, ParameterRow, ParameterTable, ValueColumn, csv_cells, CurveEnds, OnCurve};
 pub use project::{Applied, AppliedChange, Change, ChangeKind, Project, ProjectError};
 pub use seam::{Fingerprint, GridLink, Horizon, IssueKind, Lattice, SeamModel, StackIssue, blank_no_seam, blank_no_thickness, grid_holes, moved_path, relative_path, same_path};
-pub use table::{BlockPick, CalcAddUp, CalculatedColumn, ColumnHeader, ColumnKind, ColumnValues, InputMap, Table, TableColumn, TableInput, TableSetup};
+pub use table::{BlockPick, CalcAddUp, CalculatedColumn, ColumnHeader, ColumnKind, ColumnValues, InputMap, RowDataflow, Table, TableColumn, TableInput, TableSetup};
 pub use validity::{CrossingCheck, Crossings, MeshValidity, is_zero_area};
 pub use workflow::{BASE_CASE, Case, InputRule, LastRun, Source, StepAction, Workflow, WorkflowStep};

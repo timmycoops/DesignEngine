@@ -178,6 +178,50 @@ def pieces_are_joined_into_one():
     assert sum(1 for o in record["outputs"] if o["change"] == "deleted") == 2
 
 
+def a_case_runs_its_dataflows_in_order():
+    """Reserves case plan, decisions 2, 4 and 14: two strips, each a block of OB (10 m) over 3 m of coal at RD 1.5,
+    100 m by 50 m: 22,500 t of coal a block. Haulage, a row dataflow on strip 1 only, gives 2 km and 45,000 t.km there
+    and nothing on strip 2. `run_case` runs the reserves dataflow, then Haulage: two records, in order."""
+    s = zd.Session()
+    e, n = 650_000.0, 7_450_000.0
+    faces = [[0, 2, 3], [0, 3, 1], [4, 5, 7], [4, 7, 6], [0, 1, 5], [0, 5, 4], [2, 6, 7], [2, 7, 3], [0, 4, 6], [0, 6, 2], [1, 3, 7], [1, 7, 5]]
+    cells = []
+    for strip in (1, 2):
+        x = (strip - 1) * 100.0
+        for name, z0, z1, a in (("OB", 20.0, 30.0, {"horizon": "OB", "material": "waste", "seam": "L"}),
+                                ("L", 12.0, 15.0, {"horizon": "L", "material": "coal", "seam": "L", "rd": 1.5})):
+            box = [[e + x + i % 2 * 100.0, n + i // 2 % 2 * 50.0, z0 if i < 4 else z1] for i in range(8)]
+            solid = s.run("solid.from_mesh", name=f"{strip}_{name}", layer="blocks", vertices=box, triangles=faces)["outputs"][0]["id"]
+            for k, v in dict(a, strip=float(strip), block="B1").items():
+                cells.append({"object": solid, "attribute": k, "value": v})
+    s.run("object.set_attributes", cells=cells)
+    blocks = [o["id"] for o in s.objects(layer="blocks")]
+    assumptions = s.run("parameters.save", name="assumptions", csv="when material,rd (t/m3)\nwaste,2.3\n")["outputs"][0]["id"]
+    fields = [{"name": "volume", "kind": "volume", "add_up": {"by": "sum"}, "from": "volume"},
+              {"name": "thickness", "kind": "thickness", "add_up": {"by": "sum"}, "from": "thickness"},
+              {"name": "rd", "kind": "density", "add_up": {"by": "volume"}, "from": "attribute", "attribute": "rd"}]
+    reserves = s.run("dataflow.save", name="Reserves", content={"fields": fields, "steps": [{"step": "initialise"}, {"step": "final"}], "parameters": [assumptions]})["outputs"][0]["id"]
+    table = s.run("reserves.run", dataflow=reserves, blocks=blocks, stack=["OB", "L"], layer="reserves")["outputs"][0]["id"]
+    distances = s.run("parameters.save", name="haul distances", csv="when strip,distance (km)\n1,2\n,5\n")["outputs"][0]["id"]
+    haul = "def formula(row, p):\n    row.distance = p.distance\n    row.tkm = row[\"Imported\\\\Coal\\\\tonnes\"] * p.distance\n"
+    haulage = s.run("dataflow.save", name="Haulage", content={
+        "rows": True, "units": {"distance": "km", "tkm": "t.km"}, "parameters": [distances],
+        "fields": [{"name": "distance", "kind": "other", "add_up": {"by": "max"}, "from": "worked"}, {"name": "tkm", "kind": "other", "add_up": {"by": "sum"}, "from": "worked"}],
+        "steps": [{"step": "haul", "formula": {"script": haul}}]})["outputs"][0]["id"]
+    setup = s.table_setup(table)
+    setup["row_dataflows"] = [{"dataflow": haulage, "range": {"strip": "1"}}]
+    s.run("table.setup", table=table, setup=setup)
+    records = s.run_case(table)
+    assert [r["command"] for r in records] == ["reserves.run", "table.run_dataflow"], [r["command"] for r in records]
+    assert "Haulage ran on 1 of 2 rows (strip 1)" in records[1]["messages"][0], records[1]["messages"]
+    t = s.object(table)
+    assert t["units"]["Haulage\\tkm"] == "t.km"
+    by_strip = dict(zip(t["columns"]["strip"], t["columns"]["Haulage\\tkm"]))
+    assert abs(by_strip["1"] - 45_000.0) < 1e-6 and by_strip["2"] is None, by_strip
+    only = s.run_case(table, dataflow=haulage)
+    assert [r["command"] for r in only] == ["table.run_dataflow"], "that one alone"
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         original = a_project_is_made_saved_and_opened(tmp)
@@ -185,6 +229,7 @@ def main():
     a_workflow_is_captured_and_run_again()
     several_strings_are_one_run()
     pieces_are_joined_into_one()
+    a_case_runs_its_dataflows_in_order()
     print(f"zd {zd.__version__}: open, list, run and read the log all pass")
 
 
